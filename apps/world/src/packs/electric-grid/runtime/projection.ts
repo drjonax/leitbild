@@ -1,6 +1,6 @@
 import type { IsoTimestamp } from '../../../core/model/index.ts'
 import type { GridIslandProjection } from '../model.ts'
-import { gridAlarmCounts } from './alarms.ts'
+import { gridAlarmCounts, gridIslandAlarmCounts } from './alarms.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
 import { externalReserveVolumes, generatorSynchronisedAt, islandFixedInjectionMw } from './island-input.ts'
 import { publishedNullable } from './state/arrays.ts'
@@ -119,8 +119,9 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
 export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIslandPlan, at: IsoTimestamp): void => {
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
   const alarms = gridAlarmCounts(grid)
+  const islandAlarms = gridIslandAlarmCounts(grid)
   const projected = islands.islands.flatMap(island => {
-    const view = islandProjection(grid, islands, island, alarms.activeByIsland.get(island.id) ?? 0)
+    const view = islandProjection(grid, islands, island, islandAlarms.get(island.id) ?? 0)
     return view === null ? [] : [view]
   })
   const energised = projected.filter(island => island.energized && island.frequencyHz !== null)

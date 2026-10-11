@@ -44,6 +44,11 @@ export interface GridTables {
   /** 1 for a synchronous (voltage-forming) unit, and its kinetic energy H·S (MWs; 0 when converter-connected). */
   readonly generatorSynchronous: Uint8Array
   readonly generatorKineticEnergyMws: Float64Array
+  /** Branch parameters the network solution reads per branch: r and x² (pu), the from-end tap ratio (1 off transformers), the rating (MW). */
+  readonly branchResistancePu: Float64Array
+  readonly branchReactanceSquaredPu: Float64Array
+  readonly branchFromTap: Float64Array
+  readonly branchRatingMw: Float64Array
   /** Reactive demand per MW served of each load: tan(acos(power factor)). */
   readonly loadReactivePerMw: Float64Array
   /** The distinct load kinds of the Model, and each load's position among them (its daily profile). */
@@ -119,6 +124,11 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     hvdcToBus: Int32Array.from(index.hvdcLinks, link => busOf(link.toBusId)),
     generatorSynchronous: Uint8Array.from(model.generators, generator => generatorIsVoltageForming(generator) ? 1 : 0),
     generatorKineticEnergyMws: Float64Array.from(model.generators, generatorKineticEnergyMws),
+    branchResistancePu: Float64Array.from(model.branches, branch => branch.resistancePu),
+    branchReactanceSquaredPu: Float64Array.from(model.branches, branch => branch.reactancePu ** 2),
+    // Lines and cables have no transformer: their ratio is exactly 1.
+    branchFromTap: Float64Array.from(model.branches, branch => branch.kind === 'transformer' ? branch.tapRatio! : 1),
+    branchRatingMw: Float64Array.from(model.branches, branch => branch.ratingMw),
     loadReactivePerMw: Float64Array.from(model.loads, load => Math.tan(Math.acos(load.powerFactor))),
     loadKinds,
     loadKind: Uint8Array.from(model.loads, load => loadKinds.indexOf(load.kind)),

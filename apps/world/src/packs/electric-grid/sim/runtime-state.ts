@@ -3,6 +3,8 @@ import type { IslandFrequencyState } from '../runtime/frequency/island-state.ts'
 import type { IsoTimestamp } from '../../../core/model/index.ts'
 import { persistedGridAlarmState } from '../runtime/alarms.ts'
 import type { GridRuntimeInstance, RestoredGridRuntimeState } from '../runtime/instance.ts'
+import { branchStatusCodes, generatorLifecycleCodes, publishedNullable } from '../runtime/state/arrays.ts'
+import { readReserves } from '../runtime/state/views.ts'
 
 const finite = z.number().finite()
 const nonNegative = finite.nonnegative()
@@ -168,26 +170,47 @@ export const parseElectricGridRuntimeState = (raw: unknown): ElectricGridRuntime
   return electricGridRuntimeStateSchema.parse(raw)
 }
 
+// Branch, generator and load state is read from the Grid's arrays by model index; the shapes are
+// those of the state views (runtime/state/views.ts).
 export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRuntimeInstance>): ElectricGridRuntimeState => ({
   schemaVersion: electricGridRuntimeStateSchemaVersion,
   grids: [...grids.values()].map(grid => {
     const islands = grid.islandPlan
     if (!islands) throw new Error(`Grid ${grid.definition.gridId} has not advanced; its runtime state cannot be saved`)
+    const { model } = grid.definition
+    const { branches, generators, loads } = grid.arrays
     return {
       gridId: grid.definition.gridId,
       definitionDigest: grid.definition.definitionDigest,
       elapsedMs: grid.elapsedMs,
       tick: grid.tick,
-      branches: [...grid.branches].map(([id, state]) => ({ id, state: state.state, availability: state.availability, protection: structuredClone(state.protection) })),
-      generators: [...grid.generators].map(([id, state]) => ({
-        id,
-        state: state.state,
-        availableMw: state.availableMw,
-        targetMw: state.targetMw,
-        reserves: { ...state.reserves },
-        synchronisesAtElapsedMs: state.synchronisesAtElapsedMs,
+      branches: model.branches.map((branch, index) => {
+        const trip = branches.trip[index]!
+        return {
+          id: branch.id,
+          state: branchStatusCodes[branches.status[index]!]!,
+          availability: branches.availability[index]!,
+          protection: {
+            thermalLevel: branches.thermalLevel[index]!,
+            overEmergencySinceElapsedMs: publishedNullable(branches.overEmergencySinceElapsedMs[index]!),
+            trip: trip === null ? null : structuredClone(trip),
+          },
+        }
+      }),
+      generators: model.generators.map((generator, index) => ({
+        id: generator.id,
+        state: generatorLifecycleCodes[generators.lifecycle[index]!]!,
+        availableMw: generators.availableMw[index]!,
+        targetMw: generators.targetMw[index]!,
+        reserves: readReserves(generators, index),
+        synchronisesAtElapsedMs: publishedNullable(generators.synchronisesAtElapsedMs[index]!),
       })),
-      loads: [...grid.loads].map(([id, state]) => ({ id, nominalDemandMw: state.nominalDemandMw, manualDemandLimitMw: state.manualDemandLimitMw, manualShedEmergency: state.manualShedEmergency })),
+      loads: model.loads.map((load, index) => ({
+        id: load.id,
+        nominalDemandMw: loads.nominalDemandMw[index]!,
+        manualDemandLimitMw: publishedNullable(loads.manualDemandLimitMw[index]!),
+        manualShedEmergency: loads.manualShedEmergency[index] === 1,
+      })),
       storage: [...grid.storage].map(([id, state]) => ({ id, stateOfChargeFraction: state.stateOfChargeFraction })),
       externalSystems: [...grid.externalSystems].map(([id, state]) => ({ id, scheduledImportMw: state.scheduledImportMw })),
       hvdcLinks: [...grid.hvdcLinks].map(([id, state]) => ({ id, state: state.state, setpointMw: state.setpointMw, transferMw: state.transferMw, trip: state.trip === null ? null : { ...state.trip } })),

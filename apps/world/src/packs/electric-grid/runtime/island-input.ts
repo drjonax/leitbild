@@ -44,6 +44,28 @@ export const islandMembers = (grid: GridRuntimeInstance, island: GridTopologyIsl
   return members
 }
 
+const participationEntries = new WeakMap<GridExternalSystemDefinition, Int32Array>()
+
+/** Position in `participation` of the first area listing each bus as a boundary bus of `system`, −1 for none. */
+const participationEntryOfBus = (
+  grid: GridRuntimeInstance,
+  system: GridExternalSystemDefinition,
+  participation: NonNullable<GridExternalSystemDefinition['areaParticipation']>,
+): Int32Array => {
+  const cached = participationEntries.get(system)
+  if (cached !== undefined) return cached
+  const network = gridTablesFor(grid.definition).network
+  const entries = new Int32Array(network.busCount).fill(-1)
+  for (let entry = participation.length - 1; entry >= 0; entry -= 1) {
+    for (const busId of participation[entry]!.boundaryBusIds) {
+      const bus = network.busIndexById.get(busId)
+      if (bus !== undefined) entries[bus] = entry
+    }
+  }
+  participationEntries.set(system, entries)
+  return entries
+}
+
 /**
  * How a synchronous external system's exchange with one Norwegian AC component is shared among
  * the given boundary buses of that component: by area participation (renormalised over the areas
@@ -61,10 +83,11 @@ export const externalBoundarySharesInto = (
   const participation = system.areaParticipation
   if (participation === undefined) throw new Error(`${system.id} has no area participation to share its exchange`)
   const busIds = gridTablesFor(grid.definition).network.busIds
+  const entryOfBus = participationEntryOfBus(grid, system, participation)
   const entryOf = (position: number) => {
-    const busId = busIds[boundaryBuses[position]!]!
-    for (const candidate of participation) if (candidate.boundaryBusIds.includes(busId)) return candidate
-    throw new Error(`${system.id}: boundary bus ${busId} lies in no participating area`)
+    const entry = entryOfBus[boundaryBuses[position]!]!
+    if (entry === -1) throw new Error(`${system.id}: boundary bus ${busIds[boundaryBuses[position]!]!} lies in no participating area`)
+    return participation[entry]!
   }
   for (let position = 0; position < count; position += 1) capacities[position] = boundaryTieCapacityAt(grid, boundaryBuses[position]!)
   // Areas present, each counted once in order of first appearance.

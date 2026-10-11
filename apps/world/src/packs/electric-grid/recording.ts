@@ -8,6 +8,7 @@ import type {
 } from '../../core/model/index.ts'
 import type { GridModelAssetCounts } from './definition-refs.ts'
 import type { GridRuntimeInstance } from './runtime/instance.ts'
+import { flowModelAc, flowModelNone, publishedNullable } from './runtime/state/arrays.ts'
 
 export const electricGridRecordingProfiles: ReadonlyArray<RecordingProfileDescriptor> = [{
   id: 'operations',
@@ -122,36 +123,35 @@ export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId
   operations.length + estimatedIslandSeriesCount + (profileId === 'engineering'
     ? counts.bus * 2 + counts.branch * 3 + counts.generator + counts.load + counts.storage : 0)
 
-const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => [
-  ...grid.definition.model.buses.flatMap(bus => {
-    const state = () => grid.busStates.get(bus.id)
-    return [
-      series({ grid, signalId: `${bus.id}.energized`, title: `${bus.label} energised`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => state()?.energized ?? null }),
-      series({ grid, signalId: `${bus.id}.frequency`, title: `${bus.label} frequency`, quantity: 'frequency', unit: 'Hz', value: () => state()?.frequencyHz ?? null }),
-    ]
-  }),
-  ...grid.definition.model.branches.flatMap(branch => {
-    const state = () => grid.branches.get(branch.id)!
-    return [
-      series({ grid, signalId: `${branch.id}.flow`, title: `${branch.label} flow`, quantity: 'active-power', unit: 'MW', value: () => state().flowMw }),
-      series({ grid, signalId: `${branch.id}.loading`, title: `${branch.label} loading`, quantity: 'ratio', unit: '%', value: () => state().loadingPercent }),
+// Per-asset values read the Grid's arrays by model index; bus values exist once the network has been solved.
+const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => {
+  const { buses, branches, generators, loads, storage } = grid.arrays
+  const solved = (): boolean => grid.busStates.size > 0
+  return [
+    ...grid.definition.model.buses.flatMap((bus, index) => [
+      series({ grid, signalId: `${bus.id}.energized`, title: `${bus.label} energised`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => solved() ? buses.energized[index] === 1 : null }),
+      series({ grid, signalId: `${bus.id}.frequency`, title: `${bus.label} frequency`, quantity: 'frequency', unit: 'Hz', value: () => solved() ? publishedNullable(buses.frequencyHz[index]!) : null }),
+    ]),
+    ...grid.definition.model.branches.flatMap((branch, index) => [
+      series({ grid, signalId: `${branch.id}.flow`, title: `${branch.label} flow`, quantity: 'active-power', unit: 'MW', value: () => branches.flowMw[index]! }),
+      series({ grid, signalId: `${branch.id}.loading`, title: `${branch.label} loading`, quantity: 'ratio', unit: '%', value: () => branches.loadingPercent[index]! }),
       // true: flow and loading from the AC load flow; false: the DC flow; no sample without flow.
       series({ grid, signalId: `${branch.id}.ac-flow`, title: `${branch.label} flow from the AC load flow`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => {
-        const flowModel = state().flowModel
-        return flowModel === null ? null : flowModel === 'ac'
+        const flowModel = branches.flowModel[index]!
+        return flowModel === flowModelNone ? null : flowModel === flowModelAc
       } }),
-    ]
-  }),
-  ...grid.definition.model.generators.map(generator => series({
-    grid, signalId: `${generator.id}.dispatch`, title: `${generator.label} dispatch`, quantity: 'active-power', unit: 'MW', value: () => grid.generators.get(generator.id)!.dispatchMw,
-  })),
-  ...grid.definition.model.loads.map(load => series({
-    grid, signalId: `${load.id}.served`, title: `${load.label} served load`, quantity: 'active-power', unit: 'MW', value: () => grid.loads.get(load.id)!.servedMw,
-  })),
-  ...grid.definition.model.storage.map(item => series({
-    grid, signalId: `${item.id}.state-of-charge`, title: `${item.label} state of charge`, quantity: 'ratio', unit: '1', value: () => grid.storage.get(item.id)!.stateOfChargeFraction,
-  })),
-]
+    ]),
+    ...grid.definition.model.generators.map((generator, index) => series({
+      grid, signalId: `${generator.id}.dispatch`, title: `${generator.label} dispatch`, quantity: 'active-power', unit: 'MW', value: () => generators.dispatchMw[index]!,
+    })),
+    ...grid.definition.model.loads.map((load, index) => series({
+      grid, signalId: `${load.id}.served`, title: `${load.label} served load`, quantity: 'active-power', unit: 'MW', value: () => loads.servedMw[index]!,
+    })),
+    ...grid.definition.model.storage.map((item, index) => series({
+      grid, signalId: `${item.id}.state-of-charge`, title: `${item.label} state of charge`, quantity: 'ratio', unit: '1', value: () => storage[index]!.stateOfChargeFraction,
+    })),
+  ]
+}
 
 export const createGridRecordingPlan = (config: {
   readonly selection: ScenarioRecordingSelection
@@ -186,20 +186,20 @@ export const createGridRecordingPlan = (config: {
     },
     sample: ({ observedAt, simulationTime }) => {
       const descriptors = addIslandSeries()
-      return {
-        descriptors: [...descriptors],
-        samples: plans.flatMap(item => {
-          const value = item.value()
-          return value === null ? [] : [{
-            seriesId: item.descriptor.id,
-            observedAt,
-            simulationTime,
-            elapsedMs: Math.round(item.grid.elapsedMs),
-            value,
-            quality: 'good' as const,
-          }]
-        }),
+      const samples: PackRuntimeRecordingBatch['samples'][number][] = []
+      for (const item of plans) {
+        const value = item.value()
+        if (value === null) continue
+        samples.push({
+          seriesId: item.descriptor.id,
+          observedAt,
+          simulationTime,
+          elapsedMs: Math.round(item.grid.elapsedMs),
+          value,
+          quality: 'good' as const,
+        })
       }
+      return { descriptors: [...descriptors], samples }
     },
   }
 }

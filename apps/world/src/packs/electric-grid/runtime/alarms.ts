@@ -73,6 +73,10 @@ export interface GridAlarmState {
   readonly acNonConvergence: Map<string, string>
   /** Simulation time of the latest evaluation; lifecycle commands act at it. */
   clock: { readonly at: IsoTimestamp; readonly elapsedMs: number } | null
+  /** Ids observed by the evaluation in progress (scratch, not persisted). */
+  readonly observedIds: Set<string>
+  /** Active unshelved island-scope alarms per island at the last gridIslandAlarmCounts (scratch). */
+  readonly activeByIsland: Map<string, number>
 }
 
 export type PersistedGridAlarmState = {
@@ -88,6 +92,8 @@ export const createGridAlarmState = (restored?: PersistedGridAlarmState): GridAl
   baseIslandIds: restored?.baseIslandIds == null ? null : new Set(restored.baseIslandIds),
   acNonConvergence: new Map(),
   clock: restored?.clock ?? null,
+  observedIds: new Set(),
+  activeByIsland: new Map(),
 })
 
 export const persistedGridAlarmState = (state: GridAlarmState): PersistedGridAlarmState => ({
@@ -239,7 +245,8 @@ export const evaluateGridAlarms = (grid: GridRuntimeInstance, islands: GridIslan
     record.shelvedUntilElapsedMs = null
     queueTransition(grid, record, 'shelve-expired', elapsedMs, at)
   }
-  const visited = new Set<string>()
+  const visited = state.observedIds
+  visited.clear()
   for (const observation of gridAlarmObservations(grid, islands, settings, state)) {
     if (visited.has(observation.id)) throw new Error(`Grid ${grid.definition.gridId} alarm ${observation.id} was observed twice in one evaluation`)
     visited.add(observation.id)
@@ -334,8 +341,6 @@ export interface GridAlarmCounts {
   readonly highestPriority: GridAlarmPriority | null
   /** Earliest raise time among active unshelved alarms. */
   readonly oldestActiveRaisedAt: IsoTimestamp | null
-  /** Active unshelved island-scope alarms per island. */
-  readonly activeByIsland: ReadonlyMap<string, number>
 }
 
 export const gridAlarmCounts = (grid: GridRuntimeInstance): GridAlarmCounts => {
@@ -345,7 +350,6 @@ export const gridAlarmCounts = (grid: GridRuntimeInstance): GridAlarmCounts => {
   let shelved = 0
   let highestPriority: GridAlarmPriority | null = null
   let oldest: GridAlarmRecord | null = null
-  const activeByIsland = new Map<string, number>()
   for (const record of grid.alarms.records.values()) {
     if (gridAlarmShelved(record)) {
       shelved += 1
@@ -357,7 +361,16 @@ export const gridAlarmCounts = (grid: GridRuntimeInstance): GridAlarmCounts => {
     if (!record.acknowledged) activeUnacknowledged += 1
     if (highestPriority === null || record.priority < highestPriority) highestPriority = record.priority
     if (oldest === null || record.raisedAtElapsedMs < oldest.raisedAtElapsedMs) oldest = record
-    if (record.scope === 'island') activeByIsland.set(record.assetId, (activeByIsland.get(record.assetId) ?? 0) + 1)
   }
-  return { active, unacknowledged, activeUnacknowledged, shelved, highestPriority, oldestActiveRaisedAt: oldest?.raisedAt ?? null, activeByIsland }
+  return { active, unacknowledged, activeUnacknowledged, shelved, highestPriority, oldestActiveRaisedAt: oldest?.raisedAt ?? null }
+}
+
+/** Active unshelved island-scope alarms per island id; the map is the Grid's, refilled by every call. */
+export const gridIslandAlarmCounts = (grid: GridRuntimeInstance): ReadonlyMap<string, number> => {
+  const counts = grid.alarms.activeByIsland
+  counts.clear()
+  for (const record of grid.alarms.records.values()) {
+    if (record.active && record.scope === 'island' && !gridAlarmShelved(record)) counts.set(record.assetId, (counts.get(record.assetId) ?? 0) + 1)
+  }
+  return counts
 }

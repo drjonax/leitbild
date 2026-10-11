@@ -158,6 +158,8 @@ interface IslandWork {
   readonly dQ: Float64Array
   readonly control: Uint8Array
   readonly reEnabled: Uint8Array
+  /** The local indices of the PQ buses, in its first entries (scratch of reactiveFactorFor). */
+  readonly pqScratch: Int32Array
   readonly activeRhs: Float64Array
   readonly activeSolution: Float64Array
   /** Latest evaluation, per unit: max |ΔP| over the island, max |ΔQ| over PQ buses, and the slack amount λ = Σ (P − P_scheduled). */
@@ -207,6 +209,7 @@ const islandWork = (size: number): IslandWork => ({
   dQ: new Float64Array(size),
   control: new Uint8Array(size),
   reEnabled: new Uint8Array(size),
+  pqScratch: new Int32Array(size),
   activeRhs: new Float64Array(Math.max(0, size - 1)),
   activeSolution: new Float64Array(Math.max(0, size - 1)),
   maximumP: 0,
@@ -271,15 +274,17 @@ export const createAcIslandSystem = (config: {
   }
 }
 
-const pqHash = (pqLocal: Int32Array): number => {
+/** FNV-1a over the first `count` indices. */
+const pqHash = (pqLocal: Int32Array, count: number): number => {
   let hash = fnvOffsetBasis
-  for (let index = 0; index < pqLocal.length; index += 1) hash = Math.imul(hash ^ pqLocal[index]!, fnvPrime)
+  for (let index = 0; index < count; index += 1) hash = Math.imul(hash ^ pqLocal[index]!, fnvPrime)
   return hash >>> 0
 }
 
-const sameIndices = (a: Int32Array, b: Int32Array): boolean => {
-  if (a.length !== b.length) return false
-  for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return false
+/** Whether `a` holds exactly the first `count` indices of `b`. */
+const sameIndices = (a: Int32Array, b: Int32Array, count: number): boolean => {
+  if (a.length !== count) return false
+  for (let index = 0; index < count; index += 1) if (a[index] !== b[index]) return false
   return true
 }
 
@@ -318,24 +323,24 @@ const reactiveMatrix = (system: AcIslandSystem, pqLocal: Int32Array): SymmetricC
 }
 
 const reactiveFactorFor = (network: AcNetwork, system: AcIslandSystem): ReactiveFactor => {
-  const { control } = system.work
+  const { control, pqScratch } = system.work
   let count = 0
-  for (let local = 0; local < control.length; local += 1) if (control[local] !== acBusControl.pv) count += 1
-  const pqLocal = new Int32Array(count)
-  let at = 0
   for (let local = 0; local < control.length; local += 1) {
     if (control[local] === acBusControl.pv) continue
-    pqLocal[at] = local
-    at += 1
+    pqScratch[count] = local
+    count += 1
   }
-  const hash = pqHash(pqLocal)
+  const hash = pqHash(pqScratch, count)
   const cache = system.reactiveFactors
-  const hit = cache.findIndex(entry => entry.hash === hash && sameIndices(entry.pqLocal, pqLocal))
-  if (hit !== -1) {
-    const [entry] = cache.splice(hit, 1)
-    cache.push(entry!)
-    return entry!
+  for (let hit = 0; hit < cache.length; hit += 1) {
+    const entry = cache[hit]!
+    if (entry.hash !== hash || !sameIndices(entry.pqLocal, pqScratch, count)) continue
+    // Most recently used last.
+    cache.copyWithin(hit, hit + 1)
+    cache[cache.length - 1] = entry
+    return entry
   }
+  const pqLocal = pqScratch.slice(0, count)
   const matrix = reactiveMatrix(system, pqLocal)
   const numeric = factorSymmetricMatrix(
     symmetricFactorStructure(matrix),

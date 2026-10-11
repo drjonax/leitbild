@@ -1,7 +1,6 @@
 import { gridAcState, solveGridAcLoadFlow } from './ac-load-flow.ts'
 import { noteGridAcSolution } from './alarms.ts'
 import { hvdcFromTerminalMw, hvdcToTerminalMw } from './hvdc.ts'
-import type { GridBranchDefinition } from '../grid-model.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
   boundaryBusesInComponent,
@@ -15,7 +14,7 @@ import {
 import { completeDeadGridLoad, completeLiveGridLoad } from './load-service.ts'
 import { gridBranchFlowsMwInto } from './network/dc-power-flow.ts'
 import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelNotConverged } from './state/arrays.ts'
-import { gridTablesFor } from './state/tables.ts'
+import { gridTablesFor, type GridTables } from './state/tables.ts'
 import { busStateViews } from './state/views.ts'
 import { solvePlanInto } from './topology.ts'
 
@@ -208,17 +207,16 @@ const lossScratch = (grid: GridRuntimeInstance, busCount: number): Float64Array 
 }
 
 /**
- * AC series loss of a π branch, MW: r·|I|² with I = (V_from/τ − V_to)/(r + jx), the tap τ at the
- * from end. It equals the active power entering both ends (the shunt branches carry no active
+ * AC series loss of π branch `index`, MW: r·|I|² with I = (V_from/τ − V_to)/(r + jx), the tap τ at
+ * the from end. It equals the active power entering both ends (the shunt branches carry no active
  * power) and is never negative, which their rounded sum can be on a lossless branch.
  */
-const acSeriesLossMw = (branch: GridBranchDefinition, fromPu: number, toPu: number, angleRad: number, sBaseMva: number): number => {
-  // Lines and cables have no transformer: their ratio is exactly 1.
-  const from = fromPu / (branch.kind === 'transformer' ? branch.tapRatio! : 1)
+const acSeriesLossMw = (tables: GridTables, index: number, fromPu: number, toPu: number, angleRad: number, sBaseMva: number): number => {
+  const from = fromPu / tables.branchFromTap[index]!
   const half = Math.sin(angleRad / 2)
   const differenceSquared = (from - toPu) ** 2 + 4 * from * toPu * half * half
-  const r = branch.resistancePu
-  return r * differenceSquared / (r * r + branch.reactancePu ** 2) * sBaseMva
+  const r = tables.branchResistancePu[index]!
+  return r * differenceSquared / (r * r + tables.branchReactanceSquaredPu[index]!) * sBaseMva
 }
 
 /**
@@ -231,7 +229,6 @@ const acSeriesLossMw = (branch: GridBranchDefinition, fromPu: number, toPu: numb
 export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandPlan, dtSeconds: number, carryLosses: boolean): void => {
   const { plan } = islands
   const { network } = plan
-  const model = grid.definition.model
   // The Grid's tick counts network solutions; readers use it as the revision of the solved state.
   grid.tick += 1
   const injections = plan.injectionsMw
@@ -313,8 +310,8 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   // Branch quantities in model order. Voltages: the AC result where the island converged, unknown
   // (NaN, published as null) where it did not, 0 when de-energised.
   const branchArrays = grid.arrays.branches
+  const tables = gridTablesFor(grid.definition)
   for (let index = 0; index < network.branchCount; index += 1) {
-    const branch = model.branches[index]!
     const from = network.branchFrom[index]!
     const to = network.branchTo[index]!
     const island = islandOf[from]!
@@ -324,8 +321,8 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     // Losses carried as load at the branch ends from the next advance on: the AC series loss r·|I|²
     // where the island converged, else the quadratic DC estimate r·P²/S_base.
     const branchLossMw = acLive
-      ? acSeriesLossMw(branch, ac.voltagePu[from]!, ac.voltagePu[to]!, ac.angleRad[from]! - ac.angleRad[to]!, network.sBaseMva)
-      : live ? branch.resistancePu * dcFlowMw * dcFlowMw / network.sBaseMva : 0
+      ? acSeriesLossMw(tables, index, ac.voltagePu[from]!, ac.voltagePu[to]!, ac.angleRad[from]! - ac.angleRad[to]!, network.sBaseMva)
+      : live ? tables.branchResistancePu[index]! * dcFlowMw * dcFlowMw / network.sBaseMva : 0
     addAt(lossLoad, from, branchLossMw / 2)
     addAt(lossLoad, to, branchLossMw / 2)
     lossesMw += branchLossMw
@@ -345,7 +342,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     }
     branchArrays.apparentPowerMva[index] = apparentPowerMva
     branchArrays.lossesMw[index] = branchLossMw
-    branchArrays.loadingPercent[index] = apparentPowerMva / (branch.ratingMw * branchArrays.availability[index]!) * 100
+    branchArrays.loadingPercent[index] = apparentPowerMva / (tables.branchRatingMw[index]! * branchArrays.availability[index]!) * 100
     branchArrays.frequencyHz[index] = live ? frequencyOfIsland[island]! : Number.NaN
     branchArrays.voltageFromPu[index] = energised[island] !== 1 ? 0 : acConverged[island] === 1 ? ac.voltagePu[from]! : Number.NaN
     const toIsland = islandOf[to]!
@@ -369,7 +366,6 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   }
   busArrays.angleRad.set(plan.anglesRad)
   busArrays.netInjectionMw.set(injections)
-  const tables = gridTablesFor(grid.definition)
   for (const island of islands.islands) {
     if (!island.energized) continue
     const structure = plan.islands[island.planIndex]!
