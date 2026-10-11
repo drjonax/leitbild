@@ -920,8 +920,11 @@ fn observe(
     })
 }
 
-/// S2's Newton convergence coefficient (E2b resolved, a66ee83).
-const NEWTON_COEFFICIENT: f64 = 0.01;
+/// S2's Newton configuration (claude/ld01-wiki c968921, "Configuration
+/// superseded the same day"): stock's own 0.33 Newton coefficient and an
+/// iteration-matrix refresh when cj changes by 10% (IDASetDeltaCjLSetup).
+const NEWTON_COEFFICIENT: f64 = 0.33;
+const DELTA_CJ_LSETUP: f64 = 0.1;
 /// G13: the first step at every restart (s).
 const FIRST_STEP_S: f64 = 1e-4;
 /// Output target spacing of one stock IDA call (s).
@@ -975,12 +978,13 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
     ida.set_max_order(2).unwrap();
     ida.constrain_nonnegative(&nonnegative).unwrap();
     // S2's numerical configuration at every start and restart, set
-    // explicitly because stock IDAReInit retains both: the 0.01 Newton
-    // coefficient (E2b, claude/ld01-wiki a66ee83) and G13's 1e-4 s first
-    // step, applied here at the start as well so the start does not depend
-    // on the output grid.
+    // explicitly because stock IDAReInit retains it: the stock Newton
+    // coefficient with dcj 0.1 (claude/ld01-wiki c968921) and G13's 1e-4 s
+    // first step, applied here at the start as well so the start does not
+    // depend on the output grid.
     ida.set_nonlinear_convergence_coefficient(NEWTON_COEFFICIENT)
         .unwrap();
+    ida.set_delta_cj_lsetup(DELTA_CJ_LSETUP).unwrap();
     ida.set_init_step(FIRST_STEP_S).unwrap();
     ida.stop_at(cap_s).unwrap();
     let (mut y, mut yp) = (y0.clone(), yp0.clone());
@@ -1097,10 +1101,11 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
         .map_or(t, |i| i.max(t));
     let receipt = json!({
         "kind": "s2-settling-probe",
+        "predecessor": "settling-probe-1-log.jsonl (ac0f7106) was stopped before its first 1 s output: its 0.01 Newton coefficient was superseded the same day",
         "status": "NOT-EVIDENCE probe; S2 is not declared. Cost is the BASELINE on the colored joined Jacobian, not the S2 cost path (lead, 11 October). PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
         "preparation": preparation,
         "configuration": {"maxOrder": 2, "relativeTolerance": rtol, "absoluteTolerance": "the S1 classes' scaled floor for every new class (G12)",
-            "newtonCoefficient": NEWTON_COEFFICIENT, "newtonCoefficientSource": "E2b resolved, claude/ld01-wiki a66ee83: at every IDA start and restart",
+            "newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "newtonSource": "claude/ld01-wiki c968921 (supersedes a66ee83's 0.01): stock coefficient 0.33 with IDASetDeltaCjLSetup 0.1 at every IDA start and restart",
             "firstStep_s": FIRST_STEP_S, "firstStepSource": "G13 (request 4 K4) at every restart; also at the start", "maxStep_s": null,
             "advanceChunk_s": ADVANCE_CHUNK_S, "advanceChunk": "IDA_NORMAL output targets only; no step is shortened"},
         "criteria": {"source": "S2 memo §7 draft settling block (not declared)", "window_s": window_s, "corePowerRelative": 1e-4, "cellTemperature_K": 0.01, "pzrRoofPressure_Pa": 1000, "sgPressure_Pa": 1000, "cap_s": cap_s, "probe_cpu_cap_s": cpu_cap_s},
