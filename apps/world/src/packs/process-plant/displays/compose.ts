@@ -1554,7 +1554,7 @@ export const composedDisplayContent = (
       ...travelContent(readings.find(entry => entry.pen.path === pen.path)),
     }, ...(wider === null ? [] : [{
       names: [wider.name, String(wider.path), `${WIDER_RANGE} ${pen.name}`],
-      values: shownQuantity(shownReading(wider.value, pen.resolution), pen.unit),
+      values: shownQuantity(shownReading(wider.value, pen.resolution), pen.unit, readingDecimals(shownReading(wider.value, pen.resolution), pen.unit, pen.resolution, undefined)),
       limits: [],
       history: false,
     }])]
