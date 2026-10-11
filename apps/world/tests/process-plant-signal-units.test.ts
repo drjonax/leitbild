@@ -129,9 +129,14 @@ describe('requested-unit signal read boundary', () => {
   })
 
   test('procedure range and equipment claims are checked even for external-reference matches', () => {
+    // Core power declares its 0 to 4,500 MW hard range, so a procedure's 0 to 4,000 MW span is checked against it.
     expect(query('world.process-plant.procedure-tags.validate', {
       plantId: plant.id, tags: [{ id: 'NIS-PR-AVG', equipment: 'unverified-detector', units: 'MW', range: [0, 4000] }],
-    })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('no equipment identity'), expect.stringContaining('no explicit hard range')] }] })
+    })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('no equipment identity'), expect.stringContaining('does not match signal hard range 0..4500 MW')] }] })
+    // A signal with no hard range, matched by its external reference, cannot have a declared range verified.
+    expect(query('world.process-plant.procedure-tags.validate', {
+      plantId: plant.id, tags: [{ id: 'nis.intermediate_range.avg', equipment: 'nuclear-instrumentation', units: 'amps', range: [1e-11, 1e-3] }],
+    })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('no explicit hard range')] }] })
     expect(query('world.process-plant.procedure-tags.validate', {
       plantId: plant.id, tags: [{ id: 'ROD-POS-AVG', equipment: 'wrong-equipment', units: 'fraction', range: [0, 2] }],
     })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('does not match process equipment'), expect.stringContaining('does not match signal hard range')] }] })
