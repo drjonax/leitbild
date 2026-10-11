@@ -131,7 +131,6 @@ export const isProductionSourcePath = (workspace: 'host' | 'world' | 'agents' | 
   if (workspace === 'world') return path === 'package.json' || path.startsWith('src/')
   if (workspace === 'agents') {
     return path === 'package.json'
-      || path === 'mcp-servers.json'
       || path.startsWith('src/')
       || path.startsWith('examples/scripts/')
       || path.startsWith('skills/')
