@@ -101,18 +101,22 @@ describe('generated equipment mimics', () => {
     expect(mimic.summary.unmeasuredStates).toEqual([])
   })
 
-  test('a lone pipe into a hub says where it enters in the compose result, never beside the hub\'s value', () => {
+  test('a lone pipe into a hub names where it enters, and the hub then writes no value of its own', () => {
     // Safety injection to loop C reaches the core at cold leg C only; the header's stub names the other legs.
     const drawn = (intent: MimicIntent) => generated(system, intent)
+    const core = (mimic: CompiledMimic) => mimic.items.find(item => item.components.includes('core'))!
     const si = drawn({ services: ['safetyInjection'], loops: ['C'] })
-    // "Core · cold leg C" beside 339 °C read as the cold leg's temperature: the core keeps its own label.
-    expect(si.items.map(item => item.binding.label)).toContain('Core')
-    expect(si.items.map(item => item.binding.label).filter(label => label.includes(' · '))).toEqual([])
-    expect(si.summary.entries).toEqual([{ item: 'Core', port: 'cold leg C' }])
-    expect(drawn({ services: ['primaryInjection'], loops: ['A'] }).summary.entries).toEqual([{ item: 'Core', port: 'cold leg A' }])
-    // Several legs reached: the equipment on them tells them apart, and headers never list their branches.
-    expect(drawn({ services: ['primaryCoolant'], loops: ['A'] }).summary.entries).toEqual([])
-    expect(drawn({ services: ['primaryCoolant'] }).summary.entries).toEqual([])
+    // Run 22 read "Core 323 °C" where the route enters cold leg C; earlier "Core · cold leg C" beside 339 °C read
+    // as the cold leg's temperature. The core is the route's destination: its port named, no value beside it.
+    expect(core(si).binding.label).toBe('Core · cold leg C')
+    expect(core(si).rows.filter(row => row.kind === 'value')).toEqual([])
+    expect(core(drawn({ services: ['primaryInjection'], loops: ['A'] })).binding.label).toBe('Core · cold leg A')
+    // Several legs reached: the equipment on them tells them apart, the core keeps its label and its values, and
+    // headers never list their branches.
+    for (const intent of [{ services: ['primaryCoolant'], loops: ['A'] }, { services: ['primaryCoolant'] }]) {
+      expect(core(drawn(intent)).binding.label).toBe('Core')
+      expect(core(drawn(intent)).rows.some(row => row.kind === 'value')).toBe(true)
+    }
   })
 
   test('the same intent on the same model draws the same mimic', () => {

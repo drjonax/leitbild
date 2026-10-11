@@ -144,7 +144,8 @@ describe('the unit overview World generates for a Plant', () => {
       + annunciatorHeight(9, 134, layout.overviewColumn) + layout.alarms + layout.overviewFooter
     expect(readouts.pens).toHaveLength(6)
     expect(layout.overviewFrame + column).toBe(904)
-    expect(result.display.height).toBe(904)
+    // The drawing beside it, with the tags of the valves outside the loops, is the taller of the two.
+    expect(result.display.height).toBeGreaterThanOrEqual(904)
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
     // Advice readouts show current values only.
     const advice = ask('world.process-plant.display.compose', {

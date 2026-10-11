@@ -44,6 +44,8 @@ interface PlannedItem {
   readonly presentation: MimicPresentation
   readonly rows: ReadonlyArray<MimicRow>
   readonly marker: boolean
+  /** Whether its label is drawn (mimic-model.ts MimicDrawnItem.tagged). */
+  readonly tagged: boolean
   readonly role: DiagramNode['role']
   readonly rank: string
   readonly lane?: DiagramNode['lane']
@@ -129,8 +131,6 @@ interface Planned {
   /** Per edge, the Plant link it draws and the links of grouped members it stands for too. */
   readonly edgeLinks: ReadonlyMap<string, { readonly link: number; readonly parallel: ReadonlyArray<number> }>
   readonly stubs: ReadonlyMap<string, MimicStub>
-  /** Hub ports lone pipes enter ("cold leg C" of the core). */
-  readonly entries: ReadonlyArray<{ readonly item: string; readonly port: string }>
   readonly issues: ReadonlyArray<MimicIssue>
 }
 
@@ -163,7 +163,6 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   const edges: DiagramEdge[] = []
   const edgeLinks = new Map<string, { link: number; parallel: number[] }>()
   const stubs = new Map<string, MimicStub>()
-  const entries: Array<{ readonly item: string; readonly port: string }> = []
   const componentRank = new Map<number, string>()
 
   const measure = (style: OpenBridgeTextStyle, text: string, owner: string): number => {
@@ -193,8 +192,8 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       ...(planned.lane === undefined ? {} : { lane: planned.lane }),
       text: {
         lines: [
-          // A marker carries no tag: its place on the circuit names it.
-          ...(planned.marker ? [] : [{ width: tag, height: openBridgeDevice.tagLine, required: true }]),
+          // A marker in a drawn loop carries no tag: its place on the loop names it.
+          ...(planned.tagged ? [{ width: tag, height: openBridgeDevice.tagLine, required: true }] : []),
           ...planned.rows.map(row => ({ ...rowSize(row, isDevice(presentation), profile.readoutSize), required: row.required })),
         ],
       },
@@ -278,27 +277,28 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
     // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
     // A header's ports are only where branches join; its stubs name the rest.
-    // The port is never added to the item's label: "Core · cold leg C" beside
-    // the core's 339 °C read as the cold leg's temperature. Naming it at the
-    // pipe's end needs room the layout engine does not reserve yet, so the
-    // compose result says where the pipe enters instead.
+    // A hub a lone pipe enters at one of its alike ports ("cold leg C" of the
+    // core's four) is that pipe's destination: its label names the port and it
+    // writes none of its own values, so no value reads as the port's ("Core ·
+    // cold leg C" beside the core's 339 °C read as the cold leg's temperature).
     const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, piped.get(index) ?? new Set(), usedPorts.get(index) ?? new Set()) : null
-    if (reached !== null) entries.push({ item: bindings[0]!.label, port: reached })
-    const binding: MimicItemBinding = group.length === 1 ? bindings[0]! : {
-      item: bindings[0]!.item,
-      label: groupLabel(bindings.map(member => member.label)),
-      state: null,
-      values: [],
-      limits: [],
-      frames: bindings.flatMap(member => member.frames),
-    }
+    const binding: MimicItemBinding = group.length === 1
+      ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}`, values: [] })
+      : {
+          item: bindings[0]!.item,
+          label: groupLabel(bindings.map(member => member.label)),
+          state: null,
+          values: [],
+          limits: [],
+          frames: bindings.flatMap(member => member.frames),
+        }
     const marker = profile.valves === 'markers' && isValve(presentation) && group.length === 1
     const ports = [...(usedPorts.get(index) ?? [])].sort()
     const rank = [role, component.kind, component.metadata?.equipmentClass ?? '', component.metadata?.role ?? '', ports.join(','), binding.label].join('|')
     for (const member of group) componentRank.set(member, rank)
     const lane = laneOf(component, loopOrder)
     addItem(
-      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands }), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
+      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands }), marker, tagged: !marker || lane === undefined, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
       ports.map(port => ({ id: port, direction: portDirection(component, port), rank: port })),
     )
   }
@@ -336,7 +336,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
           const lane = laneOf(host, loopOrder)
           const marker = profile.valves === 'markers' && isValve(presentation)
           addItem(
-            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands }), marker, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
+            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands }), marker, tagged: !marker || lane === undefined, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
             [{ id: 'in', direction: 'in', rank: 'in' }, { id: 'out', direction: 'out', rank: 'out' }],
           )
         }
@@ -384,7 +384,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       : { ...edge, from: { node: id, port: 'end' }, to: { node: nodeOf(stub.component), port: stub.port } })
   })
 
-  return { graph: { nodes, edges }, items, edgeLinks, stubs, entries, issues }
+  return { graph: { nodes, edges }, items, edgeLinks, stubs, issues }
 }
 
 const pipeState = (graph: CompiledPlantGraph, link: CompiledProcessLink, parallel: ReadonlyArray<number>): MimicPipeState =>
@@ -416,8 +416,8 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
   const placed = new Map(layout.nodes.map(node => [node.id, node]))
   const items: MimicDrawnItem[] = [...planned.items.values()].map(item => {
     const node = placed.get(item.id)!
-    // A stack's first line is the tag, except on a marker; the rows that fit follow it.
-    const tagLines = item.marker ? 0 : 1
+    // A stack's first line is the tag, where it has one; the rows that fit follow it.
+    const tagLines = item.tagged ? 1 : 0
     return {
       id: item.id,
       binding: item.binding,
@@ -428,6 +428,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       frame: node.frame,
       rows: item.rows.slice(0, Math.max(0, (node.text?.lines ?? tagLines) - tagLines)),
       marker: item.marker,
+      tagged: item.tagged,
       components: item.components.map(component => String(graph.components[component]!.id)),
     }
   })
@@ -496,7 +497,6 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       carriers: scope.carriers,
       unverifiedFlows: [...new Set(pipes.filter(pipe => pipe.state.kind === 'fluid' && pipe.state.flow.fidelity === 'unverified').map(pipe => pipe.linkId))],
       unmeasuredStates: items.filter(item => item.binding.state?.aspect === 'position' && item.binding.state.state === undefined).map(item => item.binding.label),
-      entries: planned.entries,
     },
     hash: `${MIMIC_LAYOUT_VERSION}:${layout.hash}`,
   }

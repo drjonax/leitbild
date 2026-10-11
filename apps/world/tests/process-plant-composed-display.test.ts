@@ -711,8 +711,8 @@ describe('a display shows what its question is about', () => {
       .toContain('subjects.0: the auxFeedwater service is what the question is about but no panel shows it')
     // Safety injection to loop C draws shared equipment only; its pipe into cold leg C is loop C.
     const lineup = ask('world.process-plant.display.compose', display(['loop C', 'safetyInjection'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }])) as { shows: ReadonlyArray<string> }
-    // The drawing does not name the leg it enters, so the answer must.
-    expect(lineup.shows).toContain('The pipe drawn into Core enters it at cold leg C; the drawing does not name that port, so say it')
+    // The drawing names the leg it enters on the core, which writes no value of its own there.
+    expect(lineup.shows[0]).toContain('Core · cold leg C (core)')
     // As plants.list names it (probe run 20).
     expect(() => ask('world.process-plant.display.compose', display(['C'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))).not.toThrow()
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display(['loop D'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))))
