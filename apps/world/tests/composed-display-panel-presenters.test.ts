@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
 import { distinguishingNames, idleText, joinedName, limitLabelParts, limitLabelRanks, limitLines, limitLook, limitSeverity, mergedText, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
 import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
@@ -534,7 +535,7 @@ describe('limit labels', () => {
     const margin = (signal: string, train: string) => ({
       ruleId: `overload-${train}`, label: `EDG ${train} overload`, kind: 'alarm', severity: 'warning', operator: '<=', direction: 'low', value: 0, order: 1, action: 'ALM',
       ruleIds: [`overload-${train}`], signals: [signal], gatedBy: [`BRK-EDG-${train}-POS CLOSED, BRK-OFFSITE-${train}-POS OPEN`],
-      gates: [{ path: `dieselBreaker${train}.closedState`, on: true }, { path: `offsiteBreaker${train}.closedState`, on: false }],
+      gates: [{ path: `dieselBreaker${train}.closedState` as VariablePath, on: true }, { path: `offsiteBreaker${train}.closedState` as VariablePath, on: false }],
     }) as const
     const both = [margin('BUS-A-MARGIN', 'A'), margin('BUS-B-MARGIN', 'B')]
     const onDiesels = (path: string) => path.startsWith('dieselBreaker')
