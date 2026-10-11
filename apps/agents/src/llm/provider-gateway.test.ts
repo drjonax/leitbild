@@ -80,14 +80,15 @@ describe('createProviderGateway config merge', () => {
     expect(cfg.maxQueueDepth).toBe(PROVIDER_GATEWAY_DEFAULTS.maxQueueDepth)
   })
 
-  test('chat() returns immediately when maxConcurrent is properly set (sentinel)', async () => {
-    // The actual queue-timeout symptom: if the bug returns, this test would
-    // hang for 30 s. Bun's per-test timeout (default 5 s) catches it.
+  test('chat() is admitted immediately when maxConcurrent is properly set (sentinel)', async () => {
+    // The actual queue-timeout symptom: if the bug returns, every request
+    // queues and times out after 30 s. Admission is decided when chat() is
+    // called, so the request must hold a slot, not a queue place, at once —
+    // however slowly a loaded machine then runs it.
     const gw = createProviderGateway(stubProvider(), { maxConcurrent: undefined })
-    const start = Date.now()
-    const r = await gw.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
-    expect(r.content).toBe('ok')
-    expect(Date.now() - start).toBeLessThan(1000) // way under the 30s queue timeout
+    const reply = gw.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
+    expect(gw.getMetrics()).toMatchObject({ concurrentRequests: 1, queueDepth: 0 })
+    expect((await reply).content).toBe('ok')
   })
 
   test('stream() honors maxQueueDepth override for immediate shed', async () => {
