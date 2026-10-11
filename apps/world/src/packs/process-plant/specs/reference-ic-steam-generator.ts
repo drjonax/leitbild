@@ -13,6 +13,13 @@ import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 // clear and the inventory balance alone still shows the leak.
 const tubeLeakRadiationMSvPerH = 0.03
 
+// The narrow range spans the upper quarter of the wide range, about 12 ft
+// around the normal water level (USNRC Westinghouse Technology Systems Manual
+// 3.2), so its set points sit a few feet from the normal level, as a Model 51
+// plant's do: P-14 at 78 % and low-low at 21 % on the 33 to 44 % program of
+// USNRC Westinghouse Technology Manual 11.1, 82.4 % and 32.3 % in NUREG-1431's
+// generic Table 3.3.1-1 and 3.3.2-1.
+//
 // Narrow-range level limits above the 55 % program: a high alarm, and P-14
 // high-high, which isolates main feedwater (its pumps trip and every feed
 // regulating valve shuts) and trips the turbine (and so, above P-9, the
