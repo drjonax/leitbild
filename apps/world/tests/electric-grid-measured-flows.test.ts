@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
-import { gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
+import { gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
@@ -93,11 +93,11 @@ const knownGaps: Readonly<Record<string, KnownGap>> = {
   'summerLow border NO1→SE3': { boundMw: 300, reason: exchangeByParticipation },
   'summerLow border NO4→SE1': { boundMw: 300, reason: `${exchangeByParticipation}: the measured 255 MW export to SE1 becomes a 42 MW import` },
   // Net positions.
-  'winterPeak net NO2': { boundMw: 850, reason: uniformStorageHydro },
+  'winterPeak net NO2': { boundMw: 800, reason: uniformStorageHydro },
   'winterPeak net NO3': { boundMw: 500, reason: uniformStorageHydro },
   'summerLow net NO1': { boundMw: 175, reason: uniformStorageHydro },
   'summerLow net NO2': { boundMw: 875, reason: uniformStorageHydro },
-  'summerLow net NO3': { boundMw: 150, reason: uniformStorageHydro },
+  'summerLow net NO3': { boundMw: 125, reason: uniformStorageHydro },
   'summerLow net NO4': { boundMw: 825, reason: uniformStorageHydro },
   // Production by area and kind.
   'winterPeak hydro NO1': { boundMw: 325, reason: `${uniformStorageHydro}; ${unmodelledLosses}` },
@@ -108,8 +108,7 @@ const knownGaps: Readonly<Record<string, KnownGap>> = {
   'summerLow hydro NO2': { boundMw: 725, reason: uniformStorageHydro },
   'summerLow hydro NO4': { boundMw: 850, reason: uniformStorageHydro },
   'summerLow wind NO1': { boundMw: 175, reason: 'wind is shared by national capacity; NO1\'s farms produced 197 MW where their share gives 33 MW' },
-  // 897 MW before lane VAL1's transformer curations lowered the winter branch losses by 5 MW.
-  'winterPeak national production': { boundMw: 925, reason: unmodelledLosses },
+  'winterPeak national production': { boundMw: 900, reason: unmodelledLosses },
   'summerLow national production': { boundMw: 450, reason: unmodelledLosses },
 }
 
@@ -142,8 +141,8 @@ const modelHour = async (operatingPointId: string) => {
   const file = operatingPointFiles[operatingPointId]
   if (file === undefined) throw new Error(`no Operating Point file for ${operatingPointId}`)
   const operatingPoint = validateGridOperatingPoint(await loadJson(join(models, file)), file, targets)
-  const demand = gridOperatingPointDemand(operatingPoint.id, norwayGridModelRef)
-  const flow = solveV2PowerFlow(model, operatingPoint, demand, { tolerancePu: 1e-6, maximumIterations: 100 })
+  const profiles = gridLoadProfiles(norwayGridModelRef)
+  const flow = solveV2PowerFlow(model, operatingPoint, profiles, { tolerancePu: 1e-6, maximumIterations: 100 })
   const unconverged = flow.islands.filter(island => !island.outcome.converged)
   if (unconverged.length > 0) throw new Error(`${operatingPoint.id}: ${unconverged.length} islands did not converge`)
   const between = new Map<string, number>()
@@ -173,7 +172,7 @@ const modelHour = async (operatingPointId: string) => {
     net.set(area, net.get(area)! + transferMw)
   }
   const load = new Map<string, number>(areaIds.map(area => [area, 0]))
-  for (const entry of compileGridModelV2(model, operatingPoint, demand).model.loads) {
+  for (const entry of compileGridModelV2(model, operatingPoint, profiles).model.loads) {
     const area = areaOfBus(entry.busId)
     load.set(area, load.get(area)! + entry.demandMw)
   }
