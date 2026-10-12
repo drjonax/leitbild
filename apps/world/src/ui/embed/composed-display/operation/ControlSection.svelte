@@ -19,9 +19,9 @@
 
   type Write = { readonly path: VariablePath; readonly value: ProcessVariableValue }
   type Check = { readonly accepted: true } | { readonly accepted: false; readonly reason: string }
-  type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string }
+  type Outcome = { readonly ok: true; readonly commandId?: string } | { readonly ok: false; readonly reason: string }
 
-  let { view, now, validate, execute, draft = null, onSelected }: {
+  let { view, now, validate, execute, draft = null, onSelected, acceptedAt }: {
     view: ItemControlView
     now: OperationNow
     /** World's control.validate on the exact payload. */
@@ -32,6 +32,8 @@
     draft?: Write | null
     /** What is selected, so the symbol shows it activated; null when nothing is. */
     onSelected?: (path: VariablePath | null) => void
+    /** The plant time the Run accepted a command at, once the Plant's operations log has it: its travel is timed from then. */
+    acceptedAt?: (commandId: string) => number | undefined
   } = $props()
 
   // Raw: each is replaced whole, and a command's result is matched to the command it answers by identity.
@@ -39,7 +41,7 @@
   let check = $state.raw<'checking' | Check | null>(null)
   // A protective pushbutton's check, by its option, made as the section opens.
   let standing = $state.raw<Readonly<Record<string, Check | 'checking'>>>({})
-  let sent = $state.raw<(SentCommand & { readonly key: string }) | null>(null)
+  let sent = $state.raw<(SentCommand & { readonly key: string; readonly commandId?: string }) | null>(null)
   let busy = $state(false)
 
   const keyOf = (write: Write): string => `${write.path}=${String(write.value)}`
@@ -47,7 +49,12 @@
   const selectedOption = $derived(selectedControl?.options.find(option => option.key === selection!.key))
   const sentControl = $derived(sent === null ? undefined : view.controls.find(control => control.path === sent!.path))
   const sentOption = $derived(sentControl?.options.find(option => option.key === sent!.key))
-  const phase = $derived(sent === null || sentControl === undefined || sentOption === undefined ? null : commandPhase(sentControl, sentOption, sent, now))
+  // Timed from when the Run accepted it where the log says so, else from the sample it was sent at.
+  const phase = $derived.by(() => {
+    if (sent === null || sentControl === undefined || sentOption === undefined) return null
+    const accepted = sent.commandId === undefined ? undefined : acceptedAt?.(sent.commandId)
+    return commandPhase(sentControl, sentOption, accepted === undefined ? sent : { ...sent, sentAtElapsedMs: accepted }, now)
+  })
 
   const writeOf = (control: ControlView, option: OptionView): Write => ({ path: control.path, value: option.value })
 
@@ -76,7 +83,7 @@
     clear()
     try {
       const result = await execute(writeOf(control, option))
-      if (sent === command) sent = { ...command, result }
+      if (sent === command) sent = { ...command, result: result.ok ? { ok: true } : result, ...(result.ok && result.commandId !== undefined ? { commandId: result.commandId } : {}) }
     } catch (error) {
       if (sent === command) sent = { ...command, result: { ok: false, reason: error instanceof Error ? error.message : String(error) } }
     } finally {
@@ -127,7 +134,6 @@
           value={expanded ? selection!.key : ''}
           externalControl={true}
           allowEmptySelection={true}
-          hugText={true}
           ariaLabel={`Command ${control.target}`}
           onvalue={(event: CustomEvent<{ value: string }>) => {
             const option = control.options.find(candidate => candidate.key === event.detail.value)
@@ -143,8 +149,10 @@
           {#if option.slideOnly}
             {@const ready = standing[option.key]}
             {@const ok = ready !== undefined && ready !== 'checking' && ready.accepted && option.heldBy === null && !busy}
+            <!-- The slide's handle carries the word, so it has the track's length to travel; the line above names verb, tag and label (QA-7). -->
+            <p class="slide-what">{option.action}</p>
             <obc-slide-button aria-label={option.action} disabled={!ok} onslide={() => { if (ok) void run(control, option) }}>
-              <span slot="label">{option.action}</span>
+              <span slot="label">{option.word}</span>
             </obc-slide-button>
             {#if ready !== undefined && ready !== 'checking' && !ready.accepted}<p class="refused">{ready.reason}</p>{/if}
             {#each option.consequences as line (line)}<p class="consequence">{line}</p>{/each}
@@ -167,8 +175,9 @@
           {#each selectedOption.consequences as line (line)}<p class="consequence">{line}</p>{/each}
           {#each selectedOption.opposing as line (line)}<p class="opposing">{line}</p>{/each}
           {#if selectedOption.confirm === 'slide'}
+            <p class="slide-what">{selectedOption.action}</p>
             <obc-slide-button aria-label={selectedOption.action} disabled={!allowed} onslide={() => { if (allowed) void run(control, selectedOption) }}>
-              <span slot="label">{selectedOption.action}</span>
+              <span slot="label">{selectedOption.word}</span>
             </obc-slide-button>
           {:else}
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -209,6 +218,7 @@
   /* Neutral: the I&C allows it, which is no endorsement (QA-9). */
   .allowed, .checking, .note, .consequence, .opposing, .withheld { color: var(--element-neutral-color); }
   .refused { color: var(--element-active-color); font-weight: 600; }
+  .slide-what { font-weight: 600; color: var(--element-active-color); }
   .feedback { display: flex; flex-direction: column; gap: 2px; color: var(--element-active-color); }
   .feedback.notFollowed, .feedback.refused { font-weight: 600; }
   .auto, .withheld-list ul { list-style: none; margin: 0; padding: 0; color: var(--element-neutral-color); }

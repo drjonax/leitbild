@@ -53,12 +53,11 @@
 
 <section class="proposal" class:closed={!open} aria-label={`Proposal: ${card.action}`}>
   <header>
-    <span class="kind">PROPOSAL</span>
     <span class="who">{card.proposer}</span>
     {#if card.expires !== null}<span class="expires">expires {card.expires.at} ({left} left)</span>{/if}
   </header>
   <p class="action">{card.action}</p>
-  {#if card.from !== null || card.to !== null}<p class="change">{card.from ?? '—'} → {card.to ?? '—'}</p>{/if}
+  {#if open && (card.from !== null || card.to !== null)}<p class="change">{card.from ?? '—'} → {card.to ?? '—'}</p>{/if}
   <blockquote>
     <span class="label">Why ({card.proposerOrigin === 'ai' ? 'AI' : 'operator'}):</span> “{card.reason}”
     {#if card.procedureStep !== undefined}<span class="step">{card.procedureStep}</span>{/if}
@@ -81,15 +80,18 @@
   {#each card.opposing as line (line)}<p class="opposing">{line}</p>{/each}
   <p class="reversibility">{card.reversibility}</p>
   {#if open && card.approve !== null}
+    <!-- What Approve executes, in full (QA-7): verb, tag and label, and whether the plant changed since it was proposed. -->
+    <p class="approve-what">{card.approve.label}</p>
     <div class="decisions">
       {#if card.approve.confirm === 'slide'}
+        <!-- The slide's handle says Approve, so it has the track's length to travel; its name says what it approves. -->
         <obc-slide-button aria-label={card.approve.label} disabled={busy || !card.approve.enabled} onslide={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>
-          <span slot="label">{card.approve.label}</span>
+          <span slot="label">Approve</span>
         </obc-slide-button>
       {:else}
         <!-- An obc-button is a button: the native button inside it takes Enter and Space. -->
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <obc-button variant="normal" disabled={busy || !card.approve.enabled} onclick={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>{card.approve.label}</obc-button>
+        <obc-button variant="normal" aria-label={card.approve.label} disabled={busy || !card.approve.enabled} onclick={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>Approve</obc-button>
       {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <obc-button variant="normal" disabled={busy} onclick={() => { void decide('Rejection', () => reject(reason.trim() === '' ? null : reason.trim())) }}>Reject</obc-button>
@@ -111,7 +113,7 @@
 <style>
   .proposal { display: flex; flex-direction: column; gap: 4px; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border-divider-color); }
   header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; color: var(--element-neutral-color); }
-  .kind { font-weight: 700; letter-spacing: 0.04em; color: var(--element-active-color); }
+  .approve-what { font-weight: 600; color: var(--element-active-color); }
   p { margin: 0; }
   .action { font-weight: 700; color: var(--element-active-color); }
   .change, .margin, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }

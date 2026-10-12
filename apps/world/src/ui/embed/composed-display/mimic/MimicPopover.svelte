@@ -62,7 +62,8 @@
     customWidth={width}
     use:listen={{ 'primary-action': () => { if (open !== undefined) open(item) }, 'secondary-action': close }}
   >
-    <div slot="content" class="sections">
+    <!-- Never taller than the window: its sections scroll inside it (a pending proposal, a quick look and the controls together). -->
+    <div slot="content" class="sections" style={`max-height:${Math.max(160, (window.innerHeight - 16) * zoom - 112)}px`}>
       {#if flap !== ''}<p class="flap">{flap}</p>{/if}
       {#each sections as section (section.id)}
         <section aria-label={section.title}>
@@ -76,7 +77,7 @@
 
 <style>
   .popover { position: fixed; z-index: 10; transform-origin: 0 0; white-space: normal; }
-  .sections { display: flex; flex-direction: column; gap: 6px; }
+  .sections { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; overscroll-behavior: contain; }
   /* Its most severe active alarm, in its frame's words, on one line under its name. */
   .flap { margin: -4px 0 0; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--element-active-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   h3 { margin: 0 0 2px; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--element-neutral-color); text-transform: uppercase; letter-spacing: 0.04em; }

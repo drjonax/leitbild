@@ -324,11 +324,18 @@ export const proposalCard = (
   now: OperationNow,
 ): ProposalCard => {
   const { listed, index } = proposedOption(proposal, item)
+  // A cited reading moved where it reads otherwise as the display writes it: a change below its resolution is none.
+  const evidence = (review?.evidence ?? proposal.evidence.map(cited => ({ tagId: cited.tagId, then: cited.value, now: cited.value }))).map(entry => {
+    const path = proposal.evidence.find(cited => cited.tagId === entry.tagId)!.path
+    const then = now.format(path, entry.then)
+    const shown = now.format(path, entry.now)
+    return { tagId: entry.tagId, then, now: shown, changed: then !== shown }
+  })
+  const changed = (review?.changed ?? false) && evidence.some(entry => entry.changed)
   const control = itemControlView({ ...item, offered: [listed], withheld: [] }, now).controls[0]!
   const option = control.options[index]!
   const pending = proposal.status === 'pending'
   const permitted = review?.permitted ?? false
-  const changed = review?.changed ?? false
   const other = control.options.find(candidate => candidate.key !== option.key)
   const travel = option.travelMs === null ? 'no travel time is declared' : option.travelMs === 0 ? 'at once' : `within ${Math.round(option.travelMs / 1_000)} s`
   const toState = listed.control.options[index]!.state ?? null
@@ -345,10 +352,7 @@ export const proposalCard = (
     ...(proposal.procedureStep === undefined ? {} : { procedureStep: proposal.procedureStep }),
     checked: review === null ? { permitted: false, text: 'Not checked yet' }
       : review.permitted ? { permitted: true, text: 'I&C allows this command now' } : { permitted: false, text: review.refusal ?? 'The I&C refuses it now' },
-    evidence: (review?.evidence ?? proposal.evidence.map(cited => ({ tagId: cited.tagId, then: cited.value, now: cited.value }))).map(entry => {
-      const path = proposal.evidence.find(cited => cited.tagId === entry.tagId)!.path
-      return { tagId: entry.tagId, then: now.format(path, entry.then), now: now.format(path, entry.now), changed: entry.then !== entry.now }
-    }),
+    evidence,
     changed,
     margins: [...margins].sort((left, right) => (left.minutes ?? Infinity) - (right.minutes ?? Infinity)),
     expected: control.form === 'pushbutton' ? `${listed.control.target} pressed: ${option.consequences.length === 0 ? 'no trip follows' : option.consequences.join('; ')}`
@@ -541,8 +545,9 @@ const actorWords = (origin: 'person' | 'ai' | 'system', actorId: string): string
 /**
  * The operations log as its view lists it: every command the Plant's log
  * keeps (the last 64 that people and AI agents issued, each accepted), with
- * the proposal an approval carried out, and every proposal that closed
- * without one (rejected, expired, withdrawn, superseded). The latest command
+ * the proposal an approval carried out, every proposal still awaiting a
+ * person, and every one that closed without an approval (rejected, expired,
+ * withdrawn, superseded). The latest command
  * on a control says where the equipment stands now; an earlier one only that
  * it was accepted.
  */
@@ -591,6 +596,20 @@ export const operationsLogRows = (
       result,
     }
   })
+  const waiting = proposals.filter(proposal => proposal.status === 'pending').map((proposal): OperationsLogRow => {
+    const found = controlOf(proposal.write.path)
+    const option = found?.control.options.find(candidate => candidate.value === proposal.write.value)
+    return {
+      key: proposal.id,
+      elapsedMs: proposal.proposedAtElapsedMs,
+      time: now.clock(proposal.proposedAtElapsedMs),
+      who: actorWords(proposal.proposer.origin, proposal.proposer.actorId),
+      equipment: found?.item.label ?? proposal.item,
+      action: option?.action ?? `${proposal.word} ${proposal.item}`,
+      chain: 'proposed',
+      result: `awaiting a person's decision, expires ${now.clock(proposal.expiresAtElapsedMs)}`,
+    }
+  })
   const unexecuted = proposals.filter(proposal => proposal.status !== 'pending' && proposal.status !== 'approved' && proposal.closed !== undefined).map((proposal): OperationsLogRow => {
     const found = controlOf(proposal.write.path)
     const option = found?.control.options.find(candidate => candidate.value === proposal.write.value)
@@ -606,5 +625,5 @@ export const operationsLogRows = (
       result: `${proposal.status}${closed.actorId === undefined ? '' : ` by ${closed.actorId}`}${closed.reason === undefined ? '' : `: ${closed.reason}`}, not executed`,
     }
   })
-  return [...commands, ...unexecuted].sort((left, right) => right.elapsedMs - left.elapsedMs)
+  return [...commands, ...waiting, ...unexecuted].sort((left, right) => right.elapsedMs - left.elapsedMs)
 }

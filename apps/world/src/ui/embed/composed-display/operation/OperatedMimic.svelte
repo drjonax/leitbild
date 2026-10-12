@@ -158,7 +158,10 @@
   let armed: string | null = null
   $effect(() => {
     const opening = operation.review
-    if (opening === null || opening === armed || now === null) return
+    if (opening === null || opening === armed || now === null || listed === null || latest === undefined) return
+    // Not before the samples read the controls' paths: only then do they carry the proposals on them.
+    const sampled = new Set(latest.values.map(entry => entry.path))
+    if (!controlPaths(listed.values()).every(path => sampled.has(path))) return
     armed = opening
     const drawn = (proposal: ProcessPlantProposal): MimicDrawnItem | undefined => ownerOf(proposal.item)
     const pending = untrack(() => proposals)
@@ -214,7 +217,7 @@
     {:else}
       {@const drafted = draft !== null && draft.item === entry.id ? draft : null}
       {#key `${entry.id}|${drafted?.at ?? ''}`}
-        <ControlSection {view} {now} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} />
+        <ControlSection {view} {now} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
       {/key}
     {/if}
   {/if}

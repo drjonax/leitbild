@@ -118,6 +118,9 @@
   const lookPens = $derived(new Map((quickLook?.looks.pens ?? []).map(pen => [String(pen.path), pen])))
   /** An item's quick-look lead values, in rank order; none where World chose none. */
   const looksOf = (item: MimicDrawnItem) => (quickLook?.looks.items[item.id] ?? []).flatMap(path => lookPens.get(String(path)) ?? [])
+  // One list per item for the drawing's life: an open quick look reads its values as long as the list is the same, so a
+  // sample, which redraws the popover, never makes it read its history again.
+  const looksByItem = $derived(new Map(mimic.items.map(item => [item.id, looksOf(item)])))
   /** An item has a dot where its popover would show anything: a quick look, or a section that applies to it. */
   const dotted = (item: MimicDrawnItem): boolean => looksOf(item).length > 0 || sections.some(section => section.applies(item))
   let drawing = $state<HTMLDivElement | undefined>(undefined)
@@ -424,7 +427,7 @@
 </script>
 
 {#snippet quickLookBody(context: MimicPopoverContext)}
-  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksOf(context.item)} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} />{/if}
+  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksByItem.get(context.item.id) ?? []} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} />{/if}
 {/snippet}
 
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
