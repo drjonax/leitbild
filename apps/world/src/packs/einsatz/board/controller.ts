@@ -72,6 +72,10 @@ const guardMs = 500
 const prefetchRows = 5
 const freshMs = 5_000
 const undoMs = 8_000
+/** How long the Assets order holds after the operator's last input while a highlight only lingers, and after a send. */
+export const assetsHoldMs = 5_000
+/** How far a busy unit is from coming free, by its phase: at work on scene, carrying load to a site, or still on its way. */
+const freeingStage = (phase: string): number => ({ 'on-task': 0, 'at-site': 0, transporting: 1, 'en-route': 2, mobilizing: 2 } as Readonly<Record<string, number>>)[phase] ?? 3
 /** How long a standing alert stays in the header strip, in Run time; its row keeps it, and the log has it. */
 const alertStripMs = 3 * 60_000
 const logLimit = 200
@@ -114,8 +118,13 @@ interface Call extends CallDraft {
 }
 /** A tap on open ground with an asset highlighted: the point waits for "Move here", to do now or, after +, to add to the end of the chain. */
 interface PendingMove { readonly unitId: string; readonly point: GeoJsonPoint; readonly queue: boolean }
-/** An accepted send or queue, undoable until `untilMs` (wall time) once the Run shows the steps it created. */
-interface Undo { readonly marks: ReadonlyArray<UndoMark>; readonly steps: ReadonlyArray<CreatedStep> | null; readonly untilMs: number }
+/**
+ * An accepted send or queue, undoable until `untilMs` (wall time) and
+ * `untilRunMs` (Run time), whichever comes first, once the Run shows the
+ * steps it created: a fast-forward ends it as the Run moves on. `text` is
+ * what was sent, which the status line keeps while Undo stands.
+ */
+interface Undo { readonly marks: ReadonlyArray<UndoMark>; readonly steps: ReadonlyArray<CreatedStep> | null; readonly untilMs: number; readonly untilRunMs: number; readonly text: string }
 
 /** What a commit asks before it sends: to confirm what it drops (a divert), or Do now or Add to end (a unit holding steps). */
 type Ask = Omit<Confirmation, 'call'>
@@ -233,13 +242,20 @@ export const createBoardController = (options: {
   /** Assets' rows and sites as last shown, and the wall time they last moved without operator input. */
   let assetsShape = ''
   let assetsMovedAtMs = Number.NEGATIVE_INFINITY
-  /** The operator acts on an asset: one is highlighted, armed or waiting for "Move here", or a confirmation or choice stands. */
-  const assetsHeld = (): boolean => selection?.kind === 'unit' || confirmation !== null || pendingMove !== null || armedMove !== null || adding !== null
+  /** The wall time of the operator's last input. */
+  let lastInputMs = Number.NEGATIVE_INFINITY
+  /**
+   * The operator acts on an asset: one is armed or waiting for "Move here",
+   * or a confirmation or choice stands; or the operator's last input, a
+   * highlight or a send among them, was less than `assetsHoldMs` ago. A
+   * highlight that only lingers holds the order no longer than that.
+   */
+  const assetsHeld = (): boolean => confirmation !== null || pendingMove !== null || armedMove !== null || adding !== null || wallMs - lastInputMs < assetsHoldMs
   /**
    * Assets as shown: free first, then by id; but while the operator acts on
-   * an asset, the rows keep the places they had, and a new one joins the
-   * end, so a unit coming free never moves the row or the site under the
-   * next tap.
+   * an asset, or tapped within the last few seconds, the rows keep the
+   * places they had, and a new one joins the end, so a unit coming free
+   * never moves the row or the site under the next tap.
    */
   const assets = (): ReadonlyArray<BoardUnit> => {
     const natural = units()
@@ -298,7 +314,9 @@ export const createBoardController = (options: {
     const task = selectedTask()
     const answer = task === undefined ? undefined : recommendations.answer(task.id)
     if (task === undefined || answer === undefined) return
-    const offered = answer.alternatives.map(unit => ({ unitId: unit.unitId, label: unit.label }))
+    // A call covered next shows no proposal as its button: its units are numbered among the alternatives, first.
+    const offered = [...(coveredNext(answer) ? answer.proposal.units.filter(unit => !answer.alternatives.some(entry => entry.unitId === unit.unitId)) : []), ...answer.alternatives]
+      .map(unit => ({ unitId: unit.unitId, label: unit.label }))
     const kept = numbering?.taskId === task.id ? numbering.entries : []
     const numbered = new Set(kept.map(entry => entry.unitId))
     numbering = { taskId: task.id, entries: [...kept, ...offered.filter(entry => !numbered.has(entry.unitId))].slice(0, alternativesShown) }
@@ -347,7 +365,9 @@ export const createBoardController = (options: {
    * free but short of a condition it could meet, and none holds the call
    * queued), it offers a busy unit of the screen's Assets that could serve
    * it, as "Add to end": its next job once its steps are done, so the beat
-   * stays two taps call first. Of several, the one holding the fewest steps.
+   * stays two taps call first. Of several, one not paused (a paused unit
+   * starts nothing queued until resumed), then the one holding the fewest
+   * steps, then the one likely free soonest (`freeingStage`, then its ETA).
    */
   const queueOffer = (task: BoardTask, answer: Recommendation): Commitment | null => {
     if (answer.need === null || answer.next.length > 0) return null
@@ -357,10 +377,46 @@ export const createBoardController = (options: {
     const busy = answer.committed
       .map(entry => records!.units.get(entry.unitId))
       .filter((unit): unit is BoardUnit => unit !== undefined && unit.integrity !== 'destroyed' && shown.includes(unit))
-    const unit = [...busy].sort((a, b) => a.orders.length - b.orders.length)[0]
+    // Free soonest: one already at work on scene, then one carrying load to its site, then one still on its way; on the way, by its ETA.
+    const due = (unit: BoardUnit): number => unit.etaSeconds ?? Number.POSITIVE_INFINITY
+    const unit = [...busy].sort((a, b) =>
+      Number(a.paused === true) - Number(b.paused === true)
+      || a.orders.length - b.orders.length
+      || freeingStage(a.phase) - freeingStage(b.phase)
+      || due(a) - due(b)
+      || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0]
     if (unit === undefined) return null
     // Sent from Calls, so the selection moves on once the Run shows it.
     return { kind: 'call', call: { ...queueCall(records!, unit, { taskId: task.id }), origin: 'work-list' }, etaText: null, ask: null, undoable: undoRestores(unit, true) }
+  }
+
+  /**
+   * Whether units holding the task as their next job, behind at most the
+   * step they are carrying out (`nextJob`), would bring what the proposal sends: one of each proposed unit's
+   * type for every proposed unit. Such a call is covered next; sending the
+   * proposal too would send a second unit, so it is only offered among the
+   * alternatives. A unit with other queued steps ahead of the task covers
+   * nothing yet: the proposal stays the call's button.
+   */
+  const nextJob = (answer: Recommendation): Recommendation['next'] => answer.next.filter(entry => {
+    const unit = records!.units.get(entry.unitId)
+    return unit !== undefined && unit.orders.slice(0, entry.stepsAhead).every(step => step.state === 'active')
+  })
+  const coveredNext = (answer: Recommendation): boolean => {
+    const next = nextJob(answer)
+    if (next.length === 0) return false
+    const types = next.map(entry => records!.units.get(entry.unitId)?.unitType)
+    return answer.proposal.units.every(unit => {
+      const index = types.indexOf(records!.units.get(unit.unitId)?.unitType)
+      if (index < 0) return false
+      types.splice(index, 1)
+      return true
+    })
+  }
+  /** A call units hold queued, and whose proposal they would bring: tapped, it says who comes next rather than offering a second unit as its button. */
+  const nextCovers = (taskId: string): boolean => {
+    const answer = answerOf(taskId)
+    return answer !== undefined && coveredNext(answer)
   }
 
   const taskCommitment = (task: BoardTask): Commitment => {
@@ -373,6 +429,10 @@ export const createBoardController = (options: {
         : { kind: 'none', state: 'none', text: noRecommendationText(failure) }
     }
     let sent: ReadonlyArray<Candidate> = answer.proposal.units
+    if (chosen === null && coveredNext(answer)) {
+      const more = answer.proposal.units.length + answer.alternatives.length > 0 ? ` · ${boardWords.orSendNow}` : ''
+      return { kind: 'none', state: 'none', text: `${boardWords.coveredNext} ${joinUnits(nextJob(answer).map(entry => entry.label))}${more}` }
+    }
     if (chosen !== null) {
       const entry = numbering?.entries[chosen - 1]
       const candidate = entry === undefined ? undefined : candidateIn(answer, entry.unitId)
@@ -497,7 +557,8 @@ export const createBoardController = (options: {
     advanceCallId = null
     // The operator is in the middle of another order: the selection stays.
     if (confirmation !== null || armedMove !== null || pendingMove !== null) return
-    const next = entries().find(isUnserved)
+    // A call units hold queued, that they would serve, is in hand: the selection moves past it.
+    const next = entries().find(entry => isUnserved(entry) && !nextCovers(entry.task.id))
     focus = 'work'
     if (next === undefined) {
       if (selection?.kind === 'task') select(null, true)
@@ -516,9 +577,10 @@ export const createBoardController = (options: {
     select(list[next]!, true, true)
   }
 
+  /** The most urgent unserved call, past those units hold queued and would serve; the first of those when only they wait. */
   const urgent = (): void => {
     focus = 'work'
-    const first = entries().find(isUnserved)
+    const first = entries().find(entry => isUnserved(entry) && !nextCovers(entry.task.id)) ?? entries().find(isUnserved)
     if (first === undefined) return info(word(rules, 'noWork'))
     select({ kind: 'task', id: first.task.id, byOperator: true }, true, true)
   }
@@ -818,7 +880,7 @@ export const createBoardController = (options: {
     if (created === 'gone') undo = null
     else if (created !== 'pending') undo = { ...undo, steps: created }
   }
-  const undoShown = (): boolean => undo !== null && undo.steps !== null && wallMs < undo.untilMs
+  const undoShown = (): boolean => undo !== null && undo.steps !== null && wallMs < undo.untilMs && nowMs < undo.untilRunMs
 
   /** Undo removes each step the last send or queue created, as the units' last orders named them. */
   const undoLast = (): void => {
@@ -1042,6 +1104,8 @@ export const createBoardController = (options: {
       if (task === undefined || task.closedAtMs !== undefined) freshUntil.delete(id)
     }
     for (const [callId, call] of unseen) if (visible(call)) unseen.delete(callId)
+    // The Run moved on past Undo's time, as in a fast-forward: what was sent has had its effect.
+    if (undo !== null && nowMs >= undo.untilRunMs) undo = null
     resolveUndo()
     dropStale(previous)
     tryAdvance()
@@ -1076,7 +1140,7 @@ export const createBoardController = (options: {
     }
     feedback = { text: `✓ ${call.text}`, tone: 'done' }
     if (call.undoable) {
-      undo = { marks: call.marks, steps: null, untilMs: wallMs + undoMs }
+      undo = { marks: call.marks, steps: null, untilMs: wallMs + undoMs, untilRunMs: nowMs + undoMs, text: call.text }
       resolveUndo()
     }
     if (!visible(call)) unseen.set(callId, call)
@@ -1124,7 +1188,7 @@ export const createBoardController = (options: {
         return
       }
       case 'tick':
-        if (undo !== null && wallMs >= undo.untilMs) undo = null
+        if (undo !== null && (wallMs >= undo.untilMs || nowMs >= undo.untilRunMs)) undo = null
         return
       case 'seen':
         seen = event.roleIds
@@ -1141,6 +1205,7 @@ export const createBoardController = (options: {
   const dispatch = (event: BoardEvent): ReadonlyArray<BoardEffect> => {
     effects = []
     wallMs = event.wallMs
+    if (operatorInput(event)) lastInputMs = wallMs
     const before = commitmentKey()
     handle(event)
     if (!contactsOpened && rules.arrangement.contacts && records !== null) contactsOpened = contactsView(rules, records, nowMs, options.sides).sides.some(side => side.engageable.rows.length > 0)
@@ -1264,7 +1329,7 @@ export const createBoardController = (options: {
       id: task.id,
       proposal: answer === undefined ? [] : proposalUnits(answer),
       // Only units still offered are shown; a dropped one keeps its number for the digit keys.
-      alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen).map(row => ({ ...row, label: shownLabel(row.unitId, row.label) })),
+      alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen, !coveredNext(answer)).map(row => ({ ...row, label: shownLabel(row.unitId, row.label) })),
       ineligible: answer?.ineligible.map(item => item.reasons.map(reason => namedOnce(item.label, reason)).join(' · ')) ?? [],
       remainder,
       remainderText: remainder.length === 0 ? null : `${boardWords.remainder} ${remainder.join(', ')}`,
@@ -1298,7 +1363,8 @@ export const createBoardController = (options: {
       contactsFolded: rules.arrangement.contacts && rules.arrangement.lead === 'work-list' && !contactsOpened,
       selected: selectedView(),
       commit: commitElement(),
-      feedback,
+      // While Undo stands, the line keeps saying what it undoes, though a tap since let the words go.
+      feedback: feedback ?? (undoShown() ? { text: `✓ ${undo!.text}`, tone: 'done' } : null),
       undo: undoShown() ? boardWords.undo : null,
       mapPrompt: pendingMove === null ? null : mapPromptOf(pendingMove),
       log,

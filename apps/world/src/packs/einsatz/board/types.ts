@@ -445,7 +445,7 @@ export interface BoardView {
   readonly selected: SelectedTask | { readonly kind: 'unit'; readonly id: string } | null
   readonly commit: CommitElement
   readonly feedback: Feedback | null
-  /** The Undo button's label for 8 s after a send or a queue was accepted and the Run shows the step it created; null otherwise. */
+  /** The Undo button's label for 8 s, of wall time and of Run time, after a send or a queue was accepted and the Run shows the step it created; null otherwise. */
   readonly undo: string | null
   /** The prompt to show on the map after a tap on open ground; null when there is none. */
   readonly mapPrompt: BoardMapPrompt | null

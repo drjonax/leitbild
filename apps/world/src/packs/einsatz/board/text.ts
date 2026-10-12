@@ -58,6 +58,10 @@ export const boardWords = {
   next: 'next',
   mapPoint: 'a map point',
   undo: 'Undo',
+  /** A call units hold as their next job, which they would serve: "Covered next by U1". */
+  coveredNext: 'Covered next by',
+  /** After it, where alternatives can still be sent at once. */
+  orSendNow: 'or send another now',
   /** The Calls list's marker for waiting rows scrolled out of view above, after their count: "↑ 2 waiting". */
   waitingAbove: 'waiting',
   confirmFirst: 'Confirm or cancel first',

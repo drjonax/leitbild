@@ -3,6 +3,7 @@ import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import type { Recommendation } from '../recommendation-schema.ts'
+import { assetsHoldMs } from './controller.ts'
 import { alternativeRows } from './recommendations.ts'
 import { boardWords } from './text.ts'
 import { statusText } from './work-list.ts'
@@ -94,9 +95,22 @@ describe('Fixes from the third tap-only walkthrough', () => {
       await accepted(run, ids.recall, { unitId: 'u1', fromTaskId: 't1' })
       await screen.sync()
       expect(order()).toEqual(['u2', 'u1'])
-      // Let go, Assets sort again.
+      // Let go, Assets hold their places a moment after the tap, then sort again.
       await screen.click({ kind: 'row', list: 'units', id: 'u2' })
-      expect([screen.view().selected, order()]).toEqual([null, ['u1', 'u2']])
+      expect([screen.view().selected, order()]).toEqual([null, ['u2', 'u1']])
+      await screen.wait(assetsHoldMs)
+      expect(order()).toEqual(['u1', 'u2'])
+      // A highlight that only lingers, with no tap since, holds them no longer than that.
+      await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't2' } })
+      await screen.sync()
+      expect(order()).toEqual(['u2', 'u1'])
+      await screen.click({ kind: 'row', list: 'units', id: 'u2' })
+      await accepted(run, ids.recall, { unitId: 'u1', fromTaskId: 't2' })
+      await screen.sync()
+      expect(order()).toEqual(['u2', 'u1'])
+      await screen.wait(assetsHoldMs)
+      expect([screen.view().selected, order()]).toEqual([{ kind: 'unit', id: 'u2' }, ['u1', 'u2']])
+      await screen.click({ kind: 'row', list: 'units', id: 'u2' })
 
       // U2 highlighted, then Assets move without the operator (U1 takes a step): the site tap right after takes nothing for granted.
       await screen.click({ kind: 'row', list: 'units', id: 'u2' })
@@ -106,6 +120,60 @@ describe('Fixes from the third tap-only walkthrough', () => {
       expect(screen.calls).toHaveLength(0)
       expect(screen.view().feedback?.text).toBe('Not sent: the list changed')
       expect(screen.view().commit.offer).toContain('U2')
+    })
+  })
+
+  test('a call a unit holds queued, that it would serve, is covered next: its button sends no second unit, and another can still be sent as an alternative', async () => {
+    const items = [unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(10)), taskAt('t1', 'T1', kinds.templates.load, at(3), { [top]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(4), { [top]: 1 })]
+    await withScene(items, async run => {
+      await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
+      const screen = await openScreen(run, createWall())
+      await screen.click({ kind: 'row', list: 'work', id: 't2' })
+      expect(screen.view().commit.button).toContain('U2')
+      await screen.click({ kind: 'row', list: 'units', id: 'u1' })
+      await screen.click({ kind: 'row', list: 'work', id: 't2' })
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'option', option: 'add-to-end' })
+      await screen.sync()
+      expect(run.unit('u1').orders.map(step => step.target)).toEqual([{ taskId: 't1' }, { taskId: 't2' }])
+      expect(screen.view().commit).toMatchObject({ state: 'none', text: `${boardWords.coveredNext} U1 · ${boardWords.orSendNow}`, button: null })
+      const selected = screen.view().selected
+      expect(selected?.kind === 'task' ? selected.alternatives.map(entry => entry.label) : []).toContain('U2')
+    })
+  })
+
+  test('Add to end offered from a call with no free unit passes over a paused unit for one that is not', async () => {
+    const items = [unitAt('p1', 'P1', pairServer, at(0)), unitAt('p2', 'P2', pairServer, at(0, 0.5)), taskAt('o1', 'O1', kinds.templates.single, at(0.2)), taskAt('o2', 'O2', kinds.templates.single, at(0.2, 0.5)), taskAt('o3', 'O3', kinds.templates.single, at(3))]
+    await withScene(items, async run => {
+      await accepted(run, ids.send, { units: ['p1'], to: { taskId: 'o1' } })
+      await accepted(run, ids.send, { units: ['p2'], to: { taskId: 'o2' } })
+      const screen = await openScreen(run, createWall())
+      for (let step = 0; step < 40 && (run.unit('p1').phase !== 'on-task' || run.unit('p2').phase !== 'on-task'); step++) await runFor(run, 15_000, [screen])
+      expect([run.unit('p1').phase, run.unit('p2').phase]).toEqual(['on-task', 'on-task'])
+      await accepted(run, ids.hold, { unitId: 'p1' })
+      await screen.sync()
+      expect(run.unit('p1').paused).toBe(true)
+      await screen.click({ kind: 'row', list: 'work', id: 'o3' })
+      expect(screen.view().commit.button).toBe(`${boardWords.addToEnd}: P2 → O3`)
+    })
+  })
+
+  test('Undo ends once the Run has moved on past it, as in a fast-forward, and while it stands the status line keeps saying what it undoes', async () => {
+    const items = [unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(1)), taskAt('t1', 'T1', kinds.templates.load, at(3), { [top]: 1 })]
+    await withScene(items, async run => {
+      const screen = await openScreen(run, createWall())
+      await screen.click({ kind: 'row', list: 'units', id: 'u1' })
+      await screen.click({ kind: 'row', list: 'work', id: 't1' })
+      await screen.sync()
+      expect(screen.view().undo).toBe(boardWords.undo)
+      const sent = screen.view().feedback
+      expect(sent).toMatchObject({ tone: 'done', text: expect.stringContaining('U1') })
+      // A tap lets the line's last words go, but while Undo stands the line says what it undoes.
+      await screen.click({ kind: 'row', list: 'units', id: 'u2' })
+      expect(screen.view().feedback).toEqual(sent)
+      // The Run moves on 10 s while no wall time passes: Undo is over.
+      await runFor(run, 10_000, [screen])
+      expect([screen.view().undo, screen.view().feedback]).toEqual([null, null])
     })
   })
 

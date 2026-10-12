@@ -7,6 +7,7 @@ import { einsatzCommandIds } from '../capabilities.ts'
 import type { UnitType } from '../config-schema.ts'
 import { trackDataSchema } from '../engine/combat-model.ts'
 import { einsatzDataSchema, type TaskData, type UnitData } from '../engine/model.ts'
+import { boardWords } from '../board/text.ts'
 import { createWall, openScreen, pastGuardMs, roleScreen, runFor, type Screen, type ScreenCall } from './board-harness.ts'
 import { borderConfig, sideTypes } from './border-harness.ts'
 import { openRun, type OpenRun } from './run-harness.ts'
@@ -114,7 +115,12 @@ export const letGo = async (screen: Screen): Promise<void> => {
   if (selected?.kind === 'unit') await screen.click({ kind: 'row', list: 'units', id: selected.id })
 }
 
-/** One pass of the good dispatcher: every unserved call in list order is tapped, and its first recommendation sent. */
+/**
+ * One pass of the good dispatcher: every unserved call in list order is
+ * tapped, and its first recommendation sent. A call a busy unit holds as its
+ * next job is covered next and shows no button; the good dispatcher sends
+ * another now, the first of the units the bar lists below it.
+ */
 export const tapRecommendations = async (screen: Screen): Promise<void> => {
   await letGo(screen)
   const tried = new Set<string>()
@@ -123,6 +129,13 @@ export const tapRecommendations = async (screen: Screen): Promise<void> => {
     if (row === undefined) return
     tried.add(row.id)
     await screen.click({ kind: 'row', list: 'work', id: row.id })
+    const selected = screen.view().selected
+    const another = selected?.kind === 'task' && screen.view().commit.text.startsWith(boardWords.coveredNext) ? selected.alternatives[0] : undefined
+    if (another !== undefined) {
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'alternative', number: another.number })
+      continue
+    }
     if (screen.view().commit.state !== 'ready') continue
     await screen.wait(pastGuardMs)
     await screen.click({ kind: 'commit' })
