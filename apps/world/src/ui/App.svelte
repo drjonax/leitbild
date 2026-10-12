@@ -7,7 +7,7 @@
   type RouteComponent = Component
 
   let Route = $state<RouteComponent | null>(null)
-  let status = $state('Starting')
+  let status = $state('Starting…')
 
   const loadRoute = async (): Promise<void> => {
     try {

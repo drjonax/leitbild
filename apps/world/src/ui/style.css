@@ -210,6 +210,13 @@ body.rail-resizing {
   background: var(--bg);
 }
 
+/* While a route loads: a quiet centred line, never bare text in a corner. */
+.boot-shell {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
 .surface-main {
   min-width: 0;
   min-height: 100vh;
@@ -1179,6 +1186,11 @@ body.rail-resizing {
   place-items: center;
 }
 
+/* Nothing behind to set apart, as when joining a role Run before its map loads: no dimmed grey page. */
+.modal-backdrop.clear {
+  background: transparent;
+}
+
 /* Pinned near the top: the dialog's top edge stays put as its content grows or shrinks. */
 .modal-backdrop.top {
   place-items: start center;
@@ -1822,6 +1834,15 @@ body.rail-resizing {
   background: var(--panel-strong);
   color: var(--critical);
   font-size: 13px;
+}
+
+.process-display-notice.neutral {
+  color: var(--text);
+}
+
+.process-display-notice.success {
+  border-color: var(--success);
+  color: var(--success);
 }
 
 .process-display-resize-handle {

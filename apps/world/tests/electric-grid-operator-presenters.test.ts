@@ -13,6 +13,7 @@ import {
   gridAlarmIdsToAcknowledge,
   gridAlarmLifecycleBatchLimit,
   gridAlarmRows,
+  gridCount,
   gridLocalTimeZone,
 } from '../src/packs/electric-grid/ui/operator-alarms.ts'
 import { gridHvdcSetpointGuidance, gridShedLoadPlan, type GridShedLoadContext } from '../src/packs/electric-grid/ui/operator-commands.ts'
@@ -23,6 +24,7 @@ import {
   gridDefaultScreening,
   gridFlowModelSummary,
   gridOutageText,
+  gridRatingBasisLabel,
   gridRemedialComparison,
 } from '../src/packs/electric-grid/ui/operator-contingency.ts'
 import { corridorDefinition, corridorModel, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
@@ -79,6 +81,12 @@ describe('Grid operator alarms presenter', () => {
     expect(() => formatGridAlarmTime('not a time', gridLocalTimeZone)).toThrow('not an ISO timestamp')
   })
 
+  test('counts read in the matching number', () => {
+    expect(gridCount(1, 'energised island', 'energised islands')).toBe('1 energised island')
+    expect(gridCount(9, 'active alarm', 'active alarms')).toBe('9 active alarms')
+    expect(gridCount(0, 'load', 'loads')).toBe('0 loads')
+  })
+
   test('island alarms are named after and located at the island\'s anchor bus, as islands.list names it', async () => {
     // Bus B first in model order: the part L–A–B that forms is referenced at B but named after L,
     // its 300 kV station with the most connected branch capacity.
@@ -94,6 +102,8 @@ describe('Grid operator alarms presenter', () => {
     const island = islands.islands.find(candidate => formed.id === `island:${candidate.id.slice('island:'.length)}:formed`)!
     expect([island.anchorBus.id, island.referenceBus.id]).toEqual(['bus:l', 'bus:b'])
     expect(formed).toMatchObject({ mapAssetId: 'bus:l', assetLabel: 'Island at bus:l' })
+    // Its message names it the same way, never by its raw id.
+    expect(formed.message).toStartWith('Island at bus:l (')
   })
 })
 
@@ -112,6 +122,9 @@ describe('Grid operator N-1 presenter', () => {
     expect(violating.worst!.overloaded).toBe(true)
     expect(violating.overloaded.length).toBeGreaterThan(0)
     expect(gridFlowModelSummary(screening)).toBe('Base flows: AC load flow in 1 island; outage increments DC.')
+    // The screen names its rating as the branch loading alarms do, so its base case never reads as contradicting them.
+    expect(gridRatingBasisLabel(screening.ratingBasis)).toBe('emergency rating')
+    expect(gridRatingBasisLabel('normal')).toBe('continuous rating')
     expect(gridFlowModelSummary({ baseFlowModels: [{ islandId: 'a', flowModel: 'ac' }, { islandId: 'b', flowModel: 'dc' }], incrementModel: 'dc' }))
       .toBe('Base flows: AC load flow in 1 island, DC solution in 1 island whose AC load flow did not converge; outage increments DC.')
 

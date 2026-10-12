@@ -77,21 +77,16 @@ describe('startup progress model', () => {
     expect(startupIsReady(realtimeFailed)).toBe(false)
   })
 
-  test('keeps startup modal visible until the UI lifecycle dismisses it', () => {
+  test('shows the startup checklist while steps run or one failed, never once every step succeeded', () => {
     let steps = createStartupSteps(10)
+    steps = completeStartupStep(steps, 'route', 20)
+    expect(startupModalShouldShow({ routeMode: 'simulation-run', dismissed: false, steps })).toBe(true)
+    expect(startupModalShouldShow({ routeMode: 'simulation-run', dismissed: true, steps })).toBe(false)
+
+    expect(startupModalShouldShow({ routeMode: 'simulation-run', dismissed: false, steps: failStartupStep(steps, 'map', 'map failed', 30) })).toBe(true)
+
     for (const step of steps) steps = completeStartupStep(steps, step.id, 20)
-
-    expect(startupModalShouldShow({
-      routeMode: 'simulation-run',
-      dismissed: false,
-      steps,
-    })).toBe(true)
-
-    expect(startupModalShouldShow({
-      routeMode: 'simulation-run',
-      dismissed: true,
-      steps,
-    })).toBe(false)
+    expect(startupModalShouldShow({ routeMode: 'simulation-run', dismissed: false, steps })).toBe(false)
   })
 
   test('does not show startup modal on the picker route', () => {

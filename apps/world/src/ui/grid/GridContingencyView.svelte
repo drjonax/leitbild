@@ -11,6 +11,7 @@
     gridContingencyRows,
     gridDefaultScreening,
     gridFlowModelSummary,
+    gridRatingBasisLabel,
     gridRemedialComparison,
     type GridBranchOutage,
     type GridCandidateAction,
@@ -151,14 +152,14 @@
 
   {#if screening}
     <p class="basis">
-      {screening.screenedCount.toLocaleString('en-GB')} outages screened against the {screening.ratingBasis} rating, {screening.branchOutage === 'circuit' ? 'one circuit of each multi-circuit branch' : 'every circuit of each branch at once'}, at revision {screening.revision}{screenedRevision !== null && screenedRevision !== revision ? ' (the Grid has moved on; screen again for the current state)' : ''}.
+      {screening.screenedCount.toLocaleString('en-GB')} outages screened against the {gridRatingBasisLabel(screening.ratingBasis)}, {screening.branchOutage === 'circuit' ? 'one circuit of each multi-circuit branch' : 'every circuit of each branch at once'}, at revision {screening.revision}{screenedRevision !== null && screenedRevision !== revision ? ' (the Grid has moved on; screen again for the current state)' : ''}.
       {gridFlowModelSummary(screening)}
     </p>
     <div class="summary">
       <span class:bad={screening.violatingCount > 0}>{screening.violatingCount} with overloads</span>
       <span>{screening.islandingCount} islanding</span>
       <span>{screening.totalViolations} overloads in all</span>
-      <span class:bad={screening.baseCase.overloadedCount > 0}>Base case: {screening.baseCase.overloadedCount} overloaded</span>
+      <span class:bad={screening.baseCase.overloadedCount > 0}>Base case: {screening.baseCase.overloadedCount} overloaded ({gridRatingBasisLabel(screening.ratingBasis)})</span>
     </div>
     <h4>Worst contingencies</h4>
     <ul class="results">

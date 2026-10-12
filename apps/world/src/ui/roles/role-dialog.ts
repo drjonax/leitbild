@@ -175,6 +175,10 @@ export interface RoleDialogModel {
   readonly applyText: string
 }
 
+/** Where focus starts as the dialog opens to join: on Join once a role is ticked, else on its first choice; a switch leaves focus where it was. */
+export const roleDialogInitialFocus = (mode: 'join' | 'switch', model: Pick<RoleDialogModel, 'canApply'>): 'apply' | 'first-choice' | null =>
+  mode === 'switch' ? null : model.canApply ? 'apply' : 'first-choice'
+
 export const roleDialogModel = (declaration: RunRoles, draft: RoleDialogDraft, context: {
   readonly mode: 'join' | 'switch'
   /** The roles the screen holds now; none when joining. */

@@ -13,6 +13,8 @@
     readonly size?: 'small' | 'medium' | 'large'
     /** Where the dialog stands: centred, or pinned near the top, for a dialog whose height changes while it is in use and must not move under the finger. */
     readonly placement?: 'center' | 'top'
+    /** Whether the page behind is dimmed, or left clear for a dialog with nothing behind it to set apart. */
+    readonly backdrop?: 'dim' | 'clear'
     readonly description?: string | null
     readonly titleTone?: StatusTone | null
     readonly children?: Snippet
@@ -27,6 +29,7 @@
     showClose = true,
     size = 'medium',
     placement = 'center',
+    backdrop = 'dim',
     description = null,
     titleTone = null,
     children,
@@ -51,7 +54,7 @@
   })
 </script>
 
-<div class="modal-backdrop" class:top={placement === 'top'} role="presentation" onmousedown={closeFromBackdrop}>
+<div class="modal-backdrop" class:top={placement === 'top'} class:clear={backdrop === 'clear'} role="presentation" onmousedown={closeFromBackdrop}>
   <dialog class="modal-shell {size}" open aria-modal="true" aria-label={title} onmousedown={(event) => event.stopPropagation()}>
     <header class="modal-header">
       <div>
