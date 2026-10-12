@@ -28,7 +28,7 @@
             "label": "Ambulance",
             "icon": "ambulance",
             "tags": ["medical"],
-            "components": {"mobility": {"mode": "road", "speedFactor": 1, "mobilizeS": 60}, "service": {"provides": ["medical"], "onSceneS": 300}, "carry": {"capacity": 1, "classes": ["P1", "P2", "P3"]}},
+            "components": {"mobility": {"mode": "road", "speedFactor": 1, "mobilizeS": 60}, "service": {"provides": ["medical"], "onSceneS": 120}, "carry": {"capacity": 1, "classes": ["P1", "P2", "P3"]}},
             "standingOrders": {"deliver": "nearest-accepting", "return": {"afterIdleS": 60}}
           },
           {
@@ -45,7 +45,7 @@
             "icon": "hospital",
             "tags": ["hospital"],
             "public": true,
-            "components": {"receiving": {"accepts": ["P1", "P2", "P3"], "slots": 4, "handoverS": 180, "accepting": true}}
+            "components": {"receiving": {"accepts": ["P1", "P2", "P3"], "slots": 4, "handoverS": 60, "accepting": true}}
           },
           {
             "id": "patrol-car",
@@ -149,7 +149,9 @@
         {"type": "unit", "id": "unit:amb-2", "label": "A2", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue", "group": "ems"},
         {"type": "unit", "id": "unit:amb-3", "label": "A3", "unitType": "ambulance", "position": [11.387, 59.124], "side": "blue", "base": [11.392, 59.126], "group": "ems"},
         {"type": "unit", "id": "unit:amb-4", "label": "A4", "unitType": "ambulance", "position": [11.387, 59.124], "side": "blue", "base": [11.392, 59.126], "group": "ems"},
-        {"type": "unit", "id": "unit:helo-1", "label": "H1", "unitType": "helicopter", "position": [11.025, 59.32], "side": "blue", "group": "ems"},
+        {"type": "unit", "id": "unit:amb-5", "label": "A5", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue", "group": "ems"},
+        {"type": "unit", "id": "unit:amb-6", "label": "A6", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue", "group": "ems"},
+        {"type": "unit", "id": "unit:helo-1", "label": "H1", "unitType": "helicopter", "position": [11.392, 59.126], "side": "blue", "group": "ems"},
         {"type": "unit", "id": "unit:pol-1", "label": "P1", "unitType": "patrol-car", "position": [11.388, 59.124], "side": "blue", "group": "police"},
         {"type": "unit", "id": "unit:pol-2", "label": "P2", "unitType": "patrol-car", "position": [11.42, 59.13], "side": "blue", "group": "police"},
         {"type": "unit", "id": "unit:fire-1", "label": "F1", "unitType": "fire-engine", "position": [11.395, 59.122], "side": "blue", "group": "fire"},

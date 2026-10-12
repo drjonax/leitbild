@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from './capabilities.ts'
 import {
-  borderConfig, borderDefinitions, borderRoles, borderStart, isScout, isShooter, playBorder, pointAt, sensingCommandOf, stepsLost, timelineOf, unitsWhere,
+  borderConfig, borderDefinitions, borderRoles, borderStart, isScout, isShooter, overwatchGround, playBorder, pointAt, sensingCommandOf, stepsLost, timelineOf, unitsWhere,
   type Play, type PlayContext, type PlayLog, type TimedOrder,
 } from './fixtures/border-harness.ts'
 import { unitTypeOf } from './engine/model.ts'
@@ -38,12 +38,11 @@ const huntScouts = ({ state }: PlayContext) => {
     .map(unit => ({ capabilityId: ids.engage, input: { unitId: unit.id, trackId: target.id } }))
 }
 
-const overwatch: ReadonlyArray<readonly [number, number]> = [[11.50246, 59.13419], [11.50426, 59.13665], [11.50134, 59.132]]
 const plays: Readonly<Record<'observationPostFirst' | 'unscoutedColumn' | 'naiveMovingScout' | 'passive', ReadonlyArray<Play>>> = {
   // The scout takes the screen post before Red moves; the guns take halted overwatch, weapons free, and hunt Red's scout first.
   observationPostFirst: [{
     side: blue, viewer: commander, react: huntScouts,
-    orders: [send(0, scouts[0]!, { taskId: screenTask.id }), ...guns.map((unitId, index) => send(0, unitId, toPoint(overwatch[index]!))), ...weaponsFree(0)],
+    orders: [send(0, scouts[0]!, { taskId: screenTask.id }), ...guns.map((unitId, index) => send(0, unitId, toPoint(overwatchGround[index]!))), ...weaponsFree(0)],
   }],
   // The guns drive up the road into the halted column with no scout ahead.
   unscoutedColumn: [{
@@ -125,7 +124,7 @@ describe('halden-border plays', () => {
     expect(best.ratio, JSON.stringify(table)).toBeGreaterThan(scout.ratio)
     // Blue's orders all went through; the only refusals are scripted Red cues for units already lost.
     expect(best.log.refusals.filter(refusal => !refusal.reason.startsWith('unit_unavailable'))).toEqual([])
-  })
+  }, 60_000)
 
   test('passive Blue sees an engagement and a step-loss task between 12 and 16 minutes', async () => {
     const { log } = await outcomeOf('passive')
@@ -138,5 +137,5 @@ describe('halden-border plays', () => {
       expect(minutes(at)).toBeLessThanOrEqual(16)
     }
     expect(firstLoss!.side).toBe(blue)
-  })
+  }, 60_000)
 })

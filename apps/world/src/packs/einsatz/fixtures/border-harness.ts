@@ -156,6 +156,9 @@ export const together = (...viewers: ReadonlyArray<EinsatzViewer>): EinsatzViewe
 export const unitsWhere = (state: EngineState, side: string, predicate: (type: UnitType) => boolean): UnitRecord[] =>
   [...state.units.values()].filter(unit => unit.side === side && predicate(unitTypeOf(state.catalog, unit))).sort((a, b) => a.id < b.id ? -1 : 1)
 
+/** Blue's halted overwatch ground east of Tistedal for observation post first, one point per gun, as a commander would tap it. */
+export const overwatchGround: ReadonlyArray<readonly [number, number]> = [[11.50246, 59.13419], [11.50426, 59.13665], [11.50134, 59.132]]
+
 /** Scouts sense and identify but carry no weapon; shooters carry one. */
 export const isScout = (type: UnitType): boolean => type.components.sensor !== undefined && type.components.sensor.identifyM > 0 && type.components.effector === undefined && type.components.durability !== undefined
 export const isShooter = (type: UnitType): boolean => type.components.effector !== undefined

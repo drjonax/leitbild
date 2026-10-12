@@ -3,6 +3,11 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import type { Actor } from '../../../core/simulation-runs/actors.ts'
 import { einsatzDataSchema, type LastAction, type TaskData, type UnitData } from '../engine/model.ts'
 import { createWall, follow, openScreen, roleScreen, type Screen } from '../fixtures/board-harness.ts'
+import { borderDefinitions, borderStart, isScout, isShooter, overwatchGround, pointAt, roleCommanding, sensingCommandOf, unitsWhere } from '../fixtures/border-harness.ts'
+import { trackDataSchema } from '../engine/combat-model.ts'
+import { unitTypeOf } from '../engine/model.ts'
+import border from '../../../scenarios/halden-border.scenario.json'
+import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { groupDeclaration, groupItems, groups } from '../fixtures/groups-run.ts'
 import civil from '../fixtures/halden-civil.scenario.json'
 import { renameDefinition, type Namespace, type Renaming } from '../fixtures/renaming.ts'
@@ -15,7 +20,10 @@ import { refusalCode } from '../refusal.ts'
  * The recommendation follower presses N, then Enter (and Enter again to
  * confirm), on every unserved row as it appears, on a running Run. On civil
  * Halden the late top-priority call must divert the unit on its way to the
- * minor call. The renaming generality test runs the follower on each shipped
+ * minor call; on halden-border, with Blue playing observation post first, the
+ * receiving site that closes at 18:00 reroutes the units carrying load to the
+ * other one, and the 25:00 top-priority call diverts the unit on its way to the
+ * 24:00 minor call. The renaming generality test runs the follower on each shipped
  * Definition and on a copy whose every type, tag, template, class, property,
  * label and word is an opaque token: both Runs must journal the same
  * transitions, modulo the renaming, with the same Board actions and results.
@@ -64,6 +72,81 @@ describe('Recommendation follower', () => {
       expect(screen.calls.every(call => call.result.ok)).toBe(true)
     })
   }, 60_000)
+
+  test('on halden-border the closing site reroutes the units carrying load, and the 25:00 top-priority call diverts the unit sent to the 24:00 minor call', async () => {
+    const definition = borderDefinitions.scripted
+    const [blue] = (definition.sides ?? []).map(side => side.id) as [string]
+    const start = borderStart(definition)
+    const [scout] = unitsWhere(start, blue, isScout)
+    const guns = unitsWhere(start, blue, isShooter).map(unit => unit.id)
+    const screenTask = [...start.tasks.values()].find(task => task.side === blue
+      && start.catalog.templates.get(task.template)!.requires.some(requirement => unitTypeOf(start.catalog, scout!).components.service?.provides.includes(requirement.provides)))!
+    const scoutLabels = new Set(start.catalog.config.unitTypes.filter(isScout).map(type => type.label))
+    const carrierType = start.catalog.config.unitTypes.find(type => type.components.carry !== undefined && type.components.mobility?.mode === 'road')!
+    const borderCue = (id: string) => border.timeline.cues.find(entry => entry.id === id)!
+    const [closing, minor, late] = [borderCue('site-closes'), borderCue('call-14'), borderCue('call-15')]
+    const closedSite = (closing.actions[0]!.input as { readonly siteId: string }).siteId
+    const [minorLabel, lateLabel] = [minor, late].map(cue => (cue.actions[0]!.input as { readonly label: string }).label) as [string, string]
+
+    const run = await openRun({ definition: border })
+    try {
+      const dispatcher = await openScreen(run, createWall(), { actor: roleScreen(run, roleCommanding(definition, blue, carrierType.id).roles[0]!.id) })
+      // Blue plays observation post first, as the walkthrough's Blue military screen does.
+      const commander = roleScreen(run, ...sensingCommandOf(definition, blue).roles.map(role => role.id))
+      const order = async (capabilityId: string, input: unknown) => expect(await run.invoke(capabilityId, input, commander)).toMatchObject({ ok: true })
+      await order(ids.send, { units: [scout!.id], to: { taskId: screenTask.id } })
+      for (const [index, unitId] of guns.entries()) await order(ids.send, { units: [unitId], to: { point: pointAt(overwatchGround[index]!) } })
+      for (const unitId of guns) await order(ids.setRoe, { unitId, roe: 'free' })
+      const huntScouts = async () => {
+        const target = run.run.snapshot().objects
+          .filter(object => object.audience !== 'public' && object.audience?.includes(blue) === true)
+          .flatMap(object => { const track = trackDataSchema.safeParse(object.packData); return track.success && track.data.tier === 'identified' && scoutLabels.has(track.data.identity!.typeLabel) ? [object.id] : [] })
+          .sort()[0]
+        if (target === undefined) return
+        for (const unitId of guns) {
+          const gun = run.unit(unitId)
+          if (gun.integrity !== 'destroyed' && gun.engage !== target) await order(ids.engage, { unitId, trackId: target })
+        }
+      }
+      const startMs = run.nowMs()
+      await follow(run, dispatcher, { untilMs: startMs + (late.at.seconds + 30) * 1_000, stepMs: 5_000, alongside: huntScouts })
+
+      // Units carrying load to the closing site were released from it at the closure and now carry it to another site.
+      const releases = run.journal.flatMap(event => {
+        if (event.type !== 'object.upserted') return []
+        const data = einsatzDataSchema.safeParse(event.object.packData)
+        const last = data.success && data.data.type === 'unit' ? data.data.lastAction : undefined
+        return last?.verb === 'release' && last.target === closedSite ? [{ unitId: event.object.id, atS: (last.atMs - startMs) / 1_000 }] : []
+      })
+      expect(releases.length).toBeGreaterThan(0)
+      for (const release of releases) {
+        expect(release.atS).toBe(closing.at.seconds)
+        const after = run.unit(release.unitId)
+        expect(Object.values(after.load).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0)
+        expect(after.siteId).toBeDefined()
+        expect(after.siteId).not.toBe(closedSite)
+      }
+
+      const tasks = new Map(run.run.snapshot().objects.filter(object => object.kind === 'incident').map(object => [object.label, object.id]))
+      const [minorTask, lateTask] = [tasks.get(minorLabel)!, tasks.get(lateLabel)!]
+      const sentToMinor = dispatcher.calls.find(call => (call.input as { to?: { taskId?: string } }).to?.taskId === minorTask)!
+      expect(sentToMinor).toMatchObject({ result: { ok: true } })
+      expect((sentToMinor.input as { divert?: unknown }).divert).toBeUndefined()
+      const unitSent = (sentToMinor.input as { units: string[] }).units[0]!
+      const divert = dispatcher.calls.find(call => (call.input as { divert?: unknown }).divert !== undefined && (call.input as { to?: { taskId?: string } }).to?.taskId === lateTask)
+      expect(divert).toMatchObject({
+        input: { units: [unitSent], to: { taskId: lateTask }, divert: [{ unitId: unitSent, fromTaskId: minorTask }] },
+        result: { ok: true },
+      })
+      expect(dispatcher.calls.indexOf(divert!)).toBeGreaterThan(dispatcher.calls.indexOf(sentToMinor))
+      expect(run.unit(unitSent)).toMatchObject({ taskId: lateTask, lastAction: { verb: 'divert' } })
+      const minorRow = dispatcher.view().workList.rows.find(row => row.label === minorLabel)!
+      expect([minorRow.served, minorRow.alerts.length]).toEqual([false, 1])
+      expect(dispatcher.calls.every(call => call.result.ok)).toBe(true)
+    } finally {
+      await run.close()
+    }
+  }, 120_000)
 })
 
 const mapKeys = (record: Readonly<Record<string, number>> | undefined, rename: (key: string) => string) =>
