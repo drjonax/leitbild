@@ -49,7 +49,13 @@ export interface BaseMapReadinessFailure extends Error {
 export const isBaseMapReadinessFailure = (err: unknown): err is BaseMapReadinessFailure =>
   err instanceof Error && 'snapshot' in err
 
-const defaultTimeoutMs = 8_000
+/**
+ * How long a base map may take to become ready before the start fails with
+ * its retry. A cold tile cache, a slow disk or a browser throttling a hidden
+ * window can take well past 8 s on a start that then succeeds, so the budget
+ * leaves room for those; a map that never becomes ready still fails visibly.
+ */
+const defaultTimeoutMs = 20_000
 const baseSourceIdsFor = (map: MapLibreMap, options: BaseMapReadinessOptions): string[] => {
   if (options.baseSourceId) return [options.baseSourceId]
   const metadata = map.getStyle()?.metadata as Record<string, unknown> | undefined

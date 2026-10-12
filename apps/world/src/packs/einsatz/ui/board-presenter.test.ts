@@ -110,7 +110,7 @@ describe('Board icons', () => {
   })
 
   test('a view asks for its work rows\', unit rows\' and contacts\' icons', () => {
-    const board = createBoardController({ config: civilConfig, viewer: openModeViewer, sides: [] })
+    const board = createBoardController({ config: civilConfig, viewer: openModeViewer, declaredRoles: [], sides: [] })
     const view = board.view()
     expect(boardIconIds(view)).toEqual([])
     const side = (label: string | null, engageable: ReadonlyArray<ContactRow>, other: ReadonlyArray<ContactRow>): ContactSide => ({
@@ -147,7 +147,7 @@ describe('Board words', () => {
     try { await body(run) } finally { await run.close() }
   }
 
-  test('a unit row\'s verbs, a work row\'s close verb and remainder, the unit\'s commit hint and its ETA are the configuration\'s words', async () => {
+  test('a unit\'s verbs, a call\'s close verb and remainder, and the unit\'s ETA are the configuration\'s words', async () => {
     // One carrier for a task with two loads: the proposal leaves one behind.
     await withScene([unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(3), { [top]: 2 })], async run => {
       const wall = createWall()
@@ -156,13 +156,14 @@ describe('Board words', () => {
       expect(screen.view().unitBoard).toMatchObject({ rows: [{ recallLabel: 'Zurückrufen', holdLabel: hold, moveLabel: 'Verlegen', etaText: null }], empty: null })
       expect(screen.view().workList.rows[0]?.closeLabel).toBe('Abschließen')
       await screen.click({ kind: 'row', list: 'work', id: 't1' })
+      expect(screen.view().commit.verbs).toEqual([{ verb: 'close', label: 'Abschließen', id: 't1' }])
       const selected = screen.view().selected
       if (selected?.kind !== 'task') throw new Error('A click on the row selects the task')
       expect(selected.remainder.length).toBeGreaterThan(0)
       expect(selected.remainderText).toBe(`${boardWords.remainder} ${selected.remainder.join(', ')}`)
       expect(screen.view().headings).toEqual({ workList: wordFor(worded.lexicon, 'workList'), unitBoard: 'Einheiten', alerts: boardWords.alerts, log: boardWords.log })
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
-      expect(screen.view().commit.text).toBe(`R Zurückrufen · H ${hold} · M Verlegen`)
+      expect(screen.view().commit).toMatchObject({ state: 'asset', verbs: [{ verb: 'hold', label: hold, id: 'u1' }, { verb: 'recall', label: 'Zurückrufen', id: 'u1' }] })
 
       await screen.key('n')
       wall.advance(pastGuardMs)

@@ -30,7 +30,7 @@ const effectSnippets = (source: string): ReadonlyArray<string> => {
 
 describe('Einsatz Svelte files', () => {
   test('the Board panel and its parts are all here', () => {
-    expect(files).toEqual(['BoardContacts.svelte', 'BoardIcon.svelte', 'BoardPanel.svelte', 'BoardUnits.svelte', 'BoardWorkList.svelte'])
+    expect(files).toEqual(['BoardActionBar.svelte', 'BoardContacts.svelte', 'BoardIcon.svelte', 'BoardPanel.svelte', 'BoardUnits.svelte', 'BoardWorkList.svelte'])
   })
 
   for (const file of files) {

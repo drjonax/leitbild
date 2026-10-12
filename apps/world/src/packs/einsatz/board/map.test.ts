@@ -5,7 +5,9 @@ import type { PackTargetingContribution } from '../../../core/packs/protocol.ts'
 import { routeObjectClick, type MapClickContext, type MapTargetPanel } from '../../../ui/map-target-routing.ts'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
-import { civilConfig, civilKinds, civilRolesWith, civilWith, createWall, onGround, onObject, openScreen, pastGuardMs, roleScreen, taskAt, unitAt, type Screen } from '../fixtures/board-harness.ts'
+import { viewerForActor } from '../../../core/simulation-runs/role-gates.ts'
+import { civilConfig, civilKinds, civilRolesWith, civilWith, createWall, onGround, onObject, openScreen, pastGuardMs, pointAt, roleScreen, taskAt, unitAt, type Screen } from '../fixtures/board-harness.ts'
+import { createMapOrders } from '../ui/map-orders.ts'
 import roles from '../fixtures/halden-civil-roles.scenario.json'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { einsatzPackId } from '../ids.ts'
@@ -65,22 +67,23 @@ describe('Board and map share one selection', () => {
       })
     })
 
-    test(`the map echoing the row selection keeps a chosen alternative (${modality})`, async () => {
+    test(`the map echoing the row selection keeps a chosen alternative, which a tap sends at once (${modality})`, async () => {
       const items = [unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(3)), taskAt('t1', 'T1', kinds.templates.load, at(1), { [low]: 1 })]
       await withScene(items, async run => {
         const screen = await openScreen(run, createWall())
         if (modality === 'keys') {
           await screen.key('n')
           await screen.key('1')
+          const chosen = screen.view().commit
+          expect(chosen.text).toStartWith(`${word('send')} U2 → T1`)
+          await screen.mapSelect(screen.mapSelection())
+          expect(screen.view().commit).toEqual(chosen)
+          await commit(screen, modality)
         } else {
           await screen.click({ kind: 'row', list: 'work', id: 't1' })
+          await screen.mapSelect(screen.mapSelection())
           await screen.click({ kind: 'alternative', number: 1 })
         }
-        const chosen = screen.view().commit
-        expect(chosen.text).toStartWith(`⏎ ${word('send')} U2 → T1`)
-        await screen.mapSelect(screen.mapSelection())
-        expect(screen.view().commit).toEqual(chosen)
-        await commit(screen, modality)
         expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u2'], to: { taskId: 't1' } }, result: { ok: true } })
       })
     })
@@ -116,58 +119,97 @@ describe('Board map targets and previews', () => {
     taskAt('top', 'TOP', kinds.templates.load, at(1), { [top]: 1 }), taskAt('fire', 'FIRE', kinds.templates.conditioned, at(3)),
   ]
 
-  test('a task, a receiving site or the armed ground; any other unit says it is no target, and an object outside the records shows no preview', async () => {
+  test('a task, a receiving site or open ground, which asks "Move here" first unless M armed it; any other unit says it is no target, and an object outside the records shows no preview', async () => {
     await withScene(scene, async run => {
       const screen = await openScreen(run, createWall())
       expect(screen.preview('u1', onObject('top'))).toMatchObject({ refused: false, text: expect.stringMatching(new RegExp(`^${word('send')} U1 → TOP · ${etaPattern}$`)) })
       const ineligible = screen.preview('e2', onObject('fire'))
       expect(ineligible).toMatchObject({ refused: true, text: expect.stringContaining('E2') })
-      expect(screen.preview('u1', onGround(at(0, 3)))).toEqual({ text: 'M, then click the map to move U1', refused: true })
+      expect(screen.preview('u1', onGround(at(0, 3)))).toEqual({ text: 'Move U1 → the map point', refused: false })
       expect(screen.preview('u1', onObject('h1'))).toEqual({ text: 'Move U1 → H1', refused: false })
       expect(screen.preview('u1', onObject('p1'))).toEqual({ text: 'P1 is not a target for U1', refused: true })
       expect(screen.preview('u1', onObject('weather:front'))).toBeNull()
+
+      // A tap on the site with nothing highlighted says what to tap first.
+      await screen.mapTap('h1')
+      expect([screen.view().feedback?.text, screen.view().selected, screen.mapSelection()]).toEqual([`Tap one of ${word('unitBoard')} first, then H1`, null, null])
+      // A unit the call's recommendation finds not eligible is not sent; the tap says why and it stays highlighted.
+      await screen.click({ kind: 'row', list: 'work', id: 'fire' })
+      await screen.mapTap('e2')
+      await screen.mapTap('fire')
+      expect([screen.calls.length, screen.view().feedback?.text, screen.view().selected]).toEqual([0, ineligible!.text, { kind: 'unit', id: 'e2' }])
+      await screen.mapTap('e2')
 
       await screen.mapSelect('u1')
       await screen.mapTarget('u1', onObject('p1'))
       expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, 'P1 is not a target for U1'])
       await screen.mapTarget('u1', onObject('weather:front'))
       expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, 'Not a target for U1'])
+      // Open ground asks first: a prompt at the point and in the action bar, and nothing is sent.
       await screen.mapTarget('u1', onGround(at(0, 3)))
-      expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, 'M, then click the map to move U1'])
+      expect(screen.calls.length).toBe(0)
+      expect(screen.view().mapPrompt).toEqual({ unitId: 'u1', point: pointAt(at(0, 3)), label: 'Move U1 here' })
+      expect(screen.view().commit).toMatchObject({ state: 'move', text: 'Move U1 here', button: 'Move U1 here', cancel: 'Cancel' })
+      // Another target instead drops the prompt and sends there.
       await screen.mapTarget('u1', onObject('h1'))
       expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { siteId: 'h1' } }, result: { ok: true } })
+      expect([screen.view().mapPrompt, screen.view().selected]).toEqual([null, null])
 
-      await screen.key('m')
-      expect(screen.preview('u1', onGround(at(0, 3)))).toEqual({ text: 'Move U1 → the map point', refused: false })
+      // A tap on the prompt moves it.
+      await screen.mapSelect('u1')
       await screen.mapTarget('u1', onGround(at(0, 3)))
-      expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { point: { type: 'Point' } } }, result: { ok: true } })
+      await screen.click({ kind: 'move-here' })
+      expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { point: pointAt(at(0, 3)) } }, result: { ok: true } })
+
+      // M arms the move: the next ground click moves at once.
+      await screen.mapSelect('u1')
+      await screen.key('m')
+      await screen.mapTarget('u1', onGround(at(0, 4)))
+      expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { point: pointAt(at(0, 4)) } }, result: { ok: true } })
       expect(screen.calls.every(call => call.result.ok)).toBe(true)
     })
   })
 
-  test('a committed unit previews its divert with the confirmation it asks for; during a confirmation every target says to confirm first', async () => {
+  test('a committed unit previews its divert with what it drops; while it asks what to do every target says to confirm or cancel first', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), taskAt('low', 'LOW', kinds.templates.load, at(25), { [low]: 1 }), taskAt('top', 'TOP', kinds.templates.load, at(2), { [top]: 1 })], async run => {
       await accepted(run, ids.send, { units: ['u1'], to: { taskId: 'low' } })
       const screen = await openScreen(run, createWall())
-      const divert = `Divert U1 → TOP · ${etaPattern} · confirm: LOW \\(${code(low)}\\) · 1 ${noun(low)} returns to the queue`
+      const divert = `Divert U1 → TOP · ${etaPattern} · LOW \\(${code(low)}\\) · 1 ${noun(low)} returns to the queue`
       expect(screen.preview('u1', onObject('top'))).toMatchObject({ refused: false, text: expect.stringMatching(new RegExp(`^${divert}$`)) })
       await screen.mapSelect('u1')
       await screen.mapTarget('u1', onObject('top'))
-      expect(screen.view().commit.state).toBe('confirm')
-      expect(screen.preview('u1', onObject('low'))).toEqual({ text: 'Confirm ⏎ or Esc first', refused: true })
+      expect(screen.view().commit.state).toBe('choice')
+      expect(screen.preview('u1', onObject('low'))).toEqual({ text: 'Confirm or cancel first', refused: true })
     })
   })
 
-  test('a unit the screen\'s roles do not command previews and answers the refusal, and sends nothing', async () => {
+  test('a unit the screen\'s roles do not command is muted on the map; a tap on it, or ordering it, says which role commands it, and sends nothing', async () => {
     const roleConfig = einsatzConfigSchema.parse(roles.packs[0]!.config)
     const loadRole = scenarioRoleSchema.parse(roles.roles.find(role => roleConfig.authority.some(entry => entry.roleId === role.id && entry.taskTemplates.includes(kinds.templates.load)))!)
     await withScene([unitAt('u1', 'U1', carrier, at(0)), unitAt('p1', 'P1', pairServer, at(1)), taskAt('top', 'TOP', kinds.templates.load, at(2), { [top]: 1 })], async run => {
       // A real role Run: the screen holds the role, so the adapter would refuse what the Board did send.
       const screen = await openScreen(run, createWall(), { actor: roleScreen(run, loadRole.id) })
-      expect(screen.preview('p1', onObject('top'))).toEqual({ text: 'P1 is not commanded by your roles', refused: true })
+      const pairRole = roles.roles.find(role => roleConfig.authority.some(entry => entry.roleId === role.id && entry.taskTemplates.includes(kinds.templates.pair)))!
+      const belongs = `P1 belongs to ${pairRole.label}: add that role to command it`
+      expect(screen.preview('p1', onObject('top'))).toEqual({ text: belongs, refused: true })
       await screen.mapTarget('p1', onObject('top'))
-      expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, 'P1 is not commanded by your roles'])
+      expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, belongs])
       expect(screen.preview('u1', onObject('top'))).toMatchObject({ refused: false })
+      // A tap on it with nothing highlighted says the same, and lets the map selection go.
+      await screen.mapTap('p1')
+      expect([screen.view().feedback?.text, screen.mapSelection(), screen.view().selected]).toEqual([belongs, null, null])
+      // With an asset highlighted, it is no target either and the asset stays highlighted.
+      await screen.mapTap('u1')
+      await screen.mapTap('p1')
+      expect([screen.view().feedback?.text, screen.view().selected]).toEqual([belongs, { kind: 'unit', id: 'u1' }])
+      expect(screen.calls).toHaveLength(0)
+      // The map draws it muted, and the screen's own units not.
+      const mapOrders = createMapOrders()
+      mapOrders.connect({ config: roleConfig, roles: roles.roles.map(role => scenarioRoleSchema.parse(role)) })
+      const objects = run.run.snapshot().objects
+      const viewer = viewerForActor(run.run.roles(), roleScreen(run, loadRole.id))
+      const muted = objects.filter(object => mapOrders.mutedOnMap(object, viewer === undefined ? { objects } : { objects, viewer })).map(object => object.id as string)
+      expect(muted).toEqual(['p1'])
     }, civilRolesWith)
   })
 
@@ -207,7 +249,7 @@ describe('Board map targets and previews', () => {
       for (const [controllerId, target] of targets) await screen.mapTarget(controllerId, target)
       expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { siteId: 'h1' } }, result: { ok: true } })
       // Nor does the Board itself take map orders for a site.
-      expect(screen.preview('h1', onObject('u1'))).toEqual({ text: 'H1 cannot move', refused: true })
+      expect(screen.preview('h1', onObject('u1'))).toEqual({ text: 'H1 does not move', refused: true })
     })
   })
 })

@@ -1,4 +1,4 @@
-import type { IsoTimestamp, ObjectId, OperationalObject, RunRoles, SimulationRunId } from '../core/model/index.ts'
+import type { GeoJsonPoint, IsoTimestamp, ObjectId, OperationalObject, RunRoles, SimulationRunId } from '../core/model/index.ts'
 import type { ActivePackViews } from '../core/packs/active-views.ts'
 import type { PackMapTarget, PackSurfacePanelContribution, PackTargetContext, PackTargetPreview, WorldPackView } from '../core/packs/protocol.ts'
 import type { PanelKey } from './keys/panel-key-router.ts'
@@ -28,6 +28,17 @@ export interface SurfacePanelInteraction {
   readonly previewMapTarget?: (controllerId: ObjectId, target: PackMapTarget) => PackTargetPreview | null
   /** A key the World key router let through; true when the panel handled it. */
   readonly onKey?: (key: PanelKey) => boolean
+}
+
+/**
+ * A one-button prompt a map-target panel shows at a point on the map, such as
+ * "Move here" after a tap on open ground: the map draws the button there and
+ * a tap on it confirms. A tap anywhere else on the map does not.
+ */
+export interface MapPrompt {
+  readonly point: GeoJsonPoint
+  readonly label: string
+  readonly onConfirm: () => void
 }
 
 /** How far a panel reaches over the map from each edge, in CSS pixels. */
@@ -103,6 +114,12 @@ export interface SurfacePanelProps {
    * the Run's per-side visibility decides.
    */
   readonly seenRoleIds: ReadonlyArray<string> | null
+  /**
+   * Shows a prompt at a point on the map, or clears it with null. Only the
+   * open map-target panel's latest prompt is shown; a panel clears its own
+   * when it unmounts.
+   */
+  readonly onMapPrompt: (prompt: MapPrompt | null) => void
 }
 
 /** A panel connects the handlers its contribution declares, and only those. */

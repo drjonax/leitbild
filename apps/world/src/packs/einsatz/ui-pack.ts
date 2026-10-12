@@ -37,7 +37,8 @@ import { boardMapOrders } from './ui/map-orders.ts'
  * detection. A unit's status tone says whether it is free, committed or out
  * of action.
  *
- * The Board is the Pack's one surface panel: open by default, it takes every
+ * The Board is the Pack's one surface panel and its only unit and task list,
+ * so no category takes a rail section. Open by default, it takes every
  * map target click of an Einsatz unit and the World's keys, switches off the
  * map gestures its keys and clicks would collide with, and starts the
  * surface with the rail collapsed. Which units the map selects for orders is
@@ -202,18 +203,19 @@ export const einsatzPackView = {
     version: '1.0.0',
     name: 'Einsatz',
     description: 'Dispatch and command of configured units: unit types, typed properties, task templates, load classes and wording are scenario data. Units move by road or in straight lines, serve and carry counted demand to receiving sites, and follow closed standing orders.',
-    contributions: ['runtime', 'scenario', 'presentation'],
+    contributions: ['runtime', 'scenario', 'presentation', 'targeting'],
   }),
   runtime: {
     runtimes: [{ id: einsatzRuntimeId, version: '1.0.0', label: 'Local Einsatz runtime', kind: 'local', clock: 'simulation' }],
     defaultRuntimeId: einsatzRuntimeId,
   },
   presentation: {
+    // The Board is the only unit and task list, so no category takes a rail section.
     categories: [
-      { id: unitsCategory, label: neutralLexicon.unitBoard, emptyLabel: `No ${neutralLexicon.unitBoard.toLowerCase()}`, matches: object => typeOf(object) === 'unit' },
-      { id: tasksCategory, label: neutralLexicon.workList, emptyLabel: `No ${neutralLexicon.workList.toLowerCase()}`, matches: object => typeOf(object) === 'task' },
-      { id: tracksCategory, label: neutralLexicon.tracks, emptyLabel: `No ${neutralLexicon.tracks.toLowerCase()}`, matches: object => typeOf(object) === 'track' },
-      { id: trackIndexesCategory, label: 'Track indexes', emptyLabel: 'No track indexes', matches: object => typeOf(object) === 'track-index' },
+      { id: unitsCategory, label: neutralLexicon.unitBoard, emptyLabel: `No ${neutralLexicon.unitBoard.toLowerCase()}`, matches: object => typeOf(object) === 'unit', rail: false },
+      { id: tasksCategory, label: neutralLexicon.workList, emptyLabel: `No ${neutralLexicon.workList.toLowerCase()}`, matches: object => typeOf(object) === 'task', rail: false },
+      { id: tracksCategory, label: neutralLexicon.tracks, emptyLabel: `No ${neutralLexicon.tracks.toLowerCase()}`, matches: object => typeOf(object) === 'track', rail: false },
+      { id: trackIndexesCategory, label: 'Track indexes', emptyLabel: 'No track indexes', matches: object => typeOf(object) === 'track-index', rail: false },
     ],
     presentObject: (object, context) => presentEinsatzObject(object, context),
     /** Each unit's queued steps as straight segments after its route: the planned path of its job chain. */
@@ -226,6 +228,8 @@ export const einsatzPackView = {
   },
   targeting: {
     isController: boardMapOrders.isController,
+    // Another role's units are drawn muted; a tap on one says who commands it.
+    mutedOnMap: boardMapOrders.mutedOnMap,
     // Every map order for an Einsatz unit goes to the open Board's `onMapTarget`; the generic surface never sends one.
     isTarget: () => false,
     buildSetTargetCommand: controller => { throw new Error(`Einsatz map orders go through the Board, never the generic map path: ${controller.id}`) },

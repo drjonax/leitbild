@@ -67,7 +67,7 @@ describe('Board session', () => {
     await withRun(async run => {
       const wall = createWall()
       const { ports, seen, settle } = portsFor(run, wall)
-      const session = createBoardSession({ config: civilConfig, viewer: openModeViewer, sides: [], ports })
+      const session = createBoardSession({ config: civilConfig, viewer: openModeViewer, declaredRoles: [], sides: [], ports })
       session.observe(run.run.snapshot().objects, undefined)
       expect(seen.changes).toBe(0)
       observe(session, run)
@@ -94,6 +94,7 @@ describe('Board session', () => {
       const offline = createBoardSession({
         config: civilConfig,
         viewer: openModeViewer,
+        declaredRoles: [],
         sides: [],
         ports: { ...ports, recommend: async () => await awaited(Promise.reject(new Error('Capability query failed: 503'))) },
       })
@@ -104,6 +105,7 @@ describe('Board session', () => {
       const unreachable = createBoardSession({
         config: civilConfig,
         viewer: openModeViewer,
+        declaredRoles: [],
         sides: [],
         ports: { ...ports, invoke: async () => await awaited(Promise.reject(new Error('Failed to fetch'))) },
       })
@@ -126,6 +128,7 @@ describe('Board session', () => {
       const session = createBoardSession({
         config: civilConfig,
         viewer: openModeViewer,
+        declaredRoles: [],
         sides: [],
         ports: { ...ports, invoke: async () => await new Promise<CallResult>(resolve => { answer = resolve }) },
       })
@@ -154,7 +157,7 @@ describe('Board session', () => {
     await withRun(async run => {
       const wall = createWall()
       const { ports, seen, settle } = portsFor(run, wall)
-      const session = createBoardSession({ config: civilConfig, viewer: openModeViewer, sides: [], ports })
+      const session = createBoardSession({ config: civilConfig, viewer: openModeViewer, declaredRoles: [], sides: [], ports })
       const objects = run.run.snapshot().objects
       const later = (ms: number): IsoTimestamp => new Date(run.nowMs() + ms).toISOString() as IsoTimestamp
       const age = () => session.view().workList.rows[0]?.ageText
@@ -182,7 +185,7 @@ describe('Board session', () => {
     await withRun(async run => {
       const wall = createWall()
       const { ports, seen } = portsFor(run, wall)
-      const session = createBoardSession({ config: civilConfig, viewer: openModeViewer, sides: [], ports })
+      const session = createBoardSession({ config: civilConfig, viewer: openModeViewer, declaredRoles: [], sides: [], ports })
       session.dispatch({ kind: 'result', callId: 'board-99', result: { ok: true } })
       expect(seen.failures.map(error => (error as Error).message)).toEqual(['The Board made no call board-99'])
       expect(session.view().feedback).toBeNull()

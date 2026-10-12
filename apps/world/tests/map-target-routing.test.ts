@@ -146,6 +146,9 @@ describe('map clicks with a map-target panel', () => {
   test('a controller click selects it quietly, and with no controller a click shares the object selection', () => {
     const click = clickContext(sendTargeting, { panel })
     expect(routeObjectClick(otherUnit, click)).toEqual({ kind: 'select', objectId: otherUnit.id, note: null })
+    // A second click on the selected controller is the panel's to read; without a panel it selects it again.
+    expect(routeObjectClick(unit, click)).toEqual({ kind: 'panel', controllerId: unit.id, target: { kind: 'object', objectId: unit.id } })
+    expect(routeObjectClick(unit, clickContext(sendTargeting))).toEqual({ kind: 'select', objectId: unit.id, note: 'Selected U1; click a valid target' })
     expect(routeObjectClick(site, { ...click, controller: null })).toEqual({ kind: 'select', objectId: site.id, note: null })
     expect(routeGroundClick(ground, { ...click, controller: null })).toEqual({ kind: 'none' })
   })
@@ -175,6 +178,17 @@ describe('map clicks with a map-target panel', () => {
     expect(received.length).toBe(before)
     expect(panelPreviews).toEqual([])
     expect(routeObjectClick(site, { ...click, controller: unit })).toEqual({ kind: 'panel', controllerId: unit.id, target: { kind: 'object', objectId: site.id } })
+  })
+})
+
+describe('objects the screen may not order', () => {
+  test('a Pack that mutes objects answers for its own objects only; without one the targeting mutes nothing', () => {
+    const muting: PackTargetingContribution = { ...sendTargeting, mutedOnMap: object => roleOf(object) === 'unit' && object.id !== unit.id }
+    const foreignUnit = objectOf('f1', 'foreign', 'unit')
+    const views = createActivePackViews([viewOf('fixture', muting), viewOf('foreign', sendTargeting)])
+    const all = [...objects, foreignUnit]
+    expect(all.filter(object => views.targeting?.mutedOnMap?.(object, { objects: all }) === true).map(object => object.id)).toEqual([otherUnit.id])
+    expect(createActivePackViews([viewOf('fixture', sendTargeting)]).targeting?.mutedOnMap).toBeUndefined()
   })
 })
 

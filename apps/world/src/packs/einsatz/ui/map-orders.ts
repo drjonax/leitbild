@@ -3,12 +3,13 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import type { PackTargetContext } from '../../../core/packs/protocol.ts'
 import { configIdSchema, type EinsatzConfig } from '../config-schema.ts'
 import { einsatzPackId } from '../ids.ts'
-import { ordersOnMap, type PictureRole, type PictureTypes } from '../picture.ts'
+import { commandsUnit, ordersOnMap, type PictureRole, type PictureTypes } from '../picture.ts'
 import { pictureViewerOf } from './screen-viewer.ts'
 
 /**
- * Which Einsatz units the map selects to give orders: the Pack's
- * `targeting.isController`. It is `ordersOnMap` (picture.ts) for the role
+ * Which Einsatz units the map selects to give orders, the Pack's
+ * `targeting.isController`, and which it draws muted because the screen may
+ * not order them, `targeting.mutedOnMap`. It is `ordersOnMap` (picture.ts) for the role
  * view core gives the screen, read against the configuration the Board
  * fetched, so the map and the Board apply one rule over one configuration.
  *
@@ -38,6 +39,12 @@ export interface MapOrders {
   /** Lends the Board's configuration and the declared roles; returns their release. */
   readonly connect: (source: MapOrderSource) => () => void
   readonly isController: (object: OperationalObject, context: PackTargetContext) => boolean
+  /**
+   * The Pack's `targeting.mutedOnMap`: a unit that moves, which the screen
+   * sees but does not command, so the map draws it muted. Nothing is muted
+   * until a Board connects.
+   */
+  readonly mutedOnMap: (object: OperationalObject, context: PackTargetContext) => boolean
 }
 
 const recordTypeSchema = z.object({ type: z.string().min(1) }).loose()
@@ -76,6 +83,13 @@ export const createMapOrders = (): MapOrders => {
       // A task, a track or a track index is never a controller; a unit record that does not parse is an error.
       if (recordTypeSchema.parse(object.packData).type !== 'unit') return false
       return ordersOnMap(connected.types, pictureViewerOf(connected.source.roles, context.viewer), unitSchema.parse(object.packData))
+    },
+    mutedOnMap: (object, context) => {
+      if (object.packId !== einsatzPackId || connected === null) return false
+      if (recordTypeSchema.parse(object.packData).type !== 'unit') return false
+      const unit = unitSchema.parse(object.packData)
+      return connected.types.unitType(unit.unitType).components.mobility !== undefined
+        && !commandsUnit(connected.types, pictureViewerOf(connected.source.roles, context.viewer), unit)
     },
   }
 }

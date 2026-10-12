@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import type { IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
 import { createActivePackViews } from '../../core/packs/active-views.ts'
+import { assertContributionDescriptor } from '../../core/packs/assembly.ts'
+import { scenarioDefinitionSchema } from '../../core/scenarios/definition.ts'
+import { compileScenarioDefinition } from '../../core/scenarios/compiler.ts'
+import { createDirectRoutingAdapter } from '../../routing/direct-adapter.ts'
 import { mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, surfacePanelPackId } from '../../ui/surface-panel-interaction.ts'
 import { einsatzCommandIds } from './capabilities.ts'
 import { civilConfig, civilKinds, civilWith, taskAt, unitAt } from './fixtures/board-harness.ts'
@@ -12,6 +16,7 @@ import { engineObjects } from './engine/objects.ts'
 import { low, templates, types as engineTypes } from './fixtures/engine-harness.ts'
 import fixture from './fixtures/engine.config.json'
 import { neutralLexicon } from './lexicon.ts'
+import { einsatzPack } from './pack.ts'
 import { einsatzBoardPanelId, einsatzPackView } from './ui-pack.ts'
 
 const { categories, presentObject } = einsatzPackView.presentation
@@ -103,6 +108,21 @@ describe('Einsatz UI declarations', () => {
   test('the Pack switches off the map gestures its keys and clicks would collide with, and starts the surface with the rail collapsed', () => {
     expect(mapCameraInteractionFor([einsatzPackView])).toEqual({ doubleClickZoom: false, keyboard: false, boxZoom: false })
     expect(railStartsCollapsed([einsatzPackView])).toBe(true)
+  })
+
+  test('the descriptor declares every contribution the Pack makes, targeting included, so registering it is not refused', () => {
+    expect(einsatzPackView.descriptor.contributions.map(contribution => contribution.kind).sort()).toEqual(['presentation', 'runtime', 'scenario', 'targeting'])
+    expect(() => assertContributionDescriptor(einsatzPack)).not.toThrow()
+  })
+
+  test('no Einsatz category takes a rail section: the Board is the only unit and task list', async () => {
+    expect(categories.map(category => category.rail)).toEqual(categories.map(() => false))
+    const definition = scenarioDefinitionSchema.parse(civilWith([unitAt('u1', 'U1', civilTypes.carrier, civilAt(0)), taskAt('t1', 'T1', civilTemplates.load, civilAt(1), { [civilTop]: 1 })]))
+    const compiled = await compileScenarioDefinition(definition, [einsatzPack], { routing: createDirectRoutingAdapter() })
+    expect(compiled.view.rail.sections).toEqual([])
+    // A Starting View may still name one.
+    const named = await compileScenarioDefinition({ ...definition, view: { ...definition.view, rail: { sections: [{ categoryId: categories[0]!.id, visible: true, collapsed: false, visibleFields: [] }] } } }, [einsatzPack], { routing: createDirectRoutingAdapter() })
+    expect(named.view.rail.sections.map(section => section.categoryId)).toEqual([categories[0]!.id])
   })
 
   test('the generic map path never sends an Einsatz order: the Board takes them all', async () => {

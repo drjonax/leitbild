@@ -28,7 +28,8 @@ const declaredContributionIds = (pack: WorldPack): ReadonlyArray<string> => [
   ...(pack.interactions ? ['interactions'] : []),
 ]
 
-const assertContributionDescriptor = (pack: WorldPack): void => {
+/** Refuses a Pack whose descriptor declares other contributions than it makes. */
+export const assertContributionDescriptor = (pack: WorldPack): void => {
   const declared = pack.descriptor.contributions.map(contribution => contribution.kind).sort()
   const actual = [...declaredContributionIds(pack)].sort()
   if (JSON.stringify(declared) !== JSON.stringify(actual)) {

@@ -1,5 +1,5 @@
 import type { EinsatzConfig, LoadClass, TaskTemplate, UnitType } from '../config-schema.ts'
-import { commandedTypes, commandsUnit, groupUnitTypesOf, inPicture, ordersOnMap, queuesAnyTask, queuesTask, type GroupUnitTypes, type PictureTypes, type PictureViewer } from '../picture.ts'
+import { commandedTypes, commandsUnit, groupUnitTypesOf, inPicture, ordersOnMap, queuesAnyTask, queuesTask, roleCommands, type GroupUnitTypes, type PictureRole, type PictureTypes, type PictureViewer } from '../picture.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
 import type { Arrangement } from './types.ts'
 
@@ -48,6 +48,8 @@ export const boardGroupUnitTypes = (current: () => BoardRecords | null): GroupUn
 export interface BoardRules {
   readonly config: EinsatzConfig
   readonly viewer: PictureViewer
+  /** The configuration's types as the shared picture rules read them. */
+  readonly types: PictureTypes
   readonly typeOf: (unit: BoardUnit) => UnitType
   readonly templateOf: (task: BoardTask) => TaskTemplate
   readonly loadClass: (classId: string) => LoadClass
@@ -108,6 +110,7 @@ export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer, g
   return {
     config,
     viewer,
+    types,
     typeOf,
     templateOf,
     loadClass,
@@ -148,6 +151,22 @@ export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer, g
     },
     get arrangement() { return arrangement() },
   }
+}
+
+/** A role as the Run declares it, with the label a screen shows. */
+export type DeclaredRole = PictureRole & { readonly label: string }
+
+/**
+ * Why the screen cannot order a unit in its picture, in the words the
+ * engine's refusal uses: the operator roles that do command it, so the screen
+ * can add one; or that the unit does not move.
+ */
+export const notOrderedText = (rules: BoardRules, declared: ReadonlyArray<DeclaredRole>, unit: BoardUnit): string => {
+  if (rules.commands(unit)) return `${unit.label} does not move`
+  const commanders = declared.filter(role => role.class === 'operator' && roleCommands(rules.types, role, unit)).map(role => role.label)
+  if (commanders.length === 0) return `${unit.label} is not yours to command, and no operator role commands it`
+  const named = commanders.length === 1 ? commanders[0]! : `${commanders.slice(0, -1).join(', ')} or ${commanders.at(-1)!}`
+  return `${unit.label} belongs to ${named}: add ${commanders.length === 1 ? 'that role' : 'one of those roles'} to command it`
 }
 
 /** Units committed to a task and counted towards it, ordered by id. */

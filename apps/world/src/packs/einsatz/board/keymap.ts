@@ -1,5 +1,7 @@
 /**
- * The Board's keymap. The World key router delivers keys to the open panel
+ * The Board's keymap: hidden desktop accelerators. The Board is driven by
+ * taps and shows no key hint; these keys do the same on a keyboard. The
+ * World key router delivers keys to the open panel
  * whatever element in the frame has focus, and the panel tells it which ones
  * it handled, so their default action is prevented and a focused button's
  * own activation never commits twice.

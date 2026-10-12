@@ -111,6 +111,22 @@ describe('operational map icons', () => {
     expect((layers.find(layer => layer.id === 'leitbild-area-catalogue-symbols')?.props.data as ReadonlyArray<{ readonly id: string }>).map(symbol => symbol.id)).toEqual(['area-symbol:area'])
   })
 
+  test('an object the screen may not order is drawn muted, its presentation aside', () => {
+    const store = createMapFeatureStore()
+    const snapshot = store.update({
+      objects: [objectOf('a', 11.3), objectOf('b', 11.4)],
+      selectedControllerId: null,
+      highlightedObjectIds: [],
+      mutedObjectIds: ['b'],
+      hiddenObjectCategoryIds: [],
+      placementPoints: [],
+      packFeatures: [],
+      hasNewInfo: () => false,
+      presentationFor: presentationWith({}),
+    })
+    expect(snapshot.points.map(point => [point.id, point.muted])).toEqual([['a', false], ['b', true]])
+  })
+
   test('labels are drawn natively only for objects whose Pack presents one', () => {
     const snapshot = snapshotOf([objectOf('a', 11.3), objectOf('b', 11.4)], presentationWith({}, { b: 'B2 · ENR' }))
     expect(snapshot.points.find(point => point.id === 'a')?.label).toBeNull()

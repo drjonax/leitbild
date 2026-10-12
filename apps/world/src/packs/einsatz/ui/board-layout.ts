@@ -42,6 +42,75 @@ export const boardLayoutFor = (surfaceWidthPx: number, lead: Arrangement['lead']
 export type BoardSection = 'work' | 'units' | 'contacts'
 
 /**
+ * The Board's height, top to bottom: its padding, the alerts strip while any
+ * alert stands (capped, scrolling inside), the action bar (capped, scrolling
+ * inside past its cap), the status line (feedback, Undo, sound), the lists
+ * and the event log, with a gap between each. The lists share what is left
+ * in fixed parts, each scrolling on its own, so Calls and Assets both stay in
+ * view however long either grows. Every height a tap target takes is at
+ * least `tapPx`.
+ */
+export const tapPx = 44
+export const boardChromePx = {
+  padding: 8,
+  gap: 6,
+  /** The alerts strip's cap: two alerts. */
+  alerts: 48,
+  /** The action bar's cap: the big button, one line of alternatives or verbs, and one line of what is still needed. */
+  actionBar: 112,
+  statusLine: tapPx,
+  /** Two lines of the event log. */
+  log: 30,
+} as const
+
+/**
+ * The lists' box model. The panel binds these on the Board as CSS custom
+ * properties (`rowBoxStyle`) and the lists' style sheets size their rows and
+ * headings with them, so a row's height here is its height on screen: its
+ * lines and the gaps between them, its padding and 1 px border, and the gap
+ * to the next row. A line that wraps makes its row taller.
+ */
+export const rowBoxPx = { line: 16, lineGap: 2, padding: 6, border: 1, gap: 4, headingGap: 4 } as const
+/** The custom properties the panel binds on the Board, by name. */
+export const rowBoxVars: Readonly<Record<string, string>> = {
+  '--board-line': `${rowBoxPx.line}px`,
+  '--line-gap': `${rowBoxPx.lineGap}px`,
+  '--row-pad': `${rowBoxPx.padding}px`,
+  '--row-gap': `${rowBoxPx.gap}px`,
+  '--heading-gap': `${rowBoxPx.headingGap}px`,
+}
+/** The same, as the Board's style attribute. */
+export const rowBoxStyle = Object.entries(rowBoxVars).map(([name, value]) => `${name}: ${value}`).join('; ')
+/** A list's heading above its rows: one line and the gap below it. */
+export const listHeadingPx = rowBoxPx.line + rowBoxPx.headingGap
+/** The lines a row shows: a call's three, an asset's or a contact's two. */
+const rowLines: Readonly<Record<BoardSection, number>> = { work: 3, units: 2, contacts: 2 }
+const rowHeightPx = (lines: number): number =>
+  lines * rowBoxPx.line + (lines - 1) * rowBoxPx.lineGap + 2 * rowBoxPx.padding + 2 * rowBoxPx.border + rowBoxPx.gap
+/** The height one row takes in its list, the gap to the next included; at least a tap target. */
+export const rowPx: Readonly<Record<BoardSection, number>> = { work: rowHeightPx(rowLines.work), units: rowHeightPx(rowLines.units), contacts: rowHeightPx(rowLines.contacts) }
+const listShares: Readonly<Record<BoardSection, number>> = { work: 4, units: 3, contacts: 3 }
+
+/** The Board's height on a surface this tall: what its top and bottom clearances leave. */
+export const boardHeightFor = (surfaceHeightPx: number): number => surfaceHeightPx - boardTopClearancePx - boardBottomClearancePx
+
+/** The CSS grid rows of the lists: each its fixed share, none growing past it. */
+export const listRowsTemplate = (sections: ReadonlyArray<BoardSection>): string =>
+  sections.map(section => `minmax(0, ${listShares[section]}fr)`).join(' ')
+
+/** The height each list takes on a Board this tall, with the alerts strip shown or not. */
+export const listHeightsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, alerts: boolean): Readonly<Partial<Record<BoardSection, number>>> => {
+  const { padding, gap, actionBar, statusLine, log } = boardChromePx
+  const lists = boardHeightPx - 2 * padding - (alerts ? boardChromePx.alerts + gap : 0) - actionBar - statusLine - log - 3 * gap
+  const listGaps = gap * Math.max(0, sections.length - 1)
+  const parts = sections.reduce((sum, section) => sum + listShares[section], 0)
+  return Object.fromEntries(sections.map(section => [section, (lists - listGaps) * listShares[section] / parts]))
+}
+
+/** How many rows of a list show at once in its share, below its heading; the last row needs no gap after it. */
+export const visibleRows = (listHeightPx: number, section: BoardSection): number => (listHeightPx - listHeadingPx + rowBoxPx.gap) / rowPx[section]
+
+/**
  * The Board's lists in the order the arrangement leads with: the work list
  * first for roles with a queue, the Contacts list first for map-led roles;
  * a list the arrangement leaves out is not shown.

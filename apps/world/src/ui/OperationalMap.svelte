@@ -34,9 +34,12 @@
   import { createPackLiveLayerController, maplibreLiveMapPort, type PackLiveMapLayerBinding } from './map-runtime/pack-live-layer.ts'
   import { composeSymbolAtlas, loadMapSymbols, rasterizeSymbol } from './map-runtime/map-symbols.ts'
   import { createCatalogueSymbolAtlas } from './map-runtime/catalogue-symbol-atlas.ts'
-  import type { CameraInteraction } from './map/map-camera.ts'
+  import type { Map as MapLibreMap } from 'maplibre-gl'
+  import { startingZoomFor, type CameraInteraction } from './map/map-camera.ts'
   import { mapClickOutcome } from './map-target-routing.ts'
-  import { noMapCover, type MapCover } from './surface-panel-interaction.ts'
+  import { noMapCover, type MapCover, type MapPrompt } from './surface-panel-interaction.ts'
+  import { createMapPromptController } from './map/map-prompt.ts'
+  import { hoverCardsFor, longPressObject } from './map/map-pointer.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
     installMapPerformanceDiagnosticsGlobal,
@@ -62,6 +65,10 @@
     readonly routeRevision: number
     readonly debugMapInput?: boolean
     readonly highlightedObjectIds?: ReadonlyArray<string>
+    /** Objects the screen sees but may not order: drawn muted. */
+    readonly mutedObjectIds?: ReadonlyArray<string>
+    /** The open map-target panel's one-button prompt at a point, e.g. "Move here". */
+    readonly prompt?: MapPrompt | null
     readonly hiddenObjectCategoryIds?: ReadonlyArray<string>
     readonly hasNewInfo: (object: OperationalObject) => boolean
     readonly presentationFor: (object: OperationalObject) => PackObjectPresentation
@@ -99,7 +106,9 @@
     readonly onAssignmentObjectSelected?: (object: OperationalObject, screen: { readonly x: number; readonly y: number }) => void
     readonly onAssignmentHandleSelected?: (controllerId: string) => void
     readonly onAssignmentCancelled?: () => void
+    /** A mouse long press on an object `canLongPress` accepts; a press on any other object stays a plain click. */
     readonly onObjectLongPressed?: (object: OperationalObject) => void
+    readonly canLongPress?: (object: OperationalObject) => boolean
     /** Camera gestures on or off; only an active Pack switches one off. */
     readonly cameraInteraction: CameraInteraction
     /** How far open surface panels reach over the map: the camera centres and fits clear of them, and so do the map's own controls. */
@@ -122,6 +131,8 @@
     routeRevision,
     debugMapInput = false,
     highlightedObjectIds = [],
+    mutedObjectIds = [],
+    prompt = null,
     hiddenObjectCategoryIds = [],
     hasNewInfo,
     presentationFor,
@@ -153,6 +164,7 @@
     onAssignmentHandleSelected = () => {},
     onAssignmentCancelled = () => {},
     onObjectLongPressed = () => {},
+    canLongPress = () => false,
     cameraInteraction,
     cameraPadding = noMapCover,
     onGroundSelected,
@@ -168,9 +180,13 @@
   const syncPackFeatures = () => { if (runtime) packFeatureLayer.update(runtime.map, cachedPackMapFeatures, visibleFamilies()) }
   let appliedTheme: ThemeMode | null = null
   let appliedCameraKey: string | null = null
+  /** The camera still shows the Starting View: neither the operator nor a focus request has moved it. */
+  let startingCamera = true
   let appliedFocusRevision = -1
   let mapReadyNotified = false
   let hoveredObject: OperationalObject | null = null
+  /** The type of the last pointer seen on the canvas; hover cards and the long press are for a mouse only (map-pointer.ts). */
+  let lastPointerType: string | null = null
   let assignmentPointer = $state<GeoJsonPoint | null>(null)
   let interactionRevision = $state(0)
   let lastPointerScreen = { x: 0, y: 0 }
@@ -216,6 +232,8 @@
     mapInputDebugController = createNoopMapInputDebugController()
   }
 
+  const promptController = createMapPromptController({ getMap: () => runtime?.map ?? null })
+
   const popupController = createMapPopupController({
     getMap: () => runtime?.map ?? null,
     presentationFor: (object) => presentationFor(object),
@@ -238,6 +256,7 @@
       objects,
       selectedControllerId,
       highlightedObjectIds,
+      mutedObjectIds,
       hiddenObjectCategoryIds,
       placementPoints,
       packFeatures: cachedPackMapFeatures,
@@ -258,7 +277,7 @@
     onObjectSeen: object => onObjectSeen(object),
     onObjectHover: object => {
       hoveredObject = object
-      if (object) popupController.show(object)
+      if (object && hoverCardsFor(lastPointerType)) popupController.show(object)
       else popupController.hide()
     },
     onAssignmentHandleSelected: handle => { clickHandled = true; suppressBackgroundClick = true; onAssignmentHandleSelected(handle.controllerId) },
@@ -289,7 +308,7 @@
     rasterize: rasterizeSymbol,
     documentHidden: () => document.hidden,
     onSelect: selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) },
-    onHover: hover => { if (hover) popupController.showCard(hover); else popupController.hide() },
+    onHover: hover => { if (hover && hoverCardsFor(lastPointerType)) popupController.showCard(hover); else popupController.hide() },
     onError: message => onMapError(`Live map layer: ${message}`),
   })
 
@@ -330,6 +349,7 @@
     const current = runtime?.map
     if (!request || !current || request.revision === appliedFocusRevision) return
     appliedFocusRevision = request.revision
+    startingCamera = false
     if (request.target.kind === 'point') {
       current.flyTo({ center: [request.target.center[0], request.target.center[1]], zoom: Math.max(current.getZoom(), 9), duration: 650 })
       return
@@ -421,16 +441,25 @@
     })
   }
 
+  /** The Starting View, fitted into the part of the map no panel covers. */
+  const jumpToStartingView = (current: MapLibreMap): void => {
+    const padding = { top: cameraPadding.top, right: cameraPadding.right, bottom: cameraPadding.bottom, left: cameraPadding.left }
+    const container = current.getContainer()
+    current.jumpTo({
+      center: mapConfig.center.coordinates,
+      zoom: startingZoomFor(mapConfig.zoom, { width: container.clientWidth, height: container.clientHeight }, padding),
+      padding,
+    })
+  }
+
   const applyScenarioCameraDefault = (): void => {
     const current = runtime?.map
     if (!current) return
     const cameraKey = cameraKeyFor(mapConfig)
     if (cameraKey === appliedCameraKey) return
     appliedCameraKey = cameraKey
-    current.jumpTo({
-      center: mapConfig.center.coordinates,
-      zoom: mapConfig.zoom,
-    })
+    startingCamera = true
+    jumpToStartingView(current)
   }
 
   const notifyMapReady = (): void => {
@@ -471,7 +500,8 @@
             else if (outcome === 'ground') onGroundSelected?.(point)
           })
         },
-        onMoveStart: () => {
+        onMoveStart: event => {
+          if (event.originalEvent !== undefined) startingCamera = false
           packOverlayController.setCameraGestureActive(true)
           packOverlayController.abort('map camera moved before pack map-area query completed')
           popupController.hide()
@@ -503,8 +533,10 @@
       }
       const onPointerDown = (event: PointerEvent) => {
         pointerPoint(event)
-        if (assignmentActive || placementMode || event.button !== 0 || !hoveredObject) return
-        const origin = hoveredObject
+        lastPointerType = event.pointerType
+        if (!hoverCardsFor(lastPointerType)) popupController.hide()
+        const origin = longPressObject({ pointerType: event.pointerType, button: event.button, hovered: hoveredObject, busy: assignmentActive || placementMode !== null, canLongPress })
+        if (origin === null) return
         holdStart = { x: event.clientX, y: event.clientY }
         holdTimer = setTimeout(() => {
           holdTimer = null
@@ -519,6 +551,7 @@
       }
       const onPointerMove = (event: PointerEvent) => {
         const point = pointerPoint(event)
+        lastPointerType = event.pointerType
         if (holdStart && Math.hypot(event.clientX - holdStart.x, event.clientY - holdStart.y) > 7) clearHold()
         if (!assignmentActive) return
         assignmentPointer = point
@@ -576,11 +609,13 @@
       packFeatureLayer.destroy()
       packOverlayController.destroy()
       popupController.hide()
+      promptController.destroy()
       referenceLayerController.reset()
       runtime?.destroy()
       runtime = null
       appliedTheme = null
       appliedCameraKey = null
+      startingCamera = true
       mapReadyNotified = false
     }
   })
@@ -589,6 +624,7 @@
     objects
     selectedControllerId
     highlightedObjectIds
+    mutedObjectIds
     routeRevision
     untrack(() => operationalRenderController.syncObjects())
   })
@@ -672,6 +708,12 @@
   })
 
   $effect(() => {
+    const shown = prompt
+    if (!runtime) return
+    untrack(() => promptController.show(shown))
+  })
+
+  $effect(() => {
     const interaction = cameraInteraction
     const currentRuntime = runtime
     if (!currentRuntime) return
@@ -683,6 +725,11 @@
     const current = runtime?.map
     if (!current) return
     untrack(() => {
+      // Until the operator moves the camera, it shows the whole Starting View clear of the panels.
+      if (startingCamera) {
+        jumpToStartingView(current)
+        return
+      }
       const applied = current.getPadding()
       if (applied.top === top && applied.right === right && applied.bottom === bottom && applied.left === left) return
       current.easeTo({ padding: { top, right, bottom, left }, duration: 250 })
@@ -743,5 +790,26 @@
   .map :global(.maplibregl-ctrl-top-left),
   .map :global(.maplibregl-ctrl-bottom-left) {
     left: var(--map-cover-left);
+  }
+
+  /* A panel's prompt at a point: one button, large enough to tap. */
+  .map :global(.map-prompt .maplibregl-popup-content) {
+    padding: 0;
+    border-radius: 10px;
+    background: transparent;
+    box-shadow: 0 6px 18px rgba(16, 24, 40, .28);
+  }
+
+  .map :global(.map-prompt-button) {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 10px 16px;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
   }
 </style>

@@ -141,7 +141,7 @@ describe('Board Contacts', () => {
   test('through the controller, a side\'s screen lists only its own side\'s tracks; a role without sensing or firing units gets no Contacts list', async () => {
     const { objects, nowMs } = await engagement()
     const screen = (viewer: PictureViewer) => {
-      const board = createBoardController({ config, viewer, sides: declaredSides })
+      const board = createBoardController({ config, viewer, declaredRoles: [], sides: declaredSides })
       board.dispatch({ kind: 'snapshot', objects, currentTime: new Date(nowMs).toISOString() as IsoTimestamp, wallMs: 0 })
       return board.view()
     }
@@ -159,7 +159,7 @@ describe('Board Contacts', () => {
 
   test('the Controller\'s screen lists each side\'s tracks under the side\'s declared label, in declared order, so no two rows of a group share a serial', async () => {
     const { objects, nowMs } = await engagement()
-    const board = createBoardController({ config, viewer: controllerViewer(), sides: declaredSides })
+    const board = createBoardController({ config, viewer: controllerViewer(), declaredRoles: [], sides: declaredSides })
     board.dispatch({ kind: 'snapshot', objects, currentTime: new Date(nowMs).toISOString() as IsoTimestamp, wallMs: 0 })
     const contacts = board.view().contacts!
     const records = readBoardRecords(objects)
@@ -191,14 +191,14 @@ describe('Board Contacts', () => {
 
   test('the unit board shows an armed unit\'s rules of engagement and the track it fires on, and how visible each unit stands', async () => {
     const { state, objects, nowMs } = await engagement()
-    const board = createBoardController({ config, viewer: blueCommander(), sides: declaredSides })
+    const board = createBoardController({ config, viewer: blueCommander(), declaredRoles: [], sides: declaredSides })
     board.dispatch({ kind: 'snapshot', objects, currentTime: new Date(nowMs).toISOString() as IsoTimestamp, wallMs: 0 })
     const rows = new Map(board.view().unitBoard.rows.map(row => [row.id, row]))
     const nearTrack = state.combat.tracks.get(trackOn(state, blue, 'near'))!
     expect(rows.get('b1')).toMatchObject({ roeText: roeWords.free, targetText: `→ ${nearTrack.label}`, postureText: 'Revealed' })
     expect(rows.get('s1')).toMatchObject({ roeText: null, targetText: null, postureText: 'Concealed' })
     // Right after it was placed, the scout is still halting: the count runs down to concealment.
-    const fresh = createBoardController({ config, viewer: blueCommander(), sides: declaredSides })
+    const fresh = createBoardController({ config, viewer: blueCommander(), declaredRoles: [], sides: declaredSides })
     const placed = await stateWith([place('s1', types.blueScout, blue, at(0))])
     fresh.dispatch({ kind: 'snapshot', objects: engineObjects(placed, () => ({ at: new Date(placed.timeMs).toISOString() as IsoTimestamp, provenance: { source: 'simulator' } })), currentTime: new Date(placed.timeMs + 12_000).toISOString() as IsoTimestamp, wallMs: 0 })
     const concealAfterS = config.unitTypes.find(type => type.id === types.blueScout)!.components.signature!.concealAfterS

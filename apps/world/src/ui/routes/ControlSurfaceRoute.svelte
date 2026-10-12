@@ -56,7 +56,7 @@
   import { startupScenarioSource } from '../app/startup-scenario.ts'
   import { loadActivePackViews } from '../pack-loader.ts'
   import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
-  import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapCover, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
+  import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapCover, type MapPrompt, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
   import PanelKeyRouter from '../keys/PanelKeyRouter.svelte'
   import type { PanelKey } from '../keys/panel-key-router.ts'
   import {
@@ -325,6 +325,15 @@
     : null)
   const keymapPanel = $derived(openPanelDeclaring(surfacePanels, isSurfacePanelOpen, 'keymap'))
   const mapCameraPadding = $derived(cameraPaddingFor(surfacePanels.filter(isSurfacePanelOpen).flatMap(panel => panelMapCovers[panel.id] ?? [])))
+  // Each panel's latest map prompt; only the open map-target panel's is drawn.
+  let panelMapPrompts = $state.raw<Readonly<Record<string, MapPrompt | null>>>({})
+  const mapPrompt = $derived(mapTargetPanelContribution ? panelMapPrompts[mapTargetPanelContribution.id] ?? null : null)
+  // A panel lending its handlers may change which objects its Pack lets this screen order, so the muted set follows them.
+  const mapMutedObjectIds = $derived.by(() => {
+    void panelInteractions
+    const mutedOnMap = activePack?.targeting?.mutedOnMap
+    return mutedOnMap ? objects.filter(object => mutedOnMap(object, targetContext)).map(object => object.id) : emptyStringArray
+  })
   const mapCameraInteraction = $derived(mapCameraInteractionFor(activePack?.packs ?? []))
   const mapClickContext = $derived<MapClickContext>({ controller: selectedControllerObject, targeting: activePack?.targeting, context: targetContext, panel: mapTargetPanel })
   const mapStartupFailed = $derived(startupSteps.find(step => step.id === 'map')?.status === 'failed')
@@ -1237,6 +1246,9 @@
     mapAssignmentChoiceIds = []
   }
 
+  /** A long press starts a map assignment only on an object whose Pack declares one; on any other it stays a plain click. */
+  const canLongPress = (object: OperationalObject): boolean => activePack !== null && activePack.packForObject(object).mapAssignment !== undefined
+
   const beginMapAssignment = (controller: OperationalObject, mode: PackMapAssignmentMode): void => {
     if (!activePack) return
     const contribution = activePack.packForObject(controller).mapAssignment
@@ -2002,6 +2014,8 @@
           {routeRevision}
           {debugMapInput}
           highlightedObjectIds={scenarioState?.highlightedObjectIds ?? emptyStringArray}
+          mutedObjectIds={mapMutedObjectIds}
+          prompt={mapPrompt}
           {hiddenObjectCategoryIds}
           {hasNewInfo}
           presentationFor={mapPresentationFor}
@@ -2030,6 +2044,7 @@
           assignmentAnchor={mapAssignmentAnchor}
           assignmentHandles={mapAssignmentHandles}
           onObjectLongPressed={object => beginMapAssignment(object, 'start')}
+          {canLongPress}
           onAssignmentHandleSelected={controllerId => { const controller = objects.find(object => object.id === controllerId); if (controller) beginMapAssignment(controller, 'append') }}
           onAssignmentObjectSelected={chooseMapAssignmentTarget}
           onAssignmentCancelled={cancelMapAssignment}
@@ -2084,7 +2099,7 @@
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}
           {#if (surfacePanelOpen[panel.id] ?? panel.defaultOpen) && Panel}
-            <Panel {simulationRunId} {objects} {seenRoleIds} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} roleSet={panelRoleSet} onMapCover={(cover: MapCover) => { panelMapCovers = { ...panelMapCovers, [panel.id]: assertMapCover(panel.id, cover) } }} />
+            <Panel {simulationRunId} {objects} {seenRoleIds} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} roleSet={panelRoleSet} onMapCover={(cover: MapCover) => { panelMapCovers = { ...panelMapCovers, [panel.id]: assertMapCover(panel.id, cover) } }} onMapPrompt={(prompt: MapPrompt | null) => { panelMapPrompts = { ...panelMapPrompts, [panel.id]: prompt } }} />
           {/if}
         {/each}
         {/key}

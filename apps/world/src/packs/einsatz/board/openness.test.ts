@@ -39,7 +39,7 @@ describe('Board openness on supply-run', () => {
     expect(supplyRun.packs[0]!.config).toEqual(supplyConfig)
   })
 
-  test('the cue-created unit is dispatched in 2 actions; the lighter one shows its property reason, then becomes eligible once raised', async () => {
+  test('the cue-created unit is dispatched in 2 actions; the lighter one is free but not eligible, says why naming itself once, then becomes eligible once raised', async () => {
     const run = await openRun({ definition: supplyRun })
     try {
       const wall = createWall()
@@ -48,11 +48,12 @@ describe('Board openness on supply-run', () => {
 
       await screen.key('n')
       const before = screen.view()
-      expect(before.selected).toMatchObject({ kind: 'task', ineligible: [{ label: lighter.label, reasons: [lighterReason] }] })
+      expect(before.selected).toMatchObject({ kind: 'task', ineligible: [lighterReason] })
       expect(before.commit).toMatchObject({ state: 'none', enabled: false })
-      expect(before.commit.text).toStartWith('No unit can serve: needs 1 more')
+      // Not "no unit can serve": a unit could, once its property allows it.
+      expect(before.commit.text).toBe(`No eligible unit · ${lighterReason}`)
       expect(before.workList.rows[0]!.statusText).toBe(before.commit.text)
-      expect(before.alerts.filter(alert => alert.code === 'no_unit_can_serve').map(alert => alert.message)).toEqual([before.commit.text])
+      expect(before.alerts.filter(alert => alert.code === 'no_unit_can_serve')).toEqual([])
 
       await runFor(run, created.at.seconds * 1_000 + 1_000, [screen])
       const newcomer = screen.view().unitBoard.rows.find(row => row.id !== lighter.id)!
@@ -67,8 +68,8 @@ describe('Board openness on supply-run', () => {
       await runFor(run, (requested.at.seconds + 30) * 1_000 - (run.nowMs() - startMs), [screen])
       await screen.key('n')
       const waiting = screen.view()
-      expect(waiting.selected).toMatchObject({ kind: 'task', ineligible: [{ reasons: [lighterReason] }] })
-      expect(waiting.commit.text).toBe('No free unit · 1 committed')
+      expect(waiting.selected).toMatchObject({ kind: 'task', ineligible: [lighterReason] })
+      expect(waiting.commit.text).toBe(`No eligible unit · ${lighterReason} · 1 busy`)
 
       await runFor(run, (raised.at.seconds + 5) * 1_000 - (run.nowMs() - startMs), [screen])
       expect(screen.view().unitBoard.rows.find(row => row.id === lighter.id)!.properties[0]!.value).toBe(`${raise.properties[property.id]} ${unitOf}`)

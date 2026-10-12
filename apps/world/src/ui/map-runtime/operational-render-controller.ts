@@ -24,6 +24,7 @@ export interface OperationalRenderControllerState {
   readonly objects: ReadonlyArray<OperationalObject>
   readonly selectedControllerId: string | null
   readonly highlightedObjectIds: ReadonlyArray<string>
+  readonly mutedObjectIds: ReadonlyArray<string>
   readonly hiddenObjectCategoryIds: ReadonlyArray<string>
   readonly placementPoints: ReadonlyArray<GeoJsonPoint>
   readonly packFeatures: ReadonlyArray<PackMapFeature>
@@ -194,6 +195,7 @@ export const createOperationalRenderController = (
           objects: displayObjects,
           selectedControllerId: state.selectedControllerId,
           highlightedObjectIds: state.highlightedObjectIds,
+          mutedObjectIds: state.mutedObjectIds,
           hiddenObjectCategoryIds: state.hiddenObjectCategoryIds,
           placementPoints: state.placementPoints,
           packFeatures: state.packFeatures,

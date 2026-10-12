@@ -48,3 +48,24 @@ export const assertCameraInteractionContract = (current: MapLibreMap, interactio
     throw new Error(`Map camera interactions do not match the contract: ${wrong.join(', ')}`)
   }
 }
+
+/** Pixels on each side of the map a camera keeps clear, as MapLibre's `padding`. */
+export interface CameraPadding {
+  readonly top: number
+  readonly right: number
+  readonly bottom: number
+  readonly left: number
+}
+
+/**
+ * The zoom that shows a Starting View's whole extent inside the part of the
+ * map no panel covers: the authored zoom describes the full map, so it is
+ * lowered by how much narrower (or shorter) the clear part is. A map with no
+ * size yet, or no clear part, keeps the authored zoom.
+ */
+export const startingZoomFor = (zoom: number, size: { readonly width: number; readonly height: number }, padding: CameraPadding): number => {
+  const clearWidth = size.width - padding.left - padding.right
+  const clearHeight = size.height - padding.top - padding.bottom
+  if (size.width <= 0 || size.height <= 0 || clearWidth <= 0 || clearHeight <= 0) return zoom
+  return zoom - Math.log2(Math.max(size.width / clearWidth, size.height / clearHeight))
+}

@@ -311,6 +311,7 @@ const boardText = async (screen: Screen, earlier?: Shown): Promise<string> => {
   const board = createBoardController({
     config: configuration,
     viewer: { class: roleClassForRoleSet(declaration, screen.roleIds), sees: seesForRoleSet(declaration, screen.roleIds), roles: declaration.roles.filter(role => screen.roleIds.includes(role.id)) },
+    declaredRoles: declaration.roles,
     sides: declaration.sides ?? [],
   })
   const show = async (shown: Shown): Promise<void> => {

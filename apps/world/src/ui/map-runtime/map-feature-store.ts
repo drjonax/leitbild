@@ -108,7 +108,7 @@ const operationalPointFor = (
   const selected = object.id === context.selectedControllerId
   const highlighted = context.highlightedObjectIds.has(object.id)
   const hasNewInfo = presentation.noteworthyUpdates === true && context.hasNewInfo(object)
-  const muted = presentation.muted === true
+  const muted = presentation.muted === true || context.mutedObjectIds.has(object.id)
   const color = muted ? colorWithAlpha(hexToRgba(presentation.color), 132) : hexToRgba(presentation.color)
   const sizePx = presentation.mapIconSizePx ?? symbolSizePx(symbolId)
   const signature = [
@@ -228,6 +228,7 @@ const projectionContextFor = (
 ): MapFeatureProjectionContext => ({
   selectedControllerId: input.selectedControllerId,
   highlightedObjectIds: new Set(input.highlightedObjectIds),
+  mutedObjectIds: new Set(input.mutedObjectIds ?? []),
   hiddenObjectCategoryIds: new Set(input.hiddenObjectCategoryIds),
   hasNewInfo: input.hasNewInfo,
   presentationFor: input.presentationFor,

@@ -7,6 +7,7 @@ import type { SideLabel } from '../board/contacts.ts'
 import { createBoardController } from '../board/controller.ts'
 import type { BoardEffect, BoardEventBody, BoardView, CallResult } from '../board/types.ts'
 import type { PictureViewer } from '../picture.ts'
+import type { DeclaredRole } from '../board/rules.ts'
 
 /**
  * One Board controller wired to the World, as the Board panel runs it. The
@@ -67,12 +68,14 @@ const messageOf = (error: unknown): string => error instanceof Error ? error.mes
 export const createBoardSession = (options: {
   readonly config: EinsatzConfig
   readonly viewer: PictureViewer
+  /** The roles the Run declares, with their labels; none in a Run without roles. */
+  readonly declaredRoles: ReadonlyArray<DeclaredRole>
   /** The sides the Run declares; none in a Run that declares none. */
   readonly sides: ReadonlyArray<SideLabel>
   readonly ports: BoardPorts
 }): BoardSession => {
   const { ports } = options
-  const controller = createBoardController({ config: options.config, viewer: options.viewer, sides: options.sides })
+  const controller = createBoardController({ config: options.config, viewer: options.viewer, declaredRoles: options.declaredRoles, sides: options.sides })
   let disposed = false
   /** The Run time of the last snapshot fed, in ms. */
   let fedMs: number | null = null

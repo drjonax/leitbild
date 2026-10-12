@@ -6,7 +6,8 @@ import type { PackCommandRequest, PackMapTarget, PackTargetContext, PackTargetin
  * selects controllers and sends the Pack's target command, as it always has;
  * while an open panel declares map targets, every target click for a
  * controller of the panel's own Pack goes to that panel and the surface never
- * sends one. A controller of another Pack keeps the generic path.
+ * sends one, a second click on the selected controller included. A controller
+ * of another Pack keeps the generic path.
  */
 
 /** The open panel declaring map targets, with its handlers once it has connected them. */
@@ -57,12 +58,14 @@ const send = (command: PackCommandRequest, preview: PackTargetPreview | null, su
 
 export const routeObjectClick = (object: OperationalObject, click: MapClickContext): MapClickRoute => {
   const { controller, targeting, context, panel } = click
+  const owningPanel = controller ? panelFor(panel, controller) : null
   if (targeting?.isController(object, context)) {
+    // A second click on the selected controller is the panel's to read, e.g. a touch screen clearing the highlight.
+    if (owningPanel && controller?.id === object.id) return toPanel(owningPanel, controller.id, { kind: 'object', objectId: object.id })
     return { kind: 'select', objectId: object.id, note: panelFor(panel, object) ? null : `Selected ${object.label}; click a valid target` }
   }
   // With no unit chosen, a click shares the object's selection with the panel instead of ordering anything.
   if (panel && !controller) return { kind: 'select', objectId: object.id, note: null }
-  const owningPanel = controller ? panelFor(panel, controller) : null
   if (owningPanel && controller) return toPanel(owningPanel, controller.id, { kind: 'object', objectId: object.id })
   if (!controller || !targeting || object.id === controller.id) return none
   const target: PackMapTarget = { kind: 'object', objectId: object.id }

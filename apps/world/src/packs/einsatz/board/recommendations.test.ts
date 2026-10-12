@@ -77,7 +77,7 @@ describe('Board recommendation answers', () => {
       expect(again.map(effect => effect.taskId)).toEqual(['task:1'])
       await screen.perform(again)
       expect(row().statusText).toBeNull()
-      expect(screen.view().commit.text).toStartWith(`⏎ ${word('send')} U1 → T1`)
+      expect(screen.view().commit.text).toStartWith(`${word('send')} U1 → T1`)
     })
   })
 
@@ -103,7 +103,7 @@ describe('Board recommendation answers', () => {
       await runFor(run, 10_000)
       await screen.perform(asked(snapshotOf(run, screen)))
       expect(row().statusText).toBeNull()
-      expect(screen.view().commit.text).toStartWith(`⏎ ${word('send')} U1 → T1`)
+      expect(screen.view().commit.text).toStartWith(`${word('send')} U1 → T1`)
     })
   })
 })

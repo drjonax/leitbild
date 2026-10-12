@@ -98,6 +98,8 @@ export interface OperationalRenderInput {
   readonly objects: ReadonlyArray<OperationalObject>
   readonly selectedControllerId: string | null
   readonly highlightedObjectIds: ReadonlyArray<string>
+  /** Objects the screen sees but may not order (`targeting.mutedOnMap`): drawn muted. */
+  readonly mutedObjectIds?: ReadonlyArray<string>
   readonly hiddenObjectCategoryIds: ReadonlyArray<string>
   readonly placementPoints: ReadonlyArray<GeoJsonPoint>
   readonly packFeatures: ReadonlyArray<PackMapFeature>
@@ -180,6 +182,7 @@ export interface MapRuntimeHandle {
 export interface MapFeatureProjectionContext {
   readonly selectedControllerId: string | null
   readonly highlightedObjectIds: ReadonlySet<string>
+  readonly mutedObjectIds: ReadonlySet<string>
   readonly hiddenObjectCategoryIds: ReadonlySet<string>
   readonly hasNewInfo: (object: OperationalObject) => boolean
   readonly presentationFor: (object: OperationalObject) => PackObjectPresentation

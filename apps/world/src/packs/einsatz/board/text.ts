@@ -37,8 +37,15 @@ export const distanceText = (metres: number): string => metres < 1_000 ? `${Math
  * words and verbs are the lexicon's.
  */
 export const boardWords = {
-  soundOff: 'Sound off · click to enable',
+  soundOff: 'Sound off · tap to enable',
   soundOn: 'Sound on',
+  confirm: 'Confirm',
+  cancel: 'Cancel',
+  doNow: 'Do now',
+  undo: 'Undo',
+  confirmFirst: 'Confirm or cancel first',
+  preparing: 'Preparing…',
+  nothingToSend: 'Nothing to send',
   eta: 'ETA',
   remainder: 'Still needs',
   alerts: 'Alerts',
@@ -83,3 +90,12 @@ export const propertyText = (property: UnitProperty, value: number | boolean | s
 export const reasonText = (reason: string): string => /^[a-z][a-z0-9_]*: (\S[\s\S]*)$/.exec(reason)?.[1] ?? reason
 
 export const joinUnits = (labels: ReadonlyArray<string>): string => labels.join(' + ')
+
+/**
+ * A reason about a unit that names the unit once: the engine's reasons
+ * mostly start with the unit's label ("Unit 2 · Payload 300 kg · needs ≥
+ * 500 kg", "H1 now mobilizing to C-1"), and those stand as they are; any
+ * other is put after the label.
+ */
+export const namedOnce = (label: string, reason: string): string =>
+  reason === label || reason.startsWith(`${label} `) ? reason : `${label} · ${reason}`

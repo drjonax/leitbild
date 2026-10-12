@@ -1,7 +1,7 @@
 import type { Eta, Recommendation } from '../recommendation-schema.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
-import { assignedUnits, type BoardRules, type RoleView } from './rules.ts'
-import { classCode, clockText, etaText, joinUnits, reasonText, word } from './text.ts'
+import { assignedUnits, isFree, type BoardRules, type RoleView } from './rules.ts'
+import { classCode, clockText, etaText, joinUnits, namedOnce, reasonText, word } from './text.ts'
 import type { WorkRow } from './types.ts'
 
 /**
@@ -132,19 +132,62 @@ export const proposalText = (answer: Recommendation): string | null => {
 
 export const divertFromText = (from: NonNullable<Recommendation['alternatives'][number]['divertFrom']>): string => `${from.label} (${from.rank.code})`
 
-/** "No unit can serve: needs …" when no unit of the task's side could ever serve what the proposal leaves; null otherwise. */
-export const unservableText = (answer: Recommendation): string | null =>
-  answer.servable ? null : `No unit can serve: needs ${answer.proposal.remainder.join(', ')}`
+/**
+ * Whether a unit the recommendation lists as not eligible could ever count:
+ * it is in the picture, not destroyed, and its type moves. A destroyed unit,
+ * or one that cannot move, never will.
+ */
+export const couldBecomeEligible = (rules: BoardRules, records: BoardRecords) => (unitId: string): boolean => {
+  const unit = records.units.get(unitId)
+  return unit !== undefined && unit.integrity !== 'destroyed' && rules.typeOf(unit).components.mobility !== undefined
+}
 
-/** A divert proposal, or why no unit comes: none free, or none that could ever serve. */
-export const statusText = (answer: Recommendation): string | null => {
+/**
+ * "No unit can serve: needs …" only when no unit of the task's side could
+ * ever serve what the proposal leaves: none provides it, and no unit listed
+ * as not eligible could become eligible (`couldServe`: a property short of
+ * a condition, which a change can fix, but not a destroyed unit or one that
+ * cannot move). Null otherwise.
+ */
+export const unservableText = (answer: Recommendation, couldServe: (unitId: string) => boolean): string | null =>
+  answer.servable || answer.ineligible.some(entry => couldServe(entry.unitId)) ? null : `No unit can serve: needs ${answer.proposal.remainder.join(', ')}`
+
+/** "No eligible unit · Unit 2 · Payload 300 kg · needs ≥ 500 kg": one unit not eligible, named once; one that could become eligible first, a free one before a busy one. */
+const ineligibleText = (answer: Recommendation, isFree: (unitId: string) => boolean, couldServe: (unitId: string) => boolean): string | null => {
+  const entry = answer.ineligible.find(item => couldServe(item.unitId) && isFree(item.unitId)) ?? answer.ineligible.find(item => couldServe(item.unitId)) ?? answer.ineligible[0]
+  return entry === undefined ? null : `No eligible unit · ${namedOnce(entry.label, entry.reasons[0]!)}`
+}
+
+/**
+ * A divert proposal, or why no unit comes, kept apart: a free unit that is
+ * not eligible (with its reason), units that could come but are busy, no
+ * unit that could ever serve, or units that could become eligible.
+ */
+export const statusText = (answer: Recommendation, isFree: (unitId: string) => boolean, couldServe: (unitId: string) => boolean): string | null => {
   const divert = answer.proposal.units.find(unit => unit.divertFrom !== undefined)
   if (divert !== undefined) return `Divert ${divert.label} from ${divertFromText(divert.divertFrom!)} · ${etaText(divert.eta)}`
-  const unservable = unservableText(answer)
+  const busy = answer.committed.length > 0 ? `${answer.committed.length} busy` : null
+  if (answer.proposal.units.length === 0 && answer.need !== null) {
+    const freeIneligible = answer.ineligible.some(item => isFree(item.unitId) && couldServe(item.unitId))
+    if (freeIneligible) return [ineligibleText(answer, isFree, couldServe), busy].filter(part => part !== null).join(' · ')
+    if (busy !== null) return `No free unit · ${busy}`
+    const unservable = unservableText(answer, couldServe)
+    if (unservable !== null) return unservable
+    const ineligible = ineligibleText(answer, isFree, couldServe)
+    if (ineligible !== null) return ineligible
+    // The side could serve it, yet none of the viewer's units is free, busy or not eligible: those that could are on this call already, or another role commands them.
+    return 'No free unit'
+  }
+  const unservable = unservableText(answer, couldServe)
   if (unservable !== null) return unservable
-  if (answer.proposal.units.length === 0 && answer.need !== null) return `No free unit · ${answer.committed.length} committed`
   if (!answer.proposal.covers && answer.proposal.remainder.length > 0) return `still needs ${answer.proposal.remainder.join(', ')}`
   return null
+}
+
+/** Whether a unit in the picture is free; one outside it is not. */
+export const isFreeIn = (records: BoardRecords, unitId: string): boolean => {
+  const unit = records.units.get(unitId)
+  return unit !== undefined && isFree(unit)
 }
 
 export const workRow = (rules: BoardRules, records: BoardRecords, entry: WorkEntry, context: {
@@ -168,7 +211,7 @@ export const workRow = (rules: BoardRules, records: BoardRecords, entry: WorkEnt
     ageText: ageText(task, context.nowMs),
     coverageText: coverageText(rules, records, entry),
     etaText: context.answer === undefined ? null : proposalText(context.answer),
-    statusText: context.answer !== undefined ? statusText(context.answer) : context.failure === undefined ? null : noRecommendationText(context.failure),
+    statusText: context.answer !== undefined ? statusText(context.answer, unitId => isFreeIn(records, unitId), couldBecomeEligible(rules, records)) : context.failure === undefined ? null : noRecommendationText(context.failure),
     alerts: task.alerts.map(alert => alert.message),
     closeLabel: word(rules, 'close'),
     fresh: context.fresh,

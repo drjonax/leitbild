@@ -44,7 +44,8 @@ export interface CreateMapRuntimeConfig {
   readonly placementActive: () => boolean
   readonly onPlacementPoint: (point: GeoJsonPoint) => void
   readonly onMapClick: (point: GeoJsonPoint) => void
-  readonly onMoveStart: () => void
+  /** `originalEvent` is present when the operator's gesture started the move. */
+  readonly onMoveStart: (event: { readonly originalEvent?: unknown }) => void
   readonly onMoveEnd: () => void
   readonly onError: (error: MapRuntimeError) => void
   readonly onDiagnostics: (snapshot: MapRuntimeDiagnosticsSnapshot) => void

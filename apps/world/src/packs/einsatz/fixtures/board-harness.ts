@@ -10,6 +10,11 @@ import { einsatzConfigSchema } from '../config-validation.ts'
 import { openModeViewer, type PictureViewer } from '../picture.ts'
 import civil from './halden-civil.scenario.json'
 import civilRoles from './halden-civil-roles.scenario.json'
+import type { PackTargetContext } from '../../../core/packs/protocol.ts'
+import { routeGroundClick, routeObjectClick, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../../../ui/map-target-routing.ts'
+import { einsatzPackId } from '../ids.ts'
+import { einsatzPackView } from '../ui-pack.ts'
+import { createMapOrders } from '../ui/map-orders.ts'
 import { operator, type OpenRun } from './run-harness.ts'
 
 /**
@@ -66,6 +71,15 @@ export interface Screen {
   readonly click: (target: ClickTarget) => Promise<void>
   readonly mapSelect: (objectId: string | null) => Promise<void>
   readonly mapTarget: (unitId: string, target: MapTarget) => Promise<void>
+  /**
+   * A tap on a map object as the World surface routes it with the Board open
+   * (`ui/map-target-routing.ts`, the Pack's `isController` connected to the
+   * Board's configuration): it selects, or it is the highlighted asset's
+   * target, or a second tap on that asset.
+   */
+  readonly mapTap: (objectId: string) => Promise<void>
+  /** A tap on open ground, routed the same way. */
+  readonly groundTap: (position: readonly [number, number]) => Promise<void>
   /** The hover preview the panel would show for a map target. */
   readonly preview: (unitId: string, target: MapTarget) => TargetPreview | null
   readonly focus: (active: boolean) => Promise<void>
@@ -110,7 +124,12 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
   const viewer = screenViewer(run, actor, options.viewer)
   // The panel reads the configuration once at join, through the configuration query.
   const config = options.config ?? configurationOutputSchema.parse(await run.query(boardQueryIds.configuration, {}, actor)).config
-  const board = createBoardController({ config, viewer, sides: run.run.roles()?.sides ?? [] })
+  const board = createBoardController({ config, viewer, declaredRoles: run.run.roles()?.roles ?? [], sides: run.run.roles()?.sides ?? [] })
+  // The map's targeting as the open Board lends it: the Pack's controllers over the configuration the Board read.
+  const mapOrders = createMapOrders()
+  mapOrders.connect({ config, roles: run.run.roles()?.roles ?? [] })
+  const runViewer = viewerForActor(run.run.roles(), actor)
+  const targeting = { ...einsatzPackView.targeting, isController: mapOrders.isController, mutedOnMap: mapOrders.mutedOnMap }
   /** The Run's objects through this screen's lens: a side picture holds only what its audience lets it see. */
   const lensed = (): ReadonlyArray<OperationalObject> => {
     const snapshot = run.run.snapshot()
@@ -163,6 +182,26 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
     await dispatch(event)
     await sync()
   }
+  const panel: MapTargetPanel = {
+    label: 'Board',
+    packId: einsatzPackId,
+    onMapTarget: () => { throw new Error('The harness follows map routes itself') },
+    previewMapTarget: (controllerId, target) => board.preview(controllerId, target),
+  }
+  const mapClickContext = (objects: ReadonlyArray<OperationalObject>): MapClickContext => {
+    const context: PackTargetContext = runViewer === undefined ? { objects } : { objects, viewer: runViewer }
+    return { controller: objects.find(object => object.id === mapSelection && targeting.isController(object, context)) ?? null, targeting, context, panel }
+  }
+  /** What the World surface does with a routed map tap; a note or nothing is still the operator's tap. */
+  const followRoute = async (route: MapClickRoute): Promise<void> => {
+    if (route.kind === 'select') {
+      mapSelection = route.objectId
+      return await operatorAction({ kind: 'selection', objectId: route.objectId })
+    }
+    if (route.kind === 'panel') return await operatorAction({ kind: 'map-target', controllerId: route.controllerId, target: route.target })
+    if (route.kind === 'send') throw new Error('The surface never sends an Einsatz order itself')
+    actions += 1
+  }
 
   await sync()
   return {
@@ -195,6 +234,13 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
       await operatorAction({ kind: 'selection', objectId: objectId as ObjectId | null })
     },
     mapTarget: async (unitId, target) => await operatorAction({ kind: 'map-target', controllerId: unitId as ObjectId, target }),
+    mapTap: async objectId => {
+      const objects = lensed()
+      const object = objects.find(entry => entry.id === objectId)
+      if (object === undefined) throw new Error(`The map shows no ${objectId}`)
+      await followRoute(routeObjectClick(object, mapClickContext(objects)))
+    },
+    groundTap: async position => await followRoute(routeGroundClick(pointAt(position), mapClickContext(lensed()))),
     preview: (unitId, target) => board.preview(unitId as ObjectId, target),
     focus: async active => await dispatch({ kind: 'focus', active }),
     wait: async ms => {

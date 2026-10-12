@@ -5,6 +5,7 @@ import type { TrackData } from '../engine/combat-model.ts'
 import type { TaskData, Transition, UnitData } from '../engine/model.ts'
 import { einsatzPackId } from '../ids.ts'
 import { unitPhases } from '../lexicon.ts'
+import { ordersSchema } from '../steps.ts'
 
 /**
  * What the Board reads from the Run's Einsatz objects. The Board runs in the
@@ -54,6 +55,9 @@ const unitDataSchema = z.object({
   target: z.string().min(1).optional(),
   stillSinceMs: ms.optional(),
   revealed: z.literal(true).optional(),
+  /** The unit's job chain (`steps.ts`): the active step first, then the queued ones. */
+  orders: ordersSchema,
+  paused: z.literal(true).optional(),
 }).loose()
 
 const taskDataSchema = z.object({

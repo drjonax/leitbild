@@ -103,17 +103,20 @@ export const proposalUnits = (answer: Recommendation): ReadonlyArray<ProposalUni
   divertText: divertText(unit),
 }))
 
-/** Numbered alternatives as first shown for the selected row, each still offered or dropped with its reason. */
+/**
+ * The numbered alternatives still offered for the selected row, by the
+ * number each was first shown with. One that dropped out is no longer shown
+ * (its digit key says why), so nothing stale or greyed lingers after a send.
+ */
 export const alternativeRows = (answer: Recommendation, numbered: ReadonlyArray<{ readonly unitId: string; readonly label: string }>, chosen: number | null): ReadonlyArray<AlternativeRow> =>
-  numbered.map((entry, index) => {
+  numbered.flatMap((entry, index) => {
     const candidate = candidateIn(answer, entry.unitId)
-    return {
+    return candidate === undefined ? [] : [{
       number: index + 1,
       unitId: entry.unitId,
       label: entry.label,
-      etaText: candidate === undefined ? null : etaText(candidate.eta),
-      divertText: candidate === undefined ? null : divertText(candidate),
-      dropped: droppedReason(answer, entry.unitId),
+      etaText: etaText(candidate.eta),
+      divertText: divertText(candidate),
       chosen: chosen === index + 1,
-    }
+    }]
   })

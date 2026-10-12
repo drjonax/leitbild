@@ -53,7 +53,7 @@ describe('Board race, repeat, focus and timing', () => {
         const screen = await openScreen(run, createWall())
         await selectRow(screen, modality, 't1')
         const shown = screen.view().commit.text
-        expect(shown).toStartWith(`⏎ ${word('send')} U1 → T1 · `)
+        expect(shown).toStartWith(`${word('send')} U1 → T1 · `)
         await createTask(run, kinds.templates.load, 'T2', at(0.5), { [top]: 1 })
         await screen.sync()
         expect(screen.view().workList.rows.map(row => row.id)).toEqual(['task:1', 't1'])
@@ -122,7 +122,7 @@ describe('Board race, repeat, focus and timing', () => {
         const shown = screen.view().commit.text
         await screen.wait(120)
         await commit(screen, modality)
-        expect(shown).toStartWith(`⏎ ${word('send')} U2 → T2`)
+        expect(shown).toStartWith(`${word('send')} U2 → T2`)
         expect(lastCall(screen)).toMatchObject({ input: { units: ['u2'], to: { taskId: 't2' } }, result: { ok: true } })
 
         await createTask(run, kinds.templates.load, 'T3', at(1), { [low]: 1 })
@@ -132,12 +132,16 @@ describe('Board race, repeat, focus and timing', () => {
         const second = screen.view().selected
         if (second?.kind !== 'task') throw new Error('expected a task row')
         expect(second.alternatives.map(row => row.label)).toEqual(['U3'])
-        if (modality === 'keys') await screen.key('1')
-        else await screen.click({ kind: 'alternative', number: 1 })
-        const chosen = screen.view().commit.text
-        await screen.wait(120)
-        await commit(screen, modality)
-        expect(chosen).toStartWith(`⏎ ${word('send')} U3 → T3`)
+        if (modality === 'keys') {
+          await screen.key('1')
+          const chosen = screen.view().commit.text
+          await screen.wait(120)
+          await commit(screen, modality)
+          expect(chosen).toStartWith(`${word('send')} U3 → T3`)
+        } else {
+          // A tap on an alternative sends it at once.
+          await screen.click({ kind: 'alternative', number: 1 })
+        }
         expect(lastCall(screen)).toMatchObject({ input: { units: ['u3'], to: { taskId: 'task:1' } }, result: { ok: true } })
       })
     })
@@ -173,7 +177,7 @@ describe('Board keys after the map', () => {
     })
   })
 
-  test('a divert by map click waits for a confirmation that Enter gives', async () => {
+  test('a busy unit sent by map tap waits for its choice, which Enter gives as Do now', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), taskAt('low', 'LOW', kinds.templates.load, at(20), { [low]: 1 }), taskAt('top', 'TOP', kinds.templates.load, at(3), { [top]: 1 })], async run => {
       await accepted(run, ids.send, { units: ['u1'], to: { taskId: 'low' } })
       const screen = await openScreen(run, createWall())
@@ -181,11 +185,17 @@ describe('Board keys after the map', () => {
       await screen.mapTarget('u1', onObject('top'))
       expect(screen.calls).toHaveLength(0)
       expect(screen.view().selected?.id).toBe('top')
-      expect(screen.view().commit).toMatchObject({ state: 'confirm', text: `⏎ Confirm: Divert U1 → TOP · LOW (${code(low)}) · 1 ${civilConfig.loadClasses[2]!.noun.one} returns to the queue`, enabled: false })
+      expect(screen.view().commit).toMatchObject({
+        state: 'choice',
+        text: 'Divert U1 → TOP',
+        detail: `LOW (${code(low)}) · 1 ${civilConfig.loadClasses[2]!.noun.one} returns to the queue`,
+        options: [{ option: 'do-now', label: 'Do now' }],
+        enabled: false,
+      })
       await screen.mapSelect('top')
       expect(screen.view().feedback).toBeNull()
       await screen.mapSelect('low')
-      expect(screen.view().feedback?.text).toBe('Confirm ⏎ or Esc first')
+      expect(screen.view().feedback?.text).toBe('Confirm or cancel first')
       await screen.wait(pastGuardMs)
       await screen.key('Enter')
       expect(lastCall(screen)).toMatchObject({ input: { units: ['u1'], to: { taskId: 'top' }, divert: [{ unitId: 'u1', fromTaskId: 'low' }] }, result: { ok: true } })
@@ -226,7 +236,7 @@ describe('Board competition', () => {
       await screen.key('Enter')
       const sent = lastCall(screen)!
       expect(sent).toMatchObject({ input: { to: { taskId: 't1' } }, result: { ok: true } })
-      expect(shown).toStartWith(`⏎ ${word('send')} ${(sent.input as { units: string[] }).units.map(id => id.toUpperCase()).join(' + ')} → T1`)
+      expect(shown).toStartWith(`${word('send')} ${(sent.input as { units: string[] }).units.map(id => id.toUpperCase()).join(' + ')} → T1`)
     })
   })
 
@@ -238,7 +248,7 @@ describe('Board competition', () => {
         const mine = await openScreen(run, wall)
         const other = await openScreen(run, wall)
         await selectRow(mine, modality, 't1')
-        expect(mine.view().commit.text).toStartWith(`⏎ ${word('send')} U1 → T1`)
+        expect(mine.view().commit.text).toStartWith(`${word('send')} U1 → T1`)
         mine.freeze(true)
         await other.click({ kind: 'row', list: 'work', id: 't2' })
         await other.click({ kind: 'commit' })
@@ -305,17 +315,17 @@ describe('Board divert protection', () => {
   const offered = (screen: Screen): string[] => {
     const selected = screen.view().selected
     if (selected?.kind !== 'task') throw new Error('expected a task row')
-    return [...selected.proposal, ...selected.alternatives.filter(entry => entry.dropped === null)].map(entry => entry.label).sort()
+    return [...selected.proposal, ...selected.alternatives].map(entry => entry.label).sort()
   }
 
-  test('diverts take only units on their way to strictly lower work; the row says when no unit is free; a divert takes 3 actions and returns the work with its age', async () => {
+  test('diverts take only units on their way to strictly lower work; the row says when every unit is busy; a divert takes 3 actions and returns the work with its age', async () => {
     await withScene(protectionScene(), async run => {
       await commitScene(run)
       const screen = await openScreen(run, createWall())
       await screen.key('n')
       const c20 = screen.view().workList.rows.find(row => row.id === 'c20')!
       expect(screen.view().selected?.id).toBe('c20')
-      expect([c20.code, c20.needText, c20.statusText]).toEqual([code(top), `needs ${code(low)}×1`, 'No free unit · 4 committed'])
+      expect([c20.code, c20.needText, c20.statusText]).toEqual([code(top), `needs ${code(low)}×1`, 'No free unit · 4 busy'])
       expect(offered(screen)).toEqual([])
 
       await createTask(run, kinds.templates.load, 'NEW2', at(0, -2), { [middle]: 1 })
@@ -366,19 +376,28 @@ describe('Board divert protection', () => {
 
 describe('Board release and move', () => {
   for (const modality of modalities) {
-    test(`a committed unit moved to a point confirms, and its task reopens; H then pauses it (${modality})`, async () => {
+    test(`a committed unit moved to a point asks what to do, and its task reopens; H then pauses it (${modality})`, async () => {
       await withScene([unitAt('e1', 'E1', conditionedServer, at(0)), taskAt('f1', 'F1', kinds.templates.conditioned, at(8))], async run => {
         await accepted(run, ids.send, { units: ['e1'], to: { taskId: 'f1' } })
         await runFor(run, 61_000)
         const screen = await openScreen(run, createWall())
-        if (modality === 'keys') await screen.key(']')
-
-        if (modality === 'keys') await screen.key('m')
-        else await screen.click({ kind: 'verb', verb: 'move', id: 'e1' })
-        await screen.mapTarget('e1', onGround(at(1, 1)))
-        expect(screen.view().commit).toMatchObject({ state: 'confirm', text: `⏎ Confirm: Move E1 → the map point · F1 (${code(top)}) loses E1` })
+        if (modality === 'keys') {
+          await screen.key(']')
+          await screen.key('m')
+          await screen.mapTarget('e1', onGround(at(1, 1)))
+        } else {
+          // A tap on open ground with the asset highlighted asks "Move here" at the point; panning never moves it.
+          await screen.click({ kind: 'row', list: 'units', id: 'e1' })
+          await screen.groundTap(at(1, 1))
+          expect(screen.view().mapPrompt).toMatchObject({ unitId: 'e1', label: `${civilConfig.lexicon.move ?? 'Move'} E1 here` })
+          expect(screen.calls).toHaveLength(0)
+          await screen.click({ kind: 'move-here' })
+        }
+        expect(screen.view().commit).toMatchObject({ state: 'choice', text: 'Move E1 → the map point', detail: `F1 (${code(top)}) loses E1` })
+        expect(screen.view().mapPrompt).toBeNull()
         await screen.wait(pastGuardMs)
-        await commit(screen, modality)
+        if (modality === 'keys') await screen.key('Enter')
+        else await screen.click({ kind: 'option', option: 'do-now' })
         expect(lastCall(screen)).toMatchObject({ input: { units: ['e1'], divert: [{ unitId: 'e1', fromTaskId: 'f1' }] }, result: { ok: true } })
         const reopened = screen.view().workList.rows.find(row => row.id === 'f1')!
         expect([reopened.served, reopened.coverageText]).toEqual([false, `needs 1 more ${civilConfig.taskTemplates.find(entry => entry.id === kinds.templates.conditioned)!.requires[0]!.label.one}`])
@@ -393,18 +412,20 @@ describe('Board release and move', () => {
 
 describe('Board modal, blur and burst', () => {
   for (const modality of modalities) {
-    test(`after blur nothing commits; back in focus an unchanged commitment commits at once (${modality})`, async () => {
+    test(`after blur no key commits but a tap does; back in focus an unchanged commitment commits at once (${modality})`, async () => {
       await withScene([unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(1), { [low]: 1 })], async run => {
         const screen = await openScreen(run, createWall())
         await screen.key('n')
-        const shown = screen.view().commit.text
+        const shown = screen.view().commit
         await screen.focus(false)
-        expect(screen.view().commit).toMatchObject({ state: 'inactive', text: 'Keys inactive · click the Board', enabled: false })
-        await commit(screen, modality)
-        expect([screen.calls.length, screen.view().keysActive]).toEqual([0, false])
-        // A click brings the World window back first: focus arrives before the click.
-        await screen.focus(true)
-        expect(screen.view().commit).toMatchObject({ text: shown, enabled: true, hint: null })
+        expect([screen.view().keysActive, screen.view().commit]).toEqual([false, shown])
+        if (modality === 'keys') {
+          await screen.key('Enter')
+          expect(screen.calls.length).toBe(0)
+          await screen.focus(true)
+          expect(screen.view().commit).toMatchObject({ text: shown.text, enabled: true, hint: null })
+        }
+        // A tap acts whether or not the keyboard reaches the World.
         await commit(screen, modality)
         expect(lastCall(screen)).toMatchObject({ input: { units: ['u1'], to: { taskId: 't1' } }, result: { ok: true } })
       })
@@ -420,7 +441,7 @@ describe('Board modal, blur and burst', () => {
         const screen = await openScreen(run, wall)
         const other = await openScreen(run, wall)
         await screen.click({ kind: 'row', list: 'work', id: 't1' })
-        expect(screen.view().commit.text).toStartWith(`⏎ ${word('send')} U1 → T1`)
+        expect(screen.view().commit.text).toStartWith(`${word('send')} U1 → T1`)
         await screen.focus(false)
         await other.click({ kind: 'row', list: 'work', id: 't2' })
         await other.click({ kind: 'commit' })
@@ -429,7 +450,7 @@ describe('Board modal, blur and burst', () => {
         await screen.wait(pastGuardMs)
         await screen.focus(true)
         expect(screen.view().commit).toMatchObject({ enabled: false, hint: 'Confirm next: T1' })
-        expect(screen.view().commit.text).toStartWith(`⏎ ${word('send')} U2 → T1`)
+        expect(screen.view().commit.text).toStartWith(`${word('send')} U2 → T1`)
         await commit(screen, modality)
         expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, 'Not sent: the list changed · Confirm next: T1'])
         await screen.wait(pastGuardMs)
@@ -460,7 +481,7 @@ describe('Board modal, blur and burst', () => {
         const input = call.input as { units: string[]; to: { taskId: string } }
         expect(call.result.ok).toBe(true)
         expect(input.to.taskId).toBe(shownBySend[index]!.taskId)
-        expect(shownBySend[index]!.text).toStartWith(`⏎ ${word('send')} ${input.units.map(id => id.toUpperCase()).join(' + ')} → B${index + 1}`)
+        expect(shownBySend[index]!.text).toStartWith(`${word('send')} ${input.units.map(id => id.toUpperCase()).join(' + ')} → B${index + 1}`)
       })
       expect(new Set(screen.calls.flatMap(call => (call.input as { units: string[] }).units)).size).toBe(5)
     })
@@ -468,7 +489,7 @@ describe('Board modal, blur and burst', () => {
 })
 
 describe('Board recommendation stability, selection and wording', () => {
-  test('numbered alternatives stay put while the row is selected; a dropped one greys out and its digit says why', async () => {
+  test('numbered alternatives stay put while the row is selected; one that drops out is no longer shown, and its digit says why, naming the unit once', async () => {
     const items = [
       unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(3)), unitAt('u3', 'U3', carrier, at(5)),
       taskAt('t1', 'T1', kinds.templates.load, at(1), { [top]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(3.2), { [low]: 1 }),
@@ -481,25 +502,25 @@ describe('Board recommendation stability, selection and wording', () => {
       const numbered = () => {
         const selected = mine.view().selected
         if (selected?.kind !== 'task') throw new Error('expected a task row')
-        return selected.alternatives.map(entry => [entry.number, entry.label, entry.dropped])
+        return selected.alternatives.map(entry => [entry.number, entry.label])
       }
-      expect(numbered()).toEqual([[1, 'U2', null], [2, 'U3', null]])
+      expect(numbered()).toEqual([[1, 'U2'], [2, 'U3']])
       await other.click({ kind: 'row', list: 'work', id: 't2' })
       await other.click({ kind: 'commit' })
       await mine.sync()
-      expect(numbered()).toEqual([[1, 'U2', 'U2 now mobilizing to T2'], [2, 'U3', null]])
+      expect(numbered()).toEqual([[2, 'U3']])
       const shown = mine.view().commit
       await mine.key('1')
-      expect(mine.view().feedback?.text).toBe('1 · U2: U2 now mobilizing to T2')
+      expect(mine.view().feedback?.text).toBe('U2 now mobilizing to T2')
       expect(mine.view().commit).toEqual(shown)
       await mine.key('2')
-      expect(mine.view().commit.text).toStartWith(`⏎ ${word('send')} U3 → T1`)
+      expect(mine.view().commit.text).toStartWith(`${word('send')} U3 → T1`)
       await mine.key('Escape')
       expect(mine.view().commit).toEqual(shown)
     })
   })
 
-  test('Enter before the recommendation arrives says "Preparing…" and sends nothing; N with nothing waiting keeps the row', async () => {
+  test('Enter before the recommendation arrives says "Preparing…" and sends nothing; once nothing waits the served row is let go', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0))], async run => {
       const screen = await openScreen(run, createWall())
       await createTask(run, kinds.templates.load, 'T1', at(1), { [low]: 1 })
@@ -514,8 +535,10 @@ describe('Board recommendation stability, selection and wording', () => {
       expect(screen.view().commit).toMatchObject({ state: 'ready', enabled: true })
       await screen.key('Enter')
       expect(screen.calls).toHaveLength(1)
+      // With no call left the served row is let go; N then says so.
+      expect(screen.view().selected).toBeNull()
       await screen.key('n')
-      expect([screen.view().selected?.id, screen.view().feedback?.text, screen.view().workList.empty]).toEqual(['task:1', word('noWork'), word('noWork')])
+      expect([screen.view().selected, screen.view().feedback?.text, screen.view().workList.empty]).toEqual([null, word('noWork'), word('noWork')])
       expect(screen.raw({ kind: 'selection', objectId: 'u1' as ObjectId }).filter(effect => effect.kind === 'select')).toEqual([])
     })
   })
@@ -527,7 +550,7 @@ describe('Board recommendation stability, selection and wording', () => {
       const screen = await openScreen(run, createWall())
       await screen.key('n')
       const ready = screen.view().commit
-      expect(ready.text).toStartWith('⏎ Divert U1 from LOW')
+      expect(ready.text).toStartWith('Divert U1 from LOW')
       await screen.key('Enter')
       expect(screen.view().commit.state).toBe('confirm')
       await screen.key('Escape')
@@ -572,7 +595,7 @@ describe('Board recommendation stability, selection and wording', () => {
       const seen: Array<readonly [number, string, string, boolean]> = []
       for (let step = 1; step <= 14; step++) {
         await runFor(run, 10_000, [screen])
-        seen.push([step * 10, await proposedBy(), screen.view().commit.text.split(' ')[2]!, screen.view().commit.enabled])
+        seen.push([step * 10, await proposedBy(), screen.view().commit.text.split(' ')[1]!, screen.view().commit.enabled])
       }
       const swap = seen.findIndex(([, , shown]) => shown === 'U2')
       expect(swap).toBeGreaterThan(0)
@@ -591,7 +614,7 @@ describe('Board sound and flashes', () => {
       const screen = await openScreen(run, createWall())
       await createTask(run, kinds.templates.load, 'T1', at(5), { [low]: 1 })
       await screen.sync()
-      expect([screen.view().sound, screen.sounds()]).toEqual([{ on: false, text: 'Sound off · click to enable' }, 0])
+      expect([screen.view().sound, screen.sounds()]).toEqual([{ on: false, text: 'Sound off · tap to enable' }, 0])
       await screen.click({ kind: 'enable-sound' })
       expect(screen.view().sound).toEqual({ on: true, text: 'Sound on' })
 

@@ -190,7 +190,11 @@ const startingView = (view: ScenarioDefinition['view'], packs: ReadonlyArray<Wor
   }
   return {
     map: { center: pointFromLonLat(view.map.center), zoom: view.map.zoom, layers: layers.filter(layer => !view.map.hiddenLayers.includes(layer)) },
-    rail: { sections: categories.map(category => overrides.get(category.id) ?? { categoryId: category.id, visible: true, collapsed: false, visibleFields: [] }) },
+    rail: {
+      sections: categories
+        .filter(category => category.rail !== false || overrides.has(category.id))
+        .map(category => overrides.get(category.id) ?? { categoryId: category.id, visible: true, collapsed: false, visibleFields: [] }),
+    },
   }
 }
 

@@ -1,7 +1,8 @@
 import type { Layer, PickingInfo } from '@deck.gl/core'
-import { IconLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
+import { IconLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers'
 import type { CatalogueSymbolAtlasState } from './catalogue-symbol-atlas.ts'
 import { darkStroke, rgba, white } from './colors.ts'
+import { ObjectLabelLayer } from './object-label-layer.ts'
 import {
   leitbildSymbolAtlasUrl,
   leitbildSymbolIconMapping,
@@ -402,34 +403,17 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
         })]
       : []),
     ...(layerData.labelPoints.length > 0
-      ? [new TextLayer<OperationalPointFeature>({
+      ? [new ObjectLabelLayer({
           id: 'leitbild-object-labels',
           data: layerData.labelPoints,
+          obstacles: snapshot.points,
           // A label is part of its object: a click or hover on it acts on the object, never on the ground beneath.
           pickable: true,
           visible: visible(visibleFamilies, 'objects'),
-          characterSet: 'auto',
-          fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-          fontWeight: 600,
-          sizeUnits: 'pixels',
-          getText: point => point.label ?? '',
-          getPosition: point => point.position,
-          getSize: 11,
           getColor: point => point.muted ? rgba(40, 46, 56, 150) : rgba(24, 28, 36, 245),
-          getTextAnchor: 'middle',
-          getAlignmentBaseline: 'top',
-          getPixelOffset: point => [0, point.sizePx * 0.74 + 3],
-          background: true,
-          getBackgroundColor: white(215),
-          backgroundPadding: [3, 1],
+          backgroundColor: white(215),
           onClick: onSymbolClick,
           onHover: onSymbolHover,
-          updateTriggers: {
-            getText: snapshot.revisions.points,
-            getPosition: snapshot.revisions.points,
-            getColor: snapshot.revisions.points,
-            getPixelOffset: snapshot.revisions.points,
-          },
         })]
       : []),
     new ScatterplotLayer<OperationalPointFeature>({

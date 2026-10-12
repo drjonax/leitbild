@@ -103,6 +103,7 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
   const hasTargeting = packs.some(pack => pack.targeting !== undefined)
   const describesTargets = packs.some(pack => pack.targeting?.describeTarget !== undefined)
   const targetsPoints = packs.some(pack => pack.targeting?.pointTargets !== undefined)
+  const mutesObjects = packs.some(pack => pack.targeting?.mutedOnMap !== undefined)
 
   return {
     packs,
@@ -192,6 +193,12 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
                       return pointTargets.buildSetTargetCommand(controller, point, context)
                     },
                   },
+                }
+              : {}),
+            ...(mutesObjects
+              ? {
+                  mutedOnMap: (object: OperationalObject, context: PackTargetContext) =>
+                    ownerForObject(object).targeting?.mutedOnMap?.(object, context) ?? false,
                 }
               : {}),
             isTarget: (controller: OperationalObject, candidate: OperationalObject, context: PackTargetContext) =>

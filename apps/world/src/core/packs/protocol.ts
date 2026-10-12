@@ -38,6 +38,12 @@ export interface PackObjectCategory {
   readonly label: string
   readonly emptyLabel: string
   readonly matches: (object: OperationalObject) => boolean
+  /**
+   * Opt-out: the control rail gets no section for this category unless a
+   * Scenario's Starting View names one. A Pack whose own panel lists these
+   * objects declares it, so they are not listed twice.
+   */
+  readonly rail?: false
 }
 
 export interface PackObjectPresentation {
@@ -525,6 +531,11 @@ export interface PackTargetingContribution {
    */
   readonly describeTarget?: (controller: OperationalObject, target: PackMapTarget, context: PackTargetContext) => PackTargetPreview | null
   readonly pointTargets?: PackPointTargeting
+  /**
+   * Opt-in: whether the screen sees the object but may not order it, e.g. a
+   * unit another role commands; the map draws such an object muted.
+   */
+  readonly mutedOnMap?: (object: OperationalObject, context: PackTargetContext) => boolean
   readonly isTarget: (
     controller: OperationalObject,
     candidate: OperationalObject,

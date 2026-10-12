@@ -1,4 +1,4 @@
-import type { IsoTimestamp, ObjectId, OperationalObject } from '../../../core/model/index.ts'
+import type { GeoJsonPoint, IsoTimestamp, ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import type { PackMapTarget, PackTargetPreview } from '../../../core/packs/protocol.ts'
 import type { PanelKey } from '../../../ui/keys/panel-key-router.ts'
 import type { EinsatzCommandId } from '../capabilities.ts'
@@ -36,13 +36,20 @@ import type { EinsatzCommandId } from '../capabilities.ts'
  *   apart from the operator's map clicks. A `select` effect goes to
  *   `onSelectObject`.
  * - `keysActive`: `focus` whenever it changes; `tick` on a timer (a few times
- *   a second) so guards and flashes expire.
+ *   a second) so guards, flashes and Undo expire. Keys are hidden desktop
+ *   accelerators; a tap acts whether or not keys reach the World.
+ * - `onMapPrompt`: the view's `mapPrompt` whenever it changes, null when it
+ *   goes; a tap on the prompt dispatches the `move-here` click.
  *
  * The Pack's `targeting.isController(object, context)` is `ordersOnMap`
  * (picture.ts) for the screen's viewer: an Einsatz unit record it commands
  * whose type has `mobility`. A receiving site has none, so with a unit
- * selected a click on a site reaches `onMapTarget` as that unit's target
- * instead of selecting the site.
+ * selected a tap on a site reaches `onMapTarget` as that unit's target
+ * instead of selecting the site. A second tap on the selected unit also
+ * reaches `onMapTarget`, naming the unit itself, and lets it go. Its
+ * `targeting.mutedOnMap` mutes the units in the picture the screen does not
+ * command; a tap on one selects it on the map, which the Board answers by
+ * saying who commands it and letting the selection go.
  */
 
 export type BoardList = 'work' | 'units'
@@ -60,14 +67,33 @@ export type TargetPreview = PackTargetPreview
 /** A key the World key router delivers: `KeyboardEvent.key` and `code`, and Shift. */
 export type BoardKey = PanelKey
 
-/** What a pointer click hit on the Board. */
+/**
+ * What a busy asset may do with a new target. "Do now" replaces its current
+ * job; "Add to end" joins once job chains land and `world.einsatz.unit.queue`
+ * exists.
+ */
+export type ChoiceOption = 'do-now'
+
+/**
+ * What a tap or click hit on the Board.
+ * - A row in Assets highlights its asset, or clears the highlight when it is
+ *   the highlighted one. A row in Calls, with an asset highlighted, sends the
+ *   asset there; with none, it selects the call.
+ * - An alternative sends that unit at once (a divert asks to confirm).
+ * - The commit button sends what the action bar says, or confirms it.
+ */
 export type ClickTarget =
   | { readonly kind: 'row'; readonly list: BoardList; readonly id: string }
   | { readonly kind: 'alternative'; readonly number: number }
-  /** The one commit element: dispatch, or confirm a pending confirmation. */
+  /** The action bar's button: send the shown proposal, or confirm a pending confirmation. */
   | { readonly kind: 'commit' }
+  /** One of a busy asset's options. */
+  | { readonly kind: 'option'; readonly option: ChoiceOption }
+  /** The "Move here" prompt, on the map or in the action bar. */
+  | { readonly kind: 'move-here' }
+  | { readonly kind: 'undo' }
   | { readonly kind: 'cancel' }
-  /** A verb button on a row: recall, hold or move on a unit row; close on a task row. */
+  /** A verb button in the action bar: recall or hold the highlighted asset, close the selected call; move arms a move (the M key). */
   | { readonly kind: 'verb'; readonly verb: 'recall' | 'hold' | 'move' | 'close'; readonly id: string }
   | { readonly kind: 'enable-sound' }
 
@@ -121,26 +147,31 @@ export interface WorkRow {
   readonly coverageText: string
   /** The shown proposal and its complete arrival: "A3 + A5 ≈4:20". */
   readonly etaText: string | null
-  /** A divert proposal, "No free unit · 4 committed", "No unit can serve: needs …" or "No recommendation: …". */
+  /**
+   * Why no unit is proposed, or a divert: "Divert A2 from C-9 (P3) · 3:10";
+   * "No eligible unit · Unit 2 · Payload 300 kg · needs ≥ 500 kg" when a free
+   * unit fails a condition; "No free unit · 3 busy" when every unit that could
+   * come is busy; "No unit can serve: needs …" only when no unit could ever
+   * serve it; or "No recommendation: …".
+   */
   readonly statusText: string | null
   readonly alerts: ReadonlyArray<string>
-  /** The configuration's verb for closing a task: the C key's label. */
+  /** The configuration's verb for closing a task. */
   readonly closeLabel: string
   /** Flashes for a few seconds after the row appeared. */
   readonly fresh: boolean
   readonly selected: boolean
 }
 
+/** A unit still offered for the selected call besides its proposal; a tap sends it. */
 export interface AlternativeRow {
-  /** Stable while the row stays selected; a dropped candidate keeps its number. */
+  /** Stable while the row stays selected (the digit key's number); a candidate that drops out is no longer shown. */
   readonly number: number
   readonly unitId: string
   readonly label: string
   readonly etaText: string | null
   /** "divert from C-9 (P3)" for a divert candidate. */
   readonly divertText: string | null
-  /** Why a numbered candidate dropped out; its digit then explains instead of choosing. */
-  readonly dropped: string | null
   readonly chosen: boolean
 }
 
@@ -157,7 +188,8 @@ export interface SelectedTask {
   /** The shown proposal's units, what Enter sends unless an alternative is chosen. */
   readonly proposal: ReadonlyArray<ProposalUnit>
   readonly alternatives: ReadonlyArray<AlternativeRow>
-  readonly ineligible: ReadonlyArray<{ readonly label: string; readonly reasons: ReadonlyArray<string> }>
+  /** Units that cannot count towards it, each naming the unit once: "Unit 2 · Payload 300 kg · needs ≥ 500 kg". */
+  readonly ineligible: ReadonlyArray<string>
   /** What the task still needs after the shown proposal, in configuration words. */
   readonly remainder: ReadonlyArray<string>
   /** The remainder as the row says it: "Still needs 2 more guards, P3×1"; null when nothing remains. */
@@ -184,7 +216,7 @@ export interface UnitRow {
   readonly loadText: string | null
   /** At most two properties the type shows on the board. */
   readonly properties: ReadonlyArray<{ readonly label: string; readonly value: string }>
-  /** Every property of the unit, for the row's hover: "Payload: 300 kg · Crew: 4". */
+  /** Every property of the unit, shown on the highlighted row: "Payload: 300 kg · Crew: 4". */
   readonly propertiesText: string | null
   readonly integrityText: string | null
   /** The rules of engagement of a unit with an effector: "weapons free". */
@@ -196,6 +228,7 @@ export interface UnitRow {
   readonly alerts: ReadonlyArray<string>
   readonly free: boolean
   readonly destroyed: boolean
+  /** The highlighted asset: a tap on a target sends it. */
   readonly selected: boolean
   /** Move is armed for this unit: the next map click moves it. */
   readonly moveArmed: boolean
@@ -248,24 +281,48 @@ export interface ContactSide {
 export interface ContactsView {
   readonly heading: string
   readonly sides: ReadonlyArray<ContactSide>
-  /** What detection is and is not, for the list's hover. */
+  /** What detection is and is not, shown as a line under the list's heading. */
   readonly hover: string
 }
 
 /**
- * The one commit element: its text is both the Enter hint and the button
- * label, and exactly what a commit sends. `enabled` is false while a guard
- * runs, a call is on its way, a recommendation is still being prepared or
- * keys are inactive.
+ * The action bar: one place that says what the next tap sends, and the
+ * buttons that do it. Its text is exactly what its button commits.
+ * - ready: the selected call's proposal; the button sends it.
+ * - confirm: a divert, or closing a call with waiting load; the detail names
+ *   what is dropped, once; the button confirms.
+ * - choice: a busy asset sent to a new target; the options say what it may
+ *   do ("Do now" today).
+ * - move: a tap on open ground; the button moves the asset there, as does
+ *   the prompt on the map.
+ * - asset: an asset is highlighted; its verbs are the buttons.
+ * - preparing, sending, none: nothing to send now, and why.
+ * `enabled` is false while a guard runs, a call is on its way or a
+ * recommendation is still being prepared.
  */
 export interface CommitElement {
-  readonly state: 'ready' | 'confirm' | 'preparing' | 'sending' | 'inactive' | 'none'
+  readonly state: 'ready' | 'confirm' | 'choice' | 'move' | 'asset' | 'preparing' | 'sending' | 'none'
   readonly text: string
+  /** What a confirmation or choice drops: "C-9 (P3) · 1 pallet returns to the queue". */
+  readonly detail: string | null
+  /** The primary button's label; null when the bar has no primary button. */
+  readonly button: string | null
+  /** A busy asset's options, each a button. */
+  readonly options: ReadonlyArray<{ readonly option: ChoiceOption; readonly label: string }>
+  /** The highlighted asset's verbs, or the selected call's close verb. */
+  readonly verbs: ReadonlyArray<{ readonly verb: 'recall' | 'hold' | 'close'; readonly label: string; readonly id: string }>
   readonly enabled: boolean
   /** Why it is disabled for now: "Confirm next: C-14" during a guard. */
   readonly hint: string | null
   /** The cancel control's label while there is something to cancel. */
   readonly cancel: string | null
+}
+
+/** A one-button prompt the Board shows on the map at a point: "Move A3 here". */
+export interface BoardMapPrompt {
+  readonly unitId: string
+  readonly point: GeoJsonPoint
+  readonly label: string
 }
 
 /**
@@ -322,5 +379,9 @@ export interface BoardView {
   readonly selected: SelectedTask | { readonly kind: 'unit'; readonly id: string } | null
   readonly commit: CommitElement
   readonly feedback: Feedback | null
+  /** The Undo button's label for a few seconds after a send of free units was accepted; null otherwise. */
+  readonly undo: string | null
+  /** The prompt to show on the map after a tap on open ground; null when there is none. */
+  readonly mapPrompt: BoardMapPrompt | null
   readonly log: ReadonlyArray<LogEntry>
 }

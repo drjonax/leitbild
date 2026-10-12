@@ -8,12 +8,13 @@
   import type { EinsatzConfig } from '../config-schema.ts'
   import { invokeBoardCommand, queryBoardRecommendation, readBoardConfiguration } from './board-client.ts'
   import { boardIconIds, createBoardIcons } from './board-icons.ts'
-  import { boardBottomClearancePx, boardEdgeGapPx, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx } from './board-layout.ts'
+  import { boardBottomClearancePx, boardChromePx, boardEdgeGapPx, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx, listRowsTemplate, rowBoxStyle } from './board-layout.ts'
   import { logTime, stripHeading } from './board-presenter.ts'
   import { createBoardSession, type BoardSession } from './board-session.ts'
   import { createBoardTone, type BoardTone } from './board-tone.ts'
   import { boardMapOrders } from './map-orders.ts'
   import { screenViewerFor } from './screen-viewer.ts'
+  import BoardActionBar from './BoardActionBar.svelte'
   import BoardContacts from './BoardContacts.svelte'
   import BoardUnits from './BoardUnits.svelte'
   import BoardWorkList from './BoardWorkList.svelte'
@@ -28,6 +29,15 @@
    * configuration is there, the Board's mechanism words. It lies over the
    * map's right edge, narrow enough to leave the map clear, and pads the map
    * camera by its observed width.
+   *
+   * Touch first: the action bar on top says what the next tap sends; the
+   * status line below it carries the result, Undo and sound; Calls and Assets
+   * share the rest in fixed parts, each scrolling on its own. Every control
+   * is at least 44 px and nothing hides behind hover or hints at a key. A
+   * tap on open ground shows the controller's "Move here" prompt on the map.
+   * It never takes the keyboard itself: a pointer passing over it must not
+   * pull keys out of the Agents chat or a Host field into the Board's hidden
+   * accelerators, where Enter would commit. A tap or click focuses the World.
    */
   const props: SurfacePanelProps = $props()
 
@@ -110,6 +120,7 @@
       current = createBoardSession({
         config,
         viewer,
+        declaredRoles: props.roleSet?.declaration.roles ?? [],
         sides,
         ports: {
           invoke: async (capabilityId, input) => await invokeBoardCommand(simulationRunId, capabilityId, input),
@@ -137,6 +148,7 @@
     return () => {
       disposed = true
       window.clearInterval(ticker)
+      props.onMapPrompt(null)
       surfaceObserver.disconnect()
       boardObserver.disconnect()
       for (const release of releases.reverse()) release()
@@ -170,39 +182,48 @@
     if (shown === null) return
     untrack(() => icons.request(boardIconIds(shown)))
   })
+  // The map shows the controller's "Move here" prompt; it is sent again only when it changes.
+  let shownPromptKey: string | null = null
+  $effect(() => {
+    const prompt = view?.mapPrompt ?? null
+    const key = prompt === null ? null : JSON.stringify([prompt.unitId, prompt.point.coordinates, prompt.label])
+    if (key === shownPromptKey) return
+    shownPromptKey = key
+    untrack(() => props.onMapPrompt(prompt === null ? null : { point: prompt.point, label: prompt.label, onConfirm: () => click({ kind: 'move-here' }) }))
+  })
 </script>
 
 <section
   class="board"
   bind:this={root}
+  style={rowBoxStyle}
   style:width={`${layout.widthPx}px`}
   style:top={`${boardTopClearancePx}px`}
   style:right={`${boardEdgeGapPx}px`}
   style:bottom={`${boardBottomClearancePx}px`}
+  style:padding={`${boardChromePx.padding}px`}
+  style:gap={`${boardChromePx.gap}px`}
   aria-label={heading}
 >
   {#if view !== null}
-    <header class="strip">
-      <strong>{heading}</strong>
-      {#if view.sound.on}
-        <span class="sound on">{view.sound.text}</span>
-      {:else}
-        <button type="button" class="sound" onclick={() => click({ kind: 'enable-sound' })}>{view.sound.text}</button>
-      {/if}
-    </header>
     {#if view.alerts.length > 0}
-      <ul class="alerts" aria-label={view.headings.alerts}>
+      <ul class="alerts" aria-label={view.headings.alerts} style:max-height={`${boardChromePx.alerts}px`}>
         {#each view.alerts as alert, index (index)}
           <li><strong>{alert.label}</strong> {alert.message}</li>
         {/each}
       </ul>
     {/if}
-    <div class="commit" data-state={view.commit.state}>
-      <button type="button" class="commit-button" disabled={!view.commit.enabled} onclick={() => click({ kind: 'commit' })}>{view.commit.text}</button>
-      {#if view.commit.cancel !== null}
-        <button type="button" class="cancel" onclick={() => click({ kind: 'cancel' })}>{view.commit.cancel}</button>
+    <div class="action" style:max-height={`${boardChromePx.actionBar}px`}>
+      <BoardActionBar commit={view.commit} selected={view.selected} {click} />
+    </div>
+    <div class="status" style:min-height={`${boardChromePx.statusLine}px`}>
+      <p class="feedback" role="status" aria-live="polite" data-tone={view.feedback?.tone ?? 'none'}>{view.feedback?.text ?? ''}</p>
+      {#if view.undo !== null}<button type="button" class="undo" onclick={() => click({ kind: 'undo' })}>{view.undo}</button>{/if}
+      {#if view.sound.on}
+        <span class="sound on">{view.sound.text}</span>
+      {:else}
+        <button type="button" class="sound" onclick={() => click({ kind: 'enable-sound' })}>{view.sound.text}</button>
       {/if}
-      {#if view.commit.hint !== null}<p class="hint">{view.commit.hint}</p>{/if}
     </div>
   {/if}
   {#if problem !== null}
@@ -212,18 +233,10 @@
     </p>
   {/if}
   {#if view !== null}
-    <div class="body">
+    <div class="body" style:grid-template-rows={listRowsTemplate(sections)} style:gap={`${boardChromePx.gap}px`}>
       {#each sections as section (section)}
         {#if section === 'work'}
-          <BoardWorkList
-            heading={view.headings.workList}
-            focused={view.focus === 'work'}
-            rows={view.workList.rows}
-            empty={view.workList.empty}
-            selected={view.selected?.kind === 'task' ? view.selected : null}
-            {icon}
-            {click}
-          />
+          <BoardWorkList heading={view.headings.workList} focused={view.focus === 'work'} rows={view.workList.rows} empty={view.workList.empty} {icon} {click} />
         {:else if section === 'units'}
           <BoardUnits heading={view.headings.unitBoard} focused={view.focus === 'units'} rows={view.unitBoard.rows} empty={view.unitBoard.empty} {icon} {click} />
         {:else if view.contacts !== null}
@@ -231,30 +244,25 @@
         {/if}
       {/each}
     </div>
-    <p class="feedback" role="status" aria-live="polite" data-tone={view.feedback?.tone ?? 'none'}>{view.feedback?.text ?? ''}</p>
     {#if missingArtwork !== null}<p class="artwork">{missingArtwork}</p>{/if}
-    {#if view.log.length > 0}
-      <ol class="log" aria-label={view.headings.log}>
-        {#each view.log as entry, index (index)}
-          <li><span class="num">{logTime(entry)}</span> {entry.text}</li>
-        {/each}
-      </ol>
-    {/if}
+    <ol class="log" aria-label={view.headings.log} style:height={`${boardChromePx.log}px`}>
+      {#each view.log as entry, index (index)}
+        <li><span class="num">{logTime(entry)}</span> {entry.text}</li>
+      {/each}
+    </ol>
   {:else if problem === null}
     <p class="loading">{boardWords.loading}</p>
   {/if}
 </section>
 
 <style>
-  /* Its offsets from the surface's edges come from board-layout.ts. */
+  /* Its offsets from the surface's edges, its padding and gaps and the heights of its parts come from board-layout.ts. */
   .board {
     position: absolute;
     z-index: 15;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 10px;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -262,30 +270,28 @@
     box-shadow: 0 10px 30px rgba(16, 24, 40, .22);
     color: var(--text);
     font-size: 13px;
+    line-height: var(--board-line);
     pointer-events: auto;
   }
 
-  .strip { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .sound { padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel-strong); color: var(--muted); font-size: 12px; cursor: pointer; }
-  .sound.on { cursor: default; }
-  .alerts { max-height: 84px; overflow: auto; margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+  .alerts { flex: none; overflow: auto; margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
   .alerts li { padding: 3px 7px; border-left: 3px solid var(--critical); border-radius: 4px; background: color-mix(in srgb, var(--critical) 9%, var(--panel)); font-size: 12px; }
-  .commit { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 6px; }
-  .commit-button { min-height: 36px; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: white; font-weight: 650; font-variant-numeric: tabular-nums; text-align: left; cursor: pointer; }
-  .commit-button:disabled { border-color: var(--border); background: var(--panel-strong); color: var(--muted); cursor: default; }
-  /* Dark text on the warning colour reads at 4.5:1 or better in both themes; white would not in the dark one. */
-  .commit[data-state='confirm'] .commit-button:enabled { border-color: var(--warning); background: var(--warning); color: color-mix(in srgb, var(--warning) 15%, black); }
-  .cancel { padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: inherit; cursor: pointer; }
-  .hint { grid-column: 1 / -1; margin: 0; color: var(--warning); font-size: 12px; }
-  .problem { margin: 0; color: var(--critical); }
-  .problem button { margin-left: 6px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: inherit; cursor: pointer; }
-  .body { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 12px; }
-  .feedback { min-height: 18px; margin: 0; padding: 4px 6px; border-radius: 6px; background: var(--panel-strong); font-size: 12px; }
+  /* Past its cap the action bar scrolls inside, so the lists keep their room. */
+  .action { flex: none; overflow: auto; overscroll-behavior: contain; }
+  .status { flex: none; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 0 0 6px; border-radius: 6px; background: var(--panel-strong); }
+  .feedback { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
   .feedback[data-tone='pending'] { color: var(--muted); }
   .feedback[data-tone='done'] { color: var(--success); }
   .feedback[data-tone='refused'] { color: var(--critical); }
-  .artwork { margin: 0; color: var(--warning); font-size: 11px; }
-  .log { max-height: 96px; overflow: auto; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 11px; }
+  .status button { flex: none; min-height: 44px; min-width: 44px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: inherit; font: inherit; font-size: 12px; cursor: pointer; touch-action: manipulation; }
+  .undo { border-color: var(--accent); color: var(--accent); font-weight: 650; }
+  .sound { color: var(--muted); }
+  span.sound { flex: none; padding: 0 8px; font-size: 12px; }
+  .problem { flex: none; margin: 0; color: var(--critical); }
+  .problem button { min-height: 44px; margin-left: 6px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: inherit; cursor: pointer; }
+  .body { flex: 1; min-height: 0; display: grid; }
+  .artwork { flex: none; margin: 0; color: var(--warning); font-size: 11px; }
+  .log { flex: none; box-sizing: border-box; overflow: auto; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 11px; line-height: 15px; }
   .num { font-variant-numeric: tabular-nums; }
   .loading { margin: 0; color: var(--muted); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
