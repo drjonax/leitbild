@@ -14,10 +14,11 @@
     ProcedureRunScope,
     ProcedureRunState,
     CompiledScenario,
+    RunRoles,
     ScenarioExecutionState,
     SimulationClockState,
   } from '../../core/model/index.ts'
-  import { deleteObjectCommandKind } from '../../core/model/index.ts'
+  import { deleteObjectCommandKind, roleClassForRoleSet, runRolesOf } from '../../core/model/index.ts'
   import { createPackPresentationComposer } from '../../core/packs/presentation-composer.ts'
   import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackMapFeatureQuery, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution } from '../../core/packs/protocol.ts'
   import type { PackLiveMapLayerBinding } from '../map-runtime/pack-live-layer.ts'
@@ -29,14 +30,22 @@
     invokeSimulationRunCapability,
     querySimulationRunCapability,
     fetchRunExecution,
+    fetchRunPresence,
     syncSimulationRunSnapshot as syncSimulationRunSnapshotClient,
+    worldApiErrorCode,
   } from '../simulation-run-client.ts'
   import {
     parseControlSurfaceRoute,
   } from '../simulation-run-route.ts'
   import {
     applySimulationRunEventBatchMessage,
+    type RealtimePerspective,
   } from '../simulation-run-events.ts'
+  import RoleBar from '../roles/RoleBar.svelte'
+  import RolePicker from '../roles/RolePicker.svelte'
+  import { roleSetText, type RoleCommandsDescriber, type RoleSetChange } from '../roles/role-controller.ts'
+  import { perspectiveKey, storesForPerspective } from '../roles/perspective.ts'
+  import { configureActiveRoleSet, currentActiveRoleSet, initialRoleSet, roleSetFromSearch, roleSetStorageKey, searchWithRoleSet, writeStoredRoleSet } from '../roles/role-session.ts'
   import { beginAction, completeAction, commandFeedbackText, emptyCommandFeedback, failAction, noteAction, settleCommand, type CommandFeedback } from '../command-feedback.ts'
   import { parseDroneMotionFramesRealtimeMessage, type DroneMotionFrame } from '../../packs/drone/realtime.ts'
   import { createMapFeatureLoader } from '../app/map-feature-loader.ts'
@@ -161,6 +170,14 @@
   let procedureRevision = $state(0)
   let packDataRevisions = $state<Record<string, number>>({})
   let packPanelSelections = $state<Record<string, string | null>>({})
+  // Role Runs only: the role set this screen plays, a switch awaiting its fresh
+  // snapshot, the connection's perspective epoch, and the picker shown to a
+  // screen that holds no role. A Run without roles leaves all of them empty.
+  let heldRoleIds = $state<ReadonlyArray<string> | null>(null)
+  let pendingRoleIds = $state<ReadonlyArray<string> | null>(null)
+  let roleSwitchActionId: number | null = null
+  let perspectiveEpoch = $state(0)
+  let rolePicker = $state<{ readonly runTitle: string; readonly declaration: RunRoles; readonly holders: Readonly<Record<string, number>> } | null>(null)
   let panelMapView = $state<MapView | null>(null)
   let startupSteps = $state<ReadonlyArray<StartupStep>>(createStartupSteps())
   let mapReady = $state(false)
@@ -307,11 +324,22 @@
   const systemStatusTone = $derived<StatusTone>(
     startupHasFailed(startupSteps) ? 'error' : startupIsReady(startupSteps) ? 'ready' : 'working',
   )
-  const startupModalVisible = $derived(startupModalShouldShow({
+  const startupModalVisible = $derived(rolePicker === null && (startupModalShouldShow({
     routeMode,
     dismissed: startupDismissed,
     steps: startupSteps,
-  }) || startupStatusModalOpen)
+  }) || startupStatusModalOpen))
+  const runRoles = $derived(scenarioDefinition ? runRolesOf(scenarioDefinition) : null)
+  const describeRoleCommands = $derived.by<RoleCommandsDescriber | undefined>(() => {
+    const scenario = scenarioDefinition
+    const views = activePack?.packs.flatMap(view => view.roles ? [{ packId: view.descriptor.id, roles: view.roles }] : []) ?? []
+    if (!scenario || views.length === 0) return undefined
+    return roleId => views.flatMap(({ packId, roles }) => roles.commandsLine(roleId, scenario.packConfigs[packId]) ?? []).join(' · ') || null
+  })
+  // Reset, signal and delete are controller acts in a role Run; open mode offers them to everyone.
+  const controllerControls = $derived(runRoles === null || (heldRoleIds !== null && roleClassForRoleSet(runRoles, heldRoleIds) === 'controller'))
+  // Pack map features belong to one perspective, like every Run store.
+  const mapFeatureRevisionKey = $derived(perspectiveEpoch === 0 ? JSON.stringify(packDataRevisions) : JSON.stringify([perspectiveEpoch, packDataRevisions]))
 
   const toggleTheme = (): void => {
     theme = toggleThemeMode()
@@ -1111,7 +1139,9 @@
 
   const syncSimulationRunSnapshot = async (): Promise<void> => {
     if (!simulationRunId) return
+    const askedAs = perspectiveKey(currentActiveRoleSet())
     const body = await syncSimulationRunSnapshotClient(simulationRunId)
+    if (perspectiveKey(currentActiveRoleSet()) !== askedAs) return
     objects = [...body.snapshot.objects]
     scenarioState = body.snapshot.scenario
     clock = body.snapshot.clock
@@ -1300,6 +1330,7 @@
         }
         realtimeAttached = true
         if (parsed.clock) clock = parsed.clock
+        if (parsed.perspective) adoptPerspective(parsed.perspective)
         status = 'Connected'
         completeStep('realtime')
         completeReadyWhenReady()
@@ -1326,6 +1357,11 @@
           procedureRevision += 1
         }
       },
+      onRoleRefused: (parsed) => {
+        pendingRoleIds = null
+        if (roleSwitchActionId !== null) commandFeedback = failAction(commandFeedback, roleSwitchActionId, parsed.message)
+        roleSwitchActionId = null
+      },
       onRuntimeRealtime: (parsed) => {
         if (parsed.simulationRunId !== id) return
         if (expectedRealtimeScenarioId !== null && parsed.scenarioId !== expectedRealtimeScenarioId) return
@@ -1344,7 +1380,90 @@
         })
         publishDroneMotionFrames(frames)
       },
-    })
+    }, currentActiveRoleSet())
+  }
+
+  /** A fresh snapshot of a new perspective replaces every Run-scoped store; the map view and panel sizes stay. */
+  const adoptPerspective = (perspective: RealtimePerspective): void => {
+    const stores = storesForPerspective(perspective.snapshot, object => activePack?.targeting?.isController(object) === true)
+    objects = [...stores.objects]
+    scenarioState = stores.scenarioState
+    clock = stores.clock
+    selectedControllerId = stores.selectedControllerId
+    seenRevisions = new Map(stores.seenRevisions)
+    packDataRevisions = { ...stores.packDataRevisions }
+    packPanelSelections = { ...stores.packPanelSelections }
+    cancelMapAssignment()
+    placement.cancel()
+    latestDroneMotionFrames = []
+    routeRevision += 1
+    procedureRevision += 1
+    perspectiveEpoch = perspective.epoch
+    heldRoleIds = perspective.roleIds
+    pendingRoleIds = null
+    configureActiveRoleSet(perspective.roleIds)
+    keepRoleSet(perspective.roleIds)
+    if (roleSwitchActionId !== null) commandFeedback = completeAction(commandFeedback, roleSwitchActionId)
+    roleSwitchActionId = null
+  }
+
+  const roleSetKey = (): string => {
+    const route = activeRoute()
+    return roleSetStorageKey(route.workspaceId, route.mode === 'simulation-run' ? route.simulationRunId : '')
+  }
+
+  /** This tab's role set lives in the World frame URL and sessionStorage, never in a cookie. */
+  const keepRoleSet = (roleIds: ReadonlyArray<string> | null): void => {
+    writeStoredRoleSet(sessionStorage, roleSetKey(), roleIds)
+    history.replaceState(history.state, '', `${location.pathname}${searchWithRoleSet(location.search, roleIds)}`)
+  }
+
+  const requestRoleChange = (change: RoleSetChange): void => {
+    if (change.kind === 'unchanged') return
+    if (change.kind === 'refused') {
+      commandFeedback = noteAction(commandFeedback, change.reason)
+      return
+    }
+    if (!simulationRunId || !runRoles) return
+    const issued = beginAction(commandFeedback, `Switching to ${roleSetText(runRoles, change.roleIds)}`)
+    commandFeedback = issued.feedback
+    try {
+      realtimeConnection.setRoles(simulationRunId, change.roleIds)
+    } catch (err) {
+      commandFeedback = failAction(commandFeedback, issued.actionId, err instanceof Error ? err.message : String(err))
+      return
+    }
+    roleSwitchActionId = issued.actionId
+    pendingRoleIds = change.roleIds
+  }
+
+  /** A role Run refused this screen's role set: show the picker from the public presence. */
+  const openRolePicker = async (id: SimulationRunId): Promise<void> => {
+    const presence = await fetchRunPresence(id)
+    if (!presence.roles) {
+      // The Run declares no roles; the URL named some. Play it in open mode.
+      keepRoleSet(null)
+      configureActiveRoleSet(null)
+      commandFeedback = noteAction(commandFeedback, 'This Run declares no roles')
+      await joinSimulationRun()
+      return
+    }
+    keepRoleSet(null)
+    rolePicker = { runTitle: presence.title, declaration: presence.roles, holders: presence.roles.holders }
+  }
+
+  const loadRoleHolders = async (): Promise<Readonly<Record<string, number>>> => {
+    const route = activeRoute()
+    if (route.mode !== 'simulation-run') throw new Error('simulation run route expected')
+    const presence = await fetchRunPresence(route.simulationRunId)
+    if (!presence.roles) throw new Error('This Run no longer declares roles')
+    return presence.roles.holders
+  }
+
+  const joinWithRoles = (roleIds: ReadonlyArray<string>): void => {
+    keepRoleSet(roleIds)
+    rolePicker = null
+    void joinSimulationRun()
   }
 
   const connectPendingRealtime = (): void => {
@@ -1357,7 +1476,7 @@
   const simulationRunIdFromPath = (): SimulationRunId => {
     const route = activeRoute()
     if (route.mode !== 'simulation-run') throw new Error('simulation run route expected')
-    if (location.pathname !== route.canonicalPath) history.replaceState(null, '', route.canonicalPath)
+    if (location.pathname !== route.canonicalPath) history.replaceState(null, '', `${route.canonicalPath}${searchWithRoleSet('', roleSetFromSearch(location.search))}`)
     return route.simulationRunId
   }
 
@@ -1426,9 +1545,30 @@
       const id = simulationRunIdFromPath()
       const route = activeRoute()
       if (route.mode !== 'simulation-run') throw new Error('simulation run route expected')
+      let requestedRoleIds: ReadonlyArray<string> | null
+      try {
+        requestedRoleIds = initialRoleSet({ search: location.search, storage: sessionStorage, key: roleSetKey() })
+      } catch (err) {
+        keepRoleSet(null)
+        commandFeedback = noteAction(commandFeedback, `Stored roles were unreadable and were cleared: ${err instanceof Error ? err.message : String(err)}`)
+        requestedRoleIds = null
+      }
+      configureActiveRoleSet(requestedRoleIds)
+      heldRoleIds = requestedRoleIds
+      pendingRoleIds = null
+      perspectiveEpoch = 0
       markStartup('join-request:start')
-      const body = await joinSimulationRunClient(id)
+      let body
+      try {
+        body = await joinSimulationRunClient(id)
+      } catch (err) {
+        const code = worldApiErrorCode(err)
+        if (code !== 'role_required' && code !== 'unknown_role') throw err
+        await openRolePicker(id)
+        return
+      }
       markStartup('join-request:done')
+      if (heldRoleIds !== null) keepRoleSet(heldRoleIds)
       await completeStartupFromResponse(body, {
         setActiveStartupStep: id => {
           activeStartupStep = id
@@ -1719,7 +1859,7 @@
           onMapError={handleMapError}
           onMapDiagnostic={handleMapDiagnostic}
           {simulationRunId}
-          packDataRevisionKey={JSON.stringify(packDataRevisions)}
+          packDataRevisionKey={mapFeatureRevisionKey}
           onPackFeatureSelected={selection => { if (surfacePanels.some(panel => panel.id === selection.panelId)) { packPanelSelections = { ...packPanelSelections, [selection.panelId]: selection.itemId }; setSurfacePanelOpen(selection.panelId, true) } }}
           mapLayerGroups={activeMapLayerGroups}
           {mapLayerGroupVisibility}
@@ -1771,13 +1911,19 @@
         </section>
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
+      {#if runRoles && heldRoleIds}
+        <RoleBar declaration={runRoles} held={pendingRoleIds ?? heldRoleIds} switching={pendingRoleIds !== null} describeCommands={describeRoleCommands} request={requestRoleChange} />
+      {/if}
       {#if richOperationalUiReady && simulationRunId}
+        <!-- A panel's own Run stores belong to one perspective: a role switch remounts it. -->
+        {#key perspectiveEpoch}
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}
           {#if (surfacePanelOpen[panel.id] ?? panel.defaultOpen) && Panel}
             <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} />
           {/if}
         {/each}
+        {/key}
       {/if}
     </main>
 
@@ -1881,6 +2027,17 @@
   {/if}
 {/if}
 
+{#if rolePicker}
+  <RolePicker
+    runTitle={rolePicker.runTitle}
+    declaration={rolePicker.declaration}
+    initialHolders={rolePicker.holders}
+    describeCommands={describeRoleCommands}
+    loadHolders={loadRoleHolders}
+    join={joinWithRoles}
+  />
+{/if}
+
 {#if startupModalVisible}
   <StartupModal
     steps={startupSteps}
@@ -1905,6 +2062,6 @@
     {goToStartPage}
     {toggleTheme}
     {toggleWeatherLayer}
-    {resetScenario}
+    resetScenario={controllerControls ? resetScenario : null}
   />
 {/if}

@@ -7,6 +7,14 @@ import type {
 } from './types.ts'
 import { recordCapabilityQueryDiagnostics } from './internal-diagnostics.ts'
 import { activeWorkspaceId, workspaceApiPath } from './workspace-context.ts'
+import { withActiveRoleSet } from './roles/role-session.ts'
+import type { RunRoles } from '../core/model/index.ts'
+
+/** A World API refusal with its structured code, e.g. role_required. */
+export type WorldApiError = Error & { readonly code?: string }
+
+export const worldApiErrorCode = (error: unknown): string | undefined =>
+  error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 
 export interface SimulationRunCapabilityRequest {
   readonly capabilityId: string
@@ -26,12 +34,14 @@ const readJsonResponse = async <T>(
   const text = await response.text()
   if (!response.ok) {
     let detail: string | undefined
+    let code: string | undefined
     try {
-      const parsed = JSON.parse(text) as { readonly error?: { readonly message?: unknown } }
+      const parsed = JSON.parse(text) as { readonly error?: { readonly message?: unknown; readonly code?: unknown } }
       if (typeof parsed.error?.message === 'string') detail = parsed.error.message
+      if (typeof parsed.error?.code === 'string') code = parsed.error.code
     } catch { /* Non-JSON errors retain the stable client message. */ }
-    if (detail) throw new Error(detail)
-    throw new Error(`${failureMessage}: ${response.status}`)
+    const error: WorldApiError = new Error(detail ?? `${failureMessage}: ${response.status}`)
+    throw code === undefined ? error : Object.assign(error, { code })
   }
   return JSON.parse(text) as T
 }
@@ -44,7 +54,7 @@ export const fetchScenario = async (scenarioId: string): Promise<ScenarioRespons
 export const joinSimulationRun = async (
   simulationRunId: SimulationRunId,
 ): Promise<SimulationRunResponse> => {
-  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}`), {
+  const response = await fetch(withActiveRoleSet(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}`)), {
     cache: 'no-store',
   })
   return await readJsonResponse<SimulationRunResponse>(response, 'simulation run join failed')
@@ -53,14 +63,14 @@ export const joinSimulationRun = async (
 export const syncSimulationRunSnapshot = async (
   simulationRunId: SimulationRunId,
 ): Promise<SimulationRunResponse> => {
-  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/snapshot`), { cache: 'no-store' })
+  const response = await fetch(withActiveRoleSet(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/snapshot`)), { cache: 'no-store' })
   return await readJsonResponse<SimulationRunResponse>(response, 'snapshot sync failed')
 }
 
 export const resetSimulationRun = async (
   simulationRunId: SimulationRunId,
 ): Promise<SimulationRunResponse> => {
-  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/reset`), {
+  const response = await fetch(withActiveRoleSet(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/reset`)), {
     method: 'POST',
   })
   return await readJsonResponse<SimulationRunResponse>(response, 'simulation run reset failed')
@@ -79,7 +89,7 @@ export const invokeSimulationRunCapability = async (
   simulationRunId: SimulationRunId,
   invocation: SimulationRunCapabilityRequest,
 ): Promise<CapabilityInvocationResponse> => {
-  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/capabilities/${encodeURIComponent(invocation.capabilityId)}/invoke`), {
+  const response = await fetch(withActiveRoleSet(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/capabilities/${encodeURIComponent(invocation.capabilityId)}/invoke`)), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -89,6 +99,18 @@ export const invokeSimulationRunCapability = async (
     }),
   })
   return await readJsonResponse<CapabilityInvocationResponse>(response, 'capability invocation failed')
+}
+
+/** The public presence of a Run; a role Run adds its roles and how many screens hold each. */
+export interface RunPresence {
+  readonly simulationRunId: SimulationRunId
+  readonly title: string
+  readonly roles?: RunRoles & { readonly holders: Readonly<Record<string, number>> }
+}
+
+export const fetchRunPresence = async (simulationRunId: SimulationRunId): Promise<RunPresence> => {
+  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/presence`), { cache: 'no-store' })
+  return await readJsonResponse<RunPresence>(response, 'presence fetch failed')
 }
 
 export const fetchRunExecution = async (simulationRunId: SimulationRunId): Promise<RunExecutionState> => {
@@ -132,7 +154,7 @@ export const querySimulationRunCapability = async <T = unknown>(
   let responseStatus: number | undefined
   let recorded = false
   try {
-    const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/capabilities/${encodeURIComponent(capabilityId)}/invoke`), {
+    const response = await fetch(withActiveRoleSet(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/capabilities/${encodeURIComponent(capabilityId)}/invoke`)), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,

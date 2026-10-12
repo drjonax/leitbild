@@ -13,7 +13,8 @@
     readonly goToStartPage: () => void
     readonly toggleTheme: () => void
     readonly toggleWeatherLayer: () => void
-    readonly resetScenario: () => Promise<void>
+    /** Null where this screen may not reset: a role Run screen without a controller role. */
+    readonly resetScenario: (() => Promise<void>) | null
   }
 
   let {
@@ -34,7 +35,7 @@
 
   const confirmReset = (): void => {
     resetRequested = false
-    void resetScenario()
+    if (resetScenario) void resetScenario()
   }
 </script>
 
@@ -86,6 +87,7 @@
       </section>
     {/if}
 
+    {#if resetScenario}
     <section class="settings-row">
       <div>
         <strong>Reset</strong>
@@ -109,6 +111,7 @@
         confirm={confirmReset}
         cancel={() => { resetRequested = false }}
       />
+    {/if}
     {/if}
   </div>
 </ModalShell>

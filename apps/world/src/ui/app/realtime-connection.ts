@@ -1,9 +1,13 @@
 import type { SimulationRunId, SimulationClockState } from '../../core/model/index.ts'
 import {
   parseSimulationRunWebSocketMessage,
+  type RealtimePerspective,
+  type RoleRefusedMessage,
   type SimulationRunEventBatchMessage,
   type RuntimeRealtimeMessageBatch,
 } from '../simulation-run-events.ts'
+import { createPerspectiveGate, type PerspectiveGate } from '../roles/perspective.ts'
+import { roleSetQueryParameter } from '../roles/role-session.ts'
 import type { SimulationRunCapabilityRequest } from '../simulation-run-client.ts'
 import type { CapabilityInvocationResponse } from '../types.ts'
 import { workspaceApiPath } from '../workspace-context.ts'
@@ -13,6 +17,8 @@ export interface RealtimeReadyMessage {
   readonly simulationRunId: SimulationRunId
   readonly scenarioId?: string
   readonly clock?: SimulationClockState
+  /** Role Runs: the adopted epoch's role set and the snapshot that replaces every Run store. */
+  readonly perspective?: RealtimePerspective
 }
 
 export interface RealtimeConnectionCallbacks {
@@ -23,10 +29,14 @@ export interface RealtimeConnectionCallbacks {
   readonly onReady: (message: RealtimeReadyMessage) => void
   readonly onEvent: (message: SimulationRunEventBatchMessage) => void
   readonly onRuntimeRealtime: (message: RuntimeRealtimeMessageBatch) => void
+  readonly onRoleRefused: (message: RoleRefusedMessage) => void
 }
 
 export interface RealtimeConnectionController {
-  readonly connect: (id: SimulationRunId, callbacks: RealtimeConnectionCallbacks) => void
+  /** Opens the Run's channel; a role Run's connection carries the screen's role set. */
+  readonly connect: (id: SimulationRunId, callbacks: RealtimeConnectionCallbacks, roleIds: ReadonlyArray<string> | null) => void
+  /** Asks the Run to swap this connection's role set in place; a ready message of a new epoch answers. */
+  readonly setRoles: (id: SimulationRunId, roleIds: ReadonlyArray<string>) => void
   readonly disconnect: () => void
   readonly canCarry: (id: SimulationRunId) => boolean
   readonly statusFor: (id: SimulationRunId) => 'open' | 'connecting' | 'other'
@@ -44,11 +54,23 @@ export interface RuntimeInputRequest {
 export const createRealtimeConnectionController = (): RealtimeConnectionController => {
   let socket: WebSocket | null = null
   let socketId: SimulationRunId | null = null
+  let gate: PerspectiveGate = createPerspectiveGate()
   const pendingInvocations = new Map<string, {
     readonly resolve: (response: CapabilityInvocationResponse) => void
     readonly reject: (err: Error) => void
     readonly timeoutId: number
+    readonly epoch: number
   }>()
+
+  // An answer to a request asked under an older role set is never applied.
+  const rejectInvocationsBefore = (epoch: number): void => {
+    for (const [requestId, pending] of pendingInvocations) {
+      if (pending.epoch >= epoch) continue
+      clearTimeout(pending.timeoutId)
+      pendingInvocations.delete(requestId)
+      pending.reject(new Error('The role set changed before this answer arrived'))
+    }
+  }
 
   const canCarry = (id: SimulationRunId): boolean =>
     socket !== null
@@ -84,13 +106,17 @@ export const createRealtimeConnectionController = (): RealtimeConnectionControll
   }
 
   return {
-    connect: (id, callbacks): void => {
+    connect: (id, callbacks, roleIds): void => {
       if (canCarry(id)) return
       socket?.close()
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const nextSocket = new WebSocket(`${protocol}//${location.host}${workspaceApiPath('/ws')}?simulationRun=${encodeURIComponent(id)}`)
+      const roleQuery = roleIds === null || roleIds.length === 0 ? '' : `&${roleSetQueryParameter}=${encodeURIComponent(roleIds.join(','))}`
+      const nextSocket = new WebSocket(`${protocol}//${location.host}${workspaceApiPath('/ws')}?simulationRun=${encodeURIComponent(id)}${roleQuery}`)
       socket = nextSocket
       socketId = id
+      // Epochs count per connection.
+      gate = createPerspectiveGate()
+      const connectionGate = gate
 
       nextSocket.onopen = () => {
         if (socket !== nextSocket) return
@@ -121,7 +147,15 @@ export const createRealtimeConnectionController = (): RealtimeConnectionControll
           return
         }
         if (parsed.type === 'realtime.ready') {
+          if (parsed.perspective !== undefined) {
+            if (!connectionGate.adopt(parsed.perspective.epoch)) return
+            rejectInvocationsBefore(parsed.perspective.epoch)
+          }
           callbacks.onReady(parsed)
+          return
+        }
+        if (!connectionGate.admits(parsed.epoch)) {
+          if (parsed.type === 'capability.result' || parsed.type === 'capability.error') rejectInvocationsBefore(connectionGate.epoch())
           return
         }
         if (parsed.type === 'capability.result') {
@@ -130,6 +164,10 @@ export const createRealtimeConnectionController = (): RealtimeConnectionControll
         }
         if (parsed.type === 'capability.error') {
           rejectInvocation(parsed.requestId, parsed.message)
+          return
+        }
+        if (parsed.type === 'role.refused') {
+          callbacks.onRoleRefused(parsed)
           return
         }
         if (parsed.type === 'runtime.realtime') {
@@ -148,6 +186,12 @@ export const createRealtimeConnectionController = (): RealtimeConnectionControll
       socket = null
       socketId = null
       rejectPendingInvocations('Realtime capability channel disconnected')
+    },
+    setRoles: (id, roleIds): void => {
+      if (socketId !== id || socket === null || socket.readyState !== WebSocket.OPEN) {
+        throw new Error('Realtime channel is not open; roles switch once it reconnects')
+      }
+      socket.send(JSON.stringify({ type: 'role.set', roles: roleIds }))
     },
     canCarry,
     statusFor: (id): 'open' | 'connecting' | 'other' => {
@@ -171,6 +215,7 @@ export const createRealtimeConnectionController = (): RealtimeConnectionControll
           resolve,
           reject,
           timeoutId,
+          epoch: gate.epoch(),
         })
         activeSocket.send(JSON.stringify({
           type: 'capability.invoke',

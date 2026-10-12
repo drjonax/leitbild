@@ -3,6 +3,7 @@ import type { PackRuntimeRealtimeMessage } from '../simulation/protocol.ts'
 import type { CapabilityInvocationResponse } from './types.ts'
 import { workspaceIdSchema, type WorkspaceId } from '@leitbild/contracts'
 import { simulationRunIdSchema } from '../core/model/index.ts'
+import type { PerspectiveSnapshot } from './roles/perspective.ts'
 
 export interface SimulationRunEventPayload {
   readonly type: string
@@ -18,13 +19,25 @@ export interface SimulationRunEventPayload {
   readonly clock?: SimulationClockState
 }
 
-export interface SimulationRunEventBatchMessage {
+/** In a Run that declares roles every message carries its perspective epoch. */
+interface PerspectiveEpochTag {
+  readonly epoch?: number
+}
+
+export interface SimulationRunEventBatchMessage extends PerspectiveEpochTag {
   readonly type: 'events'
   readonly workspaceId: WorkspaceId
   readonly simulationRunId: SimulationRunId
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly events: ReadonlyArray<SimulationRunEventPayload>
+}
+
+/** A role Run's ready message: its epoch, the role set it began and a fresh snapshot. */
+export interface RealtimePerspective {
+  readonly epoch: number
+  readonly roleIds: ReadonlyArray<string>
+  readonly snapshot: PerspectiveSnapshot
 }
 
 export interface RealtimeReadyMessage {
@@ -34,9 +47,10 @@ export interface RealtimeReadyMessage {
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly clock?: SimulationClockState
+  readonly perspective?: RealtimePerspective
 }
 
-export interface RealtimeCapabilityResultMessage {
+export interface RealtimeCapabilityResultMessage extends PerspectiveEpochTag {
   readonly type: 'capability.result'
   readonly workspaceId: WorkspaceId
   readonly simulationRunId: SimulationRunId
@@ -44,15 +58,16 @@ export interface RealtimeCapabilityResultMessage {
   readonly outcome: CapabilityInvocationResponse
 }
 
-export interface RealtimeCapabilityErrorMessage {
+export interface RealtimeCapabilityErrorMessage extends PerspectiveEpochTag {
   readonly type: 'capability.error'
   readonly workspaceId: WorkspaceId
   readonly simulationRunId: SimulationRunId
   readonly requestId?: string
+  readonly code?: string
   readonly message: string
 }
 
-export interface RuntimeRealtimeMessageBatch {
+export interface RuntimeRealtimeMessageBatch extends PerspectiveEpochTag {
   readonly type: 'runtime.realtime'
   readonly workspaceId: WorkspaceId
   readonly simulationRunId: SimulationRunId
@@ -61,11 +76,20 @@ export interface RuntimeRealtimeMessageBatch {
   readonly messages: ReadonlyArray<PackRuntimeRealtimeMessage>
 }
 
-export interface RuntimeInputErrorMessage {
+export interface RuntimeInputErrorMessage extends PerspectiveEpochTag {
   readonly type: 'runtime.input.error'
   readonly workspaceId: WorkspaceId
   readonly simulationRunId: SimulationRunId
   readonly inputType?: string
+  readonly message: string
+}
+
+/** The Run refused a `role.set`; the connection keeps its role set and epoch. */
+export interface RoleRefusedMessage extends PerspectiveEpochTag {
+  readonly type: 'role.refused'
+  readonly workspaceId: WorkspaceId
+  readonly simulationRunId: SimulationRunId
+  readonly code: string
   readonly message: string
 }
 
@@ -76,6 +100,7 @@ export type SimulationRunWebSocketMessage =
   | RealtimeCapabilityErrorMessage
   | RuntimeRealtimeMessageBatch
   | RuntimeInputErrorMessage
+  | RoleRefusedMessage
 
 interface ObjectApplicationResult {
   readonly objects: ReadonlyArray<OperationalObject>
@@ -150,6 +175,32 @@ const parseRealtimeMessage = (value: unknown): PackRuntimeRealtimeMessage => {
   }
 }
 
+const validEpoch = (value: unknown, label: string): number => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw new Error(`invalid ${label}: invalid perspective epoch`)
+  return value
+}
+
+const parseEpoch = (value: Record<string, unknown>, label: string): PerspectiveEpochTag =>
+  value.epoch === undefined ? {} : { epoch: validEpoch(value.epoch, label) }
+
+const parsePerspective = (value: Record<string, unknown>): RealtimePerspective | undefined => {
+  if (value.epoch === undefined) return undefined
+  const epoch = validEpoch(value.epoch, 'realtime ready message')
+  if (!Array.isArray(value.roleIds) || !value.roleIds.every(roleId => typeof roleId === 'string')) throw new Error('invalid realtime ready message: perspective without a role set')
+  const snapshot = value.snapshot
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.objects) || typeof snapshot.seq !== 'number') throw new Error('invalid realtime ready message: perspective without a snapshot')
+  return {
+    epoch,
+    roleIds: value.roleIds as ReadonlyArray<string>,
+    snapshot: {
+      objects: snapshot.objects as ReadonlyArray<OperationalObject>,
+      seq: snapshot.seq,
+      ...(isRecord(snapshot.scenario) ? { scenario: snapshot.scenario as unknown as ScenarioExecutionState } : {}),
+      ...(isRecord(snapshot.clock) ? { clock: snapshot.clock as unknown as SimulationClockState } : {}),
+    },
+  }
+}
+
 const parseMessageScope = (value: Record<string, unknown>, label: string): {
   readonly workspaceId: WorkspaceId
   readonly simulationRunId: SimulationRunId
@@ -172,12 +223,14 @@ export const parseSimulationRunWebSocketMessage = (raw: string): SimulationRunWe
   if (parsed.type === 'realtime.ready') {
     const scope = parseMessageScope(parsed, 'realtime ready message')
     if (typeof parsed.snapshotSeq !== 'number') throw new Error('invalid realtime ready message: missing snapshot sequence')
+    const perspective = parsePerspective(parsed)
     return {
       type: 'realtime.ready',
       ...scope,
       ...(typeof parsed.scenarioId === 'string' ? { scenarioId: parsed.scenarioId } : {}),
       snapshotSeq: parsed.snapshotSeq,
       ...(isRecord(parsed.clock) ? { clock: parsed.clock as unknown as SimulationClockState } : {}),
+      ...(perspective === undefined ? {} : { perspective }),
     }
   }
   if (parsed.type === 'capability.result') {
@@ -189,6 +242,7 @@ export const parseSimulationRunWebSocketMessage = (raw: string): SimulationRunWe
       ...scope,
       requestId: parsed.requestId,
       outcome: parsed.outcome,
+      ...parseEpoch(parsed, 'Capability result message'),
     }
   }
   if (parsed.type === 'capability.error') {
@@ -198,7 +252,9 @@ export const parseSimulationRunWebSocketMessage = (raw: string): SimulationRunWe
       type: 'capability.error',
       ...scope,
       ...(typeof parsed.requestId === 'string' ? { requestId: parsed.requestId } : {}),
+      ...(typeof parsed.code === 'string' ? { code: parsed.code } : {}),
       message: parsed.message,
+      ...parseEpoch(parsed, 'Capability error message'),
     }
   }
   if (parsed.type === 'runtime.realtime') {
@@ -211,6 +267,7 @@ export const parseSimulationRunWebSocketMessage = (raw: string): SimulationRunWe
       ...(typeof parsed.scenarioId === 'string' ? { scenarioId: parsed.scenarioId } : {}),
       snapshotSeq: parsed.snapshotSeq,
       messages: parsed.messages.map(parseRealtimeMessage),
+      ...parseEpoch(parsed, 'runtime realtime message batch'),
     }
   }
   if (parsed.type === 'runtime.input.error') {
@@ -221,7 +278,13 @@ export const parseSimulationRunWebSocketMessage = (raw: string): SimulationRunWe
       ...scope,
       ...(typeof parsed.inputType === 'string' ? { inputType: parsed.inputType } : {}),
       message: parsed.message,
+      ...parseEpoch(parsed, 'runtime input error message'),
     }
+  }
+  if (parsed.type === 'role.refused') {
+    const scope = parseMessageScope(parsed, 'role refusal message')
+    if (typeof parsed.code !== 'string' || typeof parsed.message !== 'string') throw new Error('invalid role refusal message: missing code or message')
+    return { type: 'role.refused', ...scope, code: parsed.code, message: parsed.message, ...parseEpoch(parsed, 'role refusal message') }
   }
   if (parsed.type !== 'events') return null
   const scope = parseMessageScope(parsed, 'WebSocket events message')
@@ -234,6 +297,7 @@ export const parseSimulationRunWebSocketMessage = (raw: string): SimulationRunWe
     ...(typeof parsed.scenarioId === 'string' ? { scenarioId: parsed.scenarioId } : {}),
     snapshotSeq: parsed.snapshotSeq,
     events: parsed.events.map(parseEventPayload),
+    ...parseEpoch(parsed, 'WebSocket events message'),
   }
 }
 
