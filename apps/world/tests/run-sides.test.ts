@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
-import { rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { accessContextSchema, moduleResourceCollectionSchema, newRequestId, newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
 import { handleSimulationRunApi } from '../src/core/api/simulation-run-routes.ts'
 import { handleWorldModuleApi } from '../src/core/api/workspace-module-api.ts'
@@ -17,19 +19,22 @@ import {
   type SimulationRunEvent,
   type SimulationRunId,
 } from '../src/core/model/index.ts'
+import { scenarioAuthoringCatalogFor } from '../src/core/scenarios/authoring.ts'
 import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
+import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import type { Actor } from '../src/core/simulation-runs/actors.ts'
 import { eventReach, eventVisibleTo } from '../src/core/simulation-runs/event-audience.ts'
-import type { SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
+import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import { compiledScenarioSideViewRules, executionStateSideViewRules, snapshotSideViewRules } from '../src/core/simulation-runs/side-view.ts'
 import { simulationRunStateSnapshotSchema } from '../src/core/simulation-runs/state-store.ts'
 import type { WorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runtime-registry.ts'
-import { fixtureRuntimeId } from './fixtures/fixture-pack.ts'
-import { fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
+import { fixturePack, fixtureRuntimeId } from './fixtures/fixture-pack.ts'
+import { createFixturePackRuntimeAdapter, fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
 import {
   compileWithRolePacks,
   createRoleRunRegistry,
   createRoleRunWorkspaces,
+  roleRunPacks,
   sidedNames,
   sidedRoles,
   sidedRunDefinition,
@@ -320,6 +325,28 @@ describe('side views on World-direct routes', () => {
     expect(procedure).toMatchObject({ status: 403, body: { error: { code: 'role_view_not_supported' } } })
     const deleteRefused = await callRoute<ErrorBody>(registry, invokePath(run.id, 'world.object.delete', 'blue-lead'), post({ input: { objectId: names.blueTask.id } }))
     expect(deleteRefused.body.error.code).toBe('role_controller_only')
+  })
+
+  test('a side view reaches only Capabilities of Packs the Run knows to be role-aware', async () => {
+    // Compilation admits the role-aware fixture Pack, but this Run resolves it
+    // without the opt-in: the invariant compile enforces has failed here.
+    const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-role-unaware-'))
+    const registry = createSimulationRunRegistry({
+      dataDir,
+      workspaceId: newWorkspaceId(),
+      scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: [fixturePack] }),
+      scenarioDefinitions: [scenarioDefinitionSchema.parse(sided)],
+      compileScenarioDefinition: source => compileWithRolePacks(source),
+      scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(roleRunPacks),
+      runtimeAdapters: [createFixturePackRuntimeAdapter()],
+    })
+    cleanups.push(async () => { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) })
+    const run = await registry.create({ scenarioId: 'sided-run' })
+    for (const [capabilityId, input] of [[fixtureQueryIds.state, {}], [fixtureCommandIds.setPriority, { taskId: names.blueTask.id, priority: 'low' }]] as const) {
+      const refused = await callRoute<ErrorBody>(registry, invokePath(run.id, capabilityId, 'blue-lead'), post({ input }))
+      expect({ capabilityId, status: refused.status, code: refused.body.error?.code }).toEqual({ capabilityId, status: 403, code: 'role_view_not_supported' })
+    }
+    expect((await callRoute(registry, invokePath(run.id, fixtureQueryIds.state, 'control'), post({ input: {} }))).status).toBe(200)
   })
 
   test('core stamps each query and command with the caller\'s viewer, from its connection and never from input', async () => {

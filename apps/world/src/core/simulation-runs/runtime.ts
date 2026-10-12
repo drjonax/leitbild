@@ -7,12 +7,12 @@ import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
 import type { PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
 import type { AgentRestrictions,RunRoles,ScenarioSide,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
-import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema,type AudienceIssue } from '../model/index.ts'
+import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,isSideView,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema,type AudienceIssue } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
 import type { PackWikiRef } from '../packs/protocol.ts'
 import type { ScenarioRevisionId } from '../scenarios/library.ts'
 import { canIssueCommand,type Actor } from './actors.ts'
-import { assertRunCapabilityAllowed,assertTruthView,isAudienceRefusal,roleGateRefusal,viewerForActor,type RoleGateRefusal } from './role-gates.ts'
+import { assertRunCapabilityAllowed,isAudienceRefusal,roleGateRefusal,roleViewNotSupportedRefusal,viewerForActor,type RoleGateRefusal } from './role-gates.ts'
 import {
   CommandIdempotencyConflictError,
   commandIdempotencyConfigFromEnv,
@@ -167,6 +167,11 @@ export const createSimulationRunRuntime = async (config: {
   }
   readonly capabilities?: Omit<SimulationRunCapabilities, 'simulationRunId'>
   readonly runtimeCapabilities?: ReadonlyArray<ActiveSimulationCapability>
+  /**
+   * Packs that accept the role obligations (WorldPack.roleAware). A side view
+   * reaches only their Capabilities, so without this list it reaches none.
+   */
+  readonly roleAwarePackIds?: ReadonlyArray<string>
   readonly procedureSourceService?: ProcedureSourceService
   /** Wall-time transport health bound; never a physical qualification duration. */
   readonly observationAcquisitionTimeoutMs?: number
@@ -177,6 +182,7 @@ export const createSimulationRunRuntime = async (config: {
   // Sides are fixed for the Run's lifetime. Every commit of a sided Run checks
   // audiences, so this is read before any commit can run.
   const declaredSides: ReadonlyArray<ScenarioSide> | undefined = config.scenario.roles?.sides
+  const roleAwarePackIds: ReadonlySet<string> = new Set(config.roleAwarePackIds ?? [])
   // Admission state invalidates in-flight prepared commands immediately. Public
   // reads and persistence see only acknowledged journal appends. Both maps share
   // immutable objects; updates cost O(batch size), not a whole-world clone.
@@ -1391,11 +1397,13 @@ export const createSimulationRunRuntime = async (config: {
     invocation: SimulationRunCapabilityInvocation,
   ): Promise<SimulationRunCapabilityInvocationResult> => {
     assertRunCapabilityAllowed(runRoles, actor, invocation.capabilityId)
-    // A side view reaches only role-aware Pack Capabilities, which answer
-    // within its picture; World's own operations would show it truth.
+    // Deny by default: a side view reaches only Capabilities of role-aware
+    // Packs, which answer within its picture. World's own operations and any
+    // other Pack's would show it truth.
     const viewer = viewerForActor(runRoles, actor)
-    if (viewer !== undefined && runtimeCapabilities.get(invocation.capabilityId)?.packId === 'world') {
-      assertTruthView(viewer.sees, `World operation ${invocation.capabilityId}`)
+    if (viewer !== undefined && isSideView(viewer.sees)) {
+      const packId = runtimeCapabilities.get(invocation.capabilityId)?.packId
+      if (packId === undefined || !roleAwarePackIds.has(packId)) throw roleViewNotSupportedRefusal(`Capability ${invocation.capabilityId}`)
     }
     // Generic object deletion is a short canonical mutation. Commit it inside
     // the execution queue so maximum pace cannot advance another slice between

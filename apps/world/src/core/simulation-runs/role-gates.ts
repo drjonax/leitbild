@@ -1,4 +1,4 @@
-import { audienceRefusalCodes, deleteObjectCommandKind, isSideView, roleClassForRoleSet, seesForRoleSet, viewerForRoleSet, type RoleClass, type RoleSees, type RunRoles, type RunViewer } from '../model/index.ts'
+import { audienceRefusalCodes, deleteObjectCommandKind, roleClassForRoleSet, seesForRoleSet, viewerForRoleSet, type RoleClass, type RoleSees, type RunRoles, type RunViewer } from '../model/index.ts'
 import type { Actor } from './actors.ts'
 
 /**
@@ -108,11 +108,6 @@ export const viewerForActor = (declaration: RunRoles | null, actor: Actor): RunV
 
 export const roleViewNotSupportedRefusal = (what: string): RoleGateRefusal =>
   roleGateRefusal('role_view_not_supported', `${what} is not offered to a role that sees only some sides`)
-
-/** A side view reaches only the routes and Capabilities that build its picture. */
-export const assertTruthView = (sees: RoleSees, what: string): void => {
-  if (isSideView(sees)) throw roleViewNotSupportedRefusal(what)
-}
 
 /** The Actor a perspective plays: its role set and its class mapped onto Actor.role. */
 export const actorForPerspective = (actor: Actor, perspective: RunPerspective): Actor =>

@@ -629,6 +629,7 @@ export const createSimulationRunRegistry = (config: {
         runtimeCapabilities: installedCapabilities.filter(entry =>
           entry.runtimeId === 'world.core'
           || scenarioRuntime.runtimes.some(runtime => runtime.runtimeId === entry.runtimeId)),
+        roleAwarePackIds: scenarioRuntime.packs.flatMap(pack => pack.roleAware === true ? [pack.descriptor.id] : []),
         procedureSourceService,
         runtimeStateLoaders: Object.fromEntries(Object.entries(runtimeStateStores).map(([runtimeId, store]) => [runtimeId, store.load])),
         ...(historian === undefined ? {} : { historian }),
