@@ -224,18 +224,20 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
     for (const shown of [...states.values()].flat()) expect(shown.panel.pens.some(pen => pen.tagId === 'ROD-STEPS')).toBe(false)
   })
 
-  test('a header names each branch by its first equipment, and the steam dumps read their flow first, then their position and their only mode', () => {
-    for (const name of ['at power', 'turbine trip +15:00'] as const) {
-      const turbine = allWords(at(name, 'sink'))
-      const flows = turbine.find(text => text.startsWith('Steam header to: '))
-      expect(flows, name).toBeDefined()
-      expect(flows, name).not.toMatch(/\bATM\b/)
+  test('where the steam goes reads in one row: every outlet of the circuit feeding the turbine by its branch\'s first equipment, those not measured named; the dumps\' own row their position and only mode', () => {
+    // HMI review of run 26: "Steam header to: MSSV 0 kg/s" left out the dumps to the condenser and the relief valves.
+    for (const name of ['at power', 'turbine trip +15:00', 'loss of offsite power +2:30'] as const) {
+      const outlets = allWords(at(name, 'sink')).filter(text => text.startsWith('Main steam to: '))
+      expect(outlets, name).toHaveLength(1)
+      // The dumps, which a controller positions, first; each steam generator's relief valve publishes no flow, so it is named.
+      expect(outlets[0], name).toMatch(/^Main steam to: Turbine bypass [\d.]+ kg\/s · MSSV [\d.]+ kg\/s · ARV A\/B\/C\/D not measured$/)
       const lines = at(name, 'sink').columns.flatMap(column => column.lines)
       const dump = lines.findIndex(line => line.kind === 'values' && line.cells.some(cell => cell.pen.tagId === 'TURB-BYP-POS'))
       const dumps = lines[dump]
-      expect(dumps?.kind === 'values' ? dumps.cells.map(cell => cell.pen.unit) : [], name).toEqual(['kg/s', 'fraction'])
+      expect(dumps?.kind === 'values' ? dumps.cells.map(cell => cell.pen.unit) : [], name).toEqual(['fraction'])
       expect(words(lines[dump + 1]!), name).toBe('pressure mode only, 7.6 MPa')
     }
+    expect(allWords(at('turbine trip +15:00', 'sink')).find(text => text.startsWith('Main steam to: '))).toMatch(/Turbine bypass [1-9]/)
   })
 
   test('a reading outside the validity its equipment declares reads "—", never its value: off line no turbine speed, on a dead grid no frequency, without forced flow no ΔT power', () => {

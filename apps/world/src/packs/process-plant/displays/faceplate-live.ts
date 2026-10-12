@@ -73,8 +73,12 @@ export type FaceplateRowSpec =
   | { readonly kind: 'values'; readonly source: FaceplateSource; readonly paths: ReadonlyArray<string>; readonly flag?: string; readonly criteria: ReadonlyArray<FaceplateCriterion>; readonly strip?: true; readonly held?: FaceplateHeld }
   /** A safety function's checks; each shown while it applies, folded while all pass. */
   | { readonly kind: 'checks'; readonly safetyFunction: string; readonly title: string; readonly checks: ReadonlyArray<{ readonly label: string; readonly when?: FaceplateCondition; readonly condition: FaceplateCondition }> }
-  /** What a header (`from`, its short name) sends down each branch, the branch named by its first equipment. */
-  | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
+  /**
+   * Where the circuit feeding an inlet (`from`, its service: "Main steam")
+   * sends its flow besides the end, each outlet named by its branch's first
+   * equipment; those whose branch publishes no flow by name only (`unmeasured`).
+   */
+  | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }>; readonly unmeasured?: ReadonlyArray<string> }
   | { readonly kind: 'loops'; readonly loops: ReadonlyArray<string>; readonly columns: ReadonlyArray<FaceplateLoopColumn> }
 
 /** What a valve's controller holds and to what: the valve's short name (its flow's name in the row), the quantity it measures ("pressure"), its set point in display units. */
@@ -130,7 +134,7 @@ export type FaceplateRow =
   | { readonly kind: 'check'; readonly safetyFunction: string; readonly label: string; readonly met: 'no' | 'unknown' }
   /** Checks that apply, folded: their common name, how many of how many are met; in a compact faceplate, those not met by name. */
   | { readonly kind: 'checks'; readonly safetyFunction: string; readonly label: string; readonly met: number; readonly of: number; readonly notMet?: ReadonlyArray<string> }
-  | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
+  | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }>; readonly unmeasured?: ReadonlyArray<string> }
   /**
    * The loop table; an `idle` column (its rules do not act in the mode) is
    * drawn faint and names no margin; a `blank` value measures nothing now and

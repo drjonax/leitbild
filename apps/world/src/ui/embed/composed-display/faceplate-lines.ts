@@ -114,7 +114,7 @@ export type FaceplateLine =
    * decides it.
    */
   | { readonly kind: 'consequence'; readonly forms: ReadonlyArray<string>; readonly title: string; readonly idle: boolean }
-  /** Where a header sends its flow, each branch by its first equipment ("Steam header to: Turbine bypass 27.1 kg/s"). */
+  /** Where a circuit sends its flow, each outlet by its branch's first equipment ("Main steam to: Turbine bypass 27.1 kg/s · MSSV 0 kg/s"). */
   | { readonly kind: 'flows'; readonly parts: ReadonlyArray<string> }
   /**
    * One quantity of parallel equipment side by side (the rod banks): a thin
@@ -394,7 +394,9 @@ export const faceplateLines = (
         const branches = row.branches.map(branch => ({ ...branch, pen: pens.get(branch.path) ?? missing(branch.path) }))
         const resolutions = branches.flatMap(branch => branch.pen.resolution ?? [])
         const resolution = resolutions.length === 0 ? null : Math.min(...resolutions)
-        return { kind: 'flows', parts: branches.map((branch, index) => `${index === 0 ? `${row.from} to: ` : ''}${branch.destination} ${numberValue(branch.pen, live.read(branch.path), resolution).text}`) }
+        // An outlet whose branch publishes no flow is named, never left out: steam may be leaving by it.
+        const parts = [...branches.map(branch => `${branch.destination} ${numberValue(branch.pen, live.read(branch.path), resolution).text}`), ...(row.unmeasured === undefined ? [] : [`${row.unmeasured.join(', ')} not measured`])]
+        return { kind: 'flows', parts: parts.map((part, index) => `${index === 0 ? `${row.from} to: ` : ''}${part}`) }
       }
       return { kind: 'loops', table: loopTable(row, pens, live.read, activeRuleIds, sample, gates) }
     }

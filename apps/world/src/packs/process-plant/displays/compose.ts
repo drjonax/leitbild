@@ -1399,7 +1399,8 @@ const faceplatePanel = (
     const rated = pen.resolution === null && owner?.type === 'link' ? ratedFlowForLink(system.plant.graph, system.plant.graph.links[owner.linkIndex]!) : null
     return rated === null ? pen : { ...pen, resolution: rated * RESOLUTION_FRACTION }
   })
-  // As tall as its longest column can grow while it is open (every check unfolded), so nothing under it moves.
+  // As tall as its longest column can grow while it is open (every check unfolded), so nothing under it moves; the
+  // lines that wrap are reserved their rows at the width it is drawn at (sizedFaceplate).
   return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(column => faceplateMostLines(column)))) }
 }
 
@@ -1408,24 +1409,30 @@ const FACEPLATE_CHARACTER_PX = 7.5
 /** A wrapping line's lines of text to one faceplate row. */
 const FACEPLATE_TEXT_LINES_PER_ROW = 2
 
+/** A value and its unit at their longest in a line that wraps ("1234.5 kg/s"): the room each outlet's reading is reserved. */
+const FACEPLATE_VALUE_CHARACTERS = 12
+
 /**
- * A faceplate compacted for less room: each function's checks on one line,
- * which names those not met and wraps, never cut (faceplate-live.ts); rows
- * reserved for its longest form, every check named, at the width of its
- * columns.
+ * A faceplate at the width of its columns under a drawing `drawingWidth`
+ * wide, whole or compacted for less room (each function's checks on one
+ * line, which names those not met and wraps, never cut: faceplate-live.ts),
+ * with rows reserved for each line that wraps at its longest form: a folded
+ * line naming every check, and where a circuit sends its flow, every outlet
+ * at its longest reading.
  */
-const compacted = (panel: ComposedFaceplatePanel, drawingWidth: number): ComposedFaceplatePanel => {
+const sizedFaceplate = (panel: ComposedFaceplatePanel, drawingWidth: number, compact: boolean): ComposedFaceplatePanel => {
   const layout = composedDisplayLayout
   const text = drawingWidth / panel.faceplate.columns.length - 20
   const wrapped = (column: ComposedFaceplatePanel['faceplate']['columns'][number]): number => column.rows.reduce((more, row) => {
-    if (row.kind !== 'checks') return more
-    const longest = `○ ${row.title} 0/${row.checks.length} · not yet met: ${row.checks.map(check => check.label).join('; ')}`
-    return more + Math.ceil(Math.ceil(longest.length * FACEPLATE_CHARACTER_PX / Math.max(text, layout.faceplateRow)) / FACEPLATE_TEXT_LINES_PER_ROW) - 1
+    const longest = row.kind === 'checks' && compact ? `○ ${row.title} 0/${row.checks.length} · not yet met: ${row.checks.map(check => check.label).join('; ')}`
+      : row.kind === 'flows' ? `${row.from} to: ${[...row.branches.map(branch => `${branch.destination} ${'0'.repeat(FACEPLATE_VALUE_CHARACTERS)}`), ...(row.unmeasured === undefined ? [] : [`${row.unmeasured.join(', ')} not measured`])].join(' · ')}`
+        : null
+    return longest === null ? more : more + Math.ceil(Math.ceil(longest.length * FACEPLATE_CHARACTER_PX / Math.max(text, layout.faceplateRow)) / FACEPLATE_TEXT_LINES_PER_ROW) - 1
   }, 0)
   return {
     ...panel,
-    faceplate: { ...panel.faceplate, compact: true },
-    height: faceplateHeight(Math.max(0, ...panel.faceplate.columns.map(column => faceplateMostLines(column, true) + wrapped(column)))),
+    faceplate: compact ? { ...panel.faceplate, compact: true } : panel.faceplate,
+    height: faceplateHeight(Math.max(0, ...panel.faceplate.columns.map(column => faceplateMostLines(column, compact) + wrapped(column)))),
   }
 }
 
@@ -1503,7 +1510,7 @@ export const compileDetailDisplay = (
       && sampledPathCount(fitted.mimic, candidate) <= PROCESS_DISPLAY_SAMPLE_MAX_PATHS ? shown : null
   }
   const drawingWidth = view === null ? 0 : overviewDrawingRoom(view, fitted.arrangement, { ...fitted.panels, readouts: 0 })?.maxWidth ?? 0
-  const placed = (faceplate === null ? [] : [faceplate, compacted(faceplate, drawingWidth)]).flatMap(candidate => {
+  const placed = (faceplate === null ? [] : [sizedFaceplate(faceplate, drawingWidth, false), sizedFaceplate(faceplate, drawingWidth, true)]).flatMap(candidate => {
     const shown = beneath(candidate)
     return shown === null ? [] : [{ panel: candidate, panels: shown }]
   })[0]

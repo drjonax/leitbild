@@ -4,7 +4,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule, ProcessPlantIcSafetyFunctionCondition, ProcessPlantIcStatusTreeNode } from '../runtime/index.ts'
 import { processPlantIcLifecycleIdFor } from '../runtime/ic/control-protection-lifecycle.ts'
 import { findProcessPlantSignalBinding, resolveProcessPlantSignalBinding, type ProcessPlantSignalReference } from '../signals.ts'
-import { actionStates, automaticActions, branchFlows, conditionBindings, type AutomaticAction } from './actuations.ts'
+import { actionStates, automaticActions, conditionBindings, type AutomaticAction } from './actuations.ts'
 import { z } from 'zod'
 import type {
   CompiledFaceplate,
@@ -298,29 +298,88 @@ const controlledValve = (plant: CompiledProcessPlant, index: number): { readonly
 }
 
 /**
- * What a header sends down each of its branches (branchFlows), with the
- * branch's first equipment, by which it is named (the turbine bypass, the
- * main steam safety valve), not by where it ends.
+ * Where the circuit feeding an end's inlet sends its flow besides the end
+ * (HMI review of run 26: "where does the steam go?" read only the safety
+ * valve): every line of the inlet's service that leaves the circuit, into
+ * equipment the service goes on from no further (the condenser the steam
+ * dumps feed, the atmosphere a relief valve vents to), up- or downstream of
+ * the inlet; the lines through a valve a controller positions first, then in
+ * the order the circuit reaches them from the inlet. Each is named by the
+ * first equipment of its branch, after the last point where the circuit
+ * divides (the turbine bypass at the header, each steam generator's relief
+ * valve at its generator, the safety valve), never by where it ends, and read
+ * by the published flow on its branch nearest where it leaves; null where the
+ * branch publishes none.
  */
-const namedBranches = (plant: CompiledProcessPlant, header: number): ReadonlyArray<{ readonly path: VariablePath; readonly first: number }> => {
+const circuitOutlets = (plant: CompiledProcessPlant, end: number, port: string): { readonly service: string; readonly outlets: ReadonlyArray<{ readonly first: number; readonly path: VariablePath | null }> } | null => {
   const graph = plant.graph
-  const firsts = (graph.outgoingLinksByComponent[header] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow')
-  const onBranch = (first: CompiledProcessLink): ReadonlySet<number> => {
-    const carriers = new Set([linkCarrier(first)])
-    const links = [first]
-    for (let step = 1; step < MIMIC_REACH_LINKS; step += 1) {
-      const next = nextLinks(graph, links.at(-1)!, carriers)
-      if (next.length !== 1) break
-      links.push(next[0]!)
+  const inlets = attachedAt(plant, end, port).filter(entry => entry.link.kind === 'fluidFlow' && entry.link.toComponentIndex === end)
+  if (inlets.length === 0) return null
+  const service = linkCarrier(inlets[0]!.link)
+  const ofService = (indexes: ReadonlyArray<number> | undefined): ReadonlyArray<CompiledProcessLink> =>
+    (indexes ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow' && linkCarrier(link) === service)
+  const into = (component: number) => ofService(graph.incomingLinksByComponent[component])
+  const outOf = (component: number) => ofService(graph.outgoingLinksByComponent[component])
+  // The circuit breadth first from the inlet, never through the end or past where the service ends.
+  const reached = new Set([end, ...inlets.map(entry => entry.link.fromComponentIndex)])
+  const walked = new Set(inlets.map(entry => entry.link.index))
+  const leaving: CompiledProcessLink[] = []
+  let frontier = inlets.map(entry => entry.link.fromComponentIndex)
+  while (frontier.length > 0) {
+    const next: number[] = []
+    for (const component of frontier) {
+      if (outOf(component).length === 0) continue
+      for (const link of [...into(component), ...outOf(component)]) {
+        if (walked.has(link.index)) continue
+        walked.add(link.index)
+        if (link.toComponentIndex !== end && outOf(link.toComponentIndex).length === 0) leaving.push(link)
+        for (const far of [link.fromComponentIndex, link.toComponentIndex]) {
+          if (reached.has(far)) continue
+          reached.add(far)
+          next.push(far)
+        }
+      }
     }
-    return new Set(links.map(link => link.index))
+    frontier = next
   }
-  const branches = firsts.map(first => ({ first: first.toComponentIndex, links: onBranch(first) }))
-  return branchFlows(plant, header, MIMIC_REACH_LINKS).flatMap(entry => {
-    const owner = graph.signalBindingByPath.get(entry.path)?.owner
-    const branch = owner?.type === 'link' ? branches.find(candidate => candidate.links.has(owner.linkIndex)) : undefined
-    return branch === undefined ? [] : [{ path: entry.path, first: branch.first }]
+  const outlets = leaving.map(link => {
+    // Up the line it leaves by, through equipment in series, to where the circuit divides.
+    const branch = [link]
+    for (let at = link.fromComponentIndex; at !== end && into(at).length === 1 && outOf(at).length === 1 && !branch.includes(into(at)[0]!);) {
+      branch.unshift(into(at)[0]!)
+      at = into(at)[0]!.fromComponentIndex
+    }
+    const flows = branch.flatMap(entry => entry.variables.map(variable => variable.path).filter(path => String(path).endsWith('.flowKgPerS') && readable(graph.signalBindingByPath.get(path))))
+    return { first: branch[0]!.toComponentIndex, path: flows.at(-1) ?? null }
   })
+  const controlled = (component: number): boolean => declaredController.safeParse((graph.components[component]!.parameters as Readonly<Record<string, unknown>> | undefined)?.controller).success
+  return { service, outlets: [...outlets.filter(outlet => controlled(outlet.first)), ...outlets.filter(outlet => !controlled(outlet.first))] }
+}
+
+/**
+ * Parallel equipment of the loops named once with its loops ("ARV A/B/C/D"),
+ * where each one's name is the one name and its loop; other names as they are.
+ */
+const loopNames = (plant: CompiledProcessPlant, components: ReadonlyArray<number>): ReadonlyArray<string> => {
+  const graph = plant.graph
+  const names: string[] = []
+  const grouped = new Map<string, string[]>()
+  for (const index of components) {
+    const component = graph.components[index]!
+    const loop = component.metadata?.loopId
+    const name = shortName(plant, index)
+    if (loop === undefined || !name.endsWith(` ${loop}`)) {
+      names.push(name)
+      continue
+    }
+    const base = name.slice(0, -loop.length - 1)
+    if (!grouped.has(base)) {
+      grouped.set(base, [])
+      names.push(base)
+    }
+    grouped.get(base)!.push(loop)
+  }
+  return names.map(name => grouped.has(name) ? `${name} ${grouped.get(name)!.join('/')}` : name)
 }
 
 type Column = { readonly heads: FaceplateHead[]; readonly rows: FaceplateRowSpec[]; readonly rules: FaceplateRowSpec[]; readonly causeFirst: boolean }
@@ -491,18 +550,35 @@ export const compileFaceplate = (
   // (3) Port circuits, for an end no safety function judges, each titled by its port.
   const circuits: Array<{ readonly column: Column; readonly carrier: string; readonly reached: ReadonlyArray<number> }> = []
   if (functionColumns.size === 0) {
+    // Where the circuit feeding each inlet sends its flow besides the end, in one row at the foot of the inlet's
+    // column, each outlet named by its branch's first equipment; its flows claimed before any other row (a steam
+    // dump's flow is where the steam goes; the dump's own row reads its position and what it holds).
+    const outletRows = new Map<string, FaceplateRowSpec>()
+    for (const port of Object.keys(component.ports)) {
+      const found = circuitOutlets(plant, end, port)
+      if (found === null || found.outlets.length === 0) continue
+      const measured = found.outlets.filter((outlet): outlet is { readonly first: number; readonly path: VariablePath } => outlet.path !== null && !placed.has(outlet.path))
+      for (const outlet of measured) placed.add(outlet.path)
+      const unmeasured = found.outlets.filter(outlet => outlet.path === null).map(outlet => outlet.first)
+      outletRows.set(port, {
+        kind: 'flows',
+        from: portTitle(found.service),
+        branches: measured.map(outlet => ({ path: String(outlet.path), destination: shortName(plant, outlet.first) })),
+        ...(unmeasured.length === 0 ? {} : { unmeasured: loopNames(plant, unmeasured) }),
+      })
+    }
     for (const port of Object.keys(component.ports)) {
       const reached = circuitReach(plant, end, port)
       if (reached.length === 0) continue
       const into = column([{ kind: 'circuit', port, title: portTitle(port), equipment: reached.map(index => shortName(plant, index)) }])
       for (const index of reached) {
         const along = graph.components[index]!
-        // A valve its controller positions: the flow through it first, then its position, and what it holds.
+        // A valve its controller positions: the flow through it first, where no outlet row reads it, then its position, and what it holds.
         const controlled = controlledValve(plant, index)
-        if (controlled !== null && readable(bindingOf(controlled.flow)) && readable(bindingOf(controlled.position)) && !placed.has(controlled.flow) && !placed.has(controlled.position)) {
-          placed.add(controlled.flow)
-          placed.add(controlled.position)
-          into.rows.push({ kind: 'values', source: 'circuit', paths: [String(controlled.flow), String(controlled.position)], criteria: [], held: controlled.held })
+        if (controlled !== null && readable(bindingOf(controlled.position)) && !placed.has(controlled.position)) {
+          const flow = readable(bindingOf(controlled.flow)) && !placed.has(controlled.flow) ? [controlled.flow] : []
+          for (const path of [...flow, controlled.position]) placed.add(path)
+          into.rows.push({ kind: 'values', source: 'circuit', paths: [...flow, controlled.position].map(String), criteria: [], held: controlled.held })
         }
         for (const aspect of along.semantics.aspects) {
           if (aspect.state !== undefined && (aspect.aspect === 'position' || aspect.aspect === 'running' || aspect.aspect === 'energized')) push(into, valuesRow(aspect.state.path, 'circuit'))
@@ -512,17 +588,9 @@ export const compileFaceplate = (
           if (binding.owner.type === 'component' && binding.owner.componentIndex === index && binding.tagId !== undefined) push(into, valuesRow(binding.path, 'circuit'))
         }
       }
+      const outlets = outletRows.get(port)
+      if (outlets !== undefined) into.rows.push(outlets)
       circuits.push({ column: into, carrier: attachedAt(plant, end, port)[0]!.link.kind, reached })
-    }
-    // What each header reached sends down each branch, once every row has claimed its values (a controlled valve its own
-    // flow): named by the branch's first equipment, never by where it ends (the atmosphere a safety valve vents to).
-    for (const circuit of circuits) {
-      for (const index of circuit.reached) {
-        if (presentationFor(graph.components[index]!).element !== 'bar') continue
-        const branches = namedBranches(plant, index).filter(branch => readable(bindingOf(branch.path)) && !placed.has(branch.path))
-        for (const branch of branches) placed.add(branch.path)
-        if (branches.length > 0) circuit.column.rows.push({ kind: 'flows', from: shortName(plant, index), branches: branches.map(branch => ({ path: String(branch.path), destination: shortName(plant, branch.first) })) })
-      }
     }
   }
 
