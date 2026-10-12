@@ -2,15 +2,15 @@ import { audienceVisibleTo, type GeoJsonPoint, type IsoTimestamp, type ObjectId 
 import type { EinsatzConfig } from '../config-schema.ts'
 import { wordFor } from '../lexicon.ts'
 import { groupUnseen, type PictureViewer } from '../picture.ts'
-import { recommendationSchema } from '../recommendation-schema.ts'
-import { boardCommandIds, callKey, chainVerbCall, closeCall, closeDropText, createdSteps, holdCall, recallCall, releaseText, sendToTask, stepRemoveCall, undoMarks, type CallDraft, type CreatedStep, type UndoMark } from './calls.ts'
+import { recommendationSchema, type Recommendation } from '../recommendation-schema.ts'
+import { boardCommandIds, callKey, chainVerbCall, closeCall, closeDropText, createdSteps, holdCall, queueCall, recallCall, releaseText, sendToTask, stepRemoveCall, undoMarks, type CallDraft, type CreatedStep, type UndoMark } from './calls.ts'
 import { intentOf, type BoardIntent } from './keymap.ts'
 import { logChange, recordAlerts } from './log.ts'
 import { alternativeRows, candidateIn, createRecommendations, droppedReason, proposalUnits, type Candidate } from './recommendations.ts'
 import { readBoardRecords, type BoardRecords, type BoardTask, type BoardUnit } from './records.ts'
-import { boardGroupUnitTypes, createBoardRules, hasLoad, notOrderedText, type DeclaredRole } from './rules.ts'
-import { holdingText, mapOrderFor, orderPreview, orderRefusal, type MapOrder } from './taps.ts'
-import { boardWords, etaText, namedOnce, reasonText, word } from './text.ts'
+import { boardGroupUnitTypes, createBoardRules, hasLoad, notOrderedText, undoRestores, type DeclaredRole } from './rules.ts'
+import { dropText, holdingText, mapOrderFor, orderPreview, orderRefusal, type MapOrder } from './taps.ts'
+import { boardWords, classCode, etaText, namedOnce, reasonText, word } from './text.ts'
 import type { BoardEffect, BoardEvent, BoardEventBody, BoardKey, BoardList, BoardMapPrompt, BoardView, CallResult, ChoiceOption, ClickTarget, CommitElement, Feedback, HeaderAlert, LogEntry, MapTarget, TargetPreview, UnitVerb } from './types.ts'
 import { contactsView, type SideLabel } from './contacts.ts'
 import { boardUnits, unitRow } from './unit-board.ts'
@@ -30,11 +30,16 @@ import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommend
  * ground, which first asks "Move here" at the point. A free asset goes at
  * once; a busy one (a task, load or job-chain steps) asks "Do now" or "Add
  * to end". An asset row's + makes the next target tap join the end of its
- * job chain; the highlighted row's × removes a step, and its verbs stop,
- * resume, clear or recall it. A send or an added step can be undone for
- * 5 s, by removing the step it created. With no asset highlighted, a tap on
- * a call selects it and the action bar offers its proposal as one button,
- * its alternatives one tap each. Keys stay as hidden desktop accelerators.
+ * job chain; the highlighted row's × removes a step (the active step of a
+ * committed unit asks first, since it releases the call), and its verbs
+ * stop, resume, clear or recall it. A send or an added step can be undone
+ * for 5 s, by removing the step it created, where that gives the unit back
+ * as it stood (`undoRestores`). With no asset highlighted, a tap on a call
+ * selects it and the action bar offers its proposal as one button, its
+ * alternatives one tap each; a proposed unit holding job-chain steps asks
+ * "Do now" or "Add to end" there too, and one of a group the screen chose
+ * not to see is named with its group. Keys stay as hidden desktop
+ * accelerators.
  *
  * - What is shown is exactly what commits: the action bar and the call it
  *   sends are built from the same draft.
@@ -89,8 +94,11 @@ interface PendingMove { readonly unitId: string; readonly point: GeoJsonPoint; r
 /** An accepted send or queue, undoable until `untilMs` (wall time) once the Run shows the steps it created. */
 interface Undo { readonly marks: ReadonlyArray<UndoMark>; readonly steps: ReadonlyArray<CreatedStep> | null; readonly untilMs: number }
 
+/** What a commit asks before it sends: to confirm what it drops (a divert), or Do now or Add to end (a unit holding steps). */
+type Ask = Omit<Confirmation, 'call'>
+
 type Commitment =
-  | { readonly kind: 'call'; readonly call: CallDraft; readonly etaText: string | null; readonly confirm: string | null; readonly undoable: boolean }
+  | { readonly kind: 'call'; readonly call: CallDraft; readonly etaText: string | null; readonly ask: Ask | null; readonly undoable: boolean }
   | { readonly kind: 'none'; readonly state: 'preparing' | 'none'; readonly text: string }
 
 export interface BoardController {
@@ -179,6 +187,21 @@ export const createBoardController = (options: {
   let seen: ReadonlyArray<string> | null = null
   /** Assets: the units the screen commands that can move, but those of groups it chose not to see. */
   const units = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardUnits(rules, records).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
+  /** A unit's label, naming its group when the screen chose not to see that group: Calls may still offer it, drawn nowhere else. */
+  const shownLabel = (unitId: string, label: string): string => {
+    const group = records?.units.get(unitId)?.group
+    if (!groupUnseen(group, seen ?? undefined)) return label
+    const declared = rules.config.groups.find(entry => entry.id === group)
+    if (declared === undefined) throw new Error(`${unitId} names group ${group}, which the configuration does not declare`)
+    return `${label} (${declared.label} hidden)`
+  }
+  /** A task's recommendation as this screen offers it: proposed and alternative units of a group it does not see are named with their group. */
+  const answerOf = (taskId: string): Recommendation | undefined => {
+    const answer = recommendations.answer(taskId)
+    if (answer === undefined || seen === null) return answer
+    const mark = <T extends { readonly unitId: string; readonly label: string }>(entry: T): T => ({ ...entry, label: shownLabel(entry.unitId, entry.label) })
+    return { ...answer, proposal: { ...answer.proposal, units: answer.proposal.units.map(mark) }, alternatives: answer.alternatives.map(mark) }
+  }
 
   const info = (text: string): void => { feedback = { text, tone: 'info' } }
   const guardActive = (): boolean => wallMs < guardUntilMs
@@ -239,8 +262,8 @@ export const createBoardController = (options: {
   const callLine = (call: Call): Feedback => inFlight.has(call.callId) ? { text: `${call.text}…`, tone: 'pending' } : { text: `✓ ${call.text}`, tone: 'done' }
 
   const taskCommitment = (task: BoardTask): Commitment => {
-    if (rules.isReport(task)) return { kind: 'call', call: closeCall(rules, task, 'work-list'), etaText: null, confirm: null, undoable: false }
-    const answer = recommendations.answer(task.id)
+    if (rules.isReport(task)) return { kind: 'call', call: closeCall(rules, task, 'work-list'), etaText: null, ask: null, undoable: false }
+    const answer = answerOf(task.id)
     if (answer === undefined) {
       const failure = recommendations.failure(task.id)
       return failure === undefined
@@ -257,16 +280,32 @@ export const createBoardController = (options: {
     }
     if (sent.length === 0) return { kind: 'none', state: 'none', text: statusText(answer, unitId => isFreeIn(records!, unitId), couldBecomeEligible(rules, records!)) ?? boardWords.nothingToSend }
     const diverts = sent.filter(unit => unit.divertFrom !== undefined)
+    // A unit holding job-chain steps drops its active one when sent now: as when it is tapped first, it asks Do now or Add to end.
+    const holding = sent.filter(unit => unit.divertFrom === undefined && unit.steps !== undefined)
     const latest = [...sent].sort((a, b) => completeSeconds([b]) - completeSeconds([a]))[0]!
-    const dropped = (unit: Candidate): string =>
+    const released = (unit: Candidate): string =>
       releaseText(rules, records!, { id: unit.unitId, label: unit.label }, { taskId: unit.divertFrom!.taskId, label: unit.divertFrom!.label, code: unit.divertFrom!.rank.code })
+    const stopped = (unit: Candidate): string => {
+      const record = records!.units.get(unit.unitId)
+      if (record === undefined) return `${unit.label} holds ${unit.steps} ${unit.steps === 1 ? 'step' : 'steps'}`
+      return dropText(records!, record) ?? holdingText(rules, record)
+    }
+    // Add to end gives one unit a step: a send of several asks only Do now.
+    const queued = holding.length === 1 && sent.length === 1 ? records!.units.get(holding[0]!.unitId) : undefined
+    const ask: Ask | null = diverts.length === 0 && holding.length === 0 ? null : {
+      kind: holding.length === 0 ? 'confirm' : 'choice',
+      detail: [...diverts.map(released), ...holding.map(stopped)].join(' · '),
+      queue: queued === undefined ? null : queueCall(records!, queued, { taskId: task.id }),
+    }
     return {
       kind: 'call',
       call: sendToTask(rules, task, sent, 'work-list'),
       etaText: etaText(latest.eta),
-      confirm: diverts.length === 0 ? null : diverts.map(dropped).join(' · '),
-      // A unit holding steps drops its active one: removing the new step would not give it back.
-      undoable: diverts.length === 0 && sent.every(unit => unit.steps === undefined),
+      ask,
+      undoable: ask === null && sent.every(unit => {
+        const record = records!.units.get(unit.unitId)
+        return record !== undefined && undoRestores(record, false)
+      }),
     }
   }
 
@@ -315,8 +354,8 @@ export const createBoardController = (options: {
     const current = commitment()
     if (current.kind === 'none') return info(current.text)
     if (guardActive()) return guardRefusal('Not sent: the list changed')
-    if (current.confirm !== null) {
-      confirmation = { kind: 'confirm', call: current.call, detail: current.confirm, queue: null }
+    if (current.ask !== null) {
+      confirmation = { ...current.ask, call: current.call }
       armGuard()
       return
     }
@@ -451,7 +490,16 @@ export const createBoardController = (options: {
     const step = unit.orders.find(entry => entry.id === stepId)
     if (step === undefined) return info(`${unit.label} holds that step no longer`)
     navigate()
-    send(stepRemoveCall(records!, unit, step), false)
+    const call = stepRemoveCall(records!, unit, step)
+    // The active step of a committed unit releases its call: like a divert, it names what it drops and asks first.
+    if (step.state === 'active' && step.kind === 'serve' && unit.taskId !== undefined) {
+      const from = records!.tasks.get(unit.taskId)
+      if (from === undefined) throw new Error(`${unit.id} is committed to ${unit.taskId}, which is not in the picture`)
+      confirmation = { kind: 'confirm', call, detail: releaseText(rules, records!, unit, { taskId: from.id, label: from.label, code: classCode(rules, from.rank) }), queue: null }
+      armGuard()
+      return
+    }
+    send(call, false)
   }
 
   const closeSelected = (): void => {
@@ -521,13 +569,13 @@ export const createBoardController = (options: {
   const refusalOf = (order: Extract<MapOrder, { kind: 'order' }>): string | null =>
     orderRefusal(rules, order, recommendations.answer, taskId => records!.tasks.get(taskId)!)
 
-  /** Adds an order to the end of its asset's chain, undoable for a few seconds; the asset stays highlighted for its next target. */
+  /** Adds an order to the end of its asset's chain, undoable for a few seconds where that restores it; the asset stays highlighted for its next target. */
   const queueOrder = (order: Extract<MapOrder, { kind: 'order' }>): void => {
     navigate()
-    send(order.queue, true)
+    send(order.queue, undoRestores(order.unit, true))
   }
 
-  /** Sends an order: a free asset at once, undoable for a few seconds, and the highlight clears; a busy one asks what to do, in its target's row. */
+  /** Sends an order: a free asset at once, undoable for a few seconds where that restores it, and the highlight clears; a busy one asks what to do, in its target's row. */
   const placeOrder = (order: Extract<MapOrder, { kind: 'order' }>): void => {
     armedMove = null
     pendingMove = null
@@ -536,7 +584,7 @@ export const createBoardController = (options: {
     if (!order.busy) {
       // The highlight lets go before the call leaves, so a refusal can highlight the asset again.
       if (selection?.kind === 'unit' && selection.id === order.unit.id) select(null, true)
-      send(order.call, true, order.unit.id)
+      send(order.call, undoRestores(order.unit, false), order.unit.id)
       return
     }
     const task = 'taskId' in order.target ? records!.tasks.get(order.target.taskId) : undefined
@@ -589,7 +637,10 @@ export const createBoardController = (options: {
         const { queue } = confirmation
         confirmation = null
         if (queue === null) throw new Error('A busy asset\'s choice holds no "Add to end"')
-        return send(queue, true)
+        return send(queue, queue.unitIds.every(id => {
+          const unit = records?.units.get(id)
+          return unit !== undefined && undoRestores(unit, true)
+        }))
       }
     }
   }
@@ -947,7 +998,7 @@ export const createBoardController = (options: {
   const selectedView = (): BoardView['selected'] => {
     const task = selectedTask()
     if (task === undefined) return selectedUnit() === undefined ? null : { kind: 'unit', id: selection!.id }
-    const answer = recommendations.answer(task.id)
+    const answer = answerOf(task.id)
     const entry = entries().find(item => item.task.id === task.id)!
     const remainder = answer?.proposal.remainder ?? remainderFor(rules, task, entry.view)
     return {
@@ -955,7 +1006,7 @@ export const createBoardController = (options: {
       id: task.id,
       proposal: answer === undefined ? [] : proposalUnits(answer),
       // Only units still offered are shown; a dropped one keeps its number for the digit keys.
-      alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen),
+      alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen).map(row => ({ ...row, label: shownLabel(row.unitId, row.label) })),
       ineligible: answer?.ineligible.map(item => item.reasons.map(reason => namedOnce(item.label, reason)).join(' · ')) ?? [],
       remainder,
       remainderText: remainder.length === 0 ? null : `${boardWords.remainder} ${remainder.join(', ')}`,
@@ -964,7 +1015,7 @@ export const createBoardController = (options: {
 
   const view = (): BoardView => {
     const workRows = records === null ? [] : entries().map(entry => workRow(rules, records!, entry, {
-      answer: recommendations.answer(entry.task.id),
+      answer: answerOf(entry.task.id),
       failure: recommendations.failure(entry.task.id),
       nowMs,
       fresh: (freshUntil.get(entry.task.id) ?? Number.NEGATIVE_INFINITY) > wallMs,

@@ -9,7 +9,9 @@ import { boardWords } from './text.ts'
 
 /**
  * The dispatcher's tap budgets (A9: dispatch 2, a job-chain step added 2,
- * removed 2, stop 2, a late top-priority divert 3), counted against the real runtime on a
+ * removed 2, stop 2, a late top-priority divert 3; a committed asset's
+ * active step, whose removal releases its call, and a call-first send of an
+ * asset holding steps ask first, 3), counted against the real runtime on a
  * running clock. Each flow runs in both tap modalities: taps on map objects,
  * routed exactly as the World surface routes them with the Board open
  * (`ui/map-target-routing.ts`), and taps on the Board's rows. Waiting out a
@@ -242,6 +244,51 @@ describe('Board tap budgets', () => {
           })).toBe(2)
           expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.stepRemove, input: { unitId: 'u1', stepId: 'step-2' } })
           expect(run.unit('u1').orders.map(step => step.id)).toEqual(['step-1'])
+        })
+      })
+
+      test(`remove the active step of a committed asset: 3 taps, the asset, the step's × and Confirm, naming what returns to the call (${seat.name}, ${modality})`, async () => {
+        await withSeat(seat, [unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 })], async (run, screen) => {
+          await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
+          await screen.sync()
+          expect(await counted(screen, async () => {
+            await tapAsset(screen, modality, 'u1')
+            await screen.click({ kind: 'remove-step', unitId: 'u1', stepId: 'step-1' })
+            expect(screen.calls).toHaveLength(0)
+            expect(screen.view().commit).toMatchObject({ state: 'confirm', detail: expect.stringMatching(/^T1 \(.+\) · 1 .+ returns to the queue$/) })
+            await confirm(screen, 'confirm')
+          })).toBe(3)
+          expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.stepRemove, input: { unitId: 'u1', stepId: 'step-1' } })
+          expect([run.unit('u1').taskId, run.unit('u1').orders]).toEqual([undefined, []])
+        })
+      })
+
+      test(`dispatch, call first, of an asset on a move: 3 taps, the call, its suggestion and Do now; Add to end keeps the move (${seat.name}, ${modality})`, async () => {
+        const items = [
+          unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 5)),
+          taskAt('t1', 'T1', kinds.templates.load, at(1), { [low]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(1, 5), { [low]: 1 }),
+        ]
+        await withSeat(seat, items, async (run, screen) => {
+          await accepted(run, ids.send, { units: ['u1'], to: { point: pointAt(at(3)) } })
+          await accepted(run, ids.send, { units: ['u2'], to: { point: pointAt(at(3, 5)) } })
+          await screen.sync()
+          const choice = [{ option: 'do-now', label: boardWords.doNow }, { option: 'add-to-end', label: boardWords.addToEnd }]
+          expect(await counted(screen, async () => {
+            await tapCall(screen, modality, 't1')
+            await tapButton(screen)
+            expect(screen.view().commit).toMatchObject({ state: 'choice', detail: 'U1 stops: to a map point', options: choice })
+            await confirm(screen, 'choice')
+          })).toBe(3)
+          expect([sentLast(screen), screen.view().undo]).toEqual([{ units: ['u1'], to: { taskId: 't1' } }, null])
+          expect(await counted(screen, async () => {
+            await tapCall(screen, modality, 't2')
+            await tapButton(screen)
+            expect(screen.view().commit).toMatchObject({ state: 'choice', detail: 'U2 stops: to a map point', options: choice })
+            await screen.wait(pastGuardMs)
+            await screen.click({ kind: 'option', option: 'add-to-end' })
+          })).toBe(3)
+          expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.queue, input: { unitId: 'u2', to: { taskId: 't2' } } })
+          expect(run.unit('u2').orders.map(step => [step.kind, step.state])).toEqual([['move', 'active'], ['serve', 'queued']])
         })
       })
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
-import { civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, pointAt, taskAt, unitAt } from '../fixtures/board-harness.ts'
+import { civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, pointAt, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { refusalCode } from '../refusal.ts'
 import { boardWords } from './text.ts'
@@ -141,6 +141,42 @@ describe('Board verbs and Undo say only what they do', () => {
       await screen.wait(pastGuardMs)
       await screen.click({ kind: 'option', option: 'do-now' })
       expect([screen.calls.at(-1)!.input, screen.calls.at(-1)!.result.ok, screen.view().undo]).toEqual([{ units: ['u2'], to: { taskId: 't1' } }, true, null])
+    })
+  })
+
+  test('Undo is offered only where removing the step gives the asset back as it stood: not for one parked at a point, paused, or on its way home', async () => {
+    const items = [
+      unitAt('parked', 'PARKED', carrier, at(0)), unitAt('paused', 'PAUSED', carrier, at(0, 1)), unitAt('home', 'HOME', carrier, at(0, 2)),
+      taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(5, 1), { [low]: 1 }), taskAt('t3', 'T3', kinds.templates.load, at(5, 2), { [low]: 1 }),
+    ]
+    await withScene(items, async run => {
+      await accepted(run, ids.send, { units: ['parked'], to: { point: pointAt(at(0.5)) } })
+      await accepted(run, ids.send, { units: ['home'], to: { point: pointAt(at(1, 2)) } })
+      await accepted(run, ids.hold, { unitId: 'paused' })
+      await runFor(run, 300_000)
+      await accepted(run, ids.recall, { unitId: 'home' })
+      expect([run.unit('parked').phase, run.unit('parked').orders, run.unit('paused').paused, run.unit('home').phase]).toEqual(['holding', [], true, 'returning'])
+      const screen = await openScreen(run, createWall())
+      for (const [unitId, taskId] of [['parked', 't1'], ['paused', 't2'], ['home', 't3']] as const) {
+        await screen.mapTap(unitId)
+        await screen.mapTap(taskId)
+        // Free, so sent at once; undone, it would be sent home, resumed or made to idle, so Undo is not offered.
+        expect([screen.calls.at(-1)!.input, screen.calls.at(-1)!.result.ok, screen.view().undo]).toEqual([{ units: [unitId], to: { taskId } }, true, null])
+      }
+    })
+  })
+
+  test('a step added behind an asset\'s steps, or while it is paused, keeps Undo, which leaves the asset as it stood', async () => {
+    await withScene([unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 })], async run => {
+      await accepted(run, ids.hold, { unitId: 'u1' })
+      const screen = await openScreen(run, createWall())
+      await screen.click({ kind: 'verb', verb: 'add', id: 'u1' })
+      await screen.mapTap('t1')
+      expect([screen.calls.at(-1)!.capabilityId, screen.calls.at(-1)!.result.ok, screen.view().undo]).toEqual([ids.queue, true, boardWords.undo])
+      expect(run.unit('u1').orders.map(step => [step.id, step.state])).toEqual([['step-1', 'queued']])
+      await screen.click({ kind: 'undo' })
+      expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.stepRemove, input: { unitId: 'u1', stepId: 'step-1' }, result: { ok: true } })
+      expect([run.unit('u1').orders, run.unit('u1').paused, run.unit('u1').atBase]).toEqual([[], true, true])
     })
   })
 })

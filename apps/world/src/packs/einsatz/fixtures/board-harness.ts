@@ -359,8 +359,8 @@ export const pastGuardMs = 600
 /**
  * The recommendation follower: at every step of the running Run it presses N
  * and then Enter on the most urgent unserved row, confirming when the Board
- * asks, until that row offers nothing to commit. It stops at `untilMs` of Run
- * time.
+ * asks (Enter on a busy unit's choice is "Do now"), until that row offers
+ * nothing to commit. It stops at `untilMs` of Run time.
  */
 export const follow = async (run: OpenRun, screen: Screen, options: { readonly untilMs: number; readonly stepMs: number }): Promise<void> => {
   while (run.nowMs() < options.untilMs) {
@@ -370,7 +370,7 @@ export const follow = async (run: OpenRun, screen: Screen, options: { readonly u
       if (screen.view().commit.state !== 'ready') break
       await screen.wait(pastGuardMs)
       await screen.key('Enter')
-      if (screen.view().commit.state === 'confirm') {
+      if (screen.view().commit.state === 'confirm' || screen.view().commit.state === 'choice') {
         await screen.wait(pastGuardMs)
         await screen.key('Enter')
       }

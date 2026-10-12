@@ -75,7 +75,7 @@ export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarg
 }
 
 /** What doing a new target now stops of a unit that holds no task: its active step; nothing while it is paused with its first step waiting. */
-const dropText = (records: BoardRecords, unit: BoardUnit): string | null => {
+export const dropText = (records: BoardRecords, unit: BoardUnit): string | null => {
   const active = unit.orders[0]?.state === 'active' ? unit.orders[0] : undefined
   if (active !== undefined) return `${unit.label} stops: ${stepText(records, active)}`
   return null

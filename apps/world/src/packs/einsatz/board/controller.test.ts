@@ -234,6 +234,10 @@ describe('Board competition', () => {
       expect(run.object('u15')?.spatial.position?.point).not.toEqual(pointAt(at(15, 1)))
       expect([screen.view().commit.text, screen.queries()]).toEqual([shown, queries])
       await screen.key('Enter')
+      // The proposed unit is on its move, so the commit asks Do now or Add to end first; Enter is Do now.
+      expect(screen.view().commit.state).toBe('choice')
+      await screen.wait(pastGuardMs)
+      await screen.key('Enter')
       const sent = lastCall(screen)!
       expect(sent).toMatchObject({ input: { to: { taskId: 't1' } }, result: { ok: true } })
       expect(shown).toStartWith(`${word('send')} ${(sent.input as { units: string[] }).units.map(id => id.toUpperCase()).join(' + ')} → T1`)

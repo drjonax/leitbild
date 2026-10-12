@@ -30,6 +30,20 @@ export const isFree = (unit: BoardUnit): boolean => unit.taskId === undefined &&
  */
 export const holdsWork = (unit: BoardUnit): boolean => unit.taskId !== undefined || hasLoad(unit) || unit.orders.length > 0
 
+/**
+ * Whether removing the step a send or a queue gives a unit gives the unit
+ * back as it stood, so Undo may offer it. A step queued behind the steps
+ * the unit holds, or while it is paused, leaves the rest as it was. A step
+ * that starts at once ends whatever the unit was doing, and removing it
+ * leaves the unit available where it stopped, under its return order: that
+ * gives back only a unit that stood free and unpaused at its base. Undone,
+ * a unit parked at a point would be sent home, a paused one resumed, and
+ * one on its way home made to idle before it sets off again.
+ */
+export const undoRestores = (unit: BoardUnit, queued: boolean): boolean =>
+  (queued && (unit.orders.length > 0 || unit.paused === true))
+  || (unit.paused !== true && unit.orders.length === 0 && unit.phase === 'available' && unit.atBase)
+
 /** What the viewer's units can serve on a task: the services they provide and the load classes they carry. */
 export interface RoleView {
   readonly provides: ReadonlySet<string>
