@@ -8,7 +8,11 @@ import { legSchema, type Leg } from './model.ts'
 export type RoutePort = Pick<RoutingAdapter, 'id' | 'route'>
 
 /** A road route may start or end at most this far from the requested point; further away there is no road to use. */
-const roadSnapLimitM = 1_000
+export const roadSnapLimitM = 1_000
+
+/** The refusal for a point more than `roadSnapLimitM` from a road: the unit's own position when labelled, else the destination. */
+export const noRoadNear = (label?: string): string =>
+  refusal('no_road_near_point', label === undefined ? 'The destination is more than 1 km from a road' : `${label} is more than 1 km from a road`)
 const arrivalToleranceMs = 0.000001
 
 const routeDistances = new WeakMap<GeoJsonLineString, Float64Array>()
@@ -89,7 +93,7 @@ export const prepareLeg = async (routing: RoutePort, mobility: Mobility, from: G
   const leg = parsed.data
   if (leg.durationMs <= 0 && geometricLength(leg.geometry) > 0.01) return { ok: false, reason: refusal('routing_unavailable', `The router returned a route without travel time for ${label}`) }
   const first = geoPointFromLonLat(...leg.geometry.coordinates[0]!)
-  if (routeDistanceMeters(first, from) > roadSnapLimitM) return { ok: false, reason: refusal('no_road_near_point', `${label} is more than 1 km from a road`) }
-  if (routeDistanceMeters(legEnd(leg), to) > roadSnapLimitM) return { ok: false, reason: refusal('no_road_near_point', 'The destination is more than 1 km from a road') }
+  if (routeDistanceMeters(first, from) > roadSnapLimitM) return { ok: false, reason: noRoadNear(label) }
+  if (routeDistanceMeters(legEnd(leg), to) > roadSnapLimitM) return { ok: false, reason: noRoadNear() }
   return { ok: true, leg }
 }

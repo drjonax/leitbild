@@ -51,16 +51,16 @@ describe('Einsatz recommendations with diverts', () => {
     expect(recommendation.committed.find(entry => entry.unitId === 'a3')?.reason).toBe('A3 now working at LOW3 · Controller')
   })
 
-  test('a new top-class task is proposed the nearer of the middle- and low-class units; the other is a numbered divert alternative', async () => {
+  test('a new top-class task is proposed the nearer divert, from low-class work; the unit heading to middle-class work is the one alternative', async () => {
     const state = await run(await protectionScenario(), newTask('n1', templates.load, at(0.003), { [top]: 1 }))
     const recommendation = await recommendFor(state, 'n1')
-    const [proposed] = recommendation.proposal.units
-    const [other] = recommendation.alternatives
-    expect([proposed?.unitId, other?.unitId].sort()).toEqual(['a2', 'a6'])
-    expect(recommendation.alternatives).toHaveLength(1)
-    expect(other?.divertFrom?.taskId).toBe(other?.unitId === 'a2' ? 'c9' : 'low6')
-    const seconds = (entry: typeof proposed) => entry?.eta.kind === 'unavailable' ? Infinity : entry?.eta.seconds ?? Infinity
-    expect(seconds(proposed)).toBeLessThanOrEqual(seconds(other))
+    const divertFrom = (taskId: string, label: string, rank: string, code: string) => ({ taskId, label, rank: { id: rank, code } })
+    const straightTo = (unitId: string) => {
+      const distanceM = routeDistanceMeters(pointOf(state, unitId), at(0.003))
+      return { kind: 'straight-line', seconds: distanceM / 15, distanceM }
+    }
+    expect(recommendation.proposal).toEqual({ units: [{ unitId: 'a6', label: 'A6', eta: straightTo('a6'), divertFrom: divertFrom('low6', 'LOW6', low, 'C3') }], covers: true, remainder: [] })
+    expect(recommendation.alternatives).toEqual([{ unitId: 'a2', label: 'A2', eta: straightTo('a2'), divertFrom: divertFrom('c9', 'C9', middle, 'C2') }])
     expect(unitIds(recommendation.committed)).toEqual(['a1', 'a3', 'a4'])
   })
 
@@ -151,12 +151,19 @@ describe('Einsatz ETAs', () => {
     newUnit('d1', types.directCarrier, at(0.02)),
     newTask('t1', templates.load, at(0), { [top]: 1, [low]: 1 }),
   ])
-  const table = (cell: { readonly durationS: number | null; readonly distanceM: number | null }): TablePort & { calls: number } => {
+  const table = (cell: { readonly durationS: number | null; readonly distanceM: number | null; readonly sourceSnapM?: number; readonly destinationSnapM?: number }): TablePort & { calls: number } => {
     const port = {
       calls: 0,
       table: async (): Promise<RouteTableResult> => {
         port.calls += 1
-        return { durationsSeconds: [[cell.durationS]], distancesM: [[cell.distanceM === null ? null : meters(cell.distanceM)]], sourceSnapsM: [meters(0)], destinationSnapsM: [meters(0)], basis: 'routed', provider: 'stub' }
+        return {
+          durationsSeconds: [[cell.durationS]],
+          distancesM: [[cell.distanceM === null ? null : meters(cell.distanceM)]],
+          sourceSnapsM: [meters(cell.sourceSnapM ?? 5)],
+          destinationSnapsM: [meters(cell.destinationSnapM ?? 5)],
+          basis: 'routed',
+          provider: 'stub',
+        }
       },
     }
     return port
@@ -175,14 +182,38 @@ describe('Einsatz ETAs', () => {
     expect(etaOf(await recommendFor(state, 't1'), 'c1')?.kind).toBe('straight-line')
   })
 
-  test('a pair without a route has no ETA, only its straight distance, and sorts last; a router failure refuses routing_unavailable', async () => {
+  test('a pair without a route has no ETA, only its straight distance, and sorts last', async () => {
     const state = await twoUnits()
     const recommendation = await recommendFor(state, 't1', table({ durationS: null, distanceM: null }))
-    expect(etaOf(recommendation, 'c1')).toEqual({ kind: 'unavailable', reason: 'No route', straightDistanceM: routeDistanceMeters(pointOf(state, 'c1'), at(0)) })
+    expect(etaOf(recommendation, 'c1')).toEqual({ kind: 'unavailable', reason: 'routing_unavailable: ETA unavailable: no route', straightDistanceM: routeDistanceMeters(pointOf(state, 'c1'), at(0)) })
     expect(unitIds(recommendation.proposal.units)).toEqual(['d1'])
+  })
+
+  test('a unit or task more than 1 km from a road has no ETA, refused as a send of it would be', async () => {
+    const state = await twoUnits()
+    const straightDistanceM = routeDistanceMeters(pointOf(state, 'c1'), at(0))
+    expect(etaOf(await recommendFor(state, 't1', table({ durationS: 100, distanceM: 1_200, sourceSnapM: 1_001 })), 'c1'))
+      .toEqual({ kind: 'unavailable', reason: 'no_road_near_point: C1 is more than 1 km from a road', straightDistanceM })
+    expect(etaOf(await recommendFor(state, 't1', table({ durationS: 100, distanceM: 1_200, destinationSnapM: 1_001 })), 'c1'))
+      .toEqual({ kind: 'unavailable', reason: 'no_road_near_point: The destination is more than 1 km from a road', straightDistanceM })
+    expect(etaOf(await recommendFor(state, 't1', table({ durationS: 100, distanceM: 1_200, sourceSnapM: 1_000, destinationSnapM: 1_000 })), 'c1')?.kind).toBe('routed')
+  })
+
+  test('when the router fails every road ETA is unavailable with the cause, direct units keep theirs, and road units are still proposed by fit then id', async () => {
     const failing: TablePort = { table: async () => { throw new Error('Router offline') } }
-    const refused = await recommendFor(state, 't1', failing).then(() => '', (error: Error) => error.message)
-    expect(refused).toBe('routing_unavailable: ETA unavailable: Router offline')
+    const mixed = await recommendFor(await twoUnits(), 't1', failing)
+    expect(etaOf(mixed, 'c1')?.kind).toBe('unavailable')
+    expect(etaOf(mixed, 'd1')?.kind).toBe('straight-line')
+    expect(unitIds(mixed.proposal.units)).toEqual(['d1'])
+
+    const state = await runAll(emptyState(), [
+      newUnit('c1', types.roadCarrier, at(0.02)),
+      newUnit('c2', types.roadCarrier, at(0.001)),
+      newTask('t1', templates.load, at(0), { [top]: 1 }),
+    ])
+    const roadOnly = await recommendFor(state, 't1', failing)
+    expect(roadOnly.proposal).toMatchObject({ covers: true, units: [{ unitId: 'c1', eta: { kind: 'unavailable', reason: 'routing_unavailable: ETA unavailable: Router offline', straightDistanceM: routeDistanceMeters(pointOf(state, 'c1'), at(0)) } }] })
+    expect(unitIds(roadOnly.alternatives)).toEqual(['c2'])
   })
 })
 

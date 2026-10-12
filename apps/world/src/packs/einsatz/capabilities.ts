@@ -49,8 +49,11 @@ const seconds = z.number().finite().nonnegative()
 const metres = z.number().finite().nonnegative()
 /**
  * Time to arrive, turnout included. `routed` comes from the road router;
- * `straight-line` from a direct unit or a Run on the direct router. Where no
- * route exists the ETA is unavailable and only the straight distance is shown.
+ * `straight-line` from a direct unit or a Run on the direct router. Where a
+ * send of the unit would be refused for its route (the router fails or finds
+ * no route, or a point lies more than 1 km from a road) the ETA is
+ * unavailable: the reason reads `<code>: <message>` with that refusal's code,
+ * and only the straight distance is shown.
  */
 export const etaSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('routed'), seconds, distanceM: metres }).strict(),
@@ -174,7 +177,7 @@ export const einsatzCapabilities: ReadonlyArray<SimulationCapability> = [
   defineSimulationQueryCapability({
     id: einsatzQueryIds.recommend,
     title: 'Recommend units for a task',
-    description: 'For a task: the smallest set of free units covering what it needs, by fit then ETA; when free units cannot cover it, completed with units still on their way to strictly lower-priority work (diverts), else the best partial set with the remainder named. Also single-unit alternatives (free first, then diverts), ineligible units with the reasons, and busy units. ETAs include turnout and say whether they are routed or straight-line; a router failure refuses routing_unavailable.',
+    description: 'For a task: the smallest set of free units covering what it needs, by fit then ETA; when free units cannot cover it, completed with units still on their way to strictly lower-priority work (diverts), else the best partial set with the remainder named. Also single-unit alternatives (free first, then diverts), ineligible units with the reasons, and busy units. ETAs include turnout and say whether they are routed or straight-line. Where the router fails or finds no route, or a point lies more than 1 km from a road, the ETA is unavailable with the refusal a send would get (routing_unavailable, no_road_near_point) and the straight distance; the recommendation is still given.',
     input: recommendInputSchema,
     output: recommendationSchema,
     inspectObjectIds: raw => objectIds(recommendInputSchema.parse(raw).taskId),

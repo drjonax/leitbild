@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { compileScenarioDefinition } from '../../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../../../routing/protocol.ts'
-import { einsatzCommandIds as ids, einsatzQueryIds } from '../capabilities.ts'
+import { einsatzCommandIds as ids, einsatzQueryIds, type Recommendation } from '../capabilities.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { config, low, middle, start, templates, top, types } from '../fixtures/engine-harness.ts'
 import fixture from '../fixtures/engine.config.json'
@@ -202,6 +202,45 @@ describe('Einsatz commands on a running clock', () => {
       await run.settle()
       expect(run.unit('c1').load).toEqual({ [low]: 1 })
       expect(await run.invoke('world.object.delete', { objectId: 'c1' })).toMatchObject({ ok: false, reason: 'unit_loaded: C1 has 1 person on board, deliver first' })
+      healthy(run)
+    })
+  })
+})
+
+describe('Einsatz recommendations through the Run', () => {
+  const recommendFor = (run: OpenRun, taskId: string) => run.query<Recommendation>(einsatzQueryIds.recommend, { taskId })
+
+  test('ineligible units carry their reasons in property words, and once the free units are deleted the nearer divert is proposed', async () => {
+    await withRun({ items: fleet }, async run => {
+      expect(await recommendFor(run, 'haul1')).toMatchObject({
+        proposal: { units: [], covers: false, remainder: ['1 more hauler'] },
+        ineligible: [{ unitId: 'h1', label: 'H1', reasons: ['H1 · Payload 300 kg · needs ≥ 500 kg'] }],
+        servable: false,
+      })
+
+      await accepted(run, ids.send, send(['c1'], { taskId: 'low1' }))
+      await accepted(run, ids.send, send(['c2'], { taskId: 'mid1' }))
+      for (const objectId of ['c3', 'd1']) await accepted(run, 'world.object.delete', { objectId })
+      const top = await recommendFor(run, 'top1')
+      expect(top.proposal).toMatchObject({ covers: true, remainder: [], units: [{ unitId: 'c1', eta: { kind: 'straight-line' }, divertFrom: { taskId: 'low1', label: 'LOW1', rank: { id: low, code: 'C3' } } }] })
+      expect(top.proposal.units).toHaveLength(1)
+      expect(top.alternatives).toMatchObject([{ unitId: 'c2', divertFrom: { taskId: 'mid1', label: 'MID1', rank: { id: middle, code: 'C2' } } }])
+      expect(top.alternatives).toHaveLength(1)
+      healthy(run)
+    })
+  })
+
+  test('while the router cannot answer a table, recommend still proposes units with unavailable ETAs and the runtime stays healthy', async () => {
+    const direct = createDirectRoutingAdapter()
+    const tableDown: RoutingAdapter = { ...direct, id: 'table-down', table: async () => { throw new Error('Router offline') } }
+    await withRun({ items: fleet, routing: tableDown }, async run => {
+      const top = await recommendFor(run, 'top1')
+      expect(top.proposal).toMatchObject({ covers: true, units: [{ unitId: 'd1', eta: { kind: 'straight-line' } }] })
+      expect(top.alternatives.map(entry => entry.unitId)).toEqual(['c1', 'c2', 'c3'])
+      for (const entry of top.alternatives) {
+        expect(entry.eta).toEqual({ kind: 'unavailable', reason: 'routing_unavailable: ETA unavailable: Router offline', straightDistanceM: expect.any(Number) })
+        expect(entry.eta.kind === 'unavailable' && entry.eta.straightDistanceM).toBeGreaterThan(0)
+      }
       healthy(run)
     })
   })
