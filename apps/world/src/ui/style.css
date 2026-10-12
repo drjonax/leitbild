@@ -1819,6 +1819,15 @@ body.rail-resizing {
   font-size: 13px;
 }
 
+.process-display-notice.neutral {
+  color: var(--text);
+}
+
+.process-display-notice.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
 .process-display-resize-handle {
   position: absolute;
   z-index: 2;

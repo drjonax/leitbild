@@ -168,6 +168,8 @@
   const currentViewport = (): DisplaySize => ({ width: window.innerWidth, height: window.innerHeight })
 
   let notice = $state<string | null>(null)
+  // An Instructor action's own notice and its tone: sent reads neutral and accepted as success; any other notice reads as an error.
+  let actionNotice = $state<{ readonly text: string; readonly tone: 'neutral' | 'success' } | null>(null)
 
   const defaultWindowBounds = (viewport: DisplaySize): ProcessDisplayWindowBounds => ({
     x: windowConstraints.margin,
@@ -710,14 +712,18 @@
     actionsPlant = null
     runningActionId = action.id
     const named = `Instructor action "${action.title}" on ${plant.label}`
-    notice = `${named}: sent…`
+    actionNotice = { text: `${named}: sent…`, tone: 'neutral' }
+    notice = actionNotice.text
     try {
       const response = await invokeSimulationRunCapability(runId, {
         capabilityId: processPlantActionInvokeCommandKind,
         input: { plantId: plant.plantId, actionId: action.id, parameters },
       })
       if (response.kind !== 'command') throw new Error(`${processPlantActionInvokeCommandKind} is not a command`)
-      if (!disposed) notice = response.result.ok ? `${named}: accepted.` : `${named}: refused. ${response.result.reason}`
+      if (!disposed) {
+        actionNotice = response.result.ok ? { text: `${named}: accepted.`, tone: 'success' } : null
+        notice = actionNotice?.text ?? `${named}: refused. ${response.result.reason}`
+      }
     } catch (err) {
       if (!disposed) notice = `${named} could not be sent: ${errorText(err)}`
     } finally {
@@ -1020,7 +1026,7 @@
         </div>
       {/if}
       {#if notice}
-        <div class="process-display-notice" role="status">
+        <div class="process-display-notice" class:neutral={notice === actionNotice?.text && actionNotice.tone === 'neutral'} class:success={notice === actionNotice?.text && actionNotice.tone === 'success'} role="status">
           <span>{notice}</span>
           <button type="button" aria-label="Dismiss" onclick={() => { notice = null }}><X size={16} aria-hidden="true" /></button>
         </div>
