@@ -5,18 +5,21 @@ import type { ProcessPlantIcCondition, ProcessPlantIcRule, ProcessPlantIcSafetyF
 import { processPlantIcLifecycleIdFor } from '../runtime/ic/control-protection-lifecycle.ts'
 import { findProcessPlantSignalBinding, resolveProcessPlantSignalBinding, type ProcessPlantSignalReference } from '../signals.ts'
 import { actionStates, automaticActions, branchFlows, conditionBindings, type AutomaticAction } from './actuations.ts'
+import { z } from 'zod'
 import type {
   CompiledFaceplate,
   FaceplateColumnSpec,
   FaceplateCondition,
   FaceplateCriterion,
   FaceplateHead,
+  FaceplateHeld,
   FaceplateLoopColumn,
   FaceplateRowSpec,
   FaceplateRule,
   FaceplateSource,
   FaceplateWrite,
 } from './faceplate-live.ts'
+import { displayValue, unitLabel } from './display-text.ts'
 import { actionOf, firstOutGroupOf } from './ic-thresholds.ts'
 import { presentationFor } from './mimic/presentation.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
@@ -259,6 +262,57 @@ const circuitReach = (plant: CompiledProcessPlant, end: number, port: string): R
   return reached
 }
 
+/** A valve's controller as its kind declares it (junction-component-definitions.ts): the value it measures and the set point it holds it to. */
+const declaredController = z.object({ measuredPath: z.string().min(1), setpoint: z.number().finite() }).passthrough()
+
+/**
+ * A valve a controller positions (the turbine bypass, holding the main steam
+ * header's pressure): the flow through it, its position, and what its
+ * controller holds, its only mode modelled. Null for equipment with no such
+ * controller or no position.
+ */
+const controlledValve = (plant: CompiledProcessPlant, index: number): { readonly flow: VariablePath; readonly position: VariablePath; readonly held: FaceplateHeld } | null => {
+  const graph = plant.graph
+  const component = graph.components[index]!
+  const parameters = component.parameters as Readonly<Record<string, unknown>> | undefined
+  const position = component.semantics.aspects.find(aspect => aspect.aspect === 'position' && aspect.state !== undefined)?.state?.path
+  if (parameters?.controller === undefined || position === undefined) return null
+  const controller = declaredController.parse(parameters.controller)
+  const measured = graph.signalBindingByPath.get(controller.measuredPath as VariablePath)
+  if (measured === undefined) throw new Error(`component ${component.id} controller measures ${controller.measuredPath}, which the Plant does not have`)
+  // The flow it passes: the published flow of the line leaving it.
+  const flow = (graph.outgoingLinksByComponent[index] ?? []).map(link => graph.links[link]!).filter(link => link.kind === 'fluidFlow')
+    .flatMap(link => link.variables.map(variable => variable.path).filter(path => String(path).endsWith('.flowKgPerS') && graph.signalBindingByPath.get(path)?.published === true))[0]
+  if (flow === undefined) return null
+  return { flow, position, held: { quantity: measured.quantity, setpoint: displayValue(controller.setpoint, measured.unit), unit: unitLabel(measured.unit) } }
+}
+
+/**
+ * What a header sends down each of its branches (branchFlows), with the
+ * branch's first equipment, by which it is named (the turbine bypass, the
+ * main steam safety valve), not by where it ends.
+ */
+const namedBranches = (plant: CompiledProcessPlant, header: number): ReadonlyArray<{ readonly path: VariablePath; readonly first: number }> => {
+  const graph = plant.graph
+  const firsts = (graph.outgoingLinksByComponent[header] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow')
+  const onBranch = (first: CompiledProcessLink): ReadonlySet<number> => {
+    const carriers = new Set([linkCarrier(first)])
+    const links = [first]
+    for (let step = 1; step < MIMIC_REACH_LINKS; step += 1) {
+      const next = nextLinks(graph, links.at(-1)!, carriers)
+      if (next.length !== 1) break
+      links.push(next[0]!)
+    }
+    return new Set(links.map(link => link.index))
+  }
+  const branches = firsts.map(first => ({ first: first.toComponentIndex, links: onBranch(first) }))
+  return branchFlows(plant, header, MIMIC_REACH_LINKS).flatMap(entry => {
+    const owner = graph.signalBindingByPath.get(entry.path)?.owner
+    const branch = owner?.type === 'link' ? branches.find(candidate => candidate.links.has(owner.linkIndex)) : undefined
+    return branch === undefined ? [] : [{ path: entry.path, first: branch.first }]
+  })
+}
+
 type Column = { readonly heads: FaceplateHead[]; readonly rows: FaceplateRowSpec[]; readonly rules: FaceplateRowSpec[]; readonly causeFirst: boolean }
 
 /** The last of `among` that comes before position `at` of `order`. */
@@ -376,19 +430,19 @@ export const compileFaceplate = (
   // (the rod banks after the rods' average steps). An end whose protection no banner states reads them as its own.
   const protection = columns[0]
   const stopped = component.semantics.shutdownReadings
-  const besideStopped = (path: VariablePath): FaceplateRowSpec | null => {
+  // Where its system's equipment reads the same quantity one by one (the rod banks), they stand in its place as a
+  // strip, a bar each: one quantity, one row (the banks' steps, not the model's average rod beside them).
+  const strip = (path: VariablePath): FaceplateRowSpec | null => {
     const binding = bindingOf(path)
     const alike = binding === undefined ? [] : graph.signalBindings.filter(other => other.tagId !== undefined && other.path !== path && onEnd(other) && readable(other)
       && systemOf(other) === systemOf(binding) && other.quantity === binding.quantity && other.unit === binding.unit && !flagOf.has(other.path) && !placed.has(other.path) && !stopped.includes(other.path))
-    for (const other of alike) placed.add(other.path)
-    return alike.length === 0 ? null : { kind: 'values', source: 'protection', paths: alike.map(other => String(other.path)), criteria: [] }
+    if (alike.length === 0) return null
+    for (const other of [binding!, ...alike]) placed.add(other.path)
+    return { kind: 'values', source: 'protection', paths: alike.map(other => String(other.path)), criteria: [], strip: true }
   }
   if (protection !== undefined && !protection.causeFirst) {
     const isState = (path: VariablePath) => bindingOf(path)?.quantity === 'boolean'
-    for (const path of [...stopped.filter(isState), ...stopped.filter(path => !isState(path))]) {
-      push(protection, valuesRow(path, 'protection'))
-      push(protection, besideStopped(path))
-    }
+    for (const path of [...stopped.filter(isState), ...stopped.filter(path => !isState(path))]) push(protection, strip(path) ?? valuesRow(path, 'protection'))
   }
 
   // (2) Critical safety functions judging a reading of the end's equipment: every leaf of the tree under the chip.
@@ -425,7 +479,7 @@ export const compileFaceplate = (
   }
 
   // (3) Port circuits, for an end no safety function judges, each titled by its port.
-  const circuits: Array<{ readonly column: Column; readonly carrier: string }> = []
+  const circuits: Array<{ readonly column: Column; readonly carrier: string; readonly reached: ReadonlyArray<number> }> = []
   if (functionColumns.size === 0) {
     for (const port of Object.keys(component.ports)) {
       const reached = circuitReach(plant, end, port)
@@ -433,6 +487,13 @@ export const compileFaceplate = (
       const into = column([{ kind: 'circuit', port, title: portTitle(port), equipment: reached.map(index => shortName(plant, index)) }])
       for (const index of reached) {
         const along = graph.components[index]!
+        // A valve its controller positions: the flow through it first, then its position, and what it holds.
+        const controlled = controlledValve(plant, index)
+        if (controlled !== null && readable(bindingOf(controlled.flow)) && readable(bindingOf(controlled.position)) && !placed.has(controlled.flow) && !placed.has(controlled.position)) {
+          placed.add(controlled.flow)
+          placed.add(controlled.position)
+          into.rows.push({ kind: 'values', source: 'circuit', paths: [String(controlled.flow), String(controlled.position)], criteria: [], held: controlled.held })
+        }
         for (const aspect of along.semantics.aspects) {
           if (aspect.state !== undefined && (aspect.aspect === 'position' || aspect.aspect === 'running' || aspect.aspect === 'energized')) push(into, valuesRow(aspect.state.path, 'circuit'))
         }
@@ -440,13 +501,18 @@ export const compileFaceplate = (
         for (const binding of graph.signalBindings) {
           if (binding.owner.type === 'component' && binding.owner.componentIndex === index && binding.tagId !== undefined) push(into, valuesRow(binding.path, 'circuit'))
         }
-        const branches = presentationFor(along).element === 'bar'
-          ? branchFlows(plant, index, MIMIC_REACH_LINKS).filter(branch => readable(bindingOf(branch.path)) && !placed.has(branch.path))
-          : []
-        for (const branch of branches) placed.add(branch.path)
-        if (branches.length > 0) into.rows.push({ kind: 'flows', branches: branches.map(branch => ({ path: String(branch.path), destination: shortName(plant, branch.destination) })) })
       }
-      circuits.push({ column: into, carrier: attachedAt(plant, end, port)[0]!.link.kind })
+      circuits.push({ column: into, carrier: attachedAt(plant, end, port)[0]!.link.kind, reached })
+    }
+    // What each header reached sends down each branch, once every row has claimed its values (a controlled valve its own
+    // flow): named by the branch's first equipment, never by where it ends (the atmosphere a safety valve vents to).
+    for (const circuit of circuits) {
+      for (const index of circuit.reached) {
+        if (presentationFor(graph.components[index]!).element !== 'bar') continue
+        const branches = namedBranches(plant, index).filter(branch => readable(bindingOf(branch.path)) && !placed.has(branch.path))
+        for (const branch of branches) placed.add(branch.path)
+        if (branches.length > 0) circuit.column.rows.push({ kind: 'flows', from: shortName(plant, index), branches: branches.map(branch => ({ path: String(branch.path), destination: shortName(plant, branch.first) })) })
+      }
     }
   }
 

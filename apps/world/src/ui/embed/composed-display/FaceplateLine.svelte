@@ -21,6 +21,8 @@
   const GAP = 6
   /** A bar's length and thickness: a span at a glance, beside the number that reads it. */
   const BAR = { width: 64, thickness: 8 }
+  /** A strip's bars: thin, so eight and their labels take about 380 px. */
+  const STRIP = { width: 24, thickness: 6 }
 
   const measureNote = { quiet: textMeasure(panelFont(11)), bold: textMeasure(panelFont(11, 600)) }
   const measureText = textMeasure(panelFont(12))
@@ -128,9 +130,37 @@
 {:else if line.kind === 'consequence'}
   <li class="line quiet" class:idle={line.idle} bind:clientWidth={room} title={line.title}><span data-text>{consequence}</span></li>
 {:else if line.kind === 'flows'}
-  <li class="line quiet"><span data-text title={line.parts.join(' · ')}>{line.parts.join(' · ')}</span></li>
+  <li class="line quiet wrap"><span data-text title={line.parts.join(' · ')}>{line.parts.join(' · ')}</span></li>
+{:else if line.kind === 'strip'}
+  <!-- One quantity of parallel equipment side by side: a thin bar each under its short label, a value only where one differs. -->
+  <li class="line strip" title={line.title}>
+    {#each line.groups as group, at (at)}
+      {#if at > 0}<span class="sep">|</span>{/if}
+      {#each group as bar (bar.label)}
+        <span class="bank">
+          <span class="label" data-text>{bar.label}</span>
+          <obc-bar-horizontal
+            class="bar"
+            width={STRIP.width}
+            minValue={0}
+            maxValue={bar.max}
+            value={bar.value ?? 0}
+            hasBar={true}
+            hasScale={false}
+            showLabels={false}
+            barThickness={STRIP.thickness}
+            paddingLeft={0}
+            paddingRight={0}
+          ></obc-bar-horizontal>
+          {#if bar.printed !== null}<span class="printed" data-text>{bar.printed}</span>{/if}
+        </span>
+      {/each}
+    {/each}
+    {#if line.all !== null}<span class="printed" data-text>{line.all}</span>{/if}
+  </li>
 {:else}
-  <li class="line quiet" title={line.title}><span data-text>{line.text}</span></li>
+  <!-- Neutral words wrap, two lines to a row, never cut (a folded check names every check not yet met). -->
+  <li class="line quiet wrap" title={line.title}><span data-text>{line.text}</span></li>
 {/if}
 
 <style>
@@ -153,6 +183,12 @@
   .lead { flex: none; display: flex; align-items: center; }
   .deciding { flex: 0 1 auto; min-width: 0; color: var(--element-neutral-color); }
   .quiet { color: var(--element-neutral-color); }
+  .wrap { height: auto; min-height: var(--row); white-space: normal; overflow: visible; line-height: 14px; }
+  .wrap > span { overflow-wrap: anywhere; }
+  .strip { gap: 4px; }
+  .bank { flex: none; display: inline-flex; align-items: center; gap: 3px; }
+  .bank .label { font-size: 10.5px; color: var(--element-neutral-color); }
+  .printed { font-size: 11px; font-variant-numeric: tabular-nums; }
   /* Idle: faint, as an idle limit's label on a trend. */
   .idle { opacity: 0.6; }
 </style>

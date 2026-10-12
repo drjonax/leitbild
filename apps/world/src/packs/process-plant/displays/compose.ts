@@ -1301,12 +1301,31 @@ const faceplatePanel = (
   return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(column => faceplateMostLines(column)))) }
 }
 
-/** A faceplate compacted for less room: each function's checks on one line, which names those not met (faceplate-live.ts). */
-const compacted = (panel: ComposedFaceplatePanel): ComposedFaceplatePanel => ({
-  ...panel,
-  faceplate: { ...panel.faceplate, compact: true },
-  height: faceplateHeight(Math.max(0, ...panel.faceplate.columns.map(column => faceplateMostLines(column, true)))),
-})
+/** An upper bound of a character's width in a faceplate's 12 px text: the room a line that wraps is reserved by. */
+const FACEPLATE_CHARACTER_PX = 7.5
+/** A wrapping line's lines of text to one faceplate row. */
+const FACEPLATE_TEXT_LINES_PER_ROW = 2
+
+/**
+ * A faceplate compacted for less room: each function's checks on one line,
+ * which names those not met and wraps, never cut (faceplate-live.ts); rows
+ * reserved for its longest form, every check named, at the width of its
+ * columns.
+ */
+const compacted = (panel: ComposedFaceplatePanel, drawingWidth: number): ComposedFaceplatePanel => {
+  const layout = composedDisplayLayout
+  const text = drawingWidth / panel.faceplate.columns.length - 20
+  const wrapped = (column: ComposedFaceplatePanel['faceplate']['columns'][number]): number => column.rows.reduce((more, row) => {
+    if (row.kind !== 'checks') return more
+    const longest = `○ ${row.title} 0/${row.checks.length} · not yet met: ${row.checks.map(check => check.label).join('; ')}`
+    return more + Math.ceil(Math.ceil(longest.length * FACEPLATE_CHARACTER_PX / Math.max(text, layout.faceplateRow)) / FACEPLATE_TEXT_LINES_PER_ROW) - 1
+  }, 0)
+  return {
+    ...panel,
+    faceplate: { ...panel.faceplate, compact: true },
+    height: faceplateHeight(Math.max(0, ...panel.faceplate.columns.map(column => faceplateMostLines(column, true) + wrapped(column)))),
+  }
+}
 
 /** The readings a rule's condition compares, which a faceplate row names as deciding it (faceplate-live.ts names comparisons only). */
 const comparedPaths = (condition: FaceplateCondition): ReadonlyArray<string> =>
@@ -1381,7 +1400,8 @@ export const compileDetailDisplay = (
     return room !== null && fitted.mimic.width <= room.maxWidth && fitted.mimic.height <= room.maxHeight
       && sampledPathCount(fitted.mimic, candidate) <= PROCESS_DISPLAY_SAMPLE_MAX_PATHS ? shown : null
   }
-  const placed = (faceplate === null ? [] : [faceplate, compacted(faceplate)]).flatMap(candidate => {
+  const drawingWidth = view === null ? 0 : overviewDrawingRoom(view, fitted.arrangement, { ...fitted.panels, readouts: 0 })?.maxWidth ?? 0
+  const placed = (faceplate === null ? [] : [faceplate, compacted(faceplate, drawingWidth)]).flatMap(candidate => {
     const shown = beneath(candidate)
     return shown === null ? [] : [{ panel: candidate, panels: shown }]
   })[0]

@@ -62,13 +62,27 @@ export type FaceplateRowSpec =
   | { readonly kind: 'rules'; readonly group: string; readonly banner: boolean; readonly does: ReadonlyArray<FaceplateWrite>; readonly rules: ReadonlyArray<FaceplateRule & { readonly lifecycle: string }> }
   /** A rule of another group acting on a state the column's group moves, with its action's words and every command it writes; shown only while it can act. */
   | { readonly kind: 'consequence'; readonly rule: FaceplateRule; readonly action: string; readonly writes: ReadonlyArray<FaceplateWrite> }
-  /** Values on one line; with `flag`, the first, the rest shown only while it reads true; `criteria` a safety function's criterion for each, its reference once the end has stopped. */
-  | { readonly kind: 'values'; readonly source: FaceplateSource; readonly paths: ReadonlyArray<string>; readonly flag?: string; readonly criteria: ReadonlyArray<FaceplateCriterion> }
+  /**
+   * Values on one line; with `flag`, the first, the rest shown only while it
+   * reads true; `criteria` a safety function's criterion for each, its
+   * reference once the end has stopped; `strip`, one quantity of parallel
+   * equipment read side by side (the rod banks), a bar each; `held`, what the
+   * controller of the equipment whose flow and position these are holds, and
+   * to what (the steam dumps' header pressure), its only mode modelled.
+   */
+  | { readonly kind: 'values'; readonly source: FaceplateSource; readonly paths: ReadonlyArray<string>; readonly flag?: string; readonly criteria: ReadonlyArray<FaceplateCriterion>; readonly strip?: true; readonly held?: FaceplateHeld }
   /** A safety function's checks; each shown while it applies, folded while all pass. */
   | { readonly kind: 'checks'; readonly safetyFunction: string; readonly title: string; readonly checks: ReadonlyArray<{ readonly label: string; readonly when?: FaceplateCondition; readonly condition: FaceplateCondition }> }
-  /** What a header sends to each destination, by the destination's short name. */
-  | { readonly kind: 'flows'; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
+  /** What a header (`from`, its short name) sends down each branch, the branch named by its first equipment. */
+  | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
   | { readonly kind: 'loops'; readonly loops: ReadonlyArray<string>; readonly columns: ReadonlyArray<FaceplateLoopColumn> }
+
+/** What a valve's controller holds and to what: the quantity it measures ("pressure"), its set point in display units. */
+export interface FaceplateHeld {
+  readonly quantity: string
+  readonly setpoint: number
+  readonly unit: string
+}
 
 /** A safety function's criterion of a reading, as its tree asks it. */
 export interface FaceplateCriterion {
@@ -109,13 +123,13 @@ export type FaceplateRow =
   | { readonly kind: 'armed'; readonly count: number }
   /** A rule elsewhere acting on what the group moved: armed, or idle with what it waits for. */
   | { readonly kind: 'consequence'; readonly rule: string; readonly title: string; readonly action: string; readonly status: 'armed' | 'idle'; readonly deciding: ReadonlyArray<FaceplateComparison> }
-  /** Values on one line, those that measure something now; `criteria` where a safety function's criterion is their reference. */
-  | { readonly kind: 'values'; readonly source: FaceplateSource; readonly paths: ReadonlyArray<string>; readonly criteria: ReadonlyArray<FaceplateCriterion> }
+  /** Values on one line, those that measure something now; `criteria` where a safety function's criterion is their reference; `strip` and `held` as compiled. */
+  | { readonly kind: 'values'; readonly source: FaceplateSource; readonly paths: ReadonlyArray<string>; readonly criteria: ReadonlyArray<FaceplateCriterion>; readonly strip?: true; readonly held?: FaceplateHeld }
   /** A check that applies and is not met, by name: neutral, not an alarm. */
   | { readonly kind: 'check'; readonly safetyFunction: string; readonly label: string; readonly met: 'no' | 'unknown' }
   /** Checks that apply, folded: their common name, how many of how many are met; in a compact faceplate, those not met by name. */
   | { readonly kind: 'checks'; readonly safetyFunction: string; readonly label: string; readonly met: number; readonly of: number; readonly notMet?: ReadonlyArray<string> }
-  | { readonly kind: 'flows'; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
+  | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
   /**
    * The loop table; an `idle` column (its rules do not act in the mode) is
    * drawn faint and names no margin; a `blank` value measures nothing now and
@@ -155,16 +169,17 @@ export interface FaceplateLive {
 /** Active rules a group lists by name before it counts the rest. */
 export const FACEPLATE_ACTIVE_RULE_ROWS = 4
 
-/** The lines a column takes under its head: one per row, a loop table its head line and a line per loop. */
+/** The lines a column takes under its head: one per row, a loop table its head line and a line per loop, a held value the line naming its mode. */
 export const faceplateLines = (column: Pick<FaceplateColumn, 'rows'>): number =>
-  column.rows.reduce((lines, row) => lines + (row.kind === 'loops' ? 1 + row.loops.length : 1), 0)
+  column.rows.reduce((lines, row) => lines + (row.kind === 'loops' ? 1 + row.loops.length : row.kind === 'values' && row.held !== undefined ? 2 : 1), 0)
 
 /** The most lines a column of a compiled faceplate can take: every row it may show, checks unfolded (folded where `compact`), at most its active rule rows. */
 export const faceplateMostLines = (column: FaceplateColumnSpec, compact = false): number => column.rows.reduce((lines, row) => lines + (
   row.kind === 'loops' ? 1 + row.loops.length
     : row.kind === 'checks' ? (compact ? 1 : row.checks.length)
       : row.kind === 'rules' ? (row.banner ? 0 : Math.min(FACEPLATE_ACTIVE_RULE_ROWS, row.rules.length)) + 2
-        : 1), 0)
+        : row.kind === 'values' && row.held !== undefined ? 2
+          : 1), 0)
 
 const compare = (left: unknown, operator: Operator, right: number | boolean): boolean | null => {
   if (operator === '==') return left === right
@@ -330,7 +345,7 @@ export const faceplateNow = (faceplate: CompiledFaceplate, live: FaceplateLive):
     if (spec.kind === 'values') {
       const paths = spec.flag !== undefined && live.read(spec.flag) !== true ? [spec.flag] : spec.paths
       const criteria = stopped ? spec.criteria.filter(criterion => paths.includes(criterion.path) && judged.has(criterion.safetyFunction)) : []
-      return [{ kind: 'values', source: spec.source, paths, criteria }]
+      return [{ kind: 'values', source: spec.source, paths, criteria, ...(spec.strip === undefined ? {} : { strip: spec.strip }), ...(spec.held === undefined ? {} : { held: spec.held }) }]
     }
     if (spec.kind === 'loops') {
       return [{

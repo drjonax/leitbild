@@ -98,6 +98,7 @@ const words = (line: FaceplateLine): string => {
   if (line.kind === 'consequence') return line.forms[0]!
   if (line.kind === 'flows') return line.parts.join(' · ')
   if (line.kind === 'loops') return line.table.columns.map(column => column.head).join(' ')
+  if (line.kind === 'strip') return [line.groups.map(group => group.map(bar => `${bar.label}${bar.printed === null ? '' : ` ${bar.printed}`}`).join(' ')).join(' | '), ...(line.all === null ? [] : [line.all])].join(' · ')
   return line.text
 }
 
@@ -111,18 +112,20 @@ const allWords = (shown: Shown): ReadonlyArray<string> => shown.columns.flatMap(
 describe('each pinned state renders the rows World derives, one line each, within the panel', () => {
   test('one line per row, of the row\'s kind, every value row its values in order, every column within the lines its panel holds', () => {
     const kindOf = { values: 'values', rule: 'rule', acting: 'text', armed: 'text', consequence: 'consequence', check: 'text', checks: 'text', flows: 'flows', loops: 'loops' } as const
+    // A strip is one line of bars; a value its controller holds, its line and the line naming its mode.
+    const linesOf = (row: FaceplateRow): ReadonlyArray<FaceplateLine['kind']> => row.kind === 'values' && row.strip === true ? ['strip'] : row.kind === 'values' && row.held !== undefined ? ['values', 'text'] : [kindOf[row.kind]]
     for (const [name, shown] of states) {
       for (const { panel, rows, columns } of shown) {
         // What World sized the panel for: its heads, then as many rows as its longest column can take.
         const budget = (panel.height - composedDisplayLayout.faceplateHead - 2 * composedDisplayLayout.faceplatePad) / composedDisplayLayout.faceplateRow
         expect(columns.length, name).toBe(rows.length)
         columns.forEach((column, index) => {
-          expect(column.lines.map(line => line.kind), name).toEqual(rows[index]!.map(row => kindOf[row.kind]))
-          rows[index]!.forEach((row, at) => {
-            const line = column.lines[at]!
-            if (row.kind === 'values' && line.kind === 'values') expect(line.cells.map(cell => String(cell.pen.path))).toEqual([...row.paths])
-            if (row.kind === 'loops' && line.kind === 'loops') expect(line.table.rows.map(entry => entry.loop)).toEqual([...row.loops])
-          })
+          expect(column.lines.map(line => line.kind), name).toEqual(rows[index]!.flatMap(linesOf))
+          const valueLines = column.lines.filter(line => line.kind === 'values')
+          const valueRows = rows[index]!.filter(row => row.kind === 'values' && row.strip !== true)
+          valueRows.forEach((row, at) => { if (row.kind === 'values') expect(valueLines[at]!.kind === 'values' ? valueLines[at]!.cells.map(cell => String(cell.pen.path)) : []).toEqual([...row.paths]) })
+          const tables = column.lines.filter(line => line.kind === 'loops')
+          rows[index]!.filter(row => row.kind === 'loops').forEach((row, at) => { if (row.kind === 'loops') expect(tables[at]!.kind === 'loops' ? tables[at]!.table.rows.map(entry => entry.loop) : []).toEqual([...row.loops]) })
           expect(columnLineCount(column), name).toBeLessThanOrEqual(budget)
         })
       }
@@ -204,9 +207,39 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
     for (const name of ['no RCP +10:00', 'loss of offsite power +2:30'] as const) {
       const folded = allWords(at(name, 'source')).filter(text => text.includes('Natural circulation'))
       expect(folded.length, name).toBe(1)
-      expect(folded[0], name).toMatch(/^(✓ Natural circulation (\d+)\/\2|○ Natural circulation \d+\/\d+ · not met: .+)$/)
+      expect(folded[0], name).toMatch(/^(✓ Natural circulation (\d+)\/\2|○ Natural circulation \d+\/\d+ · not yet met: .+)$/)
     }
     expect(allWords(at('turbine trip +2:30', 'source')).some(text => text.includes('Natural circulation'))).toBe(false)
+  })
+
+  test('the rod banks read as one strip, SA–SD | CA–CD, a value only where a bank differs, and no average rod beside them', () => {
+    const strip = (shown: Shown) => shown.columns.flatMap(column => column.lines).find(line => line.kind === 'strip')
+    const power = strip(at('at power', 'source'))
+    const tripped = strip(at('turbine trip +2:30', 'source'))
+    if (power?.kind !== 'strip' || tripped?.kind !== 'strip') throw new Error('expected the bank strip')
+    expect(power.groups.map(group => group.map(bar => bar.label))).toEqual([['SA', 'SB', 'SC', 'SD'], ['CA', 'CB', 'CC', 'CD']])
+    expect(words(power)).toBe('SA SB SC SD | CA CB CC CD 220')
+    expect(words(tripped)).toBe('SA SB SC SD | CA CB CC CD · all 0')
+    for (const shown of [...states.values()].flat()) expect(shown.panel.pens.some(pen => pen.tagId === 'ROD-STEPS')).toBe(false)
+  })
+
+  test('a header names each branch by its first equipment, and the steam dumps read their flow first, then their position and their only mode', () => {
+    for (const name of ['at power', 'turbine trip +15:00'] as const) {
+      const turbine = allWords(at(name, 'sink'))
+      const flows = turbine.find(text => text.startsWith('Steam header to: '))
+      expect(flows, name).toBeDefined()
+      expect(flows, name).not.toMatch(/\bATM\b/)
+      const lines = at(name, 'sink').columns.flatMap(column => column.lines)
+      const dump = lines.findIndex(line => line.kind === 'values' && line.cells.some(cell => cell.pen.tagId === 'TURB-BYP-POS'))
+      const dumps = lines[dump]
+      expect(dumps?.kind === 'values' ? dumps.cells.map(cell => cell.pen.unit) : [], name).toEqual(['kg/s', 'fraction'])
+      expect(words(lines[dump + 1]!), name).toBe('pressure mode only, 7.6 MPa')
+    }
+  })
+
+  test('a check not met reads "not yet met", never "expected": no declaration of the I&C config says it is', () => {
+    for (const shown of [...states.values()].flat()) for (const text of allWords(shown)) expect(text).not.toMatch(/expected|not met(?!.*yet)/)
+    expect(allWords(at('loss of offsite power +2:30', 'source')).some(text => text.includes('not yet met:'))).toBe(true)
   })
 
   test('after a loss of offsite power the turbine names its first out, loss of load, before the reactor trip it caused', () => {

@@ -8,7 +8,7 @@
 // rule, rules by their trip's title. Pure, so the pinned states are tested
 // without a browser; FaceplatePanel draws what it returns.
 import type { ComposedDisplayPen, ComposedFaceplatePanel } from '../../../packs/process-plant/displays/compose.ts'
-import { faceplateNow, type Faceplate, type FaceplateComparison, type FaceplateCriterion, type FaceplateHead, type FaceplateLive, type FaceplateRow } from '../../../packs/process-plant/displays/faceplate-live.ts'
+import { faceplateNow, type Faceplate, type FaceplateComparison, type FaceplateCriterion, type FaceplateHead, type FaceplateHeld, type FaceplateLive, type FaceplateRow } from '../../../packs/process-plant/displays/faceplate-live.ts'
 import { displayValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
 import { activeThreshold, limitsInForce, rateWindowMs, trendReading, type LimitState, type TrendPoint, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -108,10 +108,25 @@ export type FaceplateLine =
    * decides it.
    */
   | { readonly kind: 'consequence'; readonly forms: ReadonlyArray<string>; readonly title: string; readonly idle: boolean }
-  /** Where a header sends its flow, by destination. */
+  /** Where a header sends its flow, each branch by its first equipment ("Steam header to: Turbine bypass 27.1 kg/s"). */
   | { readonly kind: 'flows'; readonly parts: ReadonlyArray<string> }
+  /**
+   * One quantity of parallel equipment side by side (the rod banks): a thin
+   * bar each under its short label, groups apart; a value printed only on a
+   * bar that differs from the others, or once for all where none does.
+   */
+  | { readonly kind: 'strip'; readonly groups: ReadonlyArray<ReadonlyArray<FaceplateStripBar>>; readonly all: string | null; readonly title: string }
   /** Parallel loops in one aligned table. */
   | { readonly kind: 'loops'; readonly table: FaceplateLoopTable }
+
+export interface FaceplateStripBar {
+  readonly label: string
+  readonly value: number | null
+  readonly max: number
+  /** Its value, where it differs from the others. */
+  readonly printed: string | null
+  readonly title: string
+}
 
 export interface FaceplateLoopTable {
   /** A column's head: the tags its cells share, the loop's place in them written x ("TE-4x1-HOT"), with its unit; idle where no rule judging it acts in the mode. */
@@ -326,6 +341,7 @@ export const faceplateLines = (
     // The column's first reading draws its sparkline, and so does any value that moves.
     let firstReading = true
     const lineOf = (row: FaceplateRow): FaceplateLine => {
+      if (row.kind === 'values' && row.strip === true) return stripOf(row.paths.map(path => pens.get(path) ?? missing(path)), live.read)
       if (row.kind === 'values') {
         const cells = row.paths.map(cellOf)
         const lead = cells[0]!
@@ -361,20 +377,73 @@ export const faceplateLines = (
           idle: row.status === 'idle',
         }
       }
-      if (row.kind === 'check') return { kind: 'text', text: `○ ${row.label} · ${row.met === 'no' ? 'not met' : 'not known'}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction} check: ${row.label}` }
-      // Folded: ✓ only while all are met; a compact faceplate names those not met on the same line.
-      if (row.kind === 'checks') return { kind: 'text', text: `${row.met === row.of ? '✓' : '○'} ${row.label} ${row.met}/${row.of}${row.notMet === undefined ? '' : ` · not met: ${row.notMet.map(label => label.includes(':') ? label.slice(label.indexOf(':') + 1).trim() : label).join('; ')}`}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction}: ${row.met} of the ${row.of} checks that apply are met${row.notMet === undefined ? '' : `; not met: ${row.notMet.join('; ')}`}` }
+      // A check not met says "not yet met": never "expected", which only a declaration of the I&C config could say.
+      if (row.kind === 'check') return { kind: 'text', text: `○ ${row.label} · ${row.met === 'no' ? 'not yet met' : 'not known'}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction} check: ${row.label}` }
+      // Folded: ✓ only while all are met; a compact faceplate names those not yet met on the same line, which wraps.
+      if (row.kind === 'checks') return { kind: 'text', text: `${row.met === row.of ? '✓' : '○'} ${row.label} ${row.met}/${row.of}${row.notMet === undefined ? '' : ` · not yet met: ${row.notMet.map(label => label.includes(':') ? label.slice(label.indexOf(':') + 1).trim() : label).join('; ')}`}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction}: ${row.met} of the ${row.of} checks that apply are met${row.notMet === undefined ? '' : `; not yet met: ${row.notMet.join('; ')}`}` }
       if (row.kind === 'flows') {
         // One header's branches read at one resolution, the finest any of them declares: no "0.0000012 kg/s" beside "1512 kg/s".
         const branches = row.branches.map(branch => ({ ...branch, pen: pens.get(branch.path) ?? missing(branch.path) }))
         const resolutions = branches.flatMap(branch => branch.pen.resolution ?? [])
         const resolution = resolutions.length === 0 ? null : Math.min(...resolutions)
-        return { kind: 'flows', parts: branches.map((branch, index) => `${index === 0 ? 'To ' : ''}${branch.destination} ${numberValue(branch.pen, live.read(branch.path), resolution).text}`) }
+        return { kind: 'flows', parts: branches.map((branch, index) => `${index === 0 ? `${row.from} to: ` : ''}${branch.destination} ${numberValue(branch.pen, live.read(branch.path), resolution).text}`) }
       }
       return { kind: 'loops', table: loopTable(row, pens, live.read, activeRuleIds, sample, gates) }
     }
-    return { head: headLine(column.heads, chips, sample), lines: column.rows.map(lineOf) }
+    // A value its controller holds: under its row, what it holds and to what, the only mode the model has.
+    return { head: headLine(column.heads, chips, sample), lines: column.rows.flatMap(row => row.kind === 'values' && row.held !== undefined ? [lineOf(row), heldLine(row.held)] : [lineOf(row)]) }
   })
+}
+
+/** What a controller holds, in words: "pressure mode only, 7.6 MPa". */
+const heldLine = (held: FaceplateHeld): FaceplateLine => ({
+  kind: 'text',
+  text: `${held.quantity} mode only, ${held.setpoint} ${held.unit}`,
+  title: `Its controller positions it to hold the ${held.quantity} at ${held.setpoint} ${held.unit}: the only control mode the model has`,
+})
+
+/**
+ * Parallel equipment's short names: the words that tell their labels apart,
+ * the first as its initial before the last unless the last already begins
+ * with it ("Shutdown bank SA position" SA, "Control bank C position" CC),
+ * grouped by that first word.
+ */
+const shortNames = (labels: ReadonlyArray<string>): ReadonlyArray<{ readonly name: string; readonly group: string }> => {
+  const words = labels.map(label => label.split(' '))
+  const common = new Set(words[0]!.filter(word => words.every(other => other.includes(word))))
+  return words.map(list => {
+    const telling = list.filter(word => !common.has(word))
+    const [first, ...rest] = telling
+    const last = rest.at(-1)
+    if (first === undefined) throw new Error('parallel readings with alike labels cannot be told apart')
+    // An identifier that already carries its group's initial before its own letter (SA) keeps it; a bare letter (C) takes it (CC).
+    return { group: first, name: last === undefined ? first : last.length > 1 && last.startsWith(first.charAt(0)) ? last : `${first.charAt(0)}${last}` }
+  })
+}
+
+/** A strip: a thin bar each over its instrument's declared range, values printed only where one differs from the others. */
+const stripOf = (pens: ReadonlyArray<ComposedDisplayPen>, read: (path: string) => unknown): FaceplateLine => {
+  const names = shortNames(pens.map(pen => pen.label))
+  const values = pens.map(pen => {
+    const raw = read(String(pen.path))
+    return typeof raw === 'number' ? shownReading(raw, pen.resolution) : null
+  })
+  const counts = new Map<number | null, number>()
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1)
+  const usual = [...counts.entries()].sort((left, right) => right[1] - left[1])[0]![0]
+  const written = (pen: ComposedDisplayPen) => numberValue(pen, read(String(pen.path))).text.replace(/ $/, '')
+  const bars = pens.map((pen, at) => {
+    const span = pen.limits?.instrumentSpan ?? pen.limits?.hardRange
+    if (span === undefined) throw new Error(`${pen.tagId ?? pen.name} declares no range to draw its bar over`)
+    return { group: names[at]!.group, bar: { label: names[at]!.name, value: values[at]!, max: span.max, printed: values[at] !== usual ? written(pen) : null, title: `${pen.tagId ?? pen.name} · ${pen.label}: ${written(pen)}` } }
+  })
+  const groups = [...new Set(bars.map(entry => entry.group))].map(group => bars.filter(entry => entry.group === group).map(entry => entry.bar))
+  return {
+    kind: 'strip',
+    groups,
+    all: counts.size === 1 && usual !== null ? `all ${written(pens[0]!)}` : null,
+    title: bars.map(entry => entry.bar.title).join('\n'),
+  }
 }
 
 /** Every value a row shows has its pen (compose.ts resolves them with the faceplate): one without is a fault, never skipped. */
