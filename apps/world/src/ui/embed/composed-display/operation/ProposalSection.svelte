@@ -5,6 +5,7 @@
   import type { ComposedDisplayPen } from '../../../../packs/process-plant/displays/compose.ts'
   import type { TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import Sparkline from '../Sparkline.svelte'
+  import { listen } from './listen.ts'
   import type { ProposalCard } from './operation-presenter.ts'
 
   // A proposal's approval card, first in its item's popover while pending
@@ -96,7 +97,11 @@
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <obc-button variant="normal" disabled={busy} onclick={() => { void decide('Rejection', () => reject(reason.trim() === '' ? null : reason.trim())) }}>Reject</obc-button>
     </div>
-    <obc-text-input-field label="Reason to reject (optional)" maxlength={300} value={reason} onchange={(event: Event) => { reason = (event.currentTarget as HTMLElement & { value: string }).value }}></obc-text-input-field>
+    <!-- Read as typed and as committed: the field's change does not bubble, so it is listened to on the field itself. -->
+    <obc-text-input-field label="Reason to reject (optional)" maxlength={300} value={reason} use:listen={{
+      input: event => { const field = event.composedPath()[0]; if (field instanceof HTMLInputElement) reason = field.value },
+      change: event => { const detail = (event as CustomEvent<{ value?: string } | null>).detail; if (typeof detail?.value === 'string') reason = detail.value },
+    }}></obc-text-input-field>
     <div class="secondary">
       {#if card.extendable}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->

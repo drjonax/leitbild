@@ -426,8 +426,22 @@ describe('demand controls and valve positions', () => {
     const throttled = { ...listed, offered: listed.offered.map(entry => (entry.control.path === valve.path ? { ...entry, throttledUnder: [under] } : entry)) }
     const control = itemControlView(throttled, plant.now()).controls.find(candidate => candidate.path === valve.path)!
     expect(control.throttled).toEqual(['Throttled under AFW actuation on SG low-low level'])
-    expect(itemBadges(throttled, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled).toEqual({ text: 'Throttled under AFW actuation on SG low-low level' })
+    expect(itemBadges(throttled, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled).toEqual({ text: 'Throttled under AFW actuation on SG low-low level', title: 'Throttled under AFW actuation on SG low-low level' })
     const record: OperationRecord = { commandId: 'cmd-throttle', path: valve.path, value: 0.4, origin: 'person', actorId: 'op-1', elapsedMs: 1_000, kind: 'write', throttledUnder: [under] }
     expect(operationsLogRows([record], [], [throttled], plant.now())[0]).toMatchObject({ action: expect.stringMatching(/^OPEN to 40 % AFW-A-CV/), chain: 'direct command · throttled under AFW actuation on SG low-low level' })
+  }, PLANT_HANG_GUARD_MS)
+
+  test('after a trip the AFW actuation holds an AFW valve\'s SHUT, which is not offered; a setting between its ends is, as a throttle', () => {
+    const plant = unit()
+    plant.step()
+    plant.runtime.writeCommand({ type: 'setVariable', path: plant.tag('RX-TRIP-MAN').path, value: true })
+    plant.step(90)
+    const valve = plant.tag('AFW-A-CV')
+    const control = itemControlView(plant.listed(plant.itemOffering(valve.path)), plant.now()).controls.find(candidate => candidate.path === valve.path)!
+    const shut = control.options.find(option => option.word === 'SHUT')!
+    expect(shut.heldBy).toMatch(/auxiliary feedwater actuation holds AFW-A-CV .* overriding it is not offered here$/)
+    expect(demandOption(control, 0.9)).toMatchObject({ word: 'OPEN to 90 %', heldBy: null })
+    expect(plant.validate({ path: valve.path, value: 0.9 })).toEqual({ accepted: true })
+    expect(plant.validate({ path: valve.path, value: 0 })).toMatchObject({ accepted: false })
   }, PLANT_HANG_GUARD_MS)
 })

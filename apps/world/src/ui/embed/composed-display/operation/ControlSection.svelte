@@ -9,6 +9,7 @@
   import '@oicl/openbridge-webcomponents/dist/components/toggle-button-option/toggle-button-option.js'
   import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
   import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
+  import { listen } from './listen.ts'
   import { commandPhase, optionOf, SELECTION_TIMEOUT_MS, type ControlView, type DemandView, type ItemControlView, type OperationNow, type OptionView, type SentCommand } from './operation-presenter.ts'
 
   // An item's CONTROL section (plan §4.2): select a command, see World check
@@ -58,9 +59,30 @@
   const shownAt = (demand: DemandView, value: number): number =>
     Number((demand.shown.min + ((value - demand.min) / (demand.max - demand.min)) * (demand.shown.max - demand.shown.min)).toPrecision(12))
   const selectSetting = (control: ControlView, demand: DemandView, shown: number): void => {
+    clearTimeout(settling)
     moving = null
     const option = optionOf(control, settingAt(demand, shown))
     if (option !== undefined && option.key !== selection?.key) void select(control, option)
+  }
+  // A step, an arrow key or a drag moves the slider; once it rests a moment (or is let go) the setting it stands at is
+  // selected, with its Execute: the slider never needs a release event to reach a command.
+  const SETTLE_MS = 400
+  let settling: ReturnType<typeof setTimeout> | undefined
+  const sliderMoved = (control: ControlView, demand: DemandView, shown: number): void => {
+    moving = { path: control.path, shown }
+    clearTimeout(settling)
+    settling = setTimeout(() => selectSetting(control, demand, shown), SETTLE_MS)
+  }
+  /**
+   * Where a demand control's slider stands: as it is moved; at the setting selected; at a command just sent, until the
+   * Plant reads it (writes wait for its next step), so the old setting never shows in between; else at its setting.
+   */
+  const sliderAt = (control: ControlView, demand: DemandView): number => {
+    if (moving?.path === control.path) return moving.shown
+    if (selection?.path === control.path && typeof selection.value === 'number') return shownAt(demand, selection.value)
+    if (sent?.path === control.path && typeof sent.value === 'number' && (sent.result === undefined || sent.result.ok) && Math.abs(demand.setting - sent.value) > demand.step / 2
+      && (phase?.kind === 'sent' || phase?.kind === 'travelling')) return shownAt(demand, sent.value)
+    return shownAt(demand, demand.setting)
   }
   const selectedControl = $derived(selection === null ? undefined : view.controls.find(control => control.path === selection!.path))
   // Read from the control as it stands now: a demand setting between its ends is an option of its own (optionOf).
@@ -147,35 +169,41 @@
         <span class="target">{control.target}</span>
         {#if control.now !== null}<span class="now">Now: {control.now}{#if control.commanded !== null} · {control.commanded}{/if}</span>{/if}
       </div>
-      {#each control.throttled as line (line)}<span class="throttled">{line}</span>{/each}
+      {#if control.throttled.length > 0}
+        <!-- One chip however many actuations stand: the first in World's words, the others counted and named in its title. -->
+        <span class="throttled" title={control.throttled.join('\n')}>{control.throttled[0]}{#if control.throttled.length > 1}{' '}<span class="more">+{control.throttled.length - 1}</span>{/if}</span>
+      {/if}
       {#if control.form === 'demand' && control.demand !== undefined}
         {@const demand = control.demand}
         {@const shut = control.options.find(option => option.value === demand.min)}
         {@const open = control.options.find(option => option.value === demand.max)}
-        {@const pending = moving?.path === control.path ? moving.shown : expanded && typeof selection?.value === 'number' ? shownAt(demand, selection.value) : shownAt(demand, demand.setting)}
-        <!-- A demand on its 1 % grid: SHUT and OPEN at its ends, the slider (or its step buttons, or the arrow keys) between; let go, the setting is selected. -->
-        <div class="demand">
+        {@const at = sliderAt(control, demand)}
+        <!-- A demand on its 1 % grid: SHUT and OPEN at its ends with the setting between them, and the slider on a row of its
+             own (its step buttons and the arrow keys move it by 1 %); where it rests, that setting is selected with its Execute. -->
+        <div class="demand-ends">
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          {#if shut !== undefined}<obc-button variant="normal" disabled={shut.current} onclick={() => { void select(control, shut) }}>{shut.word}</obc-button>{/if}
-          <obc-slider
-            class="slider"
-            min={demand.shown.min}
-            max={demand.shown.max}
-            step={demand.shown.step}
-            stepClick={demand.shown.step}
-            value={pending}
-            hasLeftIcon={true}
-            hasRightIcon={true}
-            decrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} less`}
-            incrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} more`}
-            aria-label={`Set ${control.target}`}
-            onvalue={(event: CustomEvent<number>) => { moving = { path: control.path, shown: event.detail } }}
-            onchange={(event: CustomEvent<number>) => selectSetting(control, demand, event.detail)}
-          ><obi-chevron-left-google slot="icon-left"></obi-chevron-left-google><obi-chevron-right-google slot="icon-right"></obi-chevron-right-google></obc-slider>
-          <span class="setting">{Math.round(pending)} {demand.shown.unit}</span>
+          {#if shut !== undefined}<obc-button variant="normal" disabled={shut.current || shut.heldBy !== null} onclick={() => { if (shut.heldBy === null) void select(control, shut) }}>{shut.word}</obc-button>{/if}
+          <span class="setting" aria-live="polite">Set {Math.round(at)} {demand.shown.unit}</span>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          {#if open !== undefined}<obc-button variant="normal" disabled={open.current} onclick={() => { void select(control, open) }}>{open.word}</obc-button>{/if}
+          {#if open !== undefined}<obc-button variant="normal" disabled={open.current || open.heldBy !== null} onclick={() => { if (open.heldBy === null) void select(control, open) }}>{open.word}</obc-button>{/if}
         </div>
+        <obc-slider
+          class="slider"
+          min={demand.shown.min}
+          max={demand.shown.max}
+          step={demand.shown.step}
+          stepClick={demand.shown.step}
+          value={at}
+          hasLeftIcon={true}
+          hasRightIcon={true}
+          decrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} less`}
+          incrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} more`}
+          aria-label={`Set ${control.target}`}
+          use:listen={{
+            value: event => sliderMoved(control, demand, (event as CustomEvent<number>).detail),
+            change: event => selectSetting(control, demand, (event as CustomEvent<number>).detail),
+          }}
+        ><obi-chevron-left-google slot="icon-left"></obi-chevron-left-google><obi-chevron-right-google slot="icon-right"></obi-chevron-right-google></obc-slider>
       {:else if control.form === 'twoState'}
         <obc-toggle-button-group
           value={expanded ? selection!.key : ''}
@@ -184,11 +212,11 @@
           ariaLabel={`Command ${control.target}`}
           onvalue={(event: CustomEvent<{ value: string }>) => {
             const option = control.options.find(candidate => candidate.key === event.detail.value)
-            if (option !== undefined && option.key !== selection?.key) void select(control, option)
+            if (option !== undefined && option.heldBy === null && option.key !== selection?.key) void select(control, option)
           }}
         >
           {#each control.options as option (option.key)}
-            <obc-toggle-button-option value={option.key} disabled={option.current}>{option.word}</obc-toggle-button-option>
+            <obc-toggle-button-option value={option.key} disabled={option.current || option.heldBy !== null}>{option.word}</obc-toggle-button-option>
           {/each}
         </obc-toggle-button-group>
       {:else}
@@ -196,21 +224,28 @@
           {#if option.slideOnly}
             {@const ready = standing[option.key]}
             {@const ok = ready !== undefined && ready !== 'checking' && ready.accepted && option.heldBy === null && !busy}
-            <!-- The slide's handle carries the word, so it has the track's length to travel; the line above names verb, tag and label (QA-7). -->
-            <p class="slide-what">{option.action}</p>
-            <obc-slide-button aria-label={option.action} disabled={!ok} onslide={() => { if (ok) void run(control, option) }}>
+            <!-- Its row names tag and label; the slide carries the verb and its name all three (QA-7). -->
+            <obc-slide-button class:unready={!ok} aria-label={option.action} disabled={!ok} onslide={() => { if (ok) void run(control, option) }}>
               <span slot="label">{option.word}</span>
             </obc-slide-button>
-            {#if ready !== undefined && ready !== 'checking' && !ready.accepted}<p class="refused">{ready.reason}</p>{/if}
+            <!-- Never a slide that does nothing without a word: why it cannot be slid now. -->
+            {#if busy}<p class="checking">Sending…</p>
+            {:else if ready === undefined || ready === 'checking'}<p class="checking">Checking with the I&amp;C…</p>
+            {:else if !ready.accepted}<p class="refused">{ready.reason}</p>{/if}
+            {#if option.heldBy !== null}<p class="refused">{option.heldBy}</p>{/if}
             {#each option.consequences as line (line)}<p class="consequence">{line}</p>{/each}
           {:else}
             <!-- An obc-button is a button: the native button inside it takes Enter and Space. -->
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <obc-button variant="normal" onclick={() => { void select(control, option) }}>{option.word}</obc-button>
+            <obc-button variant="normal" disabled={option.heldBy !== null} onclick={() => { if (option.heldBy === null) void select(control, option) }}>{option.word}</obc-button>
           {/if}
         {/each}
       {/if}
       {#each control.withheldOptions as withheld (withheld.word)}<p class="withheld">{withheld.word} not offered: {withheld.reason}</p>{/each}
+      {#if control.form !== 'pushbutton'}
+        <!-- An option a standing protection actuation holds against is not offered: it reads so, in World's words. -->
+        {#each control.options.filter(option => option.heldBy !== null) as held (held.key)}<p class="held">{held.word} not offered: {held.heldBy}</p>{/each}
+      {/if}
       {#if expanded && selectedOption !== undefined}
         {@const allowed = check !== null && check !== 'checking' && check.accepted && selectedOption.heldBy === null && !busy}
         <div class="selected">
@@ -268,12 +303,17 @@
   .allowed, .checking, .note, .consequence, .opposing, .withheld { color: var(--element-neutral-color); }
   .refused { color: var(--element-active-color); font-weight: 600; }
   .slide-what { font-weight: 600; color: var(--element-active-color); }
-  .demand { display: flex; align-items: center; gap: 6px; }
-  .demand .slider { flex: 1 1 auto; min-width: 0; }
-  .setting { flex: none; min-width: 40px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--element-active-color); }
+  .demand-ends { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  /* The slider has a row of its own: the whole width of the popover for its track. */
+  /* OpenBridge lays the slider out as a flex row (its step buttons beside the track): only its width is set here. */
+  .slider { width: 100%; min-width: 220px; }
+  .setting { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--element-active-color); }
+  .held { color: var(--element-neutral-color); }
+  /* A slide that cannot be slid now looks it, beside the line that says why. */
+  .unready { opacity: 0.45; }
   .auto-line { color: var(--element-active-color); }
   /* A person's setting under a standing actuation: said plainly, never in an alarm colour. */
-  .throttled { align-self: flex-start; padding: 0 6px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 11px; line-height: 16px; font-weight: 600; color: var(--element-active-color); }
+  .throttled { align-self: flex-start; padding: 0 6px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 11px; line-height: 15px; font-weight: 600; color: var(--element-active-color); }
   .manual { color: var(--element-neutral-color); }
   .feedback { display: flex; flex-direction: column; gap: 2px; color: var(--element-active-color); }
   .feedback.notFollowed, .feedback.refused { font-weight: 600; }

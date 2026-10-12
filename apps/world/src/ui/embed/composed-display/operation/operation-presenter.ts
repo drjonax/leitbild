@@ -558,8 +558,8 @@ export interface ItemBadges {
   readonly interlock: { readonly title: string } | null
   /** Another actor's command travels on it. */
   readonly commandLocked: { readonly title: string } | null
-  /** A person sets its demand between the ends a standing actuation drove it to: "Throttled under <label>". */
-  readonly throttled: { readonly text: string } | null
+  /** A person sets its demand between the ends a standing actuation drove it to: "Throttled under <label>" (+n more), each in full in `title`. */
+  readonly throttled: { readonly text: string; readonly title: string } | null
 }
 
 const byWhom = (record: OperationRecord, proposals: ReadonlyArray<ProcessPlantProposal>): { readonly text: 'OP' | 'AI' | 'OP·AI'; readonly words: string } => {
@@ -622,7 +622,7 @@ export const itemBadges = (
     interlock: held.length === 0 ? null : { title: [...new Set(held)].join('\n') },
     throttled: (() => {
       const lines = [...new Set(view.controls.flatMap(control => control.throttled))]
-      return lines.length === 0 ? null : { text: lines.join('; ') }
+      return lines.length === 0 ? null : { text: `${lines[0]}${lines.length === 1 ? '' : ` +${lines.length - 1}`}`, title: lines.join('\n') }
     })(),
     commandLocked: others.length === 0 ? null : { title: others.map(({ option, record }) => `${option.action}: ${record.actorId}'s command travels since ${now.clock(record.elapsedMs)}`).join('\n') },
   }
