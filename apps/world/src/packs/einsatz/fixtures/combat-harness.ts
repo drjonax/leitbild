@@ -5,12 +5,13 @@ import { advanceEngine, executeIntent } from '../engine/engine.ts'
 import { commandsEveryUnit, type EngineActor, type Intent } from '../engine/intents.ts'
 import { emptyEngineState, type EngineState, type Transition, type UnitRecord } from '../engine/model.ts'
 import type { TrackRecord } from '../engine/combat-model.ts'
-import { borderConfig, borderDefinitions, isScout, isShooter, ports } from './border-harness.ts'
+import { borderConfig, borderDefinitions, groupOf, isScout, isShooter, ports } from './border-harness.ts'
 
 /**
  * Test-only helpers for engagement tests on the halden-border configuration:
  * unit types found by component and standing order, never by name, units
- * placed in metres from an origin, and steps of whole engagement cycles.
+ * placed in metres from an origin in the group the Definition gives their
+ * side and type, and steps of whole engagement cycles.
  * Production code never imports this file.
  */
 
@@ -46,7 +47,12 @@ const origin = [11.2, 59.0] as const
 export const at = (north: number, east = 0): GeoJsonPoint =>
   geoPointFromLonLat(origin[0] + east / metresPerDegreeLon(origin[1] + north / metresPerDegreeLat), origin[1] + north / metresPerDegreeLat)
 
-export const place = (id: string, type: string, side: string, point: GeoJsonPoint): Intent => ({ kind: 'unit.create', id, type, side, at: point, label: id.toUpperCase() })
+/** The group halden-border gives a side's units of a type; a side it does not declare has none. */
+const groupFor = (side: string, type: string): string | undefined =>
+  side === blue || side === red ? groupOf(borderDefinitions.scripted, side, type) : undefined
+
+export const place = (id: string, type: string, side: string, point: GeoJsonPoint, group = groupFor(side, type)): Intent =>
+  ({ kind: 'unit.create', id, type, side, at: point, label: id.toUpperCase(), ...(group === undefined ? {} : { group }) })
 
 export const stateWith = async (intents: ReadonlyArray<Intent>, configuration: EinsatzConfig = config, sides: ReadonlyArray<string> = [blue, red]): Promise<EngineState> => {
   let state = emptyEngineState({ config: configuration, sides, timeMs: start })

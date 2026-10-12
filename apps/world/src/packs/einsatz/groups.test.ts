@@ -7,7 +7,6 @@ import { einsatzConfigSchema } from './config-validation.ts'
 import { types } from './fixtures/engine-harness.ts'
 import fixture from './fixtures/engine.config.json'
 import { groupConfig as config, groupDeclaration as declared, groupDeclaredRoles as roles, groupItems as items, groups, placed } from './fixtures/groups-run.ts'
-import border from '../../scenarios/halden-border.scenario.json'
 import civilRoles from './fixtures/halden-civil-roles.scenario.json'
 import { renameDefinition } from './fixtures/renaming.ts'
 import { definitionOf, lonLat, openRun, screenOf, unitItem, type OpenRun, type RoleRunDeclaration, type TaskItem, type UnitItem } from './fixtures/run-harness.ts'
@@ -205,8 +204,8 @@ describe('Einsatz group roles in a role Run', () => {
     expect(compiled.initialObjects.find(object => object.id === 'a1')?.packData).toMatchObject({ group: renamed.id('group', 'haul-a') })
   })
 
-  test('without groups nothing changes: the shipped role Definitions compile to exactly their declared roles and units name no group', async () => {
-    for (const definition of [border, civilRoles]) {
+  test('without groups nothing changes: a role Definition without groups compiles to exactly its declared roles and its units name no group', async () => {
+    for (const definition of [civilRoles]) {
       const compiled = await compile(definition)
       expect<unknown>(compiled.roles).toEqual(definition.roles)
       expect(compiled.initialObjects.filter(object => object.packId === 'einsatz').some(object => 'group' in (object.packData as object))).toBe(false)

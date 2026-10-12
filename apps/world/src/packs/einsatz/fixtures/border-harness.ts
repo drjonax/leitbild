@@ -1,14 +1,15 @@
 import { geoPointFromLonLat, type GeoJsonPoint, type ScenarioRole } from '../../../core/model/index.ts'
 import { scenarioDefinitionSchema, type ScenarioDefinition } from '../../../core/scenarios/definition.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
-import { isEinsatzCommand } from '../capabilities.ts'
+import { einsatzCommandIds, isEinsatzCommand } from '../capabilities.ts'
 import { prepareCommand } from '../commands.ts'
 import type { UnitType } from '../config-schema.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { advanceEngine, commitIntent, executeIntent, type EnginePorts } from '../engine/engine.ts'
 import { commandsEveryUnit, type EngineActor, type Intent } from '../engine/intents.ts'
 import { emptyEngineState, unitTypeOf, type EngineState, type Transition, type UnitRecord } from '../engine/model.ts'
-import { einsatzPackId } from '../ids.ts'
+import { einsatzScenarioRoles } from '../groups.ts'
+import { einsatzPackId, groupRoleId } from '../ids.ts'
 import { taskItemSchema, unitItemSchema } from '../scenario.ts'
 import { openViewer, type EinsatzViewer } from '../viewer.ts'
 import scripted from '../../../scenarios/halden-border.scenario.json'
@@ -19,8 +20,8 @@ import humanRed from '../../../scenarios/halden-border-human-red.scenario.json'
  * headless on the Einsatz engine with the direct router: items expand
  * through the same intents as the scenario codec, timeline cues run as the
  * timeline actor, and a play issues a side's orders through the command
- * path with that side's commanding role. Units, roles and tasks are found
- * by side, component and authority, never by name. Production code never
+ * path with that side's commanding group role. Units, roles and tasks are
+ * found by side, component and group, never by name. Production code never
  * imports this file.
  */
 
@@ -48,6 +49,7 @@ const itemIntent = (raw: unknown): Intent => {
     return {
       kind: 'unit.create', id: unit.id, label: unit.label, type: unit.unitType, at: geoPointFromLonLat(...unit.position),
       ...(unit.side === undefined ? {} : { side: unit.side }),
+      ...(unit.group === undefined ? {} : { group: unit.group }),
       ...(unit.base === undefined ? {} : { base: geoPointFromLonLat(...unit.base) }),
       ...(unit.properties === undefined ? {} : { properties: unit.properties }),
     }
@@ -82,31 +84,72 @@ export interface TimedOrder {
 export const timelineOf = (definition: ScenarioDefinition): TimedOrder[] => (definition.timeline?.cues ?? []).flatMap(cue => cue.actions.flatMap(action =>
   action.type === 'invoke_capability' ? [{ atS: cue.at.seconds, capabilityId: action.capabilityId, input: action.input }] : []))
 
-/** The operator role that commands a side's units of a type with this component, from the Definition's roles and authority. */
-export const commanderOf = (definition: ScenarioDefinition, side: string, component: keyof UnitType['components']): EinsatzViewer => {
-  const config = borderConfig(definition)
-  const types = new Set(config.unitTypes.filter(type => type.components[component] !== undefined).map(type => type.id))
-  const role = (definition.roles ?? []).find(entry => {
-    if (entry.class !== 'operator' || entry.sees === 'all' || !(entry.sees ?? []).includes(side)) return false
-    const authority = config.authority.find(item => item.roleId === entry.id)
-    return authority !== undefined && 'types' in authority.units && authority.units.types.some(type => types.has(type))
-  })
-  if (role === undefined) throw new Error(`No role of side ${side} commands units with ${component}`)
+/** Every role of a Definition's Runs: the roles it declares, then the role each Einsatz group derives, as compile merges them. */
+export const borderRoles = (definition: ScenarioDefinition): ReadonlyArray<ScenarioRole> =>
+  [...(definition.roles ?? []), ...einsatzScenarioRoles(selectionOf(definition).config, { sides: definition.sides ?? [] })]
+
+/** The unit types of each group, from the Definition's items and the units its cues create. */
+const groupTypes = (definition: ScenarioDefinition): ReadonlyMap<string, ReadonlySet<string>> => {
+  const created = timelineOf(definition).flatMap(order => order.capabilityId === einsatzCommandIds.unitCreate ? [order.input as { readonly type: string; readonly group?: string }] : [])
+  const members = [
+    ...selectionOf(definition).items.flatMap(item => (item as { readonly type?: unknown }).type === 'unit' ? [unitItemSchema.parse({ ...item, pack: einsatzPackId })] : []).map(unit => ({ type: unit.unitType, group: unit.group })),
+    ...created.map(input => ({ type: input.type, group: input.group })),
+  ]
+  const byGroup = new Map<string, Set<string>>()
+  for (const member of members) if (member.group !== undefined) byGroup.set(member.group, new Set([...(byGroup.get(member.group) ?? []), member.type]))
+  return byGroup
+}
+
+/** The unit types a side's groups hold in the Definition. */
+export const sideTypes = (definition: ScenarioDefinition, side: string): ReadonlySet<string> =>
+  new Set(borderConfig(definition).groups.filter(group => group.side === side).flatMap(group => [...groupTypes(definition).get(group.id) ?? []]))
+
+/** The group a side's units of a type belong to in the Definition, so a test scene places its units where the Definition does. */
+export const groupOf = (definition: ScenarioDefinition, side: string, typeId: string): string => {
+  const group = borderConfig(definition).groups.find(entry => entry.side === side && groupTypes(definition).get(entry.id)?.has(typeId) === true)
+  if (group === undefined) throw new Error(`No group of side ${side} holds units of type ${typeId}`)
+  return group.id
+}
+
+/** A screen holding one group's role: the group of a side whose unit types pass a predicate. */
+const groupViewer = (definition: ScenarioDefinition, side: string, holds: (typeId: string) => boolean, what: string): EinsatzViewer => {
+  const types = groupTypes(definition)
+  const group = borderConfig(definition).groups.find(entry => entry.side === side && [...types.get(entry.id) ?? []].some(holds))
+  const role = group === undefined ? undefined : borderRoles(definition).find(entry => entry.id === groupRoleId(group.id))
+  if (role === undefined) throw new Error(`No group of side ${side} holds ${what}`)
   return { class: 'operator', sees: role.sees ?? 'all', roles: [role] }
 }
 
-/** The operator role whose authority selects units of a type on a side, from the Definition's roles and authority. */
-export const roleCommanding = (definition: ScenarioDefinition, side: string, typeId: string): EinsatzViewer => {
+/** The group role that commands a side's units of a type with this component, from the Definition's groups and units. */
+export const commanderOf = (definition: ScenarioDefinition, side: string, component: keyof UnitType['components']): EinsatzViewer => {
   const config = borderConfig(definition)
-  const type = config.unitTypes.find(entry => entry.id === typeId)
+  return groupViewer(definition, side, typeId => config.unitTypes.find(type => type.id === typeId)?.components[component] !== undefined, `units with ${component}`)
+}
+
+/** The group role that commands a side's units of a type, from the Definition's groups and units. */
+export const roleCommanding = (definition: ScenarioDefinition, side: string, typeId: string): EinsatzViewer => {
+  const type = borderConfig(definition).unitTypes.find(entry => entry.id === typeId)
   if (type === undefined) throw new Error(`No unit type ${typeId}`)
-  const role = (definition.roles ?? []).find(entry => {
-    if (entry.class !== 'operator' || entry.sees === 'all' || !(entry.sees ?? []).includes(side)) return false
-    const units = config.authority.find(item => item.roleId === entry.id)?.units
-    return units !== undefined && ('all' in units || ('types' in units ? units.types.includes(type.id) : units.tags.some(tag => type.tags.includes(tag))))
-  })
-  if (role === undefined) throw new Error(`No role of side ${side} commands ${type.label}`)
-  return { class: 'operator', sees: role.sees ?? 'all', roles: [role] }
+  return groupViewer(definition, side, held => held === typeId, type.label)
+}
+
+/** The group roles commanding a side's units that fire or identify: the screen of the side's military command. */
+export const sensingCommandOf = (definition: ScenarioDefinition, side: string): EinsatzViewer => {
+  const config = borderConfig(definition)
+  const sensing = config.unitTypes.filter(type => type.components.effector !== undefined || (type.components.sensor?.identifyM ?? 0) > 0).map(type => type.id)
+  const roles = borderRoles(definition)
+  const held = config.groups
+    .filter(group => group.side === side && [...groupTypes(definition).get(group.id) ?? []].some(typeId => sensing.includes(typeId)))
+    .map(group => roles.find(role => role.id === groupRoleId(group.id))!)
+  if (held.length === 0) throw new Error(`No group of side ${side} fires or identifies`)
+  return { class: 'operator', sees: [side], roles: held }
+}
+
+/** A screen holding several screens' roles at once: the union of their pictures, as a role set is. */
+export const together = (...viewers: ReadonlyArray<EinsatzViewer>): EinsatzViewer => {
+  const roles = viewers.flatMap(viewer => viewer.roles)
+  const sees = viewers.some(viewer => viewer.sees === 'all') ? 'all' : [...new Set(viewers.flatMap(viewer => viewer.sees === 'all' ? [] : viewer.sees))]
+  return { class: viewers.some(viewer => viewer.class === 'controller') ? 'controller' : 'operator', sees, roles }
 }
 
 /** A side's units whose type passes a predicate, in id order. */
@@ -172,8 +215,9 @@ export const playBorder = async (input: { readonly definition?: ScenarioDefiniti
   const refusals: Array<PlayLog['refusals'][number]> = []
   const cues = timelineOf(definition)
   const plays = input.plays ?? []
+  const roles = borderRoles(definition)
   const apply = async (atS: number, order: Omit<TimedOrder, 'atS'>, viewer: EinsatzViewer, by: string): Promise<void> => {
-    const result = await runOrder(state, order, viewer, by, definition.roles ?? [])
+    const result = await runOrder(state, order, viewer, by, roles)
     state = result.state
     transitions.push(...result.transitions)
     if (result.reason !== undefined) refusals.push({ atS, capabilityId: order.capabilityId, reason: result.reason })

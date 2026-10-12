@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { routeDistanceMeters, type IsoTimestamp, type OperationalObject } from '../../../core/model/index.ts'
-import { borderDefinitions, roleCommanding } from '../fixtures/border-harness.ts'
+import { borderDefinitions, roleCommanding, sensingCommandOf } from '../fixtures/border-harness.ts'
 import { at, blue, config, cycles, place, red, stateWith, types } from '../fixtures/combat-harness.ts'
 import { unitTypeOf, type EngineState } from '../engine/model.ts'
 import { engineObjects } from '../engine/objects.ts'
@@ -52,7 +52,7 @@ const trackOn = (state: EngineState, side: string, subjectId: string): string =>
   return track.id
 }
 
-const blueCommander = (): PictureViewer => roleCommanding(borderDefinitions.scripted, blue, types.blueGun)
+const blueCommander = (): PictureViewer => sensingCommandOf(borderDefinitions.scripted, blue)
 const declaredSides: ReadonlyArray<SideLabel> = borderDefinitions.scripted.sides ?? []
 /** The Controller as the Run declares it: the truth role. */
 const controllerViewer = (): PictureViewer => {

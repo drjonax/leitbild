@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { advanceTo, at, blue, config, cycles, fireOn, place, red, run, start, stateWith, trackOf, types, unit, withTypes } from '../fixtures/combat-harness.ts'
+import { borderDefinitions, groupOf } from '../fixtures/border-harness.ts'
 import { removeRecords } from '../runtime/removal.ts'
 import { destroyedCode, underFireCode } from './combat.ts'
 import { trackTimeoutMs } from './detection.ts'
@@ -71,10 +72,11 @@ describe('Einsatz engagement', () => {
 
   test('(c) a kill watched under a fix turns the track destroyed and shooters retarget at the next boundary; an unobserved kill just ages', async () => {
     const third = 'green'
-    const configuration = withTypes(type => type, { ...config.hostility, [third]: [red] })
+    // The third side's units form one group of their own.
+    const configuration = { ...withTypes(type => type, { ...config.hostility, [third]: [red] }), groups: [...config.groups, { id: third, label: 'Green', category: 'Green', side: third }] }
     let state = await stateWith([
-      place('g1', types.redGun, third, at(0)),
-      place('gs', types.blueScout, third, at(700)),
+      place('g1', types.redGun, third, at(0), third),
+      place('gs', types.blueScout, third, at(700), third),
       place('t1', types.redScout, red, at(800)),
       place('t2', types.redScout, red, at(1_200)),
       place('w1', types.watcher, blue, at(800, 150)),
@@ -150,7 +152,7 @@ describe('Einsatz engagement', () => {
     let state = await stateWith([
       place('s1', types.blueScout, blue, at(0)),
       place('b1', types.blueGun, blue, at(0, 100)),
-      place('w2', types.watcher, red, at(500)),
+      place('w2', types.watcher, red, at(500), groupOf(borderDefinitions.scripted, red, types.redScout)),
       place('far', types.redGun, red, at(2_300)),
       place('r1', types.redGun, red, at(1_500)),
       hold('r1'),

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { borderWith, civilConfig, civilKinds, civilWith, createWall, identifiedTrack, onObject, openScreen, pastGuardMs, pointAt, roleScreen, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
-import { borderDefinitions, commanderOf } from '../fixtures/border-harness.ts'
+import { borderDefinitions, sensingCommandOf } from '../fixtures/border-harness.ts'
 import { at as northEast, blue, red, types as combatTypes } from '../fixtures/combat-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { wordFor } from '../lexicon.ts'
@@ -271,8 +271,8 @@ describe('Board engage taps', () => {
     ]
     const run = await openRun({ definition: borderWith(items) })
     try {
-      const commander = commanderOf(borderDefinitions.scripted, blue, 'effector').roles[0]!.id
-      const screen = await openScreen(run, createWall(), { actor: roleScreen(run, commander) })
+      const command = sensingCommandOf(borderDefinitions.scripted, blue).roles.map(role => role.id)
+      const screen = await openScreen(run, createWall(), { actor: roleScreen(run, ...command) })
       const track = await identifiedTrack(run, blue, [screen])
       await screen.mapTap('br')
       await screen.mapTap(track.id)

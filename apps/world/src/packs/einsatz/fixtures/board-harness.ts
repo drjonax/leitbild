@@ -16,6 +16,7 @@ import { routeGroundClick, routeObjectClick, type MapClickContext, type MapClick
 import { einsatzPackId } from '../ids.ts'
 import { einsatzPackView } from '../ui-pack.ts'
 import { createMapOrders } from '../ui/map-orders.ts'
+import { borderDefinitions, groupOf } from './border-harness.ts'
 import { operator, type OpenRun } from './run-harness.ts'
 
 /**
@@ -285,10 +286,19 @@ export const civilRolesWith = (items: ReadonlyArray<Record<string, unknown>>): u
   timeline: undefined,
 })
 
-/** halden-border with other items and no timeline: its roles, sides and configuration over a scene a test builds. */
+/**
+ * halden-border with other items and no timeline: its roles, sides, groups
+ * and configuration over a scene a test builds. A sided unit that names no
+ * group joins the group the Definition gives its side's units of its type.
+ */
 export const borderWith = (items: ReadonlyArray<Record<string, unknown>>): unknown => ({
   ...border,
-  packs: [{ ...border.packs[0]!, items }],
+  packs: [{
+    ...border.packs[0]!,
+    items: items.map(item => item.type === 'unit' && typeof item.side === 'string' && item.group === undefined
+      ? { ...item, group: groupOf(borderDefinitions.scripted, item.side, String(item.unitType)) }
+      : item),
+  }],
   timeline: undefined,
 })
 

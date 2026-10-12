@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { geoPointFromLonLat, type ObjectAudience, type OperationalObject, type SimulationRunEvent } from '../../../core/model/index.ts'
 import type { PackRuntimeEvent } from '../../../simulation/protocol.ts'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
-import { borderConfig, borderDefinitions, isScout } from '../fixtures/border-harness.ts'
+import { borderConfig, borderDefinitions, borderRoles, groupOf, isScout, roleCommanding, sideTypes } from '../fixtures/border-harness.ts'
 import { blue, red } from '../fixtures/combat-harness.ts'
 import scripted from '../../../scenarios/halden-border.scenario.json'
 import { openRun, screenOf, type OpenRun, type RoleRunDeclaration } from '../fixtures/run-harness.ts'
@@ -20,19 +20,15 @@ import { einsatzPackId } from '../ids.ts'
 const config = scripted.packs[0]!.config
 const kmEast = (lonLat: readonly [number, number], km: number): [number, number] => [lonLat[0] + km / 57.12, lonLat[1]]
 const origin: [number, number] = [11.45649, 59.12924]
-const roles = borderDefinitions.scripted.roles ?? []
-/** A side's scout type, which sees far and carries no weapon, and the operator role of that side that commands it: found by component and authority. */
-const scoutOf = (side: string): { readonly typeId: string; readonly roleId: string } => {
-  const parsed = borderConfig()
-  for (const type of parsed.unitTypes.filter(isScout)) {
-    const role = roles.find(entry => entry.class === 'operator' && entry.sees !== 'all' && (entry.sees ?? []).includes(side)
-      && parsed.authority.some(item => item.roleId === entry.id && 'types' in item.units && item.units.types.includes(type.id)))
-    if (role !== undefined) return { typeId: type.id, roleId: role.id }
-  }
-  throw new Error(`No role of side ${side} commands a scout`)
+const roles = borderRoles(borderDefinitions.scripted)
+/** A side's scout type, which sees far and carries no weapon, its group and the group's role: found by component and group. */
+const scoutOf = (side: string): { readonly typeId: string; readonly group: string; readonly roleId: string } => {
+  const type = borderConfig().unitTypes.find(entry => isScout(entry) && sideTypes(borderDefinitions.scripted, side).has(entry.id))
+  if (type === undefined) throw new Error(`No group of side ${side} holds a scout`)
+  return { typeId: type.id, group: groupOf(borderDefinitions.scripted, side, type.id), roleId: roleCommanding(borderDefinitions.scripted, side, type.id).roles[0]!.id }
 }
 const scout = (id: string, side: string, position: readonly [number, number]) =>
-  ({ type: 'unit', id, label: id.toUpperCase(), unitType: scoutOf(side).typeId, side, position })
+  ({ type: 'unit', id, label: id.toUpperCase(), unitType: scoutOf(side).typeId, side, group: scoutOf(side).group, position })
 
 /** halden-border's roles, sides and configuration over a scene, without its timeline. */
 const definitionWith = (items: ReadonlyArray<Record<string, unknown>>, configuration: unknown = config) => ({
@@ -40,7 +36,7 @@ const definitionWith = (items: ReadonlyArray<Record<string, unknown>>, configura
   packs: [{ ...scripted.packs[0]!, config: configuration, items }],
   timeline: undefined,
 })
-const declared: RoleRunDeclaration = { roles: scripted.roles as RoleRunDeclaration['roles'], config }
+const declared: RoleRunDeclaration = { roles, config }
 const blueCommander = screenOf(declared, scoutOf(blue).roleId)
 const controller = screenOf(declared, roles.find(role => role.class === 'controller')!.id)
 
@@ -121,13 +117,13 @@ describe('Einsatz track publication in a sided Run', () => {
       ...config,
       unitTypes: [...config.unitTypes, { id: 'beacon', label: 'Beacon', icon: 'radio-tower', components: { mobility: { mode: 'road', speedFactor: 1, mobilizeS: 30 }, signature: { factor: 1 } } }],
     }
-    const run = await openRun({ definition: definitionWith([{ type: 'unit', id: 'unit:beacon', label: 'BEACON', unitType: 'beacon', side: blue, position: origin }], beaconConfig) })
+    const run = await openRun({ definition: definitionWith([{ type: 'unit', id: 'unit:beacon', label: 'BEACON', unitType: 'beacon', side: blue, group: scoutOf(blue).group, position: origin }], beaconConfig) })
     const emitted = emissionsOf(run)
     try {
       await runFor(run, 10_000)
       expect(emitted.tracks()).toEqual([])
       expect(run.nowMs() % 2_000).toBe(0)
-      const created = await run.invoke(ids.unitCreate, { type: scoutOf(red).typeId, side: red, at: geoPointFromLonLat(...kmEast(origin, 1)), label: 'Watcher' }, controller)
+      const created = await run.invoke(ids.unitCreate, { type: scoutOf(red).typeId, side: red, group: scoutOf(red).group, at: geoPointFromLonLat(...kmEast(origin, 1)), label: 'Watcher' }, controller)
       expect(created.ok).toBe(true)
       // The command's own commit carries Red's scout, which names the command, and the track it opened there, which does not.
       const commandCommit = emitted.batches.find(batch => batch.some(event => event.type === 'object.upserted' && event.object.provenance.causedByCommandId === created.commandId))!

@@ -3,7 +3,7 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import { sideViewOfSnapshot } from '../../../core/simulation-runs/side-view.ts'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { roeWords } from '../lexicon.ts'
-import { createWall, openScreen, roleScreen, runFor, unitAt, type Screen } from '../fixtures/board-harness.ts'
+import { borderWith, createWall, openScreen, roleScreen, runFor, unitAt, type Screen } from '../fixtures/board-harness.ts'
 import { borderDefinitions, commanderOf } from '../fixtures/border-harness.ts'
 import { at, blue, red, types } from '../fixtures/combat-harness.ts'
 import scripted from '../../../scenarios/halden-border.scenario.json'
@@ -31,8 +31,6 @@ const untilTracked = async (run: OpenRun): Promise<void> => {
   if (!tracked('blue') || !tracked('red')) throw new Error('halden-border tracked no unit of either side in 30 minutes')
 }
 
-/** halden-border with these items and no timeline: its roles, sides and configuration over a scene a test builds. */
-const borderWith = (items: ReadonlyArray<Record<string, unknown>>): unknown => ({ ...scripted, packs: [{ ...scripted.packs[0]!, items }], timeline: undefined })
 const northOf = (metres: number): [number, number] => [...at(metres).coordinates]
 
 describe('Board on halden-border', () => {
@@ -44,8 +42,8 @@ describe('Board on halden-border', () => {
       expect(einsatzTypes(truth)).toEqual(['task', 'track', 'track-index', 'unit'])
       expect(einsatzTypes(sideViewOfSnapshot(run.run.snapshot(), ['blue']).objects)).toEqual(['task', 'track', 'unit'])
 
-      // Every role of the Definition: the Controller and each side's operators.
-      for (const role of scripted.roles) {
+      // Every role of the Run: the Controller and each side's group roles.
+      for (const role of run.run.roles()!.roles) {
         const screen = await openScreen(run, createWall(), { actor: roleScreen(run, role.id) })
         await runFor(run, 2_000, [screen])
         const view = screen.view()

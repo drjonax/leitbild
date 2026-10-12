@@ -3,15 +3,12 @@
   "title": "Halden border",
   "description": "A fictional 30-minute exercise in the Halden area. Civil dispatch for medical, police and fire calls runs beside a Blue screen and defence against a scripted Red armoured column. No national markings; a fictional exercise.",
   "objectives": ["Serve every call", "Find the Red column before it halts", "Hold Objective KNUT"],
-  "roles": [
-    {"id": "ems", "label": "EMS dispatcher", "class": "operator", "sees": ["blue"]},
-    {"id": "police", "label": "Police dispatcher", "class": "operator", "sees": ["blue"]},
-    {"id": "fire", "label": "Fire dispatcher", "class": "operator", "sees": ["blue"]},
-    {"id": "blue-commander", "label": "Blue commander", "class": "operator", "sees": ["blue"]},
-    {"id": "red-commander", "label": "Red commander", "class": "operator", "sees": ["red"]},
-    {"id": "controller", "label": "Controller", "class": "controller", "sees": "all"}
+  "roles": [{"id": "controller", "label": "Controller", "class": "controller", "sees": "all"}],
+  "rolePresets": [
+    {"id": "blue-one-person", "label": "Blue (one person)", "roles": ["group:ems", "group:police", "group:fire", "group:blue-recce", "group:blue-armour"]},
+    {"id": "civil-desks", "label": "Civil desks", "roles": ["group:ems", "group:police", "group:fire"]},
+    {"id": "blue-military", "label": "Blue military", "roles": ["group:blue-recce", "group:blue-armour"]}
   ],
-  "rolePresets": [{"id": "blue-solo", "label": "Blue solo", "roles": ["ems", "police", "fire", "blue-commander"]}],
   "sides": [{"id": "blue", "label": "Blue", "colour": "#2563eb"}, {"id": "red", "label": "Red", "colour": "#dc2626"}],
   "packs": [
     {
@@ -30,11 +27,7 @@
             "label": "Ambulance",
             "icon": "ambulance",
             "tags": ["medical"],
-            "components": {
-              "mobility": {"mode": "road", "speedFactor": 1, "mobilizeS": 60},
-              "service": {"provides": ["medical"], "onSceneS": 300},
-              "carry": {"capacity": 1, "classes": ["P1", "P2", "P3"]}
-            },
+            "components": {"mobility": {"mode": "road", "speedFactor": 1, "mobilizeS": 60}, "service": {"provides": ["medical"], "onSceneS": 300}, "carry": {"capacity": 1, "classes": ["P1", "P2", "P3"]}},
             "standingOrders": {"deliver": "nearest-accepting", "return": {"afterIdleS": 60}}
           },
           {
@@ -42,11 +35,7 @@
             "label": "Medical helicopter",
             "icon": "helicopter",
             "tags": ["medical", "air"],
-            "components": {
-              "mobility": {"mode": "direct", "speedMps": 60, "mobilizeS": 180},
-              "service": {"provides": ["medical"], "onSceneS": 600},
-              "carry": {"capacity": 2, "classes": ["P1", "P2", "P3"]}
-            },
+            "components": {"mobility": {"mode": "direct", "speedMps": 60, "mobilizeS": 180}, "service": {"provides": ["medical"], "onSceneS": 600}, "carry": {"capacity": 2, "classes": ["P1", "P2", "P3"]}},
             "standingOrders": {"deliver": "nearest-accepting", "return": {"afterIdleS": 120}}
           },
           {
@@ -62,12 +51,7 @@
             "label": "Patrol car",
             "icon": "car",
             "tags": ["police"],
-            "components": {
-              "mobility": {"mode": "road", "speedFactor": 1.1, "mobilizeS": 30},
-              "service": {"provides": ["police"], "onSceneS": 600},
-              "sensor": {"detectM": 1000, "identifyM": 0},
-              "signature": {"factor": 1}
-            },
+            "components": {"mobility": {"mode": "road", "speedFactor": 1.1, "mobilizeS": 30}, "service": {"provides": ["police"], "onSceneS": 600}, "sensor": {"detectM": 1000, "identifyM": 0}, "signature": {"factor": 1}},
             "standingOrders": {"return": {"afterIdleS": 120}}
           },
           {
@@ -113,12 +97,7 @@
             "label": "Recce",
             "icon": "binoculars",
             "tags": ["recce", "military"],
-            "components": {
-              "mobility": {"mode": "road", "speedFactor": 0.8, "mobilizeS": 30},
-              "sensor": {"detectM": 3000, "identifyM": 2000},
-              "signature": {"factor": 0.6},
-              "durability": {"stepFireS": 20}
-            },
+            "components": {"mobility": {"mode": "road", "speedFactor": 0.8, "mobilizeS": 30}, "sensor": {"detectM": 3000, "identifyM": 2000}, "signature": {"factor": 0.6}, "durability": {"stepFireS": 20}},
             "properties": [{"id": "crew", "label": "Crew", "kind": "number", "min": 0, "max": 6, "default": 3, "board": true}],
             "standingOrders": {"withdraw": {"whenDamaged": true}}
           },
@@ -141,20 +120,8 @@
         "taskTemplates": [
           {"id": "medical", "label": "Medical call", "icon": "heart-pulse"},
           {"id": "casualty", "label": "Casualty", "icon": "heart-crack"},
-          {
-            "id": "accident",
-            "label": "Traffic accident",
-            "icon": "car-front",
-            "priorityClass": "P2",
-            "requires": [{"provides": "police", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]
-          },
-          {
-            "id": "police-call",
-            "label": "Police call",
-            "icon": "siren",
-            "priorityClass": "P2",
-            "requires": [{"provides": "police", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]
-          },
+          {"id": "accident", "label": "Traffic accident", "icon": "car-front", "priorityClass": "P2", "requires": [{"provides": "police", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]},
+          {"id": "police-call", "label": "Police call", "icon": "siren", "priorityClass": "P2", "requires": [{"provides": "police", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]},
           {
             "id": "building-fire",
             "label": "Building fire",
@@ -162,60 +129,39 @@
             "priorityClass": "P1",
             "requires": [{"provides": "firefighting", "count": 1, "label": {"one": "fire engine", "other": "fire engines"}}]
           },
-          {
-            "id": "screen",
-            "label": "Screen",
-            "icon": "eye",
-            "priorityClass": "P2",
-            "requires": [{"provides": "screen", "count": 1, "label": {"one": "recce", "other": "recces"}}]
-          },
-          {"id": "orders", "label": "Orders", "icon": "scroll-text", "priorityClass": "P3"}
+          {"id": "screen", "label": "Screen", "icon": "eye", "priorityClass": "P2", "requires": [{"provides": "screen", "count": 1, "label": {"one": "recce", "other": "recces"}}]}
         ],
-        "authority": [
-          {"roleId": "ems", "units": {"tags": ["medical"]}, "taskTemplates": ["medical", "casualty", "accident", "building-fire"]},
-          {"roleId": "police", "units": {"tags": ["police"]}, "taskTemplates": ["police-call", "accident"]},
-          {"roleId": "fire", "units": {"tags": ["fire"]}, "taskTemplates": ["building-fire"]},
-          {"roleId": "blue-commander", "units": {"types": ["blue-recce", "blue-tank"]}, "taskTemplates": ["screen", "orders"]},
-          {"roleId": "red-commander", "units": {"types": ["red-recce", "red-tank"]}, "taskTemplates": ["orders"]}
+        "groups": [
+          {"id": "ems", "label": "EMS", "category": "Civil", "side": "blue"},
+          {"id": "police", "label": "Police", "category": "Civil", "side": "blue"},
+          {"id": "fire", "label": "Fire", "category": "Civil", "side": "blue"},
+          {"id": "blue-recce", "label": "Blue recce", "category": "Military", "side": "blue"},
+          {"id": "blue-armour", "label": "Blue armour", "category": "Military", "side": "blue"},
+          {"id": "red-recce", "label": "Red recce", "category": "Military", "side": "red"},
+          {"id": "red-armour", "label": "Red armour", "category": "Military", "side": "red"}
         ]
       },
       "items": [
         {"type": "unit", "id": "site:halden-clinic", "label": "Halden emergency clinic — exercise", "unitType": "hospital", "position": [11.384, 59.121]},
         {"type": "unit", "id": "site:kalnes", "label": "Kalnes receiving site — exercise", "unitType": "hospital", "position": [11.023, 59.322]},
-        {"type": "unit", "id": "unit:amb-1", "label": "A1", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue"},
-        {"type": "unit", "id": "unit:amb-2", "label": "A2", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue"},
-        {"type": "unit", "id": "unit:amb-3", "label": "A3", "unitType": "ambulance", "position": [11.387, 59.124], "side": "blue", "base": [11.392, 59.126]},
-        {"type": "unit", "id": "unit:amb-4", "label": "A4", "unitType": "ambulance", "position": [11.387, 59.124], "side": "blue", "base": [11.392, 59.126]},
-        {"type": "unit", "id": "unit:helo-1", "label": "H1", "unitType": "helicopter", "position": [11.025, 59.32], "side": "blue"},
-        {"type": "unit", "id": "unit:pol-1", "label": "P1", "unitType": "patrol-car", "position": [11.388, 59.124], "side": "blue"},
-        {"type": "unit", "id": "unit:pol-2", "label": "P2", "unitType": "patrol-car", "position": [11.42, 59.13], "side": "blue"},
-        {"type": "unit", "id": "unit:fire-1", "label": "F1", "unitType": "fire-engine", "position": [11.395, 59.122], "side": "blue"},
-        {"type": "unit", "id": "unit:blue-recce-1", "label": "Recce 1", "unitType": "blue-recce", "position": [11.45649, 59.12924], "side": "blue"},
-        {"type": "unit", "id": "unit:blue-tank-1", "label": "Tank 1", "unitType": "blue-tank", "position": [11.46198, 59.13148], "side": "blue"},
-        {"type": "unit", "id": "unit:blue-tank-2", "label": "Tank 2", "unitType": "blue-tank", "position": [11.46635, 59.13154], "side": "blue"},
-        {"type": "unit", "id": "unit:blue-tank-3", "label": "Tank 3", "unitType": "blue-tank", "position": [11.46209, 59.12922], "side": "blue"},
-        {"type": "unit", "id": "unit:red-recce-1", "label": "Recce 1", "unitType": "red-recce", "position": [11.52735, 59.16165], "side": "red"},
-        {"type": "unit", "id": "unit:red-tank-1", "label": "Tank 1", "unitType": "red-tank", "position": [11.52955, 59.16313], "side": "red"},
-        {"type": "unit", "id": "unit:red-tank-2", "label": "Tank 2", "unitType": "red-tank", "position": [11.53338, 59.16354], "side": "red"},
-        {"type": "unit", "id": "unit:red-tank-3", "label": "Tank 3", "unitType": "red-tank", "position": [11.53504, 59.16537], "side": "red"},
-        {"type": "unit", "id": "unit:red-tank-4", "label": "Tank 4", "unitType": "red-tank", "position": [11.53887, 59.16579], "side": "red"},
-        {
-          "type": "task",
-          "id": "task:blue-orders",
-          "label": "Orders: hold Objective KNUT, screen east of Tistedal",
-          "template": "orders",
-          "side": "blue",
-          "position": [11.45873, 59.13361]
-        },
-        {"type": "task", "id": "task:blue-screen", "label": "Screen east of Tistedal", "template": "screen", "side": "blue", "position": [11.47641, 59.15121]},
-        {
-          "type": "task",
-          "id": "task:red-orders",
-          "label": "Orders: attack to Objective KNUT by 15:00",
-          "template": "orders",
-          "side": "red",
-          "position": [11.52735, 59.16165]
-        }
+        {"type": "unit", "id": "unit:amb-1", "label": "A1", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue", "group": "ems"},
+        {"type": "unit", "id": "unit:amb-2", "label": "A2", "unitType": "ambulance", "position": [11.392, 59.126], "side": "blue", "group": "ems"},
+        {"type": "unit", "id": "unit:amb-3", "label": "A3", "unitType": "ambulance", "position": [11.387, 59.124], "side": "blue", "base": [11.392, 59.126], "group": "ems"},
+        {"type": "unit", "id": "unit:amb-4", "label": "A4", "unitType": "ambulance", "position": [11.387, 59.124], "side": "blue", "base": [11.392, 59.126], "group": "ems"},
+        {"type": "unit", "id": "unit:helo-1", "label": "H1", "unitType": "helicopter", "position": [11.025, 59.32], "side": "blue", "group": "ems"},
+        {"type": "unit", "id": "unit:pol-1", "label": "P1", "unitType": "patrol-car", "position": [11.388, 59.124], "side": "blue", "group": "police"},
+        {"type": "unit", "id": "unit:pol-2", "label": "P2", "unitType": "patrol-car", "position": [11.42, 59.13], "side": "blue", "group": "police"},
+        {"type": "unit", "id": "unit:fire-1", "label": "F1", "unitType": "fire-engine", "position": [11.395, 59.122], "side": "blue", "group": "fire"},
+        {"type": "unit", "id": "unit:blue-recce-1", "label": "Recce 1", "unitType": "blue-recce", "position": [11.45649, 59.12924], "side": "blue", "group": "blue-recce"},
+        {"type": "unit", "id": "unit:blue-tank-1", "label": "Tank 1", "unitType": "blue-tank", "position": [11.46198, 59.13148], "side": "blue", "group": "blue-armour"},
+        {"type": "unit", "id": "unit:blue-tank-2", "label": "Tank 2", "unitType": "blue-tank", "position": [11.46635, 59.13154], "side": "blue", "group": "blue-armour"},
+        {"type": "unit", "id": "unit:blue-tank-3", "label": "Tank 3", "unitType": "blue-tank", "position": [11.46209, 59.12922], "side": "blue", "group": "blue-armour"},
+        {"type": "unit", "id": "unit:red-recce-1", "label": "Recce 1", "unitType": "red-recce", "position": [11.52735, 59.16165], "side": "red", "group": "red-recce"},
+        {"type": "unit", "id": "unit:red-tank-1", "label": "Tank 1", "unitType": "red-tank", "position": [11.52955, 59.16313], "side": "red", "group": "red-armour"},
+        {"type": "unit", "id": "unit:red-tank-2", "label": "Tank 2", "unitType": "red-tank", "position": [11.53338, 59.16354], "side": "red", "group": "red-armour"},
+        {"type": "unit", "id": "unit:red-tank-3", "label": "Tank 3", "unitType": "red-tank", "position": [11.53504, 59.16537], "side": "red", "group": "red-armour"},
+        {"type": "unit", "id": "unit:red-tank-4", "label": "Tank 4", "unitType": "red-tank", "position": [11.53887, 59.16579], "side": "red", "group": "red-armour"},
+        {"type": "task", "id": "task:blue-screen", "label": "Screen east of Tistedal", "template": "screen", "side": "blue", "position": [11.47641, 59.15121]}
       ]
     }
   ],
@@ -263,61 +209,31 @@
         "id": "red-advance-1",
         "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "Red column moves into ambush",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-1"], "to": {"point": {"type": "Point", "coordinates": [11.49882, 59.15114]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-1"], "to": {"point": {"type": "Point", "coordinates": [11.49882, 59.15114]}}}}]
       },
       {
         "id": "red-advance-2",
         "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "Red column moves into ambush",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-2"], "to": {"point": {"type": "Point", "coordinates": [11.50099, 59.14973]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-2"], "to": {"point": {"type": "Point", "coordinates": [11.50099, 59.14973]}}}}]
       },
       {
         "id": "red-advance-3",
         "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "Red column moves into ambush",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-3"], "to": {"point": {"type": "Point", "coordinates": [11.50156, 59.15227]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-3"], "to": {"point": {"type": "Point", "coordinates": [11.50156, 59.15227]}}}}]
       },
       {
         "id": "red-advance-4",
         "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "Red column moves into ambush",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-4"], "to": {"point": {"type": "Point", "coordinates": [11.50373, 59.15085]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-4"], "to": {"point": {"type": "Point", "coordinates": [11.50373, 59.15085]}}}}]
       },
       {
         "id": "red-advance-recce",
         "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "Red recce moves forward",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-recce-1"], "to": {"point": {"type": "Point", "coordinates": [11.48509, 59.14554]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-recce-1"], "to": {"point": {"type": "Point", "coordinates": [11.48509, 59.14554]}}}}]
       },
       {
         "id": "call-4",
@@ -359,61 +275,31 @@
         "id": "red-attack-1",
         "at": {"kind": "after_scenario_start", "seconds": 720},
         "title": "Red attacks Objective KNUT",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-1"], "to": {"point": {"type": "Point", "coordinates": [11.45764, 59.13432]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-1"], "to": {"point": {"type": "Point", "coordinates": [11.45764, 59.13432]}}}}]
       },
       {
         "id": "red-attack-2",
         "at": {"kind": "after_scenario_start", "seconds": 720},
         "title": "Red attacks Objective KNUT",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-2"], "to": {"point": {"type": "Point", "coordinates": [11.46118, 59.13346]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-2"], "to": {"point": {"type": "Point", "coordinates": [11.46118, 59.13346]}}}}]
       },
       {
         "id": "red-attack-3",
         "at": {"kind": "after_scenario_start", "seconds": 720},
         "title": "Red attacks Objective KNUT",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-3"], "to": {"point": {"type": "Point", "coordinates": [11.46107, 59.13572]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-3"], "to": {"point": {"type": "Point", "coordinates": [11.46107, 59.13572]}}}}]
       },
       {
         "id": "red-attack-4",
         "at": {"kind": "after_scenario_start", "seconds": 720},
         "title": "Red attacks Objective KNUT",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-tank-4"], "to": {"point": {"type": "Point", "coordinates": [11.46461, 59.13486]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-tank-4"], "to": {"point": {"type": "Point", "coordinates": [11.46461, 59.13486]}}}}]
       },
       {
         "id": "red-attack-recce",
         "at": {"kind": "after_scenario_start", "seconds": 720},
         "title": "Red attacks Objective KNUT",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.einsatz.unit.send",
-            "input": {"units": ["unit:red-recce-1"], "to": {"point": {"type": "Point", "coordinates": [11.4637, 59.1391]}}}
-          }
-        ]
+        "actions": [{"type": "invoke_capability", "capabilityId": "world.einsatz.unit.send", "input": {"units": ["unit:red-recce-1"], "to": {"point": {"type": "Point", "coordinates": [11.4637, 59.1391]}}}}]
       },
       {
         "id": "call-7",
@@ -501,7 +387,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.unit.create",
-            "input": {"type": "blue-tank", "side": "blue", "at": {"type": "Point", "coordinates": [11.4, 59.13]}, "label": "Tank 4"}
+            "input": {"type": "blue-tank", "side": "blue", "at": {"type": "Point", "coordinates": [11.4, 59.13]}, "label": "Tank 4", "group": "blue-armour"}
           }
         ]
       },

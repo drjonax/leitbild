@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from './capabilities.ts'
 import {
-  borderConfig, borderDefinitions, borderStart, commanderOf, isScout, isShooter, playBorder, pointAt, stepsLost, timelineOf, unitsWhere,
+  borderConfig, borderDefinitions, borderRoles, borderStart, isScout, isShooter, playBorder, pointAt, sensingCommandOf, stepsLost, timelineOf, unitsWhere,
   type Play, type PlayContext, type PlayLog, type TimedOrder,
 } from './fixtures/border-harness.ts'
 import { unitTypeOf } from './engine/model.ts'
@@ -16,7 +16,7 @@ import { unitTypeOf } from './engine/model.ts'
 const definition = borderDefinitions.scripted
 const [blue, red] = (definition.sides ?? []).map(side => side.id) as [string, string]
 const start = borderStart(definition)
-const commander = commanderOf(definition, blue, 'effector')
+const commander = sensingCommandOf(definition, blue)
 const scouts = unitsWhere(start, blue, isScout).map(unit => unit.id)
 const guns = unitsWhere(start, blue, isShooter).map(unit => unit.id)
 const scoutTypes = new Set(start.catalog.config.unitTypes.filter(isScout).map(type => type.label))
@@ -75,19 +75,33 @@ const outcomeOf = async (name: keyof typeof plays): Promise<Outcome> => {
 const minutes = (ms: number): number => (ms - start.timeMs) / 60_000
 
 describe('halden-border plays', () => {
-  test('the fixture Definitions declare the six roles on two sides, and human Red differs only by Red\'s scripted moves', () => {
-    expect((definition.roles ?? []).map(role => [role.class, role.sees === 'all' ? 'all' : role.sees!.join(',')])).toEqual([
-      ['operator', blue], ['operator', blue], ['operator', blue], ['operator', blue], ['operator', red], ['controller', 'all'],
-    ])
-    expect(borderConfig(definition).authority.map(entry => entry.roleId)).toEqual((definition.roles ?? []).filter(role => role.class === 'operator').map(role => role.id))
-    expect(definition.rolePresets?.[0]?.roles).toEqual((definition.roles ?? []).filter(role => role.sees !== 'all' && role.sees?.includes(blue)).map(role => role.id))
+  test('the Definitions declare only a Controller; every unit is in exactly one sided group, whose roles the presets bundle, and human Red differs only by Red\'s scripted moves and its preset', () => {
+    const roles = borderRoles(definition)
+    expect((definition.roles ?? []).map(role => [role.class, role.sees])).toEqual([['controller', 'all']])
+    const groups = borderConfig(definition).groups
+    expect(groups.every(group => group.side === blue || group.side === red)).toBe(true)
+    expect(borderConfig(definition).authority).toEqual([])
+    // Every unit placed or created names one group of its own side.
+    const created = timelineOf(definition).filter(order => order.capabilityId === ids.unitCreate).map(order => order.input as { readonly side: string; readonly group: string })
+    const units = [...unitsWhere(start, blue, () => true), ...unitsWhere(start, red, () => true)]
+    for (const unit of [...units, ...created]) expect(groups.find(group => group.id === unit.group)?.side).toBe(unit.side)
+    const sideGroups = (side: string) => roles.filter(role => role.class === 'operator' && role.sees !== 'all' && role.sees?.includes(side) === true).map(role => role.id)
+    expect(sideGroups(blue).length + sideGroups(red).length).toBe(groups.length)
+    // The first preset is the one-person bundle of every Blue group, and the next two split it.
+    const [solo, first, second, ...rest] = definition.rolePresets ?? []
+    expect(solo!.roles).toEqual(sideGroups(blue))
+    expect([...first!.roles, ...second!.roles].sort()).toEqual([...solo!.roles].sort())
+    expect(first!.roles.some(role => second!.roles.includes(role))).toBe(false)
+    expect(rest).toEqual([])
     const human = borderDefinitions.humanRed
+    expect(human.rolePresets?.slice(0, 3)).toEqual(definition.rolePresets)
+    expect(human.rolePresets?.slice(3).map(preset => preset.roles)).toEqual([sideGroups(red)])
     const redUnits = new Set(unitsWhere(start, red, () => true).map(unit => unit.id))
     const movesRed = (order: TimedOrder): boolean => order.capabilityId === ids.send && (order.input as { readonly units: ReadonlyArray<string> }).units.every(unitId => redUnits.has(unitId))
     expect(timelineOf(human)).toEqual(timelineOf(definition).filter(order => !movesRed(order)))
     expect(timelineOf(definition).filter(movesRed).length).toBe(2 * redUnits.size)
-    const { id: _humanId, title: _humanTitle, description: _humanDescription, timeline: _humanTimeline, ...humanRest } = human
-    const { id: _id, title: _title, description: _description, timeline: _timeline, ...scriptedRest } = definition
+    const { id: _humanId, title: _humanTitle, description: _humanDescription, timeline: _humanTimeline, rolePresets: _humanPresets, ...humanRest } = human
+    const { id: _id, title: _title, description: _description, timeline: _timeline, rolePresets: _presets, ...scriptedRest } = definition
     expect(humanRest).toEqual(scriptedRest)
   })
 
