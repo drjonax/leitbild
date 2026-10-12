@@ -5,11 +5,14 @@ import type { PackScenarioAuthoringContribution, PackScenarioAuthoringField } fr
  * a task placed on the map. Their type, template and group come only from
  * the Selection's own configuration, so no type is built in and a new item
  * has none until the author picks one. A unit's group applies once the
- * configuration declares groups, and a side once the Scenario declares sides
- * (a grouped unit takes its group's side); compile refuses an item that
- * leaves either out, or mixes them, in the Pack's own words (`group_required`,
- * `group_side_mismatch`, `side_required`). Base, property values and counted
- * load are edited in the item's JSON.
+ * configuration declares groups, and a side once the Scenario declares sides.
+ * The side is typed, not derived from the group, so its field tells the
+ * author that a grouped unit's side must equal its group's side. Compile
+ * refuses an item that leaves either out or mixes them, and a type or
+ * template the configuration no longer declares, in the Pack's own words
+ * (`group_required`, `group_side_mismatch`, `side_required`,
+ * `unknown_unit_type`, `unknown_task_template`). Base, property values and
+ * counted load are edited in the item's JSON.
  */
 
 const fromConfig = (path: string, label: string, records: 'unitTypes' | 'taskTemplates' | 'groups', description: string): PackScenarioAuthoringField => ({
@@ -38,7 +41,7 @@ export const einsatzAuthoring: PackScenarioAuthoringContribution = {
       fields: [
         fromConfig('unitType', 'Unit type', 'unitTypes', 'One of the unit types this Selection\'s configuration declares.'),
         fromConfig('group', 'Group', 'groups', 'One of the groups this Selection\'s configuration declares; required once it declares any, unless the type is public.'),
-        side('The id of the declared side this unit belongs to: its group\'s side. Required exactly when the Scenario declares sides, unless the type is public.'),
+        side('The id of the declared side this unit belongs to. A grouped unit\'s side must equal its group\'s side, so type the side of the group chosen above; compile refuses any other (group_side_mismatch). Required exactly when the Scenario declares sides, unless the type is public.'),
       ],
     },
     {

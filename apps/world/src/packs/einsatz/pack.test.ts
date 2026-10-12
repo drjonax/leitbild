@@ -4,9 +4,9 @@ import { scenarioAuthoringCatalogFor } from '../../core/scenarios/authoring.ts'
 import { compileScenarioDefinition } from '../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../routing/direct-adapter.ts'
 import { einsatzAuthoring } from './authoring.ts'
-import { types } from './fixtures/engine-harness.ts'
+import { low, templates, types } from './fixtures/engine-harness.ts'
 import { groupDeclaration, groupItems, placed } from './fixtures/groups-run.ts'
-import { definitionOf, lonLat, unitItem } from './fixtures/run-harness.ts'
+import { definitionOf, lonLat, taskItem, unitItem, type TaskItem, type UnitItem } from './fixtures/run-harness.ts'
 import { einsatzPack } from './pack.ts'
 import { createEinsatzPackRuntimeAdapter } from './runtime/adapter.ts'
 
@@ -55,14 +55,29 @@ describe('Einsatz Pack', () => {
       .toThrow('offers no options and takes none from the configuration')
   })
 
+  /** Compiles the sided group Definition with one more item the Builder placed, saying whether it compiled or how it was refused. */
+  const placedOutcome = async (item: UnitItem | TaskItem): Promise<string> =>
+    await compileScenarioDefinition(definitionOf([...groupItems, item], undefined, groupDeclaration), [einsatzPack], { routing: createDirectRoutingAdapter() })
+      .then(compiled => compiled.initialObjects.some(object => object.id === item.id) ? 'compiled' : 'missing', (error: Error) => error.message)
+
   test('a unit the Builder places in a sided configuration with groups compiles with a declared group of its side, and is refused in the Pack\'s words otherwise', async () => {
-    const placedUnit = (fields: Record<string, unknown>) => placed(unitItem('x', types.roadCarrier, lonLat(0.005)), fields)
-    const outcome = async (fields: Record<string, unknown>): Promise<string> =>
-      await compileScenarioDefinition(definitionOf([...groupItems, placedUnit(fields)], undefined, groupDeclaration), [einsatzPack], { routing: createDirectRoutingAdapter() })
-        .then(compiled => compiled.initialObjects.some(object => object.id === 'x') ? 'compiled' : 'missing', (error: Error) => error.message)
+    const outcome = (fields: Record<string, unknown>) => placedOutcome(placed(unitItem('x', types.roadCarrier, lonLat(0.005)), fields))
     expect(await outcome({ side: 'north', group: 'haul-b' })).toBe('compiled')
     expect(await outcome({ side: 'north' })).toBe('Einsatz item x: group_required: Name a group: haul-a, haul-b, guards, raid')
     expect(await outcome({ side: 'south', group: 'haul-b' })).toBe('Einsatz item x: group_side_mismatch: Group "haul-b" is on side "north", not "south"')
     expect(await outcome({ group: 'haul-b' })).toStartWith('Einsatz item x: side_required: ')
+  })
+
+  test('a task the Builder places in a sided Definition compiles with a declared side, and is refused in the Pack\'s words without one', async () => {
+    const outcome = (fields: Record<string, unknown>) => placedOutcome(placed(taskItem('y', templates.load, lonLat(0.012), { [low]: 1 }), fields))
+    expect(await outcome({ side: 'north' })).toBe('compiled')
+    expect(await outcome({})).toBe('Einsatz item y: side_required: Name a side: north, south')
+  })
+
+  test('a placed unit type or task template the configuration no longer declares, as the Builder shows "Unavailable", is refused at compile in the Pack\'s words', async () => {
+    expect(await placedOutcome(placed(unitItem('x', 'withdrawn-type', lonLat(0.005)), { side: 'north', group: 'haul-b' })))
+      .toBe('Einsatz item x: unknown_unit_type: Unit type "withdrawn-type" is not declared')
+    expect(await placedOutcome(placed(taskItem('y', 'withdrawn-template', lonLat(0.012)), { side: 'north' })))
+      .toBe('Einsatz item y: unknown_task_template: Task template "withdrawn-template" is not declared')
   })
 })
