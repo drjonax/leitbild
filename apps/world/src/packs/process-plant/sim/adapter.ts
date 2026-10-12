@@ -42,9 +42,17 @@ import {
 import { createProcessPlantRuntimeInstances } from './runtime-instance-factory.ts'
 import {
   processPlantRuntimeStateSchema,
+  restoredOffsiteIsolationsFor,
   runtimeStateForProcessPlants,
   type ProcessPlantRuntimeState,
 } from './runtime-state.ts'
+import {
+  coupledBoundaryEffect,
+  coupledBoundaryRampRefusal,
+  coupledBoundaryVariables,
+  type CoupledBoundaryEffect,
+  type OffsiteIsolation,
+} from './offsite-isolation.ts'
 
 const updateIntervalMs = 1_000
 
@@ -111,6 +119,41 @@ const emitRuntimeFailure = (config: {
   }])
 }
 
+const emitOffsiteIsolationChange = (config: {
+  readonly handlers: ReadonlySet<PackRuntimeEventHandler>
+  readonly simulationRunId: PackRuntimeConnectionConfig['simulationRunId']
+  readonly connection: ElectricalConnectionDefinition
+  readonly isolated: boolean
+  readonly cause: string
+}): void => {
+  const at = nowIso()
+  const plantId = String(config.connection.system.objectId)
+  emitPackRuntimeEvents(config.handlers, [{
+    type: 'interaction.signal',
+    at,
+    provenance: { source: 'simulator', adapterId: processPlantSimAdapterId },
+    signal: {
+      id: `process-plant-offsite-isolation:${randomUUID()}` as SignalId,
+      simulationRunId: config.simulationRunId,
+      at,
+      source: { kind: 'simulation', id: processPlantSimRuntimeId },
+      targets: [{ kind: 'broadcast' }],
+      type: config.isolated ? 'process-plant.offsite.isolated' : 'process-plant.offsite.restored',
+      severity: config.isolated ? 'warning' : 'info',
+      payload: {
+        plantId,
+        portId: config.connection.system.portId,
+        gridObjectId: config.connection.network.objectId,
+        gridPortId: config.connection.network.portId,
+        cause: config.cause,
+        message: config.isolated
+          ? `${plantId} is isolated from ${config.connection.network.objectId} by a plant-side fault (${config.cause}): its offsite source holds unavailable and its port reports disconnected until available is set true`
+          : `${plantId}'s offsite isolation from ${config.connection.network.objectId} is cleared (${config.cause}); the Grid port's state applies again`,
+      },
+    },
+  }])
+}
+
 /**
  * The Grid boundary state a Plant reads: a live port has frequency and a voltage, unless the Grid's
  * AC load flow did not converge there (null); a dead one has neither.
@@ -140,6 +183,23 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
     const systemConnections = systemConnectionsFor(config.scenario.connections, plants)
     const connectedPlantIds = new Set(systemConnections.map(connection => String(connection.system.objectId)))
     const networkAvailableByPlant = new Map<string, boolean>()
+    const boundaryVariablesByPlant = coupledBoundaryVariables(systemConnections, plants)
+    const connectionKey = (connection: ElectricalConnectionDefinition): string => `${connection.system.objectId}\u0000${connection.system.portId}`
+    // Plant-side isolations of connected ports (offsite-isolation.ts), restored with the Plants' state.
+    const offsiteIsolations = new Map<string, OffsiteIsolation[]>()
+    for (const plantId of plants.keys()) {
+      const restored = restoredOffsiteIsolationsFor(runtimeState, plantId)
+      for (const isolation of restored) {
+        if (!systemConnections.some(connection => String(connection.system.objectId) === plantId && connection.system.portId === isolation.portId)) {
+          throw new Error(`restored offsite isolation names a port with no Grid connection: ${plantId}:${isolation.portId}`)
+        }
+      }
+      if (restored.length > 0) offsiteIsolations.set(plantId, restored.map(isolation => ({ ...isolation })))
+    }
+    const isolationOf = (connection: ElectricalConnectionDefinition): OffsiteIsolation | undefined =>
+      offsiteIsolations.get(String(connection.system.objectId))?.find(isolation => isolation.portId === connection.system.portId)
+    // The last Grid port state each connection delivered, re-applied when an isolation changes.
+    const lastNetworkStateByConnection = new Map<string, NetworkPortState>()
 
     const queueNetworkState = (
       connection: ElectricalConnectionDefinition,
@@ -153,7 +213,9 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
       // A dead Grid boundary has no frequency: it makes offsite power unavailable at voltage 0, and no
       // frequency is written into the Plant. A live boundary without a solved voltage is a network
       // that cannot hold its voltage there (no AC steady state): the Plant treats it as lost offsite power too.
-      const live = state.connected && state.energized && state.voltagePu !== null ? { voltagePu: state.voltagePu, frequencyHz: state.frequencyHz } : null
+      // A plant-side isolation holds against the port: no offsite voltage or frequency reaches the Plant.
+      lastNetworkStateByConnection.set(connectionKey(connection), state)
+      const live = isolationOf(connection) === undefined && state.connected && state.energized && state.voltagePu !== null ? { voltagePu: state.voltagePu, frequencyHz: state.frequencyHz } : null
       plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'available'), value: live !== null })
       plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'voltageFraction'), value: live === null ? 0 : live.voltagePu })
       if (live !== null) plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'frequencyHz'), value: live.frequencyHz })
@@ -181,9 +243,30 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           : port.state)
       }
     }
+    const deadPortState: NetworkPortState = { connected: false, energized: false, voltagePu: 0, frequencyHz: null }
+    /** Latches and clears plant-side isolations a command's accepted writes cause, and re-applies the boundary. */
+    const applyCoupledBoundaryEffect = (effect: CoupledBoundaryEffect, cause: string): void => {
+      for (const connection of effect.isolate) {
+        if (isolationOf(connection) !== undefined) continue
+        const plantId = String(connection.system.objectId)
+        offsiteIsolations.set(plantId, [...(offsiteIsolations.get(plantId) ?? []), { portId: connection.system.portId, cause }])
+        queueNetworkState(connection, lastNetworkStateByConnection.get(connectionKey(connection)) ?? deadPortState)
+        emitOffsiteIsolationChange({ handlers, simulationRunId: config.simulationRunId, connection, isolated: true, cause })
+      }
+      for (const connection of effect.clear) {
+        if (isolationOf(connection) === undefined) continue
+        const plantId = String(connection.system.objectId)
+        const remaining = (offsiteIsolations.get(plantId) ?? []).filter(isolation => isolation.portId !== connection.system.portId)
+        if (remaining.length === 0) offsiteIsolations.delete(plantId)
+        else offsiteIsolations.set(plantId, remaining)
+        queueNetworkState(connection, lastNetworkStateByConnection.get(connectionKey(connection)) ?? deadPortState)
+        emitOffsiteIsolationChange({ handlers, simulationRunId: config.simulationRunId, connection, isolated: false, cause })
+      }
+    }
+
     const persistence = createRuntimeStateWriter({
       ...(config.runtimeStateStore === undefined ? {} : { store: config.runtimeStateStore }),
-      readState: () => runtimeStateForProcessPlants(plants),
+      readState: () => runtimeStateForProcessPlants(plants, offsiteIsolations),
       delayMs: defaultSimulationRunRuntimePolicy.runtimePrivateStateFlushIntervalMs,
       label: 'process-plant',
     })
@@ -349,7 +432,10 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
               if (!result.accepted) throw new Error(result.reason)
               return { type: 'setVariable' as const, path: result.targetPath, value: actionCommand.value }
             })
+            const boundary = coupledBoundaryEffect(boundaryVariablesByPlant.get(payload.data.plantId), validated)
+            if (!boundary.ok) throw new Error(boundary.reason)
             for (const actionCommand of validated) plant.runtime.writeCommand(actionCommand)
+            applyCoupledBoundaryEffect(boundary.effect, `action ${payload.data.actionId}`)
             await persistence.saveNow()
             return { ok: true, commandId: command.id, acceptedAt }
           } catch (err) {
@@ -403,6 +489,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             },
           })
           if (!validation.accepted) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: validation.reason }
+          const rampRefusal = coupledBoundaryRampRefusal(boundaryVariablesByPlant.get(payload.data.plantId), validation.targetPath)
+          if (rampRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: rampRefusal }
           plant.ramps.start({
             id: command.id,
             path: validation.targetPath,
@@ -432,11 +520,14 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             payload: payload.data,
           })
           if (!validation.accepted) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: validation.reason }
+          const boundary = coupledBoundaryEffect(boundaryVariablesByPlant.get(payload.data.plantId), [{ path: validation.targetPath, value: payload.data.value }])
+          if (!boundary.ok) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: boundary.reason }
           plant.runtime.writeCommand({
             type: 'setVariable',
             path: validation.targetPath,
             value: payload.data.value,
           })
+          applyCoupledBoundaryEffect(boundary.effect, `control write by ${command.actorId}`)
           await persistence.saveNow()
           return { ok: true, commandId: command.id, acceptedAt }
         } catch (err) {

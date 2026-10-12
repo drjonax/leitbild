@@ -11,6 +11,7 @@ import {
   type ProcessPlantProtectionSnapshot,
 } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import type { OffsiteIsolation } from './offsite-isolation.ts'
 
 const processPlantRuntimeCheckpointSchema = z.object({
   modelDigest: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -31,6 +32,8 @@ export const processPlantRuntimeStateSchema = z.object({
     runtime: processPlantRuntimeCheckpointSchema,
     ramps: processPlantRampSnapshotSchema,
     protection: processPlantProtectionSnapshotSchema.optional(),
+    // Connected ports a plant-side fault has isolated from their Grid (offsite-isolation.ts); none when absent.
+    offsiteIsolations: z.array(z.object({ portId: z.string().min(1), cause: z.string().min(1) })).optional(),
   })),
 })
 
@@ -41,19 +44,25 @@ export interface ProcessPlantRuntimeState {
     readonly runtime: ProcessPlantRuntimeCheckpoint
     readonly ramps: ProcessPlantRampSnapshot
     readonly protection?: ProcessPlantProtectionSnapshot
+    readonly offsiteIsolations?: ReadonlyArray<OffsiteIsolation>
   }>
 }
 
 export const runtimeStateForProcessPlants = (
   plants: ReadonlyMap<string, ProcessPlantRuntimeInstance>,
+  offsiteIsolations: ReadonlyMap<string, ReadonlyArray<OffsiteIsolation>>,
 ): ProcessPlantRuntimeState => ({
   schemaVersion: 1,
-  plants: [...plants.values()].map(({ plant, runtime, ramps, protection }) => ({
-    plantId: plant.id,
-    runtime: runtime.checkpoint(),
-    ramps: ramps.snapshot(),
-    ...(protection === undefined ? {} : { protection: protection.snapshot() }),
-  })),
+  plants: [...plants.values()].map(({ plant, runtime, ramps, protection }) => {
+    const isolations = offsiteIsolations.get(plant.id) ?? []
+    return {
+      plantId: plant.id,
+      runtime: runtime.checkpoint(),
+      ramps: ramps.snapshot(),
+      ...(protection === undefined ? {} : { protection: protection.snapshot() }),
+      ...(isolations.length === 0 ? {} : { offsiteIsolations: isolations.map(isolation => ({ ...isolation })) }),
+    }
+  }),
 })
 
 const restoredPlantFor = (
@@ -75,3 +84,8 @@ export const restoredProtectionSnapshotFor = (
   runtimeState: ProcessPlantRuntimeState | null,
   plantId: string,
 ): ProcessPlantProtectionSnapshot | undefined => restoredPlantFor(runtimeState, plantId)?.protection
+
+export const restoredOffsiteIsolationsFor = (
+  runtimeState: ProcessPlantRuntimeState | null,
+  plantId: string,
+): ReadonlyArray<OffsiteIsolation> => restoredPlantFor(runtimeState, plantId)?.offsiteIsolations ?? []
