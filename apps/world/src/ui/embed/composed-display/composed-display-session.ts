@@ -79,6 +79,12 @@ export const createComposedDisplaySession = (config: {
   readonly suspendWhenIdle: boolean
   /** The view's current size, which a generated display is drawn for; null for advice. */
   readonly size: () => ViewSize | null
+  /**
+   * Where the display is operated (a generated display in the process display
+   * window): the paths its controls write and read besides what it draws, and
+   * every sample then asks for the operations on them. Null where it is not.
+   */
+  readonly operated?: () => ReadonlyArray<string> | null
   readonly wallNow?: () => number
 }) => {
   const wallNow = config.wallNow ?? (() => Date.now())
@@ -110,12 +116,13 @@ export const createComposedDisplaySession = (config: {
    * whose gates do not hold is drawn idle as World reads it (gatesHold); and
    * everything a faceplate's live rows read (faceplate-live.ts).
    */
-  const sampledPaths = (): ReadonlyArray<string> => [...new Set(panels().flatMap(panel => panel.kind === 'mimic'
+  const sampledPaths = (): ReadonlyArray<string> => [...new Set([...(config.operated?.() ?? []), ...panels().flatMap(panel => panel.kind === 'mimic'
     ? panel.mimic.paths.map(String)
     : [
       ...pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...(pen.validWhile === undefined ? [] : [String(pen.validWhile)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]),
       ...(panel.kind === 'faceplate' ? panel.faceplate.paths : []),
-    ]))]
+    ])])]
+  const sample = (): Promise<ComposedDisplaySample> => config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS, (config.operated?.() ?? null) !== null)
 
   /** Trends keep their horizon; comparisons keep ten minutes for rates. Advice readouts use only the latest sample. */
   const trendPens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> =>
@@ -218,14 +225,14 @@ export const createComposedDisplaySession = (config: {
     polls += 1
     try {
       if (polls % PRESENCE_EVERY_SAMPLES === 0 && !await checkPresence()) return
-      const sample = await config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS)
+      const sampled = await sample()
       // A display that missed samples (hidden, suspended or slow to answer)
       // reads what the Run recorded meanwhile, so no line is drawn flat
       // across the gap as if the value had held.
       if (snapshot.lastSampleWallMs !== undefined && wallNow() - snapshot.lastSampleWallMs > MISSED_SAMPLES_MS) {
-        update(await backfill(panels(), Date.parse(sample.simulationTime)))
+        update(await backfill(panels(), Date.parse(sampled.simulationTime)))
       }
-      applySample(sample)
+      applySample(sampled)
     } catch (error) {
       // Keep the last values on screen; the stale marker and this message say they are old.
       update({ sampleError: messageOf(error) })
@@ -250,7 +257,7 @@ export const createComposedDisplaySession = (config: {
     const history = await backfill(view.display.panels, now)
     lastSimulationMs = now
     // The first sample fills readouts, comparisons and alarms before polling starts.
-    const first = await config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS)
+    const first = await sample()
     update({ ...history, latest: first, lastSampleWallMs: wallNow(), ranges: grownRanges(history.series, first), phase: { kind: 'live' } })
   }
 

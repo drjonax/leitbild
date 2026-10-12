@@ -1,6 +1,7 @@
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import type { SafetyFunctionChip } from '../../../packs/process-plant/displays/safety-function-content.ts'
 import type { CompiledComposedDisplay } from '../../../packs/process-plant/displays/compose.ts'
+import type { OperationsSample } from '../../../packs/process-plant/operations/plant-operations.ts'
 import { querySimulationRunCapability } from '../../simulation-run-client.ts'
 import { workspaceApiPath } from '../../workspace-context.ts'
 import { TREND_HISTORY_LIMIT, trendPoints, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -59,6 +60,8 @@ export interface ComposedDisplaySample {
   readonly mode?: { readonly id: string; readonly label: string } | null
   /** Present where the Plant declares critical safety functions: each one's status, in declaration order. */
   readonly safetyFunctions?: ReadonlyArray<SafetyFunctionChip>
+  /** Present when the sample asked for operations: the commands people and AI agents issued on its paths (the last 64 of the Plant's), their running ramps, and the proposals for them. */
+  readonly operations?: OperationsSample
   /** Present when the sample asked for alarms. */
   readonly alarms?: ReadonlyArray<ComposedDisplayAlarm>
   readonly values: ReadonlyArray<{
@@ -76,7 +79,8 @@ export interface ComposedDisplayClient {
   /** `size`: the view's inner size, which a generated display is drawn for; null for advice, sized when composed. */
   readonly view: (runId: SimulationRunId, plantId: string, state: string, size: ViewSize | null) => Promise<ComposedDisplayViewResult>
   readonly history: (runId: SimulationRunId, seriesId: string, window: { readonly from: number; readonly to: number }) => Promise<ReadonlyArray<TrendPoint>>
-  readonly sample: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<string>, alarms: boolean) => Promise<ComposedDisplaySample>
+  /** `operations`: also what people and AI agents did and propose on these paths (a display in the process display window). */
+  readonly sample: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<string>, alarms: boolean, operations?: boolean) => Promise<ComposedDisplaySample>
 }
 
 const runPath = (runId: SimulationRunId, suffix = ''): string =>
@@ -124,5 +128,5 @@ export const composedDisplayClient: ComposedDisplayClient = {
     const page = await response.json() as RecordedSamplePage
     return trendPoints(page.samples ?? [])
   },
-  sample: (runId, plantId, paths, alarms) => querySimulationRunCapability<ComposedDisplaySample>(runId, 'world.process-plant.display.sample', { plantId, paths, alarms }),
+  sample: (runId, plantId, paths, alarms, operations = false) => querySimulationRunCapability<ComposedDisplaySample>(runId, 'world.process-plant.display.sample', { plantId, paths, alarms, ...(operations ? { operations } : {}) }),
 }
