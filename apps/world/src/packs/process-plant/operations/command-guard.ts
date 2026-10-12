@@ -9,12 +9,13 @@ import {
 import type { ProcessPlantControlWritePayload } from '../commands.ts'
 import type { ProcessPlantUnitPackData } from '../model.ts'
 import { validateProcessPlantControlWrite, type ProcessPlantControlWriteValidation } from '../control-write-validation.ts'
+import { formatQuantity } from '../displays/display-text.ts'
 import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcRule, ProcessPlantIcSnapshot, ProcessPlantProtectionRunner, ProcessPlantRuntime } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import type { ControlRule } from './controls.ts'
-import { demandSpanOf, type DemandSpan } from './demand-span.ts'
+import { demandSpanOf, demandStepOf, type DemandSpan } from './demand-span.ts'
 
 // What a command's origin may write, beyond what the I&C validates for
 // everyone (control-write-validation.ts):
@@ -34,11 +35,13 @@ import { demandSpanOf, type DemandSpan } from './demand-span.ts'
 //   isolation shut) would defeat it without a word. Such a command is refused
 //   while the actuation stands active or sealed in, naming it (QA-2); after a
 //   reset it is the operators' again. Where it drove a demand a person sets
-//   in its span (a modulating valve's position) to one end, only the other
-//   end works against it: a setting between is a throttle under it (AFW
-//   flow controlled after AFW opened its valves), recorded as such. Nothing
-//   rewrites the demand after the actuation's edge, so the throttle holds
-//   until an actuation enters again.
+//   in its span (a modulating valve's position) fully open and its rule
+//   declares a throttle floor, a setting between the floor and the open end
+//   is a throttle under it (AFW flow controlled after AFW opened its
+//   valves), recorded as such; below the floor, or with no floor declared,
+//   anything but the end it drove is refused. Nothing rewrites the demand
+//   after the actuation's edge, so a throttle holds until an actuation
+//   enters again.
 
 /** The commands an AI agent issues on a propose-only Plant only through a person's approval. */
 export const aiDirectCommandKinds: ReadonlySet<string> = new Set([
@@ -65,14 +68,21 @@ export const instructorOnlyRefusal = (binding: ProcessSignalBinding, origin: Com
 const demandsOn = (value: ProcessVariableValue): boolean => value === true || (typeof value === 'number' && value > 0)
 
 /**
- * Whether a write works against what a standing actuation wrote to the same
- * command: any other value; but where the actuation drove a demand a person
- * sets in its span to one end, only the other end. A two-state command, or a
- * demand the actuation set between its ends, keeps the first rule.
+ * How a write stands against what a standing actuation wrote to the same
+ * command: null where it does not work against it; 'opposes' for any other
+ * value; but where the actuation drove a demand a person sets in its span to
+ * its open end and declares a throttle floor, a setting from the floor up is
+ * a throttle (null) and one below it is 'belowFloor'.
  */
-export const opposesActuation = (span: DemandSpan | null, actuated: ProcessVariableValue, written: ProcessVariableValue): boolean => {
-  if (span === null || (actuated !== span.min && actuated !== span.max)) return written !== actuated
-  return written === (actuated === span.min ? span.max : span.min)
+export const againstActuation = (
+  span: DemandSpan | null,
+  floor: ProcessPlantIcRule['throttleFloor'],
+  actuated: ProcessVariableValue,
+  written: ProcessVariableValue,
+): 'opposes' | 'belowFloor' | null => {
+  if (written === actuated) return null
+  if (span === null || floor === undefined || actuated !== span.max || typeof written !== 'number' || written <= span.min) return 'opposes'
+  return written < floor.value ? 'belowFloor' : null
 }
 
 // The protection actuations that stand active or sealed in, in declaration order, with whether each is active.
@@ -105,20 +115,49 @@ export const protectionHoldRefusal = (
     .flatMap(component => [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)])
     .find(aspect => aspect.command === write.path)?.isolation
   const span = demandSpanOf(graph, write.path)
+  const binding = graph.signalBindingByPath.get(write.path)!
   for (const { rule, active } of standingActuations(plant, snapshot)) {
-    const holds = writtenTo(plant, rule, write.path).some(value => opposesActuation(span, value, write.value))
-      || (isolation !== undefined && writtenTo(plant, rule, isolation).some(value => value === true) && demandsOn(write.value))
-    if (!holds) continue
-    const binding = graph.signalBindingByPath.get(write.path)!
-    return `${rule.label ?? rule.id} (${actionOf(plant, rule)}) stands ${active ? 'active' : 'sealed in'} and holds ${binding.tagId ?? binding.path}: a command against it is refused until it is reset`
+    const judged = writtenTo(plant, rule, write.path).map(value => againstActuation(span, rule.throttleFloor, value, write.value))
+    const stands = `${rule.label ?? rule.id} (${actionOf(plant, rule)}) stands ${active ? 'active' : 'sealed in'}`
+    if (judged.includes('opposes') || (isolation !== undefined && writtenTo(plant, rule, isolation).some(value => value === true) && demandsOn(write.value))) {
+      return `${stands} and holds ${binding.tagId ?? binding.path}: a command against it is refused until it is reset`
+    }
+    if (judged.includes('belowFloor')) {
+      return `${stands}: ${binding.tagId ?? binding.path} is throttled no lower than ${formatQuantity(rule.throttleFloor!.value, binding.unit, demandStepOf(span!))} under it, which ${rule.throttleFloor!.basis}`
+    }
   }
   return null
 }
 
 /**
+ * Where standing actuations drove a demand to an end: the rules, and how far
+ * a person may throttle it under them all (the highest floor they declare),
+ * or null where one of them declares none or drove it shut (only its end is
+ * accepted). Null where none stands on it.
+ */
+export const actuationHold = (
+  plant: CompiledProcessPlant,
+  snapshot: ProcessPlantIcSnapshot,
+  path: VariablePath,
+): { readonly rules: ReadonlyArray<ControlRule>; readonly floor: { readonly value: number; readonly basis: string } | null } | null => {
+  const span = demandSpanOf(plant.graph, path)
+  if (span === null) return null
+  const holding = standingActuations(plant, snapshot).filter(({ rule }) => writtenTo(plant, rule, path).some(value => value === span.min || value === span.max))
+  if (holding.length === 0) return null
+  const floors = holding.map(({ rule }) => writtenTo(plant, rule, path).every(value => value === span.max) ? rule.throttleFloor : undefined)
+  const declared = floors.filter((floor): floor is NonNullable<typeof floor> => floor !== undefined)
+  const floor = declared.length < floors.length ? null : declared.reduce((highest, candidate) => candidate.value > highest.value ? candidate : highest)
+  return {
+    rules: holding.map(({ rule }) => ({ ruleId: rule.id, label: rule.label ?? rule.id, action: actionOf(plant, rule) })),
+    floor: floor === null ? null : { value: floor.value, basis: floor.basis },
+  }
+}
+
+/**
  * The standing actuations a write throttles: those that drove its demand to
  * an end of its span, while it sets a value strictly between the ends
- * (opposesActuation lets it through); none for any other write. The
+ * (againstActuation lets it through from their floor up); none for any
+ * other write. The
  * operations log records an accepted write with them, and controls.list
  * names them while the demand stands between.
  */

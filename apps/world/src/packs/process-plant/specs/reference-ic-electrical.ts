@@ -1,6 +1,7 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, comparison, rule, trip, write, type SignalRef } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { auxiliaryFeedwaterThrottleFloor } from './reference-ic-afw-throttle.ts'
 
 /** Undervoltage relay set points, as fractions of nominal voltage (the offsite power alarms below). */
 const degradedVoltageFraction = 0.9
@@ -176,6 +177,7 @@ const lossOfOffsitePowerAuxiliaryFeedwater = (loops: ReadonlyArray<ProcessPlantR
     write('start-turbine-afw', { tagId: 'AFW-PUMP-T' }, true),
     ...loops.map(loop => write(`open-afw-valve-${loop.toLowerCase()}`, { path: `auxFeedwaterValve${loop}.positionFraction` }, afwLineUpPositionFraction)),
   ],
+  throttleFloor: auxiliaryFeedwaterThrottleFloor,
 })
 
 export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [

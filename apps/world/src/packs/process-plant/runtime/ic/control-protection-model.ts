@@ -178,6 +178,19 @@ export const processPlantIcCommandGateSchema = z.object({
   message: z.string().min(1).optional(),
 }).strict()
 
+/**
+ * How far a person may throttle, while this actuation stands, a modulating
+ * demand it drove fully open (an auxiliary feedwater control valve): no
+ * lower than `value`, in the demand's own unit, for the reason `basis`
+ * gives. Without one, nothing between the ends is accepted while it stands:
+ * only the end it drove (plan QA-2).
+ */
+export const processPlantIcThrottleFloorSchema = z.object({
+  value: z.number().finite(),
+  basis: z.string().min(1),
+}).strict()
+export type ProcessPlantIcThrottleFloor = z.infer<typeof processPlantIcThrottleFloorSchema>
+
 export const processPlantIcRuleSchema = z.object({
   id: idSchema,
   label: z.string().min(1).optional(),
@@ -194,6 +207,7 @@ export const processPlantIcRuleSchema = z.object({
   resetCondition: processPlantIcConditionSchema.optional(),
   effects: z.array(processPlantIcEffectSchema).default([]),
   commandGates: z.array(processPlantIcCommandGateSchema).default([]),
+  throttleFloor: processPlantIcThrottleFloorSchema.optional(),
 }).strict()
 export type ProcessPlantIcRule = z.infer<typeof processPlantIcRuleSchema>
 

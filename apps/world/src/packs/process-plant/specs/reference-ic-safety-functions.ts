@@ -222,7 +222,7 @@ const coreCooling = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPl
 /** 10 %: ERG F-0.3, a narrow-range level on span in a steam generator (normal containment). */
 const narrowRangeOnSpanPercent = 10
 /** 27.8 kg/s (440 gpm): ERG F-0.3, the total feed flow that removes decay heat. */
-const minimumFeedFlowKgPerS = 27.8
+export const minimumFeedFlowKgPerS = 27.8
 /** 8.27 MPa (1,185 psig): this model's lowest main steam safety valve set pressure. */
 const safetyValveSetMPa = 8.27
 /** 82 %: this model's steam generator high-high level, feedwater isolation (reference-ic-steam-generator.ts). */

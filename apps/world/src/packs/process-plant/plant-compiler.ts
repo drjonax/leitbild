@@ -13,6 +13,7 @@ import { processPlantComponentRegistry } from './graph/index.ts'
 import { assertProcessPlantVariableValueValid } from './runtime/variable-validation.ts'
 import { processPlantIcConfigSchema, type ProcessPlantProtectionConfig } from './runtime/ic/control-protection-model.ts'
 import { assertProcessPlantIcAnnunciatorEquipmentValid, assertProcessPlantIcOperatingModesValid, assertProcessPlantIcSafetyFunctionsValid } from './runtime/ic/control-protection-validation.ts'
+import { assertThrottleFloorsValid } from './operations/demand-span.ts'
 import type { ProcessPlantDefinition } from './config.ts'
 import {
   resolveProcessPlantAutomation,
@@ -167,6 +168,7 @@ export const compileResolvedProcessPlant = (
   assertProcessPlantIcOperatingModesValid(compiledGraph, automation.operatingModes)
   assertProcessPlantIcAnnunciatorEquipmentValid(compiledGraph, automation.rules)
   assertProcessPlantIcSafetyFunctionsValid(compiledGraph, automation.safetyFunctions)
+  assertThrottleFloorsValid(compiledGraph, automation.rules)
   return {
     id: definition.id,
     modelRef: definition.modelRef,

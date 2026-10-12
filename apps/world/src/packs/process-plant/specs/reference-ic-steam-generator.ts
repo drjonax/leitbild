@@ -3,6 +3,7 @@ import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, rea
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
+import { auxiliaryFeedwaterThrottleFloor } from './reference-ic-afw-throttle.ts'
 
 // A tube leak shows on instruments, never on the fault that makes it: at
 // power primary water carries N-16 into this steam generator's steam, so its
@@ -158,6 +159,7 @@ export const steamGeneratorReferenceIcRules = (
         write('start-motor-afw-b', { path: 'auxFeedwaterPumpMotorB.running' }, true),
         ...loops.map(fed => write(`open-afw-valve-${fed.toLowerCase()}`, { path: `auxFeedwaterValve${fed}.positionFraction` }, 1)),
       ],
+      throttleFloor: auxiliaryFeedwaterThrottleFloor,
     }),
     rule({
       id: `sg-${lower}-level-low-low-reactor-trip`,

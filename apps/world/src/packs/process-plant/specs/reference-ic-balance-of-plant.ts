@@ -3,6 +3,7 @@ import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, rea
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { levelHighHighPercent, levelLowLowPercent } from './reference-ic-steam-generator.ts'
+import { auxiliaryFeedwaterThrottleFloor } from './reference-ic-afw-throttle.ts'
 
 const feedwaterAlarm = annunciator({
   system: 'feedwater',
@@ -219,6 +220,7 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       write('start-motor-afw-b-on-main-feedwater-pump-trip', { path: 'auxFeedwaterPumpMotorB.running' }, true),
       ...loops.map(loop => write(`open-afw-valve-${loop.toLowerCase()}-on-main-feedwater-pump-trip`, { path: `auxFeedwaterValve${loop}.positionFraction` }, 1)),
     ],
+    throttleFloor: auxiliaryFeedwaterThrottleFloor,
   }),
   rule({
     id: 'condensate-storage-tank-level-low',

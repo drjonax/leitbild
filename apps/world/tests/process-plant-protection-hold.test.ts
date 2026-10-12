@@ -8,7 +8,9 @@ import {
   type ProcessPlantIcSnapshot,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
-import { opposesActuation, protectionHoldRefusal, throttledUnder, validateOperatorWrite } from '../src/packs/process-plant/operations/command-guard.ts'
+import { actuationHold, againstActuation, protectionHoldRefusal, throttledUnder, validateOperatorWrite } from '../src/packs/process-plant/operations/command-guard.ts'
+import { compileResolvedProcessPlant } from '../src/packs/process-plant/plant-compiler.ts'
+import { minimumFeedFlowKgPerS } from '../src/packs/process-plant/specs/reference-ic-safety-functions.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -100,13 +102,66 @@ describe('after a real safety injection', () => {
 // opened its valves. The actuation writes once, on its edge, so the throttle
 // holds.
 describe('a throttle under an actuation that drove a demand to an end of its span', () => {
-  test('only the other end opposes it; a command without a span, or a demand set between, keeps the rule', () => {
+  test('from its declared floor up a setting is a throttle; below it, or with no floor declared, it is refused', () => {
     const span = { min: 0, max: 1 }
-    expect([0, 0.4, 1].map(value => opposesActuation(span, 1, value))).toEqual([true, false, false])
-    expect([0, 0.4, 1].map(value => opposesActuation(span, 0, value))).toEqual([false, false, true])
-    expect([0.4, 0.5].map(value => opposesActuation(span, 0.5, value))).toEqual([true, false])
-    expect(opposesActuation(null, 1, 0.4)).toBe(true)
-    expect(opposesActuation(null, true, false)).toBe(true)
+    const floor = { value: 0.2, basis: 'keeps the line open' }
+    expect([0, 0.1, 0.2, 0.4, 1].map(value => againstActuation(span, floor, 1, value))).toEqual(['opposes', 'belowFloor', null, null, null])
+    // Without a floor, the strict hold: only the end the actuation drove.
+    expect([0, 0.4, 1].map(value => againstActuation(span, undefined, 1, value))).toEqual(['opposes', 'opposes', null])
+    // A floor never lets a setting through under an actuation that drove the demand shut, or set it between.
+    expect([0.4, 1, 0].map(value => againstActuation(span, floor, 0, value))).toEqual(['opposes', 'opposes', null])
+    expect([0.4, 0.5].map(value => againstActuation(span, floor, 0.5, value))).toEqual(['opposes', null])
+    expect(againstActuation(null, floor, 1, 0.4)).toBe('opposes')
+    expect(againstActuation(null, undefined, true, false)).toBe('opposes')
+  })
+
+  test('the I&C config declares the floor: the model digest and the variable count stay as they were', () => {
+    const floored = plant.automation.rules.filter(rule => rule.throttleFloor !== undefined)
+    expect(floored.map(rule => rule.id).sort()).toEqual([
+      'loss-of-offsite-power-afw-actuation', 'main-feedwater-pumps-tripped-afw-start',
+      'sg-a-level-low-low-afw-actuation', 'sg-b-level-low-low-afw-actuation', 'sg-c-level-low-low-afw-actuation', 'sg-d-level-low-low-afw-actuation',
+    ])
+    for (const rule of floored) expect(rule.throttleFloor!.basis).toContain('FR-H.1')
+    expect(plant.modelDigest).toBe('16523e5a06e67b517862fd96650bfef2cdd5e4ad05a1dd70c8f27eb2dff9bdff')
+    expect(plant.graph.variables.length).toBe(1592)
+    // The same graph under the I&C config without any floor: the same digest and variables.
+    const withoutFloors = compileResolvedProcessPlant({
+      id: plant.id, modelRef: plant.modelRef, operatingPointRef: plant.operatingPointRef, automationRef: plant.automationRef,
+      graph: plant.sourceGraph,
+      automationForGraph: () => ({ ...plant.automation, rules: plant.automation.rules.map(({ throttleFloor: _floor, ...rule }) => rule) }),
+    })
+    expect(withoutFloors.automation.rules.some(rule => rule.throttleFloor !== undefined)).toBe(false)
+    expect(withoutFloors.modelDigest).toBe(plant.modelDigest)
+    expect(withoutFloors.graph.variables.length).toBe(plant.graph.variables.length)
+  })
+
+  test('with every AFW control valve at its floor after a trip, total feed stays above the FR-H.1 minimum', () => {
+    const plantRun = started()
+    for (let second = 0; second < 3; second += 1) plantRun.step()
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: path('RX-TRIP-MAN'), value: true })
+    for (let second = 0; second < 90; second += 1) plantRun.step()
+    const valves = ['AFW-A-CV', 'AFW-B-CV', 'AFW-C-CV', 'AFW-D-CV']
+    for (const tagId of valves) {
+      const hold = actuationHold(plant, plantRun.protection.snapshot(), path(tagId))!
+      const validation = validateOperatorWrite({ system: plant, runtime: plantRun.runtime, protection: plantRun.protection, payload: { plantId: plant.id, tagId, value: hold.floor!.value } as never, origin: 'person' })
+      expect(validation.accepted).toBe(true)
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: path(tagId), value: hold.floor!.value })
+    }
+    for (let second = 0; second < 30; second += 1) plantRun.step()
+    const totalFeed = ['A', 'B', 'C', 'D'].reduce((sum, loop) => sum + Number(plantRun.runtime.readVariable(`sg${loop}.feedwaterFlowKgPerS` as never)), 0)
+    expect(totalFeed).toBeGreaterThan(minimumFeedFlowKgPerS)
+  })
+
+  test('without a declared floor, a standing actuation holds its end strictly', () => {
+    const strict = { ...plant, automation: { ...plant.automation, rules: plant.automation.rules.map(({ throttleFloor: _floor, ...rule }) => rule) } }
+    const actuated = standing(started().protection.snapshot(), 'sg-a-level-low-low-afw-actuation', { active: false, latched: true })
+    expect(protectionHoldRefusal(strict, actuated, { path: path('AFW-A-CV'), value: 0.4 })).toContain('stands sealed in and holds AFW-A-CV: a command against it is refused until it is reset')
+    expect(actuationHold(strict, actuated, path('AFW-A-CV'))!.floor).toBeNull()
+    expect(protectionHoldRefusal(plant, actuated, { path: path('AFW-A-CV'), value: 0.4 })).toBeNull()
+    expect(actuationHold(plant, actuated, path('AFW-A-CV'))).toEqual({
+      rules: [{ ruleId: 'sg-a-level-low-low-afw-actuation', label: 'Steam generator A low-low level auxiliary feedwater actuation', action: 'AFW START' }],
+      floor: { value: 0.2, basis: plant.automation.rules.find(rule => rule.id === 'sg-a-level-low-low-afw-actuation')!.throttleFloor!.basis },
+    })
   })
 
   test('an MSIV, two-state, refuses a setting between as it refuses OPEN', () => {
@@ -135,6 +190,10 @@ describe('a throttle under an actuation that drove a demand to an end of its spa
     for (const rule of under) expect(rule).toEqual({ ruleId: rule.ruleId, label: rules.get(rule.ruleId)!.label!, action: 'AFW START' })
     const validate = (value: number) => validateOperatorWrite({ system: plant, runtime: plantRun.runtime, protection: plantRun.protection, payload: { plantId: plant.id, tagId: 'AFW-A-CV', value } as never, origin: 'person' })
     expect(validate(0.4).accepted).toBe(true)
+    expect(validate(0.2).accepted).toBe(true)
+    const low = validate(0.1)
+    expect(low.accepted).toBe(false)
+    if (!low.accepted) expect(low.reason).toMatch(/^Steam generator . low-low level auxiliary feedwater actuation \(AFW START\) stands (active|sealed in): AFW-A-CV is throttled no lower than 20 % under it, which keeps every steam generator's auxiliary feedwater line open, and with every line there total feed stays above the FR-H\.1 minimum of 27\.8 kg\/s/)
     const shut = validate(0)
     expect(shut.accepted).toBe(false)
     if (!shut.accepted) expect(shut.reason).toBe(`${under[0]!.label} (AFW START) stands ${plantRun.protection.snapshot().rules.find(rule => rule.ruleId === under[0]!.ruleId)!.active ? 'active' : 'sealed in'} and holds AFW-A-CV: a command against it is refused until it is reset`)
