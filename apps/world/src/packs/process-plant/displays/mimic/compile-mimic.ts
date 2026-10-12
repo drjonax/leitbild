@@ -9,7 +9,7 @@ import { embeddedPresentation, presentationFor, type MimicPresentation } from '.
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, POWER_STATE_WORDS, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
-import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
+import { openBridgeDevice, QUICK_LOOK_DOT, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
 // Intent (or a scope World resolved itself) → items with their bindings → a
 // diagram sized in OpenBridge px → the layout engine → a compiled mimic.
@@ -248,7 +248,8 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   const addItem = (unflapped: Omit<PlannedItem, 'flapLines'>, ports: DiagramNode['ports']): void => {
     const presentation = unflapped.presentation
     const vessel = isVessel(presentation) || unflapped.role === 'hub'
-    const tag = measure('tag', unflapped.binding.label, unflapped.binding.label)
+    // An interactive drawing's tag line also holds the item's detail dot.
+    const tag = measure('tag', unflapped.binding.label, unflapped.binding.label) + (profile.quickLooks ? QUICK_LOOK_DOT.gap + QUICK_LOOK_DOT.size : 0)
     // A frame's flap names its most severe active alarm whole, what it watches and what the I&C does there,
     // and the item counts its other alarms ("+2 alarms"): no drawing drops the action or leaves a count
     // unexplained (HMI review of run 23: "LO-LO +2" on a detail, "LO-LO · AFW START +2" on the overview).

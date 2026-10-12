@@ -9,6 +9,8 @@ import '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-excha
 import '@oicl/openbridge-webcomponents/dist/automation/valve-analoge-two-way-icon/valve-analog-two-way-icon.js'
 import '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readout-block.js'
 import '@oicl/openbridge-webcomponents/dist/components/alert-frame/alert-frame.js'
+import '@oicl/openbridge-webcomponents/dist/components/toggletip/toggletip.js'
+import '@oicl/openbridge-webcomponents/dist/icons/icon-trend.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-pump-on-horizontal.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-pump-off-horizontal.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-pump-static-horizontal.js'

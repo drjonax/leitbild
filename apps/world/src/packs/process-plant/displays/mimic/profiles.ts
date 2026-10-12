@@ -68,6 +68,12 @@ export interface MimicProfile {
    * column's four loops have none to spare).
    */
   readonly badges: ReadonlyArray<BadgeReservation>
+  /**
+   * Whether its drawing is interactive (the display window's overview and
+   * details): each item's tag line then reserves the detail dot that opens
+   * its quick look (QUICK_LOOK_DOT). A chat answer's drawing is a picture.
+   */
+  readonly quickLooks: boolean
 }
 
 /** OpenBridge's drawing conventions: its 24 px grid, pipe outline and alarm frame. */
@@ -126,6 +132,7 @@ export const chatMimicProfile: MimicProfile = {
   commands: 'inline',
   minScale: MIMIC_MIN_SCALE,
   badges: ['reserved', 'fitted'],
+  quickLooks: false,
 }
 
 /**
@@ -152,6 +159,7 @@ export const overviewMimicProfile: MimicProfile = {
   commands: 'stacked',
   minScale: 1,
   badges: ['reserved'],
+  quickLooks: true,
 }
 
 /**

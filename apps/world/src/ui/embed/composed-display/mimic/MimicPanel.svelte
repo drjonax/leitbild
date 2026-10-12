@@ -3,7 +3,7 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, shutdownDemanded, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { drawnLook, flapCount, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, shutdownDemanded, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
@@ -12,9 +12,13 @@
   import { limitInForce } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from './pipe-segments.ts'
   import { mimicLegend } from './mimic-legend.ts'
-  import { openBridgeDevice, textWidth } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
+  import { openBridgeDevice, QUICK_LOOK_DOT, textWidth } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
   import type * as OpenBridgeMimic from './openbridge-mimic.ts'
   import { embeddedDisplayFrame } from '../../view-host.ts'
+  import MimicPopover from './MimicPopover.svelte'
+  import QuickLookSection from './QuickLookSection.svelte'
+  import { nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_INTENT_MS, QUICK_LOOK_ORDER, type MimicPopoverContext, type MimicPopoverSection, type PopoverEvent, type PopoverState } from './popover.ts'
+  import type { MimicQuickLookSource } from './quick-look-source.ts'
 
   // A generated equipment mimic drawn with OpenBridge: pipes on a canvas by
   // connector-diagram, equipment as positioned OpenBridge elements. The
@@ -23,7 +27,9 @@
   // A generated display opens what an item stands for; an agent's advice is read-only.
   // Narrowed to an annunciator system, the items its rules frame stand out and
   // the rest dim, except any item with an active alarm of its own.
-  let { mimic, latest, stale, open, highlight = null, annunciation }: {
+  // Where items open (a display World generates in its window), each item's detail dot opens its popover:
+  // its quick look (`quickLook`) and the sections the hosting display adds (`sections`, popover.ts).
+  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, sections = [] }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
     stale: boolean
@@ -31,6 +37,8 @@
     annunciation: DisplayAnnunciation
     open?: ((item: MimicDrawnItem) => void) | undefined
     highlight?: ReadonlySet<string> | null
+    quickLook?: MimicQuickLookSource | undefined
+    sections?: ReadonlyArray<MimicPopoverSection>
   } = $props()
 
   let openBridge = $state<typeof OpenBridgeMimic | null>(null)
@@ -89,6 +97,113 @@
     return { status: alertTypeOf(first.alarm.severity), label: flaps.get(first.alarm.ruleId)!, others: active.length - 1, expected: first.expected }
   }
   const expectedGroups = $derived([...new Set(mimic.items.flatMap(item => alertOf(item)?.expected ?? []))])
+
+  // --- Detail dots and the item popover -------------------------------------------------------------
+  // A dot follows each item's tag, in the room its tag line reserves (QUICK_LOOK_DOT); its place is read
+  // from the tag as drawn, OpenBridge's own for a device, so it stays beside it whatever rows the stack shows.
+  const interactive = $derived(open !== undefined && (quickLook !== undefined || sections.length > 0))
+  let drawing = $state<HTMLDivElement | undefined>(undefined)
+  const tags = new Map<string, () => Element | null>()
+  const dotButtons = new Map<string, HTMLButtonElement>()
+  let dots = $state.raw<Readonly<Record<string, { readonly x: number; readonly y: number }>>>({})
+  const tagOf = (node: HTMLElement, id: string) => {
+    tags.set(id, () => node)
+    return { destroy: () => { tags.delete(id) } }
+  }
+  const dotOf = (node: HTMLButtonElement, id: string) => {
+    dotButtons.set(id, node)
+    return { destroy: () => { if (dotButtons.get(id) === node) dotButtons.delete(id) } }
+  }
+  const measureDots = (): void => {
+    if (drawing === undefined) return
+    const origin = drawing.getBoundingClientRect()
+    const next: Record<string, { x: number; y: number }> = {}
+    for (const item of mimic.items) {
+      const rect = tags.get(item.id)?.()?.getBoundingClientRect()
+      if (rect === undefined || rect.width === 0) continue
+      next[item.id] = { x: (rect.right - origin.left) / scale + QUICK_LOOK_DOT.gap, y: ((rect.top + rect.bottom) / 2 - origin.top) / scale - QUICK_LOOK_DOT.size / 2 }
+    }
+    dots = next
+  }
+  $effect(() => {
+    if (!interactive || openBridge === null) return
+    void looks
+    void scale
+    // After OpenBridge has drawn this sample's stacks.
+    const frame = requestAnimationFrame(measureDots)
+    return () => cancelAnimationFrame(frame)
+  })
+
+  // One popover at a time (popover.ts): hovering a dot opens it after a moment, a press pins it.
+  const popoverId = `mimic-popover-${Math.random().toString(36).slice(2)}`
+  const POPOVER_WIDTH = 360
+  let popover = $state.raw<PopoverState>(POPOVER_CLOSED)
+  let intent: ReturnType<typeof setTimeout> | undefined
+  let insidePopover = false
+  const applyPopover = (event: PopoverEvent): void => { popover = nextPopover(popover, event) }
+  const afterIntent = (run: () => void): void => { clearTimeout(intent); intent = setTimeout(run, POPOVER_INTENT_MS) }
+  const dotEntered = (item: MimicDrawnItem): void => afterIntent(() => applyPopover({ kind: 'hovered', item: item.id }))
+  const dotLeft = (): void => afterIntent(() => { if (!insidePopover) applyPopover({ kind: 'left' }) })
+  const pointerInPopover = (inside: boolean): void => {
+    insidePopover = inside
+    if (inside) clearTimeout(intent)
+    else afterIntent(() => applyPopover({ kind: 'left' }))
+  }
+  const pressed = (item: MimicDrawnItem): void => { clearTimeout(intent); applyPopover({ kind: 'pressed', item: item.id }) }
+  const closePopover = (returnFocus: boolean): void => {
+    const was = popover
+    clearTimeout(intent)
+    insidePopover = false
+    applyPopover({ kind: 'dismissed' })
+    if (returnFocus && was.kind === 'open') dotButtons.get(was.item)?.focus()
+  }
+  const popoverItem = $derived(popover.kind === 'open' ? mimic.items.find(item => item.id === popover.item) : undefined)
+  // Esc closes it first (not the window's Back) and returns focus to its dot; a press outside it and the dots closes it.
+  let moved = $state(0)
+  $effect(() => {
+    if (popover.kind !== 'open') return
+    const key = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closePopover(true)
+    }
+    const down = (event: PointerEvent): void => {
+      const target = event.target as Node | null
+      if (target === null || document.getElementById(popoverId)?.contains(target) || [...dotButtons.values()].some(dot => dot.contains(target))) return
+      closePopover(false)
+    }
+    const shift = (): void => { moved += 1 }
+    window.addEventListener('keydown', key, { capture: true })
+    document.addEventListener('pointerdown', down, { capture: true })
+    window.addEventListener('scroll', shift, { capture: true })
+    window.addEventListener('resize', shift)
+    return () => {
+      window.removeEventListener('keydown', key, { capture: true })
+      document.removeEventListener('pointerdown', down, { capture: true })
+      window.removeEventListener('scroll', shift, { capture: true })
+      window.removeEventListener('resize', shift)
+    }
+  })
+  let popoverHeight = $state(320)
+  // Beside its item, as the page shows it, at the window's zoom.
+  const popoverPlace = $derived.by(() => {
+    void moved
+    if (popoverItem === undefined || drawing === undefined) return null
+    const origin = drawing.getBoundingClientRect()
+    const area = target(popoverItem)
+    const box = { x: origin.left + area.x * scale, y: origin.top + area.y * scale, width: area.width * scale, height: area.height * scale }
+    return popoverPlacement(box, { width: POPOVER_WIDTH, height: popoverHeight }, { width: window.innerWidth, height: window.innerHeight }, $displayFrame.zoom)
+  })
+  const quickLookSection = $derived<MimicPopoverSection | null>(quickLook === undefined ? null : { id: 'quick-look', title: 'Quick look', order: QUICK_LOOK_ORDER, applies: () => true, body: quickLookBody })
+  const popoverSections = $derived(popoverItem === undefined ? [] : [...(quickLookSection === null ? [] : [quickLookSection]), ...sections]
+    .filter(section => section.applies(popoverItem))
+    .sort((left, right) => left.order - right.order))
+  const activeRuleIds = $derived(new Set(alarms.map(alarm => alarm.ruleId)))
+  const popoverFlap = (item: MimicDrawnItem): string => {
+    const alert = alertOf(item)
+    return alert === null ? '' : `${alert.label.flap}${alert.others === 0 ? '' : ` · ${flapCount(alert.others)}`}`
+  }
 
   const dimmed = (item: MimicDrawnItem): boolean => highlight !== null
     && !item.binding.frames.some(frame => highlight.has(frame.ruleId))
@@ -162,6 +277,9 @@
   const device = (host: HTMLElement, params: { ob: Ob; item: MimicDrawnItem; look: ItemLook; rows: ReturnType<typeof deviceRows>; alert: ReturnType<typeof alertOf> }) => {
     const element = params.ob.createDevice(mimic.readoutSize)
     host.append(element)
+    // OpenBridge writes a device's tag in its readout stack; its dot follows it there.
+    const id = params.item.id
+    tags.set(id, () => element.shadowRoot?.querySelector('obc-automation-button-readout-stack')?.shadowRoot?.querySelector('.tag') ?? null)
     const apply = (next: typeof params) => {
       if (next.item.presentation.element !== 'device') return
       next.ob.updateDevice(element, next.item.presentation.icon, next.look, {
@@ -174,7 +292,7 @@
       })
     }
     apply(params)
-    return { update: apply, destroy: () => element.remove() }
+    return { update: apply, destroy: () => { element.remove(); tags.delete(id) } }
   }
 
   const vessel = (host: HTMLElement, params: { ob: Ob; item: MimicDrawnItem; look: ItemLook }) => {
@@ -252,9 +370,13 @@
   }
 </script>
 
+{#snippet quickLookBody(context: MimicPopoverContext)}
+  {#if quickLook !== undefined}<QuickLookSection source={quickLook} item={context.item} {activeRuleIds} />{/if}
+{/snippet}
+
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
   <div class="viewport" bind:clientWidth={columnWidth} style={`height:${Math.ceil(mimic.height * scale)}px`}>
-  <div class="drawing" style={`width:${mimic.width}px;height:${mimic.height}px;transform:scale(${scale})`}>
+  <div class="drawing" style={`width:${mimic.width}px;height:${mimic.height}px;transform:scale(${scale})`} bind:this={drawing}>
     {#each mimic.zones as zone (zone.lane)}
       <div class="zone" style={`left:${zone.x}px;top:${zone.y}px;width:${zone.width}px;height:${zone.height}px`} title={zone.label}></div>
     {/each}
@@ -291,7 +413,7 @@
               <!-- A stack over its symbol stands on it: its tag on the body, its rows above, centred (a hub's downstream end). -->
               {@const above = item.text.side === 'top' && item.presentation.element !== 'bar'}
               <div class="stack" class:below={item.text.side === 'bottom'} class:above style={`left:${item.text.x}px;top:${item.text.y}px;width:${item.text.width}px${above ? `;height:${item.text.height}px` : ''}`}>
-                <span class="tag">{item.binding.label}</span>
+                <span class="tag" use:tagOf={item.id}>{item.binding.label}</span>
                 {#each item.rows as row, at (at)}
                   {#if row.kind === 'alarm'}
                     <!-- What the flap's alarm does where the flap is too narrow for it whole, and how many others are active. -->
@@ -325,12 +447,49 @@
           {#each mimic.items as item (item.id)}
             {@const area = target(item)}
             <button type="button" class="target" style={`left:${area.x}px;top:${area.y}px;width:${area.width}px;height:${area.height}px`} title={`Open ${item.binding.label}`} aria-label={`Open ${item.binding.label}: ${looks.get(item.id)?.words || 'no state drawn'}`} onclick={() => opens(item)}></button>
+            {#if interactive && dots[item.id] !== undefined}
+              <!-- The item's detail dot, after its target in tab order: hover a moment or press to open its popover. -->
+              {@const dot = dots[item.id]!}
+              {@const expanded = popover.kind === 'open' && popover.item === item.id}
+              <button
+                type="button"
+                class="dot"
+                class:open={expanded}
+                style={`left:${dot.x}px;top:${dot.y}px;width:${QUICK_LOOK_DOT.size}px;height:${QUICK_LOOK_DOT.size}px`}
+                title={`Quick look: ${item.binding.label}`}
+                aria-label={`Quick look: ${item.binding.label}`}
+                aria-expanded={expanded}
+                aria-controls={expanded ? popoverId : undefined}
+                use:dotOf={item.id}
+                onpointerenter={() => dotEntered(item)}
+                onpointerleave={dotLeft}
+                onclick={() => pressed(item)}
+              ><obi-trend usecsscolor></obi-trend></button>
+            {/if}
           {/each}
         </div>
       {/if}
     {/if}
   </div>
   </div>
+  {#if openBridge !== null && popover.kind === 'open' && popoverItem !== undefined && popoverPlace !== null}
+    {@const item = popoverItem}
+    {@const context: MimicPopoverContext = { item, latest, pinned: popover.pinned, close: () => closePopover(true) }}
+    <MimicPopover
+      id={popoverId}
+      {item}
+      flap={popoverFlap(item)}
+      sections={popoverSections}
+      {context}
+      place={popoverPlace}
+      zoom={$displayFrame.zoom}
+      width={POPOVER_WIDTH}
+      {open}
+      close={() => closePopover(true)}
+      pointer={pointerInPopover}
+      measured={height => { popoverHeight = height }}
+    />
+  {/if}
   <!-- The key names only what this drawing can show; a stale view says so first. -->
   <p class="legend">
     {#if stale}<span class="stale-tag">{mimicLegend.stale}</span><span>{mimicLegend.staleMeaning}</span>{/if}
@@ -379,6 +538,13 @@
   .target { position: absolute; padding: 0; border: none; border-radius: 4px; background: none; cursor: pointer; pointer-events: auto; }
   .target:hover { outline: 1px solid var(--border-outline-color); outline-offset: 2px; }
   .target:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 2px; }
+  /* A detail dot shows while its item is hovered or it has focus or its popover is open; on a touch screen always. */
+  .dot { position: absolute; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 4px; background: none; color: var(--element-neutral-color); cursor: pointer; pointer-events: auto; opacity: 0; --obi-trend-size: 16px; }
+  .dot :global(obi-trend) { width: 16px; height: 16px; }
+  .target:hover + .dot, .dot:hover, .dot:focus-visible, .dot.open { opacity: 1; }
+  .dot:hover, .dot.open { background: var(--container-section-color); color: var(--element-active-color); }
+  .dot:focus-visible { outline: 2px solid var(--border-focus-color); }
+  @media (pointer: coarse) { .dot { opacity: 1; } }
   /* A device's further flap lines, in the flap's colours: its action where the flap is too narrow for it whole, and the count of its other alarms. */
   .flap-line { position: absolute; box-sizing: border-box; display: flex; align-items: center; border-radius: 0 0 4px 4px; font: 370 12px/16px "Noto Sans", system-ui, sans-serif; }
   .flap-line.alarm { background: var(--alert-alarm-color); color: var(--on-alarm-active-color); }

@@ -79,3 +79,11 @@ export const smallStateRowWidth = (text: string): number =>
 /** A value row of a small readout stack: up to three digits (or as many as it declares) at 11.5 px, then its unit. */
 export const smallValueRowWidth = (unit: string, integerDigits = 3): number =>
   Math.ceil(textWidth('stateRow', '0'.repeat(integerDigits)) * openBridgeDevice.smallTextScale) + (unit === '' ? 0 : textWidth('unit', unit)) + openBridgeDevice.valueRowPadding
+
+/**
+ * The detail dot at the end of an item's tag line, which opens its quick
+ * look where a drawing is interactive (MimicProfile.quickLooks): a button
+ * this many px square, this far after the tag. The tag line reserves both,
+ * so the dot never covers anything.
+ */
+export const QUICK_LOOK_DOT = { size: 18, gap: 2 } as const
