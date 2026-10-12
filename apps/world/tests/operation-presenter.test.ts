@@ -2,24 +2,20 @@ import { describe, expect, test } from 'bun:test'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import {
   commandsForProcessPlantAction,
-  compilePlantGraph,
   compileProcessPlant,
   createProcessPlantProtectionRunner,
+  createProcessPlantRampRunner,
   createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
-  processPlantComponentRegistry,
-  processPlantOperatingMode,
-  type CompiledProcessPlant,
-  type PlantGraphSpec,
   type ProcessSignalBinding,
   type ProcessVariableValue,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
+import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
 import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
-import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
-import { derivePlantControls, offeredOption, type ControlDeclarations, type ItemControls, type OfferedControl, type PlantControls } from '../src/packs/process-plant/operations/controls.ts'
-import { optionStanding, ruleStatesFrom } from '../src/packs/process-plant/operations/control-standing.ts'
+import { followAllowanceMs, plantControlsFor, type ItemControls, type PlantControls } from '../src/packs/process-plant/operations/controls.ts'
+import { listedControlsFor, proposalPortsFor } from '../src/packs/process-plant/operations/instance-ports.ts'
 import { decideProposal, emptyProposalBook, proposeOperation, reviewProposal, type ProposalPorts } from '../src/packs/process-plant/operations/proposals.ts'
 import {
   ATTRIBUTION_MS,
@@ -28,7 +24,6 @@ import {
   itemControlView,
   pendingProposals,
   proposalCard,
-  travelAllowanceMs,
   type ListedItem,
   type OperationNow,
   type OperationRecord,
@@ -37,47 +32,28 @@ import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
 guardPlantTests()
 
-// The operation parts of a display, on the four-loop reference Plant: the
-// stuck-open PORV whose block valve an AI proposes to shut (demo beat 4, at 20 %
-// as QA-17 sets it), a protective pushbutton, a feed valve its controller holds,
-// and the SI block the I&C refuses at power. The SI block's input is marked
-// momentary as the model lane declares it; an RCP's start is declared not offered.
-
-const withMomentary = (system: CompiledProcessPlant, tagId: string): CompiledProcessPlant => {
-  const binding = resolveProcessPlantSignalBinding(system.graph, { tagId: tagId as never })
-  if (binding.owner.type !== 'component') throw new Error(`${tagId} is not a component variable`)
-  const owner = system.graph.components[binding.owner.componentIndex]!
-  const local = String(binding.path).slice(String(owner.id).length + 1)
-  const sourceGraph: PlantGraphSpec = {
-    ...system.sourceGraph,
-    components: system.sourceGraph.components.map(component => {
-      if (component.id !== owner.id) return component
-      const presentation = component.metadata?.presentation ?? {}
-      const momentary = [...new Set([...(presentation.momentary ?? []), local])]
-      return { ...component, metadata: { ...component.metadata, presentation: { ...presentation, momentary } } }
-    }),
-  }
-  return { ...system, sourceGraph, graph: compilePlantGraph(sourceGraph, processPlantComponentRegistry) }
-}
-
-const declarations: ControlDeclarations = {
-  notOffered: (binding, value) => binding.tagId !== undefined && /^RCP-[A-Z]-RUN$/.test(binding.tagId) && value === true ? 'RCP start needs seal injection and oil lift, which are not modelled' : undefined,
-}
+// The operation parts of a display, on the four-loop reference Plant as the
+// model declares it: the stuck-open PORV whose block valve an AI proposes to
+// shut (demo beat 4, at 20 % as QA-17 sets it), the manual reactor trip
+// pushbutton (beat 5), a feed valve its controller holds, an RCP whose start is
+// not offered, and the SI block the I&C refuses at power. What an item lists,
+// and what a proposal is held to, come from World's own ports (instance-ports.ts).
 
 const START = Date.parse('2026-10-16T10:00:00.000Z')
 
 /** A running four-loop Plant with protection evaluated each second, its controls derived, and what World would list for an item now. */
 const unit = () => {
-  const plant = withMomentary(compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:operation', loopCount: 4 })), 'SI-BLOCK')
+  const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:operation', loopCount: 4 }))
   const runtime = createProcessPlantRuntime({ system: plant })
   const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+  const instance: ProcessPlantRuntimeInstance = { plant, runtime, ramps: createProcessPlantRampRunner({ runtime }), protection, performance: createProcessPlantRuntimePerformance() }
   const step = (seconds = 1) => {
     for (let second = 0; second < seconds; second += 1) {
       runtime.tick(1_000)
       protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-operation' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
     }
   }
-  const controls: PlantControls = derivePlantControls(plant, declarations)
+  const controls: PlantControls = plantControlsFor(plant)
   const tag = (tagId: string): ProcessSignalBinding => resolveProcessPlantSignalBinding(plant.graph, { tagId: tagId as never })
   const now = (): OperationNow => ({
     read: path => runtime.readVariable(path),
@@ -85,40 +61,11 @@ const unit = () => {
     clock: elapsedMs => new Date(START + elapsedMs).toISOString().slice(11, 19),
     format: (path, value) => typeof value === 'number' ? formatQuantity(value, plant.graph.signalBindingByPath.get(path)!.unit, null) : String(value),
   })
-  // The declared stroke time of what a control moves, as World reads it from the model (QA-6); none for others here.
-  const travelMs = (control: OfferedControl): number | null => {
-    const owner = plant.graph.signalBindingByPath.get(control.path)!.owner
-    if (owner.type !== 'component') return null
-    const parameters = plant.graph.components[owner.componentIndex]!.parameters as Readonly<Record<string, unknown>>
-    return control.target.startsWith('MOV-8000A') && typeof parameters.blockValveStrokeTimeS === 'number' ? parameters.blockValveStrokeTimeS * 1_000 : null
-  }
-  const listed = (entry: ItemControls, offered: ReadonlyArray<OfferedControl> = entry.offered): ListedItem => {
-    const context = {
-      read: (path: VariablePath) => runtime.readVariable(path),
-      mode: processPlantOperatingMode({ system: plant, runtime, modes: plant.automation.operatingModes })?.id ?? null,
-      rules: ruleStatesFrom(protection.snapshot()),
-    }
-    return {
-      id: entry.id,
-      label: entry.label,
-      offered: offered.map(control => ({ control, standing: control.options.map(option => optionStanding(plant, control, option, context)), travelMs: travelMs(control) })),
-      withheld: entry.withheld,
-    }
-  }
+  const listed = (entry: ItemControls): ListedItem => listedControlsFor(instance, [entry.id])[0]!
   const itemOffering = (path: VariablePath): ItemControls => controls.items.find(entry => entry.offered.some(control => control.path === path))!
   const itemWithholding = (path: VariablePath): ItemControls => controls.items.find(entry => entry.withheld.some(control => control.path === path))!
-  const validate = (write: { readonly path: VariablePath; readonly value: ProcessVariableValue }) => {
-    const validation = validateProcessPlantControlWrite({ system: plant, runtime, protection, payload: { plantId: plant.id, path: write.path, value: write.value } })
-    return validation.accepted ? { accepted: true as const } : { accepted: false as const, reason: validation.reason }
-  }
-  const ports: ProposalPorts = {
-    offered: write => offeredOption(controls, write),
-    validate,
-    reading: tagId => {
-      const binding = plant.graph.signalBindingByTagId.get(tagId)
-      return binding?.published === true ? { ok: true, path: binding.path, value: runtime.readVariable(binding.path) } : { ok: false, reason: `${tagId} is not a published reading` }
-    },
-  }
+  const ports: ProposalPorts = proposalPortsFor(instance, 'ai')
+  const validate = (write: { readonly path: VariablePath; readonly value: ProcessVariableValue }) => proposalPortsFor(instance, 'person').validate(write)
   const fault = (actionId: string, parameters: Record<string, unknown> = {}) => {
     for (const command of commandsForProcessPlantAction({ actionId, parameters, graph: plant.graph })) runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
   }
@@ -153,7 +100,7 @@ describe('the CONTROL section of an item', () => {
     plant.step(5)
     const rcp = plant.tag('RCP-A-RUN')
     const control = itemControlView(plant.listed(plant.itemOffering(rcp.path)), plant.now()).controls.find(candidate => candidate.path === rcp.path)!
-    expect(control.withheldOptions).toEqual([{ word: 'START', reason: 'RCP start needs seal injection and oil lift, which are not modelled' }])
+    expect(control.withheldOptions).toEqual([{ word: 'START', reason: 'An RCP start needs seal injection and oil lift, which the model does not have: not started from the display' }])
     const stop = control.options.find(option => option.word === 'STOP')!
     expect(stop.confirm).toBe('slide')
     expect(stop.slideOnly).toBe(false)
@@ -188,23 +135,18 @@ describe('the CONTROL section of an item', () => {
     expect(stop.opposing.some(line => line.includes('writes START: acted at') || line.includes('writes START: sealed in since'))).toBe(true)
   }, PLANT_HANG_GUARD_MS)
 
-  test('a pushbutton whose press trips the reactor is a slide that selects and executes at once', () => {
+  test('the manual reactor trip on the core is a slide that selects and executes at once (demo beat 5)', () => {
     const plant = unit()
     plant.step()
-    // The model lane's manual reactor trip (O6) where it has landed; until then the SI block's pushbutton stands in for
-    // it, with a reactor trip of this Plant as the trip its press sets going, as the derivation gives O6's.
-    const declared = plant.controls.items.flatMap(entry => entry.offered.filter(control => control.form === 'pushbutton' && control.options.some(option => option.consequences.some(rule => rule.action === 'RX TRIP'))))
-    const block = plant.tag('SI-BLOCK')
-    const entry = plant.itemOffering(declared[0]?.path ?? block.path)
-    const reactorTrip = plant.plant.automation.rules.find(rule => rule.id === 'reactor-high-power-trip')!
-    const control = declared[0] ?? (() => {
-      const stand = entry.offered.find(candidate => candidate.path === block.path)!
-      return { ...stand, options: stand.options.map(option => ({ ...option, word: 'TRIP REACTOR', consequences: [{ ruleId: reactorTrip.id, label: reactorTrip.label ?? reactorTrip.id, action: 'RX TRIP' }] })) }
-    })()
-    const listed = plant.listed(entry, [control])
-    const trip = itemControlView(listed, plant.now()).controls[0]!.options[0]!
-    expect([trip.confirm, trip.slideOnly]).toEqual(['slide', true])
-    expect(trip.action).toBe(`${trip.word} ${control.target}`)
+    const button = plant.tag('RX-TRIP-MAN')
+    const control = itemControlView(plant.listed(plant.itemOffering(button.path)), plant.now()).controls.find(candidate => candidate.path === button.path)!
+    expect(control.form).toBe('pushbutton')
+    const [trip] = control.options
+    expect([trip!.word, trip!.confirm, trip!.slideOnly]).toEqual(['TRIP REACTOR', 'slide', true])
+    expect(trip!.action).toBe(`TRIP REACTOR ${control.target}`)
+    expect(trip!.consequences.some(line => line.startsWith('→ RX TRIP · '))).toBe(true)
+    // It sits on the core, whose rods its rule inserts, with the manual SI and the SI block.
+    expect(plant.itemOffering(button.path).offered.map(candidate => candidate.tagId)).toEqual(expect.arrayContaining(['RX-TRIP-MAN', 'SI-MAN', 'SI-BLOCK']))
   })
 })
 
@@ -224,7 +166,7 @@ describe('feedback while a command executes', () => {
     const accepted = { ...sent, result: { ok: true as const } }
     plant.step(5)
     expect(commandPhase(viewNow(), shut, accepted, plant.now()).kind).toBe('travelling')
-    plant.step(Math.ceil(travelAllowanceMs(10_000) / 1_000))
+    plant.step(Math.ceil(followAllowanceMs(10_000) / 1_000))
     expect(commandPhase(viewNow(), shut, accepted, plant.now())).toEqual({ kind: 'notFollowed', text: 'Not followed: CMD SHUT, OPEN since 10:00:01' })
     // Written: it strokes shut, part of the way first, then done.
     const written = { ...accepted, sentAtElapsedMs: plant.runtime.elapsedMs(), fromState: plant.runtime.readVariable(control.statePath!) }
@@ -237,24 +179,32 @@ describe('feedback while a command executes', () => {
     expect(commandPhase(viewNow(), shut, written, plant.now()).kind).toBe('done')
   })
 
-  test('a valve with no declared travel time waits for its state and is never said not followed: the stuck PORV', () => {
+  test('the stuck PORV does not follow its SHUT: it reads not followed once its declared travel and margin have passed, never before', () => {
     const plant = unit()
     plant.step()
     plant.fault('pressurizer-relief-open', { positionPercent: 20 })
     plant.step(10)
     const porv = plant.tag('PORV-456A')
-    const control = itemControlView(plant.listed(plant.itemOffering(porv.path)), plant.now()).controls.find(candidate => candidate.path === porv.path)!
-    expect(control.travelMs).toBeNull()
+    const view = () => itemControlView(plant.listed(plant.itemOffering(porv.path)), plant.now()).controls.find(candidate => candidate.path === porv.path)!
+    const control = view()
     expect(control.now).toBe('20.0 %')
-    // Its fault inputs are the instructor's and are never named here.
-    const view = itemControlView(plant.listed(plant.itemOffering(porv.path)), plant.now())
-    expect(plant.itemOffering(porv.path).withheld.some(entry => entry.reason.kind === 'instructor')).toBe(true)
-    expect(view.withheld).toEqual([])
     expect(plant.runtime.readVariable(control.statePath!)).toBeCloseTo(0.2, 3)
+    // Its fault inputs are the instructor's and are never listed.
+    expect(itemControlView(plant.listed(plant.itemOffering(porv.path)), plant.now()).withheld).toEqual([])
     const shut = control.options.find(option => option.word === 'SHUT')!
-    const phase = commandPhase(control, shut, { path: porv.path, value: shut.value, sentAtElapsedMs: 0, result: { ok: true } }, plant.now())
-    expect(phase).toMatchObject({ kind: 'travelling', by: null })
-    expect(phase.text).toContain('awaiting its state')
+    expect(shut.travelMs).toBe(0)
+    plant.runtime.writeCommand({ type: 'setVariable', path: porv.path, value: shut.value })
+    const sent = { path: porv.path, value: shut.value, sentAtElapsedMs: plant.runtime.elapsedMs(), fromState: 0.2, result: { ok: true as const } }
+    plant.step(1)
+    expect(commandPhase(view(), shut, sent, plant.now()).kind).toBe('travelling')
+    plant.step(Math.ceil(followAllowanceMs(0) / 1_000))
+    expect(commandPhase(view(), shut, sent, plant.now())).toEqual({ kind: 'notFollowed', text: 'Not followed: CMD SHUT, 20.0 % since 10:00:11' })
+    // Where the model declares no travel time the state is awaited, and never judged.
+    const undeclared = { ...shut, travelMs: null }
+    plant.step(60)
+    const awaited = commandPhase(view(), undeclared, sent, plant.now())
+    expect(awaited).toMatchObject({ kind: 'travelling', by: null })
+    expect(awaited.text).toContain('awaiting its state')
   })
 })
 

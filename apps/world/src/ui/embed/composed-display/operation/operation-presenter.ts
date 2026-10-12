@@ -1,7 +1,11 @@
 import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
-import type { ControlOption, OfferedControl, OpposingRule, WithheldControl } from '../../../../packs/process-plant/operations/controls.ts'
-import type { OptionStanding, RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
-import type { OperationOrigin, ProcessPlantProposal, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
+import { followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
+import type { RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
+import type { ListedControl, ListedItem } from '../../../../packs/process-plant/operations/instance-ports.ts'
+import type { OperationRecord } from '../../../../packs/process-plant/operations/plant-operations.ts'
+import type { ProcessPlantProposal, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
+
+export type { ListedControl, ListedItem, OperationRecord }
 
 // What the operation parts of a display render, from what World derives
 // (operations/controls.ts, control-standing.ts, proposals.ts) and what the
@@ -17,42 +21,6 @@ export const SELECTION_TIMEOUT_MS = 30_000
 export const ATTRIBUTION_MS = 5 * 60_000
 /** A position reads as an option's state within this fraction of its travel. */
 const POSITION_TOLERANCE = 0.05
-
-/**
- * How long after a command its equipment may still be travelling before it
- * reads as not followed: its declared stroke or run-up time and a margin of a
- * quarter of it, at least 2 s (plan QA-6) [judgement].
- */
-export const travelAllowanceMs = (travelMs: number): number => travelMs + Math.max(2_000, travelMs / 4)
-
-/** One offered control as World lists it for an item: the derivation, where each option's rules stand now, and its declared travel time. */
-export interface ListedControl {
-  readonly control: OfferedControl
-  /** optionStanding for each option, in option order. */
-  readonly standing: ReadonlyArray<OptionStanding>
-  /** The declared stroke or run-up time the equipment takes to follow; null where the model declares none (it is then never judged not followed). */
-  readonly travelMs: number | null
-}
-
-/** One drawn item's controls as World lists them. */
-export interface ListedItem {
-  readonly id: string
-  readonly label: string
-  readonly offered: ReadonlyArray<ListedControl>
-  readonly withheld: ReadonlyArray<WithheldControl>
-}
-
-/** An accepted command, as the Plant's operations log keeps it. */
-export interface OperationRecord {
-  readonly commandId: string
-  readonly path: VariablePath
-  readonly value: ProcessVariableValue
-  readonly origin: OperationOrigin
-  readonly actorId: string
-  readonly elapsedMs: number
-  readonly kind: 'write' | 'ramp' | 'approval'
-  readonly proposalId?: string
-}
 
 /** The Plant as the latest sample reads it. */
 export interface OperationNow {
@@ -87,6 +55,8 @@ export interface OptionView {
   readonly opposing: ReadonlyArray<string>
   /** The protection actuation that stands against it: the command is refused while it stands (QA-2). */
   readonly heldBy: string | null
+  /** How long the equipment takes to follow it, as its kind declares; null where none is declared (its state is awaited, never judged not followed). */
+  readonly travelMs: number | null
   /** The equipment's isolation input stands: it stays shut whatever this option demands. */
   readonly isolated: string | null
 }
@@ -111,12 +81,7 @@ export interface ItemControlView {
   readonly controls: ReadonlyArray<ControlView>
   /** Demands a controller holds, read-only: "AUTO · SG-A-LVL-NR held to 55 %". */
   readonly auto: ReadonlyArray<string>
-  /**
-   * What the item withholds besides, with why: demands, set points, isolation
-   * inputs. A scenario's fault or boundary input is never named on an operator
-   * display, which would tell where a malfunction can sit (research-operation
-   * §4.2): it is the instructor's.
-   */
+  /** What the item withholds besides, with why: demands, set points, isolation inputs (a fault or boundary input is never listed: controls.ts). */
   readonly withheld: ReadonlyArray<{ readonly name: string; readonly reason: string }>
 }
 
@@ -181,6 +146,7 @@ const optionView = (listed: ListedControl, option: ControlOption, index: number,
     heldBy: held === undefined ? null
       : `${held.label} holds ${control.target} ${wordFor(control, held.value)} since ${now.clock(held.atElapsedMs)}: overriding it is not offered here`,
     isolated: standing.isolated ? `Its isolation input stands: ${control.target} stays shut whatever it is commanded` : null,
+    travelMs: option.travelMs,
   }
 }
 
@@ -204,7 +170,7 @@ export const itemControlView = (item: ListedItem, now: OperationNow): ItemContro
     }
   }),
   auto: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [control.reason.text] : []),
-  withheld: item.withheld.flatMap(control => control.reason.kind === 'automatic' || control.reason.kind === 'instructor' ? [] : [{ name: control.tagId ?? String(control.path), reason: control.reason.text }]),
+  withheld: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [] : [{ name: control.tagId ?? String(control.path), reason: control.reason.text }]),
 })
 
 // --- Feedback ---------------------------------------------------------------
@@ -242,9 +208,9 @@ export const commandPhase = (control: ControlView, option: OptionView, sent: Sen
   const fraction = typeof reading === 'number' && typeof sent.fromState === 'number' && typeof goal === 'number' && sent.fromState !== goal
     ? Math.min(1, Math.max(0, (reading - sent.fromState) / (goal - sent.fromState)))
     : null
-  if (control.travelMs === null) return { kind: 'travelling', text: `${option.action}: accepted ${at}, awaiting its state`, fraction, by: null }
-  if (since <= travelAllowanceMs(control.travelMs)) {
-    return { kind: 'travelling', text: `${option.action}: travelling, expected by ${now.clock(sent.sentAtElapsedMs + control.travelMs)}`, fraction, by: now.clock(sent.sentAtElapsedMs + control.travelMs) }
+  if (option.travelMs === null) return { kind: 'travelling', text: `${option.action}: accepted ${at}, awaiting its state`, fraction, by: null }
+  if (since <= followAllowanceMs(option.travelMs)) {
+    return { kind: 'travelling', text: `${option.action}: travelling, expected by ${now.clock(sent.sentAtElapsedMs + option.travelMs)}`, fraction, by: now.clock(sent.sentAtElapsedMs + option.travelMs) }
   }
   return { kind: 'notFollowed', text: `Not followed: CMD ${option.word}, ${control.now ?? 'state unknown'} since ${at}` }
 }
@@ -335,7 +301,7 @@ export const proposalCard = (
   const permitted = review?.permitted ?? false
   const changed = review?.changed ?? false
   const other = control.options.find(candidate => candidate.key !== option.key)
-  const travel = control.travelMs === null ? 'no travel time is declared' : `within ${Math.round(control.travelMs / 1_000)} s`
+  const travel = option.travelMs === null ? 'no travel time is declared' : option.travelMs === 0 ? 'at once' : `within ${Math.round(option.travelMs / 1_000)} s`
   const toState = listed.control.options[index]!.state ?? null
   return {
     id: proposal.id,
@@ -461,7 +427,7 @@ export const itemBadges = (
     return option === undefined ? [] : [{ control, option, record }]
   })
   const travelling = latest.filter(({ control, option, record }) => control.form !== 'pushbutton' && control.statePath !== undefined && !option.current
-    && control.travelMs !== null && now.elapsedMs - record.elapsedMs <= travelAllowanceMs(control.travelMs))
+    && option.travelMs !== null && now.elapsedMs - record.elapsedMs <= followAllowanceMs(option.travelMs))
   const done = latest.filter(({ control, option, record }) => (control.form === 'pushbutton' || option.current) && now.elapsedMs - record.elapsedMs <= ATTRIBUTION_MS)
     .sort((left, right) => right.record.elapsedMs - left.record.elapsedMs)
   const moving = travelling[0]
