@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { coreModuleIds, moduleDefinitionCollectionSchema, moduleRegistrationSchema } from '@leitbild/contracts'
+import {
+  coreModuleIds,
+  featuredDefinitionCatalogSchema,
+  moduleDefinitionCollectionSchema,
+  moduleFeaturedDefinitionCollectionSchema,
+  moduleRegistrationSchema,
+} from '@leitbild/contracts'
 import { createWorkspaceHost } from '../src/host.ts'
 import type { ModuleGateway } from '../src/module-gateway.ts'
 import { createWorkspaceHostServer } from '../src/server.ts'
@@ -33,6 +39,15 @@ const gateway = (): ModuleGateway => ({
   resources: async () => ({ ok: true, value: { resources: [] } }),
   capabilities: async () => ({ ok: true, value: { capabilities: [] } }),
   invoke: async () => ({ ok: true, value: { result: null } }),
+  featuredDefinitions: async moduleId => ({ ok: true, value: moduleFeaturedDefinitionCollectionSchema.parse({ definitions: moduleId === 'world' ? [{
+    definition: { moduleId, type: 'world.scenario', id: 'test-scenario' },
+    revisionId: 'revision-0123456789abcdef0123456789abcdef',
+    title: 'Test Scenario',
+    summary: 'A short test scenario.',
+    about: 'A short test scenario that shows the featured catalogue.',
+    tags: ['Test'],
+    previews: [{ alt: 'Test map', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/test.webp', width: 1600 }] }],
+  }] : [] }) }),
 })
 
 const startHost = () => {
@@ -59,6 +74,21 @@ describe('Leitbild server', () => {
     const stale=await fetch(url,{headers:{'If-None-Match':'"old-catalog"'}})
     expect(stale.status).toBe(200)
   })
+  test('serves the featured catalogue without a Workspace and revalidates it by ETag', async () => {
+    const { host, baseUrl } = startHost()
+    const first = await fetch(`${baseUrl}/api/featured-definitions`)
+    expect(first.status).toBe(200)
+    const catalog = featuredDefinitionCatalogSchema.parse(await first.json())
+    expect(catalog.modules.map(item => [String(item.moduleId), item.status])).toEqual([['world', 'ready'], ['agents', 'ready']])
+    expect(catalog.definitions.map(item => String(item.definition.id))).toEqual(['test-scenario'])
+    expect(host.list()).toHaveLength(0)
+    const etag = first.headers.get('etag')
+    expect(etag).toBeTruthy()
+    const repeated = await fetch(`${baseUrl}/api/featured-definitions`, { headers: { 'If-None-Match': etag! } })
+    expect(repeated.status).toBe(304)
+    expect(await repeated.text()).toBe('')
+  })
+
   test('shows onboarding for zero Workspaces without implicit creation', async () => {
     const { host, baseUrl } = startHost()
     const response = await fetch(`${baseUrl}/`, { redirect: 'manual' })

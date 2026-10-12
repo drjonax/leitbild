@@ -22,8 +22,9 @@ const createModule = (moduleId: ModuleId) => {
     manifestRequests: number
     invokeFailure?: { readonly status: number; readonly code: string; readonly message: string }
     invokeDelayMs?: number
+    featured: unknown
     workspaces: Set<string>
-  } = { available: true, failLeave: false, manifestRequests: 0, workspaces: new Set<string>() }
+  } = { available: true, failLeave: false, manifestRequests: 0, featured: { definitions: [] }, workspaces: new Set<string>() }
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -45,6 +46,7 @@ const createModule = (moduleId: ModuleId) => {
           ui: { workspace: `/workspaces/{workspaceId}/${moduleId}` },
         })
       }
+      if (url.pathname === `/internal/${moduleId}/featured-definitions`) return Response.json(state.featured)
       if (url.pathname.endsWith('/invoke') && state.invokeDelayMs) await Bun.sleep(state.invokeDelayMs)
       const root = url.pathname.match(new RegExp(`^/internal/${moduleId}/workspaces/([^/]+)$`))
       if (root && request.method === 'PUT') {
@@ -116,6 +118,17 @@ const createModule = (moduleId: ModuleId) => {
     registration: moduleRegistrationSchema.parse({ moduleId, internalBaseUrl: `http://127.0.0.1:${server.port}`, manifestPath: '/manifest' }),
   }
 }
+
+const featuredScenario = (overrides: Record<string, unknown> = {}) => ({
+  definition: { moduleId: 'world', type: 'world.scenario', id: 'test-scenario' },
+  revisionId: 'revision-0123456789abcdef0123456789abcdef',
+  title: 'Test Scenario',
+  summary: 'A short test scenario.',
+  about: 'A short test scenario that shows the featured catalogue.',
+  tags: ['Test'],
+  previews: [{ alt: 'Test map', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/test.webp', width: 1600 }] }],
+  ...overrides,
+})
 
 const createFixture = () => {
   const modules = coreModuleIds.map(createModule)
@@ -220,6 +233,47 @@ describe('Leitbild Workspace Host', () => {
     store.close()
   })
 
+
+  test('aggregates every Module\'s featured Definitions without any Workspace', async () => {
+    const { modules, host, store } = createFixture()
+    try {
+      modules.find(item => item.registration.moduleId === 'world')!.state.featured = { definitions: [featuredScenario()] }
+      const catalog = await host.featuredDefinitions()
+      expect(catalog.modules).toEqual(coreModuleIds.map(moduleId => ({ moduleId, status: 'ready' })))
+      expect(catalog.definitions.map(item => `${item.definition.moduleId}:${item.definition.id}@${item.revisionId}`))
+        .toEqual(['world:test-scenario@revision-0123456789abcdef0123456789abcdef'])
+      expect(host.list()).toEqual([])
+      expect(modules.every(item => item.state.workspaces.size === 0)).toBe(true)
+    } finally { store.close() }
+  })
+
+  test('reports each Module\'s featured outcome instead of dropping a failed Module', async () => {
+    const { modules, host, store } = createFixture()
+    try {
+      const world = modules.find(item => item.registration.moduleId === 'world')!
+      const agents = modules.find(item => item.registration.moduleId === 'agents')!
+      world.state.featured = { definitions: [featuredScenario()] }
+      agents.state.available = false
+      const offline = await host.featuredDefinitions()
+      expect(offline.modules.find(item => item.moduleId === 'agents')).toMatchObject({ status: 'failed', failure: { code: 'module_discovery_failed' } })
+      expect(offline.definitions).toHaveLength(1)
+
+      agents.state.available = true
+      agents.state.featured = { definitions: [featuredScenario()] }
+      const foreign = await host.featuredDefinitions()
+      expect(foreign.modules.find(item => item.moduleId === 'agents')).toMatchObject({
+        status: 'failed', failure: { code: 'module_contract_invalid', message: 'Module agents featured a Definition owned by world' },
+      })
+      expect(foreign.definitions.map(item => String(item.definition.moduleId))).toEqual(['world'])
+
+      world.state.featured = { definitions: [featuredScenario({
+        previews: [{ alt: 'Test map', width: 1600, height: 1000, sources: [{ path: '/assets/host/test.webp', width: 1600 }] }],
+      })] }
+      const outside = await host.featuredDefinitions()
+      expect(outside.modules.find(item => item.moduleId === 'world')).toMatchObject({ status: 'failed', failure: { code: 'module_contract_invalid' } })
+      expect(outside.definitions).toEqual([])
+    } finally { store.close() }
+  })
 
   test('keeps a Workspace visible when any Module cleanup fails', async () => {
     const { modules, host, store } = createFixture()

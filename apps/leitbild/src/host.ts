@@ -2,6 +2,7 @@ import {
   capabilityIdSchema,
   coreModuleIds,
   createWorkspaceInputSchema,
+  featuredDefinitionCatalogSchema,
   moduleIdSchema,
   moduleProvisioningStateSchema,
   renameWorkspaceInputSchema,
@@ -14,6 +15,7 @@ import {
   type AccessContext,
   type CapabilityId,
   type CreateWorkspaceInput,
+  type FeaturedDefinitionCatalog,
   type InvokeCapabilityInput,
   type ModuleId,
   type ModuleProvisioningState,
@@ -38,6 +40,8 @@ export interface WorkspaceHost {
   readonly definitions: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceDefinitionCatalog>
   readonly resources: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceResourceCatalog>
   readonly capabilities: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceCapabilityCatalog>
+  /** Every installed Module's featured Definitions, with one outcome per Module; no Workspace involved. */
+  readonly featuredDefinitions: () => Promise<FeaturedDefinitionCatalog>
   readonly invoke: (id: WorkspaceId, capabilityId: CapabilityId, input: InvokeCapabilityInput, access: AccessContext, signal?: AbortSignal) => Promise<import('@leitbild/contracts').ModuleCapabilityInvocationResult>
   readonly installedModuleIds: () => ReadonlyArray<ModuleId>
 }
@@ -276,6 +280,28 @@ export const createWorkspaceHost = (config: {
         return item.result.value.capabilities
       })
       return workspaceCapabilityCatalogSchema.parse({ workspaceId: id, modules: outcomes, capabilities })
+    },
+    featuredDefinitions: async () => {
+      const results = await Promise.all(installedModuleIds.map(async moduleId => {
+        const result = await config.modules.featuredDefinitions(moduleId)
+        // A Module may feature only its own Definitions; the contract already
+        // keeps each preview inside its Definition Module's /assets/<moduleId>/.
+        const foreign = result.ok ? result.value.definitions.find(featured => featured.definition.moduleId !== moduleId) : undefined
+        return foreign === undefined ? { moduleId, result } : {
+          moduleId,
+          result: { ok: false as const, failure: {
+            code: 'module_contract_invalid',
+            message: `Module ${moduleId} featured a Definition owned by ${foreign.definition.moduleId}`,
+            retryable: false,
+          } },
+        }
+      }))
+      return featuredDefinitionCatalogSchema.parse({
+        modules: results.map(item => item.result.ok
+          ? { moduleId: item.moduleId, status: 'ready' as const }
+          : { moduleId: item.moduleId, status: 'failed' as const, failure: item.result.failure }),
+        definitions: results.flatMap(item => item.result.ok ? item.result.value.definitions : []),
+      })
     },
     invoke: invokeCapability,
     installedModuleIds: () => config.modules.list().map(registration => registration.moduleId),

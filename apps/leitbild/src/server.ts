@@ -45,6 +45,15 @@ const serveUi = async (pathname: string, uiDistPath: string): Promise<Response |
   })
 }
 
+// An exact content ETag lets a client revalidate a catalogue it already holds.
+const revalidatedJson = (request: Request, body: string, cacheControl: string): Response => {
+  const etag = '"' + new Bun.CryptoHasher('sha256').update(body).digest('hex') + '"'
+  const headers = { ETag: etag, 'Cache-Control': cacheControl, 'Content-Type': 'application/json' }
+  return request.headers.get('if-none-match') === etag
+    ? new Response(null, { status: 304, headers })
+    : new Response(body, { headers })
+}
+
 const jsonError = (
   status: number,
   code: string,
@@ -98,6 +107,9 @@ export const createWorkspaceHostServer = (config: {
 
         if (url.pathname.startsWith('/api/knowledge/') && request.method === 'GET') return knowledgeResponse(request)
 
+        if (url.pathname === '/api/featured-definitions' && request.method === 'GET') {
+          return revalidatedJson(request, JSON.stringify(await config.host.featuredDefinitions()), 'public, no-cache')
+        }
         if (url.pathname === '/api/modules' && request.method === 'GET') {
           return Response.json({ modules: config.host.installedModuleIds().map(moduleId => ({ id: moduleId })) })
         }
@@ -146,12 +158,7 @@ export const createWorkspaceHostServer = (config: {
         if (capabilitiesMatch && request.method === 'GET') {
           const workspaceId = workspaceIdSchema.parse(decodeURIComponent(capabilitiesMatch[1] ?? ''))
           const moduleId = url.searchParams.has('moduleId') ? moduleIdSchema.parse(url.searchParams.get('moduleId')) : undefined
-          const body = JSON.stringify(await config.host.capabilities(workspaceId, moduleId))
-          const etag = '"' + new Bun.CryptoHasher('sha256').update(body).digest('hex') + '"'
-          const headers = { ETag: etag, 'Cache-Control': 'private, no-cache', 'Content-Type': 'application/json' }
-          return request.headers.get('if-none-match') === etag
-            ? new Response(null, { status: 304, headers })
-            : new Response(body, { headers })
+          return revalidatedJson(request, JSON.stringify(await config.host.capabilities(workspaceId, moduleId)), 'private, no-cache')
         }
 
         const moduleMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/modules\/([^/]+)(\/retry)?$/)
