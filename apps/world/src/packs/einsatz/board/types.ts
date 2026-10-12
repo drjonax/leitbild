@@ -338,7 +338,7 @@ export interface ContactSide {
 export interface ContactsView {
   readonly heading: string
   readonly sides: ReadonlyArray<ContactSide>
-  /** What detection is and is not, shown as a line under the list's heading. */
+  /** What detection is and is not: the heading's tooltip, for a pointer; never a line in the player's way. */
   readonly hover: string
 }
 

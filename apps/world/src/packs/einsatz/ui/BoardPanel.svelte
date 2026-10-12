@@ -10,8 +10,8 @@
   import type { ObjectId } from '../../../core/model/index.ts'
   import { shownBesideBoard } from './board-camera.ts'
   import { boardIconIds, createBoardIcons } from './board-icons.ts'
-  import { boardBottomClearancePx, boardChromePx, boardEdgeGapPx, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx, listRowsTemplate, rowBoxStyle } from './board-layout.ts'
-  import { logTime, stripHeading } from './board-presenter.ts'
+  import { boardBottomClearancePx, boardChromePx, boardEdgeGapPx, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx, foldedContactsPx, listRowsTemplate, rowBoxStyle } from './board-layout.ts'
+  import { contactsFolded, contactsSummary, logTime, stripHeading } from './board-presenter.ts'
   import { createBoardSession, type BoardSession } from './board-session.ts'
   import { createBoardTone, type BoardTone } from './board-tone.ts'
   import { boardMapOrders } from './map-orders.ts'
@@ -66,7 +66,9 @@
   })
   // Until the configuration arrives the Board takes the work list's width.
   const layout = $derived(boardLayoutFor(surfaceWidth, view?.arrangement.lead ?? 'work-list'))
-  const sections = $derived(view === null ? [] : boardSections(view.arrangement))
+  // Folded Contacts leave the lists' grid for one line below it.
+  const folded = $derived(view !== null && contactsFolded(view))
+  const sections = $derived(view === null ? [] : boardSections(view.arrangement).filter(section => section !== 'contacts' || !folded))
   const heading = $derived(view === null ? boardWords.board : stripHeading(view))
   const missingArtwork = $derived.by(() => {
     void revision
@@ -274,6 +276,9 @@
         {/if}
       {/each}
     </div>
+    {#if folded && view.contacts !== null}
+      <p class="contacts" title={view.contacts.hover} style:height={`${foldedContactsPx}px`}><strong>{view.contacts.heading}</strong> {contactsSummary(view.contacts)}</p>
+    {/if}
     {#if view.alerts.length > 0}
       <ul class="alerts" aria-label={view.headings.alerts} style:max-height={`${boardChromePx.alerts}px`}>
         {#each view.alerts as alert, index (index)}
@@ -328,6 +333,8 @@
   .problem { flex: none; margin: 0; color: var(--critical); }
   .problem button { min-height: 44px; margin-left: 6px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: inherit; cursor: pointer; }
   .body { flex: 1; min-height: 0; display: grid; }
+  .contacts { flex: none; box-sizing: border-box; margin: 0; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .contacts strong { color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
   .artwork { flex: none; margin: 0; color: var(--warning); font-size: 11px; }
   .log { flex: none; box-sizing: border-box; overflow: auto; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 11px; line-height: 15px; }
   .num { font-variant-numeric: tabular-nums; }

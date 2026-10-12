@@ -5,9 +5,10 @@
 
   /**
    * The Contacts list: the screen's tracks, engageable first, each group
-   * nearest first; nothing collapsed, and what detection is shown as a line
-   * rather than on hover. A screen holding several sides' tracks shows each
-   * side under its label.
+   * nearest first. What detection is and is not is the heading's tooltip.
+   * A screen holding several sides' tracks shows each side under its label.
+   * On a screen led by its work list, while nothing is engageable, the panel
+   * folds the list to one line (`contactsFolded`).
    */
   interface Props {
     readonly contacts: ContactsView
@@ -18,9 +19,8 @@
 </script>
 
 <section class="board-section" aria-label={contacts.heading}>
-  <h3>{contacts.heading}</h3>
+  <h3 title={contacts.hover}>{contacts.heading}</h3>
   <div class="scroll">
-  <p class="about">{contacts.hover}</p>
   {#each contacts.sides as side, sideIndex (sideIndex)}
     <div class="side" class:labelled={side.label !== null}>
       {#if side.label !== null}<h4 class="side-label">{side.label}</h4>{/if}
@@ -51,7 +51,6 @@
 <style>
   .board-section { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--heading-gap); }
   .scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 6px; }
-  .about { margin: 0; color: var(--muted); font-size: 11px; }
   h3 { margin: 0; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
   .side { display: grid; gap: 6px; }
   .side.labelled { padding-left: 6px; border-left: 2px solid var(--border); }

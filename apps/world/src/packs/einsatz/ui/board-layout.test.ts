@@ -5,7 +5,7 @@ import { defaultRailWidth } from '../../../ui/rail-state.ts'
 import { cameraPaddingFor, noMapCover } from '../../../ui/surface-panel-interaction.ts'
 import type { Arrangement } from '../board/types.ts'
 import { waitingAbove } from './reveal.ts'
-import { boardChromePx, boardEdgeGapPx, boardHeightFor, boardLayoutFor, boardMapCover, boardSections, listContentPx, listHeadingPx, listHeightsFor, listRowsTemplate, listsHeightFor, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
+import { boardChromePx, boardEdgeGapPx, boardHeightFor, foldedContactsPx, boardLayoutFor, boardMapCover, boardSections, listContentPx, listHeadingPx, listHeightsFor, listRowsTemplate, listsHeightFor, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
 
 const leads: ReadonlyArray<Arrangement['lead']> = ['work-list', 'map']
 
@@ -192,6 +192,26 @@ describe('Board layout', () => {
     // The text line, the row of buttons and one row of alternatives fit the bar.
     const barGap = Number(/gap: (\d+)px/.exec(rule(bar, '.bar'))?.[1])
     expect(rowBoxPx.line + 2 * barGap + 2 * tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
+  })
+
+  test('folded Contacts give Calls and Assets the height: at 960 × 720 and 1024 × 768 each shows more rows than beside a full Contacts list', () => {
+    for (const window of [720, 768]) {
+      const board = boardHeightFor(window - 44)
+      for (const alerts of [true, false]) {
+        const three = listHeightsFor(board, ['work', 'units', 'contacts'], alerts)
+        const folded = listHeightsFor(board, ['work', 'units'], alerts, {}, true)
+        expect(folded.work!).toBeGreaterThan(three.work!)
+        expect(folded.units!).toBeGreaterThan(three.units!)
+        expect(folded.work! + folded.units! + boardChromePx.gap + foldedContactsPx + boardChromePx.gap).toBeCloseTo(listsHeightFor(board, alerts), 6)
+      }
+    }
+    // At 1024 × 768 without alerts, two and a half calls and two and a half assets, where a full Contacts list left two of each.
+    const folded = listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], false, {}, true)
+    expect(visibleRows(folded.work!, 'work')).toBeGreaterThanOrEqual(2.5)
+    expect(visibleRows(folded.units!, 'units')).toBeGreaterThanOrEqual(2.5)
+    const panel = readFileSync(join(import.meta.dir, 'BoardPanel.svelte'), 'utf8')
+    expect(panel).toContain("boardSections(view.arrangement).filter(section => section !== 'contacts' || !folded)")
+    expect(panel).toContain('style:height={`${foldedContactsPx}px`}')
   })
 
   test('the lists follow the arrangement: the work list leads for queues, Contacts for map-led roles, and a list left out is not shown', () => {

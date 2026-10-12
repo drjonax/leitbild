@@ -8,7 +8,7 @@ import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { wordFor } from '../lexicon.ts'
 import { openModeViewer } from '../picture.ts'
 import { boardIconIds, createBoardIcons, svgImageSource } from './board-icons.ts'
-import { contactFacts, contactIconTone, logTime, stripHeading, unitFacts, unitIconTone, workFacts } from './board-presenter.ts'
+import { contactFacts, contactIconTone, contactsFolded, contactsSummary, logTime, stripHeading, unitFacts, unitIconTone, workFacts } from './board-presenter.ts'
 
 /**
  * What the Board panel arranges beyond the controller's view: each row's
@@ -131,6 +131,25 @@ describe('Board icons', () => {
       contacts: { heading: 'Tracks', sides: [side('A', [contactRow({ icon: 'shield' })], [contactRow({ id: 'track:a:2' })]), side('B', [], [contactRow({ id: 'track:b:1', icon: 'flag' })])], hover: '' },
     }
     expect(boardIconIds(withRows)).toEqual(['package', 'container', 'warehouse', 'shield', 'circle-question-mark', 'flag'])
+  })
+
+  test('Contacts folds to one line of counts on a screen led by Calls while nothing is engageable, and never on one led by Contacts', () => {
+    const side = (label: string | null, engageable: ReadonlyArray<ContactRow>, other: ReadonlyArray<ContactRow>): ContactSide => ({
+      label,
+      engageable: { heading: 'Engageable', rows: engageable, empty: engageable.length === 0 ? 'None' : null },
+      other: { heading: 'Other', rows: other, empty: other.length === 0 ? 'None' : null },
+    })
+    const quiet = { heading: 'Contacts', sides: [side(null, [], [contactRow({ id: 'track:a:1' }), contactRow({ id: 'track:a:2' })])], hover: '' }
+    const callsLed = { lead: 'work-list', workList: true, unitBoard: true, contacts: true } as const
+    expect(contactsFolded({ arrangement: callsLed, contacts: quiet })).toBe(true)
+    expect(contactsSummary(quiet)).toBe('Engageable 0 · Other 2')
+    // Something to fire on unfolds the list.
+    const engageable = { ...quiet, sides: [side(null, [contactRow({ id: 'track:a:3' })], quiet.sides[0]!.other.rows)] }
+    expect(contactsFolded({ arrangement: callsLed, contacts: engageable })).toBe(false)
+    expect(contactsFolded({ arrangement: { ...callsLed, lead: 'map', workList: false }, contacts: quiet })).toBe(false)
+    expect(contactsFolded({ arrangement: { ...callsLed, contacts: false }, contacts: null })).toBe(false)
+    // Several sides' tracks are counted under each side's label.
+    expect(contactsSummary({ ...quiet, sides: [side('Blue', [], []), side('Red', [], [contactRow({ id: 'track:b:1' })])] })).toBe('Blue · Engageable 0 · Other 0 · Red · Engageable 0 · Other 1')
   })
 })
 

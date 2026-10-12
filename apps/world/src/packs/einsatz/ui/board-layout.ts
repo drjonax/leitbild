@@ -106,10 +106,13 @@ const shareOf = (sections: ReadonlyArray<BoardSection>, section: BoardSection): 
 export const listRowsTemplate = (sections: ReadonlyArray<BoardSection>): string =>
   sections.map((section, index) => index === sections.length - 1 ? 'minmax(0, 1fr)' : `fit-content(${+(shareOf(sections, section) * 100).toFixed(3)}%)`).join(' ')
 
-/** The lists' height on a Board this tall, gaps between the lists included, with the alerts strip shown or not. */
-export const listsHeightFor = (boardHeightPx: number, alerts: boolean): number => {
+/** Folded Contacts' one line below the lists: a heading's height. */
+export const foldedContactsPx = rowBoxPx.line + rowBoxPx.headingGap
+
+/** The lists' height on a Board this tall, gaps between the lists included, with the alerts strip shown or not, and Contacts folded to its line or not. */
+export const listsHeightFor = (boardHeightPx: number, alerts: boolean, foldedContacts = false): number => {
   const { padding, gap, actionBar, statusLine, log } = boardChromePx
-  return boardHeightPx - 2 * padding - (alerts ? boardChromePx.alerts + gap : 0) - actionBar - statusLine - log - 3 * gap
+  return boardHeightPx - 2 * padding - (alerts ? boardChromePx.alerts + gap : 0) - (foldedContacts ? foldedContactsPx + gap : 0) - actionBar - statusLine - log - 3 * gap
 }
 
 /**
@@ -118,8 +121,8 @@ export const listsHeightFor = (boardHeightPx: number, alerts: boolean): number =
  * (unbounded when absent): every list but the last takes that up to its
  * fair share, the last takes the rest.
  */
-export const listHeightsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, alerts: boolean, content: Readonly<Partial<Record<BoardSection, number>>> = {}): Readonly<Partial<Record<BoardSection, number>>> => {
-  const lists = listsHeightFor(boardHeightPx, alerts)
+export const listHeightsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, alerts: boolean, content: Readonly<Partial<Record<BoardSection, number>>> = {}, foldedContacts = false): Readonly<Partial<Record<BoardSection, number>>> => {
+  const lists = listsHeightFor(boardHeightPx, alerts, foldedContacts)
   const tracks = lists - boardChromePx.gap * Math.max(0, sections.length - 1)
   const heights: Partial<Record<BoardSection, number>> = {}
   let used = 0
