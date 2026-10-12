@@ -329,12 +329,6 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   return row.texts.includes(word) ? word : ''
 }
 
-/** The words a power line's far end says of its state after its name ("from UAT · LIVE"), as a supply's symbol says it. */
-export const POWER_STATE_WORDS: ReadonlyArray<string> = ['LIVE', 'DEAD', '?']
-
-/** A power line's far end in words: LIVE, DEAD, or ? where it is not known. */
-export const powerStateWord = (look: 'live' | 'dead' | 'unknown'): string => look === 'live' ? 'LIVE' : look === 'dead' ? 'DEAD' : '?'
-
 /** What a power stub says of lines to or from equipment that declares no energized state: supplied, or no supply. */
 export const SUPPLY_WORDS: ReadonlyArray<string> = ['supplied', 'no supply', '?']
 

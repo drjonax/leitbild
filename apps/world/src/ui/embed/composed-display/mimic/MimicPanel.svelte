@@ -4,7 +4,7 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { commandsHeld, indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, flapCount, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, shutdownDemanded, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { drawnLook, flapCount, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, rowText, shutdownDemanded, stubWordText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
@@ -630,8 +630,8 @@
         {/each}
         {#each mimic.stubs as stub (stub.id)}
           {#if stub.textBox !== null}
-            <!-- A power line's far end says on a line under its name whether it is live. -->
-            <span class="stub tag" style={`left:${stub.textBox.x}px;top:${stub.textBox.y}px`}>{stub.text}{#if stub.states.some(state => state.kind === 'power')}<br />{powerStateWord(pipeStatesLook(stub.states, index) as 'live' | 'dead' | 'unknown')}{/if}</span>
+            <!-- A power line's far end says on a line under its name whether the equipment it names is live, never the line towards it. -->
+            <span class="stub tag" style={`left:${stub.textBox.x}px;top:${stub.textBox.y}px`}>{stub.text}{#if stub.word !== null}<br />{stubWordText(stub.word, index)}{/if}</span>
           {/if}
         {/each}
       </div>
