@@ -789,7 +789,7 @@ export const createBoardController = (options: {
    * that proposal: once a snapshot or an answer changes what the commit
    * would send, the old call is never confirmed. A new proposal that asks
    * again replaces it, one that asks nothing lets it go, and the line says
-   * why ("Patrol 1 is free now").
+   * why ("U2 is free now").
    */
   const followProposal = (): void => {
     if (confirmation?.fromProposal !== true) return
