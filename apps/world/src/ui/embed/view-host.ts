@@ -1,17 +1,26 @@
 // An embedded view's end of World's process display window
 // (display-frame-protocol.ts). Framed by the window, a view learns whether it
-// is shown and at what zoom, tells the window how much room its content needs,
-// and hands zoom gestures made inside it to the window instead of zooming the
-// browser page. A view that no window presents (a page of its own, or a
-// display shown inline in a chat answer) is shown at 1:1 and only says once
-// that it listens.
+// is shown, at what zoom and what Back returns to, tells the window how much
+// room its content needs, hands zoom gestures made inside it to the window
+// instead of zooming the browser page, and asks it to open a display after
+// it. A view that no window presents (a page of its own, or a display shown
+// inline in a chat answer) is shown at 1:1 and only says once that it
+// listens; inline in a chat answer whose page relays to the Workspace's
+// window (it says so with the contract's view-host message), it asks that
+// page to open a display there.
+import { embeddedViewHostMessageSchema, type EmbeddedViewListing, type EmbeddedViewOpenMessage } from '@leitbild/contracts'
 import { parseDisplayFramePresentation, type DisplayFrameMessage } from './display-frame-protocol.ts'
 import { observeDisplayExtent, type DisplayExtent } from './display-extent.ts'
 
 export interface DisplayPresentation {
   readonly shown: boolean
   readonly zoom: number
+  /** For a display its window opened from another: that one's title, which Back returns to. */
+  readonly back?: string
 }
+
+/** Where a view opens a display it names: its window, or the Workspace's window through the chat page that relays. */
+export type DisplayOpening = 'window' | 'relay'
 
 /** How a view is presented until its window says otherwise, and always when it has none. */
 export const UNFRAMED_PRESENTATION: DisplayPresentation = { shown: true, zoom: 1 }
@@ -25,7 +34,7 @@ export interface ReceivedMessage {
 /** The page a view host runs in; a test passes its own. */
 export interface ViewHostPorts {
   /** The window framing this page; null for a page of its own. */
-  readonly parent: { readonly postMessage: (message: DisplayFrameMessage, targetOrigin: string) => void } | null
+  readonly parent: { readonly postMessage: (message: DisplayFrameMessage | EmbeddedViewOpenMessage, targetOrigin: string) => void } | null
   readonly origin: string
   readonly listen: (receive: (message: ReceivedMessage) => void) => () => void
   /** Says that the framing window sent something this view cannot read. */
@@ -37,14 +46,27 @@ export type ZoomStep = 'in' | 'out' | 'reset'
 export const createViewHost = (ports: ViewHostPorts) => {
   let presentation = UNFRAMED_PRESENTATION
   let presentedByWindow = false
+  let relayed = false
   let reported: string | null = null
   const subscribers = new Set<(presentation: DisplayPresentation) => void>()
   const onWindow = new Set<() => void>()
-  const post = (message: DisplayFrameMessage): void => ports.parent?.postMessage(message, ports.origin)
+  const openingSubscribers = new Set<(opening: DisplayOpening | null) => void>()
+  const post = (message: DisplayFrameMessage | EmbeddedViewOpenMessage): void => ports.parent?.postMessage(message, ports.origin)
+  const opening = (): DisplayOpening | null => presentedByWindow ? 'window' : relayed ? 'relay' : null
+  const openingChanged = (): void => {
+    for (const subscriber of [...openingSubscribers]) subscriber(opening())
+  }
 
   const receive = (message: ReceivedMessage): void => {
     // Only the framing window, on this origin, presents the view.
     if (ports.parent === null || message.source !== ports.parent || message.origin !== ports.origin) return
+    // A chat page that relays to the Workspace's window says so once it is hosted.
+    if (embeddedViewHostMessageSchema.safeParse(message.data).success) {
+      if (relayed) return
+      relayed = true
+      openingChanged()
+      return
+    }
     const next = parseDisplayFramePresentation(message.data)
     if (next === null) {
       ports.refused(message.data)
@@ -54,9 +76,10 @@ export const createViewHost = (ports: ViewHostPorts) => {
       presentedByWindow = true
       for (const started of [...onWindow]) started()
       onWindow.clear()
+      openingChanged()
     }
-    if (next.shown === presentation.shown && next.zoom === presentation.zoom) return
-    presentation = { shown: next.shown, zoom: next.zoom }
+    if (next.shown === presentation.shown && next.zoom === presentation.zoom && next.back === presentation.back) return
+    presentation = { shown: next.shown, zoom: next.zoom, ...(next.back === undefined ? {} : { back: next.back }) }
     for (const subscriber of [...subscribers]) subscriber(presentation)
   }
 
@@ -93,6 +116,26 @@ export const createViewHost = (ports: ViewHostPorts) => {
     requestZoom: (request: { readonly step: ZoomStep } | { readonly factor: number }): void => {
       if (!presentedByWindow) return
       post('step' in request ? { type: 'world:display-zoom', step: request.step } : { type: 'world:display-zoom', factor: request.factor })
+    },
+    /** Where a display this view names opens, called at once and on every change; null where it cannot open one. */
+    subscribeOpening: (subscriber: (opening: DisplayOpening | null) => void): (() => void) => {
+      subscriber(opening())
+      openingSubscribers.add(subscriber)
+      return () => { openingSubscribers.delete(subscriber) }
+    },
+    /**
+     * Opens a display after this one: in its window, or through the chat page
+     * as a listing of the Workspace's window. False where neither is there.
+     */
+    openDisplay: (request: { readonly state: string; readonly title: string; readonly listing: () => EmbeddedViewListing }): boolean => {
+      const where = opening()
+      if (where === 'window') post({ type: 'world:display-open', state: request.state, title: request.title })
+      else if (where === 'relay') post({ type: 'leitbild:view-open', view: request.listing() })
+      return where !== null
+    },
+    /** Back to the display the window opened this one from (DisplayPresentation.back). */
+    back: (): void => {
+      if (presentedByWindow && presentation.back !== undefined) post({ type: 'world:display-back' })
     },
   }
 }

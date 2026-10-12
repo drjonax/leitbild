@@ -20,6 +20,8 @@ import {
   type DeckPlant,
   type DeckRunJoin,
 } from '../src/ui/process-display/display-deck.ts'
+import { openedListing } from '../src/ui/embed/opened-display.ts'
+import { parseDisplayFrameMessage, parseDisplayFramePresentation } from '../src/ui/embed/display-frame-protocol.ts'
 
 const workspaceId = '1e828b43-37fc-4437-aa70-302d7f442ceb'
 const runId = 'run-1'
@@ -265,5 +267,37 @@ describe('mounted frames', () => {
     const mounted = mountedDeckEntries(frames, deck)
     expect(mounted[0]).toBe(deck[2]!)
     expect(mounted[0]).toMatchObject({ source: 'answer', listing: back[0] })
+  })
+})
+
+describe('a display opened from another', () => {
+  // C1 plan E5: a safety function chip or a banner label on an answer's display names equipment; the window shows its
+  // detail as a display of its own, captioned with where it came from, and its Back returns there.
+  const detail = JSON.stringify({ detail: { plantId: 'unit-a', components: ['sgA', 'sgB'] } })
+
+  test('is a self-contained listing on the same Run, with a stable key and a caption saying where it came from', () => {
+    const from = listing('advice')
+    const opened = openedListing({ key: answerDeckKey('advice'), title: from.envelope.title, envelope: from.envelope }, { state: detail, title: 'Heat sink: deciding equipment' })
+    expect(opened.envelope).toEqual({ ...from.envelope, title: 'Heat sink: deciding equipment', state: detail })
+    expect(opened.caption).toBe('From Display advice')
+    expect(openedListing({ key: answerDeckKey('advice'), title: from.envelope.title, envelope: from.envelope }, { state: detail, title: 'Other' }).key).toBe(opened.key)
+    expect(openedListing({ key: answerDeckKey('other'), title: from.envelope.title, envelope: from.envelope }, { state: detail, title: 'Other' }).key).not.toBe(opened.key)
+    // The window shows it though the conversation does not list it, as a generated display.
+    const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [from], shown: null })
+    const entry = requestedDeckEntry(deck, runId, { kind: 'listing', listing: opened })!
+    expect(entry).toMatchObject({ source: 'answer', kind: 'generated', listed: false, caption: 'From Display advice' })
+    const shown = shownDeckEntry(deck, entry, [from])
+    expect(keys(buildDisplayDeck({ simulationRunId: runId, plants, listings: [from], shown }))).toContain(entry.key)
+  })
+
+  test('a frame asks for it, and for Back, only in the protocol\'s exact words', () => {
+    expect(parseDisplayFrameMessage({ type: 'world:display-open', state: detail, title: 'Reactor Core' })).toEqual({ type: 'world:display-open', state: detail, title: 'Reactor Core' })
+    expect(parseDisplayFrameMessage({ type: 'world:display-open', state: detail })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-open', state: '', title: 'Reactor Core' })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-open', state: detail, title: 'x'.repeat(121) })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-back' })).toEqual({ type: 'world:display-back' })
+    expect(parseDisplayFrameMessage({ type: 'world:display-back', to: 'x' })).toBeNull()
+    expect(parseDisplayFramePresentation({ type: 'world:display-frame', shown: true, zoom: 1, back: 'Display advice' })).toEqual({ type: 'world:display-frame', shown: true, zoom: 1, back: 'Display advice' })
+    expect(parseDisplayFramePresentation({ type: 'world:display-frame', shown: true, zoom: 1, back: '' })).toBeNull()
   })
 })

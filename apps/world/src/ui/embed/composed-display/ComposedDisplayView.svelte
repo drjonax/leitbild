@@ -4,8 +4,10 @@
   import { composedDisplayLayout, composedTrendStripHeights, detailDisplayStateSchema, processDisplayStatePlantId, processDisplayStateSchema } from '../../../packs/process-plant/displays/composition.ts'
   import type { MimicDrawnItem } from '../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { simulationClock } from '../../../packs/process-plant/displays/display-text.ts'
+  import type { SafetyFunctionChip } from '../../../packs/process-plant/displays/safety-function-content.ts'
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
-  import { hostDisplayFrame } from '../view-host.ts'
+  import { openedListing } from '../opened-display.ts'
+  import { embeddedDisplayFrame, hostDisplayFrame, type DisplayOpening } from '../view-host.ts'
   import { composedDisplayClient } from './composed-display-client.ts'
   import { createComposedDisplaySession, type ComposedDisplaySnapshot } from './composed-display-session.ts'
   import AlarmsPanel from './AlarmsPanel.svelte'
@@ -28,6 +30,7 @@
   const parsed = $derived(processDisplayStateSchema.parse(JSON.parse(envelope.state)))
   const advice = $derived('composition' in parsed ? parsed : null)
   const plantId = $derived(processDisplayStatePlantId(parsed))
+  const runId = $derived(simulationRunIdSchema.parse(envelope.subject.id))
   const title = $derived(advice?.composition.title ?? (snapshot?.view?.kind === 'detail' ? snapshot.view.display.title : envelope.title))
 
   // A sample older than this marks the view stale (polling is 1 Hz).
@@ -81,7 +84,14 @@
       setVisible: visible => active.setVisible(visible),
       presented: () => { active.resume(); lastInputWallMs = Date.now() },
     })
+    // Where a display this one names opens (its window, or the Workspace's window through a chat page that relays),
+    // and what its window's Back returns to.
+    const host = embeddedDisplayFrame()
+    const stopOpening = host.subscribeOpening(where => { opensIn = where })
+    const stopPresentation = host.subscribe(presentation => { windowBack = presentation.back ?? null })
     return () => {
+      stopOpening()
+      stopPresentation()
       active.close()
       clearInterval(clock)
       document.removeEventListener('pointerdown', interacted)
@@ -104,8 +114,16 @@
   let shownState: string | null = null
   let opening = $state(false)
   let openError = $state<string | null>(null)
+  // Where a display named here opens; null where none can (a chat page that does not relay).
+  let opensIn = $state<DisplayOpening | null>(null)
+  // For a display its window opened from another: that one's title, which Back returns to.
+  let windowBack = $state<string | null>(null)
+  // What a chip or banner label names that cannot be drawn: said in place, with the tree path that led to it.
+  let refusal = $state<{ readonly name: string; readonly reason: string; readonly path: string | null } | null>(null)
 
-  const show = async (next: string, nextTrail: typeof trail, name: string): Promise<void> => {
+  const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
+
+  const show = async (next: string, nextTrail: typeof trail, name: string, refused?: (reason: string) => void): Promise<void> => {
     if (session === undefined || opening) return
     opening = true
     openError = null
@@ -114,12 +132,58 @@
       shownState = next
       systemFilter = null
       trail = nextTrail
+      refusal = null
     } catch (error) {
-      openError = `${name} cannot be opened: ${error instanceof Error ? error.message : String(error)}`
+      if (refused === undefined) openError = `${name} cannot be opened: ${messageOf(error)}`
+      else refused(messageOf(error))
     } finally {
       opening = false
     }
   }
+
+  /**
+   * Opens the equipment a safety function chip or a first-out banner label
+   * names (C1 plan E5, HF-21): a generated display opens it in place, Back
+   * returning; an answer's display opens it in the display window, after
+   * itself, never in the chat. Equipment that cannot be drawn is never
+   * landed on: the view says so in place, with the tree path that named it.
+   */
+  const openEquipment = async (target: { readonly components: ReadonlyArray<string>; readonly name: string; readonly path: string | null }): Promise<void> => {
+    if (view === undefined || session === undefined || opening) return
+    const next = JSON.stringify(detailDisplayStateSchema.parse({ detail: { plantId, components: [...target.components] } }))
+    const refused = (reason: string): void => { refusal = { name: target.name, reason, path: target.path } }
+    if (advice === null) {
+      const current = shownState ?? envelope.state
+      if (next === current) return
+      await show(next, [...trail, { state: current, title: view.display.title }], target.name, refused)
+      return
+    }
+    opening = true
+    try {
+      // Drawn for this view's room first: what cannot be drawn here is said here, not landed on in the window.
+      await composedDisplayClient.view(runId, plantId, next, { width: window.innerWidth, height: window.innerHeight })
+      refusal = null
+      const opened = embeddedDisplayFrame().openDisplay({
+        state: next,
+        title: target.name,
+        listing: () => openedListing({ key: `${envelope.subject.id}\n${envelope.state}`, title: envelope.title, envelope }, { state: next, title: target.name }),
+      })
+      if (!opened) refused('no display window can show it from here')
+    } catch (error) {
+      refused(messageOf(error))
+    } finally {
+      opening = false
+    }
+  }
+  const openChip = (chip: SafetyFunctionChip): void => {
+    if (chip.opens !== undefined) void openEquipment({ components: chip.opens, name: `${chip.label}: deciding equipment`, path: chip.text })
+  }
+  const openGroup = (name: string): void => {
+    const ends = annunciation?.ends[name]
+    if (ends !== undefined) void openEquipment({ components: ends, name, path: null })
+  }
+  // A generated display opens in place; an answer's display where a window can show what it names.
+  const canOpen = $derived(advice === null || opensIn !== null)
 
   const openItem = (item: MimicDrawnItem): void => {
     if (view === undefined) return
@@ -132,7 +196,10 @@
   const back = (): void => {
     const previous = trail.at(-1)
     if (previous !== undefined) void show(previous.state, trail.slice(0, -1), previous.title)
+    else if (windowBack !== null) embeddedDisplayFrame().back()
   }
+  // Back along what this display opened in place, else to the display its window opened it from.
+  const backTitle = $derived(trail.at(-1)?.title ?? windowBack)
   const opens = $derived(advice === null ? openItem : undefined)
 
   // A unit overview's annunciator tiles narrow its alarm list to one system.
@@ -233,8 +300,14 @@
     {:else if openError !== null}
       {openError}
     {:else if (activeTrip !== undefined || actuated.length > 0) && snapshot?.latest !== undefined}
-      {#if activeTrip !== undefined}<span class="tripped">{tripName} · {activeTrip.title} · {alarmAge(snapshot.latest.plantElapsedMs, activeTrip.firstActiveElapsedMs)} ago</span>{/if}
-      {#if actuated.length > 0}<span class="actuated">ACTUATED: {actuated.join(' · ')}</span>{/if}
+      {#if activeTrip !== undefined}
+        {#if canOpen && annunciation?.ends[tripName] !== undefined}
+          <button type="button" class="tripped label" title={`${tripName}: open what it commands`} onclick={() => openGroup(tripName)}>{tripName} · {activeTrip.title} · {alarmAge(snapshot.latest.plantElapsedMs, activeTrip.firstActiveElapsedMs)} ago</button>
+        {:else}
+          <span class="tripped">{tripName} · {activeTrip.title} · {alarmAge(snapshot.latest.plantElapsedMs, activeTrip.firstActiveElapsedMs)} ago</span>
+        {/if}
+      {/if}
+      {#if actuated.length > 0}<span class="actuated">ACTUATED: {#each actuated as name, index (name)}{index === 0 ? '' : ' · '}{#if canOpen && annunciation?.ends[name] !== undefined}<button type="button" class="label" title={`${name}: open what it commands`} onclick={() => openGroup(name)}>{name}</button>{:else}{name}{/if}{/each}</span>{/if}
     {:else if snapshot?.phase.kind === 'suspended'}
       Updates paused after 15 minutes without interaction. <button type="button" onclick={() => session?.resume()}>Resume</button>
     {:else if snapshot?.phase.kind === 'live' && snapshot.sampleError !== null}
@@ -251,8 +324,8 @@
 
 <article class="card" class:overview class:opening aria-busy={opening} aria-label={advice === null ? title : `AI-composed view: ${title}`} bind:clientWidth={cardWidth}>
   <header>
-    {#if trail.length > 0}
-      <button type="button" class="back" onclick={back} disabled={opening} title={`Back to ${trail.at(-1)!.title} (Esc)`}>‹ {trail.at(-1)!.title}</button>
+    {#if backTitle !== null}
+      <button type="button" class="back" onclick={back} disabled={opening} title={`Back to ${backTitle} (Esc)`}>‹ {backTitle}</button>
     {/if}
     <h1 {title}>{title}</h1>
     {#if overview}
@@ -264,7 +337,7 @@
       <!-- The operating mode the Plant's I&C declares, read each sample; plain text, as a normal state is. -->
       <span class="mode" title="Operating mode: the first of the Plant's declared modes that holds">{snapshot.latest.mode === null ? 'No declared mode holds' : snapshot.latest.mode.label}</span>
     {/if}
-    {#if overview && snapshot?.latest?.safetyFunctions !== undefined}<SafetyFunctionChips functions={snapshot.latest.safetyFunctions} />{/if}
+    {#if overview && snapshot?.latest?.safetyFunctions !== undefined}<SafetyFunctionChips functions={snapshot.latest.safetyFunctions} open={canOpen ? openChip : undefined} />{/if}
     <span class={`chip ${stateChip.tone}`}>{stateChip.text}</span>
     {#if Number.isFinite(now)}<span class="clock">sim {simulationClock(now)}</span>{/if}
   </header>
@@ -273,12 +346,21 @@
     <!-- Provenance, and on the same line the critical safety functions the Plant declares. -->
     <div class="provenance">
       <p class="unit" title={`${view?.plantLabel ?? plantId}${snapshot?.runTitle === undefined ? '' : ` · Run: ${snapshot.runTitle}`}`}>{view?.plantLabel ?? plantId}{#if snapshot?.runTitle !== undefined}{' · '}Run: {snapshot.runTitle}{/if}</p>
-      {#if snapshot?.latest?.safetyFunctions !== undefined}<SafetyFunctionChips functions={snapshot.latest.safetyFunctions} />{/if}
+      {#if snapshot?.latest?.safetyFunctions !== undefined}<SafetyFunctionChips functions={snapshot.latest.safetyFunctions} open={canOpen ? openChip : undefined} />{/if}
     </div>
     <p class="caption" title={`${advice.composition.question} — ${advice.composition.need}`}>
       <strong>Why this view:</strong> {advice.composition.question} <span class="need">{advice.composition.need}</span>
     </p>
     {@render notice()}
+  {/if}
+
+  {#if refusal !== null}
+    <!-- What a chip or banner label named cannot be drawn: said here with what named it, never landed on (HF-21). -->
+    <section class="refusal" role="alert">
+      <p><strong>{refusal.name}</strong> cannot be opened: {refusal.reason}</p>
+      {#if refusal.path !== null}<p class="path">{refusal.path}</p>{/if}
+      <button type="button" onclick={() => { refusal = null }}>Close</button>
+    </section>
   {/if}
 
   {#if snapshot === null || snapshot.phase.kind === 'checking' || snapshot.phase.kind === 'starting'}
@@ -388,6 +470,12 @@
   .banner.trip { display: flex; gap: 14px; border-left-color: var(--alert-alarm-color); font-weight: 600; }
   .banner.trip > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tripped { flex: 0 0 auto; max-width: 70%; }
+  /* A banner label that opens what its group commands: pointer and focus ring only, the banner's own look (HF-21). */
+  .banner button.label { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; height: auto; min-width: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+  .banner button.label:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 1px; }
+  .refusal { flex: none; margin: 2px 0; padding: 4px 8px; border-left: 3px solid var(--border-outline-color); background: var(--container-section-color); font-size: 12px; }
+  .refusal p { margin: 0 0 2px; }
+  .refusal .path { white-space: pre-line; color: var(--element-neutral-color); font-size: 11.5px; max-height: 160px; overflow: auto; }
   .actuated { flex: 1 1 0; }
   .status { margin: 8px 0; color: var(--element-neutral-color); }
   .status p { margin: 4px 0; }

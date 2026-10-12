@@ -1,7 +1,8 @@
 // Messages between World's process display window and the display frames it
 // shows. Both ends are World pages on one origin, so this stays World-internal:
-// the window tells a frame whether it is shown and at what zoom; the frame says
-// how much room its content needs and passes on zoom gestures made inside it.
+// the window tells a frame whether it is shown, at what zoom and what Back
+// returns to; the frame says how much room its content needs, passes on zoom
+// gestures made inside it, and asks for a display to be opened after it.
 // Each end accepts a message only from the window it expects (the frame's
 // parent, or the frame's own contentWindow) on the same origin.
 
@@ -15,6 +16,8 @@ export interface DisplayFramePresentation {
   readonly shown: boolean
   /** The scale the window paints the frame at, so canvases can be drawn sharp for it. */
   readonly zoom: number
+  /** For a display the window opened from another: the title of that one, which Back returns to. */
+  readonly back?: string
 }
 
 /** Frame -> window: listening; the window answers with the presentation. */
@@ -41,7 +44,28 @@ export type DisplayFrameZoomRequest =
   | { readonly type: 'world:display-zoom'; readonly step: 'in' | 'out' | 'reset' }
   | { readonly type: 'world:display-zoom'; readonly factor: number }
 
-export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | DisplayFrameZoomRequest
+/**
+ * Frame -> window: show this display of the same Plant in the window, after
+ * this one (equipment a safety function chip or a banner label names, opened
+ * from an answer's display); Back returns here.
+ */
+export interface DisplayFrameOpen {
+  readonly type: 'world:display-open'
+  /** The display's state, as its view publication carries it. */
+  readonly state: string
+  readonly title: string
+}
+
+/** Frame -> window: Back, to the display this one was opened from. */
+export interface DisplayFrameBack {
+  readonly type: 'world:display-back'
+}
+
+export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | DisplayFrameZoomRequest | DisplayFrameOpen | DisplayFrameBack
+
+/** The longest state and title an open request carries (a detail's state is far shorter). */
+const OPEN_STATE_MAX = 4_096
+const OPEN_TITLE_MAX = 120
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -52,11 +76,15 @@ const finitePositive = (value: unknown): value is number =>
 const hasKeys = (record: Record<string, unknown>, keys: ReadonlyArray<string>): boolean =>
   Object.keys(record).sort().join() === [...keys].sort().join()
 
+const text = (value: unknown, most: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= most
+
 export const parseDisplayFramePresentation = (value: unknown): DisplayFramePresentation | null => {
-  if (!isRecord(value) || value.type !== 'world:display-frame' || !hasKeys(value, ['type', 'shown', 'zoom'])) return null
+  if (!isRecord(value) || value.type !== 'world:display-frame') return null
+  if (!hasKeys(value, ['type', 'shown', 'zoom']) && !hasKeys(value, ['type', 'shown', 'zoom', 'back'])) return null
   if (typeof value.shown !== 'boolean' || !finitePositive(value.zoom)) return null
   if (value.zoom < DISPLAY_ZOOM_MIN || value.zoom > DISPLAY_ZOOM_MAX) return null
-  return { type: 'world:display-frame', shown: value.shown, zoom: value.zoom }
+  if ('back' in value && !text(value.back, OPEN_TITLE_MAX)) return null
+  return { type: 'world:display-frame', shown: value.shown, zoom: value.zoom, ...(typeof value.back === 'string' ? { back: value.back } : {}) }
 }
 
 export const parseDisplayFrameMessage = (value: unknown): DisplayFrameMessage | null => {
@@ -75,5 +103,10 @@ export const parseDisplayFrameMessage = (value: unknown): DisplayFrameMessage | 
     if (hasKeys(value, ['type', 'factor']) && finitePositive(value.factor)) return { type: 'world:display-zoom', factor: value.factor }
     return null
   }
+  if (value.type === 'world:display-open') {
+    if (!hasKeys(value, ['type', 'state', 'title']) || !text(value.state, OPEN_STATE_MAX) || !text(value.title, OPEN_TITLE_MAX)) return null
+    return { type: 'world:display-open', state: value.state, title: value.title }
+  }
+  if (value.type === 'world:display-back') return hasKeys(value, ['type']) ? { type: 'world:display-back' } : null
   return null
 }

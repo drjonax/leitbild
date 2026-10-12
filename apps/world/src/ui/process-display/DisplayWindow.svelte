@@ -17,7 +17,8 @@
   import type { EmbeddedViewEnvelope, EmbeddedViewListing } from '@leitbild/contracts'
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
   import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
-  import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
+  import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameOpen, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
+  import { openedListing } from '../embed/opened-display.ts'
   import { zoomStepOfKey } from '../embed/view-host.ts'
   import ProcedureRunBadges from '../procedures/ProcedureRunBadges.svelte'
   import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../procedures/procedure-run-selectors.ts'
@@ -189,6 +190,8 @@
   let zoomStates = $state.raw<ReadonlyMap<string, DisplayZoomState>>(new Map())
   let extents = $state.raw<ReadonlyMap<string, DisplayExtent>>(new Map())
   let framesUp = $state.raw<ReadonlySet<string>>(new Set())
+  // A display the window opened from another, or for a request from chat, and the display Back returns to.
+  let returnTo = $state.raw<ReadonlyMap<string, DeckEntry>>(new Map())
   let bodySize = $state.raw<DisplaySize | null>(null)
   let popover = $state<Popover | null>(null)
   let listActiveIndex = $state(0)
@@ -386,6 +389,31 @@
     extents = withoutKey(extents, key)
   }
 
+  // A display asks for equipment it names to be opened after it (a safety function chip, a banner label): the
+  // window shows it as a display of its own, and its Back returns to the one it came from.
+  const frameOpen = (key: string, request: DisplayFrameOpen): void => {
+    const from = mountedEntries.find(mounted => mounted.entry.key === key)
+    if (from === undefined) return
+    let listing: EmbeddedViewListing
+    try {
+      listing = openedListing({ key, title: from.entry.title, envelope: from.envelope }, request)
+    } catch (err) {
+      notice = `${request.title} cannot be opened: ${errorText(err)}`
+      return
+    }
+    const entry = requestedDeckEntry(deck, runId, { kind: 'listing', listing })
+    if (entry === null) return
+    returnTo = withValue(returnTo, entry.key, from.entry)
+    showEntry(entry)
+  }
+
+  const frameBack = (key: string): void => {
+    const target = returnTo.get(key)
+    if (target === undefined) return
+    returnTo = withoutKey(returnTo, key)
+    showEntry(deck.find(entry => entry.key === target.key) ?? target)
+  }
+
   const frameProblem = (_key: string, problem: string): void => {
     notice = problem
   }
@@ -439,6 +467,8 @@
     if (next.sequence === appliedRequest) return
     appliedRequest = next.sequence
     const entry = requestedDeckEntry(deck, runId, next.target)
+    // A display chat opens that the window does not list (equipment named on an answer's display) returns to what it showed.
+    if (entry !== null && entry.source === 'answer' && !entry.listed && current !== null && current.key !== entry.key) returnTo = withValue(returnTo, entry.key, current)
     if (entry !== null) showEntry(entry)
     else {
       notice = 'That Plant is not in this Run.'
@@ -908,6 +938,9 @@
           onExtent={receiveExtent}
           onZoomRequest={receiveZoomRequest}
           onProblem={frameProblem}
+          back={returnTo.get(mounted.entry.key)?.title ?? null}
+          onOpen={frameOpen}
+          onBack={frameBack}
         />
       {/each}
       {#if current === null}

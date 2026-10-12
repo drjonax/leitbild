@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { EmbeddedViewListing, EmbeddedViewOpenMessage } from '@leitbild/contracts'
 import { parseDisplayFrameMessage, type DisplayFrameMessage } from '../src/ui/embed/display-frame-protocol.ts'
 import {
   ADVICE_MIN_WIDTH,
@@ -24,9 +25,9 @@ import {
 const origin = 'https://leitbild.test'
 
 const framedPage = () => {
-  const posted: Array<{ readonly message: DisplayFrameMessage; readonly targetOrigin: string }> = []
+  const posted: Array<{ readonly message: DisplayFrameMessage | EmbeddedViewOpenMessage; readonly targetOrigin: string }> = []
   const refused: unknown[] = []
-  const parent = { postMessage: (message: DisplayFrameMessage, targetOrigin: string) => { posted.push({ message, targetOrigin }) } }
+  const parent = { postMessage: (message: DisplayFrameMessage | EmbeddedViewOpenMessage, targetOrigin: string) => { posted.push({ message, targetOrigin }) } }
   let receive: ((message: ReceivedMessage) => void) | null = null
   const host = createViewHost({
     parent,
@@ -111,7 +112,7 @@ describe('a view framed by the display window', () => {
     page.host.reportExtent(generatedExtent({ width: 1200, height: 700 }, []))
     for (const { message, targetOrigin } of page.posted) {
       expect(targetOrigin).toBe(origin)
-      expect(parseDisplayFrameMessage(JSON.parse(JSON.stringify(message)))).toEqual(message)
+      expect(parseDisplayFrameMessage(JSON.parse(JSON.stringify(message)))).toEqual(message as DisplayFrameMessage)
     }
     expect(page.posted.map(post => post.message)).toEqual([
       { type: 'world:display-zoom', step: 'in' },
@@ -119,6 +120,48 @@ describe('a view framed by the display window', () => {
       { type: 'world:display-zoom', factor: 0.9 },
       { type: 'world:display-extent', kind: 'generated', minWidth: 1200, width: 1200, height: 700 },
     ])
+  })
+
+  test('opens a display after it in its window, and goes back to the one its window opened it from', () => {
+    // C1 plan E5: a chip or banner label on an answer's display opens equipment in the window; Back returns.
+    const page = framedPage()
+    const opened: Array<string | null> = []
+    page.host.subscribeOpening(where => { opened.push(where) })
+    const request = { state: '{"detail":{"plantId":"unit-1","components":["core"]}}', title: 'Reactor Core', listing: () => { throw new Error('a window needs no listing') } }
+    page.host.listen()
+    expect(page.host.openDisplay(request)).toBe(false)
+    page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1, back: 'SG B low-low and feedwater response' })
+    expect(opened).toEqual([null, 'window'])
+    expect(page.host.current()).toEqual({ shown: true, zoom: 1, back: 'SG B low-low and feedwater response' })
+    page.posted.length = 0
+    expect(page.host.openDisplay(request)).toBe(true)
+    page.host.back()
+    expect(page.posted.map(post => post.message)).toEqual([
+      { type: 'world:display-open', state: request.state, title: 'Reactor Core' },
+      { type: 'world:display-back' },
+    ])
+    for (const { message } of page.posted) expect(parseDisplayFrameMessage(JSON.parse(JSON.stringify(message)))).toEqual(message as DisplayFrameMessage)
+    // A display the window did not open from another has nowhere to go back to.
+    page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1 })
+    page.posted.length = 0
+    page.host.back()
+    expect(page.posted).toEqual([])
+  })
+
+  test('inline in a chat answer whose page relays to the Workspace\'s window, it asks that page to open the display there', () => {
+    const page = framedPage()
+    const opened: Array<string | null> = []
+    page.host.subscribeOpening(where => { opened.push(where) })
+    page.host.listen()
+    const listing = { key: 'opened:1', caption: 'From SG B low-low', envelope: { moduleId: 'world', subject: { workspaceId: 'ws', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }, viewType: 'process-plant.display', title: 'Reactor Core', height: 600, state: '{}' } } as unknown as EmbeddedViewListing
+    const request = { state: '{}', title: 'Reactor Core', listing: () => listing }
+    expect(page.host.openDisplay(request)).toBe(false)
+    page.fromWindow({ type: 'leitbild:view-host' })
+    expect(opened).toEqual([null, 'relay'])
+    expect(page.refused).toEqual([])
+    page.posted.length = 0
+    expect(page.host.openDisplay(request)).toBe(true)
+    expect(page.posted.map(post => post.message)).toEqual([{ type: 'leitbild:view-open', view: listing }])
   })
 
   test('a frame no window presents (a chat answer\'s inline display) says only that it listens', () => {

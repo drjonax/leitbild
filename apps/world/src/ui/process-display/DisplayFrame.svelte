@@ -4,6 +4,7 @@
   import {
     parseDisplayFrameMessage,
     type DisplayFrameExtent,
+    type DisplayFrameOpen,
     type DisplayFramePresentation,
     type DisplayFrameZoomRequest,
   } from '../embed/display-frame-protocol.ts'
@@ -33,6 +34,8 @@
     readonly zoom: number
     readonly kind: DisplayKind
     readonly extent: DisplayExtent | null
+    /** For a display the window opened from another: that one's title, which the display's Back returns to. */
+    readonly back: string | null
     /** The frame's page listens (or loaded): it can be shown without leaving a blank. */
     readonly onUp: (key: string) => void
     /** The frame went away; its extent and readiness go with it. */
@@ -40,9 +43,13 @@
     readonly onExtent: (key: string, extent: DisplayExtent) => void
     readonly onZoomRequest: (key: string, request: DisplayFrameZoomRequest) => void
     readonly onProblem: (key: string, problem: string) => void
+    /** The display asks for another to be opened after it. */
+    readonly onOpen: (key: string, request: DisplayFrameOpen) => void
+    /** The display's Back, to the one it was opened from. */
+    readonly onBack: (key: string) => void
   }
 
-  let { entryKey, envelope, title, shown, zoom, kind, extent, onUp, onDown, onExtent, onZoomRequest, onProblem }: Props = $props()
+  let { entryKey, envelope, title, shown, zoom, kind, extent, back, onUp, onDown, onExtent, onZoomRequest, onProblem, onOpen, onBack }: Props = $props()
 
   // A frame's page is fixed for its life; a new envelope is a new entry.
   const source = untrack(() => `${embeddedViewPath(envelope)}${embeddedViewFragment(envelope)}`)
@@ -71,7 +78,7 @@
   const present = (): void => {
     const target = frame?.contentWindow
     if (!target) return
-    const presentation: DisplayFramePresentation = { type: 'world:display-frame', shown, zoom }
+    const presentation: DisplayFramePresentation = { type: 'world:display-frame', shown, zoom, ...(back === null ? {} : { back }) }
     target.postMessage(presentation, location.origin)
   }
 
@@ -79,6 +86,7 @@
   $effect(() => {
     void shown
     void zoom
+    void back
     if (ready) untrack(present)
   })
 
@@ -107,6 +115,14 @@
       }
       if (message.type === 'world:display-extent') {
         onExtent(key, toExtent(message))
+        return
+      }
+      if (message.type === 'world:display-open') {
+        onOpen(key, message)
+        return
+      }
+      if (message.type === 'world:display-back') {
+        onBack(key)
         return
       }
       onZoomRequest(key, message)
