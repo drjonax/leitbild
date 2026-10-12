@@ -39,5 +39,7 @@ describe('Leitbild Assistant skills', () => {
     expect(assistance.body).toContain('Tavg falls below its no-load value')
     // A rate the display marks "reversing" is turning, not going one way (run-26c rcp-trip).
     expect(assistance.body).toContain('one marked "reversing" is turning')
+    // C2b R1: an actuation reset is proposed where a procedure calls for one, only where World offers it.
+    expect(assistance.body).toContain("propose it (`reset`: its rule id from the listing's `resets`) only where offered; otherwise say why not, quoting its `reason`")
   })
 })
