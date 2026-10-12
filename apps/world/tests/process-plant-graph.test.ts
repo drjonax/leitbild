@@ -118,8 +118,15 @@ describe('process plant model composition', () => {
     // load, speed, breaker and grid signals, the main steam isolation and
     // turbine stop valves as trip valves, and the offsite supply voltage the
     // relays read (1552 variables before, 1592 after); PWR Runs checkpointed
-    // before then must be restarted.
-    expect(system.modelDigest).toBe('16523e5a06e67b517862fd96650bfef2cdd5e4ad05a1dd70c8f27eb2dff9bdff')
+    // before then must be restarted. Changed again on 2026-10-13, once for the
+    // C2b model fixes the owner approved before the demo: the steam generator
+    // relief valves' positions and flows to the atmosphere published, the
+    // turbine-driven AFW pump driven on steam from steam generators B and C
+    // through its two steam supply valves, and each steam line given its bank
+    // of safety valves ahead of its isolation valve in place of the header's
+    // valve (1592 variables before, 1691 after); PWR Runs checkpointed before
+    // then must be restarted.
+    expect(system.modelDigest).toBe('d937597219e7dc2d0c9081b377457335c805afa0c8158c58317ebce6378389fb')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

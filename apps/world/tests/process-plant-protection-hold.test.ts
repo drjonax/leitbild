@@ -123,8 +123,8 @@ describe('a throttle under an actuation that drove a demand to an end of its spa
       'sg-a-level-low-low-afw-actuation', 'sg-b-level-low-low-afw-actuation', 'sg-c-level-low-low-afw-actuation', 'sg-d-level-low-low-afw-actuation',
     ])
     for (const rule of floored) expect(rule.throttleFloor!.basis).toContain('FR-H.1')
-    expect(plant.modelDigest).toBe('16523e5a06e67b517862fd96650bfef2cdd5e4ad05a1dd70c8f27eb2dff9bdff')
-    expect(plant.graph.variables.length).toBe(1592)
+    expect(plant.modelDigest).toBe('d937597219e7dc2d0c9081b377457335c805afa0c8158c58317ebce6378389fb')
+    expect(plant.graph.variables.length).toBe(1691)
     // The same graph under the I&C config without any floor: the same digest and variables.
     const withoutFloors = compileResolvedProcessPlant({
       id: plant.id, modelRef: plant.modelRef, operatingPointRef: plant.operatingPointRef, automationRef: plant.automationRef,
