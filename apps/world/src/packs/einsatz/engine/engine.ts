@@ -1,11 +1,10 @@
 import { routeDistanceMeters, type RouteImpact } from '../../../core/model/index.ts'
-import type { RoutingAdapter } from '../../../routing/protocol.ts'
 import { refusalCode } from '../refusal.ts'
 import { closeDraft, openDraft, putUnit, setMotion, unitIn } from './draft.ts'
 import { refused, type Refused } from './intent-support.ts'
 import { commandsEveryUnit, type EngineActor, type Intent, type Plan, type RouteNeed } from './intents.ts'
 import { motionOf, raiseAlert, unitTypeOf, type EngineState, type Leg, type Transition, type UnitRecord } from './model.ts'
-import { prepareLeg } from './movement.ts'
+import { prepareLeg, type RoutePort } from './movement.ts'
 import { planHold, planRecall, planSend } from './orders.ts'
 import { settle, stepUntil } from './phases.ts'
 import { planSiteSet, planTaskClose, planTaskCreate, planUnitAdjust, planUnitCreate } from './records.ts'
@@ -23,7 +22,7 @@ import { loadText } from './wording.ts'
  */
 
 export interface EnginePorts {
-  readonly routing: RoutingAdapter
+  readonly routing: RoutePort
 }
 
 export type IntentOutcome =
@@ -82,7 +81,7 @@ export const commitIntent = (state: EngineState, intent: Intent, actor: EngineAc
 }
 
 /** Routes for every unit of an intent, in order; the first that cannot be routed refuses the intent. */
-export const prepareLegs = async (state: EngineState, routes: ReadonlyArray<RouteNeed>, routing: RoutingAdapter): Promise<{ readonly ok: true; readonly legs: ReadonlyArray<PreparedLeg> } | Refused> => {
+export const prepareLegs = async (state: EngineState, routes: ReadonlyArray<RouteNeed>, routing: RoutePort): Promise<{ readonly ok: true; readonly legs: ReadonlyArray<PreparedLeg> } | Refused> => {
   const legs: PreparedLeg[] = []
   for (const route of routes) {
     const unit = state.units.get(route.unitId)

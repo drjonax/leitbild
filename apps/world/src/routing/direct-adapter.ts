@@ -1,7 +1,10 @@
-import type { RoutingAdapter, RouteRequest, RouteResult } from './protocol.ts'
-import { geoJsonPointSchema, meters } from '../core/model/index.ts'
+import type { RoutingAdapter, RouteRequest, RouteResult, RouteTableRequest, RouteTableResult } from './protocol.ts'
+import { geoJsonPointSchema, meters, type GeoJsonPoint } from '../core/model/index.ts'
 
-const distanceMeters = (request: RouteRequest): number => {
+/** The direct model's travel speed: a straight line at 15 m/s. */
+const directSpeedMps = 15
+
+const distanceMeters = (request: Pick<RouteRequest, 'from' | 'to'>): number => {
   const [fromLon, fromLat] = request.from.coordinates
   const [toLon, toLat] = request.to.coordinates
   const meanLatRad = ((fromLat + toLat) / 2) * Math.PI / 180
@@ -23,7 +26,19 @@ export const createDirectRoutingAdapter = (): RoutingAdapter => ({
         coordinates: [from.coordinates, to.coordinates],
       },
       distanceM: meters(distanceM),
-      durationSeconds: distanceM / 15,
+      durationSeconds: distanceM / directSpeedMps,
+      provider: 'direct',
+    }
+  },
+  table: async (request: RouteTableRequest): Promise<RouteTableResult> => {
+    request.signal?.throwIfAborted()
+    const sources: ReadonlyArray<GeoJsonPoint> = request.sources.map(point => geoJsonPointSchema.parse(point))
+    const destinations: ReadonlyArray<GeoJsonPoint> = request.destinations.map(point => geoJsonPointSchema.parse(point))
+    const distances = sources.map(from => destinations.map(to => distanceMeters({ from, to })))
+    return {
+      durationsSeconds: distances.map(row => row.map(distanceM => distanceM / directSpeedMps)),
+      distancesM: distances.map(row => row.map(distanceM => meters(distanceM))),
+      basis: 'straight-line',
       provider: 'direct',
     }
   },

@@ -27,7 +27,7 @@ const patientId = 'patient:torshov-partial:1' as ObjectId
  * Hub, Ambulance adapter/engine and capability dispatch path are real. */
 const setup = async (options: {
   readonly beforeAppend?: (events: readonly SimulationRunEvent[]) => Promise<void>
-  readonly routing?: RoutingAdapter
+  readonly routing?: Pick<RoutingAdapter, 'id' | 'route'>
   readonly onDispatchResult?: (result: CommandResult) => void
   readonly interactionHandlers?: readonly InteractionHandler[]
   readonly beforeCheckpoint?: () => Promise<void>

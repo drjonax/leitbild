@@ -54,7 +54,7 @@ const sameRoadWeatherTarget = (object: OperationalObject, current: OperationalOb
 // benefit at the map scale used for response coordination.
 export const ambulanceProjectionIntervalMs = 1_000
 
-export const createLocalAmbulancePackRuntimeAdapter = (adapterConfig: { readonly routing: RoutingAdapter }): PackRuntimeAdapter => ({
+export const createLocalAmbulancePackRuntimeAdapter = (adapterConfig: { readonly routing: Pick<RoutingAdapter, 'id' | 'route'> }): PackRuntimeAdapter => ({
   id: ambulanceSimRuntimeId, version: '1.0.0', packId: ambulancePackId, clock: 'simulation',
   capabilities: [
     ...commandCapabilities,

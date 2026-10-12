@@ -4,6 +4,9 @@ import type { Mobility } from '../config-schema.ts'
 import { refusal } from '../refusal.ts'
 import { legSchema, type Leg } from './model.ts'
 
+/** The one routing operation the engine uses: a route between two points. */
+export type RoutePort = Pick<RoutingAdapter, 'id' | 'route'>
+
 /** A road route may start or end at most this far from the requested point; further away there is no road to use. */
 const roadSnapLimitM = 1_000
 const arrivalToleranceMs = 0.000001
@@ -70,12 +73,12 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
  * route that starts or ends more than 1 km from the requested points refuses
  * `no_road_near_point`. There is never a straight-line substitute for a road.
  */
-export const prepareLeg = async (routing: RoutingAdapter, mobility: Mobility, from: GeoJsonPoint, to: GeoJsonPoint, label: string): Promise<LegResult> => {
+export const prepareLeg = async (routing: RoutePort, mobility: Mobility, from: GeoJsonPoint, to: GeoJsonPoint, label: string): Promise<LegResult> => {
   if (mobility.mode === 'direct') {
     const distanceM = routeDistanceMeters(from, to)
     return { ok: true, leg: legSchema.parse({ geometry: { type: 'LineString', coordinates: [from.coordinates, to.coordinates] }, durationMs: distanceM / mobility.speedMps * 1_000, distanceM, provider: 'direct' }) }
   }
-  let route: Awaited<ReturnType<RoutingAdapter['route']>>
+  let route: Awaited<ReturnType<RoutePort['route']>>
   try {
     route = await routing.route({ from, to })
   } catch (error) {

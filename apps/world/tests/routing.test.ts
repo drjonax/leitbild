@@ -145,3 +145,53 @@ test('the explicitly selected direct model remains available and honours cancell
   expect(result.geometry.coordinates).toEqual([request.from.coordinates, request.to.coordinates])
   await expect(adapter.route({ ...request, signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' })
 })
+
+const table = {
+  code: 'Ok',
+  durations: [[120, null], [60, 90]],
+  distances: [[1500, null], [700, 1100]],
+}
+const sources = [geoPointFromLonLat(11.38, 59.12), geoPointFromLonLat(11.4, 59.1)]
+const destinations = [geoPointFromLonLat(11.39, 59.13), geoPointFromLonLat(11.5, 59.2)]
+
+test('an OSRM table asks for every source to every destination and keeps the pairs it found no route for', async () => {
+  await withServer(incoming => {
+    const url = new URL(incoming.url)
+    expect(url.pathname).toBe('/table/v1/driving/11.38,59.12;11.4,59.1;11.39,59.13;11.5,59.2')
+    expect(url.searchParams.get('sources')).toBe('0;1')
+    expect(url.searchParams.get('destinations')).toBe('2;3')
+    expect(url.searchParams.get('annotations')).toBe('duration,distance')
+    return Response.json(table)
+  }, async baseUrl => {
+    const result = await createOsrmRoutingAdapter({ baseUrl }).table({ sources, destinations })
+    expect(result).toEqual({ durationsSeconds: table.durations, distancesM: table.distances as never, basis: 'routed', provider: 'osrm' })
+  })
+})
+
+test('an OSRM table that fails, answers other pairs or runs past its deadline is an error, never a straight line', async () => {
+  const cases = [
+    () => new Response('provider failed', { status: 503 }),
+    () => Response.json({ code: 'TooBig', message: 'Too many table coordinates' }),
+    () => Response.json({ ...table, durations: [[120, 1]] }),
+    () => Response.json({ ...table, distances: [[1500], [700]] }),
+    () => Response.json({ ...table, durations: [[-1, 1], [1, 1]] }),
+  ]
+  for (const response of cases) await withServer(response, async baseUrl => {
+    await expect(createOsrmRoutingAdapter({ baseUrl }).table({ sources, destinations })).rejects.toThrow()
+  })
+  await withServer(async () => { await Bun.sleep(150); return Response.json(table) }, async baseUrl => {
+    await expect(createOsrmRoutingAdapter({ baseUrl, timeoutMs: 40 }).table({ sources, destinations })).rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+})
+
+test('the direct table is straight lines, labelled so, and agrees with direct routes', async () => {
+  const adapter = createDirectRoutingAdapter()
+  const result = await adapter.table({ sources, destinations })
+  expect(result.basis).toBe('straight-line')
+  expect(result.provider).toBe('direct')
+  const routed = await adapter.route({ from: sources[1]!, to: destinations[0]! })
+  expect(result.durationsSeconds[1]![0]).toBeCloseTo(routed.durationSeconds, 9)
+  expect(result.distancesM[1]![0]).toBeCloseTo(routed.distanceM, 9)
+  expect((await adapter.table({ sources: [], destinations })).durationsSeconds).toEqual([])
+  await expect(adapter.table({ sources, destinations, signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' })
+})

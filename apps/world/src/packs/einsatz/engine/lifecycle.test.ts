@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { meters, routeDistanceMeters, type IsoTimestamp, type RouteImpact } from '../../../core/model/index.ts'
-import type { RoutingAdapter } from '../../../routing/protocol.ts'
+import type { RoutePort } from './movement.ts'
 import { advance, arrivalAt, at, config, controller, emptyState, low, middle, newTask, newUnit, pointOf, ports, refusalOf, run, runAll, send, start, taskOf, templates, top, types, unitOf } from '../fixtures/engine-harness.ts'
 import { advanceEngine, commitIntent, executeIntent, planIntent, prepareLegs, setRouteImpacts } from './engine.ts'
 import type { EngineState } from './model.ts'
@@ -196,7 +196,7 @@ describe('Einsatz unit lifecycle', () => {
 
   test('a road leg follows dense router geometry by distance and arrives on the provider travel time', async () => {
     const corners = [at(0), at(0, 0.002), at(0.01, 0.002), at(0.01)]
-    const dogleg: RoutingAdapter = {
+    const dogleg: RoutePort = {
       id: 'dogleg',
       route: async () => ({ geometry: { type: 'LineString', coordinates: corners.map(point => point.coordinates) }, distanceM: meters(1_100), durationSeconds: 100, provider: 'dogleg' }),
     }

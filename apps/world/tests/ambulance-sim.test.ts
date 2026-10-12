@@ -19,7 +19,7 @@ const command = (kind: string, payload: unknown): CommandEnvelope => commandEnve
 }) as CommandEnvelope
 const dispatch = () => command(assignCommandKind, { unitId, incidentId, patientIds: [patientId] })
 const unit = (engine: ReturnType<typeof createAmbulanceSimEngine>) => engine.snapshot().objects.find(object => object.id === unitId)!
-const engineWith = (routing: RoutingAdapter = createDirectRoutingAdapter(), initial = objects()) => createAmbulanceSimEngine({ simulationRunId, objects: initial, routing, simulationTimeMs: epoch })
+const engineWith = (routing: Pick<RoutingAdapter, 'id' | 'route'> = createDirectRoutingAdapter(), initial = objects()) => createAmbulanceSimEngine({ simulationRunId, objects: initial, routing, simulationTimeMs: epoch })
 const fastUnitObjects = () => objects().map(object => object.id === unitId ? {
   ...object, packData: { ...responseUnitPackDataSchema.parse(object.packData), mobilizationSeconds: 0, sceneSeconds: 10 },
 } : object)
@@ -87,7 +87,7 @@ describe('Ambulance runtime integration and route restoration', () => {
       ...object, spatial: { ...object.spatial, position: { ...object.spatial.position!, point: object.id === unitId ? start : finish } },
     } : object)
     let calls = 0
-    const routing: RoutingAdapter = { id: 'test-shaped', route: async () => {
+    const routing: Pick<RoutingAdapter, 'id' | 'route'> = { id: 'test-shaped', route: async () => {
       calls++
       return { geometry: { type: 'LineString', coordinates: [start.coordinates, geoPointFromLonLat(11.01, 59).coordinates, finish.coordinates] }, distanceM: meters(1500), durationSeconds: 100, provider: 'test-shaped' }
     } }

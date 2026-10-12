@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
-import type { RoutingAdapter } from '../../../routing/protocol.ts'
+import type { RoutePort } from './movement.ts'
 import { advance, at, controller, emptyState, low, newTask, newUnit, run, runAll, send, start, taskOf, templates, top, types, unitOf } from '../fixtures/engine-harness.ts'
 import { advanceEngine, executeIntent } from './engine.ts'
 import type { EngineState, Transition } from './model.ts'
@@ -10,7 +10,7 @@ import { nextBoundaryMs } from './reflexes.ts'
 const switchableRouter = () => {
   const direct = createDirectRoutingAdapter()
   const control = { online: true, calls: 0 }
-  const routing: RoutingAdapter = {
+  const routing: RoutePort = {
     id: 'switchable',
     route: async request => {
       control.calls += 1

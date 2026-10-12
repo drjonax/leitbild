@@ -9,7 +9,7 @@ import { createAmbulanceItem, validateAmbulanceDeletion, validateAmbulanceObject
 // Explicitly synthetic test route times, not ambulance-driving calibration.
 const start = Date.parse('2026-01-01T09:00:00Z')
 const at = new Date(start).toISOString() as OperationalObject['timestamps']['createdAt']
-const routing: RoutingAdapter = { id: 'test-routing', route: async ({ from, to }) => ({ geometry: { type: 'LineString', coordinates: [from.coordinates, to.coordinates] }, durationSeconds: 10, distanceM: meters(100), provider: 'test-routing' }) }
+const routing: Pick<RoutingAdapter, 'id' | 'route'> = { id: 'test-routing', route: async ({ from, to }) => ({ geometry: { type: 'LineString', coordinates: [from.coordinates, to.coordinates] }, durationSeconds: 10, distanceM: meters(100), provider: 'test-routing' }) }
 const unit = (id = 'ambulance:a') => ({ type: 'ambulance', id, label: id, position: [11, 59], patientCapacity: 1, capabilities: ['monitoring'], crewReady: true, mobilizationSeconds: 2, sceneSeconds: 3 })
 const incident = { type: 'incident', id: 'incident:a', label: 'Incident', position: [11.002, 59], summary: 'Synthetic operational test', dispatchUrgency: 'acute' }
 const patient = (id = 'patient:a') => ({ type: 'patient', id, label: id, incidentId: 'incident:a', summary: 'Synthetic patient, no physiological model', assessedUrgency: 'urgent', needs: ['monitoring'] })

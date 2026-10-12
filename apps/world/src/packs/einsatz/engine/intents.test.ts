@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { geoPointFromLonLat, meters, type IsoTimestamp } from '../../../core/model/index.ts'
-import type { RoutingAdapter } from '../../../routing/protocol.ts'
+import type { RoutePort } from './movement.ts'
 import { advance, at, config, controller, emptyState, low, middle, newTask, newUnit, refusalOf, run, runAll, send, start, taskOf, templates, top, types, unitOf } from '../fixtures/engine-harness.ts'
 import { refusalCode } from '../refusal.ts'
 import { advanceEngine, executeIntent } from './engine.ts'
@@ -143,8 +143,8 @@ describe('Einsatz intent refusals', () => {
   })
 
   test('a road move the router cannot serve is refused, never routed in a straight line', async () => {
-    const offline: RoutingAdapter = { id: 'offline', route: async () => { throw new Error('Router offline') } }
-    const roadless: RoutingAdapter = { id: 'roadless', route: async ({ to }) => ({ geometry: { type: 'LineString', coordinates: [to.coordinates, geoPointFromLonLat(to.coordinates[0] + 0.1, to.coordinates[1]).coordinates] }, distanceM: meters(5_000), durationSeconds: 300, provider: 'roadless' }) }
+    const offline: RoutePort = { id: 'offline', route: async () => { throw new Error('Router offline') } }
+    const roadless: RoutePort = { id: 'roadless', route: async ({ to }) => ({ geometry: { type: 'LineString', coordinates: [to.coordinates, geoPointFromLonLat(to.coordinates[0] + 0.1, to.coordinates[1]).coordinates] }, distanceM: meters(5_000), durationSeconds: 300, provider: 'roadless' }) }
     const state = await runAll(emptyState(), [newUnit('u1', types.roadCarrier, at(0)), newTask('t1', templates.load, at(0.01), { [top]: 1 })])
     for (const [routing, code] of [[offline, 'routing_unavailable'], [roadless, 'no_road_near_point']] as const) {
       const outcome = await executeIntent(state, send(['u1'], { taskId: 't1' }), controller, { routing })

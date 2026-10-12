@@ -67,7 +67,7 @@ const dataOfType = <T extends AmbulanceDomainData['type']>(object: OperationalOb
 export const createAmbulanceSimEngine = (config: {
   readonly simulationRunId: SimulationRunId
   readonly objects: readonly OperationalObject[]
-  readonly routing: RoutingAdapter
+  readonly routing: Pick<RoutingAdapter, 'id' | 'route'>
   readonly simulationTimeMs: number
   readonly objectById?: (id: ObjectId) => OperationalObject | undefined
 }): AmbulanceSimEngine => {
