@@ -25,18 +25,21 @@ export const createProcessPlantRuntimeInstances = (config: {
     })
     const restoredRamps = restoredRampSnapshotFor(config.runtimeState, plant.id)
     const restoredProtectionSnapshot = restoredProtectionSnapshotFor(config.runtimeState, plant.id)
+    const ramps = createProcessPlantRampRunner({
+      runtime,
+      ...(restoredRamps === undefined ? {} : { restoredSnapshot: restoredRamps }),
+    })
+    // An automatic action's write ends a ramp on the same variable: the ramp no longer reopens a valve a trip shut.
     const protection = createProcessPlantProtectionRunner({
       system: plant,
       protection: plant.automation,
       ...(restoredProtectionSnapshot === undefined ? {} : { restoredSnapshot: restoredProtectionSnapshot }),
+      onWrite: path => { ramps.cancel(path) },
     })
     return {
       plant,
       runtime,
-      ramps: createProcessPlantRampRunner({
-        runtime,
-        ...(restoredRamps === undefined ? {} : { restoredSnapshot: restoredRamps }),
-      }),
+      ramps,
       protection,
       performance: createProcessPlantRuntimePerformance(),
     }

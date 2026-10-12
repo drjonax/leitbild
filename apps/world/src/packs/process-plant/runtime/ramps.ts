@@ -27,6 +27,8 @@ export interface ProcessPlantRampRunner {
     readonly durationMs: number
   }) => void
   readonly apply: (nextElapsedMs: number) => void
+  /** Ends the ramp on a path, if one runs: an automatic action wrote it, and a ramp would write over that on its next step. */
+  readonly cancel: (path: VariablePath) => boolean
   readonly snapshot: () => ProcessPlantRampSnapshot
 }
 
@@ -65,6 +67,7 @@ export const createProcessPlantRampRunner = (config: {
         if (fraction >= 1) active.delete(path)
       }
     },
+    cancel: path => active.delete(path),
     snapshot: () => ({ active: [...active.values()] }),
   }
 }

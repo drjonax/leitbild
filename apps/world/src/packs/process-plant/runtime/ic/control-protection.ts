@@ -1,5 +1,6 @@
 import type { SimulationRunId } from '../../../../core/model/index.ts'
 import type { PackRuntimeEvent } from '../../../../simulation/protocol.ts'
+import type { VariablePath } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import type { ProcessPlantSignalReference } from '../../signals.ts'
 import type { ProcessPlantRuntime } from '../model.ts'
@@ -163,6 +164,8 @@ export const createProcessPlantProtectionRunner = (config: {
   readonly system: CompiledProcessPlant
   readonly protection: ProcessPlantIcConfig
   readonly restoredSnapshot?: ProcessPlantIcSnapshot
+  /** Told each variable an automatic action writes, as it queues the write: a ramp on it ends there (plan-final S2). */
+  readonly onWrite?: (path: VariablePath) => void
 }): ProcessPlantProtectionRunner => {
   const protection = processPlantIcConfigSchema.parse(config.protection)
   const rules = protection.rules.map(rule => processPlantIcRuleSchema.parse(rule))
@@ -435,12 +438,12 @@ export const createProcessPlantProtectionRunner = (config: {
         for (const effect of rule.effects) {
           try {
             if (effect.type === 'writeSignal') {
-              applyProcessPlantIcWriteEffect({
+              config.onWrite?.(applyProcessPlantIcWriteEffect({
                 system: config.system,
                 runtime,
                 effect,
                 evaluateWrite: signal => evaluateWriteAgainstGates({ runtime, signal, elapsedMs }),
-              })
+              }))
               continue
             }
             events.push(...enterLifecycle({ rule, effect, elapsedMs, simulationRunId, sourceRuntimeId }))
