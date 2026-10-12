@@ -20,6 +20,7 @@ import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import { deviceLabel, mimicItemId, type MimicItem } from '../displays/mimic/bindings.ts'
 import { presentationFor } from '../displays/mimic/presentation.ts'
 import { instructorOnlyRefusal } from './command-guard.ts'
+import { modulatingDemandSpan } from './demand-span.ts'
 
 // What a person may operate on each drawn item, read from what the model
 // declares: an aspect's writable command is a two-state control in the
@@ -217,16 +218,15 @@ const automaticReason = (graph: CompiledPlantGraph, controller: { readonly measu
 }
 
 /**
- * The span a person sets a position command in: a modulating valve's, where
- * the model solves where it stands (so a person sees it follow) and no
- * controller drives it (the caller withholds those as AUTO); null for any
- * other command.
+ * The demand a person sets a position command to: a modulating valve's,
+ * where the model solves where it stands (so a person sees it follow) and no
+ * controller drives it (the caller withholds those as AUTO), over its span
+ * (demand-span.ts); null for any other command.
  */
 const analogDemandOf = (aspect: CompiledStateAspect, equipmentFunction: EquipmentFunction | undefined, binding: ProcessSignalBinding): AnalogDemand | null => {
-  if (aspect.aspect !== 'position' || equipmentFunction !== 'modulating' || aspect.state?.reading !== 'value' || binding.quantity !== 'ratio') return null
-  const range = binding.limits?.hardRange
-  if (range === undefined) throw new Error(`modulating position command declares no hard range: ${binding.path}`)
-  return { min: range.min, max: range.max, step: Number(((range.max - range.min) * DEMAND_STEP_SHARE).toPrecision(12)), unit: binding.unit, shownUnit: unitLabel(binding.unit), word: valveWords.on.word }
+  const span = modulatingDemandSpan(aspect, equipmentFunction, binding)
+  if (span === null) return null
+  return { min: span.min, max: span.max, step: Number(((span.max - span.min) * DEMAND_STEP_SHARE).toPrecision(12)), unit: binding.unit, shownUnit: unitLabel(binding.unit), word: valveWords.on.word }
 }
 
 /**

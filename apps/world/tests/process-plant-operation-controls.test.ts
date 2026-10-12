@@ -23,6 +23,7 @@ import {
   type OfferedControl,
 } from '../src/packs/process-plant/operations/controls.ts'
 import { optionStanding, ruleStatesFrom } from '../src/packs/process-plant/operations/control-standing.ts'
+import { protectionHoldRefusal, throttledUnder } from '../src/packs/process-plant/operations/command-guard.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -312,6 +313,24 @@ describe('controls depend on the Plant graph, not on equipment ids', () => {
     expect(unnamed.items.length).toBe(controls.items.length)
     expect(unnamed.items.flatMap(entry => entry.offered).length).toBeGreaterThan(30)
     expect(unnamed).toEqual(renamed(controls))
+  })
+
+  test('lets the same throttles through under a standing actuation, and holds the same other ends', () => {
+    // Every protection rule that writes a demand control's command stands, as after a trip.
+    const demands = demandControls(controls)
+    const writers = new Set(plant.automation.rules.filter(rule => rule.ruleClass === 'protection' && rule.effects.some(effect =>
+      effect.type === 'writeSignal' && demands.some(control => control.path === resolveProcessPlantSignalBinding(plant.graph, effect.signal).path))).map(rule => rule.id))
+    expect(writers.size).toBeGreaterThan(0)
+    const initial = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation }).snapshot()
+    const snapshot = { ...initial, rules: initial.rules.map(state => writers.has(state.ruleId) ? { ...state, active: true, latched: true } : state) }
+    const judged = (system: CompiledProcessPlant, path: VariablePath) => ({
+      between: [protectionHoldRefusal(system, snapshot, { path, value: 0.4 }), throttledUnder(system, snapshot, { path, value: 0.4 })],
+      ends: [0, 1].map(value => protectionHoldRefusal(system, snapshot, { path, value })),
+    })
+    const named = demands.map(control => judged(plant, control.path))
+    expect(named.some(entry => entry.between[1]!.length > 0)).toBe(true)
+    for (const entry of named) expect(entry.between[0]).toBeNull()
+    expect(demands.map(control => judged(anonymous, renamed(control.path)))).toEqual(renamed(named))
   })
 
   test('sets the same valves to a %, read from the graph alone', () => {

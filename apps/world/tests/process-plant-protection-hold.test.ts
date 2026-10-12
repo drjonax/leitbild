@@ -8,7 +8,7 @@ import {
   type ProcessPlantIcSnapshot,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
-import { protectionHoldRefusal, validateOperatorWrite } from '../src/packs/process-plant/operations/command-guard.ts'
+import { opposesActuation, protectionHoldRefusal, throttledUnder, validateOperatorWrite } from '../src/packs/process-plant/operations/command-guard.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -91,5 +91,60 @@ describe('after a real safety injection', () => {
       if (!validation.accepted) expect(validation.reason).toMatch(/^Safety injection on low pressurizer pressure \(SI\) stands (active|sealed in) and holds SI-PUMP-A/)
     }
     expect(validateOperatorWrite({ system: plant, runtime: plantRun.runtime, protection: plantRun.protection, payload: stop, origin: 'system' }).accepted).toBe(true)
+  })
+})
+
+// Where an actuation drove a demand a person sets in its span (a modulating
+// valve's position) to one end, only the other end works against it: a
+// setting between is a throttle under it, as AFW flow is controlled after AFW
+// opened its valves. The actuation writes once, on its edge, so the throttle
+// holds.
+describe('a throttle under an actuation that drove a demand to an end of its span', () => {
+  test('only the other end opposes it; a command without a span, or a demand set between, keeps the rule', () => {
+    const span = { min: 0, max: 1 }
+    expect([0, 0.4, 1].map(value => opposesActuation(span, 1, value))).toEqual([true, false, false])
+    expect([0, 0.4, 1].map(value => opposesActuation(span, 0, value))).toEqual([false, false, true])
+    expect([0.4, 0.5].map(value => opposesActuation(span, 0.5, value))).toEqual([true, false])
+    expect(opposesActuation(null, 1, 0.4)).toBe(true)
+    expect(opposesActuation(null, true, false)).toBe(true)
+  })
+
+  test('an MSIV, two-state, refuses a setting between as it refuses OPEN', () => {
+    const snapshot = started().protection.snapshot()
+    const isolated = standing(snapshot, 'containment-pressure-high-2-steam-line-isolation', { active: true, latched: true })
+    expect(protectionHoldRefusal(plant, isolated, { path: path('MSIV-A'), value: 0.5 })).toContain('stands active and holds MSIV-A')
+    expect(throttledUnder(plant, isolated, { path: path('MSIV-A'), value: 0.5 })).toEqual([])
+  })
+
+  test('after a reactor trip on the four-loop plant, AFW-A-CV takes 0.4 under the AFW actuation, refuses 0, and holds 0.4', () => {
+    const plantRun = started()
+    for (let second = 0; second < 3; second += 1) plantRun.step()
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: path('RX-TRIP-MAN'), value: true })
+    const afw = { path: path('AFW-A-CV'), value: 0.4 }
+    let seconds = 0
+    while (throttledUnder(plant, plantRun.protection.snapshot(), afw).length === 0 && seconds < 300) {
+      plantRun.step()
+      seconds += 1
+    }
+    expect(seconds).toBeLessThan(300)
+    // Let every steam generator's low-low level actuation enter: each writes the valve open once, on its edge.
+    for (let second = 0; second < 60; second += 1) plantRun.step()
+    const under = throttledUnder(plant, plantRun.protection.snapshot(), afw)
+    const rules = new Map(plant.automation.rules.map(rule => [rule.id, rule]))
+    expect(under.length).toBeGreaterThan(0)
+    for (const rule of under) expect(rule).toEqual({ ruleId: rule.ruleId, label: rules.get(rule.ruleId)!.label!, action: 'AFW START' })
+    const validate = (value: number) => validateOperatorWrite({ system: plant, runtime: plantRun.runtime, protection: plantRun.protection, payload: { plantId: plant.id, tagId: 'AFW-A-CV', value } as never, origin: 'person' })
+    expect(validate(0.4).accepted).toBe(true)
+    const shut = validate(0)
+    expect(shut.accepted).toBe(false)
+    if (!shut.accepted) expect(shut.reason).toBe(`${under[0]!.label} (AFW START) stands ${plantRun.protection.snapshot().rules.find(rule => rule.ruleId === under[0]!.ruleId)!.active ? 'active' : 'sealed in'} and holds AFW-A-CV: a command against it is refused until it is reset`)
+    expect(validate(1).accepted).toBe(true)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: afw.path, value: 0.4 })
+    const position = plant.graph.components.flatMap(component => component.semantics.aspects).find(aspect => aspect.command === afw.path)!.state!.path
+    for (let second = 0; second < 12; second += 1) {
+      plantRun.step()
+      expect(plantRun.runtime.readVariable(afw.path)).toBe(0.4)
+      expect(Math.abs(Number(plantRun.runtime.readVariable(position)) - 0.4)).toBeLessThanOrEqual(0.01)
+    }
   })
 })

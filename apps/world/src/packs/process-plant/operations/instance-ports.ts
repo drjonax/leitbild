@@ -2,9 +2,9 @@ import type { CommandOrigin } from '../../../simulation/protocol.ts'
 import type { ProcessSignalTagId, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
-import { validateOperatorWrite } from './command-guard.ts'
+import { throttledUnder, validateOperatorWrite } from './command-guard.ts'
 import { optionStanding, ruleStatesFrom, type OptionStanding, type StandingContext } from './control-standing.ts'
-import { offeredOption, plantControlsFor, type OfferedControl, type WithheldControl } from './controls.ts'
+import { offeredOption, plantControlsFor, type ControlRule, type OfferedControl, type WithheldControl } from './controls.ts'
 import type { ProposalPorts } from './proposals.ts'
 
 // The controls and proposals of one running Plant, read against its live
@@ -45,6 +45,12 @@ export interface ListedControl {
   readonly travelMs: number | null
   /** A demand control's setting now and where the equipment stands, in the command's unit. */
   readonly now?: { readonly demand: number; readonly position: number }
+  /**
+   * The standing protection actuations its demand is throttled under: they
+   * drove it to an end and it is set between ("Throttled under <label>");
+   * absent otherwise.
+   */
+  readonly throttledUnder?: ReadonlyArray<ControlRule>
 }
 
 export interface ListedItem {
@@ -59,6 +65,7 @@ export interface ListedItem {
 /** The Plant's drawn items with their controls where they stand now; only the named items where ids are given, in the derivation's order. */
 export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds?: ReadonlyArray<string>): ReadonlyArray<ListedItem> => {
   const controls = plantControlsFor(instance.plant)
+  const snapshot = instance.protection?.snapshot()
   const numberAt = (path: VariablePath): number => {
     const value = instance.runtime.readVariable(path)
     if (typeof value !== 'number') throw new Error(`${path} reads no number`)
@@ -67,7 +74,7 @@ export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds
   const context: StandingContext = {
     read: path => instance.runtime.readVariable(path),
     mode: processPlantOperatingMode({ system: instance.plant, runtime: instance.runtime, modes: instance.plant.automation.operatingModes })?.id ?? null,
-    rules: instance.protection === undefined ? new Map() : ruleStatesFrom(instance.protection.snapshot()),
+    rules: snapshot === undefined ? new Map() : ruleStatesFrom(snapshot),
   }
   return controls.items
     .filter(entry => itemIds === undefined || itemIds.includes(entry.id))
@@ -77,11 +84,14 @@ export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds
       ...(entry.position === undefined ? {} : { position: { path: entry.position, value: numberAt(entry.position) } }),
       offered: entry.offered.map(control => {
         const travel = control.options.flatMap(option => option.travelMs === null ? [] : [option.travelMs])
+        const demand = control.demand === undefined ? undefined : numberAt(control.path)
+        const under = demand === undefined || snapshot === undefined ? [] : throttledUnder(instance.plant, snapshot, { path: control.path, value: demand })
         return {
           control,
           standing: control.options.map(option => optionStanding(instance.plant, control, option, context)),
           travelMs: travel.length === 0 ? null : Math.max(...travel),
-          ...(control.demand === undefined || control.state === undefined ? {} : { now: { demand: numberAt(control.path), position: numberAt(control.state) } }),
+          ...(demand === undefined || control.state === undefined ? {} : { now: { demand, position: numberAt(control.state) } }),
+          ...(under.length === 0 ? {} : { throttledUnder: under }),
         }
       }),
       withheld: entry.withheld,

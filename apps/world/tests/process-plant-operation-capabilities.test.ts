@@ -152,6 +152,43 @@ describe('a modulating valve set to a % (owner feedback, plan-final §12 item 3)
   })
 })
 
+describe('a throttle under a standing actuation', () => {
+  test('after the trip, an AI proposal to shut AFW-A-CV is refused and one to throttle it to 40 % executes on a person\'s approval, logged and listed as a throttle, and holds', async () => {
+    await withRun(async (run, plantId) => {
+      // The fixture's own feedwater line-up trips the unit on steam generator A level within seconds; AFW opens its valves.
+      const startedAt = Date.parse(run.snapshot().clock!.currentTime)
+      await run.runMaximumPace(new Date(startedAt + 5_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+      const listed = async () => (await query<{ readonly items: ReadonlyArray<ListedItem> }>(run, operator, 'world.process-plant.controls.list', { plantId, items: ['auxFeedwaterValveA'] })).items[0]!.offered[0]!
+      const opened = await listed()
+      expect(opened.now!.demand).toBe(1)
+      expect(opened.throttledUnder).toBeUndefined()
+      const throttle = { ...shutBlockValve(plantId), tagId: 'AFW-A-CV', reason: 'Steam generator A level is recovering: control AFW flow', procedureStep: undefined, evidence: ['SG-A-LVL-NR'] }
+      const shut = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0 })
+      expect(shut.ok).toBe(false)
+      if (!shut.ok) expect(shut.reason).toMatch(/ \(AFW START\) stands (active|sealed in) and holds AFW-A-CV: a command against it is refused until it is reset$/)
+      const proposed = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0.4 })
+      expect(proposed.ok).toBe(true)
+      expect((await proposals(run, plantId))[0]!.proposal).toMatchObject({ word: 'OPEN to 40 %', status: 'pending' })
+      expect((await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: proposed.commandId, decision: 'approve' })).ok).toBe(true)
+      // The approved write is queued and applied with the next step.
+      const approvedAt = Date.parse(run.snapshot().clock!.currentTime)
+      await run.runMaximumPace(new Date(approvedAt + 1_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+      const throttled = await listed()
+      expect(throttled.now!.demand).toBe(0.4)
+      expect(throttled.throttledUnder!.length).toBeGreaterThan(0)
+      expect(throttled.throttledUnder!.every(rule => rule.action === 'AFW START' && rule.label !== rule.ruleId)).toBe(true)
+      const sample = await query<{ readonly operations: { readonly log: ReadonlyArray<{ readonly kind: string; readonly throttledUnder?: ReadonlyArray<{ readonly ruleId: string; readonly label: string }> }> } }>(
+        run, operator, 'world.process-plant.display.sample', { plantId, paths: [throttled.control.path, throttled.control.state!], operations: true })
+      expect(sample.operations.log).toEqual([expect.objectContaining({ kind: 'approval', throttledUnder: throttled.throttledUnder })])
+      // It holds: nothing rewrites the demand after the actuation's edge.
+      await run.runMaximumPace(new Date(approvedAt + 13_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+      const held = await listed()
+      expect(held.now!.demand).toBe(0.4)
+      expect(held.now!.position).toBeCloseTo(0.4, 2)
+    })
+  })
+})
+
 describe('a pending proposal across a restore', () => {
   const builtIn = scenarios.find(scenario => scenario.id === 'test-plant')!
   const plant = builtIn.initialObjects.find(object => object.packId === 'process-plant')!

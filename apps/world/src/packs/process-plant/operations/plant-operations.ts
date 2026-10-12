@@ -34,6 +34,12 @@ export const operationRecordSchema = z.object({
   /** A write, a ramp (to its target), or a person's approval that executed a proposal's write. */
   kind: z.enum(['write', 'ramp', 'approval']),
   proposalId: z.string().min(1).optional(),
+  /**
+   * The standing protection actuations it throttles: they drove its demand
+   * to an end of its span and it sets a value between (command-guard.ts
+   * throttledUnder); absent for any other command.
+   */
+  throttledUnder: z.array(z.object({ ruleId: z.string().min(1), label: z.string().min(1), action: z.string().min(1) }).strict()).min(1).optional(),
 }).strict()
 export type OperationRecord = z.infer<typeof operationRecordSchema>
 

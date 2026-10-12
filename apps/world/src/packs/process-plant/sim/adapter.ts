@@ -29,7 +29,7 @@ import {
 } from '../commands.ts'
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
-import { aiProposeOnlyRefusal, instructorOnlyRefusal, validateOperatorWrite } from '../operations/command-guard.ts'
+import { aiProposeOnlyRefusal, instructorOnlyRefusal, throttledUnder, validateOperatorWrite } from '../operations/command-guard.ts'
 import { proposalPortsFor } from '../operations/instance-ports.ts'
 import { decideProposal, proposeOperation } from '../operations/proposals.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
@@ -324,7 +324,12 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
     ): void => {
       if (plant.operations === undefined || (context.origin !== 'person' && context.origin !== 'ai')) return
       const at = { elapsedMs: plant.runtime.elapsedMs(), wallMs: Date.now() }
-      const transitions = plant.operations.record({ commandId: command.id, actorId: command.actorId, origin: context.origin, elapsedMs: at.elapsedMs, ...write }, at)
+      // A throttle under a standing actuation is logged with the actuations it sits under.
+      const under = plant.protection === undefined ? [] : throttledUnder(plant.plant, plant.protection.snapshot(), write)
+      const transitions = plant.operations.record({
+        commandId: command.id, actorId: command.actorId, origin: context.origin, elapsedMs: at.elapsedMs, ...write,
+        ...(under.length === 0 ? {} : { throttledUnder: [...under] }),
+      }, at)
       emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, transitions))
     }
 
