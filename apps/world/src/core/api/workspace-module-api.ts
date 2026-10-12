@@ -31,6 +31,9 @@ import {
   procedureControlStateSchema,
   procedureDocumentSchema,
   procedureIdSchema,
+  procedureRunIdSchema,
+  procedureRunTransitionCommandKind,
+  procedureRunTransitionPayloadSchema,
   procedureSourceIdSchema,
   procedureStepIdSchema,
   recordingSampleSchema,
@@ -54,6 +57,14 @@ import { apiError,json,readJson } from './responses.ts'
 import {
   buildSimulationRunActorForAccess,
 } from './simulation-run-routes.ts'
+import {
+  composeProcedureRunView,
+  composeProcedureStepView,
+  procedureStepNotFoundCode,
+  procedureStepViewSchema,
+  type ProcedureStepView,
+  type ProcedureStepViewPorts,
+} from '../../features/procedures/step-view.ts'
 
 const WORLD_MODULE_ID = moduleIdSchema.parse('world')
 
@@ -123,6 +134,10 @@ const readChangesInputSchema = z.object({
 const procedureCatalogInputSchema = z.object({
   sourceId: procedureSourceIdSchema.optional(),
   refresh: z.boolean().default(false),
+}).strict()
+const procedureStepReadInputSchema = z.object({
+  runId: procedureRunIdSchema.describe('A procedure Run, as world.procedure.runs.list lists it.'),
+  stepId: procedureStepIdSchema.optional().describe('A step of the run\'s procedure; omit for its current step.'),
 }).strict()
 const procedureEvidenceInputSchema = z.object({
   sourceId: procedureSourceIdSchema.optional(),
@@ -665,6 +680,58 @@ const visibleProcedureState = (runtime: ApiRunRuntime, invocation: ApiInvocation
   const procedures = runtime.snapshot().procedures ?? { runs: [] }
   const denied = deniedInspectionSubjects(runtime, invocation)
   return denied.size === 0 ? procedures : { runs: procedures.runs.filter(run => !denied.has(run.scope.plantId)) }
+}
+
+const procedureStepViewError = (status: number, code: string, message: string): Error =>
+  Object.assign(new Error(message), { status, code })
+
+/**
+ * A procedure Run's step as its caller may read it: one shared builder for
+ * step.read and for the step an AI agent's accepted transition leads to.
+ */
+const procedureStepViewFor = async (
+  runtime: ApiRunRuntime, invocation: ApiInvocation,
+  input: { readonly runId: string; readonly stepId?: string },
+  mode: 'step' | 'next',
+): Promise<ProcedureStepView> => {
+  const run = runtime.snapshot().procedures?.runs.find(candidate => candidate.runId === input.runId)
+  if (!run) throw procedureStepViewError(404, 'procedure_run_not_found', `No procedure run ${input.runId} in this Simulation Run; world.procedure.runs.list lists them.`)
+  if (deniedInspectionSubjects(runtime, invocation).has(run.scope.plantId)) {
+    throw procedureStepViewError(403, 'agent_access_restricted', `AI inspection access is restricted for: ${run.scope.plantId}`)
+  }
+  const document = await runtime.procedureDocument({
+    sourceId: run.sourceId, procedureId: run.procedureId, sourceRevision: run.sourceRevision, sourcePath: run.sourcePath,
+  })
+  const actor = buildSimulationRunActorForAccess(invocation.access)
+  const ports: ProcedureStepViewPorts = {
+    sequence: () => runtime.snapshot().seq,
+    clock: () => {
+      const clock = runtime.snapshot().clock
+      if (!clock) throw new Error('Simulation Run clock is not initialized')
+      return clock
+    },
+    observations: () => runtime.procedureObservations(actor, run.scope.plantId),
+  }
+  // A transfer or END leaves no step of this run to work.
+  if (mode === 'next' && run.status !== 'active') return composeProcedureRunView({ run, document, ports })
+  try {
+    return await composeProcedureStepView({ run, document, ports, ...(input.stepId === undefined ? {} : { stepId: input.stepId }) })
+  } catch (error) {
+    if (error instanceof Error && (error as Error & { code?: string }).code === procedureStepNotFoundCode) throw procedureStepViewError(404, procedureStepNotFoundCode, error.message)
+    throw error
+  }
+}
+
+// An AI agent's accepted transition answers with the step it leads to, so the
+// agent decides that step without another read. The command stands whatever
+// this read finds.
+const nextProcedureStep = async (runtime: ApiRunRuntime, invocation: ApiInvocation): Promise<{ readonly next: ProcedureStepView } | { readonly nextUnavailable: string }> => {
+  try {
+    const { runId } = procedureRunTransitionPayloadSchema.parse(invocation.input)
+    return { next: await procedureStepViewFor(runtime, invocation, { runId }, 'next') }
+  } catch (error) {
+    return { nextUnavailable: `The transition was accepted; reading the next step failed: ${error instanceof Error ? error.message : String(error)}. Read it with world.procedure.run.step.read.` }
+  }
 }
 
 const visibleChangeEvents = (
@@ -1444,6 +1511,32 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
   },
   {
     descriptor: {
+      id: 'world.procedure.run.step.read',
+      moduleId: WORLD_MODULE_ID,
+      kind: 'query',
+      scope: { kind: 'resource', resourceType: 'world.simulation-run' },
+      title: 'Read procedure run step',
+      description: 'Run, continue or step through a live procedure: reads one step of a procedure Run to work through it. Input {runId, stepId?}; omit stepId for the current step; runIds come from world.procedure.runs.list. Returns the run (driver, current step, step n of total); the step\'s checks, actions and cautions; its branches with index, outcome, target and whether an AI agent may select each (aiMaySelect, else personOnlyReason); each tag the step cites with its binding and current reading (formatted, quality, plant time) or why it is unavailable; World\'s observation and the step\'s decision so far; the CSF colours the procedure monitors; and sequence, to pass to world.simulation-run.wait. Select with world.procedure.run.transition; an AI agent\'s accepted transition returns this view of the next step. Readings are model values, not instrument validation.',
+      searchTerms: ['continue procedure', 'run procedure', 'step through procedure', 'work through procedure', 'next procedure step', 'procedure placekeeping'],
+      risk: 'read',
+      idempotent: true,
+      inputSchema: z.toJSONSchema(procedureStepReadInputSchema, { io: 'input' }),
+      outputSchema: capabilityJsonSchema(procedureStepViewSchema),
+    },
+    invoke: async (registry, invocation) => {
+      const input = procedureStepReadInputSchema.parse(invocation.input)
+      const runtime = await registry.load(requireSimulationRunResource(invocation))
+      try {
+        return json({ result: await procedureStepViewFor(runtime, invocation, input, 'step') })
+      } catch (error) {
+        const failure = error as Error & { status?: number; code?: string }
+        if (typeof failure.status === 'number' && typeof failure.code === 'string') return apiError(failure.status, failure.code, failure.message)
+        throw error
+      }
+    },
+  },
+  {
+    descriptor: {
       id: 'world.simulation-run.changes',
       moduleId: WORLD_MODULE_ID,
       kind: 'query',
@@ -1641,6 +1734,9 @@ const invokeCapability = async (
     }
     if (outcome.kind === 'command' && !outcome.result.ok) {
       return apiError(409, 'simulation_command_rejected', outcome.result.reason)
+    }
+    if (outcome.kind === 'command' && capabilityId === procedureRunTransitionCommandKind && invocation.access.actor.kind === 'ai') {
+      return json({ result: { ...outcome.result, ...(await nextProcedureStep(runtime, invocation)) } })
     }
     return json({
       result: outcome.result,
