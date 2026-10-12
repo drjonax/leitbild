@@ -17,8 +17,10 @@
 
   type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string }
 
-  let { proposal, review, item, now, looks, approve, reject, extend, useAsDraft }: {
+  let { proposal, review, item, now, stale = false, looks, approve, reject, extend, useAsDraft }: {
     proposal: ProcessPlantProposal
+    /** The page's samples are stale: its decisions are disabled. */
+    stale?: boolean
     review: ProposalReview | null
     item: ListedItem
     now: OperationNow
@@ -75,4 +77,4 @@
   const card = $derived(proposalCard(proposal, review, item, margins, now))
 </script>
 
-<ProposalSection {card} {histories} {approve} {reject} {extend} {useAsDraft} />
+<ProposalSection {card} {histories} {stale} {approve} {reject} {extend} {useAsDraft} />

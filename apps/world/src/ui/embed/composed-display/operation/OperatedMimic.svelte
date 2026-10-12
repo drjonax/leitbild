@@ -24,8 +24,10 @@
   // person opens them. World derives what may be operated and where it
   // stands (controls.list, read with every sample); a command goes through
   // World's one validated queued write path as this screen's actor
-  // (control.write), a decision on a proposal through control.decide. Never
-  // drawn in a chat: there the drawing has no controls.
+  // (control.write), a decision on a proposal through control.decide. In a
+  // chat (operation.readOnly) the drawing has no controls: its items carry
+  // their badges only. While the page's samples are stale every control and
+  // decision is disabled and says so, the last proposals kept in view.
   let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, operation, trends, history }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
@@ -91,7 +93,7 @@
     const drawn = owners?.get(id)
     return drawn === undefined ? undefined : mimic.items.find(item => item.id === drawn)
   }
-  const proposals = $derived<ReadonlyArray<ProcessPlantProposal>>(stale ? [] : latest?.operations?.proposals ?? [])
+  const proposals = $derived<ReadonlyArray<ProcessPlantProposal>>(latest?.operations?.proposals ?? [])
   const controlPaths = (items: Iterable<ListedItem>): ReadonlyArray<string> =>
     [...new Set([...items].flatMap(item => item.offered.flatMap(entry => [String(entry.control.path), ...(entry.control.state === undefined ? [] : [String(entry.control.state)])])))]
 
@@ -148,7 +150,7 @@
     const items = [...listed.values()]
     return pendingProposals(plantPending.filter(proposal => listed!.has(proposal.item)), items, () => [], now)
   })
-  $effect(() => { operation.proposals(pendingEntries) })
+  $effect(() => { if (!operation.readOnly) operation.proposals(pendingEntries) })
 
   /** What a drawn item offers: its equipment's controls, a group's members' and its undrawn bundled devices' together. */
   const listedOf = (item: MimicDrawnItem): ListedItem | undefined => {
@@ -175,7 +177,9 @@
       if (entry === undefined || entry.offered.length === 0) continue
       // A proposal names one piece of equipment; on a symbol that stands for several it is one of theirs.
       const shown = itemBadges(entry, { operations: operations.log, proposals: operations.proposals.filter(proposal => owners?.get(proposal.item) === item.id).map(proposal => ({ ...proposal, item: entry.id })), ownCommands, now })
-      const carriedHere = shown.progress === null && waiting.has(item.id) ? { ...shown, progress: { mode: 'static' as const } } : shown
+      // Read-only, no command is this screen's own: none locks an item.
+      const owned = operation.readOnly ? { ...shown, commandLocked: null } : shown
+      const carriedHere = owned.progress === null && waiting.has(item.id) ? { ...owned, progress: { mode: 'static' as const } } : owned
       if (carriedHere.progress !== null || carriedHere.attribution !== null || carriedHere.proposal !== null || carriedHere.interlock !== null || carriedHere.commandLocked !== null || carriedHere.throttled !== null) carried.set(item.id, carriedHere)
     }
     return carried
@@ -186,7 +190,7 @@
   let armed: string | null = null
   $effect(() => {
     const opening = operation.review
-    if (opening === null || opening === armed || now === null || listed === null || latest === undefined) return
+    if (operation.readOnly || opening === null || opening === armed || now === null || listed === null || latest === undefined) return
     // Not before the samples read the controls' paths: only then do they carry the proposals on them.
     const sampled = new Set(latest.values.map(entry => entry.path))
     if (!controlPaths(listed.values()).every(path => sampled.has(path))) return
@@ -226,7 +230,7 @@
   }
   const lookPens = $derived(quickLook === undefined ? undefined : { source: quickLook.source, pens: quickLook.looks.pens, sparklineMs: quickLook.looks.sparklineMs })
 
-  const sections = $derived<ReadonlyArray<MimicPopoverSection>>([
+  const sections = $derived<ReadonlyArray<MimicPopoverSection>>(operation.readOnly ? [] : [
     { id: 'proposal', title: 'Proposal', order: 10, modes: ['operate'], applies: item => proposalOf(item) !== undefined, body: proposalBody },
     {
       id: 'control',
@@ -253,12 +257,12 @@
       <details class="folded" open={drafted !== null}>
         <summary>{view.controls.length === 0 ? 'Not operated here' : view.controls.map(control => control.target).join(' · ')}</summary>
         {#key `${entry.id}|${drafted?.at ?? ''}`}
-          <ControlSection {view} {now} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
+          <ControlSection {view} {now} {stale} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
         {/key}
       </details>
     {:else}
       {#key `${entry.id}|${drafted?.at ?? ''}`}
-        <ControlSection {view} {now} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
+        <ControlSection {view} {now} {stale} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
       {/key}
     {/if}
   {/if}
@@ -273,6 +277,7 @@
       review={reviews.get(proposal.id) ?? null}
       item={entry}
       {now}
+      {stale}
       looks={lookPens}
       approve={() => decide(proposal, 'approve')}
       reject={reason => decide(proposal, 'reject', reason)}

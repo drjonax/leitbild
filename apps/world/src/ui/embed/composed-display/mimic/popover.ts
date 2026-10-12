@@ -166,6 +166,8 @@ export interface MimicPopoverContext {
   readonly pinned: boolean
   /** The width its sections have, in its own px, and how many quick-look rows it shows (null: all). */
   readonly room: { readonly width: number; readonly rows: number | null }
+  /** The page's samples are stale: its values are old and its controls disabled. */
+  readonly stale: boolean
 }
 
 /**

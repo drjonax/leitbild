@@ -65,8 +65,8 @@ export interface DisplayFrameBack {
 export interface DisplayFrameProposalEntry {
   readonly id: string
   readonly item: string
-  /** The components the item's own detail draws around: what the window opens to review it. */
-  readonly components: ReadonlyArray<string>
+  /** The details that may draw the item on its own symbol, each by the components it opens around, in the order the window tries them. */
+  readonly opens: ReadonlyArray<ReadonlyArray<string>>
   readonly action: string
   readonly proposer: 'AI' | 'OP'
   readonly minutes: number | null
@@ -89,8 +89,9 @@ export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | Displ
 /** The longest state and title an open request carries (a detail's state is far shorter). */
 const OPEN_STATE_MAX = 4_096
 const OPEN_TITLE_MAX = 120
-/** The most proposals, components and characters a proposals message carries. */
+/** The most proposals, details, components and characters a proposals message carries. */
 const PROPOSALS_MAX = 64
+const PROPOSAL_OPENS_MAX = 4
 const PROPOSAL_COMPONENTS_MAX = 16
 const PROPOSAL_TEXT_MAX = 600
 
@@ -115,12 +116,14 @@ export const parseDisplayFramePresentation = (value: unknown): DisplayFramePrese
 }
 
 const parseProposalEntry = (value: unknown): DisplayFrameProposalEntry | null => {
-  if (!isRecord(value) || !hasKeys(value, ['id', 'item', 'components', 'action', 'proposer', 'minutes', 'text'])) return null
+  if (!isRecord(value) || !hasKeys(value, ['id', 'item', 'opens', 'action', 'proposer', 'minutes', 'text'])) return null
   if (!text(value.id, OPEN_TITLE_MAX) || !text(value.item, OPEN_TITLE_MAX) || !text(value.action, PROPOSAL_TEXT_MAX) || !text(value.text, PROPOSAL_TEXT_MAX)) return null
   if (value.proposer !== 'AI' && value.proposer !== 'OP') return null
   if (value.minutes !== null && !(typeof value.minutes === 'number' && Number.isFinite(value.minutes) && value.minutes >= 0)) return null
-  if (!Array.isArray(value.components) || value.components.length === 0 || value.components.length > PROPOSAL_COMPONENTS_MAX || !value.components.every(component => text(component, OPEN_TITLE_MAX))) return null
-  return { id: value.id, item: value.item, components: value.components as ReadonlyArray<string>, action: value.action, proposer: value.proposer, minutes: value.minutes as number | null, text: value.text }
+  const components = (list: unknown): list is ReadonlyArray<string> =>
+    Array.isArray(list) && list.length > 0 && list.length <= PROPOSAL_COMPONENTS_MAX && list.every(component => text(component, OPEN_TITLE_MAX))
+  if (!Array.isArray(value.opens) || value.opens.length === 0 || value.opens.length > PROPOSAL_OPENS_MAX || !value.opens.every(components)) return null
+  return { id: value.id, item: value.item, opens: value.opens as ReadonlyArray<ReadonlyArray<string>>, action: value.action, proposer: value.proposer, minutes: value.minutes as number | null, text: value.text }
 }
 
 export const parseDisplayFrameMessage = (value: unknown): DisplayFrameMessage | null => {

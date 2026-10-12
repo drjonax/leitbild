@@ -19,7 +19,6 @@
   import PenLegend from './PenLegend.svelte'
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import SafetyFunctionChips from './SafetyFunctionChips.svelte'
-  import MimicPanel from './mimic/MimicPanel.svelte'
   import OperatedMimic from './operation/OperatedMimic.svelte'
   import { operationClient, type DisplayOperation } from './operation/operation-client.ts'
   import { createMimicQuickLook } from './mimic/quick-look-source.ts'
@@ -58,8 +57,8 @@
       onChange: next => { snapshot = next; keepFilter(next) },
       suspendWhenIdle: advice !== null,
       size: () => (advice === null ? { width: window.innerWidth, height: window.innerHeight } : null),
-      // Operated in the display window: its samples also read what its controls write and read.
-      operated: () => (opensIn === 'window' ? [...new Set([...operatedPaths.values()].flat())] : null),
+      // Operated in the display window, or read-only in a chat: its samples also read what its items' controls write and read.
+      operated: () => (operatedPaths.size === 0 ? null : [...new Set([...operatedPaths.values()].flat())]),
     })
     session = active
     void active.start()
@@ -222,14 +221,16 @@
   const opens = $derived(advice === null ? openItem : opensIn === 'window' ? openItemInWindow : undefined)
   // Operated only in the display window (plan §4.2): there each drawing's popovers offer World's controls and proposals.
   // A display opened on equipment (an item's detail, an answer's display) pins a pending proposal's popover as it is shown.
-  const operationOf = (panelIndex: number): DisplayOperation | undefined => opensIn !== 'window' ? undefined : {
+  // In a chat the drawing is read-only: its items carry their operation badges, and nothing is offered (C2a).
+  const operationOf = (panelIndex: number): DisplayOperation => ({
     runId,
     plantId,
     client: operationClient,
+    readOnly: opensIn !== 'window',
     sampled: paths => { operatedPaths.set(panelIndex, paths) },
-    proposals: entries => { embeddedDisplayFrame().reportProposals(entries) },
-    review: advice !== null || view?.kind === 'detail' ? `${shownTimes}|${shownState ?? envelope.state}|${trail.length}` : null,
-  }
+    proposals: entries => { if (opensIn === 'window') embeddedDisplayFrame().reportProposals(entries) },
+    review: opensIn === 'window' && (advice !== null || view?.kind === 'detail') ? `${shownTimes}|${shownState ?? envelope.state}|${trail.length}` : null,
+  })
   // Where items open, each one's detail dot opens its quick look: the lead values World chose for it with the
   // drawing, read from this Run while it is open.
   const quickLookSource = $derived(advice === null ? createMimicQuickLook({ client: composedDisplayClient, runId: simulationRunIdSchema.parse(envelope.subject.id), plantId }) : undefined)
@@ -413,16 +414,14 @@
       <div class="drawing">
         {#each view.display.panels as panel, index (index)}
           {#if panel.kind === 'mimic'}
-            {@const operation = operationOf(index)}
-            {#if operation !== undefined}<OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} trends={panel.trends} history={snapshot} />
-            {:else}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} trends={panel.trends} history={snapshot} />{/if}
-          {:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
+            <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} operation={operationOf(index)} trends={panel.trends} history={snapshot} />
+          {:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} {stale} />{/if}
         {/each}
       </div>
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
         {#each view.display.panels as panel, index (index)}
           {#if panel.kind === 'readouts'}
-            <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} column history={snapshot} />
+            <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} column history={snapshot} {stale} />
           {:else if panel.kind === 'alarms'}
             {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
             <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} fill only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
@@ -467,18 +466,13 @@
         {:else if panel.kind === 'comparison'}
           <ComparisonPanel {panel} latest={snapshot.latest} series={snapshot.series} range={snapshot.ranges[index]?.[0] ?? null} {activeRuleIds} />
         {:else if panel.kind === 'readouts'}
-          <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} />
+          <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} {stale} />
         {:else if panel.kind === 'evidence'}
           <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
         {:else if panel.kind === 'mimic'}
-          {@const operation = operationOf(index)}
-          {#if operation !== undefined}
-            <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} trends={panel.trends} history={snapshot} />
-          {:else}
-            <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} trends={panel.trends} history={snapshot} />
-          {/if}
+          <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} operation={operationOf(index)} trends={panel.trends} history={snapshot} />
         {:else if panel.kind === 'faceplate'}
-          <FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} />
+          <FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} {stale} />
         {:else}
           {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
           <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />

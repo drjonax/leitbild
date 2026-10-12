@@ -19,7 +19,8 @@
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
   import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
   import { detailDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
-  import type { ProposalListEntry } from '../embed/composed-display/operation/operation-presenter.ts'
+  import { composedDisplayClient } from '../embed/composed-display/composed-display-client.ts'
+  import { drawsOwnSymbol, type ProposalListEntry } from '../embed/composed-display/operation/operation-presenter.ts'
   import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameOpen, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
   import { openedListing } from '../embed/opened-display.ts'
   import { zoomStepOfKey } from '../embed/view-host.ts'
@@ -647,14 +648,28 @@
   const proposalEntries = $derived(current === null ? [] : proposalsByFrame.get(current.key) ?? [])
   const frameProposals = (key: string, entries: ReadonlyArray<ProposalListEntry>): void => { proposalsByFrame = withValue(proposalsByFrame, key, entries) }
 
-  // A proposal opens its item's own detail after the shown display, which pins the proposal's popover as it opens on it.
-  const reviewProposal = (entry: ProposalListEntry): void => {
+  // A proposal opens, after the shown display, a detail that draws its item on its own symbol, which pins the proposal's
+  // popover on it as it opens (HMI review of run 26c, g2): the first of the details its entry names that World draws so
+  // for this window's room; where none does, the first, whose card then stands on the item's host.
+  const reviewProposal = async (entry: ProposalListEntry): Promise<void> => {
     const from = current
     if (from === null || !plantTarget.ok) return
-    frameOpen(from.key, {
-      state: JSON.stringify(detailDisplayStateSchema.parse({ detail: { plantId: plantTarget.plant.plantId, components: [...entry.components] } })),
-      title: `Review: ${entry.action}`,
-    })
+    const plantId = plantTarget.plant.plantId
+    const states = entry.opens.map(components => JSON.stringify(detailDisplayStateSchema.parse({ detail: { plantId, components: [...components] } })))
+    const room = bodyElement === null ? null : { width: bodyElement.clientWidth, height: bodyElement.clientHeight }
+    let state = states[0]!
+    if (states.length > 1 && room !== null) {
+      for (const candidate of states) {
+        try {
+          const drawn = await composedDisplayClient.view(runId, plantId, candidate, room)
+          if (drawsOwnSymbol(drawn.display, entry.item)) { state = candidate; break }
+        } catch (err) {
+          notice = `${entry.action}: its detail cannot be drawn: ${errorText(err)}`
+          return
+        }
+      }
+    }
+    frameOpen(from.key, { state, title: `Review: ${entry.action}` })
   }
 
   let logPlant = $state.raw<DeckPlant | null>(null)
@@ -897,7 +912,7 @@
 
       {#if tier === 'wide' || tier === 'medium'}
         <div class="display-window-plant" role="group" aria-label="Plant">
-          <ProposalsChip entries={proposalEntries} open={reviewProposal} />
+          <ProposalsChip entries={proposalEntries} open={entry => { void reviewProposal(entry) }} />
           <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
           <button
             type="button"
@@ -1082,7 +1097,7 @@
       </div>
     {:else if popover === 'more'}
       <div bind:this={popoverElement} class="display-window-popover more" role="group" aria-label="More">
-        <ProposalsChip entries={proposalEntries} open={entry => { popover = null; reviewProposal(entry) }} />
+        <ProposalsChip entries={proposalEntries} open={entry => { popover = null; void reviewProposal(entry) }} />
         <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
         <button
           type="button"

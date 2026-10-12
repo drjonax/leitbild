@@ -76,12 +76,17 @@ export const operationClient: OperationClient = {
 /**
  * A display operated in the process display window: the Run and Plant its
  * controls act on, the client they act through, and how it tells its display
- * the paths its controls write and read (sampled with the rest).
+ * the paths its controls write and read (sampled with the rest). In a chat
+ * the same display is read-only: its items carry the operation state they are
+ * in (a pending proposal, a protection actuation holding them, a command
+ * travelling), and nothing is offered.
  */
 export interface DisplayOperation {
   readonly runId: SimulationRunId
   readonly plantId: string
   readonly client: OperationClient
+  /** In a chat: badges only, no PROPOSAL or CONTROL section, no proposal pinned or reported. */
+  readonly readOnly: boolean
   readonly sampled: (paths: ReadonlyArray<string>) => void
   /** Tells the display window the Plant's pending proposals, most time-critical first, for its toolbar's chip. */
   readonly proposals: (entries: ReadonlyArray<ProposalListEntry>) => void

@@ -6,7 +6,7 @@
   import type { TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import Sparkline from '../Sparkline.svelte'
   import { listen } from './listen.ts'
-  import type { ProposalCard } from './operation-presenter.ts'
+  import { STALE_CONTROLS, type ProposalCard } from './operation-presenter.ts'
 
   // A proposal's approval card, first in its item's popover while pending
   // (plan §4.4, QA-9): the exact command World stored, from → to, who
@@ -19,8 +19,10 @@
 
   type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string }
 
-  let { card, histories = {}, approve, reject, extend, useAsDraft }: {
+  let { card, histories = {}, stale = false, approve, reject, extend, useAsDraft }: {
     card: ProposalCard
+    /** The page's samples are stale: no decision is offered on old values (STALE_CONTROLS). */
+    stale?: boolean
     /** Each cited reading's pen and recorded history, where the display has them, for its sparkline. */
     histories?: Readonly<Record<string, { readonly pen: ComposedDisplayPen; readonly points: ReadonlyArray<TrendPoint>; readonly windowMs: number; readonly now: number }>>
     approve: () => Promise<Outcome>
@@ -35,7 +37,7 @@
   let outcome = $state<string | null>(null)
 
   const decide = async (what: string, act: () => Promise<Outcome>): Promise<void> => {
-    if (busy) return
+    if (busy || stale) return
     busy = true
     outcome = null
     try {
@@ -58,7 +60,8 @@
     {#if card.expires !== null}<span class="expires">expires {card.expires.at} ({left} left)</span>{/if}
   </header>
   <p class="action">{card.action}</p>
-  {#if open && (card.from !== null || card.to !== null)}<p class="change">{card.from ?? '—'} → {card.to ?? '—'}</p>{/if}
+  {#if open && card.already !== null}<p class="change">{card.already}</p>
+  {:else if open && (card.from !== null || card.to !== null)}<p class="change">{card.from ?? '—'} → {card.to ?? '—'}</p>{/if}
   <blockquote>
     <span class="label">Why ({card.proposerOrigin === 'ai' ? 'AI' : 'operator'}):</span> “{card.reason}”
     {#if card.procedureStep !== undefined}<span class="step">{card.procedureStep}</span>{/if}
@@ -76,6 +79,7 @@
     {/each}
   </ul>
   {#each card.margins as margin (margin.tagId)}<p class="margin">{margin.tagId}: {margin.text}</p>{/each}
+  {#if card.consequence !== null}<p class="consequence-line">{card.consequence}</p>{/if}
   <p class="expected">Expected: {card.expected}</p>
   {#each card.consequences as line (line)}<p class="consequence">{line}</p>{/each}
   {#each card.opposing as line (line)}<p class="opposing">{line}</p>{/each}
@@ -83,32 +87,33 @@
   {#if open && card.approve !== null}
     <!-- What Approve executes, in full (QA-7): verb, tag and label, and whether the plant changed since it was proposed. -->
     <p class="approve-what">{card.approve.label}</p>
+    {#if stale}<p class="refused" role="status">{STALE_CONTROLS}</p>{/if}
     <div class="decisions">
       {#if card.approve.confirm === 'slide'}
         <!-- The slide's handle says Approve, so it has the track's length to travel; its name says what it approves. -->
-        <obc-slide-button aria-label={card.approve.label} disabled={busy || !card.approve.enabled} onslide={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>
+        <obc-slide-button aria-label={card.approve.label} disabled={busy || stale || !card.approve.enabled} onslide={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>
           <span slot="label">Approve</span>
         </obc-slide-button>
       {:else}
         <!-- An obc-button is a button: the native button inside it takes Enter and Space. -->
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <obc-button variant="normal" aria-label={card.approve.label} disabled={busy || !card.approve.enabled} onclick={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>Approve</obc-button>
+        <obc-button variant="normal" aria-label={card.approve.label} disabled={busy || stale || !card.approve.enabled} onclick={() => { if (card.approve?.enabled) void decide('Approval', approve) }}>Approve</obc-button>
       {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <obc-button variant="normal" disabled={busy} onclick={() => { void decide('Rejection', () => reject(reason.trim() === '' ? null : reason.trim())) }}>Reject</obc-button>
+      <obc-button variant="normal" disabled={busy || stale} onclick={() => { void decide('Rejection', () => reject(reason.trim() === '' ? null : reason.trim())) }}>Reject</obc-button>
     </div>
     <!-- Read as typed and as committed: the field's change does not bubble, so it is listened to on the field itself. -->
-    <obc-text-input-field label="Reason to reject (optional)" maxlength={300} value={reason} use:listen={{
+    <obc-text-input-field label="Reason to reject (optional)" maxlength={300} value={reason} disabled={stale} use:listen={{
       input: event => { const field = event.composedPath()[0]; if (field instanceof HTMLInputElement) reason = field.value },
       change: event => { const detail = (event as CustomEvent<{ value?: string } | null>).detail; if (typeof detail?.value === 'string') reason = detail.value },
     }}></obc-text-input-field>
     <div class="secondary">
       {#if card.extendable}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <obc-button variant="flat" disabled={busy} onclick={() => { void decide('Extension', extend) }}>Extend once</obc-button>
+        <obc-button variant="flat" disabled={busy || stale} onclick={() => { void decide('Extension', extend) }}>Extend once</obc-button>
       {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <obc-button variant="flat" disabled={busy} onclick={useAsDraft}>Use as draft</obc-button>
+      <obc-button variant="flat" disabled={busy || stale} onclick={() => { if (!stale) useAsDraft() }}>Use as draft</obc-button>
     </div>
   {/if}
   {#if card.closed !== null}<p class="closed-text">{card.closed}</p>{/if}
@@ -122,6 +127,8 @@
   p { margin: 0; }
   .action { font-weight: 700; color: var(--element-active-color); }
   .change, .margin, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }
+  /* World's consequence line: what approving it stops or isolates now, read before Approve. */
+  .consequence-line { color: var(--element-active-color); }
   blockquote { margin: 0; padding-left: 6px; border-left: 2px solid var(--border-outline-color); }
   .label, .step { color: var(--element-neutral-color); }
   .step { display: block; }

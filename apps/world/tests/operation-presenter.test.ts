@@ -17,17 +17,25 @@ import { formatQuantity } from '../src/packs/process-plant/displays/display-text
 import { followAllowanceMs, plantControlsFor, type ItemControls, type PlantControls } from '../src/packs/process-plant/operations/controls.ts'
 import { listedControlsFor, proposalPortsFor } from '../src/packs/process-plant/operations/instance-ports.ts'
 import { decideProposal, emptyProposalBook, proposeOperation, reviewProposal, type ProposalPorts } from '../src/packs/process-plant/operations/proposals.ts'
+import { pushbuttonProtection } from '../src/packs/process-plant/operations/pushbutton-protection.ts'
+import { compileDetailDisplay } from '../src/packs/process-plant/displays/compose.ts'
+import type { ProcessPlantProposal } from '../src/packs/process-plant/operations/proposals.ts'
 import {
+  actorName,
   ATTRIBUTION_MS,
   commandPhase,
+  consequenceLine,
   demandOption,
+  drawsOwnSymbol,
   evidenceMargin,
   itemBadges,
   itemControlView,
+  moreActuations,
   operationNow,
   operationsLogRows,
   pendingProposals,
   proposalCard,
+  reviewOpens,
   shownProposal,
   type ListedItem,
   type OperationNow,
@@ -113,16 +121,23 @@ describe('the CONTROL section of an item', () => {
     expect(stop.consequences.some(line => line.startsWith('→ RX TRIP · ') && line.endsWith(': armed'))).toBe(true)
   })
 
-  test('the SI block is a pushbutton the I&C refuses at power, in its own words; after a safety injection a pump stop is held by the sealed-in SI signal', () => {
+  test('the SI block is a slide the I&C refuses at power, in its own words, with whether it stands and its permissive; after a safety injection a pump stop is held by the sealed-in SI signal', () => {
     const plant = unit()
     plant.step(5)
     const block = plant.tag('SI-BLOCK')
     const view = itemControlView(plant.listed(plant.itemOffering(block.path)), plant.now())
     const pushbutton = view.controls.find(candidate => candidate.path === block.path)!
     expect(pushbutton.form).toBe('pushbutton')
-    expect(pushbutton.now).toBeNull()
-    // Blocking SI sets no trip going: a button, not a slide.
-    expect(pushbutton.options.map(option => [option.confirm, option.slideOnly])).toEqual([['button', false]])
+    // A block defeats protection: slid like a trip, never pressed once (HMI review of run 26c), and it says whether it stands.
+    expect(pushbutton.now).toBe('not blocked')
+    expect(pushbutton.options.map(option => [option.confirm, option.slideOnly])).toEqual([['slide', true]])
+    expect(pushbutton.options[0]!.consequences).toEqual(['Blocks SI · Safety injection on low pressurizer pressure'])
+    expect(pushbutton.protection).toEqual({
+      role: 'block',
+      gate: { text: 'Low pressurizer pressure SI block permitted below P-11: not met now', allows: false, message: expect.stringContaining('P-11') },
+    })
+    // Trips first, then actuations, blocks last: the core's pushbuttons in that order.
+    expect(view.controls.filter(control => control.form === 'pushbutton').map(control => control.protection?.role)).toEqual(['trip', 'actuation', 'block'])
     const refusal = plant.validate({ path: block.path, value: true })
     expect(refusal.accepted).toBe(false)
     if (refusal.accepted) return
@@ -246,7 +261,8 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
       action: `SHUT ${target}`,
       from: 'OPEN',
       to: 'SHUT',
-      proposer: 'AI · assistant · 10:01:01',
+      // Who, by kind: the Run records actors by id only, never shown raw ("actor:operator").
+      proposer: 'AI agent · 10:01:01',
       proposerOrigin: 'ai',
       reason: 'PORV-456A stuck 20 % open with no demand: isolate it with its block valve',
       procedureStep: 'AOP PORV leakage step 3',
@@ -291,7 +307,7 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     const badges = () => itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(['cmd-approve-1']), now: plant.now() })
     // Approved and closed: no pending badge; its card reads who approved it.
     const closed = proposalCard(decided.book.proposals[0]!, null, plant.listed(plant.itemOffering(blockValve.path)), [], plant.now())
-    expect([closed.status, closed.closed, closed.approve, closed.expires]).toEqual(['approved', 'Approved by op-1 at 10:01:01', null, null])
+    expect([closed.status, closed.closed, closed.approve, closed.expires]).toEqual(['approved', 'Approved by an operator at 10:01:01', null, null])
     plant.step(4)
     const travelling = badges()
     expect(travelling.proposal).toBeNull()
@@ -299,12 +315,12 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     if (travelling.progress?.mode === 'determinate') expect(travelling.progress.value).toBeGreaterThan(20)
     // The command this screen issued locks nothing for it; one another screen issued does.
     expect(travelling.commandLocked).toBeNull()
-    expect(itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(), now: plant.now() }).commandLocked?.title).toContain('op-1\'s command travels since 10:01:01')
+    expect(itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(), now: plant.now() }).commandLocked?.title).toContain('another operator\'s command travels since 10:01:01')
     plant.step(8)
     const done = badges()
     expect(done.progress).toBeNull()
     expect(done.attribution?.text).toBe('OP·AI')
-    expect(done.attribution?.title).toMatch(/^SHUT MOV-8000A .+ by op-1, proposed by AI \(assistant\) at 10:01:01$/)
+    expect(done.attribution?.title).toMatch(/^SHUT MOV-8000A .+ by an operator, proposed by an AI agent at 10:01:01$/)
     plant.step(ATTRIBUTION_MS / 1_000)
     expect(badges().attribution).toBeNull()
   }, PLANT_HANG_GUARD_MS)
@@ -369,11 +385,11 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     const rejected = { ...proposed.book.proposals[0]!, id: 'cmd-propose-0', status: 'rejected' as const, closed: { atElapsedMs: 30_000, actorId: 'op-1', reason: 'not yet' } }
     const rows = () => operationsLogRows([approval], [...decided.book.proposals, rejected], [item], plant.now())
     plant.step(4)
-    expect(rows()[0]).toMatchObject({ who: 'Operator op-1', action: expect.stringMatching(/^SHUT MOV-8000A /), chain: 'approved AI assistant\'s proposal of 10:01:01', result: 'travelling' })
+    expect(rows()[0]).toMatchObject({ who: 'Operator', action: expect.stringMatching(/^SHUT MOV-8000A /), chain: 'approved an AI agent\'s proposal of 10:01:01', result: 'travelling' })
     plant.step(8)
     expect(rows().map(row => [row.time, row.who, row.chain, row.result])).toEqual([
-      ['10:01:01', 'Operator op-1', 'approved AI assistant\'s proposal of 10:01:01', 'SHUT now'],
-      ['10:00:30', 'AI assistant', 'proposed 10:01:01', 'rejected by op-1: not yet, not executed'],
+      ['10:01:01', 'Operator', 'approved an AI agent\'s proposal of 10:01:01', 'SHUT now'],
+      ['10:00:30', 'AI agent', 'proposed 10:01:01', 'rejected by an operator: not yet, not executed'],
     ])
   }, PLANT_HANG_GUARD_MS)
 
@@ -426,6 +442,10 @@ describe('demand controls and valve positions', () => {
     const throttled = { ...listed, offered: listed.offered.map(entry => (entry.control.path === valve.path ? { ...entry, throttledUnder: [under] } : entry)) }
     const control = itemControlView(throttled, plant.now()).controls.find(candidate => candidate.path === valve.path)!
     expect(control.throttled).toEqual(['Throttled under AFW actuation on SG low-low level'])
+    // Under several, the first in full and the rest counted in words (HMI review of run 26c: "actuation+3").
+    const several = { ...listed, offered: listed.offered.map(entry => (entry.control.path === valve.path ? { ...entry, throttledUnder: [under, { ...under, ruleId: 'b' }, { ...under, ruleId: 'c', label: 'AFW actuation on bus loss' }, { ...under, ruleId: 'd', label: 'AFW actuation manual' }] } : entry)) }
+    expect(itemBadges(several, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled?.text).toBe('Throttled under AFW actuation on SG low-low level +2 more actuations')
+    expect([moreActuations(1), moreActuations(3)]).toEqual(['+1 more actuation', '+3 more actuations'])
     expect(itemBadges(throttled, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled).toEqual({ text: 'Throttled under AFW actuation on SG low-low level', title: 'Throttled under AFW actuation on SG low-low level' })
     const record: OperationRecord = { commandId: 'cmd-throttle', path: valve.path, value: 0.4, origin: 'person', actorId: 'op-1', elapsedMs: 1_000, kind: 'write', throttledUnder: [under] }
     expect(operationsLogRows([record], [], [throttled], plant.now())[0]).toMatchObject({ action: expect.stringMatching(/^OPEN to 40 % AFW-A-CV/), chain: 'direct command · throttled under AFW actuation on SG low-low level' })
@@ -443,5 +463,78 @@ describe('demand controls and valve positions', () => {
     expect(demandOption(control, 0.9)).toMatchObject({ word: 'OPEN to 90 %', heldBy: null })
     expect(plant.validate({ path: valve.path, value: 0.9 })).toEqual({ accepted: true })
     expect(plant.validate({ path: valve.path, value: 0 })).toMatchObject({ accepted: false })
+  }, PLANT_HANG_GUARD_MS)
+})
+
+describe('C2a: protection pushbuttons, who acted, consequence lines and the review display', () => {
+  test('a block stands while the memory its press latches reads so, and its permissive allows the press while its condition holds', () => {
+    const plant = unit()
+    plant.step()
+    const block = plant.tag('SI-BLOCK')
+    const control = plant.itemOffering(block.path).offered.find(candidate => candidate.path === block.path)!
+    const memory = plant.tag('SI-BLOCKED').path
+    const at = (blocked: boolean, holds: boolean) => pushbuttonProtection(plant.plant, control, { read: path => (path === memory ? blocked : plant.runtime.readVariable(path)), holds: () => holds })
+    expect(at(false, false)).toMatchObject({ role: 'block', blocks: { blocked: false }, gate: { kind: 'permissive', allows: false } })
+    expect(at(true, true)).toMatchObject({ role: 'block', blocks: { blocked: true, rules: [{ ruleId: 'safety-injection-low-pzr-pressure', action: 'SI' }] }, gate: { allows: true } })
+    // The trip and the actuation beside it carry no block and no gate.
+    const trip = plant.itemOffering(block.path).offered.find(candidate => candidate.tagId === 'RX-TRIP-MAN')!
+    const injection = plant.itemOffering(block.path).offered.find(candidate => candidate.tagId === 'SI-MAN')!
+    expect(pushbuttonProtection(plant.plant, trip, { read: path => plant.runtime.readVariable(path), holds: () => true })).toEqual({ role: 'trip' })
+    expect(pushbuttonProtection(plant.plant, injection, { read: path => plant.runtime.readVariable(path), holds: () => true })).toEqual({ role: 'actuation' })
+  })
+
+  test('actors are named by kind, never by raw id', () => {
+    expect([actorName('actor:operator'), actorName('actor:human:u-17'), actorName('actor:ai:assistant'), actorName('op-1', 'person'), actorName('assistant', 'ai'), actorName('actor:scenario-timeline')])
+      .toEqual(['operator', 'operator', 'AI agent', 'operator', 'AI agent', 'the Run'])
+  })
+
+  test('World\'s consequence line shows on the option that carries one and on the card of a proposal that stored it; none is made up', () => {
+    const plant = unit()
+    plant.step()
+    const blockValve = plant.tag('MOV-8000A')
+    const listed = plant.listed(plant.itemOffering(blockValve.path))
+    const view = itemControlView(listed, plant.now()).controls.find(candidate => candidate.path === blockValve.path)!
+    expect(view.options.map(option => option.consequence)).toEqual([null, null])
+    const line = 'stops 12.0 kg/s PZR relief → relief tank (100 % of relief flow) with the unit at power'
+    const carried = { ...listed, offered: listed.offered.map(entry => entry.control.path !== blockValve.path ? entry : { ...entry, control: { ...entry.control, options: entry.control.options.map(option => (option.value === 0 ? { ...option, consequence: line } : option)) } }) }
+    const shut = itemControlView(carried, plant.now()).controls.find(candidate => candidate.path === blockValve.path)!.options.find(option => option.value === 0)!
+    expect(shut.consequence).toBe(line)
+    const proposed = proposeOperation(emptyProposalBook, {
+      id: 'cmd-propose-1', plantId: plant.plant.id, write: { path: blockValve.path, value: 0 }, reason: 'PORV leaking', evidence: ['PORV-456A-POS' as never], proposer: { actorId: 'actor:ai:assistant', origin: 'ai' },
+      at: { elapsedMs: plant.runtime.elapsedMs(), wallMs: 0 },
+    }, plant.ports)
+    if (!proposed.ok) throw new Error(proposed.reason)
+    const stored = { ...proposed.book.proposals[0]!, consequence: line } as ProcessPlantProposal
+    expect(consequenceLine(stored)).toBe(line)
+    expect(proposalCard(stored, null, listed, [], plant.now()).consequence).toBe(line)
+    expect(proposalCard(proposed.book.proposals[0]!, null, listed, [], plant.now()).consequence).toBeNull()
+    // A proposal of the state the equipment reads already says so, never "OPEN → OPEN".
+    const open = proposeOperation(emptyProposalBook, {
+      id: 'cmd-propose-2', plantId: plant.plant.id, write: { path: blockValve.path, value: 1 }, reason: 'Keep the path open', evidence: ['PORV-456A-POS' as never], proposer: { actorId: 'actor:ai:assistant', origin: 'ai' },
+      at: { elapsedMs: plant.runtime.elapsedMs(), wallMs: 0 },
+    }, plant.ports)
+    if (!open.ok) throw new Error(open.reason)
+    expect(proposalCard(open.book.proposals[0]!, null, listed, [], plant.now()).already).toBe('Already OPEN: approving it changes nothing')
+    expect(proposalCard(proposed.book.proposals[0]!, null, listed, [], plant.now()).already).toBeNull()
+  })
+
+  test('a review opens a detail that draws the proposal\'s item on its own symbol: a bundled valve\'s host and the line it sits on, where the host alone has room only for the host', () => {
+    const plant = unit()
+    plant.step()
+    const blockValve = plant.tag('MOV-8000A')
+    const item = plant.listed(plant.itemOffering(blockValve.path))
+    const opens = reviewOpens(item)
+    expect(opens).toHaveLength(2)
+    expect(opens[1]!.slice(0, 1)).toEqual([...opens[0]!])
+    const instance = { plant: plant.plant, runtime: plant.runtime, ramps: createProcessPlantRampRunner({ runtime: plant.runtime }), protection: plant.protection, performance: createProcessPlantRuntimePerformance() }
+    const drawn = (components: ReadonlyArray<string>) => {
+      const result = compileDetailDisplay(instance, new Set(), components, { width: 1920, height: 1000 })
+      if (!result.ok) throw new Error(JSON.stringify(result.issues))
+      return drawsOwnSymbol(result.display, item.id)
+    }
+    expect(opens.map(drawn)).toEqual([false, true])
+    // A component's own detail draws it: one detail to open.
+    const pump = plant.listed(plant.itemOffering(plant.tag('RCP-A-RUN').path))
+    expect(reviewOpens(pump)).toEqual([pump.components])
   }, PLANT_HANG_GUARD_MS)
 })

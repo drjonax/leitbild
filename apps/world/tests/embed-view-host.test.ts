@@ -150,7 +150,7 @@ describe('a view framed by the display window', () => {
 
   test('tells its window the pending proposals it reads, once per change and only when a window presents it; a malformed list is refused', () => {
     // QA-10: the window's chip lists what the operated display reads with its samples; the window installs no poller.
-    const entry = { id: 'cmd-propose-1', item: 'pressurizer.blockValve', components: ['pressurizer'], action: 'SHUT MOV-8000A PORV block', proposer: 'AI' as const, minutes: null, text: 'SHUT MOV-8000A PORV block · no cited reading heads for a limit · expires 10:03:43' }
+    const entry = { id: 'cmd-propose-1', item: 'pressurizer.blockValve', opens: [['pressurizer'], ['pressurizer', 'pressurizerReliefHeader']], action: 'SHUT MOV-8000A PORV block', proposer: 'AI' as const, minutes: null, text: 'SHUT MOV-8000A PORV block · no cited reading heads for a limit · expires 10:03:43' }
     const unframed = framedPage()
     unframed.host.reportProposals([entry])
     expect(unframed.posted).toEqual([])
@@ -163,7 +163,8 @@ describe('a view framed by the display window', () => {
       { type: 'world:display-proposals', entries: [] },
     ])
     for (const { message } of page.posted) expect(parseDisplayFrameMessage(JSON.parse(JSON.stringify(message)))).toEqual(message as DisplayFrameMessage)
-    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, components: [] }] })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, opens: [] }] })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, opens: [[]] }] })).toBeNull()
     expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, proposer: 'someone' }] })).toBeNull()
     expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, extra: 1 }] })).toBeNull()
   })

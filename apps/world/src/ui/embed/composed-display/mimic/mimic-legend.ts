@@ -15,4 +15,12 @@ export const mimicLegend = {
   expected: 'expected after',
   /** Where vessels trace their readings: what a trace is, before its window ("fill / trace: last 10 min"). */
   trend: 'fill / trace: last',
+  /** Beside each operation badge the drawing carries (OperatedMimic, openbridge-mimic.ts operationBadges). */
+  aiProposal: 'AI proposal waiting',
+  proposal: 'proposal waiting',
+  operator: 'operator acted',
+  ai: 'AI acted',
+  manual: 'set under actuation',
+  interlock: 'held by actuation',
+  commandLocked: 'other command travelling',
 } as const

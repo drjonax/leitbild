@@ -1,9 +1,11 @@
+import type { CompiledComposedDisplay } from '../../../../packs/process-plant/displays/compose.ts'
 import { displayValue, formatQuantity } from '../../../../packs/process-plant/displays/display-text.ts'
 import { readingStateText, type TrendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
 import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
 import { demandSetting, followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
 import type { RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
 import type { ListedControl, ListedItem } from '../../../../packs/process-plant/operations/instance-ports.ts'
+import type { PushbuttonRole } from '../../../../packs/process-plant/operations/pushbutton-protection.ts'
 import type { OperationRecord } from '../../../../packs/process-plant/operations/plant-operations.ts'
 import type { ProcessPlantProposal, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
 
@@ -19,6 +21,8 @@ export type { ListedControl, ListedItem, OperationRecord }
 
 /** A selection not executed within this wall time is cancelled (select-before-operate, plan §4.2). */
 export const SELECTION_TIMEOUT_MS = 30_000
+/** What every control and decision says while the page's samples are stale: it is disabled (HMI review of run 26c). */
+export const STALE_CONTROLS = 'Plant data stale: controls disabled'
 /** How long an operation's attribution stays on its symbol, in plant time (plan §4.3). */
 export const ATTRIBUTION_MS = 5 * 60_000
 /** A position reads as an option's state within this fraction of its travel. */
@@ -88,6 +92,8 @@ export interface OptionView {
   readonly travelMs: number | null
   /** The equipment's isolation input stands: it stays shut whatever this option demands. */
   readonly isolated: string | null
+  /** World's consequence line for it, where World derives one: what it stops, shuts or isolates now, and what may actuate. */
+  readonly consequence: string | null
 }
 
 /**
@@ -128,6 +134,12 @@ export interface ControlView {
   readonly travelMs: number | null
   /** The undrawn logic whose pushbutton it is, where it sits on the equipment its rules command. */
   readonly from?: string
+  /**
+   * A protective pushbutton: whether it trips, actuates or blocks protection,
+   * and the permissive or interlock gating it, as it stands now ("Low
+   * pressurizer pressure SI block permitted below P-11: not met now").
+   */
+  readonly protection?: { readonly role: PushbuttonRole; readonly gate: { readonly text: string; readonly allows: boolean; readonly message: string | null } | null }
 }
 
 export interface ItemControlView {
@@ -190,12 +202,24 @@ const wordFor = (control: OfferedControl, value: ProcessVariableValue): string =
 const opposingWords = (control: OfferedControl, rule: OpposingRule): string =>
   rule.via === 'isolation' ? 'isolates it' : `writes ${wordFor(control, rule.value)}`
 
+/**
+ * World's consequence line for an option or a proposal (C2a, O-core): what
+ * the operation stops, shuts or isolates now and where that flow goes, the
+ * mode, and what may actuate. Shown where World gives one; none otherwise.
+ */
+export const consequenceLine = (carrier: object): string | null => {
+  const line = (carrier as { readonly consequence?: unknown }).consequence
+  return typeof line === 'string' && line !== '' ? line : null
+}
+
 const optionView = (listed: ListedControl, option: ControlOption, index: number, current: ControlOption | undefined, now: OperationNow): OptionView => {
   const { control } = listed
   const standing = listed.standing[index]
   if (standing === undefined) throw new Error(`no standing for option ${option.word} of ${control.target}`)
   const setsTripGoing = standing.consequences.some(rule => rule.state === 'armed')
-  const protective = control.form === 'pushbutton' && option.consequences.length > 0
+  // A pushbutton that trips, actuates or blocks protection is slid, never pressed once (HMI review of run 26c).
+  const blocks = listed.protection?.blocks
+  const protective = control.form === 'pushbutton' && (option.consequences.length > 0 || blocks !== undefined)
   const held = standing.heldBy
   return {
     key: optionKey(control, option),
@@ -205,12 +229,37 @@ const optionView = (listed: ListedControl, option: ControlOption, index: number,
     action: `${option.word} ${control.target}`,
     confirm: setsTripGoing || protective ? 'slide' : 'button',
     slideOnly: protective,
-    consequences: standing.consequences.map(rule => `→ ${rule.action} · ${rule.label}: ${standingWords(rule, now)}`),
+    consequences: [
+      ...standing.consequences.map(rule => `→ ${rule.action} · ${rule.label}: ${standingWords(rule, now)}`),
+      ...(blocks === undefined ? [] : blocks.rules.map(rule => `Blocks ${rule.action} · ${rule.label}`)),
+    ],
     opposing: standing.opposing.map(rule => `${rule.action} · ${rule.label} ${opposingWords(control, rule)}: ${standingWords(rule, now)}`),
     heldBy: held === undefined ? null
       : `${held.label} holds ${control.target} ${wordFor(control, held.value)} since ${now.clock(held.atElapsedMs)}: overriding it is not offered here`,
     isolated: standing.isolated ? `Its isolation input stands: ${control.target} stays shut whatever it is commanded` : null,
     travelMs: option.travelMs,
+    consequence: consequenceLine(option) ?? consequenceLine(standing),
+  }
+}
+
+/** Where a control stands in its item's list: trips first, then actuations, then the rest, blocks last (actuate before defeat). */
+const protectionRank = (listed: ListedControl): number => {
+  const role = listed.protection?.role
+  return role === 'trip' ? 0 : role === 'actuation' ? 1 : role === 'block' ? 3 : 2
+}
+
+/** A protective pushbutton's role and the gate on it, in words. */
+const protectionView = (listed: ListedControl): ControlView['protection'] => {
+  const protection = listed.protection
+  if (protection === undefined) return undefined
+  const gate = protection.gate
+  return {
+    role: protection.role,
+    gate: gate === undefined ? null : {
+      text: `${gate.label}: ${gate.kind === 'permissive' ? (gate.allows ? 'met now' : 'not met now') : (gate.allows ? 'clear now' : 'standing now')}`,
+      allows: gate.allows,
+      message: gate.message ?? null,
+    },
   }
 }
 
@@ -244,15 +293,18 @@ const demandView = (listed: ListedControl, now: OperationNow): DemandView | unde
 export const itemControlView = (item: ListedItem, now: OperationNow): ItemControlView => ({
   id: item.id,
   label: item.label,
-  controls: item.offered.map(listed => {
+  controls: [...item.offered].sort((left, right) => protectionRank(left) - protectionRank(right)).map(listed => {
     const { control } = listed
     const current = currentOption(control, now)
     const demand = demandView(listed, now)
+    const protection = protectionView(listed)
+    const blocks = listed.protection?.blocks
     return {
       path: control.path,
       target: control.target,
       form: control.form,
-      now: nowWords(control, now),
+      // A block reads whether it stands; any other pushbutton has no state of its own.
+      now: blocks === undefined ? nowWords(control, now) : blocks.blocked ? 'blocked' : 'not blocked',
       commanded: demand === undefined || Math.abs(demand.setting - demand.position) <= demand.step / 2 ? null : `CMD ${demand.settingText}`,
       throttled: (listed.throttledUnder ?? []).map(rule => `Throttled under ${rule.label}`),
       options: control.options.map((option, index) => optionView(listed, option, index, current, now)),
@@ -261,6 +313,7 @@ export const itemControlView = (item: ListedItem, now: OperationNow): ItemContro
       ...(control.state === undefined ? {} : { statePath: control.state }),
       travelMs: listed.travelMs,
       ...(control.from === undefined ? {} : { from: control.from }),
+      ...(protection === undefined ? {} : { protection }),
     }
   }),
   auto: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [{ text: control.reason.text, manual: control.reason.manual }] : []),
@@ -297,6 +350,7 @@ export const demandOption = (control: ControlView, value: number): OptionView | 
     heldBy: null,
     travelMs: end?.travelMs ?? null,
     isolated: control.options.find(option => option.isolated !== null)?.isolated ?? null,
+    consequence: null,
   }
 }
 
@@ -366,7 +420,9 @@ export interface ProposalCard {
   readonly action: string
   readonly from: string | null
   readonly to: string | null
-  /** "AI · assistant-1 · 10:02:40" */
+  /** The equipment reads the proposed state already: approving it changes nothing ("Already SHUT"), never "SHUT → SHUT". */
+  readonly already: string | null
+  /** "AI agent · 10:02:40" */
   readonly proposer: string
   readonly proposerOrigin: 'person' | 'ai'
   readonly reason: string
@@ -379,6 +435,8 @@ export interface ProposalCard {
   /** World's ranking: the cited readings' limit states, the soonest first; never the proposer's urgency (QA-9). */
   readonly margins: ReadonlyArray<EvidenceMargin>
   readonly expected: string
+  /** World's consequence line, as the proposal stored it (or its option carries it now); null where World gives none. */
+  readonly consequence: string | null
   readonly consequences: ReadonlyArray<string>
   readonly opposing: ReadonlyArray<string>
   readonly reversibility: string
@@ -389,14 +447,35 @@ export interface ProposalCard {
   readonly closed: string | null
 }
 
+/**
+ * How the display names who acted. A Run records an actor by its id only
+ * (its label is the id), so the display names the kind of actor, never the
+ * raw id ("actor:operator"): an operator, an AI agent, or the Run itself
+ * (its scenario timeline, the system).
+ */
+export const actorName = (actorId: string, origin?: 'person' | 'ai' | 'system'): 'operator' | 'AI agent' | 'the Run' => {
+  const kind = actorId.split(':')[1]
+  if (origin === 'ai' || kind === 'ai') return 'AI agent'
+  if (origin === 'system' || kind === 'system' || kind === 'scenario-timeline') return 'the Run'
+  return 'operator'
+}
+
+const capitalized = (words: string): string => `${words.charAt(0).toUpperCase()}${words.slice(1)}`
+
+/** An actor in running text: "an operator", "an AI agent", "the Run". */
+const anActor = (actorId: string, origin?: 'person' | 'ai' | 'system'): string => {
+  const name = actorName(actorId, origin)
+  return name === 'the Run' ? name : name === 'AI agent' ? 'an AI agent' : 'an operator'
+}
+
 const proposerText = (proposal: ProcessPlantProposal, now: OperationNow): string =>
-  `${proposal.proposer.origin === 'ai' ? 'AI' : 'Operator'} · ${proposal.proposer.actorId} · ${now.clock(proposal.proposedAtElapsedMs)}`
+  `${capitalized(actorName(proposal.proposer.actorId, proposal.proposer.origin))} · ${now.clock(proposal.proposedAtElapsedMs)}`
 
 const closedText = (proposal: ProcessPlantProposal, now: OperationNow): string | null => {
   const closed = proposal.closed
   if (proposal.status === 'pending' || closed === undefined) return null
   const at = now.clock(closed.atElapsedMs)
-  const by = closed.actorId === undefined ? '' : ` by ${closed.actorId}`
+  const by = closed.actorId === undefined ? '' : ` by ${anActor(closed.actorId)}`
   if (proposal.status === 'approved') return `Approved${by} at ${at}`
   if (proposal.status === 'rejected') return `Rejected${by} at ${at}${closed.reason === undefined ? '' : `: ${closed.reason}`}`
   if (proposal.status === 'expired') return `Expired ${at}, not executed`
@@ -447,6 +526,7 @@ export const proposalCard = (
     action: option.action,
     from: control.now,
     to: toState,
+    already: option.current ? `Already ${toState ?? option.word}: approving it changes nothing` : null,
     proposer: proposerText(proposal, now),
     proposerOrigin: proposal.proposer.origin,
     reason: proposal.reason,
@@ -458,9 +538,11 @@ export const proposalCard = (
     margins: [...margins].sort((left, right) => (left.minutes ?? Infinity) - (right.minutes ?? Infinity)),
     expected: control.form === 'pushbutton' ? `${listed.control.target} pressed: ${option.consequences.length === 0 ? 'no trip follows' : option.consequences.join('; ')}`
       : `${listed.control.target} reads ${toState ?? option.word} ${travel}`,
+    consequence: consequenceLine(proposal) ?? option.consequence,
     consequences: option.consequences,
     opposing: option.opposing,
-    reversibility: control.form === 'pushbutton' ? 'Not reversed here: what it actuates latches until reset, which is not offered'
+    reversibility: control.protection?.role === 'block' ? 'Not reversed here: the block stands until its logic resets it'
+      : control.form === 'pushbutton' ? 'Not reversed here: what it actuates latches until reset, which is not offered'
       : other === undefined ? 'No opposite command is offered' : `Reversible: ${other.action} is a new command`,
     expires: pending ? { at: now.clock(proposal.expiresAtElapsedMs), inMs: Math.max(0, proposal.expiresAtElapsedMs - now.elapsedMs) } : null,
     extendable: pending && !proposal.extended,
@@ -502,14 +584,29 @@ export const shownProposal = (itemId: string, proposals: ReadonlyArray<ProcessPl
 export interface ProposalListEntry {
   readonly id: string
   readonly item: string
-  /** The components the item's own detail draws around (ListedItem.components). */
-  readonly components: ReadonlyArray<string>
+  /** The details that may draw the item on its own symbol, in the order the window tries them (reviewOpens). */
+  readonly opens: ReadonlyArray<ReadonlyArray<string>>
   readonly action: string
   readonly proposer: 'AI' | 'OP'
   /** World's soonest projected minutes to a limit among its cited readings; null where none heads for one. */
   readonly minutes: number | null
   readonly text: string
 }
+
+/**
+ * The details a review may open to draw a proposal's item on its own symbol,
+ * the card pinned on it (HMI review of run 26c, g2): its own detail first;
+ * for a device its host bundles, then the detail around the host and the line
+ * the device sits on, which draws the line and the device on it where the
+ * host's own detail has room only for the host.
+ */
+export const reviewOpens = (item: Pick<ListedItem, 'components' | 'line'>): ReadonlyArray<ReadonlyArray<string>> =>
+  item.line === undefined ? [item.components] : [item.components, [...new Set([...item.components, ...item.line])]]
+
+/** Whether a compiled display draws an item on a symbol of its own (by the ids display.compose and controls.list name it by). */
+export const drawsOwnSymbol = (display: Pick<CompiledComposedDisplay, 'panels'>, itemId: string): boolean =>
+  display.panels.some(panel => panel.kind === 'mimic' && panel.mimic.items.some(item =>
+    (item.binding.item.kind === 'device' ? [`${item.components[0]}.${item.binding.item.device}`] : item.components).includes(itemId)))
 
 /**
  * The window's list of pending proposals (plan §4.3, QA-10): the most
@@ -533,7 +630,7 @@ export const pendingProposals = (
       entry: {
         id: proposal.id,
         item: proposal.item,
-        components: item.components,
+        opens: reviewOpens(item),
         action: card.action,
         proposer: proposal.proposer.origin === 'ai' ? 'AI' as const : 'OP' as const,
         minutes: soonest?.minutes ?? null,
@@ -543,6 +640,9 @@ export const pendingProposals = (
   })
   .sort((left, right) => (left.entry.minutes ?? Infinity) - (right.entry.minutes ?? Infinity) || left.proposal.proposedAtElapsedMs - right.proposal.proposedAtElapsedMs)
   .map(({ entry }) => entry)
+
+/** The standing actuations past the first that a setting is throttled under: "+3 more actuations". */
+export const moreActuations = (count: number): string => `+${count} more actuation${count === 1 ? '' : 's'}`
 
 // --- Badges -----------------------------------------------------------------
 
@@ -563,11 +663,11 @@ export interface ItemBadges {
 }
 
 const byWhom = (record: OperationRecord, proposals: ReadonlyArray<ProcessPlantProposal>): { readonly text: 'OP' | 'AI' | 'OP·AI'; readonly words: string } => {
-  if (record.origin === 'ai') return { text: 'AI', words: `by AI (${record.actorId})` }
+  if (record.origin === 'ai') return { text: 'AI', words: 'by an AI agent' }
   const proposed = record.kind === 'approval' && record.proposalId !== undefined ? proposals.find(proposal => proposal.id === record.proposalId) : undefined
   return proposed?.proposer.origin === 'ai'
-    ? { text: 'OP·AI', words: `by ${record.actorId}, proposed by AI (${proposed.proposer.actorId})` }
-    : { text: 'OP', words: `by ${record.actorId}` }
+    ? { text: 'OP·AI', words: 'by an operator, proposed by an AI agent' }
+    : { text: 'OP', words: 'by an operator' }
 }
 
 /** The badges of one item's symbol, from the operations log, the proposal book and the item's controls as they read now. */
@@ -617,14 +717,14 @@ export const itemBadges = (
     })(),
     proposal: pending.length === 0 ? null : {
       text: pending.some(proposal => proposal.proposer.origin === 'ai') ? 'AI ?' : 'OP ?',
-      title: pending.map(proposal => `${proposal.word} proposed by ${proposal.proposer.origin === 'ai' ? 'AI' : 'an operator'} (${proposal.proposer.actorId}) at ${now.clock(proposal.proposedAtElapsedMs)}, expires ${now.clock(proposal.expiresAtElapsedMs)}`).join('\n'),
+      title: pending.map(proposal => `${proposal.word} proposed by ${proposal.proposer.origin === 'ai' ? 'an AI agent' : 'an operator'} at ${now.clock(proposal.proposedAtElapsedMs)}, expires ${now.clock(proposal.expiresAtElapsedMs)}`).join('\n'),
     },
     interlock: held.length === 0 ? null : { title: [...new Set(held)].join('\n') },
     throttled: (() => {
       const lines = [...new Set(view.controls.flatMap(control => control.throttled))]
-      return lines.length === 0 ? null : { text: `${lines[0]}${lines.length === 1 ? '' : ` +${lines.length - 1}`}`, title: lines.join('\n') }
+      return lines.length === 0 ? null : { text: `${lines[0]}${lines.length === 1 ? '' : ` ${moreActuations(lines.length - 1)}`}`, title: lines.join('\n') }
     })(),
-    commandLocked: others.length === 0 ? null : { title: others.map(({ option, record }) => `${option.action}: ${record.actorId}'s command travels since ${now.clock(record.elapsedMs)}`).join('\n') },
+    commandLocked: others.length === 0 ? null : { title: others.map(({ option, record }) => `${option.action}: ${record.origin === 'ai' ? 'an AI agent' : 'another operator'}'s command travels since ${now.clock(record.elapsedMs)}`).join('\n') },
   }
 }
 
@@ -635,7 +735,7 @@ export interface OperationsLogRow {
   readonly key: string
   readonly elapsedMs: number
   readonly time: string
-  /** "Operator op-1", "AI assistant". */
+  /** "Operator", "AI agent". */
   readonly who: string
   readonly equipment: string
   /** "SHUT MOV-8000A PZR block valve" */
@@ -646,8 +746,7 @@ export interface OperationsLogRow {
   readonly result: string
 }
 
-const actorWords = (origin: 'person' | 'ai' | 'system', actorId: string): string =>
-  `${origin === 'ai' ? 'AI' : origin === 'person' ? 'Operator' : 'Run'} ${actorId}`
+const actorWords = (origin: 'person' | 'ai' | 'system', actorId: string): string => capitalized(actorName(actorId, origin))
 
 /**
  * The operations log as its view lists it: every command the Plant's log
@@ -682,7 +781,7 @@ export const operationsLogRows = (
     const option = found === undefined ? undefined : optionOf(found.control, record.value)
     const proposal = record.proposalId === undefined ? undefined : proposals.find(candidate => candidate.id === record.proposalId)
     const how = record.kind === 'approval'
-      ? `approved${proposal === undefined ? ' proposal' : ` ${actorWords(proposal.proposer.origin, proposal.proposer.actorId)}'s proposal of ${now.clock(proposal.proposedAtElapsedMs)}`}`
+      ? `approved${proposal === undefined ? ' proposal' : ` ${anActor(proposal.proposer.actorId, proposal.proposer.origin)}'s proposal of ${now.clock(proposal.proposedAtElapsedMs)}`}`
       : record.kind === 'ramp' ? 'ramp' : 'direct command'
     const chain = record.throttledUnder === undefined ? how : `${how} · ${record.throttledUnder.map(rule => `throttled under ${rule.label}`).join(', ')}`
     const result = (() => {
@@ -730,7 +829,7 @@ export const operationsLogRows = (
       equipment: found?.item.label ?? proposal.item,
       action: option?.action ?? `${proposal.word} ${proposal.item}`,
       chain: `proposed ${now.clock(proposal.proposedAtElapsedMs)}`,
-      result: `${proposal.status}${closed.actorId === undefined ? '' : ` by ${closed.actorId}`}${closed.reason === undefined ? '' : `: ${closed.reason}`}, not executed`,
+      result: `${proposal.status}${closed.actorId === undefined ? '' : ` by ${anActor(closed.actorId)}`}${closed.reason === undefined ? '' : `: ${closed.reason}`}, not executed`,
     }
   })
   return [...commands, ...waiting, ...unexecuted].sort((left, right) => right.elapsedMs - left.elapsedMs)

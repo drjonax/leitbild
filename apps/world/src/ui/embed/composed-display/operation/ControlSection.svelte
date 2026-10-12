@@ -10,7 +10,7 @@
   import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
   import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
   import { listen } from './listen.ts'
-  import { commandPhase, optionOf, SELECTION_TIMEOUT_MS, type ControlView, type DemandView, type ItemControlView, type OperationNow, type OptionView, type SentCommand } from './operation-presenter.ts'
+  import { commandPhase, moreActuations, optionOf, SELECTION_TIMEOUT_MS, STALE_CONTROLS, type ControlView, type DemandView, type ItemControlView, type OperationNow, type OptionView, type SentCommand } from './operation-presenter.ts'
 
   // An item's CONTROL section (plan §4.2): select a command, see World check
   // it on the exact payload (the I&C's refusal in its own words), what it
@@ -20,14 +20,20 @@
   // slide selects and executes at once, checked when the section opens
   // (QA-8). Feedback stays here: sent → accepted or refused → travelling →
   // done or not followed. Esc clears a selection before the popover closes.
+  // Pushbuttons that trip, actuate or block protection are slides, trips
+  // first, blocks last, a block with whether it stands and the permissive
+  // gating it. While the page's samples are stale every control is disabled
+  // and says so: nothing is selected, sent or slid on old values.
 
   type Write = { readonly path: VariablePath; readonly value: ProcessVariableValue }
   type Check = { readonly accepted: true } | { readonly accepted: false; readonly reason: string }
   type Outcome = { readonly ok: true; readonly commandId?: string } | { readonly ok: false; readonly reason: string }
 
-  let { view, now, validate, execute, draft = null, onSelected, acceptedAt }: {
+  let { view, now, stale = false, validate, execute, draft = null, onSelected, acceptedAt }: {
     view: ItemControlView
     now: OperationNow
+    /** The page's samples are stale: every control is disabled (STALE_CONTROLS). */
+    stale?: boolean
     /** World's control.validate on the exact payload. */
     validate: (write: Write) => Promise<Check>
     /** Issues the command through the one validated queued write path; resolves with the command result. */
@@ -105,7 +111,7 @@
   }
 
   const select = async (control: ControlView, option: OptionView): Promise<void> => {
-    if (option.current || option.slideOnly) return
+    if (stale || option.current || option.slideOnly) return
     selection = { path: control.path, key: option.key, value: option.value }
     onSelected?.(control.path)
     check = 'checking'
@@ -115,7 +121,7 @@
   }
 
   const run = async (control: ControlView, option: OptionView): Promise<void> => {
-    if (busy) return
+    if (busy || stale) return
     busy = true
     const fromState = control.statePath === undefined ? undefined : now.read(control.statePath)
     const command: SentCommand & { readonly key: string } = { path: control.path, value: option.value, sentAtElapsedMs: now.elapsedMs, ...(fromState === undefined ? {} : { fromState }), key: option.key }
@@ -162,6 +168,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <!-- While a command is selected, Esc clears it before it closes the popover (MimicPanel lets a section that claims Esc have it). -->
 <section class="control" aria-label={`Control ${view.label}`} onkeydown={keydown} data-claims-escape={selection === null ? undefined : ''}>
+  {#if stale}<p class="stale" role="status">{STALE_CONTROLS}</p>{/if}
   {#each view.controls as control (control.path)}
     {@const expanded = selection?.path === control.path}
     <div class="row" class:expanded>
@@ -171,7 +178,7 @@
       </div>
       {#if control.throttled.length > 0}
         <!-- One chip however many actuations stand: the first in World's words, the others counted and named in its title. -->
-        <span class="throttled" title={control.throttled.join('\n')}>{control.throttled[0]}{#if control.throttled.length > 1}{' '}<span class="more">+{control.throttled.length - 1}</span>{/if}</span>
+        <span class="throttled" title={control.throttled.join('\n')}>{control.throttled[0]}{#if control.throttled.length > 1}{' '}<span class="more">{moreActuations(control.throttled.length - 1)}</span>{/if}</span>
       {/if}
       {#if control.form === 'demand' && control.demand !== undefined}
         {@const demand = control.demand}
@@ -182,10 +189,10 @@
              own (its step buttons and the arrow keys move it by 1 %); where it rests, that setting is selected with its Execute. -->
         <div class="demand-ends">
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          {#if shut !== undefined}<obc-button variant="normal" disabled={shut.current || shut.heldBy !== null} onclick={() => { if (shut.heldBy === null) void select(control, shut) }}>{shut.word}</obc-button>{/if}
+          {#if shut !== undefined}<obc-button variant="normal" disabled={stale || shut.current || shut.heldBy !== null} onclick={() => { if (shut.heldBy === null) void select(control, shut) }}>{shut.word}</obc-button>{/if}
           <span class="setting" aria-live="polite">Set {Math.round(at)} {demand.shown.unit}</span>
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          {#if open !== undefined}<obc-button variant="normal" disabled={open.current || open.heldBy !== null} onclick={() => { if (open.heldBy === null) void select(control, open) }}>{open.word}</obc-button>{/if}
+          {#if open !== undefined}<obc-button variant="normal" disabled={stale || open.current || open.heldBy !== null} onclick={() => { if (open.heldBy === null) void select(control, open) }}>{open.word}</obc-button>{/if}
         </div>
         <obc-slider
           class="slider"
@@ -194,6 +201,7 @@
           step={demand.shown.step}
           stepClick={demand.shown.step}
           value={at}
+          disabled={stale}
           hasLeftIcon={true}
           hasRightIcon={true}
           decrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} less`}
@@ -216,28 +224,32 @@
           }}
         >
           {#each control.options as option (option.key)}
-            <obc-toggle-button-option value={option.key} disabled={option.current || option.heldBy !== null}>{option.word}</obc-toggle-button-option>
+            <obc-toggle-button-option value={option.key} disabled={stale || option.current || option.heldBy !== null}>{option.word}</obc-toggle-button-option>
           {/each}
         </obc-toggle-button-group>
       {:else}
         {#each control.options as option (option.key)}
           {#if option.slideOnly}
             {@const ready = standing[option.key]}
-            {@const ok = ready !== undefined && ready !== 'checking' && ready.accepted && option.heldBy === null && !busy}
+            {@const ok = !stale && ready !== undefined && ready !== 'checking' && ready.accepted && option.heldBy === null && !busy}
+            {@const gate = control.protection?.gate ?? null}
             <!-- Its row names tag and label; the slide carries the verb and its name all three (QA-7). -->
             <obc-slide-button class:unready={!ok} aria-label={option.action} disabled={!ok} onslide={() => { if (ok) void run(control, option) }}>
               <span slot="label">{option.word}</span>
             </obc-slide-button>
-            <!-- Never a slide that does nothing without a word: why it cannot be slid now. -->
-            {#if busy}<p class="checking">Sending…</p>
+            <!-- Never a slide that does nothing without a word: why it cannot be slid now. The gate's own refusal is its line below. -->
+            {#if stale}<!-- STALE_CONTROLS above says why. -->
+            {:else if busy}<p class="checking">Sending…</p>
             {:else if ready === undefined || ready === 'checking'}<p class="checking">Checking with the I&amp;C…</p>
-            {:else if !ready.accepted}<p class="refused">{ready.reason}</p>{/if}
+            {:else if !ready.accepted && ready.reason !== gate?.message}<p class="refused">{ready.reason}</p>{/if}
             {#if option.heldBy !== null}<p class="refused">{option.heldBy}</p>{/if}
             {#each option.consequences as line (line)}<p class="consequence">{line}</p>{/each}
+            {#if option.consequence !== null}<p class="consequence-line">{option.consequence}</p>{/if}
+            {#if gate !== null}<p class="gate" class:refused={!gate.allows} title={gate.message ?? undefined}>{gate.text}</p>{/if}
           {:else}
             <!-- An obc-button is a button: the native button inside it takes Enter and Space. -->
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <obc-button variant="normal" disabled={option.heldBy !== null} onclick={() => { if (option.heldBy === null) void select(control, option) }}>{option.word}</obc-button>
+            <obc-button variant="normal" disabled={stale || option.heldBy !== null} onclick={() => { if (option.heldBy === null) void select(control, option) }}>{option.word}</obc-button>
           {/if}
         {/each}
       {/if}
@@ -247,13 +259,14 @@
         {#each control.options.filter(option => option.heldBy !== null) as held (held.key)}<p class="held">{held.word} not offered: {held.heldBy}</p>{/each}
       {/if}
       {#if expanded && selectedOption !== undefined}
-        {@const allowed = check !== null && check !== 'checking' && check.accepted && selectedOption.heldBy === null && !busy}
+        {@const allowed = !stale && check !== null && check !== 'checking' && check.accepted && selectedOption.heldBy === null && !busy}
         <div class="selected">
           {#if check === 'checking'}<p class="checking">Checking with the I&amp;C…</p>
           {:else if check !== null && check.accepted}<p class="allowed">I&amp;C allows this command now</p>
           {:else if check !== null}<p class="refused">{check.reason}</p>{/if}
           {#if selectedOption.heldBy !== null}<p class="refused">{selectedOption.heldBy}</p>{/if}
           {#if selectedOption.isolated !== null}<p class="note">{selectedOption.isolated}</p>{/if}
+          {#if selectedOption.consequence !== null}<p class="consequence-line">{selectedOption.consequence}</p>{/if}
           {#each selectedOption.consequences as line (line)}<p class="consequence">{line}</p>{/each}
           {#each selectedOption.opposing as line (line)}<p class="opposing">{line}</p>{/each}
           {#if selectedOption.confirm === 'slide'}
@@ -262,8 +275,9 @@
               <span slot="label">{selectedOption.word}</span>
             </obc-slide-button>
           {:else}
+            <!-- Verb, tag and label in full (QA-7): the button is the section's width and wraps whole words, never past its edge. -->
             <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <obc-button variant="raised" disabled={!allowed} onclick={() => { if (allowed) void run(control, selectedOption) }}>{selectedOption.action}</obc-button>
+            <obc-button class="execute" variant="raised" fullWidth={true} disabled={!allowed} onclick={() => { if (allowed) void run(control, selectedOption) }}>{selectedOption.action}</obc-button>
           {/if}
         </div>
       {/if}
@@ -311,6 +325,15 @@
   .held { color: var(--element-neutral-color); }
   /* A slide that cannot be slid now looks it, beside the line that says why. */
   .unready { opacity: 0.45; }
+  .stale { font-weight: 600; color: var(--element-active-color); }
+  /* World's consequence line: what the operation stops or isolates now, read before Execute. */
+  .consequence-line { color: var(--element-active-color); }
+  .gate { color: var(--element-neutral-color); }
+  .gate.refused { font-weight: 400; }
+  /* Execute grows to the lines its words take (OpenBridge's button is one line tall). */
+  .execute::part(wrapper) { height: auto; min-height: var(--ui-components-button-touch-target-size); }
+  .execute::part(visible-wrapper) { height: auto; min-height: var(--ui-components-button-visual-size); padding-top: 4px; padding-bottom: 4px; }
+  .execute::part(label) { white-space: normal; overflow-wrap: normal; word-break: normal; text-align: center; }
   .auto-line { color: var(--element-active-color); }
   /* A person's setting under a standing actuation: said plainly, never in an alarm colour. */
   .throttled { align-self: flex-start; padding: 0 6px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 11px; line-height: 15px; font-weight: 600; color: var(--element-active-color); }

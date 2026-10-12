@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MimicDrawnItem } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import type { MimicPopoverContext, MimicPopoverSection } from './popover.ts'
+  import { mimicLegend } from './mimic-legend.ts'
 
   // An item's popover, or its overlay pinned on the surface (vessel-design
   // §C): an elevated card in OpenBridge's tokens, drawn outside the drawing's
@@ -118,6 +119,8 @@
   >
     {#if pinned}<span class="handle" aria-hidden="true"><obi-drag-horizontal usecsscolor></obi-drag-horizontal></span>{/if}
     <span class="label">{item.binding.label}</span>
+    <!-- On a stale page its values are old and its controls disabled: said first, as the drawing's key says it. -->
+    {#if context.stale}<span class="stale" title={mimicLegend.staleMeaning}>{mimicLegend.stale}</span>{/if}
     {#if state !== ''}<span class="state">{state}</span>{/if}
     {#if alert !== null}<span class={`chip ${alert.status}`}>{alert.text}</span>{/if}
     {#if note !== null}<span class="note" title={note}>{note}</span>{/if}
@@ -157,6 +160,7 @@
   .handle { display: inline-flex; width: 20px; height: 20px; flex: none; color: var(--element-neutral-color); }
   .label { font-weight: 600; flex: none; }
   .state { color: var(--element-neutral-color); flex: none; }
+  .stale { flex: none; padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; font-size: 11px; line-height: 14px; font-weight: 700; }
   .chip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border-radius: 3px; font-size: 11px; line-height: 15px; font-weight: 600; }
   .chip.alarm { background: var(--alert-alarm-color); color: var(--on-alarm-active-color); }
   .chip.warning { background: var(--alert-warning-color); color: var(--on-warning-active-color); }

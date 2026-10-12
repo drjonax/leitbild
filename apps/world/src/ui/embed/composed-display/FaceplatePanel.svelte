@@ -15,8 +15,10 @@
   // safety function's chip, a port circuit with the equipment it reaches),
   // each a stack of one-line rows (HF review, HF-02), as tall as World sized
   // it (faceplateHeight), so nothing under it moves as rows come and go.
-  let { panel, latest, history, above = 0 }: {
+  let { panel, latest, history, above = 0, stale = false }: {
     panel: ComposedFaceplatePanel
+    /** The page's samples are stale: its rows are greyed, as the drawing's states read unknown. */
+    stale?: boolean
     latest: ComposedDisplaySample | undefined
     history: Pick<ComposedDisplaySnapshot, 'series' | 'historyMissing' | 'historyErrors'>
     /** The gap above it, where it follows the drawing in the drawing's own column (stacked panels have theirs). */
@@ -29,7 +31,7 @@
 </script>
 
 <!-- Before the first sample the faceplate keeps its room, empty, so the drawing above it does not move. -->
-<section class="faceplate" aria-label="Faceplate" style={`height:${panel.height}px;margin-top:${above}px;padding:${layout.faceplatePad}px 0;grid-template-columns:repeat(${panel.faceplate.columns.length}, minmax(0, 1fr))`}>
+<section class="faceplate" class:stale aria-label={stale ? 'Faceplate (stale: values not current)' : 'Faceplate'} style={`height:${panel.height}px;margin-top:${above}px;padding:${layout.faceplatePad}px 0;grid-template-columns:repeat(${panel.faceplate.columns.length}, minmax(0, 1fr))`}>
   {#each columns as column, index (index)}
     <div class="column">
       <div class="head" style={`height:${layout.faceplateHead}px`}>
@@ -76,4 +78,5 @@
   /* The window is labelled only over a column that draws a sparkline: a row narrow for one gives it up (FaceplateLine). */
   .column:not(:has(:global(svg.sparkline))) .window { visibility: hidden; }
   .lines { list-style: none; margin: 0; padding: 0; min-width: 0; }
+  .faceplate.stale .lines { opacity: 0.45; }
 </style>

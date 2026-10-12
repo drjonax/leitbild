@@ -18,11 +18,13 @@
   // A unit overview's column lists its lead values one per row, each row as
   // tall as its three lines, with room for whole names; beside each readout,
   // a sparkline of its recorded history, its window labelled once over them.
-  let { panel, latest, activeRuleIds, column = false, history }: {
+  let { panel, latest, activeRuleIds, column = false, history, stale = false }: {
     panel: ComposedReadoutsPanel
     latest: ComposedDisplaySample | undefined
     activeRuleIds: ReadonlySet<string>
     column?: boolean
+    /** The page's samples are stale: every value reads in OpenBridge's low-integrity style, and the panel says STALE, as the drawing does. */
+    stale?: boolean
     /** In the column: the history behind the sparklines, read when the display opened and extended by each sample. */
     history?: Pick<ComposedDisplaySnapshot, 'series' | 'historyMissing' | 'historyErrors'>
   } = $props()
@@ -103,7 +105,7 @@
 </script>
 
 {#snippet values()}
-<ul class="readouts" style={size}>
+<ul class="readouts" class:stale style={size}>
   {#each panel.pens as pen (pen.path)}
     {@const entry = sampled(String(pen.path))}
     {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.resolution) : entry?.value}
@@ -123,7 +125,7 @@
           <obc-readout
             value={typeof value !== 'number' ? null : word ?? (asText ? readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : displayValue(value, pen.unit))}
             valueType={asText ? 'text' : 'number'}
-            dataQuality={end === null || word !== null ? undefined : 'low-integrity'}
+            dataQuality={stale || (end !== null && word === null) ? 'low-integrity' : undefined}
             off={typeof value !== 'number'}
             offText="—"
             unit={word === null ? unitLabel(pen.unit) : ''}
@@ -158,7 +160,7 @@
   <!-- The title line (composedDisplayLayout.overviewReadoutsTitle) labels the sparklines' window once, over them. -->
   <section aria-label="Lead values">
     <h2 style={`height:${composedDisplayLayout.overviewReadoutsTitle}px`}>
-      <span>Lead values</span>
+      <span>Lead values{#if stale}{' '}<span class="stale-tag" title="not current: the last values received">STALE</span>{/if}</span>
       {#if sparklineMs !== undefined}
         <span class="window" style={`width:${SPARKLINE_SIZE.width}px`} title={`Each sparkline: the last ${sparklineWindowText(sparklineMs)} of the value's recorded history, scaled to its own range`}><span>−{sparklineWindowText(sparklineMs)}</span><span>now</span></span>
       {/if}
@@ -185,6 +187,10 @@
   .reading { display: flex; align-items: center; gap: 8px; min-width: 0; }
   /* Every sparkline ends at the row's right edge, so the window's label over the first lines up with all of them. */
   .reading :global(.sparkline), .reading :global(.none) { margin-left: auto; }
+  /* Stale: states and sparklines greyed with the values, which read in low-integrity style. */
+  .readouts.stale .state, .readouts.stale .margin { color: var(--element-neutral-color); font-weight: 400; }
+  .readouts.stale :global(.sparkline) { opacity: 0.4; }
+  .stale-tag { padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; color: var(--element-active-color); font-weight: 700; letter-spacing: 0; }
   h2 { margin: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; font-size: 11px; line-height: 12px; font-weight: 600; color: var(--element-neutral-color); text-transform: uppercase; letter-spacing: 0.04em; }
   /* Over the sparklines: as wide as one, inset by the rows' right padding (8 px). */
   .window { flex: none; display: flex; justify-content: space-between; margin-right: 8px; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }

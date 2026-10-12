@@ -337,10 +337,18 @@
 
   const format = (value: number, unit: string): string => formatQuantity(value, unit)
   const flapHeight = openBridgeDevice.flapHeight
+  /** How far a valve stands from its demand before it reads as travelling: one percent of its stroke. */
+  const TRAVEL_SHOWN = 0.01
 
   // Device rows as OpenBridge readout rows: integers with units (a valve's opening, a generator's MW) and state words.
+  // A valve on its way to a demand between its ends reads where it stands in %, never OPEN or SHUT before it gets there
+  // (HMI review of run 26c: "OPEN" while throttling to 90 %).
+  const travelling = (item: MimicDrawnItem, look: ItemLook): boolean => {
+    const demand = item.binding.state?.command === undefined ? undefined : index.get(String(item.binding.state.command))?.value
+    return look.state.kind === 'position' && typeof demand === 'number' && Math.abs(demand - look.state.fraction) >= TRAVEL_SHOWN
+  }
   const deviceRows = (item: MimicDrawnItem, look: ItemLook): OpenBridgeMimic.DeviceRows['rows'] => item.rows.flatMap((row): OpenBridgeMimic.DeviceRows['rows'] => {
-    if (row.kind === 'position' && look.state.kind === 'position' && look.state.fraction >= 0.05 && look.state.fraction <= 0.95) {
+    if (row.kind === 'position' && look.state.kind === 'position' && ((look.state.fraction >= 0.05 && look.state.fraction <= 0.95) || travelling(item, look))) {
       return [{ type: 'value' as const, value: Math.round(look.state.fraction * 100), unit: '%' }]
     }
     // A key value reads as a whole number within its instrument's span; at an end of it, or without a reading, in words (rowText).
@@ -520,6 +528,32 @@
     .map(item => `${item.binding.label}: ${looks.get(item.id)?.words || 'no state drawn'}`)
     .join('; '))
   const drawsRelief = $derived(mimic.items.some(item => item.binding.state?.aspect === 'position' && item.binding.state.state === undefined))
+  // The key names each operation badge the drawing carries now, with its glyph (HMI review of run 26c: badges had no key).
+  type BadgeKey = 'aiProposal' | 'proposal' | 'operator' | 'ai' | 'manual' | 'interlock' | 'commandLocked'
+  const BADGE_KEYS: ReadonlyArray<BadgeKey> = ['aiProposal', 'proposal', 'operator', 'ai', 'manual', 'interlock', 'commandLocked']
+  const badgeKeys = $derived.by((): ReadonlyArray<BadgeKey> => {
+    const carried = new Set<BadgeKey>()
+    for (const shown of badges?.values() ?? []) {
+      if (shown.proposal !== null) carried.add(shown.proposal.text === 'AI ?' ? 'aiProposal' : 'proposal')
+      else if (shown.attribution !== null) {
+        if (shown.attribution.text !== 'AI') carried.add('operator')
+        if (shown.attribution.text !== 'OP') carried.add('ai')
+      }
+      if (shown.throttled !== null) carried.add('manual')
+      if (shown.interlock !== null) carried.add('interlock')
+      else if (shown.commandLocked !== null) carried.add('commandLocked')
+    }
+    return BADGE_KEYS.filter(key => carried.has(key))
+  })
+  const BADGE_GLYPHS: Readonly<Record<BadgeKey, { readonly mode: 'regular' | 'enhanced'; readonly icon?: string; readonly type?: string }>> = {
+    aiProposal: { mode: 'enhanced', icon: 'obi-ai-pending' },
+    proposal: { mode: 'enhanced', icon: 'obi-command-request' },
+    operator: { mode: 'regular', icon: 'obi-user' },
+    ai: { mode: 'regular', icon: 'obi-ai' },
+    manual: { mode: 'regular', icon: 'obi-manual' },
+    interlock: { mode: 'regular', type: 'interlock' },
+    commandLocked: { mode: 'regular', type: 'command-locked' },
+  }
 
   // What a click on an item covers: its symbol and its text stack, which the layout keeps clear of every other item.
   const target = (item: MimicDrawnItem): { x: number; y: number; width: number; height: number } => {
@@ -538,7 +572,7 @@
 </script>
 
 {#snippet quickLookBody(context: MimicPopoverContext)}
-  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksByItem.get(context.item.id) ?? []} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} width={context.room.width} rows={context.room.rows} trends={trendsOf(context.item)} />{/if}
+  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksByItem.get(context.item.id) ?? []} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} width={context.room.width} rows={context.room.rows} trends={trendsOf(context.item)} stale={context.stale} />{/if}
 {/snippet}
 
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
@@ -674,7 +708,7 @@
     {#each overlays as overlay (overlay.item)}
       {@const item = mimic.items.find(candidate => candidate.id === overlay.item)}
       {#if item !== undefined}
-        {@const context: MimicPopoverContext = { item, latest, mode: 'operate', pinned: true, room: { width: overlay.width - 16, rows: overlay.rows } }}
+        {@const context: MimicPopoverContext = { item, latest, mode: 'operate', pinned: true, room: { width: overlay.width - 16, rows: overlay.rows }, stale }}
         <MimicPopover
           id={`${popoverId}-${item.id}`}
           {item}
@@ -699,7 +733,7 @@
     {#if popover.kind === 'open' && popoverItem !== undefined && popoverPlace !== null}
       {@const item = popoverItem}
       {@const place = popoverPlace}
-      {@const context: MimicPopoverContext = { item, latest, mode: popover.mode, pinned: false, room: { width: POPOVER_WIDTH - 16, rows: null } }}
+      {@const context: MimicPopoverContext = { item, latest, mode: popover.mode, pinned: false, room: { width: POPOVER_WIDTH - 16, rows: null }, stale }}
       <MimicPopover
         id={popoverId}
         {item}
@@ -727,6 +761,12 @@
       <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'closed-dash', chevron: false, theme, zoom: $displayFrame.zoom }}></canvas>{mimicLegend.unknownFlow}</span>
     {/if}
     <span class="key"><span class="abnormal-key">{mimicLegend.command}</span>{mimicLegend.commandMeaning}</span>
+    {#if openBridge !== null}
+      {#each badgeKeys as key (key)}
+        {@const glyph = BADGE_GLYPHS[key]}
+        <span class="key badge-key"><obc-automation-badge mode={glyph.mode} type={glyph.type}>{#if glyph.icon === 'obi-ai-pending'}<obi-ai-pending usecsscolor></obi-ai-pending>{:else if glyph.icon === 'obi-command-request'}<obi-command-request usecsscolor></obi-command-request>{:else if glyph.icon === 'obi-user'}<obi-user usecsscolor></obi-user>{:else if glyph.icon === 'obi-ai'}<obi-ai usecsscolor></obi-ai>{:else if glyph.icon === 'obi-manual'}<obi-manual usecsscolor></obi-manual>{/if}</obc-automation-badge>{mimicLegend[key]}</span>
+      {/each}
+    {/if}
     {#if drawsRelief}<span>{mimicLegend.notComputed}</span>{/if}
     {#each expectedGroups as group (group)}<span class="key"><span class="expected-key"></span>{mimicLegend.expected} {group}</span>{/each}
     {#if traces && trends !== undefined}<span>{mimicLegend.trend} {sparklineWindowText(trends.windowMs)}</span>{/if}
@@ -796,4 +836,6 @@
   .abnormal { position: absolute; box-sizing: border-box; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 4px; }
   .abnormal-key { padding: 0 3px; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 3px; line-height: 10px; }
   .stale-tag { padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; color: var(--element-active-color); font-weight: 700; line-height: 12px; }
+  /* A badge in the key at the key's line height: OpenBridge's badge, sized down to it. */
+  .badge-key obc-automation-badge { --automation-components-badge-new-size: 14px; --automation-components-badge-new-icon-size: 12px; --automation-components-badge-new-icon-size-flat: 12px; flex: none; }
 </style>
