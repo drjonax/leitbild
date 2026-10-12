@@ -24,21 +24,26 @@ const viewOf = (id: string, ui?: PackUiContribution): WorldPackView => ({
 
 const allOn = { doubleClickZoom: true, keyboard: true, boxZoom: true }
 
-describe('World surface hooks are inert for production Packs', () => {
-  test('no built-in Pack declares a map-target panel, a keymap, map gestures, a layout hint or opt-in targeting', async () => {
+describe('World surface hooks among the built-in Packs', () => {
+  test('no built-in Pack but Einsatz declares a map-target panel, a keymap, map gestures, a layout hint or opt-in targeting, and the others leave camera, rail and targeting as they were', async () => {
+    expect(knownUiPackIds).toContain('einsatz')
     const views = await Promise.all(knownUiPackIds.map(loadUiPack))
-    expect(views.length).toBeGreaterThan(0)
-    const panels = views.flatMap(view => view.ui?.surfacePanels ?? [])
-    expect(panels.filter(panel => panel.mapTargets !== undefined || panel.keymap !== undefined).map(panel => panel.id)).toEqual([])
+    const declaring = views.filter(view => (view.ui?.surfacePanels ?? []).some(panel => panel.mapTargets !== undefined || panel.keymap !== undefined)
+      || view.ui?.mapInteraction !== undefined || view.ui?.surfaceLayout !== undefined
+      || view.targeting?.describeTarget !== undefined || view.targeting?.pointTargets !== undefined || view.targeting?.mutedOnMap !== undefined)
+    expect(declaring.map(view => view.descriptor.id)).toEqual(['einsatz'])
+    // Without Einsatz active, every other Pack's view set is as inert as before the hooks existed.
+    const others = views.filter(view => view.descriptor.id !== 'einsatz')
+    expect(others.length).toBeGreaterThan(0)
+    const panels = others.flatMap(view => view.ui?.surfacePanels ?? [])
     expect(openPanelDeclaring(panels, () => true, 'mapTargets')).toBeNull()
     expect(openPanelDeclaring(panels, () => true, 'keymap')).toBeNull()
-    expect(views.filter(view => view.ui?.mapInteraction !== undefined || view.ui?.surfaceLayout !== undefined).map(view => view.descriptor.id)).toEqual([])
-    expect(mapCameraInteractionFor(views)).toEqual(allOn)
-    expect(railStartsCollapsed(views)).toBe(false)
-    expect(views.filter(view => view.targeting?.describeTarget !== undefined || view.targeting?.pointTargets !== undefined).map(view => view.descriptor.id)).toEqual([])
-    const active = createActivePackViews(views)
+    expect(mapCameraInteractionFor(others)).toEqual(allOn)
+    expect(railStartsCollapsed(others)).toBe(false)
+    const active = createActivePackViews(others)
     expect(active.targeting?.describeTarget).toBeUndefined()
     expect(active.targeting?.pointTargets).toBeUndefined()
+    expect(active.targeting?.mutedOnMap).toBeUndefined()
     expect(targetPreviewsWanted({ targeting: active.targeting, panel: null })).toBe(false)
     expect(groundClicksWanted({ targeting: active.targeting, panel: null })).toBe(false)
   })

@@ -7,8 +7,8 @@ import { einsatzScenarioSupport } from './scenario.ts'
 import { einsatzPackView } from './ui-pack.ts'
 
 /**
- * The Einsatz World Pack. The product registers it only at the cut; until
- * then tests assemble it with its runtime adapter.
+ * The Einsatz World Pack, registered with its runtime adapter in the World
+ * application assembly beside the other road Pack, on the same routing.
  *
  * It is role-aware: in a Run that declares sides every object it writes
  * carries its side, or `public` for a public type; its queries and refusals

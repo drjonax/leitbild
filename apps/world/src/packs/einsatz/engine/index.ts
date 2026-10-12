@@ -1,5 +1,5 @@
 /**
- * The Einsatz engine: headless, deterministic and unregistered. It holds no
+ * The Einsatz engine: headless and deterministic. It holds no
  * Capability, adapter or recommendation; those build on this API.
  */
 export { chainBy, nextStepCause, stepSkippedCode } from './chain-steps.ts'
