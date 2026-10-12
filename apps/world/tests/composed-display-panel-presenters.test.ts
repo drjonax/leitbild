@@ -552,6 +552,11 @@ describe('limit labels', () => {
       return limitLabelParts(lines[0]!, lines, { id: 'hotStandby', label: 'Hot standby' }, gates).map(part => `${part.text}${part.waits === '' ? '' : ` (${part.waits})`}`)
     }
     expect(texts(onDiesels)).toEqual(['ALM'])
+    // A rule that waits minutes names its wait with its action, and limits doing the same without it stay apart.
+    const instant = { ruleId: 'instant', label: 'Grid frequency low', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 49, order: 1, action: 'TURB TRIP', ruleIds: ['instant'], signals: ['GRID-HZ'] } as const
+    const sustained = { ...instant, ruleId: 'sustained', ruleIds: ['sustained'], delayMs: 1_800_000 }
+    const tripLines = limitLines([sustained, instant], { id: 'powerOperation', label: 'Power operation' }, noGates)
+    expect(limitLabelParts(tripLines[0]!, tripLines, { id: 'powerOperation', label: 'Power operation' }, noGates).map(part => part.text)).toEqual(['TURB TRIP after 30 min', '+ TURB TRIP'])
     // Bus A on its diesel, bus B still on offsite power: the two differ, so each names its bus.
     expect(texts(path => path === 'dieselBreakerA.closedState' || path === 'offsiteBreakerB.closedState')).toEqual(['ALM (A)', '+ ALM (B) (BRK-EDG-B-POS CLOSED, BRK-OFFSITE-B-POS OPEN)'])
     // Names: what tells parallel signals apart, alike ones as one.

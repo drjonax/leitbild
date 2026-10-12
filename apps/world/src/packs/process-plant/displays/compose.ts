@@ -318,13 +318,13 @@ const zodIssues = (error: z.ZodError): ReadonlyArray<ComposedDisplayIssue> => er
 
 // Every displayed signal's thresholds are drawn: an operator must see when any
 // of them nears or crosses a limit. Parallel loops share set points, so one
-// threshold per limit identity (kind, direction, value, order, action, modes)
+// threshold per limit identity (kind, direction, value, order, action, delay, modes)
 // keeps the panel readable and names every signal it covers.
 const drawnThresholds = (pens: ReadonlyArray<ComposedDisplayPen>): ReadonlyArray<ComposedTrendThreshold> => {
   const byAction = new Map<string, ComposedTrendThreshold>()
   for (const pen of pens) {
     for (const threshold of pen.thresholds) {
-      const key = `${threshold.kind}|${threshold.direction}|${threshold.value}|${threshold.order}|${threshold.action}|${threshold.modeLabel ?? ''}|${(threshold.gatedBy ?? []).join(',')}`
+      const key = `${threshold.kind}|${threshold.direction}|${threshold.value}|${threshold.order}|${threshold.action}|${threshold.delayMs ?? 0}|${threshold.modeLabel ?? ''}|${(threshold.gatedBy ?? []).join(',')}`
       const signal = pen.tagId ?? String(pen.path)
       const existing = byAction.get(key)
       byAction.set(key, existing === undefined

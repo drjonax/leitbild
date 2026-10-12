@@ -39,6 +39,13 @@ export interface ComposedDisplayThreshold {
   readonly action: string
   /** Present where its action is the reactor trip (its first-out group says so): of limits acting together, it is named first. */
   readonly reactorTrip?: true
+  /**
+   * How long the value must stay past the limit before the rule acts, where
+   * that wait is part of what the limit means: a grid frequency below 49 Hz
+   * trips the turbine only after 30 minutes. Absent for a wait shorter than
+   * NAMED_DELAY_MIN_MS, which only confirms a reading.
+   */
+  readonly delayMs?: number
   /** The declared operating modes the rule only acts in, as a display names them where room is short ("Modes 1–2"). */
   readonly modeLabel?: string
   /** The same modes as the Plant names them ("Power operation or Startup"). */
@@ -124,6 +131,9 @@ export const firstOutGroupOf = (plant: CompiledProcessPlant, rule: ProcessPlantI
   }
   return undefined
 }
+
+/** A rule's delay from this long is named with its limit ("after 30 min"); a shorter one only confirms a reading (seconds). */
+export const NAMED_DELAY_MIN_MS = 60_000
 
 /** A trip whose rule names no declared first-out group: it actuates something the I&C does not say. */
 export const UNDECLARED_ACTION = 'ACTUATION'
@@ -399,6 +409,7 @@ const readIcThresholds = (
         ...(severity === undefined ? {} : { severity }),
         ...action,
         ...(limit.coincidence === undefined ? {} : { action: `${action.action} ${limit.coincidence.required}/${limit.coincidence.of}`, coincidence: limit.coincidence }),
+        ...(rule.delayMs >= NAMED_DELAY_MIN_MS ? { delayMs: rule.delayMs } : {}),
         operator: limit.operator,
         direction: limit.operator === '<' || limit.operator === '<=' ? 'low' : 'high',
         value: limit.value,

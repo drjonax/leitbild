@@ -192,14 +192,29 @@ export const limitOrderName = (threshold: Pick<ComposedDisplayThreshold, 'direct
 export const limitKindName = (threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'action'>): string =>
   `${limitOrderName(threshold)} · ${threshold.action}`
 
-/** Order, exact configured value and action, as a limit's line is labelled: "LO-LO 20 % · RX TRIP". */
+/**
+ * What the I&C does at a limit as its name says it: its action, and how long
+ * the value must stay past it where the rule waits that long ("TURB TRIP
+ * after 30 min": HMI review, plan C1). A chip, a badge and an alarm row name
+ * the action alone (limitKindName); the limit's name says when.
+ */
+export const limitAction = (threshold: Pick<ComposedDisplayThreshold, 'action' | 'delayMs'>): string =>
+  threshold.delayMs === undefined ? threshold.action : `${threshold.action} after ${durationWords(threshold.delayMs)}`
+
+/** A rule's wait in whole words: "30 min", "1.5 min", "2 h". */
+const durationWords = (ms: number): string => {
+  const minutes = ms / 60_000
+  return minutes >= 120 && minutes % 60 === 0 ? `${minutes / 60} h` : `${Number(minutes.toFixed(1))} min`
+}
+
+/** Order, exact configured value and action, as a limit's line is labelled: "LO-LO 20 % · RX TRIP", "LO 49 Hz · TURB TRIP after 30 min". */
 export const thresholdName = (
-  threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'value' | 'action'>,
+  threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'value' | 'action' | 'delayMs'>,
   unit: string,
   options: { readonly withUnit: boolean } = { withUnit: true },
 ): string => {
   const label = options.withUnit ? unitLabel(unit) : ''
-  return `${limitOrderName(threshold)} ${displayValue(threshold.value, unit)}${label === '' ? '' : ` ${label}`} · ${threshold.action}`
+  return `${limitOrderName(threshold)} ${displayValue(threshold.value, unit)}${label === '' ? '' : ` ${label}`} · ${limitAction(threshold)}`
 }
 
 /** The whole name, with the modes it alone acts in: "LO-LO 20 % · RX TRIP (Modes 1–2)". */
@@ -291,8 +306,8 @@ export const nearestThresholdMargin = (
  */
 const actionsText = (margin: ThresholdMargin, modes: boolean): string => {
   const limits = [margin.threshold, ...(margin.alongside ?? [])]
-  return [...new Set(limits.map(threshold => threshold.action))].map(action => {
-    const modeLabels = limits.filter(threshold => threshold.action === action).map(threshold => threshold.modeLabel)
+  return [...new Set(limits.map(limitAction))].map(action => {
+    const modeLabels = limits.filter(threshold => limitAction(threshold) === action).map(threshold => threshold.modeLabel)
     const qualified = modes && modeLabels.every(label => label !== undefined)
     return `${action}${qualified ? ` (${[...new Set(modeLabels)].join(', ')})` : ''}`
   }).join(' + ')

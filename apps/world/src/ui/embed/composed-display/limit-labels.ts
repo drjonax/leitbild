@@ -1,5 +1,5 @@
 import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-import { bySeverity, limitOrderName, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
+import { bySeverity, limitAction, limitOrderName, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
 import { gatesHold, limitInForce, type GateStates, type PlantModeNow } from '../../../packs/process-plant/displays/trend-reading.ts'
 
@@ -236,7 +236,7 @@ export interface LimitLabelPart<T> {
  * conditions names them where another line of the strip shares its step
  * name (LO 40 % with low feed flow beside the LO 30 % alarm).
  */
-export const limitLabelParts = <T extends Pick<ComposedTrendThreshold, 'action' | 'signals' | 'modeIds' | 'modeLabel' | 'gatedBy' | 'gates' | 'direction' | 'order' | 'value'>>(
+export const limitLabelParts = <T extends Pick<ComposedTrendThreshold, 'action' | 'delayMs' | 'signals' | 'modeIds' | 'modeLabel' | 'gatedBy' | 'gates' | 'direction' | 'order' | 'value'>>(
   line: LimitLine<T>,
   lines: ReadonlyArray<LimitLine<T>>,
   mode: PlantModeNow,
@@ -251,10 +251,11 @@ export const limitLabelParts = <T extends Pick<ComposedTrendThreshold, 'action' 
   // Limits doing the same that wait on conditions alike but for one word (each generator's own feed flow) read as one: "SG A/B feedwater inflow < 150 kg/s".
   const groups: Array<{ action: string; waits: string; idle: boolean; members: T[] }> = []
   for (const entry of described) {
-    const peers = described.filter(other => other.member.action === entry.member.action && other.idle === entry.idle)
+    const action = limitAction(entry.member)
+    const peers = described.filter(other => limitAction(other.member) === action && other.idle === entry.idle)
     const waits = mergedText(peers.map(peer => peer.waits)) ?? entry.waits
-    const same = groups.find(group => group.action === entry.member.action && group.waits === waits && group.idle === entry.idle)
-    if (same === undefined) groups.push({ action: entry.member.action, waits, idle: entry.idle, members: [entry.member] })
+    const same = groups.find(group => group.action === action && group.waits === waits && group.idle === entry.idle)
+    if (same === undefined) groups.push({ action, waits, idle: entry.idle, members: [entry.member] })
     else same.members.push(entry.member)
   }
   const all = [...new Set(line.members.flatMap(member => member.signals))]

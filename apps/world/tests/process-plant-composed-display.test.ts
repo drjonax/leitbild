@@ -16,7 +16,7 @@ import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
-import { formatQuantity, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
+import { coincidentMargin, formatQuantity, limitKindName, marginText, marginTo, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
 import { compileComposedDisplay, composedDisplayShows } from '../src/packs/process-plant/displays/compose.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
@@ -128,6 +128,14 @@ describe('I&C thresholds for composed displays', () => {
     expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO-LO 20 % · AFW START', 'LO-LO 20 % · RX TRIP (Modes 1–2)', 'LO 30 % · ALM', 'LO 40 % · ALM', 'HI 75 % · ALM', 'HI-HI 82 % · FWI'])
     // Every name keeps the order-then-value shape answers cite.
     expect(names('SG-A-LVL-NR', 'percent').every(name => /^(LO|HI)(-(LO|HI|\d))? \d+ % · /.test(name))).toBe(true)
+    // A rule that waits minutes before it acts says so in its limit's name (HF review of the C1 plan: RfG's 49 Hz
+    // and 51 Hz turbine trips act after 30 minutes); a wait of seconds only confirms a reading and is not named.
+    const frequency = icThresholdsForSignal(compiled, 'offsiteGrid.frequencyHz' as never).thresholds
+    expect(frequency.map(threshold => thresholdName(threshold, 'Hz'))).toEqual(['LO-LO 47.5 Hz · TURB TRIP', 'LO 49 Hz · TURB TRIP after 30 min', 'HI 51 Hz · TURB TRIP after 30 min', 'HI-HI 51.5 Hz · TURB TRIP'])
+    expect(marginText(coincidentMargin(marginTo(48.9, frequency[1]!), frequency), 'Hz')).toBe('past LO 49 Hz · TURB TRIP after 30 min')
+    // A chip and a badge name the action alone, in the room they have.
+    expect(limitKindName(frequency[1]!)).toBe('LO · TURB TRIP')
+    expect(names('PT-455', 'MPa').some(name => name.includes(' after '))).toBe(false)
   })
 
   test('draw a limit that only on/off states of other signals gate, naming them', () => {
