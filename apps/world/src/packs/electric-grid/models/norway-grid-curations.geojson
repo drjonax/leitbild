@@ -1931,6 +1931,55 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "tonstad-unit-cables",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.726565,
+          58.65801
+        ]
+      },
+      "properties": {
+        "kind": "set-circuits",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/902286655"
+        ],
+        "wayOsmIds": [
+          "way/902286655"
+        ],
+        "voltageKv": 300,
+        "circuits": 5,
+        "reason": "Tonstad's five units each have their own step-up transformer to 300 kV (four 190 MVA 319/12 kV, one 360 MVA 320/21.5 kV), and the power leaves the underground station on 300 kV cables to the switchyard (verified, Sira-Kvina). OSM maps five Sira-Kvina 300 kV bays in Tonstad switching station, each ending at a cable transition terminal noted as one for each generator, but completes only one cable between station and switchyard; the others are mapped as stubs at both ends. The connection is modelled as five cable circuits, one per unit (inferred: one cable system per unit transformer). As one inferred circuit, the cable rule rated the whole 960 MW station at 834 MVA, and the winter base case loaded it to about 100 %.",
+        "evidence": [
+          {
+            "url": "https://www.sirakvina.no/tonstad-kraftverk",
+            "ref": "Sira-Kvina kraftselskap, Tonstad kraftverk, Tekniske data (read 2026-10-12)",
+            "note": "Ytelse transformator: 4x 190 MVA +1x 360 MVA; Spenning transformator: 4x 319/12 kV + 1x 320/21,5 kV; kraften går på 300 kV-kabler ut til koblingsanlegget"
+          },
+          {
+            "url": "https://www.openstreetmap.org/node/6037844528",
+            "ref": "nodes 6037844528–6037844532 and bays way/316744164–316744168",
+            "note": "five power=terminal transition nodes, note=one for each generator in Tonstad hydro plant below, each at a Sira-Kvina 300 kV bay of Tonstad koblingsstasjon (relation/8890360)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/902286655",
+            "ref": "way/902286655; stubs way/902286646–902286649 and way/902286651–902286654",
+            "note": "the one complete 300 kV cable (operator Sira-Kvina, no circuits or cables tag); the other cable ways end unconnected near the station and at the terminals"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
     }
   ]
 }

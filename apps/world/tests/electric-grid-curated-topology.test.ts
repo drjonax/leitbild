@@ -61,6 +61,16 @@ describe('curated topology of the Norway model', () => {
     expect(labelsOf(lines)).toEqual(['Smibelg - Sjona / Øresvik - Sjona'])
   })
 
+  test('Tonstad\'s units reach the switchyard on five 300 kV cable circuits, one per unit transformer', () => {
+    const cable = model.branches.find(branch => branch.provenance.sources.includes('curation:tonstad-unit-cables'))!
+    expect({ id: cable.id, kind: cable.kind, nominalKv: cable.nominalKv, circuits: cable.circuits, osmWayIds: cable.osmWayIds }).toEqual({
+      id: 'branch:osm-160c2daebc44076b', kind: 'cable', nominalKv: 300, circuits: 5, osmWayIds: ['902286655'],
+    })
+    const plant = model.generators.find(generator => generator.id === 'generator:nve-hydro-448')!
+    expect(plant.busId).toBe(cable.toBusId)
+    expect(cable.ratingMw).toBeGreaterThan(plant.capacityMw)
+  })
+
   test('the Ålefjær tap operated at 110 kV is not part of the ≥132 kV model', () => {
     expect(model.buses.filter(bus => bus.substationId === 'osm-relation-14027918')).toEqual([])
     expect(model.branches.filter(branch => branch.osmWayIds.includes('988971051'))).toEqual([])

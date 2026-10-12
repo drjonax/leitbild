@@ -93,10 +93,10 @@
    "id": "off-terminal-ends",
    "title": "Mapped line ends outside their terminal station",
    "status": "pass",
-   "summary": "0 of 2260 measured line ends lie outside their terminal (max 0)",
+   "summary": "0 of 2258 measured line ends lie outside their terminal (max 0)",
    "metrics": {
     "offTerminalEnds": 0,
-    "measuredEnds": 2260,
+    "measuredEnds": 2258,
     "unmeasuredEnds": 0,
     "boundaryEnds": 8
    },
@@ -222,15 +222,15 @@
    "id": "curations",
    "title": "Curated corrections applied, unexpired, and within the curated-length budget",
    "status": "pass",
-   "summary": "37/37 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.17 % (max 2.00 %)",
+   "summary": "38/38 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.18 % (max 2.00 %)",
    "metrics": {
-    "total": 37,
-    "applied": 37,
+    "total": 38,
+    "applied": 38,
     "unused": 0,
     "expired": 0,
     "violated": 0,
-    "curatedKm300kv": 15.626,
-    "curatedShare300kv": 0.0017297420128420877
+    "curatedKm300kv": 15.869299999999999,
+    "curatedShare300kv": 0.0017566744479966044
    },
    "failures": []
   }
@@ -455,6 +455,12 @@
   {
    "id": "sjona-smibelg-132kv-radial-split",
    "kind": "normally-open",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "tonstad-unit-cables",
+   "kind": "set-circuits",
    "status": "applied",
    "reasons": []
   }

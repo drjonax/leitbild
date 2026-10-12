@@ -5474,27 +5474,6 @@
           "note": "132 kV cable, cables=3"
         }
       ]
-    },
-    {
-      "branchId": "branch:osm-160c2daebc44076b",
-      "label": "Tonstad koblingsstasjon – Tonstad kraftverk 300 kV cable",
-      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
-      "maxLoading": 1.03,
-      "reason": "OSM maps the 0.24 km connection between the underground Tonstad power station (960 MW, five units) and its switchyard as one 300 kV cable without a circuit count, which the cable rule rates 834 MVA; at the winter reference hour the station runs at the common storage loading (815 MW), 840 MVA with its reactive output. The station exports its full capacity through several cable systems in reality; their number is not mapped.",
-      "evidence": [
-        {
-          "sourceId": "nve-hydro-api",
-          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
-          "ref": "VannKraftverkID 448",
-          "note": "Tonstad, 960 MW"
-        },
-        {
-          "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/902286655",
-          "ref": "way/902286655",
-          "note": "power=cable, voltage=300000, no circuits or cables tag"
-        }
-      ]
     }
   ]
 }
