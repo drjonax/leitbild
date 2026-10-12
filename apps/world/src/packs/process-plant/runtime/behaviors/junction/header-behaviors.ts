@@ -30,6 +30,30 @@ const weightedAverageLinkValue = (
   return weightTotal <= 0 ? null : weightedTotal / weightTotal
 }
 
+/**
+ * The highest pressure on the lines into a header whose source stands open:
+ * equipment that declares a position (an isolation valve) only while it is
+ * open at all; equipment that declares none is always open to it.
+ */
+const openSourcePressure = (
+  system: Parameters<ComponentBehaviorDefinition['update']>[0]['system'],
+  links: ReadonlyArray<CompiledProcessLink>,
+  context: Parameters<ComponentBehaviorDefinition['update']>[0]['context'],
+): number | null => {
+  let highest: number | null = null
+  for (const link of links) {
+    const pressurePath = processLinkVariablePath(link, 'pressureMPa')
+    if (!context.has(pressurePath)) continue
+    const position = system.graph.components[link.fromComponentIndex]?.semantics.aspects.find(aspect => aspect.aspect === 'position')?.state
+    const open = position === undefined ? true
+      : position.reading === 'closedWhileTrue' ? !context.readBoolean(position.path)
+        : context.readNumber(position.path) > 0
+    if (!open) continue
+    highest = Math.max(highest ?? Number.NEGATIVE_INFINITY, context.readNumber(pressurePath))
+  }
+  return highest
+}
+
 const updateHeaderDiagnostics = (
   input: Parameters<ComponentBehaviorDefinition['update']>[0],
 ): void => {
@@ -52,9 +76,13 @@ const updateHeaderDiagnostics = (
     optionalParameterNumber(component, 'mixingTimeConstantS', 1),
   )
   const previousPressure = context.readNumber(componentVariablePath(component, 'pressureNodeMPa'))
+  // With nothing flowing through it the header stands at the pressure of what it is open to (a main steam
+  // header after a turbine trip, at its steam generators' pressure through the open isolation valves);
+  // shut off from every source, its trapped fluid keeps the pressure it has.
   const incomingMixedPressure = weightedAverageLinkValue(incomingLinks, 'pressureMPa', context)
     ?? weightedAverageLinkValue(outgoingLinks, 'pressureMPa', context)
-    ?? optionalParameterNumber(component, 'initialPressureMPa', 1)
+    ?? openSourcePressure(system, incomingLinks, context)
+    ?? previousPressure
   // A pressure-balanced header stands at once at the pressure its pumps and branches settle at.
   const mixedPressure = isPressureBalancedHeader(component)
     ? headerPressureBalance(system, component, context).pressureMPa
@@ -88,7 +116,7 @@ const headerDiagnosticsBehavior = (componentKind: 'processHeader' | 'steamHeader
   id: `${componentKind}-mixing-diagnostics`,
   phase: 'updateComponentState',
   componentKind,
-  reads: ['incoming:flowKgPerS', 'incoming:temperatureC', 'incoming:pressureMPa', 'outgoing:flowKgPerS', 'mixedTemperatureC', 'pressureNodeMPa', 'inventoryKg', 'pressure-balanced header branches?'],
+  reads: ['incoming:flowKgPerS', 'incoming:temperatureC', 'incoming:pressureMPa', 'outgoing:flowKgPerS', 'mixedTemperatureC', 'pressureNodeMPa', 'inventoryKg', 'pressure-balanced header branches?', 'incoming source position?'],
   writes: ['inventoryKg', 'inletFlowKgPerS', 'outletFlowKgPerS', 'flowBalanceResidualKgPerS', 'mixedTemperatureC', 'mixedPressureMPa', 'pressureNodeMPa', 'unmetDemandKgPerS'],
   update: updateHeaderDiagnostics,
 })
