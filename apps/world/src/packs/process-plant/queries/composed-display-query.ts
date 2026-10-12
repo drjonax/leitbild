@@ -42,7 +42,7 @@ import {
 import { displayEvidence } from '../displays/evidence.ts'
 import { requirePlant } from './common.ts'
 import { displayValue, simulationClock, valueDigits, writtenDecimals } from '../displays/display-text.ts'
-import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
+import { heldCommands, indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { valueRowReading } from '../displays/mimic/rows.ts'
 import { mimicItemId } from '../displays/mimic/bindings.ts'
 import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
@@ -173,7 +173,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       ...(completed.evidence.length === 0 ? {} : { evidence: completed.evidence }),
       ...(lead === undefined ? {} : { lead }),
     })
-    const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => ({ path, ...sample(path) })))
+    // A command a person or an AI agent issued is judged "not followed" only after its travel time (evaluate.ts), as the drawing judges it.
+    const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => ({ path, ...sample(path) })), heldCommands(system))
     const opened = readComposedDisplay(display, opening)
     // The critical safety functions its header shows, judged as it opens.
     const safetyFunctions = evaluateSafetyFunctions(system.plant, system.runtime)
@@ -264,7 +265,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => {
       const snapshot = system.runtime.readVariableSnapshot(path)
       return { path, value: snapshot.value, quality: processPlantSignalQuality(snapshot).status }
-    }))
+    }), heldCommands(system))
     const label = plantLabelOf(display.plantId)
     return {
       plantId: display.plantId,

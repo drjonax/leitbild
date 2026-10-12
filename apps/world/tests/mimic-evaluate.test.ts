@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { MimicFlowBinding, MimicItemBinding, MimicRangeBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
-import { flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
+import { commandsHeld, flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { drawnLook, itemRows, itemTreatment, rangeText, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 
@@ -11,9 +11,14 @@ const item = (state: MimicStateBinding | null): MimicItemBinding => ({
   item: { kind: 'component', component: 0 }, label: 'X', state, values: [], ranges: [], shutdown: [], limits: [], frames: [],
 })
 
-const pump = item({ aspect: 'running', state: { path: 'p.speedRpm' as never, reading: 'aboveZero' }, command: 'p.running' as never })
-const valve = item({ aspect: 'position', state: { path: 'v.effective' as never, reading: 'value' }, command: 'v.command' as never })
+// As the model declares them: a pump's run state follows its command within the step, a valve strokes in 10 s.
+const pump = item({ aspect: 'running', state: { path: 'p.speedRpm' as never, reading: 'aboveZero' }, command: 'p.running' as never, travel: { onS: 0, offS: 0 } })
+const valve = item({ aspect: 'position', state: { path: 'v.effective' as never, reading: 'value' }, command: 'v.command' as never, travel: { onS: 10, offS: 10 } })
 const porv = item({ aspect: 'position', command: 'r.command' as never, throughput: { path: 'r.flow' as never, noFlowBelow: 0.2 } })
+
+/** A sample whose commands people or AI agents issued at these plant times, read at `nowMs`. */
+const issued = (values: Record<string, number | boolean>, log: ReadonlyArray<{ readonly path: string; readonly value: number | boolean; readonly elapsedMs: number }>, nowMs: number) =>
+  indexSample(Object.entries(values).map(([path, value]) => ({ path, value, quality: 'good' })), commandsHeld(log, nowMs))
 
 describe('mimic state of one sample', () => {
   test('a pump runs when it turns; a run command it does not follow is stated', () => {
@@ -44,22 +49,36 @@ describe('mimic state of one sample', () => {
     expect(itemLook(valve, sample({ 'v.effective': 2 }, { 'v.effective': 'outside-hard-range' })).state.kind).toBe('unknown')
   })
 
-  test('a relief valve whose position is not computed reads by what passes it', () => {
-    // PORV stuck open: commanded shut, passing 8.5 kg/s.
+  test('a valve whose position is not computed reads by what passes it, and is never judged not followed', () => {
+    // The model declares no travel time for a state it does not solve (an accumulator's discharge isolation valve):
+    // what passes it is what it shows, whatever it is commanded (I-2).
     expect(itemLook(porv, sample({ 'r.flow': 8.5, 'r.command': 0 }))).toEqual({
-      state: { kind: 'passing', flow: 8.5 }, notMeasured: true, mismatch: 'CMD SHUT', words: 'position not measured; passing 8.5 kg/s; commanded shut',
+      state: { kind: 'passing', flow: 8.5 }, notMeasured: true, mismatch: null, words: 'position not measured; passing 8.5 kg/s',
     })
     expect(itemLook(porv, sample({ 'r.flow': 0.1, 'r.command': 0 }))).toMatchObject({ state: { kind: 'notPassing' }, mismatch: null })
-    expect(itemLook(porv, sample({ 'r.flow': 0, 'r.command': 1 })).mismatch).toBe('CMD 100 %')
+    expect(itemLook(porv, sample({ 'r.flow': 0, 'r.command': 1 }))).toEqual({ state: { kind: 'notPassing', flow: 0 }, notMeasured: true, mismatch: null, words: 'position not measured; no flow' })
   })
 
-  test('an isolation valve a check valve backs reads no flow as no flow, not as shut', () => {
-    // An accumulator at power: its discharge isolation valve open, its check valve held shut by the reactor coolant
-    // system's higher pressure (evaluation run 23's SI line-up to loop C, once it drew accumulator C).
-    const isolation = item({ aspect: 'position', command: 'a.open' as never, throughput: { path: 'a.flow' as never, noFlowBelow: 0.2, heldBack: true } })
-    expect(itemLook(isolation, sample({ 'a.flow': 0, 'a.open': true }))).toEqual({ state: { kind: 'notPassing', flow: 0 }, notMeasured: true, mismatch: null, words: 'position not measured; no flow' })
-    // Passing while demanded shut is open whatever holds the flow back.
-    expect(itemLook(isolation, sample({ 'a.flow': 40, 'a.open': false })).mismatch).toBe('CMD SHUT')
+  test('a command a person or an AI agent issued is judged not followed only after its travel time and margin (QA-6)', () => {
+    const shut = [{ path: 'v.command', value: 0, elapsedMs: 100_000 }]
+    // Shut 5 s ago and stroking: no CMD, the valve is where it is.
+    expect(itemLook(valve, issued({ 'v.effective': 0.6, 'v.command': 0 }, shut, 105_000))).toMatchObject({ mismatch: null, words: '60 % open' })
+    // 10 s stroke + 2.5 s margin: at 12 s still awaited, at 13 s not followed.
+    expect(itemLook(valve, issued({ 'v.effective': 0.2, 'v.command': 0 }, shut, 112_000)).mismatch).toBeNull()
+    expect(itemLook(valve, issued({ 'v.effective': 0.2, 'v.command': 0 }, shut, 113_000))).toMatchObject({ mismatch: 'CMD SHUT', words: '20 % open; commanded shut disagrees' })
+    // A pump follows within the step: 2 s of margin, then not followed.
+    const start = [{ path: 'p.running', value: true, elapsedMs: 50_000 }]
+    expect(itemLook(pump, issued({ 'p.speedRpm': 0, 'p.running': true }, start, 52_000)).mismatch).toBeNull()
+    expect(itemLook(pump, issued({ 'p.speedRpm': 0, 'p.running': true }, start, 52_001)).mismatch).toBe('CMD RUN')
+    // A command the I&C or a scenario wrote since (the log's last write is not what it reads) is judged as it reads.
+    expect(itemLook(valve, issued({ 'v.effective': 0.6, 'v.command': 1 }, shut, 101_000)).mismatch).toBe('CMD 100 %')
+    // Each direction has its own travel: a breaker closes in 0 s and opens in 5 s.
+    const breaker = item({ aspect: 'position', state: { path: 'b.closed' as never, reading: 'closedWhileTrue' }, command: 'b.close' as never, travel: { onS: 0, offS: 5 } })
+    expect(itemLook(breaker, issued({ 'b.closed': true, 'b.close': false }, [{ path: 'b.close', value: false, elapsedMs: 0 }], 6_000)).mismatch).toBeNull()
+    expect(itemLook(breaker, issued({ 'b.closed': false, 'b.close': true }, [{ path: 'b.close', value: true, elapsedMs: 0 }], 2_500)).mismatch).toBe('CMD CLOSE')
+    // Where the model declares no travel time, the state is awaited and never judged not followed.
+    const undeclared = item({ aspect: 'running', state: { path: 'u.speedRpm' as never, reading: 'aboveZero' }, command: 'u.running' as never })
+    expect(itemLook(undeclared, sample({ 'u.speedRpm': 0, 'u.running': true })).mismatch).toBeNull()
   })
 
   test('equipment that does not follow its command stands out as abnormal, and in its alarm\'s colour only while an alarm of its own is active', () => {
@@ -72,7 +91,7 @@ describe('mimic state of one sample', () => {
     // A stale or missing sample says nothing it cannot know.
     expect(itemTreatment(itemLook(valve, sample({})), false)).toBe('normal')
     // A group stands out while any member disagrees.
-    const second = item({ aspect: 'running', state: { path: 'q.speedRpm' as never, reading: 'aboveZero' }, command: 'q.running' as never })
+    const second = item({ aspect: 'running', state: { path: 'q.speedRpm' as never, reading: 'aboveZero' }, command: 'q.running' as never, travel: { onS: 0, offS: 0 } })
     const rows = itemRows(pump, { element: 'device', icon: 'pump', aspect: 'running' }, { marker: false, members: [pump, second], commands: 'stacked', offSpan: 'end' })
     expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': true })), false)).toBe('abnormal')
     expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': false })), false)).toBe('normal')

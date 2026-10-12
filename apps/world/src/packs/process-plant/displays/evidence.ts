@@ -8,7 +8,7 @@ import { COMPOSED_EVIDENCE_MAX, COMPOSED_EVIDENCE_MAX_ROWS, type DisplayEvidence
 import { formatQuantity, isPast, offScale, readingResolution, simulationClock } from './display-text.ts'
 import { icThresholdsForSignal } from './ic-thresholds.ts'
 import { itemBinding, type MimicItem } from './mimic/bindings.ts'
-import { itemLook, type SampleIndex } from './mimic/evaluate.ts'
+import { heldCommands, itemLook, type SampleIndex } from './mimic/evaluate.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 import { operatingPointValue } from './operating-point.ts'
 import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMeasured } from './overview-key-values.ts'
@@ -180,10 +180,15 @@ export const displayEvidence = (
     ...(graph.outgoingLinksByComponent[component] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow').map(link => link.toComponentIndex),
   ]
   const suspects = [...new Set([...penEquipment, ...penEquipment.flatMap(neighbours)])].filter(component => !drawn.has(component))
-  const values = new Map<string, { readonly value: unknown; readonly quality: string }>()
+  const values = new Map<string, { readonly value: unknown; readonly quality: string; readonly heldMs?: number }>()
   const index: SampleIndex = values
+  // A command a person or an AI agent issued is no cause while its equipment is still within its travel time (evaluate.ts).
+  const held = heldCommands(system)
   const read = (path: VariablePath | undefined) => {
-    if (path !== undefined && !values.has(String(path))) values.set(String(path), sample(path))
+    if (path === undefined || values.has(String(path))) return
+    const value = sample(path)
+    const heldMs = held?.(String(path), value.value)
+    values.set(String(path), heldMs === undefined ? value : { ...value, heldMs })
   }
   // The equipment on a fault path: what does not follow its demand, and what isolates its line.
   const faults: Array<{ readonly item: MimicItem; readonly label: string }> = []

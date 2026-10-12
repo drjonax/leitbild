@@ -228,22 +228,23 @@ describe('mimic presentation and bindings', () => {
     const pzr = graph.componentIndexById.get('pressurizer' as never)!
     const porv = itemBinding(plant, { kind: 'device', component: pzr, device: 'reliefValve' }, 'position', framed)
     expect(porv.label).toBe('PORV')
-    // The PORV reads the opening the model relieves through, never its demand.
+    // The PORV reads the opening the model relieves through, never its demand; it follows its demand within the step.
     expect(porv.state).toEqual({
       aspect: 'position',
       state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' },
       command: 'pressurizer.reliefValvePositionFraction' as never,
+      travel: { onS: 0, offS: 0 },
     })
     // It is framed by its acoustic flow monitor's alarm, the instrument a plant reads its flow by.
     expect(porv.frames).toEqual([{ ruleId: 'pzr-porv-flow', flap: 'RELIEF VALVE FLOWING', watches: 'RELIEF VALVE FLOWING' }])
-    // An accumulator's discharge isolation valve opens on its command at once; the model solves no separate position.
-    // The check valve on the same outlet can hold its flow back, so no flow does not say it is shut.
+    // An accumulator's discharge isolation valve opens on its command at once; the model solves no separate position
+    // and declares no travel time, so what passes it is what it shows (evaluate.ts, I-2).
     const accumulator = graph.componentIndexById.get('safetyAccumulatorA' as never)!
     const isolation = itemBinding(plant, { kind: 'device', component: accumulator, device: 'dischargeIsolationValve' }, 'position', framed)
     expect(isolation.state).toEqual({
       aspect: 'position',
       command: 'safetyAccumulatorA.dischargeIsolationOpen' as never,
-      throughput: { path: 'safetyAccumulatorA.outletFlowKgPerS' as never, noFlowBelow: null, heldBack: true },
+      throughput: { path: 'safetyAccumulatorA.outletFlowKgPerS' as never, noFlowBelow: null },
     })
     for (const component of graph.components) {
       for (const aspect of component.semantics.aspects) {

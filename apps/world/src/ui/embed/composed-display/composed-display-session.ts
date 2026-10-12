@@ -80,9 +80,8 @@ export const createComposedDisplaySession = (config: {
   /** The view's current size, which a generated display is drawn for; null for advice. */
   readonly size: () => ViewSize | null
   /**
-   * Where the display is operated (a generated display in the process display
-   * window): the paths its controls write and read besides what it draws, and
-   * every sample then asks for the operations on them. Null where it is not.
+   * Where the display is operated (in the process display window): the paths
+   * its controls write and read besides what it draws. Null where it is not.
    */
   readonly operated?: () => ReadonlyArray<string> | null
   readonly wallNow?: () => number
@@ -122,7 +121,10 @@ export const createComposedDisplaySession = (config: {
       ...pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...(pen.validWhile === undefined ? [] : [String(pen.validWhile)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]),
       ...(panel.kind === 'faceplate' ? panel.faceplate.paths : []),
     ])])]
-  const sample = (): Promise<ComposedDisplaySample> => config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS, (config.operated?.() ?? null) !== null)
+  // A display that draws equipment, or is operated, reads what people and AI agents did on its paths with every sample: a
+  // drawing judges a command they issued "not followed" only after its travel time (evaluate.ts, QA-6).
+  const sample = (): Promise<ComposedDisplaySample> => config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS,
+    panels().some(panel => panel.kind === 'mimic') || (config.operated?.() ?? null) !== null)
 
   /** Trends keep their horizon; comparisons keep ten minutes for rates. Advice readouts use only the latest sample. */
   const trendPens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> =>

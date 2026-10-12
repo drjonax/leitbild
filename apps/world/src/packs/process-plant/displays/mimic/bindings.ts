@@ -1,5 +1,6 @@
 import type {
   AspectReading,
+  AspectTravel,
   CompiledComponent,
   CompiledEmbeddedDevice,
   CompiledPlantGraph,
@@ -48,11 +49,14 @@ export interface MimicStateBinding {
   readonly words?: { readonly on: string; readonly off: string }
   readonly command?: VariablePath
   /**
-   * What passes the item, judging it where its own state is not solved.
-   * `heldBack`: a non-return device on the same line can hold the flow back
-   * (an accumulator's check valve), so no flow does not say the item is shut.
+   * How long the equipment takes to follow its command, toward its on state
+   * and its off state, as the model declares it: a disagreement is judged
+   * "not followed" only after it and a margin (evaluate.ts). Absent where the
+   * model declares none: the state is awaited, never judged not followed.
    */
-  readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null; readonly heldBack?: true }
+  readonly travel?: AspectTravel
+  /** What passes the item, judging it where its own state is not solved. */
+  readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null }
 }
 
 /**
@@ -321,7 +325,7 @@ const declaredWords = (graph: CompiledPlantGraph, path: VariablePath): { readonl
   return component.metadata?.presentation?.states?.[String(path).slice(String(component.id).length + 1)]
 }
 
-const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, heldBack = false): MimicStateBinding | null => {
+const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null): MimicStateBinding | null => {
   if (aspect === null) return null
   const declared = aspectOf(aspects, aspect)
   if (declared === undefined) return null
@@ -336,8 +340,9 @@ const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<Compiled
     ...(state === undefined ? {} : { state }),
     ...(words === undefined ? {} : { words }),
     ...(declared.command === undefined ? {} : { command: declared.command }),
+    ...(declared.travel === undefined ? {} : { travel: declared.travel }),
     // A state the model does not solve is judged by what passes the item.
-    ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path), ...(heldBack ? { heldBack: true as const } : {}) } }),
+    ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path) } }),
   }
 }
 
@@ -433,8 +438,7 @@ export const itemBinding = (
   // A device's no-flow band is its host outlet's rating; a component's, its largest rated outflow.
   const ratings = component.semantics.ratedOutflow.filter(rating => device === undefined || rating.port === device.port).map(rating => rating.flowKgPerS)
   const rated = ratings.length === 0 ? null : Math.max(...ratings)
-  const heldBack = device !== undefined && component.semantics.embedded.some(other => other.id !== device.id && other.port === device.port && other.function === 'nonReturn')
-  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, heldBack)
+  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION)
   const drawnState = state?.state?.path
   return {
     item,

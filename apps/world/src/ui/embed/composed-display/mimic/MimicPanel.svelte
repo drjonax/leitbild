@@ -3,7 +3,7 @@
   import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
-  import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
+  import { commandsHeld, indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
   import { drawnLook, flapCount, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, shutdownDemanded, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
@@ -69,7 +69,9 @@
     }
   })
 
-  const index = $derived<SampleIndex>(indexSample(stale ? undefined : latest?.values))
+  // A command a person or an AI agent issued is judged "not followed" only after its equipment's travel time and margin, from
+  // when the Plant's operations log says it was issued (evaluate.ts, QA-6).
+  const index = $derived<SampleIndex>(indexSample(stale ? undefined : latest?.values, latest?.operations === undefined ? undefined : commandsHeld(latest.operations.log, latest.plantElapsedMs)))
   // A cleared alarm awaiting acknowledgement is listed, not framed.
   const alarms = $derived<ReadonlyArray<ComposedDisplayAlarm>>(stale ? [] : (latest?.alarms ?? []).filter(alarm => alarm.active))
   // A grouped symbol reads as its members together ("1/2 RUN").

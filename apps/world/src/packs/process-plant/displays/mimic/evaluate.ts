@@ -1,14 +1,48 @@
-import type { MimicFlowBinding, MimicItemBinding, MimicShutdownBinding } from './bindings.ts'
+import { followAllowanceMs } from '../../operations/controls.ts'
+import type { MimicFlowBinding, MimicItemBinding, MimicShutdownBinding, MimicStateBinding } from './bindings.ts'
 
 // What a drawn item and pipe show for one sample. Pure and shared by the
 // server (the compose result's equipment list) and the embed (the drawing),
 // so what the agent says can never differ from what the operator sees. A
 // missing or out-of-range value is unknown, never a substitute.
 
-export type SampleIndex = ReadonlyMap<string, { readonly value: unknown; readonly quality: string }>
+/**
+ * A sample's values by path. `heldMs`: how long a command has read this
+ * value since a person or an AI agent issued it, where the Plant's operations
+ * log says so (commandsHeld); a display judges such a command "not followed"
+ * only once the equipment's declared travel time and margin have passed.
+ */
+export type SampleIndex = ReadonlyMap<string, { readonly value: unknown; readonly quality: string; readonly heldMs?: number }>
 
-export const indexSample = (values: ReadonlyArray<{ readonly path: string; readonly value: unknown; readonly quality: string }> | undefined): SampleIndex =>
-  new Map((values ?? []).map(entry => [entry.path, { value: entry.value, quality: entry.quality }]))
+/** How long each command has read the value it reads now, in plant ms; undefined where it is not known. */
+export type CommandHeld = (path: string, value: unknown) => number | undefined
+
+export const indexSample = (values: ReadonlyArray<{ readonly path: string; readonly value: unknown; readonly quality: string }> | undefined, held?: CommandHeld): SampleIndex =>
+  new Map((values ?? []).map(entry => {
+    const heldMs = held?.(entry.path, entry.value)
+    return [entry.path, heldMs === undefined ? { value: entry.value, quality: entry.quality } : { value: entry.value, quality: entry.quality, heldMs }]
+  }))
+
+/**
+ * How long each command has read its value, from the commands people and AI
+ * agents issued (the Plant's operations log, as display.sample serves it): the
+ * latest one on a path, where the command still reads the value it wrote.
+ * Where none does (the I&C or a scenario moved it, or the log no longer keeps
+ * it), the time is not known and the command is judged as it reads.
+ */
+export const commandsHeld = (log: ReadonlyArray<{ readonly path: string; readonly value: unknown; readonly elapsedMs: number }>, nowElapsedMs: number): CommandHeld => {
+  const latest = new Map<string, { readonly value: unknown; readonly elapsedMs: number }>()
+  for (const record of log) {
+    const known = latest.get(record.path)
+    if (known === undefined || record.elapsedMs >= known.elapsedMs) latest.set(record.path, record)
+  }
+  return (path, value) => {
+    const record = latest.get(path)
+    if (record === undefined) return undefined
+    const same = typeof record.value === 'number' && typeof value === 'number' ? Math.abs(record.value - value) <= 1e-9 : record.value === value
+    return same ? Math.max(0, nowElapsedMs - record.elapsedMs) : undefined
+  }
+}
 
 const numberAt = (index: SampleIndex, path: string | undefined): number | null => {
   if (path === undefined) return null
@@ -65,6 +99,25 @@ const commandText = (index: SampleIndex, path: string | undefined, aspect: 'runn
   return { text: fraction < CLOSED_BELOW ? 'CMD SHUT' : `CMD ${percent(fraction)}`, open: fraction >= CLOSED_BELOW, fraction }
 }
 
+/** commandsHeld of a running Plant: its operations log, timed at its plant time now; none where it keeps no log. */
+export const heldCommands = (system: {
+  readonly operations?: { readonly log: () => ReadonlyArray<{ readonly path: string; readonly value: unknown; readonly elapsedMs: number }> }
+  readonly runtime: { readonly elapsedMs: () => number }
+}): CommandHeld | undefined => system.operations === undefined ? undefined : commandsHeld(system.operations.log(), system.runtime.elapsedMs())
+
+/**
+ * Whether a command that disagrees with its state is judged not followed
+ * (QA-6, I-2): only once the equipment's declared travel toward the commanded
+ * state and its margin (followAllowanceMs) have passed since it was issued;
+ * at once where that time is not known (commandsHeld); never where the model
+ * declares no travel time, whose state is awaited.
+ */
+const judged = (state: MimicStateBinding, index: SampleIndex, mismatch: string | null, towardOn: boolean): string | null => {
+  if (mismatch === null || state.command === undefined || state.travel === undefined) return null
+  const heldMs = index.get(state.command)?.heldMs
+  return heldMs === undefined || heldMs > followAllowanceMs(1_000 * (towardOn ? state.travel.onS : state.travel.offS)) ? mismatch : null
+}
+
 /**
  * Where a flag that says an item has stopped stands: stopped while it reads
  * true; `demanded` while it does not and a trip's command to stop it stands
@@ -102,7 +155,7 @@ const stateLook = (binding: MimicItemBinding, index: SampleIndex): ItemLook => {
     const band = state.state?.reading === 'flow' ? state.state.noFlowBelow ?? 0 : 0
     const running = typeof value === 'boolean' ? value : state.state?.reading === 'flow' ? Math.abs(value) >= band && value !== 0 : value > 0
     const command = commandText(index, state.command, 'running')
-    const mismatch = command === null || command.open === running ? null : command.text
+    const mismatch = judged(state, index, command === null || command.open === running ? null : command.text, command?.open === true)
     return { state: { kind: running ? 'running' : 'stopped' }, notMeasured: false, mismatch, words: `${worded(running, running ? 'running' : 'stopped')}${mismatch === null ? '' : `; commanded to ${running ? 'stop' : 'run'}`}` }
   }
 
@@ -113,7 +166,8 @@ const stateLook = (binding: MimicItemBinding, index: SampleIndex): ItemLook => {
       const closed = booleanAt(index, state.state?.path)
       if (closed === null) return unknown()
       // A breaker commanded open disagrees while its contacts stay closed, and the other way round.
-      const mismatch = command === null || command.open === null || command.open === !closed ? null : command.text
+      // Its on state is closed in: a command to close (open false) moves it toward it.
+      const mismatch = judged(state, index, command === null || command.open === null || command.open === !closed ? null : command.text, command?.open === false)
       return { state: { kind: closed ? 'closed' : 'open' }, notMeasured: false, mismatch, words: `${worded(closed, closed ? 'closed' : 'open')}${mismatch === null ? '' : `; ${mismatch.replace('CMD', 'commanded').toLowerCase()} disagrees`}` }
     }
     if (state.state === undefined) {
@@ -121,21 +175,20 @@ const stateLook = (binding: MimicItemBinding, index: SampleIndex): ItemLook => {
       const flow = numberAt(index, state.throughput?.path)
       if (flow === null) return unknown(true)
       const passing = Math.abs(flow) >= (state.throughput?.noFlowBelow ?? 0) && flow !== 0
-      // Passing while demanded shut, it is open; not passing while demanded open, it is shut, unless a non-return
-      // device on its line holds the flow back (an accumulator below the reactor coolant system's pressure).
-      const mismatch = command === null ? null : passing && command.open === false ? command.text : !passing && command.open === true && state.throughput?.heldBack !== true ? command.text : null
+      // Never judged not followed: the model declares no travel time for a state it does not solve (I-2), so what passes
+      // it is what it shows, whatever it is commanded.
       return {
         state: { kind: passing ? 'passing' : 'notPassing', flow },
         notMeasured: true,
-        mismatch,
-        words: `position not measured; ${passing ? `passing ${flow.toFixed(Math.abs(flow) >= 100 ? 0 : 1)} kg/s` : 'no flow'}${mismatch === null ? '' : `; ${mismatch.replace('CMD', 'commanded').toLowerCase()}`}`,
+        mismatch: null,
+        words: `position not measured; ${passing ? `passing ${flow.toFixed(Math.abs(flow) >= 100 ? 0 : 1)} kg/s` : 'no flow'}`,
       }
     }
     const position = numberAt(index, state.state.path)
     if (position === null) return unknown()
-    const mismatch = command?.fraction !== null && command?.fraction !== undefined
+    const mismatch = judged(state, index, command?.fraction !== null && command?.fraction !== undefined
       ? (Math.abs(command.fraction - position) > MISMATCH_FRACTION ? command.text : null)
-      : command !== null && command !== undefined && command.open !== (position >= CLOSED_BELOW) ? command.text : null
+      : command !== null && command !== undefined && command.open !== (position >= CLOSED_BELOW) ? command.text : null, command?.fraction !== null && command?.fraction !== undefined ? command.fraction > position : command?.open === true)
     const words = position < CLOSED_BELOW ? 'closed' : position > OPEN_ABOVE ? 'open' : `${percent(position)} open`
     return { state: { kind: 'position', fraction: position }, notMeasured: false, mismatch, words: `${words}${mismatch === null ? '' : `; ${mismatch.replace('CMD', 'commanded').toLowerCase()} disagrees`}` }
   }
