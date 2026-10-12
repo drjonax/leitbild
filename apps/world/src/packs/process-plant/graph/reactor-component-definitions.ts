@@ -46,6 +46,34 @@ export const nuclearInstrumentSpans = {
 //   at 20 steps withdrawn of their 228-step travel, as a Westinghouse plant's
 //   rod bottom lights come on.
 
+// Where the rods stand as a Westinghouse four-loop plant's rod position
+// indication reads them: four control banks (A to D) and four shutdown banks
+// (SA to SD), each 228 steps of travel. The control banks move in the overlap
+// program, each starting out as the bank before it reaches the bank spacing,
+// full out less the overlap (228 - 100 = 128 steps); the rod demand's range,
+// the 1,200 pcm the model's rods are worth, spans the last two banks (C and D,
+// 128 + 228 = 356 program steps), and the program is anchored where full power
+// holds the rods: the last bank 220 steps out at the critical insertion, the
+// others full out. The rods are one aligned group, so a bank's position is the
+// program's, not a measurement of its own; the shutdown banks stand full out
+// until a trip, and no withdrawal of them is modelled. Once the trip breakers
+// open, every bank falls together, at the full travel over the rods' drop time.
+
+/** The rod banks, in the order a rod position indication shows them. */
+export const shutdownRodBanks = ['A', 'B', 'C', 'D'] as const
+export const controlRodBanks = ['A', 'B', 'C', 'D'] as const
+/** Steps of a rod's travel, from fully inserted (0) to fully withdrawn. */
+export const rodTravelSteps = 228
+
+const rodBanksSchema = z.object({
+  /** Program steps between successive control banks: full out less the overlap. */
+  bankSpacingSteps: z.number().int().positive().max(rodTravelSteps),
+  /** The last control bank's steps withdrawn at the critical insertion, where full power holds the rods. */
+  lastBankStepsAtCriticalInsertion: z.number().finite().nonnegative().max(rodTravelSteps),
+}).strict()
+
+export type ReactorRodBanks = z.infer<typeof rodBanksSchema>
+
 /** Delayed-neutron precursor groups the core's kinetics carries. */
 export const delayedNeutronGroupCount = 6
 /** Fission-product decay-heat groups the core's thermal power carries. */
@@ -114,6 +142,7 @@ const reactorNeutronicsSchema = z.object({
   delayedNeutrons: delayedNeutronsSchema,
   decayHeatGroups: decayHeatGroupsSchema,
   scram: scramSchema,
+  rodBanks: rodBanksSchema,
 }).passthrough()
 
 export type ReactorNeutronics = z.infer<typeof reactorNeutronicsSchema>
@@ -171,6 +200,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       decayHeatGroups: decayHeatGroupsSchema,
       /** What the reactor trip does to the core. */
       scram: scramSchema,
+      /** How the rods' position indication reads them, bank by bank, in steps. */
+      rodBanks: rodBanksSchema,
       /** The rod control's reference average coolant temperature, Tref, programmed from turbine load. */
       temperatureProgram: temperatureProgramSchema,
       referenceCoolantOutletTemperatureC: z.number().finite().optional(),
@@ -277,11 +308,16 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'averageTemperatureDeviationC', label: 'Average coolant temperature deviation from reference', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
       // Where the rods are, as their position indication reads it: the demand,
       // which the drives follow, until the trip breakers drop them.
-      variable({ path: 'rodInsertedFraction', label: 'Rod position', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 }, instrumentSpan: { min: 0, max: 1 } } }),
+      // The rods' travel bounds it; no instrument saturates there, so it declares no span.
+      variable({ path: 'rodInsertedFraction', label: 'Rod position', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'rodsOnBottom', label: 'Rods on bottom', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       // Declared last, so the variables before them keep their places.
       variable({ path: 'sourceRangeStartupRateDpm', label: 'Source-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.sourceRangeStartupRateDpm, instrumentSpan: nuclearInstrumentSpans.sourceRangeStartupRateDpm } }),
       variable({ path: 'sourceRangeStartupRateValid', label: 'Source-range startup rate valid', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      // The rods in steps withdrawn, as their position indication reads them: on average, and bank by bank.
+      variable({ path: 'rodStepsWithdrawn', label: 'Rod position, steps withdrawn', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } }),
+      ...shutdownRodBanks.map(bank => variable({ path: `shutdownBank${bank}StepsWithdrawn`, label: `Shutdown bank S${bank} position`, kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } })),
+      ...controlRodBanks.map(bank => variable({ path: `controlBank${bank}StepsWithdrawn`, label: `Control bank ${bank} position`, kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } })),
     ],
   }),
   defineComponent({

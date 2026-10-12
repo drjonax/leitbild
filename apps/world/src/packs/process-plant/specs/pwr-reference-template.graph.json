@@ -52,6 +52,10 @@
             "reactorTripBreakerB"
           ]
         },
+        "rodBanks": {
+          "bankSpacingSteps": 128,
+          "lastBankStepsAtCriticalInsertion": 220
+        },
         "referenceCoolantOutletTemperatureC": 322,
         "referenceFuelTemperatureC": 441,
         "coolantTemperatureFeedbackPcmPerC": -3,
@@ -212,6 +216,60 @@
           "tagId": "NIS-SR-SUR-VALID",
           "equipmentId": "nuclear-instrumentation",
           "description": "Source-range startup rate valid: the source range counted through the whole last step with its high voltage on, so its rate measures the flux; false while the high voltage is off and on the step it comes back"
+        },
+        {
+          "path": "rodStepsWithdrawn",
+          "tagId": "ROD-STEPS",
+          "equipmentId": "rod-control-system",
+          "description": "Average rod position in steps withdrawn of the 228-step travel: the model's one average rod (ROD-POS-IND) over the rod demand's range, so 194 at full power while the banks read A-C 228, D 220"
+        },
+        {
+          "path": "shutdownBankAStepsWithdrawn",
+          "tagId": "ROD-BANK-SA",
+          "equipmentId": "rod-control-system",
+          "description": "Shutdown bank SA position, steps withdrawn: full out at 228 until a trip drops it with the other banks; no shutdown bank withdrawal is modelled"
+        },
+        {
+          "path": "shutdownBankBStepsWithdrawn",
+          "tagId": "ROD-BANK-SB",
+          "equipmentId": "rod-control-system",
+          "description": "Shutdown bank SB position, steps withdrawn: full out at 228 until a trip drops it with the other banks; no shutdown bank withdrawal is modelled"
+        },
+        {
+          "path": "shutdownBankCStepsWithdrawn",
+          "tagId": "ROD-BANK-SC",
+          "equipmentId": "rod-control-system",
+          "description": "Shutdown bank SC position, steps withdrawn: full out at 228 until a trip drops it with the other banks; no shutdown bank withdrawal is modelled"
+        },
+        {
+          "path": "shutdownBankDStepsWithdrawn",
+          "tagId": "ROD-BANK-SD",
+          "equipmentId": "rod-control-system",
+          "description": "Shutdown bank SD position, steps withdrawn: full out at 228 until a trip drops it with the other banks; no shutdown bank withdrawal is modelled"
+        },
+        {
+          "path": "controlBankAStepsWithdrawn",
+          "tagId": "ROD-BANK-A",
+          "equipmentId": "rod-control-system",
+          "description": "Control bank A position, steps withdrawn, in the overlap program (128 steps apart) from the average rod position; all banks drop together on a trip"
+        },
+        {
+          "path": "controlBankBStepsWithdrawn",
+          "tagId": "ROD-BANK-B",
+          "equipmentId": "rod-control-system",
+          "description": "Control bank B position, steps withdrawn, in the overlap program (128 steps apart) from the average rod position; all banks drop together on a trip"
+        },
+        {
+          "path": "controlBankCStepsWithdrawn",
+          "tagId": "ROD-BANK-C",
+          "equipmentId": "rod-control-system",
+          "description": "Control bank C position, steps withdrawn, in the overlap program (128 steps apart) from the average rod position; all banks drop together on a trip"
+        },
+        {
+          "path": "controlBankDStepsWithdrawn",
+          "tagId": "ROD-BANK-D",
+          "equipmentId": "rod-control-system",
+          "description": "Control bank D position, steps withdrawn, in the overlap program (128 steps apart) from the average rod position; all banks drop together on a trip"
         }
       ],
       "metadata": {
@@ -13183,6 +13241,15 @@
     "manualTurbineTrip.pushbutton",
     "manualTurbineTrip.demanded",
     "manualSafetyInjection.pushbutton",
-    "manualSafetyInjection.demanded"
+    "manualSafetyInjection.demanded",
+    "core.rodStepsWithdrawn",
+    "core.shutdownBankAStepsWithdrawn",
+    "core.shutdownBankBStepsWithdrawn",
+    "core.shutdownBankCStepsWithdrawn",
+    "core.shutdownBankDStepsWithdrawn",
+    "core.controlBankAStepsWithdrawn",
+    "core.controlBankBStepsWithdrawn",
+    "core.controlBankCStepsWithdrawn",
+    "core.controlBankDStepsWithdrawn"
   ]
 }

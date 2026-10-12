@@ -4,6 +4,8 @@ import { clamp, optionalParameterBoolean, optionalParameterNumber, parameterNumb
 import type { ComponentInitialValueDefinition } from './model.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
 import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
+import { controlBankStepsAt, criticalRodInsertionFraction, rodStepsWithdrawn } from '../rod-position-indication.ts'
+import { controlRodBanks, rodTravelSteps } from '../../graph/reactor-component-definitions.ts'
 
 export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValueDefinition> = [
   {
@@ -39,6 +41,12 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'averageTemperatureDeviationC') return (initialCoolantInlet + initialCoolantOutlet) / 2 - initialReference
       if (localPath === 'rodInsertionFraction' || localPath === 'rodInsertedFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
       if (localPath === 'rodsOnBottom') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1)) >= reactorNeutronics(component).scram.rodBottomInsertionFraction
+      // The rods in steps where they are demanded, the shutdown banks full out; the initial reconciliation drops
+      // them with a trip breaker open.
+      if (localPath === 'rodStepsWithdrawn') return rodStepsWithdrawn(criticalRodInsertionFraction(component))
+      if (/^shutdownBank[A-D]StepsWithdrawn$/u.test(localPath)) return rodTravelSteps
+      const controlBank = /^controlBank([A-D])StepsWithdrawn$/u.exec(localPath)
+      if (controlBank !== null) return controlBankStepsAt(component, criticalRodInsertionFraction(component))[controlRodBanks.indexOf(controlBank[1] as typeof controlRodBanks[number])]!
       if (localPath === 'powerRangePercent') return nuclearInstrumentationReading(component, initialFissionPower).powerRangePercent
       if (localPath === 'aboveP10') return nuclearInstrumentationReading(component, initialFissionPower).aboveP10
       if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps

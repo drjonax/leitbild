@@ -30,7 +30,8 @@ import {
 import { pressurizerSprayFlowKgPerS } from './pressurizer-behaviors.ts'
 import { primaryBreakFlow } from '../links/primary-break-flow.ts'
 import { intermediateRangeStartupRateDpm, nuclearInstrumentationReading, sourceRangeStartupRate } from '../nuclear-instrumentation.ts'
-import { decayHeatGroupCount, delayedNeutronGroupCount, reactorNeutronics, reactorTemperatureProgram } from '../../graph/reactor-component-definitions.ts'
+import { controlRodBanks, decayHeatGroupCount, delayedNeutronGroupCount, reactorNeutronics, reactorTemperatureProgram, rodTravelSteps, shutdownRodBanks } from '../../graph/reactor-component-definitions.ts'
+import { controlBankStepsAt, criticalRodInsertionFraction, rodStepsWithdrawn } from '../rod-position-indication.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
 type ReactorBehaviorContext = Parameters<ComponentBehaviorDefinition['update']>[0]['context']
@@ -212,10 +213,49 @@ const writePrimaryBoundaryFlows = (
 /** How fast the rod drives change the core's reactivity, driving the rods to their demand. */
 const rodReactivityRatePcmPerS = 500
 
-/** The rods' position as their indication reads it, and the rod bottom bistable on it. */
+/** The rods' position as their indication reads it, in steps too, and the rod bottom bistable on it. */
 const writeRodPosition = (core: ReactorBehaviorComponent, context: Pick<ReactorBehaviorContext, 'write'>, insertedFraction: number): void => {
   context.write(componentVariablePath(core, 'rodInsertedFraction'), insertedFraction)
+  context.write(componentVariablePath(core, 'rodStepsWithdrawn'), rodStepsWithdrawn(insertedFraction))
   context.write(componentVariablePath(core, 'rodsOnBottom'), insertedFraction >= reactorNeutronics(core).scram.rodBottomInsertionFraction)
+}
+
+const shutdownBankPaths = shutdownRodBanks.map(bank => `shutdownBank${bank}StepsWithdrawn`)
+const controlBankPaths = controlRodBanks.map(bank => `controlBank${bank}StepsWithdrawn`)
+
+/**
+ * With the trip breakers open every bank falls together, each the share of
+ * its height the rods' position indication falls by, so all reach the bottom
+ * as the indication does.
+ */
+const dropRodBanks = (core: ReactorBehaviorComponent, context: ReactorBehaviorContext, previousInserted: number, insertedFraction: number): void => {
+  const remaining = previousInserted >= 1 ? 0 : (1 - insertedFraction) / (1 - previousInserted)
+  for (const localPath of [...shutdownBankPaths, ...controlBankPaths]) {
+    const path = componentVariablePath(core, localPath)
+    context.write(path, context.readNumber(path) * remaining)
+  }
+}
+
+/**
+ * With the drives powered the control banks move as the overlap program
+ * moves for the rods' change of position, from where they stand: a bank the
+ * trip left on the bottom stays there until the rods are withdrawn. The
+ * shutdown banks hold, no withdrawal of them being modelled.
+ */
+const followControlBankProgram = (core: ReactorBehaviorComponent, context: ReactorBehaviorContext, previousInserted: number, insertedFraction: number): void => {
+  const before = controlBankStepsAt(core, previousInserted)
+  const after = controlBankStepsAt(core, insertedFraction)
+  controlBankPaths.forEach((localPath, index) => {
+    const path = componentVariablePath(core, localPath)
+    context.write(path, clamp(context.readNumber(path) + after[index]! - before[index]!, 0, rodTravelSteps))
+  })
+}
+
+/** Where the banks stand at a Plant's start: on the bottom with a trip breaker open, else full out but for the control banks' program. */
+const writeInitialRodBanks = (core: ReactorBehaviorComponent, context: Pick<ReactorBehaviorContext, 'write'>, tripped: boolean, insertedFraction: number): void => {
+  const program = controlBankStepsAt(core, insertedFraction)
+  for (const localPath of shutdownBankPaths) context.write(componentVariablePath(core, localPath), tripped ? 0 : rodTravelSteps)
+  controlBankPaths.forEach((localPath, index) => context.write(componentVariablePath(core, localPath), tripped ? 0 : program[index]!))
 }
 
 export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
@@ -223,8 +263,8 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     id: 'reactor-core-reactivity-control',
     phase: 'updateControlLogic',
     componentKind: 'reactorCore',
-    reads: ['rodInsertionFraction', 'rodInsertedFraction', 'reactivityPcm', 'reactor trip breakers closedState'],
-    writes: ['promptReactivityPcm', 'reactivityPcm', 'rodInsertedFraction', 'rodsOnBottom'],
+    reads: ['rodInsertionFraction', 'rodInsertedFraction', 'reactivityPcm', 'reactor trip breakers closedState', ...shutdownBankPaths, ...controlBankPaths],
+    writes: ['promptReactivityPcm', 'reactivityPcm', 'rodInsertedFraction', 'rodStepsWithdrawn', 'rodsOnBottom', ...shutdownBankPaths, ...controlBankPaths],
     update: ({ system, component, context }): void => {
       if (!hasComponentVariable(component, 'rodInsertionFraction') || !hasComponentVariable(component, 'reactivityPcm')) return
       const reactivity = context.readNumber(componentVariablePath(component, 'reactivityPcm'))
@@ -236,17 +276,23 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       if (rodDrivePowerLost(system, component, scram.reactorTripBreakers, context)) {
         context.write(componentVariablePath(component, 'promptReactivityPcm'), -scram.reactivityPcm)
         context.write(componentVariablePath(component, 'reactivityPcm'), approach(reactivity, -scram.reactivityPcm, scram.reactivityPcm / scram.insertionTimeS * context.dtSeconds))
-        writeRodPosition(component, context, approach(context.readNumber(componentVariablePath(component, 'rodInsertedFraction')), 1, context.dtSeconds / scram.insertionTimeS))
+        const previousInserted = context.readNumber(componentVariablePath(component, 'rodInsertedFraction'))
+        const insertedFraction = approach(previousInserted, 1, context.dtSeconds / scram.insertionTimeS)
+        writeRodPosition(component, context, insertedFraction)
+        dropRodBanks(component, context, previousInserted, insertedFraction)
         return
       }
       const rodInsertion = clamp(context.readNumber(componentVariablePath(component, 'rodInsertionFraction')), 0, 1)
-      const criticalRodInsertion = optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - parameterNumber(component, 'initialPowerFraction'), 0, 1))
+      const criticalRodInsertion = criticalRodInsertionFraction(component)
       const rodWorth = optionalParameterNumber(component, 'rodWorthPcm', 1_200)
       const targetReactivity = (criticalRodInsertion - rodInsertion) * rodWorth
       context.write(componentVariablePath(component, 'promptReactivityPcm'), targetReactivity)
       context.write(componentVariablePath(component, 'reactivityPcm'), approach(reactivity, targetReactivity, rodReactivityRatePcmPerS * context.dtSeconds))
       // The drives move the rods at the rate their reactivity follows the demand.
-      writeRodPosition(component, context, approach(context.readNumber(componentVariablePath(component, 'rodInsertedFraction')), rodInsertion, rodReactivityRatePcmPerS / rodWorth * context.dtSeconds))
+      const previousInserted = context.readNumber(componentVariablePath(component, 'rodInsertedFraction'))
+      const insertedFraction = approach(previousInserted, rodInsertion, rodReactivityRatePcmPerS / rodWorth * context.dtSeconds)
+      writeRodPosition(component, context, insertedFraction)
+      followControlBankProgram(component, context, previousInserted, insertedFraction)
     },
   },
   {
@@ -705,11 +751,13 @@ export const reactorInitialReconciliationDefinitions: ReadonlyArray<ComponentIni
     id: 'reactor-core-rod-position-initial-state',
     componentKind: 'reactorCore',
     reads: ['rodInsertionFraction', 'reactor trip breakers closedState'],
-    writes: ['rodInsertedFraction', 'rodsOnBottom'],
+    writes: ['rodInsertedFraction', 'rodStepsWithdrawn', 'rodsOnBottom', ...shutdownBankPaths, ...controlBankPaths],
     // Rods start where they are demanded, or on the bottom with a trip breaker open.
     reconcile: ({ system, component, context }): void => {
       const tripped = rodDrivePowerLost(system, component, reactorNeutronics(component).scram.reactorTripBreakers, context)
-      writeRodPosition(component, context, tripped ? 1 : clamp(context.readNumber(componentVariablePath(component, 'rodInsertionFraction')), 0, 1))
+      const insertedFraction = tripped ? 1 : clamp(context.readNumber(componentVariablePath(component, 'rodInsertionFraction')), 0, 1)
+      writeRodPosition(component, context, insertedFraction)
+      writeInitialRodBanks(component, context, tripped, insertedFraction)
     },
   },
   {

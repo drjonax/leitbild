@@ -69,6 +69,8 @@ const tripped = () => {
     sourceRange: Number(plantRun.tag('NIS-SR')),
     rodPosition: Number(plantRun.tag('ROD-POS-IND')),
     rodBottom: plantRun.tag('ROD-BOTTOM') as boolean,
+    rodSteps: Number(plantRun.tag('ROD-STEPS')),
+    ...Object.fromEntries(['SA', 'SB', 'SC', 'SD', 'A', 'B', 'C', 'D'].map(bank => [`bank${bank}`, Number(plantRun.tag(`ROD-BANK-${bank}`))])),
   }))
   tripTrajectory = { before, samples }
   return tripTrajectory
@@ -98,9 +100,12 @@ describe('at steady full power', () => {
     expect(tag('P-10')).toBe(true)
     expect(tag('NIS-SR-HV')).toBe(false)
     expect(tag('NIS-SR')).toBe(0)
-    // The rods stand where rod control holds them, off the bottom.
+    // The rods stand where rod control holds them, off the bottom: in the overlap program control bank D 220 steps
+    // out at the critical insertion, the other control banks and the shutdown banks full out at 228.
     expect(Number(tag('ROD-POS-IND'))).toBeCloseTo(Number(tag('ROD-POS-AVG')), 6)
     expect(tag('ROD-BOTTOM')).toBe(false)
+    expect(Number(tag('ROD-STEPS'))).toBeCloseTo((1 - 0.15) * 228, 6)
+    expect(['SA', 'SB', 'SC', 'SD', 'A', 'B', 'C', 'D'].map(bank => Math.round(Number(tag(`ROD-BANK-${bank}`))))).toEqual([228, 228, 228, 228, 228, 228, 228, 220])
     // Tavg sits on its program: Tref at full load.
     expect(Number(tag('TREF'))).toBeCloseTo(305.7, 1)
     expect(Math.abs(Number(tag('TAVG-TREF')))).toBeLessThan(0.1)
@@ -117,6 +122,14 @@ describe('a reactor trip from full power', () => {
     expect(at(Math.ceil(scram.insertionTimeS)).rodBottom).toBe(true)
     expect(at(Math.ceil(scram.insertionTimeS)).rodPosition as number).toBeCloseTo(1, 6)
     expect(at(600).rodBottom).toBe(true)
+    // Every bank falls with the indication, each the share of its height the rods fall by: all on the bottom together.
+    const banks = ['SA', 'SB', 'SC', 'SD', 'A', 'B', 'C', 'D'].map(bank => `bank${bank}`)
+    // A second in, every bank is on its way, the shutdown banks level with one another and above the average rod.
+    for (const bank of banks) expect(at(1)[bank] as number).toBeLessThan(228)
+    for (const bank of ['bankSB', 'bankSC', 'bankSD']) expect(at(1)[bank]).toBe(at(1).bankSA)
+    expect(at(1).bankSA as number).toBeGreaterThan(at(1).rodSteps as number)
+    for (const bank of banks) expect(at(Math.ceil(scram.insertionTimeS))[bank]).toBe(0)
+    for (const bank of banks) expect(at(600)[bank]).toBe(0)
   })
 
   test('drops power promptly as the rods fall, then settles on a -1/3 decade a minute period', () => {
