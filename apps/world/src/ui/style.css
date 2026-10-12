@@ -2804,15 +2804,30 @@ body.rail-resizing {
   background: #ffffff;
 }
 
-/* The unit strip is also the window's title bar: drag it to move the window. */
+/* The unit strip is also the window's title bar: drag it, or its grip, to move the window. */
 .procedure-header-bar {
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   cursor: move;
   touch-action: none;
+}
+
+.procedure-grip {
+  flex: none;
+  width: 16px;
+  display: grid;
+  place-items: center;
+  margin-left: -6px;
+  color: #64748b;
+  cursor: move;
+}
+
+.procedure-modal.procedure-window:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: -2px;
 }
 
 .procedure-run-comma {

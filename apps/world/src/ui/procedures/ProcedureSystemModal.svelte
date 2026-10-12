@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
+  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, GripVertical, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
   import { tick, untrack } from 'svelte'
   import type { ProcedureSession } from './procedure-session.ts'
   import { procedureBindingStatusWord, procedureComparisonText, procedureCsfChip, procedureDescriptionText, procedureDisplayReading, procedureElapsedText, procedureStepBindingSummary } from './procedure-view.ts'
@@ -84,6 +84,8 @@
     readonly session: ProcedureSession
     readonly initialProcedureId?: ProcedureId
     readonly windowOffsetIndex?: number
+    /** Raised by the route when this unit's procedures are opened again: focus this window (and its requested procedure). */
+    readonly focusRequest?: number
     readonly selectUnit: (objectId: ObjectId) => void
     /** Opens a display in the Workspace's process display window, where it can be operated. */
     readonly openDisplay?: (listing: EmbeddedViewListing) => void
@@ -144,6 +146,7 @@
     session,
     initialProcedureId = undefined,
     windowOffsetIndex = 0,
+    focusRequest = 0,
     selectUnit,
     openDisplay = undefined,
     close,
@@ -207,6 +210,7 @@
   let scrollFrame: number | null = null
   let catalogRequest = 0
   let procedureDocumentBodyElement = $state<HTMLDivElement | null>(null)
+  let procedureWindowElement = $state<HTMLDivElement | null>(null)
   /** The unit the shown document was loaded for; its scroll position is remembered under that unit. */
   let documentScope: ProcedureRunScope | null = null
   const procedureScrollPositions = new Map<string, number>()
@@ -1185,6 +1189,15 @@
     }
   })
 
+  // Opening this unit's procedures again focuses this window instead of a second one.
+  $effect(() => {
+    if (focusRequest === 0) return
+    untrack(() => {
+      procedureWindowElement?.focus()
+      if (initialProcedureId !== undefined && initialProcedureId !== document?.procedureId) void loadProcedure(initialProcedureId)
+    })
+  })
+
   // Another operator may start this procedure at a different pinned revision.
   // Synchronize its document only when identity changes, never on each checkmark.
   $effect(() => {
@@ -1443,6 +1456,7 @@
 <div class="procedure-window-layer">
   <div
     class="procedure-modal procedure-window"
+    bind:this={procedureWindowElement}
     role="dialog"
     aria-modal="true"
     aria-label="Computer-based procedure system"
@@ -1461,6 +1475,7 @@
         onpointerup={finishWindowDrag}
         onpointercancel={finishWindowDrag}
       >
+        <span class="procedure-grip" aria-hidden="true" title="Drag to move"><GripVertical size={16} /></span>
         <div class="procedure-cross-unit-strip" aria-label="Units and their procedures">
           {#each procedureUnits as unit (unit.plantId)}
             {@const unitStatusPresentation = statusForUnit(unit)}
