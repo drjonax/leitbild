@@ -13,11 +13,14 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
-import { composeEvidenceRows, type CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
+import { composeEvidenceRows, type CompiledComposedDisplay, type ComposedEvidenceRow } from '../src/packs/process-plant/displays/compose.ts'
 import { chipName, positionWord } from '../src/packs/process-plant/displays/display-text.ts'
+import { evidenceItemWidth, evidenceLines, evidenceNameWidth, evidenceNoteWidth, evidenceWhyWidth } from '../src/packs/process-plant/displays/evidence-width.ts'
+import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
+import { firstOutFlag, visibleAlarms } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
-import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
+import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayLayout, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
@@ -102,13 +105,27 @@ const listed = (evidence: ReadonlyArray<DisplayEvidence>) => evidence.map(entry 
 const runback = once(() => situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 3))
 const atPower = once(() => situation(null, 1))
 
-/** The rows World added, each as its kind, what it names, the words its values are read by and its note. */
+/**
+ * The rows World added, each as its kind, what it names, the words its values are read by (a state, read by its
+ * words alone, by its tag in brackets), its note, and whether it continues a row too wide for one line.
+ */
 const rowsOf = (display: CompiledComposedDisplay) => {
   const panel = display.panels.find(candidate => candidate.kind === 'evidence')
-  return panel?.kind !== 'evidence' ? [] : panel.rows.map(row => ({ kind: row.kind, name: row.name, items: row.items.map(item => item.label), ...(row.note === undefined ? {} : { note: row.note }) }))
+  return panel?.kind !== 'evidence' ? [] : panel.rows.map(row => ({
+    kind: row.kind,
+    name: row.name,
+    items: row.items.map(item => item.label === '' ? `[${item.pen.tagId ?? item.pen.name}]` : item.label),
+    ...(row.note === undefined ? {} : { note: row.note }),
+    ...(row.continued === true ? { continued: true } : {}),
+  }))
 }
 type Row = ReturnType<typeof rowsOf>[number]
-const trip: Row = { kind: 'trip', name: '', items: ['ROD-BOTTOM', 'ROD-STEPS', 'NIS-PR-AVG', 'NIS-IR', 'NIS-IR-SUR', 'GEN-MW', 'GEN-BKR', 'TURB-STOP-POS'] }
+// The trip check, a row for each energy end (HMI review of run 26: one row for both was cut at chat width): what
+// its protection moved, its states, then the values a critical safety function judges the stop by; the reactor's
+// row goes on in a line holding its other values, which is left out first where room is short.
+const reactorCheck: Row = { kind: 'trip', name: '', items: ['[TRIP-BKR-A-POS]', '[TRIP-BKR-B-POS]', '[ROD-BOTTOM]', 'NIS-PR-AVG', 'NIS-IR-SUR'] }
+const reactorCheckRest: Row = { kind: 'trip', name: '', items: ['ROD-STEPS', 'NIS-IR'], continued: true }
+const turbineCheck: Row = { kind: 'trip', name: '', items: ['TURB-STOP-POS', '[GEN-BKR]', 'GEN-MW'] }
 const afwToEach: Row = { kind: 'delivers', name: '', items: ['AFW-A-FLOW', 'AFW-B-FLOW', 'AFW-C-FLOW', 'AFW-D-FLOW'] }
 
 describe('what World adds to a composed display', () => {
@@ -133,7 +150,7 @@ describe('what World adds to a composed display', () => {
     expect(evidence[2]!.reason).toBe('Steam generator B low-low level auxiliary feedwater actuation: its flow into SG B')
     const rows = rowsOf(display)
     expect(rows[0]).toEqual({ kind: 'cause', name: '', items: ['MFW-B-CV-POS', 'MFW-B-CV'], note: evidence[0]!.note! })
-    expect(rows).toContainEqual(trip)
+    expect(rows.filter(row => row.kind === 'trip')).toEqual([reactorCheck, reactorCheckRest, turbineCheck])
     expect(rows).toContainEqual({ kind: 'reference', name: '', items: ['SG-A-LVL-NR'] })
     // The narrow range is off its span: its legend row reads the wide range in its rate's place, so World adds none.
     expect(read('sgB.levelPercent')).toBe(0)
@@ -205,8 +222,9 @@ describe('what World adds to a composed display', () => {
       { kind: 'readouts', signals: [signal('PORV-456A-POS', 'primary'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
       { kind: 'alarms', scope: 'related' },
     ])
-    expect(rowsOf(display).map(row => row.kind)).toEqual(['delivers', 'trip', 'program', 'mode'])
-    expect(rowsOf(display).at(-1)).toEqual({ kind: 'mode', name: '', items: ['SUB-MARGIN'] })
+    // The trip check takes a row for each end, the reactor's other values left out: the margin, heading for its
+    // alarm, comes after it and before the pressurizer level's program, which finds no room.
+    expect(rowsOf(display)).toEqual([expect.objectContaining({ kind: 'delivers' }), reactorCheck, turbineCheck, { kind: 'mode', name: '', items: ['SUB-MARGIN'] }])
     expect(listed(evidence).map(([path]) => path)).not.toContain('pressurizerReliefTank.levelPercent')
     expect(listed(evidence).map(([, kind]) => kind)).not.toContain('isolates')
     expect(Number(read('pressurizerReliefTank.levelPercent'))).toBeGreaterThan(75)
@@ -235,14 +253,14 @@ describe('what World adds to a composed display', () => {
     ])
     for (const loop of ['A', 'B', 'C', 'D']) expect(result.margins.join('\n')).toMatch(new RegExp(`SG-${loop}-LVL-NR: <0 % \\(WR SG-${loop}-LVL-WR: \\d+\\.\\d %\\)`))
     expect(lossOfFeed.read('sgA.wideRangeLevelPercent')).toBeGreaterThan(15)
-    // The header flow is shown: its flow to each steam generator is added, then the trip check; what feedwater
-    // isolation shut off, ranked last, finds no room.
-    expect(rowsOf(display)).toEqual([afwToEach, trip])
+    // The header flow is shown: its flow to each steam generator is added, then the reactor's trip check, its
+    // first line whole; the turbine's, and what feedwater isolation shut off, ranked last, find no room.
+    expect(rowsOf(display)).toEqual([afwToEach, reactorCheck])
     expect(listed(evidence)).not.toContainEqual(['feedwaterHeader.outletFlowKgPerS', 'isolates'])
     for (const loop of ['a', 'b', 'c', 'd']) expect(lossOfFeed.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`)).toBeGreaterThan(20)
     expect(Number(lossOfFeed.read('core.powerRangePercent'))).toBeLessThan(5)
     expect(lossOfFeed.read('turbineStopValve.effectivePositionFraction')).toBe(0)
-    expect(evidence.find(entry => entry.kind === 'trip')!.reason).toMatch(/^Reactor trip at 10:00:\d\d: what says Core and Turbine stopped$/)
+    expect(evidence.find(entry => entry.kind === 'trip')!.reason).toMatch(/^Reactor trip at 10:00:\d\d: what says Core stopped$/)
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
 
     // A drawing that writes a narrow range at the end of its span: the wide ranges are added, in one row.
@@ -296,8 +314,14 @@ describe('what World adds to a composed display', () => {
     expect(rowsOf(display)).toEqual([
       { kind: 'delivers', name: '', items: ['AFW-FLOW'] },
       afwToEach,
-      trip,
+      reactorCheck,
+      reactorCheckRest,
+      turbineCheck,
       { kind: 'isolates', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
+    ])
+    expect(evidence.filter(entry => entry.kind === 'trip').map(entry => entry.reason.replace(/\d\d:\d\d:\d\d/, 'hh:mm:ss'))).toEqual([
+      ...Array(7).fill('Reactor trip at hh:mm:ss: what says Core stopped'),
+      ...Array(3).fill('Reactor trip at hh:mm:ss: what says Turbine stopped'),
     ])
     expect(evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
     expect(evidence[1]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers to SG A, SG B, SG C and SG D')
@@ -306,8 +330,10 @@ describe('what World adds to a composed display', () => {
     // declares for them, the stop valve SHUT at the end of its travel.
     const panel = display.panels.find(candidate => candidate.kind === 'evidence')!
     if (panel.kind !== 'evidence') throw new Error('expected the evidence panel')
-    const items = panel.rows.find(row => row.kind === 'trip')!.items
-    const rods = items.find(item => item.label === 'ROD-BOTTOM')!.pen
+    const items = panel.rows.filter(row => row.kind === 'trip').flatMap(row => row.items)
+    // A state reads by its words alone, which name its equipment, as on the faceplate.
+    const rods = items.find(item => item.pen.tagId === 'ROD-BOTTOM')!.pen
+    expect(items.filter(item => item.pen.valueKind === 'boolean').map(item => item.label)).toEqual(['', '', '', ''])
     expect(turbineTrip.read('core.rodsOnBottom')).toBe(true)
     expect(rods.states?.on).toStartWith('Rods on bottom')
     const stopValve = items.find(item => item.label === 'TURB-STOP-POS')!.pen
@@ -440,7 +466,7 @@ describe('the rows World adds', () => {
     const graph = atPower().system.plant.graph
     const pen = (path: string) => {
       const binding = graph.signalBindingByPath.get(path as never)!
-      return { path: binding.path, name: binding.tagId ?? binding.label, quantity: binding.quantity, ...(binding.tagId === undefined ? {} : { tagId: binding.tagId }) } as never
+      return { path: binding.path, name: binding.tagId ?? binding.label, quantity: binding.quantity, unit: binding.unit, valueKind: 'number', resolution: null, thresholds: [], command: false, ...(binding.tagId === undefined ? {} : { tagId: binding.tagId }) } as never
     }
     const entry = (path: string, kind: DisplayEvidence['kind'], reason: string): DisplayEvidence => ({ path, kind, reason })
     const evidence = [
@@ -485,4 +511,60 @@ describe('a limit that on/off states gate, as World reads it', () => {
     const { result } = atPower().compose('Generator output', ['GEN-MW'], [{ kind: 'trend', horizon: '10m', signals: [signal('GEN-MW', 'primary')] }])
     expect(result.margins.join('\n')).not.toContain('past')
   }, PLANT_HANG_GUARD_MS)
+})
+
+describe('what a display shows of a trip (HMI review of run 26)', () => {
+  const tripped = once(() => situation({ actionId: 'turbine-trip' }, 1))
+
+  test('a display that draws the turbine a trip commanded lists that trip, its first-out marked', () => {
+    // The BLOCKER: "Why did the turbine trip?" drew the turbine, its stop valves and the condenser, and said "No
+    // active alarm or trip on the displayed signals": the manual trip acts on no drawn signal, but it commands the
+    // drawn turbine and its stop valve.
+    const { system, ask, compose } = tripped()
+    const annunciation = displayAnnunciation(system.plant)
+    const sample = ask('world.process-plant.display.sample', { plantId: system.plant.id, paths: ['turbine.electricMw'], alarms: true }) as { alarms: ReadonlyArray<ComposedDisplayAlarm> }
+    const shownBy = (display: CompiledComposedDisplay) => {
+      const alarms = display.panels.find(panel => panel.kind === 'alarms')!
+      if (alarms.kind !== 'alarms') throw new Error('expected the alarms')
+      return { ruleIds: alarms.ruleIds, rows: visibleAlarms(sample.alarms, 'related', alarms.ruleIds, annunciation) }
+    }
+    const drawing = shownBy(compose('Unit 2 turbine trip sequence', ['turbine'], [{ kind: 'mimic', to: ['turbine'], loops: ['A'] }, { kind: 'alarms', scope: 'related' }]).display)
+    // Every turbine trip commands the turbine: the manual one, on loss of load, on a reactor trip (P-4), on the grid's frequency.
+    expect(drawing.ruleIds).toEqual(expect.arrayContaining(['turbine-manual-trip', 'turbine-trip-on-loss-of-load', 'reactor-trip-turbine-trip', 'turbine-trip-on-grid-underfrequency']))
+    expect(drawing.rows[0]).toMatchObject({ ruleId: 'turbine-manual-trip', title: 'Manual turbine trip', active: true, firstOut: true })
+    expect(firstOutFlag(drawing.rows[0]!, annunciation)).toBe('1st TURB TRIP')
+    expect(drawing.rows.map(row => row.ruleId)).toContain('reactor-trip-turbine-trip')
+    // So does a display that only trends the generator's output: the trips that command the equipment it measures.
+    const trend = shownBy(compose('Generator output after the trip', ['GEN-MW'], [{ kind: 'trend', horizon: '2m', signals: [signal('GEN-MW', 'primary')] }, { kind: 'alarms', scope: 'related' }]).display)
+    expect(trend.rows[0]).toMatchObject({ ruleId: 'turbine-manual-trip', firstOut: true })
+  }, PLANT_HANG_GUARD_MS)
+
+  test('every line of the rows World adds fits a chat view, whole values each; a row too wide goes on under it', () => {
+    // The trip check was cut on seven displays at chat width, losing the turbine's stop valves, breaker and output.
+    const width = (row: ComposedEvidenceRow): number => evidenceWhyWidth(row.kind) + 8
+      + (row.name === '' ? 0 : evidenceNameWidth(row.name) + 8)
+      + row.items.reduce((sum, item) => sum + evidenceItemWidth(item, row.items.length > 1 || row.continued === true || row.continues === true) + 8, 0)
+      + (row.note === undefined ? 0 : evidenceNoteWidth(row.note))
+    for (const { compose } of [tripped(), runback()]) {
+      const { display } = compose('Post-trip steam-generator inventory', ['SG-A-LVL-NR'], [
+        { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), signal('SG-B-LVL-NR')] },
+        { kind: 'alarms', scope: 'plant' },
+      ])
+      const panel = display.panels.find(candidate => candidate.kind === 'evidence')!
+      if (panel.kind !== 'evidence') throw new Error('expected the evidence panel')
+      expect(panel.rows.some(row => row.kind === 'trip')).toBe(true)
+      for (const row of panel.rows) expect(width(row), row.items.map(item => item.pen.tagId).join(' ')).toBeLessThanOrEqual(composedDisplayLayout.evidenceRowRoom)
+    }
+    // A row splits where its next value would not fit, in order; a value wider than any line has one to itself; a
+    // note that does not fit after the last value takes a line of its own.
+    const { display } = tripped().compose('Generator output after the trip', ['GEN-MW'], [{ kind: 'readouts', signals: [signal('GEN-MW', 'primary'), signal('TURB-STOP-POS'), signal('NIS-PR-AVG')] }])
+    const pens = display.panels.flatMap(panel => panel.kind === 'readouts' ? panel.pens : [])
+    const items = pens.map(pen => ({ pen, label: pen.tagId! }))
+    const one = evidenceItemWidth(items[0]!, true)
+    expect(evidenceLines('trip', '', items, undefined, evidenceWhyWidth('trip') + 8 + one + 8).map(line => line.items.map(item => item.label))).toEqual([['GEN-MW'], ['TURB-STOP-POS'], ['NIS-PR-AVG']])
+    expect(evidenceLines('trip', '', items, undefined, 40).map(line => line.items.length)).toEqual([1, 1, 1])
+    const all = evidenceLines('trip', '', items, 'x'.repeat(200))
+    expect(all.map(line => [line.items.length, line.note])).toEqual([[3, false], [0, true]])
+  }, PLANT_HANG_GUARD_MS)
+
 })

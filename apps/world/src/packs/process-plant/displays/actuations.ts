@@ -41,6 +41,14 @@ export const automaticActions = (plant: CompiledProcessPlant): ReadonlyMap<strin
   return actions
 }
 
+/**
+ * The automatic actions that command any of these components: the trips that
+ * moved what a display shows (every turbine trip, manual, on loss of load or
+ * on a reactor trip, shuts the turbine's stop valve and rejects its load).
+ */
+export const commandingActions = (plant: CompiledProcessPlant, components: ReadonlySet<number>): ReadonlyArray<AutomaticAction> =>
+  [...automaticActions(plant).values()].filter(action => action.writes.some(write => components.has(write.component)))
+
 /** As the I&C runs: a rule declared for some modes acts only while the Plant is in one of them. */
 export const actsIn = (rule: ProcessPlantIcRule, mode: string | null): boolean =>
   rule.modes === undefined || (mode !== null && rule.modes.includes(mode))

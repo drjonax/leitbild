@@ -2,10 +2,11 @@ import { recordingSeriesIdFor } from '../../../core/model/index.ts'
 import { linkCarrier, nextLinks, previousLinks, type ProcessSignalBinding, type VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { safetyFunctionSignals } from '../safety-functions.ts'
-import { actionEquipment, actionFlows, actionFlowsInto, actionStates, actsIn, automaticActions, branchFlows, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
+import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, branchFlows, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
 import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, COMPOSED_EVIDENCE_MAX_ROWS, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
 import { formatQuantity, isPast, offScale, readingResolution, simulationClock } from './display-text.ts'
+import { stopStates } from './faceplate.ts'
 import { icThresholdsForSignal } from './ic-thresholds.ts'
 import { itemBinding, type MimicItem } from './mimic/bindings.ts'
 import { heldCommands, itemLook, type SampleIndex } from './mimic/evaluate.ts'
@@ -60,10 +61,11 @@ const joined = (names: ReadonlyArray<string>): string => names.length < 2 ? name
  *   where it is active, what its header delivers to each destination (the
  *   auxiliary feed to each steam generator), as the header flow alone cannot
  *   say whether one is unfed;
- * - trip: on a trend whose window holds a reactor trip, what says the
- *   Plant's energy sources and sinks stopped: their declared shutdown readings
- *   (power range, startup rate, rod bottom) and the states of what the trips
- *   that command them move on or beside them (the turbine stop valve);
+ * - trip: on a trend whose window holds a reactor trip, what says each of
+ *   the Plant's energy sources and sinks stopped, a row each: the states of
+ *   what the protection that stops it moves (the reactor trip breakers, the
+ *   turbine stop valve), then its declared shutdown readings (rod bottom,
+ *   power range, startup rate; the generator breaker and output);
  * - program: for a shown reading the Plant's control holds to a program, the
  *   program and the reading's deviation from it (TREF beside TAVG);
  * - reference: for a primary reading of parallel equipment that is off
@@ -371,15 +373,20 @@ export const displayEvidence = (
     }))
     return onsets.length === 0 ? null : Math.min(...onsets)
   })()
+  // One row per end (HMI review of run 26: the reactor's and the turbine's checks in one row were cut at chat
+  // width): what its protection moved (the trip breakers, the stop valve), then its declared shutdown readings,
+  // states before values, and of the values those a critical safety function judges the stop by first (rods on
+  // bottom, power range and startup rate, then the rod steps and the intermediate-range current; the breaker,
+  // then the output). A row too wide for a chat view goes on in a line under it, which is left out first.
   if (tripOnset !== null && tripLabel !== undefined) {
     const ends = [...graph.components.filter(component => component.semantics.energy.some(role => role.role === 'source')), ...graph.components.filter(component => component.semantics.energy.some(role => role.role === 'sink'))]
-    const reason = `${tripLabel} at ${clock(tripOnset)}: what says ${joined(ends.map(end => shortLabel(system, end.index)))} stopped`
+    const isState = (path: VariablePath): boolean => typeof sample(path).value === 'boolean'
+    const judges = safetyFunctionSignals(plant)
     for (const end of ends) {
-      for (const path of end.semantics.shutdownReadings) add(path, 'trip', reason)
-      // What the trips that command it move, on it or on the lines beside it (the stop valve on the turbine's inlet).
-      const beside = new Set([end.index, ...neighbours(end.index)])
-      const commanding = [...automaticActions(plant).values()].filter(action => action.writes.some(write => write.component === end.index))
-      for (const state of commanding.flatMap(action => actionStates(plant, action))) if (beside.has(state.component)) add(state.path, 'trip', reason)
+      const reason = `${tripLabel} at ${clock(tripOnset)}: what says ${shortLabel(system, end.index)} stopped`
+      const readings = end.semantics.shutdownReadings
+      const values = readings.filter(path => !isState(path))
+      for (const path of [...stopStates(plant, end.index), ...readings.filter(isState), ...values.filter(path => judges.has(path)), ...values.filter(path => !judges.has(path))]) add(path, 'trip', reason)
     }
   }
 
@@ -461,10 +468,14 @@ export const displayEvidence = (
     }
   }
 
-  // What the unit watches that a critical safety function judges ranks before what an action isolates: with the PORV
-  // stuck open, the subcooling margin before the main feedwater safety injection isolated.
+  // What the unit watches that a critical safety function judges ranks before what an action isolates; off normal,
+  // before the program a reading is held to and the healthy loop too: with the PORV stuck open, the subcooling margin
+  // heading for its alarm before the pressurizer level's program and the main feedwater safety injection isolated,
+  // after the trip check of each end.
+  const offNormalNow = new Set(ranked.filter(entry => entry.offNormal).map(entry => String(entry.path)))
   const rank = (entry: DisplayEvidence): number =>
-    entry.kind === 'mode' && judged.has(entry.path as VariablePath) ? PRIORITY.indexOf('isolates') - 0.5 : PRIORITY.indexOf(entry.kind)
+    entry.kind !== 'mode' || !judged.has(entry.path as VariablePath) ? PRIORITY.indexOf(entry.kind)
+      : offNormalNow.has(entry.path) ? PRIORITY.indexOf('program') - 0.5 : PRIORITY.indexOf('isolates') - 0.5
   const ordered = [...added.values()].sort((left, right) => rank(left) - rank(right))
   return firstRows(ordered, COMPOSED_EVIDENCE_MAX_ROWS, COMPOSED_EVIDENCE_MAX)
 }
@@ -476,7 +487,8 @@ export const displayEvidence = (
  * program a reading is held to, the healthy or left-out loops to compare,
  * what the actions isolate, what the unit leads with, the line-up's flows.
  * What the unit watches that a critical safety function judges comes before
- * what the actions isolate (displayEvidence).
+ * what the actions isolate; off normal, after the trip check and before the
+ * program (displayEvidence).
  */
 const PRIORITY: ReadonlyArray<DisplayEvidenceKind> = ['cause', 'isolation', 'wider', 'delivers', 'trip', 'program', 'reference', 'isolates', 'mode', 'flow']
 

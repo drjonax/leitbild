@@ -54,6 +54,8 @@ import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { operatingPointReading, operatingPointValue } from './operating-point.ts'
+import { commandingActions } from './actuations.ts'
+import { evidenceLines } from './evidence-width.ts'
 import { compileFaceplate, faceplateEnds } from './faceplate.ts'
 import { faceplateMostLines, type CompiledFaceplate, type FaceplateCondition } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
@@ -174,7 +176,7 @@ export interface ComposedReadoutsPanel {
 export interface ComposedAlarmsPanel {
   readonly kind: 'alarms'
   readonly scope: 'related' | 'plant'
-  /** I&C rules acting on the displayed signals; used when scope is related. */
+  /** I&C rules acting on the displayed signals and their equipment, and the trips commanding it; used when scope is related. */
   readonly ruleIds: ReadonlyArray<string>
   /**
    * The rows its list holds beside other panels: composedDisplayLayout.alarmRows,
@@ -195,7 +197,11 @@ export interface ComposedMimicPanel {
   readonly quickLooks?: MimicQuickLooks
 }
 
-/** A value in a row World adds, and the word the row reads it by: its tag, or the equipment that tells it from the others ("SG A"). */
+/**
+ * A value in a row World adds, and the word the row reads it by: its tag, or
+ * the equipment that tells it from the others ("SG A"); none for a state,
+ * whose words name it.
+ */
 export interface ComposedEvidenceItem {
   readonly pen: ComposedDisplayPen
   readonly label: string
@@ -214,6 +220,14 @@ export interface ComposedEvidenceRow {
   readonly name: string
   readonly items: ReadonlyArray<ComposedEvidenceItem>
   readonly note?: string
+  /**
+   * Where a row is too wide for a chat view, the lines it goes on in
+   * (evidence-width.ts): `continues` on every line but its last, `continued`
+   * on every line but its first, which is drawn after an indent as wide as the
+   * word for why. Each line holds whole values.
+   */
+  readonly continues?: true
+  readonly continued?: true
 }
 
 /** What World added to an agent's display (evidence.ts), in rows under a line that says so. */
@@ -841,10 +855,22 @@ const sizeFixes = (panels: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<
 }
 
 // Alarms "related" to a display are those whose rules act on its signals or
-// on other signals of the same equipment.
+// on other signals of the same equipment, and the trips that command the
+// equipment it shows: a display drawing a tripped turbine lists what tripped
+// it, its first-out marked (HMI review of run 26: "Why did the turbine trip?"
+// around the turbine said no trip acted on what it showed).
 const relatedRuleIds = (system: ProcessPlantRuntimeInstance, panels: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<string> => {
+  const graph = system.plant.graph
   const pens = panels.flatMap(composedPanelPens)
+  const shownEquipment = new Set([
+    ...panels.flatMap(panel => panel.kind === 'mimic' ? panel.mimic.items.flatMap(item => item.components.map(id => graph.componentIndexById.get(id as never)!)) : []),
+    ...pens.flatMap(pen => {
+      const owner = graph.signalBindingByPath.get(pen.path)?.owner
+      return owner?.type === 'component' ? [owner.componentIndex] : []
+    }),
+  ])
   return [...new Set([
+    ...commandingActions(system.plant, shownEquipment).map(action => action.rule.id),
     ...pens.flatMap(pen => [
       ...pen.thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.ruleId),
       ...pen.combinedRules.filter(rule => rule.kind !== 'control').map(rule => rule.ruleId),
@@ -965,7 +991,9 @@ export const compileComposedDisplay = (
  * (SG-A-LVL-WR … SG-D-LVL-WR); else by the equipment that tells it from the
  * others (its own, or for a pipe's flow the equipment it flows into), under
  * the label they share ("Steam generator wide-range level") or, for the flows
- * of pipes of one service, that service ("Feedwater to SG A, SG B …").
+ * of pipes of one service, that service ("Feedwater to SG A, SG B …"). A row
+ * too wide for a chat view goes on in lines under it (evidenceLines); each
+ * line counts the values it holds.
  */
 export const composeEvidenceRows = (
   graph: CompiledPlantGraph,
@@ -978,14 +1006,32 @@ export const composeEvidenceRows = (
     const first = evidence[start]!
     let end = start + 1
     while (end < evidence.length && evidence[end]!.kind === first.kind && evidence[end]!.reason === first.reason) end += 1
-    const shown = pens.slice(start, end)
-    rows.push({ kind: first.kind, reason: first.reason, ...evidenceRowItems(graph, shown), ...(first.note === undefined ? {} : { note: first.note }), count: end - start })
+    const { name, items } = evidenceRowItems(graph, pens.slice(start, end))
+    // Lines that fit a chat view, whole values each (HMI review of run 26: rows cut at chat width).
+    const lines = evidenceLines(first.kind, name, items, first.note)
+    lines.forEach((line, at) => rows.push({
+      kind: first.kind,
+      reason: first.reason,
+      name: at === 0 ? name : '',
+      items: line.items,
+      ...(line.note && first.note !== undefined ? { note: first.note } : {}),
+      ...(at < lines.length - 1 ? { continues: true as const } : {}),
+      ...(at > 0 ? { continued: true as const } : {}),
+      count: line.items.length,
+    }))
     start = end
   }
   return rows
 }
 
 const evidenceRowItems = (graph: CompiledPlantGraph, pens: ReadonlyArray<ComposedDisplayPen>): Pick<ComposedEvidenceRow, 'name' | 'items'> => {
+  const labelled = labelledRowItems(graph, pens)
+  // A state reads by its words alone, which name its equipment ("RTB A OPEN", "Rods on bottom · Core"), as a
+  // faceplate words it: its tag beside them says nothing more and takes the room of a value.
+  return { ...labelled, items: labelled.items.map(item => item.pen.valueKind === 'boolean' ? { ...item, label: '' } : item) }
+}
+
+const labelledRowItems = (graph: CompiledPlantGraph, pens: ReadonlyArray<ComposedDisplayPen>): Pick<ComposedEvidenceRow, 'name' | 'items'> => {
   if (pens.length === 1 || pens.every(pen => pen.tagId !== undefined)) return { name: '', items: pens.map(pen => ({ pen, label: pen.tagId ?? pen.name })) }
   const bindings = pens.map(pen => graph.signalBindingByPath.get(pen.path)!)
   const apart = bindings.map(binding => binding.owner.type === 'component'
@@ -1006,7 +1052,8 @@ const capitalized = (text: string): string => text.charAt(0).toUpperCase() + tex
  * An agent's display with what World adds to it (evidence.ts): its rows, in
  * one panel over the alarms, under a line that says so. A row is one line,
  * however many loops it reads, so the values an operator needs fit beside a
- * full trend. It never makes a display taller than a chat view allows: trends
+ * full trend, where they fit a chat view's width; else it goes on in the lines
+ * under it, whole values each. It never makes a display taller than a chat view allows: trends
  * shrink first, then the least telling rows are left out, each whole. A value
  * that no longer resolves (a display re-opened on a changed model) is refused
  * as any other signal is.
@@ -1024,9 +1071,32 @@ export const withEvidence = (
   const rows = composeEvidenceRows(system.plant.graph, evidence, pens)
   const alarms = display.panels.findIndex(panel => panel.kind === 'alarms')
   const at = alarms === -1 ? display.panels.length : alarms
-  for (let count = rows.length; count > 0; count -= 1) {
-    const kept = rows.slice(0, count).map(({ count: _count, ...row }) => row)
-    const added: ComposedEvidencePanel = { kind: 'evidence', pens: kept.flatMap(row => row.items.map(item => item.pen)), rows: kept }
+  // Where they do not all fit: first the lines rows go on in, the last first, each holding the least telling
+  // values of its row (a reactor's rod steps and intermediate-range current after its breakers, rods, flux and
+  // startup rate); a line holding a row's note never alone, as the note goes with its values. Then whole rows,
+  // the least telling first. What is kept is a prefix of each row, so the rows it is shown in again are the same.
+  const indexes = rows.map((_, index) => index)
+  // Each line's row, by the index of its first line.
+  const rowOf = indexes.map(index => indexes.slice(0, index + 1).reverse().find(at => rows[at]!.continued !== true)!)
+  const noted = new Set(indexes.filter(index => rows[index]!.note !== undefined).map(index => rowOf[index]!))
+  // Lines are left out from the last: a row's last line before its earlier ones.
+  const lines = indexes.filter(index => rows[index]!.continued === true && !noted.has(rowOf[index]!))
+  const keeps: Array<ReadonlyArray<number>> = [indexes]
+  for (let dropped = 1; dropped <= lines.length; dropped += 1) {
+    const gone = new Set(lines.slice(lines.length - dropped))
+    keeps.push(indexes.filter(index => !gone.has(index)))
+  }
+  const firstLines = indexes.filter(index => rows[index]!.continued !== true)
+  for (let count = firstLines.length - 1; count > 0; count -= 1) keeps.push(firstLines.slice(0, count))
+  for (const keep of keeps) {
+    const kept = keep.map(index => rows[index]!)
+    // A row whose later lines are left out ends where its kept lines do.
+    const shown = kept.map(({ count: _count, ...row }, position) => {
+      const next = kept[position + 1]
+      const { continues: _continues, ...rest } = row
+      return next?.continued === true ? row : rest
+    })
+    const added: ComposedEvidencePanel = { kind: 'evidence', pens: shown.flatMap(row => row.items.map(item => item.pen)), rows: shown }
     const panels = [...display.panels.slice(0, at), added, ...display.panels.slice(at)]
     const fit = fitComposedDisplay(panels.map(panelShape))
     if (fit.height > composedDisplayMaxHeight(panels)) continue
@@ -1036,8 +1106,10 @@ export const withEvidence = (
       if (size?.kind !== 'trend') throw new Error('fitted panels follow the compiled panels')
       return { ...panel, plot: size.plot }
     })
-    const values = rows.slice(0, count).reduce((sum, row) => sum + row.count, 0)
-    return { ok: true, display: { ...display, height: fit.height, panels: sized }, evidence: evidence.slice(0, values) }
+    // The values of the kept lines, in order: each line holds the next `count` of them.
+    const starts = rows.reduce<number[]>((sum, row, index) => [...sum, (sum[index] ?? 0) + row.count], [0])
+    const values = keep.flatMap(index => evidence.slice(starts[index]!, starts[index]! + rows[index]!.count))
+    return { ok: true, display: { ...display, height: fit.height, panels: sized }, evidence: values }
   }
   return { ok: true, display, evidence: [] }
 }
@@ -1513,7 +1585,7 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
   }
   if (panel.kind === 'mimic') return mimicShows(panel.mimic)
   if (panel.kind === 'faceplate') return [`Faceplate of ${panel.faceplate.end} by function (${panel.faceplate.columns.map(column => column.heads.map(head => head.title).join(' · ')).join('; ')}): ${panel.pens.map(signalName).join('; ')}`]
-  return [panel.scope === 'related' ? `Active alarms and trips of the ${panel.ruleIds.length} I&C rules acting on the displayed signals and their equipment` : 'All active alarms and trips of the Plant']
+  return [panel.scope === 'related' ? `Active alarms and trips of the ${panel.ruleIds.length} I&C rules acting on the displayed signals and their equipment, or commanding it` : 'All active alarms and trips of the Plant']
 })
 
 /**

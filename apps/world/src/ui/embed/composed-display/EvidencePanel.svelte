@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedDisplayPen, ComposedEvidencePanel, ComposedEvidenceRow } from '../../../packs/process-plant/displays/compose.ts'
-  import { composedDisplayLayout, type DisplayEvidenceKind } from '../../../packs/process-plant/displays/composition.ts'
+  import { composedDisplayLayout, evidenceKindWords } from '../../../packs/process-plant/displays/composition.ts'
   import { offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { readingStateText, trendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
@@ -18,18 +18,9 @@
     activeRuleIds: ReadonlySet<string>
   } = $props()
 
-  const WORDS: Readonly<Record<DisplayEvidenceKind, string>> = {
-    cause: 'cause',
-    isolation: 'isolation',
-    wider: 'wider span',
-    delivers: 'delivers',
-    trip: 'trip check',
-    program: 'program',
-    isolates: 'isolates',
-    reference: 'reference',
-    mode: 'mode watch',
-    flow: 'flow',
-  }
+  // A row too wide for a chat view goes on in lines under it, whole values each, after an indent as wide as the word
+  // for why (compose.ts composeEvidenceRows): a value of such a row is one of several, however many its line holds.
+  const several = (row: ComposedEvidenceRow): boolean => row.items.length > 1 || row.continues === true || row.continued === true
 
   interface ItemReading {
     readonly text: string
@@ -67,10 +58,10 @@
   // beside a demand ("35.0 % · SHUT DEMAND").
   const sharedUnit = (row: ComposedEvidenceRow, readings: ReadonlyArray<ItemReading>): boolean => new Set(readings.map(reading => reading.unit)).size === 1 && !row.items.some(item => item.pen.command)
   const rowText = (row: ComposedEvidenceRow, readings: ReadonlyArray<ItemReading>): string => [
-    WORDS[row.kind].toUpperCase(),
+    evidenceKindWords[row.kind].toUpperCase(),
     row.name,
-    row.items.map((item, at) => `${item.label} ${readings[at]!.text}${readings[at]!.unit === '' ? '' : ` ${readings[at]!.unit}`}${item.pen.command ? ' demand' : ''}${item.pen.simulatorOnly ? ' sim' : ''}`).join(' · '),
-    row.items.length === 1 ? readings[0]!.state : '',
+    row.items.map((item, at) => `${item.label === '' ? '' : `${item.label} `}${readings[at]!.text}${readings[at]!.unit === '' ? '' : ` ${readings[at]!.unit}`}${item.pen.command ? ' demand' : ''}${item.pen.simulatorOnly ? ' sim' : ''}`).join(' · '),
+    several(row) || row.items.length === 0 ? '' : readings[0]!.state,
     row.note ?? '',
   ].filter(part => part !== '').join('  ')
 </script>
@@ -82,21 +73,21 @@
     {#each panel.rows as row, rowIndex (rowIndex)}
       {@const readings = row.items.map(item => readingOf(item.pen))}
       {@const unitOnce = sharedUnit(row, readings)}
-      <li title={`${rowText(row, readings)}\nAdded by World from the Plant model: ${row.reason}`}>
-        <span class="why">{WORDS[row.kind]}</span>
+      <li class:continued={row.continued === true} title={`${rowText(row, readings)}\nAdded by World from the Plant model: ${row.reason}`}>
+        <span class="why" aria-hidden={row.continued === true}>{evidenceKindWords[row.kind]}</span>
         {#if row.name !== ''}<span class="name">{row.name}</span>{/if}
         {#each row.items as item, at (item.pen.path)}
           {@const reading = readings[at]!}
           <span class="item">
-            <span class="label" class:tag={item.pen.tagId === item.label}>{item.label}</span>
+            {#if item.label !== ''}<span class="label" class:tag={item.pen.tagId === item.label}>{item.label}</span>{/if}
             <span class="value" class:beyond={reading.beyond} class:offspan={reading.offSpan}>{reading.text}</span>
             {#if reading.unit !== '' && (!unitOnce || at === row.items.length - 1)}<span class="unit">{reading.unit}</span>{/if}
             {#if item.pen.command}<span class="demand">demand</span>{/if}
             {#if item.pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}
-            {#if reading.inAlarm !== null && row.items.length > 1}<AlarmChip threshold={reading.inAlarm} compact />{/if}
+            {#if reading.inAlarm !== null && several(row)}<AlarmChip threshold={reading.inAlarm} compact />{/if}
           </span>
         {/each}
-        {#if row.items.length === 1}
+        {#if row.items.length === 1 && !several(row)}
           {#if readings[0]!.inAlarm !== null}<AlarmChip threshold={readings[0]!.inAlarm} />{/if}
           {#if readings[0]!.state !== ''}<span class="state" class:beyond={readings[0]!.beyond}>{readings[0]!.state}</span>{/if}
         {/if}
@@ -112,6 +103,8 @@
   /* One line each, cut at its end where it is too long: the tooltip has all of it. A dashed rule: added by World, never an alarm colour. */
   li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 8px; border-left: 2px dashed var(--border-divider-color); white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
   .why { flex: none; padding: 0 4px; border: 1px dashed var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--element-neutral-color); }
+  /* A line a row goes on in: indented by its word for why, kept for its width only. */
+  .continued .why { visibility: hidden; }
   .name, .label, .unit { font-size: 11.5px; color: var(--element-neutral-color); }
   .name { flex: none; }
   .item { flex: none; display: inline-flex; align-items: baseline; gap: 4px; }

@@ -145,12 +145,28 @@ export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositi
 export const displayEvidenceKindSchema = z.enum(['cause', 'isolation', 'wider', 'delivers', 'trip', 'program', 'isolates', 'reference', 'mode', 'flow'])
 export type DisplayEvidenceKind = z.infer<typeof displayEvidenceKindSchema>
 
+/** Why World added a row, in a word on its row (EvidencePanel), drawn upper case. */
+export const evidenceKindWords: Readonly<Record<DisplayEvidenceKind, string>> = {
+  cause: 'cause',
+  isolation: 'isolation',
+  wider: 'wider span',
+  delivers: 'delivers',
+  trip: 'trip check',
+  program: 'program',
+  isolates: 'isolates',
+  reference: 'reference',
+  mode: 'mode watch',
+  flow: 'flow',
+}
+
 /**
  * The most rows of values World adds to one display, and the most values in
  * them: a row holds the values read together, at most one per loop of a
- * six-loop Plant (the wide-range level of every steam generator).
+ * six-loop Plant (the wide-range level of every steam generator); a trip
+ * check takes a row for each energy end. A row too wide for a chat view goes
+ * on in lines under it, which the display's height bounds.
  */
-export const COMPOSED_EVIDENCE_MAX_ROWS = 6
+export const COMPOSED_EVIDENCE_MAX_ROWS = 7
 export const COMPOSED_EVIDENCE_MAX = 36
 
 /**
@@ -258,6 +274,12 @@ export const composedDisplayLayout = {
   evidenceCaption: 16,
   /** A row of values World adds: why in a word, the values read together, and what they say beside them. */
   evidenceRow: 20,
+  /**
+   * The room a row of them has in a chat view 800 px wide: less the card's
+   * side padding (10 px each), the row's (8 px each) and its dashed rule
+   * (2 px). Values that do not fit go on to the next line (evidence-width.ts).
+   */
+  evidenceRowRoom: 762,
   /** Title row plus four alarm rows; more are summarised as a count. */
   alarms: 110,
   alarmRows: 4,

@@ -137,6 +137,16 @@ export const groupStates = (plant: CompiledProcessPlant, group: string): Readonl
   return common === null ? [] : actionStates(plant, common).map(state => state.path)
 }
 
+/**
+ * The states that say an energy end's protection stopped it: those of the
+ * commands every rule of the first group commanding it writes (the reactor
+ * trip breakers, the turbine stop valve); none for an end no group commands.
+ */
+export const stopStates = (plant: CompiledProcessPlant, end: number): ReadonlyArray<VariablePath> => {
+  const groups = commandingGroups(plant, end)
+  return groups.length === 0 ? [] : groupStates(plant, groups[0]!)
+}
+
 const writesOf = (action: AutomaticAction | null | undefined): ReadonlyArray<FaceplateWrite> =>
   (action?.writes ?? []).map(write => ({ path: String(write.binding.path), value: write.value }))
 
