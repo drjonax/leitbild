@@ -75,7 +75,7 @@
     {#if cards.length > 0}
       {#if phone}
         {#key cards.length}
-          <Carousel bind:this={carousel} items={cards} label="Demos" itemTitle={card => card.featured.title} slide={demoCard}
+          <Carousel bind:this={carousel} items={cards} label="Featured demos" itemTitle={card => card.featured.title} slide={demoCard}
             nav="dots" variant="panel" noun="demo" observeVisibility {credit} />
         {/key}
       {:else}
