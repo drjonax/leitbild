@@ -153,11 +153,49 @@ export const procedureCatalogSchema = z.object({
 })
 export type ProcedureCatalog = z.infer<typeof procedureCatalogSchema>
 
+/** Who works a procedure Run. Absent: shared, anyone may. A person driving holds AI agents to reading it. */
+export const procedureRunDriverSchema = z.object({
+  kind: z.enum(['ai', 'person']),
+  actorId: actorIdSchema,
+  /** The actor's display name when the request named one. */
+  label: z.string().min(1).max(80).optional(),
+  since: isoTimestampSchema,
+})
+export type ProcedureRunDriver = z.infer<typeof procedureRunDriverSchema>
+
+/** A reading World took of a cited tag when it accepted a branch: the value as formatted, or why none. */
+export const procedureDecisionEvidenceSchema = z.object({
+  tagId: procedureTagIdSchema,
+  reading: z.string().min(1).max(160),
+})
+
+/** A branch selection's basis: up to 300 characters and up to six of the step's own tags, which World reads at commit. */
+export const procedureDecisionBasisSchema = z.object({
+  basis: z.string().trim().min(1).max(300).optional(),
+  evidenceTagIds: z.array(procedureTagIdSchema).min(1).max(6).optional(),
+})
+
+/** The latest branch selected on a step, with who chose it and why. The journal keeps every earlier one. */
+export const procedureStepDecisionSchema = z.object({
+  branchIndex: z.number().int().nonnegative(),
+  label: z.string().min(1).optional(),
+  outcome: z.enum(['normal', 'rno', 'unknown']).optional(),
+  targetKind: procedureBranchSchema.shape.targetKind,
+  target: z.string().min(1),
+  basis: z.string().min(1).max(300).optional(),
+  evidence: z.array(procedureDecisionEvidenceSchema).max(6).optional(),
+  selectedBy: actorIdSchema,
+  selectedByLabel: z.string().min(1).max(80).optional(),
+  simulationTime: isoTimestampSchema,
+})
+export type ProcedureStepDecision = z.infer<typeof procedureStepDecisionSchema>
+
 export const procedureStepRunStateSchema = z.object({
   stepId: procedureStepIdSchema,
   assessment: procedureAssessmentSchema.default('blank'),
   comment: z.string().max(10_000).optional(),
   favorite: z.boolean().default(false),
+  decision: procedureStepDecisionSchema.optional(),
   updatedAt: isoTimestampSchema,
   updatedBy: actorIdSchema,
 })
@@ -180,6 +218,7 @@ export const procedureRunStateSchema = z.object({
   closedAt: isoTimestampSchema.optional(),
   closedBy: actorIdSchema.optional(),
   currentStepId: procedureStepIdSchema.optional(),
+  driver: procedureRunDriverSchema.optional(),
   stepStates: z.array(procedureStepRunStateSchema).default([]),
   observations: z.array(z.object({
     stepId: procedureStepIdSchema,
@@ -234,7 +273,7 @@ export const procedureRunTransitionPayloadSchema = z.object({
   runId: procedureRunIdSchema,
   stepId: procedureStepIdSchema,
   branchIndex: z.number().int().nonnegative(),
-})
+}).merge(procedureDecisionBasisSchema)
 
 export const procedureRunResetPayloadSchema = z.object({
   sourceId: procedureSourceIdSchema,
@@ -290,7 +329,21 @@ export const procedureBranchSelectedEventSchema = z.object({
   execution: procedureBranchSchema.shape.execution,
   simulationTime: isoTimestampSchema,
   selectedBy: actorIdSchema,
+  selectedByLabel: z.string().min(1).max(80).optional(),
+  label: z.string().min(1).optional(),
+  basis: z.string().min(1).max(300).optional(),
+  evidence: z.array(procedureDecisionEvidenceSchema).max(6).optional(),
   observation: procedureRunStateSchema.shape.observations.unwrap().element.optional(),
+})
+
+export const procedureRunDriverChangedEventSchema = z.object({
+  type: z.literal('procedure.run.driver.changed'),
+  runId: procedureRunIdSchema,
+  /** Absent: nobody drives; the Run is shared again. */
+  driver: procedureRunDriverSchema.optional(),
+  reason: z.enum(['claimed', 'released', 'person-acted', 'started']),
+  changedAt: isoTimestampSchema,
+  changedBy: actorIdSchema,
 })
 
 export const procedureObservationUpdatedEventSchema = z.object({

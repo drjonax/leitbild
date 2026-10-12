@@ -158,7 +158,7 @@ export const prepareProcedureCommand = async (config: {
       if (target && branch.targetStepId !== undefined) result.push({ ...base(context), type: 'procedure.step.updated', runId: target.runId,
         stepId: branch.targetStepId, currentStepId: branch.targetStepId, update: {}, updatedAt: context.at, updatedBy: command.actorId })
       result.push({ ...base(context), type: 'procedure.branch.selected', runId: run.runId, stepId: step.id,
-        branchIndex: payload.branchIndex, target: branch.target, targetKind: branch.targetKind,
+        branchIndex: payload.branchIndex, label: branch.label, target: branch.target, targetKind: branch.targetKind,
         ...(branch.targetStepId === undefined ? {} : { targetStepId: branch.targetStepId }),
         ...(branch.outcome === undefined ? {} : { outcome: branch.outcome }),
         ...(branch.execution === undefined ? {} : { execution: branch.execution }),

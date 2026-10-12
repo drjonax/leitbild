@@ -292,6 +292,42 @@ describe('procedure system', () => {
     }])
   })
 
+  test('a selected branch is kept on its step with its basis through the step update that follows, and a driver change projects onto the run', async () => {
+    let seq = 0
+    const simulationRunId = 'procedure-decision-test' as SimulationRunId
+    const at = nowIso()
+    const factory = { eventId: () => `event:${++seq}` as EventId, nextSeq: () => seq }
+    const base: CommandEnvelope = {
+      id: 'command:decision-start' as CommandEnvelope['id'], simulationRunId, actorId: 'actor:operator' as ActorId,
+      kind: 'world.procedure.run.start', targetObjectIds: [], issuedAt: at,
+      payload: { sourceId: 'pwr-ops', sourceRevision: source.revision, procedureId: 'E-0', scope: unitAScope },
+    }
+    const store = createSimulationRunStateStore()
+    store.hydrate({ objects: [], seq: 0 })
+    const started = await procedureCommandEvents({ simulationRunId, at, command: base, procedures: undefined, factory, readDocument: async () => parseFixture() })
+    for (const event of started ?? []) store.apply(event as SimulationRunEvent)
+    const runId = store.snapshot().procedures?.runs[0]?.runId
+    if (!runId) throw new Error('procedure run was not projected')
+    const transition = await procedureCommandEvents({
+      simulationRunId, at, factory, readDocument: async () => parseFixture(), procedures: store.snapshot().procedures,
+      command: { ...base, id: 'command:decision-branch' as CommandEnvelope['id'], kind: 'world.procedure.run.transition',
+        payload: { runId, stepId: 'verify-reactor-trip', branchIndex: 0, basis: 'Both trip breakers read open; power falling.' } },
+    })
+    for (const event of transition ?? []) store.apply(event as SimulationRunEvent)
+    const step = store.snapshot().procedures?.runs[0]?.stepStates.find(state => state.stepId === 'verify-reactor-trip')
+    const branch = parseFixture().steps[0]!.branches[0]!
+    expect(step?.decision).toMatchObject({ branchIndex: 0, label: branch.label, targetKind: branch.targetKind, target: branch.target, selectedBy: 'actor:operator' })
+    expect(store.snapshot().procedures?.runs[0]?.currentStepId).toBe(branch.target)
+
+    const driver = { kind: 'ai' as const, actorId: 'actor:ai:assistant' as ActorId, label: 'Assistant', since: at }
+    store.apply({ id: `event:${++seq}` as EventId, simulationRunId, seq, at, provenance: { source: 'ai' },
+      type: 'procedure.run.driver.changed', runId, driver, reason: 'claimed', changedAt: at, changedBy: driver.actorId } as SimulationRunEvent)
+    expect(store.snapshot().procedures?.runs[0]?.driver).toEqual(driver)
+    store.apply({ id: `event:${++seq}` as EventId, simulationRunId, seq, at, provenance: { source: 'operator' },
+      type: 'procedure.run.driver.changed', runId, reason: 'person-acted', changedAt: at, changedBy: 'actor:operator' } as SimulationRunEvent)
+    expect(store.snapshot().procedures?.runs[0]?.driver).toBeUndefined()
+  })
+
   test('procedure runs are scoped per unit and reset clears only the selected unit procedure', async () => {
     let seq = 0
     const simulationRunId = 'procedure-test' as SimulationRunId
