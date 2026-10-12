@@ -38,6 +38,15 @@ export interface ModuleGateway {
   readonly invoke: (moduleId: ModuleId, invocation: ModuleCapabilityInvocation, signal?: AbortSignal) => Promise<ModuleCallResult<ModuleCapabilityInvocationResult>>
 }
 
+// A Module that cannot be reached is reported in words people can act on. The
+// transport's own text (Bun: "The socket connection was closed unexpectedly…
+// pass `verbose: true`…") is kept in details for diagnosis, never as the message.
+const moduleNouns: Readonly<Record<string, string>> = { world: 'the simulation', agents: 'the AI agents' }
+const lostConnection = (moduleId: ModuleId, action: 'reconnect' | 'check'): string =>
+  `Lost the connection to ${moduleNouns[moduleId] ?? `the ${moduleId} Module`}. ${action === 'check'
+    ? 'Reload to check whether the action was applied.' : 'Reload to reconnect.'}`
+const transportCause = (error: unknown): { readonly cause: string } => ({ cause: error instanceof Error ? error.message : String(error) })
+
 const normalizeBaseUrl = (value: string): string => {
   const url = new URL(value)
   url.pathname = url.pathname.replace(/\/+$/, '')
@@ -104,8 +113,9 @@ export const createModuleGateway = (config: {
     } catch (error) {
       return moduleFailureSchema.parse({
         code: 'module_unavailable',
-        message: error instanceof Error ? error.message : String(error),
+        message: lostConnection(registration.moduleId, 'reconnect'),
         retryable: true,
+        details: transportCause(error),
       })
     }
     if (!response.ok) {
@@ -166,8 +176,9 @@ export const createModuleGateway = (config: {
     } catch (error) {
       return failure({
         code: 'module_unavailable',
-        message: error instanceof Error ? error.message : String(error),
+        message: lostConnection(moduleId, 'reconnect'),
         retryable: true,
+        details: transportCause(error),
       })
     }
     if (!response.ok) {
@@ -194,7 +205,7 @@ export const createModuleGateway = (config: {
     try {
       response = await fetchImpl(url, { headers: { Accept: 'application/json' } })
     } catch (error) {
-      return failure({ code: 'module_unavailable', message: error instanceof Error ? error.message : String(error), retryable: true })
+      return failure({ code: 'module_unavailable', message: lostConnection(config.moduleId, 'reconnect'), retryable: true, details: transportCause(error) })
     }
     if (!response.ok) {
       return await responseFailure(response, {
@@ -229,8 +240,8 @@ export const createModuleGateway = (config: {
         body: JSON.stringify(invocation),
       })
     } catch (error) {
-      return failure({ code: 'module_outcome_unknown', message: error instanceof Error ? error.message : String(error), retryable: false,
-        status: 504, details: { outcome: 'unknown', advice: 'Inspect the Resource before retrying this invocation.' } })
+      return failure({ code: 'module_outcome_unknown', message: lostConnection(moduleId, 'check'), retryable: false,
+        status: 504, details: { outcome: 'unknown', advice: 'Inspect the Resource before retrying this invocation.', ...transportCause(error) } })
     }
     if (!response.ok) {
       return await responseFailure(response, {
