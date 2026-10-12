@@ -24,7 +24,7 @@ import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
 import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
 import { shorterSignalNames } from '../src/packs/process-plant/displays/signal-names.ts'
-import { actuatedNames, bannerTrip, expectedAfter, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { actuatedNames, bannerTrip, expectedAfter, expectedOfRule, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -957,6 +957,16 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     // Before the trip, or long after it, nothing is expected.
     expect(expectedAfter(at(levelLowA, 60), alarms, annunciation)).toBeNull()
     expect(expectedAfter(at(afwA, 93 + 301), alarms, annunciation)).toBeNull()
+    // HMI review of run 26c: after a loss of feed every generator reaches low-low with the one that tripped the reactor.
+    // The first out stands out; the others, which came in with it, are expected after it, not as red as it.
+    const tripC = idOf('trip', 'sg-c-level-low-low-reactor-trip')
+    expect(expectedAfter(at(tripC, 93), [...alarms, at(tripC, 93)], annunciation)).toBe('RX TRIP')
+    // A limit's chip is faded only where every active alarm of its rule is so expected.
+    const lifecycles = [...alarms, at(tripC, 93)].map(alarm => ({ ...alarm, ruleId: alarm.id.split(':')[1]!, active: true }))
+    expect(expectedOfRule('sg-a-level-low-low-afw-actuation', lifecycles, annunciation)).toBe('RX TRIP')
+    expect(expectedOfRule('sg-b-level-low-low-afw-actuation', lifecycles, annunciation)).toBeNull()
+    expect(expectedOfRule('sg-a-secondary-radiation-high', lifecycles, annunciation)).toBeNull()
+    expect(expectedOfRule('sg-a-level-low-low-afw-actuation', lifecycles.map(alarm => ({ ...alarm, active: false })), annunciation)).toBeNull()
   })
 
   test('come from the first-out groups and limits the I&C declares, never from ids or titles', () => {

@@ -421,7 +421,7 @@
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
         {#each view.display.panels as panel, index (index)}
           {#if panel.kind === 'readouts'}
-            <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} column history={snapshot} {stale} />
+            <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} annunciation={view.display.annunciation} column history={snapshot} {stale} />
           {:else if panel.kind === 'alarms'}
             {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
             <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} fill only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
@@ -457,18 +457,18 @@
                 gates={sampledGates(snapshot.latest)}
                 {activeRuleIds}
               />
-              <PenLegend pens={strip.pens} horizonMs={panel.horizonMs} latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} />
+              <PenLegend pens={strip.pens} horizonMs={panel.horizonMs} latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} annunciation={view.display.annunciation} />
             {/each}
             {#if panel.live.length > 0}
-              <PenLegend pens={panel.live} horizonMs={panel.horizonMs} live latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} />
+              <PenLegend pens={panel.live} horizonMs={panel.horizonMs} live latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} annunciation={view.display.annunciation} />
             {/if}
           </div>
         {:else if panel.kind === 'comparison'}
-          <ComparisonPanel {panel} latest={snapshot.latest} series={snapshot.series} range={snapshot.ranges[index]?.[0] ?? null} {activeRuleIds} />
+          <ComparisonPanel {panel} latest={snapshot.latest} series={snapshot.series} range={snapshot.ranges[index]?.[0] ?? null} {activeRuleIds} annunciation={view.display.annunciation} />
         {:else if panel.kind === 'readouts'}
-          <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} {stale} />
+          <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} annunciation={view.display.annunciation} {stale} />
         {:else if panel.kind === 'evidence'}
-          <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
+          <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} annunciation={view.display.annunciation} />
         {:else if panel.kind === 'mimic'}
           <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} operation={operationOf(index)} trends={panel.trends} history={snapshot} />
         {:else if panel.kind === 'faceplate'}

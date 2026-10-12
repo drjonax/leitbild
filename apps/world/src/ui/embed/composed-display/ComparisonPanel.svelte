@@ -3,19 +3,22 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { chipName, displayValue, formatValue, limitOrderName, logarithmicSpan, readingText, shownReading, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
-  import { median, sampledGates } from './panel-presenters.ts'
+  import { expectedOfRule, median, sampledGates } from './panel-presenters.ts'
+  import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import { COMPARISON_HISTORY_MS, ratePerMinute, rateText, rateWindowMs, trendReading, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { limitLabelParts, limitLabelRanks, limitLines, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { paddedDomain, rawDomain, type ValueDomain } from './trend-geometry.ts'
 
-  let { panel, latest, series, range, activeRuleIds }: {
+  let { panel, latest, series, range, activeRuleIds, annunciation }: {
     panel: ComposedComparisonPanel
     latest: ComposedDisplaySample | undefined
     series: ReadonlyMap<string, ReadonlyArray<TrendPoint>>
     range: ValueDomain | null
     activeRuleIds: ReadonlySet<string>
+    /** What the I&C declares of its alarms: a limit state whose alarms are all expected after a first-out is faded. */
+    annunciation: DisplayAnnunciation
   } = $props()
 
   let width = $state(520)
@@ -158,7 +161,7 @@
       <line class="track" x1={scaleStart} x2={scaleStart + scaleWidth} y1={y + row / 2} y2={y + row / 2} />
       {#if value !== undefined && domain !== null}
         <path class="pointer" class:primary={pen.role === 'primary'} class:alarm={inAlarm !== null} d={`M${x(value)} ${y + 4} l5 ${row / 2 - 4} l-5 ${row / 2 - 4} l-5 ${-(row / 2 - 4)} z`} />
-        <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">{readingText(value, panel.unit, pen.resolution, pen.limits?.instrumentSpan)}{#if inAlarm !== null}<tspan class={`state ${inAlarm.severity ?? 'warning'}`} dx="6">{chipName(inAlarm)}</tspan>{/if}<tspan class="sub" dx="6">{reading?.offScale == null ? `${deviation(value)} ${rateText(ratePerMinute(shownPoints(pen), RATE_WINDOW_MS), value, panel.unit, { resolution: pen.resolution })}` : `${reading.offScale} range`}</tspan></text>
+        <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">{readingText(value, panel.unit, pen.resolution, pen.limits?.instrumentSpan)}{#if inAlarm !== null}<tspan class={`state ${inAlarm.severity ?? 'warning'}${expectedOfRule(inAlarm.ruleId, latest?.alarms ?? [], annunciation) === null ? '' : ' expected'}`} dx="6">{chipName(inAlarm)}</tspan>{/if}<tspan class="sub" dx="6">{reading?.offScale == null ? `${deviation(value)} ${rateText(ratePerMinute(shownPoints(pen), RATE_WINDOW_MS), value, panel.unit, { resolution: pen.resolution })}` : `${reading.offScale} range`}</tspan></text>
       {:else}
         <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">—</text>
       {/if}
@@ -188,6 +191,8 @@
   .state.critical { fill: var(--alert-alarm-color); }
   .state.warning { fill: var(--alert-warning-color); }
   .state.notice, .state.info { fill: var(--alert-caution-color); }
+  /* Expected after a first-out it followed: faded, as the drawing's frame and the list's row are. */
+  .state.expected { opacity: 0.45; }
   .median { stroke: var(--element-neutral-color); stroke-dasharray: 2 3; }
   .threshold { stroke: var(--element-neutral-color); stroke-width: 1.5; }
   .threshold.qualified { stroke-dasharray: 5 3; }

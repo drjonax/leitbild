@@ -5,7 +5,8 @@
   import { readingText, shownReading, valueText } from '../../../packs/process-plant/displays/display-text.ts'
   import { WIDER_RANGE } from '../../../packs/process-plant/displays/mimic/rows.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { sampledGates } from './panel-presenters.ts'
+  import { expectedOfRule, sampledGates } from './panel-presenters.ts'
+  import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { changeBesideState, rateText, rateWindowMs, readingStateText, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -14,7 +15,7 @@
   // One row per pen, columns aligned: what it is, its value, how close it is
   // to acting I&C (or the active alarm), and where it is heading. Live rows are
   // signals the Run does not record: current value only, no swatch.
-  let { pens, horizonMs, live = false, latest, series, historyMissing, activeRuleIds }: {
+  let { pens, horizonMs, live = false, latest, series, historyMissing, activeRuleIds, annunciation }: {
     pens: ReadonlyArray<ComposedDisplayPen>
     horizonMs: number
     live?: boolean
@@ -22,6 +23,8 @@
     series: ReadonlyMap<string, ReadonlyArray<TrendPoint>>
     historyMissing: ReadonlySet<string>
     activeRuleIds: ReadonlySet<string>
+    /** What the I&C declares of its alarms: a chip whose alarms are all expected after a first-out is faded. */
+    annunciation: DisplayAnnunciation
   } = $props()
 
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
@@ -74,7 +77,7 @@
       <span class="name" title={`${displayName(pen)} · ${pen.label} · ${roleLabel[pen.role]}${pen.command ? ' · operator or automation demand, not a measured state' : ''}${live ? ' · not recorded by this Run: current value only' : liveOnly ? ' · no recorded history in this window' : ''}`}>{#if live}<span class="badge">not recorded</span>{/if}{named(pen, (live ? 1 : 0) + (pen.command ? 1 : 0) + (pen.simulatorOnly ? 1 : 0))}{#if pen.command}<span class="badge">demand</span>{/if}{#if pen.simulatorOnly}<span class="badge" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}</span>
       <span class="value" class:offscale={reading?.offScale != null}>{typeof value === 'number' ? valueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan, pen.position === true) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
       <span class="state">
-        {#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}
+        {#if inAlarm !== null}<AlarmChip threshold={inAlarm} expected={expectedOfRule(inAlarm.ruleId, latest?.alarms ?? [], annunciation)} />{/if}
         {#if reading?.offScale != null}<svg class="comb-key" width="13" height="8" role="img" aria-label="drawn on the trend as an upright comb"><title>Off its span: drawn on the trend as this upright comb; no recorded data is hatched diagonally</title>{#each [0.5, 3.5, 6.5, 9.5, 12.5] as at (at)}<line x1={at} x2={at} y1="0" y2="8" />{/each}</svg>{/if}
         {#if state !== ''}<span class:beyond={reading?.offScale != null || reading?.limit?.kind === 'past'}>{state}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}

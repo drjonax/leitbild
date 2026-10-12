@@ -47,12 +47,14 @@ export const sampledGates = (latest: Pick<ComposedDisplaySample, 'values'> | und
  * The first-out group an alarm came in as the expected consequence of
  * ("RX TRIP"), or null: one its annunciator declares expected after that
  * group's actuation (DisplayAnnunciation.expected), not first out itself,
- * that came in after the group's first-out and within the declared time of
- * it. Steam generator low-low levels from the shrink after a reactor trip
- * read so; the low-low level that tripped the reactor, which came in with
- * the trip, and anything before it never do (HMI review of run 23: all four
- * generators red alike, the initiator not set apart). Such an alarm is
- * shown de-emphasised, never hidden.
+ * that came in with the group's first-out or after it, within the declared
+ * time of it. Steam generator low-low levels from the shrink after a reactor
+ * trip read so, and so do the other generators' low-low levels that came in
+ * with the one that tripped it (HMI review of run 26c: after a loss of feed,
+ * four generators as red as the first-out); the low-low level that tripped
+ * the reactor, first out, and anything before the trip never do (HMI review
+ * of run 23: all four generators red alike, the initiator not set apart).
+ * Such an alarm is shown de-emphasised, never hidden.
  */
 export const expectedAfter = (
   alarm: Pick<ComposedDisplayAlarm, 'id' | 'firstOut' | 'firstActiveElapsedMs'>,
@@ -64,7 +66,25 @@ export const expectedAfter = (
   const trigger = alarms.find(candidate => candidate.firstOut && annunciation.groups[candidate.id] === expected.after && candidate.firstActiveElapsedMs !== undefined)
   if (trigger === undefined) return null
   const lag = alarm.firstActiveElapsedMs - trigger.firstActiveElapsedMs!
-  return lag > 0 && lag <= expected.withinMs ? expected.after : null
+  return lag >= 0 && lag <= expected.withinMs ? expected.after : null
+}
+
+/**
+ * What a limit's chip is expected after, where every active alarm and trip
+ * of its rule came in as the expected consequence of the same first-out
+ * (expectedAfter): the chip is then drawn faded, as the drawing fades the
+ * frame and the list the row (HMI review of run 26c: a steam generator's
+ * LO-LO chip after a trip as red as the first-out's). Null where any of
+ * them is not, or none is active.
+ */
+export const expectedOfRule = (
+  ruleId: string,
+  alarms: ReadonlyArray<Pick<ComposedDisplayAlarm, 'id' | 'ruleId' | 'active' | 'firstOut' | 'firstActiveElapsedMs'>>,
+  annunciation: Pick<DisplayAnnunciation, 'expected' | 'groups'>,
+): string | null => {
+  const active = alarms.filter(alarm => alarm.active && alarm.ruleId === ruleId)
+  const after = new Set(active.map(alarm => expectedAfter(alarm, alarms, annunciation)))
+  return active.length > 0 && after.size === 1 ? [...after][0]! : null
 }
 
 /** The OpenBridge alert type each severity is drawn as, everywhere an alarm shows: list, tiles and drawing. */

@@ -5,7 +5,8 @@
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
   import { chipName, displayValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
-  import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
+  import { expectedOfRule, fitLimitStateText, sampledGates } from './panel-presenters.ts'
+  import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { displayName, fitName } from './pen-style.ts'
@@ -18,10 +19,12 @@
   // A unit overview's column lists its lead values one per row, each row as
   // tall as its three lines, with room for whole names; beside each readout,
   // a sparkline of its recorded history, its window labelled once over them.
-  let { panel, latest, activeRuleIds, column = false, history, stale = false }: {
+  let { panel, latest, activeRuleIds, annunciation, column = false, history, stale = false }: {
     panel: ComposedReadoutsPanel
     latest: ComposedDisplaySample | undefined
     activeRuleIds: ReadonlySet<string>
+    /** What the I&C declares of its alarms: a chip whose alarms are all expected after a first-out is faded. */
+    annunciation: DisplayAnnunciation
     column?: boolean
     /** The page's samples are stale: every value reads in OpenBridge's low-integrity style, and the panel says STALE, as the drawing does. */
     stale?: boolean
@@ -115,7 +118,7 @@
     {@const word = typeof value === 'number' && pen.position === true ? positionWord(value) : null}
     {@const asText = word !== null || end !== null || logarithmicSpan(pen.limits?.instrumentSpan)}
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
-      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}><span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
+      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}><span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} expected={expectedOfRule(inAlarm.ruleId, latest?.alarms ?? [], annunciation)} />{/if}</span>
       {#if typeof value === 'boolean'}
         <!-- A state in the words the model gives its two states ("Source-range HV off"), with its equipment where they do not name it. -->
         <span class="state" title={pen.described}>{value ? pen.states?.on : pen.states?.off}</span>

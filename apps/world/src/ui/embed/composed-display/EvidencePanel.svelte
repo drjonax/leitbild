@@ -4,7 +4,8 @@
   import { offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { readingStateText, trendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { sampledGates } from './panel-presenters.ts'
+  import { expectedOfRule, sampledGates } from './panel-presenters.ts'
+  import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import AlarmChip from './AlarmChip.svelte'
 
   // What World added to an agent's display, one line per row of values read
@@ -12,11 +13,14 @@
   // position beside its demand): why in a word, the values, and what the row
   // says beside them. A row of one value words its limit state as a legend
   // does; a row of several marks each value past a limit or off its span.
-  let { panel, latest, activeRuleIds }: {
+  let { panel, latest, activeRuleIds, annunciation }: {
     panel: ComposedEvidencePanel
     latest: ComposedDisplaySample | undefined
     activeRuleIds: ReadonlySet<string>
+    /** What the I&C declares of its alarms: a chip whose alarms are all expected after a first-out is faded. */
+    annunciation: DisplayAnnunciation
   } = $props()
+  const expectedOf = (ruleId: string): string | null => expectedOfRule(ruleId, latest?.alarms ?? [], annunciation)
 
   // A row too wide for a chat view goes on in lines under it, whole values each, after an indent as wide as the word
   // for why (compose.ts composeEvidenceRows): a value of such a row is one of several, however many its line holds.
@@ -84,11 +88,11 @@
             {#if reading.unit !== '' && (!unitOnce || at === row.items.length - 1)}<span class="unit">{reading.unit}</span>{/if}
             {#if item.pen.command}<span class="demand">demand</span>{/if}
             {#if item.pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}
-            {#if reading.inAlarm !== null && several(row)}<AlarmChip threshold={reading.inAlarm} compact />{/if}
+            {#if reading.inAlarm !== null && several(row)}<AlarmChip threshold={reading.inAlarm} compact expected={expectedOf(reading.inAlarm.ruleId)} />{/if}
           </span>
         {/each}
         {#if row.items.length === 1 && !several(row)}
-          {#if readings[0]!.inAlarm !== null}<AlarmChip threshold={readings[0]!.inAlarm} />{/if}
+          {#if readings[0]!.inAlarm !== null}<AlarmChip threshold={readings[0]!.inAlarm} expected={expectedOf(readings[0]!.inAlarm.ruleId)} />{/if}
           {#if readings[0]!.state !== ''}<span class="state" class:beyond={readings[0]!.beyond}>{readings[0]!.state}</span>{/if}
         {/if}
         {#if row.note !== undefined}<span class="note">{row.note}</span>{/if}
