@@ -209,9 +209,11 @@ describe('the AI procedure runner through the World Module API', () => {
     const runId = started.body.result.pinned.runId
     const before = started.body.result.next.sequence
 
-    // A paused plant clock ends a wait for plant time at once.
-    const paused = await invoke('world.simulation-run.wait', { simulationSeconds: 30 }, ai)
-    expect(paused.body.result).toMatchObject({ reason: 'clock-paused', paused: true, fromSequence: run.snapshot().seq })
+    // A paused plant clock ends a wait for plant time at once; naming the run answers with its current step.
+    const paused = await invoke('world.simulation-run.wait', { simulationSeconds: 30, procedureRunId: runId }, ai)
+    expect(paused.body.result).toMatchObject({ reason: 'clock-paused', paused: true, fromSequence: run.snapshot().seq,
+      next: { run: { runId, currentStepId: 'verify-reactor-trip' }, step: { id: 'verify-reactor-trip' }, tags: [{ id: 'TRIP-BKR-A' }, { id: 'TRIP-BKR-B' }, { id: 'NIS-PR-AVG' }] } })
+    expect((await invoke('world.simulation-run.wait', { simulationSeconds: 30 }, ai)).body.result.next).toBeUndefined()
 
     // An event already committed after afterSequence answers at once.
     await invoke('world.procedure.run.transition', { runId, stepId: 'verify-reactor-trip', branchIndex: 0, basis: 'Test-only selection.', evidenceTagIds: ['NIS-PR-AVG'] }, ai)

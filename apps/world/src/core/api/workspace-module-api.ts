@@ -52,6 +52,12 @@ import { scenarioDefinitionSchema } from '../scenarios/definition.ts'
 import { scenarioRevisionIdSchema } from '../scenarios/library.ts'
 import { CommandIdempotencyConflictError } from '../simulation-runs/command-idempotency.ts'
 import { drivenRunsOf, runWaitInputSchema, runWaitMaxMs, runWaitResultSchema, waitForRunChange } from '../simulation-runs/run-wait.ts'
+
+/** A wait naming a procedure Run also answers with that run's current step. */
+const runWaitAnswerSchema = runWaitResultSchema.extend({
+  next: procedureStepViewSchema.optional(),
+  nextUnavailable: z.string().optional(),
+})
 import { executionAdvanceInputSchema,executionSetInputSchema,runCopyInputSchema,runCopyOriginSchema,runExecutionStateSchema } from '../simulation-runs/execution.ts'
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import { aiRoleRunRefusal, hiddenInRoleRun, isRoleGateRefusal, roleRequiredRefusal, roleRunOpenCapabilityIds } from '../simulation-runs/role-gates.ts'
@@ -742,11 +748,11 @@ const procedureStepViewFor = async (
 // An AI agent's accepted transition answers with the step it leads to, so the
 // agent decides that step without another read. The command stands whatever
 // this read finds.
-const nextProcedureStep = async (runtime: ApiRunRuntime, invocation: ApiInvocation, runId: string, accepted: string): Promise<{ readonly next: ProcedureStepView } | { readonly nextUnavailable: string }> => {
+const nextProcedureStep = async (runtime: ApiRunRuntime, invocation: ApiInvocation, runId: string, after: string): Promise<{ readonly next: ProcedureStepView } | { readonly nextUnavailable: string }> => {
   try {
     return { next: await procedureStepViewFor(runtime, invocation, { runId }, 'next') }
   } catch (error) {
-    return { nextUnavailable: `The ${accepted} was accepted; reading the step it leads to failed: ${error instanceof Error ? error.message : String(error)}. Read it with world.procedure.run.step.read.` }
+    return { nextUnavailable: `${after}; reading the run's current step failed: ${error instanceof Error ? error.message : String(error)}. Read it with world.procedure.run.step.read.` }
   }
 }
 
@@ -758,7 +764,7 @@ const startedProcedureRun = async (runtime: ApiRunRuntime, invocation: ApiInvoca
   if (!run) return { nextUnavailable: 'The start was accepted; its run is no longer active. world.procedure.runs.list lists runs.' }
   return {
     pinned: { runId: run.runId, sourceId: run.sourceId, sourceRevision: run.sourceRevision, sourcePath: run.sourcePath },
-    ...(invocation.access.actor.kind === 'ai' ? await nextProcedureStep(runtime, invocation, run.runId, 'start') : {}),
+    ...(invocation.access.actor.kind === 'ai' ? await nextProcedureStep(runtime, invocation, run.runId, 'The start was accepted') : {}),
   }
 }
 
@@ -1570,12 +1576,12 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       kind: 'query',
       scope: { kind: 'resource', resourceType: 'world.simulation-run' },
       title: 'Wait for a Run change',
-      description: `Waits in your turn, at most ${runWaitMaxMs / 1_000} s of wall time, for the plant to respond or a person to act. Input {afterSequence?, maxWaitMs? (1000-${runWaitMaxMs}), simulationSeconds? (1-600), events? [{type, procedureRunId?, signalType?}] (up to 8)}; name simulationSeconds, events or both. Returns at the first of: a durable event after afterSequence (a step read's sequence; omitted: from now) matching events, e.g. {"type":"interaction.signal.received","signalType":"process-plant.proposal.approved"}; simulationSeconds of plant time from now; someone else taking over, releasing, closing or resetting a procedure Run you drive (reason driver-changed: stop and report); or maxWaitMs (timeout). Waiting for plant time on a paused clock returns clock-paused at once: it never plays or advances time. Returns reason, fromSequence, sequence, simulationTime, waitedMs, the matching events and driverChanged. Call it alone, then re-read the step.`,
+      description: `Waits in your turn, at most ${runWaitMaxMs / 1_000} s of wall time, for the plant to respond or a person to act. Input {afterSequence?, maxWaitMs? (1000-${runWaitMaxMs}), simulationSeconds? (1-600), events? [{type, procedureRunId?, signalType?}] (up to 8), procedureRunId?}; name simulationSeconds, events or both. With procedureRunId the result also carries next: that run's current step as world.procedure.run.step.read returns it, so decide from it without another read. Returns at the first of: a durable event after afterSequence (a step read's sequence; omitted: from now) matching events, e.g. {"type":"interaction.signal.received","signalType":"process-plant.proposal.approved"}; simulationSeconds of plant time from now; someone else taking over, releasing, closing or resetting a procedure Run you drive (reason driver-changed: stop and report); or maxWaitMs (timeout). Waiting for plant time on a paused clock returns clock-paused at once: it never plays or advances time. Returns reason, fromSequence, sequence, simulationTime, waitedMs, the matching events and driverChanged. Call it alone.`,
       searchTerms: ['wait for plant response', 'wait plant time', 'wait for approval', 'simulation seconds', 'procedure wait'],
       risk: 'read',
       idempotent: true,
       inputSchema: z.toJSONSchema(runWaitInputSchema, { io: 'input' }),
-      outputSchema: capabilityJsonSchema(runWaitResultSchema),
+      outputSchema: capabilityJsonSchema(runWaitAnswerSchema),
     },
     invoke: async (registry, invocation) => {
       const input = runWaitInputSchema.parse(invocation.input)
@@ -1602,7 +1608,8 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
           },
         },
       })
-      return json({ result })
+      return json({ result: input.procedureRunId === undefined ? result
+        : { ...result, ...(await nextProcedureStep(runtime, invocation, input.procedureRunId, `The wait ended (${result.reason})`)) } })
     },
   },
   {
@@ -1807,7 +1814,7 @@ const invokeCapability = async (
     }
     if (outcome.kind === 'command' && capabilityId === procedureRunTransitionCommandKind && invocation.access.actor.kind === 'ai') {
       const { runId } = procedureRunTransitionPayloadSchema.parse(invocation.input)
-      return json({ result: { ...outcome.result, ...(await nextProcedureStep(runtime, invocation, runId, 'transition')) } })
+      return json({ result: { ...outcome.result, ...(await nextProcedureStep(runtime, invocation, runId, 'The transition was accepted')) } })
     }
     if (outcome.kind === 'command' && capabilityId === procedureRunStartCommandKind) {
       return json({ result: { ...outcome.result, ...(await startedProcedureRun(runtime, invocation)) } })

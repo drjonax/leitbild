@@ -24,6 +24,8 @@ export const runWaitInputSchema = z.object({
     signalType: z.string().min(1).max(160).optional().describe('Only interaction signals of this type, e.g. process-plant.proposal.approved.'),
   }).strict()).min(1).max(8).optional()
     .describe('Return at the first durable event after afterSequence matching any of these.'),
+  procedureRunId: procedureRunIdSchema.optional()
+    .describe('A procedure Run whose current step the result carries as next, as world.procedure.run.step.read returns it.'),
 }).strict().superRefine((input, context) => {
   if (input.simulationSeconds === undefined && input.events === undefined) {
     context.addIssue({ code: 'custom', path: ['simulationSeconds'], message: 'Name simulationSeconds, events, or both to wait for.' })
