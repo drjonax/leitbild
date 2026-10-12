@@ -228,8 +228,13 @@
 {/if}
 {#if GuideModal}
   <GuideModal bind:open={guideOpen} page={route.kind === 'guide' ? route.page : 'start'} card={route.kind === 'guide' ? route.card : null}
-    onroute={(page: string, card: string | null) => { if (route.kind === 'guide') modalUrl.replace({ kind: 'guide', page, card }) }}
-    ontry={(demo: string | null) => { const next: ModalRoute = { kind: 'demos', demo }; openedBy = 'pointer'; modalUrl.replace(next); route = next }}
+    onpagechange={(page: string) => { if (route.kind === 'guide') modalUrl.replace({ kind: 'guide', page, card: null }) }}
+    ontrydemo={(demo: string | null, how: { keyboard: boolean }) => {
+      const next: ModalRoute = { kind: 'demos', demo }
+      openedBy = how.keyboard ? 'keyboard' : 'pointer'
+      modalUrl.replace(next)
+      route = next
+    }}
     onclose={onModalClose} fallbackFocus={() => guideButton} />
 {/if}
 
