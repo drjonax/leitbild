@@ -84,7 +84,7 @@ describe('an aspect read through a port', () => {
     })
     const suction = (own: ComponentSemantics): Partial<ComponentSemantics> => ({ aspects: [...own.aspects, aspect('level', { variable: 'levelPercent', reading: 'value', via: 'inlet' })] })
     expect(componentById(compileDeclaring('centrifugalPump', suction, spec(true))(), 'pump').semantics.aspects).toEqual([
-      { aspect: 'running', state: { path: 'pump.runningState', reading: 'true' }, command: 'pump.running' },
+      { aspect: 'running', state: { path: 'pump.runningState', reading: 'true' }, command: 'pump.running', travel: { onS: 0, offS: 0 } },
       { aspect: 'level', state: { path: 'tank.levelPercent', reading: 'value' } },
     ] as never)
     expect(componentById(compileDeclaring('centrifugalPump', suction, spec(false))(), 'pump').semantics.aspects.map(entry => entry.aspect)).toEqual(['running'])

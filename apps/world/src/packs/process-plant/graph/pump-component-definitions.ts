@@ -68,8 +68,8 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
        */
       flowDemandPath: variablePathSchema.optional(),
     }),
-    // A pump runs while it is commanded to run and its motor has power.
-    semantics: fixedSemantics({ aspects: [aspect('running', { variable: 'runningState', reading: 'true' }, 'running')], ratedOutflow: [{ port: 'outlet', parameter: 'nominalFlowKgPerS' }] }),
+    // A pump runs while it is commanded to run and its motor has power, from the step it is commanded.
+    semantics: fixedSemantics({ aspects: [aspect('running', { variable: 'runningState', reading: 'true' }, 'running', undefined, { onS: 0, offS: 0 })], ratedOutflow: [{ port: 'outlet', parameter: 'nominalFlowKgPerS' }] }),
     variables: [
       variable({ path: 'running', label: 'Run command', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'runningState', label: 'Running', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),

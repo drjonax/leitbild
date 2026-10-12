@@ -1,7 +1,13 @@
 import { z } from 'zod'
 import type { CompiledComponent, ComponentDefinition, ComponentKind } from './model.ts'
 import { defineComponent, normalized, variable } from './component-definition-helpers.ts'
-import { aspect, fixedSemantics } from './semantics.ts'
+import { aspect, fixedSemantics, type AspectTravel } from './semantics.ts'
+
+// Its motor moves the block valve across its whole stroke in its stroke time (pressurizer-behaviors.ts).
+const blockValveTravel = (parameters: unknown): AspectTravel => {
+  const strokeS = z.object({ blockValveStrokeTimeS: z.number() }).passthrough().parse(parameters).blockValveStrokeTimeS
+  return { onS: strokeS, offS: strokeS }
+}
 
 const pressurizerLevelControlSchema = z.object({
   noLoadAverageTemperatureC: z.number().finite(),
@@ -85,7 +91,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
        */
       levelControl: pressurizerLevelControlSchema,
     }),
-    semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
+    // The block valve's motor drives it across its stroke time at a steady rate; the PORV is where its demand puts it, at once.
+    semantics: parameters => fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
       aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
       // Level control holds the level to its program, set by the loops' mean temperature.
       programs: [{ reading: 'levelPercent', program: 'levelProgramPercent', deviation: 'levelDeviationPercent' }],
@@ -99,7 +106,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
         label: 'block valve',
         function: 'isolating',
         port: 'reliefOutlet',
-        aspects: [aspect('position', { variable: 'blockValveEffectivePositionFraction', reading: 'value' }, 'blockValvePositionFraction')],
+        aspects: [aspect('position', { variable: 'blockValveEffectivePositionFraction', reading: 'value' }, 'blockValvePositionFraction', undefined, blockValveTravel(parameters))],
         variables: ['blockValvePositionFraction', 'blockValveEffectivePositionFraction'],
       }, {
         id: 'reliefValve',
@@ -107,7 +114,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
         function: 'relieving',
         port: 'reliefOutlet',
         aspects: [
-          aspect('position', { variable: 'reliefValveEffectivePositionFraction', reading: 'value' }, 'reliefValvePositionFraction'),
+          aspect('position', { variable: 'reliefValveEffectivePositionFraction', reading: 'value' }, 'reliefValvePositionFraction', undefined, { onS: 0, offS: 0 }),
           aspect('throughput', { variable: 'reliefFlowKgPerS', reading: 'flow' }),
         ],
         variables: ['reliefFlowKgPerS', 'reliefValvePositionFraction', 'reliefValveEffectivePositionFraction', 'reliefValveFailureActive', 'reliefValveFailedPositionFraction', 'reliefValveFlowing'],
@@ -125,7 +132,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
         variables: ['safetyValvesLiftFraction', 'safetyValvesOpen', 'safetyValveFlowKgPerS'],
       }],
       ratedOutflow: [{ port: 'reliefOutlet', parameter: 'reliefCapacityKgPerS' }, { port: 'safetyOutlet', parameter: 'safetyValvesCapacityKgPerS' }],
-    }),
+    })(parameters),
     variables: [
       variable({ path: 'pressureMPa', label: 'Pressurizer pressure', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
       variable({ path: 'levelPercent', label: 'Pressurizer level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),

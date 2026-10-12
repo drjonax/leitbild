@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { idSchema } from '../../../core/model/index.ts'
 import { defineComponent, headerVariables, valveVariables } from './component-definition-helpers.ts'
 import { type ComponentDefinition, type ComponentKind, type PortDefinition, variablePathSchema } from './model.ts'
-import { aspect, fixedSemantics, type ComponentSemantics, type EquipmentFunction } from './semantics.ts'
+import { aspect, firstOrderLagTravelS, fixedSemantics, type ComponentSemantics, type EquipmentFunction } from './semantics.ts'
 
 const headerPortIdsSchema = z.array(idSchema).min(1).max(128)
 
@@ -31,13 +31,26 @@ const valveFunctions: Readonly<Record<string, EquipmentFunction>> = {
   safety: 'relieving',
 }
 
+// A valve's position follows its demand as a first-order lag, with its
+// opening or closing time constant, else its stroke time constant, else
+// 0.1 s (valve-behaviors.ts, which reads the same parameters).
+const valveStrokeSchema = z.object({
+  valveMode: z.string().default('control'),
+  strokeTimeConstantS: z.number().optional(),
+  strokeOpenTimeS: z.number().optional(),
+  strokeCloseTimeS: z.number().optional(),
+}).passthrough()
+
 const valveSemantics = (parameters: unknown): ComponentSemantics => {
-  const mode = z.object({ valveMode: z.string().default('control') }).passthrough().parse(parameters).valveMode
+  const parsed = valveStrokeSchema.parse(parameters)
+  const mode = parsed.valveMode
   const valveFunction = valveFunctions[mode]
   if (valveFunction === undefined) throw new Error(`valve mode ${mode} has no declared function`)
+  const timeConstant = parsed.strokeTimeConstantS ?? 0.1
+  const travel = { onS: firstOrderLagTravelS(parsed.strokeOpenTimeS ?? timeConstant), offS: firstOrderLagTravelS(parsed.strokeCloseTimeS ?? timeConstant) }
   return {
     function: valveFunction,
-    aspects: [aspect('position', { variable: 'effectivePositionFraction', reading: 'value' }, 'positionFraction', 'isolationSignal')],
+    aspects: [aspect('position', { variable: 'effectivePositionFraction', reading: 'value' }, 'positionFraction', 'isolationSignal', travel)],
     embedded: [],
     ratedOutflow: [],
     portFlows: [],

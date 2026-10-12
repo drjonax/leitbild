@@ -61,6 +61,12 @@ export interface ControlOption {
   readonly value: ProcessVariableValue
   /** What the equipment reads once it follows ("RUN", "SHUT"); none for a pushbutton. */
   readonly state?: string
+  /**
+   * How long the equipment takes to follow it, as its kind declares
+   * (StateAspectDeclaration.travel); null where the model declares no time:
+   * the state is then awaited, never judged not followed.
+   */
+  readonly travelMs: number | null
   /** What it moves: each variable it sets, with the value it reads after (OptionEffect). */
   readonly moves: ReadonlyArray<{ readonly path: VariablePath; readonly value: ProcessVariableValue | 'unknown' }>
   /** Trips whose condition reads what this option moves, in the direction it moves it. */
@@ -203,6 +209,13 @@ export const compareIcValues = (left: ProcessVariableValue, operator: Extract<Pr
   return operator === '<' ? left < right : operator === '<=' ? left <= right : operator === '>' ? left > right : left >= right
 }
 
+/**
+ * How long after a command its equipment may still be travelling before it
+ * reads as not followed: its travel time and a quarter of it more, at least
+ * 2 s more (plan-final I-2). The display's not-followed rule uses the same.
+ */
+export const followAllowanceMs = (travelMs: number): number => travelMs + Math.max(travelMs / 4, 2_000)
+
 /** What an option moves: each variable it sets, with the value it reads after, or 'unknown' where the model's state settles to no declared value (a speed). */
 export type OptionEffect = ReadonlyMap<VariablePath, ProcessVariableValue | 'unknown'>
 
@@ -250,6 +263,7 @@ const optionFor = (
     word: choice.word,
     value: choice.value,
     ...(choice.state === undefined ? {} : { state: choice.state }),
+    travelMs: context.aspect?.travel === undefined ? null : 1_000 * (choice.on ? context.aspect.travel.onS : context.aspect.travel.offS),
     moves: [...effect].map(([path, value]) => ({ path, value })),
     consequences: consequencesOf(plant, effect),
     opposing: opposingOf(plant, context.command, choice.value, context.aspect?.isolation, choice.on),

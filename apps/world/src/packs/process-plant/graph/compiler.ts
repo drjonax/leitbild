@@ -237,11 +237,18 @@ const compileAspect = (context: string, declaration: StateAspectDeclaration, own
     if (declaration.aspect !== 'position') throw new Error(`${context}: only a position is driven shut by an isolation input, not ${declaration.aspect}`)
     if (!isolation.writable || isolation.actuation !== 'command' || isolation.quantity !== 'boolean') throw new Error(`${context}: position isolation ${declaration.isolation} is not a writable boolean command`)
   }
+  // A travel time says how long a state takes to follow a command: it needs both, and is a duration.
+  const travel = declaration.travel
+  if (travel !== undefined) {
+    if (command === undefined || state === undefined) throw new Error(`${context}: ${declaration.aspect} declares a travel time but no command and state to follow it`)
+    if (![travel.onS, travel.offS].every(seconds => Number.isFinite(seconds) && seconds >= 0)) throw new Error(`${context}: ${declaration.aspect} travel times must be finite and not negative`)
+  }
   return {
     aspect: declaration.aspect,
     ...(state === undefined || stateVariable === undefined ? {} : { state: { path: stateVariable.path, reading: state.reading } }),
     ...(command === undefined ? {} : { command: command.path }),
     ...(isolation === undefined ? {} : { isolation: isolation.path }),
+    ...(travel === undefined ? {} : { travel }),
   }
 }
 

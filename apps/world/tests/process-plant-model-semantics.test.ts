@@ -75,7 +75,7 @@ describe('model semantics declared per component kind', () => {
       }
     }
     // A pump runs while its motor is commanded to run and has power, whatever its run command alone says; a valve sits where it actually is.
-    expect(componentById(graph, 'rcpA').semantics.aspects).toEqual([{ aspect: 'running', state: { path: 'rcpA.runningState' as never, reading: 'true' }, command: 'rcpA.running' as never }])
+    expect(componentById(graph, 'rcpA').semantics.aspects).toEqual([{ aspect: 'running', state: { path: 'rcpA.runningState' as never, reading: 'true' }, command: 'rcpA.running' as never, travel: { onS: 0, offS: 0 } }])
     expect(componentById(graph, 'feedwaterControlValveB').semantics.aspects[0]!.state!.path).toBe('feedwaterControlValveB.effectivePositionFraction' as never)
   })
 
@@ -84,7 +84,7 @@ describe('model semantics declared per component kind', () => {
     // Its motor-operated block valve sits before it on the same line, read from its own position feedback.
     expect(block).toMatchObject({ id: 'blockValve', function: 'isolating', port: 'reliefOutlet' })
     expect(block!.aspects).toEqual([
-      { aspect: 'position', state: { path: 'pressurizer.blockValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.blockValvePositionFraction' as never },
+      { aspect: 'position', state: { path: 'pressurizer.blockValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.blockValvePositionFraction' as never, travel: { onS: 10, offS: 10 } },
     ])
     expect(porv).toMatchObject({ id: 'reliefValve', function: 'relieving', port: 'reliefOutlet' })
     // The spring-loaded code safety valves relieve on their own outlet, with no command: their lift is all they report.
@@ -95,7 +95,7 @@ describe('model semantics declared per component kind', () => {
       { aspect: 'throughput', state: { path: 'pressurizer.safetyValveFlowKgPerS' as never, reading: 'flow' } },
     ])
     expect(porv!.aspects).toEqual([
-      { aspect: 'position', state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.reliefValvePositionFraction' as never },
+      { aspect: 'position', state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.reliefValvePositionFraction' as never, travel: { onS: 0, offS: 0 } },
       { aspect: 'throughput', state: { path: 'pressurizer.reliefFlowKgPerS' as never, reading: 'flow' } },
     ])
   })
@@ -103,7 +103,7 @@ describe('model semantics declared per component kind', () => {
   test('a breaker position is its contacts, closed while its solved state reads true', () => {
     expect(componentById(graph, 'offsiteBreakerA').semantics.aspects).toEqual([
       { aspect: 'energized', state: { path: 'offsiteBreakerA.energized' as never, reading: 'true' } },
-      { aspect: 'position', state: { path: 'offsiteBreakerA.closedState' as never, reading: 'closedWhileTrue' }, command: 'offsiteBreakerA.closed' as never },
+      { aspect: 'position', state: { path: 'offsiteBreakerA.closedState' as never, reading: 'closedWhileTrue' }, command: 'offsiteBreakerA.closed' as never, travel: { onS: 0, offS: 0 } },
     ])
   })
 

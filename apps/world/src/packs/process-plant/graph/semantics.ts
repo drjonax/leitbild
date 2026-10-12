@@ -85,7 +85,29 @@ export interface StateAspectDeclaration {
    * equipment as one that writes its command does.
    */
   readonly isolation?: LocalVariablePath
+  /**
+   * How long the equipment takes to follow its command across its whole
+   * travel, as its behaviour moves it: toward its on state (running, open,
+   * closed in) and toward its off state. Zero where it follows within the
+   * step it is commanded (a breaker, a motor-driven pump's run state).
+   * Absent where the model declares no time: a reader then awaits the state
+   * and never judges the command not followed.
+   */
+  readonly travel?: AspectTravel
 }
+
+/** Seconds an aspect's state takes to follow its command, by direction (StateAspectDeclaration.travel). */
+export interface AspectTravel {
+  readonly onS: number
+  readonly offS: number
+}
+
+/**
+ * The travel of a state that follows its command as a first-order lag of
+ * this time constant: it comes within 5 % of the command after ln 20 time
+ * constants, the band in which a display reads it as followed.
+ */
+export const firstOrderLagTravelS = (timeConstantS: number): number => timeConstantS * Math.log(20)
 
 /** Equipment the model bundles inside a component; it sits on the link that leaves one of the component's ports. */
 export interface EmbeddedDeviceDeclaration {
@@ -205,19 +227,21 @@ export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parame
 
 /**
  * A state aspect read from a solved variable (of the component on a port's
- * one link, `via` that port), with the command that demands it and the
- * isolation input that overrides it.
+ * one link, `via` that port), with the command that demands it, the
+ * isolation input that overrides it and the time it takes to follow.
  */
 export const aspect = (
   name: StateAspect,
   state: { readonly variable: string; readonly reading: AspectReading; readonly via?: string } | undefined,
   command?: string,
   isolation?: string,
+  travel?: AspectTravel,
 ): StateAspectDeclaration => ({
   aspect: name,
   ...(state === undefined ? {} : { state: { variable: state.variable as LocalVariablePath, reading: state.reading, ...(state.via === undefined ? {} : { via: state.via }) } }),
   ...(command === undefined ? {} : { command: command as LocalVariablePath }),
   ...(isolation === undefined ? {} : { isolation: isolation as LocalVariablePath }),
+  ...(travel === undefined ? {} : { travel }),
 })
 
 export interface CompiledStateAspect {
@@ -225,6 +249,7 @@ export interface CompiledStateAspect {
   readonly state?: { readonly path: VariablePath; readonly reading: AspectReading }
   readonly command?: VariablePath
   readonly isolation?: VariablePath
+  readonly travel?: AspectTravel
 }
 
 export interface CompiledEmbeddedDevice {

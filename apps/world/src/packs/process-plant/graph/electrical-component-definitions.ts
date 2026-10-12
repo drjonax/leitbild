@@ -131,7 +131,8 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       degradedVoltageTripFraction: z.number().finite().min(0).max(1.2).optional(),
     }).strict(),
     // Its contacts are closed while it is commanded closed and not tripped.
-    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }), aspect('position', { variable: 'closedState', reading: 'closedWhileTrue' }, 'closed')] }),
+    // Its contacts close and open in the step it is commanded.
+    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }), aspect('position', { variable: 'closedState', reading: 'closedWhileTrue' }, 'closed', undefined, { onS: 0, offS: 0 })] }),
     variables: [
       variable({ path: 'closed', label: 'Breaker close command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'tripped', label: 'Breaker tripped', kind: 'discrete', discipline: 'control', writable: true, publish: 'alarm', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
@@ -184,7 +185,14 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       initialAvailable: z.boolean().optional(),
       loadResponse: dieselLoadResponseSchema,
     }).strict(),
-    semantics: fixedSemantics({ keyValues: ['outputKw'], aspects: [aspect('running', { variable: 'running', reading: 'true' }, 'startCommand'), aspect('energized', { variable: 'energized', reading: 'true' })] }),
+    // It runs once its start time has passed (10 s where it declares none, as its behaviour), and stops at once.
+    semantics: parameters => fixedSemantics({
+      keyValues: ['outputKw'],
+      aspects: [
+        aspect('running', { variable: 'running', reading: 'true' }, 'startCommand', undefined, { onS: z.object({ startDelayS: z.number().optional() }).passthrough().parse(parameters).startDelayS ?? 10, offS: 0 }),
+        aspect('energized', { variable: 'energized', reading: 'true' }),
+      ],
+    })(parameters),
     variables: [
       variable({ path: 'startCommand', label: 'Diesel start command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'available', label: 'Diesel available', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', quantity: 'boolean', unit: 'boolean' }),
@@ -270,7 +278,7 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       essential: z.boolean().optional(),
       initialConnected: z.boolean().optional(),
     }).strict(),
-    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }, 'connected')] }),
+    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }, 'connected', undefined, { onS: 0, offS: 0 })] }),
     variables: [
       variable({ path: 'connected', label: 'Load feeder breaker close command', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'demandMw', label: 'Load demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
