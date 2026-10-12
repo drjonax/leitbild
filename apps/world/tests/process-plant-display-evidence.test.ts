@@ -65,11 +65,19 @@ const situation = (fault: { readonly actionId: string; readonly parameters?: Rec
   for (let second = 0; second < minutes * 60; second += 1) step()
   const pathOf = (tagId: string) => plant.graph.signalBindingByTagId.get(tagId as never)!.path
   operate?.({ step, write: (tagId, value) => runtime.writeCommand({ type: 'setVariable', path: pathOf(tagId), value }), tag: tagId => runtime.readVariable(pathOf(tagId)) })
-  // The newest samples first, as the historian reads a series window.
+  // The newest samples first, as the historian reads a series window, and the window's oldest after them where asked.
   const recordedHistory: PackRuntimeRecordedHistory = {
-    read: query => (series.get(query.seriesId) ?? [])
-      .filter(sample => sample.simulationTime >= query.from && sample.simulationTime <= query.to).slice().reverse().slice(0, query.limit)
-      .map((sample, sequence) => ({ runtimeId: 'process-plant', sequence: sequence + 1, seriesId: query.seriesId, observedAt: sample.simulationTime as IsoTimestamp, simulationTime: sample.simulationTime as IsoTimestamp, value: sample.value as number, quality: 'good' as const })),
+    read: query => {
+      const inWindow = (series.get(query.seriesId) ?? []).filter(sample => sample.simulationTime >= query.from && sample.simulationTime <= query.to)
+      const newest = inWindow.slice().reverse().slice(0, query.limit)
+      return (query.withOldest === true && inWindow.length > query.limit ? [...newest, inWindow[0]!] : newest)
+        .map((sample, sequence) => ({ runtimeId: 'process-plant', sequence: sequence + 1, seriesId: query.seriesId, observedAt: sample.simulationTime as IsoTimestamp, simulationTime: sample.simulationTime as IsoTimestamp, value: sample.value as number, quality: 'good' as const }))
+    },
+  }
+  // A series the Run's historian holds only the last `keptMs` of (recorded since, or kept no longer).
+  const forget = (path: string, keptMs: number) => {
+    const id = recordingSeriesIdFor(plant.id, path as never)
+    series.set(id, (series.get(id) ?? []).filter(sample => Date.parse(sample.simulationTime) >= now - keptMs))
   }
   const ask = (capabilityId: string, input: unknown) => answerProcessPlantQuery({
     request: { capabilityId, input },
@@ -91,7 +99,7 @@ const situation = (fault: { readonly actionId: string; readonly parameters?: Rec
     const reopened = ask('world.process-plant.display.view', { plantId: plant.id, state: result.view.state }) as { display: CompiledComposedDisplay }
     return { result, evidence: state.evidence ?? [], display: reopened.display }
   }
-  return { system, ask, compose, read: (path: string) => runtime.readVariable(path as never) }
+  return { system, ask, compose, forget, read: (path: string) => runtime.readVariable(path as never) }
 }
 
 const once = <T>(make: () => T): (() => T) => {
@@ -584,6 +592,26 @@ describe('what a display shows of a trip (HMI review of run 26)', () => {
     const trend = level.display.panels[0]!
     if (trend.kind !== 'trend') throw new Error('expected the trend')
     expect(trend.strips[0]!.pens[0]!.tagId).toBe('SG-A-LVL-NR')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('a trended signal says how far back its recorded samples reach within its trend\'s axis', () => {
+    // Run 25 (sg-b-runback): an answer said "35.0 % throughout the last 10 min" of a 3-min record. The display
+    // content says each trended signal's record (recordedMs), so the answer check holds a claimed window to it.
+    const { compose, forget } = situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 4)
+    forget('feedwaterControlValveB.effectivePositionFraction', 90_000)
+    const { result } = compose('SG B level and its feed valve', ['SG-B-LVL-NR'], [
+      { kind: 'trend', horizon: '10m', signals: [signal('SG-B-LVL-NR', 'primary'), signal('MFW-B-CV-POS')] },
+    ])
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    const item = (name: string) => content.items.find(entry => entry.names.includes(name))!
+    // The axis spans the Run's four minutes; the level was recorded all of them, the valve only the last 90 s.
+    expect(content.span?.shownMs).toBe(270_000)
+    expect(item('SG-B-LVL-NR').recordedMs).toBeGreaterThanOrEqual(240_000)
+    expect(item('SG-B-LVL-NR').recordedMs).toBeLessThanOrEqual(content.span!.shownMs)
+    expect(item('MFW-B-CV-POS').recordedMs).toBeGreaterThanOrEqual(89_000)
+    expect(item('MFW-B-CV-POS').recordedMs).toBeLessThanOrEqual(90_000)
+    // Only what its history the view shows says so.
+    expect(content.items.filter(entry => !entry.history).every(entry => entry.recordedMs === undefined)).toBe(true)
   }, PLANT_HANG_GUARD_MS)
 
   test('a valve\'s position reads SHUT or OPEN at the ends of its travel wherever a value is written', () => {

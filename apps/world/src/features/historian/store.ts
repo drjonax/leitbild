@@ -74,13 +74,15 @@ export interface SeriesWindowQuery {
   readonly from: string
   readonly to: string
   readonly limit: number
+  /** After the newest up to the limit, the window's oldest sample where it is not among them: how far back the record reaches, in one more row. */
+  readonly withOldest?: boolean
 }
 
 export interface RunHistorian {
   readonly record: (runtimeId: string, batch: PackRuntimeRecordingBatch) => void
   readonly listSeries: () => ReadonlyArray<RecordingSeriesDescriptor & { readonly runtimeId: string }>
   readonly query: (query: RecordingSeriesQuery) => RecordingPage
-  /** One runtime's series between two simulation times, the newest up to the limit: raw rows only, without the window summary a query computes. */
+  /** One runtime's series between two simulation times, the newest up to the limit (and the oldest, `withOldest`): raw rows only, without the window summary a query computes. */
   readonly seriesWindow: (query: SeriesWindowQuery) => ReadonlyArray<RecordedSample>
   readonly status: () => RunHistorianStatus
   readonly close: () => void
@@ -88,8 +90,8 @@ export interface RunHistorian {
 
 /**
  * One runtime's own series read back by simulation time, newest first up to
- * the limit: what a Pack runtime reads of what it recorded (the
- * PackRuntimeRecordedHistory port).
+ * the limit, and its oldest where asked: what a Pack runtime reads of what it
+ * recorded (the PackRuntimeRecordedHistory port).
  */
 export const recordedHistoryOf = (historian: Pick<RunHistorian, 'seriesWindow'>, runtimeId: string) => ({
   read: (query: Omit<SeriesWindowQuery, 'runtimeId'>): ReadonlyArray<RecordedSample> => historian.seriesWindow({ ...query, runtimeId }),
@@ -456,14 +458,20 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
     // The same rows a raw query by simulation time returns for the series,
     // without its window summary and retained bounds, which cost more than
     // the rows on a long Run.
-    seriesWindow: (query): ReadonlyArray<RecordedSample> => database.query<SampleRow, [string, string, string, string, number]>(`
-      SELECT sequence, runtime_id, series_id, observed_at, simulation_time, elapsed_ms,
-             value_type, value_number, value_text, value_boolean, quality
-      FROM recording_samples
-      WHERE runtime_id = ? AND series_id = ? AND simulation_time >= ? AND simulation_time <= ?
-      ORDER BY sequence DESC
-      LIMIT ?
-    `).all(query.runtimeId, query.seriesId, new Date(query.from).toISOString(), new Date(query.to).toISOString(), query.limit).map(sampleFromRow),
+    seriesWindow: (query): ReadonlyArray<RecordedSample> => {
+      const from = new Date(query.from).toISOString()
+      const to = new Date(query.to).toISOString()
+      const columns = `sequence, runtime_id, series_id, observed_at, simulation_time, elapsed_ms,
+             value_type, value_number, value_text, value_boolean, quality`
+      const window = 'FROM recording_samples WHERE runtime_id = ? AND series_id = ? AND simulation_time >= ? AND simulation_time <= ?'
+      const newest = database.query<SampleRow, [string, string, string, string, number]>(`SELECT ${columns} ${window} ORDER BY sequence DESC LIMIT ?`)
+        .all(query.runtimeId, query.seriesId, from, to, query.limit).map(sampleFromRow)
+      if (query.withOldest !== true || newest.length < query.limit) return newest
+      // The window's first sample, one row by its index: never the window between it and the newest.
+      const oldest = database.query<SampleRow, [string, string, string, string]>(`SELECT ${columns} ${window} ORDER BY sequence ASC LIMIT 1`)
+        .get(query.runtimeId, query.seriesId, from, to)
+      return oldest === null || newest.some(sample => sample.sequence === oldest.sequence) ? newest : [...newest, sampleFromRow(oldest)]
+    },
     status: (): RunHistorianStatus => {
       const first = frozenBounds ? { observed_at: frozenBounds.first } : database.query<{ observed_at: string }, []>('SELECT observed_at FROM recording_samples ORDER BY observed_at LIMIT 1').get()
       const last = frozenBounds ? { observed_at: frozenBounds.last } : database.query<{ observed_at: string }, []>('SELECT observed_at FROM recording_samples ORDER BY observed_at DESC LIMIT 1').get()

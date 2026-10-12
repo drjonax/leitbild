@@ -51,6 +51,22 @@ describe('Run Historian', () => {
     } finally { historian.close() }
   })
 
+  test('a series window reads the newest up to its limit, and with them the window\'s oldest where asked, never the rows between', () => {
+    const historian = createRunHistorian(':memory:')
+    try {
+      const second = (index: number) => at(`2026-01-01T10:00:${String(index).padStart(2, '0')}.000Z`)
+      historian.record('plant.local', { descriptors: [{ id: 'level', subjectId: 'sg', signalId: 'level', title: 'Level', valueType: 'number', unit: '%' }], samples: Array.from({ length: 30 }, (_, index) => ({ seriesId: 'level', value: index, observedAt: second(index), simulationTime: second(index), quality: 'good' as const })) })
+      const window = { runtimeId: 'plant.local', seriesId: 'level', from: second(10), to: second(29) }
+      expect(historian.seriesWindow({ ...window, limit: 3 }).map(sample => sample.value)).toEqual([29, 28, 27])
+      // How far back the record reaches in the window, in one more row: the oldest after the newest.
+      expect(historian.seriesWindow({ ...window, limit: 3, withOldest: true }).map(sample => sample.value)).toEqual([29, 28, 27, 10])
+      // Where the newest hold the oldest, no row twice.
+      expect(historian.seriesWindow({ ...window, limit: 25, withOldest: true }).map(sample => sample.value)).toHaveLength(20)
+      expect(historian.seriesWindow({ ...window, limit: 20, withOldest: true }).at(-1)?.value).toBe(10)
+      expect(historian.seriesWindow({ ...window, from: second(40), to: second(50), limit: 3, withOldest: true })).toEqual([])
+    } finally { historian.close() }
+  })
+
   test('raw wide exports retain row identities but do not numerically combine multiple actual series', () => {
     const historian = createRunHistorian(':memory:')
     try {

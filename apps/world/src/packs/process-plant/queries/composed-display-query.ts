@@ -138,21 +138,27 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     // view reads it: one bounded read per signal it draws over time, kept
     // for the second reading once World's evidence is added.
     const recordedHistory = config.recordedHistory
-    const histories = new Map<string, ReturnType<typeof trendPoints>>()
+    // Each read also says where the window's record begins (withOldest), so how far back a trended signal's record
+    // reaches costs no read of its own.
+    const histories = new Map<string, { readonly points: ReturnType<typeof trendPoints>; readonly oldest: number | null }>()
+    const windowRead = (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => {
+      if (recordedHistory === undefined) throw new Error(`${config.request.capabilityId} requires the history recorded by the answering runtime`)
+      const key = `${seriesId}|${window.from}|${window.to}|${limit}`
+      const known = histories.get(key)
+      if (known !== undefined) return known
+      const samples = recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit, withOldest: true })
+      const first = trendPoints(samples)[0]
+      const read = { points: trendPoints(samples.slice(0, limit)), oldest: first === undefined ? null : first.t }
+      histories.set(key, read)
+      return read
+    }
     const opening = {
       read,
       simulationMs: Date.parse(simulationTime),
       mode: modeNow(system),
       activeRuleIds: new Set((annunciated(system) ?? []).filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.ruleId)),
-      history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => {
-        if (recordedHistory === undefined) throw new Error(`${config.request.capabilityId} requires the history recorded by the answering runtime`)
-        const key = `${seriesId}|${window.from}|${window.to}|${limit}`
-        const known = histories.get(key)
-        if (known !== undefined) return known
-        const points = trendPoints(recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit }))
-        histories.set(key, points)
-        return points
-      },
+      history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => windowRead(seriesId, window, limit).points,
+      oldest: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => windowRead(seriesId, window, limit).oldest,
     }
     const sample = (path: VariablePath) => {
       const snapshot = system.runtime.readVariableSnapshot(path)

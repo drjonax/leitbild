@@ -209,8 +209,10 @@ export interface PackScenarioRuntimeConfig {
 /**
  * The samples this runtime recorded in its Run's historian, read by
  * simulation time: one series and window per read, the newest up to the
- * limit. The host binds it to the runtime, so a Pack reads only what it
- * recorded itself.
+ * limit; with `withOldest`, the window's oldest sample after them where it is
+ * not among them, so a reader learns how far back the record reaches without
+ * reading the window. The host binds it to the runtime, so a Pack reads only
+ * what it recorded itself.
  */
 export interface PackRuntimeRecordedHistory {
   readonly read: (query: {
@@ -218,6 +220,7 @@ export interface PackRuntimeRecordedHistory {
     readonly from: IsoTimestamp
     readonly to: IsoTimestamp
     readonly limit: number
+    readonly withOldest?: boolean
   }) => ReadonlyArray<RecordedSample>
 }
 

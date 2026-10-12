@@ -1615,6 +1615,8 @@ export interface ComposedDisplayNow {
   readonly mode: PlantModeNow
   readonly activeRuleIds: ReadonlySet<string>
   readonly history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => ReadonlyArray<TrendPoint>
+  /** When the window's oldest recorded sample was taken, from the same read as `history` with that window and limit; null where it holds none. */
+  readonly oldest: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => number | null
 }
 
 /** Each signal the view shows once, in display order. */
@@ -1665,6 +1667,12 @@ export interface ReadingRank {
   readonly by: number
 }
 
+/** The two windows a reading over a window reads its history in: its look-back, and before it the rest of the window. */
+const readingWindows = (now: ComposedDisplayNow, windowStart: number, windowMs: number) => {
+  const recentFrom = Math.max(windowStart, now.simulationMs - readingLookBackMs(windowMs))
+  return { recent: { from: recentFrom, to: now.simulationMs }, before: recentFrom <= windowStart ? null : { from: windowStart, to: recentFrom - 1 } }
+}
+
 /**
  * The recorded history a reading over the window needs, as the display's
  * whole window would give it: the samples within its look-back and the
@@ -1672,9 +1680,22 @@ export interface ReadingRank {
  * the trend's horizon and the Run.
  */
 const historyForReading = (now: ComposedDisplayNow, seriesId: string, windowStart: number, windowMs: number): ReadonlyArray<TrendPoint> => {
-  const recentFrom = Math.max(windowStart, now.simulationMs - readingLookBackMs(windowMs))
-  const recent = now.history(seriesId, { from: recentFrom, to: now.simulationMs }, TREND_HISTORY_LIMIT)
-  return recentFrom <= windowStart ? recent : [...now.history(seriesId, { from: windowStart, to: recentFrom - 1 }, 1), ...recent]
+  const { recent, before } = readingWindows(now, windowStart, windowMs)
+  const points = now.history(seriesId, recent, TREND_HISTORY_LIMIT)
+  return before === null ? points : [...now.history(seriesId, before, 1), ...points]
+}
+
+/**
+ * How far back a trended signal's recorded samples reach within its trend's
+ * time axis (`axisMs` back from now), from the reads its reading makes: the
+ * Run's historian may have recorded it for less time than the axis spans
+ * (run 25: "throughout the last 10 min" of a 3-min record). Whole
+ * milliseconds; 0 where the window holds no sample.
+ */
+const recordedReach = (now: ComposedDisplayNow, pen: ComposedDisplayPen, horizonMs: number, axisMs: number): number => {
+  const { recent, before } = readingWindows(now, now.simulationMs - horizonMs, rateWindowMs(horizonMs))
+  const oldest = (before === null ? null : now.oldest(pen.seriesId, before, 1)) ?? now.oldest(pen.seriesId, recent, TREND_HISTORY_LIMIT)
+  return oldest === null ? 0 : Math.round(Math.min(axisMs, Math.max(0, now.simulationMs - oldest)))
 }
 
 /**
@@ -1887,7 +1908,13 @@ export const composedDisplayContent = (
 ): EmbeddedViewContent => {
   const pens = shownPens(display)
   const trended = new Set(display.panels.flatMap(panel => panel.kind === 'trend' ? panel.strips.flatMap(strip => strip.pens.filter(pen => pen.recorded).map(pen => pen.path)) : []))
+  // How far back each trended signal's record reaches within its trend's axis, so an answer claims no more of it.
+  const recordedMs = (pen: ComposedDisplayPen): number | undefined => {
+    const view = penView(display, pen)
+    return view.kind !== 'legend' || !trended.has(pen.path) ? undefined : recordedReach(now, pen, view.horizonMs, trendSpanMs(view.horizonMs, historyMs))
+  }
   const items = pens.flatMap(pen => {
+    const reach = recordedMs(pen)
     const value = now.read(pen.path)
     // A legend row off its span reads the wider instrument too.
     const wider = typeof value === 'number' && readings.some(entry => entry.pen.path === pen.path && entry.legend) ? widerReading(pen, value, now.read) : null
@@ -1896,6 +1923,7 @@ export const composedDisplayContent = (
       values: typeof value === 'number' ? shownQuantity(shownReading(value, pen.resolution), pen.unit, readingDecimals(shownReading(value, pen.resolution), pen.unit, pen.resolution, pen.limits?.instrumentSpan)) : [],
       limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit, writtenDecimals(displayValue(threshold.value, pen.unit)))),
       history: trended.has(pen.path),
+      ...(reach === undefined ? {} : { recordedMs: reach }),
       ...travelContent(readings.find(entry => entry.pen.path === pen.path)),
     }, ...(wider === null ? [] : [{
       names: [wider.name, String(wider.path), `${WIDER_RANGE} ${pen.name}`],
