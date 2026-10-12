@@ -968,6 +968,48 @@ describe('steam generator atmospheric relief valves', () => {
   })
 })
 
+describe('steam generator atmospheric relief valves as displays read them', () => {
+  const loops = ['A', 'B', 'C', 'D']
+
+  test('each publishes its position and its flow to the atmosphere, tagged, declared after the variables published before them', () => {
+    const published = assemblePwrReferencePlantGraph({ loopCount: 4 }).publishedVariables.map(String)
+    for (const loop of loops) {
+      const position = resolveProcessPlantSignalBinding(graph, { tagId: `SG-${loop}-ARV-POS` as never })
+      const flow = resolveProcessPlantSignalBinding(graph, { tagId: `SG-${loop}-ARV-FLOW` as never })
+      expect(String(position.path)).toBe(`steamGeneratorReliefValve${loop}.effectivePositionFraction`)
+      expect(String(flow.path)).toBe(`steam-generator-relief-valve-${loop.toLowerCase()}-to-atmosphere.flowKgPerS`)
+      for (const binding of [position, flow]) expect(binding.published, String(binding.path)).toBe(true)
+      expect(String(flow.equipmentId)).toBe(`steamGeneratorReliefValve${loop}`)
+      // A drawing reads the valve's position from that published feedback, never a value no instrument shows.
+      const valve = graph.componentIndexById.get(`steamGeneratorReliefValve${loop}` as never)!
+      expect(itemBinding(plant, { kind: 'component', component: valve }, 'position', framingRules(plant)).state?.state?.path).toBe(position.path)
+      // Declared at the end, so every variable published before keeps its place.
+      expect(published.indexOf(String(position.path))).toBeGreaterThan(published.indexOf('core.controlBankDStepsWithdrawn'))
+      expect(published.indexOf(String(flow.path))).toBeGreaterThan(published.indexOf('core.controlBankDStepsWithdrawn'))
+    }
+  })
+
+  test('after a turbine trip from full power each reads open, venting what its feedback and flow say, and shut again once the dumps hold pressure', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    let opened = 0
+    let vented = 0
+    for (let second = 0; second < 30; second += 1) {
+      plantRun.run(1_000)
+      opened = Math.max(opened, Number(plantRun.tag('SG-A-ARV-POS')))
+      vented = Math.max(vented, Number(plantRun.tag('SG-A-ARV-FLOW')))
+    }
+    expect(opened).toBeGreaterThan(0.05)
+    expect(vented).toBeGreaterThan(1)
+    plantRun.run(60_000)
+    for (const loop of loops) {
+      expect(Number(plantRun.tag(`SG-${loop}-ARV-POS`)), loop).toBeLessThan(0.02)
+      expect(Number(plantRun.tag(`SG-${loop}-ARV-FLOW`)), loop).toBeLessThan(0.5)
+    }
+  }, PLANT_HANG_GUARD_MS)
+})
+
 describe('signal labels', () => {
   test('no label in the reference model begins with a kebab-case id; link labels name the link by its ends', () => {
     const kebab = /^[a-z0-9]+(-[a-z0-9]+){2,}\b/u

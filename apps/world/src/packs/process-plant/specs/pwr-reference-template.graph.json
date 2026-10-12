@@ -11549,7 +11549,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 0
+          "initialValue": 0,
+          "tagId": "SG-A-ARV-FLOW",
+          "equipmentId": "steamGeneratorReliefValveA",
+          "description": "Steam generator A atmospheric relief valve flow to atmosphere"
         },
         {
           "path": "temperatureC",
@@ -11650,7 +11653,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 0
+          "initialValue": 0,
+          "tagId": "SG-B-ARV-FLOW",
+          "equipmentId": "steamGeneratorReliefValveB",
+          "description": "Steam generator B atmospheric relief valve flow to atmosphere"
         },
         {
           "path": "temperatureC",
@@ -11751,7 +11757,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 0
+          "initialValue": 0,
+          "tagId": "SG-C-ARV-FLOW",
+          "equipmentId": "steamGeneratorReliefValveC",
+          "description": "Steam generator C atmospheric relief valve flow to atmosphere"
         },
         {
           "path": "temperatureC",
@@ -11852,7 +11861,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 0
+          "initialValue": 0,
+          "tagId": "SG-D-ARV-FLOW",
+          "equipmentId": "steamGeneratorReliefValveD",
+          "description": "Steam generator D atmospheric relief valve flow to atmosphere"
         },
         {
           "path": "temperatureC",
@@ -11953,7 +11965,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 0
+          "initialValue": 0,
+          "tagId": "SG-E-ARV-FLOW",
+          "equipmentId": "steamGeneratorReliefValveE",
+          "description": "Steam generator E atmospheric relief valve flow to atmosphere"
         },
         {
           "path": "temperatureC",
@@ -12054,7 +12069,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 0
+          "initialValue": 0,
+          "tagId": "SG-F-ARV-FLOW",
+          "equipmentId": "steamGeneratorReliefValveF",
+          "description": "Steam generator F atmospheric relief valve flow to atmosphere"
         },
         {
           "path": "temperatureC",
@@ -13383,6 +13401,18 @@
     "core.controlBankAStepsWithdrawn",
     "core.controlBankBStepsWithdrawn",
     "core.controlBankCStepsWithdrawn",
-    "core.controlBankDStepsWithdrawn"
+    "core.controlBankDStepsWithdrawn",
+    "steamGeneratorReliefValveA.effectivePositionFraction",
+    "steam-generator-relief-valve-a-to-atmosphere.flowKgPerS",
+    "steamGeneratorReliefValveB.effectivePositionFraction",
+    "steam-generator-relief-valve-b-to-atmosphere.flowKgPerS",
+    "steamGeneratorReliefValveC.effectivePositionFraction",
+    "steam-generator-relief-valve-c-to-atmosphere.flowKgPerS",
+    "steamGeneratorReliefValveD.effectivePositionFraction",
+    "steam-generator-relief-valve-d-to-atmosphere.flowKgPerS",
+    "steamGeneratorReliefValveE.effectivePositionFraction",
+    "steam-generator-relief-valve-e-to-atmosphere.flowKgPerS",
+    "steamGeneratorReliefValveF.effectivePositionFraction",
+    "steam-generator-relief-valve-f-to-atmosphere.flowKgPerS"
   ]
 }

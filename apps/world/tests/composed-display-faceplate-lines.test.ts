@@ -229,8 +229,9 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
     for (const name of ['at power', 'turbine trip +15:00', 'loss of offsite power +2:30'] as const) {
       const outlets = allWords(at(name, 'sink')).filter(text => text.startsWith('Main steam to: '))
       expect(outlets, name).toHaveLength(1)
-      // The dumps, which a controller positions, first; each steam generator's relief valve publishes no flow, so it is named.
-      expect(outlets[0], name).toMatch(/^Main steam to: Turbine bypass [\d.]+ kg\/s · MSSV [\d.]+ kg\/s · ARV A\/B\/C\/D not measured$/)
+      // What a controller positions first, the dumps and each steam generator's relief valve, each with its flow to the
+      // condenser or the atmosphere, then the safety valve.
+      expect(outlets[0], name).toMatch(/^Main steam to: Turbine bypass [\d.]+ kg\/s · ARV A [\d.]+ kg\/s · ARV B [\d.]+ kg\/s · ARV C [\d.]+ kg\/s · ARV D [\d.]+ kg\/s · MSSV [\d.]+ kg\/s$/)
       const lines = at(name, 'sink').columns.flatMap(column => column.lines)
       const dump = lines.findIndex(line => line.kind === 'values' && line.cells.some(cell => cell.pen.tagId === 'TURB-BYP-POS'))
       const dumps = lines[dump]
