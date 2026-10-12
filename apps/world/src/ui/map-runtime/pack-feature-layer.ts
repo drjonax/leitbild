@@ -28,6 +28,14 @@ export const packLineLayers: ReadonlyArray<LineLayerSpecification> = [
   { id: layerIds[4]!, type: 'line', source: sourceId, filter: ['all', ['!=', ['geometry-type'], 'Point'], ['==', ['get', 'dashed'], true]], paint: { 'line-color': ['get','lineColor'], 'line-width': ['get','lineWidth'], 'line-opacity': ['get','lineOpacity'], 'line-dasharray': [...packLineDash] } },
 ]
 
+type LineWidth = NonNullable<NonNullable<LineLayerSpecification['paint']>['line-width']>
+
+/** The width each Pack line layer, solid or dashed, gives its lines once a feature is selected: the selected one's 2 px wider, every other its own. */
+export const packSelectedLineWidths = (selectedId: string): ReadonlyArray<readonly [layerId: string, width: LineWidth]> => {
+  const width: LineWidth = ['case', ['==', ['get','id'], selectedId], ['+', ['get','lineWidth'], 2], ['get','lineWidth']]
+  return packLineLayers.map(layer => [layer.id, width] as const)
+}
+
 /** One native map source for Pack geometry. Evidence remains a Pack record, not a fake operational object. */
 export const createPackFeatureLayer = (onSelect: (selection: NonNullable<PackMapFeature['selection']>) => void, onError: (message: string) => void) => {
   let map: MapLibreMap | null = null
@@ -74,7 +82,7 @@ export const createPackFeatureLayer = (onSelect: (selection: NonNullable<PackMap
     const selected = map.queryRenderedFeatures(event.point, { layers: layerIds.filter(id => map!.getLayer(id)) }).map(feature => byId.get(String(feature.properties.id))).find(feature => feature?.selection)
     if (selected?.selection) {
       selectedId = selected.id
-      map.setPaintProperty(layerIds[1]!, 'line-width', ['case', ['==', ['get','id'], selectedId], ['+', ['get','lineWidth'], 2], ['get','lineWidth']])
+      for (const [layerId, width] of packSelectedLineWidths(selectedId)) map.setPaintProperty(layerId, 'line-width', width)
       map.setPaintProperty(layerIds[2]!, 'circle-stroke-width', ['case', ['==', ['get','id'], selectedId], 4, 1])
       onSelect(selected.selection)
     }

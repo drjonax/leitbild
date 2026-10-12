@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { geoPointFromLonLat } from '../src/core/model/index.ts'
 import type { PackMapFeature } from '../src/core/packs/protocol.ts'
-import { packFeatureCollection, packLineDash, packLineLayers } from '../src/ui/map-runtime/pack-feature-layer.ts'
+import { packFeatureCollection, packLineDash, packLineLayers, packSelectedLineWidths } from '../src/ui/map-runtime/pack-feature-layer.ts'
 
 const line = (id: string, lineDashed?: boolean): PackMapFeature => ({
   id,
@@ -23,5 +23,11 @@ describe('Pack feature lines', () => {
     expect(dashed!.filter).toEqual(['all', ['!=', ['geometry-type'], 'Point'], ['==', ['get', 'dashed'], true]])
     expect(dashed!.paint?.['line-dasharray']).toEqual([...packLineDash])
     expect(packLineLayers.map(layer => layer.id)).toEqual(['leitbild-pack-lines', 'leitbild-pack-dashed-lines'])
+  })
+
+  test('a selected line widens alike whether it is drawn solid or dashed', () => {
+    const width = ['case', ['==', ['get', 'id'], 'planned'], ['+', ['get', 'lineWidth'], 2], ['get', 'lineWidth']]
+    const widths: unknown = packSelectedLineWidths('planned')
+    expect(widths).toEqual([['leitbild-pack-lines', width], ['leitbild-pack-dashed-lines', width]])
   })
 })
