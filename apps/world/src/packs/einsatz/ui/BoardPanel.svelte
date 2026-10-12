@@ -158,7 +158,13 @@
     }
   })
 
-  // The screen's inputs reach the controller as events, each on every change of its prop.
+  // The screen's inputs reach the controller as events, each on every change of its prop; what it sees before its objects.
+  $effect(() => {
+    const roleIds = props.seenRoleIds
+    const current = session
+    if (current === null) return
+    untrack(() => current.dispatch({ kind: 'seen', roleIds }))
+  })
   $effect(() => {
     const objects = props.objects
     const current = session

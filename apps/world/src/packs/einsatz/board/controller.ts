@@ -1,7 +1,7 @@
 import { audienceVisibleTo, type GeoJsonPoint, type IsoTimestamp, type ObjectId } from '../../../core/model/index.ts'
 import type { EinsatzConfig } from '../config-schema.ts'
 import { wordFor } from '../lexicon.ts'
-import type { PictureViewer } from '../picture.ts'
+import { groupUnseen, type PictureViewer } from '../picture.ts'
 import { recommendationSchema } from '../recommendation-schema.ts'
 import { boardCommandIds, callKey, chainVerbCall, closeCall, closeDropText, createdSteps, holdCall, recallCall, releaseText, sendToTask, stepRemoveCall, undoMarks, type CallDraft, type CreatedStep, type UndoMark } from './calls.ts'
 import { intentOf, type BoardIntent } from './keymap.ts'
@@ -175,7 +175,10 @@ export const createBoardController = (options: {
     if (entriesOf?.records !== records) entriesOf = { records, entries: workEntries(rules, records) }
     return entriesOf.entries
   }
-  const units = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardUnits(rules, records)
+  /** The roles the screen shows, by its See boxes; null in open mode. */
+  let seen: ReadonlyArray<string> | null = null
+  /** Assets: the units the screen commands that can move, but those of groups it chose not to see. */
+  const units = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardUnits(rules, records).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
 
   const info = (text: string): void => { feedback = { text, tone: 'info' } }
   const guardActive = (): boolean => wallMs < guardUntilMs
@@ -759,16 +762,20 @@ export const createBoardController = (options: {
     }
     for (const [callId, call] of unseen) if (visible(call)) unseen.delete(callId)
     resolveUndo()
-    if (selection !== null && (selection.kind === 'task' ? selectedTask() : selectedUnit()) === undefined) {
-      const cancelled = confirmation !== null ? 'confirmation cancelled' : armedMove !== null || pendingMove !== null ? 'move cancelled' : adding !== null ? 'cancelled' : null
-      if (cancelled !== null) info(`${droppedText(selection, previous)} · ${cancelled}`)
-      confirmation = null
-      armedMove = null
-      pendingMove = null
-      adding = null
-      select(null, true)
-    }
+    dropStale(previous)
     tryAdvance()
+  }
+
+  /** A selected row the records or the See boxes no longer show lets go, cancelling what waited on it. */
+  const dropStale = (previous: BoardRecords | null): void => {
+    if (selection === null || (selection.kind === 'task' ? selectedTask() : selectedUnit()) !== undefined) return
+    const cancelled = confirmation !== null ? 'confirmation cancelled' : armedMove !== null || pendingMove !== null ? 'move cancelled' : adding !== null ? 'cancelled' : null
+    if (cancelled !== null) info(`${droppedText(selection, previous)} · ${cancelled}`)
+    confirmation = null
+    armedMove = null
+    pendingMove = null
+    adding = null
+    select(null, true)
   }
 
   const result = (callId: string, outcome: CallResult): void => {
@@ -833,6 +840,9 @@ export const createBoardController = (options: {
       case 'tick':
         if (undo !== null && wallMs >= undo.untilMs) undo = null
         return
+      case 'seen':
+        seen = event.roleIds
+        return dropStale(records)
     }
   }
 

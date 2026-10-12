@@ -1,6 +1,6 @@
 import type { RoleClass, RoleSees } from '../../core/model/index.ts'
 import type { Authority, TaskTemplate, UnitType } from './config-schema.ts'
-import { groupOfRoleId } from './ids.ts'
+import { groupOfRoleId, groupRoleId } from './ids.ts'
 
 /**
  * Who sees, commands and queues which Einsatz record (§3.1), as pure rules
@@ -100,6 +100,16 @@ const inPictureOf = (types: PictureTypes, sees: RoleSees, record: PictureUnit | 
 /** Whether a viewer's picture holds a record: the union of its roles' pictures. */
 export const inPicture = (types: PictureTypes, viewer: PictureViewer, record: PictureUnit | PictureTask): boolean =>
   inPictureOf(types, viewer.sees, record)
+
+/**
+ * The See display filter: whether the screen chose not to see the role of
+ * a unit's group (the role dialog's See boxes, given as the roles it shows;
+ * absent in open mode). Such a unit is drawn nowhere on that screen, on the
+ * map or in the Board, even where another held role commands it. It is
+ * this tab's choice only; what a side sees stays the Run's.
+ */
+export const groupUnseen = (group: string | undefined, seenRoleIds: ReadonlyArray<string> | undefined): boolean =>
+  group !== undefined && seenRoleIds !== undefined && !seenRoleIds.includes(groupRoleId(group))
 
 /** Whether a selector picks a unit type, by id, by tag or all. */
 export const selectsType = (selector: Authority['units'], unitTypeId: string, tags: ReadonlyArray<string>): boolean => {

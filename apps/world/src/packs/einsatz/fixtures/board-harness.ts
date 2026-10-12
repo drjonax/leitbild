@@ -87,6 +87,8 @@ export interface Screen {
   readonly wait: (ms: number) => Promise<void>
   /** While frozen, the screen receives no snapshots: what it shows is what it showed before. */
   readonly freeze: (frozen: boolean) => void
+  /** The role dialog's See boxes changed: the roles the screen shows, as the panel's `seenRoleIds` prop gives them. */
+  readonly see: (roleIds: ReadonlyArray<string> | null) => Promise<void>
 }
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
@@ -248,6 +250,10 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
       await dispatch({ kind: 'tick' })
     },
     freeze: value => { frozen = value },
+    see: async roleIds => {
+      await dispatch({ kind: 'seen', roleIds })
+      await sync()
+    },
   }
 }
 

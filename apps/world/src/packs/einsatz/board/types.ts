@@ -40,6 +40,9 @@ import type { EinsatzCommandId } from '../capabilities.ts'
  *   accelerators; a tap acts whether or not keys reach the World.
  * - `onMapPrompt`: the view's `mapPrompt` whenever it changes, null when it
  *   goes; a tap on the prompt dispatches the `move-here` click.
+ * - `seenRoleIds`: `seen` on every change of the prop, before the first
+ *   snapshot: Assets leaves out the units of groups the screen chose not to
+ *   see, as the map does (`groupUnseen`, picture.ts).
  *
  * The Pack's `targeting.isController(object, context)` is `ordersOnMap`
  * (picture.ts) for the screen's viewer: an Einsatz unit record it commands
@@ -129,6 +132,8 @@ export type BoardEventBody =
   | { readonly kind: 'focus'; readonly active: boolean }
   /** Wall time passed: guards expire and fresh rows stop flashing. */
   | { readonly kind: 'tick' }
+  /** The roles the screen shows (the role dialog's See boxes, `seenRoleIds`); null in open mode. */
+  | { readonly kind: 'seen'; readonly roleIds: ReadonlyArray<string> | null }
 
 export type BoardEvent = BoardEventBody & { readonly wallMs: number }
 
