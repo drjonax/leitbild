@@ -47,6 +47,9 @@ export const gridAlarmShelveDurations: ReadonlyArray<{ readonly seconds: number;
 /** world.electric-grid.alarm.lifecycle changes at most this many alarms per command. */
 export const gridAlarmLifecycleBatchLimit = 100
 
+/** A count with its noun in the matching number: "1 active alarm", "9 active alarms". */
+export const gridCount = (count: number, one: string, other: string): string => `${count} ${count === 1 ? one : other}`
+
 const priorityLabels = { 1: 'P1', 2: 'P2', 3: 'P3' } as const
 const tones = { 1: 'critical', 2: 'warning', 3: 'notice' } as const
 

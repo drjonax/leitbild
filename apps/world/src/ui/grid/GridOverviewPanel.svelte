@@ -5,7 +5,7 @@
   import { parseElectricGridObjectData } from '../../packs/electric-grid/model.ts'
   import type { GridIslandsResult } from '../../packs/electric-grid/queries/islands.ts'
   import { gridAssetItemId, parseGridAssetItemId } from '../../packs/electric-grid/ui/grid-live-layer.ts'
-  import { gridLocalTimeZone } from '../../packs/electric-grid/ui/operator-alarms.ts'
+  import { gridCount, gridLocalTimeZone } from '../../packs/electric-grid/ui/operator-alarms.ts'
   import { querySimulationRunCapability } from '../simulation-run-client.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import GridAlarmList from './GridAlarmList.svelte'
@@ -438,12 +438,12 @@
           {#if system.activeAlarmCount === 0}
             <p class="empty-state">No active alarms.</p>
           {:else}
-            <p class="alarm-status">{system.activeAlarmCount} active · {system.statusLabel} <button type="button" class="link-button" onclick={() => { view = 'alarms' }}>Open alarm list</button></p>
+            <p class="alarm-status">{gridCount(system.activeAlarmCount, 'active alarm', 'active alarms')} <button type="button" class="link-button" onclick={() => { view = 'alarms' }}>Open alarm list</button></p>
             <ul>
-              {#if summary && summary.constrainedBranchCount > 0}<li>{summary.constrainedBranchCount} corridors at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading</li>{/if}
-              {#if summary && summary.affectedLoadCount > 0}<li>{summary.affectedLoadCount} loads with unserved demand</li>{/if}
-              {#if deenergizedIslandCount > 0}<li>{deenergizedIslandCount} de-energised islands with demand</li>{/if}
-              {#if frequencyAlarmIslandCount > 0}<li>{frequencyAlarmIslandCount} energised islands with active alarms</li>{/if}
+              {#if summary && summary.constrainedBranchCount > 0}<li>{gridCount(summary.constrainedBranchCount, 'corridor', 'corridors')} at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading</li>{/if}
+              {#if summary && summary.affectedLoadCount > 0}<li>{gridCount(summary.affectedLoadCount, 'load', 'loads')} with unserved demand</li>{/if}
+              {#if deenergizedIslandCount > 0}<li>{gridCount(deenergizedIslandCount, 'de-energised island', 'de-energised islands')} with demand</li>{/if}
+              {#if frequencyAlarmIslandCount > 0}<li>{gridCount(frequencyAlarmIslandCount, 'energised island', 'energised islands')} with active alarms</li>{/if}
             </ul>
           {/if}
         </div>
@@ -501,7 +501,7 @@
                 !island.energized || island.unservedLoadMw > 0,
               )}
             {/each}
-            {#if islands.total > islands.islands.length}<p class="empty-state">{islands.total - islands.islands.length} smaller islands not shown.</p>{/if}
+            {#if islands.total > islands.islands.length}<p class="empty-state">{gridCount(islands.total - islands.islands.length, 'smaller island', 'smaller islands')} not shown.</p>{/if}
           </div>
         {/if}
       </div>

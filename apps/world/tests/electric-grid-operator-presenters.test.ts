@@ -13,6 +13,7 @@ import {
   gridAlarmIdsToAcknowledge,
   gridAlarmLifecycleBatchLimit,
   gridAlarmRows,
+  gridCount,
   gridLocalTimeZone,
 } from '../src/packs/electric-grid/ui/operator-alarms.ts'
 import { gridHvdcSetpointGuidance, gridShedLoadPlan, type GridShedLoadContext } from '../src/packs/electric-grid/ui/operator-commands.ts'
@@ -77,6 +78,12 @@ describe('Grid operator alarms presenter', () => {
     }))
     expect(gridAlarmIdsToAcknowledge(many)).toHaveLength(gridAlarmLifecycleBatchLimit)
     expect(() => formatGridAlarmTime('not a time', gridLocalTimeZone)).toThrow('not an ISO timestamp')
+  })
+
+  test('counts read in the matching number', () => {
+    expect(gridCount(1, 'energised island', 'energised islands')).toBe('1 energised island')
+    expect(gridCount(9, 'active alarm', 'active alarms')).toBe('9 active alarms')
+    expect(gridCount(0, 'load', 'loads')).toBe('0 loads')
   })
 
   test('island alarms are named after and located at the island\'s anchor bus, as islands.list names it', async () => {
