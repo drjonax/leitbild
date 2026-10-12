@@ -43,6 +43,9 @@ describe('Leitbild Assistant skills', () => {
     expect(assistance.body).toContain('one marked "reversing" is turning')
     // C2b R1: an actuation reset is proposed where a procedure calls for one, only where World offers it.
     expect(assistance.body).toContain("propose it (`reset`: its rule id from the listing's `resets`) only where offered; otherwise say why not, quoting its `reason`")
+    // A live procedure is worked step by step (procedure-runner); a question about a step reads that step, not the whole document.
+    expect(assistance.body).toContain('as procedure-runner says: `world.procedure.run.step.read` reads the step, without `runs.list` or the whole document')
+    expect(assistance.body).toContain('read `world.procedure.document.read` with its `stepId`')
   })
 
   test('the procedure runner stays within its prompt budget and keeps the person in command', async () => {
