@@ -113,8 +113,10 @@ describe('halden-border plays', () => {
     expect(publicItems(human)).toEqual(publicItems(definition))
     const withoutPosition = (items: ReadonlyArray<unknown>) => items.map(item => ({ ...(item as Record<string, unknown>), position: undefined }))
     expect(withoutPosition(sideItems(human, red).filter(item => (item as { readonly type: string }).type === 'unit'))).toEqual(withoutPosition(sideItems(definition, red)))
-    const { id: _humanId, title: _humanTitle, description: _humanDescription, objectives: _humanObjectives, timeline: _humanTimeline, rolePresets: _humanPresets, packs: humanPacks, ...humanRest } = human
-    const { id: _id, title: _title, description: _description, objectives: _objectives, timeline: _timeline, rolePresets: _presets, packs, ...scriptedRest } = definition
+    // Each opens on its own Starting View: the scripted one a little wider, so Red's reserve further back is in view too (`ui/board-camera.test.ts`).
+    const { id: _humanId, title: _humanTitle, description: _humanDescription, objectives: _humanObjectives, timeline: _humanTimeline, rolePresets: _humanPresets, view: humanView, packs: humanPacks, ...humanRest } = human
+    const { id: _id, title: _title, description: _description, objectives: _objectives, timeline: _timeline, rolePresets: _presets, view: scriptedView, packs, ...scriptedRest } = definition
+    expect(humanView?.map?.center).toEqual(scriptedView?.map?.center)
     // The configuration is the same but for the scripted exercise's word that Red's groups are scripted.
     const unscripted = (config: unknown) => {
       const parsed = config as { readonly groups: ReadonlyArray<{ readonly label: string }> }
