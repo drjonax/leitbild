@@ -21,7 +21,7 @@
   import RunRoomControls from './RunRoomControls.svelte'
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
-  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
+  import { roomScopeIncludingRun, roomSelectsRun, roomServesRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
 
   type Page = { readonly kind: 'list' } | { readonly kind: 'workspace'; readonly id: string }
   interface InvocationResponse {
@@ -102,7 +102,7 @@
       agentsVisible = false
     }
     if (run && room) {
-      if (!roomSelectsRun(room, run)) {
+      if (!roomServesRun(room, run)) {
         selectedAgentsRoomId = null
         agentsVisible = false
       }
@@ -314,7 +314,7 @@
   const switchWorldRun = (runId: string, replace = false): void => {
     selectedWorldRunId = runId
     const nextRun = resources.find(candidate => candidate.ref.type === 'world.simulation-run' && candidate.ref.id === runId)
-    if (selectedAgentsResource && nextRun && !roomSelectsRun(selectedAgentsResource, nextRun)) {
+    if (selectedAgentsResource && nextRun && !roomServesRun(selectedAgentsResource, nextRun)) {
       selectedAgentsRoomId = null
       agentsVisible = false
     }
@@ -336,6 +336,9 @@
     if (listed() === undefined && workspace) await refreshResources(workspace.id)
     const found = listed()
     if (found === undefined) return 'The display\'s Run is not in this Workspace'
+    if (selectedAgentsResource && runDeclaresRoles(found)) {
+      return 'The display\'s Run has roles, so it offers no Assistant beside it; open the Run to see the display'
+    }
     if (selectedAgentsResource && !roomSelectsRun(selectedAgentsResource, found)) {
       return 'The display\'s Run is outside this room\'s scope; open the Run to see the display'
     }
@@ -525,7 +528,7 @@
           refreshResources={() => refreshResources(workspace!.id)}
           reportError={message => { error = message }}
         />
-        {#if agentsVisible && selectedRunFamily}
+        {#if agentsVisible && selectedRunFamily && !runDeclaresRoles(selectedWorldResource)}
           {@const familyResource = resources.find(resource => resource.ref.type === 'world.run-family' && resource.ref.id === selectedRunFamily.id)}
           {#if familyResource}
             <RunRoomControls

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { moduleResourceDescriptorSchema, newWorkspaceId, workspaceResourceReferenceSchema } from '@leitbild/contracts'
-import { roomScopeIncludingRun, roomScopeKind, roomSelectsRun, runDeclaresRoles, sameResource } from '../src/ui/run-room-scope.ts'
+import { roomScopeIncludingRun, roomScopeKind, roomSelectsRun, roomServesRun, runDeclaresRoles, sameResource } from '../src/ui/run-room-scope.ts'
 
 const workspaceId = newWorkspaceId()
 const observedAt = new Date().toISOString()
@@ -95,5 +95,19 @@ describe('Run Assistant', () => {
     expect(runDeclaresRoles(run)).toBe(false)
     const viewers = moduleResourceDescriptorSchema.parse({ ...run, summary: [{ key: 'viewer-count', label: 'Viewers', kind: 'count', value: 2 }] })
     expect(runDeclaresRoles(viewers)).toBe(false)
+  })
+
+  test('no Room stays beside a role Run, not even a Workspace-scoped Room that selects every Run', () => {
+    const roleRun = moduleResourceDescriptorSchema.parse({ ...run, summary: [{ key: 'roles', label: 'Roles', kind: 'count', value: 5 }] })
+    // The Workspace Assistant, or ?agents=<room> in the URL, names a Room whose scope is the Workspace.
+    const workspaceRoom = room([agentLink])
+    expect(roomScopeKind(workspaceRoom)).toBe('workspace')
+    expect(roomSelectsRun(workspaceRoom, roleRun)).toBe(true)
+    expect(roomServesRun(workspaceRoom, roleRun)).toBe(false)
+    expect(roomServesRun(room([{ rel: 'scope-resource', ref: runRef }, agentLink]), roleRun)).toBe(false)
+    expect(roomServesRun(room([{ rel: 'scope-collection', ref: familyRef }]), roleRun)).toBe(false)
+    // A Run without roles keeps the Rooms whose scope contains it, and only those.
+    expect(roomServesRun(workspaceRoom, run)).toBe(true)
+    expect(roomServesRun(room([{ rel: 'scope-collection', ref: familyRef }, { rel: 'scope-excluded', ref: runRef }]), run)).toBe(false)
   })
 })

@@ -52,6 +52,15 @@ export const roomSelectsRun = (room: ModuleResourceDescriptor, run: ModuleResour
   return !room.links.some(link => link.rel === 'scope-excluded' && sameResource(link.ref, run.ref))
 }
 
+/**
+ * Whether a Room may stay open beside this Run: the Run must offer a Run
+ * Assistant, having no roles, and the Room's scope must contain it. A
+ * Workspace-scoped Room selects every Run of its Workspace, a role Run too,
+ * so the Host keeps a Room beside a Run only when this holds.
+ */
+export const roomServesRun = (room: ModuleResourceDescriptor, run: ModuleResourceDescriptor): boolean =>
+  !runDeclaresRoles(run) && roomSelectsRun(room, run)
+
 export const roomScopeIncludingRun = (
   room: ModuleResourceDescriptor,
   family: WorkspaceResourceReference,
