@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
@@ -168,20 +169,21 @@
   const popoverItem = $derived(popover.kind === 'open' ? mimic.items.find(item => item.id === popover.item) : undefined)
   // Esc closes it first (not the window's Back) and returns focus to its dot; a press outside it and the dots closes it.
   let moved = $state(0)
-  $effect(() => {
-    if (popover.kind !== 'open') return
+  // Registered once; each listener acts only while a popover is open.
+  runOnMount(() => {
     const key = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (popover.kind !== 'open' || event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
       closePopover(true)
     }
     const down = (event: PointerEvent): void => {
+      if (popover.kind !== 'open') return
       const target = event.target as Node | null
       if (target === null || document.getElementById(popoverId)?.contains(target) || [...dotButtons.values()].some(dot => dot.contains(target))) return
       closePopover(false)
     }
-    const shift = (): void => { moved += 1 }
+    const shift = (): void => { if (popover.kind === 'open') moved += 1 }
     window.addEventListener('keydown', key, { capture: true })
     document.addEventListener('pointerdown', down, { capture: true })
     window.addEventListener('scroll', shift, { capture: true })
