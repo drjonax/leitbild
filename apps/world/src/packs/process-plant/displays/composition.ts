@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { idSchema, isoTimestampSchema } from '../../../core/model/index.ts'
+import { variablePathSchema } from '../graph/index.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 
 // An AI-composed display states WHAT the operator should see and WHY. The
@@ -177,6 +178,12 @@ export const composedDisplayStateSchema = z.object({
   drawings: z.array(z.string().min(1).max(160)).max(COMPOSED_DISPLAY_MAX_PANELS).optional(),
   /** What World added to the agent's panels as it composed (evidence.ts), so a later view shows what the answer saw. */
   evidence: z.array(displayEvidenceSchema).min(1).max(COMPOSED_EVIDENCE_MAX).optional(),
+  /**
+   * The signal the display led with as it was composed, which the answer
+   * names (its view content's lead): every later view draws it first
+   * (compose.ts leadFirst). Absent where nothing nears a limit.
+   */
+  lead: variablePathSchema.optional(),
 }).strict().superRefine((state, ctx) => {
   const mimics = state.composition.panels.filter(panel => panel.kind === 'mimic').length
   if ((state.drawings?.length ?? 0) !== mimics) ctx.addIssue({ code: 'custom', path: ['drawings'], message: `a display with ${mimics} mimic panels stores ${mimics} drawing hashes` })

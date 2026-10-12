@@ -18,6 +18,8 @@ import {
 } from '../displays/composition.ts'
 import {
   compileComposedDisplay,
+  composedDisplayLead,
+  leadFirst,
   compileDetailDisplay,
   detailLeadKey,
   overviewLeadKey,
@@ -155,7 +157,9 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     // What the Plant's model says bears on the question besides what the agent chose, read as the agent's panels open.
     const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample, recordedSeriesIds), recordedSeriesIds)
     if (!completed.ok) throw new Error(`evidence World adds must resolve: ${completed.issues.map(issue => issue.message).join('; ')}`)
-    const display = completed.display
+    // Drawn with what it leads with first, as every later view of it is (leadFirst).
+    const lead = composedDisplayLead(readComposedDisplay(completed.display, opening))
+    const display = leadFirst(completed.display, lead)
     const mimics = display.panels.flatMap(panel => panel.kind === 'mimic' ? [panel.mimic] : [])
     const state = composedDisplayStateSchema.parse({
       composition: composedDisplayCompositionSchema.parse(config.request.input),
@@ -163,6 +167,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       modelDigest: display.modelDigest,
       ...(mimics.length === 0 ? {} : { drawings: mimics.map(mimic => mimic.hash) }),
       ...(completed.evidence.length === 0 ? {} : { evidence: completed.evidence }),
+      ...(lead === undefined ? {} : { lead }),
     })
     const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => ({ path, ...sample(path) })))
     const opened = readComposedDisplay(display, opening)
@@ -296,7 +301,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     const compiled = compiledOrRejected(system, state.composition, 'view', recordedSeriesIds)
     const completed = withEvidence(system, compiled, state.evidence ?? [], recordedSeriesIds)
     if (!completed.ok) return rejectCapabilityInput(formatComposedViewIssues(completed.issues))
-    const display = completed.display
+    const display = leadFirst(completed.display, state.lead)
     return {
       kind: 'advice',
       plantId: display.plantId,

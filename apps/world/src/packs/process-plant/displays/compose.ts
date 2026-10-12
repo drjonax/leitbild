@@ -1525,6 +1525,29 @@ export interface ComposedDisplayReading {
   readonly readings: ReadonlyArray<PenReading>
 }
 
+/** The signal a display leads with as read: the first ranked reading (readComposedDisplay); none where nothing ranks. */
+export const composedDisplayLead = ({ readings }: ComposedDisplayReading): VariablePath | undefined =>
+  readings[0]?.rank === null ? undefined : readings[0]?.pen.path
+
+/**
+ * A display drawn with its lead first within the panel that holds it, so the
+ * strip an answer names as the lead is the top one of its trend (HMI review
+ * of run 25: answers led with the subcooling margin while the pressurizer
+ * pressure strip, the agent's primary, was on top): the strip holding it goes
+ * to the top of its trend, its row to the top of its readouts or comparison;
+ * the rest keep their order, and the panels keep the agent's.
+ */
+export const leadFirst = (display: CompiledComposedDisplay, lead: VariablePath | undefined): CompiledComposedDisplay => {
+  if (lead === undefined) return display
+  const first = <T>(items: ReadonlyArray<T>, isLead: (item: T) => boolean): ReadonlyArray<T> => [...items.filter(isLead), ...items.filter(item => !isLead(item))]
+  return {
+    ...display,
+    panels: display.panels.map(panel => panel.kind === 'trend' ? { ...panel, strips: first(panel.strips, strip => strip.pens.some(pen => pen.path === lead)) }
+      : panel.kind === 'readouts' || panel.kind === 'comparison' ? { ...panel, pens: first(panel.pens, pen => pen.path === lead) }
+        : panel),
+  }
+}
+
 /** Reads a display once as it opens; its margins and view content are stated from this. */
 export const readComposedDisplay = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ComposedDisplayReading => {
   const readings = penReadings(display, now)
@@ -1611,7 +1634,7 @@ export const composedDisplayContent = (
     ? [{ names: [panel.scope === 'plant' ? 'Active alarms and trips of the Plant' : 'Active alarms and trips of the displayed signals and equipment'], values: [], limits: [], history: false }]
     : [])
   const trend = display.panels.find(panel => panel.kind === 'trend')
-  const lead = readings[0]?.rank === null ? undefined : readings[0]
+  const lead = readings.find(entry => entry.pen.path === composedDisplayLead({ now, readings }))
   return {
     items: [...items, ...equipment, ...alarms],
     span: trend === undefined ? null : { shownMs: trendSpanMs(trend.horizonMs, historyMs), horizonMs: trend.horizonMs },

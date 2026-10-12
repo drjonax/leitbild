@@ -573,7 +573,7 @@ describe('composed display panels', () => {
     return { composed, view }
   }
 
-  test('stack one strip per measurement, primary on top, with unrecorded signals as live rows', () => {
+  test('stack one strip per measurement, the lead on top, then the primary, with unrecorded signals as live rows', () => {
     const { composed, view } = composeView([
       { kind: 'trend', horizon: '10m', signals: [
         { ref: 'PT-455', role: 'counter-evidence' },
@@ -586,9 +586,11 @@ describe('composed display panels', () => {
       strips: ReadonlyArray<{ unit: string; pens: ReadonlyArray<{ ref: string; name: string }> }>
       live: ReadonlyArray<{ ref: string; name: string }>
     }
+    // The display leads with the pressurizer pressure, nearest its limit (0.5 MPa below HI 16 MPa at power), so its
+    // strip is drawn on top, where the answer that must name it finds it (HMI review of run 25); the primary follows.
     expect(trend.strips.map(strip => [strip.unit, strip.pens.map(pen => pen.ref)])).toEqual([
-      ['percent', ['SG-B-LVL-NR', 'SG-A-LVL-NR']],
       ['MPa', ['PT-455']],
+      ['percent', ['SG-B-LVL-NR', 'SG-A-LVL-NR']],
     ])
     // The whole flow through SG B's feed inlet, which its main and auxiliary feed lines share: named as the total.
     expect(trend.live.map(pen => pen.name)).toEqual(['Total feedwater inflow · Steam Generator B'])
@@ -603,7 +605,8 @@ describe('composed display panels', () => {
       { kind: 'trend', horizon: '2m', signals: ['CET-AVG', 'SUB-MARGIN', 'PT-455', 'SG-A-PRESS'].map((ref, index) => ({ ref, role: index === 0 ? 'primary' : 'context' })) },
     ])
     const trend = view.display.panels[0] as { strips: ReadonlyArray<{ pens: ReadonlyArray<{ ref: string }> }> }
-    expect(trend.strips.map(strip => strip.pens.map(pen => pen.ref))).toEqual([['CET-AVG'], ['SUB-MARGIN'], ['PT-455'], ['SG-A-PRESS']])
+    // The pressurizer pressure, the display's lead, is drawn on top; the others keep their order.
+    expect(trend.strips.map(strip => strip.pens.map(pen => pen.ref))).toEqual([['PT-455'], ['CET-AVG'], ['SUB-MARGIN'], ['SG-A-PRESS']])
   })
 
   test('name every fix in one rejection, with ways to fit the chat view', () => {
@@ -712,7 +715,8 @@ describe('composed display panels', () => {
   test('show on/off states as readouts but never as trends', () => {
     const { view } = composeView([{ kind: 'readouts', signals: [{ ref: 'RCP-A-RUN', role: 'primary' }, { ref: 'PT-455', role: 'context' }] }])
     const panel = view.display.panels[0] as { pens: Array<{ valueKind: string }> }
-    expect(panel.pens.map(pen => pen.valueKind)).toEqual(['boolean', 'number'])
+    // The pressure, the display's lead, reads first.
+    expect(panel.pens.map(pen => pen.valueKind)).toEqual(['number', 'boolean'])
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display([
       { kind: 'trend', horizon: '2m', signals: [{ ref: 'RCP-A-RUN', role: 'primary' }] },
     ])))).toContain('use a readouts panel for states')

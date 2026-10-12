@@ -175,6 +175,24 @@ describe('what World adds to a composed display', () => {
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
   }, PLANT_HANG_GUARD_MS)
 
+  test('a display draws what it leads with first: the answer\'s lead is the top strip, in every later view', () => {
+    // HMI review of run 25 (porv-open): the answer led with the subcooling margin, the display's lead, while the
+    // pressurizer pressure strip, the agent's primary, was on top.
+    const { compose } = relief()
+    const { result, display } = compose('Unit 2 pressurizer pressure and relief', ['PT-455'], [
+      { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('SUB-MARGIN')] },
+      { kind: 'alarms', scope: 'related' },
+    ])
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    expect(content.lead === null ? null : content.items[content.lead.item]!.names[0]).toBe('SUB-MARGIN')
+    // The view stores it, and the view opened again from the stored state draws its strip on top; the agent's
+    // primary follows in its own order.
+    expect(composedDisplayStateSchema.parse(JSON.parse(result.view.state)).lead).toBe('vessel.subcoolingMarginC' as never)
+    const trend = display.panels[0]!
+    if (trend.kind !== 'trend') throw new Error('expected the trend on top')
+    expect(trend.strips.map(strip => strip.pens.map(pen => pen.tagId ?? String(pen.path)))).toEqual([['SUB-MARGIN'], ['PT-455'], ['PORV-456A-POS']])
+  }, PLANT_HANG_GUARD_MS)
+
   test('PORV open after the trip, as run 22 composed it: the subcooling margin a critical safety function judges keeps the last row, before the relief tank only alarms judge', () => {
     // Run 22's composition three minutes in: its readouts leave the added rows room for four. The relief tank's
     // level and pressure head for their alarms sooner than the subcooling margin, and the safety injection signal
