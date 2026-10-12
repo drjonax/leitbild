@@ -1139,7 +1139,6 @@ const fitGenerated = (
   view: OverviewView | null,
   panels: ReadonlyArray<GeneratedPanels>,
   drawings: ReadonlyArray<GeneratedDrawing>,
-  options: { readonly scroll: boolean } = { scroll: true },
 ): { readonly ok: true; readonly arrangement: OverviewArrangement; readonly panels: GeneratedPanels; readonly mimic: CompiledMimic } | { readonly ok: false; readonly issues: ReadonlyArray<string> } => {
   const widest = panels[0]!
   const whole = view === null ? [] : [
@@ -1158,7 +1157,7 @@ const fitGenerated = (
   // A window shorter than its frame still scrolls from the least room a drawing can have.
   const shortest = view === null ? 0 : Math.max(SCROLL_STEP, view.height - composedDisplayLayout.overviewFrame - composedDisplayLayout.mimicLegend)
   const heights = Array.from({ length: Math.floor(shortest / SCROLL_STEP) }, (_, step) => shortest + (step + 1) * SCROLL_STEP)
-  const scrolling = (view === null || !options.scroll ? [] : [
+  const scrolling = (view === null ? [] : [
     { arrangement: 'column' as const, maxWidth: overviewDrawingRoom({ width: view.width, height: UNCONSTRAINED }, 'column', widest)!.maxWidth },
     { arrangement: 'stacked' as const, maxWidth: view.width - 2 * composedDisplayLayout.overviewPadding },
   ]).filter(rung => rung.maxWidth > 0)
@@ -1178,11 +1177,9 @@ const fitGenerated = (
   let refusal: ReadonlyArray<string> = []
   const attempts = [
     ...drawings.flatMap(draw => whole.map(layout => ({ arrangement: layout.arrangement, panels: layout.panels, draw: () => draw(layout.room) }))),
-    ...(!options.scroll ? [] : [
     ...scrolling.flatMap(rung => drawings.map(draw => ({ arrangement: rung.arrangement, panels: widest, draw: () => leastHeight(draw, rung.maxWidth) }))),
     ...(view === null ? [] : drawings.map(draw => ({ arrangement: 'stacked' as const, panels: widest, draw: () => leastHeight(draw, UNCONSTRAINED) }))),
     ...drawings.map(draw => ({ arrangement: 'stacked' as const, panels: widest, draw: () => draw({ maxWidth: UNCONSTRAINED, maxHeight: UNCONSTRAINED }) })),
-    ]),
   ]
   for (const { arrangement, panels: shown, draw } of attempts) {
     const drawn = draw()
@@ -1301,8 +1298,15 @@ const faceplatePanel = (
   const pens = resolvePens(system, shown.map(ref => ({ ref, role: 'primary' as const })), 'faceplate', { numericOnly: false, panelName: 'faceplate', recordedSeriesIds, within: components }, issues)
   if (pens === undefined) return null
   // As tall as its longest column can grow while it is open (every check unfolded), so nothing under it moves.
-  return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(faceplateMostLines))) }
+  return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(column => faceplateMostLines(column)))) }
 }
+
+/** A faceplate compacted for less room: each function's checks on one line, which names those not met (faceplate-live.ts). */
+const compacted = (panel: ComposedFaceplatePanel): ComposedFaceplatePanel => ({
+  ...panel,
+  faceplate: { ...panel.faceplate, compact: true },
+  height: faceplateHeight(Math.max(0, ...panel.faceplate.columns.map(column => faceplateMostLines(column, true)))),
+})
 
 /** The readings a rule's condition compares, which a faceplate row names as deciding it (faceplate-live.ts names comparisons only). */
 const comparedPaths = (condition: FaceplateCondition): ReadonlyArray<string> =>
@@ -1329,11 +1333,12 @@ const sampledPathCount = (mimic: CompiledMimic, faceplate: ComposedFaceplatePane
  * is opened (what rules acting in that mode judge first, readings that
  * measure nothing then last); they stay as chosen while the detail is open,
  * and opening it again in another mode chooses again (detailLeadKey).
- * An energy end's detail draws its faceplate under the drawing instead,
- * which takes every lead value, so the column beside the drawing holds only
- * the alarms; where its columns do not fit the view's width, or the drawing
- * does not fit the height left above it, or the display would sample more
- * values than it may, the detail keeps its lead values (HF review, HF-03).
+ * An energy end's detail draws the same drawing with its faceplate under it
+ * instead, which takes every lead value, so the column beside the drawing
+ * holds only the alarms: whole, else compact, where it fits beneath the
+ * drawing at the view's size, its columns each at their least width, and the
+ * display samples no more values than it may; otherwise the detail keeps its
+ * lead values (HF review, HF-03).
  */
 export const compileDetailDisplay = (
   system: ProcessPlantRuntimeInstance,
@@ -1365,16 +1370,28 @@ export const compileDetailDisplay = (
   }))
   const scopes = [...whole.flatMap(scope => scope.ok ? [scope.scope] : []), ...oneService]
   const drawings = scopes.map(scope => (room: Parameters<GeneratedDrawing>[0]) => compileMimicScope(system.plant, scope, { profile: detailMimicProfile, ...room }))
-  // The faceplate under the drawing only at the view's size: it never scrolls the drawing out of a window.
-  const faceplated = faceplate === null ? null
-    : fitGenerated(view, [{ ...panels[0]!, readouts: 0, faceplate: { height: faceplate.height, columns: faceplate.faceplate.columns.length } }], drawings, { scroll: false })
-  const withFaceplate = faceplated !== null && faceplated.ok && sampledPathCount(faceplated.mimic, faceplate!) <= PROCESS_DISPLAY_SAMPLE_MAX_PATHS ? faceplated : null
-  const fitted = withFaceplate ?? fitGenerated(view, panels, drawings)
+  // The drawing first, as it is drawn without a faceplate: a faceplate never changes what a detail draws.
+  const fitted = fitGenerated(view, panels, drawings)
   if (!fitted.ok) return { ok: false, issues: [{ path: 'detail', message: `nothing around it can be drawn legibly; ${fitted.issues.join('; ')}` }] }
+  // Under it the faceplate, whole or else compact, where it fits beneath at the view's size (it never scrolls the
+  // drawing out of the window) and the display samples no more than it may; else the lead values stay.
+  const beneath = (candidate: ComposedFaceplatePanel): GeneratedPanels | null => {
+    const shown = { ...fitted.panels, readouts: 0, faceplate: { height: candidate.height, columns: candidate.faceplate.columns.length } }
+    const room = view === null ? null : overviewDrawingRoom(view, fitted.arrangement, shown)
+    return room !== null && fitted.mimic.width <= room.maxWidth && fitted.mimic.height <= room.maxHeight
+      && sampledPathCount(fitted.mimic, candidate) <= PROCESS_DISPLAY_SAMPLE_MAX_PATHS ? shown : null
+  }
+  const placed = (faceplate === null ? [] : [faceplate, compacted(faceplate)]).flatMap(candidate => {
+    const shown = beneath(candidate)
+    return shown === null ? [] : [{ panel: candidate, panels: shown }]
+  })[0]
   const title = groupLabel(components.map(index => graph.components[index]!.label))
   const quickLooks = quickLooksOf(system, fitted.mimic, recordedSeriesIds, issues)
   if (issues.length > 0) return { ok: false, issues }
-  return { ok: true, display: generatedDisplay(system, title, withFaceplate === null ? readouts : faceplate!, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows }), quickLooks) }
+  return {
+    ok: true,
+    display: generatedDisplay(system, title, placed === undefined ? readouts : placed.panel, view, placed === undefined ? fitted : { ...fitted, panels: placed.panels }, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows }), quickLooks),
+  }
 }
 
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const

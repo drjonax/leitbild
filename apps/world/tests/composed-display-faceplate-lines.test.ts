@@ -169,34 +169,42 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
     expect(subcrit?.kind === 'chip' ? subcrit.chip.status : null).toBe('not-monitored')
   })
 
-  test('after a turbine trip: the core leads with rods on bottom, judges flux against SUBCRIT\'s criteria, counts nothing armed; the turbine names its first out', () => {
+  test('after a turbine trip: the core leads with its trip breakers open, then rods on bottom (E-0 step 1), judges flux against SUBCRIT\'s criteria, counts nothing armed; the turbine names its first out', () => {
     for (const name of ['turbine trip +2:30', 'turbine trip +15:00'] as const) {
       const core = at(name, 'source')
-      expect(words(core.columns[0]!.lines[0]!)).toBe('Rods on bottom')
+      expect(words(core.columns[0]!.lines[0]!)).toBe('RTB A OPEN · RTB B OPEN')
+      expect(words(core.columns[0]!.lines[1]!)).toBe('Rods on bottom')
       expect(allWords(core).some(text => /^NIS-PR-AVG .* · < 5 % SUBCRIT$/.test(text))).toBe(true)
       expect(allWords(core).some(text => /armed|acting/.test(text))).toBe(false)
       expect(core.columns[0]!.head.parts[0]).toMatchObject({ kind: 'words', text: 'RX TRIP' })
       expect(core.columns[0]!.head.parts[0]!.kind === 'words' && core.columns[0]!.head.parts[0]!.since?.endsWith(' ago')).toBe(true)
       const turbine = at(name, 'sink').columns[0]!.lines
-      expect(turbine[0]).toMatchObject({ kind: 'rule', title: 'Turbine trip on reactor trip (P-4)', firstOut: true, status: 'alarm' })
+      // The turbine-trip scenario presses the manual turbine trip (C1 T0): it is the first out, the P-4 trip after it.
+      expect(turbine[0]).toMatchObject({ kind: 'rule', title: 'Manual turbine trip', firstOut: true, status: 'alarm' })
       expect(allWords(at(name, 'sink'))).toContain('TURB-STOP-POS SHUT')
     }
   })
 
-  test('the loop table: hot and cold legs and ΔT under their shared tags, the OTΔT/OPΔT margins idle once their rules no longer act', () => {
+  test('the loop table: hot and cold legs, ΔT with ΔT power ("—" without forced flow), loop flow and the OTΔT/OPΔT margins, idle once their rules no longer act; no validity flag is a column', () => {
     const tableOf = (shown: Shown) => shown.columns.flatMap(column => column.lines).find(line => line.kind === 'loops')!
     const power = tableOf(at('at power', 'source'))
     const tripped = tableOf(at('turbine trip +2:30', 'source'))
-    if (power.kind !== 'loops' || tripped.kind !== 'loops') throw new Error('expected the loop table')
-    expect(power.table.columns.map(column => `${column.head} ${column.unit}`)).toEqual(['TE-4x1-HOT °C', 'TE-4x1-COLD °C', 'TDI-4x1 °C', 'OTDT/OPDT-4x1-MARGIN °C'])
-    expect(power.table.columns.map(column => column.idle)).toEqual([false, false, false, false])
-    expect(tripped.table.columns.map(column => column.idle)).toEqual([false, false, false, true])
+    const natural = tableOf(at('no RCP +10:00', 'source'))
+    if (power.kind !== 'loops' || tripped.kind !== 'loops' || natural.kind !== 'loops') throw new Error('expected the loop table')
+    expect(power.table.columns.map(column => `${column.head} ${column.unit}`.trim())).toEqual(['TE-4x1-HOT °C', 'TE-4x1-COLD °C', 'TDI-4x1 / TDI-4x1-PWR', 'FI-4x4 %', 'OTDT/OPDT-4x1-MARGIN °C'])
+    expect(power.table.columns.map(column => column.idle)).toEqual([false, false, false, false, false])
+    expect(tripped.table.columns.map(column => column.idle)).toEqual([false, false, false, false, true])
     expect(power.table.rows.map(row => row.loop)).toEqual(['A', 'B', 'C', 'D'])
+    // With forced flow ΔT power reads beside ΔT; with no pump running it measures nothing, and reads "—".
+    expect(power.table.rows.every(row => /^\S+ °C \/ \S+ %$/.test(row.cells[2]!.text))).toBe(true)
+    expect(natural.table.rows.every(row => row.cells[2]!.text.endsWith(' / —'))).toBe(true)
   })
 
-  test('with no reactor coolant pump running, natural circulation folds into one neutral line while every check passes', () => {
+  test('with no reactor coolant pump running, natural circulation folds into one neutral line, ticked only while every check passes, naming those not met where the faceplate is compact', () => {
     for (const name of ['no RCP +10:00', 'loss of offsite power +2:30'] as const) {
-      expect(allWords(at(name, 'source')).some(text => /^✓ Natural circulation \d+\/\d+$/.test(text))).toBe(true)
+      const folded = allWords(at(name, 'source')).filter(text => text.includes('Natural circulation'))
+      expect(folded.length, name).toBe(1)
+      expect(folded[0], name).toMatch(/^(✓ Natural circulation (\d+)\/\2|○ Natural circulation \d+\/\d+ · not met: .+)$/)
     }
     expect(allWords(at('turbine trip +2:30', 'source')).some(text => text.includes('Natural circulation'))).toBe(false)
   })

@@ -50,8 +50,8 @@ export type FaceplateHead =
 /** Parallel loops, one row each; a column's cells may hold two values (two margins its protection judges). */
 export interface FaceplateLoopColumn {
   readonly cells: ReadonlyArray<ReadonlyArray<string>>
-  /** A value a cell shows only while a flag reads true (delta-T power with forced flow), by path: the flag's path. */
-  readonly qualifiers?: Readonly<Record<string, string>>
+  /** Values that measure something only while a flag reads true (delta-T power with forced flow), each with its flag. */
+  readonly qualifiers?: ReadonlyArray<{ readonly path: string; readonly flag: string }>
   readonly source: FaceplateSource
   /** The modes each rule that judges the column acts in (null for every mode); none where no rule judges it. */
   readonly judgedIn: ReadonlyArray<ReadonlyArray<string> | null>
@@ -92,6 +92,11 @@ export interface CompiledFaceplate {
   readonly stoppedWhen: ReadonlyArray<FaceplateWrite>
   /** Every path its live rows read: values, conditions, commands. A display samples them all. */
   readonly paths: ReadonlyArray<string>
+  /**
+   * Compacted to fit under a drawing it would not fit under whole: each
+   * function's checks fold into one line, which names those not met.
+   */
+  readonly compact?: true
 }
 
 /** A faceplate row as it reads now. */
@@ -108,11 +113,15 @@ export type FaceplateRow =
   | { readonly kind: 'values'; readonly source: FaceplateSource; readonly paths: ReadonlyArray<string>; readonly criteria: ReadonlyArray<FaceplateCriterion> }
   /** A check that applies and is not met, by name: neutral, not an alarm. */
   | { readonly kind: 'check'; readonly safetyFunction: string; readonly label: string; readonly met: 'no' | 'unknown' }
-  /** Checks that apply and are met, folded: their common name, how many of how many apply. */
-  | { readonly kind: 'checks'; readonly safetyFunction: string; readonly label: string; readonly met: number; readonly of: number }
+  /** Checks that apply, folded: their common name, how many of how many are met; in a compact faceplate, those not met by name. */
+  | { readonly kind: 'checks'; readonly safetyFunction: string; readonly label: string; readonly met: number; readonly of: number; readonly notMet?: ReadonlyArray<string> }
   | { readonly kind: 'flows'; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
-  /** The loop table; an `idle` column (its rules do not act in the mode) is drawn faint and names no margin. */
-  | { readonly kind: 'loops'; readonly loops: ReadonlyArray<string>; readonly columns: ReadonlyArray<{ readonly cells: ReadonlyArray<ReadonlyArray<string>>; readonly idle: boolean }> }
+  /**
+   * The loop table; an `idle` column (its rules do not act in the mode) is
+   * drawn faint and names no margin; a `blank` value measures nothing now and
+   * reads "—" in its place (delta-T power without forced flow).
+   */
+  | { readonly kind: 'loops'; readonly loops: ReadonlyArray<string>; readonly columns: ReadonlyArray<{ readonly cells: ReadonlyArray<ReadonlyArray<string>>; readonly idle: boolean; readonly blank: ReadonlyArray<string> }> }
 
 /** One comparison a row is decided on, as it reads now. */
 export interface FaceplateComparison {
@@ -150,10 +159,10 @@ export const FACEPLATE_ACTIVE_RULE_ROWS = 4
 export const faceplateLines = (column: Pick<FaceplateColumn, 'rows'>): number =>
   column.rows.reduce((lines, row) => lines + (row.kind === 'loops' ? 1 + row.loops.length : 1), 0)
 
-/** The most lines a column of a compiled faceplate can take: every row it may show, checks unfolded, at most its active rule rows. */
-export const faceplateMostLines = (column: FaceplateColumnSpec): number => column.rows.reduce((lines, row) => lines + (
+/** The most lines a column of a compiled faceplate can take: every row it may show, checks unfolded (folded where `compact`), at most its active rule rows. */
+export const faceplateMostLines = (column: FaceplateColumnSpec, compact = false): number => column.rows.reduce((lines, row) => lines + (
   row.kind === 'loops' ? 1 + row.loops.length
-    : row.kind === 'checks' ? row.checks.length
+    : row.kind === 'checks' ? (compact ? 1 : row.checks.length)
       : row.kind === 'rules' ? (row.banner ? 0 : Math.min(FACEPLATE_ACTIVE_RULE_ROWS, row.rules.length)) + 2
         : 1), 0)
 
@@ -311,9 +320,11 @@ export const faceplateNow = (faceplate: CompiledFaceplate, live: FaceplateLive):
       const answers = applying.map(check => ({ check, met: faceplateHolds(check.condition, live.read) }))
       const failing = answers.filter(answer => answer.met !== true)
       const met = applying.length - failing.length
+      const label = foldedName(applying.map(check => check.label), spec.title)
+      if (faceplate.compact === true) return [{ kind: 'checks', safetyFunction: spec.safetyFunction, label, met, of: applying.length, ...(failing.length === 0 ? {} : { notMet: failing.map(answer => answer.check.label) }) }]
       return [
         ...failing.map((answer): FaceplateRow => ({ kind: 'check', safetyFunction: spec.safetyFunction, label: answer.check.label, met: answer.met === false ? 'no' : 'unknown' })),
-        ...(met === 0 ? [] : [{ kind: 'checks', safetyFunction: spec.safetyFunction, label: foldedName(applying.map(check => check.label), spec.title), met, of: applying.length } as const]),
+        ...(met === 0 ? [] : [{ kind: 'checks', safetyFunction: spec.safetyFunction, label, met, of: applying.length } as const]),
       ]
     }
     if (spec.kind === 'values') {
@@ -326,9 +337,10 @@ export const faceplateNow = (faceplate: CompiledFaceplate, live: FaceplateLive):
         kind: 'loops',
         loops: spec.loops,
         columns: spec.columns.map(column => ({
-          // A value measured only under a flag leaves its cell while the flag does not hold.
-          cells: column.cells.map(cell => cell.filter(path => column.qualifiers?.[path] === undefined || live.read(column.qualifiers[path]) === true)),
+          cells: column.cells,
           idle: column.judgedIn.length > 0 && !column.judgedIn.some(modes => actsIn(modes, live.mode)),
+          // A value measured only under a flag reads "—" in its place while the flag does not hold.
+          blank: (column.qualifiers ?? []).flatMap(qualifier => live.read(qualifier.flag) === true ? [] : [qualifier.path]),
         })),
       }]
     }

@@ -362,7 +362,8 @@ export const faceplateLines = (
         }
       }
       if (row.kind === 'check') return { kind: 'text', text: `○ ${row.label} · ${row.met === 'no' ? 'not met' : 'not known'}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction} check: ${row.label}` }
-      if (row.kind === 'checks') return { kind: 'text', text: `✓ ${row.label} ${row.met}/${row.of}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction}: ${row.met} of the ${row.of} checks that apply are met` }
+      // Folded: ✓ only while all are met; a compact faceplate names those not met on the same line.
+      if (row.kind === 'checks') return { kind: 'text', text: `${row.met === row.of ? '✓' : '○'} ${row.label} ${row.met}/${row.of}${row.notMet === undefined ? '' : ` · not met: ${row.notMet.map(label => label.includes(':') ? label.slice(label.indexOf(':') + 1).trim() : label).join('; ')}`}`, title: `${chips.get(row.safetyFunction)?.label ?? row.safetyFunction}: ${row.met} of the ${row.of} checks that apply are met${row.notMet === undefined ? '' : `; not met: ${row.notMet.join('; ')}`}` }
       if (row.kind === 'flows') {
         // One header's branches read at one resolution, the finest any of them declares: no "0.0000012 kg/s" beside "1512 kg/s".
         const branches = row.branches.map(branch => ({ ...branch, pen: pens.get(branch.path) ?? missing(branch.path) }))
@@ -392,7 +393,7 @@ const loopTable = (
     const tags = (cellPens[0] ?? []).map((_, at) => sharedTag(cellPens.map(cell => cell[at]!.tagId ?? cell[at]!.label)))
     const units = [...new Set(cellPens.flat().map(pen => unitLabel(pen.unit)))]
     const labels = [...new Set(cellPens.flat().map(pen => pen.label))]
-    return { head: pairedTags(tags), unit: units.length === 1 ? units[0]! : '', title: `${labels.join(' / ')}${column.idle ? ' · idle: no rule that judges it acts in this mode' : ''}`, idle: column.idle, cellPens }
+    return { head: pairedTags(tags), unit: units.length === 1 ? units[0]! : '', title: `${labels.join(' / ')}${column.idle ? ' · idle: no rule that judges it acts in this mode' : ''}`, idle: column.idle, blank: column.blank, cellPens }
   })
   return {
     columns: columns.map(({ head, unit, title, idle }) => ({ head, unit, title, idle })),
@@ -403,6 +404,8 @@ const loopTable = (
         // A number without the unit its column's head carries; a state in its words.
         const values = cellPens.map(pen => {
           const raw = read(String(pen.path))
+          // A value that measures nothing now (delta-T power without forced flow) reads "—" in its place.
+          if (column.blank.includes(String(pen.path))) return { text: '—', pen }
           if (pen.valueKind === 'boolean') return { text: stateWords(pen, raw), pen }
           const written = numberValue(pen, raw)
           return { text: column.unit === '' || written.value === null ? written.text : written.text.slice(0, -(column.unit.length + 1)), pen }

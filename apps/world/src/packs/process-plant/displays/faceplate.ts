@@ -515,7 +515,7 @@ export const compileFaceplate = (
   const read = shown.flatMap(entry => entry.rows).flatMap((row): ReadonlyArray<string> => {
     if (row.kind === 'values') return row.paths
     if (row.kind === 'flows') return row.branches.map(branch => branch.path)
-    if (row.kind === 'loops') return row.columns.flatMap(entry => [...entry.cells.flat(), ...Object.values(entry.qualifiers ?? {})])
+    if (row.kind === 'loops') return row.columns.flatMap(entry => [...entry.cells.flat(), ...(entry.qualifiers ?? []).map(qualifier => qualifier.flag)])
     if (row.kind === 'checks') return row.checks.flatMap(check => [...(check.when === undefined ? [] : conditionPaths(check.when)), ...conditionPaths(check.condition)])
     const rules = row.kind === 'rules' ? row.rules : [row.rule]
     return [...(row.kind === 'rules' ? row.does : row.writes).map(write => write.path), ...rules.flatMap(rule => [...rule.triggers, ...rule.gates].flatMap(conditionPaths))]
@@ -605,7 +605,7 @@ const loopTable = (plant: CompiledProcessPlant, end: number, judged: ReadonlyArr
     ...own.map(entry => {
       const joined = sharing(entry)
       const cells = loops.map((_, at) => [...cellsOf(entry.local)[at]!, ...joined.flatMap(other => cellsOf(other.local)[at]!)])
-      const qualifiers = Object.fromEntries(joined.flatMap(other => cellsOf(other.local).flatMap((cell, at) => cell.map(path => [path, flagOfCell(qualifiedBy.get(other.local)!)[at]!] as const))))
+      const qualifiers = joined.flatMap(other => cellsOf(other.local).flatMap((cell, at) => cell.map(path => ({ path, flag: flagOfCell(qualifiedBy.get(other.local)!)[at]! }))))
       return { cells, source: 'channel' as const, judgedIn: [], ...(joined.length === 0 ? {} : { qualifiers }) }
     }),
     ...(protectionJudges.length === 0 ? [] : [{
