@@ -87,9 +87,10 @@ interface Numbering { readonly taskId: string; readonly entries: ReadonlyArray<{
 /**
  * A call waiting for the operator: a confirmation names what it drops; a
  * choice is a busy asset's options, "Do now" (`call`) or "Add to end"
- * (`queue`).
+ * (`queue`). A choice whose "Do now" the engine would refuse (`nowRefusal`)
+ * offers only "Add to end".
  */
-interface Confirmation { readonly kind: 'confirm' | 'choice'; readonly call: CallDraft; readonly detail: string; readonly queue: CallDraft | null }
+interface Confirmation { readonly kind: 'confirm' | 'choice'; readonly call: CallDraft; readonly detail: string; readonly queue: CallDraft | null; readonly nowRefusal?: string }
 interface Call extends CallDraft {
   readonly callId: string
   /** The Run time of each named unit's last order as the Board knew it at sending; a newer order shows the call took effect or was overtaken. */
@@ -391,6 +392,7 @@ export const createBoardController = (options: {
 
   const commit = (): void => {
     if (confirmation !== null) {
+      if (confirmation.nowRefusal !== undefined) return info(confirmation.nowRefusal)
       if (guardActive()) return guardRefusal('Not sent yet')
       const { call } = confirmation
       confirmation = null
@@ -663,7 +665,9 @@ export const createBoardController = (options: {
     const inWorkList = task !== undefined && rules.queues(task)
     focus = inWorkList ? 'work' : 'units'
     select(inWorkList ? { kind: 'task', id: task.id, byOperator: true } : { kind: 'unit', id: order.unit.id, byOperator: true }, true)
-    confirmation = { kind: 'choice', call: order.call, detail: order.release ?? holdingText(rules, order.unit), queue: order.queue }
+    confirmation = order.nowRefusal === null
+      ? { kind: 'choice', call: order.call, detail: order.release ?? holdingText(rules, order.unit), queue: order.queue }
+      : { kind: 'choice', call: order.call, detail: order.nowRefusal, queue: order.queue, nowRefusal: order.nowRefusal }
     armGuard()
   }
 
@@ -1082,7 +1086,10 @@ export const createBoardController = (options: {
           state: 'choice',
           text: confirmation.call.short,
           detail: confirmation.detail,
-          options: [{ option: 'do-now', label: boardWords.doNow }, ...(confirmation.queue === null ? [] : [{ option: 'add-to-end' as const, label: boardWords.addToEnd }])],
+          options: [
+            ...(confirmation.nowRefusal === undefined ? [{ option: 'do-now' as const, label: boardWords.doNow }] : []),
+            ...(confirmation.queue === null ? [] : [{ option: 'add-to-end' as const, label: boardWords.addToEnd }]),
+          ],
           enabled: !guarded,
           hint,
           cancel: boardWords.cancel,

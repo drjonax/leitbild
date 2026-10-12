@@ -34,6 +34,9 @@ export const usableSite = (rules: Pick<BoardRules, 'typeOf'>, unit: BoardUnit, s
  */
 export const holdsWork = (unit: BoardUnit): boolean => unit.taskId !== undefined || hasLoad(unit) || unit.orders.length > 0
 
+/** Whether a unit has arrived at the task it holds: the engine refuses to divert it from there, so a new task can only join the end of its chain. */
+export const arrivedAtTask = (unit: BoardUnit): boolean => unit.taskId !== undefined && !divertable.includes(unit.phase)
+
 /**
  * Whether removing the step a send or a queue gives a unit gives the unit
  * back as it stood, so Undo may offer it. A step queued behind the steps

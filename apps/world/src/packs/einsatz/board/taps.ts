@@ -3,7 +3,7 @@ import { queueCall, releaseText, sendFromMap, stepText, type CallDraft, type Sen
 import { candidateIn } from './recommendations.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
 import { observingSide } from './contacts.ts'
-import { hasLoad, holdsWork, notOrderedText, usableSite, type BoardRules, type DeclaredRole } from './rules.ts'
+import { arrivedAtTask, hasLoad, holdsWork, notOrderedText, usableSite, type BoardRules, type DeclaredRole } from './rules.ts'
 import { classCode, etaText, loadText, namedOnce, unitWord, word } from './text.ts'
 import type { MapTarget, TargetPreview } from './types.ts'
 
@@ -31,6 +31,8 @@ export type MapOrder =
     readonly busy: boolean
     /** What "Do now" drops: the task it leaves and the load returning there, or the step it stops; null when it drops nothing. */
     readonly release: string | null
+    /** Why "Do now" would be refused, so only "Add to end" is offered: the unit has arrived at the task it holds. Null when it may go now. */
+    readonly nowRefusal: string | null
   }
   | { readonly kind: 'refused'; readonly text: string }
   /** The object is no Einsatz record in the picture: a tap says so, a hover shows nothing. */
@@ -61,10 +63,11 @@ export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarg
   if (!rules.ordersOnMap(unit)) return refused(notOrderedText(rules, context.declaredRoles, unit))
   const order = (to: SendTarget): MapOrder => {
     const both = { kind: 'order' as const, unit, target: to, call: sendFromMap(rules, shown, unit, to), queue: queueCall(shown, unit, to), busy: holdsWork(unit) }
-    if (unit.taskId === undefined) return { ...both, release: dropText(shown, unit) }
+    if (unit.taskId === undefined) return { ...both, release: dropText(shown, unit), nowRefusal: null }
     const from = shown.tasks.get(unit.taskId)
     if (from === undefined) throw new Error(`${unit.id} is committed to ${unit.taskId}, which is not in the picture`)
-    return { ...both, release: releaseText(rules, shown, unit, { taskId: from.id, label: from.label, code: classCode(rules, from.rank) }) }
+    const nowRefusal = 'taskId' in to && arrivedAtTask(unit) ? `${unit.label} is ${unitWord(rules, unit, unit.phase)} at ${from.label}` : null
+    return { ...both, release: releaseText(rules, shown, unit, { taskId: from.id, label: from.label, code: classCode(rules, from.rank) }), nowRefusal }
   }
   if (target.kind === 'point') return order({ point: target.point })
   const task = shown.tasks.get(target.objectId)
@@ -135,6 +138,7 @@ export const orderRefusal = (rules: BoardRules, order: Extract<MapOrder, { kind:
  */
 export const orderPreview = (order: Extract<MapOrder, { kind: 'order' }>, answer: Recommendation | undefined, refusal: string | null): TargetPreview => {
   if (refusal !== null) return { text: refusal, refused: true }
+  if (order.nowRefusal !== null) return { text: `${order.queue.text} · ${order.nowRefusal}`, refused: false }
   const candidate = answer === undefined ? undefined : candidateIn(answer, order.unit.id)
   const parts = [order.call.text, candidate === undefined ? null : etaText(candidate.eta), order.release]
   return { text: parts.filter(part => part !== null).join(' · '), refused: false }
