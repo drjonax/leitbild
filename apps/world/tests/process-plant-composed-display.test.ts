@@ -818,6 +818,8 @@ describe('world.process-plant.display.view and sample', () => {
     ])
     expect(sample.safetyFunctions[1]!.text).toContain('Core-exit temperature below 649 °C (1,200 °F): yes (CET-AVG 325 °C)')
     expect(sample.safetyFunctions[1]!.text).toEndWith('reference-model criteria; not a qualified plant procedure.')
+    // Each judged chip names the equipment its tree's deciding branch reads, which a click on it opens (C1 E5).
+    expect((sample.safetyFunctions as ReadonlyArray<{ opens?: ReadonlyArray<string> }>).map(chip => chip.opens ?? null)).toEqual([null, ['vessel'], ['sgA', 'sgB', 'sgC', 'sgD'], ['rcpA', 'rcpB', 'rcpC', 'rcpD'], ['containment'], ['vessel']])
     const result = ask('world.process-plant.display.compose', composition([{ ref: 'PT-455', role: 'primary' }])) as { shows: ReadonlyArray<string>; viewContent: unknown }
     const content = embeddedViewContentSchema.parse(result.viewContent)
     expect(content.statuses!.map(status => [status.names[0], status.status])).toEqual([

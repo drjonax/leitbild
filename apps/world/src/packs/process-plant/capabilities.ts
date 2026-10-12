@@ -229,6 +229,7 @@ const queryOutputById: Readonly<Record<string, z.ZodType>> = {
       status: z.enum(['green', 'yellow', 'orange', 'red', 'unknown', 'not-monitored']),
       procedure: z.string().optional(),
       text: z.string(),
+      opens: z.array(z.string()).min(1).optional(),
     }).strict()).optional(),
     alarms: z.array(z.object({
       id: z.string(),
