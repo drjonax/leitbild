@@ -300,14 +300,15 @@ describe('what equipment leads with after its trip, and beside its program', () 
     // With the trip breakers' positions published, as the model lane publishes them, both follow the rods.
     const breakers = publishedAlso({ 'reactorTripBreakerA.closedState': {}, 'reactorTripBreakerB.closedState': {} })
     expect(equipmentKeyValues(breakers, [core], tripped(breakers, 150)).slice(0, 5)).toEqual(['core.rodsOnBottom', 'reactorTripBreakerA.closedState', 'reactorTripBreakerB.closedState', 'core.rodStepsWithdrawn', 'core.powerRangePercent'] as never)
-    // At power every reactor trip can still act: the core leads as before. The turbine declares no shutdown readings.
+    // At power every reactor trip can still act: the core leads as before. After the trip the turbine leads with its
+    // stop valves' position and its shutdown readings (output, load, breaker); its steam flow is simulator-only now.
     const runtime = createProcessPlantRuntime({ system: breakers })
     runtime.tick(1_000)
     const atPower: PlantNow = { mode: 'powerOperation', read: path => runtime.readVariable(path) }
     expect(equipmentKeyValues(breakers, [core], atPower)).not.toContain('core.rodsOnBottom' as never)
     expect(equipmentKeyValues(breakers, [core], atPower)[0]).toBe('core.powerRangePercent' as never)
     const turbine = plant.graph.componentIndexById.get('turbine' as never)!
-    expect(equipmentKeyValues(plant, [turbine], after)).toEqual(['turbine-stop-valve-to-turbine.flowKgPerS', 'turbine.electricMw'] as never)
+    expect(equipmentKeyValues(plant, [turbine], after)).toEqual(['turbineStopValve.effectivePositionFraction', 'turbine.electricMw', 'turbine.impulseLoadPercent', 'turbine.outputBreakerClosed'] as never)
   }, PLANT_HANG_GUARD_MS)
 
   test('a program leads only right after the reading it programs, never alone', () => {
