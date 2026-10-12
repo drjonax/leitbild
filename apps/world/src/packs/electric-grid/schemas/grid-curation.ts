@@ -162,6 +162,16 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     kind: z.literal('normally-open'), ...common,
     wayOsmIds: z.array(wayId).min(1), voltageKv: kv,
   }).strict(),
+  /**
+   * A mapped line or cable whose circuit count OSM does not give (no circuits, cables or route
+   * relation) and a published document does: the one model line carrying every listed way takes
+   * this many circuits, and the line rules rate it and set its impedance for that count.
+   */
+  z.object({
+    kind: z.literal('set-circuits'), ...common,
+    wayOsmIds: z.array(wayId).min(1), voltageKv: kv,
+    circuits: z.number().int().min(2),
+  }).strict(),
 ])
 
 const featureSchema = z.object({
@@ -196,6 +206,7 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'add-network-equivalent': { required: ['review-by'], allowed: ['review-by'] },
   'add-transformer-units': { required: ['review-by'], allowed: ['review-by'] },
   'normally-open': { required: ['review-by'], allowed: ['review-by'] },
+  'set-circuits': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -216,6 +227,7 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'add-network-equivalent': return [properties.fromSubstationOsmId, properties.toSubstationOsmId]
     case 'add-transformer-units': return [properties.substationOsmId]
     case 'normally-open': return properties.wayOsmIds
+    case 'set-circuits': return properties.wayOsmIds
   }
 }
 

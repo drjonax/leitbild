@@ -12,6 +12,7 @@ import type { BuildLedger } from './ledger.ts'
 //   add-shunt-device                           → the shunt of its bus (network.ts);
 //   add-transformer-units                      → transformer units in the topology input, rated (curated-ratings.ts);
 //   set-line-rating, set-transformer-rating    → a branch's rating (curated-ratings.ts);
+//   set-circuits                               → a line's circuit count before the line rules (curated-circuits.ts);
 //   normally-open                              → the line starts open in the Operating Points (normally-open.ts);
 //   add-network-equivalent                     → a sub-transmission equivalent branch (network-equivalents.ts);
 //   assert-radial, boundary                    → the audit only.

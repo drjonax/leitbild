@@ -23,6 +23,7 @@ const reasonDispositions = {
   'network-equivalent-added': 'curated',
   'transformer-units-added': 'curated',
   'branch-normally-open': 'curated',
+  'curated-circuits-set': 'curated',
 } as const
 
 export type BuildLedgerReason = keyof typeof reasonDispositions

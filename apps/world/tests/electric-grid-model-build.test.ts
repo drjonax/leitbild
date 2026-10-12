@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { withCuratedCircuits } from '../src/packs/electric-grid/model-build/curated-circuits.ts'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from '../src/packs/electric-grid/model-build/curations.ts'
 import { ambientRatingRule, cableRules, lineParameters, networkEquivalentParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/model-build/electrical.ts'
 import { runOfRiverTurbineOf, runOfRiverTurbineRule } from '../src/packs/electric-grid/model-build/generator-rules.ts'
@@ -14,6 +15,7 @@ import { interconnectorTableSchema } from '../src/packs/electric-grid/schemas/gr
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import type { GridReferenceHourDispatch } from '../src/packs/electric-grid/schemas/grid-reference-dispatch.ts'
 import type { TopologyInput } from '../src/packs/electric-grid/topology/input.ts'
+import type { TopologyBranch } from '../src/packs/electric-grid/topology/result.ts'
 
 const fixture = validateGridModel(await Bun.file(new URL('./fixtures/grid-model-v2.fixture.json', import.meta.url)).json(), 'fixture')
 
@@ -197,5 +199,35 @@ describe('model build: provenance and serialisation', () => {
     expect(withoutCuratedExclusions(input, collection, ledger).features.map(feature => feature.featureId)).toEqual(['way/1'])
     expect(ledger.entries().map(entry => entry.reason)).toEqual(['offshore-supply-explained'])
     expect(() => withoutCuratedExclusions({ ...input, features: [line('way/1')] }, collection, createBuildLedger())).toThrow(`${curationSourceId(collection.features[2]!)}: target way/3 is not in the topology input`)
+  })
+
+  test('gives a line the circuits a set-circuits record names, only where the topology inferred them', () => {
+    const point = { type: 'Point', coordinates: [10, 60] }
+    const common = { licence: 'osm-odbl-1.0', author: 'test', reviewedAt: '2026-10-12', reason: 'five unit cables', evidence: [{ url: 'https://example.org/e', ref: 'e' }], expiresWhen: [{ kind: 'review-by', date: '2027-01-01' }] }
+    const record = (wayOsmIds: ReadonlyArray<string>, voltageKv = 300) => gridCurationCollectionSchema.parse({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', id: 'unit-cables', geometry: point, properties: { kind: 'set-circuits', targetOsmIds: wayOsmIds, wayOsmIds, voltageKv, circuits: 5, ...common } }],
+    })
+    const branch = (id: string, osmWayIds: ReadonlyArray<string>, circuitsSource: TopologyBranch['circuitsSource']): TopologyBranch => ({
+      id, label: id, kind: 'cable', fromBusId: 'bus:a@300', toBusId: 'bus:b@300', nominalKv: 300, lowKv: null, lengthKm: 0.2, cableLengthKm: 0.2,
+      circuits: 1, circuitsSource, voltageSource: 'mapped', ratingMva: null, osmWayIds, sourceFeatureIds: osmWayIds, osmTransformerIds: [], names: [],
+      parallelSpanGroups: 0, interconnectorId: null,
+      provenance: { sources: ['osm:test'], method: 'inferred', confidence: 'medium', note: 'circuit count inferred (1)' },
+    })
+    const lines = [branch('branch:unit-cables', ['way/1', 'way/2'], 'inferred'), branch('branch:other', ['way/3'], 'cables-tag')]
+    const ledger = createBuildLedger()
+    const curated = withCuratedCircuits(lines, record(['way/1']), ledger)
+    expect(curated.branches.map(line => [line.id, line.circuits, line.provenance.note])).toEqual([
+      ['branch:unit-cables', 5, '5 circuits by curation:unit-cables'],
+      ['branch:other', 1, 'circuit count inferred (1)'],
+    ])
+    expect([...curated.curationOf]).toEqual([['branch:unit-cables', 'curation:unit-cables']])
+    expect(ledger.entries().map(entry => [entry.reason, entry.elementIds])).toEqual([['curated-circuits-set', ['branch:unit-cables', 'curation:unit-cables']]])
+    // All circuits share the per-circuit rule: five rule cables carry five times one.
+    expect(lineParameters({ nominalKv: 300, lengthKm: 0.2, cableLengthKm: 0.2, circuits: 5 }).ratingMw).toBe(5 * cableRules[300].ratingMvaPerCircuit)
+    expect(() => withCuratedCircuits(lines, record(['way/3']), createBuildLedger())).toThrow('curation:unit-cables: branch:other has 1 circuits from its cables-tag; the record is no longer needed')
+    expect(() => withCuratedCircuits(lines, record(['way/9']), createBuildLedger())).toThrow('curation:unit-cables: 0 300 kV lines carry way/9; the record must name exactly one')
+    expect(() => withCuratedCircuits(lines, record(['way/1'], 132), createBuildLedger())).toThrow('0 132 kV lines carry way/1')
+    expect(gridCurationCollectionSchema.safeParse({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'one', geometry: point, properties: { kind: 'set-circuits', targetOsmIds: ['way/1'], wayOsmIds: ['way/1'], voltageKv: 300, circuits: 1, ...common } }] }).success).toBe(false)
   })
 })

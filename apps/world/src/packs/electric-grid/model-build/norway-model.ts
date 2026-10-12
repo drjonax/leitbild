@@ -10,6 +10,7 @@ import type { TopologyLedgerEntry } from '../topology/ledger.ts'
 import { adaptNodeSidecar } from '../topology/node-sidecar.ts'
 import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
 import { curatedNetwork } from './curated-branches.ts'
+import { withCuratedCircuits } from './curated-circuits.ts'
 import { curationSourceId, topologyCurationSet, withCuratedTransformerUnits, withoutCuratedExclusions } from './curations.ts'
 import { curatedTransformerRatings, withCuratedLineRatings, withInterconnectorRatings } from './curated-ratings.ts'
 import { withNormallyOpenLines } from './normally-open.ts'
@@ -120,7 +121,11 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     const set = new Set(osmIds)
     return inService.filter(feature => feature.properties.targetOsmIds.some(target => set.has(target))).map(curationSourceId).sort(compareText)
   }
-  const curationsOfBranch = (branch: TopologyBranch) => curationsOfIds([...branch.sourceFeatureIds, ...branch.osmWayIds])
+  const circuits = withCuratedCircuits(main.branches.filter(branch => branch.kind !== 'transformer'), curations, ledger)
+  const curationsOfBranch = (branch: TopologyBranch) => {
+    const circuitsCuration = circuits.curationOf.get(branch.id)
+    return [...curationsOfIds([...branch.sourceFeatureIds, ...branch.osmWayIds]), ...(circuitsCuration === undefined ? [] : [circuitsCuration])].sort(compareText)
+  }
   const curationsOfLink = (link: TopologyHvdcLink) => [...new Set([
     ...curationsOfIds([...link.sourceFeatureIds, ...link.osmWayIds]),
     ...curations.features.filter(feature => feature.properties.kind === 'add-interconnector-ways' && feature.properties.interconnectorId === link.id).map(curationSourceId),
@@ -144,7 +149,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   })
   const buses = [...topologyBuses, ...curated.buses].sort((left, right) => compareText(left.id, right.id))
   const ties = withInterconnectorRatings([
-    ...main.branches.filter(branch => branch.kind !== 'transformer').map(branch => toGridLine(branch, { ofBranch: curationsOfBranch })),
+    ...circuits.branches.map(branch => toGridLine(branch, { ofBranch: curationsOfBranch })),
     ...curated.lines,
   ], inputs.interconnectors.data, new Set(buses.filter(bus => bus.kind === 'boundary').map(bus => bus.id)), ids.interconnectors, ledger)
   const ratedLines = withCuratedLineRatings(ties.lines, curations, ties.ratedIds, ledger)
