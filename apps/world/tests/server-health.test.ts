@@ -306,6 +306,8 @@ describe('server health', () => {
           scenario: { scenarioId: 'scenario:realtime-cache' },
         }
       },
+      // A Run without roles: one batch for every connection.
+      roles: () => null,
       subscribe: (handler: Parameters<NonNullable<ReturnType<SimulationRunRegistry['get']>>['subscribe']>[0]) => {
         handlers.add(handler)
         return () => handlers.delete(handler)

@@ -1,8 +1,9 @@
 import { sourceDocumentPathSchema,sourceRevisionSchema,type AccessContext } from '@leitbild/contracts'
 import { z } from 'zod'
-import { actorIdSchema,clientIdSchema,interactionEndpointSchema,interactionSignalSchema,nowIso,objectIdSchema,procedureIdSchema,procedureSourceIdSchema,simulationRunIdSchema,type CompiledScenario,type InteractionSignal,type SimulationRunId } from '../model/index.ts'
+import { actorIdSchema,clientIdSchema,interactionEndpointSchema,interactionSignalSchema,isSideView,nowIso,objectIdSchema,procedureIdSchema,procedureSourceIdSchema,runRolesOf,simulationRunIdSchema,type CompiledScenario,type InteractionSignal,type RoleSees,type SimulationRunId } from '../model/index.ts'
 import type { Actor } from '../simulation-runs/actors.ts'
-import { actorForPerspective, assertControllerRole, assertHoldsRole, isRoleGateRefusal, parseRoleSetParameter, resolveRunPerspective, roleSetParameter, type RunPerspective } from '../simulation-runs/role-gates.ts'
+import { actorForPerspective, assertControllerRole, assertHoldsRole, isRoleGateRefusal, parseRoleSetParameter, resolveRunPerspective, roleSetParameter, roleViewNotSupportedRefusal, seesOfPerspective, type RunPerspective } from '../simulation-runs/role-gates.ts'
+import { sideViewOfCompiledScenario, sideViewOfSnapshot } from '../simulation-runs/side-view.ts'
 import { CommandIdempotencyConflictError } from '../simulation-runs/command-idempotency.ts'
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../simulation-runs/runtime.ts'
@@ -29,13 +30,49 @@ const isOpenRunRoute = (method: string, suffix: string): boolean =>
   || (method === 'POST' && suffix === '/copies')
   || (method === 'DELETE' && suffix === '')
 
-const runRoutePerspective = async (req: Request, url: URL, pathname: string, registry: SimulationRunRegistry): Promise<RunPerspective> => {
+/**
+ * The Run routes that build a side view's picture: the Run read, its
+ * snapshot, presence and Run-scoped Capability invocation (where the Run
+ * admits only role-aware Pack Capabilities). A side view reaches no other.
+ */
+const isSideViewRunRoute = (method: string, suffix: string): boolean =>
+  (method === 'GET' && (suffix === '' || suffix === '/snapshot' || suffix === '/presence'))
+  || (method === 'POST' && /^\/capabilities\/[^/]+\/invoke$/.test(suffix))
+
+interface RouteView {
+  readonly perspective: RunPerspective
+  /** What the caller sees; everything in open mode and on open routes without a role set. */
+  readonly sees: RoleSees
+}
+
+const openView: RouteView = { perspective: { kind: 'open' }, sees: 'all' }
+
+const runRouteView = async (req: Request, url: URL, pathname: string, registry: SimulationRunRegistry): Promise<RouteView> => {
   const match = pathname.match(/^\/simulation-runs\/([^/]+)(\/.*)?$/)
-  if (!match || isOpenRunRoute(req.method, match[2] ?? '')) return { kind: 'open' }
+  if (!match) return openView
+  const suffix = match[2] ?? ''
+  const open = isOpenRunRoute(req.method, suffix)
+  const requested = parseRoleSetParameter(url.searchParams.get(roleSetParameter))
+  if (open && requested === null) return openView
   const simulationRunId = simulationRunIdSchema.parse(decodeURIComponent(match[1] ?? ''))
-  const perspective = resolveRunPerspective(await registry.runRoles(simulationRunId), parseRoleSetParameter(url.searchParams.get(roleSetParameter)))
-  assertHoldsRole(perspective)
-  return perspective
+  const declaration = await registry.runRoles(simulationRunId)
+  // Open routes need no role. Only in a sided Run does one asked with a role
+  // set answer as that view, so a side view never reaches copy or delete.
+  if (open && declaration?.sides === undefined) return openView
+  const perspective = resolveRunPerspective(declaration, requested)
+  if (!open) assertHoldsRole(perspective)
+  const sees = seesOfPerspective(declaration, perspective)
+  if (isSideView(sees) && !isSideViewRunRoute(req.method, suffix)) throw roleViewNotSupportedRefusal('This Run route')
+  return { perspective, sees }
+}
+
+/** The Scenario fetch serves authoring material; asked as a side view of the Scenario's roles, it is refused. */
+const assertScenarioFetchView = (url: URL, scenario: CompiledScenario): void => {
+  const requested = parseRoleSetParameter(url.searchParams.get(roleSetParameter))
+  if (requested === null) return
+  const declaration = runRolesOf(scenario)
+  const perspective = resolveRunPerspective(declaration, requested)
+  if (isSideView(seesOfPerspective(declaration, perspective))) throw roleViewNotSupportedRefusal('The Scenario fetch')
 }
 
 export const capabilityInvocationRequestSchema = z.object({
@@ -104,9 +141,15 @@ const buildSignal = (simulationRunId: SimulationRunId, raw: unknown, defaultActo
   return { signal, actor: buildSimulationRunActor(actorId) }
 }
 
+/**
+ * The Run read. A side view's is built key by key from the allow-list: its
+ * objects by audience, the sequence and clock, redacted scenario state, and
+ * the Compiled Scenario without initial objects, timeline or restrictions.
+ */
 const simulationRunResponse = async (
   registry: SimulationRunRegistry,
   runtime: SimulationRunRuntime,
+  sees: RoleSees,
 ): Promise<{
   readonly id: typeof runtime.id
   readonly snapshot: ReturnType<SimulationRunRuntime['snapshot']>
@@ -117,9 +160,9 @@ const simulationRunResponse = async (
   const [scenario, summary] = await Promise.all([registry.compiledScenarioForRun(runtime.id), registry.summary(runtime.id)])
   return {
     id: runtime.id,
-    snapshot,
+    snapshot: isSideView(sees) ? sideViewOfSnapshot(snapshot, sees) : snapshot,
     ...(summary.scenarioRevisionId === null ? {} : { scenarioRevisionId: summary.scenarioRevisionId }),
-    scenario,
+    scenario: isSideView(sees) ? sideViewOfCompiledScenario(scenario, sees) : scenario,
   }
 }
 
@@ -134,16 +177,18 @@ const handleSimulationRunApiInner = async (
   const apiPrefix = `/api/workspaces/${encodeURIComponent(config.registry.workspaceId)}/world`
   if (!url.pathname.startsWith(`${apiPrefix}/`)) return null
   const pathname = url.pathname.slice(apiPrefix.length)
-  const perspective = await runRoutePerspective(req, url, pathname, config.registry)
+  const { perspective, sees } = await runRouteView(req, url, pathname, config.registry)
 
   const scenarioMatch = pathname.match(/^\/scenarios\/([^/]+)$/)
   if (scenarioMatch && req.method === 'GET') {
     const scenarioId = decodeURIComponent(scenarioMatch[1] ?? '')
     const revision = await config.registry.currentScenario(scenarioId)
     if (!revision) return apiError(404, 'scenario_not_found', 'scenario not found')
+    const scenario = await config.registry.compileScenarioRevision(revision)
+    assertScenarioFetchView(url, scenario)
     return json({
       source: revision.document,
-      scenario: await config.registry.compileScenarioRevision(revision),
+      scenario,
       revisionId: revision.id,
       digest: revision.digest,
     })
@@ -165,7 +210,12 @@ const handleSimulationRunApiInner = async (
       loaded: config.registry.get(simulationRunId) !== undefined,
       execution,
       ...(summary.roles === null ? {} : {
-        roles: { roles: summary.roles.roles, presets: summary.roles.presets, holders: config.roleHolders(simulationRunId) },
+        roles: {
+          roles: summary.roles.roles,
+          presets: summary.roles.presets,
+          ...(summary.roles.sides === undefined ? {} : { sides: summary.roles.sides }),
+          holders: config.roleHolders(simulationRunId),
+        },
       }),
     })
   }
@@ -182,7 +232,7 @@ const handleSimulationRunApiInner = async (
       }
       throw err
     }
-    return json(await simulationRunResponse(config.registry, runtime))
+    return json(await simulationRunResponse(config.registry, runtime, sees))
   }
 
   if (simulationRunMatch && req.method === 'DELETE') {
@@ -197,7 +247,7 @@ const handleSimulationRunApiInner = async (
     const simulationRunId = simulationRunIdSchema.parse(decodeURIComponent(snapshotMatch[1] ?? ''))
     const runtime = config.registry.get(simulationRunId)
     if (!runtime) return apiError(404, 'simulation_run_not_found', 'simulation run not found')
-    return json(await simulationRunResponse(config.registry, runtime))
+    return json(await simulationRunResponse(config.registry, runtime, sees))
   }
 
   const capabilitiesMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/capabilities$/)
@@ -213,7 +263,7 @@ const handleSimulationRunApiInner = async (
     const simulationRunId = simulationRunIdSchema.parse(decodeURIComponent(resetMatch[1] ?? ''))
     assertControllerRole(perspective, 'Resetting the Run')
     const runtime = await config.registry.reset(simulationRunId)
-    return json(await simulationRunResponse(config.registry, runtime))
+    return json(await simulationRunResponse(config.registry, runtime, sees))
   }
 
   const copiesMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/copies$/)

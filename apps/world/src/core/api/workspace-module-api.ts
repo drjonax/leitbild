@@ -469,7 +469,8 @@ const resourcesFor = async (registry: SimulationRunRegistry): Promise<ReadonlyAr
           ...(simulationRun.roles === null ? [] : [{
             key: 'roles', label: 'Roles', kind: 'count' as const, value: simulationRun.roles.roles.length,
           }]),
-          ...(simulationRun.objectCount === null ? [] : [{
+          // A sided Run's object count would tell every reader how much each side has.
+          ...(simulationRun.objectCount === null || simulationRun.roles?.sides !== undefined ? [] : [{
             key: 'object-count',
             label: 'Objects',
             kind: 'count' as const,

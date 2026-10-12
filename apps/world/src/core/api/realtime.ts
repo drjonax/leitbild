@@ -1,7 +1,9 @@
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import type { SimulationRunEventNotification } from '../simulation-runs/runtime.ts'
 import type { SimulationRunStateSnapshot } from '../simulation-runs/state-store.ts'
-import type { CompiledScenario, SimulationRunId, SimulationClockState } from '../model/index.ts'
+import { eventVisibleTo } from '../simulation-runs/event-audience.ts'
+import { sideViewOfCompiledScenario, sideViewOfSnapshot } from '../simulation-runs/side-view.ts'
+import { isSideView, seesForRoleSet, type CompiledScenario, type ObjectAudience, type ObjectId, type RoleSees, type RunRoles, type SimulationRunId, type SimulationClockState } from '../model/index.ts'
 import type { PackRuntimeRealtimeMessage } from '../../simulation/protocol.ts'
 import type { WorkspaceId } from '@leitbild/contracts'
 
@@ -154,6 +156,63 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
     return perspective === null ? message : { ...message, epoch: perspective.epoch }
   }
 
+  /**
+   * What a connection to a sided Run sees: its role set's union. A sided Run
+   * admits connections only with a role set; one without would see nothing.
+   */
+  const seesOf = (declaration: RunRoles, client: Client): RoleSees => {
+    const perspective = config.perspectiveOf(client)
+    return perspective === null ? [] : seesForRoleSet(declaration, perspective.roleIds)
+  }
+
+  /** The audience of an object an event names: from this batch first, then the committed projection. */
+  const audienceResolver = (
+    runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>,
+    events: SimulationRunEventNotification['events'],
+  ): ((objectId: ObjectId) => ObjectAudience | undefined) => {
+    let committed: ReadonlyMap<ObjectId, ObjectAudience | undefined> | null = null
+    const inBatch = new Map<ObjectId, ObjectAudience | undefined>()
+    for (const event of events) if (event.type === 'object.upserted') inBatch.set(event.object.id, event.object.audience)
+    return objectId => {
+      if (inBatch.has(objectId)) return inBatch.get(objectId)
+      committed ??= new Map(runtime.snapshot().objects.map(object => [object.id, object.audience]))
+      return committed.get(objectId)
+    }
+  }
+
+  /**
+   * A sided Run sends each distinct view its own batch, filtered once per
+   * view: truth views everything, side views the events their sides see and
+   * no runtime realtime messages. An empty batch is not sent.
+   */
+  const broadcastBySide = (
+    declaration: RunRoles,
+    runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>,
+    clients: ReadonlySet<Client>,
+    messageContext: RealtimeMessageContext,
+    notification: SimulationRunEventNotification,
+  ): void => {
+    const groups = new Map<string, { readonly sees: RoleSees; readonly clients: Client[] }>()
+    for (const client of clients) {
+      const sees = seesOf(declaration, client)
+      const key = sees === 'all' ? '*' : sees.join(',')
+      const group = groups.get(key) ?? { sees, clients: [] }
+      group.clients.push(client)
+      groups.set(key, group)
+    }
+    const audienceOf = audienceResolver(runtime, notification.events)
+    for (const { sees, clients: members } of groups.values()) {
+      const events = sees === 'all' ? notification.events : notification.events.filter(event => eventVisibleTo(event, sees, audienceOf))
+      if (events.length > 0) {
+        const message: RealtimeEventBatchMessage = { type: 'events', ...messageContext, events }
+        for (const client of members) config.send(client, inEpochOf(client, message))
+      }
+      if (isSideView(sees) || !notification.realtimeMessages || notification.realtimeMessages.length === 0) continue
+      const message: RealtimeRuntimeMessageBatch = { type: 'runtime.realtime', ...messageContext, messages: notification.realtimeMessages }
+      for (const client of members) config.send(client, inEpochOf(client, message))
+    }
+  }
+
   const broadcastToSimulationRun = (
     simulationRunId: SimulationRunId,
     runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>,
@@ -167,6 +226,11 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
       ? messageContextForRuntime(simulationRunId, runtime)
       : subscription.context
     subscription.context = messageContext
+    const declaration = runtime.roles()
+    if (declaration?.sides !== undefined) {
+      broadcastBySide(declaration, runtime, clients, messageContext, notification)
+      return
+    }
     if (notification.events.length > 0) {
       const message: RealtimeEventBatchMessage = {
         type: 'events',
@@ -192,15 +256,19 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
   ): RealtimeReadyMessage => {
     const snapshot = runtime.snapshot()
     const perspective = config.perspectiveOf(client)
+    const declaration = runtime.roles()
+    // A side view's ready carries only its allow-listed picture.
+    const sees = declaration === null || perspective === null ? 'all' : seesForRoleSet(declaration, perspective.roleIds)
+    const compiledScenario = perspective === null ? null : config.registry.loadedCompiledScenario(simulationRunId)
     return {
       type: 'realtime.ready',
       ...messageContextForRuntime(simulationRunId, runtime),
       ...(snapshot.clock === undefined ? {} : { clock: snapshot.clock }),
-      ...(perspective === null ? {} : {
+      ...(perspective === null || compiledScenario === null ? {} : {
         epoch: perspective.epoch,
         roleIds: perspective.roleIds,
-        snapshot,
-        compiledScenario: config.registry.loadedCompiledScenario(simulationRunId),
+        snapshot: isSideView(sees) ? sideViewOfSnapshot(snapshot, sees) : snapshot,
+        compiledScenario: isSideView(sees) ? sideViewOfCompiledScenario(compiledScenario, sees) : compiledScenario,
       }),
     }
   }
