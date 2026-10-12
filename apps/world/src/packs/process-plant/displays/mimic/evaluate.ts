@@ -88,15 +88,17 @@ export interface ItemLook {
 
 /**
  * A command as the item shows it. `open` is whether it demands the item run
- * or open; a breaker's command (`closedWhileTrue`) closes it while true.
+ * or open; a breaker's command (`closedWhileTrue`) closes it while true; a
+ * valve that stands open or shut (`twoState`) is commanded OPEN or SHUT at
+ * either end of its travel, as its position reads there.
  */
-const commandText = (index: SampleIndex, path: string | undefined, aspect: 'running' | 'position', closedWhileTrue = false): { readonly text: string; readonly open: boolean | null; readonly fraction: number | null } | null => {
+const commandText = (index: SampleIndex, path: string | undefined, aspect: 'running' | 'position', closedWhileTrue = false, twoState = false): { readonly text: string; readonly open: boolean | null; readonly fraction: number | null } | null => {
   const flag = booleanAt(index, path)
   if (flag !== null && closedWhileTrue) return { text: flag ? 'CMD CLOSE' : 'CMD OPEN', open: !flag, fraction: null }
   if (flag !== null) return { text: aspect === 'running' ? (flag ? 'CMD RUN' : 'CMD STOP') : (flag ? 'CMD OPEN' : 'CMD SHUT'), open: flag, fraction: null }
   const fraction = numberAt(index, path)
   if (fraction === null) return null
-  return { text: fraction < CLOSED_BELOW ? 'CMD SHUT' : `CMD ${percent(fraction)}`, open: fraction >= CLOSED_BELOW, fraction }
+  return { text: fraction < CLOSED_BELOW ? 'CMD SHUT' : twoState && fraction > OPEN_ABOVE ? 'CMD OPEN' : `CMD ${percent(fraction)}`, open: fraction >= CLOSED_BELOW, fraction }
 }
 
 /** commandsHeld of a running Plant: its operations log, timed at its plant time now; none where it keeps no log. */
@@ -161,7 +163,7 @@ const stateLook = (binding: MimicItemBinding, index: SampleIndex): ItemLook => {
 
   if (state.aspect === 'position') {
     const closedWhileTrue = state.state?.reading === 'closedWhileTrue'
-    const command = commandText(index, state.command, 'position', closedWhileTrue)
+    const command = commandText(index, state.command, 'position', closedWhileTrue, state.twoState === true)
     if (closedWhileTrue) {
       const closed = booleanAt(index, state.state?.path)
       if (closed === null) return unknown()

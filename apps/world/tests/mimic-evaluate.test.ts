@@ -49,6 +49,17 @@ describe('mimic state of one sample', () => {
     expect(itemLook(valve, sample({ 'v.effective': 2 }, { 'v.effective': 'outside-hard-range' })).state.kind).toBe('unknown')
   })
 
+  test('a valve that isolates or relieves is commanded OPEN or SHUT at either end of its travel, as its position reads there', () => {
+    // HMI review of run 26: MOV-8000A, the PORV block valve, read "100 %" in one place and "OPEN" in another.
+    const block = item({ aspect: 'position', state: { path: 'b.effective' as never, reading: 'value' }, command: 'b.command' as never, travel: { onS: 10, offS: 10 }, twoState: true })
+    expect(itemLook(block, sample({ 'b.effective': 0, 'b.command': 1 }))).toMatchObject({ mismatch: 'CMD OPEN', words: 'closed; commanded open disagrees' })
+    expect(itemLook(block, sample({ 'b.effective': 1, 'b.command': 0 }))).toMatchObject({ mismatch: 'CMD SHUT', words: 'open; commanded shut disagrees' })
+    // Between its ends it is commanded where it is told to stand, as any valve.
+    expect(itemLook(block, sample({ 'b.effective': 1, 'b.command': 0.4 })).mismatch).toBe('CMD 40 %')
+    // A control valve keeps its demand in percent at the end of its travel too.
+    expect(itemLook(valve, sample({ 'v.effective': 0.35, 'v.command': 1 })).mismatch).toBe('CMD 100 %')
+  })
+
   test('a valve whose position is not computed reads by what passes it, and is never judged not followed', () => {
     // The model declares no travel time for a state it does not solve (an accumulator's discharge isolation valve):
     // what passes it is what it shows, whatever it is commanded (I-2).
