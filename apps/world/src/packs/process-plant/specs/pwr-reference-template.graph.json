@@ -1139,7 +1139,15 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RCP A"
+          "shortLabel": "RCP A",
+          "notOffered": {
+            "running": {
+              "text": "An RCP start needs seal injection and oil lift, which the model does not have: not started from the display",
+              "values": [
+                true
+              ]
+            }
+          }
         }
       }
     },
@@ -1189,7 +1197,15 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RCP B"
+          "shortLabel": "RCP B",
+          "notOffered": {
+            "running": {
+              "text": "An RCP start needs seal injection and oil lift, which the model does not have: not started from the display",
+              "values": [
+                true
+              ]
+            }
+          }
         }
       }
     },
@@ -1239,7 +1255,15 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RCP C"
+          "shortLabel": "RCP C",
+          "notOffered": {
+            "running": {
+              "text": "An RCP start needs seal injection and oil lift, which the model does not have: not started from the display",
+              "values": [
+                true
+              ]
+            }
+          }
         }
       }
     },
@@ -1289,7 +1313,15 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RCP D"
+          "shortLabel": "RCP D",
+          "notOffered": {
+            "running": {
+              "text": "An RCP start needs seal injection and oil lift, which the model does not have: not started from the display",
+              "values": [
+                true
+              ]
+            }
+          }
         }
       }
     },
@@ -1339,7 +1371,15 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RCP E"
+          "shortLabel": "RCP E",
+          "notOffered": {
+            "running": {
+              "text": "An RCP start needs seal injection and oil lift, which the model does not have: not started from the display",
+              "values": [
+                true
+              ]
+            }
+          }
         }
       }
     },
@@ -1389,7 +1429,15 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RCP F"
+          "shortLabel": "RCP F",
+          "notOffered": {
+            "running": {
+              "text": "An RCP start needs seal injection and oil lift, which the model does not have: not started from the display",
+              "values": [
+                true
+              ]
+            }
+          }
         }
       }
     },
@@ -3681,7 +3729,12 @@
       },
       "metadata": {
         "presentation": {
-          "shortLabel": "MSSV"
+          "shortLabel": "MSSV",
+          "notOffered": {
+            "positionFraction": {
+              "text": "A spring-loaded safety valve lifts on its own set pressure: it has no operator control"
+            }
+          }
         }
       }
     },
@@ -4714,7 +4767,12 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RTB A"
+          "shortLabel": "RTB A",
+          "notOffered": {
+            "closed": {
+              "text": "Reactor trip breakers open on the manual reactor trip and close only in a startup after the trip is reset: not operated from the display"
+            }
+          }
         }
       }
     },
@@ -4745,7 +4803,12 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RTB B"
+          "shortLabel": "RTB B",
+          "notOffered": {
+            "closed": {
+              "text": "Reactor trip breakers open on the manual reactor trip and close only in a startup after the trip is reset: not operated from the display"
+            }
+          }
         }
       }
     },

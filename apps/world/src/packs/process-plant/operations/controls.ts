@@ -18,28 +18,22 @@ import { displayValue, unitLabel } from '../displays/display-text.ts'
 import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import { deviceLabel, mimicItemId, type MimicItem } from '../displays/mimic/bindings.ts'
 import { presentationFor } from '../displays/mimic/presentation.ts'
+import { instructorOnlyRefusal } from './command-guard.ts'
 
 // What a person may operate on each drawn item, read from what the model
 // declares: an aspect's writable command is a two-state control in the
 // aspect's words (a pump STARTs and STOPs, an isolating valve OPENs and
 // SHUTs, a breaker CLOSEs and OPENs); an on/off command the equipment's
-// presentation marks momentary is a pushbutton. Every other writable variable of the item is withheld, with
-// why: a fault or a condition outside the Plant is the instructor's; a demand
-// a controller holds reads AUTO; a demand or set point is not operated from
-// the display. What a command sets going (a trip whose condition reads what
-// it moves) and what works against it (automation writing the same command)
-// come from the I&C config. Nothing here names a Plant, equipment, signal or
-// component kind: the mimic's kind table only says what is drawn.
-
-/** What the model does not declare yet: which commands are not offered to operators. */
-export interface ControlDeclarations {
-  /**
-   * Why a command is not offered to operators where the model would make it
-   * look wrong (an RCP start, whose permissives are not modelled): per value
-   * written; undefined where it is offered.
-   */
-  readonly notOffered: (binding: ProcessSignalBinding, value: ProcessVariableValue) => string | undefined
-}
+// presentation marks momentary is a pushbutton. Every other command of the
+// item is withheld, with why: a demand a controller holds reads AUTO; a demand
+// or set point is not operated from the display; a command the presentation
+// declares not offered says why (an RCP start). A fault the scenario injects
+// and a condition outside the Plant are never listed at all: an operator
+// display does not show where a malfunction can sit (plan-final I-1). What a
+// command sets going (a trip whose condition reads what it moves) and what
+// works against it (automation writing the same command) come from the I&C
+// config. Nothing here names a Plant, equipment, signal or component kind:
+// the mimic's kind table only says what is drawn.
 
 /** A rule an operation sets going or that works against it, as displays name what the I&C does there ("RX TRIP", "AFW", "CTL"). */
 export interface ControlRule {
@@ -95,7 +89,6 @@ export interface OfferedControl {
 }
 
 export type WithheldReason =
-  | { readonly kind: 'instructor'; readonly actuation: 'faultInjection' | 'boundary'; readonly text: string }
   /** A demand a controller writes every step: a manual demand would be overwritten. */
   | { readonly kind: 'automatic'; readonly measured: VariablePath; readonly setpoint: number; readonly text: string }
   /** A demand or set point (a rod insertion, a pump's speed, a modulating valve's position). */
@@ -126,10 +119,6 @@ export interface PlantControls {
   readonly unplaced: ReadonlyArray<{ readonly path: VariablePath; readonly reason: string }>
 }
 
-const instructorText: Readonly<Record<'faultInjection' | 'boundary', string>> = {
-  faultInjection: 'Instructor only: a fault the scenario injects',
-  boundary: 'Instructor only: a condition outside the Plant',
-}
 const demandText = 'A demand or set point: not operated from the display'
 const isolationText = 'Automatic isolation input: set by the I&C'
 const unwordedText = 'An input of the equipment logic: no operator words are declared for it'
@@ -284,9 +273,14 @@ const memoriesOf = (graph: CompiledPlantGraph, component: CompiledComponent): Re
     return binding !== undefined && !binding.writable && binding.quantity === 'boolean' ? [binding.path] : []
   })
 
+// Why the presentation declares a command not offered at a value; undefined where it is offered.
+const notOfferedAt = (component: CompiledComponent, binding: ProcessSignalBinding, value: ProcessVariableValue): string | undefined => {
+  const declared = component.metadata?.presentation?.notOffered?.[localPath(component, binding.path)]
+  return declared !== undefined && (declared.values === undefined || declared.values.includes(value)) ? declared.text : undefined
+}
+
 const classify = (
   plant: CompiledProcessPlant,
-  declarations: ControlDeclarations,
   context: {
     readonly component: CompiledComponent
     readonly aspects: ReadonlyArray<CompiledStateAspect>
@@ -297,9 +291,6 @@ const classify = (
   },
   binding: ProcessSignalBinding,
 ): Classified => {
-  if (binding.actuation === 'faultInjection' || binding.actuation === 'boundary') {
-    return withheld(binding, { kind: 'instructor', actuation: binding.actuation, text: instructorText[binding.actuation] })
-  }
   if (context.isolations.has(binding.path)) return withheld(binding, { kind: 'isolationInput', text: isolationText })
   const aspect = context.aspects.find(candidate => candidate.command === binding.path)
   if (aspect !== undefined && context.controller !== null) return withheld(binding, automaticReason(plant.graph, context.controller))
@@ -316,9 +307,9 @@ const classify = (
   }
   const optionContext = { command: binding.path, ...(aspect === undefined ? {} : { aspect }), memories: [] as ReadonlyArray<VariablePath> }
   const offer = (form: OfferedControl['form'], choices: ReadonlyArray<{ readonly word: string; readonly value: ProcessVariableValue; readonly state?: string; readonly on: boolean }>, memories: ReadonlyArray<VariablePath> = []): Classified => {
-    const kept = choices.filter(choice => declarations.notOffered(binding, choice.value) === undefined)
+    const kept = choices.filter(choice => notOfferedAt(context.component, binding, choice.value) === undefined)
     const dropped = choices.flatMap(choice => {
-      const reason = declarations.notOffered(binding, choice.value)
+      const reason = notOfferedAt(context.component, binding, choice.value)
       return reason === undefined ? [] : [{ word: choice.word, value: choice.value, reason }]
     })
     if (kept.length === 0) return withheld(binding, { kind: 'declared', text: [...new Set(dropped.map(option => option.reason))].join('; ') })
@@ -364,7 +355,7 @@ const itemWritables = (graph: CompiledPlantGraph, component: CompiledComponent, 
   })
 }
 
-const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem, declarations: ControlDeclarations): { readonly label: string; readonly classified: ReadonlyArray<Classified> } => {
+const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem): { readonly label: string; readonly classified: ReadonlyArray<Classified> } => {
   const graph = plant.graph
   const component = graph.components[item.component]!
   const device = item.kind === 'device' ? component.semantics.embedded.find(candidate => candidate.id === item.device) : undefined
@@ -381,16 +372,17 @@ const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem, declaration
     controller: device === undefined ? declaredController(component) : null,
     label,
   }
-  const writables = itemWritables(graph, component, device?.id)
+  // A fault or a condition outside the Plant is never listed (I-1).
+  const writables = itemWritables(graph, component, device?.id).filter(binding => binding.actuation === 'command')
   // The aspects' commands first, in aspect order: the control an operator looks for.
   const commands = aspects.map(aspect => aspect.command).filter(defined)
   const ordered = [...writables.filter(binding => commands.includes(binding.path)).sort((left, right) => commands.indexOf(left.path) - commands.indexOf(right.path)), ...writables.filter(binding => !commands.includes(binding.path))]
-  return { label, classified: ordered.map(binding => classify(plant, declarations, context, binding)) }
+  return { label, classified: ordered.map(binding => classify(plant, context, binding)) }
 }
 
 /** The controls one drawn item offers, and the writable variables it withholds with why. */
-export const deriveItemControls = (plant: CompiledProcessPlant, item: MimicItem, declarations: ControlDeclarations): ItemControls => {
-  const { label, classified } = classifiedFor(plant, item, declarations)
+export const deriveItemControls = (plant: CompiledProcessPlant, item: MimicItem): ItemControls => {
+  const { label, classified } = classifiedFor(plant, item)
   return {
     item,
     id: mimicItemId(plant.graph, item),
@@ -437,14 +429,14 @@ const commandedEnds = (plant: CompiledProcessPlant, component: CompiledComponent
  * manual trip, the SI block) on the energy ends their rules command (QA-11):
  * the drawing has no symbol for the logic itself.
  */
-export const derivePlantControls = (plant: CompiledProcessPlant, declarations: ControlDeclarations): PlantControls => {
-  const items = operableItems(plant).map(item => deriveItemControls(plant, item, declarations))
+export const derivePlantControls = (plant: CompiledProcessPlant): PlantControls => {
+  const items = operableItems(plant).map(item => deriveItemControls(plant, item))
   const byComponent = new Map(items.flatMap(entry => entry.item.kind === 'component' ? [[entry.item.component, entry] as const] : []))
   const attached = new Map<number, OfferedControl[]>()
   const unplaced: Array<{ readonly path: VariablePath; readonly reason: string }> = []
   for (const component of plant.graph.components) {
     if (presentationFor(component).element !== 'not-drawn') continue
-    const { classified } = classifiedFor(plant, { kind: 'component', component: component.index }, declarations)
+    const { classified } = classifiedFor(plant, { kind: 'component', component: component.index })
     const pushbuttons = classified.flatMap(entry => 'offered' in entry && entry.offered.form === 'pushbutton' ? [entry.offered] : [])
     if (pushbuttons.length === 0) continue
     const ends = commandedEnds(plant, component).filter(end => byComponent.has(end))
@@ -469,9 +461,15 @@ export const derivePlantControls = (plant: CompiledProcessPlant, declarations: C
  * held to.
  */
 export const offeredOption = (
+  plant: CompiledProcessPlant,
   controls: PlantControls,
   write: { readonly path: VariablePath; readonly value: ProcessVariableValue },
 ): { readonly ok: true; readonly item: string; readonly word: string } | { readonly ok: false; readonly reason: string } => {
+  const binding = plant.graph.signalBindingByPath.get(write.path)
+  if (binding === undefined) return { ok: false, reason: `${write.path} is no signal of this Plant` }
+  // A fault or a condition outside the Plant is listed nowhere; say whose it is.
+  const instructorOnly = instructorOnlyRefusal(binding, undefined)
+  if (instructorOnly !== null) return { ok: false, reason: instructorOnly }
   for (const entry of controls.items) {
     for (const control of entry.offered) {
       if (control.path !== write.path) continue

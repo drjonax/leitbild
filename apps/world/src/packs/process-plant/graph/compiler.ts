@@ -502,6 +502,21 @@ const assertPushbuttonsMomentary = (components: ReadonlyArray<CompiledComponent>
   }
 }
 
+// A command declared not offered is one of the component's own commands, and
+// the values it names are values that command takes.
+const assertNotOfferedCommands = (components: ReadonlyArray<CompiledComponent>, variables: ReadonlyArray<CompiledVariable>): void => {
+  const byPath = new Map(variables.map(variable => [String(variable.path), variable.descriptor]))
+  for (const component of components) {
+    for (const [local, declaration] of Object.entries(component.metadata?.presentation?.notOffered ?? {})) {
+      const variable = byPath.get(`${component.id}.${local}`)
+      if (variable === undefined || !variable.writable || variable.actuation !== 'command') throw new Error(`component ${component.id} declares ${local} not offered, which is not one of its commands`)
+      for (const value of declaration.values ?? []) {
+        if ((typeof value === 'boolean') !== (variable.quantity === 'boolean')) throw new Error(`component ${component.id} declares ${local} not offered at ${String(value)}, which it does not take`)
+      }
+    }
+  }
+}
+
 // What writing a variable does, and what a ratio measures, are declared for
 // every variable, so no reader has to guess a command from a name.
 const assertVariableSemantics = (variables: ReadonlyArray<CompiledVariable>): void => {
@@ -798,6 +813,7 @@ export const compilePlantGraph = (
   assertVariableSemantics(variables)
   assertNamesUnambiguous(components, variables)
   assertPushbuttonsMomentary(components, variables)
+  assertNotOfferedCommands(components, variables)
   validateValveControllerBindings(components, variables)
   validateProcessLinkContracts(links)
   validateStrongComponentContracts(components, links)

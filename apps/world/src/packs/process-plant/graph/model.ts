@@ -305,6 +305,16 @@ export const processGraphPresentationSchema = z.object({
    * input of a state aspect, which holds what it demands.
    */
   momentary: z.array(z.string().min(1)).min(1).optional(),
+  /**
+   * Its commands an operator is not offered, by local variable path, with
+   * why: where the model would make working them look wrong (an RCP start,
+   * whose seal injection and oil lift it does not model). `values` names the
+   * values not offered (START, not STOP); absent, none of them is.
+   */
+  notOffered: z.record(z.string().min(1), z.object({
+    text: z.string().min(1).max(200),
+    values: z.array(processVariableValueSchema).min(1).optional(),
+  }).strict()).optional(),
 }).strict()
 export type ProcessGraphPresentation = z.infer<typeof processGraphPresentationSchema>
 

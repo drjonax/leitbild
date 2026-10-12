@@ -10,15 +10,15 @@ import {
   processPlantOperatingMode,
   type CompiledProcessPlant,
   type PlantGraphSpec,
+  type ProcessGraphPresentation,
   type ProcessSignalBinding,
-  type ProcessVariableValue,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
 import {
   declaredController,
   derivePlantControls,
-  type ControlDeclarations,
+  offeredOption,
   type ItemControls,
   type OfferedControl,
 } from '../src/packs/process-plant/operations/controls.ts'
@@ -28,111 +28,112 @@ import { guardPlantTests } from './plant-hang-guard.ts'
 guardPlantTests()
 
 // Controls are derived from what the model declares, never from what the
-// reference PWR calls its equipment. The tests mark the SI block's pushbutton
-// momentary in the Plant's presentation, as the model lane declares it, and
-// stand in the "not offered" statements the model does not declare yet: an
-// RCP is not started from the display.
+// reference PWR calls its equipment: aspects and their commands, momentary
+// pushbuttons and "not offered" statements in the equipment's presentation,
+// declared controllers, and the I&C config.
 
-/** The Plant with the input a tag names marked momentary in its equipment's presentation, or unmarked. */
-const withMomentary = (system: CompiledProcessPlant, tagId: string, marked: boolean): CompiledProcessPlant => {
-  const binding = resolveProcessPlantSignalBinding(system.graph, { tagId: tagId as never })
-  if (binding.owner.type !== 'component') throw new Error(`${tagId} is not a component variable`)
-  const owner = system.graph.components[binding.owner.componentIndex]!
-  const local = String(binding.path).slice(String(owner.id).length + 1)
-  const sourceGraph: PlantGraphSpec = {
-    ...system.sourceGraph,
-    components: system.sourceGraph.components.map(component => {
-      if (component.id !== owner.id) return component
-      const { momentary: declared, ...presentation } = component.metadata?.presentation ?? {}
-      const momentary = (declared ?? []).filter(path => path !== local).concat(marked ? [local] : [])
-      return { ...component, metadata: { ...component.metadata, presentation: { ...presentation, ...(momentary.length === 0 ? {} : { momentary }) } } }
-    }),
-  }
-  return { ...system, sourceGraph, graph: compilePlantGraph(sourceGraph, processPlantComponentRegistry) }
-}
-
-const plant = withMomentary(compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:controls', loopCount: 4 })), 'SI-BLOCK', true)
+const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:controls', loopCount: 4 }))
 const tag = (tagId: string): ProcessSignalBinding => resolveProcessPlantSignalBinding(plant.graph, { tagId: tagId as never })
-
-const rcpStart = (binding: ProcessSignalBinding, value: ProcessVariableValue): string | undefined =>
-  binding.tagId !== undefined && /^RCP-[A-Z]-RUN$/.test(binding.tagId) && value === true ? 'RCP start needs seal injection and oil lift, which are not modelled' : undefined
-
-const declarations: ControlDeclarations = { notOffered: rcpStart }
-
-const controls = derivePlantControls(plant, declarations)
-const itemOf = (system: CompiledProcessPlant, result: ReturnType<typeof derivePlantControls>, componentIndex: number, device?: string): ItemControls =>
-  result.items.find(entry => entry.item.component === componentIndex && (device === undefined ? entry.item.kind === 'component' : entry.item.kind === 'device' && entry.item.device === device))!
 const ownerIndex = (binding: ProcessSignalBinding): number => {
   if (binding.owner.type !== 'component') throw new Error(`${binding.path} is not a component variable`)
   return binding.owner.componentIndex
 }
+
+/** The Plant with the presentation of the equipment owning a tag changed. */
+const withPresentation = (system: CompiledProcessPlant, tagId: string, change: (presentation: ProcessGraphPresentation, local: string) => ProcessGraphPresentation): CompiledProcessPlant => {
+  const binding = resolveProcessPlantSignalBinding(system.graph, { tagId: tagId as never })
+  const owner = system.graph.components[ownerIndex(binding)]!
+  const local = String(binding.path).slice(String(owner.id).length + 1)
+  const sourceGraph: PlantGraphSpec = {
+    ...system.sourceGraph,
+    components: system.sourceGraph.components.map(component => component.id !== owner.id ? component
+      : { ...component, metadata: { ...component.metadata, presentation: change(component.metadata?.presentation ?? {}, local) } }),
+  }
+  return { ...system, sourceGraph, graph: compilePlantGraph(sourceGraph, processPlantComponentRegistry) }
+}
+
+const controls = derivePlantControls(plant)
+const itemOf = (result: ReturnType<typeof derivePlantControls>, componentIndex: number): ItemControls =>
+  result.items.find(entry => entry.item.component === componentIndex && entry.item.kind === 'component')!
 const offeredFor = (binding: ProcessSignalBinding): ReadonlyArray<OfferedControl> =>
   controls.items.flatMap(entry => entry.offered.filter(control => control.path === binding.path))
 const withheldFor = (binding: ProcessSignalBinding) =>
   controls.items.flatMap(entry => entry.withheld.filter(control => control.path === binding.path))
+const option = (control: OfferedControl, word: string) => control.options.find(candidate => candidate.word === word)!
 
 describe('controls an operator is offered', () => {
   test('an isolating valve bundled in its host is a two-state control that opens and shuts it', () => {
     const blockValve = tag('MOV-8000A')
     const [control] = offeredFor(blockValve)
-    expect(control).toBeDefined()
     expect(control!.form).toBe('twoState')
-    expect(control!.options.map(option => [option.word, option.value, option.state])).toEqual([['OPEN', 1, 'OPEN'], ['SHUT', 0, 'SHUT']])
+    expect(control!.options.map(entry => [entry.word, entry.value, entry.state])).toEqual([['OPEN', 1, 'OPEN'], ['SHUT', 0, 'SHUT']])
     expect(control!.target.startsWith('MOV-8000A ')).toBe(true)
     // Its state is the position the motor drove it to, not its demand.
     expect(control!.state).not.toBe(blockValve.path)
   })
 
   test('a pump starts and stops; a breaker closes and opens', () => {
-    expect(offeredFor(tag('SI-PUMP-A'))[0]!.options.map(option => [option.word, option.value, option.state])).toEqual([['START', true, 'RUN'], ['STOP', false, 'STOP']])
-    expect(offeredFor(tag('BRK-EDG-A-CLOSED'))[0]!.options.map(option => [option.word, option.value, option.state])).toEqual([['CLOSE', true, 'CLOSED'], ['OPEN', false, 'OPEN']])
+    expect(offeredFor(tag('SI-PUMP-A'))[0]!.options.map(entry => [entry.word, entry.value, entry.state])).toEqual([['START', true, 'RUN'], ['STOP', false, 'STOP']])
+    expect(offeredFor(tag('BRK-EDG-A-CLOSED'))[0]!.options.map(entry => [entry.word, entry.value, entry.state])).toEqual([['CLOSE', true, 'CLOSED'], ['OPEN', false, 'OPEN']])
   })
 
-  test('an option the model declares not offered is withheld with why, and the others stay', () => {
+  test('an option the presentation declares not offered is withheld with why, and the others stay', () => {
     const [control] = offeredFor(tag('RCP-A-RUN'))
-    expect(control!.options.map(option => option.word)).toEqual(['STOP'])
-    expect(control!.withheldOptions).toEqual([{ word: 'START', value: true, reason: 'RCP start needs seal injection and oil lift, which are not modelled' }])
+    expect(control!.options.map(entry => entry.word)).toEqual(['STOP'])
+    expect(control!.withheldOptions).toEqual([{ word: 'START', value: true, reason: 'An RCP start needs seal injection and oil lift, which the model does not have: not started from the display' }])
+    expect(offeredOption(plant, controls, { path: tag('RCP-A-RUN').path, value: true })).toEqual({ ok: false, reason: control!.withheldOptions[0]!.reason })
   })
 
-  test('a control every option of which is declared not offered is withheld, saying why', () => {
-    const result = derivePlantControls(plant, { ...declarations, notOffered: binding => binding.tagId === 'MOV-8000A' ? 'Not operated in this exercise' : undefined })
-    const binding = tag('MOV-8000A')
-    expect(result.items.flatMap(entry => entry.offered).some(control => control.path === binding.path)).toBe(false)
-    expect(result.items.flatMap(entry => entry.withheld).find(control => control.path === binding.path)?.reason).toEqual({ kind: 'declared', text: 'Not operated in this exercise' })
+  test('a command declared not offered at every value is withheld, saying why', () => {
+    for (const tagId of ['TRIP-BKR-A', 'TRIP-BKR-B']) {
+      expect(offeredFor(tag(tagId))).toEqual([])
+      expect(withheldFor(tag(tagId)).map(control => control.reason)).toEqual([{ kind: 'declared', text: 'Reactor trip breakers open on the manual reactor trip and close only in a startup after the trip is reset: not operated from the display' }])
+    }
+    const safetyValve = plant.graph.components.find(component => component.metadata?.presentation?.notOffered?.positionFraction !== undefined)!
+    expect(itemOf(controls, safetyValve.index).offered).toEqual([])
   })
 
-  test('the pushbutton of undrawn logic sits on the energy end its rules command, and nowhere else', () => {
-    const block = tag('SI-BLOCK')
-    const hosts = controls.items.filter(entry => entry.offered.some(control => control.path === block.path))
-    // The SI signal its block gates inserts the core's rods: the core is the end it commands.
-    expect(hosts.map(entry => plant.graph.components[entry.item.component]!.semantics.energy.map(role => role.role))).toEqual([['source']])
-    const [pushbutton] = hosts[0]!.offered.filter(control => control.path === block.path)
-    expect(pushbutton!.form).toBe('pushbutton')
-    expect(pushbutton!.options.map(option => option.value)).toEqual([true])
-    expect(pushbutton!.from).toBe(String(plant.graph.components[ownerIndex(block)]!.id))
+  test('pushbuttons of undrawn logic sit on the energy end their rules command, and nowhere else', () => {
+    for (const [tagId, role] of [['SI-BLOCK', 'source'], ['RX-TRIP-MAN', 'source'], ['SI-MAN', 'source'], ['TURB-TRIP-MAN', 'sink']] as const) {
+      const input = tag(tagId)
+      const hosts = controls.items.filter(entry => entry.offered.some(control => control.path === input.path))
+      expect(hosts.map(entry => plant.graph.components[entry.item.component]!.semantics.energy.map(energy => energy.role))).toEqual([[role]])
+      const [pushbutton] = hosts[0]!.offered.filter(control => control.path === input.path)
+      expect(pushbutton!.form).toBe('pushbutton')
+      expect(pushbutton!.options.map(entry => entry.value)).toEqual([true])
+      expect(pushbutton!.from).toBe(String(plant.graph.components[ownerIndex(input)]!.id))
+    }
+    // Pressing the manual reactor trip sets the reactor trip going.
+    expect(offeredFor(tag('RX-TRIP-MAN'))[0]!.options[0]!.consequences.map(rule => rule.action)).toEqual(['RX TRIP'])
     expect(controls.unplaced).toEqual([])
   })
 
-  test('without its momentary mark the logic input is offered nowhere', () => {
-    const result = derivePlantControls(withMomentary(plant, 'SI-BLOCK', false), declarations)
-    expect(result.items.flatMap(entry => entry.offered).some(control => control.path === tag('SI-BLOCK').path)).toBe(false)
+  test('the compiler takes a not-offered statement only on the equipment\'s own commands, at values they take', () => {
+    expect(() => withPresentation(plant, 'PT-455', (presentation, local) => ({ ...presentation, notOffered: { [local]: { text: 'A reading' } } })))
+      .toThrow('which is not one of its commands')
+    expect(() => withPresentation(plant, 'SI-PUMP-A', (presentation, local) => ({ ...presentation, notOffered: { [local]: { text: 'Not here', values: [1] } } })))
+      .toThrow('which it does not take')
+  })
+
+  test('without its momentary mark a logic input is offered nowhere', () => {
+    const unmarked = withPresentation(plant, 'SI-BLOCK', ({ momentary: _momentary, ...presentation }) => presentation)
+    expect(derivePlantControls(unmarked).items.flatMap(entry => entry.offered).some(control => control.path === tag('SI-BLOCK').path)).toBe(false)
   })
 })
 
 describe('what is withheld, and why', () => {
-  test('faults and conditions outside the Plant are the instructor\'s: no operator control writes one', () => {
-    const offered = controls.items.flatMap(entry => entry.offered)
-    for (const control of offered) expect(plant.graph.signalBindingByPath.get(control.path)!.actuation).toBe('command')
-    const instructor = controls.items.flatMap(entry => entry.withheld).filter(control => control.reason.kind === 'instructor')
-    expect(instructor.length).toBeGreaterThan(0)
-    for (const control of instructor) expect(['faultInjection', 'boundary']).toContain(plant.graph.signalBindingByPath.get(control.path)!.actuation!)
+  test('a fault the scenario injects and a condition outside the Plant are listed nowhere (I-1)', () => {
+    const listed = [...controls.items.flatMap(entry => entry.offered), ...controls.items.flatMap(entry => entry.withheld)]
+    for (const control of listed) expect(plant.graph.signalBindingByPath.get(control.path)!.actuation).toBe('command')
+    const fault = plant.graph.signalBindings.find(binding => binding.actuation === 'faultInjection')!
+    expect(offeredOption(plant, controls, { path: fault.path, value: true })).toEqual({ ok: false, reason: `${fault.tagId ?? fault.path} is a fault the scenario injects: only instructor actions and the Scenario set it` })
   })
 
   test('a demand its controller writes every step reads AUTO with what it holds, and is never offered', () => {
     const controlled = plant.graph.components.filter(component => declaredController(component) !== null)
     expect(controlled.length).toBeGreaterThan(0)
     for (const component of controlled) {
-      const entry = itemOf(plant, controls, component.index)
+      const entry = itemOf(controls, component.index)
       expect(entry.offered.filter(control => control.aspect !== undefined)).toEqual([])
       const command = component.semantics.aspects.find(aspect => aspect.command !== undefined)!.command!
       const reason = entry.withheld.find(control => control.path === command)!.reason
@@ -154,28 +155,24 @@ describe('what is withheld, and why', () => {
   test('an isolation input is the I&C\'s, and an input with no operator words is not a control', () => {
     const feedValve = plant.graph.components[ownerIndex(tag('MFW-A-CV'))]!
     const isolation = feedValve.semantics.aspects[0]!.isolation!
-    expect(itemOf(plant, controls, feedValve.index).withheld.find(control => control.path === isolation)!.reason.kind).toBe('isolationInput')
+    expect(itemOf(controls, feedValve.index).withheld.find(control => control.path === isolation)!.reason.kind).toBe('isolationInput')
     const breaker = plant.graph.components[ownerIndex(tag('BRK-EDG-A-CLOSED'))]!
-    const unworded = itemOf(plant, controls, breaker.index).withheld.filter(control => control.reason.kind === 'unworded')
+    const unworded = itemOf(controls, breaker.index).withheld.filter(control => control.reason.kind === 'unworded')
     expect(unworded.length).toBe(1)
     expect(plant.graph.signalBindingByPath.get(unworded[0]!.path)!.quantity).toBe('boolean')
   })
 })
 
 describe('consequences and opposing automation, from the I&C config', () => {
-  test('stopping a reactor coolant pump sets going the trip that reads its run state; starting it does not', () => {
-    const [control] = derivePlantControls(plant, { ...declarations, notOffered: () => undefined }).items.flatMap(entry => entry.offered).filter(candidate => candidate.path === tag('RCP-A-RUN').path)
-    const [start, stop] = control!.options
-    expect(stop!.consequences.map(rule => rule.action)).toContain('RX TRIP')
-    expect(start!.consequences).toEqual([])
+  test('stopping a reactor coolant pump sets going the trip that reads its run state', () => {
+    expect(option(offeredFor(tag('RCP-A-RUN'))[0]!, 'STOP').consequences.map(rule => rule.action)).toContain('RX TRIP')
   })
 
   test('the SI signal writes an SI pump running: it opposes STOP, not START', () => {
     const [control] = offeredFor(tag('SI-PUMP-A'))
-    const [start, stop] = control!.options
-    expect(stop!.opposing.length).toBeGreaterThan(0)
-    expect(stop!.opposing.every(rule => rule.value === true && rule.via === 'command')).toBe(true)
-    expect(start!.opposing).toEqual([])
+    expect(option(control!, 'STOP').opposing.length).toBeGreaterThan(0)
+    expect(option(control!, 'STOP').opposing.every(rule => rule.value === true && rule.via === 'command')).toBe(true)
+    expect(option(control!, 'START').opposing).toEqual([])
   })
 
   test('at power, stopping an RCP arms its trip; after a safety injection a pump stop is held by the sealed-in SI signal', () => {
@@ -191,14 +188,11 @@ describe('consequences and opposing automation, from the I&C config', () => {
       rules: ruleStatesFrom(protection.snapshot()),
     })
     for (let second = 0; second < 5; second += 1) step()
-    const unrestricted = derivePlantControls(plant, { ...declarations, notOffered: () => undefined })
-    const rcp = unrestricted.items.flatMap(entry => entry.offered).find(candidate => candidate.path === tag('RCP-A-RUN').path)!
-    const rcpStop = optionStanding(plant, rcp, rcp.options[1]!, context())
-    expect(rcpStop.consequences.map(rule => [rule.action, rule.state])).toContainEqual(['RX TRIP', 'armed'])
-    const siPump = unrestricted.items.flatMap(entry => entry.offered).find(candidate => candidate.path === tag('SI-PUMP-A').path)!
-    expect(optionStanding(plant, siPump, siPump.options[1]!, context()).heldBy).toBeUndefined()
+    const rcp = offeredFor(tag('RCP-A-RUN'))[0]!
+    expect(optionStanding(plant, rcp, option(rcp, 'STOP'), context()).consequences.map(rule => [rule.action, rule.state])).toContainEqual(['RX TRIP', 'armed'])
+    const siPump = offeredFor(tag('SI-PUMP-A'))[0]!
+    expect(optionStanding(plant, siPump, option(siPump, 'STOP'), context()).heldBy).toBeUndefined()
     // Pressurizer pressure below the SI set point: the SI signal starts the pumps once and seals in.
-    const pressure = tag('PT-455')
     runtime.writeCommand({ type: 'setVariable', path: tag('PZR-HTR').path, value: 0 })
     let elapsed = 0
     while (!protection.snapshot().rules.find(rule => rule.ruleId === 'safety-injection-low-pzr-pressure')!.latched && elapsed < 600) {
@@ -206,8 +200,8 @@ describe('consequences and opposing automation, from the I&C config', () => {
       step()
       elapsed += 1
     }
-    expect(Number(runtime.readVariable(pressure.path))).toBeLessThan(12.7)
-    const held = optionStanding(plant, siPump, siPump.options[1]!, context())
+    expect(Number(runtime.readVariable(tag('PT-455').path))).toBeLessThan(12.7)
+    const held = optionStanding(plant, siPump, option(siPump, 'STOP'), context())
     expect(held.heldBy?.ruleId.startsWith('safety-injection')).toBe(true)
     expect(held.opposing.find(rule => rule.ruleId === held.heldBy!.ruleId)).toMatchObject({ state: 'acted' })
   })
@@ -242,7 +236,7 @@ describe('controls depend on the Plant graph, not on equipment ids', () => {
   })
 
   test('derives the same controls under opaque ids', () => {
-    const unnamed = derivePlantControls(anonymous, declarations)
+    const unnamed = derivePlantControls(anonymous)
     expect(unnamed.items.length).toBe(controls.items.length)
     expect(unnamed.items.flatMap(entry => entry.offered).length).toBeGreaterThan(30)
     expect(unnamed).toEqual(renamed(controls))

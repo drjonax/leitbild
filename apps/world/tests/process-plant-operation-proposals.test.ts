@@ -209,9 +209,9 @@ describe('the stuck-open PORV on the four-loop plant (demo beat 4)', () => {
       runtime.tick(1_000)
       protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-proposals' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
     }
-    const controls = derivePlantControls(plant, { notOffered: () => undefined })
+    const controls = derivePlantControls(plant)
     const plantPorts: ProposalPorts = {
-      offered: write => offeredOption(controls, write),
+      offered: write => offeredOption(plant, controls, write),
       validate: write => {
         const validation = validateProcessPlantControlWrite({ system: plant, runtime, protection, payload: { plantId: plant.id, path: write.path, value: write.value } })
         return validation.accepted ? { accepted: true } : { accepted: false, reason: validation.reason }
@@ -235,7 +235,7 @@ describe('the stuck-open PORV on the four-loop plant (demo beat 4)', () => {
     // Neither the instructor's fault nor a controller's demand is the AI's to propose.
     expect(proposeOperation(emptyProposalBook, { ...request(), plantId: plant.id, write: { path: tag('MFW-A-CV').path, value: 0 }, evidence: ['PT-455' as ProcessSignalTagId], at: clock() }, plantPorts).reason).toMatch(/^Not offered to operators: AUTO · /)
     const failure = graph.components.find(component => component.semantics.embedded.some(device => device.id === 'reliefValve'))!.semantics.embedded.find(device => device.id === 'reliefValve')!.variables.find(path => graph.signalBindingByPath.get(path)?.actuation === 'faultInjection')!
-    expect(proposeOperation(emptyProposalBook, { ...request(), plantId: plant.id, write: { path: failure, value: false }, evidence: ['PT-455' as ProcessSignalTagId], at: clock() }, plantPorts).reason).toBe('Not offered to operators: Instructor only: a fault the scenario injects')
+    expect(proposeOperation(emptyProposalBook, { ...request(), plantId: plant.id, write: { path: failure, value: false }, evidence: ['PT-455' as ProcessSignalTagId], at: clock() }, plantPorts).reason).toBe(`Not offered to operators: ${graph.signalBindingByPath.get(failure)!.tagId ?? failure} is a fault the scenario injects: only instructor actions and the Scenario set it`)
     const atProposal = pressure()
     const proposal = proposeOperation(emptyProposalBook, {
       id: 'command:propose', plantId: plant.id, write: { path: blockValve.path, value: 0 },

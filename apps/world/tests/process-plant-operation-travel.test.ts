@@ -18,7 +18,7 @@ guardPlantTests()
 // declares no time the state is awaited, never judged.
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:travel', loopCount: 4 }))
-const controls = derivePlantControls(plant, { notOffered: () => undefined })
+const controls = derivePlantControls(plant)
 const control = (tagId: string): OfferedControl => {
   const path = resolveProcessPlantSignalBinding(plant.graph, { tagId: tagId as never }).path
   return controls.items.flatMap(entry => entry.offered).find(candidate => candidate.path === path)!
