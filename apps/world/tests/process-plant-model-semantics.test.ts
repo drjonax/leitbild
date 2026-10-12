@@ -109,11 +109,12 @@ describe('model semantics declared per component kind', () => {
 
   test('valves say what they do from their mode', () => {
     const functionOf = (id: string) => componentById(graph, id).semantics.function
+    // The behaviour treats a valve without a mode (a feed regulating valve) as a control valve, and so do its semantics.
     expect(functionOf('feedwaterControlValveB')).toBe('modulating')
     expect(functionOf('rhrIsolationValve')).toBe('isolating')
     expect(functionOf('mainSteamSafetyValve')).toBe('relieving')
-    // The behaviour treats a valve without a mode as a control valve, and so do its semantics.
-    expect(functionOf('mainSteamIsolationValveA')).toBe('modulating')
+    // The main steam isolation valves are trip valves, read open or shut.
+    expect(functionOf('mainSteamIsolationValveA')).toBe('isolating')
   })
 
   test('circuits keep the primary and secondary sides of a steam generator apart', () => {
