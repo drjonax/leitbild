@@ -19,10 +19,14 @@ const finite = z.number().finite()
 const seconds = finite.min(0).max(86_400)
 const metres = finite.positive().max(100_000)
 
-/** How a unit moves: `road` is routed on the road network, `direct` is a straight line. */
+/**
+ * How a unit moves: `road` is routed on the road network, `direct` is a
+ * straight line. `mobilizeS` is the turnout time a stationary unit spends
+ * mobilizing before it departs for a task.
+ */
 const mobilitySchema = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('road'), speedFactor: finite.positive().max(4).default(1) }).strict(),
-  z.object({ mode: z.literal('direct'), speedMps: finite.positive().max(400) }).strict(),
+  z.object({ mode: z.literal('road'), speedFactor: finite.positive().max(4).default(1), mobilizeS: seconds.default(0) }).strict(),
+  z.object({ mode: z.literal('direct'), speedMps: finite.positive().max(400), mobilizeS: seconds.default(0) }).strict(),
 ])
 
 /**
@@ -125,6 +129,7 @@ export const einsatzConfigShapeSchema = z.object({
 export type EinsatzConfig = z.output<typeof einsatzConfigShapeSchema>
 export type UnitType = z.output<typeof unitTypeSchema>
 export type UnitComponents = z.output<typeof componentsSchema>
+export type Mobility = z.output<typeof mobilitySchema>
 export type UnitProperty = z.output<typeof propertySchema>
 export type StandingOrders = z.output<typeof standingOrdersSchema>
 export type TaskTemplate = z.output<typeof taskTemplateSchema>

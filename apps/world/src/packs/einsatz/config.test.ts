@@ -36,7 +36,7 @@ describe('Einsatz configuration', () => {
     expect(requirement?.where).toEqual([{ property: 'payloadKg', atLeast: 500 }])
     const provider = config.unitTypes.find(type => type.components.service?.provides.includes(requirement!.provides))
     expect(provider?.properties).toEqual([{ id: 'payloadKg', label: 'Payload', kind: 'number', unit: 'kg', min: 0, max: 20000, default: 1000, board: true }])
-    expect(provider?.components.mobility).toEqual({ mode: 'road', speedFactor: 1 })
+    expect(provider?.components.mobility).toEqual({ mode: 'road', speedFactor: 1, mobilizeS: 0 })
   })
 
   test('the supply-run icons are catalogue symbols the operational atlas has never drawn', () => {
