@@ -16,9 +16,11 @@
   import type * as OpenBridgeMimic from './openbridge-mimic.ts'
   import { embeddedDisplayFrame } from '../../view-host.ts'
   import MimicPopover from './MimicPopover.svelte'
+  import { sparklineWindowText } from '../sparkline.ts'
   import QuickLookSection from './QuickLookSection.svelte'
   import { nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_INTENT_MS, QUICK_LOOK_ORDER, type MimicPopoverContext, type MimicPopoverSection, type PopoverEvent, type PopoverState } from './popover.ts'
   import type { MimicQuickLookSource } from './quick-look-source.ts'
+  import type { MimicQuickLooks } from '../../../../packs/process-plant/displays/mimic/quick-look.ts'
 
   // A generated equipment mimic drawn with OpenBridge: pipes on a canvas by
   // connector-diagram, equipment as positioned OpenBridge elements. The
@@ -28,7 +30,8 @@
   // Narrowed to an annunciator system, the items its rules frame stand out and
   // the rest dim, except any item with an active alarm of its own.
   // Where items open (a display World generates in its window), each item's detail dot opens its popover:
-  // its quick look (`quickLook`) and the sections the hosting display adds (`sections`, popover.ts).
+  // its quick look (`quickLook`: the lead values World chose with the drawing, and the Run to read them from)
+  // and the sections the hosting display adds (`sections`, popover.ts).
   let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, sections = [] }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
@@ -37,7 +40,7 @@
     annunciation: DisplayAnnunciation
     open?: ((item: MimicDrawnItem) => void) | undefined
     highlight?: ReadonlySet<string> | null
-    quickLook?: MimicQuickLookSource | undefined
+    quickLook?: { readonly source: MimicQuickLookSource; readonly looks: MimicQuickLooks } | undefined
     sections?: ReadonlyArray<MimicPopoverSection>
   } = $props()
 
@@ -102,6 +105,11 @@
   // A dot follows each item's tag, in the room its tag line reserves (QUICK_LOOK_DOT); its place is read
   // from the tag as drawn, OpenBridge's own for a device, so it stays beside it whatever rows the stack shows.
   const interactive = $derived(open !== undefined && (quickLook !== undefined || sections.length > 0))
+  const lookPens = $derived(new Map((quickLook?.looks.pens ?? []).map(pen => [String(pen.path), pen])))
+  /** An item's quick-look lead values, in rank order; none where World chose none. */
+  const looksOf = (item: MimicDrawnItem) => (quickLook?.looks.items[item.id] ?? []).flatMap(path => lookPens.get(String(path)) ?? [])
+  /** An item has a dot where its popover would show anything: a quick look, or a section that applies to it. */
+  const dotted = (item: MimicDrawnItem): boolean => looksOf(item).length > 0 || sections.some(section => section.applies(item))
   let drawing = $state<HTMLDivElement | undefined>(undefined)
   const tags = new Map<string, () => Element | null>()
   const dotButtons = new Map<string, HTMLButtonElement>()
@@ -195,7 +203,8 @@
     const box = { x: origin.left + area.x * scale, y: origin.top + area.y * scale, width: area.width * scale, height: area.height * scale }
     return popoverPlacement(box, { width: POPOVER_WIDTH, height: popoverHeight }, { width: window.innerWidth, height: window.innerHeight }, $displayFrame.zoom)
   })
-  const quickLookSection = $derived<MimicPopoverSection | null>(quickLook === undefined ? null : { id: 'quick-look', title: 'Quick look', order: QUICK_LOOK_ORDER, applies: () => true, body: quickLookBody })
+  // Its title names the sparklines' window once, over all of them.
+  const quickLookSection = $derived<MimicPopoverSection | null>(quickLook === undefined ? null : { id: 'quick-look', title: `Quick look · sparklines −${sparklineWindowText(quickLook.looks.sparklineMs)}`, order: QUICK_LOOK_ORDER, applies: item => looksOf(item).length > 0, body: quickLookBody })
   const popoverSections = $derived(popoverItem === undefined ? [] : [...(quickLookSection === null ? [] : [quickLookSection]), ...sections]
     .filter(section => section.applies(popoverItem))
     .sort((left, right) => left.order - right.order))
@@ -371,7 +380,7 @@
 </script>
 
 {#snippet quickLookBody(context: MimicPopoverContext)}
-  {#if quickLook !== undefined}<QuickLookSection source={quickLook} item={context.item} {activeRuleIds} />{/if}
+  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksOf(context.item)} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} />{/if}
 {/snippet}
 
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
@@ -447,7 +456,7 @@
           {#each mimic.items as item (item.id)}
             {@const area = target(item)}
             <button type="button" class="target" style={`left:${area.x}px;top:${area.y}px;width:${area.width}px;height:${area.height}px`} title={`Open ${item.binding.label}`} aria-label={`Open ${item.binding.label}: ${looks.get(item.id)?.words || 'no state drawn'}`} onclick={() => opens(item)}></button>
-            {#if interactive && dots[item.id] !== undefined}
+            {#if interactive && dots[item.id] !== undefined && dotted(item)}
               <!-- The item's detail dot, after its target in tab order: hover a moment or press to open its popover. -->
               {@const dot = dots[item.id]!}
               {@const expanded = popover.kind === 'open' && popover.item === item.id}

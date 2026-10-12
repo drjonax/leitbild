@@ -1,15 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import type { SimulationRunId } from '../src/core/model/index.ts'
-import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
-import type { ComposedReadoutsPanel } from '../src/packs/process-plant/displays/compose.ts'
+import { compileProcessPlant, createProcessPlantRuntime, createPwrReferencePlantDefinition, type VariablePath } from '../src/packs/process-plant/index.ts'
+import type { ComposedDisplayPen } from '../src/packs/process-plant/displays/compose.ts'
+import { mimicQuickLookPaths, QUICK_LOOK_LEADS } from '../src/packs/process-plant/displays/mimic/quick-look.ts'
+import { equipmentKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { compileMimicScope } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
-import type { MimicDrawnItem } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { chatMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { QUICK_LOOK_DOT, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample } from '../src/ui/embed/composed-display/composed-display-client.ts'
 import { nextPopover, popoverPlacement, POPOVER_CLOSED, type PopoverState } from '../src/ui/embed/composed-display/mimic/popover.ts'
-import { createMimicQuickLook, QUICK_LOOK_LEADS, type QuickLookState } from '../src/ui/embed/composed-display/mimic/quick-look-source.ts'
+import { createMimicQuickLook, type QuickLookState } from '../src/ui/embed/composed-display/mimic/quick-look-source.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -17,7 +18,7 @@ guardPlantTests()
 // An interactive drawing's detail dots and the popover they open: one at a
 // time, opened by hovering a dot a moment or by pressing it, which pins it;
 // placed beside its item at 100 % whatever the window's zoom; its quick look
-// read from the item's detail while it is open.
+// chosen with the drawing and read from the Run while it is open.
 
 describe('the item popover', () => {
   const open = (item: string, pinned: boolean): PopoverState => ({ kind: 'open', item, pinned })
@@ -52,58 +53,53 @@ describe('the item popover', () => {
 })
 
 describe('the quick look', () => {
-  const item = { id: 'c3', components: ['sgB'], binding: { label: 'SG B' } } as unknown as MimicDrawnItem
   const pen = (path: string, recorded: boolean, gate?: string) => ({
     path, seriesId: `series:${path}`, recorded, valueKind: 'number',
     thresholds: gate === undefined ? [] : [{ gates: [{ path: gate }] }],
   })
-  const panel = { kind: 'readouts', sparklineMs: 600_000, pens: [pen('sgB.level', true, 'core.aboveP10'), pen('sgB.pressure', false), ...Array.from({ length: 6 }, (_, at) => pen(`sgB.more${at}`, true))] } as unknown as ComposedReadoutsPanel
+  const pens = [pen('sgB.level', true, 'core.aboveP10'), pen('sgB.pressure', false), pen('sgB.wideLevel', true)] as unknown as ReadonlyArray<ComposedDisplayPen>
   const sample = (time: string): ComposedDisplaySample => ({ simulationTime: time, plantElapsedMs: 0, values: [{ path: 'sgB.level', value: 52, quality: 'good' }] })
-  const harness = () => {
+  const harness = (failSample = false) => {
     const calls: Array<{ kind: string; detail: unknown }> = []
     let tick: (() => void) | undefined
     let cleared = false
-    const client: Pick<ComposedDisplayClient, 'view' | 'history' | 'sample'> = {
-      view: async (runId, plantId, state, size) => {
-        calls.push({ kind: 'view', detail: { runId, plantId, state: JSON.parse(state), size } })
-        return { kind: 'detail', plantId, plantLabel: null, simulationTime: '2026-10-12T10:10:00.000Z', display: { panels: [panel, { kind: 'mimic' }] } } as never
-      },
+    const client: Pick<ComposedDisplayClient, 'history' | 'sample'> = {
       history: async (_runId, seriesId, window) => {
         calls.push({ kind: 'history', detail: { seriesId, window } })
         return seriesId === 'series:sgB.level' ? [{ t: Date.parse('2026-10-12T10:05:00.000Z'), v: 55 }] : []
       },
       sample: async (_runId, _plantId, paths, alarms) => {
         calls.push({ kind: 'sample', detail: { paths, alarms } })
-        return sample('2026-10-12T10:10:01.000Z')
+        if (failSample) throw new Error('the Run is not loaded')
+        return sample('2026-10-12T10:10:00.000Z')
       },
     }
     const source = createMimicQuickLook({
-      client, runId: 'run-1' as SimulationRunId, plantId: 'plant:a', size: () => ({ width: 1896, height: 972 }),
+      client, runId: 'run-1' as SimulationRunId, plantId: 'plant:a',
       setInterval: run => { tick = run; return 'timer' }, clearInterval: () => { cleared = true },
     })
     return { calls, source, tick: () => tick?.(), cleared: () => cleared }
   }
-  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+  const settle = async () => { for (let at = 0; at < 6; at++) await new Promise(resolve => setTimeout(resolve, 0)) }
 
-  test('it is the item\'s detail\'s lead values, the first six, each recorded one with its sparkline\'s history', async () => {
+  test('opening one compiles nothing: it samples its lead values and reads their sparklines\' history', async () => {
     const { calls, source } = harness()
     const states: QuickLookState[] = []
-    const stop = source.open(item, state => states.push(state))
-    for (let at = 0; at < 5; at++) await settle()
-    // The same detail the item opens, drawn for the same window, so the two are one compile and never disagree.
-    expect(calls[0]).toEqual({ kind: 'view', detail: { runId: 'run-1', plantId: 'plant:a', state: { detail: { plantId: 'plant:a', components: ['sgB'] } }, size: { width: 1896, height: 972 } } })
+    const stop = source.open({ pens, sparklineMs: 600_000 }, state => states.push(state))
+    await settle()
     expect(states[0]).toEqual({ kind: 'loading' })
+    // Only samples and history: no display is drawn or compiled for it.
+    expect(new Set(calls.map(call => call.kind))).toEqual(new Set(['sample', 'history']))
+    // Sampled with what its limits' gates read, without alarms (the drawing's own sample carries them).
+    expect(calls[0]).toEqual({ kind: 'sample', detail: { paths: ['sgB.level', 'core.aboveP10', 'sgB.pressure', 'sgB.wideLevel'], alarms: false } })
+    // History for the recorded ones, from a hold gap before the sparkline's 10 minutes, up to the Run's time now.
+    const histories = calls.filter(call => call.kind === 'history').map(call => call.detail as { seriesId: string; window: { from: number; to: number } })
+    expect(histories.map(call => call.seriesId)).toEqual(['series:sgB.level', 'series:sgB.wideLevel'])
+    expect(histories[0]!.window).toEqual({ from: Date.parse('2026-10-12T10:10:00.000Z') - 600_000 - 90_000, to: Date.parse('2026-10-12T10:10:00.000Z') })
     const shown = states.at(-1)!
     if (shown.kind !== 'shown') throw new Error(shown.kind)
-    expect(shown.panel?.pens.map(entry => String(entry.path))).toHaveLength(QUICK_LOOK_LEADS)
-    // History for the recorded ones, from a hold gap before the sparkline's 10 minutes.
-    const histories = calls.filter(call => call.kind === 'history').map(call => call.detail as { seriesId: string; window: { from: number; to: number } })
-    expect(histories.map(call => call.seriesId)).toEqual(['series:sgB.level', 'series:sgB.more0', 'series:sgB.more1', 'series:sgB.more2', 'series:sgB.more3'])
-    expect(histories[0]!.window.to - histories[0]!.window.from).toBe(600_000 + 90_000)
-    expect(shown.history.historyMissing.has('sgB.more0')).toBe(true)
-    // Sampled with what its limits' gates read, without alarms (the drawing's own sample carries them).
-    expect(calls.find(call => call.kind === 'sample')?.detail).toEqual({ paths: ['sgB.level', 'core.aboveP10', 'sgB.pressure', 'sgB.more0', 'sgB.more1', 'sgB.more2', 'sgB.more3'], alarms: false })
     expect(shown.latest?.values[0]?.value).toBe(52)
+    expect(shown.history.historyMissing.has('sgB.wideLevel')).toBe(true)
     expect(shown.history.series.get('sgB.level')?.map(point => point.v)).toEqual([55, 52])
     stop()
   })
@@ -111,8 +107,8 @@ describe('the quick look', () => {
   test('it reads each second while open and nothing once closed', async () => {
     const { calls, source, tick, cleared } = harness()
     const states: QuickLookState[] = []
-    const stop = source.open(item, state => states.push(state))
-    for (let at = 0; at < 5; at++) await settle()
+    const stop = source.open({ pens, sparklineMs: 600_000 }, state => states.push(state))
+    await settle()
     const samples = () => calls.filter(call => call.kind === 'sample').length
     expect(samples()).toBe(1)
     tick()
@@ -126,15 +122,30 @@ describe('the quick look', () => {
     expect(states.length).toBe(seen)
   })
 
-  test('a detail that cannot be drawn says why, in place of the values', async () => {
-    const source = createMimicQuickLook({
-      client: { view: async () => { throw new Error('nothing around it can be drawn legibly') }, history: async () => [], sample: async () => sample('2026-10-12T10:10:00.000Z') },
-      runId: 'run-1' as SimulationRunId, plantId: 'plant:a', size: () => null,
-    })
+  test('a sample that fails says so beside the values it last had', async () => {
+    const { source } = harness(true)
     const states: QuickLookState[] = []
-    source.open(item, state => states.push(state))
-    for (let at = 0; at < 3; at++) await settle()
-    expect(states.at(-1)).toEqual({ kind: 'failed', message: 'nothing around it can be drawn legibly' })
+    source.open({ pens, sparklineMs: 600_000 }, state => states.push(state))
+    await settle()
+    expect(states.at(-1)).toMatchObject({ kind: 'shown', latest: undefined, sampleError: 'the Run is not loaded' })
+  })
+
+  test('each drawn item\'s quick look is the first six of what its detail leads with now', () => {
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:quick-looks', loopCount: 4 }))
+    const runtime = createProcessPlantRuntime({ system: plant })
+    const principal = principalCircuits(plant.graph)
+    if (!principal.ok) throw new Error(principal.reason)
+    const drawn = compileMimicScope(plant, principal.scope, { profile: overviewMimicProfile, maxWidth: 4000, maxHeight: 4000 })
+    if (!drawn.ok) throw new Error('not drawn')
+    const now = { mode: 'powerOperation', read: (path: VariablePath) => runtime.readVariable(path) }
+    const looks = mimicQuickLookPaths(plant, drawn.mimic, now)
+    for (const item of drawn.mimic.items) {
+      const components = item.components.map(id => plant.graph.componentIndexById.get(id as never)!)
+      expect(looks[item.id] ?? []).toEqual(equipmentKeyValues(plant, components, now).slice(0, QUICK_LOOK_LEADS))
+    }
+    expect(Object.values(looks).every(paths => paths.length > 0 && paths.length <= QUICK_LOOK_LEADS)).toBe(true)
+    const core = drawn.mimic.items.find(item => item.binding.label === 'Core')!
+    expect(looks[core.id]?.[0]).toBe('core.powerRangePercent' as never)
   })
 })
 
