@@ -301,7 +301,8 @@ describe('Workspace Host with real Modules', () => {
       .map(id => agentsRuntime.team.getAgent(id))
       .find(agent => agent?.kind === 'ai')!
     const generalAssistantAI = asAIAgent(generalAssistant)!
-    expect(generalAssistantAI.getMaxToolIterations()).toBeUndefined()
+    // A visible check-in after 20 tool rounds, declared by the Assistant room definition: a cost guard that asks the person, not a hidden quota.
+    expect(generalAssistantAI.getMaxToolIterations()).toBe(20)
     expect(effectiveAgentToolSelection(generalAssistantAI.getConfig())).toEqual(expect.arrayContaining([
       'product_search',
       'product_read',
