@@ -290,6 +290,23 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
     config.sendReady(client, readyMessageForRuntime(simulationRunId, runtime, client))
   }
 
+  /**
+   * A screen holding roles is attached: a new Run that waits for its first
+   * one starts playing (`registry.screenJoined`). A failure to start it is
+   * logged; the Run stays paused for the Host to play.
+   */
+  const noteScreens = (simulationRunId: SimulationRunId, clients: ReadonlySet<Client>): void => {
+    if (![...clients].some(client => (config.perspectiveOf(client)?.roleIds.length ?? 0) > 0)) return
+    const start = async (): Promise<void> => {
+      try {
+        await config.registry.screenJoined(simulationRunId)
+      } catch (error) {
+        console.error(`Simulation Run ${simulationRunId} could not start for its first screen`, error)
+      }
+    }
+    void start()
+  }
+
   const reconcileSimulationRunSubscription = (simulationRunId: SimulationRunId): SubscriptionReconciliation => {
     const clients = clientsBySimulationRun.get(simulationRunId)
     const existing = subscriptionsBySimulationRun.get(simulationRunId)
@@ -305,6 +322,7 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
       return { runtime: null, changed: existing !== undefined }
     }
     for (const client of clients) ensureClientLease(simulationRunId, client)
+    noteScreens(simulationRunId, clients)
     if (existing?.runtime === runtime) return { runtime, changed: false }
     existing?.unsubscribe()
     const unsubscribe = runtime.subscribe(event => broadcastToSimulationRun(simulationRunId, runtime, event))

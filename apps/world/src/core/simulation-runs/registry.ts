@@ -110,6 +110,14 @@ export interface SimulationRunRegistry {
   readonly executionStatus: (id: SimulationRunId) => Promise<RunExecutionState>
   readonly executionOverview: (id: SimulationRunId) => Promise<RunExecutionState>
   readonly setExecution: (id: SimulationRunId, input: ExecutionSetInput) => Promise<RunExecutionState>
+  /**
+   * A screen holding roles joined the Run. A new Run that declares roles
+   * starts paused, so its clock does not run while its players still choose
+   * their roles; the first screen to join with roles starts it playing in
+   * realtime. Once anyone set the Run's execution, or it played, a join
+   * changes nothing.
+   */
+  readonly screenJoined: (id: SimulationRunId) => Promise<void>
   readonly advanceExecution: (id: SimulationRunId, input: { readonly minutes: number; readonly onComplete?: AdvanceCompletion }) => Promise<RunExecutionState>
   readonly load: (id: SimulationRunId) => Promise<SimulationRunRuntime>
   readonly reset: (id: SimulationRunId) => Promise<SimulationRunRuntime>
@@ -156,6 +164,8 @@ export const createSimulationRunRegistry = (config: {
   readonly procedureSourceService?: ProcedureSourceService
 }): SimulationRunRegistry => {
   const simulationRuns = new Map<SimulationRunId, SimulationRunRuntime>()
+  /** New Runs that declare roles, paused until the first screen joins with roles (`screenJoined`). */
+  const awaitingFirstScreen = new Set<SimulationRunId>()
   const loadedCompiledScenarios = new Map<SimulationRunId, CompiledScenario>()
   const lifecycle = createKeyedOperations<SimulationRunId>()
   let shuttingDown = false
@@ -607,6 +617,10 @@ export const createSimulationRunRegistry = (config: {
       throw error
     }
     const scenarioRoles = runRolesOf(scenarioRuntime.scenario)
+    // A new Run whose players choose roles waits, paused, for the first of them (`screenJoined`).
+    const awaitsScreen = !restoredSnapshot && scenarioRoles !== null
+    if (awaitsScreen) awaitingFirstScreen.add(id)
+    else awaitingFirstScreen.delete(id)
     let runtime
     try {
       runtime = await createSimulationRunRuntime({
@@ -618,6 +632,7 @@ export const createSimulationRunRegistry = (config: {
         snapshotStore,
         ...(interactionHandlers.length === 0 ? {} : { interactionHandlers }),
         ...(restoredSnapshot ? { restoredSnapshot } : {}),
+        ...(awaitsScreen ? { startPaused: true } : {}),
         ...(restoredEvents.length === 0 ? {} : { restoredEvents }),
         ...(createConfig?.initialSeq === undefined && maxEventSeq === 0 ? {} : { initialSeq: Math.max(createConfig.initialSeq ?? 0, maxEventSeq) }),
         scenario: {
@@ -889,11 +904,18 @@ export const createSimulationRunRegistry = (config: {
 
   const setExecution = async (id: SimulationRunId, rawInput: ExecutionSetInput): Promise<RunExecutionState> => {
     const input = executionSetInputSchema.parse(rawInput)
+    awaitingFirstScreen.delete(id)
     return await executionOperations.run(id, async () => await applyExecution(id, input))
+  }
+
+  const screenJoined = async (id: SimulationRunId): Promise<void> => {
+    if (!awaitingFirstScreen.delete(id)) return
+    await executionOperations.run(id, async () => { await applyExecution(id, { playback: 'playing' }) })
   }
 
   const advanceExecution = async (id: SimulationRunId, rawInput: { readonly minutes: number; readonly onComplete?: AdvanceCompletion }): Promise<RunExecutionState> => {
     const input = executionAdvanceInputSchema.parse(rawInput)
+    awaitingFirstScreen.delete(id)
     return await executionOperations.run(id, async () => {
       const active = maximumPaceJobs.get(id)
       if (active) {
@@ -1021,6 +1043,7 @@ export const createSimulationRunRegistry = (config: {
   })
 
   const deleteSimulationRun = (id: SimulationRunId): Promise<boolean> => lifecycle.run(id, async () => {
+    awaitingFirstScreen.delete(id)
     const maximumPaceJob = maximumPaceJobs.get(id)
     if (maximumPaceJob) {
       maximumPaceJob.destination = { playback: 'paused', pace: 'realtime' }
@@ -1228,6 +1251,7 @@ export const createSimulationRunRegistry = (config: {
     executionStatus,
     executionOverview,
     setExecution,
+    screenJoined,
     advanceExecution,
     load,
     reset,

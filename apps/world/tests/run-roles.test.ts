@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { accessContextSchema, newRequestId } from '@leitbild/contracts'
 import { actorIdSchema, deleteObjectCommandKind, type SimulationRunEvent, type SimulationRunId } from '../src/core/model/index.ts'
 import type { Actor } from '../src/core/simulation-runs/actors.ts'
+import { createSimulationRunRealtimeManager } from '../src/core/api/realtime.ts'
 import { handleSimulationRunApi } from '../src/core/api/simulation-run-routes.ts'
 import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import type { SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
@@ -9,6 +10,7 @@ import { deepCopy } from '../src/ui/scenario-builder-model.ts'
 import { weatherPack } from '../src/packs/weather/pack.ts'
 import { fixturePack } from './fixtures/fixture-pack.ts'
 import { fixtureCommandIds } from './fixtures/fixture-runtime.ts'
+import { waitForCondition } from './helpers.ts'
 import {
   compileWithRolePacks,
   createRoleRunRegistry,
@@ -246,6 +248,47 @@ describe('Role Run gates on World-direct REST', () => {
       expect(timeline).toMatchObject({ kind: 'command', result: { ok: true } })
       expect(issuedCommands(registry, run.id).map(command => 'roleIds' in command)).toEqual([false])
     } finally { await registry.shutdown() }
+  })
+
+  test('a new role Run waits, paused, for its first screen to join with roles; a choice made before that, a later join or an open Run is untouched', async () => {
+    const registry = await createRoleRunRegistry()
+    interface Screen { readonly roleIds: ReadonlyArray<string> }
+    const realtime = createSimulationRunRealtimeManager<Screen>({
+      registry,
+      send: () => undefined,
+      sendReady: () => undefined,
+      perspectiveOf: screen => screen.roleIds.length === 0 ? null : { roleIds: screen.roleIds, epoch: 1 },
+    })
+    const playback = async (id: SimulationRunId) => (await registry.executionStatus(id)).playback
+    try {
+      const run = await registry.create({ scenarioId: 'role-run' })
+      expect(await playback(run.id)).toBe('paused')
+      // A screen without roles, choosing them, starts nothing.
+      realtime.addClient(run.id, { roleIds: [] })
+      await Bun.sleep(20)
+      expect(await playback(run.id)).toBe('paused')
+      realtime.addClient(run.id, { roleIds: ['control'] })
+      await waitForCondition('the first screen with roles starts the Run', () => registry.get(run.id)!.snapshot().clock?.paused === false)
+      expect(await playback(run.id)).toBe('playing')
+      // Paused afterwards, it stays paused when another screen joins.
+      await registry.setExecution(run.id, { playback: 'paused' })
+      realtime.addClient(run.id, { roleIds: ['control'] })
+      await Bun.sleep(20)
+      expect(await playback(run.id)).toBe('paused')
+
+      // The Host's choice before anyone joined wins.
+      const chosen = await registry.create({ scenarioId: 'role-run' })
+      await registry.setExecution(chosen.id, { playback: 'paused' })
+      realtime.addClient(chosen.id, { roleIds: ['control'] })
+      await Bun.sleep(20)
+      expect(await playback(chosen.id)).toBe('paused')
+
+      const open = await registry.create({ scenarioId: 'open-run' })
+      expect(await playback(open.id)).toBe('playing')
+    } finally {
+      realtime.stop()
+      await registry.shutdown()
+    }
   })
 
   test('a Run without roles behaves exactly as before', async () => {

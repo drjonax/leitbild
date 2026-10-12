@@ -155,6 +155,8 @@ export const createSimulationRunRuntime = async (config: {
   readonly snapshotStore: SimulationRunSnapshotStore
   readonly interactionHandlers?: ReadonlyArray<InteractionHandler>
   readonly restoredSnapshot?: SimulationRunStateSnapshot
+  /** A new Run starts paused rather than playing; a restored one keeps the clock it was saved with. */
+  readonly startPaused?: boolean
   readonly restoredEvents?: ReadonlyArray<SimulationRunEvent>
   readonly initialSeq?: number
   readonly scenario: {
@@ -1086,7 +1088,7 @@ export const createSimulationRunRuntime = async (config: {
   }
   const hydratedClock = state.snapshot().clock
   if (hydratedClock) {
-    const initial = { ...hydratedClock, paused: config.restoredSnapshot?.clock?.paused ?? false }
+    const initial = { ...hydratedClock, paused: config.restoredSnapshot?.clock?.paused ?? config.startPaused === true }
     await config.runtimeConnection.setClock(initial)
     runClock.set(initial)
     state.hydrate({ ...state.snapshot(), clock: initial })
