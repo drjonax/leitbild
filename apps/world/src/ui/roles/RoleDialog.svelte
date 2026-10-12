@@ -73,6 +73,7 @@
     ? `${runTitle} declares roles. Control a role to play it; See shows its objects on this screen only. Anyone may pick any role.`
     : 'Control a role to play it; See shows its objects on this screen only. Control includes See; an unseen role\'s objects stay hidden even where another held role commands them.'}
   size="large"
+  placement="top"
   close={cancel ?? (() => {})}
   closeOnBackdrop={false}
   closeOnEscape={cancel !== undefined}

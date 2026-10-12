@@ -126,6 +126,8 @@ describe('the role dialog', () => {
     expect(model(sided, draft).presets.find(row => row.id === 'north-solo')?.ticked).toBe(true)
     draft = togglePreset(sided, draft, 'north-solo')
     expect(draft.control).toEqual(['control'])
+    // See goes with Control: an unticked preset leaves none of its roles seen.
+    expect(draft.hidden).toEqual(['north-desk', 'group:n-haul', 'group:n-guard'])
     // A role without a category is a row of its own.
     expect(togglePreset(sided, draft, 'north-desk').control).toEqual(['north-desk', 'control'])
     expect(togglePreset(sided, togglePreset(sided, draft, 'north-desk'), 'north-desk').control).toEqual(['control'])
