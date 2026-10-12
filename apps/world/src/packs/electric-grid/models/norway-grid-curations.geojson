@@ -1980,6 +1980,134 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "fagrafjell-vagle-1375425305-865-al59",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.751899,
+          58.804654
+        ]
+      },
+      "properties": {
+        "kind": "set-line-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/1375425305"
+        ],
+        "wayOsmIds": [
+          "way/1375425305"
+        ],
+        "voltageKv": 132,
+        "designRatingMva": 310,
+        "reason": "Lnett built the two parallel single-circuit 132 kV lines Fagrafjell – Vagle 1 and 2 (3.2 km each, energised 2024) with one 865-AL59 alloy conductor per phase (NVE concession: minimum current capacity equivalent to 865 AL 59), where the rule assumes one 243-AL1/39. Lnett's application gives the conductor about 1,800 A at 20 °C air and NVE's decision 1,600 A per circuit; the lower figure, read at 20 °C and taken to the 35 °C design air by the ambient rule (I² linear in air temperature, × 634/749), gives √3 · 132 kV · 1.600 kA · 0.8465 = 310 MVA, a lower bound. Which OSM way is line 1 and which line 2 is not mapped; both carry the same conductor.",
+        "evidence": [
+          {
+            "url": "https://www.l-nett.no/getfile.php/13384429-1665996252/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/Konsesjon/Anleggskonsesjon%20-%20Fagrafjell-Vagle-Stokkeland-prosjektet%20%2820.%20apr%202022%29.pdf",
+            "ref": "NVE anleggskonsesjon to Lnett AS, ref. 201834091-92 (2022-04-20), p. 2, items 2 and 3",
+            "note": "enkeltkurs luftledning ... minimum strømføringsevne tilsvarende 865 AL 59 (Fagrafjell–Vagle 1 and 2, ca. 3,2 km each)"
+          },
+          {
+            "url": "https://www.l-nett.no/getfile.php/131755-1650443900/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/S%C3%B8knad/Konsesjonss%C3%B8knad%20Fagrafjell%20Vagle%20Stokkeland%20til%20NVE.pdf",
+            "ref": "Lyse Elnett, konsesjonssøknad Fagrafjell – Vagle og Vagle – Stokkeland (2018), Tabell 4.2, p. 36",
+            "note": "3 stk. legert aluminium 865-Al59 (ca. 1800 A v/ 20 oC)"
+          },
+          {
+            "url": "https://www.l-nett.no/getfile.php/13384426-1650453104/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/Konsesjon/Bakgrunn%20for%20vedtak.pdf",
+            "ref": "NVE, bakgrunn for vedtak 201834091 (2022), table for Fagrafjell – Vagle",
+            "note": "Overføringskapasitet 1600 A; Type 865 AL 59"
+          },
+          {
+            "url": "https://www.l-nett.no/getfile.php/13653812-1693479437/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/MTA-plan/MTA%20132kV%20Fagrafjell-Vagle-Stokkeland_E03.pdf",
+            "ref": "Lnett, MTA-plan 132 kV Fagrafjell–Vagle–Stokkeland rev. E03, technical table (p. 12)",
+            "note": "Linetype 865-AL59"
+          },
+          {
+            "url": "https://www.l-nett.no/Fagrafjell-Vagle/",
+            "ref": "Lnett project page Fagrafjell–Vagle (read 2026-10-12), 'I løpet av 2024'",
+            "note": "Linjene mellom Vagle og Fagrafjell er ferdig og spenningssatt"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/1375425305",
+            "ref": "way/1375425305",
+            "note": "name=Fagrafjell - Vagle 1&2, operator=Lnett, cables=3, voltage=132000"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fagrafjell-vagle-1375425308-865-al59",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.759123,
+          58.803048
+        ]
+      },
+      "properties": {
+        "kind": "set-line-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/1375425308"
+        ],
+        "wayOsmIds": [
+          "way/1375425308"
+        ],
+        "voltageKv": 132,
+        "designRatingMva": 310,
+        "reason": "Lnett built the two parallel single-circuit 132 kV lines Fagrafjell – Vagle 1 and 2 (3.2 km each, energised 2024) with one 865-AL59 alloy conductor per phase (NVE concession: minimum current capacity equivalent to 865 AL 59), where the rule assumes one 243-AL1/39. Lnett's application gives the conductor about 1,800 A at 20 °C air and NVE's decision 1,600 A per circuit; the lower figure, read at 20 °C and taken to the 35 °C design air by the ambient rule (I² linear in air temperature, × 634/749), gives √3 · 132 kV · 1.600 kA · 0.8465 = 310 MVA, a lower bound. Which OSM way is line 1 and which line 2 is not mapped; both carry the same conductor.",
+        "evidence": [
+          {
+            "url": "https://www.l-nett.no/getfile.php/13384429-1665996252/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/Konsesjon/Anleggskonsesjon%20-%20Fagrafjell-Vagle-Stokkeland-prosjektet%20%2820.%20apr%202022%29.pdf",
+            "ref": "NVE anleggskonsesjon to Lnett AS, ref. 201834091-92 (2022-04-20), p. 2, items 2 and 3",
+            "note": "enkeltkurs luftledning ... minimum strømføringsevne tilsvarende 865 AL 59 (Fagrafjell–Vagle 1 and 2, ca. 3,2 km each)"
+          },
+          {
+            "url": "https://www.l-nett.no/getfile.php/131755-1650443900/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/S%C3%B8knad/Konsesjonss%C3%B8knad%20Fagrafjell%20Vagle%20Stokkeland%20til%20NVE.pdf",
+            "ref": "Lyse Elnett, konsesjonssøknad Fagrafjell – Vagle og Vagle – Stokkeland (2018), Tabell 4.2, p. 36",
+            "note": "3 stk. legert aluminium 865-Al59 (ca. 1800 A v/ 20 oC)"
+          },
+          {
+            "url": "https://www.l-nett.no/getfile.php/13384426-1650453104/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/Konsesjon/Bakgrunn%20for%20vedtak.pdf",
+            "ref": "NVE, bakgrunn for vedtak 201834091 (2022), table for Fagrafjell – Vagle",
+            "note": "Overføringskapasitet 1600 A; Type 865 AL 59"
+          },
+          {
+            "url": "https://www.l-nett.no/getfile.php/13653812-1693479437/Prosjektdokumenter/Ny%20132%20kV%20Fagrafjell%20-%20Vagle-%20Stokkeland/Konsesjon%20og%20s%C3%B8knad/MTA-plan/MTA%20132kV%20Fagrafjell-Vagle-Stokkeland_E03.pdf",
+            "ref": "Lnett, MTA-plan 132 kV Fagrafjell–Vagle–Stokkeland rev. E03, technical table (p. 12)",
+            "note": "Linetype 865-AL59"
+          },
+          {
+            "url": "https://www.l-nett.no/Fagrafjell-Vagle/",
+            "ref": "Lnett project page Fagrafjell–Vagle (read 2026-10-12), 'I løpet av 2024'",
+            "note": "Linjene mellom Vagle og Fagrafjell er ferdig og spenningssatt"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/1375425308",
+            "ref": "way/1375425308",
+            "note": "name=Fagrafjell - Vagle 1&2, operator=Lnett, cables=3, voltage=132000"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
     }
   ]
 }

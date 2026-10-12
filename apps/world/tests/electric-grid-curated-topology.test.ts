@@ -71,6 +71,12 @@ describe('curated topology of the Norway model', () => {
     expect(cable.ratingMw).toBeGreaterThan(plant.capacityMw)
   })
 
+  test('Fagrafjell – Vagle 1 and 2 carry their 865-AL59 conductor\'s rating, not the rule conductor\'s', () => {
+    const lines = model.branches.filter(branch => branch.provenance.sources.some(source => /^curation:fagrafjell-vagle-\d+-865-al59$/.test(source)))
+    // 310 MVA at the 35 °C design air (Lnett/NVE: 865-AL59, 1,600 A at 20 °C), at the model's 0 °C reference air.
+    expect(lines.map(line => [line.osmWayIds, line.circuits, line.ratingMw]).sort()).toEqual([[['1375425305'], 1, 427], [['1375425308'], 1, 427]])
+  })
+
   test('the Ålefjær tap operated at 110 kV is not part of the ≥132 kV model', () => {
     expect(model.buses.filter(bus => bus.substationId === 'osm-relation-14027918')).toEqual([])
     expect(model.branches.filter(branch => branch.osmWayIds.includes('988971051'))).toEqual([])
