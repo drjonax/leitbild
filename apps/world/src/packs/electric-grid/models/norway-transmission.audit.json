@@ -9,7 +9,7 @@
   "branches": 1243,
   "hvdcLinks": 7,
   "generators": 852,
-  "loads": 3032
+  "loads": 3121
  },
  "oracles": {
   "nveCoverage": "not-supplied"
@@ -158,7 +158,7 @@
    "metrics": {
     "NO1.modelMw": 7255.2,
     "NO1.referenceMw": 7238.7,
-    "NO2.modelMw": 5851.1,
+    "NO2.modelMw": 5851.2,
     "NO2.referenceMw": 5817.4,
     "NO3.modelMw": 4255.5,
     "NO3.referenceMw": 4262.9,

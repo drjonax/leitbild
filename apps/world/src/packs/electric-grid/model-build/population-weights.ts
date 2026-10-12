@@ -2,13 +2,33 @@ import type { PriceArea } from '../schemas/grid-ids.ts'
 import { compareText } from '../topology/ids.ts'
 import { haversineKm, type LonLat } from './geo.ts'
 import { servesLoad, type Station, type StationIndex } from './stations.ts'
+import type { WaterCrossings } from './water-crossings.ts'
 
 // Where a municipality's demand enters the ≥132 kV grid: Elhub meters demand per municipality only,
 // so the municipality's residents (SSB 1 km grid) stand in for its consumers. Each populated square
 // belongs to the municipality whose Kartverket bounding box contains it and whose representative
 // point is nearest (Kartverket publishes no outline with the point), and is served by the nearest
-// ≥132 kV substation of that municipality's price area that serves load (stations.ts servesLoad). A substation's share of the municipality's
+// ≥132 kV substation of that municipality's price area that serves load (stations.ts servesLoad),
+// unless open water lies between them (openWaterRule). A substation's share of the municipality's
 // demand is its share of the municipality's residents.
+
+/** Distributed loads farther than this from their station need a reviewed regional route, km (golden list distributed load limit). */
+export const municipalAttachmentLimitKm = 60
+
+/**
+ * A distribution grid does not cross a fjord to a substation when one on the same shore is near:
+ * when the straight path to the nearest substation crosses more than openWaterKm of continuous sea
+ * (OSM coastline), the square is served by the nearest substation within maximumDistanceFactor ×
+ * that distance (and within the municipal attachment limit) whose path crosses no more; with none,
+ * by the nearest. Modelling judgement: 1 km
+ * keeps narrow sounds, rivers and harbour basins, which overhead spans and short cables cross,
+ * and the factor 3 keeps islands with their nearby mainland station rather than a far one.
+ */
+export const openWaterRule = {
+  id: 'no-attachment-across-open-water',
+  openWaterKm: 1,
+  maximumDistanceFactor: 3,
+} as const
 
 export interface PopulationSquare {
   readonly id: string
@@ -39,6 +59,8 @@ export interface PopulationAllocation {
   readonly sharesOf: (municipalityNumber: string) => ReadonlyArray<StationShare> | undefined
   /** Squares no municipality bounding box contains (assigned to the nearest municipality point). */
   readonly squaresOutsideEveryBox: number
+  /** Squares and residents served by a farther substation than the nearest because of open water (openWaterRule). */
+  readonly acrossOpenWater: { readonly squares: number; readonly residents: number }
 }
 
 const insideBox = (point: LonLat, bbox: MunicipalityPlace['bbox']): boolean =>
@@ -48,6 +70,7 @@ export const allocateByPopulation = (config: {
   readonly squares: ReadonlyArray<PopulationSquare>
   readonly municipalities: ReadonlyArray<MunicipalityPlace>
   readonly stations: StationIndex
+  readonly water: WaterCrossings
 }): PopulationAllocation => {
   const municipalities = [...config.municipalities].sort((left, right) => compareText(left.municipalityNumber, right.municipalityNumber))
   const eligibleOf = new Map<PriceArea, Station[]>()
@@ -69,6 +92,21 @@ export const allocateByPopulation = (config: {
     }
     return { item: best, km: bestKm }
   }
+  let movedSquares = 0
+  let movedResidents = 0
+  const servingStation = (point: LonLat, eligible: ReadonlyArray<Station>, population: number): { readonly item: Station; readonly km: number } => {
+    const nearest = nearestOf(point, eligible, station => station.location)
+    if (config.water.openWaterKm(point, nearest.item.location) <= openWaterRule.openWaterKm) return nearest
+    const sameShore = eligible
+      .map(station => ({ item: station, km: haversineKm(point, station.location) }))
+      .filter(candidate => candidate.km <= nearest.km * openWaterRule.maximumDistanceFactor && candidate.km <= municipalAttachmentLimitKm)
+      .sort((left, right) => left.km - right.km || compareText(left.item.stationId, right.item.stationId))
+      .find(candidate => config.water.openWaterKm(point, candidate.item.location) <= openWaterRule.openWaterKm)
+    if (sameShore === undefined) return nearest
+    movedSquares += 1
+    movedResidents += population
+    return sameShore
+  }
   type Sum = { station: Station; residents: number; lon: number; lat: number; km: number }
   const sums = new Map<string, Map<string, Sum>>()
   let outside = 0
@@ -78,7 +116,7 @@ export const allocateByPopulation = (config: {
     const owner = nearestOf(square.centre, boxes.length > 0 ? boxes : municipalities, place => place.point).item
     const eligible = eligibleOf.get(owner.priceArea)
     if (eligible === undefined) throw new Error(`municipality ${owner.municipalityNumber}: no ≥132 kV substation in ${owner.priceArea}`)
-    const served = nearestOf(square.centre, eligible, station => station.location)
+    const served = servingStation(square.centre, eligible, square.population)
     const perStation = sums.get(owner.municipalityNumber) ?? new Map<string, Sum>()
     const sum = perStation.get(served.item.stationId) ?? { station: served.item, residents: 0, lon: 0, lat: 0, km: 0 }
     sum.residents += square.population
@@ -101,5 +139,5 @@ export const allocateByPopulation = (config: {
       }))
       .sort((left, right) => right.residents - left.residents || compareText(left.station.stationId, right.station.stationId)))
   }
-  return { sharesOf: municipalityNumber => shares.get(municipalityNumber), squaresOutsideEveryBox: outside }
+  return { sharesOf: municipalityNumber => shares.get(municipalityNumber), squaresOutsideEveryBox: outside, acrossOpenWater: { squares: movedSquares, residents: movedResidents } }
 }

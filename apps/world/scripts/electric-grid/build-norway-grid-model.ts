@@ -7,7 +7,8 @@
 //     --curations <norway-grid-curations.geojson> --interconnectors <norway-interconnectors.json> \
 //     --major-sites <norway-major-sites.json> --reference-dispatch <norway-reference-dispatch.json>
 //     --population <snapshots/ssb-population-grid/YYYYMMDD/population-cells.json> \
-//     --hydro-heads <snapshots/nve-hydro-heads/YYYYMMDD/hydro-heads.json> [--out <directory>]
+//     --hydro-heads <snapshots/nve-hydro-heads/YYYYMMDD/hydro-heads.json> \
+//     --coastline <coastline.json from snapshot-osm-coastline.ts, of the sidecar's PBF> [--out <directory>]
 //
 // The sidecar manifest is read from beside the sidecar. Exit codes: 0 built and audit passed,
 // 1 built but the audit did not pass, 2 invalid invocation or input.
@@ -22,6 +23,7 @@ import { auditGraphFromGridModelV2 } from '../../src/packs/electric-grid/audit/v
 import {
   biddingZoneSnapshotSchema,
   buildFileSchemas,
+  coastlineSnapshotSchema,
   hydroSnapshotSchema,
   municipalitySnapshotSchema,
   hydroHeadsSnapshotSchema,
@@ -75,6 +77,7 @@ const main = async (): Promise<void> => {
       'reference-dispatch': { type: 'string' },
       population: { type: 'string' },
       'hydro-heads': { type: 'string' },
+      coastline: { type: 'string' },
       golden: { type: 'string', default: join(modelsDirectory, 'norway-grid-golden.json') },
       out: { type: 'string', default: modelsDirectory },
     },
@@ -115,6 +118,7 @@ const main = async (): Promise<void> => {
     referenceDispatch: await readValidated(resolve(required('reference-dispatch')), buildFileSchemas.referenceDispatch),
     population: await readValidated(resolve(required('population')), populationSnapshotSchema),
     hydroHeads: await readValidated(resolve(required('hydro-heads')), hydroHeadsSnapshotSchema),
+    coastline: await readValidated(resolve(required('coastline')), coastlineSnapshotSchema),
   }
   const read = performance.now()
   const built = buildNorwayGridModel(inputs)

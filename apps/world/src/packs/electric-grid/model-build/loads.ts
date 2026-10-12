@@ -6,7 +6,7 @@ import { haversineKm, roundTo, type LonLat } from './geo.ts'
 import type { MunicipalitySnapshot, ReferenceHour } from './inputs.ts'
 import type { BuildLedger } from './ledger.ts'
 import { lowestLevel, servesLoad, type Station, type StationIndex } from './stations.ts'
-import type { PopulationAllocation } from './population-weights.ts'
+import { municipalAttachmentLimitKm, openWaterRule, type PopulationAllocation } from './population-weights.ts'
 import type { ModelSourceIds } from './sources.ts'
 
 // Elhub metered demand at the reference hour → Grid Model v2 loads: curated major sites absorb
@@ -56,8 +56,6 @@ const siteSearchKm = 15
  */
 export const minimumShareMw = 1
 
-/** Distributed loads farther than this from their station need a reviewed regional route, km (golden list distributed load limit). */
-export const municipalAttachmentLimitKm = 60
 
 /** A reviewed attach-load-via-regional-grid curation: the station a municipality's supply route reaches. */
 export interface RegionalSupply {
@@ -243,7 +241,7 @@ export const buildLoads = (config: {
             share: entry.share,
             location: [roundTo(entry.centre[0], 6), roundTo(entry.centre[1], 6)] as const,
             km: entry.meanKm,
-            how: `${roundTo(entry.share * 100, 1)} % of it: the ${roundTo(entry.residentShare * 100, 1)} % of the municipality's residents on Statistisk sentralbyrå's 1 km population grid (${sourceIds.population}, © SSB, CC BY 4.0; aggregated per substation) whose nearest ≥132 kV substation in ${priceArea} this is${keptShares.length < residentShares!.length ? `, scaled up for the ${residentShares!.length - keptShares.length} shares below ${minimumShareMw} MW` : ''}`,
+            how: `${roundTo(entry.share * 100, 1)} % of it: the ${roundTo(entry.residentShare * 100, 1)} % of the municipality's residents on Statistisk sentralbyrå's 1 km population grid (${sourceIds.population}, © SSB, CC BY 4.0; aggregated per substation) whose serving ≥132 kV substation in ${priceArea} this is (the nearest, or the nearest not across open water by rule ${openWaterRule.id})${keptShares.length < residentShares!.length ? `, scaled up for the ${residentShares!.length - keptShares.length} shares below ${minimumShareMw} MW` : ''}`,
           }))
         : [{ station: nearest.station, share: 1, location: point, km: nearest.km, how: `at the nearest ≥132 kV substation in ${priceArea} to the municipality point (no residents in the population grid)` }]
     for (const entry of served) {
@@ -265,7 +263,7 @@ export const buildLoads = (config: {
           priceArea,
           attachmentKm: roundTo(entry.km, 2),
           provenance: {
-            sources: [sourceIds.elhub, sourceIds.municipalities, sourceIds.biddingZones, sourceIds.osm, ...(supply === undefined ? [sourceIds.population] : [supply.curationId])],
+            sources: [sourceIds.elhub, sourceIds.municipalities, sourceIds.biddingZones, sourceIds.osm, ...(supply === undefined ? [sourceIds.population, sourceIds.coastline] : [supply.curationId])],
             method: supply === undefined ? 'measured' : 'curated',
             confidence: 'medium',
             note: `Elhub ${group} demand${group === 'industry' && sites.length > 0 ? ' less listed sites' : ''}, ${entry.how}; ${unknownControl}`,

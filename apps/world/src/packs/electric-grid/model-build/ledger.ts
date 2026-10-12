@@ -25,6 +25,7 @@ const reasonDispositions = {
   'branch-normally-open': 'curated',
   'curated-circuits-set': 'curated',
   'generator-split-by-curation': 'curated',
+  'served-across-no-open-water': 'inferred',
 } as const
 
 export type BuildLedgerReason = keyof typeof reasonDispositions

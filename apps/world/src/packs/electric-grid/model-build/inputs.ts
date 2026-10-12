@@ -5,8 +5,8 @@ import { majorSiteTableSchema, type GridMajorSiteTable } from '../schemas/grid-m
 import { referenceDispatchTableSchema, type GridReferenceDispatchTable } from '../schemas/grid-reference-dispatch.ts'
 import { priceAreas } from '../schemas/grid-ids.ts'
 
-// The explicit inputs of the Norway model build: the DS1 OSM sidecar and its manifest, the DS2
-// registry and measurement snapshots of one date, and the curated tables in models/ (including the
+// The explicit inputs of the Norway model build: the DS1 OSM sidecar and its manifest, the OSM
+// coastline of the same PBF, the DS2 registry and measurement snapshots of one date, and the curated tables in models/ (including the
 // measured national dispatch of the reference hours). Each file is
 // validated here (only the fields the build reads) and carries the SHA-256 of its bytes, so the
 // build is a pure function of these values.
@@ -199,6 +199,7 @@ export interface NorwayModelBuildInputs {
   readonly referenceDispatch: BuildFile<GridReferenceDispatchTable>
   readonly population: BuildFile<PopulationSnapshot>
   readonly hydroHeads: BuildFile<HydroHeadsSnapshot>
+  readonly coastline: BuildFile<CoastlineSnapshot>
 }
 
 export const buildFileSchemas = {

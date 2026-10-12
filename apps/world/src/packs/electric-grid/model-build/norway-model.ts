@@ -23,10 +23,11 @@ import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, buildHvdcRampGroups, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
-import { buildLoads, loadControlRule, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
+import { buildLoads, loadControlRule, loadKindRules, minimumShareMw } from './loads.ts'
 import { networkEquivalents } from './network-equivalents.ts'
 import { knownGaps, type KnownGap } from './known-gaps.ts'
-import { allocateByPopulation } from './population-weights.ts'
+import { allocateByPopulation, municipalAttachmentLimitKm, openWaterRule } from './population-weights.ts'
+import { createWaterCrossings } from './water-crossings.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
 import { buildOperatingPoints, dispatchRule } from './operating-points.ts'
 import { buildLoadProfiles, meteredDemandSourceId, priceAreaGroupMwAt } from './profiles.ts'
@@ -46,7 +47,7 @@ export const buildRules = {
   attachmentRadiusKm,
   runOfRiverUtilisationHours,
   runOfRiverTurbine: runOfRiverTurbineRule,
-  loadAllocation: { minimumShareMw, municipalAttachmentLimitKm },
+  loadAllocation: { minimumShareMw, municipalAttachmentLimitKm, openWater: openWaterRule },
   loadControl: loadControlRule,
   dispatch: dispatchRule,
 }
@@ -188,6 +189,12 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
       return [{ municipalityNumber: place.municipalityNumber, point: place.point, bbox: place.bbox, priceArea: priceAreaSchema.parse(areas[0]) }]
     }),
     stations,
+    water: createWaterCrossings(inputs.coastline.data.lines),
+  })
+  ledger.add({
+    reason: 'served-across-no-open-water',
+    elementIds: [ids.coastline],
+    detail: `${population.acrossOpenWater.squares} populated squares (${population.acrossOpenWater.residents} residents) whose nearest ≥132 kV substation lies across more than ${openWaterRule.openWaterKm} km of open sea are served by one on their shore within ${openWaterRule.maximumDistanceFactor} × that distance (rule ${openWaterRule.id})`,
   })
   const loads = buildLoads({
     hour: winterHour,

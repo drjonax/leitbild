@@ -23,6 +23,7 @@ export interface ModelSourceIds {
   readonly referenceDispatch: string
   readonly population: string
   readonly hydroHeads: string
+  readonly coastline: string
   /** Curation feature id (slug) → `curation:<slug>`. */
   readonly curation: (slug: string) => string
 }
@@ -54,6 +55,10 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
   if (manifest.sidecar.sha256 !== inputs.sidecar.sha256) {
     throw new Error(`sidecar SHA-256 ${inputs.sidecar.sha256} does not match its manifest (${manifest.sidecar.sha256})`)
   }
+  const coastline = inputs.coastline.data.source
+  if (coastline.snapshot.sha256 !== manifest.source.snapshot.sha256) {
+    throw new Error(`the coastline comes from PBF ${coastline.snapshot.sha256}, the sidecar from ${manifest.source.snapshot.sha256}; both must come from one OSM snapshot`)
+  }
   const ids: ModelSourceIds = {
     osm: `${manifest.source.id.toLowerCase()}@${manifest.source.snapshot.dataTimestamp.slice(0, 10)}`,
     hydro: `nve:hydro-plants@${date}`,
@@ -66,6 +71,7 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
     referenceDispatch: `curated:norway-reference-dispatch@${inputs.referenceDispatch.data.curatedAt}`,
     population: `ssb:population-1km-${inputs.population.data.year}@${latestRetrieval(inputs.population.data.sources).slice(0, 10)}`,
     hydroHeads: `nve:hydro-heads@${latestRetrieval(inputs.hydroHeads.data.sources).slice(0, 10)}`,
+    coastline: `${coastline.id.toLowerCase()}@${coastline.snapshot.dataTimestamp.slice(0, 10)}`,
     curation: slug => `curation:${slug}`,
   }
   const curated = (sourceId: string, file: BuildFile<{ readonly curatedAt: string }>): GridSourceInput => ({
@@ -88,6 +94,7 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
       snapshotInput(ids.elhub, inputs.referenceHours),
       snapshotInput(ids.population, inputs.population),
       snapshotInput(ids.hydroHeads, inputs.hydroHeads),
+      { sourceId: ids.coastline, snapshotAt: coastline.snapshot.dataTimestamp, sha256: inputs.coastline.sha256, licence: coastline.licence.id },
       curated(ids.interconnectors, inputs.interconnectors),
       curated(ids.majorSites, inputs.majorSites),
       // Transcribed measurements: the table's own data licence, not OSM's.
