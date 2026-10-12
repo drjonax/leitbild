@@ -2,7 +2,8 @@
   import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
   import { tick, untrack } from 'svelte'
   import type { ProcedureSession } from './procedure-session.ts'
-  import { procedureComparisonText, procedureCsfChip, procedureElapsedText } from './procedure-view.ts'
+  import { procedureBindingStatusWord, procedureComparisonText, procedureCsfChip, procedureDescriptionText, procedureDisplayReading, procedureElapsedText, procedureStepBindingSummary } from './procedure-view.ts'
+  import { readProcedureTagValue } from './procedure-client.ts'
   import { procedureViewKey, procedureCategories, procedureStepItems, procedureStepTagBindings, procedureTextSegments, procedureBlockLabel, procedureObservationEvidence, procedureObservationBasis, procedureObservationLabel, procedureSourceEvidenceRequest, procedureUnitJump } from './procedure-view.ts'
   import type {
     SimulationRunId,
@@ -178,6 +179,11 @@
   let basisReadGeneration = 0
   let openTagId = $state<ProcedureTagId | null>(null)
   let commentOpen = $state<Record<string, boolean>>({})
+  let summaryOpen = $state(false)
+  let openStepInfoId = $state<string | null>(null)
+  /** Live values of the open step ⓘ's tags, read when it opened. */
+  let stepInfoReadings = $state<Record<string, { readonly formatted?: string; readonly error?: string }>>({})
+  let stepInfoGeneration = 0
   /** Decided steps and bypassed groups the person opened, by view key; the rest stay folded. */
   let expandedSteps = $state<Record<string, boolean>>({})
   let commentDrafts = $state<Record<string, string>>({})
@@ -1072,6 +1078,29 @@
     }
   }
 
+  const toggleStepInfo = (step: ProcedureStep): void => {
+    const generation = ++stepInfoGeneration
+    stepInfoReadings = {}
+    if (openStepInfoId === step.id) {
+      openStepInfoId = null
+      return
+    }
+    openStepInfoId = step.id
+    const unit = currentUnitContext
+    for (const tagId of step.tagIds) {
+      const tag = tagFor(tagId)
+      if (!tag || validationFor(tagId)?.status === 'missing') continue
+      void (async () => {
+        try {
+          const value = await readProcedureTagValue(simulationRunId, unit.plantId, tag, unit.provider ?? provider)
+          if (!disposed && generation === stepInfoGeneration) stepInfoReadings = { ...stepInfoReadings, [tagId]: { formatted: value.formatted } }
+        } catch (err) {
+          if (!disposed && generation === stepInfoGeneration) stepInfoReadings = { ...stepInfoReadings, [tagId]: { error: errorMessage(err) } }
+        }
+      })()
+    }
+  }
+
   const closeTag = (): void => {
     openTagId = null
   }
@@ -1178,6 +1207,7 @@
       tagValidation = new Map()
       closeTag()
       closeBasis()
+      openStepInfoId = null
       if (selectedProcedureId) void loadProcedure(selectedProcedureId)
     })
   })
@@ -1199,35 +1229,50 @@
   {/each}
 {/snippet}
 
-{#snippet stepInfo(step: ProcedureStep)}
+{#snippet stepInfoButton(step: ProcedureStep)}
+  {@const summary = procedureStepBindingSummary(document ? procedureStepTagBindings(step, document.tags, tagValidation) : [])}
+  <button
+    type="button"
+    class="procedure-info-button small binding-{summary.worst}"
+    aria-label="Plant tags in step {step.label}: {summary.text}"
+    title={summary.worst === 'none' ? 'No plant tags in this step' : summary.text}
+    aria-expanded={openStepInfoId === step.id}
+    onclick={() => toggleStepInfo(step)}
+  >
+    <Info size={16} aria-hidden="true" />
+  </button>
+{/snippet}
+
+{#snippet stepInfoPanel(step: ProcedureStep)}
   {@const bindings = document ? procedureStepTagBindings(step, document.tags, tagValidation) : []}
-  <span class="procedure-info-shell step">
-    <button type="button" class="procedure-info-button small" aria-label="Plant tags in step {step.label}">
-      <Info size={15} aria-hidden="true" />
-    </button>
-    <div class="procedure-info-popover procedure-step-info-popover" role="tooltip">
-      {#if bindings.length === 0}
-        <p>No plant tags in this step: its indications are read and judged by the operator.</p>
-      {:else}
-        <p class="procedure-step-info-heading">Plant tags in this step</p>
-        {#each bindings as binding (binding.tagId)}
-          <div class="procedure-step-info-tag {binding.status}">
-            <span><b>{binding.tagId}</b>{binding.description ? ` — ${binding.description}` : ''}</span>
-            {#if binding.status === 'missing'}
-              <em>Not in this unit's plant model.</em>
-            {:else if binding.status === 'unchecked'}
-              <em>Binding not checked yet.</em>
-            {:else if binding.reads}
-              <span>Reads {binding.reads}</span>
-            {/if}
-            {#each binding.warnings as warning}<em>{warning}</em>{/each}
-            {#each binding.notes as note}<span class="procedure-step-info-note"><b>{note.label}</b> {note.text}</span>{/each}
-          </div>
-        {/each}
-      {/if}
-      <small>World does not evaluate this step's checks; a selected branch records a judgement.</small>
+  <div class="procedure-step-info" role="region" aria-label="Plant tags in step {step.label}" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); openStepInfoId = null } }}>
+    <div class="procedure-popover-head">
+      <b>{bindings.length === 0 ? 'No plant tags in this step' : procedureStepBindingSummary(bindings).text}</b>
+      <button type="button" aria-label="Close plant tags" onclick={() => { openStepInfoId = null }}><X size={14} aria-hidden="true" /></button>
     </div>
-  </span>
+    {#if bindings.length === 0}
+      <p>Its indications are read and judged by the operator.</p>
+    {:else}
+      {#each bindings as binding (binding.tagId)}
+        {@const reading = stepInfoReadings[binding.tagId]}
+        <div class="procedure-step-info-tag {binding.status}">
+          <b class="procedure-step-info-id">{binding.tagId}</b>
+          <span class="procedure-step-info-value">{binding.status === 'missing' ? '—' : reading === undefined ? '…' : reading.formatted !== undefined ? procedureDisplayReading(reading.formatted) : 'unavailable'}</span>
+          <span class="procedure-step-info-status">{procedureBindingStatusWord(binding.status)}</span>
+          {#if binding.description}<span class="procedure-step-info-detail">{binding.description}</span>{/if}
+          {#if binding.status === 'missing'}
+            <em class="procedure-step-info-detail">Not in this unit's plant model.</em>
+          {:else if binding.reads}
+            <span class="procedure-step-info-detail">Reads {binding.reads}</span>
+          {/if}
+          {#if reading?.error}<em class="procedure-step-info-detail">{reading.error}</em>{/if}
+          {#each binding.warnings as warning}<em class="procedure-step-info-detail">{warning}</em>{/each}
+          {#each binding.notes as note}<span class="procedure-step-info-detail procedure-step-info-note"><b>{note.label}</b> {note.text}</span>{/each}
+        </div>
+      {/each}
+    {/if}
+    <small>Values read when this opened. World does not evaluate this step's checks; a selected branch records a judgement.</small>
+  </div>
 {/snippet}
 
 {#snippet stepArticle(step: ProcedureStep, role: 'current' | 'decided' | 'open')}
@@ -1259,9 +1304,10 @@
       <div class="procedure-step-content">
         <h3>
           {#if role === 'current'}<span class="procedure-current-chip">Current</span>{/if}
-          Step {step.label}<span>{procedureStepDisplayName(step)}</span>{@render stepInfo(step)}
+          Step {step.label}<span class="procedure-step-name">{procedureStepDisplayName(step)}</span>{@render stepInfoButton(step)}
           {#if role === 'decided'}<button type="button" class="procedure-step-collapse" onclick={() => setStepExpanded(step.id, false)}>Collapse</button>{/if}
         </h3>
+        {#if openStepInfoId === step.id}{@render stepInfoPanel(step)}{/if}
         <div class="procedure-two-column">
           {#each procedureStepItems(step) as item}
             <div class="procedure-column" class:response={!item.primary}>
@@ -1568,11 +1614,16 @@
               <span class="procedure-unit-chip" title="Procedures in this window are for {displayUnitName}">{displayUnitName}</span>
               <h2>{document.procedureId} — {document.title}</h2>
               <span class="procedure-info-shell">
-                <button type="button" class="procedure-info-button" aria-label="About this procedure">
+                <button type="button" class="procedure-info-button" aria-label="About {document.procedureId}" aria-expanded={summaryOpen} onclick={() => { summaryOpen = !summaryOpen }}>
                   <Info size={17} aria-hidden="true" />
                 </button>
-                <div class="procedure-info-popover procedure-summary-popover" role="tooltip">
-                  {#if document.description}<p class="procedure-summary-text">{@render procedureText(document.description, [])}</p>{/if}
+                {#if summaryOpen}
+                <div class="procedure-info-popover procedure-summary-popover" role="dialog" aria-label="About {document.procedureId}" tabindex="-1" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); summaryOpen = false } }}>
+                  <div class="procedure-popover-head">
+                    <b>About {document.procedureId}</b>
+                    <button type="button" aria-label="Close" onclick={() => { summaryOpen = false }}><X size={14} aria-hidden="true" /></button>
+                  </div>
+                  {#if document.description}<p class="procedure-summary-text">{@render procedureText(procedureDescriptionText(document.description), [])}</p>{/if}
                   {#if document.appliesTo}<p><b>Applies to</b> {document.appliesTo}</p>{/if}
                   {#if document.referencePlant}<p><b>Reference plant</b> {document.referencePlant}</p>{/if}
                   {#each Object.entries(document.annotations ?? {}) as [key, value]}<p><b>{key}</b> {value}</p>{/each}
@@ -1581,6 +1632,7 @@
                     <ul>{#each document.diagnostics as diagnostic}<li>{diagnostic}</li>{/each}</ul>
                   {/if}
                 </div>
+                {/if}
               </span>
               <button type="button" class="procedure-source-icon" onclick={() => document && void loadBasis({ sourceId: document.source.sourceId, sourceRevision: document.source.revision, sourcePath: document.sourcePath, lineCount: 100 })} title="Read retained procedure source" aria-label="Read retained procedure source">
                 <ExternalLink size={15} aria-hidden="true" />

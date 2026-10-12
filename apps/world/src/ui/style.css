@@ -3670,7 +3670,7 @@ body.rail-resizing {
   white-space: nowrap;
 }
 
-/* A small circled i: hover or focus shows the popover; its top padding bridges the gap so links stay reachable. */
+/* A small circled i: a click opens its popover or panel, which has its own close. */
 .procedure-info-shell {
   position: relative;
   display: inline-flex;
@@ -3691,9 +3691,60 @@ body.rail-resizing {
 }
 
 .procedure-info-button.small {
-  width: 20px;
-  height: 20px;
-  color: #94a3b8;
+  width: 24px;
+  height: 24px;
+  color: #64748b;
+  cursor: pointer;
+}
+
+/* A step's ⓘ takes the colour of its worst tag binding. */
+.procedure-info-button.binding-resolved { color: #1d4ed8; }
+.procedure-info-button.binding-resolved-with-warnings { color: #b45309; }
+.procedure-info-button.binding-missing { color: #b42318; }
+
+.procedure-info-button[aria-expanded="true"] {
+  background: #dbeafe;
+}
+
+.procedure-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #0f172a;
+}
+
+.procedure-popover-head button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+/* The step's tags in a panel under its heading: one row per tag with its live value and binding status. */
+.procedure-step-info {
+  max-width: 420px;
+  display: grid;
+  gap: 4px;
+  margin: -4px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.procedure-step-info p,
+.procedure-step-info small {
+  margin: 0;
+  color: #475569;
 }
 
 .procedure-info-button:hover,
@@ -3708,10 +3759,11 @@ body.rail-resizing {
   top: 100%;
   left: 50%;
   z-index: 6;
+  box-sizing: border-box;
   width: min(560px, 70vw);
-  max-height: min(60vh, 520px);
+  max-height: min(60vh, 480px);
   overflow: auto;
-  display: none;
+  display: grid;
   gap: 6px;
   transform: translateX(-50%);
   margin-top: 6px;
@@ -3736,10 +3788,6 @@ body.rail-resizing {
   height: 8px;
 }
 
-.procedure-info-shell:hover .procedure-info-popover,
-.procedure-info-shell:focus-within .procedure-info-popover {
-  display: grid;
-}
 
 .procedure-info-popover p,
 .procedure-info-popover ul {
@@ -3762,30 +3810,29 @@ body.rail-resizing {
   white-space: pre-wrap;
 }
 
-.procedure-info-shell.step .procedure-info-popover {
-  left: 0;
-  width: min(460px, 60vw);
-  transform: none;
-}
-
-.procedure-step-info-heading {
-  color: #475569;
-  font-weight: 700;
-}
-
 .procedure-step-info-tag {
+  min-height: 24px;
   display: grid;
-  gap: 2px;
-  padding: 5px 0 5px 8px;
-  border-left: 3px solid #93c5fd;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 1px 10px;
+  padding: 3px 0 3px 8px;
+  border-left: 3px solid #1d4ed8;
 }
+
+.procedure-step-info-id { color: #0f172a; }
+.procedure-step-info-value { color: #0f172a; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+.procedure-step-info-status { color: #475569; font-size: 12px; font-weight: 700; }
+.procedure-step-info-detail { grid-column: 1 / -1; color: #475569; font-size: 12px; }
+.procedure-step-info-tag.resolved-with-warnings .procedure-step-info-status { color: #92400e; }
+.procedure-step-info-tag.missing .procedure-step-info-status { color: #b42318; }
 
 .procedure-step-info-tag.resolved-with-warnings {
-  border-left-color: #f59e0b;
+  border-left-color: #b45309;
 }
 
 .procedure-step-info-tag.missing {
-  border-left-color: #94a3b8;
+  border-left-color: #b42318;
 }
 
 .procedure-step-info-tag em {
@@ -3950,8 +3997,8 @@ body.rail-resizing {
   padding: 2px 6px;
   border-radius: 3px;
   background: #1d4ed8;
-  color: #ffffff !important;
-  font-size: calc(10px * var(--procedure-font-scale)) !important;
+  color: #ffffff;
+  font-size: calc(10px * var(--procedure-font-scale));
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -4125,8 +4172,8 @@ body.rail-resizing {
   font-size: calc(17px * var(--procedure-font-scale));
 }
 
-.procedure-step-content h3 span {
-  color: #64748b;
+.procedure-step-content h3 .procedure-step-name {
+  color: #475569;
   font-size: calc(14px * var(--procedure-font-scale));
   font-weight: 700;
 }
