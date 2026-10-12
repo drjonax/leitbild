@@ -760,6 +760,21 @@
     await transitionProcedureRun(simulationRunId, { runId: selectedRun.runId, stepId: fromStep.id, branchIndex: fromStep.branches.indexOf(branch) })
     await refreshRuns()
     scrollToProcedureStep(targetStep.id)
+    // Keyboard focus follows the Run to its new current step.
+    await tick()
+    procedureDocumentBodyElement?.querySelector<HTMLElement>(`[data-procedure-step-id="${CSS.escape(targetStep.id)}"] h3`)?.focus({ preventScroll: true })
+  }
+
+  // The procedure list is one Tab stop: arrows, Home and End move between its entries.
+  const moveInProcedureList = (event: KeyboardEvent): void => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    const current = event.currentTarget as HTMLButtonElement
+    const items = [...(current.closest('.procedure-list')?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+    const index = items.indexOf(current)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : Math.min(items.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)))
+    event.preventDefault()
+    items[next]?.focus()
   }
 
   const openProcedureTransition = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
@@ -1258,7 +1273,7 @@
 
 {#snippet stepInfoPanel(step: ProcedureStep)}
   {@const bindings = document ? procedureStepTagBindings(step, document.tags, tagValidation) : []}
-  <div class="procedure-step-info" role="region" aria-label="Plant tags in step {step.label}" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); openStepInfoId = null } }}>
+  <div class="procedure-step-info" role="dialog" tabindex="-1" aria-label="Plant tags in step {step.label}" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); openStepInfoId = null } }}>
     <div class="procedure-popover-head">
       <b>{bindings.length === 0 ? 'No plant tags in this step' : procedureStepBindingSummary(bindings).text}</b>
       <button type="button" aria-label="Close plant tags" onclick={() => { openStepInfoId = null }}><X size={14} aria-hidden="true" /></button>
@@ -1315,7 +1330,7 @@
         {#if state?.decision && procedureActorIsAi(state.decision.selectedBy)}<span class="procedure-ai-mark" title="This step's branch was selected by an AI">AI</span>{/if}
       </button>
       <div class="procedure-step-content">
-        <h3>
+        <h3 tabindex="-1">
           {#if role === 'current'}<span class="procedure-current-chip">Current</span>{/if}
           Step {step.label}<span class="procedure-step-name">{procedureStepDisplayName(step)}</span>{@render stepInfoButton(step)}
           {#if role === 'decided'}<button type="button" class="procedure-step-collapse" onclick={() => setStepExpanded(step.id, false)}>Collapse</button>{/if}
@@ -1589,6 +1604,9 @@
                     class:active={selectedProcedureId === item.procedureId}
                     class:run-active={runState === 'active'}
                     class:run-completed={runState === 'completed'}
+                    tabindex={item.procedureId === (selectedProcedureId ?? catalog?.procedures[0]?.procedureId) ? 0 : -1}
+                    aria-current={selectedProcedureId === item.procedureId ? 'true' : undefined}
+                    onkeydown={moveInProcedureList}
                     aria-busy={loadingProcedureId === item.procedureId}
                     onclick={() => void loadProcedure(item.procedureId)}
                   >
