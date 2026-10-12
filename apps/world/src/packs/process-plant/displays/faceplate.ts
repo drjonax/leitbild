@@ -284,7 +284,7 @@ const controlledValve = (plant: CompiledProcessPlant, index: number): { readonly
   const flow = (graph.outgoingLinksByComponent[index] ?? []).map(link => graph.links[link]!).filter(link => link.kind === 'fluidFlow')
     .flatMap(link => link.variables.map(variable => variable.path).filter(path => String(path).endsWith('.flowKgPerS') && graph.signalBindingByPath.get(path)?.published === true))[0]
   if (flow === undefined) return null
-  return { flow, position, held: { quantity: measured.quantity, setpoint: displayValue(controller.setpoint, measured.unit), unit: unitLabel(measured.unit) } }
+  return { flow, position, held: { name: shortName(plant, index), quantity: measured.quantity, setpoint: displayValue(controller.setpoint, measured.unit), unit: unitLabel(measured.unit) } }
 }
 
 /**

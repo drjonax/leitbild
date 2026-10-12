@@ -77,8 +77,9 @@ export type FaceplateRowSpec =
   | { readonly kind: 'flows'; readonly from: string; readonly branches: ReadonlyArray<{ readonly path: string; readonly destination: string }> }
   | { readonly kind: 'loops'; readonly loops: ReadonlyArray<string>; readonly columns: ReadonlyArray<FaceplateLoopColumn> }
 
-/** What a valve's controller holds and to what: the quantity it measures ("pressure"), its set point in display units. */
+/** What a valve's controller holds and to what: the valve's short name (its flow's name in the row), the quantity it measures ("pressure"), its set point in display units. */
 export interface FaceplateHeld {
+  readonly name: string
   readonly quantity: string
   readonly setpoint: number
   readonly unit: string

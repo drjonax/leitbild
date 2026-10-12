@@ -8,7 +8,7 @@
   import { displayName, fitName } from '../pen-style.ts'
   import { SPARKLINE_SIZE } from '../sparkline.ts'
   import { panelFont, textMeasure } from '../text-measure.ts'
-  import type { MimicQuickLookSource, QuickLookState } from './quick-look-source.ts'
+  import { quickLookValue, type MimicQuickLookSource, type QuickLookState } from './quick-look-source.ts'
 
   // An item's quick look: the lead values World chose for it with the
   // drawing, one line each (name · value in its unit or state words ·
@@ -33,7 +33,8 @@
   const nameOf = (pen: ComposedDisplayPen): string => pen.tagId !== undefined ? pen.tagId : fitName(displayName(pen), text => measureName(text) <= NAME_ROOM, pen.shorterNames)
   const latest = $derived(shown.kind === 'shown' ? shown.latest : undefined)
   const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.simulationTime))
-  const valueOf = (pen: ComposedDisplayPen) => latest?.values.find(entry => entry.path === String(pen.path))
+  // Outside the validity its equipment declares a reading has no value to show: "—" (quickLookValue).
+  const valueOf = (pen: ComposedDisplayPen) => quickLookValue(pen, latest)
   const pointsOf = (pen: ComposedDisplayPen) => (shown.kind === 'shown' ? shown.history.series.get(String(pen.path)) ?? [] : []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))
   const readingOf = (pen: ComposedDisplayPen, value: number): TrendReading => trendReading({
     value,

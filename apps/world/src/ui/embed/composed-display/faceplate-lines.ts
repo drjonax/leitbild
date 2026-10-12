@@ -7,7 +7,7 @@
 // writes them, states in their declared words, limits by the trend-reading
 // rule, rules by their trip's title. Pure, so the pinned states are tested
 // without a browser; FaceplatePanel draws what it returns.
-import type { ComposedDisplayPen, ComposedFaceplatePanel } from '../../../packs/process-plant/displays/compose.ts'
+import { measuresNow, type ComposedDisplayPen, type ComposedFaceplatePanel } from '../../../packs/process-plant/displays/compose.ts'
 import { faceplateNow, type Faceplate, type FaceplateComparison, type FaceplateCriterion, type FaceplateHead, type FaceplateHeld, type FaceplateLive, type FaceplateRow } from '../../../packs/process-plant/displays/faceplate-live.ts'
 import { displayValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
@@ -319,7 +319,8 @@ export const faceplateLines = (
   }
   const cellOf = (path: string): FaceplateCell => {
     const pen = pens.get(path) ?? missing(path)
-    const raw = live.read(path)
+    // Outside the validity its equipment declares, a reading has no value: it reads "—" (measuresNow).
+    const raw = measuresNow(pen, live.read) ? live.read(path) : undefined
     const value = pen.valueKind === 'boolean' ? stateValue(pen, raw) : numberValue(pen, raw)
     const inAlarm = activeThreshold(pen.thresholds, activeRuleIds, sample.mode, gates)
     const reading = value.kind !== 'number' || typeof raw !== 'number' ? null : trendReading({
@@ -343,7 +344,8 @@ export const faceplateLines = (
     const lineOf = (row: FaceplateRow): FaceplateLine => {
       if (row.kind === 'values' && row.strip === true) return stripOf(row.paths.map(path => pens.get(path) ?? missing(path)), live.read)
       if (row.kind === 'values') {
-        const cells = row.paths.map(cellOf)
+        // A controlled valve's flow is named by the valve it passes ("Turbine bypass 27.1 kg/s"), before its position.
+        const cells = row.paths.map(cellOf).map((cell, at) => at === 0 && row.held !== undefined && cell.pen.tagId === undefined ? { ...cell, name: row.held.name } : cell)
         const lead = cells[0]!
         const raw = live.read(String(lead.pen.path))
         const numeric = lead.value.kind === 'number' && lead.value.value !== null

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  commandsForProcessPlantAction,
   compileProcessPlant,
   createProcessPlantProtectionRunner,
   createProcessPlantRampRunner,
@@ -10,6 +11,8 @@ import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance 
 import { compileDetailDisplay, compileOverviewDisplay, composedDisplaySignals, type ComposedMimicPanel } from '../src/packs/process-plant/displays/compose.ts'
 import { mimicQuickLookPaths, QUICK_LOOK_LEADS } from '../src/packs/process-plant/displays/mimic/quick-look.ts'
 import { plantNowOf } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { createMimicQuickLook, quickLookValue } from '../src/ui/embed/composed-display/mimic/quick-look-source.ts'
+import type { ComposedDisplaySample } from '../src/ui/embed/composed-display/composed-display-client.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -60,4 +63,49 @@ describe('quick looks of a generated display', () => {
     const sg = panel.mimic.items.find(item => item.components.includes('sgB'))!
     expect(panel.quickLooks?.items[sg.id]?.length).toBeGreaterThan(0)
   })
+})
+
+describe('a quick look reads "—" for a reading outside the validity its equipment declares', () => {
+  test('after a loss of offsite power the turbine\'s speed and the grid\'s frequency read "—", never 0 rpm or 50 Hz, and the flags they are valid under are sampled', async () => {
+    const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:quick-look-validity', loopCount: 4 }))
+    const runtime = createProcessPlantRuntime({ system: compiled })
+    const protection = createProcessPlantProtectionRunner({ system: compiled, protection: compiled.automation })
+    const lost: ProcessPlantRuntimeInstance = { plant: compiled, runtime, ramps: createProcessPlantRampRunner({ runtime }), protection, performance: createProcessPlantRuntimePerformance() }
+    // Opened at power: the overview's quick looks carry the turbine's speed, the grid's detail's its frequency.
+    const overview = compileOverviewDisplay(lost, new Set(), fullHd)
+    const grid = compileDetailDisplay(lost, new Set(), ['offsiteGrid'], fullHd)
+    if (!overview.ok || !grid.ok) throw new Error('expected the overview and the grid detail')
+    const looks = mimicPanel(overview.display).quickLooks!
+    const pens = [...looks.pens, ...mimicPanel(grid.display).quickLooks!.pens].filter(pen => pen.tagId === 'TURB-SPEED' || pen.tagId === 'GRID-HZ')
+    expect(pens.map(pen => pen.tagId).sort()).toEqual(['GRID-HZ', 'TURB-SPEED'])
+    expect(pens.every(pen => pen.validWhile !== undefined)).toBe(true)
+    for (const command of commandsForProcessPlantAction({ actionId: 'loss-offsite-power', parameters: {}, graph: compiled.graph })) runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    for (let second = 0; second < 30; second += 1) {
+      runtime.tick(1000)
+      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run' as never, sourceRuntimeId: 'test' })
+    }
+    // What the quick look samples: each reading and the flag it is valid under.
+    let asked: ReadonlyArray<string> = []
+    const sampleOf = (paths: ReadonlyArray<string>): ComposedDisplaySample => ({
+      simulationTime: '2026-10-12T12:00:30.000Z',
+      plantElapsedMs: runtime.elapsedMs(),
+      values: paths.map(path => ({ path, value: runtime.readVariable(path as never) as number | boolean, quality: 'good' as const })),
+    })
+    const source = createMimicQuickLook({
+      client: { history: async () => ({ series: [] }) as never, sample: async (_run, _plant, paths) => { asked = paths; return sampleOf(paths) } },
+      runId: 'run' as never,
+      plantId: compiled.id,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    })
+    const stop = source.open({ pens, sparklineMs: looks.sparklineMs }, () => undefined)
+    await Bun.sleep(10)
+    stop()
+    for (const pen of pens) expect(asked).toContain(String(pen.validWhile))
+    const latest = sampleOf(asked)
+    for (const pen of pens) {
+      expect(runtime.readVariable(pen.validWhile!)).toBe(false)
+      expect(quickLookValue(pen, latest).value).toBeUndefined()
+    }
+  }, 60_000)
 })

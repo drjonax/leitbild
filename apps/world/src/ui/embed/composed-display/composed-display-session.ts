@@ -113,7 +113,7 @@ export const createComposedDisplaySession = (config: {
   const sampledPaths = (): ReadonlyArray<string> => [...new Set(panels().flatMap(panel => panel.kind === 'mimic'
     ? panel.mimic.paths.map(String)
     : [
-      ...pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]),
+      ...pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...(pen.validWhile === undefined ? [] : [String(pen.validWhile)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]),
       ...(panel.kind === 'faceplate' ? panel.faceplate.paths : []),
     ]))]
 

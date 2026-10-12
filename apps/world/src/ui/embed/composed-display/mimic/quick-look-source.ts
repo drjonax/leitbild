@@ -1,5 +1,5 @@
 import type { SimulationRunId } from '../../../../core/model/index.ts'
-import type { ComposedDisplayPen } from '../../../../packs/process-plant/displays/compose.ts'
+import { measuresNow, type ComposedDisplayPen } from '../../../../packs/process-plant/displays/compose.ts'
 import { appendPoint, gatePaths, HOLD_GAP_MS, type TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample } from '../composed-display-client.ts'
 import type { ComposedDisplaySnapshot } from '../composed-display-session.ts'
@@ -30,6 +30,19 @@ export interface MimicQuickLookSource {
 
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
+/**
+ * A quick-look row's value in the latest sample: none (read as "—") while
+ * the reading measures nothing, outside the validity its equipment declares
+ * (a turbine's speed off line, the grid's frequency on a dead grid), never
+ * its raw value; else its sampled value or state.
+ */
+export const quickLookValue = (pen: ComposedDisplayPen, latest: ComposedDisplaySample | undefined): { readonly value: number | boolean | undefined; readonly quality: 'good' | 'outside-hard-range' | undefined } => {
+  const read = (path: string) => latest?.values.find(entry => entry.path === path)?.value
+  const entry = latest?.values.find(candidate => candidate.path === String(pen.path))
+  if (!measuresNow(pen, read)) return { value: undefined, quality: undefined }
+  return { value: entry?.value, quality: entry?.quality }
+}
+
 export const createMimicQuickLook = (config: {
   readonly client: Pick<ComposedDisplayClient, 'history' | 'sample'>
   readonly runId: SimulationRunId
@@ -44,8 +57,9 @@ export const createMimicQuickLook = (config: {
     const stopTimer = config.clearInterval ?? (handle => clearInterval(handle as ReturnType<typeof setInterval>))
     const emit = (state: QuickLookState): void => { if (!stopped) onChange(state) }
     emit({ kind: 'loading' })
-    // With the values its limits' gates read, so a limit whose gates do not hold reads idle, as on the detail.
-    const paths = [...new Set(pens.flatMap(pen => [String(pen.path), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]))]
+    // With the values its limits' gates read, so a limit whose gates do not hold reads idle, as on the detail, and the
+    // flag each reading is valid under, so a reading that measures nothing reads "—" (quickLookValue).
+    const paths = [...new Set(pens.flatMap(pen => [String(pen.path), ...(pen.validWhile === undefined ? [] : [String(pen.validWhile)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]))]
     const plotted = pens.filter(pen => pen.recorded && pen.valueKind === 'number')
     void (async () => {
       let shown: Extract<QuickLookState, { kind: 'shown' }> | undefined

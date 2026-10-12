@@ -137,7 +137,8 @@ describe('each pinned state renders the rows World derives, one line each, withi
       for (const line of shown.columns.flatMap(column => column.lines)) {
         if (line.kind !== 'values') continue
         for (const cell of line.cells) {
-          if (cell.value.kind === 'number') expect(cell.name).toBe(cell.pen.tagId ?? cell.pen.name)
+          // A tag whole; an untagged flow by its name, or by the valve whose controller positions it.
+          if (cell.value.kind === 'number') expect(cell.pen.tagId === undefined ? cell.name.length > 0 : cell.name === cell.pen.tagId).toBe(true)
           else expect([cell.pen.states?.on, cell.pen.states?.off]).toContain(cell.value.words)
         }
       }
@@ -235,6 +236,23 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
       expect(dumps?.kind === 'values' ? dumps.cells.map(cell => cell.pen.unit) : [], name).toEqual(['kg/s', 'fraction'])
       expect(words(lines[dump + 1]!), name).toBe('pressure mode only, 7.6 MPa')
     }
+  })
+
+  test('a reading outside the validity its equipment declares reads "—", never its value: off line no turbine speed, on a dead grid no frequency, without forced flow no ΔT power', () => {
+    for (const [name, shown] of states) {
+      for (const { sample, columns } of shown) {
+        const read = (path: string) => sample.values.find(entry => entry.path === path)?.value
+        for (const line of columns.flatMap(column => column.lines)) {
+          if (line.kind !== 'values') continue
+          for (const cell of line.cells) {
+            if (cell.pen.validWhile === undefined || read(String(cell.pen.validWhile)) === true) continue
+            expect(cell.value.kind === 'number' ? cell.value.text : cell.value.words, `${name} ${cell.pen.tagId}`).toBe('—')
+          }
+        }
+      }
+    }
+    const lost = allWords(at('loss of offsite power +2:30', 'sink'))
+    expect(lost.some(text => /TURB-SPEED \d|GRID-HZ \d/.test(text))).toBe(false)
   })
 
   test('a check not met reads "not yet met", never "expected": no declaration of the I&C config says it is', () => {

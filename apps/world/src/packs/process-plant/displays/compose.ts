@@ -11,7 +11,7 @@ import type {
   ProcessVariableLimits,
   VariablePath,
 } from '../graph/index.ts'
-import { linkCarrier, previousLinks, processSignalTagIdSchema, variablePathSchema } from '../graph/index.ts'
+import { linkCarrier, previousLinks, processSignalTagIdSchema, ratedFlowForLink, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
@@ -43,7 +43,7 @@ import {
   type DisplayEvidence,
   type DisplayEvidenceKind,
 } from './composition.ts'
-import { displayValue, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
+import { displayValue, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
@@ -110,6 +110,13 @@ export interface ComposedDisplayPen {
   readonly wider?: { readonly path: VariablePath; readonly tagId?: string; readonly span: { readonly min: number; readonly max: number } }
   /** The finest step its reading is shown in, in native units (readingResolution); null where the model declares nothing to derive it from. */
   readonly resolution: number | null
+  /**
+   * The flag its equipment declares it measures something only while (a
+   * source range's count rate while its high voltage is on, a turbine's speed
+   * while its generator breaker is closed): while the flag does not read
+   * true, the reading reads "—", never its value (measuresNow).
+   */
+  readonly validWhile?: VariablePath
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly combinedRules: ReadonlyArray<ComposedDisplayCombinedRule>
 }
@@ -489,12 +496,21 @@ const resolvePens = (
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
       ...(wider === undefined ? {} : { wider }),
       resolution: readingResolution(binding.limits, thresholds, operatingPointValue(system.plant, binding.path)),
+      ...(validWhile(system.plant.graph, binding) === undefined ? {} : { validWhile: validWhile(system.plant.graph, binding)! }),
       thresholds,
       combinedRules,
     })
   })
   return pens.length === signals.length ? pens : undefined
 }
+
+/** The flag a reading's equipment declares it measures something only while (meaningfulWhile). */
+const validWhile = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): VariablePath | undefined => binding.owner.type !== 'component' ? undefined
+  : graph.components[binding.owner.componentIndex]!.semantics.meaningfulWhile.find(entry => entry.variables.includes(binding.path))?.flag
+
+/** Whether a pen's reading measures something now: always, or while the flag it is valid under reads true. Otherwise it reads "—". */
+export const measuresNow = (pen: Pick<ComposedDisplayPen, 'validWhile'>, read: (path: string) => unknown): boolean =>
+  pen.validWhile === undefined || read(String(pen.validWhile)) === true
 
 /** The published instrument a signal's equipment declares reads its quantity over a wider span, with that span. */
 const widerInstrument = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): ComposedDisplayPen['wider'] => {
@@ -1295,8 +1311,15 @@ const faceplatePanel = (
         : row.kind === 'rules' ? row.rules.flatMap(rule => [...rule.triggers, ...rule.gates].flatMap(comparedPaths))
           : row.kind === 'consequence' ? [...row.rule.triggers, ...row.rule.gates].flatMap(comparedPaths)
             : [])))]
-  const pens = resolvePens(system, shown.map(ref => ({ ref, role: 'primary' as const })), 'faceplate', { numericOnly: false, panelName: 'faceplate', recordedSeriesIds, within: components }, issues)
-  if (pens === undefined) return null
+  const resolved = resolvePens(system, shown.map(ref => ({ ref, role: 'primary' as const })), 'faceplate', { numericOnly: false, panelName: 'faceplate', recordedSeriesIds, within: components }, issues)
+  if (resolved === undefined) return null
+  // A line's flow the model declares no span for is written at a thousandth of the line's rated flow, the scale its
+  // drawing reads "no flow" by: a steam dump at rest reads 0 kg/s, never "0.0000025 kg/s".
+  const pens = resolved.map(pen => {
+    const owner = system.plant.graph.signalBindingByPath.get(pen.path)?.owner
+    const rated = pen.resolution === null && owner?.type === 'link' ? ratedFlowForLink(system.plant.graph, system.plant.graph.links[owner.linkIndex]!) : null
+    return rated === null ? pen : { ...pen, resolution: rated * RESOLUTION_FRACTION }
+  })
   // As tall as its longest column can grow while it is open (every check unfolded), so nothing under it moves.
   return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(column => faceplateMostLines(column)))) }
 }
