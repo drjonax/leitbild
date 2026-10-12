@@ -167,7 +167,10 @@ export const displayEvidence = (
     if (stateSince === null && commandSince === null) return undefined
     const stateNow = quantity(state, states.at(-1)!.v)
     const commandNow = quantity(command, commands.at(-1)!.v)
-    const stateText = stateSince === null ? `${stateNow} throughout the last ${Math.round(windowMs / 60_000)} min` : `${stateNow} since ${clock(stateSince)}`
+    // Held throughout what the record covers, which may be less than the window (run 25: "throughout the last 10 min" on a 3-min record).
+    const coveredMs = Math.min(windowMs, now.simulationMs - Math.max(states[0]!.t, commands[0]!.t))
+    const covered = coveredMs < 90_000 ? `${Math.round(coveredMs / 1_000)} s` : `${Math.round(coveredMs / 60_000)} min`
+    const stateText = stateSince !== null ? `${stateNow} since ${clock(stateSince)}` : coveredMs <= 0 ? `${stateNow} now` : `${stateNow} throughout the last ${covered}`
     const commandText = commandSince === null ? `demand ${commandNow} throughout`
       : stateSince !== null && commandSince <= stateSince ? `demand ${commandNow} since ${clock(commandSince)}`
         : `demand ${quantity(command, valueAt(commands, stateSince ?? states[0]!.t))} ${stateSince === null ? 'at first' : 'then'}, ${commandNow} since ${clock(commandSince)}`
