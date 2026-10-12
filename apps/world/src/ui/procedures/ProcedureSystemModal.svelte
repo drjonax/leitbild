@@ -44,6 +44,7 @@
     procedureCurrentStep,
     procedureBranchActionText,
     procedureFirstStep,
+    procedureOffPathConfirmation,
     procedureRunFor,
     procedureRunSummariesForScope,
     procedureRunVisualStateFor as selectedProcedureRunVisualStateFor,
@@ -87,7 +88,7 @@
   type LoadStageId = 'source' | 'runs' | 'document' | 'tags' | 'csfs'
   type LoadStageStatus = 'pending' | 'running' | 'done' | 'failed'
   type ProcedureTocMode = 'detail' | 'compact' | 'collapsed'
-  type ProcedureConfirmation = 'run' | 'completed' | 'reset' | 'transition'
+  type ProcedureConfirmation = 'run' | 'completed' | 'reset' | 'transition' | 'off-path'
 
   interface ProcedureWindowDragState {
     readonly pointerId: number
@@ -167,6 +168,7 @@
   let commentOpen = $state<Record<string, boolean>>({})
   let commentDrafts = $state<Record<string, string>>({})
   let pendingTransition = $state<ProcedureTransition | null>(null)
+  let pendingOffPath = $state<{ readonly from: ProcedureStep; readonly branch: ProcedureBranch } | null>(null)
   let procedureToast = $state<ProcedureToast | null>(null)
   let loadStages = $state<Record<LoadStageId, LoadStage>>(createLoadStages())
   let procedureTocMode = $state<ProcedureTocMode>('detail')
@@ -449,6 +451,7 @@
       error = null
       confirmation = null
       pendingTransition = null
+      pendingOffPath = null
       closeTag()
       tagValidation = new Map()
       csfEvaluations = new Map()
@@ -608,6 +611,7 @@
     const request = ++latestProcedureLoadRequest
     confirmation = null
     pendingTransition = null
+    pendingOffPath = null
     try {
       rememberCurrentProcedureScroll()
       if (unit.targetObjectId === undefined) throw new Error('procedure unit requires a target object')
@@ -694,6 +698,7 @@
   const cancelConfirmation = (): void => {
     confirmation = null
     pendingTransition = null
+    pendingOffPath = null
   }
 
   const completeStepAndJump = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
@@ -742,6 +747,21 @@
     }
   }
 
+  // Only the current step's branches act at once; another step's branch first says
+  // where the Run stands and where the branch takes it.
+  const branchIsOffPath = (step: ProcedureStep): boolean =>
+    currentProcedureStep !== null && currentProcedureStep.step.id !== step.id
+
+  const requestBranch = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
+    if (!selectedRun || transitionInProgress) return
+    if (branch.targetKind !== 'procedure' && branchIsOffPath(fromStep)) {
+      pendingOffPath = { from: fromStep, branch }
+      confirmation = 'off-path'
+      return
+    }
+    await activateBranch(fromStep, branch)
+  }
+
   const activateBranch = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
     if (!selectedRun || transitionInProgress) return
     try {
@@ -757,6 +777,22 @@
     } finally {
       transitionInProgress = false
     }
+  }
+
+  const offPathConfirmation = $derived(pendingOffPath && document && currentProcedureStep
+    ? procedureOffPathConfirmation({ document, current: currentProcedureStep.step, from: pendingOffPath.from, branch: pendingOffPath.branch })
+    : null)
+
+  // Leaving by a transfer holds this procedure at the step the branch was selected on.
+  const transitionReturnText = (transition: ProcedureTransition): string => {
+    const proc = transition.fromProcedure.procedureId
+    const held = transition.branch.execution === 'parallel'
+      ? `${proc} stays active at step ${transition.fromStep.label}.`
+      : `${proc} holds at step ${transition.fromStep.label} as its return point.`
+    const current = currentProcedureStep?.step
+    return current && current.id !== transition.fromStep.id
+      ? `${proc} is at step ${current.label} now. ${held}`
+      : held
   }
 
   const transitionFromLabel = (transition: ProcedureTransition): string =>
@@ -836,12 +872,19 @@
     }
     if (action === 'transition') {
       await confirmProcedureTransition()
+      return
+    }
+    if (action === 'off-path') {
+      const offPath = pendingOffPath
+      pendingOffPath = null
+      if (offPath) await activateBranch(offPath.from, offPath.branch)
     }
   }
 
   const confirmationTitle = (): string => {
     if (!document || !confirmation) return ''
     if (confirmation === 'transition') return 'Confirm procedure transition'
+    if (confirmation === 'off-path') return offPathConfirmation?.title ?? ''
     if (confirmation === 'run') return `Run ${document.procedureId} on ${displayUnitName}?`
     if (confirmation === 'completed') return `Complete ${document.procedureId} on ${displayUnitName}?`
     return `Reset ${document.procedureId} on ${displayUnitName}?`
@@ -850,6 +893,7 @@
   const confirmationBody = (): string => {
     if (!document || !confirmation) return ''
     if (confirmation === 'transition') return ''
+    if (confirmation === 'off-path') return offPathConfirmation?.body ?? ''
     const currentStep = selectedProcedureRun
       ? procedureCurrentStep(selectedProcedureRun, document)?.progress ?? furthestTouchedStep(selectedProcedureRun, document)
       : null
@@ -896,7 +940,8 @@
 
   const cycleStepAssessment = async (step: ProcedureStep): Promise<void> => {
     const current = stepStates.get(step.id)
-    await updateStep(step, { assessment: assessmentAfter(current?.assessment), currentStepId: step.id })
+    // A checkmark records a judgement on its step; only a branch moves the Run.
+    await updateStep(step, { assessment: assessmentAfter(current?.assessment) })
   }
 
   const toggleFavorite = async (step: ProcedureStep): Promise<void> => {
@@ -1366,9 +1411,10 @@
                               <button
                                 type="button"
                                 class="procedure-branch"
+                                class:off-path={activeRun !== null && branchIsOffPath(step)}
                                 disabled={!activeRun || transitionInProgress || item.branch.targetKind === 'unknown'}
-                                title={selectedRun ? branchActionTextFor(item.branch) : 'Start the procedure to use branch actions'}
-                                onclick={() => void activateBranch(step, item.branch)}
+                                title={!selectedRun ? 'Start the procedure to use branch actions' : branchIsOffPath(step) ? `Step ${step.label} is not the current step: asks before moving ${document.procedureId}` : branchActionTextFor(item.branch)}
+                                onclick={() => void requestBranch(step, item.branch)}
                               >
                                 <strong>{item.branch.label}</strong>
                                 <span>{branchActionTextFor(item.branch)}</span>
@@ -1500,6 +1546,7 @@
               <br />
               <strong>{transitionToLabel(pendingTransition)}</strong>
             </p>
+            <p>{transitionReturnText(pendingTransition)}</p>
           {:else}
             <p>{confirmationBody()}</p>
           {/if}

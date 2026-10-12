@@ -38,9 +38,16 @@ export interface ProcedureRunSummaryGroup {
 export const procedureRunDocumentKey = (run: Pick<ProcedureRunState, 'sourceId' | 'sourceRevision' | 'sourcePath' | 'procedureId'>): string =>
   `${run.sourceId}:${run.sourceRevision}:${run.sourcePath}:${run.procedureId}`
 
+/** A machine id as words: "verify-reactor-trip" reads "Verify reactor trip". */
+export const procedureHumanisedId = (id: string): string => {
+  const words = id.split(/[-_\s]+/).filter(word => word.length > 0).join(' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** A step's name: its authored title, else its id in words when the heading only numbered it. */
 export const procedureStepDisplayName = (step: ProcedureStep): string => {
   const fallback = `Step ${step.label}`
-  return step.title.trim() === fallback ? step.id : step.title
+  return step.title.trim() === fallback ? procedureHumanisedId(step.id) : step.title
 }
 
 export const procedureStepHoverLabel = (step: ProcedureStep): string =>
@@ -91,6 +98,50 @@ export const procedureBranchActionText = (config: {
   }
 
   return config.branch.target
+}
+
+/** What a confirmation for a branch on a step that is not the Run's current step says, and its action. */
+export interface ProcedureOffPathConfirmation {
+  readonly title: string
+  readonly body: string
+  readonly action: string
+}
+
+/**
+ * A branch on another step than the current one moves the Run off its path:
+ * the confirmation names where the Run stands and where the branch takes it.
+ */
+export const procedureOffPathConfirmation = (config: {
+  readonly document: ProcedureDocument
+  readonly current: ProcedureStep
+  readonly from: ProcedureStep
+  readonly branch: ProcedureBranch
+}): ProcedureOffPathConfirmation => {
+  const { document, current, from, branch } = config
+  const procedure = document.procedureId
+  const decision = `Selecting “${branch.label}” on step ${from.label} records that decision`
+  if (branch.targetKind === 'step') {
+    const target = procedureStepById(document, branch.target)
+    const label = target?.label ?? branch.target
+    return {
+      title: `Move ${procedure} from step ${current.label} to step ${label}?`,
+      body: `${decision} and makes step ${label}${target ? ` (${procedureStepDisplayName(target)})` : ''} the current step.`,
+      action: `Move ${procedure} to step ${label}`,
+    }
+  }
+  if (branch.targetKind === 'retry') {
+    return {
+      title: `Move ${procedure} from step ${current.label} back to step ${from.label}?`,
+      body: `${decision} and makes step ${from.label} the current step again.`,
+      action: `Move ${procedure} to step ${from.label}`,
+    }
+  }
+  const verb = branch.targetKind === 'abort' ? 'Abort' : 'End'
+  return {
+    title: `${verb} ${procedure} from step ${from.label}? It is at step ${current.label}.`,
+    body: `${decision} and closes ${procedure} although its current step is ${current.label}.`,
+    action: `${verb} ${procedure}`,
+  }
 }
 
 export const procedureRunFor = (

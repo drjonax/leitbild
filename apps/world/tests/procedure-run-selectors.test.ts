@@ -4,6 +4,8 @@ import {
   furthestTouchedStep,
   procedureCurrentStep,
   procedureBranchActionText,
+  procedureHumanisedId,
+  procedureOffPathConfirmation,
   procedureRunDocumentKey,
   procedureRunSummariesForScope,
   procedureRunSummaryText,
@@ -85,8 +87,24 @@ const activeRun = {
 } satisfies ProcedureRunState
 
 describe('procedure run selectors', () => {
-  test('uses procmd step id when a heading only has a fallback step title', () => {
-    expect(procedureStepDisplayName(procedure.steps[1]!)).toBe('verify-phase-a-isolation')
+  test('reads a procmd step id as words when a heading only has a fallback step title', () => {
+    expect(procedureStepDisplayName(procedure.steps[1]!)).toBe('Verify phase a isolation')
+    expect(procedureHumanisedId('check_rcp-status')).toBe('Check rcp status')
+    expect(procedureStepDisplayName({ ...procedure.steps[0]!, title: 'Verify reactor trip' })).toBe('Verify reactor trip')
+  })
+
+  test('a branch on another step than the current one names where the Run stands and where it goes', () => {
+    const [first, sixth] = procedure.steps
+    const branch = (targetKind: 'step' | 'retry' | 'end', target: string) => ({ label: 'Verified', target, targetKind, tagIds: [], sourceLine: 11 })
+    expect(procedureOffPathConfirmation({ document: procedure, current: sixth!, from: first!, branch: branch('step', 'verify-phase-a-isolation') })).toEqual({
+      title: 'Move E-0 from step 6 to step 6?',
+      body: 'Selecting “Verified” on step 1 records that decision and makes step 6 (Verify phase a isolation) the current step.',
+      action: 'Move E-0 to step 6',
+    })
+    expect(procedureOffPathConfirmation({ document: procedure, current: sixth!, from: first!, branch: branch('retry', 'RETRY') }).title)
+      .toBe('Move E-0 from step 6 back to step 1?')
+    expect(procedureOffPathConfirmation({ document: procedure, current: sixth!, from: first!, branch: branch('end', 'END') }))
+      .toMatchObject({ title: 'End E-0 from step 1? It is at step 6.', action: 'End E-0' })
   })
 
   test('labels internal branch actions with procedure, step number, and step name', () => {
@@ -99,7 +117,7 @@ describe('procedure run selectors', () => {
         tagIds: [],
         sourceLine: 11,
       },
-    })).toBe('Go to E-0, step 6: verify-phase-a-isolation')
+    })).toBe('Go to E-0, step 6: Verify phase a isolation')
   })
 
   test('labels external branch actions with target procedure first step when loaded', () => {
@@ -130,14 +148,14 @@ describe('procedure run selectors', () => {
         tagIds: [],
         sourceLine: 13,
       },
-    })).toBe('Go to FR-C.1, step 1: verify-icc')
+    })).toBe('Go to FR-C.1, step 1: Verify icc')
   })
 
   test('summarizes the furthest touched step by document order', () => {
     expect(furthestTouchedStep(activeRun, procedure)).toEqual({
       stepId: 'verify-phase-a-isolation',
       label: '6',
-      name: 'verify-phase-a-isolation',
+      name: 'Verify phase a isolation',
     })
   })
 
@@ -149,7 +167,7 @@ describe('procedure run selectors', () => {
     expect(procedureCurrentStep(run, procedure)?.progress).toEqual({
       stepId: 'verify-reactor-trip',
       label: '1',
-      name: 'verify-reactor-trip',
+      name: 'Verify reactor trip',
     })
   })
 
@@ -162,7 +180,7 @@ describe('procedure run selectors', () => {
     expect(procedureCurrentStep(transitionedRun, procedure)?.progress).toEqual({
       stepId: 'verify-phase-a-isolation',
       label: '6',
-      name: 'verify-phase-a-isolation',
+      name: 'Verify phase a isolation',
     })
   })
 

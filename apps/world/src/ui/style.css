@@ -3819,12 +3819,24 @@ body.rail-resizing {
   width: 100%;
   margin-bottom: 9px;
   padding: 8px 9px;
-  background: #f8fafc;
-  border: 1px solid #d8e0ea;
+  background: #ffffff;
+  border: 1px solid #2563eb;
+  box-shadow: inset 3px 0 0 #2563eb;
   color: inherit;
   font-size: calc(13px * var(--procedure-font-scale));
   text-align: left;
   cursor: pointer;
+}
+
+/* A branch on a step that is not the current one: secondary, it asks before moving the Run. */
+.procedure-branch.off-path {
+  background: transparent;
+  border: 1px dashed #94a3b8;
+  box-shadow: none;
+}
+
+.procedure-branch.off-path span {
+  color: #475569;
 }
 
 .procedure-branch:hover:not(:disabled),
