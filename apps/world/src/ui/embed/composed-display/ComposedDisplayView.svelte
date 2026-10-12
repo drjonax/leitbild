@@ -20,6 +20,8 @@
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import SafetyFunctionChips from './SafetyFunctionChips.svelte'
   import MimicPanel from './mimic/MimicPanel.svelte'
+  import OperatedMimic from './operation/OperatedMimic.svelte'
+  import { operationClient, type DisplayOperation } from './operation/operation-client.ts'
   import { createMimicQuickLook } from './mimic/quick-look-source.ts'
   import TrendPanel from './TrendPanel.svelte'
   import { trendGutter } from './limit-labels.ts'
@@ -56,6 +58,8 @@
       onChange: next => { snapshot = next; keepFilter(next) },
       suspendWhenIdle: advice !== null,
       size: () => (advice === null ? { width: window.innerWidth, height: window.innerHeight } : null),
+      // Operated in the display window: its samples also read what its controls write and read.
+      operated: () => (opensIn === 'window' ? [...new Set([...operatedPaths.values()].flat())] : null),
     })
     session = active
     void active.start()
@@ -91,7 +95,13 @@
     // and what its window's Back returns to.
     const host = embeddedDisplayFrame()
     const stopOpening = host.subscribeOpening(where => { opensIn = where })
-    const stopPresentation = host.subscribe(presentation => { windowBack = presentation.back ?? null })
+    // Each time the window shows it, a display opened on equipment pins a pending proposal's popover (OperatedMimic).
+    let wasShown = false
+    const stopPresentation = host.subscribe(presentation => {
+      windowBack = presentation.back ?? null
+      if (presentation.shown && !wasShown) shownTimes += 1
+      wasShown = presentation.shown
+    })
     return () => {
       stopOpening()
       stopPresentation()
@@ -121,6 +131,10 @@
   let opensIn = $state<DisplayOpening | null>(null)
   // For a display its window opened from another: that one's title, which Back returns to.
   let windowBack = $state<string | null>(null)
+  // How many times the window has shown this display.
+  let shownTimes = $state(0)
+  // The paths each operated drawing's controls write and read, by its panel.
+  const operatedPaths = new Map<number, ReadonlyArray<string>>()
   // What a chip or banner label names that cannot be drawn: said in place, with the tree path that led to it.
   let refusal = $state<{ readonly name: string; readonly reason: string; readonly path: string | null } | null>(null)
 
@@ -203,7 +217,18 @@
   }
   // Back along what this display opened in place, else to the display its window opened it from.
   const backTitle = $derived(trail.at(-1)?.title ?? windowBack)
-  const opens = $derived(advice === null ? openItem : undefined)
+  // In the display window an answer's drawing opens an item's detail after itself, as its chips do; in a chat it is read-only.
+  const openItemInWindow = (item: MimicDrawnItem): void => { void openEquipment({ components: item.components, name: item.binding.label, path: null }) }
+  const opens = $derived(advice === null ? openItem : opensIn === 'window' ? openItemInWindow : undefined)
+  // Operated only in the display window (plan §4.2): there each drawing's popovers offer World's controls and proposals.
+  // A display opened on equipment (an item's detail, an answer's display) pins a pending proposal's popover as it is shown.
+  const operationOf = (panelIndex: number): DisplayOperation | undefined => opensIn !== 'window' ? undefined : {
+    runId,
+    plantId,
+    client: operationClient,
+    sampled: paths => { operatedPaths.set(panelIndex, paths) },
+    review: advice !== null || view?.kind === 'detail' ? `${shownTimes}|${shownState ?? envelope.state}|${trail.length}` : null,
+  }
   // Where items open, each one's detail dot opens its quick look: the lead values World chose for it with the
   // drawing, read from this Run while it is open.
   const quickLookSource = $derived(advice === null ? createMimicQuickLook({ client: composedDisplayClient, runId: simulationRunIdSchema.parse(envelope.subject.id), plantId }) : undefined)
@@ -386,7 +411,11 @@
     <div class="panels beside" style={`gap:${layout.overviewColumnGap}px`}>
       <div class="drawing">
         {#each view.display.panels as panel, index (index)}
-          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />{:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
+          {#if panel.kind === 'mimic'}
+            {@const operation = operationOf(index)}
+            {#if operation !== undefined}<OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} />
+            {:else}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />{/if}
+          {:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
         {/each}
       </div>
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
@@ -441,7 +470,12 @@
         {:else if panel.kind === 'evidence'}
           <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
         {:else if panel.kind === 'mimic'}
-          <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />
+          {@const operation = operationOf(index)}
+          {#if operation !== undefined}
+            <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} />
+          {:else}
+            <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />
+          {/if}
         {:else if panel.kind === 'faceplate'}
           <FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} />
         {:else}

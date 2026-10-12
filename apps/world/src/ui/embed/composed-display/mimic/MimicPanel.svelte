@@ -48,7 +48,8 @@
     sections?: ReadonlyArray<MimicPopoverSection>
     badges?: ReadonlyMap<string, ItemBadges> | undefined
     selected?: string | null
-    pin?: string | null
+    /** Each new request opens its item's popover pinned, once the item's dot is drawn. */
+    pin?: { readonly item: string } | null
   } = $props()
 
   let openBridge = $state<typeof OpenBridgeMimic | null>(null)
@@ -176,12 +177,12 @@
   }
   const popoverItem = $derived(popover.kind === 'open' ? mimic.items.find(item => item.id === popover.item) : undefined)
   // Opened on an item with a pending proposal, the display pins its popover once its dot is drawn (QA-10).
-  let pinned: string | null = null
+  let pinned: { readonly item: string } | null = null
   $effect(() => {
-    if (pin === null || pin === pinned || dots[pin] === undefined) return
+    if (pin === null || pin === pinned || dots[pin.item] === undefined) return
     pinned = pin
     clearTimeout(intent)
-    popover = { kind: 'open', item: pin, pinned: true }
+    popover = { kind: 'open', item: pin.item, pinned: true }
   })
   // Esc closes it first (not the window's Back) and returns focus to its dot; a press outside it and the dots closes it.
   let moved = $state(0)
@@ -189,6 +190,8 @@
   runOnMount(() => {
     const key = (event: KeyboardEvent): void => {
       if (popover.kind !== 'open' || event.key !== 'Escape') return
+      // A section that claims Esc (a selected command) has it first.
+      if (event.target instanceof Element && event.target.closest('[data-claims-escape]') !== null) return
       event.preventDefault()
       event.stopPropagation()
       closePopover(true)

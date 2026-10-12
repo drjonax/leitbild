@@ -34,11 +34,12 @@
     onSelected?: (path: VariablePath | null) => void
   } = $props()
 
-  let selection = $state<{ readonly path: VariablePath; readonly key: string } | null>(null)
-  let check = $state<'checking' | Check | null>(null)
+  // Raw: each is replaced whole, and a command's result is matched to the command it answers by identity.
+  let selection = $state.raw<{ readonly path: VariablePath; readonly key: string } | null>(null)
+  let check = $state.raw<'checking' | Check | null>(null)
   // A protective pushbutton's check, by its option, made as the section opens.
-  let standing = $state<Readonly<Record<string, Check | 'checking'>>>({})
-  let sent = $state<(SentCommand & { readonly key: string }) | null>(null)
+  let standing = $state.raw<Readonly<Record<string, Check | 'checking'>>>({})
+  let sent = $state.raw<(SentCommand & { readonly key: string }) | null>(null)
   let busy = $state(false)
 
   const keyOf = (write: Write): string => `${write.path}=${String(write.value)}`
@@ -112,7 +113,8 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="control" aria-label={`Control ${view.label}`} onkeydown={keydown}>
+<!-- While a command is selected, Esc clears it before it closes the popover (MimicPanel lets a section that claims Esc have it). -->
+<section class="control" aria-label={`Control ${view.label}`} onkeydown={keydown} data-claims-escape={selection === null ? undefined : ''}>
   {#each view.controls as control (control.path)}
     {@const expanded = selection?.path === control.path}
     <div class="row" class:expanded>

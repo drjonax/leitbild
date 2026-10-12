@@ -25,8 +25,8 @@ export interface HeldProposals {
 }
 
 export interface OperationClient {
-  /** Each named drawn item's controls where they stand now (controls.list). */
-  readonly controls: (runId: SimulationRunId, plantId: string, items: ReadonlyArray<string>) => Promise<ListedControls>
+  /** Each named drawn item's controls where they stand now, or every item's (controls.list). */
+  readonly controls: (runId: SimulationRunId, plantId: string, items: ReadonlyArray<string> | null) => Promise<ListedControls>
   /** World's check of the exact write, as the screen's actor would issue it (control.validate). */
   readonly validate: (runId: SimulationRunId, plantId: string, write: OperationWrite) => Promise<OperationCheck>
   /** The write, as a command of the screen's actor (control.write). */
@@ -46,7 +46,7 @@ const commandOutcome = async (runId: SimulationRunId, capabilityId: string, inpu
 }
 
 export const operationClient: OperationClient = {
-  controls: (runId, plantId, items) => querySimulationRunCapability<ListedControls>(runId, 'world.process-plant.controls.list', { plantId, items: [...items] }),
+  controls: (runId, plantId, items) => querySimulationRunCapability<ListedControls>(runId, 'world.process-plant.controls.list', { plantId, ...(items === null ? {} : { items: [...items] }) }),
   validate: async (runId, plantId, write) => {
     const result = await querySimulationRunCapability<{ readonly accepted: boolean; readonly reason?: string }>(runId, 'world.process-plant.control.validate', { plantId, path: write.path, value: write.value })
     if (result.accepted) return { accepted: true }
@@ -62,4 +62,22 @@ export const operationClient: OperationClient = {
     const resolved = await querySimulationRunCapability<{ readonly signals: ReadonlyArray<{ readonly path: VariablePath; readonly unit: ProcessUnit }> }>(runId, 'world.process-plant.signals.resolve', { plantId, signals: paths.map(path => ({ path })) })
     return new Map(resolved.signals.map(signal => [signal.path, signal.unit]))
   },
+}
+
+/**
+ * A display operated in the process display window: the Run and Plant its
+ * controls act on, the client they act through, and how it tells its display
+ * the paths its controls write and read (sampled with the rest).
+ */
+export interface DisplayOperation {
+  readonly runId: SimulationRunId
+  readonly plantId: string
+  readonly client: OperationClient
+  readonly sampled: (paths: ReadonlyArray<string>) => void
+  /**
+   * Names each time the window shows a display opened on equipment (an item's
+   * detail, or an answer's display around it): each time, a pending
+   * proposal's popover opens pinned on its item. Null for the unit overview.
+   */
+  readonly review: string | null
 }
