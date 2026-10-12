@@ -298,6 +298,10 @@
     presentationFor: (object) => presentationFor(object),
     hasNewInfo: (object) => hasNewInfo(object),
     targetPreviewFor: (object) => targetPreviewFor?.(object) ?? null,
+    drawnAt: (object) => {
+      const point = operationalRenderController.points().find(candidate => candidate.id === object.id)
+      return point ? [point.position[0], point.position[1]] : null
+    },
   })
 
   // Catalogue icons beyond the compiled atlas: artwork loads only when an object or Pack feature uses one.
@@ -589,6 +593,8 @@
         return
       }
       runtime = nextRuntime
+      // Icons that would overlap fan out anew at each zoom step (point-declutter.ts).
+      nextRuntime.map.on('zoom', () => operationalRenderController.syncZoom())
       const canvas = nextRuntime.map.getCanvas()
       let holdTimer: ReturnType<typeof setTimeout> | null = null
       let holdStart: { x: number; y: number } | null = null

@@ -3,6 +3,7 @@ import { IconLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers'
 import type { CatalogueSymbolAtlasState } from './catalogue-symbol-atlas.ts'
 import { darkStroke, rgba, white } from './colors.ts'
 import { ObjectLabelLayer } from './object-label-layer.ts'
+import { declutterPoints, type PointLeader } from './point-declutter.ts'
 import {
   leitbildSymbolAtlasUrl,
   leitbildSymbolIconMapping,
@@ -36,6 +37,8 @@ export interface OperationalDeckLayerConfig {
    * alone, as it always has.
    */
   readonly disksPick: boolean
+  /** The zoom step the icons are laid out for (`point-declutter.ts`, `fanZoomOf`). */
+  readonly zoom: number
   readonly assignmentInteraction?: MapAssignmentInteraction
   readonly onAssignmentHandleSelected?: (handle: MapAssignmentHandleFeature) => void
   readonly layerData?: OperationalDeckLayerData
@@ -44,6 +47,14 @@ export interface OperationalDeckLayerConfig {
 export interface OperationalDeckLayerData {
   readonly visiblePaths: ReadonlyArray<OperationalPathFeature>
   readonly visibleAreaSymbols: ReadonlyArray<OperationalSymbolFeature>
+  /** Every point where the map draws its icon, fanned out where icons would overlap (`point-declutter.ts`). */
+  readonly points: ReadonlyArray<OperationalPointFeature>
+  /** A leader from each fanned icon to its true position. */
+  readonly leaders: ReadonlyArray<PointLeader>
+  /** Where each fanned object's icon is drawn, by object id. */
+  readonly drawnAt: ReadonlyMap<string, Position3>
+  /** Counts each new layout of the icons. */
+  readonly layoutRevision: number
   readonly newInfoPoints: ReadonlyArray<OperationalPointFeature>
   readonly placementPoints: ReadonlyArray<{ readonly id: string; readonly position: Position3 }>
   /** Points the compiled atlas draws: every point while no Pack uses another catalogue icon. */
@@ -60,12 +71,15 @@ export interface OperationalDeckLayerDataCache {
     snapshot: OperationalRenderSnapshot,
     visibleFamilies: ReadonlySet<string>,
     catalogueAtlas: CatalogueSymbolAtlasState,
+    zoom: number,
   ) => OperationalDeckLayerData
   readonly reset: () => void
 }
 
 export interface OperationalDeckLayerFactory {
   readonly createLayers: (config: OperationalDeckLayerConfig) => ReadonlyArray<Layer>
+  /** The points as last drawn, fanned out where icons would overlap, in draw order. */
+  readonly drawnPoints: () => ReadonlyArray<OperationalPointFeature>
   readonly reset: () => void
 }
 
@@ -126,6 +140,8 @@ const emptyPaths: ReadonlyArray<OperationalPathFeature> = []
 const emptyPoints: ReadonlyArray<OperationalPointFeature> = []
 const emptySymbols: ReadonlyArray<OperationalSymbolFeature> = []
 const emptyPlacementPoints: ReadonlyArray<{ readonly id: string; readonly position: Position3 }> = []
+const emptyLeaders: ReadonlyArray<PointLeader> = []
+const nothingMoved: ReadonlyMap<string, Position3> = new Map()
 
 /** Splits features by atlas; with no catalogue icon the compiled list is the input itself, so nothing changes for it. */
 const byAtlas = <T extends { readonly symbolId: string; readonly symbolAtlas: 'compiled' | 'catalogue' }>(
@@ -145,6 +161,11 @@ export const createOperationalDeckLayerDataCache = (): OperationalDeckLayerDataC
   let pathsVisibleKey = ''
   let visiblePaths: ReadonlyArray<OperationalPathFeature> = emptyPaths
   let pointsRevision = -1
+  let layoutZoom = Number.NaN
+  let layoutRevision = 0
+  let drawnPoints: ReadonlyArray<OperationalPointFeature> = emptyPoints
+  let leaders: ReadonlyArray<PointLeader> = emptyLeaders
+  let drawnAt: ReadonlyMap<string, Position3> = nothingMoved
   let newInfoPoints: ReadonlyArray<OperationalPointFeature> = emptyPoints
   let placementRevision = -1
   let symbolsRevision = -1
@@ -161,6 +182,10 @@ export const createOperationalDeckLayerDataCache = (): OperationalDeckLayerDataC
     pathsVisibleKey = ''
     visiblePaths = emptyPaths
     pointsRevision = -1
+    layoutZoom = Number.NaN
+    drawnPoints = emptyPoints
+    leaders = emptyLeaders
+    drawnAt = nothingMoved
     newInfoPoints = emptyPoints
     placementRevision = -1
     symbolsRevision = -1
@@ -174,7 +199,7 @@ export const createOperationalDeckLayerDataCache = (): OperationalDeckLayerDataC
   }
 
   return {
-    dataFor: (snapshot, visibleFamilies, catalogueAtlas) => {
+    dataFor: (snapshot, visibleFamilies, catalogueAtlas, zoom) => {
       const nextVisibleKey = visibleFamiliesKey(visibleFamilies)
       const atlasChanged = atlasRevision !== catalogueAtlas.revision
       atlasRevision = catalogueAtlas.revision
@@ -189,11 +214,17 @@ export const createOperationalDeckLayerDataCache = (): OperationalDeckLayerDataC
         pathsVisibleKey = nextVisibleKey
         visiblePaths = snapshot.paths.filter(path => pathFamilyIsVisible(path, visibleFamilies))
       }
-      if (pointsRevision !== snapshot.revisions.points || atlasChanged) {
+      if (pointsRevision !== snapshot.revisions.points || atlasChanged || layoutZoom !== zoom) {
         pointsRevision = snapshot.revisions.points
-        newInfoPoints = snapshot.points.filter(point => point.hasNewInfo)
-        pointsByAtlas = byAtlas(snapshot.points, catalogueAtlas, emptyPoints)
-        labelPoints = snapshot.points.some(point => point.label !== null) ? snapshot.points.filter(point => point.label !== null) : emptyPoints
+        layoutZoom = zoom
+        layoutRevision += 1
+        const decluttered = declutterPoints(snapshot.points, zoom)
+        drawnPoints = decluttered.points
+        leaders = decluttered.leaders
+        drawnAt = decluttered.drawnAt
+        newInfoPoints = drawnPoints.filter(point => point.hasNewInfo)
+        pointsByAtlas = byAtlas(drawnPoints, catalogueAtlas, emptyPoints)
+        labelPoints = drawnPoints.some(point => point.label !== null) ? drawnPoints.filter(point => point.label !== null) : emptyPoints
       }
       if (placementRevision !== snapshot.revisions.placement) {
         placementRevision = snapshot.revisions.placement
@@ -204,6 +235,10 @@ export const createOperationalDeckLayerDataCache = (): OperationalDeckLayerDataC
       return {
         visiblePaths,
         visibleAreaSymbols,
+        points: drawnPoints,
+        leaders,
+        drawnAt,
+        layoutRevision,
         newInfoPoints,
         placementPoints,
         compiledPoints: pointsByAtlas.compiled,
@@ -219,12 +254,18 @@ export const createOperationalDeckLayerDataCache = (): OperationalDeckLayerDataC
 
 export const createOperationalDeckLayerFactory = (): OperationalDeckLayerFactory => {
   const dataCache = createOperationalDeckLayerDataCache()
+  let drawnPoints: ReadonlyArray<OperationalPointFeature> = emptyPoints
   return {
-    createLayers: config => createOperationalDeckLayers({
-      ...config,
-      layerData: dataCache.dataFor(config.snapshot, config.visibleFamilies, config.catalogueAtlas),
-    }),
-    reset: dataCache.reset,
+    createLayers: config => {
+      const layerData = dataCache.dataFor(config.snapshot, config.visibleFamilies, config.catalogueAtlas, config.zoom)
+      drawnPoints = layerData.points
+      return createOperationalDeckLayers({ ...config, layerData })
+    },
+    drawnPoints: () => drawnPoints,
+    reset: () => {
+      dataCache.reset()
+      drawnPoints = emptyPoints
+    },
   }
 }
 
@@ -232,8 +273,9 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
   const snapshot = config.snapshot
   const visibleFamilies = config.visibleFamilies
   const assignmentInteraction = config.assignmentInteraction ?? { revision: 0, active: false, anchor: null, pointer: null, handles: [] }
-  const layerData = config.layerData ?? createOperationalDeckLayerDataCache().dataFor(snapshot, visibleFamilies, config.catalogueAtlas)
+  const layerData = config.layerData ?? createOperationalDeckLayerDataCache().dataFor(snapshot, visibleFamilies, config.catalogueAtlas, config.zoom)
   const visiblePaths = layerData.visiblePaths
+  const points = layerData.points
   const catalogueAtlas = config.catalogueAtlas
   const onSymbolClick = (info: PickingInfo<OperationalPointFeature>): void => {
     const point = asPointPicking(info)
@@ -281,12 +323,13 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
       iconMapping,
       sizeUnits: 'pixels',
       getIcon: () => 'git-branch-plus',
-      getPosition: handle => handle.position,
+      // A handle stands on its controller's icon, wherever a fan draws it.
+      getPosition: handle => layerData.drawnAt.get(handle.controllerId) ?? handle.position,
       getPixelOffset: [15, -15],
       getColor: white(250),
       getSize: 30,
       onClick: info => { if (info.object) config.onAssignmentHandleSelected?.(info.object) },
-      updateTriggers: { getPosition: assignmentInteraction.revision },
+      updateTriggers: { getPosition: [assignmentInteraction.revision, layerData.layoutRevision] },
     }),
     new PathLayer<OperationalPathFeature>({
       id: 'leitbild-operational-path-casing',
@@ -322,9 +365,50 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
         getWidth: snapshot.revisions.paths,
       },
     }),
+    ...(layerData.leaders.length > 0
+      ? [
+          new PathLayer<PointLeader>({
+            id: 'leitbild-object-leader-casing',
+            data: layerData.leaders,
+            pickable: false,
+            visible: visible(visibleFamilies, 'objects'),
+            getPath: leader => [leader.drawnAt, leader.trueAt] as unknown as number[],
+            getColor: white(190),
+            getWidth: 3.5,
+            widthUnits: 'pixels',
+            capRounded: true,
+          }),
+          new PathLayer<PointLeader>({
+            id: 'leitbild-object-leaders',
+            data: layerData.leaders,
+            pickable: false,
+            visible: visible(visibleFamilies, 'objects'),
+            getPath: leader => [leader.drawnAt, leader.trueAt] as unknown as number[],
+            getColor: rgba(40, 46, 56, 200),
+            getWidth: 1.5,
+            widthUnits: 'pixels',
+            capRounded: true,
+          }),
+          new ScatterplotLayer<PointLeader>({
+            id: 'leitbild-object-true-positions',
+            data: layerData.leaders,
+            pickable: false,
+            visible: visible(visibleFamilies, 'objects'),
+            radiusUnits: 'pixels',
+            lineWidthUnits: 'pixels',
+            stroked: true,
+            filled: true,
+            getPosition: leader => leader.trueAt,
+            getRadius: 3,
+            getFillColor: rgba(40, 46, 56, 230),
+            getLineColor: white(235),
+            getLineWidth: 1.5,
+          }),
+        ]
+      : []),
     new ScatterplotLayer<OperationalPointFeature>({
       id: 'leitbild-object-halos',
-      data: snapshot.points,
+      data: points,
       pickable: false,
       visible: visible(visibleFamilies, 'objects'),
       radiusUnits: 'pixels',
@@ -346,7 +430,7 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
     }),
     new ScatterplotLayer<OperationalPointFeature>({
       id: 'leitbild-object-status-disks',
-      data: snapshot.points,
+      data: points,
       // While the surface picks targets, a mouse click between the glyph's strokes lands on the disk: it is the object's, never the ground's.
       pickable: config.disksPick,
       visible: visible(visibleFamilies, 'objects'),
@@ -418,7 +502,7 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
       ? [new ObjectLabelLayer({
           id: 'leitbild-object-labels',
           data: layerData.labelPoints,
-          obstacles: snapshot.points,
+          obstacles: points,
           // A label is part of its object: a click or hover on it acts on the object, never on the ground beneath.
           pickable: true,
           visible: visible(visibleFamilies, 'objects'),

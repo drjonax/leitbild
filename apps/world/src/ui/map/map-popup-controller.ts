@@ -1,5 +1,5 @@
 import { Popup, type Map as MapLibreMap } from 'maplibre-gl'
-import type { GeoJsonPoint, OperationalObject } from '../../core/model/index.ts'
+import type { OperationalObject } from '../../core/model/index.ts'
 import type { PackObjectField, PackObjectPresentation, PackTargetPreview } from '../../core/packs/protocol.ts'
 import { featureHoverCardHtml, objectHoverCardHtml } from './object-hover-card.ts'
 
@@ -12,14 +12,13 @@ export interface MapPopupController {
   readonly hoveredObjectId: () => string | null
 }
 
-const pointOf = (object: OperationalObject): GeoJsonPoint | null =>
-  object.spatial.position?.point ?? null
-
 export const createMapPopupController = (config: {
   readonly getMap: () => MapLibreMap | null
   readonly presentationFor: (object: OperationalObject) => PackObjectPresentation
   readonly hasNewInfo: (object: OperationalObject) => boolean
   readonly targetPreviewFor: (object: OperationalObject) => PackTargetPreview | null
+  /** Where the map draws the object's icon, which a fan of icons may move from its true position; null while it draws none. */
+  readonly drawnAt: (object: OperationalObject) => readonly [number, number] | null
 }): MapPopupController => {
   let markerPopup: Popup | null = null
   let hoveredObjectId: string | null = null
@@ -63,10 +62,10 @@ export const createMapPopupController = (config: {
     },
     show: (object) => {
       const current = config.getMap()
-      const point = pointOf(object)
+      const point = config.drawnAt(object)
       if (!current || !point) return
       hoveredObjectId = object.id
-      const [lon, lat] = point.coordinates
+      const [lon, lat] = point
       markerPopup = markerPopup ?? new Popup({
         closeButton: false,
         closeOnClick: false,
@@ -85,9 +84,9 @@ export const createMapPopupController = (config: {
     },
     refresh: (sourceObjects) => {
       const object = objectById(hoveredObjectId, sourceObjects)
-      const point = object ? pointOf(object) : null
+      const point = object ? config.drawnAt(object) : null
       if (!markerPopup || !object || !point) return
-      const [lon, lat] = point.coordinates
+      const [lon, lat] = point
       markerPopup
         .setLngLat([lon, lat])
         .setHTML(hoverCardHtml(object))

@@ -52,6 +52,7 @@ describe('operational deck layer visibility', () => {
       visibleFamilies: new Set(['routes']),
       catalogueAtlas: emptyCatalogueSymbolAtlas,
       disksPick: false,
+      zoom: 10,
       onObjectSelected: () => undefined,
       onObjectSeen: () => undefined,
       onObjectHover: () => undefined,
@@ -67,8 +68,8 @@ describe('operational deck layer visibility', () => {
     const snapshot = emptySnapshot()
     const families = new Set(['objects', 'routes'])
 
-    const first = cache.dataFor(snapshot, families, emptyCatalogueSymbolAtlas)
-    const second = cache.dataFor(snapshot, new Set(['routes', 'objects']), emptyCatalogueSymbolAtlas)
+    const first = cache.dataFor(snapshot, families, emptyCatalogueSymbolAtlas, 10)
+    const second = cache.dataFor(snapshot, new Set(['routes', 'objects']), emptyCatalogueSymbolAtlas, 10)
 
     expect(second.visiblePaths).toBe(first.visiblePaths)
     expect(second.visibleAreaSymbols).toBe(first.visibleAreaSymbols)
