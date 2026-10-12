@@ -25,6 +25,7 @@
   import ContinueList from './ContinueList.svelte'
   import FeaturedRow from './FeaturedRow.svelte'
   import DefinitionCatalog from './DefinitionCatalog.svelte'
+  import WorkspaceSwitcher from './WorkspaceSwitcher.svelte'
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
   import { roomScopeIncludingRun, roomSelectsRun, roomServesRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
@@ -648,11 +649,7 @@
   <header class="ws-topbar">
     <Wordmark href="/workspaces" tone="dark" mark label="Leitbild.ai home" />
     <span class="topbar-sep" aria-hidden="true"></span>
-    {#if workspace}
-      <!-- Lane L3 import point: <WorkspaceSwitcher current={workspace} /> replaces this link once ux/l3 lands
-           (its popover lists Recent and public Workspaces and creates new ones; see $UX/lanes/l5.md). -->
-      <a class="ws-switch" href="/workspaces" title="All Workspaces"><Icon name="layers" size={16} /><span class="ws-kicker">Workspace</span>{' '}<span class="ws-name">{workspaceTitle}</span><Icon name="down" size={16} /></a>
-    {/if}
+    {#if workspace}<WorkspaceSwitcher current={workspace} currentIsPage {memory} />{/if}
     <nav class="ws-nav" aria-label="Main">
       <div class="nav-wide">
         <a class="nav-link" href={guideHref('start')}><Icon name="compass" size={18} /><span>Getting started</span></a>
@@ -749,12 +746,6 @@
   .ws-topbar { position: sticky; top: 0; z-index: 20; min-height: var(--lb-topbar-h); padding: 0 var(--lb-gutter); display: flex; align-items: center; gap: 12px;
     color: var(--lb-on-dark); background: var(--lb-brand-900); border-bottom: 1px solid #0d150f; }
   .topbar-sep { flex: none; width: 1px; height: 24px; background: var(--lb-on-dark-line); }
-  .ws-switch { min-width: 0; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; border: 1px solid var(--lb-on-dark-line);
-    border-radius: var(--lb-r-sm); color: var(--lb-on-dark); background: #1d2d22; font-size: .875rem; text-decoration: none; }
-  .ws-switch:hover { background: #24382a; }
-  .ws-switch:focus-visible { outline: 2px solid var(--lb-focus-on-dark); outline-offset: 2px; }
-  .ws-kicker { color: var(--lb-on-dark-2); }
-  .ws-name { min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
   .ws-nav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
   .nav-wide { display: flex; align-items: center; gap: 2px; }
   .nav-narrow { display: none; }
@@ -769,12 +760,11 @@
   }
   @media (max-width: 699px) {
     .ws-topbar { gap: 8px; min-height: 52px; }
-    .topbar-sep, .ws-kicker { display: none; }
-    .ws-name { max-width: 34vw; }
+    .topbar-sep { display: none; }
     .nav-wide { display: none; }
     .nav-narrow { display: block; }
   }
-  @media (pointer: coarse) { .ws-switch { min-height: 44px; } .ws-topbar :global(.nav-link) { min-height: 44px; } }
+  @media (pointer: coarse) { .ws-topbar :global(.nav-link) { min-height: 44px; } }
 
   .guide-back { flex: none; color: #aebbb0; font-size: .78rem; text-decoration: none; white-space: nowrap; }
   .guide-back:hover { color: white; }
