@@ -86,6 +86,17 @@ describe('curated topology of the Norway model', () => {
     ])
   })
 
+  test('Tonstad wind farm reaches Ertsmyra on its own 132 kV line, not through Buheii', () => {
+    const line = model.branches.find(branch => branch.id === 'branch:curated-tonstad-vindpark-terminal')!
+    expect([line.fromBusId, line.toBusId, line.osmWayIds]).toEqual(['bus:osm-relation-18292370@132', 'bus:osm-way-830169275@132', ['729980065']])
+    expect(model.generators.find(generator => generator.id === 'generator:nve-wind-10367')!.busId).toBe('bus:osm-way-830169275@132')
+    // The 132 kV lead of Ertsmyra's one 300 MVA transformer carries at least the transformer.
+    const lead = model.branches.find(branch => branch.provenance.sources.includes('curation:ertsmyra-transformer-132kv-lead'))!
+    const transformer = model.branches.find(branch => branch.id === 'branch:transformer-osm-relation-8890888-300-132')!
+    expect(lead.osmWayIds).toEqual(['830169293'])
+    expect(lead.ratingMw).toBeGreaterThanOrEqual(transformer.ratingMw)
+  })
+
   test('the Ålefjær tap operated at 110 kV is not part of the ≥132 kV model', () => {
     expect(model.buses.filter(bus => bus.substationId === 'osm-relation-14027918')).toEqual([])
     expect(model.branches.filter(branch => branch.osmWayIds.includes('988971051'))).toEqual([])

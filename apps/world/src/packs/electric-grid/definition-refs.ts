@@ -115,7 +115,7 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     fidelity: transmissionFidelity,
     source: { kind: 'grid-model', file: 'norway-transmission.grid-model.json', geometryFile: 'norway-transmission.geometry.json' },
     loadProfilesRef: norwayLoadProfilesRef,
-    assetCounts: { bus: 998, branch: 1242, generator: 852, load: 3133, storage: 0, connectionPoint: 0, hvdcTerminal: 4 },
+    assetCounts: { bus: 999, branch: 1243, generator: 852, load: 3130, storage: 0, connectionPoint: 0, hvdcTerminal: 4 },
     connectionPoints: [],
   }, {
     id: haldenFourUnitGridModelRef,
@@ -125,7 +125,7 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     fidelity: transmissionFidelity,
     source: { kind: 'grid-model-addition', baseModelRef: norwayGridModelRef, file: 'halden-four-unit.grid-model-addition.json' },
     loadProfilesRef: norwayLoadProfilesRef,
-    assetCounts: { bus: 999, branch: 1248, generator: 852, load: 3133, storage: 0, connectionPoint: 4, hvdcTerminal: 4 },
+    assetCounts: { bus: 1000, branch: 1249, generator: 852, load: 3130, storage: 0, connectionPoint: 4, hvdcTerminal: 4 },
     connectionPoints: [1, 2, 3, 4].map(haldenUnitBay),
   }],
   loadProfiles: [{

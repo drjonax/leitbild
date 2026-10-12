@@ -2171,6 +2171,106 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "tonstad-vindpark-terminal",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.783783,
+          58.545549
+        ]
+      },
+      "properties": {
+        "kind": "add-terminal",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/729980065",
+          "way/830169275",
+          "relation/18292370"
+        ],
+        "wayOsmId": "way/729980065",
+        "substationOsmId": "way/830169275",
+        "remoteSubstationOsmId": "relation/18292370",
+        "voltageKv": 132,
+        "reason": "The 132 kV line from Ertsmyra to Tonstad wind farm ends at node 6838321590, 54 m outside the mapped outline of the farm's indoor 33/132 kV substation, so open data leaves the farm without a grid terminal; the model then attached its 208 MW at Buheii, 14 km away, and loaded Buheii – Tonstad with both farms. The concession gives the farm its own 33/132 kV substation and a 15 km 132 kV line to Ertsmyra (verified).",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200903265/1539845",
+            "ref": "NVE anleggskonsesjon to Tonstad Vindpark AS, ref. 200903265-189 (2015-09-14), p. 2",
+            "note": "En 33/132 kV transformatorstasjon innenfor planområdet; en ca. 15 km 132 kV kraftledning fra planområdet til Ertsmyra transformatorstasjon"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/729980065",
+            "ref": "way/729980065",
+            "note": "line \"Tonstad vindpark - Ertsmyra\", operator Glitre Nett, voltage=132000, cables=3; free end node 6838321590 (checked 2026-10-12)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/830169275",
+            "ref": "way/830169275",
+            "note": "substation \"Tonstad vindpark\", location=indoor, voltage=132000"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "way/830169275",
+            "toSubstationOsmId": "relation/18292370",
+            "voltageKv": 132
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ertsmyra-transformer-132kv-lead",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.754837,
+          58.671397
+        ]
+      },
+      "properties": {
+        "kind": "set-line-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/830169293"
+        ],
+        "wayOsmIds": [
+          "way/830169293"
+        ],
+        "voltageKv": 132,
+        "designRatingMva": 300,
+        "reason": "The 70 m Statnett 132 kV span between Statnett's Ertsmyra station and Glitre Nett's Ertsmyra 132 kV station is the only path between Ertsmyra's one 300 MVA 420(300)/132 kV transformer and the 132 kV grid it serves, which NVE gives as Tonstad (200 MW) and Buheii (82.8 MW) wind, Rusdal hydro and the regional grid (verified). A transformer's 132 kV lead is built for at least the transformer, so the span takes the transformer's 300 MVA even at the 35 °C design air (inferred: its conductor is not published); the rule had rated it 147 MVA, below the transformer it serves.",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200903265/2489649",
+            "ref": "NVE 200903265-224 (2018-08-27), p. 1",
+            "note": "Ertsmyra transformatorstasjon (132/420 MVA) med kapasitet på 300 MVA; Rusdal, regionalnettet og Buheii også planlagt tilknyttet"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/830169293",
+            "ref": "way/830169293",
+            "note": "power=line, operator=Statnett, voltage=132000, cables=3, 70 m between relation/8890888 (Statnett Ertsmyra) and relation/18292370 (Glitre Nett Ertsmyra, voltage=132000;22000)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
     }
   ]
 }
