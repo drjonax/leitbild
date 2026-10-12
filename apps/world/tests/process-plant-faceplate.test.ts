@@ -116,22 +116,26 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
   })
 
   test('where the steam goes: every outlet of the circuit feeding the turbine, read wherever the model publishes its flow', () => {
-    // The steam generators' relief valves publish no flow in the reference model: they are named, not read. A Plant
-    // that publishes their lines' flows reads each by its branch's first equipment in the same row, after the dumps a
-    // controller positions and before the safety valve, as the circuit leads to them; nothing names them.
+    // The reference model publishes each steam generator relief valve's flow to the atmosphere and the turbine-driven
+    // AFW pump's steam supply lines' flows: each is read by its branch's first equipment in the same row, after the
+    // dumps and the relief valves a controller positions, as the circuit leads to them; nothing is named unread.
     const outletsOf = (system: CompiledProcessPlant) => {
       const end = faceplateEnds(system).find(index => system.graph.components[index]!.semantics.energy.some(role => role.role === 'sink'))!
       const { faceplate } = compileFaceplate(system, end, { mode: null, read: () => undefined }, () => undefined)!
       return faceplate.columns.flatMap(column => column.rows).find(row => row.kind === 'flows')
     }
-    expect(outletsOf(plant)).toMatchObject({ from: 'Main steam', branches: [{ destination: 'Turbine bypass' }, { destination: 'MSSV' }], unmeasured: ['ARV A/B/C/D'] })
+    const reference = outletsOf(plant)
+    expect(reference?.kind === 'flows' ? reference.branches.map(branch => branch.destination) : []).toEqual(['Turbine bypass', 'ARV A', 'ARV B', 'ARV C', 'ARV D', 'MSSV', 'TD AFW steam B', 'TD AFW steam C'])
+    expect(reference).not.toHaveProperty('unmeasured')
+    // A Plant that does not publish its relief lines' flows names them, never leaves them out.
     const reliefLines = plant.graph.links.filter(link => plant.graph.components[link.toComponentIndex]!.metadata?.equipmentClass === 'steam-generator-relief-valve')
       .map(link => String(link.variables.find(variable => String(variable.path).endsWith('.flowKgPerS'))!.path))
+    const reliefOutlets = plant.graph.links.filter(link => plant.graph.components[link.fromComponentIndex]!.metadata?.equipmentClass === 'steam-generator-relief-valve')
+      .map(link => String(link.variables.find(variable => String(variable.path).endsWith('.flowKgPerS'))!.path))
     expect(reliefLines).toHaveLength(4)
-    const published: CompiledProcessPlant = { ...plant, graph: compilePlantGraph({ ...plant.sourceGraph, publishedVariables: [...plant.sourceGraph.publishedVariables, ...reliefLines] } as PlantGraphSpec, processPlantComponentRegistry) }
-    const outlets = outletsOf(published)
-    expect(outlets?.kind === 'flows' ? outlets.branches.map(branch => branch.destination) : []).toEqual(['Turbine bypass', 'ARV A', 'ARV B', 'ARV C', 'ARV D', 'MSSV'])
-    expect(outlets).not.toHaveProperty('unmeasured')
+    const unread = new Set([...reliefLines, ...reliefOutlets])
+    const unpublished: CompiledProcessPlant = { ...plant, graph: compilePlantGraph({ ...plant.sourceGraph, publishedVariables: plant.sourceGraph.publishedVariables.filter(path => !unread.has(String(path))) } as PlantGraphSpec, processPlantComponentRegistry) }
+    expect(outletsOf(unpublished)).toMatchObject({ from: 'Main steam', branches: [{ destination: 'Turbine bypass' }, { destination: 'MSSV' }, { destination: 'TD AFW steam B' }, { destination: 'TD AFW steam C' }], unmeasured: ['ARV A/B/C/D'] })
   })
 
   test('the opaque Plant lays out the same faceplates at its operating point', () => {

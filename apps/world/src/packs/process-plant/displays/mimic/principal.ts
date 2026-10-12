@@ -1,5 +1,6 @@
 import type { CompiledPlantGraph } from '../../graph/index.ts'
 import { linkCarrier, ratedFlowForLink } from '../../graph/index.ts'
+import { pumpDriveSteamPorts } from '../../graph/pump-component-definitions.ts'
 import { drawingStops, type MimicScope } from './scope.ts'
 
 // A unit overview draws the Plant's principal circuits, found by following
@@ -14,7 +15,10 @@ import { drawingStops, type MimicScope } from './scope.ts'
 // condenser's cooling water) stubs it too. Relief valves that discharge
 // straight out of the Plant (safety and atmospheric relief valves venting to
 // the atmosphere) are left to the detail views: shut in operation, they would
-// only widen the overview, and their alarms say when they open.
+// only widen the overview, and their alarms say when they open. So are the
+// valves that only supply a pump's drive turbine with steam (the
+// turbine-driven auxiliary feedwater pump's), which also stand shut in
+// operation and take the steam out of the Plant.
 
 /** A link rated below this fraction of its circuit's largest rated flow is auxiliary to the circuit. */
 export const AUXILIARY_FLOW_FRACTION = 0.1
@@ -185,8 +189,13 @@ export const principalCircuits = (graph: CompiledPlantGraph): PrincipalCircuitsR
   // A relief valve vents out of the Plant when everything it discharges into takes the flow no further.
   const ventsOutOfPlant = (component: number): boolean => graph.components[component]!.semantics.function === 'relieving'
     && (graph.outgoingLinksByComponent[component] ?? []).every(index => (graph.outgoingLinksByComponent[graph.links[index]!.toComponentIndex] ?? []).length === 0)
+  // A valve whose every outlet is a pump's drive steam inlet supplies that pump's turbine only.
+  const suppliesDriveTurbine = (component: number): boolean => {
+    const outlets = graph.outgoingLinksByComponent[component] ?? []
+    return outlets.length > 0 && outlets.every(index => String(graph.links[index]!.toPortName) === pumpDriveSteamPorts.inlet)
+  }
   const stubs = drawingStops(graph, components, new Set(links), fluidCarriers, () => false)
-    .filter(stub => !stub.others.every(other => ventsOutOfPlant(other.component)))
+    .filter(stub => !stub.others.every(other => ventsOutOfPlant(other.component) || suppliesDriveTurbine(other.component)))
   return {
     ok: true,
     rings: ordered.map(entry => ({ ring: entry.ring, carriers: carriersOf(entry.links), components: componentsOf(entry.nodes), links: sorted(entry.links) })),

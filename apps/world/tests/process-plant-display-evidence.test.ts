@@ -303,7 +303,9 @@ describe('what World adds to a composed display', () => {
     const snapshot = system.protection!.snapshot()
     const lifecycle = (ruleId: string) => [...snapshot.alarms, ...snapshot.trips].find(entry => entry.ruleId === ruleId)!
     expect([lifecycle('sg-b-feedwater-flow-low').active, lifecycle('sg-b-feedwater-low').active]).toEqual([false, true])
-    expect(Number(read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(150)
+    // The main feedwater pumps run on after the trip (C2b) and feed SG B through its stuck valve with the auxiliary
+    // feed: some 160 kg/s, above the 150 kg/s limit and short of the 180 kg/s its low-feed alarm clears at.
+    expect(Number(read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(180)
     const detail = ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ detail: { plantId: system.plant.id, components: ['sgB'] } }), size: { width: 1600, height: 900 } }) as { display: CompiledComposedDisplay }
     const readouts = detail.display.panels.find(panel => panel.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
@@ -338,7 +340,8 @@ describe('what World adds to a composed display', () => {
       tavgAgainstNoLoad,
       { kind: 'stabilize', name: '', items: ['SG-A-PRESS', 'SG-B-PRESS', 'SG-C-PRESS', 'SG-D-PRESS'] },
       { kind: 'stabilize', name: '', items: [], note: expect.stringMatching(/^each (rising|falling) \d+\.\d+ MPa\/min over 30 s$/), continued: true },
-      { kind: 'isolates', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
+      // The feedwater isolation on low Tavg shuts the feed regulating valves only and stops no pump (C2b): the
+      // evidence names what an actuation starts or stops, so it adds no "isolates" row here.
     ])
     expect(evidence.filter(entry => entry.kind === 'trip').map(entry => entry.reason.replace(/\d\d:\d\d:\d\d/, 'hh:mm:ss'))).toEqual([
       ...Array(7).fill('Reactor trip at hh:mm:ss: what says Core stopped'),

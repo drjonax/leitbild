@@ -74,15 +74,16 @@ const componentMetadata = (
   component: ComponentInstanceSpec,
   loopId: LoopId,
 ): ProcessGraphMetadata => {
+  // A loop's steam line supplies the turbine-driven auxiliary feedwater pump's turbine through it: it goes with
+  // its loop, but it is the pump's, shared by the loops that supply it, not equipment of the loop's train.
+  if (component.kind === 'steamValve' && String(component.id).startsWith('auxFeedwaterTurbineSteamValve')) {
+    return { ...component.metadata, role: 'turbine-afw-steam-supply', equipmentClass: 'turbine-afw-steam-supply-valve' }
+  }
   const base = loopMetadata(loopIds, loopId, component.metadata)
   if (component.kind === 'steamGenerator') return { ...base, role: 'heat-sink', equipmentClass: 'steam-generator' }
   if (component.kind === 'centrifugalPump') return { ...base, role: 'primary-pump', equipmentClass: 'reactor-coolant-pump' }
   if (component.kind === 'steamValve' && String(component.id).startsWith('steamGeneratorReliefValve')) {
     return { ...base, role: 'steam-relief', equipmentClass: 'steam-generator-relief-valve' }
-  }
-  // A loop's steam line supplies the turbine-driven auxiliary feedwater pump's turbine through it.
-  if (component.kind === 'steamValve' && String(component.id).startsWith('auxFeedwaterTurbineSteamValve')) {
-    return { ...base, role: 'turbine-afw-steam-supply', equipmentClass: 'turbine-afw-steam-supply-valve' }
   }
   if (component.kind === 'steamValve') return { ...base, role: 'steam-isolation', equipmentClass: 'main-steam-isolation-valve' }
   if (component.kind === 'accumulator') return { ...base, role: 'safety-injection-source', equipmentClass: 'accumulator' }

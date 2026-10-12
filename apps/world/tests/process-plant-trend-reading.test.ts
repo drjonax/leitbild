@@ -309,7 +309,8 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     for (const horizonMs of [120_000, 600_000]) {
       const subcooling = read('SUB-MARGIN', 60, horizonMs, hotStandby)
       expect(subcooling.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 16.7 } }, eta: 'reversing', minutes: null })
-      expect(subcooling.text).toBe('21.5 °C above LO 16.7 °C · ALM · reversing')
+      // 21.6 °C since the turbine-driven AFW pump draws its steam from SG B and C (C2b), 0.1 °C more cooling.
+      expect(subcooling.text).toBe('21.6 °C above LO 16.7 °C · ALM · reversing')
       // The pressurizer level, rising toward its HI 75 % alarm some 48 pp away, reads by its LO 17 % alarm 9.5 pp behind (HMI review of run 23).
       const level = read('PZR-LVL', 60, horizonMs, hotStandby)
       expect(level.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 17 } }, minutes: null })
