@@ -60,6 +60,8 @@ export interface OperationNow {
   readonly elapsedMs: number
   /** A plant time as the display's clock writes it ("10:03:12"). */
   readonly clock: (elapsedMs: number) => string
+  /** A value of a signal as the display writes it, with its unit ("20.0 %", "15.17 MPa", a state in its words). */
+  readonly format: (path: VariablePath, value: ProcessVariableValue) => string
 }
 
 // --- CONTROL ----------------------------------------------------------------
@@ -109,7 +111,12 @@ export interface ItemControlView {
   readonly controls: ReadonlyArray<ControlView>
   /** Demands a controller holds, read-only: "AUTO · SG-A-LVL-NR held to 55 %". */
   readonly auto: ReadonlyArray<string>
-  /** What the item withholds besides, with why. */
+  /**
+   * What the item withholds besides, with why: demands, set points, isolation
+   * inputs. A scenario's fault or boundary input is never named on an operator
+   * display, which would tell where a malfunction can sit (research-operation
+   * §4.2): it is the instructor's.
+   */
   readonly withheld: ReadonlyArray<{ readonly name: string; readonly reason: string }>
 }
 
@@ -142,7 +149,7 @@ const nowWords = (control: OfferedControl, now: OperationNow): string | null => 
   const current = currentOption(control, now)
   if (current?.state !== undefined) return current.state
   const reading = now.read(control.state)
-  return typeof reading === 'number' ? `${Math.round(reading * 100)} %` : null
+  return reading === undefined ? null : now.format(control.state, reading)
 }
 
 const standingWords = (standing: RuleStanding, now: OperationNow): string =>
@@ -197,7 +204,7 @@ export const itemControlView = (item: ListedItem, now: OperationNow): ItemContro
     }
   }),
   auto: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [control.reason.text] : []),
-  withheld: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [] : [{ name: control.tagId ?? String(control.path), reason: control.reason.text }]),
+  withheld: item.withheld.flatMap(control => control.reason.kind === 'automatic' || control.reason.kind === 'instructor' ? [] : [{ name: control.tagId ?? String(control.path), reason: control.reason.text }]),
 })
 
 // --- Feedback ---------------------------------------------------------------
@@ -285,8 +292,6 @@ export interface ProposalCard {
   readonly closed: string | null
 }
 
-const valueText = (value: ProcessVariableValue): string => typeof value === 'number' ? String(Number(value.toPrecision(4))) : value ? 'on' : 'off'
-
 const proposerText = (proposal: ProcessPlantProposal, now: OperationNow): string =>
   `${proposal.proposer.origin === 'ai' ? 'AI' : 'Operator'} · ${proposal.proposer.actorId} · ${now.clock(proposal.proposedAtElapsedMs)}`
 
@@ -345,8 +350,10 @@ export const proposalCard = (
     ...(proposal.procedureStep === undefined ? {} : { procedureStep: proposal.procedureStep }),
     checked: review === null ? { permitted: false, text: 'Not checked yet' }
       : review.permitted ? { permitted: true, text: 'I&C allows this command now' } : { permitted: false, text: review.refusal ?? 'The I&C refuses it now' },
-    evidence: (review?.evidence ?? proposal.evidence.map(cited => ({ tagId: cited.tagId, then: cited.value, now: cited.value })))
-      .map(entry => ({ tagId: entry.tagId, then: valueText(entry.then), now: valueText(entry.now), changed: entry.then !== entry.now })),
+    evidence: (review?.evidence ?? proposal.evidence.map(cited => ({ tagId: cited.tagId, then: cited.value, now: cited.value }))).map(entry => {
+      const path = proposal.evidence.find(cited => cited.tagId === entry.tagId)!.path
+      return { tagId: entry.tagId, then: now.format(path, entry.then), now: now.format(path, entry.now), changed: entry.then !== entry.now }
+    }),
     changed,
     margins: [...margins].sort((left, right) => (left.minutes ?? Infinity) - (right.minutes ?? Infinity)),
     expected: control.form === 'pushbutton' ? `${listed.control.target} pressed: ${option.consequences.length === 0 ? 'no trip follows' : option.consequences.join('; ')}`

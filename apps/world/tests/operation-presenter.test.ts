@@ -16,6 +16,7 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
 import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
 import { derivePlantControls, offeredOption, type ControlDeclarations, type ItemControls, type OfferedControl, type PlantControls } from '../src/packs/process-plant/operations/controls.ts'
 import { optionStanding, ruleStatesFrom } from '../src/packs/process-plant/operations/control-standing.ts'
@@ -82,6 +83,7 @@ const unit = () => {
     read: path => runtime.readVariable(path),
     elapsedMs: runtime.elapsedMs(),
     clock: elapsedMs => new Date(START + elapsedMs).toISOString().slice(11, 19),
+    format: (path, value) => typeof value === 'number' ? formatQuantity(value, plant.graph.signalBindingByPath.get(path)!.unit, null) : String(value),
   })
   // The declared stroke time of what a control moves, as World reads it from the model (QA-6); none for others here.
   const travelMs = (control: OfferedControl): number | null => {
@@ -243,7 +245,12 @@ describe('feedback while a command executes', () => {
     const porv = plant.tag('PORV-456A')
     const control = itemControlView(plant.listed(plant.itemOffering(porv.path)), plant.now()).controls.find(candidate => candidate.path === porv.path)!
     expect(control.travelMs).toBeNull()
-    expect(control.now).toBe('20 %')
+    expect(control.now).toBe('20.0 %')
+    // Its fault inputs are the instructor's and are never named here.
+    const view = itemControlView(plant.listed(plant.itemOffering(porv.path)), plant.now())
+    expect(plant.itemOffering(porv.path).withheld.some(entry => entry.reason.kind === 'instructor')).toBe(true)
+    expect(view.withheld).toEqual([])
+    expect(plant.runtime.readVariable(control.statePath!)).toBeCloseTo(0.2, 3)
     const shut = control.options.find(option => option.word === 'SHUT')!
     const phase = commandPhase(control, shut, { path: porv.path, value: shut.value, sentAtElapsedMs: 0, result: { ok: true } }, plant.now())
     expect(phase).toMatchObject({ kind: 'travelling', by: null })
@@ -295,7 +302,7 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
       closed: null,
     })
     expect(card.margins.map(margin => margin.tagId)).toEqual(['PT-455', 'PORV-456A-POS'])
-    expect(card.evidence.map(entry => entry.tagId)).toEqual(['PORV-456A-POS', 'PT-455'])
+    expect(card.evidence.map(entry => [entry.tagId, entry.then])).toEqual([['PORV-456A-POS', '20.0 %'], ['PT-455', expect.stringMatching(/^1\d\.\d+ MPa$/)]])
     // The window's list and the symbol say a proposal waits for a person.
     expect(pendingProposals(proposed.book.proposals, [item], () => margins, plant.now()).map(entry => [entry.action, entry.proposer, entry.minutes])).toEqual([[`SHUT ${target}`, 'AI', 3.5]])
     expect(itemBadges(item, { operations: [], proposals: proposed.book.proposals, viewerActorId: 'op-1', now: plant.now() }).proposal?.text).toBe('AI ?')
