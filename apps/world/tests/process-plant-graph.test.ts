@@ -107,8 +107,19 @@ describe('process plant model composition', () => {
     // reserve, again when the steam generators' narrow range was
     // recalibrated to the upper quarter of their wide range, and again when
     // the hotwell and the feedwater tank were given their level control;
-    // PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('08595041dbc067b1d8e729722f7e1ccce94ca1d8cbaeff8644a3f1e8ebd4755b')
+    // PWR Runs checkpointed before then must be restarted. Changed again on
+    // 2026-10-12, once for the C1 model freeze (plan-final §3, owner's
+    // delegation), when the core and turbine-generator displays were given
+    // what they read: the source-range startup rate and its 2.5e4 cps at P-6,
+    // the reactor trip breakers published, the rods in steps and in eight
+    // banks, each loop's delta-T power and flow, the natural-circulation
+    // trends, the manual reactor trip, turbine trip and safety injection
+    // pushbuttons, P-14's turbine trip annunciated, the turbine-generator's
+    // load, speed, breaker and grid signals, the main steam isolation and
+    // turbine stop valves as trip valves, and the offsite supply voltage the
+    // relays read (1552 variables before, 1592 after); PWR Runs checkpointed
+    // before then must be restarted.
+    expect(system.modelDigest).toBe('16523e5a06e67b517862fd96650bfef2cdd5e4ad05a1dd70c8f27eb2dff9bdff')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
