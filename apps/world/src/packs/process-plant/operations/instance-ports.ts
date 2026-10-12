@@ -58,6 +58,8 @@ export interface ListedItem {
   readonly label: string
   /** Where a valve stands now: the value its popover shows (ItemControls.position). */
   readonly position?: { readonly path: VariablePath; readonly value: number }
+  /** The component whose detail draws the item around it: the item itself, or the one that bundles it (a detail display's state names it). */
+  readonly components: ReadonlyArray<string>
   readonly offered: ReadonlyArray<ListedControl>
   readonly withheld: ReadonlyArray<WithheldControl>
 }
@@ -82,6 +84,7 @@ export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds
       id: entry.id,
       label: entry.label,
       ...(entry.position === undefined ? {} : { position: { path: entry.position, value: numberAt(entry.position) } }),
+      components: [String(instance.plant.graph.components[entry.item.component]!.id)],
       offered: entry.offered.map(control => {
         const travel = control.options.flatMap(option => option.travelMs === null ? [] : [option.travelMs])
         const demand = control.demand === undefined ? undefined : numberAt(control.path)

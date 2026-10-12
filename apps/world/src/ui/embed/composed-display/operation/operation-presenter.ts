@@ -1,3 +1,5 @@
+import { formatQuantity } from '../../../../packs/process-plant/displays/display-text.ts'
+import { readingStateText, type TrendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
 import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
 import { followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
 import type { RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
@@ -30,6 +32,33 @@ export interface OperationNow {
   readonly clock: (elapsedMs: number) => string
   /** A value of a signal as the display writes it, with its unit ("20.0 %", "15.17 MPa", a state in its words). */
   readonly format: (path: VariablePath, value: ProcessVariableValue) => string
+}
+
+/** A plant time as the display window writes it beside an operation ("10:03:12"): the Run's clock, which is UTC. */
+const plantClock = (ms: number): string => new Date(ms).toISOString().slice(11, 19)
+
+/**
+ * The Plant as an operated display's latest sample reads it. `units` are the
+ * units of the signals its controls and proposals write and cite (from World's
+ * signals.resolve); a value of a signal without one is a fault of the caller.
+ */
+export const operationNow = (
+  sample: { readonly simulationTime: string; readonly plantElapsedMs: number; readonly values: ReadonlyArray<{ readonly path: string; readonly value: ProcessVariableValue }> },
+  units: ReadonlyMap<string, string>,
+): OperationNow => {
+  const values = new Map(sample.values.map(entry => [entry.path, entry.value]))
+  const startMs = Date.parse(sample.simulationTime) - sample.plantElapsedMs
+  return {
+    read: path => values.get(String(path)),
+    elapsedMs: sample.plantElapsedMs,
+    clock: elapsedMs => plantClock(startMs + elapsedMs),
+    format: (path, value) => {
+      if (typeof value === 'boolean') return value ? 'true' : 'false'
+      const unit = units.get(String(path))
+      if (unit === undefined) throw new Error(`no unit resolved for ${path}`)
+      return formatQuantity(value, unit)
+    },
+  }
 }
 
 // --- CONTROL ----------------------------------------------------------------
@@ -339,9 +368,37 @@ export const proposalCard = (
   }
 }
 
+/**
+ * A cited reading's limit state, as the display reads it where it draws the
+ * reading with its limits (a lead value's pen): its trend reading's state in
+ * words, and its projected minutes to the limit it heads for; 0 past one.
+ */
+export const evidenceMargin = (tagId: string, reading: Pick<TrendReading, 'offScale' | 'limit'>, unit: string, resolution: number | null): EvidenceMargin | null => {
+  const text = readingStateText(reading, unit, resolution)
+  if (text === '') return null
+  const limit = reading.limit
+  return { tagId, text, minutes: limit?.kind === 'margin' ? limit.minutes : limit?.kind === 'past' ? 0 : null }
+}
+
+/**
+ * The proposal an item's popover shows: its pending one, else the one that
+ * closed last within the attribution time, so the person sees what became of
+ * it; none otherwise.
+ */
+export const shownProposal = (itemId: string, proposals: ReadonlyArray<ProcessPlantProposal>, now: OperationNow): ProcessPlantProposal | undefined => {
+  const own = proposals.filter(proposal => proposal.item === itemId)
+  const pending = own.filter(proposal => proposal.status === 'pending').sort((left, right) => left.expiresAtElapsedMs - right.expiresAtElapsedMs)[0]
+  if (pending !== undefined) return pending
+  return own
+    .filter(proposal => proposal.closed !== undefined && now.elapsedMs - proposal.closed.atElapsedMs <= ATTRIBUTION_MS)
+    .sort((left, right) => right.closed!.atElapsedMs - left.closed!.atElapsedMs)[0]
+}
+
 export interface ProposalListEntry {
   readonly id: string
   readonly item: string
+  /** The components the item's own detail draws around (ListedItem.components). */
+  readonly components: ReadonlyArray<string>
   readonly action: string
   readonly proposer: 'AI' | 'OP'
   /** World's soonest projected minutes to a limit among its cited readings; null where none heads for one. */
@@ -371,6 +428,7 @@ export const pendingProposals = (
       entry: {
         id: proposal.id,
         item: proposal.item,
+        components: item.components,
         action: card.action,
         proposer: proposal.proposer.origin === 'ai' ? 'AI' as const : 'OP' as const,
         minutes: soonest?.minutes ?? null,
@@ -411,8 +469,8 @@ export const itemBadges = (
   input: {
     readonly operations: ReadonlyArray<OperationRecord>
     readonly proposals: ReadonlyArray<ProcessPlantProposal>
-    /** The actor of this screen: a command of anyone else's travelling locks the item. */
-    readonly viewerActorId: string | null
+    /** The commands this screen issued: one of anyone else's travelling locks the item. */
+    readonly ownCommands: ReadonlySet<string>
     readonly now: OperationNow
   },
 ): ItemBadges => {
@@ -432,7 +490,7 @@ export const itemBadges = (
     .sort((left, right) => right.record.elapsedMs - left.record.elapsedMs)
   const moving = travelling[0]
   const reading = moving?.control.statePath === undefined ? undefined : now.read(moving.control.statePath)
-  const others = travelling.filter(entry => entry.record.actorId !== input.viewerActorId)
+  const others = travelling.filter(entry => !input.ownCommands.has(entry.record.commandId))
   const pending = input.proposals.filter(proposal => proposal.status === 'pending' && proposal.item === item.id)
   const held = view.controls.flatMap(control => control.options.flatMap(option => option.heldBy === null ? [] : [option.heldBy]))
   const last = done[0]

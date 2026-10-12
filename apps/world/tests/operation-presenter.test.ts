@@ -20,10 +20,13 @@ import { decideProposal, emptyProposalBook, proposeOperation, reviewProposal, ty
 import {
   ATTRIBUTION_MS,
   commandPhase,
+  evidenceMargin,
   itemBadges,
   itemControlView,
+  operationNow,
   pendingProposals,
   proposalCard,
+  shownProposal,
   type ListedItem,
   type OperationNow,
   type OperationRecord,
@@ -255,7 +258,7 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     expect(card.evidence.map(entry => [entry.tagId, entry.then])).toEqual([['PORV-456A-POS', '20.0 %'], ['PT-455', expect.stringMatching(/^1\d\.\d+ MPa$/)]])
     // The window's list and the symbol say a proposal waits for a person.
     expect(pendingProposals(proposed.book.proposals, [item], () => margins, plant.now()).map(entry => [entry.action, entry.proposer, entry.minutes])).toEqual([[`SHUT ${target}`, 'AI', 3.5]])
-    expect(itemBadges(item, { operations: [], proposals: proposed.book.proposals, viewerActorId: 'op-1', now: plant.now() }).proposal?.text).toBe('AI ?')
+    expect(itemBadges(item, { operations: [], proposals: proposed.book.proposals, ownCommands: new Set(), now: plant.now() }).proposal?.text).toBe('AI ?')
     // Thirty seconds on the pressure has fallen: the card says the plant changed, and Approve says so too.
     plant.step(30)
     const later = proposalCard(proposal, reviewProposal(proposal, plant.ports), plant.listed(plant.itemOffering(blockValve.path)), margins, plant.now())
@@ -280,7 +283,7 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     expect(decided.execute).toEqual({ path: blockValve.path, value: 0 })
     plant.runtime.writeCommand({ type: 'setVariable', path: decided.execute!.path, value: decided.execute!.value })
     const record: OperationRecord = { commandId: 'cmd-approve-1', path: blockValve.path, value: 0, origin: 'person', actorId: 'op-1', elapsedMs: plant.runtime.elapsedMs(), kind: 'approval', proposalId: 'cmd-propose-1' }
-    const badges = () => itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, viewerActorId: 'op-1', now: plant.now() })
+    const badges = () => itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(['cmd-approve-1']), now: plant.now() })
     // Approved and closed: no pending badge; its card reads who approved it.
     const closed = proposalCard(decided.book.proposals[0]!, null, plant.listed(plant.itemOffering(blockValve.path)), [], plant.now())
     expect([closed.status, closed.closed, closed.approve, closed.expires]).toEqual(['approved', 'Approved by op-1 at 10:01:01', null, null])
@@ -289,9 +292,9 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     expect(travelling.proposal).toBeNull()
     expect(travelling.progress).toMatchObject({ mode: 'determinate' })
     if (travelling.progress?.mode === 'determinate') expect(travelling.progress.value).toBeGreaterThan(20)
-    // This screen's own command locks nothing for it; anyone else's does.
+    // The command this screen issued locks nothing for it; one another screen issued does.
     expect(travelling.commandLocked).toBeNull()
-    expect(itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, viewerActorId: 'op-2', now: plant.now() }).commandLocked?.title).toContain('op-1\'s command travels since 10:01:01')
+    expect(itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(), now: plant.now() }).commandLocked?.title).toContain('op-1\'s command travels since 10:01:01')
     plant.step(8)
     const done = badges()
     expect(done.progress).toBeNull()
@@ -309,9 +312,37 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     plant.step(15)
     const item = plant.listed(plant.itemOffering(blockValve.path))
     const record = (origin: OperationRecord['origin']): OperationRecord => ({ commandId: `cmd-${origin}`, path: blockValve.path, value: 0, origin, actorId: origin === 'system' ? 'scenario' : `${origin}-1`, elapsedMs: 1_000, kind: 'write' })
-    const badgesFor = (origin: OperationRecord['origin']) => itemBadges(item, { operations: [record(origin)], proposals: [], viewerActorId: null, now: plant.now() })
+    const badgesFor = (origin: OperationRecord['origin']) => itemBadges(item, { operations: [record(origin)], proposals: [], ownCommands: new Set(), now: plant.now() })
     expect(badgesFor('system')).toEqual({ progress: null, attribution: null, proposal: null, interlock: null, commandLocked: null })
     expect(badgesFor('person').attribution?.text).toBe('OP')
     expect(badgesFor('ai').attribution?.text).toBe('AI')
+  })
+
+  test('an operated display reads the Plant from its sample, and shows an item\'s pending proposal, else the one that closed last', () => {
+    const now = operationNow({ simulationTime: '2026-10-16T10:01:00.000Z', plantElapsedMs: 60_000, values: [{ path: 'v.position', value: 0.2 }, { path: 'v.open', value: true }] }, new Map([['v.position', 'fraction']]))
+    expect([now.read('v.position' as never), now.elapsedMs, now.clock(0), now.clock(75_000)]).toEqual([0.2, 60_000, '10:00:00', '10:01:15'])
+    expect([now.format('v.position' as never, 0.2), now.format('v.open' as never, true)]).toEqual([formatQuantity(0.2, 'fraction'), 'true'])
+    // A value is written in its signal's unit, never guessed without one.
+    expect(() => now.format('v.other' as never, 3)).toThrow('no unit resolved for v.other')
+    const proposal = (id: string, status: 'pending' | 'rejected' | 'expired', expiresAtElapsedMs: number, closedAt?: number) => ({
+      id, plantId: 'p', write: { path: 'v.open' as never, value: false }, item: 'valve', word: 'SHUT', reason: 'r', evidence: [{ tagId: 'T' as never, path: 'v.position' as never, value: 0.2 }],
+      proposer: { actorId: 'assistant', origin: 'ai' as const }, proposedAtElapsedMs: 0, proposedAtWallMs: 0, expiresAtElapsedMs, extended: false, status,
+      ...(closedAt === undefined ? {} : { closed: { atElapsedMs: closedAt } }),
+    })
+    const rejected = proposal('p1', 'rejected', 120_000, 30_000)
+    const expired = proposal('p2', 'expired', 50_000, 50_000)
+    expect(shownProposal('valve', [rejected, expired], now)?.id).toBe('p2')
+    expect(shownProposal('valve', [rejected, expired, proposal('p3', 'pending', 180_000), proposal('p4', 'pending', 170_000)], now)?.id).toBe('p4')
+    expect(shownProposal('other', [rejected], now)).toBeUndefined()
+    // Closed longer ago than the attribution time, it is no longer shown.
+    expect(shownProposal('valve', [expired], { ...now, elapsedMs: 50_000 + ATTRIBUTION_MS + 1 })).toBeUndefined()
+  })
+
+  test('a cited reading\'s margin is its limit state in words, with its projected minutes; past a limit it is first', () => {
+    const threshold = { value: 13.8e6, kind: 'trip', direction: 'low', order: 2, action: 'RX TRIP', ruleId: 'r', severity: 'critical' } as never
+    const margin = { threshold, distance: 0.5e6 } as never
+    expect(evidenceMargin('PT-455', { offScale: null, limit: { kind: 'margin', margin, eta: '≈3 min', minutes: 3 } }, 'Pa', null)?.minutes).toBe(3)
+    expect(evidenceMargin('PT-455', { offScale: null, limit: { kind: 'past', margin, back: null } }, 'Pa', null)?.minutes).toBe(0)
+    expect(evidenceMargin('PT-455', { offScale: null, limit: null }, 'Pa', null)).toBeNull()
   })
 })

@@ -111,6 +111,8 @@ describe('an AI agent proposes, a person approves', () => {
     await withRun(async (run, plantId) => {
       const listed = await query<{ readonly items: ReadonlyArray<ListedItem> }>(run, agent, 'world.process-plant.controls.list', { plantId, items: ['pressurizer.blockValve', 'core'] })
       expect(listed.items.map(item => item.id)).toEqual(['core', 'pressurizer.blockValve'])
+      // Each names the component its own detail draws around: a bundled device's, the one that bundles it.
+      expect(listed.items.map(item => item.components)).toEqual([['core'], ['pressurizer']])
       const [block] = listed.items.find(item => item.id === 'pressurizer.blockValve')!.offered
       expect(block).toMatchObject({ control: { tagId: 'MOV-8000A', form: 'twoState' }, travelMs: 10_000 })
       expect(block!.standing.length).toBe(block!.control.options.length)
