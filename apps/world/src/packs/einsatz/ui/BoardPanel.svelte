@@ -37,7 +37,11 @@
    *
    * Touch first: the action bar on top says what the next tap sends; the
    * status line below it carries the result, Undo and sound; Calls and Assets
-   * share the rest in fixed parts, each scrolling on its own. Every control
+   * share the rest in fixed parts, each scrolling on its own. Nothing moves
+   * under the finger: the action bar and the status line keep fixed heights
+   * whatever they say, and the alerts strip, which comes and goes, stands
+   * below the lists, where it shortens the last list rather than pushing
+   * every row and button down. Every control
    * is at least 44 px and nothing hides behind hover or hints at a key. A
    * tap on open ground shows the controller's "Move here" prompt on the map.
    * It never takes the keyboard itself: a pointer passing over it must not
@@ -239,17 +243,10 @@
   aria-label={heading}
 >
   {#if view !== null}
-    {#if view.alerts.length > 0}
-      <ul class="alerts" aria-label={view.headings.alerts} style:max-height={`${boardChromePx.alerts}px`}>
-        {#each view.alerts as alert, index (index)}
-          <li><strong>{alert.label}</strong> {alert.message}</li>
-        {/each}
-      </ul>
-    {/if}
-    <div class="action" style:max-height={`${boardChromePx.actionBar}px`}>
+    <div class="action" style:height={`${boardChromePx.actionBar}px`}>
       <BoardActionBar commit={view.commit} selected={view.selected} {click} />
     </div>
-    <div class="status" style:min-height={`${boardChromePx.statusLine}px`}>
+    <div class="status" style:height={`${boardChromePx.statusLine}px`}>
       <p class="feedback" role="status" aria-live="polite" data-tone={view.feedback?.tone ?? 'none'}>{view.feedback?.text ?? ''}</p>
       {#if view.undo !== null}<button type="button" class="undo" onclick={() => click({ kind: 'undo' })}>{view.undo}</button>{/if}
       {#if view.sound.on}
@@ -277,6 +274,13 @@
         {/if}
       {/each}
     </div>
+    {#if view.alerts.length > 0}
+      <ul class="alerts" aria-label={view.headings.alerts} style:max-height={`${boardChromePx.alerts}px`}>
+        {#each view.alerts as alert, index (index)}
+          <li><strong>{alert.label}</strong> {alert.message}</li>
+        {/each}
+      </ul>
+    {/if}
     {#if missingArtwork !== null}<p class="artwork">{missingArtwork}</p>{/if}
     <ol class="log" aria-label={view.headings.log} style:height={`${boardChromePx.log}px`}>
       {#each view.log as entry, index (index)}
@@ -309,10 +313,11 @@
 
   .alerts { flex: none; overflow: auto; margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
   .alerts li { padding: 3px 7px; border-left: 3px solid var(--critical); border-radius: 4px; background: color-mix(in srgb, var(--critical) 9%, var(--panel)); font-size: 12px; }
-  /* Past its cap the action bar scrolls inside, so the lists keep their room. */
+  /* The action bar keeps its height whatever it holds, and scrolls inside past it, so the lists keep their room and their place. */
   .action { flex: none; overflow: auto; overscroll-behavior: contain; }
+  /* The status line keeps its height too: feedback shows two lines at most. */
   .status { flex: none; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 0 0 6px; border-radius: 6px; background: var(--panel-strong); }
-  .feedback { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+  .feedback { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
   .feedback[data-tone='pending'] { color: var(--muted); }
   .feedback[data-tone='done'] { color: var(--success); }
   .feedback[data-tone='refused'] { color: var(--critical); }

@@ -135,7 +135,7 @@ describe('Board layout', () => {
     // Above the row stand only the text line and a confirmation's detail, which never shows beside Close.
     expect([...markup.slice(0, rowStart).matchAll(/class="([\w-]+)"/g)].map(match => match[1])).toEqual(['bar', 'text', 'detail'])
     // In the row, the buttons that act wrap among themselves; Close follows them, outside their wrapping group.
-    const row = markup.slice(rowStart, markup.indexOf('{#if commit.hint'))
+    const row = markup.slice(rowStart, markup.indexOf('{#if task !== null}'))
     const main = row.slice(row.indexOf('<div class="main">'), row.indexOf('</div>'))
     expect(main).toContain('class="primary"')
     expect(main).not.toContain('class="close"')
@@ -145,7 +145,7 @@ describe('Board layout', () => {
     const rule = (selector: string): string => new RegExp(`\\n {2}${selector.replace('.', '\\.')} \\{([^}]*)\\}`).exec(bar)?.[1] ?? ''
     expect(rule('.buttons')).toContain('display: flex;')
     expect(rule('.buttons')).not.toContain('wrap')
-    expect(Number(/gap: (\d+)px/.exec(rule('.buttons'))?.[1])).toBeGreaterThanOrEqual(3 * Number(/gap: (\d+)px/.exec(rule('.main, .alternatives'))?.[1]))
+    expect(Number(/gap: (\d+)px/.exec(rule('.buttons'))?.[1])).toBeGreaterThanOrEqual(3 * Number(/gap: (\d+)px/.exec(rule('.main'))?.[1]))
     expect(rule('.close')).toContain('flex: none;')
     // The cap holds three lines of text, the bar's gap and the row of buttons.
     const barGap = Number(/gap: (\d+)px/.exec(rule('.bar'))?.[1])
@@ -169,6 +169,29 @@ describe('Board layout', () => {
     for (const binding of ['data-waiting={!row.served}', 'onscroll={measure}', 'onclick={toTop}']) expect(list).toContain(binding)
     // The marker lies over the list, never in its flow: no row moves when it shows.
     expect(/\n {2}\.above \{([^}]*)\}/.exec(list)?.[1]).toContain('position: absolute;')
+  })
+
+  test('nothing moves under the finger: the action bar and the status line keep their heights, the guard\'s hint takes the text line, the alternatives keep to one row, and alerts stand below the lists', () => {
+    const source = (file: string) => readFileSync(join(import.meta.dir, file), 'utf8')
+    const panel = source('BoardPanel.svelte')
+    expect(panel).toContain('<div class="action" style:height={`${boardChromePx.actionBar}px`}>')
+    expect(panel).toContain('<div class="status" style:height={`${boardChromePx.statusLine}px`}>')
+    // The alerts strip comes and goes below the lists and above the log, never above a button or a row.
+    const markup = panel.slice(panel.indexOf('<section'), panel.indexOf('<style>'))
+    expect(markup.indexOf('class="alerts"')).toBeGreaterThan(markup.indexOf('class="body"'))
+    expect(markup.indexOf('class="alerts"')).toBeLessThan(markup.indexOf('class="log"'))
+    const rule = (sheet: string, selector: string): string => new RegExp(`\\n {2}${selector.replaceAll('.', '\\.')} \\{([^}]*)\\}`).exec(sheet)?.[1] ?? ''
+    expect(rule(panel, '.feedback')).toContain('-webkit-line-clamp: 2;')
+    const bar = source('BoardActionBar.svelte')
+    // The text line is always there, and holds the hint while the guard runs: the hint has no line of its own.
+    expect(bar).toContain('<p class="text" class:hint={commit.hint !== null}>{commit.hint ?? (commit.button === commit.text ? \'\' : commit.text)}</p>')
+    expect(bar).not.toContain('{#if commit.hint')
+    expect(rule(bar, '.text')).toContain('white-space: nowrap;')
+    expect(rule(bar, '.alternatives')).toContain('flex-wrap: nowrap;')
+    expect(rule(bar, '.alternatives')).toContain('overflow-x: auto;')
+    // The text line, the row of buttons and one row of alternatives fit the bar.
+    const barGap = Number(/gap: (\d+)px/.exec(rule(bar, '.bar'))?.[1])
+    expect(rowBoxPx.line + 2 * barGap + 2 * tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
   })
 
   test('the lists follow the arrangement: the work list leads for queues, Contacts for map-led roles, and a list left out is not shown', () => {

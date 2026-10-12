@@ -11,8 +11,12 @@
    * offered as a button of its own. Closing the call is pinned to the right
    * of the first row of buttons, apart from the commit button and in its own
    * colour: the bar scrolls inside past its cap, and only the text line can
-   * stand above that row, so Close is in view without scrolling. Every
-   * button is a tap target of at least 44 px, and no key is hinted.
+   * stand above that row, so Close is in view without scrolling. The text
+   * line is always there, one line high: it holds what the bar says, or
+   * while the guard runs, what the next commit acts on, so the guard's hint
+   * never pushes the buttons down. The alternatives keep to one row, which
+   * scrolls sideways when they do not fit. Every button is a tap target of
+   * at least 44 px, and no key is hinted.
    */
   interface Props {
     readonly commit: BoardView['commit']
@@ -25,7 +29,7 @@
 </script>
 
 <div class="bar" data-state={commit.state}>
-  {#if commit.button !== commit.text}<p class="text">{commit.text}</p>{/if}
+  <p class="text" class:hint={commit.hint !== null}>{commit.hint ?? (commit.button === commit.text ? '' : commit.text)}</p>
   {#if commit.detail !== null}<p class="detail">{commit.detail}</p>{/if}
   {#if commit.button !== null || commit.offer !== null || commit.options.length > 0 || commit.verbs.length > 0 || commit.cancel !== null || commit.close !== null}
     <div class="buttons">
@@ -51,7 +55,6 @@
       {/if}
     </div>
   {/if}
-  {#if commit.hint !== null}<p class="hint">{commit.hint}</p>{/if}
   {#if task !== null}
     {#if task.alternatives.length > 0}
       <div class="alternatives">
@@ -72,11 +75,16 @@
 <style>
   .bar { display: grid; align-content: start; gap: 4px; }
   p { margin: 0; }
-  .text { font-weight: 650; }
+  /* One line, always: the hint takes the text's place rather than a line of its own. */
+  .text { min-height: var(--board-line); overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .text.hint { color: var(--warning); font-size: 12px; }
   .detail { color: var(--warning); font-size: 12px; }
   /* The first row: the buttons that act, wrapping among themselves, and Close pinned to its right, never wrapping below them. */
   .buttons { display: flex; align-items: flex-start; gap: 18px; }
-  .main, .alternatives { display: flex; flex-wrap: wrap; gap: 6px; }
+  .main { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* One row of alternatives, never a second one half cut off: it scrolls sideways. */
+  .alternatives { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; overscroll-behavior: contain; }
+  .alternatives button { flex: none; }
   .main { flex: 1 1 auto; min-width: 0; }
   button { min-height: 44px; min-width: 44px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); color: inherit; font: inherit; cursor: pointer; touch-action: manipulation; }
   button:disabled { color: var(--muted); cursor: default; }
@@ -92,7 +100,6 @@
   .alternatives button { display: inline-flex; gap: 6px; align-items: baseline; }
   .alternatives button.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .divert { color: var(--warning); }
-  .hint { color: var(--warning); font-size: 12px; }
   .remainder { color: var(--warning); font-size: 12px; }
   .ineligible { color: var(--muted); font-size: 12px; }
   .num { font-variant-numeric: tabular-nums; }
