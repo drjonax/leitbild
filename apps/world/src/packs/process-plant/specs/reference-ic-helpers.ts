@@ -110,15 +110,27 @@ export const turbineTripWrites = (idPrefix: string): ReadonlyArray<ReferenceIcEf
 ]
 
 /**
- * Feedwater isolation: both main feedwater pumps trip, and every feed
- * regulating valve's isolation signal shuts it against its level controller
- * until the isolation is released (reference-ic-balance-of-plant.ts). The
- * model has no feedwater isolation valves to close.
+ * The feed regulating valves' isolation: every feed regulating valve's
+ * isolation signal shuts it against its level controller until the isolation
+ * is released (reference-ic-balance-of-plant.ts). It is what P-4 with low
+ * Tavg does after a reactor trip: the main feedwater pumps keep running. The
+ * model draws no regulating bypass valves to shut with them.
+ */
+export const feedRegulatingValveIsolationWrites = (idPrefix: string, loops: ReadonlyArray<string>): ReadonlyArray<ReferenceIcEffect> =>
+  loops.map(loop => write(`${idPrefix}-shut-feed-regulating-valve-${loop.toLowerCase()}`, { path: `feedwaterControlValve${loop}.isolationSignal` }, true))
+
+/**
+ * Feedwater isolation, as safety injection and P-14 high-high level act it:
+ * both main feedwater pumps trip and every feed line is shut. The model draws
+ * no feedwater isolation valves, so the feed regulating valves, shut by their
+ * isolation signals (feedRegulatingValveIsolationWrites), shut the lines
+ * instead; nothing feeds the steam generators but auxiliary feedwater until
+ * operators restart a pump.
  */
 export const feedwaterIsolationWrites = (idPrefix: string, loops: ReadonlyArray<string>): ReadonlyArray<ReferenceIcEffect> => [
   write(`${idPrefix}-trip-main-feedwater-pump-a`, { tagId: 'MFW-PUMP-A-RUN' }, false),
   write(`${idPrefix}-trip-main-feedwater-pump-b`, { tagId: 'MFW-PUMP-B-RUN' }, false),
-  ...loops.map(loop => write(`${idPrefix}-shut-feed-regulating-valve-${loop.toLowerCase()}`, { path: `feedwaterControlValve${loop}.isolationSignal` }, true)),
+  ...feedRegulatingValveIsolationWrites(idPrefix, loops),
 ]
 
 export const rule = (config: {

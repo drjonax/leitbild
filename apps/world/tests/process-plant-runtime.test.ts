@@ -1209,13 +1209,14 @@ describe('process plant runtime', () => {
     }
 
     const active = activeLifecycleIds(protection.snapshot())
-    // The stopped pumps trip the reactor at once; the coolant then cools below no-load and P-4 isolates feedwater.
+    // The stopped pumps trip the reactor at once; the coolant then cools below no-load and P-4 shuts the feed
+    // regulating valves, the main feedwater pumps running on.
     expect(active.trips).toEqual(expect.arrayContaining([
       'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip',
       'trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation',
     ]))
+    expect(active.alarms).not.toContain('alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable')
     expect(active.alarms).toEqual(expect.arrayContaining([
-      'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       'alarm:rcp-a-trip:not-running',
       'alarm:rcp-b-trip:not-running',
       'alarm:rcp-c-trip:not-running',
@@ -1231,8 +1232,10 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('turbineStopValve.positionFraction')))).toBeCloseTo(0, 6)
     expect(Number(runtime.readVariable(valueOf('turbineStopValve.effectivePositionFraction')))).toBeCloseTo(0, 6)
     expect(Number(runtime.readVariable(valueOf('turbine.loadFraction')))).toBeCloseTo(0, 6)
-    expect(runtime.readVariable(valueOf('mainFeedwaterPumpA.running'))).toBe(false)
-    expect(runtime.readVariable(valueOf('mainFeedwaterPumpB.running'))).toBe(false)
+    expect(runtime.readVariable(valueOf('mainFeedwaterPumpA.running'))).toBe(true)
+    expect(runtime.readVariable(valueOf('mainFeedwaterPumpB.running'))).toBe(true)
+    expect(runtime.readVariable(valueOf('feedwaterControlValveA.isolationSignal'))).toBe(true)
+    expect(Number(runtime.readVariable(valueOf('mainFeedwaterPumpA.flowKgPerS')))).toBeLessThan(1)
     expect(Number(runtime.readVariable(valueOf('core.powerMw')))).toBeLessThan(100)
     expect(Number(runtime.readVariable(valueOf('core.decayHeatMw')))).toBeGreaterThan(Number(runtime.readVariable(valueOf('core.powerMw'))))
 

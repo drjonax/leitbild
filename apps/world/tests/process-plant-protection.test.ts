@@ -642,7 +642,26 @@ describe('feedwater isolation', () => {
   const isolation = 'trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation'
   const loops = ['A', 'B', 'C', 'D']
 
-  test('shuts every feed regulating valve against its level controller while P-4 holds it, though one is stuck', () => {
+  test('on P-4 with low Tavg shuts only the feed regulating valves: the main feedwater pumps run on', () => {
+    // Westinghouse logic: a reactor trip with low Tavg shuts the regulating valves (and their bypasses, which this
+    // model does not draw); only safety injection and P-14 also trip the pumps.
+    const writes = plant.automation.rules.find(rule => rule.id === 'reactor-trip-low-tavg-feedwater-isolation')!.effects
+      .flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
+    expect(writes).toEqual(loops.map(loop => `feedwaterControlValve${loop}.isolationSignal=true`))
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    expect(plantRun.secondsUntil(isolation, 60)).not.toBeNull()
+    plantRun.run(60_000)
+    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(true)
+    // Dead-headed against the shut valves, the pumps deliver nothing, and nothing but auxiliary feedwater feeds.
+    for (const loop of loops) expect(Number(plantRun.read(`feedwater-control-valve-${loop.toLowerCase()}-to-sg-${loop.toLowerCase()}.flowKgPerS`)), loop).toBeLessThan(1)
+    expect(Number(plantRun.read('mainFeedwaterPumpA.flowKgPerS'))).toBeLessThan(1)
+    expect(plantRun.activeIds()).not.toContain('alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('shuts every feed regulating valve against its level controller while P-4 holds it; one stuck open overfeeds its steam generator until P-14 trips the pumps', () => {
     const plantRun = started()
     plantRun.run(5_000)
     // Feed regulating valve B fails at 35 %: steam generator B boils down, the reactor trips on its low-low
@@ -655,14 +674,22 @@ describe('feedwater isolation', () => {
       expect(plantRun.tag(`MFW-${loop}-CV`), loop).toBe(0)
       expect(plantRun.read(`feedwaterControlValve${loop}.isolationSignal`), loop).toBe(true)
     }
-    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(false)
-    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(false)
-    // 80 s on, with both pumps stopped, the demand still reads shut; the stuck valve stays where it failed.
+    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(true)
+    // 80 s on the demands still read shut; the stuck valve stays where it failed and the running pumps feed through it.
     plantRun.run(80_000)
     for (const loop of loops) expect(plantRun.tag(`MFW-${loop}-CV`), loop).toBe(0)
     expect(Number(plantRun.tag('MFW-A-CV-POS'))).toBe(0)
     expect(Number(plantRun.tag('MFW-B-CV-POS'))).toBeCloseTo(0.35, 6)
+    expect(Number(plantRun.read('feedwater-control-valve-a-to-sg-a.flowKgPerS'))).toBeLessThan(1)
+    expect(Number(plantRun.read('feedwater-control-valve-b-to-sg-b.flowKgPerS'))).toBeGreaterThan(50)
     expect(plantRun.trip(isolation)).toMatchObject({ active: true, latched: true })
+    // Steam generator B fills until its high-high level (P-14) isolates feedwater and trips the pumps.
+    const highHigh = 'trip:sg-b-level-high-high-feedwater-isolation:feedwater-isolation'
+    expect(plantRun.secondsUntil(highHigh, 300)).not.toBeNull()
+    plantRun.run(2_000)
+    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(false)
+    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(false)
   }, PLANT_HANG_GUARD_MS)
 
   test('is released to the level controllers once both reactor trip breakers close; its trip stands until reset', () => {
@@ -679,8 +706,9 @@ describe('feedwater isolation', () => {
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'reactorTripBreakerB.closed' as VariablePath, value: true })
     plantRun.run(10_000)
     for (const loop of loops) expect(plantRun.read(`feedwaterControlValve${loop}.isolationSignal`), loop).toBe(false)
-    // Back on its controller, the valve opens toward what the shrunk level calls for.
+    // Back on its controller, the valve opens toward what the shrunk level calls for, and the pumps, which ran on, feed through it.
     expect(Number(plantRun.tag('MFW-A-CV'))).toBeGreaterThan(0.5)
+    expect(Number(plantRun.read('feedwater-control-valve-a-to-sg-a.flowKgPerS'))).toBeGreaterThan(50)
     expect(plantRun.trip(isolation)).toMatchObject({ active: true, resettable: true })
   }, PLANT_HANG_GUARD_MS)
 

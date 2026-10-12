@@ -9,6 +9,9 @@ import {
 import { approach, clamp, optionalParameterNumber, parameterNumber, relaxToward, type ComponentNumericReadContext } from '../component-helpers.ts'
 import { primaryCircuitHydraulics, primaryLoopPumpHeadPa, primaryLoopSignedFlowKgPerS, solvePrimaryLoopFlows, type PrimaryCircuitHydraulics } from '../primary-loop-hydraulics.ts'
 import { primarySystemPressurizer } from '../system-topology.ts'
+import { outgoingComponentLinks } from '../component-link-helpers.ts'
+import { downstreamServiceDemandFraction } from '../links/link-flow-helpers.ts'
+import { serviceUsesDownstreamDemand } from '../service-profiles.ts'
 import { componentHasElectricalPower } from './electrical-behaviors.ts'
 import { headerPressureBalance, pressureBalancedHeaderFedBy } from './junction/header-pressure-balance.ts'
 
@@ -27,6 +30,17 @@ const reactorCoolantDeliveryFraction = ({ system, component, context }: PumpBeha
 }
 
 const maxSpeedFraction = 1.2
+
+// A pump on a service whose flow the valves downstream of it set (main
+// feedwater through the feed regulating valves) delivers no more than they
+// pass, as the flow it draws from its suction is no more (link-flow-source-
+// strategy.ts): with every one of them shut, as a feedwater isolation after a
+// reactor trip leaves them, it runs on, dead-headed on its minimum-flow line,
+// and delivers nothing. 1 for any other pump.
+const dischargeOpenFraction = ({ system, component, context }: Pick<PumpBehaviorInput, 'system' | 'component' | 'context'>): number => {
+  const discharge = outgoingComponentLinks(system, component, link => link.kind === 'fluidFlow' && serviceUsesDownstreamDemand(link.service))
+  return discharge.length === 0 ? 1 : Math.max(...discharge.map(link => downstreamServiceDemandFraction(system, link, context)))
+}
 
 // A running pump discharging into a pressure-balanced header delivers what
 // its curve gives at the pressure the header settles at: it comes up to that
@@ -95,7 +109,7 @@ export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition>
     id: 'centrifugal-pump-flow',
     phase: 'solveFluidFlowComponents',
     componentKind: 'centrifugalPump',
-    reads: ['running', 'speedFraction', 'speedRpm', 'flow demand?', 'incoming electrical energized?', 'pressurizer.pressureMPa?', 'pressure-balanced header branches?'],
+    reads: ['running', 'speedFraction', 'speedRpm', 'flow demand?', 'incoming electrical energized?', 'pressurizer.pressureMPa?', 'pressure-balanced header branches?', 'downstream demand valves?'],
     writes: ['runningState', 'flowKgPerS', 'speedRpm', 'demandMw', 'speedFraction'],
     update: (input): void => {
       const { system, component, context } = input
@@ -105,7 +119,7 @@ export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition>
       context.write(componentVariablePath(component, 'runningState'), running)
       context.write(componentVariablePath(component, 'speedRpm'), pumpRotorSpeedRpm(component, context, running, speed))
       const balancedFlow = balancedHeaderFlow(input, running)
-      const targetFlow = running ? balancedFlow ?? parameterNumber(component, 'nominalFlowKgPerS') * speed * reactorCoolantDeliveryFraction(input, speed) : 0
+      const targetFlow = running ? balancedFlow ?? parameterNumber(component, 'nominalFlowKgPerS') * speed * reactorCoolantDeliveryFraction(input, speed) * dischargeOpenFraction(input) : 0
       const currentFlow = context.readNumber(componentVariablePath(component, 'flowKgPerS'))
       const timeConstant = optionalParameterNumber(component, 'flowTimeConstantS', 0)
       const maxRamp = optionalParameterNumber(component, 'maxFlowRampKgPerS2', Number.POSITIVE_INFINITY)

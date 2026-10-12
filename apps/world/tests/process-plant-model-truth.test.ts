@@ -707,7 +707,7 @@ describe('a turbine trip', () => {
     expect(plantRun.activeIds().filter(id => id.includes('generator-output-low') || id.includes('turbine-load-low'))).toEqual([])
   })
 
-  test('isolates main feedwater on P-4 and low Tavg; steam generator level shrinks and the steam dumps hold pressure', () => {
+  test('shuts the feed regulating valves on P-4 and low Tavg, the main feedwater pumps running on; steam generator level shrinks and the steam dumps hold pressure', () => {
     const plantRun = started()
     plantRun.run(5_000)
     const levelBefore = Number(plantRun.tag('SG-A-LVL-NR'))
@@ -724,8 +724,9 @@ describe('a turbine trip', () => {
       safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.read('mainSteamSafetyValve.effectivePositionFraction')))
     }
     expect(plantRun.activeIds()).toContain('trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation')
-    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(false)
-    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(false)
+    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(true)
+    for (const loop of ['A', 'B', 'C', 'D']) expect(plantRun.tag(`MFW-${loop}-CV-POS`), loop).toBe(0)
     // The voids collapse as steaming falls: the level shrinks, it does not swell.
     expect(highestLevel).toBeLessThan(levelBefore + 1)
     expect(Number(plantRun.tag('SG-A-LVL-NR'))).toBeLessThan(levelBefore - 20)
