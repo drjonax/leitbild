@@ -143,9 +143,13 @@ export const openPanelDeclaring = (
 ): PackSurfacePanelContribution | null =>
   panels.find(panel => panel[hook] === true && isOpen(panel)) ?? null
 
-/** The Pack that contributes a surface panel. */
+/**
+ * The Pack that contributes a surface panel, found by the panel's id: the
+ * route holds its active Pack views in deep state, whose proxies differ per
+ * path, so the same panel reached through two paths is never the same object.
+ */
 export const surfacePanelPackId = (packs: ReadonlyArray<WorldPackView>, panel: PackSurfacePanelContribution): string => {
-  const owner = packs.find(pack => pack.ui?.surfacePanels.includes(panel) === true)
+  const owner = packs.find(pack => pack.ui?.surfacePanels.some(candidate => candidate.id === panel.id) === true)
   if (!owner) throw new Error(`Surface panel ${panel.id} belongs to no active Pack`)
   return owner.descriptor.id
 }

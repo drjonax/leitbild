@@ -105,6 +105,15 @@ describe('Einsatz UI declarations', () => {
     expect(surfacePanelPackId(active.packs, panels[0]!)).toBe(einsatzPackView.descriptor.id)
   })
 
+  test('the Board\'s Pack is found through a copy of its panel, as the route\'s deep state hands it over a different proxy per path', () => {
+    const active = createActivePackViews([einsatzPackView])
+    const proxied = new Proxy(active.surfacePanels[0]!, {})
+    expect(proxied).not.toBe(einsatzPackView.ui.surfacePanels[0])
+    expect(surfacePanelPackId(active.packs, proxied)).toBe(einsatzPackView.descriptor.id)
+    expect(surfacePanelPackId(active.packs, { ...einsatzPackView.ui.surfacePanels[0]! })).toBe(einsatzPackView.descriptor.id)
+    expect(() => surfacePanelPackId(active.packs, { ...einsatzPackView.ui.surfacePanels[0]!, id: 'other.board' })).toThrow('Surface panel other.board belongs to no active Pack')
+  })
+
   test('the Pack switches off the map gestures its keys and clicks would collide with, and starts the surface with the rail collapsed', () => {
     expect(mapCameraInteractionFor([einsatzPackView])).toEqual({ doubleClickZoom: false, keyboard: false, boxZoom: false })
     expect(railStartsCollapsed([einsatzPackView])).toBe(true)
