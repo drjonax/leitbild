@@ -230,8 +230,9 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
       const outlets = allWords(at(name, 'sink')).filter(text => text.startsWith('Main steam to: '))
       expect(outlets, name).toHaveLength(1)
       // What a controller positions first, the dumps and each steam generator's relief valve, each with its flow to the
-      // condenser or the atmosphere, then the safety valve and the turbine-driven AFW pump's steam from generators B and C.
-      expect(outlets[0], name).toMatch(/^Main steam to: Turbine bypass [\d.]+ kg\/s · ARV A [\d.]+ kg\/s · ARV B [\d.]+ kg\/s · ARV C [\d.]+ kg\/s · ARV D [\d.]+ kg\/s · MSSV [\d.]+ kg\/s · TD AFW steam B [\d.]+ kg\/s · TD AFW steam C [\d.]+ kg\/s$/)
+      // condenser or the atmosphere, then each steam line's safety valves and the turbine-driven AFW pump's steam from
+      // generators B and C, as the circuit reaches them.
+      expect(outlets[0], name).toMatch(/^Main steam to: Turbine bypass [\d.]+ kg\/s · ARV A [\d.]+ kg\/s · ARV B [\d.]+ kg\/s · ARV C [\d.]+ kg\/s · ARV D [\d.]+ kg\/s · MSSV A [\d.]+ kg\/s · TD AFW steam B [\d.]+ kg\/s · MSSV B [\d.]+ kg\/s · TD AFW steam C [\d.]+ kg\/s · MSSV C [\d.]+ kg\/s · MSSV D [\d.]+ kg\/s$/)
       const lines = at(name, 'sink').columns.flatMap(column => column.lines)
       const dump = lines.findIndex(line => line.kind === 'values' && line.cells.some(cell => cell.pen.tagId === 'TURB-BYP-POS'))
       const dumps = lines[dump]
@@ -240,7 +241,7 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
     }
     expect(allWords(at('turbine trip +15:00', 'sink')).find(text => text.startsWith('Main steam to: '))).toMatch(/Turbine bypass [1-9]/)
     // After a loss of offsite power the turbine-driven pump runs on steam from generators B and C.
-    expect(allWords(at('loss of offsite power +2:30', 'sink')).find(text => text.startsWith('Main steam to: '))).toMatch(/TD AFW steam B [1-9][\d.]* kg\/s · TD AFW steam C [1-9]/)
+    expect(allWords(at('loss of offsite power +2:30', 'sink')).find(text => text.startsWith('Main steam to: '))).toMatch(/TD AFW steam B [1-9][\d.]* kg\/s · MSSV B [\d.]+ kg\/s · TD AFW steam C [1-9]/)
   })
 
   test('a reading outside the validity its equipment declares reads "—", never its value: off line no turbine speed, on a dead grid no frequency, without forced flow no ΔT power', () => {

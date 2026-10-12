@@ -47,7 +47,9 @@ export const levelLowLowPercent = 20
 // relief valve opens above 7.86 MPa (1,125 psig) when the condenser is not
 // there to take the steam; the high-pressure alarm comes in above them and
 // below the lowest safety valve set pressure, 8.27 MPa (the 1,185 psig design
-// pressure).
+// pressure). Each steam line's five spring safety valves, ahead of its
+// isolation valve, lift in turn from there to 8.62 MPa (1,235 psig); the
+// model stands one valve for the bank, lifting in proportion over that range.
 const pressureHighMPa = 8.1
 
 export const steamGeneratorReferenceIcRules = (
@@ -258,6 +260,24 @@ export const steamGeneratorReferenceIcRules = (
         message: `Steam generator ${loop} atmospheric relief valve reads open: it is venting steam to the atmosphere.`,
         severity: 'warning',
         annunciator: annunciator({ system: 'mainSteam', equipmentId: `steamGeneratorReliefValve${loop}`, group: 'main-steam', priority: 'high', role: 'status', expectedAfter: expectedAfterReactorTrip }),
+      })],
+    }),
+    rule({
+      id: `sg-${lower}-main-steam-safety-valves-open`,
+      label: `Steam line ${loop} main steam safety valves open`,
+      ruleClass: 'alarm',
+      condition: comparison({ tagId: `MSSV-${loop}-POS` }, '>', 0.05),
+      clearCondition: comparison({ tagId: `MSSV-${loop}-POS` }, '<', 0.02),
+      clearDelayMs: 1_000,
+      delayMs: 1_000,
+      latch: false,
+      resetWhenClear: true,
+      effects: [alarm({
+        id: 'safety-valves-open',
+        title: `Steam line ${loop} main steam safety valves open`,
+        message: `Steam generator ${loop} is at its safety valves' set pressure: its steam line's safety valves are lifting and venting steam to the atmosphere.`,
+        severity: 'warning',
+        annunciator: annunciator({ system: 'mainSteam', equipmentId: `mainSteamSafetyValve${loop}`, group: 'main-steam', priority: 'high', role: 'status' }),
       })],
     }),
     rule({

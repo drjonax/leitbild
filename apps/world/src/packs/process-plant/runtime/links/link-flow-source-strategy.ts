@@ -19,8 +19,11 @@ import { primarySystemPressurizer, primarySystemReactorVessel } from '../system-
 
 const atmosphericPressureMPa = 0.101325
 
-const isReliefValve = (component: CompiledComponent | undefined): component is CompiledComponent =>
-  component?.kind === 'steamValve' && (component.parameters as Readonly<Record<string, unknown>>).valveMode === 'relief'
+// A steam line's atmospheric relief valve or its bank of safety valves, which vent straight out of the Plant.
+const isReliefValve = (component: CompiledComponent | undefined): component is CompiledComponent => {
+  const mode = component?.kind === 'steamValve' ? (component.parameters as Readonly<Record<string, unknown>>).valveMode : undefined
+  return mode === 'relief' || mode === 'safety'
+}
 
 
 /** The pump whose drive turbine a steam valve supplies, or null for any other valve. */
@@ -172,8 +175,9 @@ export const processLinkFlowSourceFor = (config: {
     }
   }
   if (fromComponent.kind === 'steamGenerator' && link.service === processPlantServices.mainSteam && isReliefValve(toComponent)) {
-    // A generator's atmospheric relief valve passes what its opening and the
-    // generator's pressure drive through it. While the generator's dome holds
+    // A generator's atmospheric relief valve, or its line's bank of safety
+    // valves, passes what its opening and the generator's pressure drive
+    // through it. While the generator's dome holds
     // stored steam it can pass more than the generator boils, so the pressure
     // falls until the valve's controller closes it down to the boil-off; its
     // stored steam spent, it passes no more than the generator boils.

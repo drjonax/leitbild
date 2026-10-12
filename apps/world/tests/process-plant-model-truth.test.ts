@@ -721,7 +721,7 @@ describe('a turbine trip', () => {
       highestLevel = Math.max(highestLevel, Number(plantRun.tag('SG-A-LVL-NR')))
       highestPressure = Math.max(highestPressure, Number(plantRun.tag('SG-A-PRESS')))
       dumpOpening = Math.max(dumpOpening, Number(plantRun.tag('TURB-BYP-POS')))
-      safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.read('mainSteamSafetyValve.effectivePositionFraction')))
+      for (const loop of ['A', 'B', 'C', 'D']) safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.tag(`MSSV-${loop}-POS`)))
     }
     expect(plantRun.activeIds()).toContain('trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation')
     expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(true)
@@ -904,9 +904,16 @@ describe('steam generator low-low level', () => {
 })
 
 describe('main steam safety valves', () => {
-  test('lift to the atmosphere outside containment, which does not pressurize', () => {
-    const discharge = graph.links.find(link => graph.components[link.fromComponentIndex]!.id === 'mainSteamSafetyValve')!
-    expect(String(graph.components[discharge.toComponentIndex]!.kind)).toBe('atmosphereBoundary')
+  test('each steam line has its bank ahead of its isolation valve, venting to the atmosphere outside containment, which does not pressurize', () => {
+    for (const loop of ['A', 'B', 'C', 'D']) {
+      const [inlet] = graph.links.filter(link => String(graph.components[link.toComponentIndex]!.id) === `mainSteamSafetyValve${loop}`)
+      expect(String(graph.components[inlet!.fromComponentIndex]!.id), loop).toBe(`sg${loop}`)
+      const [discharge] = graph.links.filter(link => String(graph.components[link.fromComponentIndex]!.id) === `mainSteamSafetyValve${loop}`)
+      expect(String(graph.components[discharge!.toComponentIndex]!.kind), loop).toBe('atmosphereBoundary')
+      for (const tagId of [`MSSV-${loop}-POS`, `MSSV-${loop}-FLOW`]) expect(resolveProcessPlantSignalBinding(graph, { tagId: tagId as never }).published, tagId).toBe(true)
+    }
+    // None stands on the header past the isolation valves.
+    expect(graph.components.some(component => String(component.id) === 'mainSteamSafetyValve')).toBe(false)
 
     const overpressured = compileProcessPlant(createPwrReferencePlantDefinition({
       id: 'plant:mssv-lift',
@@ -922,15 +929,42 @@ describe('main steam safety valves', () => {
     for (let second = 0; second < 30; second += 1) {
       runtime.tick(1_000)
       protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-model-truth' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
-      lift = Math.max(lift, read('mainSteamSafetyValve.effectivePositionFraction'))
+      lift = Math.max(lift, read('mainSteamSafetyValveA.effectivePositionFraction'))
       containmentInflow = Math.max(containmentInflow, read('containment.incomingMassKgPerS'))
     }
+    // At 10 MPa, above the last valve's 8.62 MPa, the whole bank lifts.
     expect(lift).toBeGreaterThan(0.9)
     expect(read('atmosphere.releasedMassKg')).toBeGreaterThan(1_000)
-    expect(protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:main-steam-safety-valve-open:safety-valve-open')!.firstActiveElapsedMs).toBeDefined()
+    expect(protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:sg-a-main-steam-safety-valves-open:safety-valves-open')!.firstActiveElapsedMs).toBeDefined()
     expect(containmentInflow).toBe(0)
     expect(read('containment.pressureMPa')).toBeCloseTo(containmentPressure, 9)
   })
+
+  test('with its isolation valve shut at full power, a steam generator holds near its safety valves\' set pressure as they lift in turn', () => {
+    const plantRun = started()
+    plantRun.run(60_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'mainSteamIsolationValveA.positionFraction' as VariablePath, value: 0 })
+    let peak = 0
+    let liftedAt: number | null = null
+    let lift = 0
+    for (let second = 1; second <= 120; second += 1) {
+      plantRun.run(1_000)
+      peak = Math.max(peak, Number(plantRun.tag('SG-A-PRESS')))
+      lift = Math.max(lift, Number(plantRun.tag('MSSV-A-POS')))
+      if (liftedAt === null && Number(plantRun.tag('MSSV-A-POS')) > 0.01) liftedAt = second
+    }
+    // v0.5.0 had no safety valve ahead of the isolation valves: the isolated generator rose to 9.66 MPa.
+    expect(liftedAt).not.toBeNull()
+    expect(liftedAt!).toBeLessThan(30)
+    expect(peak).toBeGreaterThan(8.27)
+    expect(peak).toBeLessThan(8.62)
+    // Part of the bank lifts: the first valves pass what the generator boils beyond its relief valve.
+    expect(lift).toBeGreaterThan(0.1)
+    expect(lift).toBeLessThan(1)
+    expect(Number(plantRun.tag('MSSV-A-FLOW'))).toBeGreaterThan(50)
+    expect(plantRun.activeIds()).toContain('alarm:sg-a-main-steam-safety-valves-open:safety-valves-open')
+    for (const loop of ['B', 'C', 'D']) expect(Number(plantRun.tag(`MSSV-${loop}-POS`)), loop).toBe(0)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('steam generator atmospheric relief valves', () => {
@@ -952,7 +986,7 @@ describe('steam generator atmospheric relief valves', () => {
       plantRun.run(1_000)
       leastSubcooling = Math.min(leastSubcooling, Number(plantRun.tag('SUB-MARGIN')))
       if (second > 120) dumpOpening = Math.max(dumpOpening, Number(plantRun.tag('TURB-BYP-POS')))
-      safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.read('mainSteamSafetyValve.effectivePositionFraction')))
+      for (const loop of ['A', 'B', 'C', 'D']) safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.tag(`MSSV-${loop}-POS`)))
       if (second > 1_200) pressures.push(Number(plantRun.tag('SG-A-PRESS')))
     }
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)

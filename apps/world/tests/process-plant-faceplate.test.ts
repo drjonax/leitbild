@@ -125,7 +125,8 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
       return faceplate.columns.flatMap(column => column.rows).find(row => row.kind === 'flows')
     }
     const reference = outletsOf(plant)
-    expect(reference?.kind === 'flows' ? reference.branches.map(branch => branch.destination) : []).toEqual(['Turbine bypass', 'ARV A', 'ARV B', 'ARV C', 'ARV D', 'MSSV', 'TD AFW steam B', 'TD AFW steam C'])
+    // Each steam line's bank of safety valves and the TD AFW pump's supplies follow, in the order the circuit reaches them.
+    expect(reference?.kind === 'flows' ? reference.branches.map(branch => branch.destination) : []).toEqual(['Turbine bypass', 'ARV A', 'ARV B', 'ARV C', 'ARV D', 'MSSV A', 'TD AFW steam B', 'MSSV B', 'TD AFW steam C', 'MSSV C', 'MSSV D'])
     expect(reference).not.toHaveProperty('unmeasured')
     // A Plant that does not publish its relief lines' flows names them, never leaves them out.
     const reliefLines = plant.graph.links.filter(link => plant.graph.components[link.toComponentIndex]!.metadata?.equipmentClass === 'steam-generator-relief-valve')
@@ -135,7 +136,9 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
     expect(reliefLines).toHaveLength(4)
     const unread = new Set([...reliefLines, ...reliefOutlets])
     const unpublished: CompiledProcessPlant = { ...plant, graph: compilePlantGraph({ ...plant.sourceGraph, publishedVariables: plant.sourceGraph.publishedVariables.filter(path => !unread.has(String(path))) } as PlantGraphSpec, processPlantComponentRegistry) }
-    expect(outletsOf(unpublished)).toMatchObject({ from: 'Main steam', branches: [{ destination: 'Turbine bypass' }, { destination: 'MSSV' }, { destination: 'TD AFW steam B' }, { destination: 'TD AFW steam C' }], unmeasured: ['ARV A/B/C/D'] })
+    const named = outletsOf(unpublished)
+    expect(named?.kind === 'flows' ? named.branches.map(branch => branch.destination) : []).toEqual(['Turbine bypass', 'MSSV A', 'TD AFW steam B', 'MSSV B', 'TD AFW steam C', 'MSSV C', 'MSSV D'])
+    expect(named).toMatchObject({ from: 'Main steam', unmeasured: ['ARV A/B/C/D'] })
   })
 
   test('the opaque Plant lays out the same faceplates at its operating point', () => {

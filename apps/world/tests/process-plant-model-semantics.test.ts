@@ -112,7 +112,7 @@ describe('model semantics declared per component kind', () => {
     // The behaviour treats a valve without a mode (a feed regulating valve) as a control valve, and so do its semantics.
     expect(functionOf('feedwaterControlValveB')).toBe('modulating')
     expect(functionOf('rhrIsolationValve')).toBe('isolating')
-    expect(functionOf('mainSteamSafetyValve')).toBe('relieving')
+    expect(functionOf('mainSteamSafetyValveA')).toBe('relieving')
     // The main steam isolation valves are trip valves, read open or shut.
     expect(functionOf('mainSteamIsolationValveA')).toBe('isolating')
   })

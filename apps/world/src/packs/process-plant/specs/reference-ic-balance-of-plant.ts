@@ -415,22 +415,4 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       ...turbineTripWrites('manual-turbine-trip'),
     ],
   }),
-  rule({
-    id: 'main-steam-safety-valve-open',
-    label: 'Main steam safety valve open',
-    ruleClass: 'alarm',
-    condition: comparison({ path: 'mainSteamSafetyValve.effectivePositionFraction' }, '>', 0.1),
-    clearCondition: comparison({ path: 'mainSteamSafetyValve.effectivePositionFraction' }, '<', 0.05),
-    clearDelayMs: 1_000,
-    delayMs: 1_000,
-    latch: false,
-    resetWhenClear: true,
-    effects: [alarm({
-      id: 'safety-valve-open',
-      title: 'Main steam safety valve open',
-      message: 'Main steam safety valve effective position is above the reference open threshold.',
-      severity: 'warning',
-      annunciator: annunciator({ system: 'mainSteam', equipmentId: 'mainSteamSafetyValve', group: 'main-steam', priority: 'high', role: 'status' }),
-    })],
-  }),
 ]

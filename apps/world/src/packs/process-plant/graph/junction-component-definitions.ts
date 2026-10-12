@@ -209,6 +209,14 @@ export const junctionComponentDefinitions: ReadonlyArray<ComponentDefinition> = 
       reverseFlowAllowed: z.boolean().optional(),
       setpointMPa: z.number().finite().positive().optional(),
       reseatMPa: z.number().finite().positive().optional(),
+      /**
+       * For a bank of spring safety valves one valve stands for (a steam
+       * line's): the pressure at which its last valve has lifted. From its
+       * first's set pressure (setpointMPa) to this the bank opens in
+       * proportion, as its valves lift in turn, and it shuts again as the
+       * pressure falls back below its first's.
+       */
+      fullLiftMPa: z.number().finite().positive().optional(),
       controller: valvePositionControllerSchema.optional(),
     }).strict(),
     semantics: valveSemantics,

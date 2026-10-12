@@ -1241,7 +1241,7 @@ describe('process plant runtime', () => {
 
     // The steam dumps hold the pressure below the safety valves.
     expect(Number(runtime.readVariable(valueOf('main-steam-header-to-turbine-bypass-valve.pressureMPa')))).toBeLessThan(8.27)
-    expect(Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction')))).toBe(0)
+    for (const loop of ['A', 'B', 'C', 'D']) expect(Number(runtime.readVariable(valueOf(`mainSteamSafetyValve${loop}.effectivePositionFraction`))), loop).toBe(0)
 
     // Isolated on P-4 with low Tavg, feedwater stops; the voids collapse and the level shrinks, never swells.
     expect(maxLevel).toBeLessThan(initialLevel + 1)
@@ -1270,7 +1270,7 @@ describe('process plant runtime', () => {
     let maxSafetyValveOpening = 0
     for (let index = 0; index < 100; index += 1) {
       runtime.tick(100)
-      maxSafetyValveOpening = Math.max(maxSafetyValveOpening, Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction'))))
+      for (const loop of ['A', 'B', 'C', 'D']) maxSafetyValveOpening = Math.max(maxSafetyValveOpening, Number(runtime.readVariable(valueOf(`mainSteamSafetyValve${loop}.effectivePositionFraction`))))
     }
     // The steam dumps open above no-load pressure (7.6 MPa) and hold the rise
     // below the safety valves' 8.27 MPa set pressure, which stay shut.
@@ -2000,9 +2000,10 @@ describe('process plant runtime', () => {
     let maxContainmentIncomingMass = 0
     for (let index = 0; index < 900; index += 1) {
       runtime.tick(100)
-      maxSafetyPosition = Math.max(maxSafetyPosition, Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction'))))
-      maxHeaderFlow = Math.max(maxHeaderFlow, Number(runtime.readVariable(valueOf('main-steam-header-to-safety-valve.flowKgPerS'))))
-      const releaseFlow = Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.flowKgPerS')))
+      // Each steam line's bank of safety valves, ahead of its isolation valve.
+      maxSafetyPosition = Math.max(maxSafetyPosition, Number(runtime.readVariable(valueOf('mainSteamSafetyValveA.effectivePositionFraction'))))
+      maxHeaderFlow = Math.max(maxHeaderFlow, Number(runtime.readVariable(valueOf('sg-a-steam-to-safety-valves-a.flowKgPerS'))))
+      const releaseFlow = ['a', 'b', 'c', 'd'].reduce((sum, loop) => sum + Number(runtime.readVariable(valueOf(`main-steam-safety-valves-${loop}-to-atmosphere.flowKgPerS`))), 0)
       maxReleaseFlow = Math.max(maxReleaseFlow, releaseFlow)
       // The generators' atmospheric relief valves open too, above 7.86 MPa.
       releasedToAtmosphere += (releaseFlow + ['a', 'b', 'c', 'd'].reduce((sum, loop) => sum + Number(runtime.readVariable(valueOf(`steam-generator-relief-valve-${loop}-to-atmosphere.flowKgPerS`))), 0)) * 0.1
@@ -2012,7 +2013,7 @@ describe('process plant runtime', () => {
     expect(maxSafetyPosition).toBeGreaterThan(0.9)
     expect(maxHeaderFlow).toBeGreaterThan(100)
     expect(maxReleaseFlow).toBeGreaterThan(100)
-    expect(Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.pressureMPa')))).toBeCloseTo(0.101325, 6)
+    expect(Number(runtime.readVariable(valueOf('main-steam-safety-valves-a-to-atmosphere.pressureMPa')))).toBeCloseTo(0.101325, 6)
     // The atmosphere totals what the valves relieved.
     expect(Number(runtime.readVariable(valueOf('atmosphere.releasedMassKg'))) - releasedBefore).toBeCloseTo(releasedToAtmosphere, 3)
     // Containment sees none of it.
