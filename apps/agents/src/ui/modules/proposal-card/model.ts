@@ -16,7 +16,7 @@ export const proposedInTurn = (msg: UIMessage): boolean =>
 export type ProposalTone = 'pending' | 'executed' | 'closed' | 'refused' | 'unknown'
 
 export interface ProposalCardView {
-  /** What it does, as World words the control: "SHUT MOV-8000A". */
+  /** What it does, as World words the control: "SHUT MOV-8000A", "RESET Manual safety injection". */
   readonly action: string
   /** The equipment it is on, as World names the drawn item: "pressurizer.blockValve". */
   readonly item?: string
@@ -34,16 +34,20 @@ export const actorName = (actorId: string): string => actorId.replace(/^actor:(?
 
 const valueWords = (value: unknown): string => typeof value === 'number' || typeof value === 'boolean' ? String(value) : JSON.stringify(value)
 
+/** What the turn asked for, before World words it: a write's target and value, or an actuation's reset by its rule id. */
+const asked = (card: ProposalCard): string => card.reset === true ? `RESET ${card.target}` : `${card.target} → ${valueWords(card.value)}`
+
 export const proposalCardView = (card: ProposalCard, proposerName: string): ProposalCardView => {
   const outcome = card.outcome
   if (outcome.kind === 'refused') {
-    return { action: `${card.target} → ${valueWords(card.value)}`, proposer: proposerName, tone: 'refused', status: `Refused by World: ${outcome.reason}`, live: false }
+    return { action: asked(card), proposer: proposerName, tone: 'refused', status: `Refused by World: ${outcome.reason}`, live: false }
   }
   if (outcome.kind === 'unreadable') {
-    return { action: `${card.target} → ${valueWords(card.value)}`, proposer: proposerName, tone: 'unknown', status: `Status unavailable: ${outcome.reason}`, live: false }
+    return { action: asked(card), proposer: proposerName, tone: 'unknown', status: `Status unavailable: ${outcome.reason}`, live: false }
   }
   const proposal = outcome.proposal
-  const base = { action: `${proposal.word} ${card.target}`, item: proposal.item, proposer: proposerName }
+  // A reset's word names its actuation ("RESET Manual safety injection"); a write's names the control's action, so the target follows.
+  const base = { action: card.reset === true ? proposal.word : `${proposal.word} ${card.target}`, item: proposal.item, proposer: proposerName }
   const by = proposal.closed?.actorId === undefined ? '' : ` by ${actorName(proposal.closed.actorId)}`
   const why = proposal.closed?.reason === undefined ? '' : `: ${proposal.closed.reason}`
   switch (proposal.status) {

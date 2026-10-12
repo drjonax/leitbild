@@ -68,11 +68,11 @@ const clausesOf = (prose: string): ReadonlyArray<string> => prose
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** How an answer names what a proposal operates: the tag or path it was proposed by. */
+/** How an answer names what a proposal operates: the tag or path it was proposed by, or the rule id of the actuation whose reset it proposes. */
 const proposedTarget = (operation: TurnOperation): string | undefined => {
   const input = operation.input
   if (!isRecord(input)) return undefined
-  return typeof input.tagId === 'string' ? input.tagId : typeof input.path === 'string' ? input.path : undefined
+  return typeof input.reset === 'string' ? input.reset : typeof input.tagId === 'string' ? input.tagId : typeof input.path === 'string' ? input.path : undefined
 }
 
 const firstLine = (error: string | undefined): string => (error ?? 'no reason given').replace(/^simulation_command_rejected:\s*/, '').split('\n')[0]!

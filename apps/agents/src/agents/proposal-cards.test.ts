@@ -41,6 +41,17 @@ describe('what a turn proposed', () => {
     ])
   })
 
+  test('an actuation\'s reset is proposed by its rule id alone, and is a card too', () => {
+    const resetInput = { plantId: 'plant:halden-1', reset: 'safety-injection-manual', reason: 'ES-1.1: SI termination criteria met', procedureStep: 'ES-1.1 Step 1', evidence: ['PT-455'] }
+    const reset = call('call_4_0', [{ key: 'reset', operationId: PROPOSE_OPERATION_ID, input: resetInput }], [
+      { key: 'reset', operationId: PROPOSE_OPERATION_ID, target: { kind: 'resource', ref: run }, success: true, data: { ok: true, commandId: 'command:r1', acceptedAt: 'x', word: 'RESET Manual safety injection' } },
+    ])
+    expect(proposedOperationsOf([reset])).toEqual([
+      { callId: 'call_4_0', key: 'reset', plantId: 'plant:halden-1', target: 'safety-injection-manual', reset: true, value: undefined, reason: resetInput.reason, procedureStep: resetInput.procedureStep, evidence: ['PT-455'],
+        outcome: { kind: 'recorded', proposalId: 'command:r1', resource: run } },
+    ])
+  })
+
   test('a recorded proposal whose evidence lost its target is an error, not a card without status', () => {
     const untargeted = call('call_3_0', [{ key: 'propose', operationId: PROPOSE_OPERATION_ID, input: proposeInput }], [
       { key: 'propose', operationId: PROPOSE_OPERATION_ID, success: true, data: { ok: true, commandId: 'command:p1', acceptedAt: 'x' } },

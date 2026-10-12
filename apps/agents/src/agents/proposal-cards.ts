@@ -24,8 +24,10 @@ export interface ProposedOperation {
   readonly callId: string
   readonly key: string
   readonly plantId: string
-  /** The tag or path it names the command by. */
+  /** The tag or path it names the command by; for an actuation's reset, the actuation's rule id. */
   readonly target: string
+  /** Whether it proposes a latched actuation's reset, which writes no value, rather than a write. */
+  readonly reset?: true
   readonly value: unknown
   readonly reason?: string
   readonly procedureStep?: string
@@ -39,7 +41,9 @@ const proposeInputSchema = z.object({
   plantId: z.string().min(1),
   tagId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
-  value: z.unknown(),
+  reset: z.string().min(1).optional(),
+  // A write's value; a reset writes none.
+  value: z.unknown().optional(),
   reason: z.string().optional(),
   procedureStep: z.string().optional(),
   evidence: z.array(z.string()).default([]),
@@ -71,13 +75,15 @@ export const proposedOperationsOf = (calls: ReadonlyArray<ExecutionCall>): Reado
   return results.data.results.flatMap((entry): ReadonlyArray<ProposedOperation> => {
     if (entry.operationId !== PROPOSE_OPERATION_ID) return []
     const input = proposeInputSchema.safeParse(args.data.calls.find(candidate => candidate.key === entry.key)?.input)
-    const target = input.success ? input.data.tagId ?? input.data.path : undefined
+    // A write names its command by tag or path and a value; a reset names the actuation alone.
+    const target = !input.success ? undefined : input.data.reset ?? (input.data.value === undefined ? undefined : input.data.tagId ?? input.data.path)
     if (!input.success || target === undefined) return []
     const base = {
       callId: call.id,
       key: entry.key,
       plantId: input.data.plantId,
       target,
+      ...(input.data.reset === undefined ? {} : { reset: true as const }),
       value: input.data.value,
       ...(input.data.reason === undefined ? {} : { reason: input.data.reason }),
       ...(input.data.procedureStep === undefined ? {} : { procedureStep: input.data.procedureStep }),

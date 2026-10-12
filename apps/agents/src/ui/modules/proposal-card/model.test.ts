@@ -45,6 +45,15 @@ describe('an answer\'s proposal card', () => {
       .toBe('Status unavailable: the Plant no longer keeps this proposal')
   })
 
+  test('an actuation\'s reset reads as World words it, or by its rule id before World has', () => {
+    const reset = { ...proposed, target: 'safety-injection-manual', reset: true as const, value: undefined }
+    const word = { ...proposal('pending'), item: 'safetyInjection.trainA', word: 'RESET Manual safety injection' }
+    expect(proposalCardView({ ...reset, outcome: { kind: 'recorded', proposalId: 'command:r1', plantElapsedMs: 60_000, proposal: word } }, 'Shift advisor'))
+      .toMatchObject({ action: 'RESET Manual safety injection', item: 'safetyInjection.trainA', tone: 'pending' })
+    expect(proposalCardView({ ...reset, outcome: { kind: 'refused', reason: 'RESET Manual safety injection is not offered: it may be reset 60 s after it acted: 12 s to go' } }, 'Shift advisor'))
+      .toMatchObject({ action: 'RESET safety-injection-manual', tone: 'refused' })
+  })
+
   test('names people and agents by the id their actor carries', () => {
     expect(actorName('actor:human:hilde')).toBe('hilde')
     expect(actorName('operator:evidence')).toBe('operator:evidence')

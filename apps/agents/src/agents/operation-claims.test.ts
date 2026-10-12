@@ -39,6 +39,15 @@ describe('an answer of a turn that only proposed', () => {
     expect(operationClaimIssues('I started charging pump B and I shut MOV-8000A.', [proposed, written])).toHaveLength(1)
   })
 
+  test('an actuation\'s reset, proposed by its rule id, is held to the same', () => {
+    const reset: TurnOperation = { operationId: PROPOSE_OPERATION_ID, input: { plantId: 'plant:halden-1', reset: 'safety-injection-manual', reason: 'ES-1.1: SI termination criteria met', evidence: ['PT-455'] }, success: true, commandId: 'command:r1' }
+    expect(operationClaimIssues('I proposed resetting safety injection; it awaits your approval in the display window.', [reset])).toEqual([])
+    expect(operationClaimIssues('I reset safety injection, so the SI pumps are yours again.', [reset])).toEqual([
+      'It says "I reset safety injection", but this turn only proposed the operation of safety-injection-manual: nothing is executed until a person approves it in the display window. Say it is proposed and awaiting a person\'s approval.',
+    ])
+    expect(operationClaimIssues('Actuation safety-injection-manual has been reset.', [reset])).toHaveLength(1)
+  })
+
   test('may not say it proposed what World refused', () => {
     expect(operationClaimIssues('I proposed starting RCP A for your approval.', [refused])).toEqual([
       'It says "I proposed starting RCP A for your approval.", but World refused the proposal: Not offered to operators: An RCP start needs seal injection and oil lift, which the model does not have: not started from the display. Say it was refused and why.',
