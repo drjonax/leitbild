@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { SimulationRunId, IsoTimestamp } from '../src/core/model/index.ts'
+import type { SimulationRunId, IsoTimestamp, OperationalObject } from '../src/core/model/index.ts'
 import { geoPointFromLonLat } from '../src/core/model/index.ts'
 import {
   createWorldPackDescriptor,
@@ -71,7 +71,7 @@ describe('MapFeatureLoader', () => {
     let recovered = false
     const loader = createMapFeatureLoader({
       pack: () => createActivePackViews([createPack([{ capabilityId: 'world.weather-test.good', input: {} }, { capabilityId: 'world.weather-test.broken', input: {} }])]),
-      objects: () => [], simulationRunId: () => 'run-test' as SimulationRunId, currentTime: () => generatedAt, seenRoleIds: () => null, selectedObjectId: () => null,
+      objects: () => [], simulationRunId: () => 'run-test' as SimulationRunId, currentTime: () => generatedAt, seenRoleIds: () => null, selectedObjectId: () => null, dataRevision: () => 'r1',
       queryCapability: async (_id, request) => { if (!recovered && request.capabilityId === 'world.weather-test.broken') throw new Error('Test provider failed'); return { features: [featureFor('good')], truncated: !recovered } },
       onWarnings: messages => { warnings = messages },
     })
@@ -106,7 +106,7 @@ describe('MapFeatureLoader', () => {
       simulationRunId: () => 'run-test' as SimulationRunId,
       currentTime: () => generatedAt,
       seenRoleIds: () => null,
-      selectedObjectId: () => null,
+      selectedObjectId: () => null, dataRevision: () => 'r1',
       queryCapability,
       queryTimeoutMs: 500,
     })
@@ -137,7 +137,7 @@ describe('MapFeatureLoader', () => {
       simulationRunId: () => 'run-test' as SimulationRunId,
       currentTime: () => generatedAt,
       seenRoleIds: () => seen,
-      selectedObjectId: () => null,
+      selectedObjectId: () => null, dataRevision: () => 'r1',
       queryCapability: async () => ({ features: [] }),
     })
     expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['group-a-path'])
@@ -152,30 +152,81 @@ describe('MapFeatureLoader', () => {
     ])
   })
 
-  test('hands a Pack\'s map features the object the map selects, and none while nothing is selected', async () => {
-    const asked: Array<string | undefined> = []
-    const selecting: WorldPack = {
+  test('hands the object the map selects only to the map features of a Pack that follows the selection, never to another Pack or a query', async () => {
+    const asked: Array<readonly [string, string | undefined]> = []
+    const following: WorldPack = {
       ...createPack([]),
-      presentation: { ...createPack([]).presentation, mapFeatures: context => { asked.push(context.selectedObjectId); return [] } },
+      presentation: { ...createPack([]).presentation, mapFeaturesFollowSelection: true, mapFeatures: context => { asked.push(['following', context.selectedObjectId]); return [] } },
     }
+    const notFollowing: WorldPack = {
+      ...createPack([]),
+      descriptor: createWorldPackDescriptor({ id: 'other-test', version: '1.0.0', name: 'Other Test', description: 'Test Pack.', contributions: ['presentation'] }),
+      presentation: {
+        ...createPack([]).presentation,
+        mapFeatures: context => { asked.push(['other', context.selectedObjectId]); return [] },
+        mapFeatureQueries: context => { asked.push(['queries', context.selectedObjectId]); return [] },
+      },
+    }
+    const views = createActivePackViews([following, notFollowing])
+    expect(views.presentation.mapFeaturesFollowSelection).toBe(true)
+    expect(createActivePackViews([notFollowing]).presentation.mapFeaturesFollowSelection).toBeUndefined()
     let selected: string | null = null
     const loader = createMapFeatureLoader({
-      pack: () => createActivePackViews([selecting]),
+      pack: () => views,
       objects: () => [],
-      simulationRunId: () => null,
+      simulationRunId: () => 'run-test' as SimulationRunId,
       currentTime: () => generatedAt,
       seenRoleIds: () => null,
       selectedObjectId: () => selected,
+      dataRevision: () => 'r1',
     })
     await loader({ viewport, zoom: 8 })
     selected = 'unit-1'
     await loader({ viewport, zoom: 8 })
-    expect(asked).toEqual([undefined, 'unit-1'])
+    expect(asked).toEqual([
+      ['following', undefined], ['other', undefined], ['queries', undefined],
+      ['following', 'unit-1'], ['other', undefined], ['queries', undefined],
+    ])
   })
 
-  test('the World view passes the roles it sees and the object it selects to the loader, and reloads Pack map features when either changes', () => {
+  test('a selection change asks the Run nothing: the synchronous features redraw and the last query results stay; new objects or data ask again', async () => {
+    let queries = 0
+    let selected: string | null = null
+    let objects: ReadonlyArray<OperationalObject> = []
+    let revision = 'r1'
+    const loader = createMapFeatureLoader({
+      pack: () => createActivePackViews([createPack([{ capabilityId: 'world.weather-test.area', input: { layers: ['wind'] } }])]),
+      objects: () => objects,
+      simulationRunId: () => 'run-test' as SimulationRunId,
+      currentTime: () => generatedAt,
+      seenRoleIds: () => null,
+      selectedObjectId: () => selected,
+      dataRevision: () => revision,
+      queryCapability: async () => { queries += 1; return { features: [featureFor(`area-${queries}`)] } },
+    })
+    expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['sync-feature', 'area-1'])
+    selected = 'drone-1'
+    expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['sync-feature', 'area-1'])
+    selected = null
+    expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['sync-feature', 'area-1'])
+    expect(queries).toBe(1)
+    // The same selection again is a refresh for something else, such as the time: it asks.
+    await loader({ viewport, zoom: 8 })
+    expect(queries).toBe(2)
+    selected = 'drone-1'
+    objects = [...objects]
+    await loader({ viewport, zoom: 8 })
+    selected = null
+    revision = 'r2'
+    await loader({ viewport, zoom: 8 })
+    expect(queries).toBe(4)
+  })
+
+  test('the World view passes the roles it sees, the object it selects and its data revision to the loader, and reloads Pack map features on a selection change only while a Pack follows it', () => {
     const route = readFileSync(join(import.meta.dir, '..', 'src', 'ui', 'routes', 'ControlSurfaceRoute.svelte'), 'utf8')
-    expect(route).toMatch(/createMapFeatureLoader\(\{[^}]*seenRoleIds:\s*\(\)\s*=>\s*seenRoleIds,\s*selectedObjectId:\s*\(\)\s*=>\s*selectedControllerId,/)
-    expect(route).toMatch(/const\s+mapFeatureRevisionKey\s*=\s*\$derived\([^\n]*\[perspectiveEpoch,\s*packDataRevisions,\s*seenRoleIds,\s*selectedControllerId\]/)
+    expect(route).toMatch(/createMapFeatureLoader\(\{[^}]*seenRoleIds:\s*\(\)\s*=>\s*seenRoleIds,\s*selectedObjectId:\s*\(\)\s*=>\s*selectedControllerId,\s*dataRevision:\s*\(\)\s*=>\s*mapFeatureDataKey,/)
+    expect(route).toMatch(/const\s+mapFeatureDataKey\s*=\s*\$derived\(JSON\.stringify\(\[perspectiveEpoch,\s*packDataRevisions,\s*seenRoleIds\]\)\)/)
+    expect(route).toMatch(/const\s+mapFeaturesFollowSelection\s*=\s*\$derived\(activePack\?\.presentation\.mapFeaturesFollowSelection\s*===\s*true\)/)
+    expect(route).toMatch(/const\s+mapFeatureRevisionKey\s*=\s*\$derived\(mapFeaturesFollowSelection\s*\?\s*JSON\.stringify\(\[mapFeatureDataKey,\s*selectedControllerId\]\)\s*:\s*mapFeatureDataKey\)/)
   })
 })

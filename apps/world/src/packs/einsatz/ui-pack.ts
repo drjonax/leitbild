@@ -222,6 +222,8 @@ export const einsatzPackView = {
       const unseen = new Set(context.objects.filter(object => unitUnseen(object, context.seenRoleIds)).map(object => object.id as string))
       return plannedPathFeatures(context.objects, unitsCategory, unitId => !unseen.has(unitId), context.selectedObjectId)
     },
+    // The selected unit's path is drawn strongly, so the map redraws these features when the selection changes.
+    mapFeaturesFollowSelection: true,
     mapFeatureLayers: ['routes'],
     mapFeatureSourcePackIds: [einsatzPackId],
   },

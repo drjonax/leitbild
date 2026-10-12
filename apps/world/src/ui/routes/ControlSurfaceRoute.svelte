@@ -392,8 +392,11 @@
   const seenRoleIds = $derived(runRoles !== null && heldRoleIds !== null ? seenRoleIdsFor(runRoles, heldRoleIds, hiddenRoleIds) : null)
   // Reset, signal and delete are controller acts in a role Run; open mode offers them to everyone.
   const controllerControls = $derived(runRoles === null || (heldRoleIds !== null && roleClassForRoleSet(runRoles, heldRoleIds) === 'controller'))
-  // Pack map features belong to one perspective, like every Run store, and are drawn for the roles this tab sees and the object it selects.
-  const mapFeatureRevisionKey = $derived(JSON.stringify([perspectiveEpoch, packDataRevisions, seenRoleIds, selectedControllerId]))
+  // Pack map features belong to one perspective, like every Run store, and are drawn for the roles this tab sees.
+  const mapFeatureDataKey = $derived(JSON.stringify([perspectiveEpoch, packDataRevisions, seenRoleIds]))
+  // Only while an active Pack draws the selected object differently does a selection change redraw Pack map features.
+  const mapFeaturesFollowSelection = $derived(activePack?.presentation.mapFeaturesFollowSelection === true)
+  const mapFeatureRevisionKey = $derived(mapFeaturesFollowSelection ? JSON.stringify([mapFeatureDataKey, selectedControllerId]) : mapFeatureDataKey)
 
   const toggleTheme = (): void => {
     theme = toggleThemeMode()
@@ -525,6 +528,7 @@
     currentTime: currentPackTime,
     seenRoleIds: () => seenRoleIds,
     selectedObjectId: () => selectedControllerId,
+    dataRevision: () => mapFeatureDataKey,
     onWarnings: messages => { mapWarnings = messages.join(' · ') },
   })
 

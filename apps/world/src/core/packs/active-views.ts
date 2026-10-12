@@ -7,6 +7,7 @@ import type {
   PackPresentationContribution,
   PackMapFeatureQuery,
   PackMapTarget,
+  PackObjectPresentationContext,
   PackTargetContext,
   PackTargetingContribution,
   PackSurfacePanelContribution,
@@ -34,6 +35,13 @@ const assertUniqueIds = (values: ReadonlyArray<{ readonly id: string }>, kind: s
     if (seen.has(value.id)) throw new Error(`duplicate ${kind}: ${value.id}`)
     seen.add(value.id)
   }
+}
+
+/** The presentation context without the map's selection, for a hook that does not follow it. */
+const withoutSelection = (context: PackObjectPresentationContext): PackObjectPresentationContext => {
+  if (context.selectedObjectId === undefined) return context
+  const { selectedObjectId: _selected, ...rest } = context
+  return rest
 }
 
 /** Each reference dataset a Pack declares is drawn by exactly one style from the same Pack. */
@@ -134,12 +142,14 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
           fields: [...presentation.fields, ...contextualFields],
         }
       },
+      // The selection reaches only the map features of a Pack that follows it, and never a query.
       mapFeatures: (context): ReadonlyArray<PackMapFeature> =>
-        packs.flatMap(pack => pack.presentation.mapFeatures?.(context) ?? []),
+        packs.flatMap(pack => pack.presentation.mapFeatures?.(pack.presentation.mapFeaturesFollowSelection === true ? context : withoutSelection(context)) ?? []),
+      ...(packs.some(pack => pack.presentation.mapFeaturesFollowSelection === true) ? { mapFeaturesFollowSelection: true as const } : {}),
       mapFeatureLayers,
       mapFeatureSourcePackIds,
       mapFeatureQueries: (context): ReadonlyArray<PackMapFeatureQuery> =>
-        packs.flatMap(pack => (pack.presentation.mapFeatureQueries?.(context) ?? []).map(request => {
+        packs.flatMap(pack => (pack.presentation.mapFeatureQueries?.(withoutSelection(context)) ?? []).map(request => {
           if (!request.capabilityId.startsWith(`world.${pack.descriptor.id}.`)) {
             throw new Error(`Pack ${pack.descriptor.id} map feature query uses foreign Capability ${request.capabilityId}`)
           }
