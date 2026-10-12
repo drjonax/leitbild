@@ -5,7 +5,7 @@
   "objectives": [
     "Get a unit on scene at every top-priority (P1) call within 8 minutes of the call.",
     "Get a fire engine to the guest harbour car fire within 4 minutes of the call.",
-    "Close every call by 33:00."
+    "Close every call within 33 minutes of the start."
   ],
   "world": {"startsAt": "2026-09-03T18:00:00.000Z", "environment": {"city": "Halden", "model": "Fictional emergency dispatch exercise; no real patient data"}},
   "view": {"map": {"center": [11.3985, 59.1275], "zoom": 12.4}},
@@ -387,7 +387,7 @@
             "guidance": {
               "id": "exercise-end",
               "title": "End of the exercise",
-              "message": "33:00: the exercise is over. Check the objectives: every P1 call reached within 8 minutes, a fire engine at the harbour car fire within 4, and every call closed.",
+              "message": "33 minutes in, the exercise is over. Check the objectives: every P1 call reached within 8 minutes, a fire engine at the guest harbour car fire within 4, and every call closed.",
               "dismissible": true,
               "tone": "update"
             }

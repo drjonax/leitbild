@@ -2,7 +2,7 @@
   "id": "supply-run",
   "title": "Supply run",
   "description": "A fictional 30-minute logistics exercise in Halden that proves Einsatz is open: a supply truck that no code knows, with a payload property and its own icons. Brekke and Tosterød depots send trucks of 300, 800 and 1,500 kg; a 1,000 kg truck joins at 2 minutes and a hired 700 kg truck at 7. Supply requests need a truck of at least 500 kg and urgent bulk requests a heavy truck of at least 1,000 kg, so the 300 kg Truck 1 waits for its upgrade to 600 kg at 5 minutes. Twice you must choose: divert the 1,000 kg truck from a routine request to an urgent bulk one, and serve two requests beside Tosterød depot with one truck's chain, so the 1,500 kg truck stays free for the next bulk request. How to play: tap a request to see the suggested truck, then tap the suggestion to send it; a divert asks you to confirm. Or tap a truck to highlight it, then tap a request or a depot on the map; a busy truck asks Do now or Add to end. The + on a truck adds the next depot or request you tap to the end of its chain.",
-  "objectives": ["Get a heavy truck to every urgent bulk request within 4 minutes of the request.", "Serve every request by 30:00."],
+  "objectives": ["Get a heavy truck to every urgent bulk request within 4 minutes of the request.", "Serve every request within 30 minutes of the start."],
   "world": {"startsAt": "2026-09-03T08:00:00.000Z", "environment": {"city": "Halden", "model": "Fictional logistics exercise"}},
   "view": {"map": {"center": [11.3775, 59.1315], "zoom": 12.2}},
   "packs": [
@@ -246,7 +246,7 @@
             "guidance": {
               "id": "exercise-end",
               "title": "End of the exercise",
-              "message": "30:00: the exercise is over. Check the objectives: a heavy truck at every urgent bulk request within 4 minutes, and every request served.",
+              "message": "30 minutes in, the exercise is over. Check the objectives: a heavy truck at every urgent bulk request within 4 minutes, and every request served.",
               "dismissible": true,
               "tone": "update"
             }

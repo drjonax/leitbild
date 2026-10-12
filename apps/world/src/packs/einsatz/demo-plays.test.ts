@@ -46,8 +46,8 @@ const stated = (definition: Definition, index: number, pattern: RegExp): number 
   if (match === null) throw new Error(`${definition.id} objective ${index} does not state ${pattern}`)
   return Number(match[1])
 }
-const minutes = /within (\d+) minutes/
-const byClock = /by (\d+):00/
+const minutes = /within (\d+) minutes of the (?:call|request)/
+const fromStart = /within (\d+) minutes of the start/
 
 interface Demo {
   readonly definition: Definition
@@ -74,7 +74,7 @@ const demos: Readonly<Record<'emergency' | 'supply', Demo>> = {
     objectives: ({ calls }) => [
       calls.filter(call => call.rank === topClass(emergency)).every(call => reachS(call) <= stated(emergency, 0, minutes) * 60),
       reachS(createdBy(calls, cueAt(emergency, 'harbour-car-fire'))) <= stated(emergency, 1, minutes) * 60,
-      closedBy(calls, stated(emergency, 2, byClock) * 60),
+      closedBy(calls, stated(emergency, 2, fromStart) * 60),
     ],
     roleIds: emergency.rolePresets![0]!.roles,
   },
@@ -83,7 +83,7 @@ const demos: Readonly<Record<'emergency' | 'supply', Demo>> = {
     beats: [chainViaNearestSite('two requests side by side', cueAt(supply, 'scout-camp-request'))],
     objectives: ({ calls }) => [
       calls.filter(call => call.rank === topClass(supply)).every(call => reachS(call) <= stated(supply, 0, minutes) * 60),
-      closedBy(calls, stated(supply, 1, byClock) * 60),
+      closedBy(calls, stated(supply, 1, fromStart) * 60),
     ],
   },
 }
