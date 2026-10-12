@@ -11,14 +11,15 @@ import { settle, stepUntil } from './phases.ts'
 import { planSiteSet, planTaskClose, planTaskCreate, planUnitAdjust, planUnitCreate } from './records.ts'
 import { orderFailedCode, type DueReflex, type StandingOrder } from './reflexes.ts'
 import { isDestroyed, isSite, linksToSite } from './rules.ts'
-import { patch } from './values.ts'
+import { patch, sameValue } from './values.ts'
 import { loadText } from './wording.ts'
 
 /**
  * The Einsatz engine API: pure functions from an engine state to the next
  * state plus the transitions that changed `packData`. Routing is the only
- * port; it is asked before a change is committed, and a commit validates the
- * intent again against the state it applies to. Callers serialize calls.
+ * port; it is asked before a change is committed. A commit validates the
+ * intent again against the state it applies to and accepts only legs routed
+ * from that state's positions. Callers serialize calls.
  */
 
 export interface EnginePorts {
@@ -48,12 +49,32 @@ export const planIntent = (state: EngineState, intent: Intent, actor: EngineActo
   }
 }
 
-/** Applies an intent with prepared legs, validating it again first. Settles what it makes due at once. */
-export const commitIntent = (state: EngineState, intent: Intent, actor: EngineActor, legs: ReadonlyMap<string, Leg>): IntentOutcome => {
+/** A leg routed for one of a plan's route needs, carrying the need it answers. */
+export interface PreparedLeg {
+  readonly route: RouteNeed
+  readonly leg: Leg
+}
+
+/**
+ * The legs a plan on this state needs, keyed by unit. A leg must answer a
+ * route need of this plan exactly, from the same point to the same point:
+ * one routed from an earlier state would move its unit back along an old
+ * path, so it is an error and is never applied.
+ */
+const legsFor = (routes: ReadonlyArray<RouteNeed>, prepared: ReadonlyArray<PreparedLeg>): ReadonlyMap<string, Leg> => {
+  const byUnit = new Map(prepared.map(entry => [entry.route.unitId, entry]))
+  const unanswered = routes.filter(route => !sameValue(byUnit.get(route.unitId)?.route, route)).map(route => route.unitId)
+  if (unanswered.length > 0 || byUnit.size !== routes.length || prepared.length !== routes.length) {
+    throw new Error(`State changed while routing ${unanswered.length > 0 ? unanswered.join(', ') : 'this intent'}; plan and route again`)
+  }
+  return new Map(prepared.map(entry => [entry.route.unitId, entry.leg]))
+}
+
+/** Applies an intent with legs prepared for it on this same state, validating it again first. Settles what it makes due at once. */
+export const commitIntent = (state: EngineState, intent: Intent, actor: EngineActor, prepared: ReadonlyArray<PreparedLeg>): IntentOutcome => {
   const plan = planIntent(state, intent, actor)
   if (!plan.ok) return plan
-  const missing = plan.routes.filter(route => !legs.has(route.unitId))
-  if (missing.length > 0) throw new Error(`No leg prepared for ${missing.map(route => route.unitId).join(', ')}`)
+  const legs = legsFor(plan.routes, prepared)
   const draft = openDraft(state)
   plan.apply(draft, legs)
   settle(draft)
@@ -61,8 +82,8 @@ export const commitIntent = (state: EngineState, intent: Intent, actor: EngineAc
 }
 
 /** Routes for every unit of an intent, in order; the first that cannot be routed refuses the intent. */
-export const prepareLegs = async (state: EngineState, routes: ReadonlyArray<RouteNeed>, routing: RoutingAdapter): Promise<{ readonly ok: true; readonly legs: ReadonlyMap<string, Leg> } | Refused> => {
-  const legs = new Map<string, Leg>()
+export const prepareLegs = async (state: EngineState, routes: ReadonlyArray<RouteNeed>, routing: RoutingAdapter): Promise<{ readonly ok: true; readonly legs: ReadonlyArray<PreparedLeg> } | Refused> => {
+  const legs: PreparedLeg[] = []
   for (const route of routes) {
     const unit = state.units.get(route.unitId)
     if (unit === undefined) throw new Error(`Einsatz unit not found: ${route.unitId}`)
@@ -70,7 +91,7 @@ export const prepareLegs = async (state: EngineState, routes: ReadonlyArray<Rout
     if (mobility === undefined) throw new Error(`${unit.id}: a route was requested for a unit without mobility`)
     const prepared = await prepareLeg(routing, mobility, route.from, route.to, unit.label)
     if (!prepared.ok) return prepared
-    legs.set(route.unitId, prepared.leg)
+    legs.push({ route, leg: prepared.leg })
   }
   return { ok: true, legs }
 }

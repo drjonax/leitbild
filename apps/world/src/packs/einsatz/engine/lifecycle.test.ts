@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { IsoTimestamp, RouteImpact } from '../../../core/model/index.ts'
+import { routeDistanceMeters, type IsoTimestamp, type RouteImpact } from '../../../core/model/index.ts'
 import { advance, arrivalAt, at, config, controller, emptyState, low, middle, newTask, newUnit, pointOf, ports, refusalOf, run, runAll, send, start, taskOf, templates, top, types, unitOf } from '../fixtures/engine-harness.ts'
-import { advanceEngine, executeIntent, setRouteImpacts } from './engine.ts'
+import { advanceEngine, commitIntent, executeIntent, planIntent, prepareLegs, setRouteImpacts } from './engine.ts'
 import type { EngineState } from './model.ts'
 import { engineObjects, readEngineState, runtimeStateOf, unitObject } from './objects.ts'
 
@@ -147,6 +147,32 @@ describe('Einsatz unit lifecycle', () => {
     expect(unitOf(state, 'u1').phase).toBe('en-route')
     state = await advance(state, start + 22_000 + Math.ceil(remainingMs * 2))
     expect(unitOf(state, 'u1').phase).toBe('on-task')
+  })
+
+  test('legs routed on an earlier state are refused at commit; legs routed on the current state start where the unit is', async () => {
+    const sent = await runAll(emptyState(), [
+      newUnit('u1', types.roadCarrier, at(0)),
+      newTask('t1', templates.load, at(0.05), { [low]: 1 }),
+      send(['u1'], { taskId: 't1' }),
+    ])
+    const planned = await advance(sent, start + 2_000)
+    const intent = send(['u1'], { point: at(0.02, 0.01) }, [{ unitId: 'u1', fromTaskId: 't1' }])
+    const routedOn = async (state: EngineState) => {
+      const plan = planIntent(state, intent, controller)
+      if (!plan.ok) throw new Error(plan.reason)
+      const legs = await prepareLegs(state, plan.routes, ports.routing)
+      if (!legs.ok) throw new Error(legs.reason)
+      return legs.legs
+    }
+    const early = await routedOn(planned)
+    const moved = await advance(planned, start + 60_000)
+    expect(() => commitIntent(moved, intent, controller, early)).toThrow('State changed while routing u1; plan and route again')
+    const committed = commitIntent(moved, intent, controller, await routedOn(moved))
+    if (!committed.ok) throw new Error(committed.reason)
+    expect(pointOf(committed.state, 'u1')).toEqual(pointOf(moved, 'u1'))
+    expect(unitOf(committed.state, 'u1').leg!.geometry.coordinates[0]).toEqual([...pointOf(moved, 'u1').coordinates])
+    const next = await advance(committed.state, start + 61_000)
+    expect(routeDistanceMeters(pointOf(moved, 'u1'), pointOf(next, 'u1'))).toBeCloseTo(15, 0)
   })
 
   test('re-sending a unit to its current task succeeds and changes nothing', async () => {
