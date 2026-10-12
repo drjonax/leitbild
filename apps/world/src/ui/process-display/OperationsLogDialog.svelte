@@ -86,7 +86,7 @@
       {#if rows === null}
         {#if failure === null}<p role="status">Reading the operations log…</p>{/if}
       {:else if rows.length === 0}
-        <p>No person or AI agent has operated or proposed anything on {target.label} yet.</p>
+        <p>No person or AI agent has operated anything on {target.label} or proposed anything for it yet.</p>
       {:else}
         <table>
           <thead><tr><th scope="col">Time</th><th scope="col">Who</th><th scope="col">Equipment</th><th scope="col">Action</th><th scope="col">How</th><th scope="col">Result</th></tr></thead>
