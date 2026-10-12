@@ -398,7 +398,8 @@
   .back:disabled, .opening :global(.target) { cursor: progress; }
   .panels { display: flex; flex-direction: column; }
   /* A unit overview fills its window: one header row (composedDisplayLayout.overviewFrame), then its panels. Nothing is shrunk; stacked, they scroll when the window is smaller. */
-  .overview header { flex: none; height: 22px; }
+  /* One row; only chips wider than the whole row wrap it onto another (SafetyFunctionChips). */
+  .overview header { flex: none; min-height: 22px; }
   .overview h1 { flex: 0 1 auto; }
   .overview .banner { flex: 1 1 0; min-width: 0; }
   .run { flex: 0 1 auto; min-width: 0; font-size: 11.5px; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
