@@ -3,7 +3,7 @@ import { idSchema, objectIdSchema } from '../../../core/model/index.ts'
 import type { PackRuntimeQuery } from '../../../simulation/protocol.ts'
 import { evaluateProcessPlantAssessments } from '../assessments.ts'
 import { processPlantControlWritePayloadSchema } from '../commands.ts'
-import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
+import { validateOperatorWrite } from '../operations/command-guard.ts'
 import { evaluateProcessPlantIcCondition, processPlantIcConditionSchema } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { requirePlant } from './common.ts'
@@ -67,10 +67,12 @@ export const answerProcessPlantControlQuery = (config: {
   }
   const payload = processPlantControlWritePayloadSchema.parse(config.request.input)
   const system = requirePlant(config.plants, payload.plantId)
-  return validateProcessPlantControlWrite({
+  // As a person's or an AI agent's write: the Run's own writes are not previewed.
+  return validateOperatorWrite({
     system: system.plant,
     runtime: system.runtime,
     ...(system.protection === undefined ? {} : { protection: system.protection }),
     payload,
+    origin: undefined,
   })
 }

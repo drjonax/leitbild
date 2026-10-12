@@ -25,7 +25,7 @@ import {
 } from '../commands.ts'
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
-import { instructorOnlyRefusal } from '../operations/command-guard.ts'
+import { instructorOnlyRefusal, validateOperatorWrite } from '../operations/command-guard.ts'
 import { processPlantElectricalBoundaries } from '../electrical-ports.ts'
 import { processPlantIdForObject,processPlantPackId,processPlantUnitPackDataSchema } from '../model.ts'
 import { compileProcessPlants } from '../plant-compiler.ts'
@@ -482,7 +482,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
-          const validation = validateProcessPlantControlWrite({
+          const validation = validateOperatorWrite({
             system: plant.plant,
             runtime: plant.runtime,
             ...(plant.protection === undefined ? {} : { protection: plant.protection }),
@@ -492,10 +492,9 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
               ...(payload.data.tagId === undefined ? {} : { tagId: payload.data.tagId }),
               value: payload.data.targetValue,
             },
+            origin: context.origin,
           })
           if (!validation.accepted) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: validation.reason }
-          const instructorOnly = instructorOnlyRefusal(plant.plant.graph.signalBindingByPath.get(validation.targetPath)!, context.origin)
-          if (instructorOnly !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: instructorOnly }
           const rampRefusal = coupledBoundaryRampRefusal(boundaryVariablesByPlant.get(payload.data.plantId), validation.targetPath)
           if (rampRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: rampRefusal }
           plant.ramps.start({
@@ -520,15 +519,14 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         const plant = plants.get(payload.data.plantId)
         if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
         try {
-          const validation = validateProcessPlantControlWrite({
+          const validation = validateOperatorWrite({
             system: plant.plant,
             runtime: plant.runtime,
             ...(plant.protection === undefined ? {} : { protection: plant.protection }),
             payload: payload.data,
+            origin: context.origin,
           })
           if (!validation.accepted) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: validation.reason }
-          const instructorOnly = instructorOnlyRefusal(plant.plant.graph.signalBindingByPath.get(validation.targetPath)!, context.origin)
-          if (instructorOnly !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: instructorOnly }
           const boundary = coupledBoundaryEffect(boundaryVariablesByPlant.get(payload.data.plantId), [{ path: validation.targetPath, value: payload.data.value }])
           if (!boundary.ok) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: boundary.reason }
           plant.runtime.writeCommand({
