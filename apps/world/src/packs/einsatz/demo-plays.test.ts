@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { isMapSymbol } from '../../core/map-symbols/catalog.ts'
 import atlas from '../../core/map-symbols/common.json'
-import type { ScenarioRolePreset } from '../../core/model/index.ts'
+import { runRolesOf, type ScenarioRolePreset } from '../../core/model/index.ts'
 import { compileScenarioDefinition } from '../../core/scenarios/compiler.ts'
 import { scenarioDefinitionSchema, type ScenarioDefinition } from '../../core/scenarios/definition.ts'
 import { createDirectRoutingAdapter } from '../../routing/direct-adapter.ts'
 import emergencyJson from '../../scenarios/halden-emergency.scenario.json'
 import supplyJson from '../../scenarios/supply-run.scenario.json'
 import { startingZoomFor } from '../../ui/map/map-camera.ts'
+import { openRoleDialog, roleDialogModel, togglePreset } from '../../ui/roles/role-dialog.ts'
 import { einsatzCommandIds as ids, einsatzQueryIds } from './capabilities.ts'
 import { createWall, openScreen, pastGuardMs, roleScreen, runFor } from './fixtures/board-harness.ts'
 import { addToEndOfNearestBusy, chainViaNearestSite, configOf, metresBetween, playDemo, reachS, slowedRouting, type Beat, type CallLog, type PlayLog, type Policy } from './fixtures/demo-play.ts'
@@ -262,6 +263,24 @@ describe('halden-emergency pressure moments and desks', () => {
     for (const item of emergency.packs[0]!.items as ReadonlyArray<{ readonly type: string; readonly unitType?: string; readonly group?: string }>) {
       if (item.type === 'unit') expect([item.unitType, item.group !== undefined]).toEqual([item.unitType, !publicTypes.has(item.unitType!)])
     }
+  })
+
+  test('the groups dialog reads as the Definition\'s categories, each listing its groups, under the presets and the Controller; the first preset ticks every group', async () => {
+    const declaration = runRolesOf(await compileScenarioDefinition(emergency, [einsatzPack], { routing: createDirectRoutingAdapter() }))
+    if (declaration === null) throw new Error('halden-emergency declares roles')
+    const groups = configOf(emergency).groups
+    const joining = openRoleDialog(declaration, [], [])
+    const model = roleDialogModel(declaration, joining, { mode: 'join', held: [], holders: null })
+    const categories = [...new Set(groups.map(group => group.category))]
+    expect(model.categories.map(category => [category.label, category.rows.map(row => row.label)]))
+      .toEqual(categories.map(category => [category, groups.filter(group => group.category === category).map(group => group.label)]))
+    expect(model.presets.map(row => [row.kind, row.label])).toEqual([
+      ...emergency.rolePresets!.map(preset => ['preset', preset.label]),
+      ['role', emergency.roles![0]!.label],
+    ])
+    const everything = roleDialogModel(declaration, togglePreset(declaration, joining, emergency.rolePresets![0]!.id), { mode: 'join', held: [], holders: null })
+    expect(everything.categories.flatMap(category => category.rows.map(row => row.control))).toEqual(groups.map(() => true))
+    expect(everything.canApply).toBe(true)
   })
 
   test('two dispatchers, one at each desk, also meet every objective, each ordering only its own groups\' units', async () => {
