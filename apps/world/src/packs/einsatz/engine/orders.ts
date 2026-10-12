@@ -103,12 +103,13 @@ const applySend = (draft: Draft, actor: EngineActor, target: Target, movers: Rea
     const fromTask = mover.fromTaskId === undefined ? undefined : taskIn(draft, mover.fromTaskId)
     const unit = fromTask === undefined ? before : releaseFromTask(draft, before, actionBy(draft, actor, 'release', fromTask.id, target.kind === 'task' ? 'divert' : 'move'))
     setMotion(draft, unit.id, { progressMs: 0 })
+    // A unit leaves its base when it departs; while it turns out it is still there.
     const departing = { leg: legs.get(unit.id)!, atBase: false, alerts: clearAlerts(unit.alerts, orderAlertCodes), phaseSinceMs: draft.timeMs, phaseDueMs: undefined }
     if (target.kind === 'task') {
       const mobilizeMs = unitTypeOf(draft.catalog, unit).components.mobility!.mobilizeS * 1_000
       const turnout = before.phase === 'mobilizing'
-        ? { phase: 'mobilizing' as const, phaseSinceMs: before.phaseSinceMs, phaseDueMs: before.phaseDueMs }
-        : !isMoving(before) && mobilizeMs > 0 ? { phase: 'mobilizing' as const, phaseDueMs: draft.timeMs + mobilizeMs } : { phase: 'en-route' as const }
+        ? { phase: 'mobilizing' as const, atBase: unit.atBase, phaseSinceMs: before.phaseSinceMs, phaseDueMs: before.phaseDueMs }
+        : !isMoving(before) && mobilizeMs > 0 ? { phase: 'mobilizing' as const, atBase: unit.atBase, phaseDueMs: draft.timeMs + mobilizeMs } : { phase: 'en-route' as const }
       const cause = fromTask === undefined ? undefined : `from ${fromTask.label}`
       putUnit(draft, patch(unit, { ...departing, ...turnout, taskId: target.task.id, lastAction: actionBy(draft, actor, fromTask === undefined ? 'send' : 'divert', target.task.id, cause) }))
     } else if (target.kind === 'site' && hasLoad(unit)) {

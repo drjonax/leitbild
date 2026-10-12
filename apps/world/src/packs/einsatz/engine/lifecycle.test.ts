@@ -28,10 +28,12 @@ const normalized = (state: EngineState) => ({
 describe('Einsatz unit lifecycle', () => {
   test('crosses every timed phase, delivers by standing order, closes the task and returns to base', async () => {
     const sent = await lifecycleState()
-    expect(unitOf(sent, 'u1')).toMatchObject({ phase: 'mobilizing', phaseDueMs: start + 2_000, taskId: 't1', atBase: false })
+    expect(unitOf(sent, 'u1')).toMatchObject({ phase: 'mobilizing', phaseDueMs: start + 2_000, taskId: 't1', atBase: true })
     const onTaskAt = arrivalAt(sent, 'u1')
     const { state, transitions } = await advanceEngine(sent, start + 300_000, ports)
     expect(phasesOf(transitions, 'u1')).toEqual(['en-route', 'on-task', 'holding', 'transporting', 'at-site', 'available', 'returning', 'available'])
+    const departed = transitions.find(entry => entry.kind === 'unit' && entry.record.id === 'u1' && entry.record.phase === 'en-route')
+    expect(departed?.kind === 'unit' && departed.record).toMatchObject({ atBase: false })
     const timeOf = (phase: string): number => transitions.find(entry => entry.kind === 'unit' && entry.record.id === 'u1' && entry.record.phase === phase)!.atMs
     expect(timeOf('on-task')).toBe(onTaskAt)
     expect(timeOf('holding')).toBe(onTaskAt + 3_000)
@@ -82,6 +84,20 @@ describe('Einsatz unit lifecycle', () => {
     expect(unitOf(state, 'b').phaseDueMs).toBe(arrival + 14_000)
     state = await advance(state, arrival + 20_000)
     expect(unitOf(state, 'site').received).toEqual({ [top]: 1, [middle]: 1, [low]: 1 })
+  })
+
+  test('a unit turning out is still at base, so a task closed or a recall then leaves it there with no return order', async () => {
+    const turningOut = await runAll(emptyState(), [
+      newUnit('u1', types.roadCarrier, at(0)),
+      newTask('t1', templates.load, at(0.01), { [low]: 1 }),
+      send(['u1'], { taskId: 't1' }),
+    ])
+    for (const intent of [{ kind: 'task.close', taskId: 't1' }, { kind: 'recall', unitId: 'u1' }] as const) {
+      const stood = await run(turningOut, intent)
+      expect(unitOf(stood, 'u1')).toMatchObject({ phase: 'available', atBase: true })
+      expect(unitOf(stood, 'u1').leg).toBeUndefined()
+      expect((await advanceEngine(stood, start + 300_000, ports)).transitions).toEqual([])
+    }
   })
 
   test('a loaded unit cannot be recalled or re-tasked; one recalled before pickup leaves the load waiting at its age', async () => {

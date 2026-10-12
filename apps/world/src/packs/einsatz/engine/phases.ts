@@ -99,7 +99,7 @@ const arrive = (draft: Draft, unit: UnitRecord): void => {
 const stepUnit = (draft: Draft, unit: UnitRecord): boolean => {
   if (isDestroyed(unit)) return false
   const due = unit.phaseDueMs !== undefined && unit.phaseDueMs <= draft.timeMs
-  if (unit.phase === 'mobilizing' && due) putUnit(draft, patch(unit, { phase: 'en-route', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
+  if (unit.phase === 'mobilizing' && due) putUnit(draft, patch(unit, { phase: 'en-route', atBase: false, phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
   else if (unit.phase === 'on-task' && due) finishTask(draft, unit)
   else if (unit.phase === 'at-site' && due) finishHandover(draft, unit)
   else if (isMoving(unit) && unit.leg !== undefined && hasArrived(unit.leg, draft.motion.get(unit.id)!.progressMs)) arrive(draft, unit)
