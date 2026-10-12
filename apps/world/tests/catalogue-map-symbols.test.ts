@@ -53,6 +53,7 @@ const layersOf = (snapshot: OperationalRenderSnapshot, catalogueAtlas: Catalogue
   snapshot,
   visibleFamilies: new Set(['objects', 'routes']),
   catalogueAtlas,
+  exactPointer: true,
   onObjectSelected: () => undefined,
   onObjectSeen: () => undefined,
   onObjectHover: () => undefined,
@@ -143,6 +144,7 @@ describe('operational map icons', () => {
       snapshot,
       visibleFamilies: new Set(['objects', 'routes']),
       catalogueAtlas: emptyCatalogueSymbolAtlas,
+      exactPointer: true,
       onObjectSelected: point => { selected.push(point.id) },
       onObjectSeen: point => { seen.push(point.id) },
       onObjectHover: point => { hovered.push(point?.id ?? null) },
@@ -252,5 +254,41 @@ describe('catalogue symbol atlas', () => {
     await flush()
     expect(run.changes).toEqual([])
     expect(run.atlas.current().url).toBeNull()
+  })
+
+  test('a mouse click on an icon\'s coloured disk between the glyph\'s strokes picks its object; a finger or pen picks as before, around the strokes only', () => {
+    const snapshot = snapshotOf([objectOf('a', 11.3), objectOf('b', 11.4)], presentationWith({}, { b: 'B2 · ENR' }))
+    type Pick = (info: { readonly object: unknown }) => void
+    const layersFor = (exactPointer: boolean, selected: string[], hovered: Array<string | null>) => createOperationalDeckLayers({
+      snapshot,
+      visibleFamilies: new Set(['objects', 'routes']),
+      catalogueAtlas: emptyCatalogueSymbolAtlas,
+      exactPointer,
+      onObjectSelected: point => { selected.push(point.id) },
+      onObjectSeen: () => undefined,
+      onObjectHover: point => { hovered.push(point?.id ?? null) },
+    })
+    const selected: string[] = []
+    const hovered: Array<string | null> = []
+    const mouse = layersFor(true, selected, hovered)
+    const disks = mouse.find(layer => layer.id === 'leitbild-object-status-disks')
+    expect(disks?.props.pickable).toBe(true)
+    ;(disks?.props.onClick as unknown as Pick)({ object: snapshot.points[0] })
+    ;(disks?.props.onHover as unknown as Pick)({ object: snapshot.points[0] })
+    expect(selected).toEqual([snapshot.points[0]!.id])
+    expect(hovered).toEqual([snapshot.points[0]!.id])
+    const touch = layersFor(false, [], [])
+    const touchDisks = touch.find(layer => layer.id === 'leitbild-object-status-disks')
+    expect(touchDisks?.props.pickable).toBe(false)
+    expect(touchDisks?.props.onClick ?? null).toBeNull()
+    // The glyphs and labels pick the same for either pointer.
+    for (const id of ['leitbild-object-symbols', 'leitbild-object-labels']) {
+      expect(mouse.find(layer => layer.id === id)?.props.pickable).toBe(true)
+      expect(touch.find(layer => layer.id === id)?.props.pickable).toBe(true)
+    }
+    // Halos and new-info rings never pick.
+    for (const id of ['leitbild-object-halos', 'leitbild-object-new-info']) {
+      expect(mouse.find(layer => layer.id === id)?.props.pickable).toBe(false)
+    }
   })
 })

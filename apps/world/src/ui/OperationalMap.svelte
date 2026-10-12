@@ -73,6 +73,11 @@
     readonly hiddenObjectCategoryIds?: ReadonlyArray<string>
     readonly hasNewInfo: (object: OperationalObject) => boolean
     readonly presentationFor: (object: OperationalObject) => PackObjectPresentation
+    /**
+     * What `presentationFor` depends on besides the object, such as the roles
+     * the screen chose to see: a change draws every object again.
+     */
+    readonly presentationKey?: string
     readonly mapFeaturesFor: (context: {
       readonly viewport: GeoJsonPolygon
       readonly zoom: number
@@ -137,6 +142,7 @@
     hiddenObjectCategoryIds = [],
     hasNewInfo,
     presentationFor,
+    presentationKey = '',
     mapFeaturesFor,
     onObjectSelected,
     onPlacementPoint,
@@ -188,6 +194,8 @@
   let hoveredObject: OperationalObject | null = null
   /** The type of the last pointer seen on the canvas; hover cards and the long press are for a mouse only (map-pointer.ts). */
   let lastPointerType: string | null = null
+  /** Whether that pointer picks exactly (a mouse, or none seen yet): the icons' disks then take clicks too. */
+  let exactPointer = true
   let assignmentPointer = $state<GeoJsonPoint | null>(null)
   let interactionRevision = $state(0)
   let lastPointerScreen = { x: 0, y: 0 }
@@ -264,6 +272,8 @@
       visibleFamilies: visibleFamilies(),
       placementCursorActive: placementCursor !== null,
       assignmentInteraction: assignmentInteraction(),
+      exactPointer,
+      presentationKey,
     }),
     hasNewInfo: object => hasNewInfo(object),
     presentationFor: object => presentationFor(object),
@@ -534,6 +544,8 @@
         if (radius === pickingRadius) return
         pickingRadius = radius
         nextRuntime.setPickingRadius(radius)
+        exactPointer = radius === 0
+        operationalRenderController.syncPicking()
       }
       const pointerPoint = (event: PointerEvent): GeoJsonPoint => {
         const rect = canvas.getBoundingClientRect()
@@ -662,6 +674,11 @@
   $effect(() => {
     hiddenObjectCategoryIds
     untrack(() => operationalRenderController.syncObjectVisibility())
+  })
+
+  $effect(() => {
+    presentationKey
+    untrack(() => operationalRenderController.syncPresentation())
   })
 
   $effect(() => {

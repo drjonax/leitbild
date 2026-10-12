@@ -393,6 +393,8 @@
   // Reset, signal and delete are controller acts in a role Run; open mode offers them to everyone.
   const controllerControls = $derived(runRoles === null || (heldRoleIds !== null && roleClassForRoleSet(runRoles, heldRoleIds) === 'controller'))
   // Pack map features belong to one perspective, like every Run store, and are drawn for the roles this tab sees.
+  // The map presents objects again when the roles the screen sees change; constant in open mode.
+  const mapPresentationKey = $derived(JSON.stringify(seenRoleIds))
   const mapFeatureDataKey = $derived(JSON.stringify([perspectiveEpoch, packDataRevisions, seenRoleIds]))
   // Only while an active Pack draws the selected object differently does a selection change redraw Pack map features.
   const mapFeaturesFollowSelection = $derived(activePack?.presentation.mapFeaturesFollowSelection === true)
@@ -2024,6 +2026,7 @@
           {hiddenObjectCategoryIds}
           {hasNewInfo}
           presentationFor={mapPresentationFor}
+          presentationKey={mapPresentationKey}
           {mapFeaturesFor}
           onObjectSelected={selectObject}
           onPlacementPoint={placement.placePoint}

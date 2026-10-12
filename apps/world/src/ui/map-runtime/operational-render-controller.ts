@@ -31,6 +31,14 @@ export interface OperationalRenderControllerState {
   readonly visibleFamilies: ReadonlySet<string>
   readonly placementCursorActive: boolean
   readonly assignmentInteraction: MapAssignmentInteraction
+  /** Whether the last pointer picks exactly, as a mouse does: the icons' disks then take clicks too (`OperationalDeckLayerConfig`). */
+  readonly exactPointer: boolean
+  /**
+   * What an object's presentation depends on besides the object itself, such
+   * as the roles a screen chose to see: a change presents every object again.
+   * Constant for a screen whose presentation follows its objects alone.
+   */
+  readonly presentationKey: string
 }
 
 export interface OperationalRenderControllerConfig {
@@ -57,6 +65,10 @@ export interface OperationalRenderController {
   readonly syncVisibility: () => void
   readonly syncObjectVisibility: () => void
   readonly syncInteraction: () => void
+  /** The pointer changed between exact (a mouse) and a finger or pen: redraw which layers pick. */
+  readonly syncPicking: () => void
+  /** The presentation key changed: present every object again. */
+  readonly syncPresentation: () => void
   /** New catalogue artwork arrived: redraw the symbol layers. */
   readonly syncSymbolArtwork: () => void
   readonly flushNow: () => void
@@ -81,11 +93,23 @@ const renderFamiliesForAreaFeatures: ReadonlyArray<RenderFamily> = [
   'operational-areas',
 ]
 
-const createRenderPresentationFor = (
+/**
+ * Each object's presentation for one render, kept while the object's
+ * revision and the presentation key stay the same: a new key (the roles a
+ * screen sees changed) presents every object again, revision or not.
+ */
+export const createRenderPresentationFor = (
   presentationFor: (object: OperationalObject) => PackObjectPresentation,
+  presentationKey: () => string,
 ): ((object: OperationalObject) => PackObjectPresentation) => {
   const cache = new Map<string, PackObjectPresentation>()
+  let cachedKey: string | null = null
   return (object) => {
+    const current = presentationKey()
+    if (current !== cachedKey) {
+      cache.clear()
+      cachedKey = current
+    }
     const key = `${object.id}:${object.revision}`
     const cached = cache.get(key)
     if (cached) return cached
@@ -114,6 +138,7 @@ const renderSignatureFor = (
   visibleFamilies: ReadonlySet<string>,
   interactionRevision: number,
   catalogueAtlasRevision: number,
+  exactPointer: boolean,
 ): string => [
   snapshot.revisions.points,
   snapshot.revisions.paths,
@@ -122,6 +147,7 @@ const renderSignatureFor = (
   visibleFamiliesKey(visibleFamilies),
   interactionRevision,
   catalogueAtlasRevision,
+  exactPointer,
 ].join('|')
 
 /** Catalogue icons the snapshot draws beyond the compiled atlas. */
@@ -140,7 +166,7 @@ export const createOperationalRenderController = (
   const deckLayerFactory = createOperationalDeckLayerFactory()
   const pendingFamilies = new Set<RenderFamily>()
   const renderHasNewInfo = createRenderHasNewInfo(config.hasNewInfo)
-  const renderPresentationFor = createRenderPresentationFor(config.presentationFor)
+  const renderPresentationFor = createRenderPresentationFor(config.presentationFor, () => config.getState().presentationKey)
   let displayMotionState: DisplayMotionState = createDisplayMotionState()
   let previousMotionObjects: ReadonlyArray<OperationalObject> = []
   let displayFrame: number | null = null
@@ -214,7 +240,7 @@ export const createOperationalRenderController = (
       if (catalogueIds.size > 0) config.catalogueAtlas.request(catalogueIds)
     }
     const catalogueAtlas = config.catalogueAtlas.current()
-    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision)
+    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.exactPointer)
     const deckUpdated = renderSignature !== lastRenderSignature
     if (deckUpdated) {
       lastRenderSignature = renderSignature
@@ -225,6 +251,7 @@ export const createOperationalRenderController = (
           snapshot,
           visibleFamilies: state.visibleFamilies,
           catalogueAtlas,
+          exactPointer: state.exactPointer,
           onObjectSelected: point => {
             config.onObjectSelected(point.object)
           },
@@ -358,6 +385,12 @@ export const createOperationalRenderController = (
     },
     syncInteraction: () => {
       schedule('placement', 95)
+    },
+    syncPicking: () => {
+      schedule('diagnostics', 95)
+    },
+    syncPresentation: () => {
+      scheduleMany(renderFamiliesForObjects, 75)
     },
     syncSymbolArtwork: () => {
       schedule('diagnostics', 60)
