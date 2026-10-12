@@ -1,9 +1,14 @@
 // A minimal World Pack for core tests only. It gives the platform positioned
 // objects, Scenario items, presentation and recording without borrowing any
-// shipped Pack's domain. Its runtime lives in fixture-runtime.ts.
+// shipped Pack's domain. Its runtime lives in fixture-runtime.ts. In a Run
+// that declares sides it keeps the role-aware obligations: each item writes
+// the audience it declares, and the runtime answers within the stamped viewer.
+// role-runs.ts opts it into role Runs.
 import { z } from 'zod'
 import {
   geoPointFromLonLat,
+  idSchema,
+  objectAudienceSchema,
   objectIdSchema,
   type AdapterId,
   type GeoJsonPoint,
@@ -19,6 +24,8 @@ import {
   createWorldPackDescriptor,
   type PackObjectPresentation,
   type PackScenarioAuthoringField,
+  type PackScenarioConfigContext,
+  type PackScenarioConfigIssue,
   type WorldPack,
 } from '../../src/core/packs/protocol.ts'
 
@@ -34,8 +41,12 @@ const common = {
   label: z.string().trim().min(1).max(120),
   position: lonLat.optional(),
   atObject: objectIdSchema.optional(),
+  /** Whose picture the object belongs to in a Run that declares sides; written as given. */
+  audience: objectAudienceSchema.optional(),
 }
-const unitItemSchema = z.object({ ...common, type: z.literal('unit'), speedMps: z.number().finite().positive().max(100) }).strict()
+/** A crew is configuration vocabulary that authority names, never an instance id. */
+const crewSchema = z.string().trim().min(1).max(40)
+const unitItemSchema = z.object({ ...common, type: z.literal('unit'), speedMps: z.number().finite().positive().max(100), crew: crewSchema.optional() }).strict()
 const siteItemSchema = z.object({ ...common, type: z.literal('site') }).strict()
 const taskItemSchema = z.object({ ...common, type: z.literal('task'), priority: prioritySchema }).strict()
 
@@ -50,7 +61,7 @@ export type FixtureItem = z.infer<typeof fixtureItemSchema>
 /** Pack-owned truth. A unit's motion is fully described by its canonical
  * position, its speed and the task it is heading to. */
 export const fixtureDataSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('unit'), speedMps: z.number().finite().positive(), taskId: objectIdSchema.optional() }).strict(),
+  z.object({ type: z.literal('unit'), speedMps: z.number().finite().positive(), taskId: objectIdSchema.optional(), crew: crewSchema.optional() }).strict(),
   z.object({ type: z.literal('site') }).strict(),
   z.object({ type: z.literal('task'), priority: prioritySchema, unitId: objectIdSchema.optional() }).strict(),
 ])
@@ -58,8 +69,27 @@ export type FixtureData = z.infer<typeof fixtureDataSchema>
 export const fixtureDataOf = (object: OperationalObject): FixtureData => fixtureDataSchema.parse(object.packData)
 
 /** Declares query providers a Run must have, so core tests can exercise the
- * conditional dependency check. The runtime itself never invokes them. */
-export const fixtureConfigSchema = z.object({ requiredQueries: z.array(z.string().min(1)).default([]) }).strict()
+ * conditional dependency check (the runtime itself never invokes them), and
+ * optionally which crews each operator role commands. Without authority every
+ * operator role commands every unit it sees. */
+export const fixtureConfigSchema = z.object({
+  requiredQueries: z.array(z.string().min(1)).default([]),
+  authority: z.array(z.object({ roleId: idSchema, crews: z.array(crewSchema).min(1) }).strict()).optional(),
+}).strict()
+export type FixtureConfig = z.infer<typeof fixtureConfigSchema>
+
+/** Authority names declared operator roles only: a controller-class role commands everything already. */
+export const fixtureConfigIssues = (raw: unknown, context: PackScenarioConfigContext): ReadonlyArray<PackScenarioConfigIssue> => {
+  const config = fixtureConfigSchema.parse(raw)
+  if (config.authority === undefined) return []
+  if (context.roles.length === 0) return [{ path: ['authority'], code: 'authority_without_roles', message: 'authority_without_roles: authority needs a Scenario that declares roles' }]
+  return config.authority.flatMap((entry, index) => {
+    const role = context.roles.find(candidate => candidate.id === entry.roleId)
+    if (!role) return [{ path: ['authority', index, 'roleId'], code: 'unknown_authority_role', message: `unknown_authority_role: no declared role ${entry.roleId}` }]
+    if (role.class === 'controller') return [{ path: ['authority', index, 'roleId'], code: 'controller_authority', message: `controller_authority: controller role ${entry.roleId} commands every unit; give authority to operator roles only` }]
+    return []
+  })
+}
 
 const kindByType: Readonly<Record<FixtureItem['type'], ObjectKind>> = { unit: 'mobile_entity', site: 'facility', task: 'incident' }
 const initialStatusByType: Readonly<Record<FixtureItem['type'], string>> = { unit: 'available', site: 'open', task: 'open' }
@@ -79,7 +109,7 @@ export const createFixtureObject = (raw: FixtureItem, context: {
   const item = fixtureItemSchema.parse(raw)
   if (context.objectById(item.id)) throw new Error(`Object already exists: ${item.id}`)
   const point = placeOf(item, context.objectById)
-  const packData: FixtureData = item.type === 'unit' ? { type: 'unit', speedMps: item.speedMps }
+  const packData: FixtureData = item.type === 'unit' ? { type: 'unit', speedMps: item.speedMps, ...(item.crew === undefined ? {} : { crew: item.crew }) }
     : item.type === 'task' ? { type: 'task', priority: item.priority }
       : { type: 'site' }
   return {
@@ -95,6 +125,7 @@ export const createFixtureObject = (raw: FixtureItem, context: {
     provenance: { source: 'simulator', adapterId: fixtureAdapterId, externalId: item.id },
     timestamps: { createdAt: context.at, updatedAt: context.at },
     packData,
+    ...(item.audience === undefined ? {} : { audience: item.audience }),
   }
 }
 
@@ -150,6 +181,7 @@ export const fixturePack: WorldPack = {
     presentObject: object => presentFixtureObject(object),
   },
   scenarioConfigSchema: fixtureConfigSchema,
+  validateScenarioConfig: fixtureConfigIssues,
   recording: { profiles: fixtureRecordingProfiles },
   scenario: {
     referencedObjects: item => typeof item.atObject === 'string' ? [item.atObject] : [],

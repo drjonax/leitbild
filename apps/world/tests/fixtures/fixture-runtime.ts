@@ -2,6 +2,7 @@
 // recording on the Run clock, kept small enough to read in one sitting.
 import { z } from 'zod'
 import {
+  audienceVisibleTo,
   commandResultSchema,
   geoPointFromLonLat,
   isoTimestampSchema,
@@ -17,6 +18,7 @@ import {
   type OperationalObject,
   type PackRuntimeRecordingBatch,
   type RecordingSeriesDescriptor,
+  type RunViewer,
   type ScenarioRecordingSelection,
 } from '../../src/core/model/index.ts'
 import { defineSimulationCommandCapability, defineSimulationQueryCapability } from '../../src/simulation/capabilities.ts'
@@ -25,6 +27,7 @@ import type {
   PackRuntimeEvent,
   PackRuntimeEventHandler,
   PackRuntimeEventHistory,
+  PackRuntimeRealtimeMessage,
 } from '../../src/simulation/protocol.ts'
 import {
   createFixtureObject,
@@ -42,14 +45,26 @@ export const fixtureCommandIds = {
   createItem: 'world.fixture.create-item',
   assign: 'world.fixture.assign',
   setPriority: 'world.fixture.set-priority',
+  announce: 'world.fixture.announce',
 } as const
-export const fixtureQueryIds = { state: 'world.fixture.state', object: 'world.fixture.object' } as const
+export const fixtureQueryIds = { state: 'world.fixture.state', object: 'world.fixture.object', viewer: 'world.fixture.viewer' } as const
+
+/** The runtime realtime message an announcement sends. */
+export const fixtureAnnouncementType = 'fixture.announcement'
 
 const createItemInput = z.object({ item: fixtureItemSchema }).strict()
 const assignInput = z.object({ unitId: objectIdSchema, taskId: objectIdSchema }).strict()
 const setPriorityInput = z.object({ taskId: objectIdSchema, priority: prioritySchema }).strict()
+const announceInput = z.object({ text: z.string().trim().min(1).max(200) }).strict()
 const stateInput = z.object({}).strict()
 const objectInput = z.object({ objectId: objectIdSchema }).strict()
+const viewerOutput = z.object({
+  viewer: z.object({
+    roleIds: z.array(z.string()),
+    class: z.enum(['controller', 'operator']),
+    sees: z.union([z.literal('all'), z.array(z.string())]),
+  }).strict().nullable(),
+}).strict()
 const summarySchema = z.object({ id: z.string(), label: z.string(), status: z.string() }).strict()
 const stateOutput = z.object({
   units: z.array(summarySchema.extend({ taskId: z.string().nullable() })),
@@ -81,6 +96,17 @@ const capabilities = [
       const payload = setPriorityInput.parse(raw)
       return { targetObjectIds: [payload.taskId], payload }
     },
+  }),
+  defineSimulationCommandCapability({
+    id: fixtureCommandIds.announce, title: 'Announce',
+    description: 'Send every screen that may receive runtime messages a transient announcement. Changes no object.',
+    input: announceInput, output: commandResultSchema, idempotent: false, schedulable: true,
+    buildCommand: raw => ({ targetObjectIds: [], payload: announceInput.parse(raw) }),
+  }),
+  defineSimulationQueryCapability({
+    id: fixtureQueryIds.viewer, title: 'Read the stamped viewer',
+    description: 'The role view core stamped on this query from the caller\'s connection, or null where there is none.',
+    input: stateInput, output: viewerOutput,
   }),
   defineSimulationQueryCapability({
     id: fixtureQueryIds.state, title: 'Read fixture state',
@@ -152,6 +178,13 @@ const stateOf = (objects: ReadonlyArray<OperationalObject>): z.infer<typeof stat
   }
 }
 
+/** The refusal convention: `<code>: <message>`, never naming what the viewer cannot see. */
+const refusal = (code: string, message: string): Error => new Error(`${code}: ${message}`)
+
+/** A role-aware Pack answers only within the stamped viewer's picture; without a viewer it sees everything. */
+const inPicture = (object: OperationalObject, viewer: RunViewer | undefined): boolean =>
+  viewer === undefined || audienceVisibleTo(object.audience, viewer.sees)
+
 const createRecorder = (selection: ScenarioRecordingSelection, startsAtMs: number) => {
   const profile = fixtureRecordingProfiles.find(candidate => candidate.id === selection.profileId)
   if (!profile) throw new Error(`unknown fixture recording profile: ${selection.profileId}`)
@@ -191,6 +224,7 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
     const objectById = (id: ObjectId): OperationalObject | undefined => objects.get(id) ?? config.objectById?.(id)
     const handlers = new Set<PackRuntimeEventHandler>()
     const recorder = config.recording ? createRecorder(config.recording, Date.parse(config.scenario.world.startsAt)) : null
+    const authority = fixtureConfigSchema.parse(config.scenario.runtimeConfig).authority
     const store = config.runtimeStateStore
     const saved = await store?.load() ?? null
     if (config.initialObjects && store && saved === null) throw new Error('Fixture runtime checkpoint is missing on a restored Run')
@@ -209,21 +243,32 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
     const commit = (changes: ReadonlyArray<Change>): void => {
       for (const { object } of changes) objects.set(object.id, object)
     }
-    const emit = (changes: ReadonlyArray<Change>, recording?: PackRuntimeRecordingBatch): void => {
-      if (changes.length === 0 && recording === undefined) return
+    const emit = (changes: ReadonlyArray<Change>, recording?: PackRuntimeRecordingBatch, realtimeMessages?: ReadonlyArray<PackRuntimeRealtimeMessage>): void => {
+      if (changes.length === 0 && recording === undefined && realtimeMessages === undefined) return
       const at = nowIso()
       const events: PackRuntimeEvent[] = changes.map(({ object, history }) =>
         ({ type: 'object.upserted', object, history, at, provenance: object.provenance }))
       for (const handler of handlers) {
-        handler({ type: 'event.emission', runtimeId: fixtureRuntimeId, emittedAt: at, events, ...(recording ? { recording } : {}) })
+        handler({ type: 'event.emission', runtimeId: fixtureRuntimeId, emittedAt: at, events, ...(recording ? { recording } : {}), ...(realtimeMessages ? { realtimeMessages } : {}) })
       }
     }
 
-    const typed = <T extends FixtureData['type']>(id: ObjectId, type: T) => {
+    const typed = <T extends FixtureData['type']>(id: ObjectId, type: T, viewer?: RunViewer) => {
       const object = objects.get(id)
+      // A side view learns nothing of what it cannot see: a missing object and
+      // one outside its picture are refused alike, without echoing the id.
+      const visible = object !== undefined && inPicture(object, viewer)
+      if (!visible && viewer !== undefined && viewer.sees !== 'all') throw refusal('not_in_picture', `a ${type} this command names is not in your picture`)
       const data = object ? fixtureDataOf(object) : undefined
       if (!object || data?.type !== type) throw new Error(`Fixture ${type} not found: ${id}`)
       return { object, data: data as Extract<FixtureData, { type: T }> }
+    }
+
+    /** With authority declared, an operator view commands only the crews its roles are given. */
+    const assertCommands = (crew: string | undefined, viewer: RunViewer | undefined): void => {
+      if (viewer === undefined || viewer.class === 'controller' || authority === undefined) return
+      if (crew !== undefined && authority.some(entry => viewer.roleIds.includes(entry.roleId) && entry.crews.includes(crew))) return
+      throw refusal('unit_not_authorized', 'none of your roles commands this unit')
     }
 
     const step = (object: OperationalObject, seconds: number): Change[] => {
@@ -257,15 +302,18 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
     }
     const advanceToRunClock = (): void => advance(Date.parse(runClock.read().currentTime))
 
-    const apply = (command: CommandEnvelope): Change[] => {
+    const apply = (command: CommandEnvelope, viewer: RunViewer | undefined): Change[] => {
       if (command.kind === fixtureCommandIds.createItem) {
         const { item } = createItemInput.parse(command.payload)
-        return [{ object: createFixtureObject(item, { at: nowIso(), objectById }), history: 'record' }]
+        const object = createFixtureObject(item, { at: nowIso(), objectById })
+        if (!inPicture(object, viewer)) throw refusal('not_in_picture', 'a screen creates only objects in its own picture')
+        return [{ object, history: 'record' }]
       }
       if (command.kind === fixtureCommandIds.assign) {
         const { unitId, taskId } = assignInput.parse(command.payload)
-        const unit = typed(unitId, 'unit')
-        const task = typed(taskId, 'task')
+        const unit = typed(unitId, 'unit', viewer)
+        const task = typed(taskId, 'task', viewer)
+        assertCommands(unit.data.crew, viewer)
         if (unit.data.taskId !== undefined) throw new Error(`${unitId} is already assigned to ${unit.data.taskId}`)
         if (task.data.unitId !== undefined) throw new Error(`${taskId} already has unit ${task.data.unitId}`)
         return [
@@ -275,7 +323,7 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
       }
       if (command.kind === fixtureCommandIds.setPriority) {
         const { taskId, priority } = setPriorityInput.parse(command.payload)
-        const task = typed(taskId, 'task')
+        const task = typed(taskId, 'task', viewer)
         return [{ object: revise(task.object, { packData: { ...task.data, priority } }), history: 'record' }]
       }
       throw new Error(`Unsupported fixture command: ${command.kind}`)
@@ -289,10 +337,15 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
         handlers.add(handler)
         return () => { handlers.delete(handler) }
       },
-      sendCommand: async command => {
+      sendCommand: async (command, context) => {
         advanceToRunClock()
+        if (command.kind === fixtureCommandIds.announce) {
+          const { text } = announceInput.parse(command.payload)
+          emit([], undefined, [{ type: fixtureAnnouncementType, at: nowIso(), payload: { text } }])
+          return { ok: true, commandId: command.id, acceptedAt: nowIso() }
+        }
         let changes: Change[]
-        try { changes = apply(command) }
+        try { changes = apply(command, context?.viewer) }
         catch (error) {
           return { ok: false, commandId: command.id, rejectedAt: nowIso(), reason: error instanceof Error ? error.message : String(error) }
         }
@@ -303,9 +356,16 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
       invokeQuery: async request => {
         if (request.capabilityId === fixtureQueryIds.state) {
           stateInput.parse(request.input)
-          return stateOf([...objects.values()])
+          return stateOf([...objects.values()].filter(object => inPicture(object, request.viewer)))
         }
-        if (request.capabilityId === fixtureQueryIds.object) return { object: objects.get(objectInput.parse(request.input).objectId) ?? null }
+        if (request.capabilityId === fixtureQueryIds.object) {
+          const object = objects.get(objectInput.parse(request.input).objectId)
+          return { object: object !== undefined && inPicture(object, request.viewer) ? object : null }
+        }
+        if (request.capabilityId === fixtureQueryIds.viewer) {
+          stateInput.parse(request.input)
+          return { viewer: request.viewer ?? null }
+        }
         throw new Error(`Unsupported fixture query: ${request.capabilityId}`)
       },
       validateObjectDeletion: (objectId, candidates) => {

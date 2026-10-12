@@ -6,13 +6,13 @@ import { recordingSeriesQuerySchema, type RecordingPage } from '../model/recordi
 import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
 import type { PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
-import type { AgentRestrictions,RunRoles,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
-import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,notificationIdSchema,nowIso,simulationClockUpdateSchema } from '../model/index.ts'
+import type { AgentRestrictions,RunRoles,ScenarioSide,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
+import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
 import type { PackWikiRef } from '../packs/protocol.ts'
 import type { ScenarioRevisionId } from '../scenarios/library.ts'
 import { canIssueCommand,type Actor } from './actors.ts'
-import { assertRunCapabilityAllowed,roleGateRefusal } from './role-gates.ts'
+import { assertRunCapabilityAllowed,assertTruthView,roleGateRefusal,viewerForActor } from './role-gates.ts'
 import {
   CommandIdempotencyConflictError,
   commandIdempotencyConfigFromEnv,
@@ -174,6 +174,9 @@ export const createSimulationRunRuntime = async (config: {
   readonly runtimeStateLoaders?: Readonly<Record<string, () => Promise<unknown | null>>>
 }): Promise<SimulationRunRuntime> => {
   const state = config.stateStore ?? createSimulationRunStateStore()
+  // Sides are fixed for the Run's lifetime. Every commit of a sided Run checks
+  // audiences, so this is read before any commit can run.
+  const declaredSides: ReadonlyArray<ScenarioSide> | undefined = config.scenario.roles?.sides
   // Admission state invalidates in-flight prepared commands immediately. Public
   // reads and persistence see only acknowledged journal appends. Both maps share
   // immutable objects; updates cost O(batch size), not a whole-world clone.
@@ -365,12 +368,49 @@ export const createSimulationRunRuntime = async (config: {
   }
 
 
+  /**
+   * A sided Run refuses the whole batch before canonical state changes when an
+   * upsert lacks a valid audience or changes it, and writes each deletion's
+   * audience at commit so the event reaches exactly the deleted object's views.
+   */
+  const withSidedAudiences = (
+    events: ReadonlyArray<SimulationRunEvent>,
+    sides: ReadonlyArray<ScenarioSide>,
+  ): ReadonlyArray<SimulationRunEvent> => {
+    const candidates = new Map<ObjectId, OperationalObject | undefined>()
+    const current = (objectId: ObjectId): OperationalObject | undefined =>
+      candidates.has(objectId) ? candidates.get(objectId) : state.getObject(objectId)
+    return events.map(event => {
+      if (event.type === 'object.upserted') {
+        const issue = sidedObjectAudienceIssue(event.object, current(event.object.id), sides)
+        if (issue !== null) throw roleGateRefusal(issue.code, issue.message)
+        candidates.set(event.object.id, event.object)
+        return event
+      }
+      if (event.type === 'object.deleted') {
+        const deleted = current(event.objectId)
+        candidates.set(event.objectId, undefined)
+        return deleted?.audience === undefined ? event : { ...event, audience: deleted.audience }
+      }
+      return event
+    })
+  }
+
+  const assertSidedObjects = (objects: ReadonlyArray<OperationalObject>): void => {
+    if (declaredSides === undefined) return
+    for (const object of objects) {
+      const issue = sidedObjectAudienceIssue(object, undefined, declaredSides)
+      if (issue !== null) throw roleGateRefusal(issue.code, issue.message)
+    }
+  }
+
   const publishManyNow = async (
-    simulationRunEvents: ReadonlyArray<SimulationRunEvent>,
+    publishedEvents: ReadonlyArray<SimulationRunEvent>,
     options?: PublishManyOptions,
   ): Promise<void> => {
     assertCommitAvailable()
-    if (simulationRunEvents.length === 0) return
+    if (publishedEvents.length === 0) return
+    const simulationRunEvents = declaredSides === undefined ? publishedEvents : withSidedAudiences(publishedEvents, declaredSides)
     if (simulationRunEvents.some(event => event.type === 'object.deleted')) {
       // Validate the complete batch before changing canonical state. This covers
       // UI/API commands, interaction effects and runtime-originated deletions.
@@ -962,12 +1002,14 @@ export const createSimulationRunRuntime = async (config: {
     if (!Bun.deepEquals(config.restoredSnapshot.scenario?.roles ?? null, config.scenario.roles ?? null)) {
       throw new Error(`Simulation Run snapshot roles do not match its Compiled Scenario: ${config.id}`)
     }
+    assertSidedObjects(config.restoredSnapshot.objects)
     state.hydrate({
       ...config.restoredSnapshot,
       clock: runClock.read(),
     })
   } else {
     const snapshot = await config.runtimeConnection.getSnapshot()
+    assertSidedObjects(snapshot.objects)
     const scenarioState = initialScenarioState()
     state.hydrate({
       objects: snapshot.objects,
@@ -1010,7 +1052,9 @@ export const createSimulationRunRuntime = async (config: {
       type: 'command.issued',
       command,
     }), { history: commandEventDisposition })
-    const result = await handleCoreCommand(command, commandSource, actor) ?? await config.runtimeConnection.sendCommand(command)
+    const viewer = viewerForActor(runRoles, actor)
+    const result = await handleCoreCommand(command, commandSource, actor)
+      ?? await config.runtimeConnection.sendCommand(command, viewer === undefined ? {} : { viewer })
     await drainRuntimeEmissions()
     await publishOneGenerated(() => ({
       id: eventId(),
@@ -1049,9 +1093,11 @@ export const createSimulationRunRuntime = async (config: {
     }
     if (active.capability.kind === 'query') {
       assertAllowed('inspect', active.capability.inspectObjectIds?.(input) ?? [])
+      const viewer = viewerForActor(runRoles, actor)
       const result = await config.runtimeConnection.invokeQuery({
         capabilityId: active.capability.id,
         input,
+        ...(viewer === undefined ? {} : { viewer }),
       })
       return { kind: 'query', result: active.capability.output.parse(result) }
     }
@@ -1287,6 +1333,12 @@ export const createSimulationRunRuntime = async (config: {
     invocation: SimulationRunCapabilityInvocation,
   ): Promise<SimulationRunCapabilityInvocationResult> => {
     assertRunCapabilityAllowed(runRoles, actor, invocation.capabilityId)
+    // A side view reaches only role-aware Pack Capabilities, which answer
+    // within its picture; World's own operations would show it truth.
+    const viewer = viewerForActor(runRoles, actor)
+    if (viewer !== undefined && runtimeCapabilities.get(invocation.capabilityId)?.packId === 'world') {
+      assertTruthView(viewer.sees, `World operation ${invocation.capabilityId}`)
+    }
     // Generic object deletion is a short canonical mutation. Commit it inside
     // the execution queue so maximum pace cannot advance another slice between
     // validation and deletion. Pack cleanup follows the resulting core event.

@@ -2,7 +2,7 @@ import type { CommandEnvelope,CommandResult,OperationalObject,SimulationRunEvent
 import { nowIso } from '../core/model/index.ts'
 import { capabilityIds } from './capabilities.ts'
 import { isExpectedCapabilityRejection } from './capability-rejection.ts'
-import type { PackRuntimeAdapter,PackRuntimeConnection,PackRuntimeConnectionConfig,PackRuntimeEmission,PackRuntimeEventHandler,PackRuntimeHealth,PackRuntimeQuery,PackRuntimeRealtimeInput,PackRuntimeSnapshot,PackScenarioRuntimeConfig } from './protocol.ts'
+import type { PackCommandContext,PackRuntimeAdapter,PackRuntimeConnection,PackRuntimeConnectionConfig,PackRuntimeEmission,PackRuntimeEventHandler,PackRuntimeHealth,PackRuntimeQuery,PackRuntimeRealtimeInput,PackRuntimeSnapshot,PackScenarioRuntimeConfig } from './protocol.ts'
 
 const duplicateObjectIds = (objects: ReadonlyArray<OperationalObject>): ReadonlyArray<string> => {
   const seen = new Set<string>()
@@ -266,7 +266,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         }
       }
 
-      const sendCommand = async (command: CommandEnvelope): Promise<CommandResult> => {
+      const sendCommand = async (command: CommandEnvelope, context?: PackCommandContext): Promise<CommandResult> => {
         const target = commandTargets.get(command.kind)
         if (!target) {
           return {
@@ -278,7 +278,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         }
         try {
           assertAvailable(target.adapter.id)
-          const result = await target.connection.sendCommand(command)
+          const result = await target.connection.sendCommand(command, context)
           markHealthy(target.adapter.id, command.kind)
           return result
         } catch (error) {

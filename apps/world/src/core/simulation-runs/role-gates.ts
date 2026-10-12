@@ -1,9 +1,10 @@
-import { deleteObjectCommandKind, roleClassForRoleSet, type RoleClass, type RunRoles } from '../model/index.ts'
+import { audienceRefusalCodes, deleteObjectCommandKind, isSideView, roleClassForRoleSet, seesForRoleSet, viewerForRoleSet, type RoleClass, type RoleSees, type RunRoles, type RunViewer } from '../model/index.ts'
 import type { Actor } from './actors.ts'
 
 /**
  * Core gates of a Run that declares roles. Each refusal carries its own code
  * so a caller can tell them apart; a Run without roles never reaches them.
+ * A Run that declares sides adds the side-view gate and its audience checks.
  */
 export const roleGateCodes = [
   'role_required',
@@ -11,6 +12,8 @@ export const roleGateCodes = [
   'role_controller_only',
   'ai_role_run_unsupported',
   'agent_restrictions_in_role_run',
+  'role_view_not_supported',
+  ...audienceRefusalCodes,
 ] as const
 export type RoleGateCode = typeof roleGateCodes[number]
 
@@ -21,7 +24,9 @@ export type RoleGateRefusal = Error & {
 }
 
 const statusFor = (code: RoleGateCode): RoleGateRefusal['status'] =>
-  code === 'unknown_role' ? 400 : code === 'agent_restrictions_in_role_run' ? 409 : 403
+  code === 'unknown_role' || code === 'audience_required' || code === 'audience_undeclared_side' ? 400
+    : code === 'agent_restrictions_in_role_run' || code === 'audience_changed' ? 409
+      : 403
 
 export const roleGateRefusal = (
   code: RoleGateCode,
@@ -83,6 +88,26 @@ export const assertControllerRole = (perspective: RunPerspective, action: string
   if (perspective.kind === 'roles' && perspective.roleClass !== 'controller') {
     throw roleGateRefusal('role_controller_only', `${action} needs a controller role`, { roleIds: [...perspective.roleIds] })
   }
+}
+
+/** What a perspective sees: everything in open mode, else its role set's union. */
+export const seesOfPerspective = (declaration: RunRoles | null, perspective: RunPerspective): RoleSees =>
+  declaration === null || perspective.kind !== 'roles' ? 'all' : seesForRoleSet(declaration, perspective.roleIds)
+
+/**
+ * The viewer core stamps for Packs on an actor's queries and commands: the
+ * role set the actor's connection holds. Open mode and the Scenario timeline
+ * have none.
+ */
+export const viewerForActor = (declaration: RunRoles | null, actor: Actor): RunViewer | undefined =>
+  declaration === null || actor.roleIds === undefined ? undefined : viewerForRoleSet(declaration, actor.roleIds)
+
+export const roleViewNotSupportedRefusal = (what: string): RoleGateRefusal =>
+  roleGateRefusal('role_view_not_supported', `${what} is not offered to a role that sees only some sides`)
+
+/** A side view reaches only the routes and Capabilities that build its picture. */
+export const assertTruthView = (sees: RoleSees, what: string): void => {
+  if (isSideView(sees)) throw roleViewNotSupportedRefusal(what)
 }
 
 /** The Actor a perspective plays: its role set and its class mapped onto Actor.role. */

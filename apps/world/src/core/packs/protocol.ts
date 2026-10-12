@@ -3,7 +3,7 @@ import type { Component } from 'svelte'
 import { z } from 'zod'
 import type { DatasetConfig,DatasetId } from '../../reference-data/types.ts'
 import type { RoutingAdapter } from '../../routing/protocol.ts'
-import type { GeoJsonPoint,GeoJsonPolygon,InteractionHandler,IsoTimestamp,MapLayerId,ObjectId,OperationalObject,ProcedureTag,RecordingProfileDescriptor } from '../model/index.ts'
+import type { GeoJsonPoint,GeoJsonPolygon,InteractionHandler,IsoTimestamp,MapLayerId,ObjectId,OperationalObject,ProcedureTag,RecordingProfileDescriptor,RunViewer,ScenarioRole,ScenarioSide } from '../model/index.ts'
 import { geoJsonPointSchema,geoJsonPolygonSchema,isoTimestampSchema } from '../model/index.ts'
 import { geoJsonGeometrySchema, type GeoJsonGeometry } from '../model/geo.ts'
 import type { PackMapAppearance,PackMapLegend,PackMapLegendSwatch,PackReferenceDatasetStyle } from './reference-style.ts'
@@ -303,6 +303,8 @@ export interface PackObjectCreationContext {
 
 export interface PackTargetContext {
   readonly objects: ReadonlyArray<OperationalObject>
+  /** The screen's role view in a role Run, from the role set its connection holds; absent in open mode. */
+  readonly viewer?: RunViewer
 }
 
 export type PackRuntimeClock = 'simulation' | 'live' | 'none'
@@ -642,15 +644,45 @@ export interface WorldPack extends WorldPackView {
    * - its Run-scoped UI state belongs to one perspective and is discarded when
    *   the screen's role set changes;
    * - it needs no other Pack that calls the Run without a role.
-   * Sided Runs (R2) add audience and viewer obligations here.
+   * In a Run that declares sides, readers holding a role receive their role's
+   * view of the one projection: objects and events filtered by audience,
+   * scenario state redacted, and runtime realtime messages limited to
+   * `pack.data.changed`. Pack runtimes, interaction handlers, persistence and
+   * the journal keep complete truth. A role-aware Pack therefore:
+   * - writes an audience on every object it upserts;
+   * - answers queries and refusals only within the stamped viewer's picture
+   *   (`PackRuntimeQuery.viewer`, `PackCommandContext.viewer`), which core
+   *   stamps from the caller's connection, never from input;
+   * - keeps sided ids out of public objects;
+   * - emits side-visible realtime messages only for public authoring changes.
    */
   readonly roleAware?: true
+  /**
+   * Checks this Pack's parsed Scenario configuration against the Scenario's
+   * roles and sides (both empty when it declares none). Run when a Scenario
+   * compiles; each issue is refused at its path within the configuration.
+   */
+  readonly validateScenarioConfig?: (config: unknown, context: PackScenarioConfigContext) => ReadonlyArray<PackScenarioConfigIssue>
   readonly authoring?: PackScenarioAuthoringContribution
   readonly recording?: PackRecordingContribution
   readonly knowledge?: PackKnowledgeContribution
   readonly referenceData?: PackReferenceDataContribution
   readonly scenario?: PackScenarioSupport
   readonly interactions?: PackInteractionContribution
+}
+
+/** The declarations a Pack's configuration is checked against. */
+export interface PackScenarioConfigContext {
+  readonly roles: ReadonlyArray<ScenarioRole>
+  readonly sides: ReadonlyArray<ScenarioSide>
+}
+
+export interface PackScenarioConfigIssue {
+  /** Within the Pack's configuration. */
+  readonly path: ReadonlyArray<string | number>
+  readonly message: string
+  /** A refusal code callers can tell apart, when the issue has one. */
+  readonly code?: string
 }
 
 export const emptyPackScenarioConfigSchema = z.object({}).strict()

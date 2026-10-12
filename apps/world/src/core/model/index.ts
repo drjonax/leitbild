@@ -1,4 +1,5 @@
 export * from './alerts.ts'
+export * from './audience.ts'
 export * from './commands.ts'
 export * from './context.ts'
 export * from './demands.ts'

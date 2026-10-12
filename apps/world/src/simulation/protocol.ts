@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,RecordedSample,ScenarioRecordingSelection,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
+import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,RecordedSample,RunViewer,ScenarioRecordingSelection,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
 import type { PackRuntimeClock } from '../core/packs/protocol.ts'
 
 export interface PackRuntimeSnapshot {
@@ -77,7 +77,7 @@ export type PackRuntimeEventHandler = (emission: PackRuntimeEmission) => void
 export interface PackRuntimeConnection {
   readonly getSnapshot: () => Promise<PackRuntimeSnapshot>
   readonly subscribe: (handler: PackRuntimeEventHandler) => () => void
-  readonly sendCommand: (command: CommandEnvelope) => Promise<CommandResult>
+  readonly sendCommand: (command: CommandEnvelope, context?: PackCommandContext) => Promise<CommandResult>
   readonly receiveRealtimeInput?: (input: PackRuntimeRealtimeInput) => Promise<void>
   readonly commandEventHistory?: (command: CommandEnvelope) => PackRuntimeEventHistory
   readonly invokeQuery: (query: PackRuntimeQuery) => Promise<unknown>
@@ -106,6 +106,18 @@ export interface PackRuntimeConnection {
 export interface PackRuntimeQuery {
   readonly capabilityId: string
   readonly input: unknown
+  /**
+   * The caller's role view in a Run that declares roles, stamped by core from
+   * the caller's connection, never from input. Absent in open mode, for the
+   * Scenario timeline and for queries between Packs.
+   */
+  readonly viewer?: RunViewer
+}
+
+/** What core tells a Pack about a command's caller beyond the journaled envelope. */
+export interface PackCommandContext {
+  /** As PackRuntimeQuery.viewer: from the caller's connection, absent in open mode and for the timeline. */
+  readonly viewer?: RunViewer
 }
 
 export interface PackRuntimeStateStore {

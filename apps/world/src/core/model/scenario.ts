@@ -5,7 +5,8 @@ import { idSchema,objectIdSchema,signalIdSchema,type ObjectId,type SignalId } fr
 import { interactionEndpointSchema,type InteractionEndpoint } from './interactions.ts'
 import { operationalObjectSchema,type OperationalObject } from './object.ts'
 import { scenarioRecordingSelectionSchema,type ScenarioRecordingSelection } from './recording.ts'
-import { roleDeclarationIssues,runRolesSchema,scenarioRolePresetSchema,scenarioRoleSchema,type RunRoles,type ScenarioRole,type ScenarioRolePreset } from './roles.ts'
+import { roleDeclarationIssues,runRolesSchema,scenarioRolePresetSchema,scenarioRoleSchema,scenarioSideSchema,type RoleDeclarationIssue,type RunRoles,type ScenarioRole,type ScenarioRolePreset,type ScenarioSide } from './roles.ts'
+import { sidedObjectAudienceIssue,type ObjectAudience } from './audience.ts'
 import { isoTimestampSchema,type IsoTimestamp } from './time.ts'
 
 export interface ScenarioWorldDefinition {
@@ -135,6 +136,8 @@ export interface CompiledScenario {
   readonly agentRestrictions: AgentRestrictions
   readonly roles?: ReadonlyArray<ScenarioRole>
   readonly rolePresets?: ReadonlyArray<ScenarioRolePreset>
+  /** Visibility keys for the roles' pictures; absent when the Scenario declares none. */
+  readonly sides?: ReadonlyArray<ScenarioSide>
   readonly packs: ReadonlyArray<string>
   readonly packRuntimes: Record<string, string>
   readonly packConfigs: Record<string, unknown>
@@ -198,14 +201,18 @@ export const scenarioExecutionStateSchema = z.object({
   timeline: scenarioTimelineProgressStateSchema.optional(),
 }).strict().superRefine((state, ctx) => {
   if (state.roles === undefined) return
-  for (const issue of roleDeclarationIssues(state.roles.roles, state.roles.presets)) {
+  for (const issue of roleDeclarationIssues(state.roles.roles, state.roles.presets, state.roles.sides)) {
     const [field, ...rest] = issue.path
-    ctx.addIssue({ code: 'custom', path: ['roles', field === 'rolePresets' ? 'presets' : 'roles', ...rest], message: issue.message })
+    ctx.addIssue({ code: 'custom', path: ['roles', field === 'rolePresets' ? 'presets' : field ?? 'roles', ...rest], message: issue.message, ...issueParams(issue) })
   }
   if (!agentRestrictionsAreEmpty(state.agentRestrictions)) {
     ctx.addIssue({ code: 'custom', path: ['agentRestrictions'], message: agentRestrictionsInRoleRunMessage })
   }
 })
+
+/** A role-declaration issue's refusal code, as zod issue params callers read. */
+export const issueParams = (issue: Pick<RoleDeclarationIssue, 'code'>): { readonly params?: { readonly code: string } } =>
+  issue.code === undefined ? {} : { params: { code: issue.code } }
 
 const operationIdSchema = z.string().regex(/^[a-z][a-z0-9-]*(?:[._-][a-z0-9-]+)+$/)
 
@@ -311,6 +318,35 @@ export const scenarioTimelineSchema = z.object({
   }
 }).strict()
 
+/**
+ * A sided Scenario's initial objects each carry a valid audience, and its
+ * guidance, which every side is shown, names only public objects.
+ */
+const sidedScenarioIssues = (
+  sides: ReadonlyArray<ScenarioSide>,
+  initialObjects: ReadonlyArray<{ readonly id: string; readonly audience?: ObjectAudience | undefined }>,
+  timeline: { readonly cues: ReadonlyArray<{ readonly actions: ReadonlyArray<{ readonly type: string; readonly guidance?: { readonly id: string; readonly objectIds: ReadonlyArray<string> } }> }> } | undefined,
+): ReadonlyArray<RoleDeclarationIssue> => {
+  const issues: RoleDeclarationIssue[] = initialObjects.flatMap((object, index) => {
+    const issue = sidedObjectAudienceIssue(object, undefined, sides)
+    return issue === null ? [] : [{ path: ['initialObjects', index, 'audience'], code: issue.code, message: issue.message }]
+  })
+  const audiences = new Map<string, ObjectAudience | undefined>(initialObjects.map(object => [object.id, object.audience]))
+  ;(timeline?.cues ?? []).forEach((cue, cueIndex) => cue.actions.forEach((action, actionIndex) => {
+    if (action.type !== 'show_guidance' || action.guidance === undefined) return
+    const guidance = action.guidance
+    guidance.objectIds.forEach((objectId, objectIndex) => {
+      if (audiences.get(objectId) === 'public') return
+      issues.push({
+        path: ['timeline', 'cues', cueIndex, 'actions', actionIndex, 'guidance', 'objectIds', objectIndex],
+        code: 'guidance_references_sided_object',
+        message: `guidance_references_sided_object: guidance ${guidance.id} names ${audiences.has(objectId) ? 'an object that is not public' : 'an object that is not an initial public object'}; every side is shown guidance, so it may name only public objects`,
+      })
+    })
+  }))
+  return issues
+}
+
 export const compiledScenarioSchema = z.object({
   id: idSchema,
   schemaVersion: z.literal(1),
@@ -320,6 +356,7 @@ export const compiledScenarioSchema = z.object({
   agentRestrictions: agentRestrictionsSchema,
   roles: z.array(scenarioRoleSchema).min(1).optional(),
   rolePresets: z.array(scenarioRolePresetSchema).min(1).optional(),
+  sides: z.array(scenarioSideSchema).min(1).optional(),
   packs: z.array(idSchema).default([]),
   packRuntimes: z.record(z.string(), idSchema).default({}),
   packConfigs: z.record(z.string(), z.unknown()).default({}),
@@ -330,8 +367,13 @@ export const compiledScenarioSchema = z.object({
   recording: z.array(scenarioRecordingSelectionSchema).default([]),
   timeline: scenarioTimelineSchema.optional(),
 }).superRefine((scenario, ctx) => {
-  for (const issue of roleDeclarationIssues(scenario.roles, scenario.rolePresets)) {
-    ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message })
+  for (const issue of roleDeclarationIssues(scenario.roles, scenario.rolePresets, scenario.sides)) {
+    ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message, ...issueParams(issue) })
+  }
+  if (scenario.sides !== undefined) {
+    for (const issue of sidedScenarioIssues(scenario.sides, scenario.initialObjects, scenario.timeline)) {
+      ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message, ...issueParams(issue) })
+    }
   }
   if (scenario.roles !== undefined && !agentRestrictionsAreEmpty(scenario.agentRestrictions)) {
     ctx.addIssue({ code: 'custom', path: ['agentRestrictions'], message: agentRestrictionsInRoleRunMessage, params: { code: 'agent_restrictions_in_role_run' } })

@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { agentRestrictionsAreEmpty, agentRestrictionsInRoleRunMessage, agentRestrictionsSchema, electricalConnectionSpecSchema, idSchema, objectContextSchema, objectIdSchema, roleDeclarationIssues, scenarioRecordingSelectionSchema, scenarioRolePresetSchema, scenarioRoleSchema } from '../model/index.ts'
-import { scenarioTimelineSchema } from '../model/scenario.ts'
+import { agentRestrictionsAreEmpty, agentRestrictionsInRoleRunMessage, agentRestrictionsSchema, electricalConnectionSpecSchema, idSchema, objectContextSchema, objectIdSchema, roleDeclarationIssues, scenarioRecordingSelectionSchema, scenarioRolePresetSchema, scenarioRoleSchema, scenarioSideSchema } from '../model/index.ts'
+import { issueParams, scenarioTimelineSchema } from '../model/scenario.ts'
 
 const lonLatSchema = z.tuple([
   z.number().finite().min(-180).max(180),
@@ -52,6 +52,8 @@ export const scenarioDefinitionSchema = z.object({
   /** Play perspectives; a Scenario without them runs in open mode. */
   roles: z.array(scenarioRoleSchema).min(1).optional(),
   rolePresets: z.array(scenarioRolePresetSchema).min(1).optional(),
+  /** Visibility keys: what each role sees. Needs roles; without sides every role sees everything. */
+  sides: z.array(scenarioSideSchema).min(1).optional(),
   packs: z.array(scenarioPackSelectionSchema).min(1),
   world: z.object({
     startsAt: z.string().datetime(),
@@ -66,8 +68,8 @@ export const scenarioDefinitionSchema = z.object({
     values.forEach((id, index) => { if (seen.has(id)) ctx.addIssue({ code: 'custom', path: [...path, index], message: `duplicate id: ${id}` }); seen.add(id) })
   }
   checkIds(source.view.rail?.sections.map(section => section.categoryId) ?? [], ['view', 'rail', 'sections'])
-  for (const issue of roleDeclarationIssues(source.roles, source.rolePresets)) {
-    ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message })
+  for (const issue of roleDeclarationIssues(source.roles, source.rolePresets, source.sides)) {
+    ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message, ...issueParams(issue) })
   }
   if (source.roles !== undefined && !agentRestrictionsAreEmpty(source.agentRestrictions)) {
     ctx.addIssue({ code: 'custom', path: ['agentRestrictions'], message: agentRestrictionsInRoleRunMessage, params: { code: 'agent_restrictions_in_role_run' } })

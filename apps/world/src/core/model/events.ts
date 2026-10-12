@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { commandEnvelopeSchema, commandResultSchema, type CommandEnvelope, type CommandResult } from './commands.ts'
 import { actorIdSchema, eventIdSchema, objectIdSchema, simulationRunIdSchema, type ActorId, type EventId, type ObjectId, type SimulationRunId } from './ids.ts'
 import { operationalObjectSchema, type OperationalObject } from './object.ts'
+import { objectAudienceSchema, type ObjectAudience } from './audience.ts'
 import { provenanceSchema, type Provenance } from './provenance.ts'
 import { isoTimestampSchema, simulationClockStateSchema, type IsoTimestamp, type SimulationClockState } from './time.ts'
 import { telemetryStateSchema, type TelemetryState } from './telemetry.ts'
@@ -28,6 +29,11 @@ export type SimulationRunEvent =
   | (EventEnvelopeBase & {
       readonly type: 'object.deleted'
       readonly objectId: ObjectId
+      /**
+       * The deleted object's audience, written at commit in a Run that
+       * declares sides. Without it the event reaches truth roles only.
+       */
+      readonly audience?: ObjectAudience
     })
   | (EventEnvelopeBase & {
       readonly type: 'telemetry.sampled'
@@ -135,6 +141,7 @@ export const simulationRunEventSchema = z.discriminatedUnion('type', [
   eventBaseSchema.extend({
     type: z.literal('object.deleted'),
     objectId: objectIdSchema,
+    audience: objectAudienceSchema.optional(),
   }),
   eventBaseSchema.extend({
     type: z.literal('telemetry.sampled'),

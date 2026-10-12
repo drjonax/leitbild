@@ -96,6 +96,19 @@ const assertRolePacks = (source: ScenarioDefinition, packs: ReadonlyArray<WorldP
   if (issues.length > 0) throw new z.ZodError(issues)
 }
 
+/** Each Pack's own check of its parsed configuration against the Scenario's roles and sides. */
+const assertPackConfigs = (source: ScenarioDefinition, packs: ReadonlyArray<WorldPack>, packConfigs: Record<string, unknown>): void => {
+  const context = { roles: source.roles ?? [], sides: source.sides ?? [] }
+  const issues = source.packs.flatMap((selection, index) =>
+    (packs[index]?.validateScenarioConfig?.(packConfigs[selection.id], context) ?? []).map(issue => ({
+      code: 'custom' as const,
+      path: ['packs', index, 'config', ...issue.path],
+      message: issue.message,
+      ...(issue.code === undefined ? {} : { params: { code: issue.code } }),
+    })))
+  if (issues.length > 0) throw new z.ZodError(issues)
+}
+
 const startingView = (view: ScenarioDefinition['view'], packs: ReadonlyArray<WorldPack>): StartingView => {
   const layers = [...new Set(['objects', 'routes', 'highlights', ...packs.flatMap(pack => pack.presentation.mapFeatureLayers ?? [])])]
   const overrides = new Map((view.rail?.sections ?? []).map(section => [section.categoryId, section]))
@@ -123,6 +136,7 @@ export const compileScenarioDefinition = async (
     const pack = registeredPackFor(packsById, selection.id)
     return [selection.id, pack.scenarioConfigSchema.parse(selection.config)]
   }))
+  assertPackConfigs(source, activePacks, packConfigs)
   const objectMap = new Map<ObjectId, OperationalObject>()
   const initialObjects: OperationalObject[] = []
   const pending = source.packs.flatMap(selection => selection.items.map(item => ({ selection, item })))
@@ -159,6 +173,7 @@ export const compileScenarioDefinition = async (
     agentRestrictions: source.agentRestrictions,
     ...(source.roles === undefined ? {} : { roles: source.roles }),
     ...(source.rolePresets === undefined ? {} : { rolePresets: source.rolePresets }),
+    ...(source.sides === undefined ? {} : { sides: source.sides }),
     packs: source.packs.map(selection => selection.id),
     packRuntimes: Object.fromEntries(source.packs.flatMap(selection =>
       selection.runtime === undefined ? [] : [[selection.id, selection.runtime]])),

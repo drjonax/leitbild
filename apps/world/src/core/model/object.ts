@@ -6,6 +6,7 @@ import { provenanceSchema, type Provenance } from './provenance.ts'
 import { telemetryStateSchema, type TelemetryState } from './telemetry.ts'
 import { alertStateSchema, type AlertState } from './alerts.ts'
 import { objectContextSchema, type ObjectContext } from './context.ts'
+import { objectAudienceSchema, type ObjectAudience } from './audience.ts'
 
 export const objectKindSchema = z.enum(['mobile_entity', 'incident', 'facility', 'zone', 'patient', 'observation'])
 export type ObjectKind = z.infer<typeof objectKindSchema>
@@ -112,6 +113,8 @@ export interface OperationalObject {
   readonly timestamps: ObjectTimestamps
   readonly packData?: unknown
   readonly context?: ObjectContext
+  /** Whose picture holds the object in a Run that declares sides; see ObjectAudience. */
+  readonly audience?: ObjectAudience
 }
 
 export const positionFixSchema = z.object({
@@ -207,4 +210,5 @@ export const operationalObjectSchema = z.object({
   timestamps: objectTimestampsSchema,
   packData: z.unknown().optional(),
   context: objectContextSchema.optional(),
+  audience: objectAudienceSchema.optional(),
 })
