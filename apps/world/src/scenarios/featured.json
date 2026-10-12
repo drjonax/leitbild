@@ -1,1 +1,53 @@
-[]
+[
+  {
+    "scenarioId": "halden-offsite-power-restoration",
+    "summary": "Four simulated nuclear units lose their grid connection; watch the grid frequency fall, then restore offsite power.",
+    "about": "Four fictional nuclear units at Halden send about 4.4 GW into a model of Norway's grid. Two minutes in, a fault cuts them off: every turbine trips, and the grid frequency falls until automatic load shedding (cutting off some customers) stops it. Watch a reactor shut down on its live display, restore offsite power, or ask the Leitbild Assistant what happened. It shows Leitbild simulating a detailed plant and a national grid together, faster than realtime.",
+    "tags": ["Nuclear plant + grid", "Event at 2 min", "Desktop"],
+    "previews": [
+      {
+        "alt": "Grid map around Halden after the fault, beside the Grid panel showing the grid frequency in red, below 49 Hz.",
+        "width": 1600,
+        "height": 1000,
+        "sources": [
+          { "file": "halden-offsite-power-restoration-960.f8df729a.webp", "width": 960 },
+          { "file": "halden-offsite-power-restoration-1600.8e5cb331.webp", "width": 1600 }
+        ]
+      }
+    ]
+  },
+  {
+    "scenarioId": "nordland-corridor-security",
+    "summary": "A hidden weakness in a model of northern Norway's grid: find and fix it before a line trips, then compare both futures.",
+    "about": "A line left connected after switching means that when one major line in northern Norway trips at ten minutes, a chain of smaller lines follows and customers lose power. Copy the simulation, fix the weakness in one copy, and fast-forward both to compare. It shows Leitbild's what-if copies and a grid model built from open Norwegian data.",
+    "tags": ["Power grid", "What-if copies", "Event at 10 min", "Desktop"],
+    "previews": [
+      {
+        "alt": "Map of the Helgeland coast after the major line trip, with the smaller lines that tripped after it drawn as red dashes.",
+        "width": 1600,
+        "height": 1000,
+        "sources": [
+          { "file": "nordland-corridor-security-960.eba0efd4.webp", "width": 960 },
+          { "file": "nordland-corridor-security-1600.72cf8593.webp", "width": 1600 }
+        ]
+      }
+    ]
+  },
+  {
+    "scenarioId": "halden-emergency",
+    "summary": "Run a fictional emergency desk in Halden: send ambulances, patrol cars and fire engines to incoming calls, alone or with a colleague.",
+    "about": "A fictional 30-minute dispatch exercise: calls arrive every few minutes; tap a call, then its suggested unit, or queue a busy unit with “Add to end”. Two people can split the work on separate screens, one desk for ambulances and one for police and fire. Every unit type and call comes from the scenario, not from code: it shows Einsatz, Leitbild's general-purpose dispatch engine.",
+    "tags": ["Emergency dispatch", "30 min", "1–2 players", "iPad or desktop"],
+    "previews": [
+      {
+        "alt": "Map of Halden with ambulances, patrol cars and fire engines on their way to calls, beside the list of open calls and units.",
+        "width": 1600,
+        "height": 1000,
+        "sources": [
+          { "file": "halden-emergency-960.bf08bfbf.webp", "width": 960 },
+          { "file": "halden-emergency-1600.31107f76.webp", "width": 1600 }
+        ]
+      }
+    ]
+  }
+]
