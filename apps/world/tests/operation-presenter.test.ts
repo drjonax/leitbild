@@ -24,6 +24,7 @@ import {
   itemBadges,
   itemControlView,
   operationNow,
+  operationsLogRows,
   pendingProposals,
   proposalCard,
   shownProposal,
@@ -345,4 +346,30 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     expect(evidenceMargin('PT-455', { offScale: null, limit: { kind: 'past', margin, back: null } }, 'Pa', null)?.minutes).toBe(0)
     expect(evidenceMargin('PT-455', { offScale: null, limit: null }, 'Pa', null)).toBeNull()
   })
+
+  test('the operations log lists who did what, the approval chain and what came of it, newest first', () => {
+    const plant = unit()
+    plant.step()
+    plant.fault('pressurizer-relief-open', { positionPercent: 20 })
+    plant.step(60)
+    const blockValve = plant.tag('MOV-8000A')
+    const at = () => ({ elapsedMs: plant.runtime.elapsedMs(), wallMs: plant.runtime.elapsedMs() })
+    const proposed = proposeOperation(emptyProposalBook, {
+      id: 'cmd-propose-1', plantId: plant.plant.id, write: { path: blockValve.path, value: 0 }, reason: 'Isolate the stuck PORV',
+      evidence: ['PORV-456A-POS' as never], proposer: { actorId: 'assistant', origin: 'ai' }, at: at(),
+    }, plant.ports)
+    const decided = decideProposal(proposed.book, { proposalId: 'cmd-propose-1', decision: 'approve', decider: { actorId: 'op-1', origin: 'person' }, commandId: 'cmd-approve-1', at: at() }, plant.ports)
+    plant.runtime.writeCommand({ type: 'setVariable', path: blockValve.path, value: 0 })
+    const approval: OperationRecord = { commandId: 'cmd-approve-1', path: blockValve.path, value: 0, origin: 'person', actorId: 'op-1', elapsedMs: plant.runtime.elapsedMs(), kind: 'approval', proposalId: 'cmd-propose-1' }
+    const item = plant.listed(plant.itemOffering(blockValve.path))
+    const rejected = { ...proposed.book.proposals[0]!, id: 'cmd-propose-0', status: 'rejected' as const, closed: { atElapsedMs: 30_000, actorId: 'op-1', reason: 'not yet' } }
+    const rows = () => operationsLogRows([approval], [...decided.book.proposals, rejected], [item], plant.now())
+    plant.step(4)
+    expect(rows()[0]).toMatchObject({ who: 'Operator op-1', action: expect.stringMatching(/^SHUT MOV-8000A /), chain: 'approved AI assistant\'s proposal of 10:01:01', result: 'travelling' })
+    plant.step(8)
+    expect(rows().map(row => [row.time, row.who, row.chain, row.result])).toEqual([
+      ['10:01:01', 'Operator op-1', 'approved AI assistant\'s proposal of 10:01:01', 'SHUT now'],
+      ['10:00:30', 'AI assistant', 'proposed 10:01:01', 'rejected by op-1: not yet, not executed'],
+    ])
+  }, PLANT_HANG_GUARD_MS)
 })

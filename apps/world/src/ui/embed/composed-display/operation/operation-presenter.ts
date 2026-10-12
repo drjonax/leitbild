@@ -516,3 +516,95 @@ export const itemBadges = (
     commandLocked: others.length === 0 ? null : { title: others.map(({ option, record }) => `${option.action}: ${record.actorId}'s command travels since ${now.clock(record.elapsedMs)}`).join('\n') },
   }
 }
+
+// --- Operations log -----------------------------------------------------------
+
+/** One line of the operations log view (plan §4.3): what a person or an AI agent did or proposed, newest first. */
+export interface OperationsLogRow {
+  readonly key: string
+  readonly elapsedMs: number
+  readonly time: string
+  /** "Operator op-1", "AI assistant". */
+  readonly who: string
+  readonly equipment: string
+  /** "SHUT MOV-8000A PZR block valve" */
+  readonly action: string
+  /** How it came about: a direct command, a person's approval of a proposal, or a proposal that closed unexecuted. */
+  readonly chain: string
+  /** What came of it: the equipment's state now for the latest command on it, else that it was accepted. */
+  readonly result: string
+}
+
+const actorWords = (origin: 'person' | 'ai' | 'system', actorId: string): string =>
+  `${origin === 'ai' ? 'AI' : origin === 'person' ? 'Operator' : 'Run'} ${actorId}`
+
+/**
+ * The operations log as its view lists it: every command the Plant's log
+ * keeps (the last 64 that people and AI agents issued, each accepted), with
+ * the proposal an approval carried out, and every proposal that closed
+ * without one (rejected, expired, withdrawn, superseded). The latest command
+ * on a control says where the equipment stands now; an earlier one only that
+ * it was accepted.
+ */
+export const operationsLogRows = (
+  log: ReadonlyArray<OperationRecord>,
+  proposals: ReadonlyArray<ProcessPlantProposal>,
+  items: ReadonlyArray<ListedItem>,
+  now: OperationNow,
+): ReadonlyArray<OperationsLogRow> => {
+  const views = items.map(item => ({ item, view: itemControlView(item, now) }))
+  const controlOf = (path: VariablePath) => {
+    for (const { item, view } of views) {
+      const control = view.controls.find(candidate => candidate.path === path)
+      if (control !== undefined) return { item, control }
+    }
+    return undefined
+  }
+  const latestOn = new Map<string, OperationRecord>()
+  for (const record of log) {
+    const known = latestOn.get(record.path)
+    if (known === undefined || record.elapsedMs >= known.elapsedMs) latestOn.set(record.path, record)
+  }
+  const commands = log.map((record): OperationsLogRow => {
+    const found = controlOf(record.path)
+    const option = found?.control.options.find(candidate => candidate.value === record.value)
+    const proposal = record.proposalId === undefined ? undefined : proposals.find(candidate => candidate.id === record.proposalId)
+    const chain = record.kind === 'approval'
+      ? `approved${proposal === undefined ? ' proposal' : ` ${actorWords(proposal.proposer.origin, proposal.proposer.actorId)}'s proposal of ${now.clock(proposal.proposedAtElapsedMs)}`}`
+      : record.kind === 'ramp' ? 'ramp' : 'direct command'
+    const result = (() => {
+      if (found === undefined || option === undefined) return 'accepted'
+      if (latestOn.get(record.path) !== record) return 'accepted; a later command followed'
+      if (found.control.form === 'pushbutton' || found.control.statePath === undefined) return 'pressed'
+      if (option.current) return `${found.control.now ?? option.word} now`
+      if (option.travelMs === null) return 'awaiting its state'
+      return now.elapsedMs - record.elapsedMs <= followAllowanceMs(option.travelMs) ? 'travelling' : `not followed: ${found.control.now ?? 'state unknown'}`
+    })()
+    return {
+      key: record.commandId,
+      elapsedMs: record.elapsedMs,
+      time: now.clock(record.elapsedMs),
+      who: actorWords(record.origin, record.actorId),
+      equipment: found?.item.label ?? String(record.path),
+      action: option?.action ?? `${String(record.value)} ${String(record.path)}`,
+      chain,
+      result,
+    }
+  })
+  const unexecuted = proposals.filter(proposal => proposal.status !== 'pending' && proposal.status !== 'approved' && proposal.closed !== undefined).map((proposal): OperationsLogRow => {
+    const found = controlOf(proposal.write.path)
+    const option = found?.control.options.find(candidate => candidate.value === proposal.write.value)
+    const closed = proposal.closed!
+    return {
+      key: proposal.id,
+      elapsedMs: closed.atElapsedMs,
+      time: now.clock(closed.atElapsedMs),
+      who: actorWords(proposal.proposer.origin, proposal.proposer.actorId),
+      equipment: found?.item.label ?? proposal.item,
+      action: option?.action ?? `${proposal.word} ${proposal.item}`,
+      chain: `proposed ${now.clock(proposal.proposedAtElapsedMs)}`,
+      result: `${proposal.status}${closed.actorId === undefined ? '' : ` by ${closed.actorId}`}${closed.reason === undefined ? '' : `: ${closed.reason}`}, not executed`,
+    }
+  })
+  return [...commands, ...unexecuted].sort((left, right) => right.elapsedMs - left.elapsedMs)
+}

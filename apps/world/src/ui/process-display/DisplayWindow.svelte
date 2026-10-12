@@ -7,6 +7,7 @@
     ChevronRight,
     ClipboardList,
     Ellipsis,
+    History,
     Maximize2,
     Minimize2,
     Minus,
@@ -17,6 +18,8 @@
   import type { EmbeddedViewEnvelope, EmbeddedViewListing } from '@leitbild/contracts'
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
   import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
+  import { detailDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
+  import type { ProposalListEntry } from '../embed/composed-display/operation/operation-presenter.ts'
   import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameOpen, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
   import { openedListing } from '../embed/opened-display.ts'
   import { zoomStepOfKey } from '../embed/view-host.ts'
@@ -31,7 +34,10 @@
     type FloatingWindowDragMode,
   } from '../window-bounds.ts'
   import DisplayFrame from './DisplayFrame.svelte'
+  import OperationsLogDialog from './OperationsLogDialog.svelte'
   import PlantActionsDialog from './PlantActionsDialog.svelte'
+  import ProposalsChip from './ProposalsChip.svelte'
+  import { readPendingProposals } from './window-operations.ts'
   import {
     acknowledgeShown,
     buildDisplayDeck,
@@ -634,6 +640,61 @@
     }
   }
 
+  // --- Proposals and the operations log --------------------------------------
+
+  // The pending proposals of the shown display's Plant, read every two seconds (QA-10): the toolbar's chip lists them,
+  // most time-critical first, and is absent while none waits.
+  const PROPOSALS_READ_MS = 2_000
+  let proposalEntries = $state.raw<ReadonlyArray<ProposalListEntry>>([])
+  let proposalsFailure = $state<string | null>(null)
+  const proposalsPlantId = $derived(plantTarget.ok ? plantTarget.plant.plantId : null)
+  $effect(() => {
+    const plantId = proposalsPlantId
+    proposalEntries = []
+    proposalsFailure = null
+    if (plantId === null) return
+    let stopped = false
+    let reading = false
+    const read = async (): Promise<void> => {
+      if (reading) return
+      reading = true
+      try {
+        const next = await readPendingProposals(runId, plantId)
+        if (!stopped) { proposalEntries = next; proposalsFailure = null }
+      } catch (err) {
+        if (!stopped) proposalsFailure = `Proposals cannot be read: ${errorText(err)}`
+      } finally {
+        reading = false
+      }
+    }
+    void read()
+    const timer = setInterval(() => { void read() }, PROPOSALS_READ_MS)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  })
+
+  // A proposal opens its item's own detail after the shown display, which pins the proposal's popover as it opens on it.
+  const reviewProposal = (entry: ProposalListEntry): void => {
+    const from = current
+    if (from === null || !plantTarget.ok) return
+    frameOpen(from.key, {
+      state: JSON.stringify(detailDisplayStateSchema.parse({ detail: { plantId: plantTarget.plant.plantId, components: [...entry.components] } })),
+      title: `Review: ${entry.action}`,
+    })
+  }
+
+  let logPlant = $state.raw<DeckPlant | null>(null)
+  const openOperationsLog = (): void => {
+    popover = null
+    if (plantTarget.ok) logPlant = plantTarget.plant
+  }
+  const closeOperationsLog = (): void => {
+    logPlant = null
+    void focusWindow()
+  }
+
   // --- Instructor actions ---------------------------------------------------
 
   const openPlantActions = (): void => {
@@ -864,7 +925,19 @@
 
       {#if tier === 'wide' || tier === 'medium'}
         <div class="display-window-plant" role="group" aria-label="Plant">
+          <ProposalsChip entries={proposalEntries} open={reviewProposal} />
+          {#if proposalsFailure !== null}<span class="display-window-caption" role="status" title={proposalsFailure}>Proposals unavailable</span>{/if}
           <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
+          <button
+            type="button"
+            class="display-window-button"
+            aria-label={plantTarget.ok ? `Operations log of ${plantTarget.plant.label}` : `Operations log unavailable: ${plantTarget.reason}`}
+            title={plantTarget.ok ? `Operations log of ${plantTarget.plant.label}: what people and AI agents did and proposed` : plantTarget.reason}
+            aria-disabled={!plantTarget.ok}
+            onclick={openOperationsLog}
+          >
+            <History size={17} aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="display-window-button"
@@ -900,14 +973,16 @@
           bind:this={moreButton}
           type="button"
           class="display-window-button display-window-more"
-          aria-label="More: Instructor actions, procedures, maximise"
+          aria-label="More: proposals, operations log, Instructor actions, procedures, maximise"
           title="More"
           aria-haspopup="true"
           aria-expanded={popover === 'more'}
           onclick={() => togglePopover('more')}
         >
           <Ellipsis size={18} aria-hidden="true" />
-          {#if procedureSummaries.active.length > 0}
+          {#if proposalEntries.length > 0}
+            <span class="display-window-count" aria-label="{proposalEntries.length} pending proposals">{proposalEntries.length}</span>
+          {:else if procedureSummaries.active.length > 0}
             <span class="display-window-count" aria-label="{procedureSummaries.active.length} active procedures">{procedureSummaries.active.length}</span>
           {/if}
         </button>
@@ -1035,7 +1110,18 @@
       </div>
     {:else if popover === 'more'}
       <div bind:this={popoverElement} class="display-window-popover more" role="group" aria-label="More">
+        <ProposalsChip entries={proposalEntries} open={entry => { popover = null; reviewProposal(entry) }} />
         <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
+        <button
+          type="button"
+          class="display-window-menu-item"
+          title={plantTarget.ok ? '' : plantTarget.reason}
+          aria-disabled={!plantTarget.ok}
+          onclick={openOperationsLog}
+        >
+          <History size={16} aria-hidden="true" />
+          <span>{plantTarget.ok ? `Operations log of ${plantTarget.plant.label}` : `Operations log: ${plantTarget.reason}`}</span>
+        </button>
         <button
           type="button"
           class="display-window-menu-item"
@@ -1084,6 +1170,10 @@
       {/each}
     {/if}
   </section>
+
+  {#if logPlant !== null}
+    <OperationsLogDialog simulationRunId={runId} plant={logPlant} close={closeOperationsLog} />
+  {/if}
 
   {#if actionsPlant !== null}
     <PlantActionsDialog
