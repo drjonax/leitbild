@@ -188,7 +188,7 @@ describe('model semantics declared per component kind', () => {
       id: 'semantics.rate',
       title: 'Rate',
       fixedStepMs: 100,
-      components: [component('engine', 'turbineLoadSink', 'Engine', { nominalElectricMw: 10, initialLoadFraction: 1, nominalSteamFlowKgPerS: 10, electricalTimeConstantS: 5 })],
+      components: [component('engine', 'turbineLoadSink', 'Engine', { nominalElectricMw: 10, initialLoadFraction: 1, nominalSteamFlowKgPerS: 10, electricalTimeConstantS: 5, gridSource: 'grid', generatorPoleCount: 4 })],
       connections: [],
     })
     expect(() => compilePlantGraph(spec, registry)).toThrow('component engine semantics: energy sink rate steamFlowKgPerS must be a solved power')

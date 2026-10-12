@@ -195,7 +195,7 @@ describe('the mimic draws any Plant, not only the reference PWR', () => {
         component('feedNorth', 'processTank', 'Feed North', tank, [], { presentation: { shortLabel: 'FT-N' } }),
         component('feedSouth', 'processTank', 'Feed South', tank, [], { presentation: { shortLabel: 'FT-S' } }),
         component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 }, [], { presentation: { shortLabel: 'DR' } }),
-        component('engine', 'turbineLoadSink', 'Engine', { nominalElectricMw: 10, initialLoadFraction: 1, nominalSteamFlowKgPerS: 10, electricalTimeConstantS: 5 }, [], { presentation: { shortLabel: 'ENG' } }),
+        component('engine', 'turbineLoadSink', 'Engine', { nominalElectricMw: 10, initialLoadFraction: 1, nominalSteamFlowKgPerS: 10, electricalTimeConstantS: 5, gridSource: 'grid', generatorPoleCount: 4 }, [], { presentation: { shortLabel: 'ENG' } }),
       ],
       connections: [
         connect('north-feed', 'feedNorth.outlet', 'drum.feedwaterInlet', feed),

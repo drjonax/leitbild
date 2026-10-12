@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { idSchema } from '../../../core/model/index.ts'
 import type { ComponentDefinition, ComponentKind } from './model.ts'
 import { defineComponent, normalized, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
@@ -65,18 +66,39 @@ export const balanceOfPlantComponentDefinitions: ReadonlyArray<ComponentDefiniti
       electricalTimeConstantS: z.number().finite().positive().optional(),
       exhaustTemperatureAtFullLoadC: z.number().finite().optional(),
       exhaustTemperatureAtNoLoadC: z.number().finite().optional(),
+      /** The grid source the generator turns in step with while its output breaker is closed. */
+      gridSource: idSchema,
+      /** The generator's poles: on line it turns at 120·f / poles rpm (four poles: 1,500 rpm at 50 Hz). */
+      generatorPoleCount: z.number().int().positive().multipleOf(2),
     }),
-    // A turbine-generator runs on line while its output breaker is closed onto the grid, carrying load.
-    semantics: fixedSemantics({ keyValues: ['electricMw'], aspects: [aspect('running', { variable: 'outputBreakerClosed', reading: 'true' })], ratedOutflow: [{ port: 'exhaustSteamOutlet', parameter: 'nominalSteamFlowKgPerS' }], energy: [{ role: 'sink', circuit: 'steam', rate: 'electricMw' }] }),
+    semantics: fixedSemantics({
+      keyValues: ['electricMw'],
+      // A turbine-generator runs on line while its output breaker is closed onto the grid, carrying load.
+      aspects: [aspect('running', { variable: 'outputBreakerClosed', reading: 'true' })],
+      ratedOutflow: [{ port: 'exhaustSteamOutlet', parameter: 'nominalSteamFlowKgPerS' }],
+      // Its speed is the grid's, synchronous, only while the output breaker is closed; the model solves no rotor
+      // to say how it coasts down once the breaker opens.
+      meaningfulWhile: [{ flag: 'outputBreakerClosed', variables: ['speedRpm'] }],
+      // After a trip the generator makes nothing and its output breaker stands open: what E-0 verifies it by,
+      // beside the stop valves the trips shut.
+      shutdownReadings: ['electricMw', 'outputBreakerClosed'],
+      energy: [{ role: 'sink', circuit: 'steam', rate: 'electricMw' }],
+    }),
     variables: [
       variable({ path: 'electricMw', label: 'Electrical output', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       // The generator's output breaker: closed while the turbine carries a load demand, open as its load is rejected.
       variable({ path: 'outputBreakerClosed', label: 'Generator output breaker closed', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'loadFraction', label: 'Load demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'load', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
-      variable({ path: 'steamFlowKgPerS', label: 'Turbine steam flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
-      variable({ path: 'steamDemandKgPerS', label: 'Turbine steam demand', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      // The model's absolute steam flows rest on a latent heat alone and read about a fifth below a real
+      // four-loop plant's: no instrument shows them; the turbine's load shows the same flow in percent.
+      variable({ path: 'steamFlowKgPerS', label: 'Turbine steam flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
+      variable({ path: 'steamDemandKgPerS', label: 'Turbine steam demand', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
       variable({ path: 'steamAvailabilityFraction', label: 'Turbine steam availability', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', measurand: 'availability', quantity: 'ratio', unit: 'fraction' }),
-      variable({ path: 'exhaustTemperatureC', label: 'Turbine exhaust temperature', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
+      // A load-weighted 105 to 145 °C, not the saturation temperature of the condenser's back pressure a real
+      // low-pressure exhaust stands near: no instrument shows it.
+      variable({ path: 'exhaustTemperatureC', label: 'Turbine exhaust temperature', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC', simulatorOnly: true }),
+      variable({ path: 'impulseLoadPercent', label: 'Turbine load (impulse pressure, from steam flow)', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'load', quantity: 'ratio', unit: 'percent' }),
+      variable({ path: 'speedRpm', label: 'Turbine-generator speed (synchronous)', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'rotationalSpeed', unit: 'rpm' }),
     ],
   }),
   defineComponent({
@@ -104,9 +126,11 @@ export const balanceOfPlantComponentDefinitions: ReadonlyArray<ComponentDefiniti
     }),
     semantics: fixedSemantics({ keyValues: ['condensateLevelPercent', 'backPressurePa'], aspects: [aspect('level', { variable: 'condensateLevelPercent', reading: 'value' })], ratedOutflow: [{ port: 'condensateOutlet', parameter: 'maxCondensateOutletFlowKgPerS' }, { port: 'coolingWaterOutlet', parameter: 'nominalCoolingWaterFlowKgPerS' }], energy: [{ role: 'transfer', from: 'condensing', to: 'cooling' }] }),
     variables: [
-      variable({ path: 'steamFlowKgPerS', label: 'Condenser steam flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      // Steam flow and heat rejected rest on a latent heat alone: the heat rejected does not close with the
+      // reactor's heat less the generator's output. No instrument shows them.
+      variable({ path: 'steamFlowKgPerS', label: 'Condenser steam flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
       variable({ path: 'condensateProductionKgPerS', label: 'Condensate production', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
-      variable({ path: 'heatRejectedMw', label: 'Condenser heat rejected', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      variable({ path: 'heatRejectedMw', label: 'Condenser heat rejected', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW', simulatorOnly: true }),
       variable({ path: 'condensateInventoryKg', label: 'Condensate inventory', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
       variable({ path: 'condensateLevelPercent', label: 'Condensate level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
       variable({ path: 'availableCondensateOutletFlowKgPerS', label: 'Available condensate outlet flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),

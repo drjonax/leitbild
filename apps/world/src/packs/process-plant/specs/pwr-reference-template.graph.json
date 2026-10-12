@@ -2473,11 +2473,12 @@
       "kind": "steamValve",
       "label": "Turbine Stop Valve",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "metadata": {
         "presentation": {
-          "shortLabel": "TSV"
+          "shortLabel": "Turbine stop valves"
         }
       },
       "variables": [
@@ -2550,7 +2551,9 @@
         "grossCycleEfficiencyFraction": 0.34,
         "initialLoadFraction": 0.85,
         "nominalSteamFlowKgPerS": 1340,
-        "electricalTimeConstantS": 5
+        "electricalTimeConstantS": 5,
+        "gridSource": "offsiteGrid",
+        "generatorPoleCount": 4
       },
       "variables": [
         {
@@ -2563,14 +2566,41 @@
           "path": "electricMw",
           "tagId": "GEN-MW",
           "equipmentId": "turbine",
-          "description": "Generator electrical output"
+          "description": "Generator electrical output",
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 1300
+            }
+          }
+        },
+        {
+          "path": "outputBreakerClosed",
+          "tagId": "GEN-BKR",
+          "equipmentId": "turbine",
+          "description": "Generator output breaker, derived: closed while the turbine carries a load demand, open as its load is rejected (no separate breaker or reverse-power sequence is modeled)"
+        },
+        {
+          "path": "impulseLoadPercent",
+          "tagId": "TURB-IMP-LOAD",
+          "equipmentId": "turbine",
+          "description": "Turbine load from first-stage (impulse) pressure, derived from steam flow over rated steam flow"
+        },
+        {
+          "path": "speedRpm",
+          "tagId": "TURB-SPEED",
+          "equipmentId": "turbine",
+          "description": "Turbine-generator speed, synchronous with the grid frequency while the generator breaker is closed; not measured with it open"
         }
       ],
       "metadata": {
         "presentation": {
           "shortLabel": "Turbine",
           "states": {
-            "outputBreakerClosed": { "on": "ON LINE", "off": "OFF LINE" }
+            "outputBreakerClosed": {
+              "on": "ON LINE",
+              "off": "OFF LINE"
+            }
           }
         }
       }
@@ -3602,6 +3632,22 @@
           "tagId": "GRID-VOLTAGE",
           "equipmentId": "offsiteGrid",
           "description": "Offsite grid voltage fraction"
+        },
+        {
+          "path": "frequencyHz",
+          "tagId": "GRID-HZ",
+          "equipmentId": "offsiteGrid",
+          "description": "Offsite grid frequency",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 70
+            },
+            "normalRange": {
+              "min": 49,
+              "max": 51
+            }
+          }
         }
       ],
       "metadata": {
@@ -8494,6 +8540,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         },
         {
@@ -8539,6 +8586,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         },
         {
@@ -8550,6 +8598,7 @@
           "publish": "telemetry",
           "quantity": "temperature",
           "unit": "degC",
+          "simulatorOnly": true,
           "initialValue": 120
         }
       ]
@@ -12368,6 +12417,10 @@
     "turbine.steamDemandKgPerS",
     "turbine.steamAvailabilityFraction",
     "turbine.exhaustTemperatureC",
+    "turbine.loadFraction",
+    "turbine.outputBreakerClosed",
+    "turbine.impulseLoadPercent",
+    "turbine.speedRpm",
     "condenser.steamFlowKgPerS",
     "condenser.condensateProductionKgPerS",
     "condenser.heatRejectedMw",
@@ -12740,6 +12793,8 @@
     "offsiteGrid.energized",
     "offsiteGrid.availablePowerMw",
     "offsiteGrid.voltageFraction",
+    "offsiteGrid.available",
+    "offsiteGrid.frequencyHz",
     "unitAuxTransformer.availablePowerMw",
     "safetyBusA.energized",
     "safetyBusA.degraded",

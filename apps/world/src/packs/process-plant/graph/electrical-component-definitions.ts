@@ -73,7 +73,12 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       maximumImportMw: z.number().finite().nonnegative().optional(),
       generatorInertiaSeconds: z.number().finite().nonnegative().optional(),
     }).strict(),
-    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' })] }),
+    semantics: fixedSemantics({
+      aspects: [aspect('energized', { variable: 'energized', reading: 'true' })],
+      // The grid's frequency is measured on its voltage: with the grid lost or the Plant isolated from it there
+      // is none to measure, whatever number the boundary last held.
+      meaningfulWhile: [{ flag: 'energized', variables: ['frequencyHz'] }],
+    }),
     variables: [
       variable({ path: 'available', label: 'Grid source available', kind: 'control', discipline: 'electrical', writable: true, publish: 'telemetry', actuation: 'boundary', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'frequencyHz', label: 'Grid frequency', kind: 'control', discipline: 'electrical', writable: true, publish: 'telemetry', actuation: 'boundary', quantity: 'frequency', unit: 'Hz', limits: { hardRange: { min: 0, max: 70 } } }),
