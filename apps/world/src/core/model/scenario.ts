@@ -5,6 +5,7 @@ import { idSchema,objectIdSchema,signalIdSchema,type ObjectId,type SignalId } fr
 import { interactionEndpointSchema,type InteractionEndpoint } from './interactions.ts'
 import { operationalObjectSchema,type OperationalObject } from './object.ts'
 import { scenarioRecordingSelectionSchema,type ScenarioRecordingSelection } from './recording.ts'
+import { roleDeclarationIssues,runRolesSchema,scenarioRolePresetSchema,scenarioRoleSchema,type RunRoles,type ScenarioRole,type ScenarioRolePreset } from './roles.ts'
 import { isoTimestampSchema,type IsoTimestamp } from './time.ts'
 
 export interface ScenarioWorldDefinition {
@@ -53,6 +54,8 @@ export interface ScenarioTimelineProgressState {
 export interface ScenarioExecutionState {
   readonly scenarioId: string
   readonly agentRestrictions: AgentRestrictionsState
+  /** The Run's roles, copied from its Compiled Scenario; absent in open mode. */
+  readonly roles?: RunRoles
   readonly guidance?: ScenarioGuidance
   readonly highlightedObjectIds: ReadonlyArray<ObjectId>
   readonly timeline?: ScenarioTimelineProgressState
@@ -130,6 +133,8 @@ export interface CompiledScenario {
   readonly description?: string
   readonly objectives?: ReadonlyArray<string>
   readonly agentRestrictions: AgentRestrictions
+  readonly roles?: ReadonlyArray<ScenarioRole>
+  readonly rolePresets?: ReadonlyArray<ScenarioRolePreset>
   readonly packs: ReadonlyArray<string>
   readonly packRuntimes: Record<string, string>
   readonly packConfigs: Record<string, unknown>
@@ -187,10 +192,20 @@ export const scenarioTimelineProgressStateSchema = z.object({
 export const scenarioExecutionStateSchema = z.object({
   scenarioId: idSchema,
   agentRestrictions: z.lazy(() => agentRestrictionsStateSchema),
+  roles: runRolesSchema.optional(),
   guidance: scenarioGuidanceSchema.optional(),
   highlightedObjectIds: z.array(objectIdSchema).default([]),
   timeline: scenarioTimelineProgressStateSchema.optional(),
-}).strict()
+}).strict().superRefine((state, ctx) => {
+  if (state.roles === undefined) return
+  for (const issue of roleDeclarationIssues(state.roles.roles, state.roles.presets)) {
+    const [field, ...rest] = issue.path
+    ctx.addIssue({ code: 'custom', path: ['roles', field === 'rolePresets' ? 'presets' : 'roles', ...rest], message: issue.message })
+  }
+  if (!agentRestrictionsAreEmpty(state.agentRestrictions)) {
+    ctx.addIssue({ code: 'custom', path: ['agentRestrictions'], message: agentRestrictionsInRoleRunMessage })
+  }
+})
 
 const operationIdSchema = z.string().regex(/^[a-z][a-z0-9-]*(?:[._-][a-z0-9-]+)+$/)
 
@@ -217,6 +232,14 @@ const validateAgentRestrictions = (restrictions: AgentRestrictions, ctx: z.Refin
 }
 
 export const agentRestrictionsSchema = agentRestrictionsBaseSchema.superRefine(validateAgentRestrictions)
+
+export const agentRestrictionsAreEmpty = (restrictions: AgentRestrictions): boolean =>
+  restrictions.operationIds.length === 0 && restrictions.objects.length === 0
+
+/** A role Run carries no AI restrictions: AI is refused on role Runs, and the
+ * restrictions' execution-state copy would carry object ids to every screen. */
+export const agentRestrictionsInRoleRunMessage =
+  'agent_restrictions_in_role_run: a Scenario that declares roles cannot restrict AI access, because AI is refused on role Runs'
 
 export const agentRestrictionsStateSchema = agentRestrictionsBaseSchema.extend({
   revision: z.number().int().nonnegative(),
@@ -295,6 +318,8 @@ export const compiledScenarioSchema = z.object({
   description: z.string().min(1).optional(),
   objectives: z.array(z.string().trim().min(1).max(2048)).optional(),
   agentRestrictions: agentRestrictionsSchema,
+  roles: z.array(scenarioRoleSchema).min(1).optional(),
+  rolePresets: z.array(scenarioRolePresetSchema).min(1).optional(),
   packs: z.array(idSchema).default([]),
   packRuntimes: z.record(z.string(), idSchema).default({}),
   packConfigs: z.record(z.string(), z.unknown()).default({}),
@@ -305,6 +330,12 @@ export const compiledScenarioSchema = z.object({
   recording: z.array(scenarioRecordingSelectionSchema).default([]),
   timeline: scenarioTimelineSchema.optional(),
 }).superRefine((scenario, ctx) => {
+  for (const issue of roleDeclarationIssues(scenario.roles, scenario.rolePresets)) {
+    ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message })
+  }
+  if (scenario.roles !== undefined && !agentRestrictionsAreEmpty(scenario.agentRestrictions)) {
+    ctx.addIssue({ code: 'custom', path: ['agentRestrictions'], message: agentRestrictionsInRoleRunMessage, params: { code: 'agent_restrictions_in_role_run' } })
+  }
   const objectIds = new Set(scenario.initialObjects.map(object => object.id))
   scenario.agentRestrictions.objects.forEach((entry, index) => {
     if (!objectIds.has(entry.objectId)) {

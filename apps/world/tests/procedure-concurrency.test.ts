@@ -31,7 +31,7 @@ describe('procedure commands through the real publish queue and realtime project
     const runtime = await registry.create({ scenarioId: 'test-response' })
     const clients = [createSimulationRunStateStore(), createSimulationRunStateStore()]
     const batches: ReadonlyArray<SimulationRunEvent>[] = []
-    const realtime = createSimulationRunRealtimeManager<(typeof clients)[number]>({ registry,
+    const realtime = createSimulationRunRealtimeManager<(typeof clients)[number]>({ registry, perspectiveOf: () => null,
       send: (client, message) => {
         if (message.type === 'events') { batches.push(message.events); for (const event of message.events) client.apply(event) }
       }, sendReady: () => {} })

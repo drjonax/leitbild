@@ -10,9 +10,10 @@ import { capabilityJsonSchema } from '../../simulation/capabilities.ts'
 import { worldCoreCapabilities } from '../../simulation/core-capabilities.ts'
 import type { PackRuntimeAdapter, PackWorkspaceCapability } from '../../simulation/protocol.ts'
 import { createRuntimeHub } from '../../simulation/runtime-hub.ts'
-import type { CompiledScenario,IsoTimestamp,SimulationClockState,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
+import type { CompiledScenario,IsoTimestamp,RunRoles,SimulationClockState,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
 import {
   newSimulationRunId,
+  runRolesOf,
   simulationRunIdSchema,
 } from '../model/index.ts'
 import { createSimulationClock,nowIso } from '../model/time.ts'
@@ -66,6 +67,8 @@ export interface SimulationRunSummary {
   readonly clock: SimulationClockState | null
   readonly activeCapabilityIds: ReadonlyArray<string>
   readonly origin: RunCopyOrigin | null
+  /** The roles the Run declares; null in open mode or when unreadable. */
+  readonly roles: RunRoles | null
   readonly loadError?: string
 }
 
@@ -116,6 +119,8 @@ export interface SimulationRunRegistry {
   readonly list: () => ReadonlyArray<SimulationRunRuntime>
   readonly listKnown: () => Promise<ReadonlyArray<SimulationRunSummary>>
   readonly summary: (id: SimulationRunId) => Promise<SimulationRunSummary>
+  /** The roles a Run declares, read from its pinned Compiled Scenario without loading it. */
+  readonly runRoles: (id: SimulationRunId) => Promise<RunRoles | null>
   readonly status: () => Promise<SimulationRunRegistryStatus>
   readonly acquireLease: (id: SimulationRunId, kind: SimulationRunLeaseKind) => () => void
   readonly setBackgroundExecution: (id: SimulationRunId, enabled: boolean) => Promise<SimulationRunLeaseSummary>
@@ -174,7 +179,9 @@ export const createSimulationRunRegistry = (config: {
   })
   let scenarioLibraryReady: Promise<void> | null = null
   const compiledScenarios = new Map<ScenarioRevisionId, Promise<CompiledScenario>>()
-  const pinnedTitles = new Map<string, string>()
+  // A Run's Compiled Scenario is immutable, so its title and roles are pinned
+  // once read, independent of later edits to the authored Definition.
+  const pinnedScenarioFacts = new Map<string, { readonly title: string; readonly roles: RunRoles | null }>()
   const installedCapabilities: ReadonlyArray<ActiveSimulationCapability> = [
     ...worldCoreCapabilities.map(capability => ({ packId: 'world', runtimeId: 'world.core', capability })),
     ...config.runtimeAdapters.flatMap(adapter =>
@@ -594,6 +601,7 @@ export const createSimulationRunRegistry = (config: {
       historian?.close()
       throw error
     }
+    const scenarioRoles = runRolesOf(scenarioRuntime.scenario)
     let runtime
     try {
       runtime = await createSimulationRunRuntime({
@@ -611,6 +619,7 @@ export const createSimulationRunRegistry = (config: {
           id: scenarioRuntime.scenarioId,
           startsAt: scenarioRuntime.scenario.world.startsAt,
           agentRestrictions: scenarioRuntime.scenario.agentRestrictions,
+          ...(scenarioRoles === null ? {} : { roles: scenarioRoles }),
           ...(scenarioRuntime.scenario.timeline === undefined ? {} : { timeline: scenarioRuntime.scenario.timeline }),
         },
         capabilities: capabilitiesFor(scenarioRuntime, scenarioRevisionIdFromManifest(createConfig.manifest)),
@@ -998,7 +1007,7 @@ export const createSimulationRunRegistry = (config: {
       await maximumPaceJob.done
     }
     const wasLoaded = await closeLoaded(id)
-    pinnedTitles.delete(id)
+    pinnedScenarioFacts.delete(id)
     executionStates.delete(id)
     const runDir = join(simulationRunRoot, id)
     let existedOnDisk = true
@@ -1031,8 +1040,24 @@ export const createSimulationRunRegistry = (config: {
   const unavailableSummary = (id: SimulationRunId, loadError: string): SimulationRunSummary => ({
     id, name: null, title: id, scenarioId: null, scenarioTitle: null,
     scenarioRevisionId: null, createdAt: null, loaded: false,
-    snapshotSeq: null, objectCount: null, clock: null, activeCapabilityIds: [], origin: null, loadError,
+    snapshotSeq: null, objectCount: null, clock: null, activeCapabilityIds: [], origin: null, roles: null, loadError,
   })
+
+  const pinnedScenarioFactsFor = async (id: SimulationRunId): Promise<{ readonly title: string; readonly roles: RunRoles | null }> => {
+    const pinned = pinnedScenarioFacts.get(id)
+    if (pinned) return pinned
+    const scenario = await createCompiledScenarioStore(join(simulationRunRoot, id, 'compiled-scenario.json')).load()
+    const facts = { title: scenario.title, roles: runRolesOf(scenario) }
+    pinnedScenarioFacts.set(id, facts)
+    return facts
+  }
+
+  const runRoles = async (id: SimulationRunId): Promise<RunRoles | null> => {
+    const loaded = simulationRuns.get(id)
+    if (loaded) return loaded.roles()
+    if (!await manifestStoreFor(id).load()) throw new Error(`Simulation Run not found: ${id}`)
+    return (await pinnedScenarioFactsFor(id)).roles
+  }
 
   const readSummary = async (id: SimulationRunId): Promise<SimulationRunSummary> => {
     const manifest = await manifestStoreFor(id).load()
@@ -1040,12 +1065,7 @@ export const createSimulationRunRegistry = (config: {
     const loaded = simulationRuns.get(id)
     // Names must not follow a mutable or deleted catalog entry. Read the pinned
     // compiled artifact independently of the authored revision.
-    let scenarioTitle = pinnedTitles.get(id)
-    if (scenarioTitle === undefined) {
-      const scenario = await createCompiledScenarioStore(join(simulationRunRoot, id, 'compiled-scenario.json')).load()
-      scenarioTitle = scenario.title
-      pinnedTitles.set(id, scenarioTitle)
-    }
+    const { title: scenarioTitle, roles } = await pinnedScenarioFactsFor(id)
     const name = await readRunDisplayName(join(simulationRunRoot, id, 'display-name.json'))
     const title = name ?? scenarioTitle
     if (loaded) {
@@ -1064,6 +1084,7 @@ export const createSimulationRunRegistry = (config: {
         clock: snapshot.clock ?? null,
         activeCapabilityIds: capabilityIdsForRuntimeIds(manifest.runtimes.map(runtime => runtime.id)),
         origin: manifest.origin ?? null,
+        roles,
       }
     }
     const snapshotStore = createSimulationRunSnapshotStore({
@@ -1093,6 +1114,7 @@ export const createSimulationRunRegistry = (config: {
       clock: snapshot?.clock ?? null,
       activeCapabilityIds: capabilityIdsForRuntimeIds(manifest.runtimes.map(runtime => runtime.id)),
       origin: manifest.origin ?? null,
+      roles,
       ...(loadError === undefined ? {} : { loadError }),
     }
   }
@@ -1193,6 +1215,7 @@ export const createSimulationRunRegistry = (config: {
     list: () => [...simulationRuns.values()],
     listKnown,
     summary: summaryFor,
+    runRoles,
     status,
     acquireLease,
     compiledScenarioForRun: async id => {
@@ -1220,7 +1243,7 @@ export const createSimulationRunRegistry = (config: {
       await lifecycle.drain()
       const results = await Promise.allSettled([...simulationRuns.keys()].map(close))
       compiledScenarios.clear()
-      pinnedTitles.clear()
+      pinnedScenarioFacts.clear()
       const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Simulation Run shutdown failed')
     },

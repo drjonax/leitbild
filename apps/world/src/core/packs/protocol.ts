@@ -607,6 +607,12 @@ export interface PackProcedureAssessmentResult {
 /** The browser-safe projection of a World Pack. It contains only contributions
  * used by the generic World UI and may be loaded without runtime, compilation,
  * persistence, or build-time dependencies. */
+/** Role picker wording a role-aware Pack may supply: one plain line saying
+ * what a role commands in this Pack's configuration, e.g. "commands 4 units". */
+export interface PackRoleContribution {
+  readonly commandsLine: (roleId: string, packConfig: unknown) => string | null
+}
+
 export interface WorldPackView {
   readonly descriptor: WorldPackDescriptor
   readonly runtime?: PackRuntimeContribution
@@ -617,12 +623,27 @@ export interface WorldPackView {
   readonly mapAssignment?: PackMapAssignmentContribution
   readonly ui?: PackUiContribution
   readonly procedures?: PackProcedureContribution
+  readonly roles?: PackRoleContribution
 }
 
 /** Complete server-side Pack definition. World Pack views are projections of
  * this contract, never partial World Packs with fabricated schemas. */
 export interface WorldPack extends WorldPackView {
   readonly scenarioConfigSchema: z.ZodType
+  /**
+   * Opts this Pack into Runs whose Scenario declares roles; compiling a role
+   * Run with any other Pack is refused (`role_run_pack_not_role_aware`).
+   * A role-aware Pack accepts these obligations:
+   * - its Capabilities are called only by a person holding a role, or by the
+   *   Scenario timeline; AI callers are refused before they reach it;
+   * - its UI calls the Run through the World-direct client, which carries the
+   *   screen's role set, never through the Host broker, which carries none;
+   * - its Run-scoped UI state belongs to one perspective and is discarded when
+   *   the screen's role set changes;
+   * - it needs no other Pack that calls the Run without a role.
+   * Sided Runs (R2) add audience and viewer obligations here.
+   */
+  readonly roleAware?: true
   readonly authoring?: PackScenarioAuthoringContribution
   readonly recording?: PackRecordingContribution
   readonly knowledge?: PackKnowledgeContribution

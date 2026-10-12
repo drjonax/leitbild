@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { actorIdSchema, clientIdSchema, commandIdSchema, objectIdSchema, simulationRunIdSchema, type ActorId, type ClientId, type CommandId, type ObjectId, type SimulationRunId } from './ids.ts'
+import { actorIdSchema, clientIdSchema, commandIdSchema, idSchema, objectIdSchema, simulationRunIdSchema, type ActorId, type ClientId, type CommandId, type ObjectId, type SimulationRunId } from './ids.ts'
 import { isoTimestampSchema, type IsoTimestamp } from './time.ts'
 
 export const deleteObjectCommandKind = 'world.object.delete'
@@ -21,6 +21,8 @@ export interface CommandEnvelope {
   readonly payload: unknown
   readonly issuedAt: IsoTimestamp
   readonly expectedRevision?: number
+  /** The role set the issuing screen held; present only in a Run that declares roles. */
+  readonly roleIds?: ReadonlyArray<string>
 }
 
 export type CommandResult =
@@ -47,6 +49,7 @@ export const commandEnvelopeSchema = z.object({
   payload: z.custom<unknown>(value => value !== undefined, 'payload is required'),
   issuedAt: isoTimestampSchema,
   expectedRevision: z.number().int().nonnegative().optional(),
+  roleIds: z.array(idSchema).min(1).optional(),
 })
 
 export const commandResultSchema = z.discriminatedUnion('ok', [

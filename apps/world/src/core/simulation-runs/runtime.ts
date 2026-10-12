@@ -6,12 +6,13 @@ import { recordingSeriesQuerySchema, type RecordingPage } from '../model/recordi
 import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
 import type { PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
-import type { AgentRestrictions,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
+import type { AgentRestrictions,RunRoles,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
 import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,notificationIdSchema,nowIso,simulationClockUpdateSchema } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
 import type { PackWikiRef } from '../packs/protocol.ts'
 import type { ScenarioRevisionId } from '../scenarios/library.ts'
 import { canIssueCommand,type Actor } from './actors.ts'
+import { assertRunCapabilityAllowed,roleGateRefusal } from './role-gates.ts'
 import {
   CommandIdempotencyConflictError,
   commandIdempotencyConfigFromEnv,
@@ -58,6 +59,8 @@ export interface SimulationRunRuntime {
   readonly id: SimulationRunId
   readonly capabilities: () => SimulationRunCapabilities
   readonly snapshot: () => SimulationRunStateSnapshot
+  /** The roles this Run declares, fixed for its lifetime; null in open mode. */
+  readonly roles: () => RunRoles | null
   readonly setClock: (update: SimulationClockUpdate) => Promise<SimulationClockState>
   readonly setAgentRestrictions: (actor: Actor, restrictions: AgentRestrictions, expectedRevision: number) => Promise<ScenarioExecutionState['agentRestrictions']>
   readonly checkpointForCopy: () => Promise<SimulationRunCopyCheckpoint>
@@ -158,6 +161,8 @@ export const createSimulationRunRuntime = async (config: {
     readonly id: string
     readonly startsAt: IsoTimestamp
     readonly agentRestrictions: AgentRestrictions
+    /** Absent for a Scenario without roles: open mode. */
+    readonly roles?: RunRoles
     readonly timeline?: ScenarioTimeline
   }
   readonly capabilities?: Omit<SimulationRunCapabilities, 'simulationRunId'>
@@ -939,6 +944,7 @@ export const createSimulationRunRuntime = async (config: {
   const initialScenarioState = (): ScenarioExecutionState => ({
     scenarioId: config.scenario.id,
     agentRestrictions: { ...config.scenario.agentRestrictions, revision: 0 },
+    ...(config.scenario.roles === undefined ? {} : { roles: config.scenario.roles }),
     highlightedObjectIds: [],
     ...(config.scenario.timeline === undefined
       ? {}
@@ -951,6 +957,11 @@ export const createSimulationRunRuntime = async (config: {
   })
 
   if (config.restoredSnapshot) {
+    // Roles are compiled once and never change in a Run; restored state must
+    // still declare exactly the Compiled Scenario's roles.
+    if (!Bun.deepEquals(config.restoredSnapshot.scenario?.roles ?? null, config.scenario.roles ?? null)) {
+      throw new Error(`Simulation Run snapshot roles do not match its Compiled Scenario: ${config.id}`)
+    }
     state.hydrate({
       ...config.restoredSnapshot,
       clock: runClock.read(),
@@ -975,6 +986,7 @@ export const createSimulationRunRuntime = async (config: {
     state.hydrate({ ...state.snapshot(), clock: initial })
   }
   committedState.hydrate(state.snapshot())
+  const runRoles: RunRoles | null = config.scenario.roles ?? null
 
   const issueCommandThroughRuntime = async (
     actor: Actor,
@@ -1058,6 +1070,7 @@ export const createSimulationRunRuntime = async (config: {
       kind: active.capability.id,
       targetObjectIds,
       payload: built.payload,
+      ...(runRoles === null || actor.roleIds === undefined ? {} : { roleIds: actor.roleIds }),
       issuedAt: invocation.issuedAt ?? runClock.read().currentTime,
       ...(invocation.expectedRevision === undefined ? {} : { expectedRevision: invocation.expectedRevision }),
       ...(invocation.idempotencyKey === undefined ? {} : { idempotencyKey: invocation.idempotencyKey }),
@@ -1239,6 +1252,7 @@ export const createSimulationRunRuntime = async (config: {
     if (!['operator', 'supervisor', 'controller', 'system'].includes(actor.role)) {
       throw Object.assign(new Error('Only a human operator or system actor may replace Run AI restrictions'), { code: 'agent_restrictions_human_required' })
     }
+    if (runRoles !== null) throw roleGateRefusal('agent_restrictions_in_role_run', 'A Run that declares roles has no AI restrictions, because AI is refused on it')
     const restrictions = agentRestrictionsSchema.parse(rawRestrictions) as AgentRestrictions
     return await enqueueOperation(async () => {
       const snapshot = state.snapshot()
@@ -1272,6 +1286,7 @@ export const createSimulationRunRuntime = async (config: {
     actor: Actor,
     invocation: SimulationRunCapabilityInvocation,
   ): Promise<SimulationRunCapabilityInvocationResult> => {
+    assertRunCapabilityAllowed(runRoles, actor, invocation.capabilityId)
     // Generic object deletion is a short canonical mutation. Commit it inside
     // the execution queue so maximum pace cannot advance another slice between
     // validation and deletion. Pack cleanup follows the resulting core event.
@@ -1431,6 +1446,7 @@ export const createSimulationRunRuntime = async (config: {
       recording: config.capabilities?.recording ?? { selections: [], profiles: [] },
     }),
     snapshot: () => snapshotWithCurrentClock(),
+    roles: () => runRoles,
     setClock,
     setAgentRestrictions,
     checkpointForCopy,

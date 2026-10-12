@@ -1,10 +1,22 @@
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import type { SimulationRunEventNotification } from '../simulation-runs/runtime.ts'
+import type { SimulationRunStateSnapshot } from '../simulation-runs/state-store.ts'
 import type { SimulationRunId, SimulationClockState } from '../model/index.ts'
 import type { PackRuntimeRealtimeMessage } from '../../simulation/protocol.ts'
 import type { WorkspaceId } from '@leitbild/contracts'
 
-type RealtimeMessageContext = Omit<RealtimeReadyMessage, 'type' | 'clock'>
+type RealtimeMessageContext = Omit<RealtimeReadyMessage, 'type' | 'clock' | 'epoch' | 'roleIds' | 'snapshot'>
+
+/**
+ * A role-Run connection's perspective: the role set it holds and the epoch
+ * that set began. Every message it receives carries that epoch, so a screen
+ * can tell messages of its current role set from late ones of an older set.
+ * A connection to a Run without roles has none, and its messages are unchanged.
+ */
+export interface ClientPerspective {
+  readonly roleIds: ReadonlyArray<string>
+  readonly epoch: number
+}
 
 interface RealtimeSubscription {
   readonly runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>
@@ -33,6 +45,10 @@ export interface RealtimeReadyMessage {
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly clock?: SimulationClockState
+  /** Role Runs only: the perspective epoch, its role set and a fresh snapshot to replace every Run store. */
+  readonly epoch?: number
+  readonly roleIds?: ReadonlyArray<string>
+  readonly snapshot?: SimulationRunStateSnapshot
 }
 
 export interface RealtimeEventBatchMessage {
@@ -42,6 +58,7 @@ export interface RealtimeEventBatchMessage {
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly events: SimulationRunEventNotification['events']
+  readonly epoch?: number
 }
 
 export interface RealtimeRuntimeMessageBatch {
@@ -51,6 +68,7 @@ export interface RealtimeRuntimeMessageBatch {
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly messages: ReadonlyArray<PackRuntimeRealtimeMessage>
+  readonly epoch?: number
 }
 
 export type RealtimeOutboundMessage = RealtimeEventBatchMessage | RealtimeRuntimeMessageBatch
@@ -58,6 +76,10 @@ export type RealtimeOutboundMessage = RealtimeEventBatchMessage | RealtimeRuntim
 export interface SimulationRunRealtimeManager<Client> {
   readonly addClient: (simulationRunId: SimulationRunId, client: Client) => void
   readonly removeClient: (simulationRunId: SimulationRunId, client: Client) => void
+  /** Answers a connection whose perspective just changed with a fresh ready snapshot in its new epoch. */
+  readonly sendReady: (simulationRunId: SimulationRunId, client: Client) => void
+  /** How many connections hold each role, for the public presence route. */
+  readonly roleHolders: (simulationRunId: SimulationRunId) => Readonly<Record<string, number>>
   readonly reconcile: () => void
   readonly status: () => RealtimeStatus
   readonly stop: () => void
@@ -87,6 +109,7 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
   readonly registry: SimulationRunRegistry
   readonly send: (client: Client, message: RealtimeOutboundMessage) => void
   readonly sendReady: (client: Client, message: RealtimeReadyMessage) => void
+  readonly perspectiveOf: (client: Client) => ClientPerspective | null
 }): SimulationRunRealtimeManager<Client> => {
   const clientsBySimulationRun = new Map<SimulationRunId, Set<Client>>()
   const subscriptionsBySimulationRun = new Map<SimulationRunId, RealtimeSubscription>()
@@ -122,6 +145,11 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
     }
   }
 
+  const inEpochOf = <Message extends RealtimeOutboundMessage>(client: Client, message: Message): Message => {
+    const perspective = config.perspectiveOf(client)
+    return perspective === null ? message : { ...message, epoch: perspective.epoch }
+  }
+
   const broadcastToSimulationRun = (
     simulationRunId: SimulationRunId,
     runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>,
@@ -141,7 +169,7 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
         ...messageContext,
         events: notification.events,
       }
-      for (const client of clients) config.send(client, message)
+      for (const client of clients) config.send(client, inEpochOf(client, message))
     }
     if (notification.realtimeMessages && notification.realtimeMessages.length > 0) {
       const message: RealtimeRuntimeMessageBatch = {
@@ -149,19 +177,22 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
         ...messageContext,
         messages: notification.realtimeMessages,
       }
-      for (const client of clients) config.send(client, message)
+      for (const client of clients) config.send(client, inEpochOf(client, message))
     }
   }
 
   const readyMessageForRuntime = (
     simulationRunId: SimulationRunId,
     runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>,
+    client: Client,
   ): RealtimeReadyMessage => {
     const snapshot = runtime.snapshot()
+    const perspective = config.perspectiveOf(client)
     return {
       type: 'realtime.ready',
       ...messageContextForRuntime(simulationRunId, runtime),
       ...(snapshot.clock === undefined ? {} : { clock: snapshot.clock }),
+      ...(perspective === null ? {} : { epoch: perspective.epoch, roleIds: perspective.roleIds, snapshot }),
     }
   }
 
@@ -171,8 +202,7 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
   ): void => {
     const clients = clientsBySimulationRun.get(simulationRunId)
     if (!clients) return
-    const message = readyMessageForRuntime(simulationRunId, runtime)
-    for (const client of clients) config.sendReady(client, message)
+    for (const client of clients) config.sendReady(client, readyMessageForRuntime(simulationRunId, runtime, client))
   }
 
   const sendReadyToClient = (
@@ -180,7 +210,7 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
     runtime: NonNullable<ReturnType<SimulationRunRegistry['get']>>,
     client: Client,
   ): void => {
-    config.sendReady(client, readyMessageForRuntime(simulationRunId, runtime))
+    config.sendReady(client, readyMessageForRuntime(simulationRunId, runtime, client))
   }
 
   const reconcileSimulationRunSubscription = (simulationRunId: SimulationRunId): SubscriptionReconciliation => {
@@ -216,6 +246,20 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
       clientsBySimulationRun.set(simulationRunId, clients)
       const { runtime } = reconcileSimulationRunSubscription(simulationRunId)
       if (runtime) sendReadyToClient(simulationRunId, runtime, client)
+    },
+    sendReady: (simulationRunId, client): void => {
+      if (!clientsBySimulationRun.get(simulationRunId)?.has(client)) throw new Error(`realtime client is not attached to ${simulationRunId}`)
+      const { runtime, changed } = reconcileSimulationRunSubscription(simulationRunId)
+      if (!runtime) throw new Error(`Simulation Run is not loaded: ${simulationRunId}`)
+      if (changed) sendReadyToSimulationRun(simulationRunId, runtime)
+      else sendReadyToClient(simulationRunId, runtime, client)
+    },
+    roleHolders: (simulationRunId) => {
+      const holders: Record<string, number> = {}
+      for (const client of clientsBySimulationRun.get(simulationRunId) ?? []) {
+        for (const roleId of config.perspectiveOf(client)?.roleIds ?? []) holders[roleId] = (holders[roleId] ?? 0) + 1
+      }
+      return holders
     },
     removeClient: (simulationRunId, client): void => {
       const clients = clientsBySimulationRun.get(simulationRunId)

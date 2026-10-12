@@ -84,6 +84,18 @@ const expandItem = async (
 }
 
 
+/** A role Run admits only Packs that accept the role obligations (WorldPack.roleAware). */
+const assertRolePacks = (source: ScenarioDefinition, packs: ReadonlyArray<WorldPack>): void => {
+  if (source.roles === undefined) return
+  const issues = source.packs.flatMap((selection, index) => packs[index]?.roleAware === true ? [] : [{
+    code: 'custom' as const,
+    path: ['packs', index, 'id'],
+    message: `role_run_pack_not_role_aware: Pack ${selection.id} is not role-aware, so it cannot run in a Scenario that declares roles`,
+    params: { code: 'role_run_pack_not_role_aware' },
+  }])
+  if (issues.length > 0) throw new z.ZodError(issues)
+}
+
 const startingView = (view: ScenarioDefinition['view'], packs: ReadonlyArray<WorldPack>): StartingView => {
   const layers = [...new Set(['objects', 'routes', 'highlights', ...packs.flatMap(pack => pack.presentation.mapFeatureLayers ?? [])])]
   const overrides = new Map((view.rail?.sections ?? []).map(section => [section.categoryId, section]))
@@ -106,6 +118,7 @@ export const compileScenarioDefinition = async (
   const packsById = new Map(packs.map(pack => [pack.descriptor.id, pack]))
   const startsAt = source.world.startsAt as IsoTimestamp
   const activePacks = source.packs.map(selection => registeredPackFor(packsById, selection.id))
+  assertRolePacks(source, activePacks)
   const packConfigs = Object.fromEntries(source.packs.map(selection => {
     const pack = registeredPackFor(packsById, selection.id)
     return [selection.id, pack.scenarioConfigSchema.parse(selection.config)]
@@ -144,6 +157,8 @@ export const compileScenarioDefinition = async (
     ...(source.description === undefined ? {} : { description: source.description }),
     objectives: source.objectives,
     agentRestrictions: source.agentRestrictions,
+    ...(source.roles === undefined ? {} : { roles: source.roles }),
+    ...(source.rolePresets === undefined ? {} : { rolePresets: source.rolePresets }),
     packs: source.packs.map(selection => selection.id),
     packRuntimes: Object.fromEntries(source.packs.flatMap(selection =>
       selection.runtime === undefined ? [] : [[selection.id, selection.runtime]])),

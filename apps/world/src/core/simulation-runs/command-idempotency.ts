@@ -66,6 +66,7 @@ export const commandBodyFingerprint = (command: CommandEnvelope): string =>
     expectedRevision: command.expectedRevision ?? null,
     payload: command.payload,
     targetObjectIds: command.targetObjectIds,
+    ...(command.roleIds === undefined ? {} : { roleIds: command.roleIds }),
   })
 
 export const commandIdempotencyTupleKey = (command: CommandEnvelope): string | null => {

@@ -136,6 +136,7 @@ const callRoute = async <T>(
       requestId: newRequestId(),
       actor: { kind: 'anonymous' },
     }),
+    roleHolders: () => ({}),
   })
   if (!response) throw new Error(`route did not handle ${init?.method ?? 'GET'} ${path}`)
   return { status: response.status, body: await response.json() as T }

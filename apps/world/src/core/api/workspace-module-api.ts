@@ -47,6 +47,7 @@ import { scenarioRevisionIdSchema } from '../scenarios/library.ts'
 import { CommandIdempotencyConflictError } from '../simulation-runs/command-idempotency.ts'
 import { executionAdvanceInputSchema,executionSetInputSchema,runCopyInputSchema,runCopyOriginSchema,runExecutionStateSchema } from '../simulation-runs/execution.ts'
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
+import { aiRoleRunRefusal, hiddenInRoleRun, isRoleGateRefusal, roleRequiredRefusal, roleRunOpenCapabilityIds } from '../simulation-runs/role-gates.ts'
 import type { WorldWorkspaceRuntimeRegistry } from '../workspaces/runtime-registry.ts'
 import { apiError,json,readJson } from './responses.ts'
 import {
@@ -54,6 +55,15 @@ import {
 } from './simulation-run-routes.ts'
 
 const WORLD_MODULE_ID = moduleIdSchema.parse('world')
+
+/** A refusal a validator named with its own code (e.g. a role Run's Pack check); otherwise invalid_request. */
+const zodErrorCode = (error: z.ZodError): string => {
+  for (const issue of error.issues) {
+    const code = issue.code === 'custom' ? (issue.params as { readonly code?: unknown } | undefined)?.code : undefined
+    if (typeof code === 'string') return code
+  }
+  return 'invalid_request'
+}
 
 export const worldModuleManifest = workspaceModuleManifestSchema.parse({
   module: {
@@ -435,11 +445,13 @@ const resourcesFor = async (registry: SimulationRunRegistry): Promise<ReadonlyAr
             .map(candidate => ({ rel: 'copy', ref: runRef(candidate.id), title: candidate.title })),
         ],
         uiPath: `/workspaces/${encodeURIComponent(registry.workspaceId)}/world/runs/${encodeURIComponent(simulationRun.id)}`,
+        // A role Run offers no AI restrictions and no Inspect: AI is refused on
+        // it, and the Host renders those controls only from these fields.
         capabilityIds: [
           ...worldCapabilities.idsForResourceType('world.simulation-run'),
           ...simulationRun.activeCapabilityIds,
-        ],
-        inspectionCapabilityId: 'world.simulation-run.inspect',
+        ].filter(capabilityId => simulationRun.roles === null || !hiddenInRoleRun(capabilityId)),
+        ...(simulationRun.roles === null ? { inspectionCapabilityId: 'world.simulation-run.inspect' } : {}),
         deleteCapabilityId: 'world.simulation-run.delete',
         renameCapabilityId: 'world.simulation-run.rename',
         summary: [
@@ -454,6 +466,9 @@ const resourcesFor = async (registry: SimulationRunRegistry): Promise<ReadonlyAr
             key: 'lineage', label: 'Lineage', kind: 'status' as const, value: 'What-if copy',
           }]),
           { key: 'viewer-count', label: 'Viewers', kind: 'count' as const, value: viewers },
+          ...(simulationRun.roles === null ? [] : [{
+            key: 'roles', label: 'Roles', kind: 'count' as const, value: simulationRun.roles.roles.length,
+          }]),
           ...(simulationRun.objectCount === null ? [] : [{
             key: 'object-count',
             label: 'Objects',
@@ -1543,6 +1558,14 @@ const invokeCapability = async (
   const release = invocation.resource?.type === 'world.simulation-run' && capabilityId !== 'world.simulation-run.delete'
     ? registry.acquireLease(requireSimulationRunResource(invocation), 'api') : undefined
   try {
+    // The Host broker carries no role set. In a role Run it serves people only
+    // the open Run controls and serves AI nothing Run-scoped.
+    if (invocation.resource?.type === 'world.simulation-run') {
+      const ai = invocation.access.actor.kind === 'ai'
+      if (ai || !roleRunOpenCapabilityIds.has(capabilityId)) {
+        if (await registry.runRoles(requireSimulationRunResource(invocation)) !== null) throw ai ? aiRoleRunRefusal() : roleRequiredRefusal()
+      }
+    }
     if (invocation.access.actor.kind === 'ai' && invocation.resource?.type === 'world.simulation-run') {
       const runtime = await registry.load(requireSimulationRunResource(invocation))
       const restrictions = runtime.snapshot().scenario?.agentRestrictions
@@ -1666,6 +1689,7 @@ export const handleWorldModuleApi = async (
     return null
   } catch (error) {
     if (isCapabilityRejection(error)) return apiError(error.status, error.code, error.message)
+    if (isRoleGateRefusal(error)) return apiError(error.status, error.code, error.message, error.details)
     if (error instanceof Error && 'code' in error && error.code === 'storage_budget_exceeded') return apiError(507, 'storage_budget_exceeded', error.message)
     if (error instanceof Error && 'code' in error && error.code === 'history_unavailable') return apiError(503, 'history_unavailable', error.message)
     if (error instanceof Error && 'code' in error && error.code === 'workspace_closing') return apiError(409, 'workspace_closing', error.message)
@@ -1679,7 +1703,7 @@ export const handleWorldModuleApi = async (
       return apiError(409, 'simulation_run_name_changed', error.message)
     }
     if (error instanceof SyntaxError) return apiError(400, 'invalid_json', error.message)
-    if (error instanceof z.ZodError) return apiError(400, 'invalid_request', error.message)
+    if (error instanceof z.ZodError) return apiError(400, zodErrorCode(error), error.message)
     if (error instanceof CommandIdempotencyConflictError) return apiError(error.status, error.code, error.message)
     if (error instanceof Error && error.message.startsWith('World Module not provisioned:')) {
       return apiError(404, 'workspace_not_found', 'World is not enabled in this Workspace')

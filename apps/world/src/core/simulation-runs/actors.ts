@@ -7,7 +7,10 @@ export type ActorRole = z.infer<typeof actorRoleSchema>
 export interface Actor {
   readonly id: ActorId
   readonly label: string
+  /** In a role Run, controller when any held role is controller-class, else operator. */
   readonly role: ActorRole
+  /** The Scenario roles this actor holds; present only in a Run that declares roles. */
+  readonly roleIds?: ReadonlyArray<string>
 }
 
 export const canIssueCommand = (actor: Actor, command: CommandEnvelope): boolean => {

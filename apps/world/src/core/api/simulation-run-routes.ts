@@ -2,6 +2,7 @@ import { sourceDocumentPathSchema,sourceRevisionSchema,type AccessContext } from
 import { z } from 'zod'
 import { actorIdSchema,clientIdSchema,interactionEndpointSchema,interactionSignalSchema,nowIso,objectIdSchema,procedureIdSchema,procedureSourceIdSchema,simulationRunIdSchema,type CompiledScenario,type InteractionSignal,type SimulationRunId } from '../model/index.ts'
 import type { Actor } from '../simulation-runs/actors.ts'
+import { actorForPerspective, assertControllerRole, assertHoldsRole, isRoleGateRefusal, parseRoleSetParameter, resolveRunPerspective, roleSetParameter, type RunPerspective } from '../simulation-runs/role-gates.ts'
 import { CommandIdempotencyConflictError } from '../simulation-runs/command-idempotency.ts'
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../simulation-runs/runtime.ts'
@@ -14,6 +15,27 @@ const defaultOperatorActorId = actorIdSchema.parse('actor:operator')
 export interface SimulationRunRouteConfig {
   readonly registry: SimulationRunRegistry
   readonly accessContext: AccessContext
+  /** Connections holding each role of a Run, for its public presence. */
+  readonly roleHolders: (simulationRunId: SimulationRunId) => Readonly<Record<string, number>>
+}
+
+/**
+ * Run routes a screen may use in a role Run before it holds a role: presence
+ * (the role picker reads it), copy and delete. Every other Run route carries
+ * the screen's role set in the `roles` query parameter.
+ */
+const isOpenRunRoute = (method: string, suffix: string): boolean =>
+  (method === 'GET' && suffix === '/presence')
+  || (method === 'POST' && suffix === '/copies')
+  || (method === 'DELETE' && suffix === '')
+
+const runRoutePerspective = async (req: Request, url: URL, pathname: string, registry: SimulationRunRegistry): Promise<RunPerspective> => {
+  const match = pathname.match(/^\/simulation-runs\/([^/]+)(\/.*)?$/)
+  if (!match || isOpenRunRoute(req.method, match[2] ?? '')) return { kind: 'open' }
+  const simulationRunId = simulationRunIdSchema.parse(decodeURIComponent(match[1] ?? ''))
+  const perspective = resolveRunPerspective(await registry.runRoles(simulationRunId), parseRoleSetParameter(url.searchParams.get(roleSetParameter)))
+  assertHoldsRole(perspective)
+  return perspective
 }
 
 export const capabilityInvocationRequestSchema = z.object({
@@ -112,6 +134,7 @@ const handleSimulationRunApiInner = async (
   const apiPrefix = `/api/workspaces/${encodeURIComponent(config.registry.workspaceId)}/world`
   if (!url.pathname.startsWith(`${apiPrefix}/`)) return null
   const pathname = url.pathname.slice(apiPrefix.length)
+  const perspective = await runRoutePerspective(req, url, pathname, config.registry)
 
   const scenarioMatch = pathname.match(/^\/scenarios\/([^/]+)$/)
   if (scenarioMatch && req.method === 'GET') {
@@ -136,7 +159,15 @@ const handleSimulationRunApiInner = async (
       return apiError(404, 'simulation_run_not_found', summary.loadError ?? 'simulation run not found')
     }
     const execution = await config.registry.executionOverview(simulationRunId)
-    return json({ simulationRunId, title: summary.title, loaded: config.registry.get(simulationRunId) !== undefined, execution })
+    return json({
+      simulationRunId,
+      title: summary.title,
+      loaded: config.registry.get(simulationRunId) !== undefined,
+      execution,
+      ...(summary.roles === null ? {} : {
+        roles: { roles: summary.roles.roles, presets: summary.roles.presets, holders: config.roleHolders(simulationRunId) },
+      }),
+    })
   }
 
   const simulationRunMatch = pathname.match(/^\/simulation-runs\/([^/]+)$/)
@@ -180,6 +211,7 @@ const handleSimulationRunApiInner = async (
   const resetMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/reset$/)
   if (resetMatch && req.method === 'POST') {
     const simulationRunId = simulationRunIdSchema.parse(decodeURIComponent(resetMatch[1] ?? ''))
+    assertControllerRole(perspective, 'Resetting the Run')
     const runtime = await config.registry.reset(simulationRunId)
     return json(await simulationRunResponse(config.registry, runtime))
   }
@@ -266,7 +298,7 @@ const handleSimulationRunApiInner = async (
     if (!runtime) return apiError(404, 'simulation_run_not_found', 'simulation run not found')
     const invocation = capabilityInvocationRequestSchema.parse(await readJson(req))
     try {
-      const actor = buildSimulationRunActorForAccess(config.accessContext)
+      const actor = actorForPerspective(buildSimulationRunActorForAccess(config.accessContext), perspective)
       const outcome = await runtime.invokeCapability(actor, {
         capabilityId,
         input: invocation.input,
@@ -276,6 +308,7 @@ const handleSimulationRunApiInner = async (
       return json(outcome)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
+      if (isRoleGateRefusal(error)) return apiError(error.status, error.code, reason, error.details)
       if (error instanceof CommandIdempotencyConflictError) {
         return apiError(error.status, error.code, reason)
       }
@@ -326,6 +359,7 @@ const handleSimulationRunApiInner = async (
   const signalMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/signals$/)
   if (signalMatch && req.method === 'POST') {
     const simulationRunId = simulationRunIdSchema.parse(decodeURIComponent(signalMatch[1] ?? ''))
+    assertControllerRole(perspective, 'Sending a signal')
     const runtime = config.registry.get(simulationRunId)
     if (!runtime) return apiError(404, 'simulation_run_not_found', 'simulation run not found')
     const raw = await readJson(req)
@@ -349,6 +383,7 @@ export const handleSimulationRunApi = async (
     return await handleSimulationRunApiInner(req, url, config)
   } catch (err) {
     if (err instanceof Error && err.message.startsWith('Simulation Run not found:')) return apiError(404, 'simulation_run_not_found', 'simulation run not found')
+    if (isRoleGateRefusal(err)) return apiError(err.status, err.code, err.message, err.details)
     if (err instanceof Error && 'code' in err && err.code === 'storage_budget_exceeded') return apiError(507, 'storage_budget_exceeded', err.message)
     if (err instanceof Error && 'code' in err && err.code === 'history_unavailable') return apiError(503, 'history_unavailable', err.message)
     if (err instanceof Error && 'code' in err && err.code === 'simulation_run_busy') return apiError(409, 'simulation_run_busy', err.message)

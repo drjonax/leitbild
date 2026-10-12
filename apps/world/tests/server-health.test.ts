@@ -196,6 +196,7 @@ describe('server health', () => {
     const client: CapturedRealtimeClient = { events: [], eventMessages: [], readyMessages: [] }
     const realtime = createSimulationRunRealtimeManager<CapturedRealtimeClient>({
       registry,
+      perspectiveOf: () => null,
       send: captureRealtimeMessage,
       sendReady: (targetClient, message) => {
         targetClient.readyMessages.push(message.scenarioId ?? '')
@@ -261,6 +262,7 @@ describe('server health', () => {
     const secondClient: CapturedRealtimeClient = { events: [], eventMessages: [], readyMessages: [] }
     const realtime = createSimulationRunRealtimeManager<CapturedRealtimeClient>({
       registry,
+      perspectiveOf: () => null,
       send: captureRealtimeMessage,
       sendReady: (targetClient, message) => {
         targetClient.readyMessages.push(message.scenarioId ?? '')
@@ -316,6 +318,7 @@ describe('server health', () => {
     const messages: RealtimeOutboundMessage[] = []
     const realtime = createSimulationRunRealtimeManager<{ readonly id: string }>({
       registry,
+      perspectiveOf: () => null,
       send: (_client, message) => {
         messages.push(message)
       },
@@ -370,6 +373,7 @@ describe('server health', () => {
     const client: CapturedRealtimeClient = { events: [], eventMessages: [], readyMessages: [] }
     const realtime = createSimulationRunRealtimeManager<CapturedRealtimeClient>({
       registry,
+      perspectiveOf: () => null,
       send: captureRealtimeMessage,
       sendReady: (targetClient, message) => {
         targetClient.readyMessages.push(message.scenarioId ?? '')
