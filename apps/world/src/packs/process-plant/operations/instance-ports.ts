@@ -1,10 +1,14 @@
 import type { CommandOrigin } from '../../../simulation/protocol.ts'
-import type { ProcessSignalTagId, VariablePath } from '../graph/index.ts'
+import type { CompiledPlantGraph, ProcessSignalTagId, VariablePath } from '../graph/index.ts'
+import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../displays/composition.ts'
+import type { MimicItem } from '../displays/mimic/bindings.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
 import { throttledUnder, validateOperatorWrite } from './command-guard.ts'
 import { optionStanding, ruleStatesFrom, type OptionStanding, type StandingContext } from './control-standing.ts'
 import { offeredOption, plantControlsFor, type ControlRule, type OfferedControl, type WithheldControl } from './controls.ts'
+import { pushbuttonProtection, type PushbuttonProtection } from './pushbutton-protection.ts'
+import { evaluateProcessPlantIcCondition } from '../runtime/ic/control-protection-conditions.ts'
 import type { ProposalPorts } from './proposals.ts'
 
 // The controls and proposals of one running Plant, read against its live
@@ -51,6 +55,8 @@ export interface ListedControl {
    * absent otherwise.
    */
   readonly throttledUnder?: ReadonlyArray<ControlRule>
+  /** A protective pushbutton: whether it trips, actuates or blocks, where its block and the permissive gating it stand now (pushbutton-protection.ts). */
+  readonly protection?: PushbuttonProtection
 }
 
 export interface ListedItem {
@@ -60,8 +66,28 @@ export interface ListedItem {
   readonly position?: { readonly path: VariablePath; readonly value: number }
   /** The component whose detail draws the item around it: the item itself, or the one that bundles it (a detail display's state names it). */
   readonly components: ReadonlyArray<string>
+  /** A bundled device: the components at the far ends of the line it sits on (lineEnds), for a detail that draws it on its own symbol. */
+  readonly line?: ReadonlyArray<string>
   readonly offered: ReadonlyArray<ListedControl>
   readonly withheld: ReadonlyArray<WithheldControl>
+}
+
+/**
+ * A device its host bundles (a pressurizer's relief or block valve): the
+ * components at the far ends of the line it sits on. A detail around its host
+ * alone may draw the device inside the host's symbol (HMI review of run 26c,
+ * g2); one around the host and these draws the line and the device on it.
+ */
+const lineEnds = (graph: CompiledPlantGraph, item: MimicItem): { readonly line?: ReadonlyArray<string> } => {
+  if (item.kind === 'component') return {}
+  const port = graph.components[item.component]!.semantics.embedded.find(device => device.id === item.device)?.port
+  if (port === undefined) return {}
+  const ends = [
+    ...(graph.outgoingLinksByComponent[item.component] ?? []).map(index => graph.links[index]!).filter(link => link.fromPortName === port).map(link => link.toComponentIndex),
+    ...(graph.incomingLinksByComponent[item.component] ?? []).map(index => graph.links[index]!).filter(link => link.toPortName === port).map(link => link.fromComponentIndex),
+  ]
+  const line = [...new Set(ends.filter(index => index !== item.component).map(index => String(graph.components[index]!.id)))].slice(0, PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS - 1)
+  return line.length === 0 ? {} : { line }
 }
 
 /** The Plant's drawn items with their controls where they stand now; only the named items where ids are given, in the derivation's order. */
@@ -85,16 +111,22 @@ export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds
       label: entry.label,
       ...(entry.position === undefined ? {} : { position: { path: entry.position, value: numberAt(entry.position) } }),
       components: [String(instance.plant.graph.components[entry.item.component]!.id)],
+      ...lineEnds(instance.plant.graph, entry.item),
       offered: entry.offered.map(control => {
         const travel = control.options.flatMap(option => option.travelMs === null ? [] : [option.travelMs])
         const demand = control.demand === undefined ? undefined : numberAt(control.path)
         const under = demand === undefined || snapshot === undefined ? [] : throttledUnder(instance.plant, snapshot, { path: control.path, value: demand })
+        const protection = pushbuttonProtection(instance.plant, control, {
+          read: path => instance.runtime.readVariable(path),
+          holds: condition => evaluateProcessPlantIcCondition({ system: instance.plant, runtime: instance.runtime, condition }).matches,
+        })
         return {
           control,
           standing: control.options.map(option => optionStanding(instance.plant, control, option, context)),
           travelMs: travel.length === 0 ? null : Math.max(...travel),
           ...(demand === undefined || control.state === undefined ? {} : { now: { demand, position: numberAt(control.state) } }),
           ...(under.length === 0 ? {} : { throttledUnder: under }),
+          ...(protection === undefined ? {} : { protection }),
         }
       }),
       withheld: entry.withheld,
