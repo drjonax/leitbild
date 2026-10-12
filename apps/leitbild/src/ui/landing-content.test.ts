@@ -122,16 +122,19 @@ describe('hero slides', () => {
 })
 
 describe('slide image loading (C12)', () => {
-  test('loads slide 1 first, the rest after load and idle', () => {
-    expect([...slidesToLoad({ count: 6, shown: new Set(), idle: false, saveData: false })]).toEqual([0])
-    expect([...slidesToLoad({ count: 6, shown: new Set(), idle: true, saveData: false })]).toEqual([0, 1, 2, 3, 4, 5])
+  const sorted = (set: ReadonlySet<number>) => [...set].sort((a, b) => a - b)
+
+  test('loads slide 1 first, and only the next slide after load and idle', () => {
+    expect(sorted(slidesToLoad({ count: 6, current: 0, shown: new Set(), idle: false, saveData: false }))).toEqual([0])
+    expect(sorted(slidesToLoad({ count: 6, current: 0, shown: new Set(), idle: true, saveData: false }))).toEqual([0, 1])
   })
 
-  test('loads a slide as soon as it is shown', () => {
-    expect([...slidesToLoad({ count: 6, shown: new Set([3]), idle: false, saveData: false })].sort()).toEqual([0, 3])
+  test('keeps shown slides and fetches one ahead as the carousel moves, wrapping at the end', () => {
+    expect(sorted(slidesToLoad({ count: 6, current: 3, shown: new Set([1, 2, 3]), idle: true, saveData: false }))).toEqual([0, 1, 2, 3, 4])
+    expect(sorted(slidesToLoad({ count: 6, current: 5, shown: new Set([5]), idle: true, saveData: false }))).toEqual([0, 5])
   })
 
-  test('preloads nothing under Save-Data', () => {
-    expect([...slidesToLoad({ count: 6, shown: new Set([1]), idle: true, saveData: true })].sort()).toEqual([0, 1])
+  test('fetches nothing ahead under Save-Data', () => {
+    expect(sorted(slidesToLoad({ count: 6, current: 1, shown: new Set([1]), idle: true, saveData: true }))).toEqual([0, 1])
   })
 })

@@ -49,10 +49,11 @@
   let tryButton = $state<HTMLElement | null>(null)
   let guideButton = $state<HTMLElement | null>(null)
 
+  let current = $state(0)
   let shown = $state(new Set<number>([0]))
   let idle = $state(false)
   const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true
-  const loaded = $derived(slidesToLoad({ count: HERO_SLIDES.length, shown, idle, saveData }))
+  const loaded = $derived(slidesToLoad({ count: HERO_SLIDES.length, current, shown, idle, saveData }))
 
   $effect(() => { demosOpen = route.kind === 'demos' })
   $effect(() => { guideOpen = route.kind === 'guide' })
@@ -108,7 +109,7 @@
       route = next
     })
     if (hinted) refreshRemembered()
-    // Slides 2–6 load after the page has loaded and gone idle (C12).
+    // The next slide's image loads after the page has loaded and gone idle (C12).
     const whenIdle = (): void => {
       const request = (window as Window & { requestIdleCallback?: (callback: () => void) => number }).requestIdleCallback
       if (request) request(() => { idle = true })
@@ -196,7 +197,7 @@
       </div>
       <div class="show">
         <Carousel items={HERO_SLIDES} label="Leitbild highlights" itemTitle={slide => slide.title} slide={heroSlide} {credit}
-          variant="hero" observeVisibility onindexchange={index => { if (!shown.has(index)) shown = new Set([...shown, index]) }} />
+          variant="hero" observeVisibility onindexchange={index => { current = index; if (!shown.has(index)) shown = new Set([...shown, index]) }} />
       </div>
     </div>
   </section>

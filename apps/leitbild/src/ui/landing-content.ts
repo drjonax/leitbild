@@ -128,16 +128,19 @@ export const heroSrcset = (urls: ReadonlyMap<number, string>): string =>
 export const HERO_IMAGE_SIZES = '(max-width: 900px) 96vw, 880px'
 
 /**
- * Which slides may load their image now (plan v2 C12): slide 1 at once; the
- * rest once the page has loaded and gone idle, or when shown. Under Save-Data
- * a slide loads only when it is shown.
+ * Which slides may load their image now (plan v2 C12): slide 1 at once, every
+ * slide that has been shown, and, once the page has loaded and gone idle, the
+ * one after the current slide, so a rotation never shows an empty frame.
+ * Under Save-Data nothing is fetched ahead.
  */
 export const slidesToLoad = (state: {
   readonly count: number
+  readonly current: number
   readonly shown: ReadonlySet<number>
   readonly idle: boolean
   readonly saveData: boolean
 }): ReadonlySet<number> => {
-  if (state.idle && !state.saveData) return new Set(Array.from({ length: state.count }, (_, index) => index))
-  return new Set([0, ...state.shown])
+  const load = new Set([0, state.current, ...state.shown])
+  if (state.idle && !state.saveData && state.count > 0) load.add((state.current + 1) % state.count)
+  return load
 }
