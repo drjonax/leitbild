@@ -106,12 +106,15 @@ export const proposalUnits = (answer: Recommendation): ReadonlyArray<ProposalUni
 /**
  * The numbered alternatives still offered for the selected row, by the
  * number each was first shown with. One that dropped out is no longer shown
- * (its digit key says why), so nothing stale or greyed lingers after a send.
+ * (its digit key says why), so nothing stale or greyed lingers after a send;
+ * nor is one the proposal has come to send, which its button names.
  */
 export const alternativeRows = (answer: Recommendation, numbered: ReadonlyArray<{ readonly unitId: string; readonly label: string }>, chosen: number | null): ReadonlyArray<AlternativeRow> =>
   numbered.flatMap((entry, index) => {
     const candidate = candidateIn(answer, entry.unitId)
-    return candidate === undefined ? [] : [{
+    // A unit the proposal now sends is on the big button already, unless the operator chose it by its number.
+    const proposed = chosen !== index + 1 && answer.proposal.units.some(unit => unit.unitId === entry.unitId)
+    return candidate === undefined || proposed ? [] : [{
       number: index + 1,
       unitId: entry.unitId,
       label: entry.label,

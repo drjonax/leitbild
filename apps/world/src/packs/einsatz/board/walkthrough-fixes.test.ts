@@ -67,7 +67,7 @@ describe('Fixes from the tap-only walkthrough', () => {
       expect(screen.view().unitBoard.sites.map(entry => [entry.id, entry.label])).toEqual([['h1', 'H1']])
       expect(screen.view().unitBoard.sitesHeading).toBe(neutralLexicon.sites)
       await screen.click({ kind: 'site', id: 'h1' })
-      expect([screen.view().feedback?.text, screen.calls]).toEqual([`Tap one of ${civilConfig.lexicon.unitBoard} first, then H1`, []])
+      expect([screen.view().feedback?.text, screen.calls]).toEqual([`Tap one of your ${civilConfig.lexicon.unitBoard!.toLowerCase()} first, then H1`, []])
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       await screen.click({ kind: 'site', id: 'h1' })
       expect(screen.calls.map(call => [call.input, call.result.ok])).toEqual([[{ units: ['u1'], to: { siteId: 'h1' } }, true]])

@@ -203,7 +203,8 @@ export const statusText = (answer: Recommendation, isFree: (unitId: string) => b
   }
   const unservable = unservableText(answer, couldServe)
   if (unservable !== null) return unservable
-  if (!answer.proposal.covers && answer.proposal.remainder.length > 0) return `still needs ${answer.proposal.remainder.join(', ')}`
+  // A unit holding the task queued comes next: its "next" stands instead of a remainder.
+  if (!answer.proposal.covers && answer.proposal.remainder.length > 0 && answer.next.length === 0) return `still needs ${answer.proposal.remainder.join(', ')}`
   return null
 }
 

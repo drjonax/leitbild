@@ -15,6 +15,9 @@ const inline = (word: string): string => word.charAt(0).toLowerCase() + word.sli
 /** A configuration word for a lexicon key, as a heading. */
 export const word = (rules: BoardRules, key: LexiconKey): string => wordFor(rules.config.lexicon, key)
 
+/** A configuration word for a lexicon key, inside a sentence: "Tap one of your units first". */
+export const inlineWord = (rules: BoardRules, key: LexiconKey): string => inline(word(rules, key))
+
 /** A unit's own word for a lexicon key, inside a sentence. */
 export const unitWord = (rules: BoardRules, unit: BoardUnit, key: LexiconKey): string =>
   inline(wordFor(rules.config.lexicon, key, rules.typeOf(unit).lexicon))

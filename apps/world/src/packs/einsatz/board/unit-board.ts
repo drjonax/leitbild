@@ -45,13 +45,15 @@ const targetLabel = (records: BoardRecords, trackId: string): string | null => {
 }
 
 /**
- * How visible a unit with a signature stands: revealed for a while after it
- * fired; standing still, counting down to concealment; concealed once it has
- * stood still long enough. A moving or destroyed unit shows nothing.
+ * How visible a unit that can be fired on stands (a signature and
+ * durability): revealed for a while after it fired; standing still,
+ * counting down to concealment; concealed once it has stood still long
+ * enough. A moving or destroyed unit shows nothing, nor does one that no
+ * fire can harm, for which concealment decides nothing on the Board.
  */
 const postureText = (rules: BoardRules, unit: BoardUnit, nowMs: number): string | null => {
-  const signature = rules.typeOf(unit).components.signature
-  if (signature === undefined || unit.integrity === 'destroyed') return null
+  const { signature, durability } = rules.typeOf(unit).components
+  if (signature === undefined || durability === undefined || unit.integrity === 'destroyed') return null
   if (unit.revealed === true) return 'Revealed'
   if (unit.stillSinceMs === undefined) return null
   const left = signature.concealAfterS - (nowMs - unit.stillSinceMs) / 1_000
