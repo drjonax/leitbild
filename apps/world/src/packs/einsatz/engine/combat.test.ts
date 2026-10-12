@@ -157,6 +157,7 @@ describe('Einsatz engagement', () => {
       place('r1', types.redGun, red, at(1_500)),
       hold('r1'),
       hold('far'),
+      { kind: 'set-roe', unitId: 'b1', roe: 'return-fire' },
     ])
     // Blue returns fire only; nothing red fired, so nothing is engaged, though r1 is identified with a fix and in range.
     state = (await advanceTo(state, 20)).state

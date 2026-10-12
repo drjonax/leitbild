@@ -93,10 +93,10 @@ describe('Board on halden-border', () => {
         for (const screen of all) await screen.sync()
       }
       // One snapshot before and one after each order, so each line comes from comparing two record sets.
-      await order(ids.setRoe, { unitId: 'b1', roe: 'free' })
+      await order(ids.setRoe, { unitId: 'b1', roe: 'return-fire' })
       await order(ids.engage, { unitId: 'b1', trackId: track.id })
       const lines = (screen: Screen) => screen.view().log.filter(entry => entry.recordId === 'b1').map(entry => entry.text)
-      const expected = [`B1: engaging ${track.label}`, `B1: set · ${roeWords.free}`]
+      const expected = [`B1: engaging ${track.label}`, `B1: set · ${roeWords['return-fire']}`]
       expect(lines(screens.own).slice(0, 2)).toEqual(expected)
       expect(lines(screens.truth).slice(0, 2)).toEqual(expected)
       expect(lines(screens.other)).toEqual([])

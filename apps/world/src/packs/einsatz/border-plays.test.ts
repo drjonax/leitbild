@@ -74,7 +74,7 @@ const outcomeOf = async (name: keyof typeof plays): Promise<Outcome> => {
 const minutes = (ms: number): number => (ms - start.timeMs) / 60_000
 
 describe('halden-border plays', () => {
-  test('the Definitions declare only a Controller; every unit is in exactly one sided group, whose roles the presets bundle, and human Red differs only by Red\'s scripted moves and its preset', () => {
+  test('the Definitions declare only a Controller; every unit is in exactly one sided group, whose roles the presets bundle, and human Red trades the scripted Red moves for Red\'s own calls and preset', () => {
     const roles = borderRoles(definition)
     expect((definition.roles ?? []).map(role => [role.class, role.sees])).toEqual([['controller', 'all']])
     const groups = borderConfig(definition).groups
@@ -95,12 +95,19 @@ describe('halden-border plays', () => {
     const human = borderDefinitions.humanRed
     expect(human.rolePresets?.slice(0, 3)).toEqual(definition.rolePresets)
     expect(human.rolePresets?.slice(3).map(preset => preset.roles)).toEqual([sideGroups(red)])
+    // Human Red gets Red's orders as its own calls instead of the scripted moves; Blue's timeline is the same.
     const redUnits = new Set(unitsWhere(start, red, () => true).map(unit => unit.id))
     const movesRed = (order: TimedOrder): boolean => order.capabilityId === ids.send && (order.input as { readonly units: ReadonlyArray<string> }).units.every(unitId => redUnits.has(unitId))
     expect(timelineOf(human)).toEqual(timelineOf(definition).filter(order => !movesRed(order)))
-    expect(timelineOf(definition).filter(movesRed).length).toBe(2 * redUnits.size)
-    const { id: _humanId, title: _humanTitle, description: _humanDescription, timeline: _humanTimeline, rolePresets: _humanPresets, ...humanRest } = human
-    const { id: _id, title: _title, description: _description, timeline: _timeline, rolePresets: _presets, ...scriptedRest } = definition
+    expect(new Set(timelineOf(definition).filter(movesRed).flatMap(order => (order.input as { readonly units: ReadonlyArray<string> }).units))).toEqual(redUnits)
+    const humanStart = borderStart(human)
+    expect([...start.tasks.values()].every(task => task.side === blue)).toBe(true)
+    expect([...humanStart.tasks.values()].filter(task => task.side !== blue).map(task => task.side)).toEqual([red, red])
+    const itemsOf = (source: typeof definition) => source.packs[0]!.items.filter(item => (item as { readonly side?: string }).side !== red || (item as { readonly type?: string }).type !== 'task')
+    expect(itemsOf(human)).toEqual(itemsOf(definition))
+    const { id: _humanId, title: _humanTitle, description: _humanDescription, objectives: _humanObjectives, timeline: _humanTimeline, rolePresets: _humanPresets, packs: humanPacks, ...humanRest } = human
+    const { id: _id, title: _title, description: _description, objectives: _objectives, timeline: _timeline, rolePresets: _presets, packs, ...scriptedRest } = definition
+    expect(humanPacks.map(pack => pack.config)).toEqual(packs.map(pack => pack.config))
     expect(humanRest).toEqual(scriptedRest)
   })
 

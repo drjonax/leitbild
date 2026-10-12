@@ -3,9 +3,7 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import type { Actor } from '../../../core/simulation-runs/actors.ts'
 import { einsatzDataSchema, type LastAction, type TaskData, type UnitData } from '../engine/model.ts'
 import { createWall, follow, openScreen, roleScreen, type Screen } from '../fixtures/board-harness.ts'
-import { borderDefinitions, borderStart, isScout, isShooter, overwatchGround, pointAt, roleCommanding, sensingCommandOf, unitsWhere } from '../fixtures/border-harness.ts'
-import { trackDataSchema } from '../engine/combat-model.ts'
-import { unitTypeOf } from '../engine/model.ts'
+import { borderDefinitions, borderStart, isScout, unitsWhere } from '../fixtures/border-harness.ts'
 import border from '../../../scenarios/halden-border.scenario.json'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { groupDeclaration, groupItems, groups } from '../fixtures/groups-run.ts'
@@ -20,7 +18,7 @@ import { refusalCode } from '../refusal.ts'
  * The recommendation follower presses N, then Enter (and Enter again to
  * confirm), on every unserved row as it appears, on a running Run. On civil
  * Halden the late top-priority call must divert the unit on its way to the
- * minor call; on halden-border, with Blue playing observation post first, the
+ * minor call; on halden-border, played by one screen holding all of Blue, the
  * receiving site that closes at 18:00 reroutes the units carrying load to the
  * other one, and the 25:00 top-priority call diverts the unit on its way to the
  * 24:00 minor call. The renaming generality test runs the follower on each shipped
@@ -78,53 +76,40 @@ describe('Recommendation follower', () => {
     const [blue] = (definition.sides ?? []).map(side => side.id) as [string]
     const start = borderStart(definition)
     const [scout] = unitsWhere(start, blue, isScout)
-    const guns = unitsWhere(start, blue, isShooter).map(unit => unit.id)
-    const screenTask = [...start.tasks.values()].find(task => task.side === blue
-      && start.catalog.templates.get(task.template)!.requires.some(requirement => unitTypeOf(start.catalog, scout!).components.service?.provides.includes(requirement.provides)))!
-    const scoutLabels = new Set(start.catalog.config.unitTypes.filter(isScout).map(type => type.label))
-    const carrierType = start.catalog.config.unitTypes.find(type => type.components.carry !== undefined && type.components.mobility?.mode === 'road')!
     const borderCue = (id: string) => border.timeline.cues.find(entry => entry.id === id)!
-    const [closing, minor, late] = [borderCue('site-closes'), borderCue('call-14'), borderCue('call-15')]
+    const [push, closing, minor, late] = [borderCue('red-push-1'), borderCue('site-closes'), borderCue('call-18'), borderCue('call-19')]
     const closedSite = (closing.actions[0]!.input as { readonly siteId: string }).siteId
     const [minorLabel, lateLabel] = [minor, late].map(cue => (cue.actions[0]!.input as { readonly label: string }).label) as [string, string]
 
     const run = await openRun({ definition: border })
     try {
-      const dispatcher = await openScreen(run, createWall(), { actor: roleScreen(run, roleCommanding(definition, blue, carrierType.id).roles[0]!.id) })
-      // Blue plays observation post first, as the walkthrough's Blue military screen does.
-      const commander = roleScreen(run, ...sensingCommandOf(definition, blue).roles.map(role => role.id))
-      const order = async (capabilityId: string, input: unknown) => expect(await run.invoke(capabilityId, input, commander)).toMatchObject({ ok: true })
-      await order(ids.send, { units: [scout!.id], to: { taskId: screenTask.id } })
-      for (const [index, unitId] of guns.entries()) await order(ids.send, { units: [unitId], to: { point: pointAt(overwatchGround[index]!) } })
-      for (const unitId of guns) await order(ids.setRoe, { unitId, roe: 'free' })
-      const huntScouts = async () => {
-        const target = run.run.snapshot().objects
-          .filter(object => object.audience !== 'public' && object.audience?.includes(blue) === true)
-          .flatMap(object => { const track = trackDataSchema.safeParse(object.packData); return track.success && track.data.tier === 'identified' && scoutLabels.has(track.data.identity!.typeLabel) ? [object.id] : [] })
-          .sort()[0]
-        if (target === undefined) return
-        for (const unitId of guns) {
-          const gun = run.unit(unitId)
-          if (gun.integrity !== 'destroyed' && gun.engage !== target) await order(ids.engage, { unitId, trackId: target })
-        }
-      }
+      // One person plays all of Blue from the first preset: every call, the military ones included, by recommendation.
+      const actor = roleScreen(run, ...definition.rolePresets![0]!.roles)
+      const dispatcher = await openScreen(run, createWall(), { actor })
       const startMs = run.nowMs()
-      await follow(run, dispatcher, { untilMs: startMs + (late.at.seconds + 30) * 1_000, stepMs: 5_000, alongside: huntScouts })
+      // The one beat the recommendations do not cover: when Red pushes onto the screen post, the scout is pulled back.
+      let pulledBack = false
+      const pullBack = async () => {
+        if (pulledBack || run.nowMs() - startMs < push.at.seconds * 1_000) return
+        pulledBack = true
+        expect(await run.invoke(ids.recall, { unitId: scout!.id }, actor)).toMatchObject({ ok: true })
+      }
+      await follow(run, dispatcher, { untilMs: startMs + (late.at.seconds + 30) * 1_000, stepMs: 5_000, alongside: pullBack })
 
-      // Units carrying load to the closing site were released from it at the closure and now carry it to another site.
-      const releases = run.journal.flatMap(event => {
+      // Units carrying load to the closing site were released from it at the closure, with their load, and handed it over at another site.
+      const unitRecords = run.journal.flatMap((event, index) => {
         if (event.type !== 'object.upserted') return []
         const data = einsatzDataSchema.safeParse(event.object.packData)
-        const last = data.success && data.data.type === 'unit' ? data.data.lastAction : undefined
-        return last?.verb === 'release' && last.target === closedSite ? [{ unitId: event.object.id, atS: (last.atMs - startMs) / 1_000 }] : []
+        return data.success && data.data.type === 'unit' ? [{ index, unitId: event.object.id, unit: data.data }] : []
       })
+      const releases = unitRecords.filter(entry => entry.unit.lastAction?.verb === 'release' && entry.unit.lastAction.target === closedSite)
       expect(releases.length).toBeGreaterThan(0)
       for (const release of releases) {
-        expect(release.atS).toBe(closing.at.seconds)
-        const after = run.unit(release.unitId)
-        expect(Object.values(after.load).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0)
-        expect(after.siteId).toBeDefined()
-        expect(after.siteId).not.toBe(closedSite)
+        expect((release.unit.lastAction!.atMs - startMs) / 1_000).toBe(closing.at.seconds)
+        expect(Object.values(release.unit.load).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0)
+        const handover = unitRecords.find(entry => entry.index > release.index && entry.unitId === release.unitId && entry.unit.phase === 'at-site')
+        expect(handover?.unit.siteId).toBeDefined()
+        expect(handover?.unit.siteId).not.toBe(closedSite)
       }
 
       const tasks = new Map(run.run.snapshot().objects.filter(object => object.kind === 'incident').map(object => [object.label, object.id]))
