@@ -11,11 +11,11 @@ import { emptyEngineState, unitTypeOf, type EngineState, type Transition, type U
 import { einsatzPackId } from '../ids.ts'
 import { taskItemSchema, unitItemSchema } from '../scenario.ts'
 import { openViewer, type EinsatzViewer } from '../viewer.ts'
-import scripted from './halden-border.scenario.json'
-import humanRed from './halden-border-human-red.scenario.json'
+import scripted from '../../../scenarios/halden-border.scenario.json'
+import humanRed from '../../../scenarios/halden-border-human-red.scenario.json'
 
 /**
- * Test-only harness that plays the halden-border fixture Definitions
+ * Test-only harness that plays the built-in halden-border Definitions
  * headless on the Einsatz engine with the direct router: items expand
  * through the same intents as the scenario codec, timeline cues run as the
  * timeline actor, and a play issues a side's orders through the command

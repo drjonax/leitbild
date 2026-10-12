@@ -8,7 +8,7 @@ import type { BoardEffect, BoardEventBody, BoardKey, BoardView, CallResult, Clic
 import { configurationOutputSchema, type EinsatzConfig, type TaskTemplate, type UnitType } from '../config-schema.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { openModeViewer, type PictureViewer } from '../picture.ts'
-import border from './halden-border.scenario.json'
+import border from '../../../scenarios/halden-border.scenario.json'
 import civil from './halden-civil.scenario.json'
 import civilRoles from './halden-civil-roles.scenario.json'
 import type { PackTargetContext } from '../../../core/packs/protocol.ts'

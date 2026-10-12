@@ -11,7 +11,7 @@ import { divertablePhases, hasLoad, isDestroyed, isFree } from '../engine/rules.
 import { createWall, follow, openScreen, roleScreen } from '../fixtures/board-harness.ts'
 import { types as groupUnitTypes } from '../fixtures/engine-harness.ts'
 import { groupConfig, groupDeclaration, groupItems } from '../fixtures/groups-run.ts'
-import border from '../fixtures/halden-border.scenario.json'
+import border from '../../../scenarios/halden-border.scenario.json'
 import civil from '../fixtures/halden-civil.scenario.json'
 import roles from '../fixtures/halden-civil-roles.scenario.json'
 import { lonLat, openRun, screenOf } from '../fixtures/run-harness.ts'

@@ -4,7 +4,7 @@ import type { PackRuntimeEvent } from '../../../simulation/protocol.ts'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { borderConfig, borderDefinitions, isScout } from '../fixtures/border-harness.ts'
 import { blue, red } from '../fixtures/combat-harness.ts'
-import scripted from '../fixtures/halden-border.scenario.json'
+import scripted from '../../../scenarios/halden-border.scenario.json'
 import { openRun, screenOf, type OpenRun, type RoleRunDeclaration } from '../fixtures/run-harness.ts'
 import { einsatzPackId } from '../ids.ts'
 
