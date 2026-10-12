@@ -27,6 +27,18 @@
     { "url": "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-01-12T07%3A00%3A00%22%2C%222026-01-12T07%3A15%3A00%22%2C%222026-01-12T07%3A30%3A00%22%2C%222026-01-12T07%3A45%3A00%22%5D%7D", "retrievedAt": "2026-10-11T18:51:35.178Z", "sha256": "b9995a8dcc6820aeb6c9f5ab02fd0e87c5d0f8b3be13125192671cdf2b89af4e" },
     { "url": "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-07-12T04%3A00%3A00%22%2C%222026-07-12T04%3A15%3A00%22%2C%222026-07-12T04%3A30%3A00%22%2C%222026-07-12T04%3A45%3A00%22%5D%7D", "retrievedAt": "2026-10-11T18:51:35.376Z", "sha256": "f12eb4c90d6d41e8b7bfa5c1e102e9d401e64b1a820fde24435a9030f65b8fd7" }
    ]
+  },
+  {
+   "id": "elhub",
+   "title": "Elhub energy-data API: PRODUCTION_PER_GROUP_MBA_HOUR per price area",
+   "publisher": "Elhub AS",
+   "url": "https://api.elhub.no/energy-data/v0/price-areas",
+   "licence": "cc-by-4.0",
+   "attribution": "Elhub AS",
+   "retrievals": [
+    { "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=PRODUCTION_PER_GROUP_MBA_HOUR&startDate=2026-01-12T08%3A00%3A00%2B01%3A00&endDate=2026-01-12T09%3A00%3A00%2B01%3A00", "retrievedAt": "2026-10-11T18:54:08.397Z", "sha256": "cf0eece9c68307760f1fe938b9aee5779093e1b2a02a64d3c37eb06e78409b90" },
+    { "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=PRODUCTION_PER_GROUP_MBA_HOUR&startDate=2026-07-12T06%3A00%3A00%2B02%3A00&endDate=2026-07-12T07%3A00%3A00%2B02%3A00", "retrievedAt": "2026-10-11T18:54:08.561Z", "sha256": "d120f4b43766d3ac7b3e7f7420b3003a957c4996a21ee594498185b0fc063649" }
+   ]
   }
  ],
  "hours": {
@@ -42,6 +54,16 @@
     "other": 113.3
    },
    "loadMw": 24288.0,
+   "areaProduction": {
+    "source": "elhub",
+    "mw": {
+     "NO1": { "hydro": 2482.9, "wind": 92.8, "thermal": 27.4, "solar": 0.3, "other": 0.1 },
+     "NO2": { "hydro": 8749, "wind": 1031.9, "thermal": 12.9, "solar": 0, "other": 7.2 },
+     "NO3": { "hydro": 2741.5, "wind": 1385.5, "thermal": 19.8, "solar": 0, "other": 0.2 },
+     "NO4": { "hydro": 3239.7, "wind": 893.5, "thermal": 182.2, "solar": 0, "other": 0.1 },
+     "NO5": { "hydro": 5725.3, "wind": 0, "thermal": 12, "solar": 0, "other": 0 }
+    }
+   },
    "importMw": {
     "SE": -1459.3,
     "FI": -47.0,
@@ -60,9 +82,10 @@
    "queries": [
     "https://api.energy-charts.info/public_power?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
     "https://api.energy-charts.info/cbpf?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
-    "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-01-12T07%3A00%3A00%22%2C%222026-01-12T07%3A15%3A00%22%2C%222026-01-12T07%3A30%3A00%22%2C%222026-01-12T07%3A45%3A00%22%5D%7D"
+    "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-01-12T07%3A00%3A00%22%2C%222026-01-12T07%3A15%3A00%22%2C%222026-01-12T07%3A30%3A00%22%2C%222026-01-12T07%3A45%3A00%22%5D%7D",
+    "https://api.elhub.no/energy-data/v0/price-areas?dataset=PRODUCTION_PER_GROUP_MBA_HOUR&startDate=2026-01-12T08%3A00%3A00%2B01%3A00&endDate=2026-01-12T09%3A00%3A00%2B01%3A00"
    ],
-   "note": "Means of the quarter-hours 07:00–07:45 UTC (08:00–09:00 Europe/Oslo). AC borders: Svenska kraftnät per Swedish bidding-zone border (sum 1,460.0 MW export; Energy-Charts gives Sweden 1,459.3 MW), Finland from Energy-Charts. other = waste 44.1 + other renewables 69.1 + biomass 0.1 + solar 0.0 MW. Net export 2,150.8 MW. Statnett driftsdata (PhysicalFlowMap/GetFlow, 07:00 UTC) gives NordLink 1,446.7 MW export, Skagerrak 56.7, North Sea Link 539.4 and NorNed 102.4 MW import; its history keeps no AC or internal border flows for this hour."
+   "note": "Means of the quarter-hours 07:00–07:45 UTC (08:00–09:00 Europe/Oslo). Production per price area: Elhub PRODUCTION_PER_GROUP_MBA_HOUR, the hour's kWh as mean MW. AC borders: Svenska kraftnät per Swedish bidding-zone border (sum 1,460.0 MW export; Energy-Charts gives Sweden 1,459.3 MW), Finland from Energy-Charts. other = waste 44.1 + other renewables 69.1 + biomass 0.1 + solar 0.0 MW. Net export 2,150.8 MW. Statnett driftsdata (PhysicalFlowMap/GetFlow, 07:00 UTC) gives NordLink 1,446.7 MW export, Skagerrak 56.7, North Sea Link 539.4 and NorNed 102.4 MW import; its history keeps no AC or internal border flows for this hour."
   },
   "summerLow": {
    "startUtc": "2026-07-12T04:00:00.000Z",
@@ -76,6 +99,16 @@
     "other": 95.9
    },
    "loadMw": 10854.0,
+   "areaProduction": {
+    "source": "elhub",
+    "mw": {
+     "NO1": { "hydro": 1238, "wind": 197.3, "thermal": 32.1, "solar": 16.7, "other": 0.5 },
+     "NO2": { "hydro": 3546.6, "wind": 71.7, "thermal": 11.1, "solar": 4.3, "other": 11.6 },
+     "NO3": { "hydro": 1732.4, "wind": 101.8, "thermal": 18.5, "solar": 1.4, "other": 0.1 },
+     "NO4": { "hydro": 2692, "wind": 104.4, "thermal": 180, "solar": 0.1, "other": 0 },
+     "NO5": { "hydro": 2999.1, "wind": 0, "thermal": 19.8, "solar": 1.2, "other": 0 }
+    }
+   },
    "importMw": {
     "SE": 845.2,
     "FI": -37.0,
@@ -94,9 +127,10 @@
    "queries": [
     "https://api.energy-charts.info/public_power?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
     "https://api.energy-charts.info/cbpf?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
-    "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-07-12T04%3A00%3A00%22%2C%222026-07-12T04%3A15%3A00%22%2C%222026-07-12T04%3A30%3A00%22%2C%222026-07-12T04%3A45%3A00%22%5D%7D"
+    "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-07-12T04%3A00%3A00%22%2C%222026-07-12T04%3A15%3A00%22%2C%222026-07-12T04%3A30%3A00%22%2C%222026-07-12T04%3A45%3A00%22%5D%7D",
+    "https://api.elhub.no/energy-data/v0/price-areas?dataset=PRODUCTION_PER_GROUP_MBA_HOUR&startDate=2026-07-12T06%3A00%3A00%2B02%3A00&endDate=2026-07-12T07%3A00%3A00%2B02%3A00"
    ],
-   "note": "Means of the quarter-hours 04:00–04:45 UTC (06:00–07:00 Europe/Oslo). AC borders: Svenska kraftnät per Swedish bidding-zone border (sum 846.1 MW import; Energy-Charts gives Sweden 845.2 MW), Finland from Energy-Charts. Hydro pumped storage is not published for this hour (null). other = other renewables 54.0 + waste 40.9 + solar 1.0 MW. Net export 1,919.0 MW."
+   "note": "Means of the quarter-hours 04:00–04:45 UTC (06:00–07:00 Europe/Oslo). Production per price area: Elhub PRODUCTION_PER_GROUP_MBA_HOUR, the hour's kWh as mean MW. AC borders: Svenska kraftnät per Swedish bidding-zone border (sum 846.1 MW import; Energy-Charts gives Sweden 845.2 MW), Finland from Energy-Charts. Hydro pumped storage is not published for this hour (null). other = other renewables 54.0 + waste 40.9 + solar 1.0 MW. Net export 1,919.0 MW."
   }
  }
 }

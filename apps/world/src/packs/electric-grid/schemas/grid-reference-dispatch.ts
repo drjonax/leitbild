@@ -49,6 +49,11 @@ const hourSchema = z.strictObject({
   loadMw: nonNegativeMw,
   /** Physical cross-border flow into Norway per neighbour. */
   importMw: z.strictObject({ SE: mw, FI: mw, DK: mw, DE: mw, NL: mw, GB: mw }),
+  /** Elhub's metered production of each price area per production group (PRODUCTION_PER_GROUP_MBA_HOUR), with the source it was read from. */
+  areaProduction: z.strictObject({
+    source: sourceIdSchema,
+    mw: z.record(priceAreaSchema, z.strictObject({ hydro: nonNegativeMw, wind: nonNegativeMw, thermal: nonNegativeMw, solar: nonNegativeMw, other: nonNegativeMw })),
+  }),
   /** Physical flow into Norway over each AC border of the Nordic exchange: a Norwegian price area and a Swedish bidding zone or Finland. */
   acBorderImportMw: z.array(z.strictObject({ priceArea: priceAreaSchema, externalArea: z.enum(['SE1', 'SE2', 'SE3', 'FI']), importMw: mw, source: sourceIdSchema })).min(1),
   /** Exact queries the values were read from. */
@@ -84,6 +89,7 @@ export const referenceDispatchTableSchema = z.strictObject({
     hour.acBorderImportMw.forEach((border, index) => {
       if (!sources.has(border.source)) context.addIssue({ code: 'custom', path: ['hours', name, 'acBorderImportMw', index, 'source'], message: `${border.source} is not a source of the table` })
     })
+    if (!sources.has(hour.areaProduction.source)) context.addIssue({ code: 'custom', path: ['hours', name, 'areaProduction', 'source'], message: `${hour.areaProduction.source} is not a source of the table` })
     hour.queries.forEach((query, index) => {
       if (!retrieved.has(query)) context.addIssue({ code: 'custom', path: ['hours', name, 'queries', index], message: 'is no retrieval of a source' })
     })

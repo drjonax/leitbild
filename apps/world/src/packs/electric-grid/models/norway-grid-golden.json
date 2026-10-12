@@ -5447,5 +5447,21 @@
       ]
     }
   ],
-  "powerFlowOverloads": []
+  "powerFlowOverloads": [
+    {
+      "branchId": "branch:osm-a0269051d0144396",
+      "label": "Håkøybotn – Tverråsen 132 kV (class-default rating, no published rating found)",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.05,
+      "reason": "Class-default rating, no published rating found: the line carries the Kvaløya wind farms behind Tverråsen into Håkøybotn, and the model rates it by the 132 kV overhead class rule (203 MW continuous, 244 MW emergency) for want of a published rating. At the winter reference hour NO4's wind runs at its measured 894 MW (Elhub), 77 % of the area's capacity, which loads the line to 1.046 of its class-default rating in the AC load flow; it stays below the emergency rating and its relays do not operate in three simulated hours.",
+      "evidence": [
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/586667747",
+          "ref": "way/586667747",
+          "note": "Håkøybotn - Tverråsen, power=line, voltage=132000, cables=3, operator=Arva; no rating tag"
+        }
+      ]
+    }
+  ]
 }
