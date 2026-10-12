@@ -17,7 +17,8 @@ const controlSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('select'),
     defaultValue: z.string().optional(),
-    options: z.array(z.object({ value: z.string(), label: z.string().min(1), compatibleWith: z.object({ path: pathSchema, values: z.array(z.string()) }).strict().optional() }).strict()).min(1),
+    // Empty only when the options come from the Pack configuration (checked in validateAuthoring).
+    options: z.array(z.object({ value: z.string(), label: z.string().min(1), compatibleWith: z.object({ path: pathSchema, values: z.array(z.string()) }).strict().optional() }).strict()),
     extendFromConfig: z.object({ path: pathSchema, valueKey: z.string(), labelKey: z.string() }).strict().optional(),
   }).strict(),
   z.object({ kind: z.literal('reference'), itemTypes: z.array(z.string()).optional(), defaultValue: z.string().optional() }).strict(),
@@ -189,10 +190,15 @@ const validateAuthoring = (pack: WorldPack): void => {
     // Probe schema shape only, just as the point above does. Required references
     // cannot have genuine defaults before the user selects an existing item.
     // These values never enter published defaults, a Scenario, or a Run.
+    // A required choice among the Scenario's own configuration records, such
+    // as a configured type, has no genuine default either: the author picks one.
     const itemSchema = z.toJSONSchema(pack.scenario.itemSchemas[itemType.id]!, { io: 'input' }) as SchemaNode
     for (const field of itemType.fields) {
-      if (field.control.kind === 'reference' && !schemaAt(itemSchema, field.path).optional && valueAt(candidate, field.path) === undefined)
-        setValueAt(candidate, field.path, 'reference:authoring-check')
+      if (field.control.kind === 'select' && field.control.options.length === 0 && field.control.extendFromConfig === undefined)
+        throw new Error(`authoring field ${field.path.join('.')} of ${itemType.id} in Pack ${pack.descriptor.id} offers no options and takes none from the configuration`)
+      if (schemaAt(itemSchema, field.path).optional || valueAt(candidate, field.path) !== undefined) continue
+      if (field.control.kind === 'reference') setValueAt(candidate, field.path, 'reference:authoring-check')
+      else if (field.control.kind === 'select' && field.control.options.length === 0) setValueAt(candidate, field.path, 'authoring-check')
     }
     pack.scenario.itemSchemas[itemType.id]!.parse(candidate)
     for (const collection of itemType.collections ?? []) {

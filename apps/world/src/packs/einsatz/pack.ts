@@ -1,4 +1,5 @@
 import type { WorldPack } from '../../core/packs/protocol.ts'
+import { einsatzAuthoring } from './authoring.ts'
 import { einsatzConfigSchema } from './config-validation.ts'
 import { einsatzScenarioRoles } from './groups.ts'
 import { validateEinsatzScenarioConfig } from './scenario-config.ts'
@@ -19,6 +20,7 @@ import { einsatzPackView } from './ui-pack.ts'
 export const einsatzPack: WorldPack = {
   ...einsatzPackView,
   scenarioConfigSchema: einsatzConfigSchema,
+  authoring: einsatzAuthoring,
   roleAware: true,
   validateScenarioConfig: validateEinsatzScenarioConfig,
   scenarioRoles: einsatzScenarioRoles,
