@@ -2058,6 +2058,7 @@
           onAssignmentCancelled={cancelMapAssignment}
           cameraInteraction={mapCameraInteraction}
           cameraPadding={mapCameraPadding}
+          chooseStacked={mapTargetPanelContribution !== null}
           onGroundSelected={groundClicksWanted(mapClickContext) ? selectGround : undefined}
           targetPreviewFor={targetPreviewsWanted(mapClickContext) ? previewTarget : undefined}
         />

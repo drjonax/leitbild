@@ -196,6 +196,8 @@ export const createMapRuntime = async (
   assertCameraInteractionContract(current, config.cameraInteraction)
 
   let overlay: MapboxOverlay | null = null
+  /** The picking radius last set; a mouse's 0 until a finger or pen sets more. */
+  let pickingRadiusPx = 0
   const installDeckOverlay = (): void => {
     diagnostics.start('operational-dynamic', 'Installing deck overlay')
     const nextOverlay = mapPerformanceDiagnostics.measure(
@@ -363,6 +365,12 @@ export const createMapRuntime = async (
       const activeOverlay = overlay
       if (activeOverlay === null) throw new Error('Deck overlay is not installed')
       activeOverlay.setProps({ pickingRadius: radiusPx })
+      pickingRadiusPx = radiusPx
+    },
+    pickObjectsAt: (screen, layerIds, depth) => {
+      const activeOverlay = overlay
+      if (activeOverlay === null) throw new Error('Deck overlay is not installed')
+      return activeOverlay.pickMultipleObjects({ x: screen.x, y: screen.y, radius: pickingRadiusPx, depth, layerIds: [...layerIds] })
     },
     diagnostics: snapshot,
     destroy: () => {

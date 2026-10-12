@@ -41,6 +41,7 @@ const createRuntime = (
   resize: () => undefined,
   setCameraInteraction: () => undefined,
   setPickingRadius: () => undefined,
+  pickObjectsAt: () => [],
   diagnostics: () => ({ phases: [] }),
   destroy: () => undefined,
 })

@@ -39,6 +39,8 @@
   import { mapClickOutcome } from './map-target-routing.ts'
   import { noMapCover, type MapCover, type MapPrompt } from './surface-panel-interaction.ts'
   import { createMapPromptController } from './map/map-prompt.ts'
+  import { createMapStackChooser } from './map/map-stack-chooser.ts'
+  import { stackDepth, stackedObjects, stackLayerIds } from './map/map-stack.ts'
   import { hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
   import { operationalIconPx } from './map-runtime/symbol-kit.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
@@ -119,6 +121,13 @@
     readonly cameraInteraction: CameraInteraction
     /** How far open surface panels reach over the map: the camera centres and fits clear of them, and so do the map's own controls. */
     readonly cameraPadding?: MapCover
+    /**
+     * Whether a tap that lands on several objects' icons shows a chooser
+     * listing them, instead of taking the top one; the surface opts in while
+     * a panel takes map targets, whose operator must reach a site beneath
+     * the units parked on it.
+     */
+    readonly chooseStacked?: boolean
     /** Reported only when given: a click on open ground, neither an object nor a Pack feature. */
     readonly onGroundSelected?: (point: GeoJsonPoint) => void
     /** The order preview a hovered object's card shows, when the selected controller's Pack describes targets. */
@@ -174,6 +183,7 @@
     canLongPress = () => false,
     cameraInteraction,
     cameraPadding = noMapCover,
+    chooseStacked = false,
     onGroundSelected,
     targetPreviewFor,
   }: Props = $props()
@@ -242,6 +252,36 @@
   }
 
   const promptController = createMapPromptController({ getMap: () => runtime?.map ?? null })
+  const stackChooser = createMapStackChooser({ getMap: () => runtime?.map ?? null })
+
+  /** An object a click picked, or the one chosen from a stack: an assignment's target, or a selection. */
+  const pickObject = (object: OperationalObject): void => {
+    if (assignmentActive) {
+      suppressBackgroundClick = true
+      onAssignmentObjectSelected(object, lastPointerScreen)
+    } else onObjectSelected(object)
+  }
+
+  /** The objects whose icons lie under the last press, when the surface opted in to choosing among a stack. */
+  const stackUnderPointer = (): ReadonlyArray<OperationalObject> => {
+    const current = runtime
+    if (!chooseStacked || assignmentActive || current === null) return []
+    return stackedObjects(current.pickObjectsAt(lastPointerScreen, stackLayerIds, stackDepth))
+  }
+
+  const showStackChooser = (stack: ReadonlyArray<OperationalObject>): void => {
+    const current = runtime
+    if (current === null) return
+    const point = current.map.unproject([lastPointerScreen.x, lastPointerScreen.y])
+    stackChooser.show(geoPointFromLonLat(point.lng, point.lat), stack.map(object => ({
+      id: object.id,
+      label: presentationFor(object).mapLabel ?? object.label,
+      choose: () => {
+        onObjectSeen(object)
+        pickObject(object)
+      },
+    })))
+  }
 
   const popupController = createMapPopupController({
     getMap: () => runtime?.map ?? null,
@@ -280,10 +320,9 @@
     onObjectSelected: object => {
       clickHandled = true
       if (performance.now() < longPressConsumedUntil) return
-      if (assignmentActive) {
-        suppressBackgroundClick = true
-        onAssignmentObjectSelected(object, lastPointerScreen)
-      } else onObjectSelected(object)
+      const stack = stackUnderPointer()
+      if (stack.length > 1) return showStackChooser(stack)
+      pickObject(object)
     },
     onObjectSeen: object => onObjectSeen(object),
     onObjectHover: object => {
@@ -503,6 +542,8 @@
           // synchronously, because the deck overlay picks with pickAsync 'sync' (map-runtime.ts).
           // A double-click's extra object click leaves no mark on the next click.
           clickHandled = false
+          // Any click lets a stack's chooser go; an object click on a stack shows a new one.
+          stackChooser.hide()
           queueMicrotask(() => {
             const outcome = mapClickOutcome({ suppressed: suppressBackgroundClick, assignmentActive, handled: clickHandled })
             clickHandled = false
@@ -513,6 +554,7 @@
         },
         onMoveStart: event => {
           if (event.originalEvent !== undefined) startingCamera = false
+          stackChooser.hide()
           packOverlayController.setCameraGestureActive(true)
           packOverlayController.abort('map camera moved before pack map-area query completed')
           popupController.hide()
@@ -632,6 +674,7 @@
       packOverlayController.destroy()
       popupController.hide()
       promptController.destroy()
+      stackChooser.hide()
       referenceLayerController.reset()
       runtime?.destroy()
       runtime = null
@@ -692,7 +735,7 @@
   })
 
   $effect(() => { packDataRevisionKey; untrack(() => { void packOverlayController.refresh() }) })
-  $effect(() => { perspectiveEpoch; untrack(() => { hoveredObject = null; popupController.hide() }) })
+  $effect(() => { perspectiveEpoch; untrack(() => { hoveredObject = null; popupController.hide(); stackChooser.hide() }) })
 
   $effect(() => {
     mapConfig.layers.join('|')
@@ -825,6 +868,34 @@
     border-radius: 10px;
     background: transparent;
     box-shadow: 0 6px 18px rgba(16, 24, 40, .28);
+  }
+
+  /* The chooser of objects stacked under one tap: one button per object, each large enough to tap. */
+  .map :global(.map-stack .maplibregl-popup-content) {
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--panel);
+    box-shadow: 0 6px 18px rgba(16, 24, 40, .28);
+  }
+
+  .map :global(.map-stack-list) {
+    display: grid;
+    gap: 4px;
+  }
+
+  .map :global(.map-stack-button) {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-strong);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    touch-action: manipulation;
   }
 
   .map :global(.map-prompt-button) {
