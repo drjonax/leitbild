@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { openBridgeDevice } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import type { MimicRow } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { insertedFraction, vesselGeometry } from '../src/ui/embed/composed-display/mimic/vessel-symbol.ts'
+import { insertedFraction, ROD_SHOWN, vesselGeometry } from '../src/ui/embed/composed-display/mimic/vessel-symbol.ts'
 import { fillTracePath, programMark, stripReading } from '../src/ui/embed/composed-display/mimic/vessel-trends.ts'
 
 // The reactor vessel's geometry and the vessels' traces, as the embed draws
@@ -43,8 +43,11 @@ describe('the reactor vessel symbol', () => {
     expect(edges.at(-1)![1]).toBeLessThanOrEqual(core.x + core.width + 1e-9)
     edges.slice(1).forEach(([left], index) => expect(left).toBeGreaterThan(edges[index]![1]))
     expect(edges[4]![0] - edges[3]![1]).toBeGreaterThan(edges[1]![0] - edges[0]![1])
-    // At power: seven banks out, the last control bank 8 steps in.
-    expect(core.bars.map(bar => bar.length)).toEqual([0, 0, 0, 0, 0, 0, 0, expect.closeTo((8 / 228) * core.height, 6)])
+    // At power: seven banks out, the last control bank 8 steps in; every one shows itself withdrawn above the core
+    // region, never as a 2 px tick (ISA-101 review of run 26c).
+    expect(core.bars.map(bar => bar.inserted)).toEqual([0, 0, 0, 0, 0, 0, 0, expect.closeTo((8 / 228) * core.height, 6)])
+    expect(core.bars.map(bar => bar.withdrawn)).toEqual(Array.from({ length: 8 }, () => ROD_SHOWN))
+    expect(core.y - shape.body.y).toBeGreaterThanOrEqual(ROD_SHOWN)
   })
 
   test('its fill spans the interior by the level it reads; a level it does not know is no fill, never an empty vessel', () => {
@@ -54,7 +57,8 @@ describe('the reactor vessel symbol', () => {
     expect(overview(null, []).fill).toBeNull()
     // Tripped, every bank is in; one whose reading is missing is drawn as not known.
     const tripped = overview(100, [[1, 1, 1, 1], [1, 1, 1, null]])
-    expect(tripped.core!.bars.map(bar => bar.length)).toEqual([...Array.from({ length: 7 }, () => tripped.core!.height), null])
+    expect(tripped.core!.bars.map(bar => bar.inserted)).toEqual([...Array.from({ length: 7 }, () => tripped.core!.height), null])
+    expect(tripped.core!.bars.map(bar => bar.withdrawn)).toEqual([...Array.from({ length: 7 }, () => 0), null])
   })
 
   test('equipment that heats nothing has no core region', () => {

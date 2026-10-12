@@ -53,11 +53,12 @@
     </g>
     <rect class="core" x={core.x + 0.5} y={core.y + 0.5} width={core.width - 1} height={core.height - 1} />
     {#each core.bars as bar, at (at)}
-      <rect class="tick" x={bar.x + bar.width / 2 - 0.5} y={bar.tick} width="1" height="4" />
-      {#if bar.length === null}
+      {#if bar.inserted === null || bar.withdrawn === null}
         <rect class="bar-unknown" x={bar.x} y={core.y} width={bar.width} height={core.height} />
-      {:else if bar.length > 0}
-        <rect class="bar" x={bar.x} y={core.y} width={bar.width} height={bar.length} />
+      {:else}
+        <!-- Withdrawn above the core region, quiet; inserted into it, bright: a tripped core reads at a glance. -->
+        {#if bar.withdrawn > 0}<rect class="bar-out" x={bar.x} y={core.y - bar.withdrawn} width={bar.width} height={bar.withdrawn} />{/if}
+        {#if bar.inserted > 0}<rect class="bar" x={bar.x} y={core.y} width={bar.width} height={bar.inserted} />{/if}
       {/if}
     {/each}
   {/if}
@@ -70,16 +71,18 @@
 
 <style>
   .vessel { display: block; overflow: visible; }
-  .empty { fill: var(--instrument-frame-tertiary-color); }
+  /* Filled and framed as OpenBridge fills and frames its tanks (its linear indicators' regular scheme), so the vessel is
+     no brighter than any other on a normal display (ISA-101; HMI review of run 26c). */
+  .empty { fill: var(--instrument-frame-secondary-color); }
   /* A level the drawing does not know: OpenBridge's static fill, never an empty vessel. */
   .unknown { fill: var(--container-section-color); }
-  .liquid { fill: var(--instrument-regular-secondary-color); }
-  .level { stroke: var(--instrument-regular-primary-color); stroke-width: 1; }
-  .outline { fill: none; stroke: var(--instrument-frame-primary-color); stroke-width: 1.5; }
-  .flange, .collar { fill: var(--instrument-frame-primary-color); stroke: var(--instrument-frame-tertiary-color); stroke-width: 1; }
-  .core { fill: none; stroke: var(--instrument-frame-secondary-color); stroke-width: 1; }
-  .hatch { stroke: var(--instrument-frame-secondary-color); stroke-width: 1; opacity: 0.1; }
-  .tick { fill: var(--instrument-tick-mark-tertiary-color); }
+  .liquid { fill: var(--instrument-regular-tertiary-color); }
+  .level { stroke: var(--instrument-regular-secondary-color); stroke-width: 1; }
+  .outline { fill: none; stroke: var(--instrument-frame-tertiary-color); stroke-width: 1.5; }
+  .flange, .collar { fill: var(--instrument-frame-tertiary-color); stroke: var(--instrument-frame-tertiary-color); stroke-width: 1; }
+  .core { fill: none; stroke: var(--instrument-frame-tertiary-color); stroke-width: 1; }
+  .hatch { stroke: var(--instrument-frame-tertiary-color); stroke-width: 1; opacity: 0.25; }
+  .bar-out { fill: var(--instrument-regular-secondary-color); }
   .bar { fill: var(--instrument-regular-primary-color); }
   .bar-unknown { fill: none; stroke: var(--instrument-regular-primary-color); stroke-width: 1; stroke-dasharray: 2 2; }
 </style>

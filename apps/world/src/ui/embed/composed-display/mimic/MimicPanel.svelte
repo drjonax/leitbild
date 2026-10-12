@@ -481,7 +481,7 @@
   // Inside a heat exchanger's box, below its icon, clear of its body's edge.
   const strip = (item: MimicDrawnItem) => ({ x: item.box.x + openBridgeDevice.vessel.inset, y: item.box.y + item.box.height * 2 / 3, width: item.box.width - 2 * openBridgeDevice.vessel.inset, height: item.box.height / 3 - openBridgeDevice.vessel.inset - 1 })
   // The key says what a trace is once any vessel draws one.
-  const traces = $derived(mimic.items.some(item => item.trend !== undefined || item.rows.some(row => row.kind === 'value' && row.sparkline === true)) && (trends?.pens.some(pen => pen.recorded) ?? false))
+  const traces = $derived(mimic.items.some(item => item.trend !== undefined || item.rows.some(row => row.kind === 'value' && row.sparkline !== undefined)) && (trends?.pens.some(pen => pen.recorded) ?? false))
 
   // A value row's readout block, before its unit (and after WR where the row reads its wider instrument); at an
   // end of the span it reads, "<0" in low-integrity style, as a readout shows a reading off its span.
@@ -642,12 +642,12 @@
                     <span class={`alarm-row ${alert?.status ?? ''}`}>{alert === null ? '' : flapOf(item, alert).parts[row.part]}</span>
                   {:else if row.kind === 'value'}
                     {@const reading = valueRowReading(row, index)}
-                    {#if row.sparkline === true}
+                    {#if row.sparkline !== undefined}
                       <!-- A reactor vessel's value, and on a line under it what it read over the last minutes. -->
                       {@const traced = stale ? undefined : trendPen(reading?.wider === true && row.wider !== undefined ? row.wider.path : row.path)}
                       <span class="traced">
                         <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
-                        <span class="sparkline-row">{#if traced !== undefined && trends !== undefined}<MiniTrace pen={traced} points={pointsOf(String(traced.path))} {now} windowMs={trends.windowMs} width={openBridgeDevice.rowSparkline.width} height={openBridgeDevice.rowSparkline.height} />{/if}</span>
+                        <span class="sparkline-row" style={`height:${row.sparkline.height + openBridgeDevice.rowSparklineGap}px`}>{#if traced !== undefined && trends !== undefined}<MiniTrace pen={traced} points={pointsOf(String(traced.path))} {now} windowMs={trends.windowMs} width={row.sparkline.width} height={row.sparkline.height} framed />{/if}</span>
                       </span>
                     {:else}
                       <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
@@ -798,7 +798,7 @@
   .value-row { display: inline-flex; align-items: baseline; gap: 4px; height: 20px; }
   .traced { display: flex; flex-direction: column; align-items: inherit; }
   .fill-trace path { fill: none; stroke: var(--instrument-regular-primary-color); stroke-width: 1; stroke-linejoin: round; }
-  .sparkline-row { display: flex; align-items: center; height: 16px; }
+  .sparkline-row { display: flex; align-items: center; }
   .unit { font: 370 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row { font: 400 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row.emphasis { color: var(--element-active-color); }

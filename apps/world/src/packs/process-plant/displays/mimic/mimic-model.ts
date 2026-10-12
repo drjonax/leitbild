@@ -13,7 +13,7 @@ import type { MimicIntent } from './scope.ts'
 // restyle it.
 
 /** Changes whenever the same intent on the same model could draw differently. */
-export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-10`
+export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-11`
 
 /**
  * A mimic may be up to 800 px wide (owner decision): OpenBridge's full-size

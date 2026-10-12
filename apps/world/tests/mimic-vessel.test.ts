@@ -123,7 +123,7 @@ describe('the reactor vessel on a drawing', () => {
     expect(core.box.width).toBe(chatMimicProfile.vessel.cells * 24)
     expect(core.vessel).toBeDefined()
     expect(result.mimic.trendPaths).toEqual([])
-    expect(result.mimic.items.some(item => item.trend !== undefined || item.rows.some(row => row.kind === 'value' && row.sparkline === true))).toBe(false)
+    expect(result.mimic.items.some(item => item.trend !== undefined || item.rows.some(row => row.kind === 'value' && row.sparkline !== undefined))).toBe(false)
   })
 })
 
@@ -140,7 +140,8 @@ describe('vessels trace their readings over the last minutes', () => {
     }
     const core = coreOf(overview)
     expect(core.trend).toBeUndefined()
-    expect(core.rows.filter(row => row.kind === 'value').map(row => row.kind === 'value' && row.sparkline === true)).toEqual([true])
+    // The core-exit temperature's sparkline is large enough to read a rise or a fall (HMI review of run 26c).
+    expect(core.rows.filter(row => row.kind === 'value').map(row => row.kind === 'value' ? row.sparkline : undefined)).toEqual([{ width: 80, height: 24 }])
     // What their history is kept for: each fill, each strip's reading and its wide range, the core-exit temperature.
     expect(overview.trendPaths.map(String).sort()).toEqual([
       'condenser.condensateLevelPercent', 'core.coreExitTemperatureC', 'feedwaterTank.levelPercent', 'pressurizer.levelPercent',

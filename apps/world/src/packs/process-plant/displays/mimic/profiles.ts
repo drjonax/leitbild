@@ -91,6 +91,14 @@ export interface MimicProfile {
    * display has its own trend panel.
    */
   readonly trends: boolean
+  /**
+   * Where it shows trends, the size of a reactor vessel's value-row
+   * sparklines, framed on a line under each row, large enough to read a rise
+   * or a fall (HMI review of run 26c: at 40 x 14 it was decorative); none
+   * where the drawing has no height for them over its other rows (a detail,
+   * whose lead values and faceplate trend the same readings).
+   */
+  readonly sparklines: { readonly width: number; readonly height: number } | null
 }
 
 /** OpenBridge's drawing conventions: its 24 px grid, pipe outline and alarm frame. */
@@ -152,6 +160,7 @@ export const chatMimicProfile: MimicProfile = {
   quickLooks: false,
   vessel: { cells: 2, core: 'overlap', head: openBridgeDevice.reactorVessel.head },
   trends: false,
+  sparklines: null,
 }
 
 /**
@@ -184,6 +193,7 @@ export const overviewMimicProfile: MimicProfile = {
   // 1595 px of a 1585 px room), and four grid steps taller into the free height above its nozzles.
   vessel: { cells: 4, core: 'overlap', head: openBridgeDevice.reactorVessel.head + 4 * 24 },
   trends: true,
+  sparklines: { width: 80, height: 24 },
 }
 
 /**
@@ -199,4 +209,5 @@ export const detailMimicProfile: MimicProfile = {
   parallel: 'each',
   stubLabels: 'names',
   vessel: { cells: 4, core: 'overlap', head: openBridgeDevice.reactorVessel.head },
+  sparklines: null,
 }

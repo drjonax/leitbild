@@ -77,8 +77,8 @@ export const openBridgeDevice = {
    * only its bottom dome there.
    */
   reactorVessel: { head: 46, dome: 30, flange: 6, coreGap: 12, coreBand: 72, bottomDome: 20 },
-  /** A sparkline on a line under a value row (MimicRow `sparkline`): its width and height, on a line this high. */
-  rowSparkline: { width: 40, height: 14, line: 16 },
+  /** A sparkline on a line under a value row (MimicRow `sparkline`) keeps this much of its line clear of the row over it. */
+  rowSparklineGap: 4,
 } as const
 
 /** What a reactor vessel's box keeps below its last nozzle: its core region there (`band`), or only its bottom dome (`overlap`). */

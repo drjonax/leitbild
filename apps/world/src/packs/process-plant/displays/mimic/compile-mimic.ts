@@ -74,7 +74,7 @@ const valueRowSize = (row: Extract<MimicRow, { kind: 'value' }>, own: number, va
 
 /** A value row with its sparkline on a line under it (MimicRow `sparkline`): no narrower than the sparkline, a line taller. */
 const withSparkline = (row: Extract<MimicRow, { kind: 'value' }>, size: { readonly width: number; readonly height: number }): { readonly width: number; readonly height: number } =>
-  row.sparkline !== true ? size : { width: Math.max(size.width, openBridgeDevice.rowSparkline.width), height: size.height + openBridgeDevice.rowSparkline.line }
+  row.sparkline === undefined ? size : { width: Math.max(size.width, row.sparkline.width), height: size.height + row.sparkline.height + openBridgeDevice.rowSparklineGap }
 
 const stateRowWidth = (texts: ReadonlyArray<string>): number =>
   Math.max(...texts.map(text => textWidth('stateRow', text))) + openBridgeDevice.stateRowPadding
@@ -499,7 +499,7 @@ const coreOf = (graph: CompiledPlantGraph, item: Pick<PlannedItem, 'item' | 'pre
 
 /** A reactor vessel's value rows each carry a sparkline where its profile shows trends (MimicRow `sparkline`). */
 const withSparklines = (rows: ReadonlyArray<MimicRow>, presentation: MimicPresentation, profile: MimicProfile): ReadonlyArray<MimicRow> =>
-  !profile.trends || presentation.element !== 'vessel' ? rows : rows.map(row => (row.kind === 'value' ? { ...row, sparkline: true as const } : row))
+  !profile.trends || profile.sparklines === null || presentation.element !== 'vessel' ? rows : rows.map(row => (row.kind === 'value' ? { ...row, sparkline: profile.sparklines! } : row))
 
 /**
  * What an item draws of its reading over time where its profile shows trends
@@ -518,7 +518,7 @@ const trendOf = (item: Pick<MimicDrawnItem, 'binding' | 'presentation' | 'rows'>
 /** The readings an item's trends draw over time: its trend's, and its sparkline rows' with their wider instruments. */
 const trendPathsOf = (item: Pick<MimicDrawnItem, 'rows' | 'trend'>): ReadonlyArray<VariablePath> => [
   ...(item.trend?.kind === 'fill' ? [item.trend.path] : item.trend?.kind === 'strip' ? rowPaths(item.rows[item.trend.row]!) : []),
-  ...item.rows.flatMap(row => (row.kind === 'value' && row.sparkline === true ? rowPaths(row) : [])),
+  ...item.rows.flatMap(row => (row.kind === 'value' && row.sparkline !== undefined ? rowPaths(row) : [])),
 ]
 
 /** A power stub's word, about the far ends it names (stubWordBinding); null where its lines carry fluid. */

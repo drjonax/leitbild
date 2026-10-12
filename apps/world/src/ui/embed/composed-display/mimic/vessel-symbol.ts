@@ -5,7 +5,9 @@ import { openBridgeDevice } from '../../../../packs/process-plant/displays/mimic
 // head on a flange, its body, its bottom dome, collars where the layout
 // brought its pipes, its level as the fill, and where it heats, its core
 // region with each part it inserts (a rod bank) hanging into it by its
-// inserted length. Pure geometry in the box's own px; VesselSymbol.svelte
+// inserted length, and what of it stands withdrawn drawn above the region,
+// at least ROD_SHOWN long, so a bank out of the core is seen as out, not
+// missing. Pure geometry in the box's own px; VesselSymbol.svelte
 // draws it. The fill is the level the model reads (a collapsed level over
 // the interior, not a water surface), so nothing marks the core's top as
 // covered or uncovered.
@@ -25,8 +27,12 @@ export interface VesselGeometry {
     readonly height: number
     /** 45° hatch lines inside it, clipped to it. */
     readonly hatch: ReadonlyArray<{ readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number }>
-    /** Each part's slot: its tick over the core, and its bar down from the core's top by its inserted length; null where its reading is not known. */
-    readonly bars: ReadonlyArray<{ readonly x: number; readonly width: number; readonly tick: number; readonly length: number | null }>
+    /**
+     * Each part: the length it is inserted, down from the core's top, and
+     * the length shown of it withdrawn, up from the core's top; both null
+     * where its reading is not known.
+     */
+    readonly bars: ReadonlyArray<{ readonly x: number; readonly width: number; readonly inserted: number | null; readonly withdrawn: number | null }>
   } | null
 }
 
@@ -38,6 +44,8 @@ const COLLAR = 10
 /** The core region keeps this far inside the body, per 72 px of width. */
 const CORE_INSET = 6
 const HATCH_PITCH = 6
+/** A part not fully in shows this much of it above the core region (ISA-101 review of run 26c: 2 px ticks at power). */
+export const ROD_SHOWN = 12
 
 /**
  * How far a part is in: its reading over its range, from the end it is out
@@ -85,7 +93,8 @@ export const vesselGeometry = (input: {
   const fill = input.level === null ? null : { top: (h - 4) - Math.min(1, Math.max(0, input.level / 100)) * (h - 8) }
   const core = input.drawing.core === null ? null : (() => {
     const x = left + inset + CORE_INSET * scale
-    const band = input.drawing.core === 'band' ? CORE_BAND : Math.max(CORE_BAND, Math.round(CORE_SHARE * (bodyBottom - bodyTop)))
+    // Overlapping its nozzles, it leaves room above it for its withdrawn parts to show.
+    const band = input.drawing.core === 'band' ? CORE_BAND : Math.min(bodyBottom - bodyTop - ROD_SHOWN, Math.max(CORE_BAND, Math.round(CORE_SHARE * (bodyBottom - bodyTop))))
     const y = Math.max(bodyTop, bodyBottom - band)
     const width = w - 2 * (x - left)
     const height = bodyBottom - y
@@ -100,7 +109,12 @@ export const vesselGeometry = (input: {
     const sizes = input.groups.map(group => group.length * bar + (group.length - 1) * gap)
     let next = cx - (sizes.reduce((sum, size) => sum + size, 0) + (input.groups.length - 1) * groupGap) / 2
     const bars = input.groups.flatMap(group => {
-      const placed = group.map((inserted, index) => ({ x: next + index * (bar + gap), width: bar, tick: y - 2, length: inserted === null ? null : inserted * height }))
+      const placed = group.map((inserted, index) => ({
+        x: next + index * (bar + gap),
+        width: bar,
+        inserted: inserted === null ? null : inserted * height,
+        withdrawn: inserted === null ? null : inserted >= 1 ? 0 : Math.min(ROD_SHOWN, y - bodyTop),
+      }))
       next += group.length * bar + (group.length - 1) * gap + groupGap
       return placed
     })
