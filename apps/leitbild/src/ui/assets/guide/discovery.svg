@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 332" width="480" height="332" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 8 4 0 8z" fill="#1c6f68"/></marker>
+  </defs>
+  <rect x="24" y="16" width="300" height="56" rx="12" fill="#ffffff" stroke="#b7c2b4" stroke-width="1.5"/>
+  <text x="44" y="41" font-size="17" font-weight="700" fill="#172019">Question</text>
+  <text x="44" y="61" font-size="14" fill="#5f6b63">Starts from what you ask</text>
+  <path d="M174 74v16" stroke="#1c6f68" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="24" y="96" width="300" height="56" rx="12" fill="#ffffff" stroke="#b7c2b4" stroke-width="1.5"/>
+  <text x="44" y="121" font-size="17" font-weight="700" fill="#172019">Explore</text>
+  <text x="44" y="141" font-size="14" fill="#5f6b63">What exists here? What may it do?</text>
+  <path d="M174 154v16" stroke="#1c6f68" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="24" y="176" width="300" height="56" rx="12" fill="#ffffff" stroke="#b7c2b4" stroke-width="1.5"/>
+  <text x="44" y="201" font-size="17" font-weight="700" fill="#172019">Read</text>
+  <text x="44" y="221" font-size="14" fill="#5f6b63">Only what the question needs</text>
+  <path d="M326 204c44 0 44-80 4-80" fill="none" stroke="#1c6f68" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="378" y="158" font-size="14" fill="#46524a">follow</text>
+  <text x="378" y="176" font-size="14" fill="#46524a">references</text>
+  <path d="M174 234v16" stroke="#1c6f68" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="24" y="256" width="300" height="56" rx="12" fill="#263c2b"/>
+  <text x="44" y="281" font-size="17" font-weight="700" fill="#ffffff">Answer</text>
+  <text x="44" y="301" font-size="14" fill="#cfe2d3">With the evidence it used</text>
+  <text x="378" y="290" font-size="14" fill="#46524a">stops when</text>
+  <text x="378" y="308" font-size="14" fill="#46524a">it is enough</text>
+</svg>
