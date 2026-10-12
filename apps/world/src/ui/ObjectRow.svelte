@@ -21,7 +21,8 @@
     readonly visibleFields: ReadonlyArray<PackObjectField>
     readonly markSeen: (object: OperationalObject) => void
     readonly selectObject: (object: OperationalObject) => void
-    readonly deleteObject: (object: OperationalObject) => Promise<void>
+    /** Absent where this screen may not delete: a role Run's operator-class role sets. */
+    readonly deleteObject?: (object: OperationalObject) => Promise<void>
     readonly detailPresentationFor?: (object: OperationalObject) => PackObjectPresentation | Promise<PackObjectPresentation>
     readonly openProcessDisplay?: (object: OperationalObject) => void
     readonly openProcedureSystem?: (object: OperationalObject) => void
@@ -151,6 +152,7 @@
   const droneProfileEditorAvailable = $derived(object.packId === 'drone' && openDroneProfileEditor !== undefined)
   const confirmDelete = (): void => {
     deleteRequestedFor = null
+    if (!deleteObject) throw new Error(`Deleting ${object.label} is not offered on this screen`)
     void deleteObject(object)
   }
 
@@ -306,16 +308,18 @@
       </span>
     </span>
   </div>
-  <span class="row-delete-toggle" bind:this={deleteToggle}>
-    <IconButton
-      label="Delete {object.label}"
-      title="Delete {object.label}"
-      icon={X}
-      size={13}
-      variant="bare"
-      onClick={() => { deleteRequestedFor = deleteRequested ? null : object.id }}
-    />
-  </span>
+  {#if deleteObject}
+    <span class="row-delete-toggle" bind:this={deleteToggle}>
+      <IconButton
+        label="Delete {object.label}"
+        title="Delete {object.label}"
+        icon={X}
+        size={13}
+        variant="bare"
+        onClick={() => { deleteRequestedFor = deleteRequested ? null : object.id }}
+      />
+    </span>
+  {/if}
   {#if visibleFields.length > 0}
     <div class="object-row-details">
       {#each visibleFields as field (field.key)}
@@ -337,7 +341,7 @@
 
 <!-- Outside the row: a press on the question must not select the row, and a
      group of buttons must not sit inside the row's role="button". -->
-{#if deleteRequested}
+{#if deleteRequested && deleteObject}
   <div class="row-delete-confirm">
     <InlineConfirmation
       question="Delete {object.label}?"

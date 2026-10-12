@@ -384,7 +384,12 @@ describe('inert in a Run without roles', () => {
     // The picker opens only on the Run's own refusal of a screen without (valid) roles.
     expect(route.match(/rolePicker\s*=\s*\{/g)).toHaveLength(1)
     expect(route).toMatch(/if\s*\(\s*code\s*!==\s*'role_required'\s*&&\s*code\s*!==\s*'unknown_role'\s*\)\s*throw\s+err\b/)
-    // Reset is offered to everyone in open mode, where no role set exists.
+    // Delete and reset are offered to everyone in open mode, where no role set exists.
+    expect(markup).toMatch(/deleteObject=\{\s*controllerControls\s*\?\s*deleteObject\s*:\s*undefined\s*\}/)
+    // Without a delete handler the rail row shows no delete control and no confirmation.
+    const row = readFileSync(join(import.meta.dir, '..', 'src', 'ui', 'ObjectRow.svelte'), 'utf8')
+    expect(row).toMatch(/\{#if\s+deleteObject\s*\}\s*<span\s+class="row-delete-toggle"/)
+    expect(row).toMatch(/\{#if\s+deleteRequested\s*&&\s*deleteObject\s*\}/)
     expect(markup).toMatch(/resetScenario=\{\s*controllerControls\s*\?\s*resetScenario\s*:\s*null\s*\}/)
     expect(route).toMatch(/const\s+controllerControls\s*=\s*\$derived\(\s*runRoles\s*===\s*null\s*\|\|/)
   })

@@ -1825,7 +1825,7 @@
         {hasNewInfo}
         {markSeen}
         {selectObject}
-        {deleteObject}
+        deleteObject={controllerControls ? deleteObject : undefined}
         {openProcessDisplay}
         {openProcedureSystem}
         {openProcedureSystemAt}

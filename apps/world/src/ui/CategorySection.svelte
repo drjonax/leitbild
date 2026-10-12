@@ -28,7 +28,8 @@
     readonly beginPlacement: (type: PackCreateObjectType) => void
     readonly markSeen: (object: OperationalObject) => void
     readonly selectObject: (object: OperationalObject) => void
-    readonly deleteObject: (object: OperationalObject) => Promise<void>
+    /** Absent where this screen may not delete: a role Run's operator-class role sets. */
+    readonly deleteObject?: (object: OperationalObject) => Promise<void>
     readonly detailPresentationFor?: (object: OperationalObject) => PackObjectPresentation | Promise<PackObjectPresentation>
     readonly openProcessDisplay?: (object: OperationalObject) => void
     readonly openProcedureSystem?: (object: OperationalObject) => void

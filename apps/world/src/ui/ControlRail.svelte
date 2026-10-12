@@ -45,7 +45,8 @@
     readonly hasNewInfo: (object: OperationalObject) => boolean
     readonly markSeen: (object: OperationalObject) => void
     readonly selectObject: (object: OperationalObject) => void
-    readonly deleteObject: (object: OperationalObject) => Promise<void>
+    /** Absent where this screen may not delete: a role Run's operator-class role sets. */
+    readonly deleteObject?: (object: OperationalObject) => Promise<void>
     readonly openProcessDisplay?: (object: OperationalObject) => void
     readonly openProcedureSystem?: (object: OperationalObject) => void
     readonly openProcedureSystemAt?: (object: OperationalObject, summary?: ProcedureRunSummary) => void
