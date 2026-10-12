@@ -1,4 +1,5 @@
 import type { CompiledProcessPlant } from './plant-compiler.ts'
+import type { PlantOperations } from './operations/plant-operations.ts'
 import type { ProcessPlantProtectionRunner, ProcessPlantRampRunner, ProcessPlantRuntime } from './runtime/index.ts'
 
 export interface ProcessPlantRuntimePerformanceSnapshot {
@@ -20,6 +21,8 @@ export interface ProcessPlantRuntimeInstance {
   readonly runtime: ProcessPlantRuntime
   readonly ramps: ProcessPlantRampRunner
   readonly protection?: ProcessPlantProtectionRunner
+  /** What people and AI agents did to it and propose (operations/plant-operations.ts); the Pack runtime keeps one per Plant. */
+  readonly operations?: PlantOperations
   readonly performance: ProcessPlantRuntimePerformance
 }
 

@@ -5,7 +5,9 @@ import {
 } from '../runtime/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import { createPlantOperations } from '../operations/plant-operations.ts'
 import {
+  restoredOperationsFor,
   restoredProtectionSnapshotFor,
   restoredRuntimeCheckpointFor,
   restoredRampSnapshotFor,
@@ -41,6 +43,7 @@ export const createProcessPlantRuntimeInstances = (config: {
       runtime,
       ramps,
       protection,
+      operations: createPlantOperations(restoredOperationsFor(config.runtimeState, plant.id)),
       performance: createProcessPlantRuntimePerformance(),
     }
   })(),

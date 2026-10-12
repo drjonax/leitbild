@@ -34,6 +34,7 @@ import { defaultSimulationRunRuntimePolicy } from '../../../core/simulation-runs
 import { createRuntimeStateWriter } from '../../../simulation/runtime-state-writer.ts'
 import { createProcessPlantRecordingPlan } from '../recording.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import type { ProcessVariableValue, VariablePath } from '../graph/index.ts'
 import { componentVariablePath } from '../runtime/index.ts'
 import { processPlantSimAdapterId,processPlantSimRuntimeId } from './constants.ts'
 import {
@@ -41,6 +42,7 @@ import {
   processPlantProjectionEvents,
   projectedInitialProcessPlantObjects,
 } from './object-projection.ts'
+import { proposalSignalEvents } from './proposal-signals.ts'
 import { createProcessPlantRuntimeInstances } from './runtime-instance-factory.ts'
 import {
   processPlantRuntimeStateSchema,
@@ -306,6 +308,19 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
     const aiOperationOf = (plantId: string): ProcessPlantUnitPackData['aiOperation'] =>
       processPlantUnitPackDataSchema.parse(objectsById.get(plantId as ObjectId)?.packData).aiOperation
 
+    // The operations log keeps what people and AI agents did; the Run's own writes are its Scenario's.
+    const recordOperation = (
+      plant: ProcessPlantRuntimeInstance,
+      command: CommandEnvelope,
+      context: PackCommandContext,
+      write: { readonly path: VariablePath; readonly value: ProcessVariableValue; readonly kind: 'write' | 'ramp' | 'approval'; readonly proposalId?: string },
+    ): void => {
+      if (plant.operations === undefined || (context.origin !== 'person' && context.origin !== 'ai')) return
+      const at = { elapsedMs: plant.runtime.elapsedMs(), wallMs: Date.now() }
+      const transitions = plant.operations.record({ commandId: command.id, actorId: command.actorId, origin: context.origin, elapsedMs: at.elapsedMs, ...write }, at)
+      emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, transitions))
+    }
+
     let runtimeFailureReason: string | null = null
     let failureAt = nowIso()
     let lastSuccessfulInteractionAt = nowIso()
@@ -332,7 +347,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         }
       }
       const events: PackRuntimeEvent[] = []
-      for (const { runtime, ramps, protection, performance: runtimePerformance } of plants.values()) {
+      for (const { runtime, ramps, protection, operations, performance: runtimePerformance } of plants.values()) {
         const startedAt = performance.now()
         ramps.apply(runtime.elapsedMs() + elapsedMs)
         const tick = runtime.tick(elapsedMs)
@@ -342,6 +357,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           simulationRunId: config.simulationRunId,
           sourceRuntimeId: processPlantSimRuntimeId,
         }) ?? []))
+        // A proposal lapses at its plant time, never within a minute of wall time (proposals.ts).
+        events.push(...proposalSignalEvents(config.simulationRunId, operations?.expire({ elapsedMs: runtime.elapsedMs(), wallMs: Date.now() }) ?? []))
         runtimePerformance.record({
           wallMs: performance.now() - startedAt,
           simulatedMs: tick.simulatedMs,
@@ -513,6 +530,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             target: payload.data.targetValue,
             durationMs: payload.data.durationSeconds * 1_000,
           })
+          recordOperation(plant, command, context, { path: validation.targetPath, value: payload.data.targetValue, kind: 'ramp' })
           await persistence.saveNow()
           return { ok: true, commandId: command.id, acceptedAt }
         }
@@ -547,6 +565,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             value: payload.data.value,
           })
           applyCoupledBoundaryEffect(boundary.effect, `control write by ${command.actorId}`)
+          recordOperation(plant, command, context, { path: validation.targetPath, value: payload.data.value, kind: 'write' })
           await persistence.saveNow()
           return { ok: true, commandId: command.id, acceptedAt }
         } catch (err) {

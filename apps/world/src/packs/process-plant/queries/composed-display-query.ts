@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { EMBEDDED_VIEW_MAX_HEIGHT, embeddedViewContentSchema, embeddedViewPublicationSchema } from '@leitbild/contracts'
 import { idSchema, type IsoTimestamp, type ObjectId, type OperationalObject } from '../../../core/model/index.ts'
 import type { PackRuntimeQuery, PackRuntimeRecordedHistory } from '../../../simulation/protocol.ts'
+import { operationsSampleFor } from '../operations/plant-operations.ts'
 import { rejectCapabilityInput, rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { variablePathSchema, type VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
@@ -72,6 +73,8 @@ export const displaySampleQuerySchema = z.object({
   plantId: idSchema,
   paths: z.array(variablePathSchema).min(1).max(PROCESS_DISPLAY_SAMPLE_MAX_PATHS),
   alarms: z.boolean().default(false),
+  /** What people and AI agents did on these paths, the ramps running on them and the proposals for them. */
+  operations: z.boolean().default(false),
 }).strict()
 
 // Generated displays per Plant, by what they show and the view size: windows
@@ -319,6 +322,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
   const system = requirePlant(config.plants, payload.plantId)
   const alarms = payload.alarms ? annunciated(system) : undefined
   if (payload.alarms && alarms === undefined) return rejectCapabilityTarget(`Process Plant ${payload.plantId} has no configured alarms`)
+  if (payload.operations && system.operations === undefined) return rejectCapabilityTarget(`Process Plant ${payload.plantId} keeps no operations record`)
+  const operations = payload.operations && system.operations !== undefined ? operationsSampleFor(system.operations, system.ramps.snapshot().active, new Set(payload.paths)) : undefined
   const mode = modeNow(system)
   const safetyFunctions = evaluateSafetyFunctions(system.plant, system.runtime)
   return {
@@ -341,6 +346,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
           ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }),
         })),
     }),
+    ...(operations === undefined ? {} : { operations }),
     values: payload.paths.map(path => {
       if (!system.plant.graph.signalBindingByPath.has(path)) return rejectCapabilityTarget(`Process Plant signal path not found: ${path}`)
       const variable = system.runtime.readVariableSnapshot(path)
