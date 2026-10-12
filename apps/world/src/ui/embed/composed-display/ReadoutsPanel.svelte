@@ -3,7 +3,7 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { displayValue, limitKindName, logarithmicSpan, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import { chipName, displayValue, logarithmicSpan, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
   import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
   import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -55,7 +55,7 @@
     const head = heads[String(pen.path)] ?? 0
     if (pen.tagId === undefined || head === 0) return false
     const badges = [...(pen.command ? ['demand'] : []), ...(pen.simulatorOnly ? ['sim'] : [])]
-    const room = head - badges.reduce((sum, word) => sum + badgeWidth(word) + HEAD_GAP, 0) - chipWidth(limitKindName(inAlarm)) - HEAD_GAP
+    const room = head - badges.reduce((sum, word) => sum + badgeWidth(word) + HEAD_GAP, 0) - chipWidth(chipName(inAlarm)) - HEAD_GAP
     return measureName(pen.tagId) > room
   }
   // A limit state takes its row's width, measured as drawn, and drops whole

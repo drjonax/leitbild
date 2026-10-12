@@ -62,6 +62,13 @@ export interface ComposedDisplayThreshold {
   /** The same conditions by signal path, to tell whether they hold now (trend-reading.ts gatesHold). */
   readonly gates?: ReadonlyArray<LimitGate>
   /**
+   * For an alarm whose rule sets no limit on one value alone (a level low
+   * with low feed): what it watches, as its alarm row names it ("L LO & F
+   * LO"), so its chip reads as that row and apart from another alarm at the
+   * same limit (annunciators.ts alarmWatches). Set where a display shows it.
+   */
+  readonly watches?: string
+  /**
    * Where the rule votes over channels (2 of 4 low-low levels), how many of
    * how many must be past their limits: this channel's limit is where it
    * votes, and its action is named with the vote ("AFW START 2/4").

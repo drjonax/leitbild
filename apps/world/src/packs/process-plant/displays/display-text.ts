@@ -193,6 +193,17 @@ export const limitKindName = (threshold: Pick<ComposedDisplayThreshold, 'directi
   `${limitOrderName(threshold)} · ${threshold.action}`
 
 /**
+ * A limit acting now as its chip names it: as its alarm row is tagged, by
+ * what its rule watches where it watches more than this value ("L LO & F LO ·
+ * ALM"), else by order and action ("LO-LO · RX TRIP"). Compact, the action
+ * is left to the margin line under it.
+ */
+export const chipName = (threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'action' | 'watches'>, compact = false): string => {
+  const head = threshold.watches ?? limitOrderName(threshold)
+  return compact ? head : `${head} · ${threshold.action}`
+}
+
+/**
  * What the I&C does at a limit as its name says it: its action, and how long
  * the value must stay past it where the rule waits that long ("TURB TRIP
  * after 30 min": HMI review, plan C1). A chip, a badge and an alarm row name

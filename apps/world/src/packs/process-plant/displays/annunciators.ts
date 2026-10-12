@@ -120,6 +120,27 @@ const limitedPath = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): Var
   return drawn.length === 1 ? drawn[0]! : null
 }
 
+const watchesByPlant = new WeakMap<CompiledProcessPlant, ReadonlyMap<string, string>>()
+
+/**
+ * What each alarm rule with no limit on one value watches, by rule id, in
+ * the words its drawing's flap uses ("L LO & F LO", "DEAD"): its alarm row's
+ * tag and a chip on any of its values name it so, apart from another alarm at
+ * the same limit. A steam generator's low level with low feed and its
+ * power-operation feed flow alarm both set LO 150 kg/s on the feed flow;
+ * after a trip the second clears with its mode while the first stays active,
+ * and a chip reading "LO · ALM" read as the cleared one (HMI review of run 25).
+ */
+export const alarmWatches = (plant: CompiledProcessPlant): ReadonlyMap<string, string> => {
+  const known = watchesByPlant.get(plant)
+  if (known !== undefined) return known
+  const watches = new Map(plant.automation.rules
+    .filter(rule => rule.enabled && icRuleKind(rule) === 'alarm' && limitedPath(plant, rule) === null)
+    .map(rule => [rule.id, flapText(plant, rule, undefined).watches] as const))
+  watchesByPlant.set(plant, watches)
+  return watches
+}
+
 const annunciationByPlant = new WeakMap<CompiledProcessPlant, DisplayAnnunciation>()
 
 export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunciation => {
@@ -155,7 +176,8 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
   const tagOf = (entry: (typeof annunciated)[number]): string => {
     const order = orderOf(entry.rule)
     if (order !== null) return `${order} · ${actionOfEntry(entry)}`
-    return entry.effect.type === 'alarm.enter' ? `${flapText(plant, entry.rule, undefined).watches} · ${actionOfEntry(entry)}` : actionOfEntry(entry)
+    const watches = entry.effect.type === 'alarm.enter' ? alarmWatches(plant).get(entry.rule.id) : undefined
+    return watches === undefined ? actionOfEntry(entry) : `${watches} · ${actionOfEntry(entry)}`
   }
   const declared = plant.automation.firstOutGroups
   const annunciation: DisplayAnnunciation = {

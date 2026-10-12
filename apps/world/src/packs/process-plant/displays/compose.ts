@@ -50,7 +50,7 @@ import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mi
 import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
-import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
+import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { operatingPointValue } from './operating-point.ts'
 import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
@@ -439,7 +439,10 @@ const resolvePens = (
       issues.push({ path, message: `"${signal.ref}" is a ${typeof value} state signal; ${options.panelName} panels show numeric signals only (use a readouts panel for states)` })
       return
     }
-    const { thresholds, combinedRules } = icThresholdsForSignal(system.plant, binding.path)
+    const { thresholds: limits, combinedRules } = icThresholdsForSignal(system.plant, binding.path)
+    // A chip on this value names an alarm watching more than it as its alarm row does (alarmWatches).
+    const watching = alarmWatches(system.plant)
+    const thresholds = limits.map(threshold => watching.has(threshold.ruleId) ? { ...threshold, watches: watching.get(threshold.ruleId)! } : threshold)
     const seriesId = recordingSeriesIdFor(system.plant.id, binding.path)
     const identity = signalIdentity(system, binding)
     const wider = widerInstrument(system.plant.graph, binding)

@@ -14,7 +14,8 @@ import {
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { composeEvidenceRows, type CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
-import { positionWord } from '../src/packs/process-plant/displays/display-text.ts'
+import { chipName, positionWord } from '../src/packs/process-plant/displays/display-text.ts'
+import { activeThreshold } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -86,7 +87,7 @@ const situation = (fault: { readonly actionId: string; readonly parameters?: Rec
     const reopened = ask('world.process-plant.display.view', { plantId: plant.id, state: result.view.state }) as { display: CompiledComposedDisplay }
     return { result, evidence: state.evidence ?? [], display: reopened.display }
   }
-  return { system, compose, read: (path: string) => runtime.readVariable(path as never) }
+  return { system, ask, compose, read: (path: string) => runtime.readVariable(path as never) }
 }
 
 const once = <T>(make: () => T): (() => T) => {
@@ -236,6 +237,30 @@ describe('what World adds to a composed display', () => {
     // Readouts alone draw no history across the trip: no trip check.
     const now = lossOfFeed.compose('Feed now', ['AFW-FLOW'], [{ kind: 'readouts', signals: [signal('AFW-FLOW', 'primary')] }])
     expect(listed(now.evidence).map(([, kind]) => kind)).not.toContain('trip')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('SG B runback: the feed inflow chip on the SG B detail names the alarm that is active, as its alarm row does', () => {
+    // HMI review of run 25: three minutes after FCV B ran back, the SG B detail's feedwater inflow read "LO · ALM"
+    // beside "feedwater flow low" listed as cleared. Two alarms set LO 150 kg/s on that flow: the flow alarm of power
+    // operation, cleared with its mode at the trip, and the low level with low feed, still active. The chip named the
+    // limit both share, in the cleared row's words; it now names the active alarm as its row does.
+    const { system, ask, read } = runback()
+    const snapshot = system.protection!.snapshot()
+    const lifecycle = (ruleId: string) => [...snapshot.alarms, ...snapshot.trips].find(entry => entry.ruleId === ruleId)!
+    expect([lifecycle('sg-b-feedwater-flow-low').active, lifecycle('sg-b-feedwater-low').active]).toEqual([false, true])
+    expect(Number(read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(150)
+    const detail = ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ detail: { plantId: system.plant.id, components: ['sgB'] } }), size: { width: 1600, height: 900 } }) as { display: CompiledComposedDisplay }
+    const readouts = detail.display.panels.find(panel => panel.kind === 'readouts')!
+    if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
+    const inflow = readouts.pens.find(pen => String(pen.path) === 'sgB.feedwaterFlowKgPerS')!
+    const active = new Set([...snapshot.alarms, ...snapshot.trips].filter(entry => entry.active).map(entry => entry.ruleId))
+    const chip = activeThreshold(inflow.thresholds, active, { id: 'hotStandby', label: 'Hot standby' }, path => read(String(path)) as never)!
+    const tags = detail.display.annunciation.tags
+    const tagOf = (ruleId: string) => Object.entries(tags).find(([id]) => id.split(':')[1] === ruleId)![1]
+    expect(chipName(chip)).toBe('L LO & F LO · ALM')
+    expect(chipName(chip)).toBe(tagOf('sg-b-feedwater-low'))
+    expect(tagOf('sg-b-feedwater-flow-low')).toBe('LO · ALM')
+    expect(chipName(chip, true)).toBe('L LO & F LO')
   }, PLANT_HANG_GUARD_MS)
 
   test('turbine trip: narrow ranges below their span read the wide ranges in the legend, beside the auxiliary feed in all and to each, and the trip check', () => {
