@@ -15,6 +15,8 @@ import { createManualIdleTimer, createTestPackRuntimeAdapters, createTestScenari
 // the coupling would otherwise rewrite the offsite source from the live port on every update.
 
 const operator = { id: 'actor:offsite-isolation-test' as ActorId, label: 'Offsite isolation test operator', role: 'operator' as const }
+// The Run itself, as its Scenario timeline writes: the only origin a boundary input takes a direct write from.
+const scenario = { id: 'actor:offsite-isolation-scenario' as ActorId, label: 'Offsite isolation test scenario', role: 'system' as const }
 // Hang guard, not a cost budget: four PWR Plants run single-threaded, about load/8-fold slower in wall time.
 const watchdogMs = 1_200_000
 
@@ -73,7 +75,7 @@ describe('a Grid-connected Plant\'s loss of offsite power', () => {
         const plant = run.snapshot().objects.find(object => object.id === 'plant:halden-1' as ObjectId)!
         return electricalPortFromObject(plant, 'grid-420kv')!.state!
       }
-      const invoke = async (capabilityId: string, input: Record<string, unknown>) => run.invokeCapability(operator, { capabilityId, input })
+      const invoke = async (capabilityId: string, input: Record<string, unknown>, actor: typeof operator | typeof scenario = operator) => run.invokeCapability(actor, { capabilityId, input })
       const unitOnePoint = async () => {
         const outcome = await invoke('world.electric-grid.connection-points.list', { gridId: 'grid:halden-four-unit' })
         if (outcome.kind !== 'query') throw new Error('connection-points.list is not a query')
@@ -98,12 +100,13 @@ describe('a Grid-connected Plant\'s loss of offsite power', () => {
       expect(isolatedPoint.energized).toBe(true)
       expect(signalTypes()).toEqual(['process-plant.offsite.isolated'])
 
-      // The Grid's voltage and frequency stay the Grid's: a plant-side write of them is refused.
-      const voltageWrite = await invoke('world.process-plant.control.write', { plantId: 'plant:halden-1', path: 'offsiteGrid.voltageFraction', value: 0.85 })
+      // The Grid's voltage and frequency stay the Grid's: even the Scenario's plant-side write of them is refused.
+      const voltageWrite = await invoke('world.process-plant.control.write', { plantId: 'plant:halden-1', path: 'offsiteGrid.voltageFraction', value: 0.85 }, scenario)
       expect(voltageWrite).toMatchObject({ kind: 'command', result: { ok: false } })
+      if (voltageWrite.kind === 'command' && !voltageWrite.result.ok) expect(voltageWrite.result.reason).toContain('is set by the Grid this Plant is connected to')
 
-      // An operator's or Scenario's write of available=true clears the isolation; the Grid port applies again.
-      const restore = await invoke('world.process-plant.control.write', { plantId: 'plant:halden-1', path: 'offsiteGrid.available', value: true })
+      // The instructor's "Restore offsite power" clears the isolation; the Grid port applies again.
+      const restore = await invoke('world.process-plant.action.invoke', { plantId: 'plant:halden-1', actionId: 'restore-offsite-power', parameters: {} })
       expect(restore).toMatchObject({ kind: 'command', result: { ok: true } })
       await advanceTo(50)
       expect(plantPort()).toMatchObject({ energized: true, connected: true })

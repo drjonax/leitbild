@@ -3,6 +3,7 @@ import type { CommandEnvelope,CommandResult,ElectricalConnectionDefinition,IsoTi
 import { electricalPortFromObject,nowIso } from '../../../core/model/index.ts'
 import { createSimulationClock } from '../../../core/model/time.ts'
 import type {
+  PackCommandContext,
   PackRuntimeAdapter,
   PackRuntimeConnection,
   PackRuntimeConnectionConfig,
@@ -24,6 +25,7 @@ import {
 } from '../commands.ts'
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
+import { instructorOnlyRefusal } from '../operations/command-guard.ts'
 import { processPlantElectricalBoundaries } from '../electrical-ports.ts'
 import { processPlantIdForObject,processPlantPackId,processPlantUnitPackDataSchema } from '../model.ts'
 import { compileProcessPlants } from '../plant-compiler.ts'
@@ -402,7 +404,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           handlers.delete(handler)
         }
       },
-      sendCommand: async (command: CommandEnvelope): Promise<CommandResult> => {
+      sendCommand: async (command: CommandEnvelope, context: PackCommandContext): Promise<CommandResult> => {
         const acceptedAt = nowIso()
         if (runtimeFailureReason !== null) {
           return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant runtime has stopped after a runtime failure: ${runtimeFailureReason}` }
@@ -430,6 +432,9 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
                 },
               })
               if (!result.accepted) throw new Error(result.reason)
+              // An instructor action is a person's or the Scenario's; an AI agent's reaches no fault or boundary input.
+              const refusal = context.origin === 'ai' ? instructorOnlyRefusal(plant.plant.graph.signalBindingByPath.get(result.targetPath)!, context.origin) : null
+              if (refusal !== null) throw new Error(refusal)
               return { type: 'setVariable' as const, path: result.targetPath, value: actionCommand.value }
             })
             const boundary = coupledBoundaryEffect(boundaryVariablesByPlant.get(payload.data.plantId), validated)
@@ -489,6 +494,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             },
           })
           if (!validation.accepted) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: validation.reason }
+          const instructorOnly = instructorOnlyRefusal(plant.plant.graph.signalBindingByPath.get(validation.targetPath)!, context.origin)
+          if (instructorOnly !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: instructorOnly }
           const rampRefusal = coupledBoundaryRampRefusal(boundaryVariablesByPlant.get(payload.data.plantId), validation.targetPath)
           if (rampRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: rampRefusal }
           plant.ramps.start({
@@ -520,6 +527,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             payload: payload.data,
           })
           if (!validation.accepted) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: validation.reason }
+          const instructorOnly = instructorOnlyRefusal(plant.plant.graph.signalBindingByPath.get(validation.targetPath)!, context.origin)
+          if (instructorOnly !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: instructorOnly }
           const boundary = coupledBoundaryEffect(boundaryVariablesByPlant.get(payload.data.plantId), [{ path: validation.targetPath, value: payload.data.value }])
           if (!boundary.ok) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: boundary.reason }
           plant.runtime.writeCommand({
