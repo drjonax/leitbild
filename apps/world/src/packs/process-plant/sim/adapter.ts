@@ -16,6 +16,8 @@ import { processPlantCapabilities } from '../capabilities.ts'
 import {
   processPlantActionInvokeCommandKind,
   processPlantActionInvokePayloadSchema,
+  processPlantActuationResetCommandKind,
+  processPlantActuationResetPayloadSchema,
   processPlantControlDecideCommandKind,
   processPlantControlDecidePayloadSchema,
   processPlantControlProposeCommandKind,
@@ -31,7 +33,8 @@ import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../con
 import type { ProcessPlantControlProposeResult } from '../capabilities.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
 import { aiProposeOnlyRefusal, instructorOnlyRefusal, throttledUnder, validateOperatorWrite } from '../operations/command-guard.ts'
-import { proposalPortsFor } from '../operations/instance-ports.ts'
+import { listedResetsFor, proposalPortsFor, resetContextFor } from '../operations/instance-ports.ts'
+import { resetRefusal } from '../operations/actuation-reset.ts'
 import { decideProposal, proposeOperation } from '../operations/proposals.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import { processPlantElectricalBoundaries } from '../electrical-ports.ts'
@@ -334,6 +337,51 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
       emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, transitions))
     }
 
+    /**
+     * A person's reset of a latched actuation, executed directly or approved
+     * from a proposal: allowed only as actuation-reset.ts offers it now; it
+     * clears the latch and writes nothing, and is logged with what it held.
+     * Returns why it is refused, or null.
+     */
+    const resetActuation = (
+      plant: ProcessPlantRuntimeInstance,
+      command: CommandEnvelope,
+      context: PackCommandContext,
+      ruleId: string,
+      reason: string | undefined,
+      proposalId?: string,
+    ): string | null => {
+      if (plant.protection === undefined) return `process plant I&C is not configured for plant: ${plant.plant.id}`
+      if (context.origin !== 'person' && context.origin !== 'system') {
+        return context.origin === 'ai'
+          ? 'An AI agent proposes an actuation reset for a person to approve (world.process-plant.control.propose with reset); it does not reset one itself'
+          : 'A reset needs who takes it'
+      }
+      const refusal = resetRefusal(plant.plant, plant.protection.snapshot(), ruleId, resetContextFor(plant))
+      if (refusal !== null) return refusal
+      const reset = listedResetsFor(plant).find(candidate => candidate.ruleId === ruleId)!
+      const events = plant.protection.resetActuation({
+        ruleId,
+        elapsedMs: plant.runtime.elapsedMs(),
+        simulationRunId: config.simulationRunId,
+        sourceRuntimeId: processPlantSimRuntimeId,
+        actorId: command.actorId,
+        ...(command.clientId === undefined ? {} : { clientId: command.clientId }),
+        ...(reason === undefined ? {} : { reason }),
+      })
+      emitPackRuntimeEvents(handlers, events)
+      if (plant.operations !== undefined && context.origin === 'person') {
+        const at = { elapsedMs: plant.runtime.elapsedMs(), wallMs: Date.now() }
+        const transitions = plant.operations.recordReset({
+          commandId: command.id, kind: 'reset', ruleId, label: reset.label, holds: [...reset.holds],
+          origin: context.origin, actorId: command.actorId, elapsedMs: at.elapsedMs,
+          ...(proposalId === undefined ? {} : { proposalId }),
+        }, at)
+        emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, transitions))
+      }
+      return null
+    }
+
     let runtimeFailureReason: string | null = null
     let failureAt = nowIso()
     let lastSuccessfulInteractionAt = nowIso()
@@ -491,6 +539,16 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
           if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           if (!plant.protection) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant I&C is not configured for plant: ${payload.data.plantId}` }
+          // Resetting a latched protection actuation's alarm or trip resets the actuation: as a reset is offered, never around it.
+          const snapshot = plant.protection.snapshot()
+          const ruleId = [...snapshot.trips, ...snapshot.alarms].find(lifecycle => lifecycle.id === payload.data.lifecycleId)?.ruleId
+          const rule = plant.plant.automation.rules.find(candidate => candidate.id === ruleId)
+          if (payload.data.action === 'reset' && rule !== undefined && rule.ruleClass === 'protection' && rule.latch && snapshot.rules.find(state => state.ruleId === rule.id)?.latched === true) {
+            const refusal = resetActuation(plant, command, context, rule.id, payload.data.reason)
+            if (refusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: refusal }
+            await persistence.saveNow()
+            return { ok: true, commandId: command.id, acceptedAt }
+          }
           try {
             const events = plant.protection.applyLifecycleAction({
               id: payload.data.lifecycleId,
@@ -523,11 +581,16 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (plant.operations === undefined) throw new Error(`process plant ${payload.data.plantId} keeps no operations record`)
           if (context.origin !== 'person' && context.origin !== 'ai') return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: 'Only a person or an AI agent proposes an operation' }
           try {
-            const binding = resolveProcessPlantSignalBinding(plant.plant.graph, payload.data.path !== undefined ? { path: payload.data.path } : { tagId: payload.data.tagId! })
+            const operation = payload.data.reset !== undefined ? { reset: payload.data.reset } : {
+              write: {
+                path: resolveProcessPlantSignalBinding(plant.plant.graph, payload.data.path !== undefined ? { path: payload.data.path } : { tagId: payload.data.tagId! }).path,
+                value: payload.data.value!,
+              },
+            }
             const step = proposeOperation(plant.operations.book(), {
               id: command.id,
               plantId: payload.data.plantId,
-              write: { path: binding.path, value: payload.data.value },
+              ...operation,
               reason: payload.data.reason,
               ...(payload.data.procedureStep === undefined ? {} : { procedureStep: payload.data.procedureStep }),
               evidence: payload.data.evidence,
@@ -549,6 +612,16 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: err instanceof Error ? err.message : String(err) }
           }
         }
+        if (command.kind === processPlantActuationResetCommandKind) {
+          const payload = processPlantActuationResetPayloadSchema.safeParse(command.payload)
+          if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
+          const plant = plants.get(payload.data.plantId)
+          if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+          const refusal = resetActuation(plant, command, context, payload.data.ruleId, payload.data.reason)
+          if (refusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: refusal }
+          await persistence.saveNow()
+          return { ok: true, commandId: command.id, acceptedAt }
+        }
         if (command.kind === processPlantControlDecideCommandKind) {
           const payload = processPlantControlDecidePayloadSchema.safeParse(command.payload)
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
@@ -566,10 +639,14 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           }, proposalPortsFor(plant, context.origin))
           plant.operations.setBook(step.book)
           emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, step.transitions))
-          // An approval executes the stored write, validated again under the approver's guards, as a control write does.
+          // An approval executes the stored write, validated again under the approver's guards, as a control write does; or the stored reset.
           if (step.ok && step.execute !== undefined) {
             plant.runtime.writeCommand({ type: 'setVariable', path: step.execute.path, value: step.execute.value })
             recordOperation(plant, command, context, { path: step.execute.path, value: step.execute.value, kind: 'approval', proposalId: payload.data.proposalId })
+          }
+          if (step.ok && step.executeReset !== undefined) {
+            const refusal = resetActuation(plant, command, context, step.executeReset, payload.data.reason, payload.data.proposalId)
+            if (refusal !== null) throw new Error(`an approved reset was refused after its check: ${refusal}`)
           }
           await persistence.saveNow()
           return step.ok ? { ok: true, commandId: command.id, acceptedAt } : { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: step.reason! }

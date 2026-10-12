@@ -43,8 +43,10 @@ export const processPlantProposalSchema = z.object({
   /** The id of the command that proposed it. */
   id: z.string().min(1),
   plantId: z.string().min(1),
-  /** The exact write approval executes. */
-  write: z.object({ path: variablePathSchema, value: processVariableValueSchema }).strict(),
+  /** The exact write approval executes; or, for an actuation reset, the actuation it resets (operations/actuation-reset.ts). */
+  write: z.object({ path: variablePathSchema, value: processVariableValueSchema }).strict().optional(),
+  /** The actuation, and the commands its effects wrote: the QA-2 hold on them lifts with the reset. */
+  reset: z.object({ ruleId: z.string().min(1), label: z.string().min(1), holds: z.array(variablePathSchema) }).strict().optional(),
   /** The drawn item that offers the control (controls.ts), where a person reviews it. */
   item: z.string().min(1),
   /** The control's word for the write ("SHUT", "THROTTLE to 40 %"). */
@@ -68,8 +70,16 @@ export const processPlantProposalSchema = z.object({
     commandId: z.string().min(1).optional(),
     reason: z.string().min(1).optional(),
   }).strict().optional(),
-}).strict()
+}).strict().refine(proposal => (proposal.write === undefined) !== (proposal.reset === undefined), { message: 'a proposal is either a write or an actuation reset' })
 export type ProcessPlantProposal = z.infer<typeof processPlantProposalSchema>
+
+/** What a proposal operates, so proposals on the same thing supersede each other: a command's path, or an actuation's reset. */
+type ProposalTarget = { readonly path: VariablePath } | { readonly ruleId: string }
+
+const targetKey = (target: ProposalTarget): string => 'path' in target ? `write:${target.path}` : `reset:${target.ruleId}`
+
+const proposalTarget = (proposal: Pick<ProcessPlantProposal, 'write' | 'reset'>): ProposalTarget =>
+  proposal.write !== undefined ? { path: proposal.write.path } : { ruleId: proposal.reset!.ruleId }
 
 export const processPlantProposalBookSchema = z.object({
   proposals: z.array(processPlantProposalSchema),
@@ -105,6 +115,8 @@ export interface ProposalStep {
   readonly transitions: ReadonlyArray<ProposalTransition>
   /** The stored write an approval executes, through the one validated queued write path. */
   readonly execute?: ProposalWrite
+  /** The actuation an approved reset proposal resets, by rule id. */
+  readonly executeReset?: string
 }
 
 /** What a proposal is checked against: the controls on offer, the I&C's own validation, and the published readings. */
@@ -115,13 +127,17 @@ export interface ProposalPorts {
   readonly validate: (write: ProposalWrite) => { readonly accepted: true } | { readonly accepted: false; readonly reason: string }
   /** A published reading by tag, with its value now. */
   readonly reading: (tagId: ProcessSignalTagId) => { readonly ok: true; readonly path: VariablePath; readonly value: ProcessVariableValue } | { readonly ok: false; readonly reason: string }
+  /** An actuation's reset as offered now, on the drawn item a person reviews it on; else why it is not offered (actuation-reset.ts). */
+  readonly resettable: (ruleId: string) => { readonly ok: true; readonly item: string; readonly word: string; readonly label: string; readonly holds: ReadonlyArray<VariablePath> } | { readonly ok: false; readonly reason: string }
 }
 
 export interface ProposeRequest {
   /** The proposing command's id: the proposal's id. */
   readonly id: string
   readonly plantId: string
-  readonly write: ProposalWrite
+  /** The write it proposes; or `reset`, the actuation whose reset it proposes, by rule id. */
+  readonly write?: ProposalWrite
+  readonly reset?: string
   readonly reason: string
   readonly procedureStep?: string
   readonly evidence: ReadonlyArray<ProcessSignalTagId>
@@ -187,10 +203,19 @@ export const proposeOperation = (book: ProcessPlantProposalBook, request: Propos
   }
   const tags = [...new Set(request.evidence)]
   if (tags.length === 0 || tags.length > PROPOSAL_EVIDENCE_MAX) return refused(book, `A proposal cites 1 to ${PROPOSAL_EVIDENCE_MAX} published readings as evidence`)
-  const offered = ports.offered(request.write)
-  if (!offered.ok) return refused(book, `Not offered to operators: ${offered.reason}`)
-  const validation = ports.validate(request.write)
-  if (!validation.accepted) return refused(book, validation.reason)
+  if ((request.write === undefined) === (request.reset === undefined)) return refused(book, 'A proposal is either a write or an actuation reset')
+  const operation = (() => {
+    if (request.reset !== undefined) {
+      const reset = ports.resettable(request.reset)
+      return reset.ok ? { ok: true as const, item: reset.item, word: reset.word, reset: { ruleId: request.reset, label: reset.label, holds: [...reset.holds] } } : { ok: false as const, reason: reset.reason }
+    }
+    const offered = ports.offered(request.write!)
+    if (!offered.ok) return { ok: false as const, reason: `Not offered to operators: ${offered.reason}` }
+    const validation = ports.validate(request.write!)
+    if (!validation.accepted) return { ok: false as const, reason: validation.reason }
+    return { ok: true as const, item: offered.item, word: offered.word, write: request.write!, ...(offered.consequence === undefined ? {} : { consequence: offered.consequence }) }
+  })()
+  if (!operation.ok) return refused(book, operation.reason)
   const evidence: Array<ProcessPlantProposal['evidence'][number]> = []
   for (const tagId of tags) {
     const reading = ports.reading(tagId)
@@ -200,10 +225,10 @@ export const proposeOperation = (book: ProcessPlantProposalBook, request: Propos
   const proposal = processPlantProposalSchema.parse({
     id: request.id,
     plantId: request.plantId,
-    write: request.write,
-    item: offered.item,
-    word: offered.word,
-    ...(offered.consequence === undefined ? {} : { consequence: offered.consequence }),
+    ...('write' in operation ? { write: operation.write } : { reset: operation.reset }),
+    item: operation.item,
+    word: operation.word,
+    ...('consequence' in operation ? { consequence: operation.consequence } : {}),
     reason,
     ...(procedureStep === undefined ? {} : { procedureStep }),
     evidence,
@@ -214,8 +239,9 @@ export const proposeOperation = (book: ProcessPlantProposalBook, request: Propos
     extended: false,
     status: 'pending',
   })
+  const target = targetKey(proposalTarget(proposal))
   const superseded = book.proposals
-    .filter(candidate => candidate.status === 'pending' && candidate.write.path === request.write.path && candidate.proposer.actorId === request.proposer.actorId)
+    .filter(candidate => candidate.status === 'pending' && targetKey(proposalTarget(candidate)) === target && candidate.proposer.actorId === request.proposer.actorId)
     .map(candidate => close(candidate, 'superseded', { atElapsedMs: request.at.elapsedMs, actorId: request.proposer.actorId, commandId: request.id, reason: 'Superseded by a newer proposal from the same proposer' }))
   return {
     ok: true,
@@ -231,7 +257,7 @@ export const proposeOperation = (book: ProcessPlantProposalBook, request: Propos
  * command; refused, the proposal stays pending. An approved write supersedes
  * the other pending proposals on the same equipment.
  */
-export const decideProposal = (book: ProcessPlantProposalBook, request: DecideRequest, ports: Pick<ProposalPorts, 'validate'>): ProposalStep => {
+export const decideProposal = (book: ProcessPlantProposalBook, request: DecideRequest, ports: Pick<ProposalPorts, 'validate' | 'resettable'>): ProposalStep => {
   const expired = expireProposals(book, request.at)
   const proposal = expired.book.proposals.find(candidate => candidate.id === request.proposalId)
   if (proposal === undefined) return refused(expired.book, `No proposal ${request.proposalId} on this Plant`, expired.transitions)
@@ -257,27 +283,36 @@ export const decideProposal = (book: ProcessPlantProposalBook, request: DecideRe
     const rejected = close(proposal, 'rejected', withReason)
     return { ok: true, book: bounded(replaced(expired.book, [rejected])), transitions: [...expired.transitions, { type: 'rejected', proposal: rejected }] }
   }
-  const validation = ports.validate(proposal.write)
-  if (!validation.accepted) return refused(expired.book, validation.reason, expired.transitions)
+  const check = permitted(proposal, ports)
+  if (!check.accepted) return refused(expired.book, check.reason, expired.transitions)
   const approved = close(proposal, 'approved', withReason)
+  const target = targetKey(proposalTarget(proposal))
   const superseded = expired.book.proposals
-    .filter(candidate => candidate.status === 'pending' && candidate.id !== proposal.id && candidate.write.path === proposal.write.path)
+    .filter(candidate => candidate.status === 'pending' && candidate.id !== proposal.id && targetKey(proposalTarget(candidate)) === target)
     .map(candidate => close(candidate, 'superseded', { ...by, reason: `Superseded by the approval of proposal ${proposal.id}` }))
   return {
     ok: true,
     book: bounded(replaced(expired.book, [approved, ...superseded])),
     transitions: [...expired.transitions, { type: 'approved', proposal: approved }, ...superseded.map(candidate => ({ type: 'superseded' as const, proposal: candidate }))],
-    execute: proposal.write,
+    ...(proposal.write !== undefined ? { execute: proposal.write } : { executeReset: proposal.reset!.ruleId }),
   }
 }
 
-/** A command a person or an AI agent executed on the same equipment supersedes the pending proposals for it. */
+// Whether a proposal's operation is allowed now: its write as the I&C validates it, or its reset as offered.
+const permitted = (proposal: ProcessPlantProposal, ports: Pick<ProposalPorts, 'validate' | 'resettable'>): { readonly accepted: true } | { readonly accepted: false; readonly reason: string } => {
+  if (proposal.write !== undefined) return ports.validate(proposal.write)
+  const reset = ports.resettable(proposal.reset!.ruleId)
+  return reset.ok ? { accepted: true } : { accepted: false, reason: reset.reason }
+}
+
+/** A command a person or an AI agent executed on the same equipment, or the same actuation's reset, supersedes the pending proposals for it. */
 export const supersedeByCommand = (
   book: ProcessPlantProposalBook,
-  command: { readonly path: VariablePath; readonly commandId: string; readonly actorId: string; readonly at: ProposalClock },
+  command: ProposalTarget & { readonly commandId: string; readonly actorId: string; readonly at: ProposalClock },
 ): { readonly book: ProcessPlantProposalBook; readonly transitions: ReadonlyArray<ProposalTransition> } => {
+  const target = targetKey(command)
   const superseded = book.proposals
-    .filter(candidate => candidate.status === 'pending' && candidate.write.path === command.path)
+    .filter(candidate => candidate.status === 'pending' && targetKey(proposalTarget(candidate)) === target)
     .map(candidate => close(candidate, 'superseded', { atElapsedMs: command.at.elapsedMs, actorId: command.actorId, commandId: command.commandId, reason: 'Superseded by a command on the same equipment' }))
   if (superseded.length === 0) return { book, transitions: [] }
   return { book: bounded(replaced(book, superseded)), transitions: superseded.map(proposal => ({ type: 'superseded', proposal })) }
@@ -292,9 +327,9 @@ export interface ProposalReview {
   readonly changed: boolean
 }
 
-/** Read-only: validates the stored write and reads its evidence again, changing nothing. */
-export const reviewProposal = (proposal: ProcessPlantProposal, ports: Pick<ProposalPorts, 'validate' | 'reading'>): ProposalReview => {
-  const validation = ports.validate(proposal.write)
+/** Read-only: validates the stored write, or checks the reset is still offered, and reads its evidence again, changing nothing. */
+export const reviewProposal = (proposal: ProcessPlantProposal, ports: Pick<ProposalPorts, 'validate' | 'reading' | 'resettable'>): ProposalReview => {
+  const validation = permitted(proposal, ports)
   const evidence = proposal.evidence.map(cited => {
     const reading = ports.reading(cited.tagId)
     if (!reading.ok) throw new Error(`proposal ${proposal.id} cites a reading the Plant no longer publishes: ${reading.reason}`)
@@ -314,8 +349,7 @@ export const proposalEvent = (transition: ProposalTransition): { readonly type: 
   payload: {
     proposalId: transition.proposal.id,
     plantId: transition.proposal.plantId,
-    path: transition.proposal.write.path,
-    value: transition.proposal.write.value,
+    ...(transition.proposal.write !== undefined ? { path: transition.proposal.write.path, value: transition.proposal.write.value } : { reset: transition.proposal.reset!.ruleId }),
     item: transition.proposal.item,
     word: transition.proposal.word,
     status: transition.proposal.status,

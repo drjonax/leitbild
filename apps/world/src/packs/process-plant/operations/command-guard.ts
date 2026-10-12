@@ -12,9 +12,10 @@ import { validateProcessPlantControlWrite, type ProcessPlantControlWriteValidati
 import { formatQuantity } from '../displays/display-text.ts'
 import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
-import type { ProcessPlantIcRule, ProcessPlantIcSnapshot, ProcessPlantProtectionRunner, ProcessPlantRuntime } from '../runtime/index.ts'
+import { evaluateProcessPlantIcCondition, type ProcessPlantIcRule, type ProcessPlantIcSnapshot, type ProcessPlantProtectionRunner, type ProcessPlantRuntime } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import type { ControlRule } from './controls.ts'
+import { actuationResets, resetClause } from './actuation-reset.ts'
 import { demandSpanOf, demandStepOf, type DemandSpan } from './demand-span.ts'
 
 // What a command's origin may write, beyond what the I&C validates for
@@ -102,14 +103,21 @@ const writtenTo = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, path: 
 /**
  * Why a write is refused because a protection actuation that stands active
  * or sealed in wrote the opposite to the same equipment: to its command
- * (opposesActuation), or to the isolation input that shuts it whatever its
+ * (againstActuation), or to the isolation input that shuts it whatever its
  * command demands; null where none stands against it.
  */
 export const protectionHoldRefusal = (
   plant: CompiledProcessPlant,
   snapshot: ProcessPlantIcSnapshot,
   write: { readonly path: VariablePath; readonly value: ProcessVariableValue },
-): string | null => {
+): string | null => protectionHold(plant, snapshot, write)?.text ?? null
+
+/** The actuation that holds a write, and the sentence that refuses it (protectionHoldRefusal). */
+export const protectionHold = (
+  plant: CompiledProcessPlant,
+  snapshot: ProcessPlantIcSnapshot,
+  write: { readonly path: VariablePath; readonly value: ProcessVariableValue },
+): { readonly ruleId: string; readonly text: string } | null => {
   const graph = plant.graph
   const isolation = graph.components
     .flatMap(component => [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)])
@@ -120,10 +128,10 @@ export const protectionHoldRefusal = (
     const judged = writtenTo(plant, rule, write.path).map(value => againstActuation(span, rule.throttleFloor, value, write.value))
     const stands = `${rule.label ?? rule.id} (${actionOf(plant, rule)}) stands ${active ? 'active' : 'sealed in'}`
     if (judged.includes('opposes') || (isolation !== undefined && writtenTo(plant, rule, isolation).some(value => value === true) && demandsOn(write.value))) {
-      return `${stands} and holds ${binding.tagId ?? binding.path}: a command against it is refused until it is reset`
+      return { ruleId: rule.id, text: `${stands} and holds ${binding.tagId ?? binding.path}: a command against it is refused until it is reset` }
     }
     if (judged.includes('belowFloor')) {
-      return `${stands}: ${binding.tagId ?? binding.path} is throttled no lower than ${formatQuantity(rule.throttleFloor!.value, binding.unit, demandStepOf(span!))} under it, which ${rule.throttleFloor!.basis}`
+      return { ruleId: rule.id, text: `${stands}: ${binding.tagId ?? binding.path} is throttled no lower than ${formatQuantity(rule.throttleFloor!.value, binding.unit, demandStepOf(span!))} under it, which ${rule.throttleFloor!.basis}` }
     }
   }
   return null
@@ -189,9 +197,19 @@ export const validateOperatorWrite = (config: {
   const validation = validateProcessPlantControlWrite(config)
   if (!validation.accepted) return validation
   const binding = config.system.graph.signalBindingByPath.get(validation.targetPath)!
-  const refusal = instructorOnlyRefusal(binding, config.origin)
-    ?? (config.origin === 'system' || config.protection === undefined ? null
-      : protectionHoldRefusal(config.system, config.protection.snapshot(), { path: validation.targetPath, value: config.payload.value }))
+  const holding = (): string | null => {
+    if (config.origin === 'system' || config.protection === undefined) return null
+    const snapshot = config.protection.snapshot()
+    const hold = protectionHold(config.system, snapshot, { path: validation.targetPath, value: config.payload.value })
+    if (hold === null) return null
+    // The hold sentence says whether the actuation may be reset now, and why not.
+    const resets = actuationResets(config.system, snapshot, {
+      holds: condition => evaluateProcessPlantIcCondition({ system: config.system, runtime: config.runtime, condition }).matches,
+      elapsedMs: config.runtime.elapsedMs(),
+    })
+    return `${hold.text}${resetClause(resets.find(reset => reset.ruleId === hold.ruleId))}`
+  }
+  const refusal = instructorOnlyRefusal(binding, config.origin) ?? holding()
   if (refusal === null) return validation
   return { accepted: false, reason: refusal, signal: validation.signal, targetPath: validation.targetPath, currentValue: validation.currentValue }
 }

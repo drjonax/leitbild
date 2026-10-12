@@ -7,6 +7,7 @@ import {
   processPlantActionInvokeCommandKind,
   processPlantControlProposeCommandKind,
   processPlantControlDecideCommandKind,
+  processPlantActuationResetCommandKind,
 } from './command-kinds.ts'
 import { PROPOSAL_EVIDENCE_MAX, PROPOSAL_PROCEDURE_STEP_MAX_LENGTH, PROPOSAL_REASON_MAX_LENGTH } from './operations/proposals.ts'
 
@@ -17,6 +18,7 @@ export {
   processPlantActionInvokeCommandKind,
   processPlantControlProposeCommandKind,
   processPlantControlDecideCommandKind,
+  processPlantActuationResetCommandKind,
 }
 
 export const processPlantActionInvokePayloadSchema = z.object({
@@ -84,16 +86,23 @@ export const processPlantControlProposePayloadSchema = z.object({
   plantId: z.string().min(1),
   path: variablePathSchema.optional(),
   tagId: processSignalTagIdSchema.optional(),
-  value: processVariableValueSchema.describe('The value of one option the control offers (controls.list): true/false, 1/0 for a valve\'s OPEN/SHUT, or a demand control\'s setting in its span and step (0.4 for OPEN to 40 %).'),
+  value: processVariableValueSchema.optional().describe('The value of one option the control offers (controls.list): true/false, 1/0 for a valve\'s OPEN/SHUT, or a demand control\'s setting in its span and step (0.4 for 40 %). Absent for a reset.'),
+  reset: z.string().min(1).optional().describe('Instead of a write: the latched actuation to reset, by its ruleId as controls.list lists it under resets.'),
   reason: z.string().trim().min(1).max(PROPOSAL_REASON_MAX_LENGTH).describe('Why, in plain words: what the evidence shows and what the operation does about it.'),
   procedureStep: z.string().trim().min(1).max(PROPOSAL_PROCEDURE_STEP_MAX_LENGTH).optional().describe('The procedure step it carries out, as the procedure names it.'),
   evidence: z.array(processSignalTagIdSchema).min(1).max(PROPOSAL_EVIDENCE_MAX).describe('Published tags it rests on; the person sees how each moved since.'),
 }).strict().superRefine((payload, ctx) => {
+  if (payload.reset !== undefined) {
+    if (payload.path !== undefined || payload.tagId !== undefined || payload.value !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a proposed reset names its actuation only: no path, tagId or value' })
+    }
+    return
+  }
   const referenceCount = Number(payload.path !== undefined) + Number(payload.tagId !== undefined)
-  if (referenceCount !== 1) {
+  if (referenceCount !== 1 || payload.value === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'process plant control proposal must define exactly one of path or tagId',
+      message: 'process plant control proposal must define exactly one of path or tagId, and a value, or a reset',
     })
   }
 })
@@ -108,3 +117,11 @@ export const processPlantControlDecidePayloadSchema = z.object({
 }).strict()
 
 export type ProcessPlantControlDecidePayload = z.infer<typeof processPlantControlDecidePayloadSchema>
+
+export const processPlantActuationResetPayloadSchema = z.object({
+  plantId: z.string().min(1),
+  ruleId: z.string().min(1).describe('The latched actuation to reset, by its ruleId as controls.list lists it under resets.'),
+  reason: z.string().trim().min(1).max(PROPOSAL_REASON_MAX_LENGTH).optional(),
+}).strict()
+
+export type ProcessPlantActuationResetPayload = z.infer<typeof processPlantActuationResetPayloadSchema>

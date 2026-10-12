@@ -3,7 +3,8 @@ import type { CompiledPlantGraph, ProcessSignalTagId, ProcessVariableValue, Vari
 import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../displays/composition.ts'
 import type { MimicItem } from '../displays/mimic/bindings.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { processPlantOperatingMode } from '../runtime/index.ts'
+import { evaluateProcessPlantIcCondition, processPlantOperatingMode } from '../runtime/index.ts'
+import { actuationResets, resetRefusal, type ActuationReset, type ResetContext } from './actuation-reset.ts'
 import { actuationHold, throttledUnder, validateOperatorWrite } from './command-guard.ts'
 import { itemCarrier, offVerb, operationConsequence, type ConsequenceContext, type OperationConsequence } from './consequence.ts'
 import { optionStanding, ruleStatesFrom, type OptionStanding, type StandingContext } from './control-standing.ts'
@@ -52,6 +53,30 @@ const writeConsequence = (instance: ProcessPlantRuntimeInstance, item: string, p
   return typeof position === 'number' && value < position ? throttleConsequence(instance, entry, context) : null
 }
 
+/** The Plant now, as an actuation's reset is judged against it. */
+export const resetContextFor = (instance: ProcessPlantRuntimeInstance): ResetContext => ({
+  holds: condition => evaluateProcessPlantIcCondition({ system: instance.plant, runtime: instance.runtime, condition }).matches,
+  elapsedMs: instance.runtime.elapsedMs(),
+})
+
+/** A standing latched actuation's RESET as controls.list gives it, with the drawn items whose controls it holds, where a person finds it. */
+export interface ListedReset extends ActuationReset {
+  readonly items: ReadonlyArray<string>
+}
+
+/** Every standing latched actuation of the Plant with its RESET, offered or why not. */
+export const listedResetsFor = (instance: ProcessPlantRuntimeInstance): ReadonlyArray<ListedReset> => {
+  if (instance.protection === undefined) return []
+  const controls = plantControlsFor(instance.plant)
+  return actuationResets(instance.plant, instance.protection.snapshot(), resetContextFor(instance)).map(reset => ({
+    ...reset,
+    items: controls.items
+      .filter(entry => [...entry.offered.flatMap(control => [control.path, ...(control.isolation === undefined ? [] : [control.isolation])]), ...entry.withheld.map(control => control.path)]
+        .some(path => reset.holds.includes(path)))
+      .map(entry => entry.id),
+  }))
+}
+
 /**
  * What a proposal is held to on this Plant, for a command of this origin: a
  * control on offer, the I&C's validation with the origin's guards (S1,
@@ -80,6 +105,16 @@ export const proposalPortsFor = (instance: ProcessPlantRuntimeInstance, origin: 
     return binding?.published === true
       ? { ok: true, path: binding.path, value: instance.runtime.readVariable(binding.path) }
       : { ok: false, reason: `${tagId} is no reading this Plant publishes` }
+  },
+  // A reset is reviewed on the first drawn item whose controls its actuation holds.
+  resettable: ruleId => {
+    if (instance.protection === undefined) return { ok: false, reason: `Process Plant ${instance.plant.id} has no I&C to reset` }
+    const refusal = resetRefusal(instance.plant, instance.protection.snapshot(), ruleId, resetContextFor(instance))
+    if (refusal !== null) return { ok: false, reason: refusal }
+    const reset = listedResetsFor(instance).find(candidate => candidate.ruleId === ruleId)!
+    const item = reset.items[0]
+    if (item === undefined) return { ok: false, reason: `${reset.word} is shown on no drawn item: nothing it holds is drawn` }
+    return { ok: true, item, word: reset.word, label: reset.label, holds: reset.holds }
   },
 })
 

@@ -4,3 +4,4 @@ export const processPlantIcLifecycleCommandKind = 'world.process-plant.ic.lifecy
 export const processPlantActionInvokeCommandKind = 'world.process-plant.action.invoke'
 export const processPlantControlProposeCommandKind = 'world.process-plant.control.propose'
 export const processPlantControlDecideCommandKind = 'world.process-plant.control.decide'
+export const processPlantActuationResetCommandKind = 'world.process-plant.actuation.reset'

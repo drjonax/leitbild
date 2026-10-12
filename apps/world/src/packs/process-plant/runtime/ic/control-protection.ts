@@ -75,6 +75,21 @@ export interface ProcessPlantProtectionRunner {
     readonly signal: ProcessPlantSignalReference
     readonly elapsedMs: number
   }) => { readonly ok: true } | { readonly ok: false; readonly reason: string }
+  /**
+   * Resets one actuation: clears its latch and every alarm and trip it
+   * stands in, as a lifecycle reset does for each; it writes nothing, so the
+   * equipment stays as it stands. Whether a reset is allowed now is the
+   * caller's to judge (operations/actuation-reset.ts).
+   */
+  readonly resetActuation: (config: {
+    readonly ruleId: string
+    readonly elapsedMs: number
+    readonly simulationRunId: SimulationRunId
+    readonly sourceRuntimeId: string
+    readonly actorId?: string
+    readonly clientId?: string
+    readonly reason?: string
+  }) => ReadonlyArray<PackRuntimeEvent>
 }
 
 const shouldResetLatchedState = (config: {
@@ -362,6 +377,90 @@ export const createProcessPlantProtectionRunner = (config: {
     return events
   }
 
+  const applyLifecycleAction: ProcessPlantProtectionRunner['applyLifecycleAction'] = input => {
+    const lifecycle = lifecycles.get(input.id)
+    if (!lifecycle) throw new Error(`unknown process plant I&C lifecycle id: ${input.id}`)
+    const rule = rules.find(candidate => candidate.id === lifecycle.ruleId)
+    if (!rule) throw new Error(`process plant I&C rule missing for lifecycle: ${lifecycle.ruleId}`)
+    const events: PackRuntimeEvent[] = []
+    const transition = (() => {
+      if (input.action === 'acknowledge') return 'acknowledged'
+      if (input.action === 'suppress') return 'suppressed'
+      if (input.action === 'unsuppress') return 'unsuppressed'
+      if (input.action === 'shelve') return 'shelved'
+      if (input.action === 'unshelve') return 'unshelved'
+      return 'reset'
+    })()
+    if (input.action === 'acknowledge') {
+      lifecycle.acknowledged = true
+      lifecycle.acknowledgeCount += 1
+      lifecycle.lastAcknowledgedElapsedMs = input.elapsedMs
+    } else if (input.action === 'reset') {
+      const state = states.get(lifecycle.ruleId)
+      if (!state) throw new Error(`process plant I&C state missing for rule: ${lifecycle.ruleId}`)
+      lifecycle.active = false
+      lifecycle.latched = false
+      lifecycle.resettable = false
+      lifecycle.acknowledged = false
+      lifecycle.firstOut = false
+      delete lifecycle.firstOutRank
+      delete lifecycle.firstOutElapsedMs
+      lifecycle.lastClearedElapsedMs = input.elapsedMs
+      lifecycle.lastResetElapsedMs = input.elapsedMs
+      state.active = false
+      state.latched = false
+      delete state.activeSinceElapsedMs
+      delete state.clearSinceElapsedMs
+    } else if (input.action === 'suppress') {
+      lifecycle.suppressed = true
+      lifecycle.lastSuppressedElapsedMs = input.elapsedMs
+    } else if (input.action === 'unsuppress') {
+      lifecycle.suppressed = false
+    } else if (input.action === 'shelve') {
+      lifecycle.shelved = true
+      lifecycle.acknowledged = true
+      lifecycle.acknowledgeCount += 1
+      lifecycle.lastShelvedElapsedMs = input.elapsedMs
+      lifecycle.lastAcknowledgedElapsedMs = input.elapsedMs
+      lifecycle.shelvedUntilElapsedMs = input.shelveDurationMs === undefined
+        ? undefined
+        : input.elapsedMs + input.shelveDurationMs
+    } else {
+      lifecycle.shelved = false
+      delete lifecycle.shelvedUntilElapsedMs
+    }
+    lifecycle.lastTransitionElapsedMs = input.elapsedMs
+    lifecycle.lastActorId = input.actorId
+    if (input.clientId === undefined) delete lifecycle.lastClientId
+    else lifecycle.lastClientId = input.clientId
+    if (input.reason === undefined) delete lifecycle.lastReason
+    else lifecycle.lastReason = input.reason
+    lifecycle.transitionCount += 1
+    updateProcessPlantIcLifecyclePhase(lifecycle)
+    rememberProcessPlantIcLifecycleHistory({
+      history,
+      lifecycle,
+      transition,
+      elapsedMs: input.elapsedMs,
+      ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+      ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+    })
+    events.push(eventForProcessPlantIcLifecycleTransition({
+      simulationRunId: input.simulationRunId,
+      sourceRuntimeId: input.sourceRuntimeId,
+      plantId: config.system.id,
+      rule,
+      lifecycle,
+      transition,
+      elapsedMs: input.elapsedMs,
+      ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+      ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+    }))
+    return events
+  }
+
   return {
     evaluate: ({ runtime, elapsedMs, simulationRunId, sourceRuntimeId }): ReadonlyArray<PackRuntimeEvent> => {
       const events: PackRuntimeEvent[] = [
@@ -479,87 +578,20 @@ export const createProcessPlantProtectionRunner = (config: {
       history: [...history],
     }),
     catalog: (): ProcessPlantIcCatalog => catalogForProcessPlantIcRules(config.system, rules, protection.operatingModes),
-    applyLifecycleAction: input => {
-      const lifecycle = lifecycles.get(input.id)
-      if (!lifecycle) throw new Error(`unknown process plant I&C lifecycle id: ${input.id}`)
-      const rule = rules.find(candidate => candidate.id === lifecycle.ruleId)
-      if (!rule) throw new Error(`process plant I&C rule missing for lifecycle: ${lifecycle.ruleId}`)
-      const events: PackRuntimeEvent[] = []
-      const transition = (() => {
-        if (input.action === 'acknowledge') return 'acknowledged'
-        if (input.action === 'suppress') return 'suppressed'
-        if (input.action === 'unsuppress') return 'unsuppressed'
-        if (input.action === 'shelve') return 'shelved'
-        if (input.action === 'unshelve') return 'unshelved'
-        return 'reset'
-      })()
-      if (input.action === 'acknowledge') {
-        lifecycle.acknowledged = true
-        lifecycle.acknowledgeCount += 1
-        lifecycle.lastAcknowledgedElapsedMs = input.elapsedMs
-      } else if (input.action === 'reset') {
-        const state = states.get(lifecycle.ruleId)
-        if (!state) throw new Error(`process plant I&C state missing for rule: ${lifecycle.ruleId}`)
-        lifecycle.active = false
-        lifecycle.latched = false
-        lifecycle.resettable = false
-        lifecycle.acknowledged = false
-        lifecycle.firstOut = false
-        delete lifecycle.firstOutRank
-        delete lifecycle.firstOutElapsedMs
-        lifecycle.lastClearedElapsedMs = input.elapsedMs
-        lifecycle.lastResetElapsedMs = input.elapsedMs
-        state.active = false
-        state.latched = false
-        delete state.activeSinceElapsedMs
-        delete state.clearSinceElapsedMs
-      } else if (input.action === 'suppress') {
-        lifecycle.suppressed = true
-        lifecycle.lastSuppressedElapsedMs = input.elapsedMs
-      } else if (input.action === 'unsuppress') {
-        lifecycle.suppressed = false
-      } else if (input.action === 'shelve') {
-        lifecycle.shelved = true
-        lifecycle.acknowledged = true
-        lifecycle.acknowledgeCount += 1
-        lifecycle.lastShelvedElapsedMs = input.elapsedMs
-        lifecycle.lastAcknowledgedElapsedMs = input.elapsedMs
-        lifecycle.shelvedUntilElapsedMs = input.shelveDurationMs === undefined
-          ? undefined
-          : input.elapsedMs + input.shelveDurationMs
-      } else {
-        lifecycle.shelved = false
-        delete lifecycle.shelvedUntilElapsedMs
-      }
-      lifecycle.lastTransitionElapsedMs = input.elapsedMs
-      lifecycle.lastActorId = input.actorId
-      if (input.clientId === undefined) delete lifecycle.lastClientId
-      else lifecycle.lastClientId = input.clientId
-      if (input.reason === undefined) delete lifecycle.lastReason
-      else lifecycle.lastReason = input.reason
-      lifecycle.transitionCount += 1
-      updateProcessPlantIcLifecyclePhase(lifecycle)
-      rememberProcessPlantIcLifecycleHistory({
-        history,
-        lifecycle,
-        transition,
-        elapsedMs: input.elapsedMs,
-        ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
-        ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-      })
-      events.push(eventForProcessPlantIcLifecycleTransition({
-        simulationRunId: input.simulationRunId,
-        sourceRuntimeId: input.sourceRuntimeId,
-        plantId: config.system.id,
-        rule,
-        lifecycle,
-        transition,
-        elapsedMs: input.elapsedMs,
-        ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
-        ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-      }))
+    applyLifecycleAction,
+    resetActuation: input => {
+      const rule = rules.find(candidate => candidate.id === input.ruleId)
+      if (!rule) throw new Error(`unknown process plant I&C rule: ${input.ruleId}`)
+      const state = states.get(rule.id)
+      if (!state) throw new Error(`process plant I&C state missing for rule: ${rule.id}`)
+      const { ruleId: _ruleId, ...action } = input
+      const events = [...lifecycles.values()]
+        .filter(lifecycle => lifecycle.ruleId === rule.id && (lifecycle.active || lifecycle.latched || lifecycle.resettable))
+        .flatMap(lifecycle => applyLifecycleAction({ ...action, id: lifecycle.id, action: 'reset' }))
+      state.active = false
+      state.latched = false
+      delete state.activeSinceElapsedMs
+      delete state.clearSinceElapsedMs
       return events
     },
     evaluateWrite: evaluateWriteAgainstGates,

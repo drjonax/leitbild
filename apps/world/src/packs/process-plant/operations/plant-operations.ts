@@ -41,16 +41,36 @@ export const operationRecordSchema = z.object({
    */
   throttledUnder: z.array(z.object({ ruleId: z.string().min(1), label: z.string().min(1), action: z.string().min(1) }).strict()).min(1).optional(),
 }).strict()
+
 export type OperationRecord = z.infer<typeof operationRecordSchema>
+
+/** A person's reset of a latched actuation (actuation-reset.ts), as they executed it or approved it from a proposal. */
+export const resetRecordSchema = z.object({
+  commandId: z.string().min(1),
+  kind: z.literal('reset'),
+  ruleId: z.string().min(1),
+  label: z.string().min(1),
+  /** The commands its effects wrote, whose QA-2 hold the reset lifted. */
+  holds: z.array(variablePathSchema),
+  origin: operationOriginSchema,
+  actorId: z.string().min(1),
+  elapsedMs: z.number().finite().nonnegative(),
+  proposalId: z.string().min(1).optional(),
+}).strict()
+
+export type ResetRecord = z.infer<typeof resetRecordSchema>
 
 export const plantOperationsStateSchema = z.object({
   log: z.array(operationRecordSchema).max(OPERATIONS_KEPT),
   proposals: z.array(processPlantProposalSchema),
+  /** The actuation resets people executed, newest last; absent while there are none. */
+  resets: z.array(resetRecordSchema).max(OPERATIONS_KEPT).optional(),
 }).strict()
 export type PlantOperationsState = z.infer<typeof plantOperationsStateSchema>
 
 export interface PlantOperations {
   readonly log: () => ReadonlyArray<OperationRecord>
+  readonly resets: () => ReadonlyArray<ResetRecord>
   readonly book: () => ProcessPlantProposalBook
   /** Takes the book a proposal transition left (proposals.ts). */
   readonly setBook: (book: ProcessPlantProposalBook) => void
@@ -60,6 +80,8 @@ export interface PlantOperations {
    * closed its proposal and the others on it.
    */
   readonly record: (record: OperationRecord, at: ProposalClock) => ReadonlyArray<ProposalTransition>
+  /** Logs a person's actuation reset; executed directly, it supersedes what was proposed for the same actuation. */
+  readonly recordReset: (record: ResetRecord, at: ProposalClock) => ReadonlyArray<ProposalTransition>
   /** Lapses the proposals whose time is up. */
   readonly expire: (at: ProposalClock) => ReadonlyArray<ProposalTransition>
   /** What to persist; undefined while it holds nothing. */
@@ -69,9 +91,11 @@ export interface PlantOperations {
 export const createPlantOperations = (restored?: PlantOperationsState): PlantOperations => {
   const parsed = restored === undefined ? undefined : plantOperationsStateSchema.parse(restored)
   let log: ReadonlyArray<OperationRecord> = parsed?.log ?? []
+  let resets: ReadonlyArray<ResetRecord> = parsed?.resets ?? []
   let book: ProcessPlantProposalBook = { proposals: parsed?.proposals ?? [] }
   return {
     log: () => log,
+    resets: () => resets,
     book: () => book,
     setBook: next => { book = next },
     record: (record, at) => {
@@ -81,20 +105,29 @@ export const createPlantOperations = (restored?: PlantOperationsState): PlantOpe
       book = step.book
       return step.transitions
     },
+    recordReset: (record, at) => {
+      resets = [...resets, resetRecordSchema.parse(record)].slice(-OPERATIONS_KEPT)
+      if (record.proposalId !== undefined) return []
+      const step = supersedeByCommand(book, { ruleId: record.ruleId, commandId: record.commandId, actorId: record.actorId, at })
+      book = step.book
+      return step.transitions
+    },
     expire: at => {
       const step = expireProposals(book, at)
       book = step.book
       return step.transitions
     },
-    snapshot: () => log.length === 0 && book.proposals.length === 0 ? undefined : { log: [...log], proposals: [...book.proposals] },
+    snapshot: () => log.length === 0 && book.proposals.length === 0 && resets.length === 0 ? undefined
+      : { log: [...log], proposals: [...book.proposals], ...(resets.length === 0 ? {} : { resets: [...resets] }) },
   }
 }
 
-/** What a display that draws these paths shows of operation: their logged commands, running ramps and proposals. */
+/** What a display that draws these paths shows of operation: their logged commands, running ramps and proposals, and the resets of actuations that wrote them. */
 export interface OperationsSample {
   readonly log: ReadonlyArray<OperationRecord>
   readonly ramps: ReadonlyArray<ProcessPlantRamp>
   readonly proposals: ReadonlyArray<ProcessPlantProposal>
+  readonly resets: ReadonlyArray<ResetRecord>
 }
 
 export const operationsSampleFor = (
@@ -104,5 +137,6 @@ export const operationsSampleFor = (
 ): OperationsSample => ({
   log: operations.log().filter(record => paths.has(record.path)),
   ramps: ramps.filter(ramp => paths.has(ramp.path)),
-  proposals: operations.book().proposals.filter(proposal => paths.has(proposal.write.path)),
+  proposals: operations.book().proposals.filter(proposal => proposal.write !== undefined ? paths.has(proposal.write.path) : proposal.reset!.holds.some(path => paths.has(path))),
+  resets: operations.resets().filter(record => record.holds.some(path => paths.has(path))),
 })

@@ -279,6 +279,12 @@ export const gateText = (plant: CompiledProcessPlant, gate: LimitGate): string =
   return `${name} ${gate.operator} ${displayValue(gate.value, binding.unit)}${unit === '' ? '' : ` ${unit}`}`
 }
 
+/** A rule's condition as operators read it ("PT-455 < 12.7 MPa and SI-BLOCKED off"); null where no gate can state it (a vote). */
+export const conditionText = (plant: CompiledProcessPlant, condition: ProcessPlantIcCondition): string | null => {
+  const gate = gateOf(plant, condition, false)
+  return gate === null ? null : gateText(plant, gate)
+}
+
 /** An untagged signal named with the equipment it belongs to, as one gate among parallel loops' tells them apart: "SG A feedwater inflow". */
 const ownedName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string => {
   const owner = binding.owner.type === 'component' ? plant.graph.components[binding.owner.componentIndex]! : undefined

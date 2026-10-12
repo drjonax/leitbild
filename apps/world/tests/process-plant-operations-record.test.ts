@@ -50,7 +50,7 @@ const send = async (connection: PackRuntimeConnection, kind: string, payload: un
   } satisfies CommandEnvelope, origin === undefined ? {} : { origin })
 const sample = async (connection: PackRuntimeConnection, paths: ReadonlyArray<string>) =>
   await connection.invokeQuery({ capabilityId: 'world.process-plant.display.sample', input: { plantId, paths, operations: true } }) as {
-    readonly operations: { readonly log: ReadonlyArray<OperationRecord>; readonly ramps: ReadonlyArray<{ readonly path: string; readonly target: number }>; readonly proposals: ReadonlyArray<unknown> }
+    readonly operations: { readonly log: ReadonlyArray<OperationRecord>; readonly ramps: ReadonlyArray<{ readonly path: string; readonly target: number }>; readonly proposals: ReadonlyArray<unknown>; readonly resets: ReadonlyArray<unknown> }
   }
 
 describe('the operations record', () => {
@@ -70,6 +70,7 @@ describe('the operations record', () => {
       offered: () => ({ ok: true, item: 'item', word: 'SHUT' }),
       validate: () => ({ accepted: true }),
       reading: () => ({ ok: true, path: 'p.pt' as VariablePath, value: 15 }),
+      resettable: ruleId => ({ ok: false, reason: `${ruleId} is not reset in this test` }),
     }
     const operations = createPlantOperations()
     const proposed = proposeOperation(operations.book(), { id: 'command:p', plantId: 'p', write: { path: 'p.valve' as VariablePath, value: 0 }, reason: 'isolate', evidence: ['PT' as never], proposer: { actorId: 'actor:ai:a', origin: 'ai' }, at: { elapsedMs: 0, wallMs: 0 } }, ports)
@@ -98,7 +99,7 @@ describe('on a Plant\'s Pack connection', () => {
       ])
       expect(served.operations.ramps.map(ramp => [ramp.path, ramp.target])).toEqual([['rcpA.speedFraction', 0.95]])
       // A display that does not draw a path is not served its operations.
-      expect((await sample(first, ['pressurizer.pressureMPa'])).operations).toEqual({ log: [], ramps: [], proposals: [] })
+      expect((await sample(first, ['pressurizer.pressureMPa'])).operations).toEqual({ log: [], ramps: [], proposals: [], resets: [] })
       await first.checkpoint!()
     } finally {
       await first.close()
@@ -125,7 +126,7 @@ describe('on a Plant\'s Pack connection', () => {
     expect('operations' in saved.plants[0]!).toBe(false)
     const restored = await createLocalProcessPlantPackRuntimeAdapter().connect({ simulationRunId, scenario, runtimeStateStore: store, runClock: pausedClock() })
     try {
-      expect((await sample(restored, ['chargingPumpB.running'])).operations).toEqual({ log: [], ramps: [], proposals: [] })
+      expect((await sample(restored, ['chargingPumpB.running'])).operations).toEqual({ log: [], ramps: [], proposals: [], resets: [] })
     } finally {
       await restored.close()
     }

@@ -485,10 +485,12 @@ const closedText = (proposal: ProcessPlantProposal, now: OperationNow): string |
 
 /** The listed control a proposal's write is, on its item, and its option as the control reads now. */
 const proposedOption = (proposal: ProcessPlantProposal, item: ListedItem, now: OperationNow): { readonly listed: ListedControl; readonly control: ControlView; readonly option: OptionView } => {
-  const listed = item.offered.find(candidate => candidate.control.path === proposal.write.path)
+  const write = proposal.write
+  if (write === undefined) throw new Error(`proposal ${proposal.id} resets an actuation: it has no write to show as a control`)
+  const listed = item.offered.find(candidate => candidate.control.path === write.path)
   const control = listed === undefined ? undefined : itemControlView({ ...item, offered: [listed], withheld: [] }, now).controls[0]
-  const option = control === undefined ? undefined : optionOf(control, proposal.write.value)
-  if (listed === undefined || control === undefined || option === undefined) throw new Error(`proposal ${proposal.id} writes ${proposal.write.path}, which item ${item.id} does not offer`)
+  const option = control === undefined ? undefined : optionOf(control, write.value)
+  if (listed === undefined || control === undefined || option === undefined) throw new Error(`proposal ${proposal.id} writes ${write.path}, which item ${item.id} does not offer`)
   return { listed, control, option }
 }
 
@@ -573,7 +575,8 @@ export const evidenceMargin = (tagId: string, reading: Pick<TrendReading, 'offSc
  * it; none otherwise.
  */
 export const shownProposal = (itemId: string, proposals: ReadonlyArray<ProcessPlantProposal>, now: OperationNow): ProcessPlantProposal | undefined => {
-  const own = proposals.filter(proposal => proposal.item === itemId)
+  // A reset proposal has no control to show it as: its card is still to come (C2b R1).
+  const own = proposals.filter(proposal => proposal.item === itemId && proposal.write !== undefined)
   const pending = own.filter(proposal => proposal.status === 'pending').sort((left, right) => left.expiresAtElapsedMs - right.expiresAtElapsedMs)[0]
   if (pending !== undefined) return pending
   return own
@@ -619,7 +622,8 @@ export const pendingProposals = (
   marginsOf: (proposal: ProcessPlantProposal) => ReadonlyArray<EvidenceMargin>,
   now: OperationNow,
 ): ReadonlyArray<ProposalListEntry> => proposals
-  .filter(proposal => proposal.status === 'pending')
+  // A reset proposal has no control to show it as: its card is still to come (C2b R1).
+  .filter(proposal => proposal.status === 'pending' && proposal.write !== undefined)
   .map(proposal => {
     const item = items.find(candidate => candidate.id === proposal.item)
     if (item === undefined) throw new Error(`proposal ${proposal.id} names item ${proposal.item}, which offers no controls`)
@@ -804,8 +808,8 @@ export const operationsLogRows = (
     }
   })
   const waiting = proposals.filter(proposal => proposal.status === 'pending').map((proposal): OperationsLogRow => {
-    const found = controlOf(proposal.write.path)
-    const option = found === undefined ? undefined : optionOf(found.control, proposal.write.value)
+    const found = proposal.write === undefined ? undefined : controlOf(proposal.write.path)
+    const option = found === undefined ? undefined : optionOf(found.control, proposal.write!.value)
     return {
       key: proposal.id,
       elapsedMs: proposal.proposedAtElapsedMs,
@@ -818,8 +822,8 @@ export const operationsLogRows = (
     }
   })
   const unexecuted = proposals.filter(proposal => proposal.status !== 'pending' && proposal.status !== 'approved' && proposal.closed !== undefined).map((proposal): OperationsLogRow => {
-    const found = controlOf(proposal.write.path)
-    const option = found === undefined ? undefined : optionOf(found.control, proposal.write.value)
+    const found = proposal.write === undefined ? undefined : controlOf(proposal.write.path)
+    const option = found === undefined ? undefined : optionOf(found.control, proposal.write!.value)
     const closed = proposal.closed!
     return {
       key: proposal.id,

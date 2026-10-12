@@ -52,6 +52,11 @@ const feedwaterIsolationOnSafetyInjection = (cause: string) => trip({
   annunciator: annunciator({ ...siAction, firstOutGroup: 'feedwater-isolation' }),
 })
 
+// The SI signal is reset no sooner than a minute after it acts: a
+// Westinghouse plant's SI reset timer holds the reset off so that the
+// actuated loads have started and sequenced before operators take them back.
+const safetyInjectionResetAfterMs = 60_000
+
 const siPumps = [
   { id: 'safetyInjectionPumpA', train: 'A' },
   { id: 'safetyInjectionPumpB', train: 'B' },
@@ -86,6 +91,7 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       feedwaterIsolationOnSafetyInjection('low pressurizer pressure'),
       ...safetyInjectionWrites('safety-injection', loops),
     ],
+    resetAfterMs: safetyInjectionResetAfterMs,
   }),
   // Containment pressure Hi-1 (NUREG-1431 Table 3.3.2-1, function 1.c), in
   // modes 1 to 4: a break inside containment pressurizes it before the
@@ -108,6 +114,7 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       feedwaterIsolationOnSafetyInjection('containment pressure Hi-1'),
       ...safetyInjectionWrites('safety-injection-containment', loops),
     ],
+    resetAfterMs: safetyInjectionResetAfterMs,
   }),
   // Manual safety injection: a pushbutton on the control board
   // (manualActuation), both trains' switches folded into one, whose demand is
@@ -130,6 +137,7 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       feedwaterIsolationOnSafetyInjection('manual actuation'),
       ...safetyInjectionWrites('safety-injection-manual', loops),
     ],
+    resetAfterMs: safetyInjectionResetAfterMs,
   }),
   // The BLOCK pushbutton is accepted only where the block can hold: below
   // P-11, with the reactor tripped. Anywhere else it is refused.

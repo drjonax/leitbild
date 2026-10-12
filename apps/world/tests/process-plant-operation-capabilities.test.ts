@@ -174,7 +174,7 @@ describe('a throttle under a standing actuation', () => {
       const throttle = { ...shutBlockValve(plantId), tagId: 'AFW-A-CV', reason: 'Steam generator A level is recovering: control AFW flow', procedureStep: undefined, evidence: ['SG-A-LVL-NR'] }
       const shut = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0 })
       expect(shut.ok).toBe(false)
-      if (!shut.ok) expect(shut.reason).toMatch(/ \(AFW START\) stands (active|sealed in) and holds AFW-A-CV: a command against it is refused until it is reset$/)
+      if (!shut.ok) expect(shut.reason).toMatch(/ \(AFW START\) stands (active|sealed in) and holds AFW-A-CV: a command against it is refused until it is reset; it cannot be reset yet: condition still present: SG-A-LVL-NR < 20 %$/)
       const belowFloor = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0.1 })
       expect(belowFloor.ok).toBe(false)
       if (!belowFloor.ok) expect(belowFloor.reason).toMatch(/AFW-A-CV is throttled no lower than 20 % under it, which keeps every steam generator's auxiliary feedwater line open/)
@@ -219,6 +219,35 @@ describe('the consequence of an operation that stops, shuts or disconnects', () 
       expect(proposed).toMatchObject({ ok: true, word: 'SHUT', consequence: { verb: 'shuts off', mode: { id: 'powerOperation' } } })
       expect(proposed.consequence!.text).toContain('may actuate: ')
       expect((await proposals(run, plantId))[0]!.proposal.consequence).toEqual(proposed.consequence)
+    })
+  })
+})
+
+describe('an actuation reset', () => {
+  test('a person resets a latched actuation once it is offered; an AI agent only proposes it, and the approved reset is logged', async () => {
+    await withRun(async (run, plantId) => {
+      expect((await command(run, operator, 'world.process-plant.control.write', { plantId, tagId: 'RX-TRIP-MAN', value: true })).ok).toBe(true)
+      const startedAt = Date.parse(run.snapshot().clock!.currentTime)
+      await run.runMaximumPace(new Date(startedAt + 5_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+      const resets = async () => (await query<{ readonly resets: ReadonlyArray<{ readonly ruleId: string; readonly word: string; readonly offered: boolean; readonly reason?: string; readonly items: ReadonlyArray<string>; readonly holds: ReadonlyArray<string> }> }>(run, agent, 'world.process-plant.controls.list', { plantId })).resets
+      const manual = (await resets()).find(reset => reset.ruleId === 'reactor-manual-trip')!
+      expect(manual).toMatchObject({ word: 'RESET Manual reactor trip', offered: true })
+      expect(manual.items.length).toBeGreaterThan(0)
+      // Not offered while its condition holds, for a person too.
+      const lowLow = (await resets()).find(reset => reset.ruleId === 'sg-a-level-low-low-afw-actuation')!
+      expect(await command(run, operator, 'world.process-plant.actuation.reset', { plantId, ruleId: lowLow.ruleId }))
+        .toMatchObject({ ok: false, reason: `RESET Steam generator A low-low level auxiliary feedwater actuation is not offered: ${lowLow.reason}` })
+      // An AI agent never resets; it proposes.
+      expect(await command(run, agent, 'world.process-plant.actuation.reset', { plantId, ruleId: 'reactor-manual-trip' }))
+        .toMatchObject({ ok: false, reason: 'An AI agent proposes an actuation reset for a person to approve (world.process-plant.control.propose with reset); it does not reset one itself' })
+      const proposed = await command(run, agent, 'world.process-plant.control.propose', { plantId, reset: 'reactor-manual-trip', reason: 'The manual trip has acted and its demand has cleared', evidence: ['PT-455'] }) as ProposeAccepted
+      expect(proposed).toMatchObject({ ok: true, word: 'RESET Manual reactor trip' })
+      expect((await proposals(run, plantId))[0]!.proposal).toMatchObject({ reset: { ruleId: 'reactor-manual-trip', label: 'Manual reactor trip' }, item: manual.items[0], status: 'pending' })
+      const approved = await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: proposed.commandId, decision: 'approve' })
+      expect(approved.ok).toBe(true)
+      expect((await resets()).some(reset => reset.ruleId === 'reactor-manual-trip')).toBe(false)
+      const sample = await query<{ readonly operations: { readonly resets: ReadonlyArray<unknown> } }>(run, operator, 'world.process-plant.display.sample', { plantId, paths: [manual.holds[0]!], operations: true })
+      expect(sample.operations.resets).toEqual([expect.objectContaining({ kind: 'reset', ruleId: 'reactor-manual-trip', origin: 'person', actorId: operator.id, proposalId: proposed.commandId, commandId: approved.commandId })])
     })
   })
 })

@@ -5,7 +5,7 @@ import { evaluateProcessPlantAssessments } from '../assessments.ts'
 import { processPlantControlWritePayloadSchema } from '../commands.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { validateOperatorWrite } from '../operations/command-guard.ts'
-import { listedControlsFor, proposalPortsFor } from '../operations/instance-ports.ts'
+import { listedControlsFor, listedResetsFor, proposalPortsFor } from '../operations/instance-ports.ts'
 import { reviewProposal } from '../operations/proposals.ts'
 import { evaluateProcessPlantIcCondition, processPlantIcConditionSchema } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
@@ -105,7 +105,7 @@ export const answerProcessPlantControlQuery = (config: {
     const items = listedControlsFor(system, payload.items)
     const missing = (payload.items ?? []).filter(id => !items.some(item => item.id === id))
     if (missing.length > 0) return rejectCapabilityTarget(`Process Plant ${payload.plantId} draws no item ${missing.join(', ')}: name items as display.compose reports them (equipment ids, or "<component>.<device>")`)
-    return { plantId: payload.plantId, plantElapsedMs: system.runtime.elapsedMs(), items }
+    return { plantId: payload.plantId, plantElapsedMs: system.runtime.elapsedMs(), items, resets: listedResetsFor(system) }
   }
   const payload = processPlantControlWritePayloadSchema.parse(config.request.input)
   const system = requirePlant(config.plants, payload.plantId)

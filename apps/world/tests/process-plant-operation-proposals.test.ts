@@ -43,13 +43,17 @@ const valve = 'plant.blockValve' as VariablePath
 const pump = 'plant.pump' as VariablePath
 const readings: Record<string, number> = { 'PT-1': 14.8, 'LT-1': 55 }
 let refusal: string | null = null
+let resetRefused: string | null = null
 const ports: ProposalPorts = {
   offered: write => write.path === valve || write.path === pump ? { ok: true, item: 'item:x', word: write.value === 0 || write.value === false ? 'SHUT' : 'OPEN' } : { ok: false, reason: 'AUTO · L held to 55 %' },
   validate: () => refusal === null ? { accepted: true } : { accepted: false, reason: refusal },
   reading: tagId => tagId in readings ? { ok: true, path: `plant.${tagId}` as VariablePath, value: readings[tagId]! } : { ok: false, reason: `${tagId} is not a published reading` },
+  resettable: ruleId => ruleId !== 'rule:si' ? { ok: false, reason: `${ruleId} is no I&C rule of this Plant` }
+    : resetRefused === null ? { ok: true, item: 'item:x', word: 'RESET SI', label: 'SI', holds: [pump] } : { ok: false, reason: resetRefused },
 }
 beforeEach(() => {
   refusal = null
+  resetRefused = null
   readings['PT-1'] = 14.8
 })
 const ai = { actorId: 'actor:ai:advisor', origin: 'ai' as const }
@@ -220,6 +224,7 @@ describe('the stuck-open PORV on the four-loop plant (demo beat 4)', () => {
         const binding = graph.signalBindingByTagId.get(tagId)
         return binding?.published === true ? { ok: true, path: binding.path, value: runtime.readVariable(binding.path) } : { ok: false, reason: `${tagId} is not a published reading` }
       },
+      resettable: ruleId => ({ ok: false, reason: `${ruleId} is not reset in this test` }),
     }
     const tag = (tagId: string) => resolveProcessPlantSignalBinding(graph, { tagId: tagId as never })
     const pressure = () => Number(runtime.readVariable(tag('PT-455').path))
@@ -261,5 +266,37 @@ describe('the stuck-open PORV on the four-loop plant (demo beat 4)', () => {
     const recovered = pressure()
     expect(recovered).toBeGreaterThan(atApproval)
     expect(tripped()).toBe(false)
+  })
+})
+
+describe('a proposed actuation reset', () => {
+  const resetRequest = (overrides: Partial<ProposeRequest> = {}): ProposeRequest => {
+    const { write: _write, ...base } = request()
+    return { ...base, reset: 'rule:si', ...overrides }
+  }
+
+  test('is recorded as the reset it is, refused where it is not offered, and approved it hands back the reset to execute', () => {
+    const proposed = proposeOperation(emptyProposalBook, resetRequest(), ports)
+    expect(proposed.ok).toBe(true)
+    expect(proposed.book.proposals[0]).toMatchObject({ reset: { ruleId: 'rule:si', label: 'SI', holds: [pump] }, word: 'RESET SI', item: 'item:x' })
+    expect(proposed.book.proposals[0]!.write).toBeUndefined()
+    expect(proposalEvent(proposed.transitions[0]!).payload).toMatchObject({ reset: 'rule:si', word: 'RESET SI' })
+    resetRefused = 'RESET SI is not offered: condition still present: PT-1 < 12.7 MPa'
+    expect(proposeOperation(emptyProposalBook, resetRequest({ id: 'command:p2' }), ports).reason).toBe(resetRefused)
+    expect(reviewProposal(proposed.book.proposals[0]!, ports)).toMatchObject({ permitted: false, refusal: resetRefused })
+    expect(decideProposal(proposed.book, { proposalId: 'command:p1', decision: 'approve', decider: person, commandId: 'command:a1', at: at(1_000) }, ports).ok).toBe(false)
+    resetRefused = null
+    const approved = decideProposal(proposed.book, { proposalId: 'command:p1', decision: 'approve', decider: person, commandId: 'command:a1', at: at(1_000) }, ports)
+    expect(approved).toMatchObject({ ok: true, executeReset: 'rule:si' })
+    expect(approved.execute).toBeUndefined()
+  })
+
+  test('is a write or a reset, never both or neither; a person\'s own reset supersedes it', () => {
+    expect(proposeOperation(emptyProposalBook, { ...request(), reset: 'rule:si' }, ports).reason).toBe('A proposal is either a write or an actuation reset')
+    const proposed = proposeOperation(emptyProposalBook, resetRequest(), ports)
+    // A write on equipment the actuation holds does not supersede it; the reset itself does.
+    expect(supersedeByCommand(proposed.book, { path: pump, commandId: 'command:w', actorId: person.actorId, at: at(500) }).transitions).toEqual([])
+    const superseded = supersedeByCommand(proposed.book, { ruleId: 'rule:si', commandId: 'command:r', actorId: person.actorId, at: at(500) })
+    expect(superseded.transitions.map(transition => [transition.type, transition.proposal.id])).toEqual([['superseded', 'command:p1']])
   })
 })

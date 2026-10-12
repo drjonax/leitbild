@@ -196,7 +196,8 @@ describe('a throttle under an actuation that drove a demand to an end of its spa
     if (!low.accepted) expect(low.reason).toMatch(/^Steam generator . low-low level auxiliary feedwater actuation \(AFW START\) stands (active|sealed in): AFW-A-CV is throttled no lower than 20 % under it, which keeps every steam generator's auxiliary feedwater line open, and with every line there total feed stays above the FR-H\.1 minimum of 27\.8 kg\/s/)
     const shut = validate(0)
     expect(shut.accepted).toBe(false)
-    if (!shut.accepted) expect(shut.reason).toBe(`${under[0]!.label} (AFW START) stands ${plantRun.protection.snapshot().rules.find(rule => rule.ruleId === under[0]!.ruleId)!.active ? 'active' : 'sealed in'} and holds AFW-A-CV: a command against it is refused until it is reset`)
+    // The hold says why the actuation cannot be reset yet: its low-low level is still present.
+    if (!shut.accepted) expect(shut.reason).toBe(`${under[0]!.label} (AFW START) stands ${plantRun.protection.snapshot().rules.find(rule => rule.ruleId === under[0]!.ruleId)!.active ? 'active' : 'sealed in'} and holds AFW-A-CV: a command against it is refused until it is reset; it cannot be reset yet: condition still present: SG-A-LVL-NR < 20 %`)
     expect(validate(1).accepted).toBe(true)
     plantRun.runtime.writeCommand({ type: 'setVariable', path: afw.path, value: 0.4 })
     const position = plant.graph.components.flatMap(component => component.semantics.aspects).find(aspect => aspect.command === afw.path)!.state!.path

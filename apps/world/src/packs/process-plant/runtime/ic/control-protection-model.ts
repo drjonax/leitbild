@@ -208,6 +208,12 @@ export const processPlantIcRuleSchema = z.object({
   effects: z.array(processPlantIcEffectSchema).default([]),
   commandGates: z.array(processPlantIcCommandGateSchema).default([]),
   throttleFloor: processPlantIcThrottleFloorSchema.optional(),
+  /**
+   * The least plant time after a latched actuation acted before a person may
+   * reset it (the SI reset timer); absent, it may be reset as soon as its
+   * condition no longer holds.
+   */
+  resetAfterMs: z.number().finite().positive().optional(),
 }).strict()
 export type ProcessPlantIcRule = z.infer<typeof processPlantIcRuleSchema>
 

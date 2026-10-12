@@ -137,6 +137,8 @@ export const rule = (config: {
   readonly commandGates?: ReadonlyArray<{ readonly signal: SignalRef; readonly message?: string }>
   /** For an actuation that opens a modulating valve: how far a person may throttle it while it stands. */
   readonly throttleFloor?: ProcessPlantIcRule['throttleFloor']
+  /** For a latched actuation: the least time after it acted before a person may reset it. */
+  readonly resetAfterMs?: number
 }): ProcessPlantIcRule => ({
   id: config.id,
   ...(config.label === undefined ? {} : { label: config.label }),
@@ -152,6 +154,7 @@ export const rule = (config: {
   effects: [...config.effects],
   commandGates: (config.commandGates ?? []).map(gate => ({ signal: signalReference(gate.signal), ...(gate.message === undefined ? {} : { message: gate.message }) })),
   ...(config.throttleFloor === undefined ? {} : { throttleFloor: config.throttleFloor }),
+  ...(config.resetAfterMs === undefined ? {} : { resetAfterMs: config.resetAfterMs }),
 })
 
 export const deadbandController = (config: {
