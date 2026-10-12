@@ -213,10 +213,9 @@ describe('model semantics declared per component kind', () => {
   })
 
   test('readings are meaningful only while a solved flag says so', () => {
-    // The source range counts while its high voltage is on; its startup rate measures once it has counted through a step.
+    // The source range counts, and its startup rate measures, while its high voltage is on.
     expect(componentById(graph, 'core').semantics.meaningfulWhile).toEqual([
-      { flag: 'core.sourceRangeEnergized', variables: ['core.sourceRangeCountRateCps'] },
-      { flag: 'core.sourceRangeStartupRateValid', variables: ['core.sourceRangeStartupRateDpm'] },
+      { flag: 'core.sourceRangeEnergized', variables: ['core.sourceRangeCountRateCps', 'core.sourceRangeStartupRateDpm'] },
     ] as never)
     const base = processPlantComponentRegistry.get('reactorCore' as ComponentKind)!
     const faulty: ComponentDefinition = { ...base, semantics: fixedSemantics({ meaningfulWhile: [{ flag: 'sourceRangeCountRateCps', variables: ['intermediateRangeCurrentAmps'] }] }) }
@@ -228,7 +227,7 @@ describe('model semantics declared per component kind', () => {
     // Rod control holds Tavg, as the vessel the core heats reads it, to Tref; level control the pressurizer's level to its program.
     expect(componentById(graph, 'core').semantics.programs).toEqual([{ reading: 'vessel.meanPrimaryCoolantTemperatureC', program: 'core.referenceAverageTemperatureC', deviation: 'core.averageTemperatureDeviationC' }] as never)
     expect(componentById(graph, 'pressurizer').semantics.programs).toEqual([{ reading: 'pressurizer.levelPercent', program: 'pressurizer.levelProgramPercent', deviation: 'pressurizer.levelDeviationPercent' }] as never)
-    expect(componentById(graph, 'core').semantics.shutdownReadings).toEqual(['core.powerRangePercent', 'core.intermediateRangeStartupRateDpm', 'core.rodsOnBottom'] as never)
+    expect(componentById(graph, 'core').semantics.shutdownReadings).toEqual(['core.rodsOnBottom', 'core.rodStepsWithdrawn', 'core.powerRangePercent', 'core.intermediateRangeCurrentAmps', 'core.intermediateRangeStartupRateDpm'] as never)
     const base = processPlantComponentRegistry.get('reactorCore' as ComponentKind)!
     const compileWith = (semantics: Parameters<typeof fixedSemantics>[0]) => () => compilePlantGraph(assemblePwrReferencePlantGraph({ loopCount: 4 }), new Map([...processPlantComponentRegistry, ['reactorCore' as ComponentKind, { ...base, semantics: fixedSemantics(semantics) }]]))
     expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'powerRangePercent' }] }))

@@ -85,7 +85,7 @@ const subcriticality = (): ProcessPlantIcSafetyFunction => {
           condition: comparison({ tagId: 'NIS-SR-HV' }, '==', true),
           yes: branch({
             question: 'Source-range startup rate zero or negative',
-            basis: 'ERG F-0.1: source-range SUR zero or negative; the rate reads zero on the step the high voltage comes back, before it has a count to compare (NIS-SR-SUR-VALID)',
+            basis: 'ERG F-0.1: source-range SUR zero or negative; the rate reads zero on the step the high voltage comes back, before it has a count to compare',
             condition: comparison({ tagId: 'NIS-SR-SUR' }, '<=', 0),
             yes: status('green', 'The core is subcritical with the source range in service.'),
             no: status('yellow', 'The source-range count rate is rising: the core may be approaching criticality slowly.', 'FR-S.2'),

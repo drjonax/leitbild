@@ -63,15 +63,13 @@ export const intermediateRangeStartupRateDpm = (previousCurrentAmps: number, cur
 
 /**
  * The source range's startup rate, from how its count rate changed over the
- * step. It measures only while the source range counted through the whole
- * step: on the step its high voltage comes back the count rate jumps from
- * nothing, which is no rate of the flux, so the meter reads zero and says it
- * is not yet valid; it holds no earlier reading.
+ * step, while the source range counted through the whole step. With its high
+ * voltage off it reads zero, measuring nothing; on the step the high voltage
+ * comes back the count rate jumps from nothing, which is no rate of the flux,
+ * so it reads zero then too rather than pin at +5 DPM. It holds no earlier
+ * reading.
  */
-export const sourceRangeStartupRate = (previous: { readonly energized: boolean; readonly countRateCps: number }, current: { readonly energized: boolean; readonly countRateCps: number }, dtSeconds: number): { readonly valid: boolean; readonly startupRateDpm: number } => {
-  const valid = previous.energized && current.energized
-  return {
-    valid,
-    startupRateDpm: valid ? startupRateDpm(previous.countRateCps, current.countRateCps, dtSeconds, nuclearInstrumentSpans.sourceRangeStartupRateDpm) : 0,
-  }
-}
+export const sourceRangeStartupRateDpm = (previous: { readonly energized: boolean; readonly countRateCps: number }, current: { readonly energized: boolean; readonly countRateCps: number }, dtSeconds: number): number =>
+  previous.energized && current.energized
+    ? startupRateDpm(previous.countRateCps, current.countRateCps, dtSeconds, nuclearInstrumentSpans.sourceRangeStartupRateDpm)
+    : 0

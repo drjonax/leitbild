@@ -108,7 +108,7 @@ const rowsOf = (display: CompiledComposedDisplay) => {
   return panel?.kind !== 'evidence' ? [] : panel.rows.map(row => ({ kind: row.kind, name: row.name, items: row.items.map(item => item.label), ...(row.note === undefined ? {} : { note: row.note }) }))
 }
 type Row = ReturnType<typeof rowsOf>[number]
-const trip: Row = { kind: 'trip', name: '', items: ['NIS-PR-AVG', 'NIS-IR-SUR', 'ROD-BOTTOM', 'GEN-MW', 'GEN-BKR', 'TURB-STOP-POS'] }
+const trip: Row = { kind: 'trip', name: '', items: ['ROD-BOTTOM', 'ROD-STEPS', 'NIS-PR-AVG', 'NIS-IR', 'NIS-IR-SUR', 'GEN-MW', 'GEN-BKR', 'TURB-STOP-POS'] }
 const afwToEach: Row = { kind: 'delivers', name: '', items: ['AFW-A-FLOW', 'AFW-B-FLOW', 'AFW-C-FLOW', 'AFW-D-FLOW'] }
 
 describe('what World adds to a composed display', () => {

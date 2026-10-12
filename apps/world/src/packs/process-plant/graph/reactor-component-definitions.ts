@@ -250,18 +250,15 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
         { reading: 'sourceRangeCountRateCps', wider: 'intermediateRangeCurrentAmps', while: 'aboveP6' },
         { reading: 'intermediateRangeCurrentAmps', wider: 'powerRangePercent', while: 'aboveP10' },
       ],
-      // Above P-6 the source range's high voltage is cut and it counts nothing; its startup rate measures once it
-      // has counted through a whole step.
-      meaningfulWhile: [
-        { flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] },
-        { flag: 'sourceRangeStartupRateValid', variables: ['sourceRangeStartupRateDpm'] },
-      ],
+      // Above P-6 the source range's high voltage is cut: it counts nothing and its startup rate measures nothing.
+      meaningfulWhile: [{ flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps', 'sourceRangeStartupRateDpm'] }],
       permissives: ['aboveP6', 'aboveP10'],
       // Rod control holds the coolant's average temperature, as the vessel the core heats reads it, to Tref.
       programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'referenceAverageTemperatureC', deviation: 'averageTemperatureDeviationC' }],
-      // After a reactor trip the power range falls to decay power, the startup rate goes negative and the rod
-      // bottom indication reads the rods on the bottom: what E-0 verifies the trip by.
-      shutdownReadings: ['powerRangePercent', 'intermediateRangeStartupRateDpm', 'rodsOnBottom'],
+      // After a reactor trip the rod bottom indication reads the rods on the bottom, their steps fall to none, the
+      // power range falls to decay power and the intermediate range's current and startup rate fall: what E-0
+      // verifies the trip by, in the order a faceplate reads them.
+      shutdownReadings: ['rodsOnBottom', 'rodStepsWithdrawn', 'powerRangePercent', 'intermediateRangeCurrentAmps', 'intermediateRangeStartupRateDpm'],
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
     }),
     variables: [
@@ -313,7 +310,6 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'rodsOnBottom', label: 'Rods on bottom', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       // Declared last, so the variables before them keep their places.
       variable({ path: 'sourceRangeStartupRateDpm', label: 'Source-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.sourceRangeStartupRateDpm, instrumentSpan: nuclearInstrumentSpans.sourceRangeStartupRateDpm } }),
-      variable({ path: 'sourceRangeStartupRateValid', label: 'Source-range startup rate valid', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       // The rods in steps withdrawn, as their position indication reads them: on average, and bank by bank.
       variable({ path: 'rodStepsWithdrawn', label: 'Rod position, steps withdrawn', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } }),
       ...shutdownRodBanks.map(bank => variable({ path: `shutdownBank${bank}StepsWithdrawn`, label: `Shutdown bank S${bank} position`, kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } })),
