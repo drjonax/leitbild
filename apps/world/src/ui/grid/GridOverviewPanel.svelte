@@ -374,9 +374,9 @@
           <p class="eyebrow">Electric grid</p>
           <h2>{summary?.model.title ?? selectedGridItem?.object.label ?? 'Grid overview'}</h2>
         </div>
-        <div class="frequency" class:alert={frequencyClass === 'alert'} class:watch={frequencyClass === 'watch'}>
+        <div class="frequency" class:alert={frequencyClass === 'alert'} class:watch={frequencyClass === 'watch'} title="Frequency of the largest connected part of the grid">
           <span>{system.frequencyHz === null ? 'De-energised' : system.frequencyHz.toFixed(3)}</span>
-          <small>{system.frequencyHz === null ? '' : 'Hz (largest island)'}</small>
+          <small>{system.frequencyHz === null ? '' : 'Hz · grid frequency'}</small>
         </div>
       </div>
       <button
