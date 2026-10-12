@@ -24,7 +24,7 @@
   <button class="status-dot-button" type="button" aria-label="Show Leitbild status" title={status} onclick={openStatusModal}>
     <StatusDot tone={systemStatusTone} label={status} />
   </button>
-  <span class="brand">Leitbild</span>
+  <span class="brand">Leitbild.ai</span>
   <span class="version">v{appVersion}</span>
   <IconButton
     label="Open settings"
