@@ -1,3 +1,4 @@
+import { isStandingOrderBy } from '../ids.ts'
 import { motionOf, unitTypeOf, type Catalog, type EngineState, type UnitMotion, type UnitRecord } from './model.ts'
 import { hasLoad, isDestroyed, isFree } from './rules.ts'
 import { byId } from './values.ts'
@@ -39,7 +40,7 @@ const withdrawPending = (catalog: Catalog, unit: UnitRecord): boolean => {
   if (unit.integrity !== 'damaged' || unit.integritySinceMs === undefined || unitTypeOf(catalog, unit).standingOrders?.withdraw?.whenDamaged !== true) return false
   if (hasLoad(unit) || unit.phase === 'returning' || (unit.atBase && unit.phase === 'available')) return false
   const action = unit.lastAction
-  const movedSince = action !== undefined && action.atMs >= unit.integritySinceMs && movementVerbs.includes(action.verb) && !action.by.startsWith('standing-order:')
+  const movedSince = action !== undefined && action.atMs >= unit.integritySinceMs && movementVerbs.includes(action.verb) && !isStandingOrderBy(action.by)
   return !movedSince
 }
 

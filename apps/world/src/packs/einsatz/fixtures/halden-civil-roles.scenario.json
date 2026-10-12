@@ -1,0 +1,200 @@
+{
+  "id": "halden-dispatch-roles",
+  "title": "Halden emergency response exercise · dispatcher roles",
+  "description": "Test-only: the civil Halden exercise with an EMS, a Police and a Fire dispatcher and a Controller, without sides, for the two-screen Board walkthrough and the live rules test. A fictional 30-minute civil dispatch exercise around Halden. Road ambulances, a medical helicopter, patrol cars and a fire engine answer medical calls, public-order calls, a building fire and a road accident; nothing is dispatched at the start. Late in the exercise a top-priority call arrives while every ambulance is busy. Calls, needs and service times are authored assumptions for demonstration, not clinical advice or claims about real services.",
+  "objectives": [
+    "Dispatch the recommended units to each call as it arrives.",
+    "Keep top-priority calls covered, diverting a unit still on its way to a minor call when no unit is free.",
+    "Let standing orders take patients to the nearest accepting hospital and bring units home."
+  ],
+  "world": { "startsAt": "2026-09-03T08:00:00.000Z", "environment": { "city": "Halden", "model": "Fictional civil dispatch exercise; no real patient data" } },
+  "view": { "map": { "center": [11.29, 59.22], "zoom": 10 } },
+  "roles": [
+    { "id": "ems", "label": "EMS dispatcher", "class": "operator" },
+    { "id": "police", "label": "Police dispatcher", "class": "operator" },
+    { "id": "fire", "label": "Fire dispatcher", "class": "operator" },
+    { "id": "controller", "label": "Controller", "class": "controller" }
+  ],
+  "packs": [
+    {
+      "id": "einsatz",
+      "config": {
+        "lexicon": {
+          "workList": "Calls",
+          "unitBoard": "Units",
+          "noWork": "No calls waiting",
+          "send": "Dispatch",
+          "tracks": "Contacts",
+          "on-task": "On scene",
+          "at-site": "At hospital"
+        },
+        "loadClasses": [
+          { "id": "acute", "label": "Acute", "code": "P1", "noun": { "one": "patient", "other": "patients" } },
+          { "id": "urgent", "label": "Urgent", "code": "P2", "noun": { "one": "patient", "other": "patients" } },
+          { "id": "routine", "label": "Non-urgent", "code": "P3", "noun": { "one": "patient", "other": "patients" } }
+        ],
+        "unitTypes": [
+          {
+            "id": "ambulance",
+            "label": "Ambulance",
+            "icon": "ambulance",
+            "tags": ["medical"],
+            "components": {
+              "mobility": { "mode": "road", "mobilizeS": 60 },
+              "service": { "provides": ["patient-care"], "onSceneS": 600 },
+              "carry": { "capacity": 1, "classes": ["acute", "urgent", "routine"] }
+            },
+            "standingOrders": { "deliver": "nearest-accepting", "return": { "afterIdleS": 60 } }
+          },
+          {
+            "id": "medical-helicopter",
+            "label": "Medical helicopter",
+            "icon": "helicopter",
+            "tags": ["medical"],
+            "components": {
+              "mobility": { "mode": "direct", "speedMps": 68, "mobilizeS": 120 },
+              "service": { "provides": ["patient-care"], "onSceneS": 600 },
+              "carry": { "capacity": 2, "classes": ["acute", "urgent", "routine"] }
+            },
+            "standingOrders": { "deliver": "nearest-accepting", "return": { "afterIdleS": 120 } }
+          },
+          {
+            "id": "patrol-car",
+            "label": "Patrol car",
+            "icon": "car",
+            "tags": ["police"],
+            "components": {
+              "mobility": { "mode": "road" },
+              "service": { "provides": ["policing"], "onSceneS": 300 }
+            },
+            "standingOrders": { "return": { "afterIdleS": 60 } }
+          },
+          {
+            "id": "fire-engine",
+            "label": "Fire engine",
+            "icon": "fire-extinguisher",
+            "tags": ["fire"],
+            "components": {
+              "mobility": { "mode": "road", "speedFactor": 0.8, "mobilizeS": 60 },
+              "service": { "provides": ["fire-suppression"], "onSceneS": 900 }
+            },
+            "properties": [
+              { "id": "waterL", "label": "Water", "kind": "number", "unit": "l", "min": 0, "max": 10000, "default": 3000, "board": true }
+            ],
+            "standingOrders": { "return": { "afterIdleS": 60 } }
+          },
+          {
+            "id": "hospital",
+            "label": "Hospital",
+            "icon": "hospital",
+            "public": true,
+            "components": { "receiving": { "accepts": ["acute", "urgent", "routine"], "slots": 2, "handoverS": 900, "accepting": true } }
+          },
+          {
+            "id": "triage-centre",
+            "label": "Triage centre",
+            "icon": "house-plus",
+            "public": true,
+            "components": { "receiving": { "accepts": ["urgent", "routine"], "slots": 2, "handoverS": 600, "accepting": true } }
+          }
+        ],
+        "taskTemplates": [
+          { "id": "medical", "label": "Medical call", "icon": "heart-pulse" },
+          {
+            "id": "public-order",
+            "label": "Public order",
+            "icon": "siren",
+            "priorityClass": "urgent",
+            "requires": [{ "provides": "policing", "count": 2, "label": { "one": "patrol car", "other": "patrol cars" } }]
+          },
+          {
+            "id": "road-accident",
+            "label": "Road accident",
+            "icon": "car-front",
+            "priorityClass": "urgent",
+            "requires": [{ "provides": "policing", "count": 1, "label": { "one": "patrol car", "other": "patrol cars" } }]
+          },
+          {
+            "id": "building-fire",
+            "label": "Building fire",
+            "icon": "flame",
+            "priorityClass": "acute",
+            "requires": [{ "provides": "fire-suppression", "count": 1, "label": { "one": "fire engine", "other": "fire engines" }, "where": [{ "property": "waterL", "atLeast": 2000 }] }]
+          },
+          { "id": "report", "label": "Report", "icon": "message-square", "priorityClass": "routine" }
+        ],
+        "authority": [
+          { "roleId": "ems", "units": { "tags": ["medical"] }, "taskTemplates": ["medical"] },
+          { "roleId": "police", "units": { "tags": ["police"] }, "taskTemplates": ["public-order", "road-accident", "report"] },
+          { "roleId": "fire", "units": { "tags": ["fire"] }, "taskTemplates": ["building-fire"] }
+        ]
+      },
+      "items": [
+        { "type": "unit", "id": "unit:halden-1", "label": "A1", "unitType": "ambulance", "position": [11.385, 59.127] },
+        { "type": "unit", "id": "unit:halden-2", "label": "A2", "unitType": "ambulance", "position": [11.414, 59.15] },
+        { "type": "unit", "id": "unit:sarpsborg-1", "label": "A3", "unitType": "ambulance", "position": [11.11, 59.28] },
+        { "type": "unit", "id": "unit:aremark-1", "label": "A4", "unitType": "ambulance", "position": [11.67, 59.22] },
+        { "type": "unit", "id": "unit:helo-ostfold", "label": "H1", "unitType": "medical-helicopter", "position": [11.08, 59.3] },
+        { "type": "unit", "id": "unit:patrol-1", "label": "Patrol 1", "unitType": "patrol-car", "position": [11.39, 59.125] },
+        { "type": "unit", "id": "unit:patrol-2", "label": "Patrol 2", "unitType": "patrol-car", "position": [11.37, 59.13] },
+        { "type": "unit", "id": "unit:fire-1", "label": "Engine 1", "unitType": "fire-engine", "position": [11.4, 59.12] },
+        { "type": "unit", "id": "site:kalnes", "label": "Kalnes hospital", "unitType": "hospital", "position": [11.023, 59.322] },
+        { "type": "unit", "id": "site:halden-triage", "label": "Halden triage centre", "unitType": "triage-centre", "position": [11.384, 59.121] },
+        { "type": "task", "id": "task:e6-collision", "label": "C-1 E6 collision", "template": "medical", "position": [11.325, 59.19], "loads": { "acute": 1, "urgent": 1 } },
+        { "type": "task", "id": "task:tistedal", "label": "C-2 Tistedal", "template": "medical", "position": [11.45, 59.125], "loads": { "urgent": 1 } }
+      ]
+    }
+  ],
+  "timeline": {
+    "cues": [
+      {
+        "id": "centre-disturbance",
+        "at": { "kind": "after_scenario_start", "seconds": 180 },
+        "title": "Disturbance in the town centre",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "public-order", "label": "C-3 Torget disturbance", "at": { "type": "Point", "coordinates": [11.385, 59.13] } } }]
+      },
+      {
+        "id": "industrial-fall",
+        "at": { "kind": "after_scenario_start", "seconds": 360 },
+        "title": "Fall at an industrial site",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "medical", "label": "C-4 Industrial site fall", "at": { "type": "Point", "coordinates": [11.39, 59.16] }, "loads": { "urgent": 1 } } }]
+      },
+      {
+        "id": "ferry-terminal-fire",
+        "at": { "kind": "after_scenario_start", "seconds": 540 },
+        "title": "Building fire at the ferry terminal",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "building-fire", "label": "C-5 Ferry terminal fire", "at": { "type": "Point", "coordinates": [11.37, 59.11] } } }]
+      },
+      {
+        "id": "aremark-arrest",
+        "at": { "kind": "after_scenario_start", "seconds": 720 },
+        "title": "Cardiac arrest in Aremark",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "medical", "label": "C-6 Aremark cardiac arrest", "at": { "type": "Point", "coordinates": [11.7, 59.24] }, "loads": { "acute": 1 } } }]
+      },
+      {
+        "id": "svinesund-accident",
+        "at": { "kind": "after_scenario_start", "seconds": 900 },
+        "title": "Road accident near Svinesund",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "road-accident", "label": "C-7 Svinesund road accident", "at": { "type": "Point", "coordinates": [11.27, 59.1] } } }]
+      },
+      {
+        "id": "road-obstruction",
+        "at": { "kind": "after_scenario_start", "seconds": 1080 },
+        "title": "Road obstruction reported",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "report", "label": "C-8 Fallen tree on Rv 21", "at": { "type": "Point", "coordinates": [11.35, 59.15] } } }]
+      },
+      {
+        "id": "minor-call",
+        "at": { "kind": "after_scenario_start", "seconds": 1440 },
+        "title": "A minor call in southern Halden",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "medical", "label": "C-9 Southern Halden fall", "at": { "type": "Point", "coordinates": [11.39, 59.08] }, "loads": { "routine": 1 } } }]
+      },
+      {
+        "id": "late-top-priority",
+        "at": { "kind": "after_scenario_start", "seconds": 1500 },
+        "title": "A late top-priority call while every ambulance is busy",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "medical", "label": "C-10 Brekke collapse", "at": { "type": "Point", "coordinates": [11.4, 59.1] }, "loads": { "acute": 1 } } }]
+      }
+    ]
+  }
+}

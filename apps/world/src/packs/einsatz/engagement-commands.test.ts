@@ -11,7 +11,7 @@ const blueGunner = roleCommanding(definition, blue, types.blueGun)
 const blueWatcher = roleCommanding(definition, blue, types.watcher)
 const redGunner = roleCommanding(definition, red, types.redGun)
 
-const order = async (state: EngineState, viewer: EinsatzViewer, capabilityId: string, input: unknown) => runOrder(state, { capabilityId, input }, viewer, viewer.roleIds[0] ?? 'Controller')
+const order = async (state: EngineState, viewer: EinsatzViewer, capabilityId: string, input: unknown) => runOrder(state, { capabilityId, input }, viewer, viewer.roles[0]?.id ?? 'Controller', definition.roles ?? [])
 const codeOf = async (state: EngineState, viewer: EinsatzViewer, capabilityId: string, input: unknown): Promise<string> => {
   const result = await order(state, viewer, capabilityId, input)
   if (result.reason === undefined) throw new Error(`Expected a refusal of ${capabilityId}`)
@@ -44,7 +44,7 @@ describe('Einsatz engagement commands', () => {
 
     const engaged = await order(state, blueGunner, ids.engage, { unitId: 'b1', trackId: identified.id })
     expect(engaged.reason).toBeUndefined()
-    expect(unit(engaged.state, 'b1')).toMatchObject({ engage: identified.id, lastAction: { verb: 'engage', target: identified.id, by: blueGunner.roleIds[0] } })
+    expect(unit(engaged.state, 'b1')).toMatchObject({ engage: identified.id, lastAction: { verb: 'engage', target: identified.id, by: blueGunner.roles[0]!.id } })
     // Another side's track is outside the picture for a side role, and a cross-side reference for the Controller.
     expect(await codeOf(state, blueGunner, ids.engage, { unitId: 'b1', trackId: redTrack.id })).toBe('not_in_picture')
     expect(await codeOf(state, openViewer, ids.engage, { unitId: 'b1', trackId: redTrack.id })).toBe('cross_side_reference')

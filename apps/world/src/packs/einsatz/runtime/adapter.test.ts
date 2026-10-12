@@ -3,13 +3,14 @@ import { actorIdSchema, commandIdSchema, nowIso, type CommandEnvelope, type Simu
 import { compileScenarioDefinition } from '../../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../../../routing/protocol.ts'
-import { einsatzCommandIds as ids, einsatzQueryIds, type Recommendation } from '../capabilities.ts'
+import { einsatzCommandIds as ids, einsatzQueryIds } from '../capabilities.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { config, low, middle, start, templates, top, types } from '../fixtures/engine-harness.ts'
 import fixture from '../fixtures/engine.config.json'
 import { definitionOf, isoAt, lonLat, openRun, taskItem, unitItem, type OpenRun } from '../fixtures/run-harness.ts'
 import { einsatzPackId, einsatzRuntimeId } from '../ids.ts'
 import { einsatzPack } from '../pack.ts'
+import type { Recommendation } from '../recommendation-schema.ts'
 import { refusalCode } from '../refusal.ts'
 
 const point = (east: number, north = 0) => ({ type: 'Point', coordinates: lonLat(east, north) })

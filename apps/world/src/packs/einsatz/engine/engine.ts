@@ -1,4 +1,5 @@
 import { routeDistanceMeters, type RouteImpact } from '../../../core/model/index.ts'
+import { standingOrderBy } from '../ids.ts'
 import { refusalCode } from '../refusal.ts'
 import { planEngage, planSetRoe } from './engagement-orders.ts'
 import { closeDraft, openDraft, putUnit, setMotion, unitIn } from './draft.ts'
@@ -140,7 +141,7 @@ const reflexFailed = (state: EngineState, due: DueReflex, reason: string): Advan
 
 const runReflex = async (state: EngineState, due: DueReflex, ports: EnginePorts): Promise<AdvanceOutcome> => {
   const unit = unitIn(state, due.unitId)
-  const actor: EngineActor = { by: `standing-order:${due.order}`, commandable: commandsEveryUnit }
+  const actor: EngineActor = { by: standingOrderBy(due.order), commandable: commandsEveryUnit }
   const order = due.order === 'deliver' ? deliverIntent(state, unit) : { ok: true as const, intent: { kind: 'recall' as const, unitId: unit.id } }
   const outcome = order.ok ? await runIntent(state, order.intent, actor, ports) : order
   return outcome.ok ? outcome : reflexFailed(state, due, outcome.reason)

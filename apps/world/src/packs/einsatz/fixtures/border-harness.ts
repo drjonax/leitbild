@@ -1,4 +1,4 @@
-import { geoPointFromLonLat, type GeoJsonPoint } from '../../../core/model/index.ts'
+import { geoPointFromLonLat, type GeoJsonPoint, type ScenarioRole } from '../../../core/model/index.ts'
 import { scenarioDefinitionSchema, type ScenarioDefinition } from '../../../core/scenarios/definition.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
 import { isEinsatzCommand } from '../capabilities.ts'
@@ -92,7 +92,7 @@ export const commanderOf = (definition: ScenarioDefinition, side: string, compon
     return authority !== undefined && 'types' in authority.units && authority.units.types.some(type => types.has(type))
   })
   if (role === undefined) throw new Error(`No role of side ${side} commands units with ${component}`)
-  return { roleIds: [role.id], class: 'operator', sees: role.sees === 'all' || role.sees === undefined ? 'all' : role.sees }
+  return { class: 'operator', sees: role.sees ?? 'all', roles: [role] }
 }
 
 /** The operator role whose authority selects units of a type on a side, from the Definition's roles and authority. */
@@ -106,7 +106,7 @@ export const roleCommanding = (definition: ScenarioDefinition, side: string, typ
     return units !== undefined && ('all' in units || ('types' in units ? units.types.includes(type.id) : units.tags.some(tag => type.tags.includes(tag))))
   })
   if (role === undefined) throw new Error(`No role of side ${side} commands ${type.label}`)
-  return { roleIds: [role.id], class: 'operator', sees: role.sees === 'all' || role.sees === undefined ? 'all' : role.sees }
+  return { class: 'operator', sees: role.sees ?? 'all', roles: [role] }
 }
 
 /** A side's units whose type passes a predicate, in id order. */
@@ -150,10 +150,10 @@ const freshId = (state: EngineState, kind: 'unit' | 'task'): string => {
   }
 }
 
-/** Runs one order as its caller: refused orders are logged, never thrown. */
-export const runOrder = async (state: EngineState, order: Omit<TimedOrder, 'atS'>, viewer: EinsatzViewer, by: string): Promise<{ readonly state: EngineState; readonly transitions: ReadonlyArray<Transition>; readonly reason?: string }> => {
+/** Runs one order as its caller, against the roles the Definition declares: refused orders are logged, never thrown. */
+export const runOrder = async (state: EngineState, order: Omit<TimedOrder, 'atS'>, viewer: EinsatzViewer, by: string, declared: ReadonlyArray<ScenarioRole>): Promise<{ readonly state: EngineState; readonly transitions: ReadonlyArray<Transition>; readonly reason?: string }> => {
   if (!isEinsatzCommand(order.capabilityId)) throw new Error(`Not an Einsatz command: ${order.capabilityId}`)
-  const prepared = prepareCommand({ state, viewer, by, newId: kind => freshId(state, kind) }, order.capabilityId, order.input)
+  const prepared = prepareCommand({ state, viewer, roles: declared, by, newId: kind => freshId(state, kind) }, order.capabilityId, order.input)
   if (!prepared.ok) return { state, transitions: [], reason: prepared.reason }
   const outcome = await executeIntent(state, prepared.intent, prepared.actor, ports)
   return outcome.ok ? { state: outcome.state, transitions: outcome.transitions } : { state, transitions: [], reason: outcome.reason }
@@ -173,7 +173,7 @@ export const playBorder = async (input: { readonly definition?: ScenarioDefiniti
   const cues = timelineOf(definition)
   const plays = input.plays ?? []
   const apply = async (atS: number, order: Omit<TimedOrder, 'atS'>, viewer: EinsatzViewer, by: string): Promise<void> => {
-    const result = await runOrder(state, order, viewer, by)
+    const result = await runOrder(state, order, viewer, by, definition.roles ?? [])
     state = result.state
     transitions.push(...result.transitions)
     if (result.reason !== undefined) refusals.push({ atS, capabilityId: order.capabilityId, reason: result.reason })

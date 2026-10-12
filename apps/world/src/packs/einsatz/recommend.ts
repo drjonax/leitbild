@@ -1,5 +1,5 @@
 import { capabilityRejection } from '../../simulation/capability-rejection.ts'
-import type { Eta, Recommendation } from './capabilities.ts'
+import type { Eta, Recommendation } from './recommendation-schema.ts'
 import { assignedTo, contributionOf, countedFor, coverageOf, isDivertCandidate, residualNeed, roleViewFor, type RoleView } from './engine/coverage.ts'
 import { committedText, loadedText } from './engine/intent-support.ts'
 import { templateOf, unitTypeOf, type EngineState, type TaskCoverage, type TaskRecord, type UnitRecord } from './engine/model.ts'

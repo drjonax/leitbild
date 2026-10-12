@@ -11,6 +11,7 @@ import { newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
 import { createServer } from '../src/core/api/server.ts'
 import {
   audienceVisibleTo,
+  roleClassForRoleSet,
   seesForRoleSet,
   type ObjectAudience,
   type OperationalObject,
@@ -33,8 +34,11 @@ import {
 } from '../src/ui/simulation-run-client.ts'
 import { applySimulationRunEventBatchMessage } from '../src/ui/simulation-run-events.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
-import { einsatzCommandIds, einsatzQueryIds, type Recommendation } from '../src/packs/einsatz/capabilities.ts'
-import { createEinsatzSidedRuntimeAdapter, einsatzCrossSideCue, einsatzSidedNames, einsatzSidedSelection } from '../src/packs/einsatz/fixtures/sided-run.ts'
+import { createBoardController } from '../src/packs/einsatz/board/controller.ts'
+import { configurationOutputSchema, einsatzCommandIds, einsatzQueryIds } from '../src/packs/einsatz/capabilities.ts'
+import type { Recommendation } from '../src/packs/einsatz/recommendation-schema.ts'
+import { roeWords } from '../src/packs/einsatz/engine/engagement-orders.ts'
+import { createEinsatzSidedRuntimeAdapter, einsatzCrossSideCue, einsatzSidedCombat, einsatzSidedNames, einsatzSidedSelection } from '../src/packs/einsatz/fixtures/sided-run.ts'
 import { einsatzPack } from '../src/packs/einsatz/pack.ts'
 import { fixtureRuntimeId } from './fixtures/fixture-pack.ts'
 import { fixtureAnnouncementType, fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
@@ -207,12 +211,18 @@ const attributions = (screen: Screen): ReadonlyArray<string> => [...new Set((scr
 const storeText = (stores: RunScopedStores | null): string =>
   JSON.stringify(stores, (_key, value: unknown) => value instanceof Map ? [...value.entries()] : value)
 
+/** An Einsatz object's record type, or undefined for any other object. */
+const einsatzType = (object: { readonly packId: string; readonly packData?: unknown }): unknown =>
+  object.packId === 'einsatz' ? (object.packData as { readonly type?: unknown } | undefined)?.type : undefined
+
 /**
  * Every object the Run has held, with its audience: initial ones, every
  * upsert journaled or projected since, and every object the script asked for,
- * so an id the Run refused is still watched for.
+ * so an id the Run refused is still watched for. A track's label is its own
+ * side's serial, which every side numbers alike ("T-1"), so only its id names
+ * it; every other label is watched like its id.
  */
-const inventory = new Map<string, { readonly label: string; readonly audience: ObjectAudience | undefined }>()
+const inventory = new Map<string, { readonly label: string | null; readonly audience: ObjectAudience | undefined }>()
 const attempt = <T extends { readonly id: string; readonly label: string; readonly audience?: ObjectAudience }>(item: T): T => {
   inventory.set(item.id, { label: item.label, audience: item.audience })
   return item
@@ -221,7 +231,7 @@ const attempt = <T extends { readonly id: string; readonly label: string; readon
 const sideCommands = new Map<string, ReadonlyArray<string>>()
 const takeInventory = async (): Promise<void> => {
   const run = await liveRun()
-  const record = (object: OperationalObject) => { inventory.set(object.id, { label: object.label, audience: object.audience }) }
+  const record = (object: OperationalObject) => { inventory.set(object.id, { label: einsatzType(object) === 'track' ? null : object.label, audience: object.audience }) }
   for (const object of (await (await registry()).compiledScenarioForRun(runId)).initialObjects) record(object)
   for (const event of run.events()) {
     if (event.type === 'object.upserted') record(event.object)
@@ -234,17 +244,18 @@ const takeInventory = async (): Promise<void> => {
 }
 
 const forbiddenFor = (side: string): ReadonlyArray<string> => [
-  ...[...inventory.entries()].flatMap(([id, { label, audience }]) => audienceVisibleTo(audience, [side]) ? [] : [id, label]),
+  ...[...inventory.entries()].flatMap(([id, { label, audience }]) => audienceVisibleTo(audience, [side]) ? [] : label === null ? [id] : [id, label]),
   ...[...sideCommands.entries()].flatMap(([commandId, sees]) => sees.includes(side) ? [] : [commandId]),
 ]
 
-/** The oracle: no forbidden token in what the screen received since the marks, or in its stores. */
-const expectNoLeak = async (screen: Screen, side: string, since: { readonly http?: number; readonly ws?: number } = {}): Promise<void> => {
+/** The oracle: no forbidden token in what the screen received since the marks, in its stores, or in what else it built from them. */
+const expectNoLeak = async (screen: Screen, side: string, since: { readonly http?: number; readonly ws?: number } = {}, built: ReadonlyArray<string> = []): Promise<void> => {
   await takeInventory()
   const texts = [
     ...screen.http.slice(since.http ?? 0).map(entry => entry.body),
     ...screen.ws.slice(since.ws ?? 0).map(entry => entry.text),
     storeText(screen.stores),
+    ...built,
   ]
   const leaks = forbiddenFor(side).filter(token => texts.some(text => text.includes(token)))
   expect({ screen: screen.name, side, leaks }).toEqual({ screen: screen.name, side, leaks: [] })
@@ -273,6 +284,54 @@ const refusalOf = (outcome: Awaited<ReturnType<typeof command>>): string | null 
 
 const recommendAs = async (screen: Screen, taskId: string): Promise<Recommendation> =>
   await asScreen(screen, async () => await querySimulationRunCapability<Recommendation>(runId, einsatzQueryIds.recommend, { taskId }))
+/** What a screen held at one moment: its objects and the Run time. */
+interface Shown {
+  readonly objects: ReadonlyArray<OperationalObject>
+  readonly currentTime: NonNullable<RunScopedStores['clock']>['currentTime']
+}
+
+const shownOn = (screen: Screen): Shown => {
+  const stores = screen.stores
+  const currentTime = stores?.clock?.currentTime
+  if (stores === null || currentTime === undefined) throw new Error(`${screen.name} holds no Run to show on a Board`)
+  return { objects: stores.objects, currentTime }
+}
+
+/**
+ * What the Einsatz Board would hold on a screen: a controller for its role
+ * set, fed what the screen held earlier, when given, then what it holds now,
+ * with the recommendations each snapshot asks for, answered as that screen.
+ * Two snapshots make the event log compare two record sets. Its whole
+ * state, as text to search.
+ */
+const boardText = async (screen: Screen, earlier?: Shown): Promise<string> => {
+  const now = shownOn(screen)
+  const configuration = configurationOutputSchema.parse(await asScreen(screen, async () => await querySimulationRunCapability<unknown>(runId, einsatzQueryIds.configuration, {}))).config
+  const board = createBoardController({
+    config: configuration,
+    viewer: { class: roleClassForRoleSet(declaration, screen.roleIds), sees: seesForRoleSet(declaration, screen.roleIds), roles: declaration.roles.filter(role => screen.roleIds.includes(role.id)) },
+  })
+  const show = async (shown: Shown): Promise<void> => {
+    const asked = board.dispatch({ kind: 'snapshot', objects: shown.objects, currentTime: shown.currentTime, wallMs: 0 })
+    for (const effect of asked) {
+      if (effect.kind !== 'recommend') continue
+      // An earlier snapshot's task may have closed since; the panel reports a failed query as such.
+      let answer: unknown
+      try {
+        answer = await asScreen(screen, async () => await querySimulationRunCapability<unknown>(runId, einsatzQueryIds.recommend, { taskId: effect.taskId }))
+      } catch (error) {
+        if (shown === now) throw error
+        board.dispatch({ kind: 'recommendation-failed', taskId: effect.taskId, key: effect.key, reason: error instanceof Error ? error.message : String(error), wallMs: 0 })
+        continue
+      }
+      board.dispatch({ kind: 'recommendation', taskId: effect.taskId, key: effect.key, answer, wallMs: 0 })
+    }
+  }
+  if (earlier !== undefined) await show(earlier)
+  await show(now)
+  return JSON.stringify(board.view())
+}
+
 /** Every unit a recommendation names: proposed, alternatives, ineligible and busy. */
 const recommended = (recommendation: Recommendation): ReadonlyArray<string> => [
   ...recommendation.proposal.units, ...recommendation.alternatives, ...recommendation.ineligible, ...recommendation.committed,
@@ -477,6 +536,74 @@ describe('the wire oracle on a sided fixture Run', () => {
     expect(controller.stores?.objects.find(object => object.id === einsatz.blueTask.id)?.packData).toMatchObject({ coverage: { loads: [expect.objectContaining({ covered: 0 })] } })
     await expectNoLeak(red, 'red')
     await expectNoLeak(blue, 'blue')
+  })
+
+  test('cases 2 and 4 on Einsatz: in a fight, a Blue step-loss task and Red\'s orders reach only their own side, and every track a side receives is whitelisted', async () => {
+    const combat = einsatzSidedCombat(nonce, { side: 'blue', role: 'blue-lead' }, { side: 'red', role: 'red-lead' })
+    const named = einsatzSidedNames(nonce)
+    const marks = { red: red.ws.length, blue: blue.ws.length }
+    for (const input of [combat.scout, combat.nearGun, combat.farGun]) {
+      const outcome = await command(controller, einsatzCommandIds.unitCreate, input)
+      if (outcome.kind !== 'command' || !outcome.result.ok) throw new Error(`The Controller could not create ${input.label}: ${JSON.stringify(outcome)}`)
+    }
+    await barrier(red, blue, controller)
+    const idOf = (label: string): string => {
+      const found = controller.stores?.objects.find(object => object.label === label)
+      if (found === undefined) throw new Error(`The Controller holds no ${label}`)
+      return found.id
+    }
+    const scout = idOf(named.scout.label)
+    const farGun = idOf(named.farGun.label)
+    const before = { red: shownOn(red), blue: shownOn(blue) }
+    // Red orders its far shooter to hold fire: a side's order, which only Red and truth views hear of.
+    const held = await command(red, einsatzCommandIds.setRoe, { unitId: farGun, roe: 'hold' })
+    if (held.kind !== 'command' || !held.result.ok) throw new Error(`Red could not order its shooter: ${JSON.stringify(held)}`)
+    const reg = await registry()
+    await reg.advanceExecution(runId, { minutes: 2 })
+    await waitForCondition('maximum pace finished', () => reg.leaseSummary(runId).leasesByKind['maximum-pace'] === 0)
+    await barrier(red, blue, controller)
+
+    // Case 2: the scout's step-loss tasks are Blue's alone; Red's order shows on Red's shooter only.
+    const lossTasks = (screen: Screen) => einsatzIds(screen).filter(id => id.startsWith(`${scout}:loss-`))
+    expect(lossTasks(blue).length).toBeGreaterThan(0)
+    expect(lossTasks(controller)).toEqual(lossTasks(blue))
+    expect(lossTasks(red)).toEqual([])
+    expect(red.stores?.objects.find(object => object.id === farGun)?.packData).toMatchObject({ roe: 'hold', lastAction: { by: 'Red lead' } })
+    expect(einsatzIds(blue)).not.toContain(farGun)
+    // Each side's Board, fed what its screen held before Red's order and what it holds now, shows the step-loss work to Blue alone and Red's order in Red's log alone.
+    const boards = { red: await boardText(red, before.red), blue: await boardText(blue, before.blue) }
+    expect(lossTasks(blue).every(id => boards.blue.includes(id))).toBe(true)
+    const logOf = (board: string): ReadonlyArray<string> => (JSON.parse(board) as { readonly log: ReadonlyArray<{ readonly recordId: string; readonly text: string }> }).log.filter(entry => entry.recordId === farGun).map(entry => entry.text)
+    expect(logOf(boards.red)).toContain(`${named.farGun.label}: set · ${roeWords.hold}`)
+    expect(logOf(boards.blue)).toEqual([])
+    await expectNoLeak(red, 'red', {}, [boards.red])
+    await expectNoLeak(blue, 'blue', {}, [boards.blue])
+    expect(sideCommands.get(held.result.commandId)).toEqual(['red'])
+
+    // Case 4: every track a side screen received, and every one it holds, carries its observation and nothing more.
+    const tracksOf = (screen: Screen, since: number): ReadonlyArray<OperationalObject> => [
+      ...eventsReceived(screen, since).flatMap(event => event.type === 'object.upserted' && event.object !== undefined ? [event.object as OperationalObject] : []),
+      ...(screen.stores?.objects ?? []),
+    ].filter(object => einsatzType(object) === 'track')
+    const tiers = new Set<string>()
+    for (const [screen, side, since] of [[blue, 'blue', marks.blue], [red, 'red', marks.red]] as const) {
+      const received = tracksOf(screen, since)
+      expect(received.length).toBeGreaterThan(0)
+      for (const track of received) {
+        const data = track.packData as { readonly tier: string; readonly identity?: unknown }
+        tiers.add(`${side}:${data.tier}`)
+        expect({ id: track.id, audience: track.audience, provenance: track.provenance, alerts: track.alerts }).toEqual({ id: track.id, audience: [side], provenance: { source: 'simulator' }, alerts: [] })
+        expect([track.id, Object.keys(track.spatial).sort(), Object.keys(track.spatial.position ?? {}).sort()]).toEqual([track.id, ['frame', 'position'], ['observedAt', 'point']])
+        expect([track.id, ['tasking', 'telemetry', 'context'].filter(key => key in track)]).toEqual([track.id, []])
+        expect([track.id, Object.keys(track.packData as object).filter(key => !['type', 'tier', 'fix', 'identity'].includes(key))]).toEqual([track.id, []])
+        // A contact names no type, side or colour of what it follows.
+        if (data.tier === 'contact') expect([track.id, data.identity, JSON.stringify(track).includes(side === 'blue' ? '"red"' : '"blue"')]).toEqual([track.id, undefined, false])
+      }
+      // The per-side index of which unit each track follows reaches no side screen.
+      expect((screen.stores?.objects ?? []).filter(object => einsatzType(object) === 'track-index')).toEqual([])
+    }
+    // Blue's scout held the far shooter as a contact and the near one identified; Red watched its kill of the scout.
+    expect([...tiers].sort()).toEqual(expect.arrayContaining(['blue:contact', 'blue:identified', 'red:destroyed']))
   })
 
   test('case 8: side sockets get only side-visible event types, deletions by their audience, and no runtime messages', async () => {

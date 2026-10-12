@@ -3,11 +3,12 @@ import { ZodError } from 'zod'
 import type { CommandId, ObjectAudience, ScenarioRole, ScenarioSide } from '../../../core/model/index.ts'
 import { compileScenarioDefinition } from '../../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
-import { einsatzCommandIds as ids, einsatzQueryIds, type Recommendation } from '../capabilities.ts'
+import { einsatzCommandIds as ids, einsatzQueryIds } from '../capabilities.ts'
+import type { Recommendation } from '../recommendation-schema.ts'
 import { low, start, templates, types } from '../fixtures/engine-harness.ts'
 import fixture from '../fixtures/engine.config.json'
 import { definitionOf, isoAt, lonLat, openRun, screenOf, taskItem, unitItem, type OpenRun, type RoleRunDeclaration, type TaskItem, type UnitItem } from '../fixtures/run-harness.ts'
-import { einsatzAdapterId, einsatzPackId } from '../ids.ts'
+import { einsatzAdapterId, einsatzPackId, standingOrderBy } from '../ids.ts'
 import { einsatzPack } from '../pack.ts'
 import { refusalCode } from '../refusal.ts'
 import { causedBy, type Commander } from './adapter.ts'
@@ -253,6 +254,14 @@ describe('Einsatz configuration against the Scenario', () => {
       ({ id: `role-${index}`, label: `${String(index).padStart(2, '0')} ${'w'.repeat(77)}`, class: 'operator', sees: ['north'] }))
     await expect(compileScenarioDefinition(withConfig({}, { roles: labelled(12), sides }), [einsatzPack], { routing: createDirectRoutingAdapter() })).resolves.toBeDefined()
     expect(await compileIssues(withConfig({}, { roles: labelled(13), sides }))).toEqual([{ path: config, code: 'role_labels_too_long' }])
+  })
+
+  test('no role is labelled as lastAction.by names a standing order, so a person\'s order never reads as a reflex\'s', async () => {
+    const reserved = roles.map((role, index) => index === 0 ? { ...role, label: standingOrderBy('withdraw') } : role)
+    expect(await compileIssues(withConfig({ authority }, { roles: reserved, sides }))).toEqual([{ path: config, code: 'role_label_reserved' }])
+    // The words alone, not at the start, are a label like any other.
+    const quoted = roles.map((role, index) => index === 0 ? { ...role, label: `North ${standingOrderBy('withdraw')}` } : role)
+    await expect(compileScenarioDefinition(withConfig({ authority }, { roles: quoted, sides }), [einsatzPack], { routing: createDirectRoutingAdapter() })).resolves.toBeDefined()
   })
 
   test('hostility is between declared sides', async () => {

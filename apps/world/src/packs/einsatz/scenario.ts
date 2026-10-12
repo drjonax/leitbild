@@ -60,6 +60,7 @@ export const einsatzScenarioSupport: PackScenarioSupport = {
     if (!outcome.ok) throw new Error(`Einsatz item ${item.id}: ${outcome.reason}`)
     const transition = outcome.transitions.filter(entry => entry.record.id === item.id).at(-1)
     if (transition === undefined) throw new Error(`Einsatz item ${item.id} produced no object`)
+    if (transition.kind !== 'unit' && transition.kind !== 'task') throw new Error(`Einsatz item ${item.id} produced a ${transition.kind}, not a unit or a task`)
     const audience = audienceOf(outcome.state, transition.record)
     const stamp: ObjectStamp = { at: context.at, provenance: { source: 'simulator', adapterId: einsatzAdapterId, externalId: item.id }, ...(audience === undefined ? {} : { audience }) }
     return { objects: [transitionObject(outcome.state, transition, stamp)] }

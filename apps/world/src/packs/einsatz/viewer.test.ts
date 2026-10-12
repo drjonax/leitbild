@@ -56,9 +56,9 @@ const refusalOf = (state: EngineState, viewer: EinsatzViewer, kind: Parameters<t
 describe('Einsatz viewer', () => {
   test('no stamped viewer is open mode or the timeline, a truth view commanding everything; a stamped viewer holds its declared roles', () => {
     expect(resolveViewer(undefined, declared)).toBe(openViewer)
-    expect(openViewer).toEqual({ roleIds: [], class: 'controller', sees: 'all', roles: [] })
+    expect(openViewer).toEqual({ class: 'controller', sees: 'all', roles: [] })
     expect(resolveViewer({ roleIds: ['ground', 'air'], class: 'operator', sees: 'all' }, declared))
-      .toEqual({ roleIds: ['ground', 'air'], class: 'operator', sees: 'all', roles: declared.slice(0, 2) })
+      .toEqual({ class: 'operator', sees: 'all', roles: declared.slice(0, 2) })
     expect(() => resolveViewer({ roleIds: ['ghost'], class: 'operator', sees: 'all' }, declared)).toThrow('The caller holds role ghost, which this Run does not declare')
   })
 

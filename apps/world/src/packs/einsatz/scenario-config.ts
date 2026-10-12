@@ -1,6 +1,7 @@
 import type { PackScenarioConfigContext, PackScenarioConfigIssue } from '../../core/packs/protocol.ts'
 import { einsatzConfigShapeSchema } from './config-schema.ts'
 import { lastActionByMaxLength } from './engine/model.ts'
+import { isStandingOrderBy, standingOrderByPrefix } from './ids.ts'
 import { refusal, type ScenarioConfigRefusalCode } from './refusal.ts'
 import { rolesText } from './viewer.ts'
 
@@ -15,7 +16,11 @@ import { rolesText } from './viewer.ts'
  * - `lastAction.by` names a caller's roles by label, so the labels of every
  *   declared role, held at once, must fit it (`role_labels_too_long`, at the
  *   configuration as a whole): a Run must never write a record it cannot
- *   read back.
+ *   read back;
+ * - no role's label starts as `lastAction.by` names a standing order
+ *   (`role_label_reserved`, at the configuration as a whole), so a person's
+ *   order never reads as a reflex's, neither to the withdraw reflex nor on
+ *   the Board.
  */
 export const validateEinsatzScenarioConfig = (raw: unknown, context: PackScenarioConfigContext): ReadonlyArray<PackScenarioConfigIssue> => {
   const config = einsatzConfigShapeSchema.parse(raw)
@@ -41,5 +46,7 @@ export const validateEinsatzScenarioConfig = (raw: unknown, context: PackScenari
   const attribution = rolesText(context.roles)
   const labels = attribution.length <= lastActionByMaxLength ? [] : [issue([], 'role_labels_too_long',
     `The labels of all ${context.roles.length} declared roles, held at once, read ${attribution.length} characters; Einsatz names the roles that gave an order in at most ${lastActionByMaxLength}: shorten the labels`)]
-  return [...authority, ...hostility, ...labels]
+  const reserved = context.roles.filter(role => isStandingOrderBy(role.label)).map(role => issue([], 'role_label_reserved',
+    `Role "${role.id}" is labelled "${role.label}"; Einsatz names its standing orders "${standingOrderByPrefix}…" where it names the roles that gave an order, so the label would make a person's order read as a standing order: relabel the role`))
+  return [...authority, ...hostility, ...labels, ...reserved]
 }

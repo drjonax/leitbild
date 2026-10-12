@@ -1,0 +1,95 @@
+{
+  "id": "supply-run",
+  "title": "Supply run",
+  "description": "A fictional logistics exercise that proves Einsatz is open: a supply truck that no code knows, with a payload property and its own icon. A depot holds a 300 kg truck; at 2 minutes a 1,000 kg truck joins; supply requests need at least 500 kg of payload; at 10 minutes the lighter truck is upgraded to 600 kg and becomes eligible.",
+  "objectives": [
+    "Dispatch a supply truck to every supply request it can carry.",
+    "See why the lighter truck cannot take a request until its payload is raised."
+  ],
+  "world": { "startsAt": "2026-09-03T08:00:00.000Z", "environment": { "city": "Halden", "model": "Fictional logistics exercise" } },
+  "view": { "map": { "center": [11.39, 59.13], "zoom": 12 } },
+  "packs": [
+    {
+      "id": "einsatz",
+      "config": {
+        "lexicon": {
+          "workList": "Supply requests",
+          "unitBoard": "Vehicles",
+          "noWork": "No requests waiting",
+          "on-task": "Unloading"
+        },
+        "loadClasses": [
+          { "id": "P1", "label": "Urgent", "code": "P1", "noun": { "one": "pallet", "other": "pallets" } },
+          { "id": "P2", "label": "Routine", "code": "P2", "noun": { "one": "pallet", "other": "pallets" } }
+        ],
+        "unitTypes": [
+          {
+            "id": "depot",
+            "label": "Depot",
+            "icon": "warehouse",
+            "tags": ["logistics"],
+            "public": true,
+            "components": {}
+          },
+          {
+            "id": "supply-truck",
+            "label": "Supply truck",
+            "icon": "truck",
+            "tags": ["logistics"],
+            "components": {
+              "mobility": { "mode": "road" },
+              "service": { "provides": ["supply"], "onSceneS": 300 }
+            },
+            "properties": [
+              { "id": "payloadKg", "label": "Payload", "kind": "number", "unit": "kg", "min": 0, "max": 20000, "default": 1000, "board": true }
+            ],
+            "standingOrders": { "return": { "afterIdleS": 60 } }
+          }
+        ],
+        "taskTemplates": [
+          {
+            "id": "supply",
+            "label": "Supply request",
+            "icon": "package",
+            "priorityClass": "P2",
+            "requires": [
+              {
+                "provides": "supply",
+                "count": 1,
+                "label": { "one": "supply truck", "other": "supply trucks" },
+                "where": [{ "property": "payloadKg", "atLeast": 500 }]
+              }
+            ]
+          }
+        ]
+      },
+      "items": [
+        { "type": "unit", "id": "site:brekke-depot", "label": "Brekke depot", "unitType": "depot", "position": [11.4, 59.12] },
+        { "type": "unit", "id": "unit:truck-1", "label": "Truck 1", "unitType": "supply-truck", "position": [11.4, 59.12], "properties": { "payloadKg": 300 } },
+        { "type": "task", "id": "task:field-kitchen", "label": "R-1 Field kitchen", "template": "supply", "position": [11.3, 59.16] }
+      ]
+    }
+  ],
+  "timeline": {
+    "cues": [
+      {
+        "id": "second-truck",
+        "at": { "kind": "after_scenario_start", "seconds": 120 },
+        "title": "A 1,000 kg truck joins at the depot",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.unit.create", "input": { "type": "supply-truck", "label": "Truck 2", "at": { "type": "Point", "coordinates": [11.4, 59.12] }, "properties": { "payloadKg": 1000 } } }]
+      },
+      {
+        "id": "shelter-request",
+        "at": { "kind": "after_scenario_start", "seconds": 240 },
+        "title": "The shelter asks for supplies",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.task.create", "input": { "template": "supply", "label": "R-2 Shelter", "at": { "type": "Point", "coordinates": [11.43, 59.135] } } }]
+      },
+      {
+        "id": "lighter-truck-upgraded",
+        "at": { "kind": "after_scenario_start", "seconds": 600 },
+        "title": "The lighter truck is upgraded to 600 kg",
+        "actions": [{ "type": "invoke_capability", "capabilityId": "world.einsatz.unit.adjust", "input": { "unitId": "unit:truck-1", "properties": { "payloadKg": 600 }, "reason": "Second axle fitted" } }]
+      }
+    ]
+  }
+}

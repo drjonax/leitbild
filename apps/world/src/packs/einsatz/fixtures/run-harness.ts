@@ -98,17 +98,23 @@ export interface OpenRun {
   readonly close: () => Promise<void>
 }
 
-/** A Run of the Einsatz engine fixture configuration with these items, or a role Run as declared: running unless `paused`, or restored from a checkpoint. */
-export const openRun = async (options: {
+/**
+ * A Run of the Einsatz engine fixture configuration with these items, or a
+ * role Run as declared, or of a whole Scenario Definition: running unless
+ * `paused`, or restored from a checkpoint.
+ */
+export const openRun = async (options: ({
   readonly items: ReadonlyArray<UnitItem | TaskItem>
   readonly timeline?: ScenarioTimeline
   readonly declared?: RoleRunDeclaration
+} | { readonly definition: unknown }) & {
   readonly paused?: boolean
   readonly routing?: RoutingAdapter
   readonly restore?: RestorePoint
 }): Promise<OpenRun> => {
   const direct = createDirectRoutingAdapter()
-  const compiled = await compileScenarioDefinition(definitionOf(options.items, options.timeline, options.declared), [einsatzPack], { routing: direct })
+  const definition = 'definition' in options ? options.definition : definitionOf(options.items, options.timeline, options.declared)
+  const compiled = await compileScenarioDefinition(definition, [einsatzPack], { routing: direct })
   const runRoles = runRolesOf(compiled)
   const adapter = createEinsatzPackRuntimeAdapter({ routing: options.routing ?? direct })
   let monotonicMs = 0

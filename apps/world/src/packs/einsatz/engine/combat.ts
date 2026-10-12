@@ -1,5 +1,6 @@
 import { routeDistanceMeters } from '../../../core/model/index.ts'
 import type { UnitComponents } from '../config-schema.ts'
+import { standingOrderBy } from '../ids.ts'
 import { wordFor } from '../lexicon.ts'
 import { refusalCode } from '../refusal.ts'
 import { trackIndexOf, trackingSides, type TrackRecord } from './combat-model.ts'
@@ -205,7 +206,7 @@ const observeKills = (draft: Draft, destroyed: ReadonlyArray<UnitRecord>): void 
   }
 }
 
-const stepLossActor: EngineActor = { by: 'standing-order:onStepLost', commandable: commandsEveryUnit }
+const stepLossActor: EngineActor = { by: standingOrderBy('onStepLost'), commandable: commandsEveryUnit }
 
 /**
  * The `onStepLost` standing order: each step lost creates a task from its

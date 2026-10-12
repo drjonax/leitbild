@@ -36,11 +36,12 @@ export type ConfigurationRefusalCode = typeof configurationRefusalCodes[number]
 /**
  * Refusals of a configuration against the Scenario it runs in: authority
  * needs declared roles and names operator roles only, hostility names
- * declared sides, and the roles' labels fit `lastAction.by`. An authority
+ * declared sides, and the roles' labels fit `lastAction.by` and never read
+ * as a standing order there. An authority
  * entry naming an undeclared role is `authority_unknown_role`, apart from
  * core's `unknown_role` for a caller asking for an undeclared role.
  */
-export const scenarioConfigRefusalCodes = ['authority_without_roles', 'authority_unknown_role', 'controller_authority', 'unknown_side', 'role_labels_too_long'] as const
+export const scenarioConfigRefusalCodes = ['authority_without_roles', 'authority_unknown_role', 'controller_authority', 'unknown_side', 'role_labels_too_long', 'role_label_reserved'] as const
 export type ScenarioConfigRefusalCode = typeof scenarioConfigRefusalCodes[number]
 
 /**

@@ -1,6 +1,6 @@
 import { routeDistanceMeters, type GeoJsonPoint } from '../../core/model/index.ts'
 import type { RouteTableResult, RoutingAdapter } from '../../routing/protocol.ts'
-import type { Eta } from './capabilities.ts'
+import type { Eta } from './recommendation-schema.ts'
 import { motionOf, unitTypeOf, type EngineState, type UnitRecord } from './engine/model.ts'
 import { noRoadNear, roadSnapLimitM } from './engine/movement.ts'
 import { isMoving } from './engine/rules.ts'
