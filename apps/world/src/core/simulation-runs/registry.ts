@@ -115,7 +115,8 @@ export interface SimulationRunRegistry {
    * starts paused, so its clock does not run while its players still choose
    * their roles; the first screen to join with roles starts it playing in
    * realtime. Once anyone set the Run's execution, or it played, a join
-   * changes nothing.
+   * changes nothing. A start that fails leaves the Run waiting, so the next
+   * join retries; after a World restart the Run waits for the Host's Play.
    */
   readonly screenJoined: (id: SimulationRunId) => Promise<void>
   readonly advanceExecution: (id: SimulationRunId, input: { readonly minutes: number; readonly onComplete?: AdvanceCompletion }) => Promise<RunExecutionState>
@@ -164,7 +165,11 @@ export const createSimulationRunRegistry = (config: {
   readonly procedureSourceService?: ProcedureSourceService
 }): SimulationRunRegistry => {
   const simulationRuns = new Map<SimulationRunId, SimulationRunRuntime>()
-  /** New Runs that declare roles, paused until the first screen joins with roles (`screenJoined`). */
+  /**
+   * New Runs that declare roles, paused until the first screen joins with roles
+   * (`screenJoined`). The mark lives in this process: it survives an idle close
+   * and reload, but after a World restart such a Run waits for the Host's Play.
+   */
   const awaitingFirstScreen = new Set<SimulationRunId>()
   const loadedCompiledScenarios = new Map<SimulationRunId, CompiledScenario>()
   const lifecycle = createKeyedOperations<SimulationRunId>()
@@ -617,10 +622,11 @@ export const createSimulationRunRegistry = (config: {
       throw error
     }
     const scenarioRoles = runRolesOf(scenarioRuntime.scenario)
-    // A new Run whose players choose roles waits, paused, for the first of them (`screenJoined`).
+    // A new Run whose players choose roles waits, paused, for the first of them
+    // (`screenJoined`). Reloading the Run, after an idle close, keeps the mark;
+    // only a choice, a join that started it, or a delete clears it.
     const awaitsScreen = !restoredSnapshot && scenarioRoles !== null
     if (awaitsScreen) awaitingFirstScreen.add(id)
-    else awaitingFirstScreen.delete(id)
     let runtime
     try {
       runtime = await createSimulationRunRuntime({
@@ -909,8 +915,13 @@ export const createSimulationRunRegistry = (config: {
   }
 
   const screenJoined = async (id: SimulationRunId): Promise<void> => {
-    if (!awaitingFirstScreen.delete(id)) return
-    await executionOperations.run(id, async () => { await applyExecution(id, { playback: 'playing' }) })
+    if (!awaitingFirstScreen.has(id)) return
+    await executionOperations.run(id, async () => {
+      // A choice made while this join waited wins; a failed start keeps the mark, so the next join retries.
+      if (!awaitingFirstScreen.has(id)) return
+      await applyExecution(id, { playback: 'playing' })
+      awaitingFirstScreen.delete(id)
+    })
   }
 
   const advanceExecution = async (id: SimulationRunId, rawInput: { readonly minutes: number; readonly onComplete?: AdvanceCompletion }): Promise<RunExecutionState> => {

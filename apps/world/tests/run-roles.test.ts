@@ -291,6 +291,29 @@ describe('Role Run gates on World-direct REST', () => {
     }
   })
 
+  test('a role Run closed while its players still choose waits for them after it is loaded again', async () => {
+    const registry = await createRoleRunRegistry()
+    interface Screen { readonly roleIds: ReadonlyArray<string> }
+    const realtime = createSimulationRunRealtimeManager<Screen>({
+      registry,
+      send: () => undefined,
+      sendReady: () => undefined,
+      perspectiveOf: screen => screen.roleIds.length === 0 ? null : { roleIds: screen.roleIds, epoch: 1 },
+    })
+    try {
+      const run = await registry.create({ scenarioId: 'role-run' })
+      expect(await registry.close(run.id)).toBe(true)
+      await registry.load(run.id)
+      expect((await registry.executionStatus(run.id)).playback).toBe('paused')
+      realtime.addClient(run.id, { roleIds: ['control'] })
+      await waitForCondition('the first screen with roles starts the reloaded Run', () => registry.get(run.id)?.snapshot().clock?.paused === false)
+      expect((await registry.executionStatus(run.id)).playback).toBe('playing')
+    } finally {
+      realtime.stop()
+      await registry.shutdown()
+    }
+  })
+
   test('a Run without roles behaves exactly as before', async () => {
     const registry = await createRoleRunRegistry()
     try {

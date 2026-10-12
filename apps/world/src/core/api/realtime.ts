@@ -293,7 +293,8 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
   /**
    * A screen holding roles is attached: a new Run that waits for its first
    * one starts playing (`registry.screenJoined`). A failure to start it is
-   * logged; the Run stays paused for the Host to play.
+   * logged and the Run stays paused, still waiting: the next screen that joins
+   * retries, and the Host can play it.
    */
   const noteScreens = (simulationRunId: SimulationRunId, clients: ReadonlySet<Client>): void => {
     if (![...clients].some(client => (config.perspectiveOf(client)?.roleIds.length ?? 0) > 0)) return
