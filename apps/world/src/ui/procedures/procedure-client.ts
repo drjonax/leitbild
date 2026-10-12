@@ -51,6 +51,8 @@ export interface ProcedureTagValidation {
   readonly id: string
   readonly status: 'resolved' | 'resolved-with-warnings' | 'missing'
   readonly signal?: Record<string, unknown>
+  /** The Pack's id for the equipment the tag is measured on, where it names one. */
+  readonly measuredOn?: string
   readonly warnings: ReadonlyArray<string>
 }
 
@@ -322,10 +324,13 @@ export const validateProcedureTags = async (
       assertString(warning, 'procedure tag validation warning must be a string'),
     )
     const signal = optionalRecord(row.signal)
+    const measuredOn = row.measuredOn === undefined ? undefined : assertString(row.measuredOn, 'procedure tag validation measuredOn must be a non-empty string')
+    if (measuredOn !== undefined && status === 'missing') throw new Error(`procedure tag validation row ${id} is missing but names equipment`)
     return [id, {
       id,
       status,
       ...(signal === null ? {} : { signal }),
+      ...(measuredOn === undefined ? {} : { measuredOn }),
       warnings,
     }]
   })

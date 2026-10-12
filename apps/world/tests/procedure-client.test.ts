@@ -108,7 +108,7 @@ describe('procedure client', () => {
         result: {
           plantId: 'plant:test',
           tags: [
-            { id: 'PT-455', status: 'resolved', signal: { path: 'pressurizer.pressureMPa' }, warnings: [] },
+            { id: 'PT-455', status: 'resolved', signal: { path: 'pressurizer.pressureMPa' }, measuredOn: 'pressurizer', warnings: [] },
             { id: 'SI-SIG', status: 'missing', warnings: [] },
           ],
         },
@@ -134,8 +134,19 @@ describe('procedure client', () => {
         ],
       },
     }])
-    expect(validation.get('PT-455')).toMatchObject({ id: 'PT-455', status: 'resolved' })
+    expect(validation.get('PT-455')).toMatchObject({ id: 'PT-455', status: 'resolved', measuredOn: 'pressurizer' })
     expect(validation.get('SI-SIG')).toEqual({ id: 'SI-SIG', status: 'missing', warnings: [] })
+  })
+
+  test('rejects tag validation naming equipment malformed or for a tag the model lacks', async () => {
+    for (const row of [
+      { id: 'PT-455', status: 'resolved', measuredOn: '', warnings: [] },
+      { id: 'PT-455', status: 'resolved', measuredOn: 7, warnings: [] },
+      { id: 'SI-SIG', status: 'missing', measuredOn: 'pressurizer', warnings: [] },
+    ]) {
+      globalThis.fetch = (async (_input: string | URL | Request): Promise<Response> => Response.json({ kind: 'query', result: { plantId: 'plant:test', tags: [row] } })) as typeof fetch
+      await expect(validateProcedureTags('run-test' as SimulationRunId, 'plant:test', [{ id: row.id }], provider)).rejects.toThrow()
+    }
   })
 
   test('real parsed E-0 document tags cross the client and strict Pack boundary without document metadata', async () => {
