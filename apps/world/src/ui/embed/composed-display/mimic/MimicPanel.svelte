@@ -299,9 +299,9 @@
                   {:else if row.kind === 'value'}
                     {@const reading = valueRowReading(row, index)}
                     <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
-                  {:else if row.kind === 'shutdown'}
-                    <!-- Whether it has stopped, written like its tag; a trip it does not follow in the command's colour. -->
-                    <span class="shutdown-row" class:emphasis={row.part === 'command'}>{rowText(row, look, index, format)}</span>
+                  {:else if row.kind === 'shutdown' || row.kind === 'range'}
+                    <!-- Whether it has stopped, and a quantity on the instrument reading it now, written like its tag; a trip it does not follow in the command's colour. -->
+                    <span class="tag-row" class:emphasis={row.kind === 'shutdown' && row.part === 'command'}>{rowText(row, look, index, format)}</span>
                   {:else}
                     {@const text = rowText(row, look, index, format)}
                     {#if text !== ''}<span class="state-row" class:emphasis={row.kind === 'mismatch'}>{text}</span>{/if}
@@ -371,8 +371,8 @@
   .unit { font: 370 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row { font: 400 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row.emphasis { color: var(--element-active-color); }
-  .shutdown-row { min-height: 16px; font: 370 12px/16px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
-  .shutdown-row.emphasis { color: var(--element-active-color); }
+  .tag-row { min-height: 16px; font: 370 12px/16px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
+  .tag-row.emphasis { color: var(--element-active-color); }
   .legend { margin: 0; display: flex; align-items: center; gap: 10px; height: 14px; font: 400 11px/14px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; }
   .key { display: inline-flex; align-items: center; gap: 4px; }
   .targets { position: absolute; inset: 0; pointer-events: none; }

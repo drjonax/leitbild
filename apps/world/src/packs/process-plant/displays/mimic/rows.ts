@@ -1,8 +1,8 @@
-import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicShutdownBinding } from './bindings.ts'
+import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicRangeBinding, MimicShutdownBinding } from './bindings.ts'
 import { flowLook, itemLook, powerLook, shutdownLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
-import { displayValue, offScale, readingText, readingValueText, unitLabel } from '../display-text.ts'
+import { displayValue, logarithmicSpan, offScale, readingText, readingValueText, unitLabel } from '../display-text.ts'
 
 // The text rows beside a drawn item, shared by the server (which reserves
 // their room before any sample exists) and the embed (which fills them). A
@@ -51,6 +51,15 @@ export type MimicRow =
    * the column beside a hub's lanes.
    */
   | { readonly kind: 'shutdown'; readonly part: 'word' | 'command'; readonly flag: MimicShutdownBinding; readonly texts: ReadonlyArray<string>; readonly required: true }
+  /**
+   * A quantity its instruments read in turn (MimicRangeBinding), on the
+   * instrument that reads it now: the widest whose flag holds, else the
+   * narrowest ("PWR 100 %", "6.9×10⁻⁷ A", "24000 cps"); a reading over
+   * decades in powers of ten. `texts` are the widest it can write, for its
+   * room. A vessel writes it like its tag, so it fits the column beside a
+   * hub's lanes.
+   */
+  | { readonly kind: 'range'; readonly chain: MimicRangeBinding; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** What passes an item whose position is not computed: PASSING or NO FLOW. */
   | { readonly kind: 'throughput'; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** A command the item does not follow: CMD 100 %, CMD RUN, CMD SHUT. */
@@ -113,6 +122,39 @@ const shutdownRows = (flag: MimicShutdownBinding): ReadonlyArray<MimicRow> => fl
 export const shutdownDemanded = (rows: ReadonlyArray<MimicRow>, index: SampleIndex): boolean =>
   rows.some(row => row.kind === 'shutdown' && row.part === 'word' && shutdownLook(row.flag, index) === 'demanded')
 
+/** A range row's widest texts: every instrument's span ends, and the widest value its span's decades or digits can write. */
+const rangeTexts = (chain: MimicRangeBinding): ReadonlyArray<string> => ['?', '—', ...chain.steps.flatMap(step => {
+  const lettered = (text: string): string => (step.letters === undefined ? text : `${step.letters} ${text}`)
+  const span = step.span
+  if (span === undefined) return [lettered(readingText(888.8, step.unit, null, undefined))]
+  // Over decades, each power of ten it spans with the widest mantissa; else a value just under each power of ten up to its top.
+  const low = logarithmicSpan(span) ? Math.floor(Math.log10(span.min)) : -1
+  const high = Math.ceil(Math.log10(Math.max(Math.abs(span.max), 1)))
+  const samples = Array.from({ length: high - low + 1 }, (_, at) => 8.8 * 10 ** (low + at)).filter(value => value > span.min && value < span.max)
+  return [span.min, span.max, ...samples].map(value => lettered(readingText(value, step.unit, null, span)))
+})]
+
+/** Which instrument of a range row reads now: the widest whose flag holds, else the narrowest; null where a flag is not known. */
+const rangeStep = (chain: MimicRangeBinding, index: SampleIndex): MimicRangeBinding['steps'][number] | null => {
+  for (let at = chain.steps.length - 1; at > 0; at -= 1) {
+    const flag = index.get(String(chain.steps[at - 1]!.widerWhile))?.value
+    if (typeof flag !== 'boolean') return null
+    if (flag) return chain.steps[at]!
+  }
+  return chain.steps[0]!
+}
+
+/** A range row's text for one sample: the reading instrument's value, "—" where it measures nothing now, "?" where it is not known. */
+export const rangeText = (chain: MimicRangeBinding, index: SampleIndex): string => {
+  const step = rangeStep(chain, index)
+  if (step === null) return '?'
+  if (step.meaningful !== undefined && index.get(String(step.meaningful))?.value !== true) return '—'
+  const entry = index.get(String(step.path))
+  if (entry === undefined || typeof entry.value !== 'number' || entry.quality === 'outside-hard-range') return '?'
+  const text = readingText(entry.value, step.unit, null, step.span)
+  return step.letters === undefined ? text : `${step.letters} ${text}`
+}
+
 /** The digits of the widest whole value a range reaches, in the unit it is shown in. */
 const integerDigits = (range: { readonly min: number; readonly max: number }, unit: string): number =>
   Math.max(...[range.min, range.max].map(bound => String(Math.round(Math.abs(displayValue(bound, unit)))).length + (bound < 0 ? 1 : 0)))
@@ -171,13 +213,14 @@ export const itemRows = (
     ...(value.wider === undefined || options.offSpan !== 'wider' ? {} : { wider: { path: value.wider.path, span: value.wider.span } }),
     ...(!device || value.range === undefined ? {} : { digits: integerDigits(value.range, value.unit) }),
   })
+  const ranges: ReadonlyArray<MimicRow> = binding.ranges.map(chain => ({ kind: 'range', chain, texts: rangeTexts(chain), required: true }))
   const shutdown = binding.shutdown.flatMap(shutdownRows)
-  if (!device || state === null) return [...binding.values.map((value, index) => valueRow(value, index === 0)), ...shutdown]
+  if (!device || state === null) return [...binding.values.map((value, index) => valueRow(value, index === 0)), ...ranges, ...shutdown]
   // A device's key values follow what its state rows say, each sized for the
   // widest value its instrument declares it reads (a generator's MW, a
   // diesel's kW); one that declares no such range has no row. They go before
   // anything else when a drawing has no room.
-  const after = [...binding.values.flatMap(value => value.range === undefined ? [] : [valueRow(value, false)]), ...shutdown]
+  const after = [...binding.values.flatMap(value => value.range === undefined ? [] : [valueRow(value, false)]), ...ranges, ...shutdown]
   return [...stateRows(binding, state, stacked, valuesOf), ...after]
 }
 
@@ -266,6 +309,7 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   if (row.kind === 'alarm') return ''
   if (row.kind === 'commandValue') return look.mismatch === null ? '' : look.mismatch.slice('CMD '.length)
   if (row.kind === 'throughput') return look.state.kind === 'passing' ? 'PASSING' : look.state.kind === 'notPassing' ? 'NO FLOW' : '?'
+  if (row.kind === 'range') return rangeText(row.chain, index)
   if (row.kind === 'shutdown') {
     const stopped = shutdownLook(row.flag, index)
     if (row.part === 'command') return stopped === 'demanded' ? SHUTDOWN_COMMAND : ''

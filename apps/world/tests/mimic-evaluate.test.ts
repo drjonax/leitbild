@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import type { MimicFlowBinding, MimicItemBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import type { MimicFlowBinding, MimicItemBinding, MimicRangeBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
-import { drawnLook, itemRows, itemTreatment, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { drawnLook, itemRows, itemTreatment, rangeText, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 
 const sample = (values: Record<string, number | boolean>, quality: Record<string, string> = {}) =>
   indexSample(Object.entries(values).map(([path, value]) => ({ path, value, quality: quality[path] ?? 'good' })))
 
 const item = (state: MimicStateBinding | null): MimicItemBinding => ({
-  item: { kind: 'component', component: 0 }, label: 'X', state, values: [], shutdown: [], limits: [], frames: [],
+  item: { kind: 'component', component: 0 }, label: 'X', state, values: [], ranges: [], shutdown: [], limits: [], frames: [],
 })
 
 const pump = item({ aspect: 'running', state: { path: 'p.speedRpm' as never, reading: 'aboveZero' }, command: 'p.running' as never })
@@ -144,5 +145,32 @@ describe('mimic state of one sample', () => {
     expect(at({ 'g.breaker': false })).toEqual(['OFF LINE', '—'])
     // Without declared words, the aspect's own.
     expect(itemRows({ ...generator, state: { ...generator.state!, words: undefined } as never }, { element: 'device', icon: 'generator', aspect: 'running' }, { marker: false, members: [], commands: 'stacked', offSpan: 'end' })[0]).toEqual({ kind: 'state', texts: ['RUN', 'STOP', '?'], required: true })
+  })
+
+  test('a quantity its instruments read in turn reads on the widest whose flag holds, over decades in powers of ten', () => {
+    // A core's flux: source range counts until P-6, intermediate range current above it, power range above P-10.
+    const flux: MimicRangeBinding = {
+      steps: [
+        { path: 'c.sr' as never, unit: 'cps', span: { min: 0, max: 1e6 }, meaningful: 'c.srHv' as never, widerWhile: 'c.p6' as never },
+        { path: 'c.ir' as never, unit: 'amps', span: { min: 1e-11, max: 1e-3 }, widerWhile: 'c.p10' as never },
+        { path: 'c.pr' as never, unit: 'percent', letters: 'PWR', span: { min: 0, max: 120 } },
+      ],
+    }
+    const at = (values: Record<string, number | boolean>) => rangeText(flux, sample(values))
+    expect(at({ 'c.p6': true, 'c.p10': true, 'c.pr': 99.97, 'c.ir': 2.2e-4 })).toBe('PWR 100.0 %')
+    expect(at({ 'c.p6': true, 'c.p10': false, 'c.pr': 2, 'c.ir': 6.9e-7 })).toBe('6.9×10⁻⁷ A')
+    expect(at({ 'c.p6': false, 'c.p10': false, 'c.srHv': true, 'c.sr': 24_000, 'c.ir': 1e-10 })).toBe('24000 cps')
+    // The source range counts nothing while its high voltage is off; a reading off its span says only where it is.
+    expect(at({ 'c.p6': false, 'c.p10': false, 'c.srHv': false, 'c.sr': 0 })).toBe('—')
+    expect(at({ 'c.p6': true, 'c.p10': false, 'c.ir': 1e-12 })).toBe('<1.0×10⁻¹¹ A')
+    // A switching flag not known says so, never a guess at the instrument.
+    expect(at({ 'c.p6': true, 'c.ir': 6.9e-7 })).toBe('?')
+    // Its row reserves room for the widest it can write, which on a vessel stays inside a hub's column (94 px at 12 px).
+    const rows = itemRows({ ...item(null), ranges: [flux] }, { element: 'tank', tank: 'pressurized', aspect: 'level' }, { marker: false, members: [], commands: 'stacked', offSpan: 'end' })
+    const range = rows[0]!
+    expect(range.kind).toBe('range')
+    if (range.kind !== 'range') return
+    for (const text of ['PWR 100.0 %', '6.9×10⁻⁷ A', '24000 cps', '<1.0×10⁻¹¹ A', '>1000000 cps']) expect(Math.max(...range.texts.map(candidate => textWidth('tag', candidate)))).toBeGreaterThanOrEqual(textWidth('tag', text))
+    expect(Math.max(...range.texts.map(candidate => textWidth('tag', candidate)))).toBeLessThanOrEqual(94)
   })
 })

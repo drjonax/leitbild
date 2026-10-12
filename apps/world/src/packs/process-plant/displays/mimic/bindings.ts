@@ -90,6 +90,27 @@ export interface MimicShutdownBinding {
   readonly demands: ReadonlyArray<{ readonly path: VariablePath; readonly value: number | boolean }>
 }
 
+/**
+ * One quantity its instruments read in turn, each where the next wider one
+ * does not (a core's neutron flux: counted by its source range, read as a
+ * current by its intermediate range while P-6 holds and in percent by its
+ * power range while P-10 does), narrowest first, as its equipment declares
+ * them (flag-switched wider ranges).
+ */
+export interface MimicRangeBinding {
+  readonly steps: ReadonlyArray<{
+    readonly path: VariablePath
+    readonly unit: string
+    /** What it measures, where its unit does not say (a share: PWR for percent of rated power). */
+    readonly letters?: string
+    readonly span?: { readonly min: number; readonly max: number }
+    /** A flag its reading measures something only while it reads true (meaningfulWhile). */
+    readonly meaningful?: VariablePath
+    /** The flag while which the next, wider instrument reads the quantity instead; absent on the widest. */
+    readonly widerWhile?: VariablePath
+  }>
+}
+
 export interface MimicItemBinding {
   readonly item: MimicItem
   /** The operator's short name. */
@@ -97,6 +118,8 @@ export interface MimicItemBinding {
   readonly state: MimicStateBinding | null
   /** The values an operator reads first on it. */
   readonly values: ReadonlyArray<MimicValueBinding>
+  /** The quantities it reads on instruments in turn (MimicRangeBinding). */
+  readonly ranges: ReadonlyArray<MimicRangeBinding>
   /** What says it has stopped, as its shutdown readings declare it (MimicShutdownBinding). */
   readonly shutdown: ReadonlyArray<MimicShutdownBinding>
   /** I&C alarm and trip limits on its level, marked on the vessel. */
@@ -367,6 +390,37 @@ const shutdownBindings = (plant: CompiledProcessPlant, component: CompiledCompon
   })
 }
 
+/**
+ * The chains of a component's flag-switched wider ranges, each from the
+ * instrument that is no other's wider one, out to the widest.
+ */
+const rangeBindings = (graph: CompiledPlantGraph, component: CompiledComponent): ReadonlyArray<MimicRangeBinding> => {
+  const switched = component.semantics.widerRanges.filter(range => range.while !== undefined)
+  const next = new Map(switched.map(range => [range.reading, range]))
+  const widened = new Set(switched.map(range => range.wider))
+  const meaningful = (path: VariablePath) => component.semantics.meaningfulWhile.find(entry => entry.variables.includes(path))?.flag
+  const step = (path: VariablePath): MimicRangeBinding['steps'][number] => {
+    const signal = graph.signalBindingByPath.get(path)!
+    const span = signal.limits?.instrumentSpan
+    const flag = meaningful(path)
+    const widerWhile = next.get(path)?.while
+    return {
+      path,
+      unit: signal.unit,
+      ...(signal.unit === 'fraction' || signal.unit === 'percent' ? { letters: variableLetters(signal) } : {}),
+      ...(span === undefined ? {} : { span }),
+      ...(flag === undefined ? {} : { meaningful: flag }),
+      ...(widerWhile === undefined ? {} : { widerWhile }),
+    }
+  }
+  // The compiler holds each chain free of returns, so following it ends.
+  return switched.filter(range => !widened.has(range.reading)).map(root => {
+    const paths: VariablePath[] = [root.reading]
+    for (let range = next.get(root.reading); range !== undefined; range = next.get(range.wider)) paths.push(range.wider)
+    return { steps: paths.map(step) }
+  })
+}
+
 export const itemBinding = (
   plant: CompiledProcessPlant,
   item: MimicItem,
@@ -387,6 +441,7 @@ export const itemBinding = (
     label: device === undefined ? labelOf(component) : deviceLabel(component, device),
     state,
     values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path, drawnState)) : [],
+    ranges: device === undefined ? rangeBindings(graph, component) : [],
     shutdown: device === undefined ? shutdownBindings(plant, component, drawnState) : [],
     limits: levelLimits(plant, state),
     frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),

@@ -91,8 +91,8 @@ const rowWords = (row: MimicRow): ReadonlyArray<string> =>
 // Vessels use our stack of readout blocks (one decimal); devices OpenBridge's
 // readout stack at the profile's size: small (11.5 px) or regular (16 px).
 const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['readoutSize']): { readonly width: number; readonly height: number } => {
-  // A vessel's alarm and shutdown rows are written like its tag.
-  if (row.kind === 'alarm' || (row.kind === 'shutdown' && !device)) return { width: Math.max(...row.texts.map(text => textWidth('tag', text))), height: openBridgeDevice.tagLine }
+  // A vessel's alarm, range and shutdown rows are written like its tag.
+  if (row.kind === 'alarm' || ((row.kind === 'shutdown' || row.kind === 'range') && !device)) return { width: Math.max(...row.texts.map(text => textWidth('tag', text))), height: openBridgeDevice.tagLine }
   if (!device || readoutSize === 'regular') {
     const digits = device ? 0 : 1
     // A device writes a value as a whole number of its declared digits, or in words at an end of its span.
@@ -109,7 +109,7 @@ const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['read
 
 const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly text: string }> =>
   row.kind === 'alarm' ? row.texts.map(text => ({ style: 'tag' as const, text }))
-    : row.kind === 'shutdown' ? row.texts.flatMap(text => [{ style: 'tag' as const, text }, { style: 'stateRow' as const, text }])
+    : row.kind === 'shutdown' || row.kind === 'range' ? row.texts.flatMap(text => [{ style: 'tag' as const, text }, { style: 'stateRow' as const, text }])
     : row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }]), ...(row.letters === undefined ? [] : [{ style: 'unit' as const, text: row.letters }]), ...rowWords(row).map(text => ({ style: 'stateRow' as const, text }))]
     : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
@@ -358,12 +358,13 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     // cold leg C" beside the core's 339 °C read as the cold leg's temperature).
     const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, piped.get(index) ?? new Set(), usedPorts.get(index) ?? new Set()) : null
     const binding: MimicItemBinding = group.length === 1
-      ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}`, values: [] })
+      ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}`, values: [], ranges: [] })
       : {
           item: bindings[0]!.item,
           label: groupLabel(bindings.map(member => member.label)),
           state: null,
           values: [],
+          ranges: [],
           shutdown: [],
           limits: [],
           frames: bindings.flatMap(member => member.frames),
@@ -482,6 +483,7 @@ const orientationOf = (node: PlacedNode): 'horizontal' | 'vertical' =>
 const rowPaths = (row: MimicRow): ReadonlyArray<VariablePath> => {
   if (row.kind === 'value') return [row.path as VariablePath, ...(row.wider === undefined ? [] : [row.wider.path as VariablePath])]
   if (row.kind === 'shutdown') return row.part === 'word' ? [row.flag.path, ...row.flag.demands.map(demand => demand.path)] : []
+  if (row.kind === 'range') return row.chain.steps.flatMap(step => [step.path, ...(step.meaningful === undefined ? [] : [step.meaningful]), ...(step.widerWhile === undefined ? [] : [step.widerWhile])])
   if (row.kind !== 'count') return []
   return row.members.flatMap(member => [
     ...(member.state?.state === undefined ? [] : [member.state.state.path]),

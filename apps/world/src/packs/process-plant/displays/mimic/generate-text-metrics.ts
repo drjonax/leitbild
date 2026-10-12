@@ -57,8 +57,12 @@ const sameShapeAs: ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly
   { style: 'value', text: 'hinted zeros', part: [...valueNumber, { sheet: READOUT_BLOCK, rules: ['.hinted-zero'] }] },
 ]
 
-/** The characters a mimic label may use: printable ASCII and the symbols and Norwegian letters of plant labels. */
-export const MIMIC_TEXT_CHARACTERS: ReadonlyArray<string> = [...Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index)), ...'°³²·‒–—−µ±…Δ×øæåØÆÅ']
+/**
+ * The characters a mimic label may use: printable ASCII, the symbols and
+ * Norwegian letters of plant labels, and the superscript digits and minus of
+ * a reading over decades written in powers of ten ("6.9×10⁻⁷ A").
+ */
+export const MIMIC_TEXT_CHARACTERS: ReadonlyArray<string> = [...Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index)), ...'°³²·‒–—−µ±…Δ×øæåØÆÅ', ...'⁰¹⁴⁵⁶⁷⁸⁹⁻']
 
 // ---------------------------------------------------------------- CSS reading
 
