@@ -228,12 +228,14 @@ describe('mimic presentation and bindings', () => {
     const pzr = graph.componentIndexById.get('pressurizer' as never)!
     const porv = itemBinding(plant, { kind: 'device', component: pzr, device: 'reliefValve' }, 'position', framed)
     expect(porv.label).toBe('PORV')
-    // The PORV reads the opening the model relieves through, never its demand; it follows its demand within the step.
+    // The PORV reads the opening the model relieves through, never its demand; it follows its demand within the step and,
+    // as a relief valve, stands open or shut.
     expect(porv.state).toEqual({
       aspect: 'position',
       state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' },
       command: 'pressurizer.reliefValvePositionFraction' as never,
       travel: { onS: 0, offS: 0 },
+      twoState: true,
     })
     // It is framed by its acoustic flow monitor's alarm, the instrument a plant reads its flow by.
     expect(porv.frames).toEqual([{ ruleId: 'pzr-porv-flow', flap: 'RELIEF VALVE FLOWING', watches: 'RELIEF VALVE FLOWING' }])
@@ -244,6 +246,7 @@ describe('mimic presentation and bindings', () => {
     expect(isolation.state).toEqual({
       aspect: 'position',
       command: 'safetyAccumulatorA.dischargeIsolationOpen' as never,
+      twoState: true,
       throughput: { path: 'safetyAccumulatorA.outletFlowKgPerS' as never, noFlowBelow: null },
     })
     for (const component of graph.components) {
