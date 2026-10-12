@@ -13,9 +13,9 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
-import { composeEvidenceRows, type CompiledComposedDisplay, type ComposedEvidenceRow } from '../src/packs/process-plant/displays/compose.ts'
-import { chipName, positionWord, valueText } from '../src/packs/process-plant/displays/display-text.ts'
-import { evidenceItemWidth, evidenceLines, evidenceNameWidth, evidenceNoteWidth, evidenceWhyWidth } from '../src/packs/process-plant/displays/evidence-width.ts'
+import { composeEvidenceRows, evidenceCriterionText, type CompiledComposedDisplay, type ComposedEvidenceRow } from '../src/packs/process-plant/displays/compose.ts'
+import { chipName, positionWord, unitLabel, valueText } from '../src/packs/process-plant/displays/display-text.ts'
+import { evidenceChips, evidenceItemWidth, evidenceLines, evidenceNameWidth, evidenceNoteWidth, evidenceUnitOnce, evidenceWhyWidth } from '../src/packs/process-plant/displays/evidence-width.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
 import { firstOutFlag, visibleAlarms } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold } from '../src/packs/process-plant/displays/trend-reading.ts'
@@ -135,6 +135,11 @@ const reactorCheck: Row = { kind: 'trip', name: '', items: ['[TRIP-BKR-A-POS]', 
 const reactorCheckRest: Row = { kind: 'trip', name: '', items: ['ROD-STEPS', 'NIS-IR'], continued: true }
 const turbineCheck: Row = { kind: 'trip', name: '', items: ['TURB-STOP-POS', '[GEN-BKR]', 'GEN-MW'] }
 const afwToEach: Row = { kind: 'delivers', name: '', items: ['AFW-A-FLOW', 'AFW-B-FLOW', 'AFW-C-FLOW', 'AFW-D-FLOW'] }
+// After a trip, on a display about taking the core's heat: the feed into each steam generator, read against the heat
+// sink's minimum total (it says what an actuation's flow to each did, so that row is not added twice); Tavg against its
+// program, which with no load holds its no-load value; the steam generators' pressures with which way they go.
+const feedCriterion: Row = { kind: 'criterion', name: 'Feedwater inflow', items: ['SG A', 'SG B', 'SG C', 'SG D'] }
+const tavgAgainstNoLoad: Row = { kind: 'stabilize', name: '', items: ['TAVG', 'TREF', 'TAVG-TREF'] }
 
 describe('what World adds to a composed display', () => {
   test('SG B runback: the feed valve that does not follow its demand, as it stood across the onset; the wide range in the legend; the auxiliary feed into SG B, the trip check and a healthy steam generator', () => {
@@ -159,7 +164,11 @@ describe('what World adds to a composed display', () => {
     const rows = rowsOf(display)
     expect(rows[0]).toEqual({ kind: 'cause', name: '', items: ['MFW-B-CV-POS', 'MFW-B-CV'], note: evidence[0]!.note! })
     expect(rows.filter(row => row.kind === 'trip')).toEqual([reactorCheck, reactorCheckRest, turbineCheck])
-    expect(rows).toContainEqual({ kind: 'reference', name: '', items: ['SG-A-LVL-NR'] })
+    // After the trip the feed into every steam generator, healthy ones too, is read against the heat sink's minimum; with
+    // Tavg against its no-load program it takes the room the healthy loop's narrow range had (below its span here too).
+    expect(rows.map(row => row.kind)).toEqual(['cause', 'delivers', 'delivers', 'criterion', 'trip', 'trip', 'trip', 'stabilize'])
+    expect(rows).toContainEqual(feedCriterion)
+    expect(rows.at(-1)).toEqual(tavgAgainstNoLoad)
     // The narrow range is off its span: its legend row reads the wide range in its rate's place, so World adds none.
     expect(read('sgB.levelPercent')).toBe(0)
     expect(listed(evidence).map(([, kind]) => kind)).not.toContain('wider')
@@ -261,9 +270,10 @@ describe('what World adds to a composed display', () => {
     ])
     for (const loop of ['A', 'B', 'C', 'D']) expect(result.margins.join('\n')).toMatch(new RegExp(`SG-${loop}-LVL-NR: <0 % \\(WR SG-${loop}-LVL-WR: \\d+\\.\\d %\\)`))
     expect(lossOfFeed.read('sgA.wideRangeLevelPercent')).toBeGreaterThan(15)
-    // The header flow is shown: its flow to each steam generator is added, then the reactor's trip check, its
-    // first line whole; the turbine's, and what feedwater isolation shut off, ranked last, find no room.
-    expect(rowsOf(display)).toEqual([afwToEach, reactorCheck])
+    // The header flow is shown: the feed into each steam generator is added, against the heat sink's minimum total,
+    // then the reactor's trip check, its first line whole; the turbine's, the post-trip values and what feedwater
+    // isolation shut off, ranked last, find no room.
+    expect(rowsOf(display)).toEqual([feedCriterion, reactorCheck])
     expect(listed(evidence)).not.toContainEqual(['feedwaterHeader.outletFlowKgPerS', 'isolates'])
     for (const loop of ['a', 'b', 'c', 'd']) expect(lossOfFeed.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`)).toBeGreaterThan(20)
     expect(Number(lossOfFeed.read('core.powerRangePercent'))).toBeLessThan(5)
@@ -321,10 +331,13 @@ describe('what World adds to a composed display', () => {
     for (const loop of ['A', 'B', 'C', 'D']) expect(result.margins.join('\n')).toMatch(new RegExp(`SG-${loop}-LVL-NR: <0 % \\(WR SG-${loop}-LVL-WR: \\d+\\.\\d %\\)`))
     expect(rowsOf(display)).toEqual([
       { kind: 'delivers', name: '', items: ['AFW-FLOW'] },
-      afwToEach,
+      feedCriterion,
       reactorCheck,
       reactorCheckRest,
       turbineCheck,
+      tavgAgainstNoLoad,
+      { kind: 'stabilize', name: '', items: ['SG-A-PRESS', 'SG-B-PRESS', 'SG-C-PRESS', 'SG-D-PRESS'] },
+      { kind: 'stabilize', name: '', items: [], note: expect.stringMatching(/^each (rising|falling) \d+\.\d+ MPa\/min over 30 s$/), continued: true },
       { kind: 'isolates', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
     ])
     expect(evidence.filter(entry => entry.kind === 'trip').map(entry => entry.reason.replace(/\d\d:\d\d:\d\d/, 'hh:mm:ss'))).toEqual([
@@ -332,7 +345,7 @@ describe('what World adds to a composed display', () => {
       ...Array(3).fill('Reactor trip at hh:mm:ss: what says Turbine stopped'),
     ])
     expect(evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
-    expect(evidence[1]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers to SG A, SG B, SG C and SG D')
+    expect(evidence.find(entry => entry.kind === 'criterion')!.reason).toBe('HEAT SINK: Total feed flow to the steam generators at least 27.8 kg/s (440 gpm)')
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
     // The trip check reads as the drawing does (HMI review of run 23: "ON" and "0 %"): the rods by the words the core
     // declares for them, the stop valve SHUT at the end of its travel.
@@ -437,10 +450,16 @@ describe('what World adds to a composed display', () => {
       { kind: 'mimic', to: ['auxFeedwaterPumpMotor', 'auxFeedwaterPumpMotorB'], services: ['electricalPower'], reach: 2 },
       { kind: 'alarms', scope: 'related' },
     ])
-    // Powered is not pumping: the pumps' header flow says whether they deliver water, and its flow to each steam
-    // generator whether every one is fed.
-    expect(rowsOf(diesel.display)).toEqual([{ kind: 'delivers', name: '', items: ['AFW-FLOW'] }, afwToEach])
-    expect(diesel.evidence[0]!.reason).toMatch(/^Steam generator [A-D] low-low level auxiliary feedwater actuation: what it delivers$/)
+    // Powered is not pumping: the pumps' header flow says whether they deliver water, and the feed into each steam
+    // generator, against the heat sink's minimum, whether every one is fed. The pump the question names is held
+    // running by the actuation that started it.
+    expect(rowsOf(diesel.display).slice(0, 3)).toEqual([
+      { kind: 'hold', name: '', items: ['[AFW-PUMP-A-RUNNING]', '[AFW-PUMP-A]'], note: expect.stringMatching(/^since 10:00:\d\d$/) },
+      { kind: 'delivers', name: '', items: ['AFW-FLOW'] },
+      feedCriterion,
+    ])
+    expect(diesel.evidence[0]!.reason).toMatch(/^Steam generator [A-D] low-low level auxiliary feedwater actuation holds MD AFW A at RUN: STOP refused while it stands$/)
+    expect(diesel.evidence.find(entry => entry.kind === 'delivers')!.reason).toMatch(/^Steam generator [A-D] low-low level auxiliary feedwater actuation: what it delivers$/)
     expect(offsite.read('auxFeedwaterHeader.outletFlowKgPerS')).toBeGreaterThan(50)
   }, PLANT_HANG_GUARD_MS)
 
@@ -471,7 +490,8 @@ describe('what World adds to a composed display', () => {
 
 describe('the rows World adds', () => {
   test('read parallel values by their tags, or by the equipment that tells them apart under what they share', () => {
-    const graph = atPower().system.plant.graph
+    const plant = atPower().system.plant
+    const graph = plant.graph
     const pen = (path: string) => {
       const binding = graph.signalBindingByPath.get(path as never)!
       return { path: binding.path, name: binding.tagId ?? binding.label, quantity: binding.quantity, unit: binding.unit, valueKind: 'number', resolution: null, thresholds: [], command: false, ...(binding.tagId === undefined ? {} : { tagId: binding.tagId }) } as never
@@ -484,7 +504,7 @@ describe('the rows World adds', () => {
       entry('feedwater-control-valve-b-to-sg-b.flowKgPerS', 'flow', 'to each'),
       entry('sgC.wideRangeLevelPercent', 'wider', 'off span'),
     ]
-    expect(composeEvidenceRows(graph, evidence, evidence.map(value => pen(value.path))).map(row => [row.kind, row.name, row.items.map(item => item.label), row.count])).toEqual([
+    expect(composeEvidenceRows(plant, evidence, evidence.map(value => pen(value.path))).map(row => [row.kind, row.name, row.items.map(item => item.label), row.count])).toEqual([
       ['wider', '', ['SG-A-LVL-WR', 'SG-B-LVL-WR'], 2],
       ['flow', 'Feedwater to', ['SG A', 'SG B'], 2],
       ['wider', '', ['SG-C-LVL-WR'], 1],
@@ -549,10 +569,16 @@ describe('what a display shows of a trip (HMI review of run 26)', () => {
 
   test('every line of the rows World adds fits a chat view, whole values each; a row too wide goes on under it', () => {
     // The trip check was cut on seven displays at chat width, losing the turbine's stop valves, breaker and output.
-    const width = (row: ComposedEvidenceRow): number => evidenceWhyWidth(row.kind) + 8
-      + (row.name === '' ? 0 : evidenceNameWidth(row.name) + 8)
-      + row.items.reduce((sum, item) => sum + evidenceItemWidth(item, row.items.length > 1 || row.continued === true || row.continues === true) + 8, 0)
-      + (row.note === undefined ? 0 : evidenceNoteWidth(row.note))
+    const width = (row: ComposedEvidenceRow): number => {
+      const once = evidenceUnitOnce(row.items.map(item => item.pen))
+      const chips = evidenceChips(row.kind, row.items.length > 1 || row.continued === true || row.continues === true ? 2 : 1)
+      return evidenceWhyWidth(row.kind) + 8
+        + (row.name === '' ? 0 : evidenceNameWidth(row.name) + 8)
+        + row.items.reduce((sum, item) => sum + evidenceItemWidth(item, chips, !once) + 8, 0)
+        + (once ? 4 + evidenceNameWidth(unitLabel(row.items[0]!.pen.unit)) : 0)
+        + (row.note === undefined ? 0 : evidenceNoteWidth(row.note))
+        + (row.criterion === undefined ? 0 : evidenceNoteWidth(evidenceCriterionText(row.criterion, `000000 ${row.criterion.unit}`)))
+    }
     for (const { compose } of [tripped(), runback()]) {
       const { display } = compose('Post-trip steam-generator inventory', ['SG-A-LVL-NR'], [
         { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), signal('SG-B-LVL-NR')] },
@@ -622,5 +648,50 @@ describe('what a display shows of a trip (HMI review of run 26)', () => {
     const readouts = display.panels[0]!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
     expect(readouts.pens.map(pen => pen.position)).toEqual([true, true])
+  }, PLANT_HANG_GUARD_MS)
+})
+
+
+describe('what an operation display and a post-trip display carry (reviews of run 26c)', () => {
+  const lossOfFeed = once(() => situation({ actionId: 'loss-main-feedwater' }, 3))
+
+  test('a display composed around an operated item reads what holds it, and the criterion the holding actuation serves', () => {
+    // HMI review of run 26c (op-stop-afw-pump): the Plant refused to stop MD AFW A, held by the AFW actuation, and the
+    // display drew no hold. Its state and demand are read together with the actuation and since when; then the total
+    // feed into the steam generators the pump feeds, against the heat sink's minimum, which that actuation serves.
+    const { compose, read } = lossOfFeed()
+    const pump = compose('Unit 2 motor-driven AFW A', ['auxFeedwaterPumpMotor'], [{ kind: 'mimic', from: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater'] }, { kind: 'alarms', scope: 'related' }])
+    const rows = rowsOf(pump.display)
+    expect(rows[0]).toEqual({ kind: 'hold', name: '', items: ['[AFW-PUMP-A-RUNNING]', '[AFW-PUMP-A]'], note: expect.stringMatching(/^since 10:00:\d\d$/) })
+    expect(pump.evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation holds MD AFW A at RUN: STOP refused while it stands')
+    expect(read('auxFeedwaterPumpMotor.runningState')).toBe(true)
+    expect(rows).toContainEqual(feedCriterion)
+    const panel = pump.display.panels.find(candidate => candidate.kind === 'evidence')!
+    if (panel.kind !== 'evidence') throw new Error('expected the evidence panel')
+    // The row reads its values against what the function asks: their total, at least 27.8 kg/s, live (EvidencePanel).
+    const criterion = panel.rows.find(row => row.criterion !== undefined)!.criterion!
+    expect(criterion).toMatchObject({ safetyFunction: 'HEAT SINK', operator: '>=', value: 27.8, total: true, unit: 'kg/s' })
+    expect(criterion.paths).toEqual(['sgA.feedwaterFlowKgPerS', 'sgB.feedwaterFlowKgPerS', 'sgC.feedwaterFlowKgPerS', 'sgD.feedwaterFlowKgPerS'])
+    expect(evidenceCriterionText(criterion, '112')).toBe('total 112 ≥ 27.8 kg/s · HEAT SINK')
+    // The same drawing composed about nothing it operates reads no hold.
+    const lineUp = compose('Auxiliary feedwater line-up', ['auxFeedwater'], [{ kind: 'mimic', from: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater'] }, { kind: 'alarms', scope: 'related' }])
+    expect(rowsOf(lineUp.display).map(row => row.kind)).not.toContain('hold')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('after a trip the post-trip values join a display about taking the core\'s heat, never one about the trip of the turbine', () => {
+    // SME review of run 26c: lead post-trip displays with Tavg against its no-load value, the steam generator pressure
+    // trend and total feed against the heat sink's minimum.
+    const { compose } = situation({ actionId: 'turbine-trip' }, 1)
+    const levels = compose('Post-trip heat sink', ['SG-A-LVL-NR'], [{ kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), signal('SUB-MARGIN')] }, { kind: 'alarms', scope: 'plant' }])
+    const kinds = rowsOf(levels.display).map(row => row.kind)
+    expect(kinds).toContain('criterion')
+    expect(rowsOf(levels.display)).toContainEqual(tavgAgainstNoLoad)
+    expect(levels.evidence.find(entry => entry.kind === 'stabilize')!.reason).toBe('after the trip, TAVG against its program, which with no load holds its no-load value')
+    // A display about the turbine's trip draws nothing that takes the core's heat: no post-trip values.
+    const why = compose('Unit 2 turbine trip sequence', ['turbine'], [{ kind: 'mimic', to: ['turbine'], loops: ['A'] }, { kind: 'alarms', scope: 'related' }])
+    expect(why.evidence.map(entry => entry.kind)).not.toContain('stabilize')
+    // At power, nothing of the post-trip check.
+    const power = atPower().compose('SG A level at power', ['SG-A-LVL-NR'], [{ kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary')] }])
+    expect(power.evidence.map(entry => entry.kind).filter(kind => kind === 'stabilize' || kind === 'criterion')).toEqual([])
   }, PLANT_HANG_GUARD_MS)
 })

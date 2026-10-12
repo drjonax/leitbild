@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ComposedDisplayPen, ComposedEvidencePanel, ComposedEvidenceRow } from '../../../packs/process-plant/displays/compose.ts'
+  import { evidenceCriterionText, type ComposedDisplayPen, type ComposedEvidenceCriterion, type ComposedEvidencePanel, type ComposedEvidenceRow } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout, evidenceKindWords } from '../../../packs/process-plant/displays/composition.ts'
   import { offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { readingStateText, trendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -58,6 +58,19 @@
     }
   }
 
+  // What a critical safety function asks of a row's values, read live: their total where it judges it, met or not.
+  const criterionOf = (criterion: ComposedEvidenceCriterion): { readonly text: string; readonly met: boolean | null } => {
+    const values = criterion.paths.map(path => latest?.values.find(entry => entry.path === path)?.value)
+    const numbers = values.filter((value): value is number => typeof value === 'number')
+    const known = numbers.length === values.length && numbers.length > 0
+    const reading = known ? (criterion.total ? numbers.reduce((sum, value) => sum + value, 0) : numbers[0]!) : null
+    const met = reading === null ? null
+      : criterion.operator === '<' ? reading < criterion.value : criterion.operator === '<=' ? reading <= criterion.value
+        : criterion.operator === '>' ? reading > criterion.value : criterion.operator === '>=' ? reading >= criterion.value
+          : criterion.operator === '==' ? reading === criterion.value : reading !== criterion.value
+    return { text: evidenceCriterionText(criterion, reading === null ? null : readingValueText(reading, criterion.unit, criterion.resolution, undefined)), met }
+  }
+
   // One unit after the last value where every value shares it ("SG A 28.5 · SG B 28.5 kg/s"), else after each, as
   // beside a demand ("35.0 % · SHUT DEMAND").
   const sharedUnit = (row: ComposedEvidenceRow, readings: ReadonlyArray<ItemReading>): boolean => new Set(readings.map(reading => reading.unit)).size === 1 && !row.items.some(item => item.pen.command)
@@ -67,6 +80,7 @@
     row.items.map((item, at) => `${item.label === '' ? '' : `${item.label} `}${readings[at]!.text}${readings[at]!.unit === '' ? '' : ` ${readings[at]!.unit}`}${item.pen.command ? ' demand' : ''}${item.pen.simulatorOnly ? ' sim' : ''}`).join(' · '),
     several(row) || row.items.length === 0 ? '' : readings[0]!.state,
     row.note ?? '',
+    row.criterion === undefined ? '' : criterionOf(row.criterion).text,
   ].filter(part => part !== '').join('  ')
 </script>
 
@@ -88,7 +102,7 @@
             {#if reading.unit !== '' && (!unitOnce || at === row.items.length - 1)}<span class="unit">{reading.unit}</span>{/if}
             {#if item.pen.command}<span class="demand">demand</span>{/if}
             {#if item.pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}
-            {#if reading.inAlarm !== null && several(row)}<AlarmChip threshold={reading.inAlarm} compact expected={expectedOf(reading.inAlarm.ruleId)} />{/if}
+            {#if reading.inAlarm !== null && several(row) && row.kind !== 'criterion'}<AlarmChip threshold={reading.inAlarm} compact expected={expectedOf(reading.inAlarm.ruleId)} />{/if}
           </span>
         {/each}
         {#if row.items.length === 1 && !several(row)}
@@ -96,6 +110,10 @@
           {#if readings[0]!.state !== ''}<span class="state" class:beyond={readings[0]!.beyond}>{readings[0]!.state}</span>{/if}
         {/if}
         {#if row.note !== undefined}<span class="note">{row.note}</span>{/if}
+        {#if row.criterion !== undefined}
+          {@const criterion = criterionOf(row.criterion)}
+          <span class="criterion" class:unmet={criterion.met === false}>{criterion.text}</span>
+        {/if}
       </li>
     {/each}
   </ul>
@@ -119,4 +137,7 @@
   .demand { padding: 0 4px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
   .state { font-size: 11px; color: var(--element-neutral-color); overflow: hidden; text-overflow: ellipsis; }
   .note { min-width: 0; font-size: 11px; color: var(--element-neutral-color); overflow: hidden; text-overflow: ellipsis; }
+  /* What a critical safety function asks of the row's values: neutral while met, set apart by weight where not. */
+  .criterion { flex: none; font-size: 11px; color: var(--element-neutral-color); }
+  .criterion.unmet { color: var(--alert-caution-color); font-weight: 600; }
 </style>

@@ -1,6 +1,6 @@
 import type { ComposedDisplayPen, ComposedEvidenceItem } from './compose.ts'
 import { composedDisplayLayout, evidenceKindWords, type DisplayEvidenceKind } from './composition.ts'
-import { chipName, POSITION_OPEN_ABOVE, readingValueText, unitLabel } from './display-text.ts'
+import { chipName, POSITION_OPEN_ABOVE, readingValueText, RESOLUTION_FRACTION, unitLabel } from './display-text.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
 // How wide a row of values World adds draws, at its widest, so a row that
@@ -13,6 +13,9 @@ import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 // the widest text it can read: either state's words, OPEN or SHUT for a
 // valve, its span's ends as "<0" and ">100", or the most digits it reads to
 // within its span.
+
+/** How many times the scale its resolution is a share of a reading with no declared span is reserved room for. */
+const UNSPANNED_SCALES = 10
 
 /** The metrics table's regular style (Noto Sans 400 at 16 px), scaled to each size. */
 const TABLE_PX = 16
@@ -52,8 +55,11 @@ const widestValue = (pen: ComposedDisplayPen): { readonly value: number; readonl
   const span = pen.limits?.instrumentSpan
   const unit = unitLabel(pen.unit)
   const step = pen.resolution ?? 0
+  // Without a declared span, the scale its resolution was derived from (RESOLUTION_FRACTION of it) bounds what it
+  // reads, ten times over; without either, five digits and a decimal.
+  const bound = pen.resolution === null ? 99_999.9 : (pen.resolution / RESOLUTION_FRACTION) * UNSPANNED_SCALES
   const values = span === undefined
-    ? [-99_999.9, 99_999.9]
+    ? [-bound, bound]
     : [span.min, span.max, span.max - Math.max(step, (span.max - span.min) * 1e-3), span.min + Math.max(step, (span.max - span.min) * 1e-3)]
   const texts = [...values.map(value => readingValueText(value, pen.unit, pen.resolution, span)), ...(pen.position === true ? ['OPEN', 'SHUT', readingValueText(POSITION_OPEN_ABOVE, pen.unit, pen.resolution, span)] : [])]
   return { value: Math.max(...texts.map(text => textPx(text, 13, { bold: true }))), unit: unit === '' ? 0 : ITEM_GAP + textPx(unit, 11.5) }
@@ -65,15 +71,26 @@ const widestChip = (pen: ComposedDisplayPen): number => {
   return chips.length === 0 ? 0 : ITEM_GAP + Math.max(...chips)
 }
 
-/** One value as its row draws it at its widest: its label, value and unit, its marks, and in a row of several its chip. */
-export const evidenceItemWidth = (item: ComposedEvidenceItem, several: boolean): number => {
+/**
+ * One value as its row draws it at its widest: its label, value and unit
+ * (`unit`: where its row writes a unit after each value), its marks, and its
+ * chip (`chips`: in a row of several that draws them).
+ */
+export const evidenceItemWidth = (item: ComposedEvidenceItem, chips: boolean, unit = true): number => {
   const { pen } = item
   const widest = widestValue(pen)
-  return (item.label === '' ? 0 : textPx(item.label, 11.5) + ITEM_GAP) + widest.value + widest.unit
+  return (item.label === '' ? 0 : textPx(item.label, 11.5) + ITEM_GAP) + widest.value + (unit ? widest.unit : 0)
     + (pen.command ? ITEM_GAP + mark('demand') : 0)
     + (pen.simulatorOnly === true ? ITEM_GAP + mark('sim') : 0)
-    + (several ? widestChip(pen) : 0)
+    + (chips ? widestChip(pen) : 0)
 }
+
+/** Whether a row writes one unit after its last value, all its values sharing it (EvidencePanel's sharedUnit). */
+export const evidenceUnitOnce = (pens: ReadonlyArray<ComposedDisplayPen>): boolean =>
+  pens.length > 1 && new Set(pens.map(pen => pen.unit)).size === 1 && !pens.some(pen => pen.command || pen.position === true || pen.valueKind === 'boolean')
+
+/** Whether a row draws its values' alarm chips: a row of several does, but for a criterion's, which reads them against it instead. */
+export const evidenceChips = (kind: DisplayEvidenceKind, count: number): boolean => count > 1 && kind !== 'criterion'
 
 /** What a row says beside its values, at 11 px. */
 export const evidenceNoteWidth = (note: string): number => textPx(note, 11)
@@ -101,17 +118,20 @@ export const evidenceLines = <Item extends ComposedEvidenceItem>(
   note: string | undefined,
   room: number = composedDisplayLayout.evidenceRowRoom,
 ): ReadonlyArray<EvidenceLine<Item>> => {
-  const several = items.length > 1
+  const chips = evidenceChips(kind, items.length)
+  const once = evidenceUnitOnce(items.map(item => item.pen))
+  // Where the values share a unit, each line writes it once, after its last value.
+  const unit = once ? ITEM_GAP + textPx(unitLabel(items[0]!.pen.unit), 11.5) : 0
   const indent = evidenceWhyWidth(kind) + ROW_GAP
   const lines: Array<EvidenceLine<Item>> = []
   let line: Item[] = []
-  let used = indent + (name === '' ? 0 : evidenceNameWidth(name) + ROW_GAP)
+  let used = indent + unit + (name === '' ? 0 : evidenceNameWidth(name) + ROW_GAP)
   for (const item of items) {
-    const width = evidenceItemWidth(item, several)
+    const width = evidenceItemWidth(item, chips, !once)
     if (line.length > 0 && used + width > room) {
       lines.push({ items: line, note: false })
       line = []
-      used = indent
+      used = indent + unit
     }
     line.push(item)
     used += width + ROW_GAP

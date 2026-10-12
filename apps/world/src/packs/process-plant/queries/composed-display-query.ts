@@ -165,7 +165,9 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       return { value: snapshot.value, quality: processPlantSignalQuality(snapshot).status }
     }
     // What the Plant's model says bears on the question besides what the agent chose, read as the agent's panels open.
-    const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample, recordedSeriesIds), recordedSeriesIds)
+    // What the question is about, as the agent named it: the items an operation display is composed around.
+    const subjects = composedDisplayCompositionSchema.parse(config.request.input).subjects ?? []
+    const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample, recordedSeriesIds, subjects), recordedSeriesIds)
     if (!completed.ok) throw new Error(`evidence World adds must resolve: ${completed.issues.map(issue => issue.message).join('; ')}`)
     // Drawn with what it leads with first, as every later view of it is (leadFirst).
     const lead = composedDisplayLead(readComposedDisplay(completed.display, opening))

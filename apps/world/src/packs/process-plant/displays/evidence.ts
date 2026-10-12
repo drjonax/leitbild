@@ -13,7 +13,11 @@ import { heldCommands, itemLook, type SampleIndex } from './mimic/evaluate.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 import { operatingPointValue } from './operating-point.ts'
 import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMeasured } from './overview-key-values.ts'
-import { COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, TREND_HISTORY_LIMIT, type TrendPoint } from './trend-reading.ts'
+import { COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, ratePerMinute, travelText, TREND_HISTORY_LIMIT, type TrendPoint } from './trend-reading.ts'
+import { listedControlsFor } from '../operations/instance-ports.ts'
+import { safetyFunctionCriteria, type SafetyFunctionCriterion } from './safety-criteria.ts'
+import { resolveEquipmentName } from './mimic/scope.ts'
+import { mimicItemId } from './mimic/bindings.ts'
 
 // The evidence a composed display carries besides what the agent chose: what
 // the Plant's model says bears on the question now, added by World and
@@ -82,7 +86,16 @@ const joined = (names: ReadonlyArray<string>): string => names.length < 2 ? name
  *   critical safety function judges before those only an alarm judges, and
  *   before what the actions isolate;
  * - flow: along a drawn line-up, the header flow each drawn header carries,
- *   and to each destination, and each drawn pump feeds.
+ *   and to each destination, and each drawn pump feeds;
+ * - hold: for an operated item the display is about (its subject, or the
+ *   target of a proposal it draws), the standing actuation that holds it or
+ *   the isolation that shuts it, with its state and demand;
+ * - criterion: what a critical safety function asks of what that actuation
+ *   delivers, and after a trip of the feed into the heat transfer equipment
+ *   (total feed against the heat sink's minimum), read against it live;
+ * - stabilize: after a trip, on a display about taking the source's heat,
+ *   the source's programmed reading against its no-load program and the heat
+ *   transfer equipment's pressures with which way they go.
  * Equipment a drawing shows says its own command and state, so it is never a
  * cause or an isolation here.
  */
@@ -92,6 +105,8 @@ export const displayEvidence = (
   { now, readings }: ComposedDisplayReading,
   sample: EvidenceSample,
   recordedSeriesIds: ReadonlySet<string>,
+  /** What the question is about, as the agent named it (signals or equipment): the items an operation display is composed around. */
+  subjects: ReadonlyArray<string> = [],
 ): ReadonlyArray<DisplayEvidence> => {
   const plant = system.plant
   const graph = plant.graph
@@ -327,10 +342,12 @@ export const displayEvidence = (
     return owner.type === 'component' ? owner.componentIndex : undefined
   }
   // What a header sends to each destination, read together.
-  const toEach = (header: number | undefined): { readonly paths: ReadonlyArray<VariablePath>; readonly to: string } | null => {
+  const toEach = (header: number | undefined): { readonly paths: ReadonlyArray<VariablePath>; readonly destinations: ReadonlyArray<number>; readonly to: string } | null => {
     const branches = header === undefined ? [] : branchFlows(plant, header, MIMIC_REACH_LINKS)
-    return branches.length === 0 ? null : { paths: branches.map(branch => branch.path), to: joined(branches.map(branch => shortLabel(system, branch.destination))) }
+    return branches.length === 0 ? null : { paths: branches.map(branch => branch.path), destinations: branches.map(branch => branch.destination), to: joined(branches.map(branch => shortLabel(system, branch.destination))) }
   }
+  // Each flow an action delivers to one destination, by the destination: a criterion of the feed into each reads it instead.
+  const deliveredTo = new Map<string, number>()
   for (const action of bearing) {
     if (!actsIn(action.rule, mode) || !(now.activeRuleIds.has(action.rule.id) || ahead.has(action.rule.id))) continue
     const flows = actionFlows(plant, action, MIMIC_REACH_LINKS)
@@ -353,7 +370,11 @@ export const displayEvidence = (
       add(flow.path, flow.effect === 'starts' ? 'delivers' : 'isolates', `${named}${active ? '' : ', its limit ahead'}: ${effect}`)
       // Delivering, the header's flow alone cannot say whether a destination is unfed: its flow to each is read beside it.
       const branches = active && flow.effect === 'starts' ? toEach(ownerOf(flow.path)) : null
-      for (const path of branches?.paths ?? []) add(path, 'delivers', `${named}: what it delivers to ${branches!.to}`)
+      for (const [at, path] of (branches?.paths ?? []).entries()) {
+        const reason = `${named}: what it delivers to ${branches!.to}`
+        add(path, 'delivers', reason)
+        if (added.get(String(path))?.reason === reason) deliveredTo.set(String(path), branches!.destinations[at]!)
+      }
     }
   }
 
@@ -387,6 +408,101 @@ export const displayEvidence = (
       const readings = end.semantics.shutdownReadings
       const values = readings.filter(path => !isState(path))
       for (const path of [...stopStates(plant, end.index), ...readings.filter(isState), ...values.filter(path => judges.has(path)), ...values.filter(path => !judges.has(path))]) add(path, 'trip', reason)
+    }
+  }
+
+  // Hold: an operated item the display is about (equipment it names as its subject, or a drawn item a person or an
+  // AI agent proposed to operate) that a standing protection actuation holds (a command against it is refused while
+  // it stands) or whose isolation input shuts it: its state and its demand, read together, with what holds it and
+  // since when (HMI review of run 26c: the AFW pump's hold not drawn). Then the criterion a critical safety function
+  // asks of what that actuation delivers, where its tree judges it (total feed flow into the steam generators the
+  // auxiliary feed pumps feed, against the heat sink's minimum).
+  const subjectComponents = subjectEquipment(system, subjects)
+  const operated = operatedItems(system, mimics.flatMap(mimic => mimic.items.map(item => mimicItemId(graph, item.binding.item))), subjectComponents)
+  const clockAt = (elapsedMs: number): string => clock(now.simulationMs - (system.runtime.elapsedMs() - elapsedMs))
+  const servedBy = (action: AutomaticAction): ReadonlyArray<SafetyFunctionCriterion> => {
+    const commanded = actionEquipment(plant, action)
+    return safetyFunctionCriteria(plant).filter(criterion => criterion.paths.every(path => {
+      const binding = graph.signalBindingByPath.get(path)
+      return binding !== undefined && binding.quantity === 'flowRate' && binding.owner.type === 'component'
+        && commanded.some(source => feeds(plant, source, (binding.owner as { readonly componentIndex: number }).componentIndex, MIMIC_REACH_LINKS))
+    }))
+  }
+  // A criterion's row reads every value it judges together, against it, even one a panel shows: its total is the point.
+  const addCriterion = (criterion: SafetyFunctionCriterion): void => {
+    if (!criterion.paths.every(path => readable(path)) || criterion.paths.every(path => added.get(String(path))?.kind === 'criterion')) return
+    for (const path of criterion.paths) {
+      added.delete(String(path))
+      added.set(String(path), { path: String(path), kind: 'criterion', reason: `${criterion.safetyFunction}: ${criterion.question}` })
+    }
+  }
+  for (const item of operated) {
+    for (const offered of item.offered) {
+      const control = offered.control
+      const held = offered.standing.flatMap(standing => standing.heldBy === undefined ? [] : [standing.heldBy])[0]
+      const isolating = offered.standing.some(standing => standing.isolated) && control.isolation !== undefined
+        ? [...automaticActions(plant).values()].find(action => now.activeRuleIds.has(action.rule.id) && action.writes.some(write => write.binding.path === control.isolation))
+        : undefined
+      if (held === undefined && isolating === undefined) continue
+      const paths = [...(control.state === undefined ? [] : [control.state]), control.path]
+      if (held !== undefined) {
+        const at = control.options.find(option => option.value === held.value)?.state
+        const refused = control.options.filter(option => option.value !== held.value).map(option => option.word)
+        const reason = `${held.label} holds ${item.label}${at === undefined ? '' : ` at ${at}`}${refused.length === 0 ? '' : `: ${refused.join(' and ')} refused while it stands`}`
+        for (const path of paths) add(path, 'hold', reason, `since ${clockAt(held.atElapsedMs)}`)
+        const action = automaticActions(plant).get(held.ruleId)
+        for (const criterion of action === undefined ? [] : servedBy(action)) addCriterion(criterion)
+      } else if (isolating !== undefined) {
+        const reason = `${isolating.rule.label ?? isolating.rule.id} holds ${item.label} shut whatever its demand`
+        for (const path of paths) add(path, 'hold', reason)
+        for (const criterion of servedBy(isolating)) addCriterion(criterion)
+      }
+    }
+  }
+
+  // After a reactor trip, on a display about taking the heat from the energy source (its question names the heat transfer
+  // equipment, what feeds it, or the source's programmed reading), what the post-trip check decides on, where the model declares it
+  // (SME review of run 26c): the feed into that equipment against the minimum a critical safety function asks; the
+  // source's programmed reading against its program, which with no load holds its no-load value; and that equipment's
+  // pressures with which way they go.
+  const sources = graph.components.filter(component => component.semantics.energy.some(role => role.role === 'source'))
+  const takers = graph.components.filter(component => component.semantics.energy.some(role => role.role === 'transfer')
+    && sources.some(source => neighbours(source.index).includes(component.index)))
+  const programReadings = new Set(sources.flatMap(source => source.semantics.programs.map(program => String(program.reading))))
+  // What the display is about: the equipment its question names, and its primary signals'; all it shows where it names none.
+  const primaryPens = pens.filter(pen => pen.role === 'primary')
+  const focus = new Set([...subjectComponents, ...primaryPens.map(pen => measuredOn(pen.path))])
+  const aboutHeat = [...(focus.size === 0 ? shownEquipment : focus)].some(component => takers.some(taker => taker.index === component || feeds(plant, component, taker.index, MIMIC_REACH_LINKS)))
+    || (focus.size === 0 ? pens : primaryPens).some(pen => programReadings.has(String(pen.path)))
+  if (reactorTrips.length > 0 && aboutHeat) {
+    const taken = new Set(takers.map(taker => taker.index))
+    for (const criterion of safetyFunctionCriteria(plant)) {
+      const owners = criterion.paths.map(path => graph.signalBindingByPath.get(path)?.owner)
+      if (!criterion.paths.every(path => graph.signalBindingByPath.get(path)?.quantity === 'flowRate') || !owners.every(owner => owner?.type === 'component' && taken.has(owner.componentIndex))) continue
+      addCriterion(criterion)
+      // The feed into each, read against the minimum, says what an action's flow to each did: that row is not added twice.
+      const fed = new Set(owners.map(owner => (owner as { readonly componentIndex: number }).componentIndex))
+      if (criterion.paths.every(path => added.get(String(path))?.kind === 'criterion')) {
+        for (const [path, destination] of deliveredTo) if (fed.has(destination) && added.get(path)?.kind === 'delivers') added.delete(path)
+      }
+    }
+    for (const program of sources.flatMap(source => source.semantics.programs)) {
+      const name = bindingOf(program.reading).tagId ?? bindingOf(program.reading).label
+      const reason = `after the trip, ${name} against its program, which with no load holds its no-load value`
+      for (const path of [program.reading, program.program, ...(program.deviation === undefined ? [] : [program.deviation])]) add(path, 'stabilize', reason)
+    }
+    const pressures = takers.flatMap(taker => graph.signalBindings.filter(binding => binding.owner.type === 'component' && binding.owner.componentIndex === taker.index
+      && binding.quantity === 'pressure' && binding.tagId !== undefined && binding.simulatorOnly !== true && readable(binding.path)))
+    if (pressures.length > 0) {
+      // Which way each goes over the last half minute of the Run's record, as a trend legend reads its rate.
+      const ways = pressures.flatMap(binding => {
+        const points = history(binding.path)
+        const rate = points === null ? null : ratePerMinute(points, RATE_NOTE_MS)
+        return rate === null ? [] : [travelText(rate, points!.at(-1)!.v, binding.unit, null, resolutionOf(binding.path), RATE_NOTE_MS)]
+      })
+      const note = ways.length === pressures.length && new Set(ways).size === 1 ? `${pressures.length === 1 ? '' : 'each '}${ways[0]}` : undefined
+      const reason = `after the trip, ${joined([...new Set(pressures.map(binding => binding.label.toLowerCase()))])}, and which way ${pressures.length === 1 ? 'it goes' : 'they go'}`
+      for (const binding of pressures) add(binding.path, 'stabilize', reason, note)
     }
   }
 
@@ -481,16 +597,46 @@ export const displayEvidence = (
 }
 
 /**
- * The order rows are kept in where room is short: the cause first, the
- * device that isolates the fault, the wider instrument of a reading off its
- * span, what the automatic actions deliver, whether the trip acted, the
- * program a reading is held to, the healthy or left-out loops to compare,
+ * The order rows are kept in where room is short: the cause first, what
+ * holds an operated item, the device that isolates the fault, the wider
+ * instrument of a reading off its span, what the automatic actions deliver
+ * and the criterion a safety function asks of it, whether the trip acted,
+ * what the post-trip check decides on, the program a reading is held to,
+ * the healthy or left-out loops to compare,
  * what the actions isolate, what the unit leads with, the line-up's flows.
  * What the unit watches that a critical safety function judges comes before
  * what the actions isolate; off normal, after the trip check and before the
  * program (displayEvidence).
  */
-const PRIORITY: ReadonlyArray<DisplayEvidenceKind> = ['cause', 'isolation', 'wider', 'delivers', 'trip', 'program', 'reference', 'isolates', 'mode', 'flow']
+const PRIORITY: ReadonlyArray<DisplayEvidenceKind> = ['cause', 'hold', 'isolation', 'wider', 'delivers', 'criterion', 'trip', 'stabilize', 'program', 'reference', 'isolates', 'mode', 'flow']
+
+/** The span a row's note reads a rate over, as a trend legend's shortest window does. */
+const RATE_NOTE_MS = 30_000
+
+/**
+ * The items a display is composed around that a person or an AI agent
+ * operates, where they stand now (instance-ports.ts listedControlsFor): those
+ * whose equipment the question names as its subject, and the drawn items a
+ * proposal in the Plant's operations record targets.
+ */
+const operatedItems = (system: ProcessPlantRuntimeInstance, drawnIds: ReadonlyArray<string>, subjects: ReadonlySet<number>): ReturnType<typeof listedControlsFor> => {
+  const graph = system.plant.graph
+  const named = new Set([...subjects].map(component => String(graph.components[component]!.id)))
+  const proposed = new Set((system.operations?.book().proposals ?? []).map(proposal => proposal.item).filter(id => drawnIds.includes(id)))
+  if (named.size === 0 && proposed.size === 0) return []
+  return listedControlsFor(system).filter(item => proposed.has(item.id) || item.components.some(component => named.has(component)))
+}
+
+/** The equipment the question names as its subject: a signal's own equipment, or equipment by id, tag or label. */
+const subjectEquipment = (system: ProcessPlantRuntimeInstance, subjects: ReadonlyArray<string>): ReadonlySet<number> => {
+  const graph = system.plant.graph
+  return new Set(subjects.flatMap(subject => {
+    const binding = graph.signalBindingByTagId.get(subject as never) ?? graph.signalBindingByPath.get(subject as VariablePath)
+    if (binding !== undefined) return binding.owner.type === 'component' ? [binding.owner.componentIndex] : []
+    const equipment = resolveEquipmentName(graph, subject)
+    return 'error' in equipment ? [] : equipment.components
+  }))
+}
 
 /** The values of the first rows, a row being consecutive values of one kind and reason: at most `rows` rows and `values` values, each row whole. */
 const firstRows = (evidence: ReadonlyArray<DisplayEvidence>, rows: number, values: number): ReadonlyArray<DisplayEvidence> => {

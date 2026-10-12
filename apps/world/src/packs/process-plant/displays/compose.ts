@@ -13,6 +13,7 @@ import type {
 } from '../graph/index.ts'
 import { linkCarrier, previousLinks, processSignalTagIdSchema, ratedFlowForLink, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
   COMPOSED_DISPLAY_MAX_HEIGHT_PX,
@@ -43,7 +44,7 @@ import {
   type DisplayEvidence,
   type DisplayEvidenceKind,
 } from './composition.ts'
-import { displayValue, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
+import { displayValue, formatQuantity, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
@@ -56,6 +57,7 @@ import { alarmWatches, annunciatorSystems, displayAnnunciation, type Annunciator
 import { operatingPointReading, operatingPointValue } from './operating-point.ts'
 import { commandingActions } from './actuations.ts'
 import { evidenceLines } from './evidence-width.ts'
+import { criterionOfReadings } from './safety-criteria.ts'
 import { compileFaceplate, faceplateEnds } from './faceplate.ts'
 import { faceplateMostLines, type CompiledFaceplate, type FaceplateCondition } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
@@ -232,6 +234,12 @@ export interface ComposedEvidenceRow {
   readonly name: string
   readonly items: ReadonlyArray<ComposedEvidenceItem>
   readonly note?: string
+  /**
+   * What a critical safety function asks of the row's values, which the row
+   * reads them against live, in its note's place: their total ("total 112
+   * kg/s ≥ 27.8 · HEAT SINK") or the one value (safety-criteria.ts).
+   */
+  readonly criterion?: ComposedEvidenceCriterion
   /**
    * Where a row is too wide for a chat view, the lines it goes on in
    * (evidence-width.ts): `continues` on every line but its last, `continued`
@@ -1009,25 +1017,30 @@ export const compileComposedDisplay = (
  * line counts the values it holds.
  */
 export const composeEvidenceRows = (
-  graph: CompiledPlantGraph,
+  plant: CompiledProcessPlant,
   evidence: ReadonlyArray<DisplayEvidence>,
   pens: ReadonlyArray<ComposedDisplayPen>,
 ): ReadonlyArray<ComposedEvidenceRow & { readonly count: number }> => {
+  const graph = plant.graph
   const rows: Array<ComposedEvidenceRow & { readonly count: number }> = []
   let start = 0
   while (start < evidence.length) {
     const first = evidence[start]!
     let end = start + 1
     while (end < evidence.length && evidence[end]!.kind === first.kind && evidence[end]!.reason === first.reason) end += 1
-    const { name, items } = evidenceRowItems(graph, pens.slice(start, end))
+    const shown = pens.slice(start, end)
+    const { name, items } = evidenceRowItems(graph, shown)
+    // A criterion's row reads its values against what the function asks, live, where its note would go.
+    const criterion = first.kind === 'criterion' ? evidenceCriterion(plant, shown) : undefined
     // Lines that fit a chat view, whole values each (HMI review of run 26: rows cut at chat width).
-    const lines = evidenceLines(first.kind, name, items, first.note)
+    const lines = evidenceLines(first.kind, name, items, criterion === undefined ? first.note : criterionWidest(criterion))
     lines.forEach((line, at) => rows.push({
       kind: first.kind,
       reason: first.reason,
       name: at === 0 ? name : '',
       items: line.items,
-      ...(line.note && first.note !== undefined ? { note: first.note } : {}),
+      ...(line.note && first.note !== undefined && criterion === undefined ? { note: first.note } : {}),
+      ...(line.note && criterion !== undefined ? { criterion } : {}),
       ...(at < lines.length - 1 ? { continues: true as const } : {}),
       ...(at > 0 ? { continued: true as const } : {}),
       count: line.items.length,
@@ -1036,6 +1049,47 @@ export const composeEvidenceRows = (
   }
   return rows
 }
+
+/** A critical safety function's criterion of a row's values, in their display unit (ComposedEvidenceRow.criterion). */
+export interface ComposedEvidenceCriterion {
+  readonly safetyFunction: string
+  readonly operator: '<' | '<=' | '>' | '>=' | '==' | '!='
+  /** In the values' native unit. */
+  readonly value: number
+  /** Whether it judges their sum. */
+  readonly total: boolean
+  /** Every value of the row it judges, on whichever line each stands; their unit, and the finest step any is shown in. */
+  readonly paths: ReadonlyArray<string>
+  readonly unit: ProcessUnit
+  readonly resolution: number | null
+}
+
+const evidenceCriterion = (plant: CompiledProcessPlant, pens: ReadonlyArray<ComposedDisplayPen>): ComposedEvidenceCriterion | undefined => {
+  const criterion = criterionOfReadings(plant, pens.map(pen => pen.path))
+  const steps = pens.flatMap(pen => pen.resolution ?? [])
+  return criterion === undefined ? undefined : {
+    safetyFunction: criterion.safetyFunction,
+    operator: criterion.operator,
+    value: criterion.value,
+    total: criterion.total,
+    paths: pens.map(pen => String(pen.path)),
+    unit: pens[0]!.unit,
+    resolution: steps.length === 0 ? null : Math.min(...steps),
+  }
+}
+
+const operatorSigns = { '<': '<', '<=': '≤', '>': '>', '>=': '≥', '==': '=', '!=': '≠' } as const
+
+/**
+ * What a criterion row says after its values: their total where it judges
+ * it, the sign and the limit, and the function ("total 112 kg/s ≥ 27.8 kg/s
+ * · HEAT SINK").
+ */
+export const evidenceCriterionText = (criterion: ComposedEvidenceCriterion, total: string | null): string =>
+  `${criterion.total ? `total ${total ?? '—'} ` : ''}${operatorSigns[criterion.operator]} ${formatQuantity(criterion.value, criterion.unit)} · ${criterion.safetyFunction}`
+
+/** A criterion's text at its widest, its total six digits: the room its row reserves. */
+const criterionWidest = (criterion: ComposedEvidenceCriterion): string => evidenceCriterionText(criterion, '0'.repeat(6))
 
 const evidenceRowItems = (graph: CompiledPlantGraph, pens: ReadonlyArray<ComposedDisplayPen>): Pick<ComposedEvidenceRow, 'name' | 'items'> => {
   const labelled = labelledRowItems(graph, pens)
@@ -1081,17 +1135,18 @@ export const withEvidence = (
   const issues: ComposedDisplayIssue[] = []
   const pens = resolvePens(system, evidence.map(entry => ({ ref: entry.path, role: 'context' as const })), 'evidence', { numericOnly: false, panelName: 'evidence', recordedSeriesIds }, issues)
   if (pens === undefined) return { ok: false, issues }
-  const rows = composeEvidenceRows(system.plant.graph, evidence, pens)
+  const rows = composeEvidenceRows(system.plant, evidence, pens)
   const alarms = display.panels.findIndex(panel => panel.kind === 'alarms')
   const at = alarms === -1 ? display.panels.length : alarms
   // Where they do not all fit: first the lines rows go on in, the last first, each holding the least telling
   // values of its row (a reactor's rod steps and intermediate-range current after its breakers, rods, flux and
-  // startup rate); a line holding a row's note never alone, as the note goes with its values. Then whole rows,
+  // startup rate); never a line of a row with a note or a criterion, which goes with all its values. Then whole rows,
   // the least telling first. What is kept is a prefix of each row, so the rows it is shown in again are the same.
   const indexes = rows.map((_, index) => index)
   // Each line's row, by the index of its first line.
   const rowOf = indexes.map(index => indexes.slice(0, index + 1).reverse().find(at => rows[at]!.continued !== true)!)
-  const noted = new Set(indexes.filter(index => rows[index]!.note !== undefined).map(index => rowOf[index]!))
+  // A row whose note or criterion reads all its values together is kept whole.
+  const noted = new Set(indexes.filter(index => rows[index]!.note !== undefined || rows[index]!.criterion !== undefined).map(index => rowOf[index]!))
   // Lines are left out from the last: a row's last line before its earlier ones.
   const lines = indexes.filter(index => rows[index]!.continued === true && !noted.has(rowOf[index]!))
   const keeps: Array<ReadonlyArray<number>> = [indexes]
@@ -1099,8 +1154,10 @@ export const withEvidence = (
     const gone = new Set(lines.slice(lines.length - dropped))
     keeps.push(indexes.filter(index => !gone.has(index)))
   }
+  // Then whole rows from the last, each with the lines it keeps (a noted row all of them).
   const firstLines = indexes.filter(index => rows[index]!.continued !== true)
-  for (let count = firstLines.length - 1; count > 0; count -= 1) keeps.push(firstLines.slice(0, count))
+  const lasting = indexes.filter(index => !lines.includes(index))
+  for (let count = firstLines.length - 1; count > 0; count -= 1) keeps.push(lasting.filter(index => firstLines.indexOf(rowOf[index]!) < count))
   for (const keep of keeps) {
     const kept = keep.map(index => rows[index]!)
     // A row whose later lines are left out ends where its kept lines do.

@@ -140,18 +140,23 @@ export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositi
  * heading off it; what an automatic action delivers, to each destination, or
  * isolates; whether a reactor trip did what it must; the program a reading is
  * held to; the same reading on a healthy or left-out loop; what the unit
- * watches in its mode; the flows along a drawn line-up.
+ * watches in its mode; the flows along a drawn line-up; the actuation that
+ * holds an operated item; a critical safety function's criterion of what an
+ * actuation delivers; after a trip, what the post-trip check decides on.
  */
-export const displayEvidenceKindSchema = z.enum(['cause', 'isolation', 'wider', 'delivers', 'trip', 'program', 'isolates', 'reference', 'mode', 'flow'])
+export const displayEvidenceKindSchema = z.enum(['cause', 'hold', 'isolation', 'wider', 'delivers', 'trip', 'criterion', 'stabilize', 'program', 'isolates', 'reference', 'mode', 'flow'])
 export type DisplayEvidenceKind = z.infer<typeof displayEvidenceKindSchema>
 
 /** Why World added a row, in a word on its row (EvidencePanel), drawn upper case. */
 export const evidenceKindWords: Readonly<Record<DisplayEvidenceKind, string>> = {
   cause: 'cause',
+  hold: 'hold',
   isolation: 'isolation',
   wider: 'wider span',
   delivers: 'delivers',
   trip: 'trip check',
+  criterion: 'criterion',
+  stabilize: 'post-trip',
   program: 'program',
   isolates: 'isolates',
   reference: 'reference',
