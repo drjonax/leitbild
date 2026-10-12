@@ -14,7 +14,9 @@ import {
   workspaceResourceReferenceSchema,
   type WorkspaceId,
 } from '@leitbild/contracts'
-import { createDeploymentRuntime } from '../core/deployment-runtime.ts'
+import { createDeploymentRuntime, type DeploymentRuntime } from '../core/deployment-runtime.ts'
+import { makeStubGateway, makeStubSetup, stubProviderConfig } from './__fixtures__/stub-gateway.ts'
+import type { ChatRequest } from '../core/types/llm.ts'
 import { createAgentsModuleState, type AgentsModuleState } from '../core/workspaces/module-state.ts'
 import { createWorkspaceRuntimeRegistry, type WorkspaceRuntimeRegistry } from '../core/workspaces/runtime-registry.ts'
 import { agentsModuleManifest, handleAgentsModuleApi } from './workspace-module-api.ts'
@@ -38,7 +40,11 @@ beforeEach(async () => {
   process.env.PROVIDER = 'ollama'
   delete process.env.LEITBILD_SEED_WORKSPACE
   state = createAgentsModuleState()
-  const deployment = createDeploymentRuntime()
+  registry = createWorkspaceRuntimeRegistry({ deployment: withAssistantCatalog(createDeploymentRuntime()), moduleState: state, idleMs: 1_000_000 })
+})
+
+// The Leitbild Assistant definition selects these Skills and tools.
+const withAssistantCatalog = (deployment: DeploymentRuntime): DeploymentRuntime => {
   deployment.sharedSkillStore.register({
     name: 'leitbild-assistance', description: 'Test assistance Skill', body: 'Use Workspace evidence.',
     tools: [], allowedToolNames: ['workspace_explore', 'workspace_call'], dirPath: home,
@@ -55,8 +61,8 @@ beforeEach(async () => {
       execute: async () => ({ success: true, data: {} }),
     })
   }
-  registry = createWorkspaceRuntimeRegistry({ deployment, moduleState: state, idleMs: 1_000_000 })
-})
+  return deployment
+}
 
 afterEach(async () => {
   await registry.shutdown()
@@ -207,6 +213,89 @@ describe('Agents Workspace Module API', () => {
 
     const wrongWorkspace = await open('Use this.', [{ ...focusedResource, workspaceId: newWorkspaceId() }])
     expect(wrongWorkspace.status).toBe(409)
+  })
+
+  test('a new conversation opens a separate titled Room, posts as its human and wakes the Assistant; reuse is unchanged', async () => {
+    // Swap in a stub model so the Assistant's turn runs without a real model call.
+    const asked: ChatRequest[] = []
+    await registry.shutdown()
+    registry = createWorkspaceRuntimeRegistry({
+      deployment: withAssistantCatalog(createDeploymentRuntime({
+        providerConfig: stubProviderConfig,
+        providerSetup: makeStubSetup({ ...makeStubGateway(), stream: async function* (request: ChatRequest) {
+          asked.push(request)
+          yield { delta: 'Start with a demo.', done: true, tokensUsed: { prompt: 1, completion: 1 } }
+        } }),
+      })),
+      moduleState: state,
+      idleMs: 1_000_000,
+    })
+    const workspaceId = newWorkspaceId()
+    await request('PUT', `/internal/workspaces/${workspaceId}`, { workspaceId })
+    const library = registry.definitionsFor(workspaceId)
+    const template = (await library.currentRevision('leitbild-assistant'))!
+    await library.update({
+      ...template.document,
+      room: { ...template.document.room, agents: template.document.room.agents.map(agent => ({ ...agent, model: 'mock-model' })) },
+    }, template.id)
+    const path = `/internal/workspaces/${workspaceId}/capabilities/agents.assistance.open/invoke`
+    const open = (input: unknown) => request('POST', path, invokeBody(workspaceId, 'agents.assistance.open', input))
+    type Opened = { result: { resource: { id: string }; reused: boolean; uiPath: string }; createdResources?: Array<{ id: string }> }
+
+    const shared = await open({})
+    expect(shared.status).toBe(201)
+    const sharedId = (await shared.json() as Opened).result.resource.id
+    const runtime = await registry.getOrLoad(workspaceId)
+    runtime.rooms.getRoom(sharedId)!.setPaused(true)
+
+    const prompt = 'What can I try in Leitbild in my first ten minutes?\n\nAsked from: Getting started guide · suggested question'
+    const fresh = await open({ conversation: 'new', title: 'Getting started question', prompt })
+    expect(fresh.status).toBe(201)
+    const freshBody = await fresh.json() as Opened
+    expect(freshBody.result.reused).toBe(false)
+    expect(freshBody.createdResources?.map(resource => resource.id)).toEqual([freshBody.result.resource.id])
+    expect(freshBody.result.uiPath).toContain(`room=${freshBody.result.resource.id}`)
+    expect(freshBody.result.resource.id).not.toBe(sharedId)
+    const room = runtime.rooms.getRoom(freshBody.result.resource.id)!
+    expect(room.profile.name).toBe('Getting started question')
+    expect(room.profile.scope).toEqual({ kind: 'workspace' })
+    expect(room.paused).toBe(false)
+    expect(runtime.rooms.getRoom(sharedId)!.paused).toBe(true)
+
+    const human = room.getParticipantIds().map(id => runtime.team.getAgent(id)!).find(agent => agent.kind === 'human')!
+    const question = room.getRecent(10).find(message => message.type === 'chat' && message.content === prompt)!
+    expect(question).toMatchObject({ senderId: human.id, senderName: 'You' })
+    const assistant = asAIAgent(room.getParticipantIds().map(id => runtime.team.getAgent(id)!).find(agent => agent.kind === 'ai')!)!
+    expect(assistant.getConfig().ownerRoomId).toBe(room.profile.id)
+    await assistant.whenIdle()
+    expect(asked.some(call => call.messages.some(message => typeof message.content === 'string' && message.content.includes(prompt)))).toBe(true)
+    expect(room.getRecent(10).some(message => message.senderId === assistant.id && message.type === 'chat')).toBe(true)
+
+    const again = await open({ conversation: 'new', title: 'Getting started question', prompt: 'And what are the plant model\'s limits?' })
+    expect(again.status).toBe(201)
+    const againId = (await again.json() as Opened).result.resource.id
+    expect(new Set([sharedId, room.profile.id, againId]).size).toBe(3)
+    expect(runtime.rooms.getRoom(againId)!.profile.name).toBe('Getting started question-2')
+
+    const reused = await open({ conversation: 'reuse', prompt: 'Back to the shared conversation.' })
+    expect(reused.status).toBe(200)
+    expect((await reused.json() as Opened).result).toMatchObject({ resource: { id: sharedId }, reused: true })
+    expect(runtime.rooms.getRoom(sharedId)!.paused).toBe(false)
+    expect(runtime.rooms.listAllRooms()).toHaveLength(3)
+
+    for (const invalid of [
+      { conversation: 'new', title: 'Getting started question' },
+      { conversation: 'new', prompt },
+      { conversation: 'new', title: 'x'.repeat(81), prompt },
+      { conversation: 'new', title: 'Getting started question', prompt, origin: 'guide' },
+      { conversation: 'fresh', title: 'Getting started question', prompt },
+    ]) {
+      const refused = await open(invalid)
+      expect(refused.status).toBe(400)
+      expect(await refused.json()).toMatchObject({ error: { code: 'invalid_request' } })
+    }
+    expect(runtime.rooms.listAllRooms()).toHaveLength(3)
+    await Promise.all(runtime.team.listByKind('ai').map(agent => asAIAgent(agent)!.whenIdle()))
   })
 
   test('Run assistance is concurrent-safe, durable, and shared by one derived Run Family', async () => {
