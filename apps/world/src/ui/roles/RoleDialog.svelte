@@ -6,6 +6,7 @@
   import {
     chooseSide,
     openRoleDialog,
+    roleDialogInitialFocus,
     roleDialogModel,
     roleDialogResult,
     toggleControl,
@@ -50,6 +51,13 @@
   const model = $derived(roleDialogModel(declaration, draft, { mode, held, holders }))
   const sideLabels = (sides: ReadonlyArray<{ readonly label: string }>): string => sides.map(side => side.label).join(' and ')
   const screens = (count: number | null): string => count === null ? '' : `${count} ${count === 1 ? 'screen' : 'screens'}`
+  let applyButton = $state<HTMLButtonElement | null>(null)
+
+  runOnMount(() => {
+    const focus = roleDialogInitialFocus(mode, model)
+    if (focus === 'apply') applyButton?.focus()
+    if (focus === 'first-choice') applyButton?.closest('dialog')?.querySelector<HTMLElement>('.modal-body input, .modal-body button')?.focus()
+  })
 
   runOnMount(() => {
     let active = true
@@ -74,6 +82,7 @@
     : 'Control a role to play it; See shows its objects on this screen only. Control includes See; an unseen role\'s objects stay hidden even where another held role commands them.'}
   size="large"
   placement="top"
+  backdrop={mode === 'join' ? 'clear' : 'dim'}
   close={cancel ?? (() => {})}
   closeOnBackdrop={false}
   closeOnEscape={cancel !== undefined}
@@ -95,7 +104,7 @@
       {#each model.presets as row (row.id)}
         <li>
           <label class="role-dialog__preset" class:ticked={row.ticked}>
-            <input type="checkbox" checked={row.ticked} onchange={() => { draft = togglePreset(declaration, draft, row.id) }} />
+            <input type="checkbox" aria-label={row.label} aria-describedby="role-dialog-{row.kind}-{row.id}" checked={row.ticked} onchange={() => { draft = togglePreset(declaration, draft, row.id) }} />
             {#if row.sides.length > 0}
               <span class="role-dialog__sidebar" aria-label={`Sees ${sideLabels(row.sides)}`}>
                 {#each row.sides as side (side.id)}<span style:background={side.colour}></span>{/each}
@@ -103,7 +112,7 @@
             {/if}
             <span class="role-dialog__text">
               <strong>{row.label}</strong>
-              <small>{row.kind === 'preset'
+              <small id="role-dialog-{row.kind}-{row.id}">{row.kind === 'preset'
                 ? `Preset · ${row.roleIds.map(roleId => declaration.roles.find(role => role.id === roleId)?.label ?? roleId).join(' + ')}`
                 : row.roleClass === 'controller' ? 'Controller · sees and commands everything'
                 : describeCommands?.(row.id) ?? (row.sides.length > 0 ? `Operator · sees ${sideLabels(row.sides)}` : 'Operator')}</small>
@@ -148,7 +157,7 @@
 
   {#snippet footer()}
     {#if cancel}<button type="button" class="role-dialog__cancel" onclick={cancel}>Cancel</button>{/if}
-    <button type="button" class="role-dialog__apply" disabled={!model.canApply} onclick={() => apply(roleDialogResult(draft))}>{model.applyText}</button>
+    <button type="button" class="role-dialog__apply" bind:this={applyButton} disabled={!model.canApply} onclick={() => apply(roleDialogResult(draft))}>{model.applyText}</button>
   {/snippet}
 </ModalShell>
 

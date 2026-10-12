@@ -1181,6 +1181,11 @@ body.rail-resizing {
   place-items: center;
 }
 
+/* Nothing behind to set apart, as when joining a role Run before its map loads: no dimmed grey page. */
+.modal-backdrop.clear {
+  background: transparent;
+}
+
 /* Pinned near the top: the dialog's top edge stays put as its content grows or shrinks. */
 .modal-backdrop.top {
   place-items: start center;
