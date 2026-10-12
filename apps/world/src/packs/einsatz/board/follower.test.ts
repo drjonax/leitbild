@@ -7,7 +7,7 @@ import { groupDeclaration, groupItems, groups } from '../fixtures/groups-run.ts'
 import civil from '../fixtures/halden-civil.scenario.json'
 import { renameDefinition, type Namespace, type Renaming } from '../fixtures/renaming.ts'
 import { definitionOf, openRun, type OpenRun } from '../fixtures/run-harness.ts'
-import supplyRun from '../fixtures/supply-run.scenario.json'
+import supplyRun from '../../../scenarios/supply-run.scenario.json'
 import { groupRoleId } from '../ids.ts'
 import { refusalCode } from '../refusal.ts'
 

@@ -5,7 +5,7 @@ import { einsatzConfigSchema } from '../config-validation.ts'
 import { createWall, openScreen, pastGuardMs, runFor } from '../fixtures/board-harness.ts'
 import { openRun } from '../fixtures/run-harness.ts'
 import supplyConfig from '../fixtures/supply-run.config.json'
-import supplyRun from '../fixtures/supply-run.scenario.json'
+import supplyRun from '../../../scenarios/supply-run.scenario.json'
 
 /**
  * Openness: a unit type that no code knows, with a property and an icon the

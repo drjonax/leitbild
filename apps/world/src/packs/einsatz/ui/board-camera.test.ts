@@ -5,7 +5,7 @@ import border from '../fixtures/halden-border.scenario.json'
 import borderHumanRed from '../fixtures/halden-border-human-red.scenario.json'
 import civil from '../fixtures/halden-civil.scenario.json'
 import civilRoles from '../fixtures/halden-civil-roles.scenario.json'
-import supplyRun from '../fixtures/supply-run.scenario.json'
+import supplyRun from '../../../scenarios/supply-run.scenario.json'
 import { clearPart, screenPointOf, shownBesideBoard, type CameraView } from './board-camera.ts'
 import { boardLayoutFor, boardMapCover } from './board-layout.ts'
 

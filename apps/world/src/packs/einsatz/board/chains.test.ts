@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { civilConfig, civilKinds, civilWith, createWall, openScreen, pastGuardMs, pointAt, runFor, taskAt, unitAt, type Screen } from '../fixtures/board-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
-import supplyRun from '../fixtures/supply-run.scenario.json'
+import supplyRun from '../../../scenarios/supply-run.scenario.json'
 import { boardWords } from './text.ts'
 
 /**
