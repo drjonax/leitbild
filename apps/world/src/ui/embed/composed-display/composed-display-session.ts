@@ -2,6 +2,7 @@ import type { SimulationRunId } from '../../../core/model/index.ts'
 import type { CompiledComposedPanel, ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample, ComposedDisplayViewResult, ViewSize } from './composed-display-client.ts'
 import { appendPoint, COMPARISON_HISTORY_MS, gatePaths, HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+import { LEAD_VALUE_SPARKLINE_MS } from '../../../packs/process-plant/displays/composition.ts'
 import type { ValueDomain } from './trend-geometry.ts'
 
 export type ComposedDisplayPhase =
@@ -124,8 +125,12 @@ export const createComposedDisplaySession = (config: {
       horizonMs: panel.kind === 'trend' ? panel.horizonMs : COMPARISON_HISTORY_MS,
     })))
 
-  /** A generated display's lead values keep their sparklines' window: the recorded numeric ones. */
+  /** A generated display's lead values, and the values a faceplate's rows show, keep their sparklines' window: the recorded numeric ones. */
   const sparklinePens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> => shown.flatMap(panel => {
+    if (panel.kind === 'faceplate') {
+      const rows = new Set(panel.faceplate.columns.flatMap(column => column.rows.flatMap(row => row.kind === 'values' ? row.paths : [])))
+      return panel.pens.filter(pen => rows.has(String(pen.path)) && pen.recorded && pen.valueKind === 'number').map(pen => ({ path: String(pen.path), seriesId: pen.seriesId, horizonMs: LEAD_VALUE_SPARKLINE_MS }))
+    }
     if (panel.kind !== 'readouts' || panel.sparklineMs === undefined) return []
     const horizonMs = panel.sparklineMs
     return panel.pens.filter(pen => pen.recorded && pen.valueKind === 'number').map(pen => ({ path: String(pen.path), seriesId: pen.seriesId, horizonMs }))

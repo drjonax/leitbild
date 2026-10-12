@@ -55,10 +55,11 @@ import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { operatingPointReading, operatingPointValue } from './operating-point.ts'
 import { compileFaceplate, faceplateEnds } from './faceplate.ts'
-import { faceplateMostLines, type CompiledFaceplate } from './faceplate-live.ts'
+import { faceplateMostLines, type CompiledFaceplate, type FaceplateCondition } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
+import { mimicQuickLookPaths, type MimicQuickLooks } from './mimic/quick-look.ts'
 import {
   icAlarmRuleIdsForEquipment,
   icThresholdsForSignal,
@@ -183,6 +184,8 @@ export interface ComposedAlarmsPanel {
 export interface ComposedMimicPanel {
   readonly kind: 'mimic'
   readonly mimic: CompiledMimic
+  /** A display World generates: each drawn item's quick look, chosen with the drawing (mimic/quick-look.ts); never part of what it shows. */
+  readonly quickLooks?: MimicQuickLooks
 }
 
 /** A value in a row World adds, and the word the row reads it by: its tag, or the equipment that tells it from the others ("SG A"). */
@@ -1197,9 +1200,10 @@ const generatedDisplay = (
   view: OverviewView | null,
   fitted: { readonly arrangement: OverviewArrangement; readonly panels: GeneratedPanels; readonly mimic: CompiledMimic },
   alarms: (panels: ReadonlyArray<CompiledComposedPanel>) => ComposedAlarmsPanel,
+  quickLooks: MimicQuickLooks | undefined,
 ): CompiledComposedDisplay => {
   // Nothing generated is a trend, so every panel has its natural height. Lead values come before the drawing, a faceplate under it.
-  const mimic: ComposedMimicPanel = { kind: 'mimic', mimic: fitted.mimic }
+  const mimic: ComposedMimicPanel = { kind: 'mimic', mimic: fitted.mimic, ...(quickLooks === undefined ? {} : { quickLooks }) }
   const shown: ReadonlyArray<CompiledComposedPanel> = readouts === undefined ? [mimic] : readouts.kind === 'faceplate' ? [mimic, readouts] : [readouts, mimic]
   const width = view === null ? fitted.mimic.width : view.width - 2 * composedDisplayLayout.overviewPadding
   return {
@@ -1224,6 +1228,21 @@ const leadValues = (
   if (paths.length === 0) return undefined
   const panel = compilePanel(system, { kind: 'readouts', signals: paths.map(path => ({ ref: path, role: 'primary' as const })) }, 0, recordedSeriesIds, issues, within)
   return panel?.kind === 'readouts' ? { ...panel, sparklineMs: LEAD_VALUE_SPARKLINE_MS } : undefined
+}
+
+/**
+ * A generated display's quick looks: each drawn item's first detail lead
+ * values as they rank now, compiled as lead values are, each once.
+ */
+const quickLooksOf = (
+  system: ProcessPlantRuntimeInstance,
+  mimic: CompiledMimic,
+  recordedSeriesIds: ReadonlySet<string>,
+  issues: ComposedDisplayIssue[],
+): MimicQuickLooks | undefined => {
+  const items = mimicQuickLookPaths(system.plant, mimic, plantNow(system))
+  const panel = leadValues(system, [...new Set(Object.values(items).flat())], recordedSeriesIds, issues)
+  return panel === undefined ? undefined : { sparklineMs: LEAD_VALUE_SPARKLINE_MS, pens: panel.pens, items }
 }
 
 /**
@@ -1252,7 +1271,9 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
   const fitted = fitGenerated(view, tiles.map(option => ({ readouts: values, annunciators: option.systems.length, tileWidth: option.width })), [room => compileMimicScope(system.plant, circuits.scope, { profile: overviewMimicProfile, ...room })])
   if (!fitted.ok) return { ok: false, issues: fitted.issues.map(message => ({ path: 'overview', message })) }
   const systems = tiles.find(option => option.width === fitted.panels.tileWidth)!.systems
-  return { ok: true, display: generatedDisplay(system, 'Unit overview', readouts, view, fitted, () => ({ kind: 'alarms', scope: 'plant', ruleIds: [], rows: composedDisplayLayout.alarmRows, systems, tileWidth: fitted.panels.tileWidth })) }
+  const quickLooks = quickLooksOf(system, fitted.mimic, recordedSeriesIds, issues)
+  if (issues.length > 0) return { ok: false, issues }
+  return { ok: true, display: generatedDisplay(system, 'Unit overview', readouts, view, fitted, () => ({ kind: 'alarms', scope: 'plant', ruleIds: [], rows: composedDisplayLayout.alarmRows, systems, tileWidth: fitted.panels.tileWidth }), quickLooks) }
 }
 
 /**
@@ -1270,15 +1291,25 @@ const faceplatePanel = (
   const end = components.length === 1 && faceplateEnds(system.plant).includes(components[0]!) ? components[0]! : undefined
   const compiled = end === undefined ? null : compileFaceplate(system.plant, end, plantNow(system), path => operatingPointReading(system.plant, path))
   if (compiled === null) return null
+  // What its rows show, and every reading a rule or consequence row may name as what decides it (faceplate-live.ts).
   const shown = [...new Set(compiled.faceplate.columns.flatMap(column => column.rows.flatMap(row => row.kind === 'values' ? row.paths
     : row.kind === 'flows' ? row.branches.map(branch => branch.path)
       : row.kind === 'loops' ? row.columns.flatMap(entry => entry.cells.flat())
-        : [])))]
+        : row.kind === 'rules' ? row.rules.flatMap(rule => [...rule.triggers, ...rule.gates].flatMap(comparedPaths))
+          : row.kind === 'consequence' ? [...row.rule.triggers, ...row.rule.gates].flatMap(comparedPaths)
+            : [])))]
   const pens = resolvePens(system, shown.map(ref => ({ ref, role: 'primary' as const })), 'faceplate', { numericOnly: false, panelName: 'faceplate', recordedSeriesIds, within: components }, issues)
   if (pens === undefined) return null
   // As tall as its longest column can grow while it is open (every check unfolded), so nothing under it moves.
   return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(faceplateMostLines))) }
 }
+
+/** The readings a rule's condition compares, which a faceplate row names as deciding it (faceplate-live.ts names comparisons only). */
+const comparedPaths = (condition: FaceplateCondition): ReadonlyArray<string> =>
+  condition.type === 'comparison' ? [condition.path]
+    : condition.type === 'not' ? comparedPaths(condition.condition)
+      : condition.type === 'all' || condition.type === 'any' || condition.type === 'vote' ? condition.conditions.flatMap(comparedPaths)
+        : []
 
 /** How many values a generated display samples: what its drawing draws, what its faceplate reads, and what their limits need. */
 const sampledPathCount = (mimic: CompiledMimic, faceplate: ComposedFaceplatePanel): number => new Set([
@@ -1341,7 +1372,9 @@ export const compileDetailDisplay = (
   const fitted = withFaceplate ?? fitGenerated(view, panels, drawings)
   if (!fitted.ok) return { ok: false, issues: [{ path: 'detail', message: `nothing around it can be drawn legibly; ${fitted.issues.join('; ')}` }] }
   const title = groupLabel(components.map(index => graph.components[index]!.label))
-  return { ok: true, display: generatedDisplay(system, title, withFaceplate === null ? readouts : faceplate!, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows })) }
+  const quickLooks = quickLooksOf(system, fitted.mimic, recordedSeriesIds, issues)
+  if (issues.length > 0) return { ok: false, issues }
+  return { ok: true, display: generatedDisplay(system, title, withFaceplate === null ? readouts : faceplate!, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows }), quickLooks) }
 }
 
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const

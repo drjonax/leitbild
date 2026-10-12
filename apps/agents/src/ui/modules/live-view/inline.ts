@@ -24,8 +24,22 @@ interface InlineSlot {
 const slots = new Map<HTMLElement, InlineSlot>()
 let sweepTimer: ReturnType<typeof setInterval> | undefined
 
+// Says to a mounted inline display, on load, that the window takes what it opens; set once the Host relays.
+let announceTo: ((frame: HTMLIFrameElement) => void) | null = null
+
+/** From now on every inline display, mounted or mounted later, learns that what it opens reaches the window. */
+export const relayInlineOpens = (announce: (frame: HTMLIFrameElement) => void): void => {
+  announceTo = announce
+  for (const inline of slots.values()) if (inline.frame !== null) announce(inline.frame)
+}
+
+/** The windows of the inline displays now mounted: the only frames whose open requests this page relays. */
+export const inlineFrameWindows = (): ReadonlyArray<Window> =>
+  [...slots.values()].flatMap(inline => inline.frame?.contentWindow == null ? [] : [inline.frame.contentWindow])
+
 const frameFor = (envelope: EmbeddedViewEnvelope): HTMLIFrameElement => {
   const frame = document.createElement('iframe')
+  frame.addEventListener('load', () => announceTo?.(frame))
   frame.src = embeddedViewPath(envelope) + embeddedViewFragment(envelope)
   frame.title = `Live display: ${envelope.title}`
   frame.style.cssText = `display:block;width:100%;height:${envelope.height}px;border:0;`

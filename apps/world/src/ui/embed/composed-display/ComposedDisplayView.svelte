@@ -3,6 +3,7 @@
   import { simulationRunIdSchema } from '../../../core/model/index.ts'
   import { composedDisplayLayout, composedTrendStripHeights, detailDisplayStateSchema, processDisplayStatePlantId, processDisplayStateSchema } from '../../../packs/process-plant/displays/composition.ts'
   import type { MimicDrawnItem } from '../../../packs/process-plant/displays/mimic/mimic-model.ts'
+  import type { MimicQuickLooks } from '../../../packs/process-plant/displays/mimic/quick-look.ts'
   import { simulationClock } from '../../../packs/process-plant/displays/display-text.ts'
   import type { SafetyFunctionChip } from '../../../packs/process-plant/displays/safety-function-content.ts'
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
@@ -19,6 +20,7 @@
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import SafetyFunctionChips from './SafetyFunctionChips.svelte'
   import MimicPanel from './mimic/MimicPanel.svelte'
+  import { createMimicQuickLook } from './mimic/quick-look-source.ts'
   import TrendPanel from './TrendPanel.svelte'
   import { trendGutter } from './limit-labels.ts'
   import { actuatedNames, agoText, alarmAge, bannerTrip, sampledGates } from './panel-presenters.ts'
@@ -202,6 +204,10 @@
   // Back along what this display opened in place, else to the display its window opened it from.
   const backTitle = $derived(trail.at(-1)?.title ?? windowBack)
   const opens = $derived(advice === null ? openItem : undefined)
+  // Where items open, each one's detail dot opens its quick look: the lead values World chose for it with the
+  // drawing, read from this Run while it is open.
+  const quickLookSource = $derived(advice === null ? createMimicQuickLook({ client: composedDisplayClient, runId: simulationRunIdSchema.parse(envelope.subject.id), plantId }) : undefined)
+  const quickLookOf = (panel: { readonly quickLooks?: MimicQuickLooks }) => quickLookSource === undefined || panel.quickLooks === undefined ? undefined : { source: quickLookSource, looks: panel.quickLooks }
 
   // A unit overview's annunciator tiles narrow its alarm list to one system.
   // The narrowing never hides news: it ends by itself on a new trip or
@@ -380,7 +386,7 @@
     <div class="panels beside" style={`gap:${layout.overviewColumnGap}px`}>
       <div class="drawing">
         {#each view.display.panels as panel, index (index)}
-          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />{:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
+          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />{:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
         {/each}
       </div>
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
@@ -435,7 +441,7 @@
         {:else if panel.kind === 'evidence'}
           <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
         {:else if panel.kind === 'mimic'}
-          <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />
+          <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />
         {:else if panel.kind === 'faceplate'}
           <FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} />
         {:else}

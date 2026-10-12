@@ -3,6 +3,8 @@ import { embeddedViewOpenMessageSchema, embeddedViewsMessageSchema, newWorkspace
 import {
   createViewListPublisher,
   createViewListSync,
+  inlineHostAnnouncement,
+  inlineOpenRequest,
   isViewHostAnnouncement,
   viewOpenMessage,
   workspaceRoomHref,
@@ -40,6 +42,18 @@ describe('the Host announcement', () => {
 })
 
 describe('messages Agents builds for the Host', () => {
+  test('an inline display\'s open request is relayed only from a frame this page made, on this origin, about this Workspace', () => {
+    const frame = { name: 'inline display' }
+    const page = { origin: 'https://leitbild.app', workspaceId, inlineFrames: [frame] }
+    const request = { origin: 'https://leitbild.app', source: frame, data: viewOpenMessage(listing('opened:1')) }
+    expect(inlineOpenRequest(request, page)).toEqual(viewOpenMessage(listing('opened:1')))
+    expect(inlineOpenRequest({ ...request, source: { name: 'another frame' } }, page)).toBeNull()
+    expect(inlineOpenRequest({ ...request, origin: 'https://evil.example' }, page)).toBeNull()
+    expect(inlineOpenRequest(request, { ...page, workspaceId: newWorkspaceId() })).toBeNull()
+    expect(inlineOpenRequest({ ...request, data: { type: 'leitbild:view-open' } }, page)).toBeNull()
+    expect(inlineHostAnnouncement()).toEqual({ type: 'leitbild:view-host' })
+  })
+
   test('an open request carries the whole listing and passes the contract', () => {
     expect(embeddedViewOpenMessageSchema.parse(viewOpenMessage(listing('room-1/tr_1/call_1_0/a')))).toEqual({ type: 'leitbild:view-open', view: listing('room-1/tr_1/call_1_0/a') })
   })

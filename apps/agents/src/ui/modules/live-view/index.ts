@@ -15,10 +15,13 @@ import { openView } from './open.ts'
 import {
   createViewListPublisher,
   createViewListSync,
+  inlineHostAnnouncement,
+  inlineOpenRequest,
   isViewHostAnnouncement,
   workspaceRoomHref,
   type ViewHostMessage,
 } from './host-link.ts'
+import { inlineFrameWindows, relayInlineOpens } from './inline.ts'
 import { createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showPreparing, showRefused, showUnhosted, type ChipActions } from './chip.ts'
 
 // Long enough for a burst of re-renders and resolutions to settle into one
@@ -121,11 +124,18 @@ const renderViewBlocks = async (container: HTMLElement): Promise<void> => {
 addPostRenderProcessor('leitbild-view', renderViewBlocks)
 
 window.addEventListener('message', event => {
+  // An inline display asks for another in the window (C1 E5: a chip or banner label on it): relayed while hosted.
+  const open = hosted ? inlineOpenRequest(event, { origin: location.origin, workspaceId: currentWorkspaceId(), inlineFrames: inlineFrameWindows() }) : null
+  if (open !== null) {
+    postToHost(open)
+    return
+  }
   if (!isViewHostAnnouncement(event, { origin: location.origin, parent: window.parent, self: window })) return
   // The Host announces once per frame load; a repeated announcement changes nothing.
   if (hosted) return
   hosted = true
   promoteUnhostedChips(document, chipActions)
+  relayInlineOpens(frame => frame.contentWindow?.postMessage(inlineHostAnnouncement(), location.origin))
   refreshViewList()
 })
 

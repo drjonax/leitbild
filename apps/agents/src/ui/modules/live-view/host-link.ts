@@ -3,7 +3,7 @@
 // one with the contract schemas, relays it to the window and reports a
 // rejection itself. Agents frames no World page. Pure apart from injected
 // timers and posting, so it is tested without a DOM.
-import type { EmbeddedViewListing, EmbeddedViewOpenMessage, EmbeddedViewsMessage } from '@leitbild/contracts'
+import { embeddedViewOpenMessageSchema, type EmbeddedViewHostMessage, type EmbeddedViewListing, type EmbeddedViewOpenMessage, type EmbeddedViewsMessage } from '@leitbild/contracts'
 import { viewListings, type ResolvedViewFence, type ViewFence } from './listing.ts'
 import type { ViewResolution } from './resolve.ts'
 
@@ -35,6 +35,26 @@ export const isViewHostAnnouncement = (event: ViewHostEvent, page: ViewHostPage)
 }
 
 export const viewOpenMessage = (view: EmbeddedViewListing): EmbeddedViewOpenMessage => ({ type: 'leitbild:view-open', view })
+
+/**
+ * A display framed inline in an answer asks for another to be opened in the
+ * window (the equipment a safety function chip or a banner label on it
+ * names): an exact contract open message, on this origin, from one of the
+ * inline frames this page made, about this Workspace. Null for anything else;
+ * the Host validates it again before relaying it.
+ */
+export const inlineOpenRequest = (
+  event: ViewHostEvent,
+  page: { readonly origin: string; readonly workspaceId: string; readonly inlineFrames: ReadonlyArray<unknown> },
+): EmbeddedViewOpenMessage | null => {
+  if (event.origin !== page.origin || !page.inlineFrames.includes(event.source)) return null
+  const parsed = embeddedViewOpenMessageSchema.safeParse(event.data)
+  if (!parsed.success || parsed.data.view.envelope.subject.workspaceId !== page.workspaceId) return null
+  return parsed.data
+}
+
+/** What this page tells an inline display once the Host relays for it: what it opens reaches the window. */
+export const inlineHostAnnouncement = (): EmbeddedViewHostMessage => ({ type: 'leitbild:view-host' })
 
 /** Where a display opens when this page is not inside the Host: the Workspace page with this room, never a Run. */
 export const workspaceRoomHref = (workspaceId: string, roomId: string): string =>
