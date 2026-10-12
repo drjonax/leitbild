@@ -643,6 +643,18 @@ describe('what each trip does', () => {
     expect(plantRun.tag('TDAFW-STM-B')).toBe(0)
   }, PLANT_HANG_GUARD_MS)
 
+  test('after a turbine trip from power every alarm that comes in within five minutes is declared expected after the reactor trip', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    const before = plantRun.runtime.elapsedMs()
+    plantRun.act('turbine-trip')
+    plantRun.run(300_000)
+    const alarms = plantRun.protection.snapshot().alarms.filter(lifecycle => (lifecycle.firstActiveElapsedMs ?? -1) >= before)
+    // The pressurizer's pressure dips below its low alarm, the generators' levels shrink, their relief valves lift.
+    expect(alarms.map(lifecycle => lifecycle.ruleId)).toEqual(expect.arrayContaining(['pzr-pressure-low', 'sg-a-level-low', 'sg-a-atmospheric-relief-valve-open']))
+    for (const lifecycle of alarms) expect(lifecycle.annunciator?.expectedAfter, lifecycle.id).toEqual({ firstOutGroup: 'reactor-trip', withinMs: 300_000 })
+  }, PLANT_HANG_GUARD_MS)
+
   test('a reactor trip trips the turbine through P-4 and annunciates it with the other turbine trips', () => {
     expect(groupsOf('reactor-trip-turbine-trip')).toEqual(['turbine-trip'])
     // An operator's manual trip: the trip breakers open with no other trip in, and the turbine follows.

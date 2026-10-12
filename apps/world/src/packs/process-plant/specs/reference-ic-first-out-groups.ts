@@ -32,8 +32,9 @@ export type ReferenceFirstOutGroupId = (typeof referenceFirstOutGroups)[number][
  * their low and low-low set points (starting auxiliary feedwater, and
  * tripping the already tripped reactor again), feed flow stops as the feed
  * regulating valves shut, Tavg falls to the feedwater isolation after a trip,
- * and the steam generators' relief valves lift briefly before the dumps
- * open. Each
+ * the steam generators' relief valves lift briefly before the dumps open, and
+ * the pressurizer's pressure dips below its low alarm as the coolant shrinks.
+ * Each
  * such alarm's annunciator declares it, so displays show these as expected
  * after the reactor trip's first-out, never hidden, while the first-out and
  * what came in before it stand out.
