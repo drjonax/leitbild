@@ -1,4 +1,4 @@
-import type { RoleClass, RunRoles } from '../../core/model/index.ts'
+import { seesForRoleSet, type RoleClass, type RunRoles, type ScenarioSide } from '../../core/model/index.ts'
 
 /**
  * The role picker's and role bar's interaction logic, free of the DOM. A
@@ -29,6 +29,25 @@ export const orderedRoleSet = (declaration: RunRoles, roleIds: ReadonlyArray<str
 export const roleLabels = (declaration: RunRoles, roleIds: ReadonlyArray<string>): ReadonlyArray<string> =>
   declaration.roles.filter(role => roleIds.includes(role.id)).map(role => role.label)
 
+/**
+ * The sides whose pictures a set of roles plays, in declaration order: none
+ * for a truth view (it sees everything) and none in a Run without sides.
+ */
+export const sidesSeen = (declaration: RunRoles, roleIds: ReadonlyArray<string>): ReadonlyArray<ScenarioSide> => {
+  const sees = seesForRoleSet(declaration, roleIds)
+  return sees === 'all' ? [] : (declaration.sides ?? []).filter(side => sees.includes(side.id))
+}
+
+/**
+ * The role bar's warning when a held set sees more than one side. Whether
+ * sides oppose each other is a Pack's notion; core warns on any two, since
+ * one screen then shows what fair play keeps apart.
+ */
+export const sidesWarning = (declaration: RunRoles, roleIds: ReadonlyArray<string>): string | null => {
+  const seen = sidesSeen(declaration, roleIds)
+  return seen.length < 2 ? null : `This screen sees ${seen.map(side => side.label).join(' and ')} together: play fair`
+}
+
 /** A role-aware Pack may say what a role commands; with no such Pack the line is absent. */
 export type RoleCommandsDescriber = (roleId: string) => string | null
 
@@ -36,8 +55,8 @@ export interface RoleCard extends RoleEntry {
   readonly ticked: boolean
   /** Screens holding this role now (role cards only). */
   readonly holders: number | null
-  /** The role's side colour; sides arrive in R2, so it is null until then. */
-  readonly sideColour: string | null
+  /** The sides this role or preset sees, each shown in its colour; none for a truth role. */
+  readonly sides: ReadonlyArray<ScenarioSide>
 }
 
 export const pickerCards = (declaration: RunRoles, config: {
@@ -47,7 +66,7 @@ export const pickerCards = (declaration: RunRoles, config: {
   ...entry,
   ticked: entry.roleIds.every(roleId => config.ticked.includes(roleId)),
   holders: entry.kind === 'role' ? config.holders[entry.id] ?? 0 : null,
-  sideColour: null,
+  sides: sidesSeen(declaration, entry.roleIds),
 }))
 
 /** Ticking a preset ticks all its roles; unticking it unticks them. */
@@ -98,6 +117,8 @@ export interface RoleBarChip {
   readonly label: string
   readonly roleClass: RoleClass
   readonly droppable: boolean
+  /** The sides this role sees, each shown in its colour; none for a truth role. */
+  readonly sides: ReadonlyArray<ScenarioSide>
 }
 
 export interface RoleBarModel {
@@ -105,16 +126,19 @@ export interface RoleBarModel {
   /** Entries the `+` menu offers: those not already wholly held. */
   readonly addable: ReadonlyArray<RoleEntry>
   readonly entries: ReadonlyArray<RoleEntry>
+  /** Shown as a band when the held set sees more than one side. */
+  readonly sidesWarning: string | null
 }
 
 export const roleBarModel = (declaration: RunRoles, held: ReadonlyArray<string>): RoleBarModel => {
   const entries = roleEntries(declaration)
   return {
     chips: declaration.roles.filter(role => held.includes(role.id)).map(role => ({
-      id: role.id, label: role.label, roleClass: role.class, droppable: held.length > 1,
+      id: role.id, label: role.label, roleClass: role.class, droppable: held.length > 1, sides: sidesSeen(declaration, [role.id]),
     })),
     addable: entries.filter(entry => !entry.roleIds.every(roleId => held.includes(roleId))),
     entries,
+    sidesWarning: sidesWarning(declaration, held),
   }
 }
 

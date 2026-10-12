@@ -69,6 +69,7 @@
 <div class="role-bar" class:switching role="toolbar" aria-label="Roles held by this screen" title="P then 1–9 switches role">
   {#each model.chips as chip (chip.id)}
     <span class="role-chip" data-class={chip.roleClass}>
+      {#each chip.sides as side (side.id)}<span class="role-chip__side" style:background={side.colour} title={`Sees ${side.label}`}></span>{/each}
       <button type="button" class="role-chip__label" title={`Play only ${chip.label}`} disabled={switching} onclick={() => request(switchToEntry(declaration, held, chip.id))}>{chip.label}</button>
       {#if chip.droppable}
         <button type="button" class="role-chip__drop" aria-label={`Drop ${chip.label}`} title={`Drop ${chip.label}`} disabled={switching} onclick={() => request(dropRole(declaration, held, chip.id))}>×</button>
@@ -94,6 +95,7 @@
     </span>
   {/if}
   {#if switchingTo}<span class="role-bar__switching" role="status">Switching to {roleSetText(declaration, switchingTo)}…</span>{/if}
+  {#if model.sidesWarning}<span class="role-bar__warning" role="note">{model.sidesWarning}</span>{/if}
 </div>
 
 <style>
@@ -143,6 +145,30 @@
   .role-chip__label {
     padding: 4px 4px 4px 10px;
     font-weight: 650;
+  }
+
+  .role-chip__side {
+    width: 8px;
+    height: 8px;
+    margin-left: 8px;
+    border-radius: 50%;
+  }
+
+  .role-chip__side + .role-chip__side {
+    margin-left: 3px;
+  }
+
+  .role-chip__side + .role-chip__label {
+    padding-left: 6px;
+  }
+
+  .role-bar__warning {
+    flex-basis: 100%;
+    padding: 4px 10px;
+    border: 1px solid color-mix(in srgb, var(--warning) 60%, var(--border));
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--warning) 14%, var(--panel));
+    font-weight: 600;
   }
 
   .role-chip__label:last-child {

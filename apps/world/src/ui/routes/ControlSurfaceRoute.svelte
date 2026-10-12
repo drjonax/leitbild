@@ -18,9 +18,9 @@
     ScenarioExecutionState,
     SimulationClockState,
   } from '../../core/model/index.ts'
-  import { deleteObjectCommandKind, roleClassForRoleSet, runRolesOf } from '../../core/model/index.ts'
+  import { deleteObjectCommandKind, roleClassForRoleSet, runRolesOf, viewerForRoleSet } from '../../core/model/index.ts'
   import { createPackPresentationComposer } from '../../core/packs/presentation-composer.ts'
-  import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackMapFeatureQuery, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution } from '../../core/packs/protocol.ts'
+  import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackMapFeatureQuery, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution, PackTargetContext } from '../../core/packs/protocol.ts'
   import type { PackLiveMapLayerBinding } from '../map-runtime/pack-live-layer.ts'
   import type { ActivePackViews } from '../../core/packs/active-views.ts'
   import {
@@ -51,6 +51,7 @@
   import { installPlacementGlobalEvents } from '../app/placement-global-events.ts'
   import { createRealtimeConnectionController } from '../app/realtime-connection.ts'
   import { completeControlSurfaceStartupFromSnapshot } from '../app/control-surface-session.ts'
+  import { startupScenarioSource } from '../app/startup-scenario.ts'
   import { loadActivePackViews } from '../pack-loader.ts'
   import {
     categoryRowsFor,
@@ -293,12 +294,17 @@
     return step?.status === 'failed' ? { state: 'failed', reason: step.error ?? `${step.label} failed` } : { state: 'joining' }
   })
   const richOperationalUiReady = $derived(!mapVisible || mapReady || mapStartupFailed)
+  // Targeting acts as the screen's role view, from the role set its connection holds.
+  const targetContext = $derived.by<PackTargetContext>(() => {
+    const declaration = scenarioDefinition ? runRolesOf(scenarioDefinition) : null
+    return declaration !== null && heldRoleIds !== null ? { objects, viewer: viewerForRoleSet(declaration, heldRoleIds) } : { objects }
+  })
   const mapAssignmentController = $derived(mapAssignment ? objects.find(object => object.id === mapAssignment.controllerId) ?? null : null)
   const mapAssignmentContribution = $derived(mapAssignmentController && activePack ? activePack.packForObject(mapAssignmentController).mapAssignment ?? null : null)
   const mapAssignmentAnchor = $derived(mapAssignmentController && mapAssignmentContribution && mapAssignment
-    ? mapAssignmentContribution.anchorFor(mapAssignmentController, mapAssignment.mode, { objects })
+    ? mapAssignmentContribution.anchorFor(mapAssignmentController, mapAssignment.mode, targetContext)
     : null)
-  const mapAssignmentHandles = $derived(activePack ? activePack.packs.flatMap(pack => pack.mapAssignment?.handles({ objects }) ?? []) : [])
+  const mapAssignmentHandles = $derived(activePack ? activePack.packs.flatMap(pack => pack.mapAssignment?.handles(targetContext) ?? []) : [])
   const debugMapInput = $derived(new URLSearchParams(location.search).get('debugMapInput') === '1')
   const debugStartup = new URLSearchParams(location.search).get('debugStartup') === '1'
   const categoryRows = $derived<ReadonlyArray<CategoryRow>>(categoryRowsForStartingView(allCategoryRows, railConfig))
@@ -1183,7 +1189,7 @@
     if (!activePack) return
     const contribution = activePack.packForObject(controller).mapAssignment
     if (!contribution) return
-    if (mode === 'start' && !contribution.canStart(controller, { objects })) {
+    if (mode === 'start' && !contribution.canStart(controller, targetContext)) {
       commandFeedback = noteAction(commandFeedback, `${controller.label} is not available for a new assignment`)
       return
     }
@@ -1206,7 +1212,7 @@
 
   const chooseMapAssignmentTarget = (candidate: OperationalObject, screen: { readonly x: number; readonly y: number }): void => {
     if (!mapAssignment || !mapAssignmentController || !mapAssignmentContribution) return
-    const target = mapAssignmentContribution.targetFor(mapAssignmentController, candidate, mapAssignment.mode, { objects })
+    const target = mapAssignmentContribution.targetFor(mapAssignmentController, candidate, mapAssignment.mode, targetContext)
     if (!target) {
       commandFeedback = noteAction(commandFeedback, `${candidate.label} is not a valid next destination`)
       cancelMapAssignment()
@@ -1276,8 +1282,8 @@
     }
     if (destination.id === controller.id) return
     const pack = requireActivePack()
-    if (!pack.targeting?.isTarget(controller, destination, { objects })) return
-    const command = pack.targeting.buildSetTargetCommand(controller, destination, { objects })
+    if (!pack.targeting?.isTarget(controller, destination, targetContext)) return
+    const command = pack.targeting.buildSetTargetCommand(controller, destination, targetContext)
     await sendCommand(command.kind, command.payload, `Sending ${controller.label} to ${destination.label}`)
   }
 
@@ -1290,7 +1296,7 @@
       return
     }
     const controller = selectedControllerObject
-    if (controller && pack.targeting?.isTarget(controller, object, { objects })) {
+    if (controller && pack.targeting?.isTarget(controller, object, targetContext)) {
       void setDestination(object)
     }
   }
@@ -1509,13 +1515,13 @@
       readonly setActiveStartupStep: (id: StartupStepId) => void
     },
   ): Promise<void> => {
-    const scenarioId = response.snapshot.scenario?.scenarioId
-    if (!scenarioId) throw new Error('simulation run snapshot is missing scenario state')
-    const packScenario = scenarioDefinition?.id === scenarioId
-      ? scenarioDefinition
-      : response.scenario?.id === scenarioId
-        ? await loadScenarioDefinitionAndPackFromDefinition(response.scenario)
-        : await loadScenarioDefinitionAndPack(scenarioId)
+    const source = startupScenarioSource(response, scenarioDefinition, currentActiveRoleSet() !== null)
+    const scenarioId = source.kind === 'scenario-fetch' ? source.scenarioId : source.scenario.id
+    const packScenario = source.kind === 'installed'
+      ? source.scenario
+      : source.kind === 'run-read'
+        ? await loadScenarioDefinitionAndPackFromDefinition(source.scenario)
+        : await loadScenarioDefinitionAndPack(source.scenarioId)
     if (packScenario.id !== scenarioId || !activePack) throw new Error(`scenario packs failed to load for ${scenarioId}`)
     await completeControlSurfaceStartupFromSnapshot({
       response,

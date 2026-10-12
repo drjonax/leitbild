@@ -40,7 +40,7 @@ import {
 import { fetchRunPresence, joinSimulationRun, worldApiErrorCode } from '../src/ui/simulation-run-client.ts'
 import { parseSimulationRunWebSocketMessage } from '../src/ui/simulation-run-events.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
-import { compileWithRolePacks, declaredPresets, declaredRoles, openRunDefinition, roleRunDefinition } from './fixtures/role-runs.ts'
+import { compileWithRolePacks, declaredPresets, declaredRoles, openRunDefinition, roleRunDefinition, sidedRoles, sides } from './fixtures/role-runs.ts'
 
 const declaration: RunRoles = { roles: [...declaredRoles], presets: [...declaredPresets] }
 const workspaceId = workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111')
@@ -67,11 +67,12 @@ describe('role picker and role bar', () => {
       ['role', 'dispatch', '1'], ['role', 'field', '2'], ['role', 'control', '3'], ['preset', 'solo', '4'],
     ])
     const cards = pickerCards(declaration, { ticked: ['dispatch', 'field'], holders: { control: 2 } })
-    expect(cards.map(card => ({ id: card.id, ticked: card.ticked, holders: card.holders, side: card.sideColour }))).toEqual([
-      { id: 'dispatch', ticked: true, holders: 0, side: null },
-      { id: 'field', ticked: true, holders: 0, side: null },
-      { id: 'control', ticked: false, holders: 2, side: null },
-      { id: 'solo', ticked: true, holders: null, side: null },
+    // A Run without sides shows no side colours.
+    expect(cards.map(card => ({ id: card.id, ticked: card.ticked, holders: card.holders, sides: card.sides }))).toEqual([
+      { id: 'dispatch', ticked: true, holders: 0, sides: [] },
+      { id: 'field', ticked: true, holders: 0, sides: [] },
+      { id: 'control', ticked: false, holders: 2, sides: [] },
+      { id: 'solo', ticked: true, holders: null, sides: [] },
     ])
   })
 
@@ -95,7 +96,8 @@ describe('role picker and role bar', () => {
     const bar = roleBarModel(declaration, ['field', 'dispatch'])
     expect(bar.chips.map(chip => [chip.id, chip.droppable])).toEqual([['dispatch', true], ['field', true]])
     expect(bar.addable.map(entry => entry.id)).toEqual(['control'])
-    expect(roleBarModel(declaration, ['control']).chips).toEqual([{ id: 'control', label: 'Controller', roleClass: 'controller', droppable: false }])
+    expect(roleBarModel(declaration, ['control']).chips).toEqual([{ id: 'control', label: 'Controller', roleClass: 'controller', droppable: false, sides: [] }])
+    expect(roleBarModel(declaration, ['dispatch', 'field', 'control']).sidesWarning).toBeNull()
     expect(roleSetText(declaration, ['control', 'dispatch'])).toBe('Dispatcher + Controller')
   })
 
@@ -123,6 +125,20 @@ describe('role picker and role bar', () => {
     }
     step(key('p', 8_000))
     expect(step(key('1', 8_100))).toMatchObject({ handled: true, change: { kind: 'unchanged' } })
+  })
+})
+
+describe('side colours and the several-sides warning', () => {
+  const sided: RunRoles = { roles: [...sidedRoles], presets: [], sides: [...sides] }
+
+  test('the picker and the role bar show each role\'s side colour and warn when one screen sees two sides', () => {
+    expect(pickerCards(sided, { ticked: [], holders: {} }).map(card => [card.id, card.sides.map(side => side.colour)])).toEqual([
+      ['red-lead', [sides[0]!.colour]], ['blue-lead', [sides[1]!.colour]], ['umpire', []], ['control', []],
+    ])
+    expect(roleBarModel(sided, ['red-lead']).sidesWarning).toBeNull()
+    expect(roleBarModel(sided, ['red-lead', 'control']).sidesWarning).toBeNull()
+    expect(roleBarModel(sided, ['red-lead', 'blue-lead']).sidesWarning).toBe('This screen sees Red and Blue together: play fair')
+    expect(roleBarModel(sided, ['blue-lead', 'red-lead']).chips.map(chip => chip.sides.map(side => side.id))).toEqual([['red'], ['blue']])
   })
 })
 

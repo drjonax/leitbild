@@ -26,6 +26,7 @@
   let presenceError = $state<string | null>(null)
   const holders = $derived(polledHolders ?? initialHolders)
   const cards = $derived(pickerCards(declaration, { ticked, holders }))
+  const sideLabels = (sides: ReadonlyArray<{ readonly label: string }>): string => sides.map(side => side.label).join(' and ')
 
   runOnMount(() => {
     let active = true
@@ -55,10 +56,14 @@
     {#each cards as card (card.id)}
       <label class="role-card" class:ticked={card.ticked}>
         <input type="checkbox" checked={card.ticked} onchange={() => { ticked = togglePickerEntry(declaration, ticked, card.id) }} />
-        {#if card.sideColour}<span class="role-card__side" style:background={card.sideColour}></span>{/if}
+        {#if card.sides.length > 0}
+          <span class="role-card__sides" title={`Sees ${sideLabels(card.sides)}`}>
+            {#each card.sides as side (side.id)}<span class="role-card__side" style:background={side.colour}></span>{/each}
+          </span>
+        {/if}
         <span class="role-card__text">
           <strong>{card.label}</strong>
-          <small>{card.kind === 'preset' ? `Preset · ${roleSetText(declaration, card.roleIds)}` : card.roleClass === 'controller' ? 'Controller · sees and commands everything' : 'Operator'}</small>
+          <small>{card.kind === 'preset' ? `Preset · ${roleSetText(declaration, card.roleIds)}` : card.roleClass === 'controller' ? 'Controller · sees and commands everything' : card.sides.length > 0 ? `Operator · sees ${sideLabels(card.sides)}` : 'Operator'}</small>
         </span>
         {#if card.key}<kbd title={`P then ${card.key} switches to this later`}>{card.key}</kbd>{/if}
         {#if card.holders !== null}<span class="role-card__holders" title="Screens holding this role now">{card.holders} {card.holders === 1 ? 'screen' : 'screens'}</span>{/if}
@@ -100,10 +105,15 @@
     margin: 2px 0 0;
   }
 
-  .role-card__side {
+  .role-card__sides {
     flex: 0 0 auto;
-    width: 6px;
     align-self: stretch;
+    display: flex;
+    gap: 2px;
+  }
+
+  .role-card__side {
+    width: 6px;
     border-radius: 3px;
   }
 
