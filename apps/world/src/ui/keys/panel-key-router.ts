@@ -1,3 +1,5 @@
+import type { PanelKey } from './panel-key.ts'
+
 /**
  * The Pack-agnostic World key router. It owns no keymap: it decides only
  * whether a key may reach the open surface panel that declares one, and the
@@ -5,14 +7,6 @@
  * prevented, so a focused button never also activates natively; repeats of a
  * handled key are swallowed, never delivered again.
  */
-
-export interface PanelKey {
-  /** `KeyboardEvent.key`, e.g. "Enter", "ArrowDown", "n", "E". */
-  readonly key: string
-  /** `KeyboardEvent.code`, the physical key, e.g. "KeyN", "Digit1", "BracketLeft". */
-  readonly code: string
-  readonly shift: boolean
-}
 
 export interface PanelKeyEvent extends PanelKey {
   readonly repeat: boolean

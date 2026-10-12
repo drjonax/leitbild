@@ -1,7 +1,8 @@
-import type { GeoJsonPoint, IsoTimestamp, ObjectId, OperationalObject, RunRoles, SimulationRunId } from '../core/model/index.ts'
+import type { GeoJsonPoint, IsoTimestamp, ObjectId, OperationalObject, SimulationRunId } from '../core/model/index.ts'
 import type { ActivePackViews } from '../core/packs/active-views.ts'
 import type { PackMapTarget, PackSurfacePanelContribution, PackTargetContext, PackTargetPreview, WorldPackView } from '../core/packs/protocol.ts'
-import type { PanelKey } from './keys/panel-key-router.ts'
+import type { PanelKey } from './keys/panel-key.ts'
+import type { MapCover, PanelRoleSet } from './surface-panel-contract.ts'
 import type { CameraInteraction } from './map/map-camera.ts'
 import type { MapFocusTarget } from './map-runtime/types.ts'
 import type { MapView } from './map-view.ts'
@@ -41,14 +42,6 @@ export interface MapPrompt {
   readonly onConfirm: () => void
 }
 
-/** How far a panel reaches over the map from each edge, in CSS pixels. */
-export interface MapCover {
-  readonly top: number
-  readonly right: number
-  readonly bottom: number
-  readonly left: number
-}
-
 export const noMapCover: MapCover = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 })
 
 const coverEdges = ['top', 'right', 'bottom', 'left'] as const
@@ -70,12 +63,6 @@ export const cameraPaddingFor = (covers: ReadonlyArray<MapCover>): MapCover => (
   bottom: Math.max(0, ...covers.map(cover => cover.bottom)),
   left: Math.max(0, ...covers.map(cover => cover.left)),
 })
-
-/** The role set a screen plays in a Run that declares roles, with the Run's declaration. */
-export interface PanelRoleSet {
-  readonly declaration: RunRoles
-  readonly roleIds: ReadonlyArray<string>
-}
 
 /** The props the World surface passes to every surface panel. */
 export interface SurfacePanelProps {

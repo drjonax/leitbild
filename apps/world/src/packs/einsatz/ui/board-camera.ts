@@ -1,4 +1,4 @@
-import type { MapCover } from '../../../ui/surface-panel-interaction.ts'
+import type { MapCover } from '../../../ui/surface-panel-contract.ts'
 import { boardBottomClearancePx, boardTopClearancePx } from './board-layout.ts'
 
 /**

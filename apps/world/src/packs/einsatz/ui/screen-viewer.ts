@@ -1,5 +1,5 @@
 import { viewerForRoleSet, type RunViewer } from '../../../core/model/index.ts'
-import type { PanelRoleSet } from '../../../ui/surface-panel-interaction.ts'
+import type { PanelRoleSet } from '../../../ui/surface-panel-contract.ts'
 import { openModeViewer, type PictureRole, type PictureViewer } from '../picture.ts'
 
 /**

@@ -58,7 +58,7 @@
   import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPickingWanted, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
   import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapCover, type MapPrompt, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
   import PanelKeyRouter from '../keys/PanelKeyRouter.svelte'
-  import type { PanelKey } from '../keys/panel-key-router.ts'
+  import type { PanelKey } from '../keys/panel-key.ts'
   import {
     categoryRowsFor,
     placementCursorFor,

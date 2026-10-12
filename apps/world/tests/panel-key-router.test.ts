@@ -5,10 +5,10 @@ import {
   panelKeyDecision,
   panelKeyDown,
   panelKeyUp,
-  type PanelKey,
   type PanelKeyEvent,
   type PanelKeySurface,
 } from '../src/ui/keys/panel-key-router.ts'
+import type { PanelKey } from '../src/ui/keys/panel-key.ts'
 
 const press = (patch: Partial<PanelKeyEvent> = {}): PanelKeyEvent => ({
   key: 'Enter',

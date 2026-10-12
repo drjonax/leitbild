@@ -1,6 +1,7 @@
 <script lang="ts">
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
-  import { installPanelKeyRouter, type PanelKey } from './panel-key-router.ts'
+  import type { PanelKey } from './panel-key.ts'
+  import { installPanelKeyRouter } from './panel-key-router.ts'
 
   /**
    * Mounted only while an open surface panel declares a keymap: one window

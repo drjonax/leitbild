@@ -1,6 +1,6 @@
 import type { GeoJsonPoint, IsoTimestamp, ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import type { PackMapTarget, PackTargetPreview } from '../../../core/packs/protocol.ts'
-import type { PanelKey } from '../../../ui/keys/panel-key-router.ts'
+import type { PanelKey } from '../../../ui/keys/panel-key.ts'
 import type { EinsatzCommandId } from '../capabilities.ts'
 
 /**
