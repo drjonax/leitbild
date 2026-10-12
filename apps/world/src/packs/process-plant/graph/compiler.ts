@@ -25,7 +25,16 @@ import type {
 } from './model.ts'
 import { linkVariableSemanticsFor, validateProcessLinkContracts } from './link-contracts.ts'
 import { connectionKindSchema, deriveProcessVariableCapabilities, plantGraphSpecSchema } from './model.ts'
-import { readingAccepts, type CompiledComponentSemantics, type CompiledEnergyRole, type CompiledStateAspect, type ComponentSemantics, type ProgramDeclaration, type StateAspectDeclaration } from './semantics.ts'
+import {
+  readingAccepts,
+  type CompiledComponentSemantics,
+  type CompiledEnergyRole,
+  type CompiledStateAspect,
+  type ComponentSemantics,
+  type ProgramDeclaration,
+  type StateAspectDeclaration,
+  type WiderRangeDeclaration,
+} from './semantics.ts'
 
 interface ResolvedPortRef {
   readonly componentId: ComponentId
@@ -196,6 +205,84 @@ const applyComponentVariableOverride = (
   }
 }
 
+type VariableResolver = (local: LocalVariablePath) => VariableDescriptor
+
+// A component's variables by local path. A name it does not have is an error
+// of the semantics that name it, named by its local path on the component
+// itself and by its full path on another.
+const variablesOf = (context: string, holder: Pick<CompiledComponent, 'id' | 'variables'>, named: 'local' | 'path' = 'local'): VariableResolver => {
+  const byPath = new Map(holder.variables.map(variable => [String(variable.path), variable]))
+  return local => {
+    const path = variablePathFor(holder.id, local)
+    const variable = byPath.get(path)
+    if (variable === undefined) throw new Error(`${context} names unknown variable ${named === 'local' ? local : path}`)
+    return variable
+  }
+}
+
+// An aspect's state must be solved (or an outside boundary) and readable as
+// it is read; its command and isolation input are the component's own.
+const compileAspect = (context: string, declaration: StateAspectDeclaration, own: VariableResolver, stateOf: VariableResolver): CompiledStateAspect => {
+  const state = declaration.state
+  const stateVariable = state === undefined ? undefined : stateOf(state.variable)
+  if (state !== undefined && stateVariable !== undefined) {
+    if (stateVariable.writable && stateVariable.actuation !== 'boundary') throw new Error(`${context}: ${declaration.aspect} state ${state.variable} is writable, so it would draw a demand as the state`)
+    if (!readingAccepts(state.reading, stateVariable)) throw new Error(`${context}: ${declaration.aspect} state ${state.variable} (${stateVariable.quantity}) cannot be read as ${state.reading}`)
+    if (state.reading === 'closedWhileTrue' && declaration.aspect !== 'position') throw new Error(`${context}: only a position reads closed while true, not ${declaration.aspect}`)
+  }
+  const command = declaration.command === undefined ? undefined : own(declaration.command)
+  if (command !== undefined && (!command.writable || command.actuation !== 'command')) throw new Error(`${context}: ${declaration.aspect} command ${declaration.command} is not a writable command`)
+  const isolation = declaration.isolation === undefined ? undefined : own(declaration.isolation)
+  if (isolation !== undefined) {
+    if (declaration.aspect !== 'position') throw new Error(`${context}: only a position is driven shut by an isolation input, not ${declaration.aspect}`)
+    if (!isolation.writable || isolation.actuation !== 'command' || isolation.quantity !== 'boolean') throw new Error(`${context}: position isolation ${declaration.isolation} is not a writable boolean command`)
+  }
+  return {
+    aspect: declaration.aspect,
+    ...(state === undefined || stateVariable === undefined ? {} : { state: { path: stateVariable.path, reading: state.reading } }),
+    ...(command === undefined ? {} : { command: command.path }),
+    ...(isolation === undefined ? {} : { isolation: isolation.path }),
+  }
+}
+
+// Two instruments read one quantity as solved values with declared spans: in
+// the same unit where the wider reads at the end of the first's span, in any
+// where a solved flag says when it reads. Each reading has one wider range at
+// most, and following them never comes back to a reading.
+const compileWiderRanges = (
+  context: string,
+  declarations: ReadonlyArray<WiderRangeDeclaration>,
+  resolve: VariableResolver,
+): CompiledComponentSemantics['widerRanges'] => {
+  const compiled = declarations.map(range => {
+    const reading = resolve(range.reading as LocalVariablePath)
+    const wider = resolve(range.wider as LocalVariablePath)
+    if (reading.writable || wider.writable) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must be solved readings`)
+    const flag = range.while === undefined ? undefined : resolve(range.while as LocalVariablePath)
+    if (flag === undefined) {
+      if (reading.quantity !== wider.quantity || reading.unit !== wider.unit || reading.measurand !== wider.measurand) throw new Error(`${context}: ${range.wider} does not read the quantity ${range.reading} reads`)
+    } else {
+      if (flag.quantity !== 'boolean' || flag.writable) throw new Error(`${context}: ${range.wider} reads what ${range.reading} reads while ${range.while}, which is not a solved flag`)
+      if (reading.quantity === 'boolean' || wider.quantity === 'boolean') throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must be measured values, not on/off signals`)
+    }
+    if (reading.limits?.instrumentSpan === undefined || wider.limits?.instrumentSpan === undefined) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must declare their instrument spans`)
+    return { reading: reading.path, wider: wider.path, ...(flag === undefined ? {} : { while: flag.path }) }
+  })
+  const widerOf = new Map<VariablePath, VariablePath>()
+  for (const range of compiled) {
+    if (widerOf.has(range.reading)) throw new Error(`${context}: ${range.reading} has more than one wider range`)
+    widerOf.set(range.reading, range.wider)
+  }
+  for (const start of widerOf.keys()) {
+    const seen = new Set([start])
+    for (let next = widerOf.get(start); next !== undefined; next = widerOf.get(next)) {
+      if (seen.has(next)) throw new Error(`${context}: the wider ranges of ${start} come back to ${next}`)
+      seen.add(next)
+    }
+  }
+  return compiled
+}
+
 // A kind's semantics name its own variables and ports; every name must exist,
 // a state must be solved (or an outside boundary), and a command must be one.
 const compileComponentSemantics = (
@@ -206,36 +293,7 @@ const compileComponentSemantics = (
   parameters: unknown,
 ): CompiledComponentSemantics => {
   const context = `component ${componentId} semantics`
-  const byPath = new Map(variables.map(variable => [String(variable.path), variable]))
-  const resolve = (local: LocalVariablePath): VariableDescriptor => {
-    const variable = byPath.get(variablePathFor(componentId, local))
-    if (variable === undefined) throw new Error(`${context} names unknown variable ${local}`)
-    return variable
-  }
-  const compileAspect = (declaration: StateAspectDeclaration): CompiledStateAspect => {
-    const state = declaration.state
-    if (state !== undefined) {
-      const variable = resolve(state.variable)
-      if (variable.writable && variable.actuation !== 'boundary') throw new Error(`${context}: ${declaration.aspect} state ${state.variable} is writable, so it would draw a demand as the state`)
-      if (!readingAccepts(state.reading, variable)) throw new Error(`${context}: ${declaration.aspect} state ${state.variable} (${variable.quantity}) cannot be read as ${state.reading}`)
-      if (state.reading === 'closedWhileTrue' && declaration.aspect !== 'position') throw new Error(`${context}: only a position reads closed while true, not ${declaration.aspect}`)
-    }
-    if (declaration.command !== undefined) {
-      const command = resolve(declaration.command)
-      if (!command.writable || command.actuation !== 'command') throw new Error(`${context}: ${declaration.aspect} command ${declaration.command} is not a writable command`)
-    }
-    if (declaration.isolation !== undefined) {
-      const isolation = resolve(declaration.isolation)
-      if (declaration.aspect !== 'position') throw new Error(`${context}: only a position is driven shut by an isolation input, not ${declaration.aspect}`)
-      if (!isolation.writable || isolation.actuation !== 'command' || isolation.quantity !== 'boolean') throw new Error(`${context}: position isolation ${declaration.isolation} is not a writable boolean command`)
-    }
-    return {
-      aspect: declaration.aspect,
-      ...(state === undefined ? {} : { state: { path: variablePathFor(componentId, state.variable), reading: state.reading } }),
-      ...(declaration.command === undefined ? {} : { command: variablePathFor(componentId, declaration.command) }),
-      ...(declaration.isolation === undefined ? {} : { isolation: variablePathFor(componentId, declaration.isolation) }),
-    }
-  }
+  const resolve = variablesOf(context, { id: componentId, variables })
   const portName = (name: string): PortName => {
     if (ports[name] === undefined) throw new Error(`${context} names unknown port ${name}`)
     return name as PortName
@@ -243,13 +301,17 @@ const compileComponentSemantics = (
   const record = parameters !== null && typeof parameters === 'object' && !Array.isArray(parameters) ? parameters as Record<string, unknown> : {}
   return {
     ...(semantics.function === undefined ? {} : { function: semantics.function }),
-    aspects: semantics.aspects.map(compileAspect),
+    // An aspect can be read through a port, so aspects are resolved once the links are (compileAspects).
+    aspects: [],
     embedded: semantics.embedded.map(device => ({
       id: device.id,
       label: device.label,
       function: device.function,
       port: portName(device.port),
-      aspects: device.aspects.map(compileAspect),
+      aspects: device.aspects.map(declaration => {
+        if (declaration.state?.via !== undefined) throw new Error(`${context}: the ${device.id} ${declaration.aspect} is the device's own, never read through a port`)
+        return compileAspect(context, declaration, resolve, resolve)
+      }),
       variables: device.variables.map(local => {
         resolve(local as LocalVariablePath)
         return variablePathFor(componentId, local as LocalVariablePath)
@@ -290,14 +352,7 @@ const compileComponentSemantics = (
       if (flag.quantity !== 'boolean' || flag.writable) throw new Error(`${context}: permissive ${local} is not a solved flag`)
       return variablePathFor(componentId, local as LocalVariablePath)
     }),
-    widerRanges: semantics.widerRanges.map(range => {
-      const reading = resolve(range.reading as LocalVariablePath)
-      const wider = resolve(range.wider as LocalVariablePath)
-      if (reading.writable || wider.writable) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must be solved readings`)
-      if (reading.quantity !== wider.quantity || reading.unit !== wider.unit || reading.measurand !== wider.measurand) throw new Error(`${context}: ${range.wider} does not read the quantity ${range.reading} reads`)
-      if (reading.limits?.instrumentSpan === undefined || wider.limits?.instrumentSpan === undefined) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must declare their instrument spans`)
-      return { reading: variablePathFor(componentId, range.reading as LocalVariablePath), wider: variablePathFor(componentId, range.wider as LocalVariablePath) }
-    }),
+    widerRanges: compileWiderRanges(context, semantics.widerRanges, resolve),
     // A program can program a reading of another component, so programs are resolved once the links are (compilePrograms).
     programs: [],
     shutdownReadings: semantics.shutdownReadings.map(local => {
@@ -318,6 +373,52 @@ const compileComponentSemantics = (
       return { ...role, rate: variablePathFor(componentId, role.rate as LocalVariablePath) }
     }),
   }
+}
+
+/**
+ * The component at the far end of a port's one link, whose variable a
+ * component reads (`subject` names what it reads); null where the Plant
+ * leaves the port unconnected. A port with several links reaches no one
+ * component.
+ */
+const componentAcross = (
+  component: CompiledComponent,
+  via: string,
+  subject: string,
+  components: ReadonlyArray<CompiledComponent>,
+  links: ReadonlyArray<CompiledProcessLink>,
+): CompiledComponent | null => {
+  const context = `component ${component.id} semantics`
+  if (component.ports[via] === undefined) throw new Error(`${context}: ${subject} is read through unknown port ${via}`)
+  const onPort = links.filter(link => (link.fromComponentIndex === component.index && String(link.fromPortName) === via) || (link.toComponentIndex === component.index && String(link.toPortName) === via))
+  if (onPort.length > 1) throw new Error(`${context}: ${subject} is read through port ${via}, which has ${onPort.length} links, not one`)
+  const link = onPort[0]
+  return link === undefined ? null : components[link.fromComponentIndex === component.index ? link.toComponentIndex : link.fromComponentIndex]!
+}
+
+/**
+ * A component's state aspects, in declared order, resolved against the
+ * Plant's links. A state read through a port (`via`) is the variable of the
+ * component on that port's one link; through a port the Plant leaves
+ * unconnected it reaches none, so that aspect is not the Plant's. Another
+ * component's state is not this one's to demand: such an aspect has no
+ * command or isolation input.
+ */
+const compileAspects = (
+  component: CompiledComponent,
+  declarations: ReadonlyArray<StateAspectDeclaration>,
+  components: ReadonlyArray<CompiledComponent>,
+  links: ReadonlyArray<CompiledProcessLink>,
+): ReadonlyArray<CompiledStateAspect> => {
+  const context = `component ${component.id} semantics`
+  const own = variablesOf(context, component)
+  return declarations.flatMap(declaration => {
+    const state = declaration.state
+    if (state?.via === undefined) return [compileAspect(context, declaration, own, own)]
+    if (declaration.command !== undefined || declaration.isolation !== undefined) throw new Error(`${context}: ${declaration.aspect} is read through port ${state.via} from another component, so it takes no command or isolation input`)
+    const holder = componentAcross(component, state.via, `${declaration.aspect} state ${state.variable}`, components, links)
+    return holder === null ? [] : [compileAspect(context, declaration, own, variablesOf(context, holder, 'path'))]
+  })
 }
 
 /**
@@ -342,17 +443,8 @@ const compilePrograms = (
     if (variable.writable) throw new Error(`${context}: ${path} must be a solved reading`)
     return variable
   }
-  const holderOf = (declaration: ProgramDeclaration): CompiledComponent | null => {
-    const via = declaration.via
-    if (via === undefined) return component
-    if (component.ports[via] === undefined) throw new Error(`${context}: ${declaration.reading} is read through unknown port ${via}`)
-    const onPort = links.filter(link => (link.fromComponentIndex === component.index && String(link.fromPortName) === via) || (link.toComponentIndex === component.index && String(link.toPortName) === via))
-    if (onPort.length > 1) throw new Error(`${context}: ${declaration.reading} is read through port ${via}, which has ${onPort.length} links, not one`)
-    const link = onPort[0]
-    return link === undefined ? null : components[link.fromComponentIndex === component.index ? link.toComponentIndex : link.fromComponentIndex]!
-  }
   return declarations.flatMap(declaration => {
-    const holder = holderOf(declaration)
+    const holder = declaration.via === undefined ? component : componentAcross(component, declaration.via, declaration.reading, components, links)
     if (holder === null) return []
     const reading = solved(holder, declaration.reading)
     const program = solved(component, declaration.program)
@@ -380,6 +472,25 @@ const assertNamesUnambiguous = (components: ReadonlyArray<CompiledComponent>, va
     for (const local of Object.keys(component.metadata?.presentation?.states ?? {})) {
       const variable = byPath.get(`${component.id}.${local}`)
       if (variable === undefined || variable.descriptor.quantity !== 'boolean') throw new Error(`component ${component.id} names state words for ${local}, which is not one of its on/off signals`)
+    }
+  }
+}
+
+// A pushbutton is an on/off command of its own component, marked once, that
+// no state aspect holds: an aspect's command or isolation input stands until
+// it is written again.
+const assertPushbuttonsMomentary = (components: ReadonlyArray<CompiledComponent>, variables: ReadonlyArray<CompiledVariable>): void => {
+  const byPath = new Map(variables.map(variable => [String(variable.path), variable.descriptor]))
+  for (const component of components) {
+    const momentary = component.metadata?.presentation?.momentary ?? []
+    assertUnique(momentary, local => local, `component ${component.id} momentary input`)
+    const aspects = [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)]
+    const held = new Set(aspects.flatMap(aspect => [aspect.command, aspect.isolation].flatMap(path => path === undefined ? [] : [String(path)])))
+    for (const local of momentary) {
+      const path = `${component.id}.${local}`
+      const variable = byPath.get(path)
+      if (variable === undefined || !variable.writable || variable.actuation !== 'command' || variable.quantity !== 'boolean') throw new Error(`component ${component.id} marks ${local} momentary, which is not one of its on/off commands`)
+      if (held.has(path)) throw new Error(`component ${component.id} marks ${local} momentary, but it is the input of a state aspect, which holds what it demands`)
     }
   }
 }
@@ -549,6 +660,7 @@ export const compilePlantGraph = (
   const definitions = new Map<ComponentId, ComponentDefinition>()
   const portDefinitions = new Map<ComponentId, Readonly<Record<string, PortDefinition>>>()
   const programDeclarations: Array<ReadonlyArray<ProgramDeclaration>> = []
+  const aspectDeclarations: Array<ReadonlyArray<StateAspectDeclaration>> = []
   const ownSemantics: CompiledComponent[] = spec.components.map((component, index) => {
     const definition = resolveDefinition(registry, component.kind)
     assertComponentVariableOverridesValid(component.id, definition, component.variables)
@@ -560,6 +672,7 @@ export const compilePlantGraph = (
     portDefinitions.set(component.id, ports)
     const declared = definition.semantics(parameters)
     programDeclarations.push(declared.programs)
+    aspectDeclarations.push(declared.aspects)
     const variables = definition.variables.map(variable => applyComponentVariableOverride({
       ...variable,
       path: variablePathFor(component.id, variable.path),
@@ -643,7 +756,11 @@ export const compilePlantGraph = (
   })
   const components: ReadonlyArray<CompiledComponent> = ownSemantics.map(component => ({
     ...component,
-    semantics: { ...component.semantics, programs: compilePrograms(component, programDeclarations[component.index]!, ownSemantics, links) },
+    semantics: {
+      ...component.semantics,
+      aspects: compileAspects(component, aspectDeclarations[component.index]!, ownSemantics, links),
+      programs: compilePrograms(component, programDeclarations[component.index]!, ownSemantics, links),
+    },
   }))
   const published = new Set(spec.publishedVariables)
   const componentVariables: CompiledVariable[] = components.flatMap(component =>
@@ -673,6 +790,7 @@ export const compilePlantGraph = (
   validateSignalMetadata(variables)
   assertVariableSemantics(variables)
   assertNamesUnambiguous(components, variables)
+  assertPushbuttonsMomentary(components, variables)
   validateValveControllerBindings(components, variables)
   validateProcessLinkContracts(links)
   validateStrongComponentContracts(components, links)

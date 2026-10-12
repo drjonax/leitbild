@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { LocalVariablePath, PortName, ProcessQuantity, ProcessUnit, VariablePath } from './model.ts'
+import type { CompiledComponent, CompiledPlantGraph, LocalVariablePath, PortName, ProcessQuantity, ProcessUnit, VariablePath } from './model.ts'
 
 // Model semantics: what equipment is and does, declared once per component
 // kind beside its behaviour and never repeated per Plant instance. They are
@@ -63,8 +63,14 @@ export interface StateAspectDeclaration {
    * when the model computes none (an accumulator's discharge isolation valve
    * follows its command at once), so the aspect reads "not measured" and is
    * judged by what the model does solve.
+   *
+   * Read through a port (`via`), it is the variable of the component at the
+   * far end of that port's one link: a core's level is the coolant level the
+   * vessel it heats computes. A port the Plant leaves unconnected reaches
+   * none, so the aspect is not the Plant's. Such a state is another
+   * component's, so the aspect has no command or isolation input.
    */
-  readonly state?: { readonly variable: LocalVariablePath; readonly reading: AspectReading }
+  readonly state?: { readonly variable: LocalVariablePath; readonly reading: AspectReading; readonly via?: string }
   /**
    * The writable variable that demands this aspect. It only annotates a
    * disagreement, never the state. A boolean command of a position read
@@ -138,10 +144,10 @@ export interface ComponentSemantics {
   /**
    * One quantity read by two instruments, the second over a wider span (a
    * steam generator's narrow-range level and its wide-range level from the
-   * tube sheet): where the first stands at an end of its span, the second
-   * says where the quantity is.
+   * tube sheet): where the first stands at an end of its span, or while a
+   * flag says so (`while`), the second says where the quantity is.
    */
-  readonly widerRanges: ReadonlyArray<{ readonly reading: string; readonly wider: string }>
+  readonly widerRanges: ReadonlyArray<WiderRangeDeclaration>
   /**
    * A reading's program: the value the Plant's control holds it to (`program`),
    * and how far it stands from it (`deviation`), both the equipment's own. The
@@ -169,21 +175,46 @@ export interface ProgramDeclaration {
   readonly deviation?: string
 }
 
+/**
+ * A reading and the instrument that reads its quantity over a wider span.
+ * Each reading has at most one, and the ranges chain without coming back to
+ * a reading, so a reader can follow them from the narrowest instrument out.
+ */
+export interface WiderRangeDeclaration {
+  readonly reading: string
+  readonly wider: string
+  /**
+   * A solved flag of the same equipment that says when the wider instrument
+   * reads the quantity: while it reads true, the wider one says where the
+   * quantity is, whatever the first reads. Such a pair may measure the
+   * quantity in different units: a core's neutron flux, counted by its source
+   * range, is read as a current by its intermediate range while P-6 holds,
+   * and as percent of rated power by its power range while P-10 does.
+   * Absent, the wider instrument reads where the first stands at an end of
+   * its span, in the same unit.
+   */
+  readonly while?: string
+}
+
 /** Declares semantics that do not depend on a component's parameters. */
 export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parameters: unknown) => ComponentSemantics) => {
   const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], widerRanges: [], programs: [], shutdownReadings: [], energy: [], ...semantics }
   return () => resolved
 }
 
-/** A state aspect read from a solved variable, with the command that demands it and the isolation input that overrides it. */
+/**
+ * A state aspect read from a solved variable (of the component on a port's
+ * one link, `via` that port), with the command that demands it and the
+ * isolation input that overrides it.
+ */
 export const aspect = (
   name: StateAspect,
-  state: { readonly variable: string; readonly reading: AspectReading } | undefined,
+  state: { readonly variable: string; readonly reading: AspectReading; readonly via?: string } | undefined,
   command?: string,
   isolation?: string,
 ): StateAspectDeclaration => ({
   aspect: name,
-  ...(state === undefined ? {} : { state: { variable: state.variable as LocalVariablePath, reading: state.reading } }),
+  ...(state === undefined ? {} : { state: { variable: state.variable as LocalVariablePath, reading: state.reading, ...(state.via === undefined ? {} : { via: state.via }) } }),
   ...(command === undefined ? {} : { command: command as LocalVariablePath }),
   ...(isolation === undefined ? {} : { isolation: isolation as LocalVariablePath }),
 })
@@ -213,7 +244,7 @@ export interface CompiledComponentSemantics {
   readonly keyValues: ReadonlyArray<VariablePath>
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: VariablePath; readonly variables: ReadonlyArray<VariablePath> }>
   readonly permissives: ReadonlyArray<VariablePath>
-  readonly widerRanges: ReadonlyArray<{ readonly reading: VariablePath; readonly wider: VariablePath }>
+  readonly widerRanges: ReadonlyArray<{ readonly reading: VariablePath; readonly wider: VariablePath; readonly while?: VariablePath }>
   readonly programs: ReadonlyArray<{ readonly reading: VariablePath; readonly program: VariablePath; readonly deviation?: VariablePath }>
   readonly shutdownReadings: ReadonlyArray<VariablePath>
   readonly energy: ReadonlyArray<CompiledEnergyRole>
@@ -224,6 +255,27 @@ export type CompiledEnergyRole =
   | { readonly role: 'source'; readonly circuit: string; readonly rate: VariablePath }
   | { readonly role: 'transfer'; readonly from: string; readonly to: string }
   | { readonly role: 'sink'; readonly circuit: string; readonly rate: VariablePath }
+
+/** Equipment at one end of a Plant's energy path, with the circuit it heats or works and the variable that measures the rate. */
+export interface EnergyEnd {
+  readonly component: CompiledComponent
+  readonly role: 'source' | 'sink'
+  readonly circuit: string
+  readonly rate: VariablePath
+}
+
+/**
+ * The equipment a Plant's energy starts at and ends in, as their kinds
+ * declare it: its sources first (a reactor core heating its coolant), then
+ * its sinks (a turbine taking work out of its steam), each in component
+ * order. Readers that treat the ends apart (a faceplate for each) find them
+ * here without naming a kind.
+ */
+export const energyEnds = (graph: Pick<CompiledPlantGraph, 'components'>): ReadonlyArray<EnergyEnd> => {
+  const ends = graph.components.flatMap(component => component.semantics.energy.flatMap((role): ReadonlyArray<EnergyEnd> =>
+    role.role === 'transfer' ? [] : [{ component, role: role.role, circuit: role.circuit, rate: role.rate }]))
+  return [...ends.filter(end => end.role === 'source'), ...ends.filter(end => end.role === 'sink')]
+}
 
 /** Which quantities and units each reading accepts. */
 export const readingAccepts = (reading: AspectReading, descriptor: { readonly quantity: ProcessQuantity; readonly unit: ProcessUnit }): boolean => {

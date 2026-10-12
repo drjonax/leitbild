@@ -291,11 +291,20 @@ export const processGraphPresentationSchema = z.object({
   /** Short names of devices the component bundles, by device id ("PORV"). */
   embedded: z.record(idSchema, z.string().min(1).max(24)).optional(),
   /**
-   * How operators read its on/off signals that serve no state aspect, by
-   * local variable path: "Source-range HV on" and "Source-range HV off",
-   * never "Not source-range detector high voltage on".
+   * How operators read its on/off signals, by local variable path:
+   * "Source-range HV on" and "Source-range HV off", never "Not source-range
+   * detector high voltage on". Words for the state or command of a state
+   * aspect replace the aspect's own words: a turbine-generator whose running
+   * aspect is its output breaker reads ON LINE / OFF LINE, not RUN / STOP.
    */
   states: z.record(z.string().min(1), z.object({ on: z.string().min(1).max(40), off: z.string().min(1).max(40) }).strict()).optional(),
+  /**
+   * Its pushbuttons, by local variable path: on/off commands that spring back
+   * once pressed (an SI block, a manual trip), so an operator presses them
+   * rather than switching them on or off. Never the command or isolation
+   * input of a state aspect, which holds what it demands.
+   */
+  momentary: z.array(z.string().min(1)).min(1).optional(),
 }).strict()
 export type ProcessGraphPresentation = z.infer<typeof processGraphPresentationSchema>
 
