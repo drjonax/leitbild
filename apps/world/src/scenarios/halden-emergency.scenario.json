@@ -162,6 +162,23 @@
   "timeline": {
     "cues": [
       {
+        "id": "desk-briefing",
+        "at": {"kind": "after_scenario_start", "seconds": 0},
+        "title": "Calls keep coming for 30 minutes",
+        "actions": [
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "desk-briefing",
+              "title": "Calls keep coming for 30 minutes",
+              "message": "Tap the waiting call under Calls, then tap Dispatch to send its suggested unit.",
+              "dismissible": true,
+              "tone": "default"
+            }
+          }
+        ]
+      },
+      {
         "id": "busterud-crash",
         "at": {"kind": "after_scenario_start", "seconds": 40},
         "title": "A car hits a cyclist at Busterud",
