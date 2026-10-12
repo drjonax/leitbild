@@ -7,7 +7,8 @@ import type { OperationalObject } from '../../core/model/index.ts'
  * the tap's click because content appeared, and the object it leaves hovered
  * is stale by the next press. So the map tracks the type of the last pointer
  * it saw (`PointerEvent.pointerType`), and before any it shows nothing on
- * hover.
+ * hover. A finger also needs a bigger target than an icon: a tap picks
+ * objects within a radius around it, a mouse click only under it.
  */
 
 /** Whether a hover over an object shows its card and target preview: only for a mouse. */
@@ -34,3 +35,15 @@ export const longPressObject = (press: MapPress): OperationalObject | null => {
   if (press.busy || press.button !== 0 || press.pointerType !== 'mouse' || press.hovered === null) return null
   return press.canLongPress(press.hovered) ? press.hovered : null
 }
+
+/** The smallest target a tap needs (A9, touch first): 44 px square. */
+export const touchTargetPx = 44
+
+/**
+ * How far around the pointer a press picks an object, in px: nothing for a
+ * mouse, which points exactly, and before any pointer; for a finger or a
+ * pen, enough that an icon of `iconPx` takes a tap anywhere in a
+ * `touchTargetPx` square around it.
+ */
+export const pickingRadiusFor = (pointerType: string | null, iconPx: number): number =>
+  pointerType === null || pointerType === 'mouse' ? 0 : Math.max(0, Math.ceil((touchTargetPx - iconPx) / 2))

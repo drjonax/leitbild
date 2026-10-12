@@ -40,6 +40,7 @@ const createRuntime = (
   setStyleUrl: async () => undefined,
   resize: () => undefined,
   setCameraInteraction: () => undefined,
+  setPickingRadius: () => undefined,
   diagnostics: () => ({ phases: [] }),
   destroy: () => undefined,
 })

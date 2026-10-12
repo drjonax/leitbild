@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { OperationalObject } from '../src/core/model/index.ts'
-import { hoverCardsFor, longPressObject, type MapPress } from '../src/ui/map/map-pointer.ts'
+import { hoverCardsFor, longPressObject, pickingRadiusFor, touchTargetPx, type MapPress } from '../src/ui/map/map-pointer.ts'
+import { operationalIconPx } from '../src/ui/map-runtime/symbol-kit.ts'
 
 /** Only the identity matters to the press rules. */
 const object = (id: string): OperationalObject => ({ id }) as OperationalObject
@@ -37,5 +38,17 @@ describe('map pointer gestures', () => {
     expect(longPressObject(press({ hovered: null }))).toBeNull()
     expect(longPressObject(press({ button: 2 }))).toBeNull()
     expect(longPressObject(press({ busy: true }))).toBeNull()
+  })
+
+  test('a finger or a pen picks an operational icon anywhere in a 44 px target around it; a mouse, and nothing before the first pointer, picks only under the pointer', () => {
+    expect(touchTargetPx).toBe(44)
+    for (const type of ['touch', 'pen']) {
+      const radius = pickingRadiusFor(type, operationalIconPx)
+      expect(radius).toBe(11)
+      expect(operationalIconPx + 2 * radius).toBeGreaterThanOrEqual(touchTargetPx)
+    }
+    expect([pickingRadiusFor('mouse', operationalIconPx), pickingRadiusFor(null, operationalIconPx)]).toEqual([0, 0])
+    // An icon already as big as the target needs no radius.
+    expect(pickingRadiusFor('touch', 48)).toBe(0)
   })
 })

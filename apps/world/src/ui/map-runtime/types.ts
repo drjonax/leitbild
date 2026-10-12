@@ -175,6 +175,8 @@ export interface MapRuntimeHandle {
   readonly setStyleUrl: (styleUrl: string) => Promise<void>
   readonly resize: () => void
   readonly setCameraInteraction: (interaction: CameraInteraction) => void
+  /** How far around a press the map picks operational objects, in px (`map/map-pointer.ts`, `pickingRadiusFor`). */
+  readonly setPickingRadius: (radiusPx: number) => void
   readonly diagnostics: () => MapRuntimeDiagnosticsSnapshot
   readonly destroy: () => void
 }

@@ -358,6 +358,12 @@ export const createMapRuntime = async (
     setCameraInteraction: (interaction: CameraInteraction) => {
       assertCameraInteractionContract(current, interaction)
     },
+    setPickingRadius: (radiusPx: number) => {
+      if (!Number.isFinite(radiusPx) || radiusPx < 0) throw new Error(`Picking radius must be a non-negative number of px: ${radiusPx}`)
+      const activeOverlay = overlay
+      if (activeOverlay === null) throw new Error('Deck overlay is not installed')
+      activeOverlay.setProps({ pickingRadius: radiusPx })
+    },
     diagnostics: snapshot,
     destroy: () => {
       destroyResources()

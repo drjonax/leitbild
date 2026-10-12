@@ -39,7 +39,8 @@
   import { mapClickOutcome } from './map-target-routing.ts'
   import { noMapCover, type MapCover, type MapPrompt } from './surface-panel-interaction.ts'
   import { createMapPromptController } from './map/map-prompt.ts'
-  import { hoverCardsFor, longPressObject } from './map/map-pointer.ts'
+  import { hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
+  import { operationalIconPx } from './map-runtime/symbol-kit.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
     installMapPerformanceDiagnosticsGlobal,
@@ -525,6 +526,15 @@
       let holdTimer: ReturnType<typeof setTimeout> | null = null
       let holdStart: { x: number; y: number } | null = null
       const clearHold = () => { if (holdTimer !== null) clearTimeout(holdTimer); holdTimer = null; holdStart = null }
+      // A finger picks objects within a 44 px target around the tap; a mouse only under it.
+      let pickingRadius = 0
+      const trackPointer = (pointerType: string) => {
+        lastPointerType = pointerType
+        const radius = pickingRadiusFor(pointerType, operationalIconPx)
+        if (radius === pickingRadius) return
+        pickingRadius = radius
+        nextRuntime.setPickingRadius(radius)
+      }
       const pointerPoint = (event: PointerEvent): GeoJsonPoint => {
         const rect = canvas.getBoundingClientRect()
         lastPointerScreen = { x: event.clientX - rect.left, y: event.clientY - rect.top }
@@ -533,7 +543,7 @@
       }
       const onPointerDown = (event: PointerEvent) => {
         pointerPoint(event)
-        lastPointerType = event.pointerType
+        trackPointer(event.pointerType)
         if (!hoverCardsFor(lastPointerType)) popupController.hide()
         const origin = longPressObject({ pointerType: event.pointerType, button: event.button, hovered: hoveredObject, busy: assignmentActive || placementMode !== null, canLongPress })
         if (origin === null) return
@@ -551,7 +561,7 @@
       }
       const onPointerMove = (event: PointerEvent) => {
         const point = pointerPoint(event)
-        lastPointerType = event.pointerType
+        trackPointer(event.pointerType)
         if (holdStart && Math.hypot(event.clientX - holdStart.x, event.clientY - holdStart.y) > 7) clearHold()
         if (!assignmentActive) return
         assignmentPointer = point
