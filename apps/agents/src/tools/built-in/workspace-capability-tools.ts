@@ -14,6 +14,7 @@ import {
   type ModuleCapabilityDescriptor,
   type ModuleDefinitionDescriptor,
   type ModuleResourceDescriptor,
+  type EmbeddedViewPublication,
   type WorkspaceDefinitionRevisionReference,
   type WorkspaceId,
   type WorkspaceResourceReference,
@@ -284,6 +285,30 @@ const callInputSchema = z.object({
 }).strict()
 
 const catalogPath = (workspacePath: string, kind: 'capabilities' | 'definitions' | 'resources'): string => `${workspacePath}/${kind}`
+
+/**
+ * What the model reads of a workspace_call result. A published view's `state`
+ * is opaque to every embedder (contracts embedded-views.ts), and its completed
+ * envelope is execution evidence the display window resolves by viewRef: the
+ * model presents a view by reference only, so neither is repeated in its
+ * context (a composed display carried its state twice, about 8 KB). The rest
+ * of the result (title, what it shows, viewContent) stays. Every check reads
+ * the raw result or the execution store, never this text: the view fence and
+ * answer-consistency checks (evaluation.ts), what a turn did
+ * (operation-claims.ts), proposal cards and the display window.
+ */
+export const workspaceCallResultForModel = (result: ToolResult): ToolResult => {
+  if (!result.success) return result
+  const { results } = result.data as { readonly results: ReadonlyArray<Readonly<Record<string, unknown>>> }
+  return { ...result, data: { results: results.map(entry => {
+    if (!Object.hasOwn(entry, 'embeddedView')) return entry
+    const { embeddedView: _evidence, data, ...rest } = entry
+    // An envelope is completed only from a valid publication in data.view (embeddedViewFor).
+    const { view, ...fields } = data as { readonly view: EmbeddedViewPublication } & Readonly<Record<string, unknown>>
+    const { state: _opaque, ...shown } = view
+    return { ...rest, data: { ...fields, view: shown } }
+  }) } }
+}
 
 export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDeps): ReadonlyArray<Tool> => {
   const fetchImpl = deps.fetchImpl ?? fetch

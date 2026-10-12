@@ -404,6 +404,47 @@ describe('evaluation answer-display consistency', () => {
     expect((await run([corrected])).calls).toHaveLength(2)
     expect((await run([inconsistent], {})).calls).toHaveLength(2)
   })
+
+  test('the model reads a display by reference; both checks still read the evidence it left out', async () => {
+    // A composed display carries its opaque state twice: in the published view and in the completed envelope.
+    const state = JSON.stringify({ composition: { title: 'Core cooling', panels: [{ kind: 'trend', signals: [{ ref: 'CET-AVG' }] }] } })
+    const view = { viewType: 'process-plant.composed-display', title: 'Core cooling', height: 340, state }
+    const subject = { workspaceId: 'ws', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }
+    const display = {
+      success: true,
+      data: { results: [{
+        key: 'compose', operationId: 'world.process-plant.display.compose', success: true,
+        data: { view, shows: ['trend'], viewContent }, embeddedView: { ...view, moduleId: 'world', subject }, viewRef: 'call_0_0/compose',
+      }] },
+    }
+    const scripted = [
+      { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] },
+      { content: inconsistent },
+      { content: corrected },
+    ]
+    let index = 0
+    const calls: ChatRequest[] = []
+    const provider: LLMProvider = {
+      models: async () => [],
+      chat: async request => { calls.push(structuredClone(request)); return { ...mkResponse(''), ...scripted[index++]! } },
+    }
+    const result = await evaluate(mkContext(), mkConfig(), provider, async () => [display], 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+    })
+    const evidence = calls[1]!.messages.find(message => message.role === 'tool')!.content
+    expect(evidence).not.toContain('composition')
+    expect(evidence).not.toContain('embeddedView')
+    expect(JSON.parse(evidence)).toEqual({ results: [{
+      key: 'compose', operationId: 'world.process-plant.display.compose', success: true, viewRef: 'call_0_0/compose',
+      data: { view: { viewType: 'process-plant.composed-display', title: 'Core cooling', height: 340 }, shows: ['trend'], viewContent },
+    }] })
+    // The answer-consistency check read viewContent from the raw result, and the fence check its viewRef.
+    expect(calls).toHaveLength(3)
+    expect(calls[2]!.messages.at(-1)!.content).toContain('- It cites 401 kg/s, but the display shows no value in kg/s.')
+    expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
+    expect(result.decision.toolTrace![0]!.resultBytes).toBe(new TextEncoder().encode(evidence).byteLength)
+    expect(display.data.results[0]!.embeddedView.state).toBe(state)
+  })
 })
 
 describe('evaluation operation claims', () => {

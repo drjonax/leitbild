@@ -7,7 +7,7 @@ import {
   workspaceResourceReferenceSchema,
   type WorkspaceRoomScope,
 } from '@leitbild/contracts'
-import { createWorkspaceCapabilityTools } from './workspace-capability-tools.ts'
+import { createWorkspaceCapabilityTools, workspaceCallResultForModel } from './workspace-capability-tools.ts'
 import { toolsToDefinitions } from '../../llm/tool-capability.ts'
 
 const workspaceId = newWorkspaceId()
@@ -350,6 +350,40 @@ describe('Workspace progressive-discovery tools', () => {
     }] } })
     const standalone = await call!.execute({ calls: [{ key: 'p', operationId: readId, input: {} }] }, context)
     expect(standalone).toMatchObject({ success: true, data: { results: [{ viewError: expect.stringContaining('no execution evidence') }] } })
+  })
+
+  test('the model reads a view by reference: its opaque state and envelope stay in the execution evidence', async () => {
+    const state = JSON.stringify({ composition: { title: 'Pressure', panels: [{ kind: 'trend', signals: ['PZR-P'] }] }, issuedAt: now })
+    const view = { viewType: 'process-plant.display', title: 'Pressure', height: 340, state }
+    const viewContent = { items: [{ names: ['PZR-P'], values: [{ value: 15.5, unit: 'MPa' }], limits: [], history: true }], span: null, lead: null }
+    const viewFetch = (async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? new Request(input, init) : new Request(String(input), init)
+      if (!new URL(request.url).pathname.endsWith('/invoke')) return catalogFetch([])(input, init)
+      const { input: asked } = await request.json() as { input: { display?: true } }
+      return Response.json({ result: asked.display === true ? { view, shows: ['trend'], viewContent } : { state: 'running' } })
+    }) as typeof fetch
+    const [, call] = createWorkspaceCapabilityTools({ workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: () => ({ kind: 'resource', resource: run }), fetchImpl: viewFetch })
+    const raw = await call!.execute({ calls: [
+      { key: 'display', operationId: readId, input: { display: true } },
+      { key: 'plain', operationId: readId, input: {} },
+      { key: 'refused', operationId: readId, target: { kind: 'resource', ref: otherRun }, input: {} },
+    ] }, { ...context, executionCallId: 'call_0_0' })
+    const before = JSON.stringify(raw)
+    const shown = workspaceCallResultForModel(raw)
+    // The raw result, which the execution store and every check read, keeps the view.
+    expect(JSON.stringify(raw)).toBe(before)
+    expect((raw.data as { results: ReadonlyArray<unknown> }).results[0]).toMatchObject({ embeddedView: { state }, data: { view: { state } } })
+    const [display, plain, refused] = (shown.data as { results: ReadonlyArray<Record<string, unknown>> }).results
+    expect(display).toEqual({
+      key: 'display', operationId: readId, target: runTarget, success: true, viewRef: 'call_0_0/display',
+      data: { view: { viewType: 'process-plant.display', title: 'Pressure', height: 340 }, shows: ['trend'], viewContent },
+    })
+    expect(JSON.stringify(shown)).not.toContain('composition')
+    const [, rawPlain, rawRefused] = (raw.data as { results: ReadonlyArray<Record<string, unknown>> }).results
+    expect(plain).toBe(rawPlain)
+    expect(refused).toBe(rawRefused)
+    const failed = { success: false, error: 'invalid_tool_input: Batch keys must be unique', data: { code: 'invalid_tool_input' } }
+    expect(workspaceCallResultForModel(failed)).toBe(failed)
   })
 
   test('batches independent reads but rejects a batch containing a change', async () => {
