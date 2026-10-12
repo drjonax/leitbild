@@ -49,6 +49,7 @@ import '@oicl/openbridge-webcomponents/dist/icons/icon-ai.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-ai-pending.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-user.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-command-request.js'
+import '@oicl/openbridge-webcomponents/dist/icons/icon-manual.js'
 import mimicFontUrl from 'virtual:openbridge-mimic-font'
 import { renderSegments, themeFromCss, type Segment, type ThemeVars } from '@oicl/connector-diagram'
 import type { MimicIconFamily } from '../../../../packs/process-plant/displays/mimic/presentation.ts'
@@ -222,11 +223,13 @@ export const operationBadges = (badges: ItemBadges | null): { readonly who: Read
       : attribution === 'OP·AI' ? [iconBadge('regular', 'obi-user'), iconBadge('regular', 'obi-ai')]
         : [iconBadge('regular', attribution === 'AI' ? 'obi-ai' : 'obi-user')]
   const hold = badges.interlock !== null ? [typed('interlock')] : badges.commandLocked !== null ? [typed('command-locked')] : []
-  return { who, hold }
+  // A person's setting under a standing actuation ("Throttled under …"): OpenBridge's manual badge, beside who acted, where it has room.
+  const manual = badges.throttled !== null && who.length < 2 ? [iconBadge('regular', 'obi-manual')] : []
+  return { who: [...who, ...manual], hold }
 }
 
 const badgesKey = (badges: ItemBadges | null): string =>
-  JSON.stringify([badges?.proposal?.text ?? null, badges?.attribution?.text ?? null, badges?.interlock !== null && badges?.interlock !== undefined, badges?.commandLocked !== null && badges?.commandLocked !== undefined])
+  JSON.stringify([badges?.proposal?.text ?? null, badges?.attribution?.text ?? null, badges?.interlock !== null && badges?.interlock !== undefined, badges?.commandLocked !== null && badges?.commandLocked !== undefined, badges?.throttled?.text ?? null])
 
 /**
  * A device's operation state: activated while a command for it is selected;

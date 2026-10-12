@@ -12,13 +12,15 @@
   // or arrow keys: 8 px, Shift 24 px), its corner resizes it (or Shift+Alt
   // and the arrow keys): only its trends widen, and its rows drop whole from
   // the bottom; Esc while it has focus unpins it.
-  let { id, item, state, alert, sections, context, place, zoom, width, pinned, pin, pointer, measured, touched, move, resize }: {
+  let { id, item, state, alert, note = null, sections, context, place, zoom, width, pinned, pin, pointer, measured, touched, move, resize }: {
     id: string
     item: MimicDrawnItem
     /** The item's state word as its symbol writes it ("RUN", "SHUT", "ON LINE"); empty where it has none. */
     state: string
     /** Its most severe active alarm in its flap's words, in its alarm's colour; null without one. */
     alert: { readonly status: 'alarm' | 'warning' | 'caution'; readonly text: string } | null
+    /** A person's setting under a standing actuation, in World's words ("Throttled under AFW actuation"); null without one. */
+    note?: string | null
     sections: ReadonlyArray<MimicPopoverSection>
     context: MimicPopoverContext
     place: { readonly x: number; readonly y: number }
@@ -118,6 +120,7 @@
     <span class="label">{item.binding.label}</span>
     {#if state !== ''}<span class="state">{state}</span>{/if}
     {#if alert !== null}<span class={`chip ${alert.status}`}>{alert.text}</span>{/if}
+    {#if note !== null}<span class="note" title={note}>{note}</span>{/if}
     <!-- An obc-icon-button is a button: the native button inside it takes Enter and Space. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <obc-icon-button
@@ -159,6 +162,7 @@
   .chip.warning { background: var(--alert-warning-color); color: var(--on-warning-active-color); }
   .chip.caution { background: var(--alert-caution-color); color: var(--on-caution-active-color); }
   /* The pin fits the 24 px header: OpenBridge's icon button at a 24 px target. */
+  .note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 11px; line-height: 15px; font-weight: 600; }
   .pin { margin-left: auto; flex: none; height: 24px; --ui-components-button-touch-target-size: 24px; --ui-components-icon-button-visual-target-size: 24px; }
   .body { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 6px; overflow-y: auto; overscroll-behavior: contain; font-size: 11.5px; line-height: 15px; }
   h3 { margin: 2px 0 0; font-size: 10px; line-height: 13px; font-weight: 600; color: var(--element-neutral-color); text-transform: uppercase; letter-spacing: 0.04em; }

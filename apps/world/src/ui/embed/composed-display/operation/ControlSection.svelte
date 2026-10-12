@@ -147,6 +147,7 @@
         <span class="target">{control.target}</span>
         {#if control.now !== null}<span class="now">Now: {control.now}{#if control.commanded !== null} · {control.commanded}{/if}</span>{/if}
       </div>
+      {#each control.throttled as line (line)}<span class="throttled">{line}</span>{/each}
       {#if control.form === 'demand' && control.demand !== undefined}
         {@const demand = control.demand}
         {@const shut = control.options.find(option => option.value === demand.min)}
@@ -271,6 +272,8 @@
   .demand .slider { flex: 1 1 auto; min-width: 0; }
   .setting { flex: none; min-width: 40px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--element-active-color); }
   .auto-line { color: var(--element-active-color); }
+  /* A person's setting under a standing actuation: said plainly, never in an alarm colour. */
+  .throttled { align-self: flex-start; padding: 0 6px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 11px; line-height: 16px; font-weight: 600; color: var(--element-active-color); }
   .manual { color: var(--element-neutral-color); }
   .feedback { display: flex; flex-direction: column; gap: 2px; color: var(--element-active-color); }
   .feedback.notFollowed, .feedback.refused { font-weight: 600; }

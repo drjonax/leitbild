@@ -43,6 +43,11 @@
   let failure = $state<string | null>(null)
   // The commands this screen issued: another screen's travelling command locks an item; its own does not.
   let ownCommands = $state.raw<ReadonlySet<string>>(new Set())
+  // Commands the Run accepted that the Plant has not applied yet (writes are queued to its next step), by the drawn
+  // item they move: its ring turns while they wait, and nothing reads the value they replace as not followed.
+  // A command the log does not show within QUEUED_MS of plant time is no longer taken as waiting.
+  let queued = $state.raw<ReadonlyMap<string, { readonly item: string; readonly atElapsedMs: number }>>(new Map())
+  const QUEUED_MS = 10_000
   // The item whose command is selected: its symbol shows activated.
   let selected = $state<string | null>(null)
   // A proposal used as a draft: CONTROL opens with its command selected, as this person's own.
@@ -144,12 +149,15 @@
     if (stale || now === null || listed === null || latest?.operations === undefined) return undefined
     const operations = latest.operations
     const carried = new Map<string, ItemBadges>()
+    const logged = new Set(operations.log.map(record => record.commandId))
+    const waiting = new Set([...queued].filter(([commandId, entry]) => !logged.has(commandId) && now.elapsedMs - entry.atElapsedMs <= QUEUED_MS).map(([, entry]) => entry.item))
     for (const item of mimic.items) {
       const entry = listedOf(item)
       if (entry === undefined || entry.offered.length === 0) continue
       // A proposal names one piece of equipment; on a symbol that stands for several it is one of theirs.
       const shown = itemBadges(entry, { operations: operations.log, proposals: operations.proposals.filter(proposal => owners?.get(proposal.item) === item.id).map(proposal => ({ ...proposal, item: entry.id })), ownCommands, now })
-      if (shown.progress !== null || shown.attribution !== null || shown.proposal !== null || shown.interlock !== null || shown.commandLocked !== null) carried.set(item.id, shown)
+      const carriedHere = shown.progress === null && waiting.has(item.id) ? { ...shown, progress: { mode: 'static' as const } } : shown
+      if (carriedHere.progress !== null || carriedHere.attribution !== null || carriedHere.proposal !== null || carriedHere.interlock !== null || carriedHere.commandLocked !== null || carriedHere.throttled !== null) carried.set(item.id, carriedHere)
     }
     return carried
   })
@@ -171,16 +179,23 @@
     pin = pending === undefined ? null : { item: drawn(pending)!.id }
   })
 
+  /** The drawn item a command or a proposal moves. */
+  const drawnFor = (equipment: string | undefined): string | undefined => equipment === undefined ? undefined : owners?.get(equipment)
+  const listedWith = (path: VariablePath): string | undefined => [...(listed?.values() ?? [])].find(entry => entry.offered.some(candidate => candidate.control.path === path))?.id
+  const accepted = (commandId: string, item: string | undefined): void => {
+    ownCommands = new Set([...ownCommands, commandId])
+    if (item !== undefined && latest !== undefined) queued = new Map([...queued, [commandId, { item, atElapsedMs: latest.plantElapsedMs }]])
+  }
   const execute = async (write: Write): Promise<OperationOutcome> => {
     const outcome = await operation.client.write(operation.runId, operation.plantId, write)
-    if (outcome.ok) ownCommands = new Set([...ownCommands, outcome.commandId])
+    if (outcome.ok) accepted(outcome.commandId, drawnFor(listedWith(write.path)))
     return outcome
   }
   const validate = (write: Write) => operation.client.validate(operation.runId, operation.plantId, write)
   const decide = async (proposal: ProcessPlantProposal, decision: 'approve' | 'reject' | 'extend', reason: string | null = null): Promise<OperationOutcome> => {
     const outcome = await operation.client.decide(operation.runId, operation.plantId, proposal.id, decision, reason)
     // The approval's command executes the stored write: it travels as this screen's own.
-    if (outcome.ok) ownCommands = new Set([...ownCommands, outcome.commandId])
+    if (outcome.ok) accepted(outcome.commandId, decision === 'approve' ? drawnFor(proposal.item) : undefined)
     return outcome
   }
 

@@ -121,6 +121,8 @@ export interface ControlView {
   readonly options: ReadonlyArray<OptionView>
   /** A demand control's span and setting; absent on two-state controls and pushbuttons. */
   readonly demand?: DemandView
+  /** "Throttled under <label>": the standing actuations that drove its demand to an end while a person sets it between (World's labels as given). */
+  readonly throttled: ReadonlyArray<string>
   readonly withheldOptions: ReadonlyArray<{ readonly word: string; readonly reason: string }>
   readonly statePath?: VariablePath
   readonly travelMs: number | null
@@ -252,6 +254,7 @@ export const itemControlView = (item: ListedItem, now: OperationNow): ItemContro
       form: control.form,
       now: nowWords(control, now),
       commanded: demand === undefined || Math.abs(demand.setting - demand.position) <= demand.step / 2 ? null : `CMD ${demand.settingText}`,
+      throttled: (listed.throttledUnder ?? []).map(rule => `Throttled under ${rule.label}`),
       options: control.options.map((option, index) => optionView(listed, option, index, current, now)),
       ...(demand === undefined ? {} : { demand }),
       withheldOptions: control.withheldOptions.map(option => ({ word: option.word, reason: option.reason })),
@@ -555,6 +558,8 @@ export interface ItemBadges {
   readonly interlock: { readonly title: string } | null
   /** Another actor's command travels on it. */
   readonly commandLocked: { readonly title: string } | null
+  /** A person sets its demand between the ends a standing actuation drove it to: "Throttled under <label>". */
+  readonly throttled: { readonly text: string } | null
 }
 
 const byWhom = (record: OperationRecord, proposals: ReadonlyArray<ProcessPlantProposal>): { readonly text: 'OP' | 'AI' | 'OP·AI'; readonly words: string } => {
@@ -615,6 +620,10 @@ export const itemBadges = (
       title: pending.map(proposal => `${proposal.word} proposed by ${proposal.proposer.origin === 'ai' ? 'AI' : 'an operator'} (${proposal.proposer.actorId}) at ${now.clock(proposal.proposedAtElapsedMs)}, expires ${now.clock(proposal.expiresAtElapsedMs)}`).join('\n'),
     },
     interlock: held.length === 0 ? null : { title: [...new Set(held)].join('\n') },
+    throttled: (() => {
+      const lines = [...new Set(view.controls.flatMap(control => control.throttled))]
+      return lines.length === 0 ? null : { text: lines.join('; ') }
+    })(),
     commandLocked: others.length === 0 ? null : { title: others.map(({ option, record }) => `${option.action}: ${record.actorId}'s command travels since ${now.clock(record.elapsedMs)}`).join('\n') },
   }
 }
@@ -672,9 +681,10 @@ export const operationsLogRows = (
     const found = controlOf(record.path)
     const option = found === undefined ? undefined : optionOf(found.control, record.value)
     const proposal = record.proposalId === undefined ? undefined : proposals.find(candidate => candidate.id === record.proposalId)
-    const chain = record.kind === 'approval'
+    const how = record.kind === 'approval'
       ? `approved${proposal === undefined ? ' proposal' : ` ${actorWords(proposal.proposer.origin, proposal.proposer.actorId)}'s proposal of ${now.clock(proposal.proposedAtElapsedMs)}`}`
       : record.kind === 'ramp' ? 'ramp' : 'direct command'
+    const chain = record.throttledUnder === undefined ? how : `${how} · ${record.throttledUnder.map(rule => `throttled under ${rule.label}`).join(', ')}`
     const result = (() => {
       if (found === undefined || option === undefined) return 'accepted'
       if (latestOn.get(record.path) !== record) return 'accepted; a later command followed'

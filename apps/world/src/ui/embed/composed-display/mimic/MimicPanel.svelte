@@ -314,7 +314,7 @@
   const badgeWords = (item: MimicDrawnItem): string => {
     const carried = badges?.get(item.id)
     if (carried === undefined) return ''
-    return [carried.proposal?.title, carried.attribution?.title, carried.interlock?.title, carried.commandLocked?.title].filter((line): line is string => line !== undefined).map(line => `\n${line}`).join('')
+    return [carried.proposal?.title, carried.attribution?.title, carried.throttled?.text, carried.interlock?.title, carried.commandLocked?.title].filter((line): line is string => line !== undefined).map(line => `\n${line}`).join('')
   }
   const popoverFlap = (item: MimicDrawnItem): string => {
     const alert = alertOf(item)
@@ -613,6 +613,7 @@
           {item}
           state={stateWordOf(item)}
           alert={alertWordsOf(item)}
+          note={badges?.get(item.id)?.throttled?.text ?? null}
           sections={sectionsFor(item, 'operate')}
           {context}
           place={{ x: overlay.x, y: overlay.y }}
@@ -637,6 +638,7 @@
         {item}
         state={stateWordOf(item)}
         alert={alertWordsOf(item)}
+        note={badges?.get(item.id)?.throttled?.text ?? null}
         sections={popoverSections}
         {context}
         {place}

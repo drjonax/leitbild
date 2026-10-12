@@ -318,7 +318,7 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     const item = plant.listed(plant.itemOffering(blockValve.path))
     const record = (origin: OperationRecord['origin']): OperationRecord => ({ commandId: `cmd-${origin}`, path: blockValve.path, value: 0, origin, actorId: origin === 'system' ? 'scenario' : `${origin}-1`, elapsedMs: 1_000, kind: 'write' })
     const badgesFor = (origin: OperationRecord['origin']) => itemBadges(item, { operations: [record(origin)], proposals: [], ownCommands: new Set(), now: plant.now() })
-    expect(badgesFor('system')).toEqual({ progress: null, attribution: null, proposal: null, interlock: null, commandLocked: null })
+    expect(badgesFor('system')).toEqual({ progress: null, attribution: null, proposal: null, interlock: null, commandLocked: null, throttled: null })
     expect(badgesFor('person').attribution?.text).toBe('OP')
     expect(badgesFor('ai').attribution?.text).toBe('AI')
   })
@@ -415,5 +415,19 @@ describe('demand controls and valve positions', () => {
     expect(item.controls).toEqual([])
     expect(item.position).toMatch(/%$/)
     expect(item.auto[0]?.manual).toContain('AUTO/MAN mode')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('a setting between the ends an actuation drove the valve to reads "Throttled under" the actuation, in World\'s label, in its row, on its symbol and in the log', () => {
+    const plant = unit()
+    plant.step()
+    const valve = plant.tag('AFW-A-CV')
+    const listed = plant.listed(plant.itemOffering(valve.path))
+    const under = { ruleId: 'afw-actuation', label: 'AFW actuation on SG low-low level', action: 'AFW START' }
+    const throttled = { ...listed, offered: listed.offered.map(entry => (entry.control.path === valve.path ? { ...entry, throttledUnder: [under] } : entry)) }
+    const control = itemControlView(throttled, plant.now()).controls.find(candidate => candidate.path === valve.path)!
+    expect(control.throttled).toEqual(['Throttled under AFW actuation on SG low-low level'])
+    expect(itemBadges(throttled, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled).toEqual({ text: 'Throttled under AFW actuation on SG low-low level' })
+    const record: OperationRecord = { commandId: 'cmd-throttle', path: valve.path, value: 0.4, origin: 'person', actorId: 'op-1', elapsedMs: 1_000, kind: 'write', throttledUnder: [under] }
+    expect(operationsLogRows([record], [], [throttled], plant.now())[0]).toMatchObject({ action: expect.stringMatching(/^OPEN to 40 % AFW-A-CV/), chain: 'direct command · throttled under AFW actuation on SG low-low level' })
   }, PLANT_HANG_GUARD_MS)
 })
