@@ -21,6 +21,7 @@ export const einsatzPack: WorldPack = {
   ...einsatzPackView,
   scenarioConfigSchema: einsatzConfigSchema,
   authoring: einsatzAuthoring,
+  knowledge: { wikiRefs: [{ name: 'Einsatz knowledge', url: '/wiki?path=world%2Fpacks%2Feinsatz%2Findex.md' }] },
   roleAware: true,
   validateScenarioConfig: validateEinsatzScenarioConfig,
   scenarioRoles: einsatzScenarioRoles,

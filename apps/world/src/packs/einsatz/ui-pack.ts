@@ -202,7 +202,7 @@ export const einsatzPackView = {
     version: '1.0.0',
     name: 'Einsatz',
     description: 'Dispatch and command of configured units: unit types, typed properties, task templates, load classes and wording are scenario data. Units move by road or in straight lines, serve and carry counted demand to receiving sites, and follow closed standing orders.',
-    contributions: ['runtime', 'scenario', 'presentation', 'targeting'],
+    contributions: ['runtime', 'knowledge', 'scenario', 'presentation', 'targeting'],
   }),
   runtime: {
     runtimes: [{ id: einsatzRuntimeId, version: '1.0.0', label: 'Local Einsatz runtime', kind: 'local', clock: 'simulation' }],
