@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
-import { distinguishingNames, idleText, joinedName, limitLabelParts, limitLabelRanks, limitLines, limitLook, limitSeverity, mergedText, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
+import { distinguishingNames, idleText, joinedName, limitLabelParts, limitLabelRanks, limitLines, limitLook, limitSeverity, mergedText, stackLabels, TREND_GUTTER, trendGutter } from '../src/ui/embed/composed-display/limit-labels.ts'
 import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
@@ -553,5 +553,21 @@ describe('limit labels', () => {
     expect(mergedText(['BRK-EDG-A-POS CLOSED, BRK-OFFSITE-A-POS OPEN', 'BRK-EDG-B-POS CLOSED, BRK-OFFSITE-B-POS OPEN'])).toBeNull()
     // compare-sg-levels: LO 30 and LO-LO 20 both lie below the scale; given highest first and wanting one edge, they read down in value order.
     expect(stackLabels([slot('lo-30', 120, 1, 'low', 12), slot('lo-lo-20', 120, 0, 'low', 24)], { start: 0, end: 120 }).map(label => [label.key, label.start])).toEqual([['lo-30', 84], ['lo-lo-20', 96]])
+  })
+
+  test('the strips of one trend share one gutter, as wide as the widest label any of them writes, so their times line up', () => {
+    // HMI review of run 25 (porv-open, power-stable, sg-b-runback): each strip's gutter was as wide as its own labels,
+    // so the "now" of a strip without limits stood right of the one above it. A measure of 6 px a character.
+    const measure = (text: string): number => text.length * 6
+    const strip = (unit: 'degC' | 'MPa', ...limits: ReadonlyArray<ComposedDisplayThreshold>) => ({ unit, thresholds: limits.map(limit => ({ ...limit, ruleIds: [limit.ruleId], signals: ['X'] })) })
+    const subcooling = strip('degC', thresholds[0]!, { ...thresholds[0]!, ruleId: 'trip-low-2', value: 16.7, action: 'RX TRIP + AFW START' })
+    const pressure = strip('MPa')
+    const controlOnly = strip('MPa', thresholds[2]!)
+    // "▲ LO-LO 16.7 · RX TRIP + AFW START (+9)" is 39 characters: 234 px and the inset, within the bound.
+    expect(trendGutter([subcooling], measure)).toBe(TREND_GUTTER.max)
+    expect(trendGutter([subcooling, pressure], measure)).toBe(trendGutter([subcooling], measure))
+    expect(trendGutter([strip('degC', thresholds[1]!), pressure], measure)).toBe('▲ LO 30 · ALM (+9)'.length * 6 + 14)
+    // A strip without limits, or with control set points only (marked on the axis, not named), takes the least width.
+    expect(trendGutter([pressure, controlOnly], measure)).toBe(TREND_GUTTER.min)
   })
 })

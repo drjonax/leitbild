@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-  import { displayValue, formatQuantity, limitOrderName, logarithmicSpan, offScale, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatQuantity, limitOrderName, logarithmicSpan, offScale, readingText, shownReading, simulationClock, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import {
     coincidentPens,
     limitInScale,
@@ -33,6 +33,7 @@
     issuedAt,
     runStartedAt,
     height,
+    gutter,
     timeAxis,
     adviceLabel,
     mode,
@@ -53,6 +54,8 @@
     /** Simulation time the Run started, when known; history cannot reach before it. */
     runStartedAt: number | null
     height: number
+    /** The right gutter's width, shared by the strips of one trend so their plots line up (limit-labels.ts trendGutter). */
+    gutter: number
     timeAxis: boolean
     adviceLabel: boolean
     /** The Plant's operating mode in the latest sample; undefined before it or where the Plant declares none. */
@@ -108,7 +111,6 @@
   /** How far a label's continued rows are indented. */
   const CONTINUED = 8
   const measureLabel = textMeasure(panelFont(10, 700))
-  const rowText = (threshold: ComposedTrendThreshold): string => thresholdName(threshold, strip.unit, { withUnit: false })
   // A part's bracket of what it waits for is a part of its own, split at words where it is longer than the gutter.
   type LabelPart = Omit<LimitLabelPart<ComposedTrendThreshold>, 'waits'>
   const labelParts = (line: (typeof lines)[number]): ReadonlyArray<LabelPart> => limitLabelParts(line, lines, mode, gates).flatMap(part => [
@@ -139,10 +141,6 @@
     }
     return rows
   }
-  // The right gutter is as wide as its widest label, room for a fold count included, within bounds.
-  const GUTTER_MIN = 118
-  const GUTTER_MAX = 190
-  const gutter = $derived(Math.min(GUTTER_MAX, Math.max(GUTTER_MIN, Math.ceil(Math.max(0, ...limitThresholds.map(threshold => measureLabel(`▲ ${rowText(threshold)} (+9)`)))) + 14)))
   const headOf = (line: (typeof lines)[number], edge: 'above' | 'below' | null): string =>
     `${edge === null ? '' : edge === 'above' ? '▲ ' : '▼ '}${limitOrderName(line.members[0]!)} ${displayValue(line.value, strip.unit)} · `
   const pad = $derived({ left: 44, right: gutter, top: 18, bottom: timeAxis ? 22 : 0 })

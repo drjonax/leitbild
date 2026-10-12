@@ -1,5 +1,5 @@
-import type { ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-import { bySeverity, limitOrderName } from '../../../packs/process-plant/displays/display-text.ts'
+import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
+import { bySeverity, limitOrderName, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
 import { gatesHold, limitInForce, type GateStates, type PlantModeNow } from '../../../packs/process-plant/displays/trend-reading.ts'
 
@@ -64,6 +64,23 @@ export const stackLabels = (
     folded.get(nearest.key)!.push(slot.key)
   }
   return ordered.map((slot, index) => ({ key: slot.key, start: starts[index]!, folded: folded.get(slot.key)! }))
+}
+
+/** The bounds of a trend's right gutter, where its limits are named. */
+export const TREND_GUTTER = { min: 118, max: 190 } as const
+
+/**
+ * How wide a trend's right gutter is: as wide as the widest limit label any
+ * of its strips writes there (an edge mark and a fold count included),
+ * within bounds. The strips of one trend share it, so their plots are one
+ * width and a time stands at one place in each (HMI review of run 25: the
+ * "now" of stacked strips stood apart, each gutter as wide as its own labels).
+ */
+export const trendGutter = (strips: ReadonlyArray<Pick<ComposedTrendStrip, 'unit' | 'thresholds'>>, measure: (text: string) => number): number => {
+  const widest = Math.max(0, ...strips.flatMap(strip => strip.thresholds
+    .filter(threshold => threshold.kind !== 'control')
+    .map(threshold => measure(`▲ ${thresholdName(threshold, strip.unit, { withUnit: false })} (+9)`))))
+  return Math.min(TREND_GUTTER.max, Math.max(TREND_GUTTER.min, Math.ceil(widest) + 14))
 }
 
 export interface RankedLimit {

@@ -17,7 +17,9 @@
   import SafetyFunctionChips from './SafetyFunctionChips.svelte'
   import MimicPanel from './mimic/MimicPanel.svelte'
   import TrendPanel from './TrendPanel.svelte'
+  import { trendGutter } from './limit-labels.ts'
   import { actuatedNames, agoText, alarmAge, bannerTrip, sampledGates } from './panel-presenters.ts'
+  import { panelFont, textMeasure } from './text-measure.ts'
   import { trendWindowMs } from './trend-geometry.ts'
 
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()
@@ -185,6 +187,9 @@
     return { text: 'Connecting', tone: 'quiet' }
   })
 
+  // A trend's strips name their limits in one gutter width (TrendPanel's limit labels), so their times line up.
+  const measureLimitLabel = textMeasure(panelFont(10, 700))
+
   // Recorded history cannot reach before the Run started; trends say so.
   const runStartedAt = $derived(snapshot?.latest === undefined ? null : Date.parse(snapshot.latest.simulationTime) - snapshot.latest.plantElapsedMs)
   const activeRuleIds = $derived(new Set((snapshot?.latest?.alarms ?? []).filter(alarm => alarm.active).map(alarm => alarm.ruleId)))
@@ -313,6 +318,7 @@
         {#if panel.kind === 'trend'}
           {@const charts = composedTrendStripHeights(panel.strips.length, panel.plot)}
           {@const windowMs = trendWindowMs(panel.horizonMs, now, runStartedAt)}
+          {@const gutter = trendGutter(panel.strips, measureLimitLabel)}
           <div>
             {#each panel.strips as strip, stripIndex (strip.pens[0]!.measurement)}
               <TrendPanel
@@ -326,6 +332,7 @@
                 {issuedAt}
                 {runStartedAt}
                 height={charts[stripIndex]!}
+                {gutter}
                 timeAxis={stripIndex === panel.strips.length - 1}
                 adviceLabel={stripIndex === 0}
                 mode={snapshot.latest?.mode}
