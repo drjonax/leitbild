@@ -403,6 +403,52 @@ describe('Workspace Host with real Modules', () => {
     expect(afterWeather.success).toBe(true)
     expect((afterWeather.data as { state: { surface: { ice: number } } }).state.surface.ice).toBeCloseTo(0.8, 1)
 
+    // An Einsatz Run starts through the Host broker like any built-in
+    // Scenario: the open-mode supply-run, where every caller plays everything.
+    // The Workspace-scoped Assistant discovers its tasks, asks for a
+    // recommendation, sends it, sees the task served, and a second send of the
+    // same unit is refused with the Pack's code and words.
+    const einsatzCatalog = await fetch(`${baseUrl}/api/workspaces/${workspace.id}/definitions`)
+    expect(einsatzCatalog.status).toBe(200)
+    const supplyScenario = (await einsatzCatalog.json() as {
+      definitions: Array<{ ref: Record<string, string>; currentRevisionId: string }>
+    }).definitions.find(definition => definition.ref.type === 'world.scenario' && definition.ref.id === 'supply-run')!
+    expect(supplyScenario).toBeDefined()
+    const supplyStart = await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities/world.scenario.start/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ definition: { ...supplyScenario.ref, revisionId: supplyScenario.currentRevisionId }, input: {} }),
+    })
+    expect(supplyStart.status).toBe(200)
+    const supplyRunId = (await supplyStart.json() as { result: { id: string } }).result.id
+    const workspaceAssistantContext = { callerId: generalAssistant.id, callerName: generalAssistant.name, roomId: assistantRoomId }
+    const supplyTarget = { kind: 'resource' as const, ref: { workspaceId: workspace.id, moduleId: 'world', type: 'world.simulation-run', id: supplyRunId } }
+    const onSupplyRun = async (operationId: string, input: unknown) => {
+      const response = await invoke!.execute({ calls: [{ key: 'result', operationId, target: supplyTarget, input }] }, workspaceAssistantContext)
+      expect(response.success).toBe(true)
+      return (response.data as { results: Array<{ success: boolean; data?: unknown; error?: string }> }).results[0]!
+    }
+    const einsatzConfiguration = await onSupplyRun('world.einsatz.configuration', {})
+    expect(einsatzConfiguration).toMatchObject({ success: true, data: { revision: 0 } })
+    expect((einsatzConfiguration.data as { config: { taskTemplates: unknown[] } }).config.taskTemplates.length).toBeGreaterThan(0)
+    const searchedTasks = await onSupplyRun('world.simulation-run.objects.search', { packId: 'einsatz', kind: 'incident' })
+    expect(searchedTasks.success).toBe(true)
+    const [taskId, otherTaskId] = (searchedTasks.data as { objects: Array<{ id: string }> }).objects.map(object => object.id)
+    expect(taskId).toBeDefined()
+    expect(otherTaskId).toBeDefined()
+    const recommended = await onSupplyRun('world.einsatz.recommend', { taskId })
+    expect(recommended).toMatchObject({ success: true, data: { taskId, proposal: { covers: true } } })
+    const proposal = (recommended.data as { proposal: { units: Array<{ unitId: string }> } }).proposal.units.map(unit => unit.unitId)
+    expect(proposal.length).toBeGreaterThan(0)
+    expect(await onSupplyRun('world.einsatz.unit.send', { units: proposal, to: { taskId } })).toMatchObject({ success: true, data: { ok: true } })
+    expect(await onSupplyRun('world.einsatz.recommend', { taskId })).toMatchObject({ success: true, data: { taskId, need: null } })
+    const sentUnit = (await onSupplyRun('world.simulation-run.objects.search', { packId: 'einsatz', text: proposal[0] })).data as { objects: Array<{ id: string; status: string }> }
+    const committedUnit = sentUnit.objects.find(object => object.id === proposal[0])
+    expect(committedUnit).toBeDefined()
+    expect(['mobilizing', 'en-route']).toContain(committedUnit!.status)
+    expect(await onSupplyRun('world.einsatz.unit.send', { units: proposal, to: { taskId: otherTaskId } }))
+      .toMatchObject({ success: false, error: expect.stringContaining('unit_committed:') })
+
     const deleteRun = await fetch(
       `${baseUrl}/api/workspaces/${workspace.id}/capabilities/world.simulation-run.delete/invoke`,
       {
