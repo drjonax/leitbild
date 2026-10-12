@@ -207,7 +207,7 @@ describe('Grid live layer: MapLibre layers', () => {
     const group = electricGridPackView.presentation.mapLayerGroups!.find(candidate => candidate.id === gridLiveLayerGroupId)!
     expect(gridLiveMapLayer.layerGroupId).toBe(gridLiveLayerGroupId)
     expect(layerIdsMatching(ids, group.layerIdPattern)).toEqual(ids)
-    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'equivalent-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
+    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
     expect(electricGridPackView.presentation.liveMapLayers).toEqual([gridLiveMapLayer])
     expect(electricGridPackView.presentation.mapLegends).toContain(gridLiveStateLegend)
   })
@@ -297,7 +297,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     // The first branch in id order is the curated Follo – Lambertseter equivalent; lines follow their mapped routes.
     expect(norway.model.branches[0]!.id).toBe('branch:curated-follo-lambertseter-47kv-equivalent')
     expect(drawnAs(norway.model.branches.find(branch => branch.kind === 'ac_line' && branch.id.startsWith('branch:osm-'))!.id)).toBe('Mapped route')
-    expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a mapped line)')
+    expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a physical line)')
     expect(drawnAs(norway.model.branches.find(branch => branch.id.startsWith('branch:transformer-'))!.id)).toBe('Transformer, drawn between its buses')
     expect(state.hoverCard(0)!.fields.find(field => field.key === 'voltage')!.value).toBe('420 kV – 132 kV, equivalent of the sub-transmission between them')
   })
