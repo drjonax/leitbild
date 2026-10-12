@@ -6,6 +6,7 @@ import {
   procedureBranchActionText,
   procedureActorIsAi,
   procedureActorLabel,
+  procedureCompletionWarning,
   procedureDecisionTargetText,
   procedureDecisionTone,
   procedureDriverView,
@@ -263,5 +264,19 @@ describe('procedure run selectors', () => {
     expect(procedureDriverView({ ...personRun, stepStates: [] })?.handBackTo).toBeNull()
     expect(procedureDriverView({ ...aiRun, status: 'completed' })).toBeNull()
     expect(procedureDriverView(activeRun)).toBeNull()
+  })
+
+  test('completing away from an END step names the steps still open; at an END step it says nothing', () => {
+    const steps = Array.from({ length: 6 }, (_, index) => ({
+      id: `s${index + 1}`, label: String(index + 1), title: `Step ${index + 1}`, level: 2, blocks: [], tagIds: [],
+      branches: index === 3 ? [{ label: 'Done', target: 'END', targetKind: 'end' as const, tagIds: [], sourceLine: index * 10 + 5 }] : [],
+      sourceLine: index * 10 + 1, sourceEndLine: index * 10 + 9,
+    }))
+    const document = { ...procedure, steps } satisfies ProcedureDocument
+    const state = (stepId: string, extra: Record<string, unknown>) => ({ stepId, assessment: 'blank' as const, favorite: false, updatedAt: at, updatedBy: actor, ...extra })
+    const run = { ...activeRun, currentStepId: 's2', stepStates: [state('s1', { decision: { branchIndex: 0, targetKind: 'step' as const, target: 's2', selectedBy: actor, simulationTime: at } }), state('s5', { assessment: 'complete' })] } satisfies ProcedureRunState
+    expect(procedureCompletionWarning(document, run)).toBe('E-0 is at step 2, not at an END step. Steps 2–4, 6 are still open.')
+    expect(procedureCompletionWarning(document, { ...run, currentStepId: 's4' })).toBeNull()
+    expect(procedureCompletionWarning(document, { ...run, currentStepId: 's6' })).toBeNull()
   })
 })

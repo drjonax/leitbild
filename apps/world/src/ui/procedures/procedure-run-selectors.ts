@@ -349,6 +349,25 @@ export const procedureStepRows = (
   return rows
 }
 
+/** A step that may close its procedure: one with an END branch, or the last step. */
+export const procedureStepIsTerminal = (document: ProcedureDocument, step: ProcedureStep): boolean =>
+  step.branches.some(branch => branch.targetKind === 'end') || document.steps.at(-1)?.id === step.id
+
+/**
+ * What completing a Run away from a terminal step leaves undone: the steps neither
+ * decided, ticked nor bypassed. Null when the Run stands at a terminal step.
+ */
+export const procedureCompletionWarning = (document: ProcedureDocument, run: ProcedureRunState): string | null => {
+  const current = procedureCurrentStep(run, document)?.step
+  if (current && procedureStepIsTerminal(document, current)) return null
+  const states = new Map(run.stepStates.map(state => [state.stepId, state]))
+  const open = procedureStepRows(document, run).flatMap(row => row.kind === 'step' && row.role !== 'decided'
+    && (states.get(row.step.id)?.assessment ?? 'blank') === 'blank' ? [row.step] : [])
+  const where = current ? `at step ${current.label}, not at an END step` : 'not at an END step'
+  if (open.length === 0) return `${document.procedureId} is ${where}.`
+  return `${document.procedureId} is ${where}. ${open.length === 1 ? `Step ${open[0]!.label} is` : `Steps ${procedureStepRangeText(open, document)} are`} still open.`
+}
+
 /** Step labels as short ranges in document order: "5–10, 12". */
 export const procedureStepRangeText = (steps: ReadonlyArray<ProcedureStep>, document: ProcedureDocument): string => {
   const indices = steps.map(step => document.steps.indexOf(step)).filter(index => index >= 0).sort((left, right) => left - right)

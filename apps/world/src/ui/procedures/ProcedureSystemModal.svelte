@@ -46,6 +46,7 @@
     procedureBranchActionText,
     procedureActorIsAi,
     procedureActorLabel,
+    procedureCompletionWarning,
     procedureDecisionTargetText,
     procedureDecisionTone,
     procedureDriverView,
@@ -198,6 +199,8 @@
   let scrollFrame: number | null = null
   let catalogRequest = 0
   let procedureDocumentBodyElement = $state<HTMLDivElement | null>(null)
+  /** The unit the shown document was loaded for; its scroll position is remembered under that unit. */
+  let documentScope: ProcedureRunScope | null = null
   const procedureScrollPositions = new Map<string, number>()
 
   const currentUnitContext = $derived(unitContexts.find(unit => unit.plantId === plantId) ?? {
@@ -503,12 +506,14 @@
       }
       const nextDocument = await readDocumentFor(procedureId as ProcedureId, resolvedSourceConfig)
       if (disposed || requestId !== latestProcedureLoadRequest) return
+      const unitChanged = documentScope !== null && documentScope.plantId !== targetScope.plantId
       document = nextDocument
+      documentScope = targetScope
       loading = false
       if (catalog && !releasePrefetch) releasePrefetch = session.retainPrefetch(catalog)
       loadingProcedureId = null
       setLoadStage('document', 'done', `${nextDocument.steps.length} steps`)
-      await restoreProcedurePosition(nextDocument, targetScope, requestId)
+      await restoreProcedurePosition(nextDocument, targetScope, requestId, unitChanged)
       if (disposed || requestId !== latestProcedureLoadRequest) return
       const loadTagValidation = async (): Promise<ReadonlyMap<string, ProcedureTagValidation>> => {
         try {
@@ -591,9 +596,9 @@
   }
 
   const rememberCurrentProcedureScroll = (): void => {
-    if (!document || !procedureDocumentBodyElement) return
+    if (!document || !documentScope || !procedureDocumentBodyElement) return
     procedureScrollPositions.set(
-      procedureViewKey(document, currentScope),
+      procedureViewKey(document, documentScope),
       procedureDocumentBodyElement.scrollTop,
     )
   }
@@ -619,6 +624,7 @@
     nextDocument: ProcedureDocument,
     scope: ProcedureRunScope,
     requestId = latestProcedureLoadRequest,
+    unitChanged = false,
   ): Promise<void> => {
     await tick()
     if (disposed || requestId !== latestProcedureLoadRequest || !procedureDocumentBodyElement) return
@@ -632,7 +638,8 @@
       scrollToProcedureStep(sharedStep.step.id, 'auto')
       return
     }
-    procedureDocumentBodyElement.scrollTop = procedureScrollPositions.get(
+    // A unit hop opens where that unit stands, else at the top: never at another unit's place.
+    procedureDocumentBodyElement.scrollTop = unitChanged ? 0 : procedureScrollPositions.get(
       procedureViewKey(nextDocument, scope),
     ) ?? 0
   }
@@ -946,9 +953,17 @@
       return `Confirm that you want to run ${document.procedureId} - ${document.title} on ${displayUnitName}.`
     }
     if (confirmation === 'completed') {
-      return `Confirm that ${document.procedureId} on ${displayUnitName} should be marked completed on step ${currentStep?.label ?? '-'}.`
+      const warning = selectedProcedureRun ? procedureCompletionWarning(document, selectedProcedureRun) : null
+      return warning ?? `${document.procedureId} on ${displayUnitName} is marked completed at step ${currentStep?.label ?? '-'}.`
     }
     return `Reset clears the current run state, step assessments, comments, and favorites for ${document.procedureId} on ${displayUnitName}.`
+  }
+
+  const procedureRunStatusLabel = (run: ProcedureRunState | null): string => {
+    if (run?.status === 'active') return 'Active'
+    if (run?.status === 'completed') return 'Completed'
+    if (run?.status === 'transferred') return 'Held'
+    return 'Not started'
   }
 
   const assessmentAfter = (assessment: ProcedureAssessment | undefined): ProcedureAssessment => {
@@ -1537,6 +1552,7 @@
           {#if document}
           <div class="procedure-document-toolbar">
             <div class="procedure-document-title">
+              <span class="procedure-unit-chip" title="Procedures in this window are for {displayUnitName}">{displayUnitName}</span>
               <h2>{document.procedureId} — {document.title}</h2>
               <span class="procedure-info-shell">
                 <button type="button" class="procedure-info-button" aria-label="About this procedure">
@@ -1556,23 +1572,28 @@
               <button type="button" class="procedure-source-icon" onclick={() => document && void loadBasis({ sourceId: document.source.sourceId, sourceRevision: document.source.revision, sourcePath: document.sourcePath, lineCount: 100 })} title="Read retained procedure source" aria-label="Read retained procedure source">
                 <ExternalLink size={15} aria-hidden="true" />
               </button>
-              <button
-                type="button"
-                class="procedure-step-counter"
-                disabled={currentProcedureStep === null}
-                title={currentProcedureStep ? `Scroll to ${procedureStepHoverLabel(currentProcedureStep.step)}` : 'No active procedure step'}
-                onclick={() => currentProcedureStep && scrollToProcedureStep(currentProcedureStep.step.id)}
-              >Step {currentProcedureStep?.step.label ?? '-'}/{document.steps.length}</button>
             </div>
             <div class="procedure-mode-actions">
+              <span class="procedure-status-pill {selectedProcedureRun?.status ?? 'idle'}">
+                <span class="procedure-status-dot" aria-hidden="true"></span>
+                {procedureRunStatusLabel(selectedProcedureRun)}
+                {#if currentProcedureStep}
+                  ·
+                  <button
+                    type="button"
+                    class="procedure-step-counter"
+                    title={`Scroll to ${procedureStepHoverLabel(currentProcedureStep.step)}`}
+                    onclick={() => currentProcedureStep && scrollToProcedureStep(currentProcedureStep.step.id)}
+                  >step {currentProcedureStep.step.label}/{document.steps.length}</button>
+                {/if}
+              </span>
               {#if completedRun}
-                <button type="button" class="completed" disabled>Completed</button>
-                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset{/if}</button>
+                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset…{/if}</button>
               {:else if activeRun}
-                <button type="button" class="run running" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'completed' }}>
-                  {#if pendingControl === 'complete'}{@render recordingNote()}{:else}<Play size={13} aria-hidden="true" /> Active{/if}
+                <button type="button" class="complete" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'completed' }}>
+                  {#if pendingControl === 'complete'}{@render recordingNote()}{:else}Complete…{/if}
                 </button>
-                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset{/if}</button>
+                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset…{/if}</button>
               {:else}
                 <button type="button" class="run" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'run' }}>
                   {#if pendingControl === 'run'}{@render recordingNote()}{:else}<Play size={13} aria-hidden="true" /> {selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'}{/if}

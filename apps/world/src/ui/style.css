@@ -3563,10 +3563,69 @@ body.rail-resizing {
 
 .procedure-document-title {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, auto) auto auto auto;
+  display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.procedure-document-title > * {
+  flex: none;
+}
+
+.procedure-document-title > h2 {
+  flex: 0 1 auto;
+}
+
+/* The unit this window shows, named before the document title so a hop is never missed. */
+.procedure-unit-chip {
+  padding: 3px 7px;
+  border-radius: 3px;
+  background: #1e3a8a;
+  color: #ffffff;
+  font-size: calc(12px * var(--procedure-font-scale));
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+/* Run status: a pill to read, not a button; its step part jumps to the current step. */
+.procedure-status-pill {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 13px;
+  background: #ffffff;
+  color: #334155;
+  font-size: calc(12px * var(--procedure-font-scale));
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.procedure-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.procedure-status-pill.active {
+  border-color: #15803d;
+  color: #14532d;
+}
+
+.procedure-status-pill.active .procedure-status-dot { background: #15803d; }
+.procedure-status-pill.transferred .procedure-status-dot { background: transparent; border: 2px solid #475569; }
+.procedure-status-pill.completed .procedure-status-dot { background: #475569; }
+
+.procedure-mode-actions .procedure-status-pill .procedure-step-counter {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .procedure-document-title h2 {
@@ -3764,6 +3823,7 @@ body.rail-resizing {
 .procedure-mode-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 7px;
 }
