@@ -595,11 +595,13 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
       const position = fid - refs.busStart
       const bus = geometry.buses[position]!
       const islandPosition = result.buses.island[position]!
+      const drawnAt = bus.external?.station === undefined ? [] : [packField('drawn', 'Drawn at', bus.external.station)]
       if (islandPosition === null && bus.external?.synchronous === true) {
         return {
           title: bus.label,
           fields: [
             packField('external', 'External system', `${bus.external.label}, behind AC ties`),
+            ...drawnAt,
             packField('voltage', 'Voltage level', `${bus.kv} kV`),
             packField('role', 'Connection', 'Separated from Norway: every tie to this boundary bus is open. The external system holds it energised; closing a tie is checked on frequency difference.'),
           ],
@@ -611,6 +613,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
           title: bus.label,
           fields: [
             ...(bus.external === undefined ? [] : [packField('external', 'External system', bus.external.label)]),
+            ...drawnAt,
             packField('role', 'Connection', 'HVDC terminal outside the modelled AC network and every island; the external system supplies or absorbs its links\' transfer'),
             ...links.map(({ link, linkPosition }) => {
               const linkState = result.hvdcLinks.state[linkPosition]!
@@ -627,6 +630,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
         title: bus.label,
         fields: [
           ...(bus.external === undefined ? [] : [packField('external', 'External system', `${bus.external.label}, behind AC ties`)]),
+          ...drawnAt,
           packField('voltage', 'Voltage level', `${bus.kv} kV`),
           packField('island', 'Island', `${island.id} (${result.islands.length} in the Grid)`),
           packField('energized', 'Energised', island.energized

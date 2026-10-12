@@ -4,6 +4,7 @@ import { interconnectorTableSchema, type GridInterconnectorTable } from '../sche
 import { majorSiteTableSchema, type GridMajorSiteTable } from '../schemas/grid-major-site.ts'
 import { referenceDispatchTableSchema, type GridReferenceDispatchTable } from '../schemas/grid-reference-dispatch.ts'
 import { priceAreas } from '../schemas/grid-ids.ts'
+import { continuationSnapshotSchema, type ContinuationSnapshot } from './interconnector-continuations.ts'
 
 // The explicit inputs of the Norway model build: the DS1 OSM sidecar and its manifest, the OSM
 // coastline of the same PBF, the DS2 registry and measurement snapshots of one date, and the curated tables in models/ (including the
@@ -200,9 +201,12 @@ export interface NorwayModelBuildInputs {
   readonly population: BuildFile<PopulationSnapshot>
   readonly hydroHeads: BuildFile<HydroHeadsSnapshot>
   readonly coastline: BuildFile<CoastlineSnapshot>
+  /** The interconnectors' routes beyond the extract (interconnector-continuations.ts): map geometry only. */
+  readonly continuations: BuildFile<ContinuationSnapshot>
 }
 
 export const buildFileSchemas = {
+  continuations: continuationSnapshotSchema,
   curations: gridCurationCollectionSchema,
   interconnectors: interconnectorTableSchema,
   majorSites: majorSiteTableSchema,

@@ -361,7 +361,8 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     for (const busId of ['bus:boundary-DE', 'bus:boundary-DK1', 'bus:boundary-GB', 'bus:boundary-NL']) {
       expect(before.featureStates.get(busFid(busId))).toMatchObject({ external: true, alarm: false, island: -1 })
       const links = norway.model.hvdcLinks.flatMap((link, position) => link.toBusId === busId ? [`link-${position}`] : [])
-      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'role', ...links])
+      // Drawn at the converter abroad its links' mapped routes reach.
+      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'drawn', 'role', ...links])
     }
     expect(before.featureStates.get(busFid('bus:boundary-SE3@420'))).toMatchObject({ external: false, energized: true })
 

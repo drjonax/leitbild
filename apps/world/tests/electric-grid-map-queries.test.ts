@@ -120,9 +120,22 @@ describe('Grid map query Capabilities', () => {
     for (const tie of geometry.branches.filter(branch => geometry.buses[branch.toBus]!.external !== undefined)) {
       expect(haversineKm(tie.path[tie.path.length - 2]!, tie.path[tie.path.length - 1]!)).toBeLessThan(5)
     }
+    // HVDC cables run on along their mapped routes abroad to their converters, where the map draws
+    // their boundary buses; the model keeps the buses where the cables leave the Norway extract.
+    const drawnAt = (busId: string) => geometry.buses.find(bus => bus.id === busId)!
+    expect(drawnAt('bus:boundary-DK1').external?.station).toBe('Jævnstrømsstation Tjele')
+    expect(drawnAt('bus:boundary-DE').external?.station).toBe('NordLink HVDC Wilster')
+    expect(drawnAt('bus:boundary-GB').external?.station).toBe('Cambois Converter Station')
+    expect(drawnAt('bus:boundary-NL').external?.station).toBe('NorNed Converterstation')
+    expect(drawnAt('bus:boundary-SE3@420').external?.station).toBeUndefined()
+    for (const link of geometry.hvdcLinks) expect(haversineKm(link.path[link.path.length - 1]!, geometry.buses[link.toBus]!.location)).toBeLessThan(0.5)
+    // Skagerrak, NordLink and North Sea Link used to stop at sea or at the shore, 40 km and more short of their converters.
+    for (const busId of ['bus:boundary-DK1', 'bus:boundary-DE', 'bus:boundary-GB']) {
+      expect(haversineKm(drawnAt(busId).location, model.buses.find(bus => bus.id === busId)!.location)).toBeGreaterThan(40)
+    }
     // Boundary buses name their external system; HVDC-only systems are asynchronous.
     const external = (busId: string) => geometry.buses.find(bus => bus.id === busId)!.external
-    expect(external('bus:boundary-DE')).toEqual({ label: 'Germany (Continental European synchronous area)', synchronous: false })
+    expect(external('bus:boundary-DE')).toEqual({ label: 'Germany (Continental European synchronous area)', synchronous: false, station: 'NordLink HVDC Wilster' })
     expect(external('bus:boundary-SE3@420')?.synchronous).toBe(true)
     expect(geometry.buses.filter(bus => bus.external !== undefined).map(bus => bus.id).every(id => id.startsWith('bus:boundary-'))).toBe(true)
     expect(ask<GridMapGeometryResult>(grid, geometryId).geometryDigest).toBe(geometry.geometryDigest)
@@ -273,11 +286,13 @@ const artifactFor = (model: GridModelDefinition, change: (artifact: Record<strin
     sourceBuildId: model.sourceBuild.id,
     simplificationMeters: 50,
     routes: 'mapped',
+    sources: [],
     branches: [
       { id: 'branch:osm-0123456789abcdef', path: [[10, 60], [10.5, 60.1], [11, 60]] },
       { id: 'branch:osm-fedcba9876543210', path: [[11, 60], [11.1, 60.5], [11, 61]] },
     ],
     hvdcLinks: [],
+    boundaryBuses: [],
   }
   change(artifact)
   return JSON.stringify(artifact)
@@ -319,6 +334,8 @@ describe('Grid geometry artifact', () => {
       .toThrow("$.sourceBuildId: must be the model's source build build-1")
     expect(() => load(model, artifactFor(model, artifact => { artifact.hvdcLinks = [{ id: 'hvdc:nordlink', path: [[10, 60], [8, 54]] }] })))
       .toThrow('$.hvdcLinks[0].id: hvdc:nordlink is not in the model')
+    expect(() => load(model, artifactFor(model, artifact => { artifact.boundaryBuses = [{ id: 'bus:boundary-DK1', location: [9.57, 56.48], station: { osmId: 'way/1', name: 'Tjele' } }] })))
+      .toThrow('$.boundaryBuses[0].id: bus:boundary-DK1 is not a boundary bus of the model')
     expect(() => load(model, artifactFor(model, artifact => { artifact.extra = true })))
       .toThrow('electric-grid.test.v2.geometry.json: invalid Grid Geometry')
     expect(() => load(model, '{')).toThrow('electric-grid.test.v2.geometry.json: invalid JSON')

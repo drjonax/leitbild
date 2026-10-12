@@ -55,6 +55,8 @@ export interface GridMapLinkEndpoints {
 export interface GridArtifactPaths {
   readonly branchPaths: ReadonlyMap<string, ReadonlyArray<LonLat>>
   readonly hvdcLinkPaths: ReadonlyMap<string, ReadonlyArray<LonLat>>
+  /** Boundary buses the map draws at a station abroad: its location and name. */
+  readonly boundaryBuses: ReadonlyMap<string, { readonly location: LonLat; readonly station: string }>
   readonly simplificationMeters: number
   readonly routes: 'mapped' | 'designed'
   readonly sha256: string
@@ -139,11 +141,13 @@ export const loadGridGeometryArtifact = (config: {
       to: boundaryBusIds.has(branch.toBusId) ? null : busLocation.get(branch.toBusId)!,
     }))),
     ...coverageIssues('hvdcLinks', artifact.hvdcLinks, config.hvdcLinks),
+    ...artifact.boundaryBuses.flatMap((entry, position) => boundaryBusIds.has(entry.id) ? [] : [{ path: ['boundaryBuses', position, 'id'], message: `${entry.id} is not a boundary bus of the model` }]),
   ]
   if (issues.length > 0) throw gridDataError(config.file, 'Grid Geometry', issues)
   return {
     branchPaths: new Map(artifact.branches.map(entry => [entry.id, entry.path])),
     hvdcLinkPaths: new Map(artifact.hvdcLinks.map(entry => [entry.id, entry.path])),
+    boundaryBuses: new Map(artifact.boundaryBuses.map(entry => [entry.id, { location: entry.location, station: entry.station.name ?? entry.station.osmId }])),
     simplificationMeters: artifact.simplificationMeters,
     routes: artifact.routes,
     sha256: sha256(config.text),
@@ -185,6 +189,7 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifacts: ReadonlyArr
   const geometryDigest = sha256(`${modelDigest}\n${artifacts.length === 0 ? 'bus-to-bus' : artifacts.map(artifact => artifact.sha256).join('\n')}`)
   const branchArtifact = (id: string): GridArtifactPaths | null => artifacts.find(artifact => artifact.branchPaths.has(id)) ?? null
   const linkPath = (id: string): ReadonlyArray<LonLat> | null => artifacts.find(artifact => artifact.hvdcLinkPaths.has(id))?.hvdcLinkPaths.get(id) ?? null
+  const drawnAt = (id: string) => artifacts.find(artifact => artifact.boundaryBuses.has(id))?.boundaryBuses.get(id)
   const busIndex = new Map(model.buses.map((bus, position) => [bus.id, position]))
   const location = (value: GridAssetLocation): [number, number] => roundPoint(value)
   const externalByBus = new Map(model.externalSystems.flatMap(system => system.boundaryBusIds.map(busId => [busId, system] as const)))
@@ -201,12 +206,14 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifacts: ReadonlyArr
       simplificationMeters: artifacts[0]?.simplificationMeters ?? null,
       buses: model.buses.map(bus => {
         const external = externalByBus.get(bus.id)
+        // A boundary bus is drawn at the station abroad its first interconnector reaches, where the artifact says.
+        const drawn = drawnAt(bus.id)
         return {
           id: bus.id,
           label: bus.label,
           kv: bus.nominalKv,
-          location: location(bus.location),
-          ...(external === undefined ? {} : { external: { label: external.label, synchronous: external.synchronous } }),
+          location: drawn === undefined ? location(bus.location) : roundPoint(drawn.location),
+          ...(external === undefined ? {} : { external: { label: external.label, synchronous: external.synchronous, ...(drawn === undefined ? {} : { station: drawn.station }) } }),
         }
       }),
       branches: model.branches.map(branch => {

@@ -3,12 +3,13 @@ import type { LonLat } from './geometry.ts'
 import type { PreparedInterconnector, PreparedInterconnectors } from './interconnectors.ts'
 import type { TopologyLedger } from './ledger.ts'
 import { describeNode, type LevelDangling, type LevelLink, type LevelsResult } from './levels.ts'
+import type { TopologyForeignEnd } from './result.ts'
 
 // AC ties: the listed ways must all be in one or more corridors that start at the listed Norwegian
 // station and end at a free way end (the mapped line leaves the extract abroad). Such a corridor
 // becomes a branch to the area's boundary bus; anything else is ledgered, never guessed.
 
-export type AcTie = { readonly link: LevelLink; readonly entry: PreparedInterconnector; readonly foreignEnd: LonLat }
+export type AcTie = { readonly link: LevelLink; readonly entry: PreparedInterconnector; readonly foreignEnd: TopologyForeignEnd }
 
 export type AcTieResult = {
   readonly ties: ReadonlyArray<AcTie>
@@ -67,7 +68,7 @@ export const resolveAcTies = (
       ties.push({
         link: { id: syntheticId, a: stub.anchor!, b: `B|${entry.id}`, chain: stub.chain, kv },
         entry,
-        foreignEnd: coordinateOf(stub.danglingKeys[0]!),
+        foreignEnd: { key: stub.danglingKeys[0]!, location: coordinateOf(stub.danglingKeys[0]!) },
       })
       syntheticId -= 1
     }

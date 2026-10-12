@@ -20,8 +20,12 @@ export const gridMapGeometryResultSchema = z.object({
     id: z.string(),
     label: z.string(),
     kv: finite,
-    location: lonLat,
-    external: z.object({ label: z.string(), synchronous: z.boolean() }).strict().optional()
+    location: lonLat.describe('Where the map draws the bus: a boundary bus at the station abroad its first interconnector reaches.'),
+    external: z.object({
+      label: z.string(),
+      synchronous: z.boolean(),
+      station: z.string().optional().describe('The station abroad where the map draws this boundary bus: the one its first interconnector\'s mapped route reaches. The model places the bus where that interconnector leaves the Norway extract.'),
+    }).strict().optional()
       .describe('Only on a boundary bus of an external system: synchronous, the Nordic equivalent behind AC ties; asynchronous, a system reached only by HVDC links, outside the modelled AC network.'),
   }).strict()),
   branches: z.array(z.object({

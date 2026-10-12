@@ -8,7 +8,8 @@
 //     --major-sites <norway-major-sites.json> --reference-dispatch <norway-reference-dispatch.json>
 //     --population <snapshots/ssb-population-grid/YYYYMMDD/population-cells.json> \
 //     --hydro-heads <snapshots/nve-hydro-heads/YYYYMMDD/hydro-heads.json> \
-//     --coastline <coastline.json from snapshot-osm-coastline.ts, of the sidecar's PBF> [--out <directory>]
+//     --coastline <coastline.json from snapshot-osm-coastline.ts, of the sidecar's PBF> \
+//     --continuations <norway-interconnector-continuations.json from snapshot-interconnector-continuations.ts> [--out <directory>]
 //
 // The sidecar manifest is read from beside the sidecar. Exit codes: 0 built and audit passed,
 // 1 built but the audit did not pass, 2 invalid invocation or input.
@@ -78,6 +79,7 @@ const main = async (): Promise<void> => {
       population: { type: 'string' },
       'hydro-heads': { type: 'string' },
       coastline: { type: 'string' },
+      continuations: { type: 'string' },
       golden: { type: 'string', default: join(modelsDirectory, 'norway-grid-golden.json') },
       out: { type: 'string', default: modelsDirectory },
     },
@@ -119,6 +121,7 @@ const main = async (): Promise<void> => {
     population: await readValidated(resolve(required('population')), populationSnapshotSchema),
     hydroHeads: await readValidated(resolve(required('hydro-heads')), hydroHeadsSnapshotSchema),
     coastline: await readValidated(resolve(required('coastline')), coastlineSnapshotSchema),
+    continuations: await readValidated(resolve(required('continuations')), buildFileSchemas.continuations),
   }
   const read = performance.now()
   const built = buildNorwayGridModel(inputs)
@@ -150,6 +153,7 @@ const main = async (): Promise<void> => {
   console.log(`built ${model.id} ${model.sourceBuild.id}: ${model.buses.length} buses, ${model.branches.length} branches, ${model.hvdcLinks.length} HVDC links, ${model.externalSystems.length} external systems, ${model.generators.length} generators, ${model.loads.length} loads, ${model.shunts.length} shunts`)
   console.log(`time: read ${((read - started) / 1000).toFixed(2)} s, build ${((compiled - read) / 1000).toFixed(2)} s, audit ${((audited - compiled) / 1000).toFixed(2)} s, write ${((written - audited) / 1000).toFixed(2)} s`)
   for (const [name, text] of files) console.log(`  ${name}: ${(Buffer.byteLength(text) / 1024).toFixed(1)} KiB`)
+  for (const route of built.continuations) console.log(`continued ${route.interconnectorId}: ${route.osmWayIds.length} ways abroad to ${route.station.name ?? route.station.osmId} (${route.station.osmId})${route.station.namedInTable ? '' : ', not the station the interconnector table names'}`)
   for (const route of built.haldenRoutes) console.log(`designed route ${route.id}: ${route.corridorKm} km along ${route.corridorIds.length} corridors, ${route.spurKm} km of spur`)
   for (const check of report.checks) console.log(`[${check.status.toUpperCase()}] ${check.id}: ${check.summary}`)
   console.log(`audit verdict: ${report.verdict.toUpperCase()}`)

@@ -15,6 +15,16 @@ const pathEntry = (id: RegExp, subject: string) => z.object({
   path,
 }).strict()
 
+/** A source of map data beyond the model's own, such as the routes of interconnectors abroad. */
+const sourceEntry = z.object({
+  sourceId: z.string().regex(/^\S+$/),
+  /** The OSM data time the source reflects. */
+  snapshotAt: z.iso.datetime(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  licence: z.literal('osm-odbl-1.0'),
+}).strict()
+export type GridGeometrySource = z.infer<typeof sourceEntry>
+
 const requireUniqueIds = (entries: ReadonlyArray<{ readonly id: string }>, field: string, context: z.core.$RefinementCtx<unknown>): void => {
   const seen = new Set<string>()
   entries.forEach((entry, index) => {
@@ -36,11 +46,22 @@ export const gridGeometryArtifactSchema = z.object({
    * (model-build/designed-routes.ts). No designed path stands for a real line.
    */
   routes: z.enum(['mapped', 'designed']),
+  sources: z.array(sourceEntry),
   branches: z.array(pathEntry(gridIdPatterns.branch, 'branch')),
   hvdcLinks: z.array(pathEntry(gridIdPatterns.hvdcLink, 'HVDC link')),
+  /**
+   * Where the map draws each boundary bus: at the station abroad that its first interconnector's
+   * mapped route reaches. Drawing only; the model keeps the bus where its interconnector leaves the extract.
+   */
+  boundaryBuses: z.array(z.object({
+    id: z.string().regex(gridIdPatterns.bus, 'must be a Grid bus id'),
+    location: lonLat,
+    station: z.object({ osmId: z.string().regex(/^(node|way|relation)\/\d+$/), name: z.string().min(1).nullable() }).strict(),
+  }).strict()),
 }).strict().superRefine((artifact, context) => {
   requireUniqueIds(artifact.branches, 'branches', context)
   requireUniqueIds(artifact.hvdcLinks, 'hvdcLinks', context)
+  requireUniqueIds(artifact.boundaryBuses, 'boundaryBuses', context)
 })
 export type GridGeometryArtifact = z.infer<typeof gridGeometryArtifactSchema>
 

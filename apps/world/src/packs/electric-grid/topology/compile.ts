@@ -17,7 +17,7 @@ import { buildLevels, ledgerDanglingCorridor, type LevelLink } from './levels.ts
 import { createTopologyOptions, type TopologyOptions } from './options.ts'
 import { splitSharedTowers } from './shared-towers.ts'
 import { reportStations } from './reports.ts'
-import type { TopologyBranch, TopologyBus, TopologyResult, TopologySummary } from './result.ts'
+import type { TopologyBranch, TopologyBus, TopologyForeignEnd, TopologyResult, TopologySummary } from './result.ts'
 import { groupStations } from './station-groups.ts'
 import { createStationContainers, createStationIndex } from './station-index.ts'
 import { createTerminalResolver } from './terminals.ts'
@@ -69,11 +69,11 @@ export const compileGridTopology = (
   const levels = buildLevels({ acLines: classified.acLines, inheritedKv, routes: classified.routes, terminals, index, groups, options }, ledger)
   const acTies = resolveAcTies(levels, interconnectors, terminals.coordinateOf, ledger)
   for (const stub of acTies.unclaimed) ledgerDanglingCorridor(stub, { terminals, index, groups, options }, ledger)
-  const accepted: Array<{ link: LevelLink; entry: PreparedInterconnector | null; foreignEnd: LonLat | null }> = [
+  const accepted: Array<{ link: LevelLink; entry: PreparedInterconnector | null; foreignEnd: TopologyForeignEnd | null }> = [
     ...levels.links.map(link => ({ link, entry: null, foreignEnd: null })),
     ...acTies.ties.map(tie => ({ link: tie.link, entry: tie.entry, foreignEnd: tie.foreignEnd })),
   ]
-  const foreignEnds = new Map<string, LonLat>(acTies.ties.map(tie => [tie.entry.id, tie.foreignEnd]))
+  const foreignEnds = new Map<string, LonLat>(acTies.ties.map(tie => [tie.entry.id, tie.foreignEnd.location]))
 
   const levelsOfGroup = new Map<string, Set<number>>()
   const junctions = new Map<string, { key: string; kv: number; names: Set<string> }>()

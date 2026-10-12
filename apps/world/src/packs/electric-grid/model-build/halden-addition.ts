@@ -137,8 +137,10 @@ export const buildHaldenGeometry = (config: {
       sourceBuildId: config.base.sourceBuild.id,
       simplificationMeters: designedRouteRules.simplificationMeters,
       routes: 'designed',
+      sources: [],
       branches: routes.map(route => ({ id: route.id, path: route.path.map(point => [point[0], point[1]] as [number, number]) })),
       hvdcLinks: [],
+      boundaryBuses: [],
     },
     routes,
   }
