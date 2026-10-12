@@ -27,7 +27,13 @@ export interface MapFeatureStore {
 }
 
 interface FamilyState<T extends { readonly id: string; readonly signature: string }> {
-  readonly items: T[]
+  /**
+   * The family's features. A change of members replaces the array, so a deck
+   * layer drawing it sees new data and sizes every attribute buffer, picking
+   * colours included, for the new count; a change of signatures alone
+   * updates it in place, for the layers' update triggers to redraw.
+   */
+  items: T[]
   readonly signatures: Map<string, string>
   revision: number
 }
@@ -50,7 +56,7 @@ const syncFamily = <T extends { readonly id: string; readonly signature: string 
 ): void => {
   let changed = !idsMatch(family.items, nextItems)
   if (changed) {
-    family.items.splice(0, family.items.length, ...nextItems)
+    family.items = [...nextItems]
     family.signatures.clear()
     for (const item of nextItems) family.signatures.set(item.id, item.signature)
     family.revision += 1

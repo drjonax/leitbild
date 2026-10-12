@@ -113,6 +113,34 @@ describe('operational map icons', () => {
     expect((layers.find(layer => layer.id === 'leitbild-area-catalogue-symbols')?.props.data as ReadonlyArray<{ readonly id: string }>).map(symbol => symbol.id)).toEqual(['area-symbol:area'])
   })
 
+  test('an object arriving mid-Run gives the disk and halo layers new data, so deck sizes their buffers for it; a move alone updates them in place', () => {
+    const store = createMapFeatureStore()
+    const input = (objects: ReadonlyArray<OperationalObject>) => ({
+      objects,
+      selectedControllerId: null,
+      highlightedObjectIds: [],
+      hiddenObjectCategoryIds: [],
+      placementPoints: [],
+      packFeatures: [],
+      hasNewInfo: () => false,
+      presentationFor: presentationWith({}),
+    })
+    const dataOf = (snapshot: OperationalRenderSnapshot, id: string) => layersOf(snapshot, emptyCatalogueSymbolAtlas).find(layer => layer.id === id)?.props.data as ReadonlyArray<{ readonly id: string }>
+    const before = store.update(input([objectOf('a', 11.3), objectOf('b', 11.4)]))
+    const disks = dataOf(before, 'leitbild-object-status-disks')
+    const halos = dataOf(before, 'leitbild-object-halos')
+    const grown = store.update(input([objectOf('a', 11.3), objectOf('b', 11.4), objectOf('c', 11.5)]))
+    for (const [id, earlier] of [['leitbild-object-status-disks', disks], ['leitbild-object-halos', halos]] as const) {
+      const data = dataOf(grown, id)
+      expect(data).not.toBe(earlier)
+      expect(data.map(point => point.id)).toEqual(['a', 'b', 'c'])
+    }
+    expect(disks.map(point => point.id)).toEqual(['a', 'b'])
+    const moved = store.update(input([objectOf('a', 11.3), objectOf('b', 11.45), objectOf('c', 11.5)]))
+    expect(dataOf(moved, 'leitbild-object-status-disks')).toBe(dataOf(grown, 'leitbild-object-status-disks'))
+    expect(moved.revisions.points).toBe(grown.revisions.points + 1)
+  })
+
   test('an object the screen may not order is drawn muted, its presentation aside', () => {
     const store = createMapFeatureStore()
     const snapshot = store.update({
