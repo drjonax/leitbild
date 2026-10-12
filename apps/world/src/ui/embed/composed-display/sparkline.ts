@@ -69,6 +69,20 @@ export const sparkline = (input: {
   }
 }
 
+/**
+ * Where a sparkline's recorded history begins, in its px: 0 where it covers
+ * the whole window, the line's first reading where it starts later (the
+ * Run started, or the historian held nothing before the display opened), the
+ * whole width where there is none. What lies left of it is hatched, never
+ * drawn as if the value had held.
+ */
+export const historyStartX = (points: ReadonlyArray<TrendPoint>, now: number, windowMs: number, width: number): number => {
+  const first = points.find(point => Number.isFinite(point.v))
+  if (first === undefined) return width
+  const start = now - windowMs
+  return first.t <= start ? 0 : Math.min(width, ((first.t - start) / windowMs) * (width - INSET_END))
+}
+
 /** The window a sparkline spans, as its label says it: "10 min". */
 export const sparklineWindowText = (windowMs: number): string =>
   windowMs % 60_000 === 0 ? `${windowMs / 60_000} min` : `${Math.round(windowMs / 1000)} s`

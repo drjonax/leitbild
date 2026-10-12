@@ -9,34 +9,74 @@ import { principalCircuits } from '../src/packs/process-plant/displays/mimic/pri
 import { chatMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { QUICK_LOOK_DOT, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample } from '../src/ui/embed/composed-display/composed-display-client.ts'
-import { nextPopover, popoverPlacement, POPOVER_CLOSED, type PopoverState } from '../src/ui/embed/composed-display/mimic/popover.ts'
+import { keptInWindow, movedOverlay, nextPopover, OVERLAY_WIDTH, popoverPlacement, POPOVER_CLOSED, POPOVER_WIDTH, QUICK_LOOK_ROW, raisedOverlay, resizedOverlay, togglePinned, type PinnedOverlay, type PopoverMode, type PopoverState } from '../src/ui/embed/composed-display/mimic/popover.ts'
 import { createMimicQuickLook, type QuickLookState } from '../src/ui/embed/composed-display/mimic/quick-look-source.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
 
 // An interactive drawing's detail dots and the popover they open: one at a
-// time, opened by hovering a dot a moment or by pressing it, which pins it;
-// placed beside its item at 100 % whatever the window's zoom; its quick look
-// chosen with the drawing and read from the Run while it is open.
+// time, a quick look when a dot is hovered a moment, the item's controls too
+// when it is pressed; placed beside its item at 100 % whatever the window's
+// zoom; pinned, an overlay a person drags and resizes, several at once; its
+// quick look chosen with the drawing and read from the Run while it is open.
 
 describe('the item popover', () => {
-  const open = (item: string, pinned: boolean): PopoverState => ({ kind: 'open', item, pinned })
+  const open = (item: string, mode: PopoverMode): PopoverState => ({ kind: 'open', item, mode })
 
-  test('a press always pins: it never closes a popover hovering opened, only a pinned one on its own dot', () => {
-    expect(nextPopover(POPOVER_CLOSED, { kind: 'hovered', item: 'a' })).toEqual(open('a', false))
-    expect(nextPopover(open('a', false), { kind: 'pressed', item: 'a' })).toEqual(open('a', true))
-    expect(nextPopover(open('a', true), { kind: 'pressed', item: 'a' })).toEqual(POPOVER_CLOSED)
-    expect(nextPopover(open('a', true), { kind: 'pressed', item: 'b' })).toEqual(open('b', true))
-    expect(nextPopover(POPOVER_CLOSED, { kind: 'pressed', item: 'a' })).toEqual(open('a', true))
+  test('hovering opens a quick look, a press the item\'s controls too; a second press on its dot closes it', () => {
+    expect(nextPopover(POPOVER_CLOSED, { kind: 'hovered', item: 'a' })).toEqual(open('a', 'look'))
+    expect(nextPopover(open('a', 'look'), { kind: 'pressed', item: 'a' })).toEqual(open('a', 'operate'))
+    expect(nextPopover(open('a', 'operate'), { kind: 'pressed', item: 'a' })).toEqual(POPOVER_CLOSED)
+    expect(nextPopover(open('a', 'operate'), { kind: 'pressed', item: 'b' })).toEqual(open('b', 'operate'))
+    expect(nextPopover(POPOVER_CLOSED, { kind: 'pressed', item: 'a' })).toEqual(open('a', 'operate'))
   })
 
-  test('hovering never takes over a pinned popover, and leaving closes only a hovered one', () => {
-    expect(nextPopover(open('a', true), { kind: 'hovered', item: 'b' })).toEqual(open('a', true))
-    expect(nextPopover(open('a', false), { kind: 'hovered', item: 'b' })).toEqual(open('b', false))
-    expect(nextPopover(open('a', false), { kind: 'left' })).toEqual(POPOVER_CLOSED)
-    expect(nextPopover(open('a', true), { kind: 'left' })).toEqual(open('a', true))
-    expect(nextPopover(open('a', true), { kind: 'dismissed' })).toEqual(POPOVER_CLOSED)
+  test('hovering never takes over a popover a press opened; leaving, Esc or a press outside close either (there is no Close)', () => {
+    expect(nextPopover(open('a', 'operate'), { kind: 'hovered', item: 'b' })).toEqual(open('a', 'operate'))
+    expect(nextPopover(open('a', 'look'), { kind: 'hovered', item: 'b' })).toEqual(open('b', 'look'))
+    expect(nextPopover(open('a', 'look'), { kind: 'left' })).toEqual(POPOVER_CLOSED)
+    expect(nextPopover(open('a', 'operate'), { kind: 'left' })).toEqual(POPOVER_CLOSED)
+    expect(nextPopover(open('a', 'operate'), { kind: 'dismissed' })).toEqual(POPOVER_CLOSED)
+  })
+
+  test('the pin keeps a popover on the surface until it is pressed again; several stand at once, the one touched last on top', () => {
+    const a: PinnedOverlay = { item: 'a', x: 100, y: 50, width: POPOVER_WIDTH, rows: null }
+    const b: PinnedOverlay = { item: 'b', x: 500, y: 50, width: POPOVER_WIDTH, rows: null }
+    const both = togglePinned(togglePinned([], a), b)
+    expect(both.map(overlay => overlay.item)).toEqual(['a', 'b'])
+    expect(raisedOverlay(both, 'a').map(overlay => overlay.item)).toEqual(['b', 'a'])
+    expect(togglePinned(both, a)).toEqual([b])
+  })
+
+  test('an overlay is dragged and kept inside the window, at the window\'s zoom', () => {
+    const page = { width: 1600, height: 900 }
+    const a: PinnedOverlay = { item: 'a', x: 100, y: 50, width: 340, rows: null }
+    expect(movedOverlay(a, { dx: 40, dy: 10 }, 200, page, 1)).toEqual({ ...a, x: 140, y: 60 })
+    // Never past the window's edges: 340 wide, 200 tall.
+    expect(movedOverlay(a, { dx: 5000, dy: 5000 }, 200, page, 1)).toEqual({ ...a, x: 1260, y: 700 })
+    expect(movedOverlay(a, { dx: -500, dy: -500 }, 200, page, 1)).toEqual({ ...a, x: 0, y: 0 })
+    // Drawn at 1/2 when the window shows the display at 200 %: it takes half the page's px.
+    expect(movedOverlay(a, { dx: 5000, dy: 0 }, 200, page, 2)).toEqual({ ...a, x: 1430, y: 50 })
+    // A smaller window moves it back inside.
+    expect(keptInWindow({ ...a, x: 1400 }, 200, { width: 1200, height: 900 }, 1)).toEqual({ ...a, x: 860 })
+  })
+
+  test('resizing widens only the trends, between 280 and 520 px, and shows whole rows, dropping the rest from the bottom', () => {
+    const page = { width: 1600, height: 900 }
+    const a: PinnedOverlay = { item: 'a', x: 100, y: 50, width: 340, rows: null }
+    const start = { width: 340, rows: 6 }
+    // 6 rows drawn in 260 px: chrome 92 px.
+    expect(resizedOverlay(a, start, { dx: 100, dy: 0 }, 6, 260, page, 1)).toEqual({ ...a, width: 440, rows: null })
+    expect(resizedOverlay(a, start, { dx: 1000, dy: 0 }, 6, 260, page, 1).width).toBe(OVERLAY_WIDTH.max)
+    expect(resizedOverlay(a, start, { dx: -1000, dy: 0 }, 6, 260, page, 1).width).toBe(OVERLAY_WIDTH.min)
+    // Two rows up: 4 rows; a short drag snaps to whole rows; never fewer than one, never more than it has.
+    expect(resizedOverlay(a, start, { dx: 0, dy: -2 * QUICK_LOOK_ROW }, 6, 260, page, 1).rows).toBe(4)
+    expect(resizedOverlay(a, start, { dx: 0, dy: -10 }, 6, 260, page, 1).rows).toBeNull()
+    expect(resizedOverlay(a, start, { dx: 0, dy: -1000 }, 6, 260, page, 1).rows).toBe(1)
+    expect(resizedOverlay(a, { width: 340, rows: 2 }, { dx: 0, dy: 1000 }, 6, 148, page, 1).rows).toBeNull()
+    // Near the window's bottom edge it shows only the rows that fit above it: 200 px less 92 px of chrome hold 3.
+    expect(resizedOverlay({ ...a, y: 700 }, { width: 340, rows: 2 }, { dx: 0, dy: 1000 }, 6, 148, page, 1).rows).toBe(3)
   })
 
   test('it stands beside its item, never over it, and reads at 100 % at the window\'s zoom', () => {

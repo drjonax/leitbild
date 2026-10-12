@@ -6,31 +6,48 @@
   import Sparkline from '../Sparkline.svelte'
   import { sampledGates } from '../panel-presenters.ts'
   import { displayName, fitName } from '../pen-style.ts'
-  import { SPARKLINE_SIZE } from '../sparkline.ts'
+  import { sparklineWindowText } from '../sparkline.ts'
   import { panelFont, textMeasure } from '../text-measure.ts'
+  import { QUICK_LOOK_ROW } from './popover.ts'
   import { quickLookValue, type MimicQuickLookSource, type QuickLookState } from './quick-look-source.ts'
 
-  // An item's quick look: the lead values World chose for it with the
-  // drawing, one line each (name · value in its unit or state words ·
-  // sparkline · the limit it is in alarm at), read while the popover is open
-  // (quick-look-source.ts). The words, resolution and limit names are the
-  // detail's; the detail has the rest.
-  let { source, pens, sparklineMs, activeRuleIds }: {
+  // An item's quick look (vessel-design §C): the lead values World chose for
+  // it with the drawing, one 28 px row each: tag · value (bold, its unit, the
+  // chip of the limit it is in alarm at) · its trend, every trend on one
+  // shared time axis whose window one line under them names. Read while the
+  // popover is open (quick-look-source.ts); a sample updates values and lines
+  // in place. A valve shows its position only, no trend. In a pinned overlay
+  // its trends take the width it is given, text never shrinks, and the rows
+  // it has no room for drop from the bottom behind a "+n" line.
+  let { source, pens, sparklineMs, activeRuleIds, width, rows = null, trends = true }: {
     source: MimicQuickLookSource
     pens: ReadonlyArray<ComposedDisplayPen>
     sparklineMs: number
     activeRuleIds: ReadonlySet<string>
+    /** The room it has, in its popover's own px. */
+    width: number
+    /** How many rows it shows; null for all. */
+    rows?: number | null
+    /** Whether its rows draw trends: a valve's position needs none. */
+    trends?: boolean
   } = $props()
 
   let shown = $state.raw<QuickLookState>({ kind: 'loading' })
 
-  // Reading the values is a subscription to the Run, held while the section is drawn.
+  // Reading the values is a subscription to the Run, held while the section is drawn and its pens are the same.
   $effect(() => source.open({ pens, sparklineMs }, next => { shown = next }))
 
-  /** The name column's room: a tag is never shortened; a label drops whole words to fit. */
-  const NAME_ROOM = 104
+  /** The tag and value columns' room: text never shrinks; a label drops whole words to fit its column. */
+  const TAG_ROOM = 92
+  const VALUE_ROOM = 104
+  const GAP = 6
+  const TREND_MIN = 64
   const measureName = textMeasure(panelFont(11.5))
-  const nameOf = (pen: ComposedDisplayPen): string => pen.tagId !== undefined ? pen.tagId : fitName(displayName(pen), text => measureName(text) <= NAME_ROOM, pen.shorterNames)
+  const nameOf = (pen: ComposedDisplayPen): string => pen.tagId !== undefined ? pen.tagId : fitName(displayName(pen), text => measureName(text) <= TAG_ROOM, pen.shorterNames)
+  const trendWidth = $derived(Math.max(TREND_MIN, Math.floor(width - TAG_ROOM - VALUE_ROOM - 2 * GAP)))
+  const trendSize = $derived({ width: trendWidth, height: QUICK_LOOK_ROW - 4 })
+  const visible = $derived(rows === null ? pens : pens.slice(0, Math.max(1, rows)))
+  const hidden = $derived(pens.length - visible.length)
   const latest = $derived(shown.kind === 'shown' ? shown.latest : undefined)
   const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.simulationTime))
   // Outside the validity its equipment declares a reading has no value to show: "—" (quickLookValue).
@@ -58,54 +75,70 @@
     return unit === '' ? number : `${number} ${unit}`
   }
   const limitDrawn = (reading: TrendReading) => reading.limit?.kind === 'margin' || reading.limit?.kind === 'past' ? reading.limit.margin.threshold : null
+  const anyTrend = $derived(trends && visible.some(pen => pen.valueKind === 'number'))
+  const columns = $derived(`${TAG_ROOM}px ${trends ? `${VALUE_ROOM}px ${trendWidth}px` : 'minmax(0, 1fr)'}`)
 </script>
 
-<ul class="rows" style={`grid-template-columns:${NAME_ROOM}px minmax(0, 1fr) ${SPARKLINE_SIZE.width}px max-content`}>
-  {#each pens as pen (pen.path)}
+<ul class="rows" style={`grid-template-columns:${columns};column-gap:${GAP}px;grid-auto-rows:${QUICK_LOOK_ROW}px`}>
+  {#each visible as pen (pen.path)}
     {@const entry = valueOf(pen)}
     {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.resolution) : entry?.value}
     {@const reading = typeof value === 'number' ? readingOf(pen, value) : null}
     <li>
       <span class="name" class:tag={pen.tagId !== undefined} title={`${displayName(pen)} · ${pen.label}`}>{nameOf(pen)}</span>
-      {#if typeof value === 'boolean'}
-        <!-- A state in the words the model gives its two states, as the detail writes it. -->
-        <span class="value state">{value ? pen.states?.on : pen.states?.off}</span>
-      {:else if typeof value === 'number'}
-        <span class="value" class:low={reading?.offScale !== null}>{valueText(pen, value)}</span>
-      {:else}
-        <span class="value" title={entry?.quality === 'outside-hard-range' ? 'outside range' : 'not read yet'}>{entry?.quality === 'outside-hard-range' ? 'outside range' : '—'}</span>
+      <span class="value-cell">
+        {#if typeof value === 'boolean'}
+          <!-- A state in the words the model gives its two states, as the detail writes it. -->
+          <span class="value state">{value ? pen.states?.on : pen.states?.off}</span>
+        {:else if typeof value === 'number'}
+          <span class="value" class:low={reading?.offScale !== null}>{valueText(pen, value)}</span>
+        {:else}
+          <span class="value none" title={entry?.quality === 'outside-hard-range' ? 'outside range' : 'not read yet'}>{entry?.quality === 'outside-hard-range' ? 'outside range' : '—'}</span>
+        {/if}
+        {#if reading?.inAlarm}<AlarmChip threshold={reading.inAlarm} compact />{/if}
+      </span>
+      {#if trends}
+        {#if pen.valueKind === 'number' && shown.kind === 'shown'}
+          <Sparkline
+            {pen}
+            windowMs={sparklineMs}
+            points={pointsOf(pen)}
+            {now}
+            limit={reading === null ? null : limitDrawn(reading)}
+            inAlarm={reading?.inAlarm ?? null}
+            historyMissing={shown.history.historyMissing.has(String(pen.path))}
+            historyError={shown.history.historyErrors.get(String(pen.path))}
+            size={trendSize}
+            hatched
+          />
+        {:else}
+          <span class="no-line"></span>
+        {/if}
       {/if}
-      {#if pen.valueKind === 'number' && shown.kind === 'shown'}
-        <Sparkline
-          {pen}
-          windowMs={sparklineMs}
-          points={pointsOf(pen)}
-          {now}
-          limit={reading === null ? null : limitDrawn(reading)}
-          inAlarm={reading?.inAlarm ?? null}
-          historyMissing={shown.history.historyMissing.has(String(pen.path))}
-          historyError={shown.history.historyErrors.get(String(pen.path))}
-        />
-      {:else}
-        <span class="no-line"></span>
-      {/if}
-      <span class="margin">{#if reading?.inAlarm}<AlarmChip threshold={reading.inAlarm} compact />{/if}</span>
     </li>
   {/each}
 </ul>
+{#if anyTrend}
+  <!-- One time axis for every trend above it: their onsets line up. -->
+  <p class="axis" aria-hidden="true" style={`margin-left:${TAG_ROOM + VALUE_ROOM + 2 * GAP}px;width:${trendWidth}px`}><span>−{sparklineWindowText(sparklineMs)}</span><span>now</span></p>
+{/if}
+{#if hidden > 0}<p class="more">+{hidden} more: resize to show</p>{/if}
 {#if shown.kind === 'shown' && shown.sampleError !== null}<p class="note">Showing the last received values. {shown.sampleError}</p>{/if}
 
 <style>
-  .note { margin: 2px 0 0; font-size: 10.5px; line-height: 14px; color: var(--element-neutral-color); }
-  .rows { list-style: none; margin: 0; padding: 0; display: grid; column-gap: 6px; row-gap: 2px; align-items: center; }
+  .note, .more { margin: 0; font-size: 10.5px; line-height: 14px; color: var(--element-neutral-color); }
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; align-items: center; }
   li { display: contents; }
   .name { font-size: 11.5px; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* A tag is whole or not shown at all: never an ellipsis through it. */
   .name.tag { text-overflow: clip; }
-  .value { justify-self: end; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--element-active-color); }
+  .value-cell { display: flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; }
+  /* The current value carries the row: bold, as the trend's end dot marks it on the line. */
+  .value { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--element-active-color); }
   .value.state { font-size: 12px; }
+  .value.none { font-weight: 400; color: var(--element-neutral-color); }
   /* At an end of its span a reading says only where the quantity is, in low-integrity style. */
-  .value.low { color: var(--element-neutral-color); font-style: italic; }
+  .value.low { color: var(--element-neutral-color); font-style: italic; font-weight: 400; }
   .no-line { width: 0; }
-  .margin { min-width: 0; }
+  .axis { display: flex; justify-content: space-between; height: 18px; margin-top: 0; margin-bottom: 0; font-size: 10px; line-height: 14px; color: var(--element-neutral-color); }
 </style>

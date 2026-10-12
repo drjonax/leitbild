@@ -14,15 +14,16 @@
   import { itemBadges, itemControlView, operationNow, shownProposal, type ItemBadges, type ListedItem, type OperationNow } from './operation-presenter.ts'
   import ProposalReview from './ProposalReview.svelte'
 
-  // A drawing operated in the process display window (plan §4.2-§4.4): each
-  // item's popover adds its PROPOSAL (order 10) and CONTROL (order 30)
-  // sections to its quick look, and its symbol carries its operation badges.
-  // World derives what may be operated and where it stands (controls.list,
-  // read with every sample); a command goes through World's one validated
-  // queued write path as this screen's actor (control.write), a decision on a
-  // proposal through control.decide. Hovering a dot shows what it offers;
-  // only a pinned popover offers a command (hover never exposes an active
-  // control). Never drawn in a chat: there the drawing has no controls.
+  // A drawing operated in the process display window (plan §4.2-§4.4, §12):
+  // the popover a press on an item's dot opens adds its PROPOSAL (order 10)
+  // and CONTROL (order 15) sections above its quick look, and its symbol
+  // carries its operation badges. Hovering a dot shows the quick look only,
+  // never a command. Pinned as an overlay, the controls fold away until a
+  // person opens them. World derives what may be operated and where it
+  // stands (controls.list, read with every sample); a command goes through
+  // World's one validated queued write path as this screen's actor
+  // (control.write), a decision on a proposal through control.decide. Never
+  // drawn in a chat: there the drawing has no controls.
   let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, operation }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
@@ -192,11 +193,13 @@
   const lookPens = $derived(quickLook === undefined ? undefined : { source: quickLook.source, pens: quickLook.looks.pens, sparklineMs: quickLook.looks.sparklineMs })
 
   const sections = $derived<ReadonlyArray<MimicPopoverSection>>([
-    { id: 'proposal', title: 'Proposal', order: 10, applies: item => proposalOf(item) !== undefined, body: proposalBody },
+    { id: 'proposal', title: 'Proposal', order: 10, modes: ['operate'], applies: item => proposalOf(item) !== undefined, body: proposalBody },
     {
       id: 'control',
       title: 'Control',
-      order: 30,
+      // Above the quick look's rows, in the popover a press opens (vessel-design §C); a hover shows the rows only.
+      order: 15,
+      modes: ['operate'],
       applies: item => {
         const entry = listedOf(item)
         return now !== null && entry !== undefined && (entry.offered.length > 0 || entry.withheld.length > 0)
@@ -210,12 +213,16 @@
   {@const entry = listedOf(context.item)}
   {#if entry !== undefined && now !== null}
     {@const view = itemControlView(entry, now)}
-    {#if !context.pinned}
-      <!-- Hovering never offers a command: the person pins the popover first. -->
-      <p class="hint">{view.controls.length === 0 ? 'Not operated here' : `${view.controls.map(control => control.target).join(', ')}: click the dot to operate`}</p>
-      {#each view.auto as line (line)}<p class="hint">{line}</p>{/each}
+    {@const drafted = draft !== null && draft.item === entry.id ? draft : null}
+    {#if context.pinned}
+      <!-- A pinned overlay monitors: its controls fold away above its rows until a person opens them. -->
+      <details class="folded" open={drafted !== null}>
+        <summary>{view.controls.length === 0 ? 'Not operated here' : view.controls.map(control => control.target).join(' · ')}</summary>
+        {#key `${entry.id}|${drafted?.at ?? ''}`}
+          <ControlSection {view} {now} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
+        {/key}
+      </details>
     {:else}
-      {@const drafted = draft !== null && draft.item === entry.id ? draft : null}
       {#key `${entry.id}|${drafted?.at ?? ''}`}
         <ControlSection {view} {now} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
       {/key}
@@ -227,21 +234,17 @@
   {@const entry = listedOf(context.item)}
   {@const proposal = proposalOf(context.item)}
   {#if entry !== undefined && proposal !== undefined && now !== null}
-    {#if !context.pinned}
-      <p class="hint">{proposal.proposer.origin === 'ai' ? 'AI' : 'Operator'} ({proposal.proposer.actorId}) {proposal.status === 'pending' ? `proposes ${proposal.word}: click the dot to review` : `proposed ${proposal.word}: ${proposal.status}`}</p>
-    {:else}
-      <ProposalReview
-        {proposal}
-        review={reviews.get(proposal.id) ?? null}
-        item={entry}
-        {now}
-        looks={lookPens}
-        approve={() => decide(proposal, 'approve')}
-        reject={reason => decide(proposal, 'reject', reason)}
-        extend={() => decide(proposal, 'extend')}
-        useAsDraft={() => { draft = { item: entry.id, write: proposal.write, at: Date.now() } }}
-      />
-    {/if}
+    <ProposalReview
+      {proposal}
+      review={reviews.get(proposal.id) ?? null}
+      item={entry}
+      {now}
+      looks={lookPens}
+      approve={() => decide(proposal, 'approve')}
+      reject={reason => decide(proposal, 'reject', reason)}
+      extend={() => decide(proposal, 'extend')}
+      useAsDraft={() => { draft = { item: entry.id, write: proposal.write, at: Date.now() } }}
+    />
   {/if}
 {/snippet}
 
@@ -249,6 +252,6 @@
 {#if failure !== null}<p class="failure" role="status">{failure}</p>{/if}
 
 <style>
-  .hint { margin: 0; font-size: 12px; color: var(--element-neutral-color); }
+  .folded summary { cursor: pointer; font-size: 11.5px; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .failure { margin: 2px 0 0; font-size: 11.5px; color: var(--element-active-color); }
 </style>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { SPARKLINE_SIZE, sparkline, sparklineText, sparklineWindowText } from '../src/ui/embed/composed-display/sparkline.ts'
+import { historyStartX, SPARKLINE_SIZE, sparkline, sparklineText, sparklineWindowText } from '../src/ui/embed/composed-display/sparkline.ts'
 import type { TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { paddedDomain } from '../src/ui/embed/composed-display/trend-geometry.ts'
 import { readingResolution, shownReading } from '../src/packs/process-plant/displays/display-text.ts'
@@ -135,5 +135,17 @@ describe('readings near nothing', () => {
     })
     expect(output.path).not.toContain('NaN')
     expect(output.end === null || Number.isFinite(output.end.y)).toBe(true)
+  })
+})
+
+describe('a quick look\'s trends on one shared time axis', () => {
+  test('the part of the window its history does not reach is hatched, never drawn as held', () => {
+    // History from before the window: nothing hatched.
+    expect(historyStartX([{ t: start - 60_000, v: 1 }, { t: now, v: 1 }], now, windowMs, 200)).toBe(0)
+    // History from halfway: the left half (less the end dot's inset) is hatched.
+    expect(historyStartX([{ t: start + windowMs / 2, v: 1 }], now, windowMs, 204)).toBe(100)
+    // None at all: the whole trend.
+    expect(historyStartX([], now, windowMs, 200)).toBe(200)
+    expect(historyStartX([{ t: now, v: Number.NaN }], now, windowMs, 200)).toBe(200)
   })
 })

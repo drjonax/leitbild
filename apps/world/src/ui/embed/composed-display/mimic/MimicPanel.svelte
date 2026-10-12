@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
@@ -17,9 +17,8 @@
   import type * as OpenBridgeMimic from './openbridge-mimic.ts'
   import { embeddedDisplayFrame } from '../../view-host.ts'
   import MimicPopover from './MimicPopover.svelte'
-  import { sparklineWindowText } from '../sparkline.ts'
   import QuickLookSection from './QuickLookSection.svelte'
-  import { nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_INTENT_MS, QUICK_LOOK_ORDER, type MimicPopoverContext, type MimicPopoverSection, type PopoverEvent, type PopoverState } from './popover.ts'
+  import { keptInWindow, movedOverlay, nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_INTENT_MS, POPOVER_WIDTH, QUICK_LOOK_ORDER, QUICK_LOOK_ROW, raisedOverlay, resizedOverlay, togglePinned, type MimicPopoverContext, type MimicPopoverSection, type PinnedOverlay, type PopoverEvent, type PopoverMode, type PopoverState } from './popover.ts'
   import type { MimicQuickLookSource } from './quick-look-source.ts'
   import type { MimicQuickLooks } from '../../../../packs/process-plant/displays/mimic/quick-look.ts'
   import type { ItemBadges } from '../operation/operation-presenter.ts'
@@ -155,22 +154,44 @@
     return () => cancelAnimationFrame(frame)
   })
 
-  // One popover at a time (popover.ts): hovering a dot opens it after a moment, a press pins it.
+  // One popover at a time (popover.ts): hovering a dot opens its quick look after a moment, a press its controls too.
+  // Pinned, a popover stays on the surface as an overlay until its pin is pressed again; several may stand at once.
   const popoverId = `mimic-popover-${Math.random().toString(36).slice(2)}`
-  const POPOVER_WIDTH = 360
   let popover = $state.raw<PopoverState>(POPOVER_CLOSED)
+  let overlays = $state.raw<ReadonlyArray<PinnedOverlay>>([])
+  // Each overlay's whole height as drawn (own px), to keep it inside the window.
+  let overlayHeights = $state.raw<Readonly<Record<string, number>>>({})
   let intent: ReturnType<typeof setTimeout> | undefined
   let insidePopover = false
+  const overlaid = (item: MimicDrawnItem): boolean => overlays.some(overlay => overlay.item === item.id)
   const applyPopover = (event: PopoverEvent): void => { popover = nextPopover(popover, event) }
   const afterIntent = (run: () => void): void => { clearTimeout(intent); intent = setTimeout(run, POPOVER_INTENT_MS) }
-  const dotEntered = (item: MimicDrawnItem): void => afterIntent(() => applyPopover({ kind: 'hovered', item: item.id }))
-  const dotLeft = (): void => afterIntent(() => { if (!insidePopover) applyPopover({ kind: 'left' }) })
+  /** What a popover in this mode shows of an item: its sections that apply, in order. */
+  const sectionsFor = (item: MimicDrawnItem, mode: PopoverMode): ReadonlyArray<MimicPopoverSection> =>
+    [...(quickLookSection === null ? [] : [quickLookSection]), ...sections]
+      .filter(section => section.modes.includes(mode) && section.applies(item))
+      .sort((left, right) => left.order - right.order)
+  // Hovering opens a quick look only where the item has one; a pinned item is on the surface already.
+  const dotEntered = (item: MimicDrawnItem): void => {
+    if (overlaid(item) || sectionsFor(item, 'look').length === 0) return
+    afterIntent(() => applyPopover({ kind: 'hovered', item: item.id }))
+  }
+  /** Leaving closes the popover, unless a control in it has focus (a person choosing a command). */
+  const leave = (): void => {
+    if (insidePopover) return
+    if (document.getElementById(popoverId)?.contains(document.activeElement) === true) return
+    applyPopover({ kind: 'left' })
+  }
+  const dotLeft = (): void => afterIntent(leave)
   const pointerInPopover = (inside: boolean): void => {
     insidePopover = inside
     if (inside) clearTimeout(intent)
-    else afterIntent(() => applyPopover({ kind: 'left' }))
+    else afterIntent(leave)
   }
-  const pressed = (item: MimicDrawnItem): void => { clearTimeout(intent); applyPopover({ kind: 'pressed', item: item.id }) }
+  const pressed = (item: MimicDrawnItem): void => {
+    clearTimeout(intent)
+    if (!overlaid(item)) applyPopover({ kind: 'pressed', item: item.id })
+  }
   const closePopover = (returnFocus: boolean): void => {
     const was = popover
     clearTimeout(intent)
@@ -179,15 +200,27 @@
     if (returnFocus && was.kind === 'open') dotButtons.get(was.item)?.focus()
   }
   const popoverItem = $derived(popover.kind === 'open' ? mimic.items.find(item => item.id === popover.item) : undefined)
+  const page = (): { readonly width: number; readonly height: number } => ({ width: window.innerWidth, height: window.innerHeight })
+  /** Pins the open popover where it stands, or closes an item's overlay. */
+  const togglePin = (item: MimicDrawnItem, from: { readonly x: number; readonly y: number } | null): void => {
+    const standing = overlays.find(overlay => overlay.item === item.id)
+    if (standing !== undefined) { overlays = togglePinned(overlays, standing); return }
+    const place = from ?? besideItem(item, popoverHeight)
+    if (place === null) return
+    overlays = togglePinned(overlays, { item: item.id, x: place.x, y: place.y, width: POPOVER_WIDTH, rows: null })
+    if (popover.kind === 'open' && popover.item === item.id) { clearTimeout(intent); insidePopover = false; popover = POPOVER_CLOSED }
+  }
+  const updateOverlay = (next: PinnedOverlay): void => { overlays = overlays.map(overlay => (overlay.item === next.item ? next : overlay)) }
   // Opened on an item with a pending proposal, the display pins its popover once its dot is drawn (QA-10).
-  let pinned: { readonly item: string } | null = null
+  let pinRequest: { readonly item: string } | null = null
   $effect(() => {
-    if (pin === null || pin === pinned || dots[pin.item] === undefined) return
-    pinned = pin
-    clearTimeout(intent)
-    popover = { kind: 'open', item: pin.item, pinned: true }
+    if (pin === null || pin === pinRequest || dots[pin.item] === undefined) return
+    pinRequest = pin
+    const item = mimic.items.find(candidate => candidate.id === pin.item)
+    if (item !== undefined && !overlaid(item)) togglePin(item, null)
   })
-  // Esc closes it first (not the window's Back) and returns focus to its dot; a press outside it and the dots closes it.
+  // Esc closes the popover first (not the window's Back) and returns focus to its dot; a press outside it and the dots closes it.
+  // Overlays stay until unpinned; a resized window or a new zoom keeps them inside it.
   let moved = $state(0)
   // Registered once; each listener acts only while a popover is open.
   runOnMount(() => {
@@ -205,7 +238,7 @@
       if (target === null || document.getElementById(popoverId)?.contains(target) || [...dotButtons.values()].some(dot => dot.contains(target))) return
       closePopover(false)
     }
-    const shift = (): void => { if (popover.kind === 'open') moved += 1 }
+    const shift = (): void => { moved += 1 }
     window.addEventListener('keydown', key, { capture: true })
     document.addEventListener('pointerdown', down, { capture: true })
     window.addEventListener('scroll', shift, { capture: true })
@@ -217,28 +250,66 @@
       window.removeEventListener('resize', shift)
     }
   })
+  $effect(() => {
+    void moved
+    const zoom = $displayFrame.zoom
+    const kept = untrack(() => overlays).map(overlay => keptInWindow(overlay, untrack(() => overlayHeights)[overlay.item] ?? 160, page(), zoom))
+    if (kept.some((overlay, at) => overlay !== untrack(() => overlays)[at])) overlays = kept
+  })
   let popoverHeight = $state(320)
-  // Beside its item, as the page shows it, at the window's zoom.
+  /** Beside an item, as the page shows it, at the window's zoom. */
+  const besideItem = (item: MimicDrawnItem, height: number): { readonly x: number; readonly y: number } | null => {
+    if (drawing === undefined) return null
+    const origin = drawing.getBoundingClientRect()
+    const area = target(item)
+    const box = { x: origin.left + area.x * scale, y: origin.top + area.y * scale, width: area.width * scale, height: area.height * scale }
+    return popoverPlacement(box, { width: POPOVER_WIDTH, height }, page(), $displayFrame.zoom)
+  }
   const popoverPlace = $derived.by(() => {
     void moved
-    if (popoverItem === undefined || drawing === undefined) return null
-    const origin = drawing.getBoundingClientRect()
-    const area = target(popoverItem)
-    const box = { x: origin.left + area.x * scale, y: origin.top + area.y * scale, width: area.width * scale, height: area.height * scale }
-    return popoverPlacement(box, { width: POPOVER_WIDTH, height: popoverHeight }, { width: window.innerWidth, height: window.innerHeight }, $displayFrame.zoom)
+    return popoverItem === undefined ? null : besideItem(popoverItem, popoverHeight)
   })
-  // Its title names the sparklines' window once, over all of them.
-  const quickLookSection = $derived<MimicPopoverSection | null>(quickLook === undefined ? null : { id: 'quick-look', title: `Quick look · sparklines −${sparklineWindowText(quickLook.looks.sparklineMs)}`, order: QUICK_LOOK_ORDER, applies: item => looksOf(item).length > 0, body: quickLookBody })
-  const popoverSections = $derived(popoverItem === undefined ? [] : [...(quickLookSection === null ? [] : [quickLookSection]), ...sections]
-    .filter(section => section.applies(popoverItem))
-    .sort((left, right) => left.order - right.order))
+  // A drag moves or resizes an overlay from what it was when the drag began; a keyboard step from what it is.
+  let dragging: { readonly item: string; readonly from: PinnedOverlay; readonly height: number } | null = null
+  const dragStart = (overlay: PinnedOverlay): { readonly from: PinnedOverlay; readonly height: number } => {
+    if (dragging?.item !== overlay.item) dragging = { item: overlay.item, from: overlay, height: overlayHeights[overlay.item] ?? 160 }
+    return dragging
+  }
+  const moveOverlay = (overlay: PinnedOverlay, travel: { readonly dx: number; readonly dy: number }, end: boolean): void => {
+    const start = dragStart(overlay)
+    updateOverlay(movedOverlay(start.from, travel, start.height, page(), $displayFrame.zoom))
+    if (end) dragging = null
+  }
+  /** Rows an item's quick look has, and how many an overlay shows of them. */
+  const rowsOf = (item: string): number => looksByItem.get(item)?.length ?? 0
+  const shownRows = (overlay: PinnedOverlay): number => overlay.rows ?? rowsOf(overlay.item)
+  const resizeOverlay = (overlay: PinnedOverlay, change: { readonly travel: { readonly dx: number; readonly dy: number } } | { readonly step: { readonly width: number; readonly rows: number } }, end: boolean): void => {
+    const start = 'travel' in change ? dragStart(overlay) : { from: overlay, height: overlayHeights[overlay.item] ?? 160 }
+    const travel = 'travel' in change ? change.travel : { dx: change.step.width / $displayFrame.zoom, dy: (change.step.rows * QUICK_LOOK_ROW) / $displayFrame.zoom }
+    updateOverlay(resizedOverlay(start.from, { width: start.from.width, rows: shownRows(start.from) }, travel, Math.max(1, rowsOf(overlay.item)), start.height, page(), $displayFrame.zoom))
+    if (end) dragging = null
+  }
+  /** The state word its symbol writes ("RUN", "SHUT", "ON LINE"), for its popover's header; empty where it writes none. */
+  const stateWordOf = (item: MimicDrawnItem): string => {
+    const look = looks.get(item.id)
+    const row = item.rows.find(candidate => candidate.kind === 'state' || candidate.kind === 'position' || (candidate.kind === 'marker' && (candidate.part === 'word' || candidate.part === 'whole')))
+    return look === undefined || row === undefined ? '' : rowText(row, look, index, format)
+  }
+  const alertWordsOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly text: string } | null => {
+    const alert = alertOf(item)
+    return alert === null ? null : { status: alert.status, text: popoverFlap(item) }
+  }
+  // The quick look names its sparklines' window on its shared time axis.
+  const quickLookSection = $derived<MimicPopoverSection | null>(quickLook === undefined ? null : { id: 'quick-look', title: 'Quick look', order: QUICK_LOOK_ORDER, modes: ['look', 'operate'], applies: item => looksOf(item).length > 0, body: quickLookBody })
+  const popoverSections = $derived(popover.kind === 'open' && popoverItem !== undefined ? sectionsFor(popoverItem, popover.mode) : [])
   const activeRuleIds = $derived(new Set(alarms.map(alarm => alarm.ruleId)))
-  /** What a dot opens: the titles of the sections its popover shows ("Quick look · Control"). */
+  /** What a dot opens: its quick look on hover, and the sections a press shows ("Quick look · Control"). */
   const dotTitle = (item: MimicDrawnItem): string => {
-    const shown = [...(looksOf(item).length > 0 ? [{ title: 'Quick look', order: QUICK_LOOK_ORDER }] : []), ...sections.filter(section => section.applies(item))]
-      .sort((left, right) => left.order - right.order).map(section => section.title)
+    const shown = sectionsFor(item, 'operate').map(section => section.title)
     return `${shown.join(' · ')}: ${item.binding.label}`
   }
+  /** Symbols of the family a valve's position says all about: its popover shows its position, no trend. */
+  const trendsOf = (item: MimicDrawnItem): boolean => !(item.presentation.element === 'device' && item.presentation.icon.startsWith('valve'))
   /** What an item's badges say, for its target's title and its screen reader name. */
   const badgeWords = (item: MimicDrawnItem): string => {
     const carried = badges?.get(item.id)
@@ -427,7 +498,7 @@
 </script>
 
 {#snippet quickLookBody(context: MimicPopoverContext)}
-  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksByItem.get(context.item.id) ?? []} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} />{/if}
+  {#if quickLook !== undefined}<QuickLookSection source={quickLook.source} pens={looksByItem.get(context.item.id) ?? []} sparklineMs={quickLook.looks.sparklineMs} {activeRuleIds} width={context.room.width} rows={context.room.rows} trends={trendsOf(context.item)} />{/if}
 {/snippet}
 
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
@@ -509,7 +580,7 @@
             {#if interactive && dots[item.id] !== undefined && dotted(item)}
               <!-- The item's detail dot, after its target in tab order: hover a moment or press to open its popover. -->
               {@const dot = dots[item.id]!}
-              {@const expanded = popover.kind === 'open' && popover.item === item.id}
+              {@const expanded = (popover.kind === 'open' && popover.item === item.id) || overlaid(item)}
               <button
                 type="button"
                 class="dot"
@@ -518,12 +589,12 @@
                 title={dotTitle(item)}
                 aria-label={dotTitle(item)}
                 aria-expanded={expanded}
-                aria-controls={expanded ? popoverId : undefined}
+                aria-controls={popover.kind === 'open' && popover.item === item.id ? popoverId : undefined}
                 use:dotOf={item.id}
                 onpointerenter={() => dotEntered(item)}
                 onpointerleave={dotLeft}
                 onclick={() => pressed(item)}
-              ><obi-trend usecsscolor></obi-trend></button>
+              ><obi-search usecsscolor></obi-search></button>
             {/if}
           {/each}
         </div>
@@ -531,23 +602,52 @@
     {/if}
   </div>
   </div>
-  {#if openBridge !== null && popover.kind === 'open' && popoverItem !== undefined && popoverPlace !== null}
-    {@const item = popoverItem}
-    {@const context: MimicPopoverContext = { item, latest, pinned: popover.pinned, close: () => closePopover(true) }}
-    <MimicPopover
-      id={popoverId}
-      {item}
-      flap={popoverFlap(item)}
-      sections={popoverSections}
-      {context}
-      place={popoverPlace}
-      zoom={$displayFrame.zoom}
-      width={POPOVER_WIDTH}
-      {open}
-      close={() => closePopover(true)}
-      pointer={pointerInPopover}
-      measured={height => { popoverHeight = height }}
-    />
+  {#if openBridge !== null}
+    <!-- Pinned overlays, the one touched last on top; then the popover a hover or a press opened. -->
+    {#each overlays as overlay (overlay.item)}
+      {@const item = mimic.items.find(candidate => candidate.id === overlay.item)}
+      {#if item !== undefined}
+        {@const context: MimicPopoverContext = { item, latest, mode: 'operate', pinned: true, room: { width: overlay.width - 16, rows: overlay.rows } }}
+        <MimicPopover
+          id={`${popoverId}-${item.id}`}
+          {item}
+          state={stateWordOf(item)}
+          alert={alertWordsOf(item)}
+          sections={sectionsFor(item, 'operate')}
+          {context}
+          place={{ x: overlay.x, y: overlay.y }}
+          zoom={$displayFrame.zoom}
+          width={overlay.width}
+          pinned={true}
+          pin={() => togglePin(item, null)}
+          pointer={() => {}}
+          measured={height => { overlayHeights = { ...overlayHeights, [item.id]: height } }}
+          touched={() => { overlays = raisedOverlay(overlays, item.id) }}
+          move={(travel, end) => moveOverlay(overlay, travel, end)}
+          resize={(change, end) => resizeOverlay(overlay, change, end)}
+        />
+      {/if}
+    {/each}
+    {#if popover.kind === 'open' && popoverItem !== undefined && popoverPlace !== null}
+      {@const item = popoverItem}
+      {@const place = popoverPlace}
+      {@const context: MimicPopoverContext = { item, latest, mode: popover.mode, pinned: false, room: { width: POPOVER_WIDTH - 16, rows: null } }}
+      <MimicPopover
+        id={popoverId}
+        {item}
+        state={stateWordOf(item)}
+        alert={alertWordsOf(item)}
+        sections={popoverSections}
+        {context}
+        {place}
+        zoom={$displayFrame.zoom}
+        width={POPOVER_WIDTH}
+        pinned={false}
+        pin={() => togglePin(item, place)}
+        pointer={pointerInPopover}
+        measured={height => { popoverHeight = height }}
+      />
+    {/if}
   {/if}
   <!-- The key names only what this drawing can show; a stale view says so first. -->
   <p class="legend">
@@ -598,8 +698,8 @@
   .target:hover { outline: 1px solid var(--border-outline-color); outline-offset: 2px; }
   .target:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 2px; }
   /* A detail dot shows while its item is hovered or it has focus or its popover is open; on a touch screen always. */
-  .dot { position: absolute; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 4px; background: none; color: var(--element-neutral-color); cursor: pointer; pointer-events: auto; opacity: 0; --obi-trend-size: 16px; }
-  .dot :global(obi-trend) { width: 16px; height: 16px; }
+  .dot { position: absolute; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 4px; background: none; color: var(--element-neutral-color); cursor: pointer; pointer-events: auto; opacity: 0; }
+  .dot :global(obi-search) { width: 16px; height: 16px; }
   .target:hover + .dot, .dot:hover, .dot:focus-visible, .dot.open { opacity: 1; }
   .dot:hover, .dot.open { background: var(--container-section-color); color: var(--element-active-color); }
   .dot:focus-visible { outline: 2px solid var(--border-focus-color); }
