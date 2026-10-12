@@ -3981,7 +3981,7 @@ body.rail-resizing {
 
 .procedure-step {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   padding: 13px;
   background: #ffffff;
@@ -4019,8 +4019,77 @@ body.rail-resizing {
   text-transform: uppercase;
 }
 
-.procedure-step-collapse {
+/* Collapse and the step's ⋯ menu sit at the heading's right end. */
+.procedure-step-tools {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+}
+
+.procedure-step-mark {
+  align-self: center;
+  color: #b45309;
+  font-size: calc(14px * var(--procedure-font-scale));
+}
+
+.procedure-step-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.procedure-step-menu-button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.procedure-step-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 4;
+  min-width: 200px;
+  display: grid;
+  padding: 4px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+.procedure-step-menu-list button {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.procedure-step-menu-list button:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.procedure-step-menu-list button:disabled {
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.procedure-step-collapse {
   padding: 2px 8px;
   border: 1px solid #cbd5e1;
   background: #ffffff;

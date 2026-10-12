@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, GripVertical, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
+  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, GripVertical, Info, MessageSquare, MoreHorizontal, Play, RefreshCw, Star, X } from 'lucide-svelte'
   import { tick, untrack } from 'svelte'
   import type { ProcedureSession } from './procedure-session.ts'
   import { procedureBindingStatusWord, procedureComparisonText, procedureCsfChip, procedureDescriptionText, procedureDisplayReading, procedureElapsedText, procedureStepBindingSummary } from './procedure-view.ts'
@@ -183,6 +183,7 @@
   let openTagId = $state<ProcedureTagId | null>(null)
   let commentOpen = $state<Record<string, boolean>>({})
   let summaryOpen = $state(false)
+  let openStepMenuId = $state<string | null>(null)
   let openStepInfoId = $state<string | null>(null)
   /** Live values of the open step ⓘ's tags, read when it opened. */
   let stepInfoReadings = $state<Record<string, { readonly formatted?: string; readonly error?: string }>>({})
@@ -1333,7 +1334,11 @@
         <h3 tabindex="-1">
           {#if role === 'current'}<span class="procedure-current-chip">Current</span>{/if}
           Step {step.label}<span class="procedure-step-name">{procedureStepDisplayName(step)}</span>{@render stepInfoButton(step)}
-          {#if role === 'decided'}<button type="button" class="procedure-step-collapse" onclick={() => setStepExpanded(step.id, false)}>Collapse</button>{/if}
+          {#if pendingControl === `favorite:${step.id}`}<span class="procedure-spinner" aria-label="Recording…"></span>{:else if state?.favorite}<span class="procedure-step-mark" title="Marked">★</span>{/if}
+          <span class="procedure-step-tools">
+            {#if role === 'decided'}<button type="button" class="procedure-step-collapse" onclick={() => setStepExpanded(step.id, false)}>Collapse</button>{/if}
+            {@render stepMenu(step, state)}
+          </span>
         </h3>
         {#if openStepInfoId === step.id}{@render stepInfoPanel(step)}{/if}
         <div class="procedure-two-column">
@@ -1420,18 +1425,28 @@
         {/if}
       </div>
     </div>
-    <div class="procedure-step-actions">
-      <button type="button" class:active={commentOpen[draftKey(step.id)] === true} disabled={!selectedRun} title="Comment" aria-label="Comment" onclick={() => { commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
-        <MessageSquare size={16} aria-hidden="true" />
-      </button>
-      <button type="button" class:active={state?.favorite === true} class:busy={busy} disabled={!selectedRun || busy} title="Favorite" aria-label="Favorite" onclick={() => void toggleFavorite(step)}>
-        {#if pendingControl === `favorite:${step.id}`}<span class="procedure-spinner" aria-label="Recording…"></span>{:else}<Star size={16} aria-hidden="true" />{/if}
-      </button>
-      <button type="button" title="Report procedure issue" aria-label="Report procedure issue" onclick={() => openIssue(step)}>
-        <Bug size={16} aria-hidden="true" />
-      </button>
-    </div>
   </article>
+{/snippet}
+
+{#snippet stepMenu(step: ProcedureStep, state: ProcedureStepRunState | undefined)}
+  <span class="procedure-step-menu">
+    <button type="button" class="procedure-step-menu-button" aria-label="More for step {step.label}" aria-haspopup="menu" aria-expanded={openStepMenuId === step.id} onclick={() => { openStepMenuId = openStepMenuId === step.id ? null : step.id }}>
+      <MoreHorizontal size={16} aria-hidden="true" />
+    </button>
+    {#if openStepMenuId === step.id}
+      <span class="procedure-step-menu-list" role="menu" tabindex="-1" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); openStepMenuId = null } }}>
+        <button type="button" role="menuitem" disabled={!selectedRun} onclick={() => { openStepMenuId = null; commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
+          <MessageSquare size={14} aria-hidden="true" /> {state?.comment ? 'Edit comment' : 'Comment'}
+        </button>
+        <button type="button" role="menuitem" disabled={!selectedRun || busy} onclick={() => { openStepMenuId = null; void toggleFavorite(step) }}>
+          <Star size={14} aria-hidden="true" /> {state?.favorite ? 'Unmark' : 'Mark'}
+        </button>
+        <button type="button" role="menuitem" onclick={() => { openStepMenuId = null; openIssue(step) }}>
+          <Bug size={14} aria-hidden="true" /> Report procedure issue
+        </button>
+      </span>
+    {/if}
+  </span>
 {/snippet}
 
 {#snippet recordingNote()}
