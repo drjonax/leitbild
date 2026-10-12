@@ -211,7 +211,7 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
   }
   // An instrument that reads the same quantity over a wider span ranks beside the reading it widens (a steam
   // generator's wide-range level beside its narrow range), on each item, so parallel items still compare in turn.
-  const wider = new Map(components.flatMap(component => graph.components[component]!.semantics.widerRanges.map(range => [range.reading, range.wider] as const)))
+  const wider = new Map(components.flatMap(component => graph.components[component]!.semantics.widerRanges.flatMap(range => range.while === undefined ? [[range.reading, range.wider] as const] : [])))
   const widened = (paths: ReadonlyArray<VariablePath>): ReadonlyArray<VariablePath> => paths.flatMap(path => wider.has(path) ? [path, wider.get(path)!] : [path])
   const inTurn = (listOf: (component: number) => ReadonlyArray<VariablePath>): ReadonlyArray<VariablePath> => {
     const lists = components.map(component => widened(listOf(component)).filter(readable))

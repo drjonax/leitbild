@@ -265,7 +265,7 @@ export const displayEvidence = (
   for (const entry of readings) {
     const binding = bindingOf(entry.pen.path)
     if (binding.owner.type !== 'component') continue
-    const wider = graph.components[binding.owner.componentIndex]!.semantics.widerRanges.find(range => range.reading === entry.pen.path)?.wider
+    const wider = graph.components[binding.owner.componentIndex]!.semantics.widerRanges.find(range => range.reading === entry.pen.path && range.while === undefined)?.wider
     if (wider === undefined) continue
     const name = entry.pen.tagId ?? entry.pen.name
     if (entry.reading.offScale !== null) {

@@ -464,7 +464,7 @@ const resolvePens = (
 /** The published instrument a signal's equipment declares reads its quantity over a wider span, with that span. */
 const widerInstrument = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): ComposedDisplayPen['wider'] => {
   if (binding.owner.type !== 'component') return undefined
-  const path = graph.components[binding.owner.componentIndex]!.semantics.widerRanges.find(range => range.reading === binding.path)?.wider
+  const path = graph.components[binding.owner.componentIndex]!.semantics.widerRanges.find(range => range.reading === binding.path && range.while === undefined)?.wider
   const wider = path === undefined ? undefined : graph.signalBindingByPath.get(path)
   // The compiler holds both instruments of a declared wider range to their spans.
   return wider === undefined || !wider.published ? undefined : { path: wider.path, ...(wider.tagId === undefined ? {} : { tagId: wider.tagId }), span: wider.limits!.instrumentSpan! }

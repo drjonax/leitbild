@@ -295,7 +295,7 @@ const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, p
   const share = signal.unit === 'fraction' || signal.unit === 'percent'
   const span = signal.limits?.instrumentSpan
   // The compiler holds both instruments of a declared wider range to their spans.
-  const wider = component.semantics.widerRanges.find(range => range.reading === path)?.wider
+  const wider = component.semantics.widerRanges.find(range => range.reading === path && range.while === undefined)?.wider
   const widerSignal = wider === undefined ? undefined : graph.signalBindingByPath.get(wider)
   return {
     path,
