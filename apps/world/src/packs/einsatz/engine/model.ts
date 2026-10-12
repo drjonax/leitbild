@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { geoJsonLineStringSchema, geoJsonPointSchema, idSchema, type GeoJsonPoint, type RouteImpact } from '../../../core/model/index.ts'
-import { configIdSchema, type EinsatzConfig, type LoadClass, type TaskTemplate, type UnitType } from '../config-schema.ts'
+import { configIdSchema, roeModes, type EinsatzConfig, type LoadClass, type TaskTemplate, type UnitType } from '../config-schema.ts'
 import { validateEinsatzConfig } from '../config-validation.ts'
 import { unitPhases } from '../lexicon.ts'
+import { emptyCombatState, type CombatState, type Sighting, type TrackIndexRecord, type TrackRecord } from './combat-model.ts'
 
 const simulationMs = z.number().finite().nonnegative()
 /** A validated point typed as the core's read-only GeoJSON point. */
@@ -29,7 +30,7 @@ export const legSchema = z.object({
 }).strict()
 export type Leg = z.output<typeof legSchema>
 
-export const actionVerbs = ['create', 'send', 'divert', 'move', 'deliver', 'recall', 'hold', 'release', 'adjust', 'set', 'close'] as const
+export const actionVerbs = ['create', 'send', 'divert', 'move', 'deliver', 'recall', 'hold', 'release', 'adjust', 'set', 'close', 'engage'] as const
 /** The last order a record received: what, towards which object, by whom and why, at which Run time. */
 export const lastActionSchema = z.object({
   verb: z.enum(actionVerbs),
@@ -73,8 +74,9 @@ export const integrities = ['healthy', 'damaged', 'destroyed'] as const
 
 /**
  * A unit's `packData`. It changes only on transitions (phase, task, load,
- * leg, integrity, properties, alerts, last order); its position and leg
- * progress are per-cycle runtime state. A site is a unit whose type has
+ * leg, integrity, properties, alerts, last order, rules of engagement,
+ * targets, posture); its position, leg progress and fire received are
+ * per-cycle runtime state. A site is a unit whose type has
  * `receiving` and no `mobility`; it alone carries `accepting` and `received`.
  */
 export const unitDataSchema = z.object({
@@ -97,6 +99,17 @@ export const unitDataSchema = z.object({
   received: countsSchema.optional(),
   lastAction: lastActionSchema.optional(),
   alerts: alertsSchema,
+  /** When the unit last lost a step; present once damaged. */
+  integritySinceMs: simulationMs.optional(),
+  /** Rules of engagement, on a unit with an effector. */
+  roe: z.enum(roeModes).optional(),
+  /** The own-side track ordered as priority target, and the one fired on in the last engagement step. */
+  engage: idSchema.optional(),
+  target: idSchema.optional(),
+  /** On a unit with a signature: since when it has stood still, absent while it moves. Halted once still for `concealAfterS`. */
+  stillSinceMs: simulationMs.optional(),
+  /** On a unit with a signature: it fired within the last 60 s, so it is seen further away. */
+  revealed: z.literal(true).optional(),
 }).strict()
 
 const tally = z.number().int().nonnegative()
@@ -172,16 +185,25 @@ export interface EngineState {
   readonly units: ReadonlyMap<string, UnitRecord>
   readonly tasks: ReadonlyMap<string, TaskRecord>
   readonly motion: ReadonlyMap<string, UnitMotion>
+  /** Tracks, fixes and fire received: see `combat-model.ts`. */
+  readonly combat: CombatState
 }
 
-/** A record's `packData` changed at `atMs`. A unit transition also carries where the unit was then. */
+/**
+ * A record's `packData` changed at `atMs`. A unit transition also carries
+ * where the unit was then, a track transition its sighting. A dropped track
+ * is deleted.
+ */
 export type Transition =
   | { readonly kind: 'unit'; readonly atMs: number; readonly record: UnitRecord; readonly point: GeoJsonPoint; readonly progressMs: number }
   | { readonly kind: 'task'; readonly atMs: number; readonly record: TaskRecord }
+  | { readonly kind: 'track'; readonly atMs: number; readonly record: TrackRecord; readonly sighting: Sighting }
+  | { readonly kind: 'track-index'; readonly atMs: number; readonly record: TrackIndexRecord }
+  | { readonly kind: 'track-dropped'; readonly atMs: number; readonly record: Pick<TrackRecord, 'id' | 'side'> }
 
 export const emptyEngineState = (input: { readonly config: EinsatzConfig; readonly sides: ReadonlyArray<string>; readonly timeMs: number }): EngineState => {
   if (!Number.isFinite(input.timeMs) || input.timeMs < 0) throw new Error('Invalid Einsatz engine time')
-  return { catalog: createCatalog(input.config), sides: input.sides, timeMs: input.timeMs, units: new Map(), tasks: new Map(), motion: new Map() }
+  return { catalog: createCatalog(input.config), sides: input.sides, timeMs: input.timeMs, units: new Map(), tasks: new Map(), motion: new Map(), combat: emptyCombatState() }
 }
 
 export const unitTypeOf = (catalog: Catalog, unit: UnitRecord): UnitType => {

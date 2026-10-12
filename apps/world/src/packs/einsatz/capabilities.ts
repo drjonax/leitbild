@@ -22,6 +22,8 @@ export const einsatzCommandIds = {
   taskCreate: 'world.einsatz.task.create',
   taskClose: 'world.einsatz.task.close',
   siteSet: 'world.einsatz.site.set',
+  setRoe: 'world.einsatz.unit.set-roe',
+  engage: 'world.einsatz.unit.engage',
 } as const
 export const einsatzQueryIds = {
   recommend: 'world.einsatz.recommend',
@@ -37,6 +39,8 @@ export const commandInputSchemas = {
   [einsatzCommandIds.taskCreate]: z.object(intentFields.taskCreate).strict(),
   [einsatzCommandIds.taskClose]: z.object(intentFields.taskClose).strict(),
   [einsatzCommandIds.siteSet]: z.object(intentFields.siteSet).strict(),
+  [einsatzCommandIds.setRoe]: z.object(intentFields.setRoe).strict(),
+  [einsatzCommandIds.engage]: z.object(intentFields.engage).strict(),
 }
 export type EinsatzCommandId = keyof typeof commandInputSchemas
 export type CommandInput<K extends EinsatzCommandId> = z.output<typeof commandInputSchemas[K]>
@@ -179,6 +183,20 @@ export const einsatzCapabilities: ReadonlyArray<SimulationCapability> = [
     description: 'Set whether a receiving site accepts arrivals. When it stops accepting, units under a deliver standing order heading or queued there deliver elsewhere at once; handovers under way finish.',
     idempotent: true,
     targets: input => objectIds(input.siteId),
+  }),
+  command({
+    id: einsatzCommandIds.setRoe,
+    title: 'Set rules of engagement',
+    description: 'Set a unit\'s rules of engagement from the next 2 s engagement step on: hold (never fire), return-fire (fire only on tracks whose unit fired in the last 60 s) or free (fire on any eligible track). Only a unit with an effector has rules of engagement.',
+    idempotent: true,
+    targets: input => objectIds(input.unitId),
+  }),
+  command({
+    id: einsatzCommandIds.engage,
+    title: 'Engage a track',
+    description: 'Name one of the unit\'s own side\'s tracks as its priority target: an identified track of a hostile side whose type the unit\'s effector targets. The unit fires on it whenever the fire gate passes (a fire-control fix, in range, and the rules of engagement allow); otherwise it keeps its current or nearest eligible target. A track of another side is refused cross_side_reference; a contact, a destroyed track or one the unit cannot engage is refused track_not_engageable.',
+    idempotent: true,
+    targets: input => objectIds(input.unitId),
   }),
   defineSimulationQueryCapability({
     id: einsatzQueryIds.recommend,

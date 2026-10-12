@@ -2,15 +2,18 @@ import { z } from 'zod'
 import { geoJsonPosition2DSchema, idSchema, meters, type AlertState, type IsoTimestamp, type ObjectAudience, type ObjectId, type OperationalObject, type PackId, type Provenance } from '../../../core/model/index.ts'
 import type { EinsatzConfig } from '../config-schema.ts'
 import { einsatzPackId } from '../ids.ts'
+import { combatRuntimeSchema } from './combat-model.ts'
 import { einsatzDataSchema, emptyEngineState, motionOf, templateOf, unitTypeOf, type EngineState, type Leg, type RecordAlert, type TaskRecord, type Transition, type UnitMotion, type UnitRecord } from './model.ts'
 import { legPosition, speedFactor } from './movement.ts'
 import { committedPhases, isMoving, isSite, linksToSite, linksToTask, movingPhases } from './rules.ts'
+import { combatRuntimeOf, isTrackObject, readCombatState, trackIndexObject, trackObject, trackObjects } from './track-objects.ts'
 import { sameValue } from './values.ts'
 
 /**
  * Canonical objects and the engine state. Units and tasks are
  * `OperationalObject`s whose truth is `packData`; position, route progress
- * and ETA are snapshot-only. Leg progress and failed reflex attempts are
+ * and ETA are snapshot-only. Leg progress, failed reflex attempts and the
+ * engagement values (fire received, fire and hit times, track fix times) are
  * per-cycle values kept in the runtime state store, never journaled.
  */
 
@@ -42,6 +45,8 @@ export const einsatzRuntimeStateSchema = z.object({
     leg: legKeySchema.optional(),
     reflexAttemptMs: z.number().finite().nonnegative().optional(),
   }).strict()),
+  /** Fire received, last fire and hit times, and track fixes; empty before the first engagement step. */
+  combat: combatRuntimeSchema,
 }).strict()
 export type EinsatzRuntimeState = z.output<typeof einsatzRuntimeStateSchema>
 
@@ -55,6 +60,7 @@ export const runtimeStateOf = (state: EngineState): EinsatzRuntimeState => ({
       ...(motion.reflexAttemptMs === undefined ? {} : { reflexAttemptMs: motion.reflexAttemptMs }),
     }]
   })),
+  combat: combatRuntimeOf(state.combat, new Set(state.units.keys())),
 })
 
 const fail = (id: string, message: string): never => { throw new Error(`${id}: ${message}`) }
@@ -83,7 +89,12 @@ const assertConsistent = (state: EngineState): void => {
       const site = state.units.get(unit.siteId) ?? fail(unit.id, `delivering to missing site ${unit.siteId}`)
       if (!isSite(state.catalog, site) || !linksToSite(state.catalog, unit, site)) fail(unit.id, `cannot deliver to ${site.id}`)
     }
+    const durability = unitTypeOf(state.catalog, unit).components.durability
+    if (unit.integrity === 'damaged' && durability !== undefined && (state.combat.units.get(unit.id)?.fireS ?? 0) < durability.stepFireS) {
+      fail(unit.id, 'the unit is damaged, but the fire it received is missing from the runtime state')
+    }
   }
+  for (const track of state.combat.tracks.values()) if (!state.sides.includes(track.side)) fail(track.id, `tracks for undeclared side ${track.side}`)
 }
 
 /** Rebuilds the engine state from canonical Einsatz objects and the runtime state saved with them. */
@@ -98,8 +109,13 @@ export const readEngineState = (input: {
   const units = new Map<string, UnitRecord>()
   const tasks = new Map<string, TaskRecord>()
   const motion = new Map<string, UnitMotion>()
+  const tracked: OperationalObject[] = []
   for (const object of input.objects) {
     if (object.packId !== einsatzPackId) continue
+    if (isTrackObject(object)) {
+      tracked.push(object)
+      continue
+    }
     const data = einsatzDataSchema.parse(object.packData)
     if (data.type === 'task') {
       tasks.set(object.id, { ...data, id: object.id, label: object.label })
@@ -119,7 +135,7 @@ export const readEngineState = (input: {
       ...(saved?.reflexAttemptMs === undefined ? {} : { reflexAttemptMs: saved.reflexAttemptMs }),
     })
   }
-  const state: EngineState = { ...empty, units, tasks, motion }
+  const state: EngineState = { ...empty, units, tasks, motion, combat: readCombatState(tracked, runtime.combat) }
   assertConsistent(state)
   return state
 }
@@ -216,13 +232,24 @@ export const taskObject = (record: TaskRecord, stamp: ObjectStamp): OperationalO
   }
 }
 
-/** The object a transition records: the record as it was then, the unit where it was then. */
-export const transitionObject = (state: EngineState, transition: Transition, stamp: ObjectStamp): OperationalObject => transition.kind === 'task'
-  ? taskObject(transition.record, stamp)
-  : unitObject(state, transition.record, { point: transition.point, progressMs: transition.progressMs, impacts: motionOf(state, transition.record.id).impacts }, stamp)
+/**
+ * The object a transition records: the record as it was then, the unit where
+ * it was then, the track where it was last detected. A dropped track has no
+ * object; it is deleted.
+ */
+export const transitionObject = (state: EngineState, transition: Transition, stamp: ObjectStamp): OperationalObject => {
+  switch (transition.kind) {
+    case 'task': return taskObject(transition.record, stamp)
+    case 'unit': return unitObject(state, transition.record, { point: transition.point, progressMs: transition.progressMs, impacts: motionOf(state, transition.record.id).impacts }, stamp)
+    case 'track': return trackObject(transition.record, transition.sighting, stamp)
+    case 'track-index': return trackIndexObject(transition.record, stamp)
+    case 'track-dropped': throw new Error(`${transition.record.id}: a dropped track is deleted, not written`)
+  }
+}
 
 /** Every Einsatz object as the state holds it now, for a snapshot. */
 export const engineObjects = (state: EngineState, stampFor: (id: string) => ObjectStamp): OperationalObject[] => [
   ...[...state.units.values()].map(unit => unitObject(state, unit, motionOf(state, unit.id), stampFor(unit.id))),
   ...[...state.tasks.values()].map(task => taskObject(task, stampFor(task.id))),
+  ...trackObjects(state.combat, state.catalog.config.lexicon, stampFor),
 ]

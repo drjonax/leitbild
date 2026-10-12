@@ -29,6 +29,7 @@
           {
             "id": "emitter", "label": "Emitter", "icon": "circle", "tags": ["t"],
             "components": { "effector": { "rangeM": 100, "targets": ["t", "t"] } },
+            "standingOrders": { "roe": "hold" },
             "properties": [{ "id": "e", "label": "E", "kind": "enum", "values": [{ "id": "a", "label": "A" }, { "id": "a", "label": "A again" }], "default": "a" }]
           }
         ],
@@ -89,7 +90,7 @@
               "effector": { "rangeM": 100, "targets": ["ghost"] },
               "durability": { "stepFireS": 10 }
             },
-            "standingOrders": { "onStepLost": { "createTask": "nothing", "perStep": { "L8": 1 } } }
+            "standingOrders": { "roe": "hold", "onStepLost": { "createTask": "nothing", "perStep": { "L8": 1 } } }
           },
           {
             "id": "site", "label": "Site", "icon": "circle",
@@ -236,7 +237,8 @@
               "mobility": { "mode": "direct", "speedMps": 10 },
               "sensor": { "detectM": 100, "identifyM": 50 },
               "effector": { "rangeM": 100, "targets": ["t"] }
-            }
+            },
+            "standingOrders": { "roe": "hold" }
           },
           {
             "id": "far-sighted", "label": "Far sighted", "icon": "circle",
@@ -278,6 +280,15 @@
         { "code": "order_requires_component", "path": ["unitTypes", 0, "standingOrders", "withdraw"] },
         { "code": "order_requires_component", "path": ["unitTypes", 0, "standingOrders", "onStepLost"] }
       ]
+    },
+    {
+      "name": "an effector without rules of engagement",
+      "config": {
+        "unitTypes": [
+          { "id": "unit", "label": "Unit", "icon": "circle", "tags": ["t"], "components": { "effector": { "rangeM": 100, "targets": ["t"] } } }
+        ]
+      },
+      "issues": [{ "code": "component_requires_order", "path": ["unitTypes", 0, "standingOrders", "roe"] }]
     },
     {
       "name": "a step loss creating a load-less task from a template without a priority floor",

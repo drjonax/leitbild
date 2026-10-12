@@ -48,7 +48,8 @@
         "effector": { "rangeM": 1000, "targets": ["heavy"] },
         "signature": { "factor": 0.8 },
         "durability": { "stepFireS": 40 }
-      }
+      },
+      "standingOrders": { "roe": "return-fire" }
     },
     {
       "id": "post",

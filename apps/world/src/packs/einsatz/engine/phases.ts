@@ -1,8 +1,9 @@
+import { engagementActive, engagementDue, runEngagement } from './combat.ts'
 import { assignedTo, coverageOf, isDone, loadAllocation, rankOf } from './coverage.ts'
 import { closeDraft, openDraft, putUnit, recordTask, setMotion, stageTask, taskIn, unitIn, type Draft } from './draft.ts'
 import { clearAlerts, raiseAlert, templateOf, unitTypeOf, workReturnedCode, type EngineState, type LastAction, type TaskRecord, type Transition, type UnitRecord } from './model.ts'
 import { advanceProgress, hasArrived, legEnd, legPosition, msToArrival, speedFactor } from './movement.ts'
-import { dueReflexes, reflexDueMs, type DueReflex } from './reflexes.ts'
+import { dueReflexes, nextBoundaryMs, reflexDueMs, type DueReflex } from './reflexes.ts'
 import { isDestroyed, isMoving, meetsRequirement } from './rules.ts'
 import { addCounts, byId, countOf, countsOf, patch, total } from './values.ts'
 import { loadText } from './wording.ts'
@@ -146,9 +147,9 @@ export const settle = (draft: Draft): void => {
   }
 }
 
-/** The next Run time something happens: a timed phase ends, a unit arrives, or a standing order falls due. */
+/** The next Run time something happens: a timed phase ends, a unit arrives, a standing order falls due, or an engagement step runs. */
 const nextEventMs = (draft: Draft, targetMs: number): number => {
-  let next = targetMs
+  let next = engagementActive(draft) ? Math.min(targetMs, nextBoundaryMs(draft.timeMs)) : targetMs
   for (const unit of draft.units.values()) {
     if (isDestroyed(unit)) continue
     const motion = draft.motion.get(unit.id)!
@@ -184,7 +185,9 @@ export interface StepResult {
 
 /**
  * Advances deterministically towards `targetMs`, stepping to each phase
- * deadline and arrival (rounded up to the Run clock's millisecond). It stops
+ * deadline and arrival (rounded up to the Run clock's millisecond) and, while
+ * engagement is active, to each absolute 2 s boundary, where the engagement
+ * step runs once after the transitions due then. It stops
  * early, at the exact Run time, when standing orders fall due; they need
  * routes, so the caller runs them and continues. Large and small steps reach
  * the same state.
@@ -196,6 +199,10 @@ export const stepUntil = (state: EngineState, targetMs: number): StepResult => {
   for (let iteration = 0; ; iteration++) {
     if (iteration > advanceBudget) throw new Error('Einsatz advance budget exceeded; use bounded simulation steps')
     settle(draft)
+    if (engagementDue(draft)) {
+      runEngagement(draft)
+      settle(draft)
+    }
     const reflexes = dueReflexes(draft)
     if (reflexes.length > 0 || draft.timeMs >= targetMs) return { state: closeDraft(draft), transitions: draft.transitions, reflexes }
     const next = nextEventMs(draft, targetMs)

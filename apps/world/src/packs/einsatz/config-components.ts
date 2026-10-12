@@ -35,10 +35,19 @@ const orderNeeds: Readonly<Record<keyof StandingOrders, ReadonlyArray<keyof Unit
 }
 const orders = Object.keys(orderNeeds) as ReadonlyArray<keyof StandingOrders>
 
-export const standingOrderComponents: ConfigCheck = config => config.unitTypes.flatMap((type, index): ConfigIssue[] =>
-  orders.flatMap(order => {
+/**
+ * Each standing order needs the components it acts through, and an effector
+ * fires only under the rules of engagement its type states: the engine
+ * assumes none.
+ */
+export const standingOrderComponents: ConfigCheck = config => config.unitTypes.flatMap((type, index): ConfigIssue[] => [
+  ...orders.flatMap(order => {
     if (type.standingOrders?.[order] === undefined) return []
     const missing = orderNeeds[order].filter(component => type.components[component] === undefined)
     return missing.length === 0 ? []
       : [configIssue(['unitTypes', index, 'standingOrders', order], 'order_requires_component', `Standing order ${order} on "${type.label}" needs ${missing.join(' and ')}`)]
-  }))
+  }),
+  ...(type.components.effector !== undefined && type.standingOrders?.roe === undefined
+    ? [configIssue(['unitTypes', index, 'standingOrders', 'roe'], 'component_requires_order', `"${type.label}" has an effector, so it needs standing order roe: hold, return-fire or free`)]
+    : []),
+])

@@ -49,7 +49,7 @@ const intentOf = (item: Item): Intent => {
 
 /** The engine state of the objects authored so far, at the Scenario's start, on the sides it declares. */
 const authoredState = (config: unknown, objects: ReadonlyArray<OperationalObject>, at: IsoTimestamp, sides: ReadonlyArray<ScenarioSide>) =>
-  readEngineState({ config: einsatzConfigSchema.parse(config), sides: sides.map(side => side.id), objects, runtime: { timeMs: Date.parse(at), units: {} } })
+  readEngineState({ config: einsatzConfigSchema.parse(config), sides: sides.map(side => side.id), objects, runtime: { timeMs: Date.parse(at), units: {}, combat: { units: {}, tracks: {} } } })
 
 export const einsatzScenarioSupport: PackScenarioSupport = {
   itemSchemas: { unit: unitItemSchema, task: taskItemSchema },

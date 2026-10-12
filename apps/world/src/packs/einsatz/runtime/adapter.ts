@@ -10,6 +10,7 @@ import { advanceEngine, commitIntent, planIntent, prepareLegs, type EnginePorts 
 import { loadedText } from '../engine/intent-support.ts'
 import { motionOf, type EngineState, type Transition } from '../engine/model.ts'
 import { audienceOf, readEngineState, runtimeStateOf, transitionObject, unitObject, type ObjectStamp } from '../engine/objects.ts'
+import { sightingOf, trackDeletionRefusal, trackIndexObject, trackObject, type TrackStamp } from '../engine/track-objects.ts'
 import { hasLoad } from '../engine/rules.ts'
 import { recommend } from '../recommend.ts'
 import { refusal } from '../refusal.ts'
@@ -76,13 +77,15 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
     config: engineConfig,
     sides: (config.scenario.sides ?? []).map(side => side.id),
     objects,
-    runtime: saved?.engine ?? { timeMs: clockMs(), units: {} },
+    runtime: saved?.engine ?? { timeMs: clockMs(), units: {}, combat: { units: {}, tracks: {} } },
   })
   const ports: EnginePorts = { routing }
 
   /** The object last published for each record, and where each unit was then. */
   const published = new Map<string, OperationalObject>(objects.map(object => [object.id, object]))
   const publishedMotion = new Map([...current.motion].map(([id, motion]) => [id, { point: motion.point, progressMs: motion.progressMs }]))
+  /** Each track's last published sighting; a track's position between transitions is snapshot-only. */
+  const publishedSightings = new Map([...current.combat.sightings].map(([id, sighting]) => [id, sighting.observedAtMs]))
   /** Records the Run has held, so one it no longer holds was deleted rather than not yet committed. */
   const heldByRun = new Set<string>()
   const deletedByRun = new Set<string>()
@@ -118,8 +121,18 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
     const previous = published.get(id)
     return { at, provenance, ...(audience === undefined ? {} : { audience }), ...(previous === undefined ? {} : { previous }) }
   }
+  /** How a track or a track index is written: by the simulator for its own audience, whichever commit carries it. */
+  const trackStamp = (id: string, at: IsoTimestamp): TrackStamp => {
+    const previous = published.get(id)
+    return { at, ...(previous === undefined ? {} : { previous }) }
+  }
 
-  /** Publishes each transition as a durable object, then every unit that moved since it was last published. */
+  /**
+   * Publishes each transition as a durable object, then every unit that
+   * moved and every track sighted since it was last published. Tracks and
+   * track indexes are written apart from units and tasks, for their own
+   * audience and never naming a command; a dropped track is deleted.
+   */
   const publish = (state: EngineState, transitions: ReadonlyArray<Transition>, commander?: Commander): void => {
     const at = nowIso()
     const events: PackRuntimeEvent[] = []
@@ -128,6 +141,21 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
       events.push({ type: 'object.upserted', object, at, history, provenance: object.provenance })
     }
     for (const transition of transitions) {
+      if (transition.kind === 'track-dropped') {
+        published.delete(transition.record.id)
+        publishedSightings.delete(transition.record.id)
+        events.push({ type: 'object.deleted', objectId: transition.record.id as ObjectId, at, history: 'record', provenance: { source: 'simulator' } })
+        continue
+      }
+      if (transition.kind === 'track') {
+        upsert(trackObject(transition.record, transition.sighting, trackStamp(transition.record.id, at)), 'record')
+        publishedSightings.set(transition.record.id, transition.sighting.observedAtMs)
+        continue
+      }
+      if (transition.kind === 'track-index') {
+        upsert(trackIndexObject(transition.record, trackStamp(transition.record.id, at)), 'record')
+        continue
+      }
       upsert(transitionObject(state, transition, stamp(transition.record.id, audienceOf(state, transition.record), at, commander)), 'record')
       if (transition.kind === 'unit') publishedMotion.set(transition.record.id, { point: transition.point, progressMs: transition.progressMs })
     }
@@ -137,6 +165,12 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
       if (last !== undefined && samePoint(last.point, motion.point) && last.progressMs === motion.progressMs) continue
       upsert(unitObject(state, unit, motion, stamp(unit.id, audienceOf(state, unit), at, commander)), 'snapshot-only')
       publishedMotion.set(unit.id, { point: motion.point, progressMs: motion.progressMs })
+    }
+    for (const track of state.combat.tracks.values()) {
+      const sighting = sightingOf(state.combat, track.id)
+      if (publishedSightings.get(track.id) === sighting.observedAtMs) continue
+      upsert(trackObject(track, sighting, trackStamp(track.id, at)), 'snapshot-only')
+      publishedSightings.set(track.id, sighting.observedAtMs)
     }
     if (events.length === 0) return
     for (const handler of handlers) handler({ type: 'event.emission', events, emittedAt: at, runtimeId: einsatzRuntimeId })
@@ -302,6 +336,8 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
     validateObjectDeletion: objectId => {
       const unit = current.units.get(objectId)
       if (unit !== undefined && hasLoad(unit)) throw new Error(refusal('unit_loaded', loadedText(current, unit)))
+      const track = trackDeletionRefusal(current.combat, objectId)
+      if (track !== undefined) throw new Error(track)
     },
     observeCommittedEvents: async events => {
       for (const event of events) {

@@ -26,6 +26,7 @@ export const configurationRefusalCodes = [
   'refused_combination',
   'identify_exceeds_detect',
   'order_requires_component',
+  'component_requires_order',
   'priority_class_required',
   'self_hostility',
 ] as const
@@ -66,6 +67,10 @@ export const engineRefusalCodes = [
   'property_out_of_range',
   'routing_unavailable',
   'no_road_near_point',
+  'no_effector',
+  'track_not_engageable',
+  'track_not_deletable',
+  'reserved_id',
 ] as const
 
 export type EngineRefusalCode = typeof engineRefusalCodes[number]

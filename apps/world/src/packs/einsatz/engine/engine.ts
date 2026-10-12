@@ -1,5 +1,6 @@
 import { routeDistanceMeters, type RouteImpact } from '../../../core/model/index.ts'
 import { refusalCode } from '../refusal.ts'
+import { planEngage, planSetRoe } from './engagement-orders.ts'
 import { closeDraft, openDraft, putUnit, setMotion, unitIn } from './draft.ts'
 import { refused, type Refused } from './intent-support.ts'
 import { commandsEveryUnit, type EngineActor, type Intent, type Plan, type RouteNeed } from './intents.ts'
@@ -45,6 +46,8 @@ export const planIntent = (state: EngineState, intent: Intent, actor: EngineActo
     case 'site.set': return planSiteSet(state, intent, actor)
     case 'unit.create': return planUnitCreate(state, intent, actor)
     case 'unit.adjust': return planUnitAdjust(state, intent, actor)
+    case 'set-roe': return planSetRoe(state, intent, actor)
+    case 'engage': return planEngage(state, intent, actor)
   }
 }
 
@@ -119,7 +122,7 @@ const deliverIntent = (state: EngineState, unit: UnitRecord): { readonly ok: tru
   return { ok: true, intent: { kind: 'send', units: [unit.id], to: { siteId: nearest.site.id } } }
 }
 
-const orderWords: Readonly<Record<StandingOrder, string>> = { deliver: 'Deliver', return: 'Return' }
+const orderWords: Readonly<Record<StandingOrder, string>> = { deliver: 'Deliver', return: 'Return', withdraw: 'Withdraw' }
 
 /**
  * A standing order that cannot be carried out raises its alert on the unit,

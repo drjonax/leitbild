@@ -37,7 +37,7 @@ describe('Einsatz state discipline', () => {
     const sent = await travelling()
     const arrival = arrivalAt(sent, 'u1')
     const { state, transitions } = await advanceEngine(sent, arrival, ports)
-    expect(transitions.map(entry => [entry.kind, entry.atMs, entry.kind === 'unit' ? entry.record.phase : entry.record.coverage.loads[0]?.covered])).toEqual([
+    expect(transitions.map(entry => [entry.kind, entry.atMs, entry.kind === 'unit' ? entry.record.phase : entry.kind === 'task' ? entry.record.coverage.loads[0]?.covered : entry.kind])).toEqual([
       ['unit', start + 2_000, 'en-route'],
       ['unit', arrival, 'on-task'],
     ])
@@ -55,10 +55,10 @@ describe('Einsatz state discipline', () => {
     const leg = unitOf(moving, 'u1').leg!
     expect(runtime).toEqual({ timeMs: start + 10_000, units: { u1: { progressMs: 8_000, leg: {
       provider: leg.provider, durationMs: leg.durationMs, distanceM: leg.distanceM, from: leg.geometry.coordinates[0]!, to: leg.geometry.coordinates.at(-1)!,
-    } } } })
+    } } }, combat: { units: {}, tracks: {} } })
     const objects = engineObjects(moving, () => ({ at: isoAt(moving.timeMs), provenance: { source: 'simulator' } }))
     expect(objects.find(object => object.id === 'u1')?.packData).not.toHaveProperty('progressMs')
-    expect(() => readEngineState({ config, sides: [], objects, runtime: { timeMs: runtime.timeMs, units: {} } })).toThrow('leg progress is missing')
+    expect(() => readEngineState({ config, sides: [], objects, runtime: { timeMs: runtime.timeMs, units: {}, combat: runtime.combat } })).toThrow('leg progress is missing')
     const restored = readEngineState({ config, sides: [], objects, runtime })
     expect(restored.motion.get('u1')).toEqual(moving.motion.get('u1')!)
     expect([...restored.units.values()]).toEqual([...moving.units.values()])

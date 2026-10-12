@@ -6,7 +6,9 @@ import { einsatzRuntimeStateSchema } from '../engine/objects.ts'
  * What the Einsatz runtime keeps beside the canonical objects, never
  * journaled: the configuration in force and its revision, the next serial
  * of the unit and task ids it gives, and the engine's per-cycle values (Run
- * time, leg progress with the leg it measures, and failed reflex attempts).
+ * time, leg progress with the leg it measures, failed reflex attempts, fire
+ * received by each unit, when it last fired and was last hit, the last
+ * engagement step, and each track's last fire-control fix).
  * Saved with every checkpoint and Run copy, and read back on connect.
  */
 export const savedStateSchema = z.object({

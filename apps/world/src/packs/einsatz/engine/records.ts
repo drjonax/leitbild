@@ -1,4 +1,5 @@
 import type { GeoJsonPoint } from '../../../core/model/index.ts'
+import { engagementFieldsAtCreate, isTrackId } from './combat-model.ts'
 import { coverageOf, rankOf } from './coverage.ts'
 import { putUnit, setMotion, stageTask, unitIn, type Draft } from './draft.ts'
 import { actionBy, notInPicture, refused, sideRefusal, type Refused } from './intent-support.ts'
@@ -11,7 +12,9 @@ import type { UnitType } from '../config-schema.ts'
 const applied = (apply: (draft: Draft) => void): Plan => ({ ok: true, routes: [], notes: [], apply: draft => apply(draft) })
 
 const idTaken = (state: EngineState, id: string): Refused | undefined =>
-  state.units.has(id) || state.tasks.has(id) ? refused('duplicate_id', `${id} already exists`) : undefined
+  state.units.has(id) || state.tasks.has(id) ? refused('duplicate_id', `${id} already exists`)
+    : isTrackId(id) ? refused('reserved_id', `${id} is reserved: ids starting with track: or tracks: name tracks`)
+    : undefined
 
 const propertiesRefusal = (type: UnitType, properties: Readonly<Record<string, PropertyValue>>): Refused | undefined => {
   for (const [id, value] of Object.entries(properties)) {
@@ -54,6 +57,7 @@ export const planUnitCreate = (state: EngineState, intent: IntentOf<'unit.create
       ...(receiving === undefined ? {} : { accepting: receiving.accepting, received: {} }),
       lastAction: actionBy(draft, actor, 'create'),
       alerts: [],
+      ...engagementFieldsAtCreate(type, draft.timeMs, draft.sides.length > 0),
     })
   })
 }

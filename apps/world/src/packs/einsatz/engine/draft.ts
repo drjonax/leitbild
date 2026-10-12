@@ -1,3 +1,4 @@
+import type { Sighting, TrackRecord, UnitCombat } from './combat-model.ts'
 import type { Catalog, EngineState, TaskRecord, Transition, UnitMotion, UnitRecord } from './model.ts'
 import { patch, sameValue } from './values.ts'
 
@@ -16,7 +17,17 @@ export interface Draft {
   readonly tasks: Map<string, TaskRecord>
   readonly recordedTasks: Map<string, TaskRecord>
   readonly motion: Map<string, UnitMotion>
+  readonly combat: CombatDraft
   readonly transitions: Transition[]
+}
+
+/** The engagement state of a draft; only the engagement step changes tracks and records their transitions. */
+export interface CombatDraft {
+  cycleMs: number | undefined
+  readonly tracks: Map<string, TrackRecord>
+  readonly sightings: Map<string, Sighting>
+  readonly units: Map<string, UnitCombat>
+  readonly serials: Map<string, number>
 }
 
 export const openDraft = (state: EngineState): Draft => ({
@@ -27,6 +38,13 @@ export const openDraft = (state: EngineState): Draft => ({
   tasks: new Map(state.tasks),
   recordedTasks: new Map(state.tasks),
   motion: new Map(state.motion),
+  combat: {
+    cycleMs: state.combat.cycleMs,
+    tracks: new Map(state.combat.tracks),
+    sightings: new Map(state.combat.sightings),
+    units: new Map(state.combat.units),
+    serials: new Map(state.combat.serials),
+  },
   transitions: [],
 })
 
@@ -37,6 +55,13 @@ export const closeDraft = (draft: Draft): EngineState => ({
   units: draft.units,
   tasks: draft.tasks,
   motion: draft.motion,
+  combat: {
+    ...(draft.combat.cycleMs === undefined ? {} : { cycleMs: draft.combat.cycleMs }),
+    tracks: draft.combat.tracks,
+    sightings: draft.combat.sightings,
+    units: draft.combat.units,
+    serials: draft.combat.serials,
+  },
 })
 
 export const unitIn = (draft: { readonly units: ReadonlyMap<string, UnitRecord> }, id: string): UnitRecord => {

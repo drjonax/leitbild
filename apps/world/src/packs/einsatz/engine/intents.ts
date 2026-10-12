@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { idSchema, type GeoJsonPoint } from '../../../core/model/index.ts'
-import { configIdSchema } from '../config-schema.ts'
+import { configIdSchema, roeModes } from '../config-schema.ts'
 import type { Draft } from './draft.ts'
 import { pointSchema, propertyValueSchema, type Leg, type UnitRecord } from './model.ts'
 
@@ -39,6 +39,8 @@ export const intentFields = {
   siteSet: { siteId: idSchema, accepting: z.boolean() },
   unitCreate: { type: configIdSchema, side: configIdSchema.optional(), at: pointSchema, base: pointSchema.optional(), label: labelSchema, properties: propertiesSchema.optional() },
   unitAdjust: { unitId: idSchema, properties: propertiesSchema.refine(properties => Object.keys(properties).length > 0, 'Name at least one property'), reason: reasonSchema },
+  setRoe: { unitId: idSchema, roe: z.enum(roeModes) },
+  engage: { unitId: idSchema, trackId: idSchema },
 } as const
 
 /** Every divert names a unit of the send, once. */
@@ -66,6 +68,11 @@ export const siteSetIntentSchema = z.object({ kind: z.literal('site.set'), ...in
 export const unitCreateIntentSchema = z.object({ kind: z.literal('unit.create'), id: idSchema, ...intentFields.unitCreate }).strict()
 export const unitAdjustIntentSchema = z.object({ kind: z.literal('unit.adjust'), ...intentFields.unitAdjust }).strict()
 
+/** Set a unit's rules of engagement: hold fire, return fire, or fire on any eligible track. */
+export const setRoeIntentSchema = z.object({ kind: z.literal('set-roe'), ...intentFields.setRoe }).strict()
+/** Name an own-side track as a unit's priority target. */
+export const engageIntentSchema = z.object({ kind: z.literal('engage'), ...intentFields.engage }).strict()
+
 export const intentSchema = z.discriminatedUnion('kind', [
   sendIntentSchema,
   recallIntentSchema,
@@ -75,6 +82,8 @@ export const intentSchema = z.discriminatedUnion('kind', [
   siteSetIntentSchema,
   unitCreateIntentSchema,
   unitAdjustIntentSchema,
+  setRoeIntentSchema,
+  engageIntentSchema,
 ])
 
 export type Intent = z.output<typeof intentSchema>

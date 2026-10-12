@@ -43,6 +43,12 @@ const seen = (context: CommandContext, id: string): Refused | undefined => {
   return record === undefined || inPicture(context.state.catalog, context.viewer, record) ? undefined : notInPicture()
 }
 
+/** Refused unless the track is one of a side the viewer sees; an id the state does not hold is left to the engine. */
+const trackSeen = (context: CommandContext, trackId: string): Refused | undefined => {
+  const track = context.state.combat.tracks.get(trackId)
+  return track === undefined || context.viewer.sees === 'all' || context.viewer.sees.includes(track.side) ? undefined : notInPicture()
+}
+
 /**
  * Refused unless the task is in the viewer's queue. Closing a task releases
  * every unit on it, whoever commands them, so only a role whose work it is
@@ -112,6 +118,14 @@ const intentFor = (context: CommandContext, kind: EinsatzCommandId, payload: unk
     case einsatzCommandIds.siteSet: {
       const input = parse(einsatzCommandIds.siteSet)
       return ok({ kind: 'site.set', ...input }, commanded(context, input.siteId))
+    }
+    case einsatzCommandIds.setRoe: {
+      const input = parse(einsatzCommandIds.setRoe)
+      return ok({ kind: 'set-roe', ...input }, commanded(context, input.unitId))
+    }
+    case einsatzCommandIds.engage: {
+      const input = parse(einsatzCommandIds.engage)
+      return ok({ kind: 'engage', ...input }, commanded(context, input.unitId), trackSeen(context, input.trackId))
     }
   }
 }
