@@ -13,12 +13,13 @@ export interface StateTexts {
   readonly off: string
 }
 
-export const stateTexts = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): StateTexts => {
+export const stateTexts = (graph: CompiledPlantGraph, binding: ProcessSignalBinding, within: ReadonlyArray<number> = []): StateTexts => {
   const owner = binding.owner.type === 'component' ? graph.components[binding.owner.componentIndex]! : undefined
   const local = owner === undefined ? undefined : String(binding.path).slice(String(owner.id).length + 1)
   const declared = local === undefined ? undefined : owner?.metadata?.presentation?.states?.[local]
-  // A row of alike states (two buses' voltage) is told apart by its equipment, where the words do not name it.
-  const short = owner?.metadata?.presentation?.shortLabel ?? owner?.label
+  // A row of alike states (two buses' voltage) is told apart by its equipment, where the words do not name it; in
+  // the detail of that equipment (`within`) the words stand alone: "Rods on bottom" on the core's, not "… · Core".
+  const short = owner === undefined || within.includes(owner.index) ? undefined : owner.metadata?.presentation?.shortLabel ?? owner.label
   const named = (text: string): string => short === undefined || text.includes(short) ? text : `${text} · ${short}`
   if (declared !== undefined) return { on: named(declared.on), off: named(declared.off) }
   const served = owner?.semantics.aspects.find(aspect => aspect.command === binding.path || aspect.state?.path === binding.path)

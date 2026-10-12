@@ -87,9 +87,11 @@ export interface ComposedDisplayPen {
   /** Recorded by this Run's historian, so a trend has history from before the view opened. */
   readonly recorded: boolean
   /**
-   * A writable operator or automation command (a demand), not a measured
-   * state: a valve's commanded position can read closed while the valve is
-   * stuck open. Shown as "demand" wherever it appears.
+   * A writable input, not a measured state: an operator's or automation's
+   * command (a demand: a valve's commanded position can read closed while the
+   * valve is stuck open), or a scenario's fault knob. Shown as "demand"
+   * wherever it appears. A condition outside the Plant that only a scenario
+   * sets (the offsite grid's voltage) is read as measured, not as a demand.
    */
   readonly command: boolean
   /** A diagnostic only the simulator computes, which no real plant's instrument reads: tagged SIM wherever it shows. */
@@ -404,7 +406,13 @@ const resolvePens = (
   system: ProcessPlantRuntimeInstance,
   signals: ReadonlyArray<ComposedDisplaySignal>,
   panelPath: string,
-  options: { readonly numericOnly: boolean; readonly panelName: string; readonly recordedSeriesIds: ReadonlySet<string> },
+  options: {
+    readonly numericOnly: boolean
+    readonly panelName: string
+    readonly recordedSeriesIds: ReadonlySet<string>
+    /** The equipment a detail is of, whose states read without its name (state-words.ts). */
+    readonly within?: ReadonlyArray<number>
+  },
   issues: ComposedDisplayIssue[],
 ): ReadonlyArray<ComposedDisplayPen> | undefined => {
   const pens: ComposedDisplayPen[] = []
@@ -448,11 +456,11 @@ const resolvePens = (
       unit: binding.unit,
       quantity: binding.quantity,
       valueKind: typeof value === 'number' ? 'number' : 'boolean',
-      ...(typeof value === 'boolean' ? { states: stateTexts(system.plant.graph, binding) } : {}),
+      ...(typeof value === 'boolean' ? { states: stateTexts(system.plant.graph, binding, options.within) } : {}),
       ...(typeof value === 'number' && servesPosition(system.plant.graph, binding) ? { position: true as const } : {}),
       seriesId,
       recorded: options.recordedSeriesIds.has(seriesId),
-      command: binding.writable,
+      command: binding.writable && binding.actuation !== 'boundary',
       ...(binding.simulatorOnly === undefined ? {} : { simulatorOnly: binding.simulatorOnly }),
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
       ...(wider === undefined ? {} : { wider }),
@@ -517,12 +525,13 @@ const compilePanel = (
   panelIndex: number,
   recordedSeriesIds: ReadonlySet<string>,
   issues: ComposedDisplayIssue[],
+  within: ReadonlyArray<number> = [],
 ): UnsizedPanel | undefined => {
   const panelPath = `panels.${panelIndex}`
   if (panel.kind === 'alarms') return { kind: 'alarms', scope: panel.scope, ruleIds: [], rows: composedDisplayLayout.alarmRows }
   if (panel.kind === 'mimic') throw new Error('a mimic is compiled once the other panels are known')
   if (panel.kind === 'readouts') {
-    const pens = resolvePens(system, panel.signals, panelPath, { numericOnly: false, panelName: 'readouts', recordedSeriesIds }, issues)
+    const pens = resolvePens(system, panel.signals, panelPath, { numericOnly: false, panelName: 'readouts', recordedSeriesIds, within }, issues)
     return pens === undefined ? undefined : { kind: 'readouts', pens }
   }
   const pens = resolvePens(system, panel.signals, panelPath, { numericOnly: true, panelName: panel.kind, recordedSeriesIds }, issues)
@@ -1165,15 +1174,16 @@ const generatedDisplay = (
   }
 }
 
-/** A generated display's lead values, each recorded one with a sparkline of its history. */
+/** A generated display's lead values, each recorded one with a sparkline of its history; a detail's states read without its name (`within`). */
 const leadValues = (
   system: ProcessPlantRuntimeInstance,
   paths: ReadonlyArray<VariablePath>,
   recordedSeriesIds: ReadonlySet<string>,
   issues: ComposedDisplayIssue[],
+  within: ReadonlyArray<number> = [],
 ): ComposedReadoutsPanel | undefined => {
   if (paths.length === 0) return undefined
-  const panel = compilePanel(system, { kind: 'readouts', signals: paths.map(path => ({ ref: path, role: 'primary' as const })) }, 0, recordedSeriesIds, issues)
+  const panel = compilePanel(system, { kind: 'readouts', signals: paths.map(path => ({ ref: path, role: 'primary' as const })) }, 0, recordedSeriesIds, issues, within)
   return panel?.kind === 'readouts' ? { ...panel, sparklineMs: LEAD_VALUE_SPARKLINE_MS } : undefined
 }
 
@@ -1229,7 +1239,7 @@ export const compileDetailDisplay = (
   if (unknown.length > 0) return { ok: false, issues: [{ path: 'detail', message: `${system.plant.id} has no ${unknown.length === 1 ? 'component' : 'components'} ${unknown.join(', ')}` }] }
   const components = componentIds.map(id => graph.componentIndexById.get(id as never)!)
   const issues: ComposedDisplayIssue[] = []
-  const readouts = leadValues(system, equipmentKeyValues(system.plant, components, plantNow(system)), recordedSeriesIds, issues)
+  const readouts = leadValues(system, equipmentKeyValues(system.plant, components, plantNow(system)), recordedSeriesIds, issues, components)
   if (issues.length > 0) return { ok: false, issues }
   const loops = [...new Set(components.map(index => graph.components[index]!.metadata?.loopId))]
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}

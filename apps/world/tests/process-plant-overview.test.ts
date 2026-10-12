@@ -137,10 +137,12 @@ describe('the unit overview World generates for a Plant', () => {
     const readouts = result.display.panels.find(candidate => candidate.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
     expect(readouts.sparklineMs).toBe(600_000)
-    // The vessel's net inventory flow is not recorded: it has no sparkline, and the agent is told so.
-    expect(readouts.pens.filter(pen => !pen.recorded).map(pen => String(pen.path))).toEqual(['vessel.netInventoryFlowKgPerS'])
+    // Every lead value at power is recorded (the unrecorded net inventory flow, computed by the simulator only, no
+    // longer leads: C1 E2), and the agent is told each has a sparkline.
+    expect(readouts.pens.filter(pen => !pen.recorded).map(pen => String(pen.path))).toEqual([])
     const shows = composedDisplayShows(result.display, system.runtime.elapsedMs()).join(' ')
-    expect(shows).toContain('each recorded one has a sparkline of its last 10 min, for direction and rate only (no value scale); not recorded by this Run, so without one: ')
+    expect(shows).toContain('each recorded one has a sparkline of its last 10 min, for direction and rate only (no value scale)')
+    expect(shows).not.toContain('not recorded by this Run, so without one: ')
     // The column as drawn: the title over six lead values, nine tiles two to a row, the alarms and the footer, under the window's header row.
     const layout = composedDisplayLayout
     const column = layout.overviewReadoutsTitle + readouts.pens.length * layout.overviewReadoutRow + layout.panelGap
@@ -239,7 +241,8 @@ describe('the unit overview World generates for a Plant', () => {
       return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
     }
     // Containment pressure, at atmospheric inside its normal range, yields its place at power as after the trip.
-    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'SUB-MARGIN', 'CET-AVG', 'GEN-MW'])
+    // The simulator-only net inventory flow never leads (C1 E2): the vessel's liquid level takes its place.
+    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'PT-455', 'SUB-MARGIN', 'RVLS-DYN', 'CET-AVG', 'GEN-MW'])
     // No energy sink is watched once the turbine has tripped: the heat path leads (core cooling, then the heat sink
     // the actuation feeds), then the pressure safety injection can still act on and the pressurizer's level.
     expect(leads(tripped)).toEqual(['SUB-MARGIN', 'CET-AVG', 'AFW-FLOW', 'PT-455', 'PZR-LVL', 'RVLS-DYN'])
@@ -331,6 +334,8 @@ describe('equipment opened from the unit overview', () => {
     expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-SR-HV', 'NIS-IR', 'NIS-IR-SUR'])
     expect(readouts.pens.map(pen => String(pen.path))).not.toContain('core.coolantOutletTemperatureC')
     expect(readouts.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.valueKind).toBe('boolean')
+    // In the core's own detail its states read without its name (C1 E2): "Source-range HV off", not "… · Core".
+    expect(readouts.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.states).toEqual({ on: 'Source-range HV on', off: 'Source-range HV off' })
   })
 
   test('every item of the overview opens', () => {

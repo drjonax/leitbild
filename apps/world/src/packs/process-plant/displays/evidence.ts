@@ -11,7 +11,7 @@ import { itemBinding, type MimicItem } from './mimic/bindings.ts'
 import { itemLook, type SampleIndex } from './mimic/evaluate.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 import { operatingPointValue } from './operating-point.ts'
-import { overviewCandidates, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMeasured } from './overview-key-values.ts'
 import { COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, TREND_HISTORY_LIMIT, type TrendPoint } from './trend-reading.ts'
 
 // The evidence a composed display carries besides what the agent chose: what
@@ -114,9 +114,11 @@ export const displayEvidence = (
   }
   const penEquipment = [...new Set(pens.map(pen => measuredOn(pen.path)))]
   const shownEquipment = new Set([...penEquipment, ...drawn])
+  // What a row may show: a measured reading (a condition outside the Plant, the grid's voltage, among them), or a
+  // published demand beside the state it commands; never a scenario's fault knob.
   const readable = (path: VariablePath | undefined): path is VariablePath => {
     const binding = path === undefined ? undefined : graph.signalBindingByPath.get(path)
-    return binding !== undefined && binding.published && (!binding.writable || binding.actuation === 'command')
+    return binding !== undefined && (readsAsMeasured(binding) || (binding.published && isDemand(binding)))
   }
   const added = new Map<string, DisplayEvidence>()
   const add = (path: VariablePath, kind: DisplayEvidenceKind, reason: string, note?: string): void => {
@@ -497,7 +499,7 @@ const parallelReadings = (system: ProcessPlantRuntimeInstance, path: VariablePat
     .filter(component => component.index !== own.index && component.metadata?.loopId !== undefined && (component.metadata?.equipmentClass ?? component.kind) === kind)
     .flatMap(component => {
       const peer = graph.signalBindingByPath.get(`${component.id}.${variable}` as VariablePath)
-      return peer === undefined || peer.unit !== binding.unit || !peer.published || peer.writable ? [] : [{ path: peer.path, loop: component.metadata!.loopId!, component: component.index }]
+      return peer === undefined || peer.unit !== binding.unit || !readsAsMeasured(peer) ? [] : [{ path: peer.path, loop: component.metadata!.loopId!, component: component.index }]
     })
     .sort((left, right) => left.loop.localeCompare(right.loop))
 }

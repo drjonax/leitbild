@@ -18,7 +18,7 @@ import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-th
 import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
 import { coincidentMargin, formatQuantity, limitKindName, marginText, marginTo, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
-import { compileComposedDisplay, composedDisplayShows } from '../src/packs/process-plant/displays/compose.ts'
+import { compileComposedDisplay, composedDisplayShows, type CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
@@ -82,6 +82,9 @@ describe('on/off states on composed displays', () => {
   test('read in the words the model gives them, never a negated label (HMI review of run 23)', () => {
     const textsOf = (tagId: string) => stateTexts(compiled.graph, compiled.graph.signalBindingByTagId.get(tagId as never)!)
     expect(textsOf('NIS-SR-HV')).toEqual({ on: 'Source-range HV on · Core', off: 'Source-range HV off · Core' })
+    // In the core's own detail its name would repeat the title: the words stand alone there.
+    const core = compiled.graph.componentIndexById.get('core' as never)!
+    expect(stateTexts(compiled.graph, compiled.graph.signalBindingByTagId.get('NIS-SR-HV' as never)!, [core])).toEqual({ on: 'Source-range HV on', off: 'Source-range HV off' })
     // A signal that reads or commands a state aspect reads by its equipment and the aspect's words.
     expect(textsOf('EDG-A-RUN')).toEqual({ on: 'EDG A RUN', off: 'EDG A STOP' })
     expect(textsOf('BRK-OFFSITE-A-POS')).toEqual({ on: 'Offsite BKR A CLOSED', off: 'Offsite BKR A OPEN' })
@@ -405,6 +408,24 @@ describe('world.process-plant.display.compose', () => {
     }) as { warnings: ReadonlyArray<string>; shows: ReadonlyArray<string> }
     expect(result.warnings).toContain("PORV-456A is a writable command (a demand), not a measured state; never present it as the equipment's actual state or position.")
     expect(result.shows.join('\n')).toContain('PORV-456A (Pressurizer relief valve position demand, fraction, context, a command (demand), shown as demand)')
+  })
+
+  test('reads a condition outside the Plant as measured, never as a demand; a fault knob stays marked as no measured state', () => {
+    // C1 plan E2: the grid's voltage is writable by a scenario only (a boundary); it read "demand" with the PORV's
+    // demand. A scenario's fault knob is no measured state either and keeps its mark.
+    const result = ask('world.process-plant.display.compose', {
+      ...composition([{ ref: 'PT-455', role: 'primary' }]),
+      panels: [
+        { kind: 'trend', horizon: '2m', signals: [{ ref: 'PT-455', role: 'primary' }] },
+        { kind: 'readouts', signals: [{ ref: 'GRID-VOLTAGE', role: 'context' }, { ref: 'PORV-456A', role: 'context' }, { ref: 'sgA.tubeLeakFraction', role: 'context' }] },
+      ],
+    }) as { warnings: ReadonlyArray<string>; view: { state: string } }
+    const display = (ask('world.process-plant.display.view', { plantId: compiled.id, state: result.view.state }) as { display: CompiledComposedDisplay }).display
+    const readouts = display.panels.find(panel => panel.kind === 'readouts')!
+    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
+    expect(readouts.pens.map(pen => [pen.tagId ?? String(pen.path), pen.command])).toEqual([['GRID-VOLTAGE', false], ['PORV-456A', true], ['sgA.tubeLeakFraction', true]])
+    expect(result.warnings.join('\n')).not.toContain('GRID-VOLTAGE is a writable command')
+    expect(result.warnings).toContain("PORV-456A is a writable command (a demand), not a measured state; never present it as the equipment's actual state or position.")
   })
 
   test('says when a signal only the simulator computes, which the display tags SIM (HMI review of run 23)', () => {

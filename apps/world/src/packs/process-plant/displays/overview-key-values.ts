@@ -4,12 +4,26 @@ import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { COMPOSED_READOUTS_MAX_SIGNALS, GENERATED_DETAIL_MAX_LEAD_VALUES } from './composition.ts'
-import { actionFlows, actionFlowsInto, actsIn, armed, automaticActions, conditionBindings, feedsTransferIntake } from './actuations.ts'
+import { actionFlows, actionFlowsInto, actionStates, actsIn, armed, automaticActions, conditionBindings, feedsTransferIntake } from './actuations.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 
-const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolean => {
+/**
+ * A signal an operator reads as measured: published, and read-only, or a
+ * condition outside the Plant that only a scenario sets (the offsite grid's
+ * voltage and frequency), which the Plant does not command.
+ */
+export const readsAsMeasured = (binding: Pick<ProcessSignalBinding, 'published' | 'writable' | 'actuation'>): boolean =>
+  binding.published && (!binding.writable || binding.actuation === 'boundary')
+
+/** A demand: what an operator, a controller or the I&C commands the equipment to do, which it may not follow. */
+export const isDemand = (binding: Pick<ProcessSignalBinding, 'writable' | 'actuation'>): boolean =>
+  binding.writable && binding.actuation === 'command'
+
+// What may lead a display: a measured reading, never one only the simulator computes, which no instrument of a real
+// plant reads (a vessel's net inventory flow).
+const leadableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolean => {
   const binding = plant.graph.signalBindingByPath.get(path)
-  return binding !== undefined && !binding.writable && binding.published
+  return binding !== undefined && readsAsMeasured(binding) && binding.simulatorOnly !== true
 }
 
 /**
@@ -41,10 +55,11 @@ const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolea
  * it armed and far off): the one change of order the Plant's values make
  * within a mode. A trip that has done all it can watches nothing more: a
  * turbine already tripped keeps no generator output among the leads.
- * Per-loop values stay on their loop's symbols. Unpublished signals are left
- * out; so are writable ones, which would show a demand, on-off states, and
- * the states symbols draw as a position, a run or an energized state (a
- * turbine stop valve's position, a breaker's contacts).
+ * Per-loop values stay on their loop's symbols. Only what an operator reads
+ * as measured leads (readsAsMeasured): never a demand, never a value only the
+ * simulator computes; nor on-off states, nor the states symbols draw as a
+ * position, a run or an energized state (a turbine stop valve's position, a
+ * breaker's contacts).
  */
 export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): ReadonlyArray<VariablePath> => {
   const { leads, ends, endsFirst } = overviewCandidates(plant, now)
@@ -69,7 +84,7 @@ export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): 
     const binding = graph.signalBindingByPath.get(path)
     return binding?.owner.type === 'component' ? graph.components[binding.owner.componentIndex] : undefined
   }
-  const readable = readableIn(plant)
+  const readable = leadableIn(plant)
   const drawnStates = new Set(graph.components.flatMap(component => [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)])
     .flatMap(aspect => aspect.state === undefined || aspect.aspect === 'level' || aspect.aspect === 'throughput' ? [] : [aspect.state.path]))
   const leadable = (path: VariablePath): boolean => {
@@ -167,9 +182,38 @@ export const notMeaningfulNow = (plant: CompiledProcessPlant, now: PlantNow): Re
 const meaningFlags = (plant: CompiledProcessPlant): ReadonlySet<VariablePath> => new Set(plant.graph.components
   .flatMap(component => [...component.semantics.meaningfulWhile.map(qualified => qualified.flag), ...component.semantics.permissives]))
 
-/** What a detail's lead values depend on besides its equipment: the same key draws the same values. */
-export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): string =>
-  `${now.mode ?? 'no mode'}|${[...notMeaningfulNow(plant, now)].sort().join(',')}`
+/** The equipment a trip commands that has done all it can (no write of it left to make): a tripped reactor's core. */
+const commandedByActedTrips = (plant: CompiledProcessPlant, now: PlantNow): ReadonlySet<number> => new Set([...automaticActions(plant).values()]
+  .filter(action => !armed(action, now.read)).flatMap(action => action.writes.map(write => write.component)))
+
+/**
+ * What says equipment that declares shutdown readings has stopped, once a
+ * trip commanding it has acted, as E-0 verifies a reactor trip first: its
+ * declared on/off readings (rods on bottom), the states every trip commanding
+ * it moves (both reactor trip breakers), then its declared readings (power
+ * range and startup rate, falling). None while every trip commanding it can
+ * still act (at power), or for equipment that declares none.
+ */
+const stoppedReadings = (plant: CompiledProcessPlant, component: number, acted: ReadonlySet<number>): ReadonlyArray<VariablePath> => {
+  const declared = plant.graph.components[component]!.semantics.shutdownReadings
+  if (declared.length === 0 || !acted.has(component)) return []
+  const moved = [...automaticActions(plant).values()].filter(action => action.writes.some(write => write.component === component))
+    .map(action => actionStates(plant, action).map(state => state.path))
+  const common = (moved[0] ?? []).filter(path => moved.every(paths => paths.includes(path)))
+  const state = (path: VariablePath): boolean => plant.graph.signalBindingByPath.get(path)?.quantity === 'boolean'
+  return [...declared.filter(state), ...common, ...declared.filter(path => !state(path))]
+}
+
+/**
+ * What a detail's lead values depend on besides its equipment: the same key
+ * draws the same values. Its parts: the mode, the readings measuring nothing
+ * now, and the equipment whose shutdown readings lead (stoppedReadings).
+ */
+export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): string => {
+  const stopped = [...commandedByActedTrips(plant, now)].map(component => plant.graph.components[component]!)
+    .filter(component => component.semantics.shutdownReadings.length > 0).map(component => String(component.id)).sort()
+  return `${now.mode ?? 'no mode'}|${[...notMeaningfulNow(plant, now)].sort().join(',')}|${stopped.join(',')}`
+}
 
 // A signal belongs to the node that owns its path and to the equipment it is
 // bound to, as the alarms related to a display count it (ic-thresholds.ts):
@@ -182,7 +226,10 @@ const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
 
 /**
  * The values a detail of some equipment leads with, for the Plant as it is
- * when the detail is opened: the signals of its equipment that alarm and
+ * when the detail is opened: once a trip commanding it has acted, what says
+ * it stopped (stoppedReadings: rods on bottom, both trip breakers, power
+ * falling; a faceplate takes these over where the detail draws one); the
+ * signals of its equipment that alarm and
  * trip rules acting in the current mode judge (trips first); what automatic
  * actions acting in the mode on those signals send into it (the auxiliary
  * feedwater a steam generator's low-low level starts, into that steam
@@ -195,14 +242,18 @@ const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
  * is shown and its flag is not. An instrument reading the same quantity over
  * a wider span follows the reading it widens. A permissive (P-10 on the core)
  * is never a value of its own: the source range's high voltage is the
- * instrument fact, its state the logic's. Each is taken in turn from every
- * item, so parallel equipment is compared value by value.
+ * instrument fact, its state the logic's. A program leads only right after
+ * the reading it programs (Tref after Tavg, a pressurizer's level program
+ * after its level), never alone (HMI review of run 25: Tref without Tavg).
+ * Only what an operator reads as measured leads, never a value only the
+ * simulator computes. Each is taken in turn from every item, so parallel
+ * equipment is compared value by value.
  */
 export const equipmentKeyValues = (plant: CompiledProcessPlant, components: ReadonlyArray<number>, now: PlantNow): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
   const ownerOf = (binding: { readonly owner: { readonly type: string; readonly componentIndex?: number } } | undefined) =>
     binding?.owner.type === 'component' ? binding.owner.componentIndex : undefined
-  const readable = readableIn(plant)
+  const readable = leadableIn(plant)
   const own = (component: number) => graph.signalBindings.filter(binding => ownerOf(binding) === component)
   const equipment = (component: number) => new Set(own(component).flatMap(equipmentOf))
   const onEquipment = (bindings: ReadonlyArray<ProcessSignalBinding>) => (component: number): ReadonlyArray<VariablePath> => {
@@ -224,7 +275,9 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
       .filter(action => conditionBindings(plant, action.rule.condition).some(binding => equipmentOf(binding).some(key => keys.has(key))))
       .flatMap(action => actionFlowsInto(plant, action, component).map(flow => flow.path))
   }
+  const acted = commandedByActedTrips(plant, now)
   const ranked = [...new Set([
+    ...inTurn(component => stoppedReadings(plant, component, acted)),
     ...inTurn(onEquipment(judged(plant, now.mode, true))),
     ...inTurn(sentInto),
     ...inTurn(component => graph.components[component]!.semantics.keyValues),
@@ -235,5 +288,16 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
   // range's high voltage off above P-6); while it measures, the reading itself says the flag is on.
   const silenced = new Map([...silencedBy(plant, now)].filter(([, flag]) => readable(flag)))
   const out = meaningFlags(plant)
-  return [...new Set(ranked.flatMap(path => silenced.has(path) ? [silenced.get(path)!] : out.has(path) ? [] : [path]))].slice(0, GENERATED_DETAIL_MAX_LEAD_VALUES)
+  const shown = [...new Set(ranked.flatMap(path => silenced.has(path) ? [silenced.get(path)!] : out.has(path) ? [] : [path]))]
+  // A program goes right after its reading, which comes along where it is not shown (Tavg before Tref).
+  const programmed = new Map(components.flatMap(component => graph.components[component]!.semantics.programs.map(program => [program.program, program.reading] as const)))
+  const paired: VariablePath[] = []
+  for (const path of shown) {
+    const reading = programmed.get(path)
+    if (paired.includes(path) || (reading !== undefined && !readable(reading))) continue
+    if (reading === undefined) paired.push(path)
+    else if (paired.includes(reading)) paired.splice(paired.indexOf(reading) + 1, 0, path)
+    else paired.push(reading, path)
+  }
+  return paired.slice(0, GENERATED_DETAIL_MAX_LEAD_VALUES)
 }
