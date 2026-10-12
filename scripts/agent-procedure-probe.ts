@@ -36,6 +36,8 @@
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+// A turn costing less than this never counts as a runaway, however far over its estimate: cheap models' estimates are cents.
+const runawayFloorUsd = 0.05
 const usage = 'Usage: bun scripts/agent-procedure-probe.ts <origin> <evidenceDir> [--model <openrouter model id>] [--budget-usd 1.5] [--unit "Halden Unit 2"] [--price <in>,<cached>,<write>,<out> --worst-turn-usd <usd>] [--dry]'
 
 // ---- Arguments ----
@@ -327,7 +329,7 @@ const ask = async (turn: number, prompt: string) => {
   const expected = requestedModel ?? String(room!.model)
   const sameModel = answeredBy === null || bare(answeredBy) === bare(expected) || (tableEntry(answeredBy) !== undefined && tableEntry(answeredBy)?.[0] === tableEntry(expected)?.[0])
   if (!sameModel) stop(`Turn ${turn + 1} was answered by ${answeredBy}, not the Agent's ${expected}`)
-  if (cost! > 2 * estimate) stop(`Turn ${turn + 1} cost $${usd(cost!)}, more than twice its scenario estimate $${usd(estimate)}`)
+  if (cost! > 2 * estimate && cost! > runawayFloorUsd) stop(`Turn ${turn + 1} cost $${usd(cost!)}, more than twice its scenario estimate $${usd(estimate)}`)
   return record
 }
 
@@ -638,7 +640,7 @@ const openReference = run === undefined || unit === undefined || e0 === undefine
     dry ? 'n/a: no model turns in a dry run' : calls.length === 0 ? 'none' : [...new Set(calls)].join(', '))
 }
 add('cost', `total cost within $${budgetUsd}, no turn over twice its estimate`,
-  dry ? null : turns.length > 0 && spentUsd <= budgetUsd && turns.every(entry => entry.costUsd !== null && entry.costUsd <= 2 * entry.estimateUsd),
+  dry ? null : turns.length > 0 && spentUsd <= budgetUsd && turns.every(entry => entry.costUsd !== null && (entry.costUsd <= 2 * entry.estimateUsd || entry.costUsd <= runawayFloorUsd)),
   dry ? 'n/a: a dry run calls no model' : `$${usd(spentUsd)} over ${turns.length} turn(s): ${turns.map(entry => `$${entry.costUsd ?? '?'} (estimate $${entry.estimateUsd})`).join(', ')}`)
 
 const judged = criteria.filter(criterion => criterion.pass !== null)
