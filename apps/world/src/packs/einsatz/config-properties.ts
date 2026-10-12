@@ -7,7 +7,8 @@ const maxBoardProperties = 2
 const inRange = (property: NumberProperty, value: number): boolean =>
   (property.min === undefined || value >= property.min) && (property.max === undefined || value <= property.max)
 
-const rangeText = (property: NumberProperty): string => {
+/** A number property's bounds in its own unit: "0–20000 kg", "≥ 0 kg", or "any value". */
+export const rangeText = (property: NumberProperty): string => {
   const unit = property.unit === undefined ? '' : ` ${property.unit}`
   if (property.min !== undefined && property.max !== undefined) return `${property.min}–${property.max}${unit}`
   if (property.min !== undefined) return `≥ ${property.min}${unit}`

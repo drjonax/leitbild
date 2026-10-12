@@ -1,4 +1,5 @@
-import type { Requirement, UnitProperty, UnitType } from '../config-schema.ts'
+import { rangeText } from '../config-properties.ts'
+import type { Requirement, UnitType } from '../config-schema.ts'
 import { refusal } from '../refusal.ts'
 import { unitTypeOf, type Catalog, type PropertyValue, type TaskRecord, type UnitRecord } from './model.ts'
 import { total } from './values.ts'
@@ -64,12 +65,6 @@ export const conditionReasons = (catalog: Catalog, unit: UnitRecord, requirement
 /** A unit meets a requirement when its type provides the service and its properties pass every `where` comparison. */
 export const meetsRequirement = (catalog: Catalog, unit: UnitRecord, requirement: Requirement): boolean =>
   providesFor(unitTypeOf(catalog, unit), requirement) && conditionReasons(catalog, unit, requirement).length === 0
-
-const rangeText = (property: Extract<UnitProperty, { kind: 'number' }>): string => {
-  const unit = property.unit === undefined ? '' : ` ${property.unit}`
-  if (property.min !== undefined && property.max !== undefined) return `${property.min}–${property.max}${unit}`
-  return property.min !== undefined ? `≥ ${property.min}${unit}` : `≤ ${property.max}${unit}`
-}
 
 /** Why a property value cannot be set on a unit of this type, as an Einsatz refusal; undefined when it can. */
 export const propertyRefusal = (type: UnitType, propertyId: string, value: PropertyValue): string | undefined => {

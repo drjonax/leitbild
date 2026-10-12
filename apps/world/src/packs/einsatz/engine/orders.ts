@@ -41,7 +41,7 @@ const siteRefusal = (state: EngineState, unit: UnitRecord, site: UnitRecord): Re
   const accepts = unitTypeOf(state.catalog, site).components.receiving!.accepts
   if (site.accepting !== true) return refused('site_not_accepting', `${site.label} is not accepting`)
   const refusedClass = state.catalog.classes.find(loadClass => unit.load[loadClass.id] !== undefined && !accepts.includes(loadClass.id))
-  return refusedClass === undefined ? undefined : refused('site_not_accepting', `${site.label} does not accept ${refusedClass.noun.other}`)
+  return refusedClass === undefined ? undefined : refused('site_not_accepting', `${site.label} does not accept ${refusedClass.code} ${refusedClass.noun.other}`)
 }
 
 /** Whether one unit may take part in a send, before coverage is counted. */

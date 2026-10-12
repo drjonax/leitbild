@@ -137,7 +137,7 @@ describe('Einsatz intent refusals', () => {
     ])
     state = await advance(state, start + 3_000)
     expect(unitOf(state, 'd1')).toMatchObject({ phase: 'holding', load: { [low]: 1 } })
-    expect((await refusalOf(state, send(['d1'], { siteId: 'camp' }))).reason).toBe('site_not_accepting: CAMP does not accept people')
+    expect((await refusalOf(state, send(['d1'], { siteId: 'camp' }))).reason).toBe('site_not_accepting: CAMP does not accept C3 people')
     state = await run(state, { kind: 'site.set', siteId: 'site', accepting: false })
     expect((await refusalOf(state, send(['d1'], { siteId: 'site' }))).reason).toBe('site_not_accepting: SITE is not accepting')
   })
