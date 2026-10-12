@@ -94,7 +94,7 @@ describe('procedure step view', () => {
   test('reads the current step compactly: branches with the AI verdict, step tags with readings and plant time, CSF colours, sequence', async () => {
     const view = await composeProcedureStepView({ run: run(), document: document(), ports: ports({
       reads: {
-        'TRIP-BKR-A': value('TRIP-BKR-A', 'false'),
+        'TRIP-BKR-A': value('TRIP-BKR-A', 'false boolean', { value: false, path: 'reactorTripBreakerA.closed' }),
         'TRIP-BKR-B': value('TRIP-BKR-B', 'false', { quality: 'uncertain' }),
         'NIS-PR-AVG': value('NIS-PR-AVG', '3.1 MW', { conversionStatus: 'unavailable', warning: 'requested percent is not available' }),
       },
@@ -116,7 +116,7 @@ describe('procedure step view', () => {
     ])
     expect(view.tags).toEqual([
       { id: 'TRIP-BKR-A', description: 'reactor trip breaker A position', binding: 'resolved', notes: { 'model-note': 'the model reports closed as a boolean' },
-        reading: { formatted: 'false', quality: 'good' } },
+        reading: { formatted: 'false boolean', signal: 'reactorTripBreakerA.closed', quality: 'good' } },
       { id: 'TRIP-BKR-B', description: 'reactor trip breaker B position', binding: 'resolved', reading: { formatted: 'false', quality: 'uncertain' } },
       { id: 'NIS-PR-AVG', description: 'power range neutron flux average', binding: 'resolved', warnings: ['requested percent unavailable'],
         reading: { formatted: '3.1 MW', quality: 'good', note: 'requested percent is not available' } },

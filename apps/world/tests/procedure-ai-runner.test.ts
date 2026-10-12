@@ -128,7 +128,9 @@ describe('the AI procedure runner through the World Module API', () => {
     const read = await invoke('world.procedure.run.step.read', {}, ai)
     expect(read.status).toBe(200)
     const view = read.body.result
-    const readTags = structuredClone(view.tags) as Array<{ id: string; reading: { formatted: string; quality: string; note?: string } }>
+    const readTags = structuredClone(view.tags) as Array<{ id: string; reading: { formatted: string; signal?: string; quality: string; note?: string } }>
+    // An on/off reading names the model variable it is: here the breaker's closed state, not its position word.
+    expect(readTags[0]!.reading).toMatchObject({ formatted: 'true boolean', signal: 'reactorTripBreakerA.closed' })
     expect(view.sequence).toBe(run.snapshot().seq)
     expect(view.paused).toBe(true)
     expect(view.run).toMatchObject({ runId, procedureId: 'E-0', plantId, unit: 'Unit A1', currentStepId: 'verify-reactor-trip', stepNumber: 1, totalSteps: 2, driver: { kind: 'ai' } })

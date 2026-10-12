@@ -31,6 +31,8 @@ const runSummarySchema = z.object({
 /** A value World read for the view, just before its simulationTime. */
 const tagReadingSchema = z.object({
   formatted: z.string(),
+  /** The model variable read, where its value means nothing without it: an on/off state, or a unit the tag asks for that the model does not give. */
+  signal: z.string().optional(),
   quality: z.string().optional(),
   /** The Pack's caveat on this value (such as a requested unit it could not convert to), unless a binding warning says it. */
   note: z.string().optional(),
@@ -135,6 +137,7 @@ const tagRow = (document: ProcedureDocument, read: ProcedureTagRead) => {
     ...(Object.keys(notes).length === 0 ? {} : { notes }),
     ...(read.value === undefined ? {} : { reading: {
       formatted: read.value.formatted,
+      ...(read.value.path !== undefined && (typeof read.value.value === 'boolean' || read.value.conversionStatus === 'unavailable') ? { signal: read.value.path } : {}),
       ...(read.value.quality === undefined ? {} : { quality: read.value.quality }),
       ...(read.value.warning === undefined || read.warnings.includes(read.value.warning) ? {} : { note: read.value.warning }),
     } }),
