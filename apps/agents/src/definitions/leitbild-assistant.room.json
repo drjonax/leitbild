@@ -24,6 +24,14 @@
         "kind": "post-message",
         "content": "Briefly explain what you can help me do in this Workspace and how you verify answers and scenarios. Do not change anything."
       }
+    }, {
+      "id": "continue-procedure",
+      "label": "Continue procedure",
+      "description": "Resume the procedure the Assistant held for you, once you have approved its proposal or selected the branch in the procedure window.",
+      "action": {
+        "kind": "post-message",
+        "content": "Continue the procedure you were running."
+      }
     }]
   }
 }
