@@ -54,7 +54,7 @@ describe('Einsatz state discipline', () => {
     const runtime = runtimeStateOf(moving)
     const leg = unitOf(moving, 'u1').leg!
     expect(runtime).toEqual({ timeMs: start + 10_000, units: { u1: { progressMs: 8_000, leg: {
-      provider: leg.provider, durationMs: leg.durationMs, distanceM: leg.distanceM, from: leg.geometry.coordinates[0], to: leg.geometry.coordinates.at(-1),
+      provider: leg.provider, durationMs: leg.durationMs, distanceM: leg.distanceM, from: leg.geometry.coordinates[0]!, to: leg.geometry.coordinates.at(-1)!,
     } } } })
     const objects = engineObjects(moving, () => ({ at: isoAt(moving.timeMs), provenance: { source: 'simulator' } }))
     expect(objects.find(object => object.id === 'u1')?.packData).not.toHaveProperty('progressMs')

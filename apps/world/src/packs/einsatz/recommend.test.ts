@@ -57,7 +57,7 @@ describe('Einsatz recommendations with diverts', () => {
     const divertFrom = (taskId: string, label: string, rank: string, code: string) => ({ taskId, label, rank: { id: rank, code } })
     const straightTo = (unitId: string) => {
       const distanceM = routeDistanceMeters(pointOf(state, unitId), at(0.003))
-      return { kind: 'straight-line', seconds: distanceM / 15, distanceM }
+      return { kind: 'straight-line' as const, seconds: distanceM / 15, distanceM }
     }
     expect(recommendation.proposal).toEqual({ units: [{ unitId: 'a6', label: 'A6', eta: straightTo('a6'), divertFrom: divertFrom('low6', 'LOW6', low, 'C3') }], covers: true, remainder: [] })
     expect(recommendation.alternatives).toEqual([{ unitId: 'a2', label: 'A2', eta: straightTo('a2'), divertFrom: divertFrom('c9', 'C9', middle, 'C2') }])

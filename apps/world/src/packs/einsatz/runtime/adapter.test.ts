@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { commandEnvelopeSchema, nowIso, type CommandEnvelope } from '../../../core/model/index.ts'
+import { actorIdSchema, commandIdSchema, nowIso, type CommandEnvelope, type SimulationRunId } from '../../../core/model/index.ts'
 import { compileScenarioDefinition } from '../../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../../../routing/protocol.ts'
@@ -268,8 +268,15 @@ describe('Einsatz recommendations through the Run', () => {
 })
 
 describe('Einsatz runtime refusals and faults', () => {
-  const envelope = (id: string, kind: string, payload: unknown, roleIds?: ReadonlyArray<string>): CommandEnvelope => commandEnvelopeSchema.parse({
-    id, simulationRunId: 'run-einsatz-open', actorId: 'actor:operator', kind, targetObjectIds: [], payload, issuedAt: nowIso(), ...(roleIds === undefined ? {} : { roleIds }),
+  const envelope = (id: string, kind: string, payload: unknown, roleIds?: ReadonlyArray<string>): CommandEnvelope => ({
+    id: commandIdSchema.parse(id),
+    simulationRunId: 'run-einsatz-open' as SimulationRunId,
+    actorId: actorIdSchema.parse('actor:operator'),
+    kind,
+    targetObjectIds: [],
+    payload,
+    issuedAt: nowIso(),
+    ...(roleIds === undefined ? {} : { roleIds }),
   })
   const reasonOf = (result: Awaited<ReturnType<OpenRun['connection']['sendCommand']>>): string => {
     if (result.ok) throw new Error('Expected a refusal')
