@@ -232,7 +232,7 @@
     }
   ],
   "world": {"startsAt": "2026-09-03T08:00:00.000Z", "environment": {"city": "Halden", "model": "Fictional exercise; no national markings, no real persons"}},
-  "view": {"map": {"center": [11.4345, 59.135], "zoom": 11.5}},
+  "view": {"map": {"center": [11.4345, 59.135], "zoom": 11.4}},
   "timeline": {
     "cues": [
       {

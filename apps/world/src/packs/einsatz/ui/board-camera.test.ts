@@ -3,6 +3,7 @@ import { startingZoomFor } from '../../../ui/map/map-camera.ts'
 import { noMapCover } from '../../../ui/surface-panel-interaction.ts'
 import border from '../../../scenarios/halden-border.scenario.json'
 import borderHumanRed from '../../../scenarios/halden-border-human-red.scenario.json'
+import emergency from '../../../scenarios/halden-emergency.scenario.json'
 import civil from '../fixtures/halden-civil.scenario.json'
 import civilRoles from '../fixtures/halden-civil-roles.scenario.json'
 import supplyRun from '../../../scenarios/supply-run.scenario.json'
@@ -13,10 +14,10 @@ import { boardLayoutFor, boardMapCover } from './board-layout.ts'
  * The map beside the Board: a call or asset selected from the lists that
  * lies under the Board, under the bars or off the map is brought into view,
  * and every Einsatz scenario's Starting View shows all its objects beside
- * the Board on an iPad (1024 × 768) and at 960 × 720. The border exercises
- * keep their close-up of the fighting: a receiving site far behind it, and
- * the units based there, may lie off that view, since they are picked from
- * the lists, which bring them into view.
+ * the Board on an iPad (1024 × 768) and at 960 × 720. A Scenario may leave
+ * off a distant receiving site and the units based there, since they are
+ * picked from the lists, which bring them into view; none of the built-in
+ * ones needs to.
  */
 
 /** The World surface below the Host's 44 px header, for these windows. */
@@ -80,8 +81,9 @@ describe('the map beside the Board', () => {
     ['civil', civil, []],
     ['civilRoles', civilRoles, []],
     ['supplyRun', supplyRun, []],
-    ['border', border, ['Kalnes receiving site — exercise', 'H1']],
-    ['borderHumanRed', borderHumanRed, ['Kalnes receiving site — exercise', 'H1']],
+    ['emergency', emergency, []],
+    ['border', border, []],
+    ['borderHumanRed', borderHumanRed, []],
   ]
   for (const [name, scenario, offView] of scenarios) {
     test(`the ${name} Starting View shows every starting object beside the Board at 1024 × 768 and 960 × 720${offView.length === 0 ? '' : ', but a distant receiving site and the units based there'}`, () => {

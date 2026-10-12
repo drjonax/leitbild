@@ -25,6 +25,8 @@ const at = (eastKm: number, northKm = 0): [number, number] => [11.38 + eastKm / 
 const borderTypes: ReadonlyArray<{ readonly id: string; readonly components: Readonly<Record<string, unknown>> }> = border.packs[0]!.config.unitTypes
 /** The border configuration's first unit type with exactly these components. */
 const borderType = (...components: ReadonlyArray<string>): string => borderTypes.find(type => Object.keys(type.components).sort().join() === [...components].sort().join())!.id
+/** The border configuration's first group of a side: where a test's own unit of a type no group holds is placed. */
+const sideGroup = (side: string): string => border.packs[0]!.config.groups.find(group => group.side === side)!.id
 /** What the civil configuration calls the units its two-unit template needs, counted more than one. */
 const pairNeed = civilConfig.taskTemplates.find(template => template.id === kinds.templates.pair)!.requires[0]!.label!.other
 
@@ -76,8 +78,8 @@ describe('Fixes from the tap-only walkthrough', () => {
     const post = { id: 'post', label: 'Post', icon: 'binoculars', tags: ['post'], components: { sensor: { detectM: 3000, identifyM: 2000 } } }
     const definition = borderWith([
       unitAt('amb', 'AMB', borderType('carry', 'mobility', 'service'), at(0), { side: blue }),
-      unitAt('post-blue', 'BLUE POST', 'post', at(1), { side: blue }),
-      unitAt('post-red', 'RED POST', 'post', at(2), { side: red }),
+      unitAt('post-blue', 'BLUE POST', 'post', at(1), { side: blue, group: sideGroup(blue) }),
+      unitAt('post-red', 'RED POST', 'post', at(2), { side: red, group: sideGroup(red) }),
       unitAt('kalnes', 'KALNES', borderType('receiving'), at(3)),
     ]) as { readonly packs: ReadonlyArray<{ readonly config: { readonly unitTypes: ReadonlyArray<unknown> } }> }
     const pack = definition.packs[0]!
