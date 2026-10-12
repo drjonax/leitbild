@@ -79,7 +79,7 @@ export const aiStepCommentLimit = 500
 /** An AI agent answers a step by selecting a branch; on a step it records only a comment. */
 export const assertAiStepUpdate = (update: {
   readonly assessment?: unknown
-  readonly comment?: string
+  readonly comment?: string | undefined
   readonly favorite?: unknown
   readonly currentStepId?: unknown
 }): void => {

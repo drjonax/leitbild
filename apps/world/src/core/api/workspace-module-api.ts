@@ -691,7 +691,7 @@ const procedureStepViewError = (status: number, code: string, message: string): 
  */
 const procedureStepViewFor = async (
   runtime: ApiRunRuntime, invocation: ApiInvocation,
-  input: { readonly runId: string; readonly stepId?: string },
+  input: { readonly runId: string; readonly stepId?: string | undefined },
   mode: 'step' | 'next',
 ): Promise<ProcedureStepView> => {
   const run = runtime.snapshot().procedures?.runs.find(candidate => candidate.runId === input.runId)
