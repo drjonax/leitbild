@@ -20,6 +20,7 @@ import { decideProposal, emptyProposalBook, proposeOperation, reviewProposal, ty
 import {
   ATTRIBUTION_MS,
   commandPhase,
+  demandOption,
   evidenceMargin,
   itemBadges,
   itemControlView,
@@ -95,7 +96,8 @@ describe('the CONTROL section of an item', () => {
     plant.step()
     const feedValve = plant.tag('MFW-A-CV')
     const view = itemControlView(plant.listed(plant.itemWithholding(feedValve.path)), plant.now())
-    expect(view.auto).toEqual(['AUTO · SG-A-LVL-NR held to 55 %'])
+    // Read-only: a manual demand needs an AUTO/MAN mode the model does not have, and the popover says so.
+    expect(view.auto).toEqual([{ text: 'AUTO · SG-A-LVL-NR held to 55 %', manual: expect.stringContaining('AUTO/MAN mode the model does not have') }])
     expect(view.controls.some(control => control.path === feedValve.path)).toBe(false)
   })
 
@@ -168,19 +170,21 @@ describe('feedback while a command executes', () => {
     expect(commandPhase(control, shut, { ...sent, result: { ok: false, reason: 'MOV-8000A is held' } }, plant.now())).toEqual({ kind: 'refused', text: 'Refused: MOV-8000A is held' })
     // Not written to the Plant: the valve stays open. Within its 10 s stroke and margin it travels, after that it is not followed.
     const accepted = { ...sent, result: { ok: true as const } }
+    // The option as the control reads now: whether the equipment has followed it.
+    const shutNow = () => viewNow().options.find(option => option.word === 'SHUT')!
     plant.step(5)
-    expect(commandPhase(viewNow(), shut, accepted, plant.now()).kind).toBe('travelling')
+    expect(commandPhase(viewNow(), shutNow(), accepted, plant.now()).kind).toBe('travelling')
     plant.step(Math.ceil(followAllowanceMs(10_000) / 1_000))
-    expect(commandPhase(viewNow(), shut, accepted, plant.now())).toEqual({ kind: 'notFollowed', text: 'Not followed: CMD SHUT, OPEN since 10:00:01' })
+    expect(commandPhase(viewNow(), shutNow(), accepted, plant.now())).toEqual({ kind: 'notFollowed', text: 'Not followed: CMD SHUT, OPEN since 10:00:01' })
     // Written: it strokes shut, part of the way first, then done.
     const written = { ...accepted, sentAtElapsedMs: plant.runtime.elapsedMs(), fromState: plant.runtime.readVariable(control.statePath!) }
     plant.runtime.writeCommand({ type: 'setVariable', path: blockValve.path, value: shut.value })
     plant.step(4)
-    const travelling = commandPhase(viewNow(), shut, written, plant.now())
+    const travelling = commandPhase(viewNow(), shutNow(), written, plant.now())
     expect(travelling.kind).toBe('travelling')
     if (travelling.kind === 'travelling') expect(travelling.fraction).toBeGreaterThan(0.2)
     plant.step(8)
-    expect(commandPhase(viewNow(), shut, written, plant.now()).kind).toBe('done')
+    expect(commandPhase(viewNow(), shutNow(), written, plant.now()).kind).toBe('done')
   })
 
   test('the stuck PORV does not follow its SHUT: it reads not followed once its declared travel and margin have passed, never before', () => {
@@ -371,5 +375,45 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
       ['10:01:01', 'Operator op-1', 'approved AI assistant\'s proposal of 10:01:01', 'SHUT now'],
       ['10:00:30', 'AI assistant', 'proposed 10:01:01', 'rejected by op-1: not yet, not executed'],
     ])
+  }, PLANT_HANG_GUARD_MS)
+
+})
+
+describe('demand controls and valve positions', () => {
+  test('a modulating valve no controller drives is set on its 1 % grid between SHUT and OPEN, its command beside where it stands', () => {
+    const plant = unit()
+    plant.step()
+    const valve = plant.tag('AFW-A-CV')
+    const view = () => itemControlView(plant.listed(plant.itemOffering(valve.path)), plant.now()).controls.find(candidate => candidate.path === valve.path)!
+    const control = view()
+    expect(control.form).toBe('demand')
+    expect(control.demand?.shown).toEqual({ min: 0, max: 100, step: 1, unit: '%' })
+    expect([control.now, control.commanded, control.options.map(option => [option.word, option.current])]).toEqual(['SHUT', null, [['OPEN', false], ['SHUT', true]]])
+    // A setting between its ends is an option of its own, in World's words for it, moving as its OPEN end does.
+    const forty = demandOption(control, 0.4)!
+    expect([forty.word, forty.action, forty.confirm, forty.current]).toEqual(['OPEN to 40 %', `OPEN to 40 % ${control.target}`, 'button', false])
+    expect(forty.travelMs).toBe(control.options.find(option => option.word === 'OPEN')!.travelMs)
+    // Off its grid or its span it is no setting.
+    expect(demandOption(control, 0.405)).toBeNull()
+    expect(demandOption(control, 1.2)).toBeNull()
+    // Written and followed (the model moves this valve within the step): it reads 40 %, its command no longer shown apart, and the command is done.
+    plant.runtime.writeCommand({ type: 'setVariable', path: valve.path, value: 0.4 })
+    const sent = { path: valve.path, value: 0.4, sentAtElapsedMs: plant.runtime.elapsedMs(), fromState: 0, result: { ok: true as const } }
+    plant.step(2)
+    const set = view()
+    expect([set.now, set.commanded, set.demand?.settingText]).toEqual(['40 %', null, '40 %'])
+    expect(commandPhase(set, demandOption(set, 0.4)!, sent, plant.now()).kind).toBe('done')
+    // A further setting is selectable; the one it stands at is not.
+    expect([demandOption(set, 0.4)!.current, demandOption(set, 0.55)!.current]).toEqual([true, false])
+  }, PLANT_HANG_GUARD_MS)
+
+  test('a valve shows where it stands; a controller\'s valve reads AUTO with what it holds and why it is not operated by hand', () => {
+    const plant = unit()
+    plant.step()
+    const feed = plant.tag('MFW-A-CV')
+    const item = itemControlView(plant.listed(plant.itemWithholding(feed.path)), plant.now())
+    expect(item.controls).toEqual([])
+    expect(item.position).toMatch(/%$/)
+    expect(item.auto[0]?.manual).toContain('AUTO/MAN mode')
   }, PLANT_HANG_GUARD_MS)
 })

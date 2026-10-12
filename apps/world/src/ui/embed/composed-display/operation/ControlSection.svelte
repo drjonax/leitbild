@@ -2,11 +2,14 @@
   import '@oicl/openbridge-webcomponents/dist/components/button/button.js'
   import '@oicl/openbridge-webcomponents/dist/components/progress-bar/progress-bar.js'
   import '@oicl/openbridge-webcomponents/dist/components/slide-button/slide-button.js'
+  import '@oicl/openbridge-webcomponents/dist/components/slider/slider.js'
+  import '@oicl/openbridge-webcomponents/dist/icons/icon-chevron-left-google.js'
+  import '@oicl/openbridge-webcomponents/dist/icons/icon-chevron-right-google.js'
   import '@oicl/openbridge-webcomponents/dist/components/toggle-button-group/toggle-button-group.js'
   import '@oicl/openbridge-webcomponents/dist/components/toggle-button-option/toggle-button-option.js'
   import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
   import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
-  import { commandPhase, SELECTION_TIMEOUT_MS, type ControlView, type ItemControlView, type OperationNow, type OptionView, type SentCommand } from './operation-presenter.ts'
+  import { commandPhase, optionOf, SELECTION_TIMEOUT_MS, type ControlView, type DemandView, type ItemControlView, type OperationNow, type OptionView, type SentCommand } from './operation-presenter.ts'
 
   // An item's CONTROL section (plan §4.2): select a command, see World check
   // it on the exact payload (the I&C's refusal in its own words), what it
@@ -37,18 +40,33 @@
   } = $props()
 
   // Raw: each is replaced whole, and a command's result is matched to the command it answers by identity.
-  let selection = $state.raw<{ readonly path: VariablePath; readonly key: string } | null>(null)
+  let selection = $state.raw<{ readonly path: VariablePath; readonly key: string; readonly value: ProcessVariableValue } | null>(null)
+  // A demand control's slider while it is moved, as a person reads it (%), before it is let go and selected.
+  let moving = $state.raw<{ readonly path: VariablePath; readonly shown: number } | null>(null)
   let check = $state.raw<'checking' | Check | null>(null)
   // A protective pushbutton's check, by its option, made as the section opens.
   let standing = $state.raw<Readonly<Record<string, Check | 'checking'>>>({})
   let sent = $state.raw<(SentCommand & { readonly key: string; readonly commandId?: string }) | null>(null)
   let busy = $state(false)
 
-  const keyOf = (write: Write): string => `${write.path}=${String(write.value)}`
+  /** A demand control's setting from where its slider stands (%), on its step, in the command's unit. */
+  const settingAt = (demand: DemandView, shown: number): number => {
+    const share = (shown - demand.shown.min) / (demand.shown.max - demand.shown.min)
+    const steps = Math.round((share * (demand.max - demand.min)) / demand.step)
+    return Number(Math.min(demand.max, Math.max(demand.min, demand.min + steps * demand.step)).toPrecision(12))
+  }
+  const shownAt = (demand: DemandView, value: number): number =>
+    Number((demand.shown.min + ((value - demand.min) / (demand.max - demand.min)) * (demand.shown.max - demand.shown.min)).toPrecision(12))
+  const selectSetting = (control: ControlView, demand: DemandView, shown: number): void => {
+    moving = null
+    const option = optionOf(control, settingAt(demand, shown))
+    if (option !== undefined && option.key !== selection?.key) void select(control, option)
+  }
   const selectedControl = $derived(selection === null ? undefined : view.controls.find(control => control.path === selection!.path))
-  const selectedOption = $derived(selectedControl?.options.find(option => option.key === selection!.key))
+  // Read from the control as it stands now: a demand setting between its ends is an option of its own (optionOf).
+  const selectedOption = $derived(selectedControl === undefined || selection === null ? undefined : optionOf(selectedControl, selection.value))
   const sentControl = $derived(sent === null ? undefined : view.controls.find(control => control.path === sent!.path))
-  const sentOption = $derived(sentControl?.options.find(option => option.key === sent!.key))
+  const sentOption = $derived(sentControl === undefined || sent === null ? undefined : optionOf(sentControl, sent.value))
   // Timed from when the Run accepted it where the log says so, else from the sample it was sent at.
   const phase = $derived.by(() => {
     if (sent === null || sentControl === undefined || sentOption === undefined) return null
@@ -66,7 +84,7 @@
 
   const select = async (control: ControlView, option: OptionView): Promise<void> => {
     if (option.current || option.slideOnly) return
-    selection = { path: control.path, key: option.key }
+    selection = { path: control.path, key: option.key, value: option.value }
     onSelected?.(control.path)
     check = 'checking'
     const result = await validate(writeOf(control, option))
@@ -107,7 +125,7 @@
   runOnMount(() => {
     for (const control of view.controls) for (const option of control.options) if (option.slideOnly) void checkProtective(control, option)
     const drafted = draft === null ? undefined : view.controls.find(control => control.path === draft.path)
-    const option = drafted?.options.find(candidate => candidate.key === keyOf(draft!))
+    const option = drafted === undefined ? undefined : optionOf(drafted, draft!.value)
     if (drafted !== undefined && option !== undefined) void select(drafted, option)
   })
 
@@ -127,9 +145,37 @@
     <div class="row" class:expanded>
       <div class="head">
         <span class="target">{control.target}</span>
-        {#if control.now !== null}<span class="now">Now: {control.now}</span>{/if}
+        {#if control.now !== null}<span class="now">Now: {control.now}{#if control.commanded !== null} · {control.commanded}{/if}</span>{/if}
       </div>
-      {#if control.form === 'twoState'}
+      {#if control.form === 'demand' && control.demand !== undefined}
+        {@const demand = control.demand}
+        {@const shut = control.options.find(option => option.value === demand.min)}
+        {@const open = control.options.find(option => option.value === demand.max)}
+        {@const pending = moving?.path === control.path ? moving.shown : expanded && typeof selection?.value === 'number' ? shownAt(demand, selection.value) : shownAt(demand, demand.setting)}
+        <!-- A demand on its 1 % grid: SHUT and OPEN at its ends, the slider (or its step buttons, or the arrow keys) between; let go, the setting is selected. -->
+        <div class="demand">
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          {#if shut !== undefined}<obc-button variant="normal" disabled={shut.current} onclick={() => { void select(control, shut) }}>{shut.word}</obc-button>{/if}
+          <obc-slider
+            class="slider"
+            min={demand.shown.min}
+            max={demand.shown.max}
+            step={demand.shown.step}
+            stepClick={demand.shown.step}
+            value={pending}
+            hasLeftIcon={true}
+            hasRightIcon={true}
+            decrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} less`}
+            incrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} more`}
+            aria-label={`Set ${control.target}`}
+            onvalue={(event: CustomEvent<number>) => { moving = { path: control.path, shown: event.detail } }}
+            onchange={(event: CustomEvent<number>) => selectSetting(control, demand, event.detail)}
+          ><obi-chevron-left-google slot="icon-left"></obi-chevron-left-google><obi-chevron-right-google slot="icon-right"></obi-chevron-right-google></obc-slider>
+          <span class="setting">{Math.round(pending)} {demand.shown.unit}</span>
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          {#if open !== undefined}<obc-button variant="normal" disabled={open.current} onclick={() => { void select(control, open) }}>{open.word}</obc-button>{/if}
+        </div>
+      {:else if control.form === 'twoState'}
         <obc-toggle-button-group
           value={expanded ? selection!.key : ''}
           externalControl={true}
@@ -195,8 +241,10 @@
       {/if}
     </div>
   {/each}
+  {#if view.controls.length === 0 && view.position !== null}<p class="now">Position {view.position}</p>{/if}
   {#if view.auto.length > 0}
-    <ul class="auto">{#each view.auto as line (line)}<li>{line}</li>{/each}</ul>
+    <!-- What a controller holds, read-only, and what operating it by hand would take. -->
+    <ul class="auto">{#each view.auto as line (line.text)}<li><span class="auto-line">{line.text}</span> <span class="manual">{line.manual}</span></li>{/each}</ul>
   {/if}
   {#if view.withheld.length > 0}
     <details class="withheld-list">
@@ -219,6 +267,11 @@
   .allowed, .checking, .note, .consequence, .opposing, .withheld { color: var(--element-neutral-color); }
   .refused { color: var(--element-active-color); font-weight: 600; }
   .slide-what { font-weight: 600; color: var(--element-active-color); }
+  .demand { display: flex; align-items: center; gap: 6px; }
+  .demand .slider { flex: 1 1 auto; min-width: 0; }
+  .setting { flex: none; min-width: 40px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--element-active-color); }
+  .auto-line { color: var(--element-active-color); }
+  .manual { color: var(--element-neutral-color); }
   .feedback { display: flex; flex-direction: column; gap: 2px; color: var(--element-active-color); }
   .feedback.notFollowed, .feedback.refused { font-weight: 600; }
   .auto, .withheld-list ul { list-style: none; margin: 0; padding: 0; color: var(--element-neutral-color); }

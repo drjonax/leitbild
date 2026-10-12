@@ -1,7 +1,7 @@
-import { formatQuantity } from '../../../../packs/process-plant/displays/display-text.ts'
+import { displayValue, formatQuantity } from '../../../../packs/process-plant/displays/display-text.ts'
 import { readingStateText, type TrendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
 import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
-import { followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
+import { demandSetting, followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
 import type { RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
 import type { ListedControl, ListedItem } from '../../../../packs/process-plant/operations/instance-ports.ts'
 import type { OperationRecord } from '../../../../packs/process-plant/operations/plant-operations.ts'
@@ -90,13 +90,37 @@ export interface OptionView {
   readonly isolated: string | null
 }
 
+/**
+ * A demand control's span and where it stands (a modulating valve set "OPEN
+ * to 40 %"), in its shown unit (%): its OPEN and SHUT options are its ends;
+ * any setting on its step between them is an option of its own
+ * (demandOption).
+ */
+export interface DemandView {
+  readonly control: OfferedControl
+  readonly min: number
+  readonly max: number
+  readonly step: number
+  /** min, max and step as a person reads and sets them ("%"). */
+  readonly shown: { readonly min: number; readonly max: number; readonly step: number; readonly unit: string }
+  /** What it is commanded to now, in the command's unit, and as a person reads it ("40 %"). */
+  readonly setting: number
+  readonly settingText: string
+  /** Where the equipment stands, in the command's unit. */
+  readonly position: number
+}
+
 export interface ControlView {
   readonly path: VariablePath
   readonly target: string
   readonly form: OfferedControl['form']
   /** The state the equipment reads now, in the options' words; null for a pushbutton, or a position between them ("35 %"). */
   readonly now: string | null
+  /** A demand control's command beside where it stands, where they differ ("CMD 40 %"); null otherwise. */
+  readonly commanded: string | null
   readonly options: ReadonlyArray<OptionView>
+  /** A demand control's span and setting; absent on two-state controls and pushbuttons. */
+  readonly demand?: DemandView
   readonly withheldOptions: ReadonlyArray<{ readonly word: string; readonly reason: string }>
   readonly statePath?: VariablePath
   readonly travelMs: number | null
@@ -108,8 +132,10 @@ export interface ItemControlView {
   readonly id: string
   readonly label: string
   readonly controls: ReadonlyArray<ControlView>
-  /** Demands a controller holds, read-only: "AUTO · SG-A-LVL-NR held to 55 %". */
-  readonly auto: ReadonlyArray<string>
+  /** Demands a controller holds, read-only: "AUTO · SG-A-LVL-NR held to 55 %", and what operating them by hand would take. */
+  readonly auto: ReadonlyArray<{ readonly text: string; readonly manual: string }>
+  /** Where a valve stands, as its popover shows it in place of a trend ("35 %"); null for other equipment. */
+  readonly position: string | null
   /** What the item withholds besides, with why: demands, set points, isolation inputs (a fault or boundary input is never listed: controls.ts). */
   readonly withheld: ReadonlyArray<{ readonly name: string; readonly reason: string }>
 }
@@ -140,6 +166,13 @@ const currentOption = (control: OfferedControl, now: OperationNow): ControlOptio
 
 const nowWords = (control: OfferedControl, now: OperationNow): string | null => {
   if (control.form === 'pushbutton' || control.state === undefined) return null
+  // A demand control reads where it stands on its own step ("35 %"), or at an end in its word.
+  if (control.demand !== undefined) {
+    const reading = now.read(control.state)
+    if (typeof reading !== 'number') return null
+    const end = currentOption(control, now)
+    return end?.state ?? formatQuantity(reading, control.demand.unit, control.demand.step)
+  }
   const current = currentOption(control, now)
   if (current?.state !== undefined) return current.state
   const reading = now.read(control.state)
@@ -180,27 +213,93 @@ const optionView = (listed: ListedControl, option: ControlOption, index: number,
 }
 
 /** The CONTROL section of one item, as it reads now. */
+const demandView = (listed: ListedControl, now: OperationNow): DemandView | undefined => {
+  const { control } = listed
+  const demand = control.demand
+  if (demand === undefined || control.state === undefined) return undefined
+  // Where it stands and what it is commanded to, as the latest sample reads them; as World listed them before the first.
+  const read = (path: VariablePath, listedValue: number | undefined): number => {
+    const value = now.read(path)
+    if (typeof value === 'number') return value
+    if (listedValue === undefined) throw new Error(`${path} reads no number`)
+    return listedValue
+  }
+  const shown = (value: number): number => Number(displayValue(value, demand.unit).toPrecision(12))
+  const setting = read(control.path, listed.now?.demand)
+  return {
+    control,
+    min: demand.min,
+    max: demand.max,
+    step: demand.step,
+    shown: { min: shown(demand.min), max: shown(demand.max), step: shown(demand.step), unit: demand.shownUnit },
+    setting,
+    settingText: formatQuantity(setting, demand.unit, demand.step),
+    position: read(control.state, listed.now?.position),
+  }
+}
+
+/** The CONTROL section of one item, as it reads now. */
 export const itemControlView = (item: ListedItem, now: OperationNow): ItemControlView => ({
   id: item.id,
   label: item.label,
   controls: item.offered.map(listed => {
     const { control } = listed
     const current = currentOption(control, now)
+    const demand = demandView(listed, now)
     return {
       path: control.path,
       target: control.target,
       form: control.form,
       now: nowWords(control, now),
+      commanded: demand === undefined || Math.abs(demand.setting - demand.position) <= demand.step / 2 ? null : `CMD ${demand.settingText}`,
       options: control.options.map((option, index) => optionView(listed, option, index, current, now)),
+      ...(demand === undefined ? {} : { demand }),
       withheldOptions: control.withheldOptions.map(option => ({ word: option.word, reason: option.reason })),
       ...(control.state === undefined ? {} : { statePath: control.state }),
       travelMs: listed.travelMs,
       ...(control.from === undefined ? {} : { from: control.from }),
     }
   }),
-  auto: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [control.reason.text] : []),
+  auto: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [{ text: control.reason.text, manual: control.reason.manual }] : []),
+  position: item.position === undefined ? null : now.format(item.position.path, now.read(item.position.path) ?? item.position.value),
   withheld: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [] : [{ name: control.tagId ?? String(control.path), reason: control.reason.text }]),
 })
+
+/**
+ * A demand control's setting between its ends as an option of its own
+ * ("OPEN to 40 % AFW-A-CV …"), in World's words for it (demandSetting); null
+ * where the value is no setting of it. It moves the equipment as its end in
+ * the same direction does, within that end's declared travel (plan-final
+ * I-2); what it sets going or works against, World's check on the exact
+ * write says (control.validate).
+ */
+export const demandOption = (control: ControlView, value: number): OptionView | null => {
+  const demand = control.demand
+  if (demand === undefined) return null
+  if (value === demand.max || value === demand.min) return control.options.find(option => option.value === value) ?? null
+  // Opening moves it as its OPEN end does, closing as its SHUT end does.
+  const end = control.options.find(option => option.value === (value >= demand.position ? demand.max : demand.min))
+  const setting = demandSetting(demand.control, value)
+  if (!setting.ok) return null
+  return {
+    key: `${control.path}=${String(value)}`,
+    word: setting.word,
+    value,
+    current: Math.abs(demand.position - value) <= demand.step / 2,
+    action: `${setting.word} ${control.target}`,
+    confirm: 'button',
+    slideOnly: false,
+    consequences: [],
+    opposing: [],
+    heldBy: null,
+    travelMs: end?.travelMs ?? null,
+    isolated: control.options.find(option => option.isolated !== null)?.isolated ?? null,
+  }
+}
+
+/** The option a value of a control is: one it lists, or a demand control's setting between its ends. */
+export const optionOf = (control: ControlView, value: ProcessVariableValue): OptionView | undefined =>
+  control.options.find(option => option.value === value) ?? (typeof value === 'number' ? demandOption(control, value) ?? undefined : undefined)
 
 // --- Feedback ---------------------------------------------------------------
 
@@ -228,9 +327,9 @@ export const commandPhase = (control: ControlView, option: OptionView, sent: Sen
   const at = now.clock(sent.sentAtElapsedMs)
   if (sent.result === undefined) return { kind: 'sent', text: `${option.action}: sent ${at}` }
   if (!sent.result.ok) return { kind: 'refused', text: `Refused: ${sent.result.reason}` }
-  const target = control.options.find(candidate => candidate.key === option.key)
-  if (control.statePath === undefined || control.form === 'pushbutton' || target === undefined) return { kind: 'done', text: `${option.word} ${at}` }
-  if (target.current) return { kind: 'done', text: `${optionState(option, control)} ${now.clock(now.elapsedMs)}` }
+  // `option` is read from the control as it stands now, so `current` says whether the equipment has followed.
+  if (control.statePath === undefined || control.form === 'pushbutton') return { kind: 'done', text: `${option.word} ${at}` }
+  if (option.current) return { kind: 'done', text: `${optionState(option, control)} ${now.clock(now.elapsedMs)}` }
   const since = now.elapsedMs - sent.sentAtElapsedMs
   const reading = now.read(control.statePath)
   const goal = option.value
@@ -302,12 +401,13 @@ const closedText = (proposal: ProcessPlantProposal, now: OperationNow): string |
   return `Superseded at ${at}${closed.reason === undefined ? '' : `: ${closed.reason}`}`
 }
 
-/** The listed control and option a proposal's write is, on its item. */
-const proposedOption = (proposal: ProcessPlantProposal, item: ListedItem): { readonly listed: ListedControl; readonly index: number } => {
+/** The listed control a proposal's write is, on its item, and its option as the control reads now. */
+const proposedOption = (proposal: ProcessPlantProposal, item: ListedItem, now: OperationNow): { readonly listed: ListedControl; readonly control: ControlView; readonly option: OptionView } => {
   const listed = item.offered.find(candidate => candidate.control.path === proposal.write.path)
-  const index = listed?.control.options.findIndex(option => option.value === proposal.write.value) ?? -1
-  if (listed === undefined || index < 0) throw new Error(`proposal ${proposal.id} writes ${proposal.write.path}, which item ${item.id} does not offer`)
-  return { listed, index }
+  const control = listed === undefined ? undefined : itemControlView({ ...item, offered: [listed], withheld: [] }, now).controls[0]
+  const option = control === undefined ? undefined : optionOf(control, proposal.write.value)
+  if (listed === undefined || control === undefined || option === undefined) throw new Error(`proposal ${proposal.id} writes ${proposal.write.path}, which item ${item.id} does not offer`)
+  return { listed, control, option }
 }
 
 /**
@@ -323,7 +423,7 @@ export const proposalCard = (
   margins: ReadonlyArray<EvidenceMargin>,
   now: OperationNow,
 ): ProposalCard => {
-  const { listed, index } = proposedOption(proposal, item)
+  const { listed, control, option } = proposedOption(proposal, item, now)
   // A cited reading moved where it reads otherwise as the display writes it: a change below its resolution is none.
   const evidence = (review?.evidence ?? proposal.evidence.map(cited => ({ tagId: cited.tagId, then: cited.value, now: cited.value }))).map(entry => {
     const path = proposal.evidence.find(cited => cited.tagId === entry.tagId)!.path
@@ -332,13 +432,11 @@ export const proposalCard = (
     return { tagId: entry.tagId, then, now: shown, changed: then !== shown }
   })
   const changed = (review?.changed ?? false) && evidence.some(entry => entry.changed)
-  const control = itemControlView({ ...item, offered: [listed], withheld: [] }, now).controls[0]!
-  const option = control.options[index]!
   const pending = proposal.status === 'pending'
   const permitted = review?.permitted ?? false
   const other = control.options.find(candidate => candidate.key !== option.key)
   const travel = option.travelMs === null ? 'no travel time is declared' : option.travelMs === 0 ? 'at once' : `within ${Math.round(option.travelMs / 1_000)} s`
-  const toState = listed.control.options[index]!.state ?? null
+  const toState = listed.control.options.find(candidate => candidate.value === option.value)?.state ?? (control.demand === undefined ? null : option.word)
   return {
     id: proposal.id,
     item: proposal.item,
@@ -485,7 +583,7 @@ export const itemBadges = (
     const record = input.operations.filter(candidate => candidate.path === control.path && candidate.origin !== 'system')
       .reduce<OperationRecord | undefined>((last, candidate) => last === undefined || candidate.elapsedMs >= last.elapsedMs ? candidate : last, undefined)
     if (record === undefined) return []
-    const option = control.options.find(candidate => candidate.value === record.value)
+    const option = optionOf(control, record.value)
     return option === undefined ? [] : [{ control, option, record }]
   })
   const travelling = latest.filter(({ control, option, record }) => control.form !== 'pushbutton' && control.statePath !== undefined && !option.current
@@ -572,7 +670,7 @@ export const operationsLogRows = (
   }
   const commands = log.map((record): OperationsLogRow => {
     const found = controlOf(record.path)
-    const option = found?.control.options.find(candidate => candidate.value === record.value)
+    const option = found === undefined ? undefined : optionOf(found.control, record.value)
     const proposal = record.proposalId === undefined ? undefined : proposals.find(candidate => candidate.id === record.proposalId)
     const chain = record.kind === 'approval'
       ? `approved${proposal === undefined ? ' proposal' : ` ${actorWords(proposal.proposer.origin, proposal.proposer.actorId)}'s proposal of ${now.clock(proposal.proposedAtElapsedMs)}`}`
@@ -598,7 +696,7 @@ export const operationsLogRows = (
   })
   const waiting = proposals.filter(proposal => proposal.status === 'pending').map((proposal): OperationsLogRow => {
     const found = controlOf(proposal.write.path)
-    const option = found?.control.options.find(candidate => candidate.value === proposal.write.value)
+    const option = found === undefined ? undefined : optionOf(found.control, proposal.write.value)
     return {
       key: proposal.id,
       elapsedMs: proposal.proposedAtElapsedMs,
@@ -612,7 +710,7 @@ export const operationsLogRows = (
   })
   const unexecuted = proposals.filter(proposal => proposal.status !== 'pending' && proposal.status !== 'approved' && proposal.closed !== undefined).map((proposal): OperationsLogRow => {
     const found = controlOf(proposal.write.path)
-    const option = found?.control.options.find(candidate => candidate.value === proposal.write.value)
+    const option = found === undefined ? undefined : optionOf(found.control, proposal.write.value)
     const closed = proposal.closed!
     return {
       key: proposal.id,
