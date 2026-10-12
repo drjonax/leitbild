@@ -35,8 +35,11 @@
     card?: string | null
     /** The user paged: replace `?guide=` (modal-url `replace`). */
     onpagechange?: (page: GuidePageId) => void
-    /** "Try …": the caller swaps to the Demos modal (`world:<id>`, or null for its first slide). Without it, the link navigates to `/workspaces?demos=…`. */
-    ontrydemo?: (demo: string | null) => void
+    /**
+     * "Try …": the caller swaps to the Demos modal (`world:<id>`, or null for its first slide);
+     * `keyboard` is true for Enter/Space, so Demos can start stopped. Without it, the link navigates to `/workspaces?demos=…`.
+     */
+    ontrydemo?: (demo: string | null, how: { readonly keyboard: boolean }) => void
     /** Footer "Close" reports 'close-button', like ×. */
     onclose?: (reason: ModalCloseReason) => void
     fallbackFocus?: () => HTMLElement | null
@@ -167,7 +170,7 @@
   const tryDemo = (event: MouseEvent, demo: string | null): void => {
     if (!ontrydemo || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
-    ontrydemo(demo)
+    ontrydemo(demo, { keyboard: event.detail === 0 })
   }
 
   // ---- Ask page ----
