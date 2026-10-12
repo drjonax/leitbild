@@ -38,7 +38,7 @@ const declaration: RunRoles = { roles: [...sidedRoles], presets: [], sides: [...
 const oracle = createWireOracle(declaration)
 const {
   registry, liveRun, asScreen, createScreen, readRun, join, objectIds, einsatzIds, attributions, storeText, einsatzType,
-  attempt, sideCommands, takeInventory, forbiddenFor, expectNoLeak, barrier, eventsReceived, command, refusalOf, recommendAs,
+  attempt, sideCommands, takeInventory, forbiddenFor, holds, expectNoLeak, barrier, eventsReceived, command, refusalOf, recommendAs,
   shownOn, boardText, recommended, screens,
 } = oracle
 
@@ -433,5 +433,12 @@ describe('the wire oracle itself', () => {
     const planted: Screen = { ...createScreen('planted', ['blue-lead']), ws: [{ text: JSON.stringify({ type: 'events', events: [{ type: 'object.deleted', objectId: names.redTask.id }] }), type: 'events' }] }
     const leaks = forbiddenFor('blue').filter(token => [...planted.ws.map(entry => entry.text), storeText(planted.stores)].some(text => text.includes(token)))
     expect(leaks).toEqual([names.redTask.id])
+  })
+
+  test('finds a token only as a whole id or label, never as the start of a longer id', () => {
+    expect(holds('{"objectId":"task:1"}', 'task:1')).toBe(true)
+    expect(holds('{"objectId":"task:12"}', 'task:1')).toBe(false)
+    expect(holds('{"objectId":"task:12","next":"task:1"}', 'task:1')).toBe(true)
+    expect(holds(`${names.redUnit.label} · damaged`, names.redUnit.label)).toBe(true)
   })
 })

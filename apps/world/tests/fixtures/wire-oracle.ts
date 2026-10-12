@@ -254,6 +254,18 @@ export const createWireOracle = (declaration: RunRoles) => {
     ...[...sideCommands.entries()].flatMap(([commandId, sees]) => sees.includes(side) ? [] : [commandId]),
   ]
 
+  /**
+   * Whether a text holds a token as a whole: not as the start of a longer id,
+   * so a forbidden "task:1" is found in "task:1" but not in the engine's next
+   * id "task:12".
+   */
+  const holds = (text: string, token: string): boolean => {
+    for (let index = text.indexOf(token); index !== -1; index = text.indexOf(token, index + 1)) {
+      if (!/[\w:-]/.test(text.charAt(index + token.length))) return true
+    }
+    return false
+  }
+
   /** The oracle: no forbidden token in what the screen received since the marks, in its stores, or in what else it built from them. */
   const expectNoLeak = async (screen: Screen, side: string, since: { readonly http?: number; readonly ws?: number } = {}, built: ReadonlyArray<string> = []): Promise<void> => {
     await takeInventory()
@@ -263,7 +275,7 @@ export const createWireOracle = (declaration: RunRoles) => {
       storeText(screen.stores),
       ...built,
     ]
-    const leaks = forbiddenFor(side).filter(token => texts.some(text => text.includes(token)))
+    const leaks = forbiddenFor(side).filter(token => texts.some(text => holds(text, token)))
     expect({ screen: screen.name, side, leaks }).toEqual({ screen: screen.name, side, leaks: [] })
   }
 
@@ -394,6 +406,7 @@ export const createWireOracle = (declaration: RunRoles) => {
     sideCommands,
     takeInventory,
     forbiddenFor,
+    holds,
     expectNoLeak,
     barrier,
     eventsReceived,
