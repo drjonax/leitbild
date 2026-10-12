@@ -19,5 +19,9 @@ describe('Leitbild Assistant skills', () => {
     expect(displays.body.length).toBeLessThanOrEqual(OPERATOR_DISPLAYS_BODY_MAX_CHARS)
     expect(displays.body).toContain('world.process-plant.display.compose')
     expect(displays.body).toContain('```leitbild-view\nview <viewRef>\n```')
+    // Plant equipment is operated by proposing it for a person's decision (plan C1 §4.4).
+    const assistance = store.get('leitbild-assistance')!
+    expect(assistance.body).toContain('world.process-plant.control.propose')
+    expect(assistance.body).toContain('never say it was done')
   })
 })
