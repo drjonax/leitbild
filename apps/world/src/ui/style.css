@@ -3155,6 +3155,66 @@ body.rail-resizing {
   font-weight: 700;
 }
 
+/* A refused or failed write: one dismissable 28 px line, not a standing banner. */
+.procedure-error-strip {
+  box-sizing: border-box;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 22px;
+  border-bottom: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.procedure-error-strip span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.procedure-error-strip button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #991b1b;
+  cursor: pointer;
+}
+
+/* The control whose write is on its way spins; the others wait at full contrast. */
+.procedure-spinner {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  flex: none;
+  border: 2px solid #bfdbfe;
+  border-top-color: #1d4ed8;
+  border-radius: 50%;
+  animation: procedure-document-spin 0.9s linear infinite;
+}
+
+.procedure-recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.procedure-modal button.busy:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
 .procedure-loading-panel {
   min-height: 0;
   display: grid;
@@ -3388,6 +3448,10 @@ body.rail-resizing {
   background: #f8fafc;
 }
 
+.procedure-document > * {
+  flex: none;
+}
+
 .procedure-document > .procedure-document-body {
   flex: 1 1 auto;
 }
@@ -3407,6 +3471,7 @@ body.rail-resizing {
 }
 
 .procedure-driver-band {
+  box-sizing: border-box;
   min-height: 32px;
   display: flex;
   align-items: center;
@@ -3480,7 +3545,8 @@ body.rail-resizing {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .procedure-document-spinner {
+  .procedure-document-spinner,
+  .procedure-spinner {
     animation: none;
   }
 }

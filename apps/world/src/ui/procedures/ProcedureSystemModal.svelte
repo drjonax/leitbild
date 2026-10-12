@@ -186,7 +186,8 @@
   let procedureFontScale = $state(1)
   let windowBounds = $state<FloatingWindowBounds>({ x: 48, y: 48, width: 1500, height: 940 })
   let windowDragState = $state<ProcedureWindowDragState | null>(null)
-  let transitionInProgress = $state(false)
+  /** The control whose write is on its way; it shows Recording… and every other write waits. */
+  let pendingControl = $state<string | null>(null)
   let boundsInitialized = false
   let csfRefreshInFlight = false
   let toastTimer: number | null = null
@@ -221,6 +222,7 @@
     ? procedureCurrentStep(selectedProcedureRun, document)
     : null)
   const driverView = $derived(procedureDriverView(selectedProcedureRun))
+  const busy = $derived(pendingControl !== null)
   const procedureRows = $derived(document ? procedureStepRows(document, selectedProcedureRun) : [])
   const catalogCategories = $derived(procedureCategories(catalog?.procedures ?? []))
   const sourceLabel = $derived(catalog
@@ -398,6 +400,17 @@
   const errorMessage = (err: unknown): string =>
     err instanceof Error ? err.message : String(err)
 
+  const branchControlKey = (step: ProcedureStep, branch: ProcedureBranch): string =>
+    `branch:${step.id}:${step.branches.indexOf(branch)}`
+
+  // One write at a time: its control says Recording… until World answers.
+  const recording = async (control: string, write: () => Promise<void>): Promise<void> => {
+    if (pendingControl !== null) return
+    pendingControl = control
+    try { await write() }
+    finally { if (!disposed) pendingControl = null }
+  }
+
   const procedureLoadRows = $derived<ReadonlyArray<LoadStage>>([
     loadStages.source,
     loadStages.runs,
@@ -545,7 +558,7 @@
     const current = document
     const request = latestProcedureLoadRequest
     if (!current) return
-    try {
+    await recording('run', async () => { try {
       await startProcedureRun(simulationRunId, {
         sourceId: current.source.sourceId,
         sourceRevision: current.source.revision,
@@ -555,7 +568,7 @@
       await refreshRuns()
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
-    }
+    } })
   }
 
   const closeActiveRun = async (status: 'completed' | 'abandoned'): Promise<boolean> => {
@@ -770,7 +783,7 @@
     currentProcedureStep !== null && currentProcedureStep.step.id !== step.id
 
   const requestBranch = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
-    if (!selectedRun || transitionInProgress) return
+    if (!selectedRun || busy) return
     if (branch.targetKind !== 'procedure' && branchIsOffPath(fromStep)) {
       pendingOffPath = { from: fromStep, branch }
       confirmation = 'off-path'
@@ -780,9 +793,9 @@
   }
 
   const activateBranch = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
-    if (!selectedRun || transitionInProgress) return
+    if (!selectedRun || busy) return
     try {
-      transitionInProgress = true
+      pendingControl = branchControlKey(fromStep, branch)
       if (branch.targetKind === 'step') await completeStepAndJump(fromStep, branch)
       else if (branch.targetKind === 'procedure') await openProcedureTransition(fromStep, branch)
       else if (branch.targetKind !== 'unknown') {
@@ -792,7 +805,7 @@
     } catch (err) {
       error = errorMessage(err)
     } finally {
-      transitionInProgress = false
+      if (!disposed) pendingControl = null
     }
   }
 
@@ -821,9 +834,9 @@
   const confirmProcedureTransition = async (): Promise<void> => {
     const transition = pendingTransition
     const request = latestProcedureLoadRequest
-    if (!transition || transitionInProgress) return
+    if (!transition || busy) return
     try {
-      transitionInProgress = true
+      pendingControl = branchControlKey(transition.fromStep, transition.branch)
       await transitionProcedureRun(simulationRunId, {
         runId: transition.sourceRunId,
         stepId: transition.fromStep.id,
@@ -839,7 +852,7 @@
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
     } finally {
-      if (!disposed) transitionInProgress = false
+      if (!disposed) pendingControl = null
       if (request === latestProcedureLoadRequest) pendingTransition = null
     }
   }
@@ -848,11 +861,13 @@
     const current = document
     if (!activeRun || !current) return
     const unitLabel = displayUnitName
-    if (!await closeActiveRun('completed')) return
-    showProcedureToast(`${current.procedureId} completed for ${unitLabel}. Reset the procedure to run it again.`, {
-      placement: 'center',
-      tone: 'success',
-      durationMs: 4_000,
+    await recording('complete', async () => {
+      if (!await closeActiveRun('completed')) return
+      showProcedureToast(`${current.procedureId} completed for ${unitLabel}. Reset the procedure to run it again.`, {
+        placement: 'center',
+        tone: 'success',
+        durationMs: 4_000,
+      })
     })
   }
 
@@ -861,19 +876,19 @@
     const run = activeRun
     const request = latestProcedureLoadRequest
     if (!run) return
-    try {
+    await recording('drive', async () => { try {
       await driveProcedureRun(simulationRunId, { runId: run.runId, action })
       await refreshRuns()
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
-    }
+    } })
   }
 
   const resetSelectedProcedure = async (): Promise<void> => {
     const current = document
     const request = latestProcedureLoadRequest
     if (!current) return
-    try {
+    await recording('reset', async () => { try {
       await resetProcedureRun(simulationRunId, {
         sourceId: current.source.sourceId,
         procedureId: current.procedureId,
@@ -882,7 +897,7 @@
       await refreshRuns()
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
-    }
+    } })
   }
 
   const confirmProcedureAction = async (): Promise<void> => {
@@ -971,16 +986,16 @@
   const cycleStepAssessment = async (step: ProcedureStep): Promise<void> => {
     const current = stepStates.get(step.id)
     // A checkmark records a judgement on its step; only a branch moves the Run.
-    await updateStep(step, { assessment: assessmentAfter(current?.assessment) })
+    await recording(`assess:${step.id}`, async () => { await updateStep(step, { assessment: assessmentAfter(current?.assessment) }) })
   }
 
   const toggleFavorite = async (step: ProcedureStep): Promise<void> => {
     const current = stepStates.get(step.id)
-    await updateStep(step, { favorite: !(current?.favorite ?? false) })
+    await recording(`favorite:${step.id}`, async () => { await updateStep(step, { favorite: !(current?.favorite ?? false) }) })
   }
 
   const saveComment = async (step: ProcedureStep): Promise<void> => {
-    await updateStep(step, { comment: commentDrafts[draftKey(step.id)] ?? '' })
+    await recording(`comment:${step.id}`, async () => { await updateStep(step, { comment: commentDrafts[draftKey(step.id)] ?? '' }) })
   }
 
   const tagFor = (tagId: ProcedureTagId): ProcedureTag | undefined =>
@@ -1192,12 +1207,16 @@
       <button
         type="button"
         class="procedure-assessment {assessmentClass(state)}"
-        disabled={!selectedRun}
+        class:busy={busy}
+        disabled={!selectedRun || busy}
+        aria-busy={pendingControl === `assess:${step.id}`}
         title="Human placekeeping assessment; not an automatic equipment check"
         aria-label="Cycle human assessment"
         onclick={() => void cycleStepAssessment(step)}
       >
-        {#if state?.assessment === 'complete'}
+        {#if pendingControl === `assess:${step.id}`}
+          <span class="procedure-spinner" aria-label="Recording…"></span>
+        {:else if state?.assessment === 'complete'}
           <Check size={17} aria-hidden="true" />
         {:else if state?.assessment === 'failed'}
           <X size={17} aria-hidden="true" />
@@ -1225,12 +1244,14 @@
                   class="procedure-branch {taken ? `taken tone-${procedureDecisionTone(taken)}` : ''}"
                   class:untaken={state?.decision !== undefined && taken === undefined}
                   class:off-path={activeRun !== null && branchIsOffPath(step)}
-                  disabled={!activeRun || transitionInProgress || item.branch.targetKind === 'unknown'}
+                  class:busy={busy}
+                  disabled={!activeRun || busy || item.branch.targetKind === 'unknown'}
                   title={!selectedRun ? 'Start the procedure to use branch actions' : branchIsOffPath(step) ? `Step ${step.label} is not the current step: asks before moving ${document?.procedureId ?? 'the Run'}` : branchActionTextFor(item.branch)}
                   onclick={() => void requestBranch(step, item.branch)}
                 >
                   <strong>{#if taken}<span class="procedure-taken-mark" aria-hidden="true">✓</span>{/if}{item.branch.label}</strong>
                   <span>{branchActionTextFor(item.branch)}</span>
+                  {#if pendingControl === branchControlKey(step, item.branch)}{@render recordingNote()}{/if}
                   {#if taken}
                     {@const who = procedureActorLabel(taken.selectedBy, taken.selectedByLabel)}
                     {#if procedureActorIsAi(taken.selectedBy)}
@@ -1286,7 +1307,7 @@
               oninput={(event) => { commentDrafts = { ...commentDrafts, [draftKey(step.id)]: event.currentTarget.value } }}
               placeholder="Add handling annotation..."
             ></textarea>
-            <button type="button" onclick={() => void saveComment(step)}>Save comment</button>
+            <button type="button" disabled={busy} aria-busy={pendingControl === `comment:${step.id}`} onclick={() => void saveComment(step)}>{#if pendingControl === `comment:${step.id}`}{@render recordingNote()}{:else}Save comment{/if}</button>
           </div>
         {/if}
         {#if state?.comment}
@@ -1298,14 +1319,33 @@
       <button type="button" class:active={commentOpen[draftKey(step.id)] === true} disabled={!selectedRun} title="Comment" aria-label="Comment" onclick={() => { commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
         <MessageSquare size={16} aria-hidden="true" />
       </button>
-      <button type="button" class:active={state?.favorite === true} disabled={!selectedRun} title="Favorite" aria-label="Favorite" onclick={() => void toggleFavorite(step)}>
-        <Star size={16} aria-hidden="true" />
+      <button type="button" class:active={state?.favorite === true} class:busy={busy} disabled={!selectedRun || busy} title="Favorite" aria-label="Favorite" onclick={() => void toggleFavorite(step)}>
+        {#if pendingControl === `favorite:${step.id}`}<span class="procedure-spinner" aria-label="Recording…"></span>{:else}<Star size={16} aria-hidden="true" />{/if}
       </button>
       <button type="button" title="Report procedure issue" aria-label="Report procedure issue" onclick={() => openIssue(step)}>
         <Bug size={16} aria-hidden="true" />
       </button>
     </div>
   </article>
+{/snippet}
+
+{#snippet recordingNote()}
+  <span class="procedure-recording" role="status"><span class="procedure-spinner" aria-hidden="true"></span>Recording…</span>
+{/snippet}
+
+{#snippet errorStrips()}
+  {#if error}
+    <div class="procedure-error-strip" role="alert">
+      <span title={error}>{error}</span>
+      <button type="button" aria-label="Dismiss message" onclick={() => { error = null }}><X size={14} aria-hidden="true" /></button>
+    </div>
+  {/if}
+  {#if csfError}
+    <div class="procedure-error-strip" role="alert">
+      <span title={csfError}>Critical safety functions: {csfError}</span>
+      <button type="button" aria-label="Dismiss message" onclick={() => { csfError = null }}><X size={14} aria-hidden="true" /></button>
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet stepSummary(step: ProcedureStep)}
@@ -1428,13 +1468,7 @@
       </div>
     </header>
 
-    {#if csfError}
-      <div class="procedure-error">{csfError}</div>
-    {/if}
-
-    {#if error}
-      <div class="procedure-error">{error}</div>
-    {/if}
+    {#if !document}{@render errorStrips()}{/if}
 
     {#if procedureLoadPanelVisible}
       <section class="procedure-loading-panel" aria-live="polite" aria-label="Procedure system loading status">
@@ -1533,28 +1567,29 @@
             <div class="procedure-mode-actions">
               {#if completedRun}
                 <button type="button" class="completed" disabled>Completed</button>
-                <button type="button" class="reset" onclick={() => { confirmation = 'reset' }}>Reset</button>
+                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset{/if}</button>
               {:else if activeRun}
-                <button type="button" class="run running" onclick={() => { confirmation = 'completed' }}>
-                  <Play size={13} aria-hidden="true" /> Active
+                <button type="button" class="run running" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'completed' }}>
+                  {#if pendingControl === 'complete'}{@render recordingNote()}{:else}<Play size={13} aria-hidden="true" /> Active{/if}
                 </button>
-                <button type="button" class="reset" onclick={() => { confirmation = 'reset' }}>Reset</button>
+                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset{/if}</button>
               {:else}
-                <button type="button" class="run" onclick={() => { confirmation = 'run' }}>
-                  <Play size={13} aria-hidden="true" /> {selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'}
+                <button type="button" class="run" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'run' }}>
+                  {#if pendingControl === 'run'}{@render recordingNote()}{:else}<Play size={13} aria-hidden="true" /> {selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'}{/if}
                 </button>
               {/if}
             </div>
           </div>
+          {@render errorStrips()}
           {#if driverView}
             <div class="procedure-driver-band {driverView.kind}" role="status">
               {#if driverView.kind === 'ai'}
                 <span class="procedure-ai-tag">AI</span>
                 <span class="procedure-driver-text"><b>{driverView.label} driving {document.procedureId}</b> on {displayUnitName} · since {driverView.since} · {driverView.aiSteps} {driverView.aiSteps === 1 ? 'step' : 'steps'}</span>
-                <button type="button" title="Drive {document.procedureId} yourself; the AI only reads it until you hand it back. Ticking a step or selecting a branch also takes over." onclick={() => void driveSelectedRun('claim')}>Take over</button>
+                <button type="button" title="Drive {document.procedureId} yourself; the AI only reads it until you hand it back. Ticking a step or selecting a branch also takes over." class:busy={busy} disabled={busy} onclick={() => void driveSelectedRun('claim')}>{#if pendingControl === 'drive'}{@render recordingNote()}{:else}Take over{/if}</button>
               {:else}
                 <span class="procedure-driver-text"><b>You are driving {document.procedureId}</b>{driverView.handBackTo ? '' : ' · AI agents only read it'}</span>
-                <button type="button" title={driverView.handBackTo ? `Let ${driverView.handBackTo} continue ${document.procedureId}` : `Share ${document.procedureId} again`} onclick={() => void driveSelectedRun('release')}>{driverView.handBackTo ? `Hand back to ${driverView.handBackTo}` : 'Release'}</button>
+                <button type="button" title={driverView.handBackTo ? `Let ${driverView.handBackTo} continue ${document.procedureId}` : `Share ${document.procedureId} again`} class:busy={busy} disabled={busy} onclick={() => void driveSelectedRun('release')}>{#if pendingControl === 'drive'}{@render recordingNote()}{:else}{driverView.handBackTo ? `Hand back to ${driverView.handBackTo}` : 'Release'}{/if}</button>
               {/if}
             </div>
           {/if}
@@ -1659,7 +1694,7 @@
           {/if}
           <div class="procedure-confirm-actions">
             <button type="button" onclick={cancelConfirmation}>Cancel</button>
-            <button type="button" class="primary" disabled={transitionInProgress} onclick={() => void confirmProcedureAction()}>Confirm</button>
+            <button type="button" class="primary" disabled={busy} onclick={() => void confirmProcedureAction()}>Confirm</button>
           </div>
         </div>
       </div>
