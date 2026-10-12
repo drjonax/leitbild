@@ -44,6 +44,11 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       nominalSteamMassKg: z.number().finite().positive().optional(),
       voidFractionAtNominalBoiling: normalized.optional(),
       voidFractionTimeConstantS: z.number().finite().positive().optional(),
+      /**
+       * The mixture level the boiling voids add, in percent of the full-scale inventory per unit void fraction:
+       * the swell a trip's void collapse takes away. Calibrate it against the narrow range's span, not the
+       * generator's height: the reference's full-power swell is about a fifth of its narrow range.
+       */
       swellLevelGainPercent: z.number().finite().nonnegative().optional(),
       narrowRangeLowerFraction: normalized.optional(),
       narrowRangeUpperFraction: normalized.optional(),

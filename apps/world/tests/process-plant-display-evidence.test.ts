@@ -320,16 +320,17 @@ describe('what World adds to a composed display', () => {
     expect(chipName(chip, true)).toBe('L LO & F LO')
   }, PLANT_HANG_GUARD_MS)
 
-  test('turbine trip: narrow ranges below their span read the wide ranges in the legend, beside the auxiliary feed in all and to each, and the trip check', () => {
+  test('loss of main feedwater: narrow ranges below their span read the wide ranges in the legend, beside the auxiliary feed in all and to each, and the trip check', () => {
     // Run 23: a minute after the turbine trip the narrow ranges read 17.9 %, on scale; nothing showed where the
-    // inventory would be once they left it. Since the narrow range spans the wide range's upper quarter (R4a), the
-    // shrink takes every generator below it within seconds: each legend row reads its wide range.
-    const turbineTrip = situation({ actionId: 'turbine-trip' }, 1)
-    const { evidence, display, result } = turbineTrip.compose('Post-trip steam-generator inventory', ['SG-A-LVL-NR', 'SG-B-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'], [
+    // inventory would be once they left it. A turbine trip's shrink now stops on the span again, at about 14 %
+    // (C2b). A minute after a loss of main feedwater the low-low trip's shrink and the boil-off on auxiliary feed
+    // alone have taken every generator below it: each legend row reads its wide range.
+    const lossOfFeed = situation({ actionId: 'loss-main-feedwater' }, 1)
+    const { evidence, display, result } = lossOfFeed.compose('Post-trip steam-generator inventory', ['SG-A-LVL-NR', 'SG-B-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'], [
       { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), ...['B', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`))] },
       { kind: 'alarms', scope: 'plant' },
     ])
-    expect(Number(turbineTrip.read('sgA.levelPercent'))).toBe(0)
+    expect(Number(lossOfFeed.read('sgA.levelPercent'))).toBe(0)
     for (const loop of ['A', 'B', 'C', 'D']) expect(result.margins.join('\n')).toMatch(new RegExp(`SG-${loop}-LVL-NR: <0 % \\(WR SG-${loop}-LVL-WR: \\d+\\.\\d %\\)`))
     expect(rowsOf(display)).toEqual([
       { kind: 'delivers', name: '', items: ['AFW-FLOW'] },
@@ -360,20 +361,20 @@ describe('what World adds to a composed display', () => {
     // A state reads by its words alone, which name its equipment, as on the faceplate.
     const rods = items.find(item => item.pen.tagId === 'ROD-BOTTOM')!.pen
     expect(items.filter(item => item.pen.valueKind === 'boolean').map(item => item.label)).toEqual(['', '', '', ''])
-    expect(turbineTrip.read('core.rodsOnBottom')).toBe(true)
+    expect(lossOfFeed.read('core.rodsOnBottom')).toBe(true)
     expect(rods.states?.on).toStartWith('Rods on bottom')
     const stopValve = items.find(item => item.label === 'TURB-STOP-POS')!.pen
     expect(stopValve.position).toBe(true)
-    expect(positionWord(Number(turbineTrip.read('turbineStopValve.effectivePositionFraction')))).toBe('SHUT')
+    expect(positionWord(Number(lossOfFeed.read('turbineStopValve.effectivePositionFraction')))).toBe('SHUT')
     expect(items.find(item => item.label === 'NIS-PR-AVG')!.pen.position).toBeUndefined()
     expect([positionWord(0.049), positionWord(0.05), positionWord(0.95), positionWord(0.951)]).toEqual(['SHUT', null, null, 'OPEN'])
   }, PLANT_HANG_GUARD_MS)
 
   test('each critical safety function chip opens the equipment on its tree\'s deciding branch, and each banner group the energy end it commands', () => {
-    // C1 plan E5 (HF review HF-21): from status to evidence in one click. After a turbine trip heat sink is yellow on
-    // every steam generator's narrow range below 10 %: the chip opens the four. Subcriticality was decided on the
-    // startup rate, read on the core.
-    const { system, ask } = situation({ actionId: 'turbine-trip' }, 1)
+    // C1 plan E5 (HF review HF-21): from status to evidence in one click. After a loss of main feedwater heat sink is
+    // yellow on every steam generator's narrow range below 10 %: the chip opens the four. Subcriticality was decided on
+    // the startup rate, read on the core.
+    const { system, ask } = situation({ actionId: 'loss-main-feedwater' }, 1)
     const sample = ask('world.process-plant.display.sample', { plantId: system.plant.id, paths: ['pressurizer.pressureMPa'], alarms: false }) as { safetyFunctions: ReadonlyArray<{ shortLabel: string; status: string; opens?: ReadonlyArray<string> }> }
     expect(Object.fromEntries(sample.safetyFunctions.map(chip => [chip.shortLabel, chip.opens ?? null]))).toEqual({
       SUBCRIT: ['core'],

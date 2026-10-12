@@ -342,11 +342,12 @@ describe('auxiliary feedwater on a loss of offsite power', () => {
     const plantRun = started()
     plantRun.run(2_000)
     plantRun.act('turbine-trip')
-    plantRun.run(30_000)
+    plantRun.run(45_000)
     expect(plantRun.tag('UNIT-BUS-A-ENERGIZED')).toBe(true)
     expect(plantRun.tag('RCP-A-RUNNING')).toBe(true)
     expect(plantRun.activeIds()).not.toContain('trip:loss-of-offsite-power-afw-actuation:afw-actuation')
-    // The trip from full power shrinks the generators below their 20 % low-low level, which starts the
+    // The trip from full power shrinks the generators, and with their feed isolated they boil off the coolant's
+    // stored heat: about half a minute after the trip they pass their 20 % low-low level, which starts the
     // motor-driven pumps on offsite power at once.
     expect(plantRun.activeIds()).toContain('trip:sg-a-level-low-low-afw-actuation:afw-actuation')
     expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(true)

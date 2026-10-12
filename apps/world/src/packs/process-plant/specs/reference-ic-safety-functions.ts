@@ -251,7 +251,7 @@ const heatSink = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlant
           basis: 'ERG F-0.3: narrow-range level in all SGs greater than [10 %]',
           condition: all(loops.map(loop => comparison(level(loop), '>', narrowRangeOnSpanPercent))),
           yes: status('green', 'Every steam generator has level on span and pressure in hand: the heat sink is satisfied.'),
-          no: status('yellow', 'A steam generator\'s narrow-range level is below span while feed holds the heat sink; after a trip from power that is the expected shrink, refilled by auxiliary feedwater.', 'FR-H.5'),
+          no: status('yellow', 'A steam generator\'s narrow-range level is below span while feed holds the heat sink; after a loss of its feedwater at power that is the expected shrink and boil-off, refilled by auxiliary feedwater.', 'FR-H.5'),
         }),
         no: status('yellow', 'A steam generator is above its relief valves\' pressure: normal steam release is not holding it.', 'FR-H.4'),
       }),
@@ -280,7 +280,7 @@ const heatSink = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlant
     checks: [],
     expectations: [{
       when: tripDemanded(),
-      text: 'After a trip from power, shrink takes narrow-range levels below span; total feed flow at or above 27.8 kg/s holds the heat sink while auxiliary feedwater refills the steam generators.',
+      text: 'After a trip from power, shrink takes narrow-range levels down to about the low-low set point within a minute or two, and below span after a loss of feedwater; total feed flow at or above 27.8 kg/s holds the heat sink while auxiliary feedwater refills the steam generators.',
     }],
   }
 }

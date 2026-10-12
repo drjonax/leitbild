@@ -326,10 +326,10 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     // generator B boil down more slowly: the trend is established before the level gets there.
     const read = qaCase('steam-generator-b-feedwater-runback', 90, ['SG-B-LVL-NR'], { positionPercent: 70 })
     // The two-minute trend projects it; the ten-minute trend's longer window has not yet the history to.
-    expect(read('SG-B-LVL-NR', 32, 120_000, powerOperation).text).toBe('9.8 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈12 s')
+    expect(read('SG-B-LVL-NR', 32, 120_000, powerOperation).text).toBe('9.6 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈12 s')
     expect(read('SG-B-LVL-NR', 32, 600_000, powerOperation).reading.limit).toMatchObject({ minutes: null })
-    // It does, 13 s later.
+    // It does, 12 s later.
     const crossed = read('SG-B-LVL-NR', 90, 120_000, powerOperation).trace.find(point => point.v < 20)!
-    expect(crossed.t / 1000).toBe(45)
+    expect(crossed.t / 1000).toBe(44)
   })
 })
