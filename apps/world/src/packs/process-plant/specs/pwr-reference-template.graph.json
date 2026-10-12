@@ -2572,10 +2572,10 @@
           "path": "electricMw",
           "tagId": "GEN-MW",
           "equipmentId": "turbine",
-          "description": "Generator electrical output",
+          "description": "Generator electrical output; its meter reads reverse power below zero over a -100 to 1300 MW span",
           "limits": {
             "instrumentSpan": {
-              "min": 0,
+              "min": -100,
               "max": 1300
             }
           }
