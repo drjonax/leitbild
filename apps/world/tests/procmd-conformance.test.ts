@@ -34,7 +34,7 @@ describe('World consumes the canonical format without semantic projection', () =
     const run = procedureRunStateSchema.parse(JSON.parse(persisted))
     const store = createSimulationRunStateStore()
     store.hydrate({ objects: [], seq: 0, procedures: { runs: [run] } })
-    const requests: Array<{ sourceId: string; sourceRevision: string; sourcePath?: string; procedureId: string }> = []
+    const requests: Array<{ sourceId: string; sourceRevision?: string; sourcePath?: string; procedureId: string }> = []
     const before = baseline.find(item => item.procedureId === 'E-0')!.steps[0]!
     const branchIndex = before.branches.findIndex(branch => branch.targetKind === 'procedure')
     expect(branchIndex).toBe(1)

@@ -233,9 +233,10 @@ export const procedureControlStateSchema = z.object({
 })
 export type ProcedureControlState = z.infer<typeof procedureControlStateSchema>
 
+/** Without sourceId and sourceRevision, the Run's only procedure source at its current publication, which the run pins. */
 export const procedureRunStartPayloadSchema = z.object({
-  sourceId: procedureSourceIdSchema,
-  sourceRevision: sourceRevisionSchema,
+  sourceId: procedureSourceIdSchema.optional(),
+  sourceRevision: sourceRevisionSchema.optional(),
   procedureId: procedureIdSchema,
   scope: procedureRunScopeSchema,
 })

@@ -49,6 +49,16 @@ const command = <T>(config: {
 })
 
 /** Accepted for an AI agent, it carries the step the transition leads to (as step.read returns it), or why that read failed. */
+/** A start's pin, for every caller; for an AI agent also the first step, as step.read returns it. */
+const procedureStartResultSchema = z.discriminatedUnion('ok', [
+  commandResultSchema.options[0].extend({
+    pinned: z.object({ runId: z.string(), sourceId: z.string(), sourceRevision: z.string(), sourcePath: z.string() }).strict().optional(),
+    next: procedureStepViewSchema.optional(),
+    nextUnavailable: z.string().optional(),
+  }),
+  commandResultSchema.options[1],
+])
+
 const procedureTransitionResultSchema = z.discriminatedUnion('ok', [
   commandResultSchema.options[0].extend({ next: procedureStepViewSchema.optional(), nextUnavailable: z.string().optional() }),
   commandResultSchema.options[1],
@@ -67,8 +77,9 @@ export const worldCoreCapabilities: ReadonlyArray<SimulationCapability> = [
   command({
     id: procedureRunStartCommandKind,
     title: 'Start procedure run',
-    description: 'Starts a pinned procedure for an explicit operational scope, or resumes a transferred procedure at its preserved step. Completed or abandoned procedures require an explicit reset. An AI agent that starts or resumes a procedure drives it (see world.procedure.run.drive); it cannot resume one someone else drives.',
+    description: 'Input {procedureId, scope: {plantId, label?}, sourceId?, sourceRevision?}. Starts a procedure for an explicit operational scope, pinned to a source revision, or resumes a transferred procedure at its preserved step. Without sourceId and sourceRevision it starts from the Run\'s procedure source at its current publication (name sourceId where the Run has several); the result names the pinned run, source, revision and path. Completed or abandoned procedures require an explicit reset. An AI agent that starts or resumes a procedure drives it (see world.procedure.run.drive), and the result carries next: its current step, as world.procedure.run.step.read returns it; it cannot resume one someone else drives.',
     input: procedureRunStartPayloadSchema,
+    output: procedureStartResultSchema,
     targets: input => [objectIdSchema.parse(input.scope.plantId)],
   }),
   command({

@@ -870,6 +870,13 @@ export const createSimulationRunRuntime = async (config: {
             await procedureSourceService.readDocument(documentConfig),
           ...(procedureSourceService.assertTargetApplicable === undefined ? {} : { assertTargetApplicable: procedureSourceService.assertTargetApplicable }),
           observations: plantId => procedureObservations(actor, plantId),
+          soleSourceId: () => {
+            const sources = procedureSourceService.listSources()
+            if (sources.length === 1) return sources[0]!.sourceId
+            throw new Error(sources.length === 0
+              ? 'No procedure source is configured for this Run.'
+              : `This Run has ${sources.length} procedure sources (${sources.map(source => source.sourceId).join(', ')}): name sourceId.`)
+          },
         })
         if (commit === null) return null
         await publishGenerated(async () => {

@@ -105,7 +105,7 @@ describe('procedure system', () => {
       e0Fixture.replace('[[FR-S.1]]', '[[N4#abnormal-coast]]') })
     const target = parseProcedureMarkdown({ source, sourcePath: 'N4.md', sourceUrl: '/wiki?path=N4.md', rawMarkdown:
       e0Fixture.replace('procedure-id: E-0', 'procedure-id: N4').replace('[id: verify-turbine-trip]', '[id: abnormal-coast]').replace('- Verified → END', '- Return → [[E-0]]') })
-    const readDocument = async (input: { procedureId: string; sourceRevision: string }) => {
+    const readDocument = async (input: { procedureId: string; sourceRevision?: string }) => {
       expect(input.sourceRevision).toBe(source.revision)
       return input.procedureId === 'E-0' ? origin : target
     }

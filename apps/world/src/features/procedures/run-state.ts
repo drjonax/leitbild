@@ -61,8 +61,10 @@ export const prepareProcedureCommand = async (config: {
   readonly assertTargetApplicable?: (document: ProcedureDocument, object: OperationalObject) => void
   readonly readDocument: (config: {
     readonly sourceId: string; readonly procedureId: string
-    readonly sourceRevision: string; readonly sourcePath?: string
+    readonly sourceRevision?: string; readonly sourcePath?: string
   }) => Promise<ProcedureDocument>
+  /** The Run's only procedure source, for a start that names none; throws where there are several or none. */
+  readonly soleSourceId?: () => string
   /** A scope's live observations, read as the command's actor. A transition citing evidence tags reads them here. */
   readonly observations?: (plantId: string) => ProcedureObservationPort
 }): Promise<((context: ProcedureCommitContext) => ReadonlyArray<SimulationRunEvent>) | null> => {
@@ -127,11 +129,16 @@ export const prepareProcedureCommand = async (config: {
 
   if (kind.data === 'world.procedure.run.start') {
     const payload = procedureRunStartPayloadSchema.parse(command.payload)
-    const document = await config.readDocument(payload)
+    if (payload.sourceId === undefined && payload.sourceRevision !== undefined) throw new Error('sourceRevision requires sourceId')
+    const sourceId = payload.sourceId ?? config.soleSourceId?.()
+    if (sourceId === undefined) throw new Error('Name the procedure sourceId: this command path has no sole procedure source.')
+    // Without a revision, the source's current publication; the run pins the revision read.
+    const document = await config.readDocument({ sourceId, procedureId: payload.procedureId,
+      ...(payload.sourceRevision === undefined ? {} : { sourceRevision: payload.sourceRevision }) })
     assertInstalledProcedure(document)
     return context => {
       assertDocumentScope(context, document, payload.scope)
-      const existing = currentRunFor(context.procedures, payload.sourceId, payload.procedureId, payload.scope)
+      const existing = currentRunFor(context.procedures, document.source.sourceId, payload.procedureId, payload.scope)
       if (existing?.status === 'transferred' && existing.sourceRevision === document.source.revision && existing.sourcePath === document.sourcePath) {
         if (context.actorKind === 'ai') assertAiMayDrive(existing, command.actorId)
         const takeover = personTakesOver(context, existing)
