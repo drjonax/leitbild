@@ -21,7 +21,7 @@
   import RunRoomControls from './RunRoomControls.svelte'
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
-  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runFamilyFor, sameResource } from './run-room-scope.ts'
+  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
 
   type Page = { readonly kind: 'list' } | { readonly kind: 'workspace'; readonly id: string }
   interface InvocationResponse {
@@ -543,7 +543,9 @@
         {/if}
       {/if}
       {#if selectedWorldResource}
-        <AssistantLauncher disabled={assistantCapability === undefined} toggle={toggleRunAssistant} active={agentsVisible} onError={message => { error = message }} />
+        {#if !runDeclaresRoles(selectedWorldResource)}
+          <AssistantLauncher disabled={assistantCapability === undefined} toggle={toggleRunAssistant} active={agentsVisible} onError={message => { error = message }} />
+        {/if}
       {:else}
         <AssistantLauncher disabled={assistantCapability === undefined} submit={openAssistant} />
       {/if}

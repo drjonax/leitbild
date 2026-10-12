@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { moduleResourceDescriptorSchema, newWorkspaceId, workspaceResourceReferenceSchema } from '@leitbild/contracts'
-import { roomScopeIncludingRun, roomScopeKind, roomSelectsRun, sameResource } from '../src/ui/run-room-scope.ts'
+import { roomScopeIncludingRun, roomScopeKind, roomSelectsRun, runDeclaresRoles, sameResource } from '../src/ui/run-room-scope.ts'
 
 const workspaceId = newWorkspaceId()
 const observedAt = new Date().toISOString()
@@ -82,5 +82,18 @@ describe('Run Room scope', () => {
       collection: familyRef,
       members: { mode: 'selected', only: [other, run.ref] },
     })
+  })
+})
+
+describe('Run Assistant', () => {
+  test('a Run whose summary publishes roles offers no Run Assistant; a Run without roles does', () => {
+    const roleRun = moduleResourceDescriptorSchema.parse({ ...run, summary: [{ key: 'roles', label: 'Roles', kind: 'count', value: 6 }] })
+    expect(runDeclaresRoles(roleRun)).toBe(true)
+    // A Controller and four groups: World counts the roles derived from groups (einsatz-registration.test.ts).
+    const groupRun = moduleResourceDescriptorSchema.parse({ ...run, summary: [{ key: 'viewer-count', label: 'Viewers', kind: 'count', value: 0 }, { key: 'roles', label: 'Roles', kind: 'count', value: 5 }] })
+    expect(runDeclaresRoles(groupRun)).toBe(true)
+    expect(runDeclaresRoles(run)).toBe(false)
+    const viewers = moduleResourceDescriptorSchema.parse({ ...run, summary: [{ key: 'viewer-count', label: 'Viewers', kind: 'count', value: 2 }] })
+    expect(runDeclaresRoles(viewers)).toBe(false)
   })
 })
