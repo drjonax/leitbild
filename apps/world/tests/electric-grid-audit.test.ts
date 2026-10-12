@@ -523,7 +523,7 @@ describe('repository golden list and curations', () => {
     expect({
       stations: golden.stations.length, substations: golden.substations.length, corridors: golden.corridors.length,
       interconnectors: golden.interconnectors.length, radial: golden.radialAllowList.length, curations: curations.features.length,
-    }).toEqual({ stations: 130, substations: 37, corridors: 25, interconnectors: 14, radial: 77, curations: 40 })
+    }).toEqual({ stations: 130, substations: 37, corridors: 25, interconnectors: 14, radial: 77, curations: 41 })
     const entries = [...golden.stations, ...golden.substations, ...golden.corridors, ...golden.excludedCorridors, ...golden.interconnectors, ...golden.radialAllowList]
     expect(entries.every(entry => entry.evidence.length > 0 && entry.evidence.every(item => item.url.startsWith('https://')))).toBe(true)
   })

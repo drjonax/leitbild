@@ -2108,6 +2108,69 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "oyfjellet-two-stations",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          13.050939,
+          65.84272
+        ]
+      },
+      "properties": {
+        "kind": "split-plant",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/1080209770",
+          "way/1080209784"
+        ],
+        "generatorId": "generator:nve-wind-10269",
+        "parts": [
+          {
+            "substationOsmId": "way/1080209770",
+            "voltageKv": 132,
+            "weight": 140
+          },
+          {
+            "substationOsmId": "way/1080209784",
+            "voltageKv": 132,
+            "weight": 280
+          }
+        ],
+        "reason": "NVE registers Øyfjellet's 400 MW at one point near Heifjellet, and the nearest-station rule put the whole farm there, so the 11 km 132 kV cable from Heifjellet to Middagseidklumpen carried all of it. The concession builds two transformer stations, one 140 MVA 132/33 kV transformer at Heifjellet and two at Middagseidklumpen, each with its own breaker bay, and the 33 kV collection grid feeds them (verified). The farm is split by that transformer capacity, one third at Heifjellet and two thirds at Middagseidklumpen (inferred: the turbines per station are not published).",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707386/2775823",
+            "ref": "MTA Øyfjellet vindkraftverk (Multiconsult, 2019-05-06), p. 7: content of the anleggskonsesjon NVE 201104174-149 (2018-10-11)",
+            "note": "To transformatorstasjoner, ved Middagseidklumpen og Heifjellet, med to og en 140 MVA 132/33 kV transformatorer med hvert sitt bryterfelt"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707386/2775823",
+            "ref": "MTA Øyfjellet vindkraftverk, p. 7 and p. 19",
+            "note": "ca. 12 km 132 kV jordkabel mellom de to transformatorene; the grid connection leaves from the transformer at Middagseidklumpen towards Marka"
+          },
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 10269",
+            "note": "Øyfjellet, 400 MW, one registered point"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/1080209770",
+            "ref": "way/1080209770 (Heifjellet) and way/1080209784 (Middagseidklumpen)",
+            "note": "both power=substation, voltage=132000;33000"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
     }
   ]
 }

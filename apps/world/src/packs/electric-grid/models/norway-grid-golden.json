@@ -5447,33 +5447,5 @@
       ]
     }
   ],
-  "powerFlowOverloads": [
-    {
-      "branchId": "branch:osm-f32a8c4ff97e6ea6",
-      "label": "Heifjellet – Middagseidklumpen 132 kV cable (Øyfjellet wind farm)",
-      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
-      "maxLoading": 1.08,
-      "reason": "NVE registers Øyfjellet's 400 MW at one point and the model connects the farm at Heifjellet, so this internal cable carries the whole 262 MW winter output. The concession places one 140 MVA 132/33 kV transformer at Heifjellet and two at Middagseidklumpen, so in the farm the cable between them carries only Heifjellet's part; the cable rule rates it 250 MVA where the concession requires at least TSLF 1×3×1 1600 mm².",
-      "evidence": [
-        {
-          "sourceId": "nve-wind-api",
-          "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
-          "ref": "AnleggsNr 10269",
-          "note": "Øyfjellet, 400 MW"
-        },
-        {
-          "sourceId": "nve-case-documents",
-          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707386/2775823",
-          "ref": "MTA Øyfjellet vindkraftverk (2019-05-06), table of the anleggskonsesjon NVE 201104174-149 (2018-10-11)",
-          "note": "To transformatorstasjoner, ved Middagseidklumpen og Heifjellet, med to og en 140 MVA 132/33 kV transformatorer"
-        },
-        {
-          "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/1080268517",
-          "ref": "way/1080268517",
-          "note": "132 kV cable, cables=3"
-        }
-      ]
-    }
-  ]
+  "powerFlowOverloads": []
 }

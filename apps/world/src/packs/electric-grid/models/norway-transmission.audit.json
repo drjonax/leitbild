@@ -8,7 +8,7 @@
   "buses": 998,
   "branches": 1242,
   "hvdcLinks": 7,
-  "generators": 851,
+  "generators": 852,
   "loads": 3133
  },
  "oracles": {
@@ -222,10 +222,10 @@
    "id": "curations",
    "title": "Curated corrections applied, unexpired, and within the curated-length budget",
    "status": "pass",
-   "summary": "40/40 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.18 % (max 2.00 %)",
+   "summary": "41/41 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.18 % (max 2.00 %)",
    "metrics": {
-    "total": 40,
-    "applied": 40,
+    "total": 41,
+    "applied": 41,
     "unused": 0,
     "expired": 0,
     "violated": 0,
@@ -473,6 +473,12 @@
   {
    "id": "fagrafjell-vagle-1375425308-865-al59",
    "kind": "set-line-rating",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "oyfjellet-two-stations",
+   "kind": "split-plant",
    "status": "applied",
    "reasons": []
   }

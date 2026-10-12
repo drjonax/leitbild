@@ -77,6 +77,15 @@ describe('curated topology of the Norway model', () => {
     expect(lines.map(line => [line.osmWayIds, line.circuits, line.ratingMw]).sort()).toEqual([[['1375425305'], 1, 427], [['1375425308'], 1, 427]])
   })
 
+  test('Øyfjellet feeds its two transformer stations, a third at Heifjellet and two thirds at Middagseidklumpen', () => {
+    const parts = model.generators.filter(generator => generator.provenance.sources.includes('curation:oyfjellet-two-stations'))
+      .map(generator => [generator.id, generator.busId, generator.capacityMw, generator.registryIds]).sort()
+    expect(parts).toEqual([
+      ['generator:curated-oyfjellet-two-stations-2', 'bus:osm-way-1080209784@132', 266.667, ['10269']],
+      ['generator:nve-wind-10269', 'bus:osm-way-1080209770@132', 133.333, ['10269']],
+    ])
+  })
+
   test('the Ålefjær tap operated at 110 kV is not part of the ≥132 kV model', () => {
     expect(model.buses.filter(bus => bus.substationId === 'osm-relation-14027918')).toEqual([])
     expect(model.branches.filter(branch => branch.osmWayIds.includes('988971051'))).toEqual([])
