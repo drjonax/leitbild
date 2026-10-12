@@ -6,8 +6,11 @@
    * a selected call it holds the proposal as one big button and the
    * alternatives one tap each, then what is still needed and which units
    * cannot come. For a confirmation or a busy asset's choice it names what is
-   * dropped; for a highlighted asset it holds its verbs. Every button is a
-   * tap target of at least 44 px, and no key is hinted.
+   * dropped; for a highlighted asset it holds its verbs. An asset that was
+   * highlighted when the call was tapped in the list is offered as a button
+   * of its own beside the call's suggestion. Closing the call lies apart,
+   * at the bar's foot, away from the commit button. Every button is a tap
+   * target of at least 44 px, and no key is hinted.
    */
   interface Props {
     readonly commit: BoardView['commit']
@@ -22,10 +25,13 @@
 <div class="bar" data-state={commit.state}>
   {#if commit.button !== commit.text}<p class="text">{commit.text}</p>{/if}
   {#if commit.detail !== null}<p class="detail">{commit.detail}</p>{/if}
-  {#if commit.button !== null || commit.options.length > 0 || commit.verbs.length > 0 || commit.cancel !== null}
+  {#if commit.button !== null || commit.offer !== null || commit.options.length > 0 || commit.verbs.length > 0 || commit.cancel !== null}
     <div class="buttons">
       {#if commit.button !== null}
         <button type="button" class="primary" disabled={!commit.enabled} onclick={() => click({ kind: 'commit' })}>{commit.button}</button>
+      {/if}
+      {#if commit.offer !== null}
+        <button type="button" class="offer" disabled={!commit.enabled} onclick={() => click({ kind: 'offer' })}>{commit.offer}</button>
       {/if}
       {#each commit.options as entry (entry.option)}
         <button type="button" class="primary" disabled={!commit.enabled} onclick={() => click({ kind: 'option', option: entry.option })}>{entry.label}</button>
@@ -54,6 +60,11 @@
     {#if task.remainderText !== null}<p class="remainder">{task.remainderText}</p>{/if}
     {#each task.ineligible as line, index (index)}<p class="ineligible">{line}</p>{/each}
   {/if}
+  {#if commit.close !== null}
+    <div class="foot">
+      <button type="button" class="close" onclick={() => click({ kind: 'verb', verb: 'close', id: commit.close!.id })}>{commit.close.label}</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -69,6 +80,11 @@
   /* Dark text on the warning colour reads at 4.5:1 or better in both themes; white would not in the dark one. */
   .bar[data-state='confirm'] .primary:enabled, .bar[data-state='choice'] .primary:enabled { border-color: var(--warning); background: var(--warning); color: color-mix(in srgb, var(--warning) 15%, black); }
   .cancel { background: var(--panel); }
+  .offer { flex: 1 1 auto; border-color: var(--accent); background: var(--panel); color: var(--accent); font-weight: 650; text-align: left; }
+  .offer:disabled { border-color: var(--border); color: var(--muted); }
+  /* Closing a call ends it: it sits at the foot, away from the commit button, and reads as no commit. */
+  .foot { display: flex; justify-content: flex-end; }
+  .close { background: var(--panel); border-color: var(--critical); color: var(--critical); }
   .alternatives button { display: inline-flex; gap: 6px; align-items: baseline; }
   .alternatives button.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .divert { color: var(--warning); }

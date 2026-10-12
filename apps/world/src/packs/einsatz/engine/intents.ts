@@ -33,7 +33,8 @@ export const intentFields = {
   recall: { unitId: idSchema, fromTaskId: idSchema.optional() },
   hold: { unitId: idSchema },
   queue: { unitId: idSchema, to: sendTargetSchema },
-  stepRemove: { unitId: idSchema, stepId: idSchema },
+  /** `undo` takes back the step the unit's last order created, quietly: an active one is released without a work-returned alert. */
+  stepRemove: { unitId: idSchema, stepId: idSchema, undo: z.literal(true).optional() },
   resume: { unitId: idSchema },
   clear: { unitId: idSchema },
   taskCreate: { template: configIdSchema, side: configIdSchema.optional(), at: pointSchema, loads: loadsSchema.optional(), label: labelSchema },
@@ -65,7 +66,7 @@ export const recallIntentSchema = z.object({ kind: z.literal('recall'), ...inten
 export const holdIntentSchema = z.object({ kind: z.literal('hold'), ...intentFields.hold }).strict()
 /** Add a step at the end of a unit's chain; a unit with no step, not paused, starts it at once, exactly as a send. */
 export const queueIntentSchema = z.object({ kind: z.literal('queue'), ...intentFields.queue }).strict()
-/** Remove one step; the active step is released as a recall releases it, and the next step starts. */
+/** Remove one step; the active step is released as a recall releases it, and the next step starts. An undo puts it back quietly. */
 export const stepRemoveIntentSchema = z.object({ kind: z.literal('step.remove'), ...intentFields.stepRemove }).strict()
 /** Resume a paused unit's chain. */
 export const resumeIntentSchema = z.object({ kind: z.literal('resume'), ...intentFields.resume }).strict()

@@ -25,11 +25,16 @@ const settleBudget = 10_000
 const advanceBudget = 100_000
 const maxAdvanceMs = 86_400_000
 
-/** Releases a unit from its task: un-picked load stays with the task at its original age, under a "work returned" alert. */
-export const releaseFromTask = (draft: Draft, unit: UnitRecord, action: LastAction): UnitRecord => {
+/**
+ * Releases a unit from its task: un-picked load stays with the task at its
+ * original age, under a "work returned" alert. An undo (`undone`) takes back
+ * a send that has just been given, so the task's work never left it: it
+ * raises no alert.
+ */
+export const releaseFromTask = (draft: Draft, unit: UnitRecord, action: LastAction, undone = false): UnitRecord => {
   if (unit.taskId === undefined) return unit
   const task = taskIn(draft, unit.taskId)
-  if (task.closedAtMs === undefined) {
+  if (task.closedAtMs === undefined && !undone) {
     const waiting = total(task.loads) > 0 ? ` · ${loadText(draft.catalog, task.loads)} waiting` : ''
     stageTask(draft, patch(task, { alerts: raiseAlert(task.alerts, { code: workReturnedCode, message: `${unit.label} released from ${task.label}${waiting}`, sinceMs: draft.timeMs }) }))
   }

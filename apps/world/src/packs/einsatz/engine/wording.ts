@@ -17,14 +17,23 @@ export const unitWord = (catalog: Catalog, unit: UnitRecord, key: LexiconKey): s
 
 export const phaseWord = (catalog: Catalog, unit: UnitRecord): string => unitWord(catalog, unit, unit.phase)
 
-/** "2 pallets, 1 crate" in declared class order. */
-export const loadText = (catalog: Catalog, load: Counts): string => catalog.classes
-  .filter(loadClass => countOf(load, loadClass.id) > 0)
-  .map(loadClass => {
+/**
+ * "2 pallets, 1 crate" in declared class order. Classes that share a noun
+ * count together, so two classes of patients read "2 patients", never
+ * "1 patient, 1 patient".
+ */
+export const loadText = (catalog: Catalog, load: Counts): string => {
+  const byNoun = new Map<string, { readonly noun: { readonly one: string; readonly other: string }; count: number }>()
+  for (const loadClass of catalog.classes) {
     const count = countOf(load, loadClass.id)
-    return `${count} ${count === 1 ? loadClass.noun.one : loadClass.noun.other}`
-  })
-  .join(', ')
+    if (count <= 0) continue
+    const key = JSON.stringify([loadClass.noun.one, loadClass.noun.other])
+    const shared = byNoun.get(key)
+    if (shared === undefined) byNoun.set(key, { noun: loadClass.noun, count })
+    else shared.count += count
+  }
+  return [...byNoun.values()].map(({ noun, count }) => `${count} ${count === 1 ? noun.one : noun.other}`).join(', ')
+}
 
 export const classCode = (catalog: Catalog, classId: string): string => {
   const loadClass = catalog.classes.find(entry => entry.id === classId)

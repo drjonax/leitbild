@@ -9,12 +9,13 @@ export type UnitPhase = typeof unitPhases[number]
 export const unitLexiconKeys = ['hold', ...unitPhases] as const
 /**
  * Words only the whole configuration sets: list headings and what an empty
- * list says, track tiers and the Contacts groups, and the Board's verbs for
- * sending units to a task, recalling a unit, moving it and closing a task.
+ * list says, track tiers and the Contacts groups, the Board's verbs for
+ * sending units to a task, recalling a unit, moving it and closing a task,
+ * and the heading of the places a unit can be sent to.
  */
 export const boardLexiconKeys = [
   'workList', 'unitBoard', 'tracks', 'contact', 'identified', 'noWork', 'noUnits', 'engageable', 'otherTracks', 'noTracks',
-  'send', 'recall', 'move', 'close',
+  'send', 'recall', 'move', 'close', 'sites',
 ] as const
 export const lexiconKeys = [...boardLexiconKeys, ...unitLexiconKeys] as const
 
@@ -36,8 +37,9 @@ export const neutralLexicon: Readonly<Record<LexiconKey, string>> = {
   send: 'Send',
   recall: 'Recall',
   move: 'Move',
-  close: 'Close',
-  hold: 'Hold',
+  close: 'Close task',
+  sites: 'Sites',
+  hold: 'Stop',
   available: 'Available',
   mobilizing: 'Mobilizing',
   'en-route': 'En route',

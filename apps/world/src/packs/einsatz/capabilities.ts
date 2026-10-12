@@ -105,7 +105,7 @@ export const einsatzCapabilities: ReadonlyArray<SimulationCapability> = [
   command({
     id: einsatzCommandIds.stepRemove,
     title: 'Remove a step',
-    description: 'Remove one step from a unit\'s job chain. A queued step leaves; the active step is released as a recall releases it (load not yet picked up returns to its task) and the unit stops where it is and starts its next step, or, with none left, its return order applies. A unit keeps a step that delivers the load it carries, or will carry by then unless its deliver order delivers it anyway (unit_loaded). An unknown step id is refused step_not_found. Undo a send or queue by removing the step it created.',
+    description: 'Remove one step from a unit\'s job chain. A queued step leaves; the active step is released as a recall releases it (load not yet picked up returns to its task) and the unit stops where it is and starts its next step, or, with none left, its return order applies. A unit keeps a step that delivers the load it carries, or will carry by then unless its deliver order delivers it anyway (unit_loaded). An unknown step id is refused step_not_found. Undo a send or queue by removing the step it created with undo: true: only the step the unit\'s last order created (else step_not_undoable), and an active one is released quietly, with no work-returned alert on its task; the order records cause "undo".',
     idempotent: false,
     targets: input => objectIds(input.unitId),
   }),

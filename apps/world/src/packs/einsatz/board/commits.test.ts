@@ -75,7 +75,7 @@ describe('Board call locks', () => {
       await screen.perform(closing)
       // Accepted, not yet shown: still locked.
       expect(invokes(screen.raw(close))).toEqual([])
-      expect(screen.view().feedback).toEqual({ text: '✓ Close R1', tone: 'done' })
+      expect(screen.view().feedback).toEqual({ text: `✓ ${civilConfig.lexicon.close} R1`, tone: 'done' })
       await screen.sync()
       expect(screen.calls.map(call => [call.capabilityId, call.result.ok])).toEqual([[ids.recall, true], [ids.taskClose, true]])
       expect(run.task('r1').closedAtMs).toBeDefined()
@@ -112,7 +112,7 @@ describe('Board confirmations', () => {
           await screen.click({ kind: 'row', list: 'work', id: 't1' })
           await screen.click({ kind: 'verb', verb: 'close', id: 't1' })
         }
-        expect(screen.view().commit).toMatchObject({ state: 'confirm', text: 'Close T1', detail: `2 ${civilConfig.loadClasses[2]!.noun.other} dropped`, button: 'Confirm', enabled: false })
+        expect(screen.view().commit).toMatchObject({ state: 'confirm', text: `${civilConfig.lexicon.close} T1`, detail: `2 ${civilConfig.loadClasses[2]!.noun.other} dropped`, button: 'Confirm', enabled: false })
         expect(screen.calls).toHaveLength(0)
         await screen.wait(pastGuardMs)
         await commit(screen, modality)

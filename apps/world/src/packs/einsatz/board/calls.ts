@@ -165,12 +165,32 @@ export const queueCall = (records: BoardRecords, unit: BoardUnit, target: SendTa
   }
 }
 
-/** Remove one step from a unit's chain: a queued one leaves, the active one is released as a recall releases it. */
-export const stepRemoveCall = (records: BoardRecords, unit: { readonly id: string; readonly label: string }, step: Step, prefix: string = boardWords.removeStep): CallDraft => {
-  const text = `${prefix} ${stepText(records, step)} · ${unit.label}`
+/**
+ * A step as the object of a verb: "C-1", "delivery to H1", "move to a map
+ * point", "engagement of T-3", so "Remove move to a map point · U2" never
+ * reads as a direction.
+ */
+export const stepNoun = (records: BoardRecords, step: Step): string => {
+  const label = stepTargetLabel(records, step.target)
+  switch (step.kind) {
+    case 'serve': return label
+    case 'deliver': return `delivery to ${label}`
+    case 'move': return `move to ${label}`
+    case 'engage': return `engagement of ${label}`
+  }
+}
+
+/**
+ * Remove one step from a unit's chain: a queued one leaves, the active one is
+ * released as a recall releases it. An undo removes the step the unit's last
+ * order created and puts things back quietly: the engine raises no release
+ * alert for it.
+ */
+export const stepRemoveCall = (records: BoardRecords, unit: { readonly id: string; readonly label: string }, step: Step, mode: 'remove' | 'undo' = 'remove'): CallDraft => {
+  const text = `${mode === 'undo' ? boardWords.undo : boardWords.removeStep} ${stepNoun(records, step)} · ${unit.label}`
   return {
     capabilityId: boardCommandIds.stepRemove,
-    input: { unitId: unit.id, stepId: step.id },
+    input: { unitId: unit.id, stepId: step.id, ...(mode === 'undo' ? { undo: true } : {}) },
     text,
     short: text,
     origin: 'unit-board',

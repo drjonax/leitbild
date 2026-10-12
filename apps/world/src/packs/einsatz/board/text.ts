@@ -46,6 +46,9 @@ export const boardWords = {
   addTarget: 'Add a target',
   engage: 'Engage',
   removeStep: 'Remove',
+  divert: 'Divert',
+  /** What closing a call says when no unit has served it and it names no remainder. */
+  unserved: 'Not served yet',
   resume: 'Resume',
   clear: 'Clear',
   paused: 'paused',
@@ -74,14 +77,26 @@ export const etaText = (eta: Eta): string => {
   return `${boardWords.eta} unavailable · ${distanceText(eta.straightDistanceM)}`
 }
 
-/** "1 pallet, 2 crates" in declared class order. */
-export const loadText = (rules: BoardRules, load: Readonly<Record<string, number>>): string => rules.config.loadClasses
-  .filter(entry => (load[entry.id] ?? 0) > 0)
-  .map(entry => {
-    const count = load[entry.id]!
-    return `${count} ${count === 1 ? entry.noun.one : entry.noun.other}`
-  })
-  .join(', ')
+/**
+ * "1 pallet, 2 crates" in declared class order. Classes that share a noun
+ * count together, so two classes of patients read "2 patients", never
+ * "1 patient, 1 patient".
+ */
+export const loadText = (rules: BoardRules, load: Readonly<Record<string, number>>): string => nounCounts(rules.config.loadClasses, classId => load[classId] ?? 0)
+
+/** Counts per noun, in the order each noun is first declared: "2 patients", "1 pallet, 2 crates". */
+const nounCounts = (classes: ReadonlyArray<{ readonly id: string; readonly noun: { readonly one: string; readonly other: string } }>, countOf: (classId: string) => number): string => {
+  const byNoun = new Map<string, { readonly noun: { readonly one: string; readonly other: string }; count: number }>()
+  for (const entry of classes) {
+    const count = countOf(entry.id)
+    if (count <= 0) continue
+    const key = JSON.stringify([entry.noun.one, entry.noun.other])
+    const shared = byNoun.get(key)
+    if (shared === undefined) byNoun.set(key, { noun: entry.noun, count })
+    else shared.count += count
+  }
+  return [...byNoun.values()].map(({ noun, count }) => `${count} ${count === 1 ? noun.one : noun.other}`).join(', ')
+}
 
 export const classCode = (rules: BoardRules, classId: string): string => rules.loadClass(classId).code
 

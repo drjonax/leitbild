@@ -13,6 +13,15 @@ export const einsatzAdapterId = 'adapter:einsatz.local' as AdapterId
 export const standingOrderByPrefix = 'standing-order:'
 export const standingOrderBy = (order: string): string => `${standingOrderByPrefix}${order}`
 export const isStandingOrderBy = (by: string): boolean => by.startsWith(standingOrderByPrefix)
+/**
+ * How `lastAction.by` names the engine starting a unit's next step: run like
+ * a standing order, so it never counts as a person's order, yet it only
+ * carries on what a person queued, and the log does not call it one.
+ */
+export const chainStepBy = standingOrderBy('chain')
+
+/** The cause a step removal records when it undoes the order that created the step. */
+export const undoCause = 'undo'
 
 /**
  * The operator role a declared group becomes, and back. Configuration ids

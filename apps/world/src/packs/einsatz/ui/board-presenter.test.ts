@@ -127,10 +127,10 @@ describe('Board icons', () => {
     const withRows = {
       ...view,
       workList: { rows: [workRow({ icon: 'package' })], empty: null },
-      unitBoard: { rows: [unitRow({ icon: 'container' }), unitRow({ id: 'u2', icon: 'container' })], empty: null },
+      unitBoard: { rows: [unitRow({ icon: 'container' }), unitRow({ id: 'u2', icon: 'container' })], empty: null, sitesHeading: 'Sites', sites: [{ id: 's1', label: 'S1', typeLabel: 'Depot', icon: 'warehouse' }] },
       contacts: { heading: 'Tracks', sides: [side('A', [contactRow({ icon: 'shield' })], [contactRow({ id: 'track:a:2' })]), side('B', [], [contactRow({ id: 'track:b:1', icon: 'flag' })])], hover: '' },
     }
-    expect(boardIconIds(withRows)).toEqual(['package', 'container', 'shield', 'circle-question-mark', 'flag'])
+    expect(boardIconIds(withRows)).toEqual(['package', 'container', 'warehouse', 'shield', 'circle-question-mark', 'flag'])
   })
 })
 
@@ -162,7 +162,8 @@ describe('Board words', () => {
       expect(screen.view().unitBoard).toMatchObject({ rows: [{ recallLabel: 'Zurückrufen', holdLabel: hold, moveLabel: 'Verlegen', etaText: null }], empty: null })
       expect(screen.view().workList.rows[0]?.closeLabel).toBe('Abschließen')
       await screen.click({ kind: 'row', list: 'work', id: 't1' })
-      expect(screen.view().commit.verbs).toEqual([{ verb: 'close', label: 'Abschließen', id: 't1' }])
+      // Closing the call is its own control, apart from the commit button.
+      expect([screen.view().commit.verbs, screen.view().commit.close]).toEqual([[], { label: 'Abschließen', id: 't1' }])
       const selected = screen.view().selected
       if (selected?.kind !== 'task') throw new Error('A click on the row selects the task')
       expect(selected.remainder.length).toBeGreaterThan(0)
@@ -186,7 +187,7 @@ describe('Board words', () => {
       await screen.click({ kind: 'enable-sound' })
       expect(screen.view().sound).toEqual({ on: true, text: boardWords.soundOn })
 
-      expect(screen.view().unitBoard).toEqual({ rows: [], empty: 'Keine Einheiten' })
+      expect(screen.view().unitBoard).toEqual({ rows: [], empty: 'Keine Einheiten', sitesHeading: wordFor(worded.lexicon, 'sites'), sites: [] })
       // Stepping through an empty unit board says so, in the configuration's words.
       await screen.key(']')
       await screen.key('ArrowDown')

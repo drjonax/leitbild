@@ -83,8 +83,8 @@ export type UnitVerb = 'recall' | 'hold' | 'resume' | 'clear' | 'add' | 'move'
 /**
  * What a tap or click hit on the Board.
  * - A row in Assets highlights its asset, or clears the highlight when it is
- *   the highlighted one. A row in Calls, with an asset highlighted, sends the
- *   asset there; with none, it selects the call.
+ *   the highlighted one. A row in Calls selects the call; with an asset
+ *   highlighted, the action bar then offers to send it there. It never sends.
  * - An alternative sends that unit at once (a divert asks to confirm).
  * - The commit button sends what the action bar says, or confirms it.
  */
@@ -93,6 +93,8 @@ export type ClickTarget =
   | { readonly kind: 'alternative'; readonly number: number }
   /** The action bar's button: send the shown proposal, or confirm a pending confirmation. */
   | { readonly kind: 'commit' }
+  /** The offered asset's button: send it to the selected call. */
+  | { readonly kind: 'offer' }
   /** One of a busy asset's options. */
   | { readonly kind: 'option'; readonly option: ChoiceOption }
   /** The "Move here" prompt, on the map or in the action bar. */
@@ -108,6 +110,8 @@ export type ClickTarget =
   | { readonly kind: 'verb'; readonly verb: UnitVerb | 'close'; readonly id: string }
   /** A step's × on the highlighted asset's job chain. */
   | { readonly kind: 'remove-step'; readonly unitId: string; readonly stepId: string }
+  /** A site under Assets: the highlighted asset's target, as a tap on it on the map. */
+  | { readonly kind: 'site'; readonly id: string }
   | { readonly kind: 'enable-sound' }
 
 /** A command's outcome as the Run answered this screen; a transport failure is a refusal with its reason. */
@@ -233,7 +237,7 @@ export interface UnitRow {
   readonly loadText: string | null
   /** At most two properties the type shows on the board. */
   readonly properties: ReadonlyArray<{ readonly label: string; readonly value: string }>
-  /** Every property of the unit, shown on the highlighted row: "Payload: 300 kg · Crew: 4". */
+  /** The unit's other properties, shown on the highlighted row besides those in `properties`: "Payload: 300 kg · Crew: 4"; null when it has none. */
   readonly propertiesText: string | null
   readonly integrityText: string | null
   /** The rules of engagement of a unit with an effector: "weapons free". */
@@ -257,6 +261,19 @@ export interface UnitRow {
   readonly canAdd: boolean
   /** The + was tapped: the next target tap joins the end of its chain. */
   readonly adding: boolean
+}
+
+/**
+ * A place an asset can be sent to, listed under Assets: a unit in the
+ * picture that does not move (a hospital, a depot, a post). A tap on it with
+ * an asset highlighted is a tap on its target, even where units parked on it
+ * cover it on the map.
+ */
+export interface SiteRow {
+  readonly id: string
+  readonly label: string
+  readonly typeLabel: string
+  readonly icon: string
 }
 
 /** One step of an asset's job chain, as its row shows it. */
@@ -342,10 +359,18 @@ export interface CommitElement {
   readonly detail: string | null
   /** The primary button's label; null when the bar has no primary button. */
   readonly button: string | null
+  /**
+   * "Send A2 here": the asset that was highlighted when the operator tapped
+   * the selected call in the list, offered as a button of its own beside the
+   * call's suggestion; null when none is offered. A list tap never sends.
+   */
+  readonly offer: string | null
   /** A busy asset's options, each a button. */
   readonly options: ReadonlyArray<{ readonly option: ChoiceOption; readonly label: string }>
-  /** The highlighted asset's verbs (Stop or Resume, Clear, recall), or the selected call's close verb. */
-  readonly verbs: ReadonlyArray<{ readonly verb: Exclude<UnitVerb, 'add' | 'move'> | 'close'; readonly label: string; readonly id: string }>
+  /** The highlighted asset's verbs: Stop or Resume, Clear, recall. */
+  readonly verbs: ReadonlyArray<{ readonly verb: Exclude<UnitVerb, 'add' | 'move'>; readonly label: string; readonly id: string }>
+  /** The selected call's close verb ("Close call"), kept apart from the commit button; null for a report, which the commit button closes. */
+  readonly close: { readonly label: string; readonly id: string } | null
   readonly enabled: boolean
   /** Why it is disabled for now: "Confirm next: C-14" during a guard. */
   readonly hint: string | null
@@ -408,13 +433,13 @@ export interface BoardView {
   readonly sound: { readonly on: boolean; readonly text: string }
   readonly alerts: ReadonlyArray<HeaderAlert>
   readonly workList: { readonly rows: ReadonlyArray<WorkRow>; readonly empty: string | null }
-  readonly unitBoard: { readonly rows: ReadonlyArray<UnitRow>; readonly empty: string | null }
+  readonly unitBoard: { readonly rows: ReadonlyArray<UnitRow>; readonly empty: string | null; readonly sitesHeading: string; readonly sites: ReadonlyArray<SiteRow> }
   /** Null unless the arrangement includes the Contacts list. */
   readonly contacts: ContactsView | null
   readonly selected: SelectedTask | { readonly kind: 'unit'; readonly id: string } | null
   readonly commit: CommitElement
   readonly feedback: Feedback | null
-  /** The Undo button's label for 5 s after a send or a queue was accepted and the Run shows the step it created; null otherwise. */
+  /** The Undo button's label for 8 s after a send or a queue was accepted and the Run shows the step it created; null otherwise. */
   readonly undo: string | null
   /** The prompt to show on the map after a tap on open ground; null when there is none. */
   readonly mapPrompt: BoardMapPrompt | null

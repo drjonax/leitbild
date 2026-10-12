@@ -65,6 +65,7 @@ export const createBoardIcons = (ports: BoardIconPorts): BoardIcons => {
 export const boardIconIds = (view: BoardView): ReadonlyArray<string> => [...new Set([
   ...view.workList.rows.map(row => row.icon),
   ...view.unitBoard.rows.map(row => row.icon),
+  ...view.unitBoard.sites.map(site => site.icon),
   ...(view.contacts === null ? [] : view.contacts.sides.flatMap(side => [...side.engageable.rows, ...side.other.rows]).map(row => row.icon)),
 ])]
 

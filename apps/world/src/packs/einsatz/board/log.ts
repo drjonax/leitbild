@@ -1,5 +1,5 @@
 import type { actionVerbs } from '../engine/model.ts'
-import { isStandingOrderBy } from '../ids.ts'
+import { chainStepBy, isStandingOrderBy, undoCause } from '../ids.ts'
 import type { BoardLastAction, BoardRecords, BoardTask, BoardUnit } from './records.ts'
 import type { BoardRules } from './rules.ts'
 import { classCode, unitWord } from './text.ts'
@@ -27,10 +27,20 @@ type ActionVerb = (typeof actionVerbs)[number]
 const labelOf = (records: BoardRecords, id: string | undefined): string | undefined =>
   id === undefined ? undefined : records.units.get(id)?.label ?? records.tasks.get(id)?.label ?? records.tracks.get(id)?.label
 
-/** "sent to C-12 · from C-9", in neutral mechanism words; a target outside the picture is not named. */
-const actionText = (rules: BoardRules, records: BoardRecords, record: BoardUnit | BoardTask, action: BoardLastAction): string => {
+/**
+ * "sent to C-12 · from C-9", in neutral mechanism words; a target outside the
+ * picture is not named. An undone send reads "recalled (undo)", an undone
+ * queued step "step removed: H1 (undo)", with no other cause. The engine
+ * starting a queued step carries on a person's order, and is not called a
+ * standing order.
+ */
+const actionText = (rules: BoardRules, records: BoardRecords, record: BoardUnit | BoardTask, action: BoardLastAction, before: BoardUnit | BoardTask): string => {
   const target = labelOf(records, action.target)
   const to = target === undefined ? '' : ` ${target}`
+  if (action.verb === 'remove' && action.cause === undoCause) {
+    const wasActive = before.type === 'unit' && before.orders.some(step => step.id === action.stepId && step.state === 'active')
+    return `${record.label}: ${wasActive ? 'recalled' : `step removed:${to}`} (undo)`
+  }
   const verbs: Readonly<Record<ActionVerb, string>> = {
     create: 'created',
     send: `sent to${to}`,
@@ -52,7 +62,7 @@ const actionText = (rules: BoardRules, records: BoardRecords, record: BoardUnit 
   const known = (verb: string): verb is ActionVerb => Object.hasOwn(verbs, verb)
   if (!known(action.verb)) throw new Error(`Unknown Einsatz order ${action.verb}`)
   const verb = verbs[action.verb]
-  const by = isStandingOrderBy(action.by) ? ' · standing order' : ''
+  const by = isStandingOrderBy(action.by) && action.by !== chainStepBy ? ' · standing order' : ''
   const cause = action.cause === undefined || action.verb === 'release' ? '' : ` · ${action.cause}`
   return `${record.label}: ${verb}${cause}${by}`
 }
@@ -78,7 +88,7 @@ export const logChange = (rules: BoardRules, previous: BoardRecords, next: Board
       continue
     }
     if (record.lastAction !== undefined && !sameAction(before.lastAction, record.lastAction)) {
-      entries.push({ atMs: record.lastAction.atMs, recordId: record.id, text: actionText(rules, next, record, record.lastAction) })
+      entries.push({ atMs: record.lastAction.atMs, recordId: record.id, text: actionText(rules, next, record, record.lastAction, before) })
     }
     for (const alert of record.alerts) {
       const standing = before.alerts.find(entry => entry.code === alert.code)

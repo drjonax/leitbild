@@ -13,8 +13,8 @@ import { dropText, holdingText, mapOrderFor, orderPreview, orderRefusal, type Ma
 import { boardWords, classCode, etaText, namedOnce, reasonText, word } from './text.ts'
 import type { BoardEffect, BoardEvent, BoardEventBody, BoardKey, BoardList, BoardMapPrompt, BoardView, CallResult, ChoiceOption, ClickTarget, CommitElement, Feedback, HeaderAlert, LogEntry, MapTarget, TargetPreview, UnitVerb } from './types.ts'
 import { contactsView, type SideLabel } from './contacts.ts'
-import { boardUnits, unitRow } from './unit-board.ts'
-import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommendationText, remainderFor, statusText, unservableText, workEntries, workRow, type WorkEntry } from './work-list.ts'
+import { boardSites, boardUnits, siteRow, unitRow } from './unit-board.ts'
+import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommendationText, remainderFor, serviceRemainderFor, statusText, unservableText, workEntries, workRow, type WorkEntry } from './work-list.ts'
 
 /**
  * The Einsatz Board controller: the dispatcher's Calls and Assets, action
@@ -32,23 +32,26 @@ import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommend
  * job-chain steps) asks "Do now" or "Add to end". An asset row's + makes
  * the next target tap join the end of its job chain; the highlighted row's × removes a step (the active step of a
  * committed unit asks first, since it releases the call), and its verbs
- * stop, resume, clear or recall it. A send or an added step can be undone
- * for 5 s, by removing the step it created, where that gives the unit back
- * as it stood (`undoRestores`). With no asset highlighted, a tap on a call
- * selects it and the action bar offers its proposal as one button, its
- * alternatives one tap each; a proposed unit holding job-chain steps asks
- * "Do now" or "Add to end" there too, and one of a group the screen chose
- * not to see is named with its group. Keys stay as hidden desktop
- * accelerators.
+ * stop, resume, clear or recall it; each of these lets the highlight go, so
+ * the next tap on a call selects it. A send or an added step can be undone
+ * for 8 s, by removing the step it created, where that gives the unit back
+ * as it stood (`undoRestores`); an undo puts things back quietly, raising no
+ * release alert. A tap on a call in the list never sends by itself: it
+ * selects the call and the action bar offers its proposal as one button, its
+ * alternatives one tap each, and, while an asset was highlighted, "Send
+ * <asset> here" as a button of its own; a proposed unit holding job-chain
+ * steps asks "Do now" or "Add to end" there too, and one of a group the
+ * screen chose not to see is named with its group. Closing a call is a verb
+ * apart from the commit button and asks to confirm while the call is still
+ * unserved. A new action clears the feedback line of the last one's words.
+ * Keys stay as hidden desktop accelerators.
  *
  * - What is shown is exactly what commits: the action bar and the call it
  *   sends are built from the same draft.
  * - Recommendations are asked for the selected row and the top unserved rows
  *   and kept stable (`recommendations.ts`).
  * - The guard: when the selected row's commitment changes without operator
- *   input, commits are refused for 500 ms; navigation ends it. A Calls row
- *   that moved in the list within that time takes no asset tapped onto it:
- *   the tap may have been aimed at the row that was there before.
+ *   input, commits are refused for 500 ms; navigation ends it.
  * - A call stays locked from sending until the Run shows it: a task with a
  *   call on its way, or accepted but not yet shown, takes no second commit.
  * - After an own commit from Calls, once the Run shows it, the selection
@@ -59,7 +62,7 @@ import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommend
 const guardMs = 500
 const prefetchRows = 5
 const freshMs = 5_000
-const undoMs = 5_000
+const undoMs = 8_000
 const logLimit = 200
 const alternativesShown = 9
 /** How long a `select` effect waits for the map to echo it; a later report of that object is the operator's. */
@@ -152,6 +155,12 @@ export const createBoardController = (options: {
   let pendingMove: PendingMove | null = null
   /** The asset whose + was tapped: its next target tap joins the end of its chain. */
   let adding: string | null = null
+  /**
+   * The asset highlighted when the operator tapped the selected call in the
+   * list: the action bar offers to send it there, or, after its +, to add the
+   * call to the end of its chain.
+   */
+  let offered: { readonly unitId: string; readonly queue: boolean } | null = null
   let guardUntilMs = Number.NEGATIVE_INFINITY
   /** Sent, with no result yet. */
   const inFlight = new Map<string, Call>()
@@ -173,10 +182,6 @@ export const createBoardController = (options: {
   /** The Board's own `select` effects the map has not echoed yet, oldest first, with the wall time each was made. */
   let echoes: Array<{ readonly objectId: string | null; readonly wallMs: number }> = []
 
-  /** Each Calls row's place in the list, and the wall time it last took a new place without operator input. */
-  let rowPlaces = new Map<string, number>()
-  const movedAtMs = new Map<string, number>()
-
   let entriesOf: { readonly records: BoardRecords; readonly entries: ReadonlyArray<WorkEntry> } | null = null
   const entries = (): ReadonlyArray<WorkEntry> => {
     if (records === null) return []
@@ -187,6 +192,8 @@ export const createBoardController = (options: {
   let seen: ReadonlyArray<string> | null = null
   /** Assets: the units the screen commands that can move, but those of groups it chose not to see. */
   const units = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardUnits(rules, records).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
+  /** The sites listed under Assets, but those of groups the screen chose not to see. */
+  const sites = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardSites(rules, records).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
   /** A unit's label, naming its group when the screen chose not to see that group: Calls may still offer it, drawn nowhere else. */
   const shownLabel = (unitId: string, label: string): string => {
     const group = records?.units.get(unitId)?.group
@@ -204,6 +211,8 @@ export const createBoardController = (options: {
   }
 
   const info = (text: string): void => { feedback = { text, tone: 'info' } }
+  /** An operator action starts: the feedback line lets go of the last action's words, so none of them stands under the new one. */
+  const startAction = (): void => { feedback = null }
   const guardActive = (): boolean => wallMs < guardUntilMs
   const armGuard = (): void => { guardUntilMs = wallMs + guardMs }
 
@@ -235,7 +244,10 @@ export const createBoardController = (options: {
     const same = next !== null && selection?.kind === next.kind && selection.id === next.id
     selection = next
     chosen = null
-    if (!same) numbering = null
+    if (!same) {
+      numbering = null
+      offered = null
+    }
     updateNumbering()
     if (mirror && !same) {
       const objectId = (next?.id ?? null) as ObjectId | null
@@ -347,7 +359,10 @@ export const createBoardController = (options: {
       if (guardActive()) return guardRefusal('Not sent yet')
       const { call } = confirmation
       confirmation = null
-      return send(call, false)
+      // A confirmed × lets its asset go, as an unconfirmed one does.
+      const asset = call.capabilityId === boardCommandIds.stepRemove ? call.unitIds[0]! : null
+      if (asset !== null) letGo(asset)
+      return send(call, false, asset)
     }
     if (pendingMove !== null) return moveHere()
     if (busy()) return
@@ -451,6 +466,11 @@ export const createBoardController = (options: {
     return true
   }
 
+  /** Lets the highlighted asset go after a verb or a step's × sent for it, so the next tap on a call selects the call. */
+  const letGo = (unitId: string): void => {
+    if (selection?.kind === 'unit' && selection.id === unitId) select(null, true)
+  }
+
   /** Highlights an asset, or clears the highlight when it is the highlighted one. */
   const toggleAsset = (unitId: string, mirror: boolean): void => {
     navigate()
@@ -479,7 +499,8 @@ export const createBoardController = (options: {
       feedback = callLine(pending)
       return
     }
-    send(verb === 'recall' ? recallCall(rules, unit) : verb === 'hold' ? holdCall(rules, unit) : chainVerbCall(unit, verb), false)
+    letGo(unit.id)
+    send(verb === 'recall' ? recallCall(rules, unit) : verb === 'hold' ? holdCall(rules, unit) : chainVerbCall(unit, verb), false, unit.id)
   }
 
   /** A step's × on the highlighted asset's chain: the step leaves it, as the engine judges. */
@@ -499,7 +520,8 @@ export const createBoardController = (options: {
       armGuard()
       return
     }
-    send(call, false)
+    letGo(unit.id)
+    send(call, false, unit.id)
   }
 
   const closeSelected = (): void => {
@@ -513,9 +535,15 @@ export const createBoardController = (options: {
     }
     if (guardActive()) return guardRefusal('Not sent: the list changed')
     const call = closeCall(rules, task, 'work-list')
+    // Closing a call still unserved, or one with load waiting, asks first and says what is left undone: the services, then the load dropped.
+    // A report has nothing to serve: closing it is its acknowledgement.
+    const entry = rules.isReport(task) ? undefined : entries().find(item => item.task.id === task.id)
+    const services = entry === undefined || !isUnserved(entry) ? [] : serviceRemainderFor(rules, task, entry.view)
     const dropped = closeDropText(rules, task)
-    if (dropped === null) return send(call, false)
-    confirmation = { kind: 'confirm', call, detail: dropped, queue: null }
+    const unserved = entry !== undefined && isUnserved(entry) && services.length === 0 && dropped === null ? boardWords.unserved : null
+    const detail = [services.length === 0 ? null : `${boardWords.remainder} ${services.join(', ')}`, dropped, unserved].filter(part => part !== null).join(' · ')
+    if (detail === '') return send(call, false)
+    confirmation = { kind: 'confirm', call, detail, queue: null }
     armGuard()
   }
 
@@ -535,6 +563,10 @@ export const createBoardController = (options: {
     }
     if (chosen !== null) {
       chosen = null
+      return
+    }
+    if (offered !== null) {
+      offered = null
       return
     }
     if (selection?.kind === 'unit') select(null, true)
@@ -663,10 +695,46 @@ export const createBoardController = (options: {
     }
     const steps = undo.steps!
     undo = null
-    for (const created of steps) send(stepRemoveCall(records!, created.unit, created.step, boardWords.undo), false)
+    for (const created of steps) send(stepRemoveCall(records!, created.unit, created.step, 'undo'), false)
+  }
+
+  /**
+   * A call tapped in the list while an asset is highlighted: the call is
+   * selected like any other, and the asset is offered as a button of its own
+   * beside the call's suggestion, never sent by the tap itself. An asset the
+   * Board can tell is refused is not offered; the line says why.
+   */
+  const offerAsset = (unitId: string, taskId: string, queue: boolean): void => {
+    const order = mapOrder(unitId, { kind: 'object', objectId: taskId as ObjectId })
+    if (order.kind !== 'order') return info(order.text)
+    const refusal = refusalOf(order)
+    if (refusal !== null) return info(refusal)
+    offered = { unitId, queue }
+  }
+
+  /** The offered asset's order for the selected call; null when either is gone. */
+  const offerOrder = (): Extract<MapOrder, { kind: 'order' }> | null => {
+    const task = selectedTask()
+    const unit = offered === null ? undefined : records?.units.get(offered.unitId)
+    if (task === undefined || unit === undefined || !units().includes(unit)) return null
+    const order = mapOrder(unit.id, { kind: 'object', objectId: task.id as ObjectId })
+    return order.kind === 'order' && refusalOf(order) === null ? order : null
+  }
+
+  /** The offer's button: the asset sent to the selected call, or added to the end of its chain, as a tap on the call on the map does. */
+  const sendOffered = (): void => {
+    if (confirmFirst()) return
+    const order = offerOrder()
+    const queue = offered?.queue === true
+    offered = null
+    if (order === null) return info(boardWords.nothingToSend)
+    navigate()
+    if (queue) return queueOrder(order)
+    placeOrder(order)
   }
 
   const click = (target: ClickTarget): void => {
+    if (target.kind !== 'enable-sound') startAction()
     switch (target.kind) {
       case 'row': {
         // A row tap during a confirmation or a choice cancels it, then acts (§9.1); a map tap only says to confirm or cancel first.
@@ -676,15 +744,14 @@ export const createBoardController = (options: {
         }
         if (target.list === 'units') return toggleAsset(target.id, true)
         const asset = selectedUnit()
-        if (asset !== undefined) {
-          // The row may have moved under the finger: the tap was aimed at what was there before.
-          if (wallMs - (movedAtMs.get(target.id) ?? Number.NEGATIVE_INFINITY) < guardMs) return info('Not sent: the list changed')
-          return targetTap(asset.id, { kind: 'object', objectId: target.id as ObjectId })
-        }
+        const queue = asset !== undefined && adding === asset.id
         navigate()
         focus = 'work'
-        return select({ kind: 'task', id: target.id, byOperator: true }, true)
+        select({ kind: 'task', id: target.id, byOperator: true }, true)
+        if (asset !== undefined) offerAsset(asset.id, target.id, queue)
+        return
       }
+      case 'offer': return sendOffered()
       case 'alternative':
         // One tap sends the alternative; a divert asks to confirm. Like the big button, it waits out a guard.
         if (guardActive()) return guardRefusal('Not sent: the list changed')
@@ -697,6 +764,14 @@ export const createBoardController = (options: {
       case 'undo': return undoLast()
       case 'cancel': return cancel()
       case 'remove-step': return removeStep(target.unitId, target.stepId)
+      case 'site': {
+        // A site under Assets is a target for the highlighted asset, as on the map; with none, it says to tap one first.
+        const site = records?.units.get(target.id)
+        if (site === undefined || !sites().includes(site)) return info('Not in your picture')
+        const asset = selectedUnit()
+        if (asset === undefined) return info(`Tap one of ${word(rules, 'unitBoard')} first, then ${site.label}`)
+        return targetTap(asset.id, { kind: 'object', objectId: site.id as ObjectId })
+      }
       case 'verb':
         if (confirmFirst()) return
         // A second + on the asset that waits for its target lets the + go.
@@ -734,6 +809,7 @@ export const createBoardController = (options: {
     }
     echoes = []
     if (objectId === (selection?.id ?? null)) return
+    startAction()
     if (confirmFirst()) return
     navigate()
     const unit = objectId === null ? undefined : records?.units.get(objectId)
@@ -802,11 +878,6 @@ export const createBoardController = (options: {
       if (queuedWork && soundOn) effects.push({ kind: 'sound', tone: 'new-work' })
     }
     records = next
-    // Rows that took a new place, or are new, since the last snapshot; the first one sets the places.
-    const places = new Map(entries().map((entry, index) => [entry.task.id, index]))
-    if (previous !== null) for (const [id, place] of places) if (rowPlaces.get(id) !== place) movedAtMs.set(id, wallMs)
-    for (const id of movedAtMs.keys()) if (!places.has(id)) movedAtMs.delete(id)
-    rowPlaces = places
     for (const id of freshUntil.keys()) {
       const task = next.tasks.get(id)
       if (task === undefined || task.closedAtMs !== undefined) freshUntil.delete(id)
@@ -869,12 +940,15 @@ export const createBoardController = (options: {
       case 'key': {
         if (!keysActive) return
         const intent = intentOf(event.key, event.shift)
-        if (intent !== undefined) act(intent)
-        return
+        if (intent === undefined) return
+        startAction()
+        return act(intent)
       }
       case 'click': return click(event.target)
       case 'selection': return mapSelect(event.objectId)
-      case 'map-target': return targetTap(event.controllerId, event.target)
+      case 'map-target':
+        startAction()
+        return targetTap(event.controllerId, event.target)
       case 'focus': {
         if (event.active === keysActive) return
         if (!event.active) {
@@ -937,7 +1011,7 @@ export const createBoardController = (options: {
 
   const commitElement = (): CommitElement => {
     const bar = (fields: Partial<CommitElement> & Pick<CommitElement, 'state' | 'text'>): CommitElement =>
-      ({ detail: null, button: null, options: [], verbs: [], enabled: false, hint: null, cancel: null, ...fields })
+      ({ detail: null, button: null, offer: null, options: [], verbs: [], close: null, enabled: false, hint: null, cancel: null, ...fields })
     const guarded = guardActive()
     const hint = guarded ? guardText() : null
     if (confirmation !== null) {
@@ -968,11 +1042,15 @@ export const createBoardController = (options: {
     const lock = task === undefined ? undefined : lockOf(task.id)
     if (lock !== undefined) return bar({ state: 'sending', text: callLine(lock).text })
     const current = commitment()
-    const closeVerb: CommitElement['verbs'] = task === undefined || rules.isReport(task) ? [] : [{ verb: 'close', label: word(rules, 'close'), id: task.id }]
-    const cancelable = chosen !== null || armedMove !== null ? boardWords.cancel : null
-    if (current.kind === 'none') return bar({ state: current.state, text: current.text, verbs: closeVerb, cancel: cancelable })
+    const close: CommitElement['close'] = task === undefined || rules.isReport(task) ? null : { label: word(rules, 'close'), id: task.id }
+    const offerOf = offerOrder()
+    const offer = offerOf === null ? null
+      : offered?.queue === true ? `${boardWords.addToEnd}: ${offerOf.unit.label} here`
+      : `${offerOf.unit.taskId === undefined ? word(rules, 'send') : boardWords.divert} ${offerOf.unit.label} here`
+    const cancelable = chosen !== null || armedMove !== null || offer !== null ? boardWords.cancel : null
+    if (current.kind === 'none') return bar({ state: current.state, text: current.text, offer, close, enabled: offer !== null, cancel: cancelable })
     const text = `${current.call.text}${current.etaText === null ? '' : ` · ${current.etaText}`}`
-    return bar({ state: 'ready', text, button: text, verbs: closeVerb, enabled: !guarded, hint, cancel: cancelable })
+    return bar({ state: 'ready', text, button: text, offer, close, enabled: !guarded, hint, cancel: cancelable })
   }
 
   /** The "Move here" prompt for a waiting move, while its asset is still in Assets. */
@@ -1035,7 +1113,7 @@ export const createBoardController = (options: {
       sound: { on: soundOn, text: soundOn ? boardWords.soundOn : boardWords.soundOff },
       alerts: headerAlerts(),
       workList: { rows: workRows, empty: workRows.some(row => !row.served) ? null : word(rules, 'noWork') },
-      unitBoard: { rows: unitRows, empty: unitRows.length === 0 ? word(rules, 'noUnits') : null },
+      unitBoard: { rows: unitRows, empty: unitRows.length === 0 ? word(rules, 'noUnits') : null, sitesHeading: word(rules, 'sites'), sites: sites().map(site => siteRow(rules, site)) },
       contacts: rules.arrangement.contacts && records !== null ? contactsView(rules, records, nowMs, options.sides) : null,
       selected: selectedView(),
       commit: commitElement(),

@@ -1,4 +1,4 @@
-import { isStandingOrderBy, standingOrderBy } from '../ids.ts'
+import { chainStepBy, isStandingOrderBy } from '../ids.ts'
 import { wordFor } from '../lexicon.ts'
 import { stepIdOf, stepKindFor, type Step, type StepTarget } from '../steps.ts'
 import type { TrackRecord } from './combat-model.ts'
@@ -19,7 +19,7 @@ import { byId, patch } from './values.ts'
 export const stepSkippedCode = 'step_skipped'
 
 /** How `lastAction.by` names the engine starting a unit's next step: run like a standing order, so it never counts as a person's order. */
-export const chainBy = standingOrderBy('chain')
+export const chainBy = chainStepBy
 /** The cause an automatic start of the next step records. */
 export const nextStepCause = 'next step'
 

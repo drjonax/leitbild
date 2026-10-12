@@ -4,7 +4,7 @@ import { stepText } from './calls.ts'
 import type { BoardRecords, BoardUnit } from './records.ts'
 import { hasLoad, isFree, type BoardRules } from './rules.ts'
 import { boardWords, clockText, loadText, propertyText, unitWord, word } from './text.ts'
-import type { ChainStepRow, UnitRow } from './types.ts'
+import type { ChainStepRow, SiteRow, UnitRow } from './types.ts'
 
 /**
  * The unit board: the units the viewer commands that can move, free first,
@@ -16,6 +16,20 @@ export const boardUnits = (rules: BoardRules, records: BoardRecords): ReadonlyAr
   [...records.units.values()]
     .filter(unit => rules.commands(unit) && rules.typeOf(unit).components.mobility !== undefined)
     .sort((a, b) => Number(isFree(b)) - Number(isFree(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+/** The places a unit can be sent to: the living units in the picture that do not move, in id order. */
+export const boardSites = (rules: BoardRules, records: BoardRecords): ReadonlyArray<BoardUnit> =>
+  [...records.units.values()]
+    .filter(unit => rules.typeOf(unit).components.mobility === undefined && unit.integrity !== 'destroyed')
+    .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+
+export const siteRow = (rules: BoardRules, unit: BoardUnit): SiteRow => {
+  const type = rules.typeOf(unit)
+  return { id: unit.id, label: unit.label, typeLabel: type.label, icon: type.icon }
+}
+
+/** The properties a highlighted row adds to those its detail line shows already, on one line; null when it adds none. */
+const rest = (texts: ReadonlyArray<string>): string | null => texts.length === 0 ? null : texts.join(' · ')
 
 /** The track a unit fired on, by its label in the screen's picture. */
 const targetLabel = (records: BoardRecords, trackId: string): string | null => {
@@ -75,7 +89,7 @@ export const unitRow = (rules: BoardRules, records: BoardRecords, unit: BoardUni
     etaText: unit.etaSeconds === undefined ? null : `${boardWords.eta} ${clockText(unit.etaSeconds)}`,
     loadText: load === '' ? null : load,
     properties: type.properties.filter(property => property.board).map(property => ({ label: property.label, value: propertyText(property, unit.properties[property.id]) })),
-    propertiesText: type.properties.length === 0 ? null : type.properties.map(property => `${property.label}: ${propertyText(property, unit.properties[property.id])}`).join(' · '),
+    propertiesText: rest(type.properties.filter(property => !property.board).map(property => `${property.label}: ${propertyText(property, unit.properties[property.id])}`)),
     integrityText: unit.integrity === 'healthy' ? null : unit.integrity === 'destroyed' ? unitWord(rules, unit, 'destroyed') : 'damaged',
     roeText: unit.roe === undefined ? null : roeWords[unit.roe],
     targetText: unit.target === undefined ? null : targetLabel(records, unit.target),

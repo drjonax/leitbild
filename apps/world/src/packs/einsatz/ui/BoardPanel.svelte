@@ -244,7 +244,7 @@
         {#if section === 'work'}
           <BoardWorkList heading={view.headings.workList} focused={view.focus === 'work'} rows={view.workList.rows} empty={view.workList.empty} {icon} {click} />
         {:else if section === 'units'}
-          <BoardUnits heading={view.headings.unitBoard} focused={view.focus === 'units'} rows={view.unitBoard.rows} empty={view.unitBoard.empty} addLabel={boardWords.addTarget} removeLabel={boardWords.removeStep} {icon} {click} />
+          <BoardUnits heading={view.headings.unitBoard} focused={view.focus === 'units'} rows={view.unitBoard.rows} empty={view.unitBoard.empty} sitesHeading={view.unitBoard.sitesHeading} sites={view.unitBoard.sites} addLabel={boardWords.addTarget} removeLabel={boardWords.removeStep} {icon} {click} />
         {:else if view.contacts !== null}
           <BoardContacts contacts={view.contacts} {icon} />
         {/if}

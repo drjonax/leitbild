@@ -87,7 +87,10 @@ describe('Board job chains', () => {
       expect(row(screen, 'u1').chain.map(step => [step.stepId, step.text])).toEqual([['step-1', 'T1'], ['step-2', `${boardWords.next}: T2`], ['step-3', `${boardWords.next}: to ${boardWords.mapPoint}`]])
       await screen.click({ kind: 'verb', verb: 'clear', id: 'u1' })
       expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.clear, input: { unitId: 'u1' }, result: { ok: true } })
-      expect([stepsOf(run, 'u1'), row(screen, 'u1').chain, screen.view().commit.verbs.map(entry => entry.verb)]).toEqual([[], [], ['hold', 'recall']])
+      // Clear lets the highlight go; highlighted again, the asset offers no Clear.
+      expect([stepsOf(run, 'u1'), row(screen, 'u1').chain, screen.view().selected]).toEqual([[], [], null])
+      await screen.click({ kind: 'row', list: 'units', id: 'u1' })
+      expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['hold', 'recall'])
     })
   })
 
@@ -116,6 +119,7 @@ describe('Board job chains', () => {
       const screen = await openScreen(run, createWall())
       await screen.click({ kind: 'row', list: 'units', id: 'c1' })
       await screen.click({ kind: 'row', list: 'work', id: 'k1' })
+      await screen.click({ kind: 'offer' })
       await screen.click({ kind: 'verb', verb: 'add', id: 'c1' })
       await screen.mapTap('far')
       expect(screen.calls.map(call => [call.capabilityId, call.input, call.result.ok])).toEqual([
@@ -129,7 +133,7 @@ describe('Board job chains', () => {
     })
   })
 
-  test('supply-run: a place, then two requests, by taps, served in that order', async () => {
+  test('supply-run: a place from the sites under Assets, then two requests from Calls, by taps, served in that order', async () => {
     const run = await openRun({ definition: supplyRun })
     try {
       // Past the cues that add the heavier vehicle and the second request.
@@ -144,11 +148,15 @@ describe('Board job chains', () => {
       await runFor(run, 900_000)
       expect(run.unit(heavier.id).orders).toEqual([])
       const screen = await openScreen(run, createWall())
+      // The place is listed under Assets, so it is a target by tap even where vehicles parked on it cover it on the map.
+      expect(screen.view().unitBoard.sites.map(entry => entry.id)).toContain(place.id)
       await screen.click({ kind: 'row', list: 'units', id: heavier.id })
-      await screen.mapTap(place.id)
+      await screen.click({ kind: 'site', id: place.id })
       for (const request of [first, second]) {
         await screen.click({ kind: 'verb', verb: 'add', id: heavier.id })
         await screen.click({ kind: 'row', list: 'work', id: request.id })
+        expect(screen.view().commit.offer).toBe(`${boardWords.addToEnd}: ${heavier.label} here`)
+        await screen.click({ kind: 'offer' })
       }
       expect(screen.calls.map(call => [call.capabilityId, call.input, call.result.ok])).toEqual([
         [ids.send, { units: [heavier.id], to: { siteId: place.id } }, true],

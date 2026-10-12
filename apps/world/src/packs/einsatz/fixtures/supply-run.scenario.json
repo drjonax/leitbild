@@ -16,6 +16,7 @@
           "workList": "Supply requests",
           "unitBoard": "Vehicles",
           "noWork": "No requests waiting",
+          "close": "Close request",
           "on-task": "Unloading"
         },
         "loadClasses": [

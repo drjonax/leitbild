@@ -1,3 +1,4 @@
+import { undoCause } from '../ids.ts'
 import { refusalCode } from '../refusal.ts'
 import { maxSteps, stepKindFor, stepTargetId, type Step, type StepKind } from '../steps.ts'
 import { activeStep, clearedByOrder, newStep, skipSteps, targetLabel } from './chain-steps.ts'
@@ -149,7 +150,9 @@ const deliveryRefusal = (state: EngineState, unit: UnitRecord, index: number): R
  * as a recall releases it: a task gets its work back, the unit stops where
  * it is and starts its next step, or, with none, its return order applies.
  * A unit keeps the step that delivers the load it carries, or will carry,
- * there (see `deliveryRefusal`).
+ * there (see `deliveryRefusal`). An undo takes back only the step the
+ * unit's last order created (else `step_not_undoable`), raises no
+ * work-returned alert and records `undo` as the order's cause.
  */
 export const planStepRemove = (state: EngineState, intent: IntentOf<'step.remove'>, actor: EngineActor): Plan => {
   const unit = state.units.get(intent.unitId)
@@ -157,13 +160,15 @@ export const planStepRemove = (state: EngineState, intent: IntentOf<'step.remove
   const index = unit.orders.findIndex(step => step.id === intent.stepId)
   if (index < 0) return refused('step_not_found', `${unit.label} holds no step ${intent.stepId}`)
   const step = unit.orders[index]!
+  if (intent.undo === true && unit.lastAction?.stepId !== step.id) return refused('step_not_undoable', `${unit.label}'s last order did not create ${step.id}: it can be removed, not undone`)
   const delivery = deliveryRefusal(state, unit, index)
   if (delivery) return delivery
+  const undone = intent.undo === true
   return {
     ok: true, routes: [], notes: [],
     apply: draft => {
       const current = unitIn(draft, unit.id)
-      const order = orderOn(draft, actor, 'remove', step)
+      const order = { ...orderOn(draft, actor, 'remove', step), ...(undone ? { cause: undoCause } : {}) }
       const orders = current.orders.filter(entry => entry.id !== step.id)
       const alerts = clearAlerts(current.alerts, clearedByOrder(actor))
       if (step.state !== 'active') {
@@ -174,7 +179,7 @@ export const planStepRemove = (state: EngineState, intent: IntentOf<'step.remove
         putUnit(draft, patch(current, { orders, alerts, lastAction: order, engage: current.engage === step.target.trackId ? undefined : current.engage }))
         return
       }
-      const released = releaseFromTask(draft, current, order)
+      const released = releaseFromTask(draft, current, order, undone)
       setMotion(draft, unit.id, { progressMs: 0 })
       putUnit(draft, patch(released, { orders, alerts, lastAction: order, leg: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
     },

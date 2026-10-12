@@ -87,6 +87,7 @@ export const engineRefusalCodes = [
   'reserved_id',
   'chain_full',
   'step_not_found',
+  'step_not_undoable',
   'group_required',
   'unknown_group',
   'group_not_declared',

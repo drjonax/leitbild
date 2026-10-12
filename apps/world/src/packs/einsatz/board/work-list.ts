@@ -80,21 +80,24 @@ export const nextText = (answer: Recommendation): string | null => answer.next.l
   .map(entry => entry.stepsAhead === 0 ? `${entry.label} next` : `${entry.label} next, ${entry.stepsAhead} ${entry.stepsAhead === 1 ? 'step' : 'steps'} ahead`)
   .join(' · ')
 
-/** What the task still needs from the viewer's units, in configuration words: "2 more guards", "P3×1". */
-export const remainderFor = (rules: BoardRules, task: BoardTask, view: RoleView): string[] => {
+/** The services the task still needs from the viewer's units, in configuration words: "2 more guards". */
+export const serviceRemainderFor = (rules: BoardRules, task: BoardTask, view: RoleView): string[] => {
   const requirements = rules.templateOf(task).requires
-  return [
-    ...task.coverage.requirements.flatMap((entry, index) => {
-      const missing = entry.count - Math.min(entry.count, entry.enRoute + entry.onTask + entry.completed)
-      const label = requirements[index]!.label
-      return view.provides.has(entry.provides) && missing > 0 ? [`${missing} more ${missing === 1 ? label.one : label.other}`] : []
-    }),
-    ...task.coverage.loads.flatMap(entry => {
-      const missing = entry.waiting - entry.covered
-      return view.carries.has(entry.classId) && missing > 0 ? [`${classCode(rules, entry.classId)}×${missing}`] : []
-    }),
-  ]
+  return task.coverage.requirements.flatMap((entry, index) => {
+    const missing = entry.count - Math.min(entry.count, entry.enRoute + entry.onTask + entry.completed)
+    const label = requirements[index]!.label
+    return view.provides.has(entry.provides) && missing > 0 ? [`${missing} more ${missing === 1 ? label.one : label.other}`] : []
+  })
 }
+
+/** What the task still needs from the viewer's units, in configuration words: "2 more guards", "P3×1". */
+export const remainderFor = (rules: BoardRules, task: BoardTask, view: RoleView): string[] => [
+  ...serviceRemainderFor(rules, task, view),
+  ...task.coverage.loads.flatMap(entry => {
+    const missing = entry.waiting - entry.covered
+    return view.carries.has(entry.classId) && missing > 0 ? [`${classCode(rules, entry.classId)}×${missing}`] : []
+  }),
+]
 
 const lower = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1)
 
@@ -177,12 +180,16 @@ const ineligibleText = (answer: Recommendation, isFree: (unitId: string) => bool
 /**
  * A divert proposal, or why no unit comes, kept apart: a free unit that is
  * not eligible (with its reason), units that could come but are busy, no
- * unit that could ever serve, or units that could become eligible.
+ * unit that could ever serve, or units that could become eligible. Nothing
+ * while no unit is proposed but one holds the task queued in its job chain:
+ * the row's "next" names it.
  */
 export const statusText = (answer: Recommendation, isFree: (unitId: string) => boolean, couldServe: (unitId: string) => boolean): string | null => {
   const divert = answer.proposal.units.find(unit => unit.divertFrom !== undefined)
   if (divert !== undefined) return `Divert ${divert.label} from ${divertFromText(divert.divertFrom!)} · ${etaText(divert.eta)}`
   const busy = answer.committed.length > 0 ? `${answer.committed.length} busy` : null
+  // A unit holds the task queued: its "next" says who comes, and no line beside it says that none can.
+  if (answer.proposal.units.length === 0 && answer.next.length > 0) return null
   if (answer.proposal.units.length === 0 && answer.need !== null) {
     const freeIneligible = answer.ineligible.some(item => isFree(item.unitId) && couldServe(item.unitId))
     if (freeIneligible) return [ineligibleText(answer, isFree, couldServe), busy].filter(part => part !== null).join(' · ')

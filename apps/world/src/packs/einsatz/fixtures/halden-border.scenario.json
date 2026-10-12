@@ -18,7 +18,7 @@
       "id": "einsatz",
       "config": {
         "hostility": {"blue": ["red"], "red": ["blue"]},
-        "lexicon": {"workList": "Calls", "unitBoard": "Units", "tracks": "Contacts", "contact": "Contact", "identified": "Identified", "noWork": "No calls waiting"},
+        "lexicon": {"workList": "Calls", "unitBoard": "Units", "tracks": "Contacts", "contact": "Contact", "identified": "Identified", "noWork": "No calls waiting", "close": "Close call"},
         "loadClasses": [
           {"id": "P1", "label": "Acute", "code": "P1", "noun": {"one": "patient", "other": "patients"}},
           {"id": "P2", "label": "Urgent", "code": "P2", "noun": {"one": "patient", "other": "patients"}},

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ClickTarget, UnitRow } from '../board/types.ts'
+  import type { ClickTarget, SiteRow, UnitRow } from '../board/types.ts'
   import BoardIcon from './BoardIcon.svelte'
   import { unitFacts, unitIconTone } from './board-presenter.ts'
   import { revealWhen } from './reveal.ts'
@@ -10,7 +10,9 @@
    * then holds its verbs. Each row shows its job chain, the active step and
    * then the queued ones as "next", and a + that makes the next target tap
    * join the end of the chain. A highlighted row shows every property and a
-   * × on each step, so nothing depends on hover.
+   * × on each step, so nothing depends on hover. Below them the sites, one
+   * tap each: with an asset highlighted a tap sends it there, as a tap on the
+   * site on the map, even where units parked on it cover it there.
    */
   interface Props {
     readonly heading: string
@@ -18,6 +20,8 @@
     readonly rows: ReadonlyArray<UnitRow>
     /** What the list says while it holds no unit. */
     readonly empty: string | null
+    readonly sitesHeading: string
+    readonly sites: ReadonlyArray<SiteRow>
     /** The labels of the + and × buttons, for assistive technology; the buttons show the signs. */
     readonly addLabel: string
     readonly removeLabel: string
@@ -25,7 +29,7 @@
     readonly click: (target: ClickTarget) => void
   }
 
-  const { heading, focused, rows, empty, addLabel, removeLabel, icon, click }: Props = $props()
+  const { heading, focused, rows, empty, sitesHeading, sites, addLabel, removeLabel, icon, click }: Props = $props()
 </script>
 
 <section class="board-section" aria-label={heading}>
@@ -75,6 +79,19 @@
         </li>
       {/each}
     </ol>
+    {#if sites.length > 0}
+      <h4>{sitesHeading}</h4>
+      <ul class="sites">
+        {#each sites as site (site.id)}
+          <li>
+            <button type="button" class="site" onclick={() => click({ kind: 'site', id: site.id })}>
+              <BoardIcon svg={icon(site.icon)} tone="unit" />
+              <span><strong>{site.label}</strong> <span class="type">{site.typeLabel}</span></span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 </section>
 
@@ -108,5 +125,8 @@
   .phase { margin-left: auto; }
   .alert { color: var(--critical); font-size: 12px; }
   .num { font-variant-numeric: tabular-nums; }
+  h4 { margin: var(--row-gap) 0 var(--heading-gap); color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+  .sites { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: var(--row-gap); }
+  .site { min-height: 44px; display: flex; gap: 6px; align-items: center; padding: var(--row-pad) 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: inherit; font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 </style>
