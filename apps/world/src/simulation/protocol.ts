@@ -114,10 +114,19 @@ export interface PackRuntimeQuery {
   readonly viewer?: RunViewer
 }
 
+/** Who issues a command: a person, an AI agent, or the Run itself (its Scenario timeline, a system caller). */
+export type CommandOrigin = 'person' | 'ai' | 'system'
+
 /** What core tells a Pack about a command's caller beyond the journaled envelope. */
 export interface PackCommandContext {
   /** As PackRuntimeQuery.viewer: from the caller's connection, absent in open mode and for the timeline. */
   readonly viewer?: RunViewer
+  /**
+   * From the caller's Actor role, stamped by core on every command it issues;
+   * absent only where no Run issues it (a Pack test driving its connection),
+   * which a Pack grants nothing reserved to a person, an agent or the Run.
+   */
+  readonly origin?: CommandOrigin
 }
 
 export interface PackRuntimeStateStore {

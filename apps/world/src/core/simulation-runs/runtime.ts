@@ -5,7 +5,7 @@ import type { RunHistorianStatus } from '../../features/historian/policy.ts'
 import { recordingSeriesQuerySchema, type RecordingPage } from '../model/recording.ts'
 import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
-import type { PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
+import type { CommandOrigin,PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
 import type { AgentRestrictions,RunRoles,ScenarioSide,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
 import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,isSideView,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema,type AudienceIssue } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
@@ -1094,6 +1094,9 @@ export const createSimulationRunRuntime = async (config: {
   committedState.hydrate(state.snapshot())
   const runRoles: RunRoles | null = config.scenario.roles ?? null
 
+  // A Pack tells a person's command from an AI agent's and the Run's own by this, never by parsing actor ids.
+  const commandOriginOf = (actor: Actor): CommandOrigin => actor.role === 'ai_agent' ? 'ai' : actor.role === 'system' ? 'system' : 'person'
+
   const issueCommandThroughRuntime = async (
     actor: Actor,
     command: CommandEnvelope,
@@ -1118,7 +1121,7 @@ export const createSimulationRunRuntime = async (config: {
     }), { history: commandEventDisposition })
     const viewer = viewerForActor(runRoles, actor)
     const result = await handleCoreCommand(command, commandSource, actor)
-      ?? await config.runtimeConnection.sendCommand(command, viewer === undefined ? {} : { viewer })
+      ?? await config.runtimeConnection.sendCommand(command, { ...(viewer === undefined ? {} : { viewer }), origin: commandOriginOf(actor) })
     await drainRuntimeEmissions()
     await publishOneGenerated(() => ({
       id: eventId(),
@@ -1392,6 +1395,9 @@ export const createSimulationRunRuntime = async (config: {
     })
   }
 
+  // An AI agent's command is journaled as the AI's, not as an operator's (plan-final S3).
+  const commandSourceOf = (actor: Actor): Provenance['source'] => actor.role === 'ai_agent' ? 'ai' : 'operator'
+
   const invokeCapability = async (
     actor: Actor,
     invocation: SimulationRunCapabilityInvocation,
@@ -1409,7 +1415,7 @@ export const createSimulationRunRuntime = async (config: {
     // the execution queue so maximum pace cannot advance another slice between
     // validation and deletion. Pack cleanup follows the resulting core event.
     if (invocation.capabilityId === deleteObjectCommandKind) {
-      return await enqueueOperation(async () => await invokeCapabilityThroughRuntime(actor, invocation, 'operator'))
+      return await enqueueOperation(async () => await invokeCapabilityThroughRuntime(actor, invocation, commandSourceOf(actor)))
     }
     // Enter at an exact execution boundary, then let potentially slow command
     // preparation (routing, document reads) overlap. Canonical commits already
@@ -1418,7 +1424,7 @@ export const createSimulationRunRuntime = async (config: {
     // deletion races while adding no consistency guarantee.
     const mutating = runtimeCapabilities.get(invocation.capabilityId)?.capability.kind === 'command'
     await enqueueOperation(async () => { if (mutating) activeMutations++ })
-    try { return await invokeCapabilityThroughRuntime(actor, invocation, 'operator') }
+    try { return await invokeCapabilityThroughRuntime(actor, invocation, commandSourceOf(actor)) }
     finally { if (mutating) activeMutations-- }
   }
 
