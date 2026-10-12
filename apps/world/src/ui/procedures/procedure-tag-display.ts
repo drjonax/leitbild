@@ -70,3 +70,7 @@ export const procedureTagDeclared = (tag: Pick<ProcedureTag, 'description' | 'un
   ]
   return parts.length === 0 ? null : parts.join(' · ')
 }
+
+/** A reading as the dialog states it: a two-state signal names what it says ("Reactor trip breaker A closed: no"), a number its value and unit. */
+export const procedureTagReadingText = (reading: { readonly label: string; readonly value: unknown; readonly formatted: string }): string =>
+  typeof reading.value === 'boolean' ? `${reading.label}: ${reading.value ? 'yes' : 'no'}` : reading.formatted

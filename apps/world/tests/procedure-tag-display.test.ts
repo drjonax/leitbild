@@ -10,6 +10,7 @@ import {
   procedureTagDisplayEnvelope,
   procedureTagDisplayPlan,
   procedureTagDisplaySource,
+  procedureTagReadingText,
 } from '../src/ui/procedures/procedure-tag-display.ts'
 
 const workspaceId = workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111')
@@ -92,4 +93,9 @@ describe("a clicked procedure tag's display", () => {
       .toBe('SI actuation signal · equipment si-system · in bool')
     expect(procedureTagDeclared({})).toBeNull()
   })
+})
+
+test('a two-state reading names what it says; a number keeps its value and unit', () => {
+  expect(procedureTagReadingText({ label: 'Reactor trip breaker A closed', value: false, formatted: 'false boolean' })).toBe('Reactor trip breaker A closed: no')
+  expect(procedureTagReadingText({ label: 'Pressurizer pressure', value: 15.5, formatted: '15.500 MPa' })).toBe('15.500 MPa')
 })

@@ -23,11 +23,12 @@
   import StatusIndicator from '../components/StatusIndicator.svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ProcedureRunBadges from './ProcedureRunBadges.svelte'
+  import ProcedureTagDisplay from './ProcedureTagDisplay.svelte'
+  import type { EmbeddedViewListing } from '@leitbild/contracts'
   import {
     closeProcedureRun,
     transitionProcedureRun,
     evaluateProcedureCsfs,
-    readProcedureTagValue,
     readProcedureSourceEvidence,
     resetProcedureRun,
     startProcedureRun,
@@ -35,7 +36,6 @@
     validateProcedureTags,
     type ProcedureCsfEvaluation,
     type ProcedureTagValidation,
-    type ProcedureTagValue,
     type ProcedureSourceEvidence,
     type ProcedureSourceEvidenceRequest,
   } from './procedure-client.ts'
@@ -71,6 +71,8 @@
     readonly initialProcedureId?: ProcedureId
     readonly windowOffsetIndex?: number
     readonly selectUnit: (objectId: ObjectId) => void
+    /** Opens a display in the Workspace's process display window, where it can be operated. */
+    readonly openDisplay?: (listing: EmbeddedViewListing) => void
     readonly close: () => void
   }
 
@@ -129,6 +131,7 @@
     initialProcedureId = undefined,
     windowOffsetIndex = 0,
     selectUnit,
+    openDisplay = undefined,
     close,
   }: Props = $props()
 
@@ -160,9 +163,7 @@
   let basisError = $state<string | null>(null)
   let basisLoading = $state(false)
   let basisReadGeneration = 0
-  let hoveredTagId = $state<ProcedureTagId | null>(null)
-  let hoveredTagValue = $state<ProcedureTagValue | null>(null)
-  let hoveredTagError = $state<string | null>(null)
+  let openTagId = $state<ProcedureTagId | null>(null)
   let commentOpen = $state<Record<string, boolean>>({})
   let commentDrafts = $state<Record<string, string>>({})
   let pendingTransition = $state<ProcedureTransition | null>(null)
@@ -181,7 +182,6 @@
   let disposed = false
   let releasePrefetch: (() => void) | null = null
   let scrollFrame: number | null = null
-  let tagRequest = 0
   let catalogRequest = 0
   let procedureDocumentBodyElement = $state<HTMLDivElement | null>(null)
   const procedureScrollPositions = new Map<string, number>()
@@ -449,7 +449,7 @@
       error = null
       confirmation = null
       pendingTransition = null
-      hideTag()
+      closeTag()
       tagValidation = new Map()
       csfEvaluations = new Map()
       csfReadAt = null
@@ -951,32 +951,16 @@
     }
   }
 
-  const showTag = async (tagId: ProcedureTagId): Promise<void> => {
-    const request = ++tagRequest
-    const view = latestProcedureLoadRequest
-    hoveredTagId = tagId
-    hoveredTagValue = null
-    hoveredTagError = null
-    if (validationFor(tagId)?.status === 'missing') return
-    const tag = tagFor(tagId)
-    if (!tag) {
-      hoveredTagError = 'Procedure tag metadata not found.'
-      return
-    }
-    try {
-      const value = await readProcedureTagValue(simulationRunId, currentUnitContext.plantId, tag, currentProvider)
-      if (!disposed && request === tagRequest && view === latestProcedureLoadRequest) hoveredTagValue = value
-    } catch (err) {
-      if (!disposed && request === tagRequest && view === latestProcedureLoadRequest) hoveredTagError = errorMessage(err)
-    }
+  const closeTag = (): void => {
+    openTagId = null
   }
 
-  const hideTag = (): void => {
-    tagRequest++
-    hoveredTagId = null
-    hoveredTagValue = null
-    hoveredTagError = null
-  }
+  // The display window's listing for a tag's display: one key per unit and tag.
+  const tagDisplayListing = (tagId: ProcedureTagId, envelope: EmbeddedViewListing['envelope']): EmbeddedViewListing => ({
+    key: `procedure-tag:${currentUnitContext.plantId}:${tagId}`,
+    caption: `From ${document?.procedureId ?? 'procedure'} ${tagId}`.slice(0, 120),
+    envelope,
+  })
 
   const closeBasis = (): void => {
     basisReadGeneration++
@@ -1041,7 +1025,6 @@
       disposed = true
       latestProcedureLoadRequest++
       catalogRequest++
-      tagRequest++
       basisReadGeneration++
       releasePrefetch?.()
       unsubscribe()
@@ -1072,7 +1055,7 @@
       csfEvaluations = new Map()
       csfReadAt = null
       tagValidation = new Map()
-      hideTag()
+      closeTag()
       closeBasis()
       if (selectedProcedureId) void loadProcedure(selectedProcedureId)
     })
@@ -1083,7 +1066,7 @@
 {#snippet procedureText(text: string, tagIds: readonly string[])}
   {#each procedureTextSegments(text, tagIds, document?.sourceUrl) as segment}
     {#if segment.kind === 'tag'}
-      <button type="button" class="procedure-tag" onmouseenter={() => void showTag(segment.text as ProcedureTagId)} onmouseleave={hideTag}>«{segment.text}»</button>
+      <button type="button" class="procedure-tag" title="Show {segment.text} on a process display" onclick={() => { openTagId = segment.text as ProcedureTagId }}>{segment.text}</button>
     {:else if segment.kind === 'link'}
       {@const sourceRequest = document ? procedureSourceEvidenceRequest(segment.href, document) : undefined}
       {#if sourceRequest}
@@ -1464,27 +1447,22 @@
       </div>
     {/if}
 
-    {#if hoveredTagId}
-      <div class="procedure-tag-popover">
-        <strong>{hoveredTagId}</strong>
-        {#if tagFor(hoveredTagId)?.description}<span>{tagFor(hoveredTagId)?.description}</span>{/if}
-        {#if hoveredTagValue}
-          <b>{hoveredTagValue.formatted}</b>
-          {#if hoveredTagValue.path}<small>{hoveredTagValue.path}</small>{/if}
-          {#if hoveredTagValue.warning && !validationFor(hoveredTagId)?.warnings.includes(hoveredTagValue.warning)}
-            <em>{hoveredTagValue.warning}</em>
-          {/if}
-        {:else if validationFor(hoveredTagId)?.status === 'missing'}
-          <em>Not resolved to a Leitbild signal.</em>
-        {:else if hoveredTagError}
-          <em>{hoveredTagError}</em>
-        {:else}
-          <small>Reading live value...</small>
-        {/if}
-        {#if validationFor(hoveredTagId)?.status !== 'missing' && validationFor(hoveredTagId)?.warnings.length}
-          <em>{validationFor(hoveredTagId)?.warnings.join('; ')}</em>
-        {/if}
-      </div>
+    {#if openTagId}
+      {@const openTag = tagFor(openTagId)}
+      {#if openTag}
+        {#key `${currentUnitContext.plantId}:${openTagId}`}
+          <ProcedureTagDisplay
+            {simulationRunId}
+            plantId={currentUnitContext.plantId}
+            unitLabel={displayUnitName}
+            tag={openTag}
+            validation={validationFor(openTagId)}
+            provider={currentProvider}
+            close={closeTag}
+            openInDisplayWindow={openDisplay === undefined ? undefined : (envelope) => { if (openTagId) openDisplay(tagDisplayListing(openTagId, envelope)) }}
+          />
+        {/key}
+      {/if}
     {/if}
 
     {#if refreshing}

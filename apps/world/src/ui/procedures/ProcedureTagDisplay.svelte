@@ -13,6 +13,7 @@
     procedureTagDisplayEnvelope,
     procedureTagDisplayPlan,
     procedureTagDisplaySource,
+    procedureTagReadingText,
   } from './procedure-tag-display.ts'
 
   // A clicked procedure tag: the live process display World draws around the
@@ -130,7 +131,7 @@
   {#if validation?.status === 'missing'}
     <span>No reading: the tag has no signal in this unit's model.</span>
   {:else if reading}
-    <span>Reads <b>{reading.formatted}</b></span>
+    <span>Reads <b>{procedureTagReadingText(reading)}</b></span>
   {:else if readingError}
     <span class="procedure-tag-display-error">Reading unavailable: {readingError}</span>
   {:else}
@@ -152,13 +153,13 @@
   >
     <header class="procedure-tag-display-header">
       <div class="procedure-tag-display-identity">
-        <h2 id={titleId}>«{tag.id}»</h2>
+        <h2 id={titleId}>{tag.id}</h2>
         {#if tag.description}<span class="procedure-tag-display-description">{tag.description}</span>{/if}
         <span class="procedure-tag-display-unit">{unitLabel}</span>
       </div>
       <div class="procedure-tag-display-reading" aria-live="polite">
         <span class="procedure-tag-display-value">
-          {#if validation?.status === 'missing'}—{:else if reading}{reading.formatted}{:else if readingError}unavailable{:else}…{/if}
+          {#if validation?.status === 'missing'}—{:else if reading}{procedureTagReadingText(reading)}{:else if readingError}unavailable{:else}…{/if}
         </span>
         <small title={bindingLine}>{bindingLine}</small>
       </div>
