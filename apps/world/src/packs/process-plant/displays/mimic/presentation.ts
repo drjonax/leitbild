@@ -76,6 +76,7 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   atmosphereBoundary: { element: 'not-drawn', reason: 'the atmosphere is where a release leaves the Plant; it is named where each discharge pipe ends' },
   safetyInjectionBlockLogic: { element: 'not-drawn', reason: 'protection logic moves no fluid; it is read through its permissive and block states' },
   loadSequencer: { element: 'not-drawn', reason: 'a load sequencer carries no power; it is read through its step' },
+  manualActuation: { element: 'not-drawn', reason: 'a manual actuation pushbutton moves nothing; it is operated where the equipment its rule acts on is drawn' },
 }
 
 /** Kinds the table covers, for the completeness test against the component registry. */
