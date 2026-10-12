@@ -1,5 +1,5 @@
-import type { MimicFlowBinding, MimicFrame, MimicItemBinding } from './bindings.ts'
-import { flowLook, itemLook, powerLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
+import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicShutdownBinding } from './bindings.ts'
+import { flowLook, itemLook, powerLook, shutdownLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
 import { displayValue, offScale, readingText, readingValueText, unitLabel } from '../display-text.ts'
@@ -26,10 +26,31 @@ export type MimicRow =
     readonly required: boolean
     readonly span?: { readonly min: number; readonly max: number }
     readonly wider?: { readonly path: string; readonly span: { readonly min: number; readonly max: number } }
+    /**
+     * On a device, the integer digits its readout reserves: those of the
+     * widest value its instrument declares it reads over (a generator's
+     * 1300 MW), which a device's value row needs declared.
+     */
+    readonly digits?: number
   }
   | { readonly kind: 'position'; readonly required: true }
-  /** The state in a word where the symbol alone could be misread: RUN or STOP, ?, DEAD, POS ?. */
-  | { readonly kind: 'state'; readonly texts: ReadonlyArray<string>; readonly required: true }
+  /**
+   * The state in a word where the symbol alone could be misread: RUN or
+   * STOP, ?, DEAD, POS ?; or the words its equipment declares for its state
+   * signal (`words`: ON LINE and OFF LINE for a generator on its breaker).
+   */
+  | { readonly kind: 'state'; readonly texts: ReadonlyArray<string>; readonly words?: { readonly on: string; readonly off: string }; readonly required: true }
+  /**
+   * A flag that says the item has stopped (MimicShutdownBinding), in its
+   * declared words, on two lines: empty while it has not and nothing
+   * commands it to; its word once it has ("Rods on bottom"); and while a
+   * trip's command to stop it stands unmet, its other word over that command
+   * ("Rods off bottom", "CMD trip"), so a trip the item does not follow
+   * never reads as an empty row (HF review: an absent "Rods on bottom" is no
+   * cue of a failed trip). A vessel writes them like its tag, so they fit
+   * the column beside a hub's lanes.
+   */
+  | { readonly kind: 'shutdown'; readonly part: 'word' | 'command'; readonly flag: MimicShutdownBinding; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** What passes an item whose position is not computed: PASSING or NO FLOW. */
   | { readonly kind: 'throughput'; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** A command the item does not follow: CMD 100 %, CMD RUN, CMD SHUT. */
@@ -77,6 +98,25 @@ const OTHER_WORDS: Readonly<Record<string, string>> = { RUN: 'STOP', LIVE: 'DEAD
 /** Whether an item's position is a breaker's contacts, closed while its state reads true. */
 const switching = (binding: MimicItemBinding): boolean => binding.state?.state?.reading === 'closedWhileTrue'
 
+/** What a trip's command to stop an item says beside the flag's other word while it stands unmet. */
+export const SHUTDOWN_COMMAND = 'CMD trip'
+
+/** A flag's two shutdown rows: its word (its other word only where a trip commands it), and the command where one does. */
+const shutdownRows = (flag: MimicShutdownBinding): ReadonlyArray<MimicRow> => flag.demands.length === 0
+  ? [{ kind: 'shutdown', part: 'word', flag, texts: [flag.words.on, '?'], required: true }]
+  : [
+      { kind: 'shutdown', part: 'word', flag, texts: [flag.words.on, flag.words.off, '?'], required: true },
+      { kind: 'shutdown', part: 'command', flag, texts: [SHUTDOWN_COMMAND], required: true },
+    ]
+
+/** Whether any of an item's shutdown rows stands commanded and unmet for one sample: the item is outlined as not following its command. */
+export const shutdownDemanded = (rows: ReadonlyArray<MimicRow>, index: SampleIndex): boolean =>
+  rows.some(row => row.kind === 'shutdown' && row.part === 'word' && shutdownLook(row.flag, index) === 'demanded')
+
+/** The digits of the widest whole value a range reaches, in the unit it is shown in. */
+const integerDigits = (range: { readonly min: number; readonly max: number }, unit: string): number =>
+  Math.max(...[range.min, range.max].map(bound => String(Math.round(Math.abs(displayValue(bound, unit)))).length + (bound < 0 ? 1 : 0)))
+
 // The state word leads, as on a single item, so "0/2 RUN" never reads as running (QA review of run 22).
 const countTexts = (members: number, word: string): ReadonlyArray<string> =>
   [word, OTHER_WORDS[word]!].flatMap(state => [`${state} ${members}/${members}`, `${state} ${members}/${members} ?`])
@@ -120,29 +160,51 @@ export const itemRows = (
     ]
   }
   const state = binding.state
-  const values: ReadonlyArray<MimicRow> = binding.values.map((value, index) => ({
+  const device = presentation.element === 'device'
+  const valueRow = (value: MimicItemBinding['values'][number], required: boolean): MimicRow => ({
     kind: 'value',
     path: value.path,
     unit: value.unit,
     ...(value.letters === undefined ? {} : { letters: value.letters }),
-    required: index === 0,
+    required,
     ...(value.span === undefined ? {} : { span: value.span }),
     ...(value.wider === undefined || options.offSpan !== 'wider' ? {} : { wider: { path: value.wider.path, span: value.wider.span } }),
-  }))
-  if (presentation.element !== 'device' || state === null) return values
+    ...(!device || value.range === undefined ? {} : { digits: integerDigits(value.range, value.unit) }),
+  })
+  const shutdown = binding.shutdown.flatMap(shutdownRows)
+  if (!device || state === null) return [...binding.values.map((value, index) => valueRow(value, index === 0)), ...shutdown]
+  // A device's key values follow what its state rows say, each sized for the
+  // widest value its instrument declares it reads (a generator's MW, a
+  // diesel's kW); one that declares no such range has no row. They go before
+  // anything else when a drawing has no room.
+  const after = [...binding.values.flatMap(value => value.range === undefined ? [] : [valueRow(value, false)]), ...shutdown]
+  return [...stateRows(binding, state, stacked, valuesOf), ...after]
+}
+
+// What a device says of its state, before its values.
+const stateRows = (
+  binding: MimicItemBinding,
+  state: NonNullable<MimicItemBinding['state']>,
+  stacked: boolean,
+  valuesOf: (commands: ReadonlyArray<string>) => ReadonlyArray<string>,
+): ReadonlyArray<MimicRow> => {
+  // Its equipment's words for its state signal, where it declares them, else the aspect's own.
+  const worded = (on: string, off: string): Pick<Extract<MimicRow, { kind: 'state' }>, 'texts' | 'words'> =>
+    state.words === undefined ? { texts: [on, off, '?'] } : { texts: [state.words.on, state.words.off, '?'], words: state.words }
   // Running equipment says RUN in words as stopped equipment says STOP: an
   // icon's fill alone does not tell the two apart for every reader (HMI review, run 22).
   if (state.aspect === 'running') {
-    if (!stacked) return [{ kind: 'state', texts: ['RUN', 'STOP', '?', ...RUNNING_COMMANDS], required: true }]
+    const running = worded('RUN', 'STOP')
+    if (!stacked) return [{ kind: 'state', ...running, texts: [...running.texts, ...RUNNING_COMMANDS], required: true }]
     // Stacked rows reserve only what the item's bindings let it say: no command, no CMD.
-    if (state.command === undefined) return [{ kind: 'state', texts: ['RUN', 'STOP', '?'], required: true }]
-    return [{ kind: 'state', texts: ['RUN', 'STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
+    if (state.command === undefined) return [{ kind: 'state', ...running, required: true }]
+    return [{ kind: 'state', ...running, texts: [...running.texts, 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
   }
   // A source or supply says LIVE as it says DEAD (HMI review of run 23: the grid and the auxiliary transformer drawn without a state).
-  if (state.aspect === 'energized') return [{ kind: 'state', texts: ['LIVE', 'DEAD', '?'], required: true }]
+  if (state.aspect === 'energized') return [{ kind: 'state', ...worded('LIVE', 'DEAD'), required: true }]
   if (switching(binding)) {
     // No symbol shows a breaker's contacts, so its first row always says them; a command it does not follow follows.
-    const contacts: MimicRow = { kind: 'state', texts: ['CLOSED', 'OPEN', '?'], required: true }
+    const contacts: MimicRow = { kind: 'state', ...worded('CLOSED', 'OPEN'), required: true }
     if (state.command === undefined) return [contacts]
     return stacked
       ? [contacts, { kind: 'state', texts: ['CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(BREAKER_COMMANDS), required: true }]
@@ -162,7 +224,7 @@ export const itemRows = (
       ...(state.command === undefined ? [] : [{ kind: 'mismatch' as const, texts: POSITION_COMMANDS, required: true as const }]),
     ]
   }
-  return values
+  return []
 }
 
 /** What a row shows for one sample; empty when there is nothing to say (a fully open valve). */
@@ -204,10 +266,18 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   if (row.kind === 'alarm') return ''
   if (row.kind === 'commandValue') return look.mismatch === null ? '' : look.mismatch.slice('CMD '.length)
   if (row.kind === 'throughput') return look.state.kind === 'passing' ? 'PASSING' : look.state.kind === 'notPassing' ? 'NO FLOW' : '?'
+  if (row.kind === 'shutdown') {
+    const stopped = shutdownLook(row.flag, index)
+    if (row.part === 'command') return stopped === 'demanded' ? SHUTDOWN_COMMAND : ''
+    return stopped === 'stopped' ? row.flag.words.on : stopped === 'demanded' ? row.flag.words.off : stopped === 'unknown' ? '?' : ''
+  }
   if (row.texts.includes('POS ?')) return 'POS ?'
   // The state word, unless the symbol disagrees with its command: then the command, or CMD over it.
   if (look.mismatch !== null && row.texts.includes(look.mismatch)) return look.mismatch
   if (look.mismatch !== null && row.texts.includes('CMD')) return 'CMD'
+  const on = look.state.kind === 'running' || look.state.kind === 'energized' || look.state.kind === 'closed'
+  const off = look.state.kind === 'stopped' || look.state.kind === 'dead' || look.state.kind === 'open'
+  if (row.kind === 'state' && row.words !== undefined) return on ? row.words.on : off ? row.words.off : look.state.kind === 'unknown' ? '?' : ''
   const word = look.state.kind === 'running' ? 'RUN' : look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'energized' ? 'LIVE' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
     : look.state.kind === 'closed' ? 'CLOSED' : look.state.kind === 'open' ? 'OPEN' : ''
   return row.texts.includes(word) ? word : ''
@@ -307,11 +377,12 @@ export const drawnLook = (binding: MimicItemBinding, rows: ReadonlyArray<MimicRo
  * How a drawn item stands out (ISA-101): framed in its alarm's colour while
  * an alarm of its own is active; outlined as abnormal, in no alarm colour,
  * while it (or a member of its group) does not follow its command, so the
- * cause of an upset shows on the drawing before any alarm it leads to; drawn
- * as normal otherwise.
+ * cause of an upset shows on the drawing before any alarm it leads to, as
+ * while a trip's command to stop it stands unmet (`demanded`,
+ * shutdownDemanded); drawn as normal otherwise.
  */
-export const itemTreatment = (look: ItemLook, alarmed: boolean): 'alarm' | 'abnormal' | 'normal' =>
-  alarmed ? 'alarm' : look.mismatch !== null ? 'abnormal' : 'normal'
+export const itemTreatment = (look: ItemLook, alarmed: boolean, demanded = false): 'alarm' | 'abnormal' | 'normal' =>
+  alarmed ? 'alarm' : look.mismatch !== null || demanded ? 'abnormal' : 'normal'
 
 /** A pipe standing for parallel pipes carries flow while any of them does; it is unknown when none does and any is unknown. */
 export const bundleFlowLook = (flows: ReadonlyArray<MimicFlowBinding>, index: SampleIndex): FlowLook => {

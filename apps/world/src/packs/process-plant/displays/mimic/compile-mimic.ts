@@ -1,7 +1,7 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink, VariablePath } from '../../graph/index.ts'
 import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
-import { unitLabel } from '../display-text.ts'
+import { readingText, unitLabel } from '../display-text.ts'
 import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, type MimicItem, type MimicItemBinding } from './bindings.ts'
 import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
@@ -58,8 +58,8 @@ const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number
   return key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
 }
 
-const valueRowWidth = (unit: string, fractionDigits: number): number =>
-  readoutBlockWidth(3, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
+const valueRowWidth = (unit: string, fractionDigits: number, integerDigits = 3): number =>
+  readoutBlockWidth(integerDigits, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
 
 /**
  * A value row that may read its wider instrument says so before the value, in
@@ -74,24 +74,34 @@ const valueRowSize = (row: Extract<MimicRow, { kind: 'value' }>, own: number, va
 const stateRowWidth = (texts: ReadonlyArray<string>): number =>
   Math.max(...texts.map(text => textWidth('stateRow', text))) + openBridgeDevice.stateRowPadding
 
+/**
+ * What a device's value row may write in words instead of its readout: the
+ * ends of its instrument's span ("<0 MW"), and the dash for no reading.
+ */
+const deviceValueWords = (row: Extract<MimicRow, { kind: 'value' }>): ReadonlyArray<string> =>
+  ['—', ...(row.span === undefined ? [] : [readingText(row.span.min, row.unit, null, row.span), readingText(row.span.max, row.unit, null, row.span)])]
+
 /** The words a position row shows where the valve stands at an end, or its position is not known. */
 const POSITION_WORDS = ['POS ?', 'SHUT', 'OPEN']
 
 /** The texts a row may show, besides its values: what must be measurable. */
 const rowWords = (row: MimicRow): ReadonlyArray<string> =>
-  row.kind === 'value' ? [] : row.kind === 'position' ? POSITION_WORDS : row.texts
+  row.kind === 'value' ? (row.digits === undefined ? [] : deviceValueWords(row)) : row.kind === 'position' ? POSITION_WORDS : row.texts
 
 // Vessels use our stack of readout blocks (one decimal); devices OpenBridge's
 // readout stack at the profile's size: small (11.5 px) or regular (16 px).
 const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['readoutSize']): { readonly width: number; readonly height: number } => {
-  // A vessel's alarm rows are written like its tag.
-  if (row.kind === 'alarm') return { width: Math.max(...row.texts.map(text => textWidth('tag', text))), height: openBridgeDevice.tagLine }
+  // A vessel's alarm and shutdown rows are written like its tag.
+  if (row.kind === 'alarm' || (row.kind === 'shutdown' && !device)) return { width: Math.max(...row.texts.map(text => textWidth('tag', text))), height: openBridgeDevice.tagLine }
   if (!device || readoutSize === 'regular') {
     const digits = device ? 0 : 1
+    // A device writes a value as a whole number of its declared digits, or in words at an end of its span.
+    if (row.kind === 'value' && row.digits !== undefined) return { width: Math.max(valueRowWidth(row.unit, 0, row.digits), stateRowWidth(deviceValueWords(row))), height: openBridgeDevice.row }
     if (row.kind === 'value') return { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row }
     if (row.kind === 'position') return { width: Math.max(valueRowWidth('fraction', digits), stateRowWidth(POSITION_WORDS)), height: openBridgeDevice.row }
     return { width: stateRowWidth(rowWords(row)), height: openBridgeDevice.row }
   }
+  if (row.kind === 'value' && row.digits !== undefined) return { width: Math.max(smallValueRowWidth(unitLabel(row.unit), row.digits), ...deviceValueWords(row).map(smallStateRowWidth)), height: openBridgeDevice.smallValueRow }
   if (row.kind === 'value') return { width: valueRowSize(row, smallValueRowWidth(unitLabel(row.unit)), () => smallValueRowWidth(unitLabel(row.unit))), height: openBridgeDevice.smallValueRow }
   if (row.kind === 'position') return { width: Math.max(smallValueRowWidth('%'), ...POSITION_WORDS.map(smallStateRowWidth)), height: openBridgeDevice.smallValueRow }
   return { width: Math.max(...rowWords(row).map(smallStateRowWidth)), height: openBridgeDevice.smallStateRow }
@@ -99,7 +109,8 @@ const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['read
 
 const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly text: string }> =>
   row.kind === 'alarm' ? row.texts.map(text => ({ style: 'tag' as const, text }))
-    : row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }]), ...(row.letters === undefined ? [] : [{ style: 'unit' as const, text: row.letters }])]
+    : row.kind === 'shutdown' ? row.texts.flatMap(text => [{ style: 'tag' as const, text }, { style: 'stateRow' as const, text }])
+    : row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }]), ...(row.letters === undefined ? [] : [{ style: 'unit' as const, text: row.letters }]), ...rowWords(row).map(text => ({ style: 'stateRow' as const, text }))]
     : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
 const isDevice = (presentation: MimicPresentation): boolean => presentation.element === 'device'
@@ -353,6 +364,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
           label: groupLabel(bindings.map(member => member.label)),
           state: null,
           values: [],
+          shutdown: [],
           limits: [],
           frames: bindings.flatMap(member => member.frames),
         }
@@ -469,6 +481,7 @@ const orientationOf = (node: PlacedNode): 'horizontal' | 'vertical' =>
 
 const rowPaths = (row: MimicRow): ReadonlyArray<VariablePath> => {
   if (row.kind === 'value') return [row.path as VariablePath, ...(row.wider === undefined ? [] : [row.wider.path as VariablePath])]
+  if (row.kind === 'shutdown') return row.part === 'word' ? [row.flag.path, ...row.flag.demands.map(demand => demand.path)] : []
   if (row.kind !== 'count') return []
   return row.members.flatMap(member => [
     ...(member.state?.state === undefined ? [] : [member.state.state.path]),

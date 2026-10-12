@@ -1,4 +1,4 @@
-import type { MimicFlowBinding, MimicItemBinding } from './bindings.ts'
+import type { MimicFlowBinding, MimicItemBinding, MimicShutdownBinding } from './bindings.ts'
 
 // What a drawn item and pipe show for one sample. Pure and shared by the
 // server (the compose result's equipment list) and the embed (the drawing),
@@ -65,10 +65,35 @@ const commandText = (index: SampleIndex, path: string | undefined, aspect: 'runn
   return { text: fraction < CLOSED_BELOW ? 'CMD SHUT' : `CMD ${percent(fraction)}`, open: fraction >= CLOSED_BELOW, fraction }
 }
 
+/**
+ * Where a flag that says an item has stopped stands: stopped while it reads
+ * true; `demanded` while it does not and a trip's command to stop it stands
+ * (the command reads what the trip writes); `quiet` otherwise; unknown
+ * without a reading.
+ */
+export const shutdownLook = (shutdown: MimicShutdownBinding, index: SampleIndex): 'stopped' | 'demanded' | 'quiet' | 'unknown' => {
+  const stopped = booleanAt(index, shutdown.path)
+  if (stopped === null) return 'unknown'
+  if (stopped) return 'stopped'
+  return shutdown.demands.some(demand => index.get(demand.path)?.value === demand.value) ? 'demanded' : 'quiet'
+}
+
+/** An item's look, with what its shutdown flags say in words after its state's (`Rods on bottom`). */
 export const itemLook = (binding: MimicItemBinding, index: SampleIndex): ItemLook => {
+  const look = stateLook(binding, index)
+  const said = binding.shutdown.flatMap(flag => {
+    const stopped = shutdownLook(flag, index)
+    return stopped === 'stopped' ? [flag.words.on] : stopped === 'demanded' ? [`${flag.words.off}; commanded to trip`] : []
+  })
+  return said.length === 0 ? look : { ...look, words: [look.words, ...said].filter(words => words !== '').join('; ') }
+}
+
+const stateLook = (binding: MimicItemBinding, index: SampleIndex): ItemLook => {
   const state = binding.state
   if (state === null) return { state: { kind: 'none' }, notMeasured: false, mismatch: null, words: '' }
   const unknown = (notMeasured = false): ItemLook => ({ state: { kind: 'unknown' }, notMeasured, mismatch: null, words: notMeasured ? 'position not measured; no flow value' : 'state unknown' })
+  // An on/off state its equipment words reads in those words (ON LINE), else in the aspect's own.
+  const worded = (on: boolean, own: string): string => state.words === undefined ? own : on ? state.words.on : state.words.off
 
   if (state.aspect === 'running') {
     const value = state.state?.reading === 'true' ? booleanAt(index, state.state.path) : numberAt(index, state.state?.path)
@@ -78,7 +103,7 @@ export const itemLook = (binding: MimicItemBinding, index: SampleIndex): ItemLoo
     const running = typeof value === 'boolean' ? value : state.state?.reading === 'flow' ? Math.abs(value) >= band && value !== 0 : value > 0
     const command = commandText(index, state.command, 'running')
     const mismatch = command === null || command.open === running ? null : command.text
-    return { state: { kind: running ? 'running' : 'stopped' }, notMeasured: false, mismatch, words: `${running ? 'running' : 'stopped'}${mismatch === null ? '' : `; commanded to ${running ? 'stop' : 'run'}`}` }
+    return { state: { kind: running ? 'running' : 'stopped' }, notMeasured: false, mismatch, words: `${worded(running, running ? 'running' : 'stopped')}${mismatch === null ? '' : `; commanded to ${running ? 'stop' : 'run'}`}` }
   }
 
   if (state.aspect === 'position') {
@@ -89,7 +114,7 @@ export const itemLook = (binding: MimicItemBinding, index: SampleIndex): ItemLoo
       if (closed === null) return unknown()
       // A breaker commanded open disagrees while its contacts stay closed, and the other way round.
       const mismatch = command === null || command.open === null || command.open === !closed ? null : command.text
-      return { state: { kind: closed ? 'closed' : 'open' }, notMeasured: false, mismatch, words: `${closed ? 'closed' : 'open'}${mismatch === null ? '' : `; ${mismatch.replace('CMD', 'commanded').toLowerCase()} disagrees`}` }
+      return { state: { kind: closed ? 'closed' : 'open' }, notMeasured: false, mismatch, words: `${worded(closed, closed ? 'closed' : 'open')}${mismatch === null ? '' : `; ${mismatch.replace('CMD', 'commanded').toLowerCase()} disagrees`}` }
     }
     if (state.state === undefined) {
       // The model does not compute the position: what passes the item judges it.
@@ -125,7 +150,7 @@ export const itemLook = (binding: MimicItemBinding, index: SampleIndex): ItemLoo
   if (state.aspect === 'energized') {
     const energized = booleanAt(index, state.state?.path)
     if (energized === null) return unknown()
-    return { state: { kind: energized ? 'energized' : 'dead' }, notMeasured: false, mismatch: null, words: energized ? 'energized' : 'dead' }
+    return { state: { kind: energized ? 'energized' : 'dead' }, notMeasured: false, mismatch: null, words: worded(energized, energized ? 'energized' : 'dead') }
   }
 
   const flow = numberAt(index, state.state?.path)

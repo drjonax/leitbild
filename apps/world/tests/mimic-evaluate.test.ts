@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import type { MimicFlowBinding, MimicItemBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
-import { drawnLook, itemRows, itemTreatment, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { drawnLook, itemRows, itemTreatment, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
 
 const sample = (values: Record<string, number | boolean>, quality: Record<string, string> = {}) =>
   indexSample(Object.entries(values).map(([path, value]) => ({ path, value, quality: quality[path] ?? 'good' })))
 
 const item = (state: MimicStateBinding | null): MimicItemBinding => ({
-  item: { kind: 'component', component: 0 }, label: 'X', state, values: [], limits: [], frames: [],
+  item: { kind: 'component', component: 0 }, label: 'X', state, values: [], shutdown: [], limits: [], frames: [],
 })
 
 const pump = item({ aspect: 'running', state: { path: 'p.speedRpm' as never, reading: 'aboveZero' }, command: 'p.running' as never })
@@ -102,5 +102,47 @@ describe('mimic state of one sample', () => {
     expect(powerLook(['offsite.energized', 'diesel.energized'], sample({ 'offsite.energized': false, 'diesel.energized': true }))).toBe('live')
     expect(powerLook(['offsite.energized', 'diesel.energized'], sample({ 'offsite.energized': false }))).toBe('unknown')
     expect(powerLook(['offsite.energized', 'diesel.energized'], sample({ 'offsite.energized': false, 'diesel.energized': false }))).toBe('dead')
+  })
+
+  test('a flag that says the item stopped is quiet at power, says so once it has, and says a trip it does not follow', () => {
+    // A core: rods on bottom in its declared words, and every trip's command to it (full rod insertion).
+    const core: MimicItemBinding = {
+      ...item(null),
+      shutdown: [{ path: 'c.rodsOnBottom' as never, words: { on: 'Rods on bottom', off: 'Rods off bottom' }, demands: [{ path: 'c.rodInsertion' as never, value: 1 }] }],
+    }
+    const rows = itemRows(core, { element: 'tank', tank: 'pressurized', aspect: 'level' }, { marker: false, members: [], commands: 'stacked', offSpan: 'end' })
+    expect(rows.map(row => row.kind === 'shutdown' ? [row.part, row.texts] : row.kind)).toEqual([['word', ['Rods on bottom', 'Rods off bottom', '?']], ['command', ['CMD trip']]])
+    const read = (values: Record<string, number | boolean>) => {
+      const index = sample(values)
+      const look = drawnLook(core, rows, index)
+      return { texts: rows.map(row => rowText(row, look, index, String)), words: look.words, treatment: itemTreatment(look, false, shutdownDemanded(rows, index)) }
+    }
+    // At power: rod control holds the bank part-way in; nothing to say.
+    expect(read({ 'c.rodsOnBottom': false, 'c.rodInsertion': 0.15 })).toEqual({ texts: ['', ''], words: '', treatment: 'normal' })
+    // Tripped, rods falling: the command stands unmet, and the item is outlined as not following it.
+    expect(read({ 'c.rodsOnBottom': false, 'c.rodInsertion': 1 })).toEqual({ texts: ['Rods off bottom', 'CMD trip'], words: 'Rods off bottom; commanded to trip', treatment: 'abnormal' })
+    expect(read({ 'c.rodsOnBottom': true, 'c.rodInsertion': 1 })).toEqual({ texts: ['Rods on bottom', ''], words: 'Rods on bottom', treatment: 'normal' })
+    // Without a reading it says only that it does not know.
+    expect(read({})).toEqual({ texts: ['?', ''], words: '', treatment: 'normal' })
+  })
+
+  test('an on/off state reads in the words its equipment declares, a key value of a device in the digits its instrument declares', () => {
+    // A generator running on its output breaker, ON LINE and OFF LINE; its output over a declared 0-1300 MW.
+    const generator: MimicItemBinding = {
+      ...item({ aspect: 'running', state: { path: 'g.breaker' as never, reading: 'true' }, words: { on: 'ON LINE', off: 'OFF LINE' } }),
+      values: [{ path: 'g.mw' as never, unit: 'MW', span: { min: 0, max: 1300 }, range: { min: 0, max: 1300 } }, { path: 'g.unranged' as never, unit: 'MW' }],
+    }
+    const rows = itemRows(generator, { element: 'device', icon: 'generator', aspect: 'running' }, { marker: false, members: [], commands: 'stacked', offSpan: 'end' })
+    expect(rows).toEqual([
+      { kind: 'state', texts: ['ON LINE', 'OFF LINE', '?'], words: { on: 'ON LINE', off: 'OFF LINE' }, required: true },
+      // A value its instrument declares no range for has no row: its width could not be reserved.
+      { kind: 'value', path: 'g.mw', unit: 'MW', required: false, span: { min: 0, max: 1300 }, digits: 4 },
+    ])
+    const at = (values: Record<string, number | boolean>) => rows.map(row => rowText(row, itemLook(generator, sample(values)), sample(values), (value, unit) => `${value} ${unit}`))
+    expect(at({ 'g.breaker': true, 'g.mw': 1162 })).toEqual(['ON LINE', '1162 MW'])
+    expect(itemLook(generator, sample({ 'g.breaker': false })).words).toBe('OFF LINE')
+    expect(at({ 'g.breaker': false })).toEqual(['OFF LINE', '—'])
+    // Without declared words, the aspect's own.
+    expect(itemRows({ ...generator, state: { ...generator.state!, words: undefined } as never }, { element: 'device', icon: 'generator', aspect: 'running' }, { marker: false, members: [], commands: 'stacked', offSpan: 'end' })[0]).toEqual({ kind: 'state', texts: ['RUN', 'STOP', '?'], required: true })
   })
 })

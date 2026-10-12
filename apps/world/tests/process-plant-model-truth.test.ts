@@ -215,15 +215,18 @@ describe('breakers', () => {
     expect(drawing.mimic.items.find(item => item.binding.label === 'EDG A')!.binding.state).toMatchObject({ aspect: 'running', state: { path: 'dieselGeneratorA.running' }, command: 'dieselGeneratorA.startCommand' })
     // The bus reads its voltmeter, in kilovolts.
     expect(rowsOf('Bus A')).toEqual(['6.60 kV'])
-    expect(rowsOf('EDG A')).toEqual(['STOP'])
+    // A diesel writes its load beside its state, in the kW its instrument reads.
+    expect(rowsOf('EDG A')).toEqual(['STOP', '0 kW'])
     plantRun.act('loss-offsite-power')
     plantRun.run(5_000)
     // Started on the dead bus and not yet up to speed: its start command shows beside it.
-    expect(rowsOf('EDG A')).toEqual(['CMD RUN'])
+    expect(rowsOf('EDG A')).toEqual(['CMD RUN', '0 kW'])
     expect(rowsOf('Bus A')).toEqual(['0 kV'])
     plantRun.run(45_000)
     // Running, its load sequence done, the symbol shows it and says RUN, as a pump's does.
-    expect(rowsOf('EDG A')).toEqual(['RUN'])
+    const load = Number(plantRun.read('dieselGeneratorA.outputKw'))
+    expect(load).toBeGreaterThan(1_000)
+    expect(rowsOf('EDG A')).toEqual(['RUN', `${Math.round(load)} kW`])
     expect(rowsOf('Bus A')).toEqual(['6.60 kV'])
   })
 

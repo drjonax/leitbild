@@ -3,7 +3,7 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { drawnLook, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, shutdownDemanded, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
@@ -97,10 +97,15 @@
   const format = (value: number, unit: string): string => formatQuantity(value, unit)
   const flapHeight = openBridgeDevice.flapHeight
 
-  // Device rows as OpenBridge readout rows: integers with units (a valve's opening) and state words.
+  // Device rows as OpenBridge readout rows: integers with units (a valve's opening, a generator's MW) and state words.
   const deviceRows = (item: MimicDrawnItem, look: ItemLook): OpenBridgeMimic.DeviceRows['rows'] => item.rows.flatMap((row): OpenBridgeMimic.DeviceRows['rows'] => {
     if (row.kind === 'position' && look.state.kind === 'position' && look.state.fraction >= 0.05 && look.state.fraction <= 0.95) {
       return [{ type: 'value' as const, value: Math.round(look.state.fraction * 100), unit: '%' }]
+    }
+    // A key value reads as a whole number within its instrument's span; at an end of it, or without a reading, in words (rowText).
+    const reading = row.kind === 'value' ? valueRowReading(row, index) : null
+    if (row.kind === 'value' && reading !== null && reading.end === null && !reading.wider) {
+      return [{ type: 'value' as const, value: Math.round(displayValue(reading.value, row.unit)), unit: unitLabel(row.unit) }]
     }
     const text = rowText(row, look, index, format)
     // Every state word reads at one weight, RUN as STOP, OPEN as SHUT, LIVE as DEAD (HMI review of run 23: RUN was the faintest
@@ -272,7 +277,7 @@
                 <span class={`flap-line ${alert.status}`} style={`left:${item.frame.x}px;top:${item.frame.y + item.frame.height - (below - at) * flapHeight}px;width:${item.frame.width}px;height:${flapHeight}px;padding-left:${openBridgeDevice.flapLabelInset}px`}>{flap.parts[part]}</span>
               {/if}
             {/each}
-          {:else if itemTreatment(look, alert !== null) === 'abnormal'}
+          {:else if itemTreatment(look, alert !== null, shutdownDemanded(item.rows, index)) === 'abnormal'}
             <!-- Not following its command: abnormal, outlined in OpenBridge's enhanced colour, never an alarm colour. -->
             <div class="abnormal" style={abnormalBox(item)}></div>
           {/if}
@@ -283,7 +288,9 @@
               <div class="box" style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vessel={{ ob, item, look }}></div>
             {/if}
             {#if item.text !== null}
-              <div class="stack" class:below={item.text.side === 'bottom'} style={`left:${item.text.x}px;top:${item.text.y}px;width:${item.text.width}px`}>
+              <!-- A stack over its symbol stands on it: its tag on the body, its rows above, centred (a hub's downstream end). -->
+              {@const above = item.text.side === 'top' && item.presentation.element !== 'bar'}
+              <div class="stack" class:below={item.text.side === 'bottom'} class:above style={`left:${item.text.x}px;top:${item.text.y}px;width:${item.text.width}px${above ? `;height:${item.text.height}px` : ''}`}>
                 <span class="tag">{item.binding.label}</span>
                 {#each item.rows as row, at (at)}
                   {#if row.kind === 'alarm'}
@@ -292,6 +299,9 @@
                   {:else if row.kind === 'value'}
                     {@const reading = valueRowReading(row, index)}
                     <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
+                  {:else if row.kind === 'shutdown'}
+                    <!-- Whether it has stopped, written like its tag; a trip it does not follow in the command's colour. -->
+                    <span class="shutdown-row" class:emphasis={row.part === 'command'}>{rowText(row, look, index, format)}</span>
                   {:else}
                     {@const text = rowText(row, look, index, format)}
                     {#if text !== ''}<span class="state-row" class:emphasis={row.kind === 'mismatch'}>{text}</span>{/if}
@@ -354,12 +364,15 @@
   .box { position: absolute; }
   .stack { position: absolute; display: flex; flex-direction: column; align-items: flex-start; }
   .stack.below { align-items: center; }
+  .stack.above { flex-direction: column-reverse; align-items: center; }
   .tag { font: 370 12px/16px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .stub { position: absolute; }
   .value-row { display: inline-flex; align-items: baseline; gap: 4px; height: 20px; }
   .unit { font: 370 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row { font: 400 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row.emphasis { color: var(--element-active-color); }
+  .shutdown-row { min-height: 16px; font: 370 12px/16px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
+  .shutdown-row.emphasis { color: var(--element-active-color); }
   .legend { margin: 0; display: flex; align-items: center; gap: 10px; height: 14px; font: 400 11px/14px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; }
   .key { display: inline-flex; align-items: center; gap: 4px; }
   .targets { position: absolute; inset: 0; pointer-events: none; }

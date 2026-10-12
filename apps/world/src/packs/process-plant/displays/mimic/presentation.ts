@@ -53,7 +53,8 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   reliefTank: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   pressurizer: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   accumulator: { element: 'tank', tank: 'pressurized', aspect: null },
-  reactorCore: { element: 'tank', tank: 'pressurized', aspect: null },
+  // A core's body is the level its kind declares it reads (through the vessel it heats); static where it declares none.
+  reactorCore: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   reactorVessel: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   containmentVolume: { element: 'tank', tank: 'generic', aspect: 'level' },
   steamGenerator: { element: 'heat-exchanger', aspect: 'level' },

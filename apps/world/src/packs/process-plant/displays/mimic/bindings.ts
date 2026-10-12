@@ -40,6 +40,12 @@ export interface MimicStateBinding {
   readonly aspect: StateAspect
   /** The solved signal; absent when the model computes none, so the state reads "not measured". */
   readonly state?: { readonly path: VariablePath; readonly reading: AspectReading; readonly noFlowBelow?: number | null }
+  /**
+   * The words its equipment declares for an on/off state signal, which the
+   * symbol says in place of the aspect's own: a turbine-generator running
+   * on its output breaker reads ON LINE and OFF LINE, not RUN and STOP.
+   */
+  readonly words?: { readonly on: string; readonly off: string }
   readonly command?: VariablePath
   /**
    * What passes the item, judging it where its own state is not solved.
@@ -67,6 +73,21 @@ export interface MimicValueBinding {
   readonly letters?: string
   readonly span?: { readonly min: number; readonly max: number }
   readonly wider?: { readonly path: VariablePath; readonly span: { readonly min: number; readonly max: number } }
+  /** What its instrument declares it reads over: its span, else its hard range (a device sizes its row for it). */
+  readonly range?: { readonly min: number; readonly max: number }
+}
+
+/**
+ * An on/off reading of its own that says the equipment has stopped (a core's
+ * rods on bottom), among the readings its kind declares say so, in the words
+ * its equipment declares for it; and what its protection commands it to stop
+ * with: each command of its own a trip writes, and the value the trip writes.
+ * Such a flag says the equipment stopped while it reads true.
+ */
+export interface MimicShutdownBinding {
+  readonly path: VariablePath
+  readonly words: { readonly on: string; readonly off: string }
+  readonly demands: ReadonlyArray<{ readonly path: VariablePath; readonly value: number | boolean }>
 }
 
 export interface MimicItemBinding {
@@ -76,6 +97,8 @@ export interface MimicItemBinding {
   readonly state: MimicStateBinding | null
   /** The values an operator reads first on it. */
   readonly values: ReadonlyArray<MimicValueBinding>
+  /** What says it has stopped, as its shutdown readings declare it (MimicShutdownBinding). */
+  readonly shutdown: ReadonlyArray<MimicShutdownBinding>
   /** I&C alarm and trip limits on its level, marked on the vessel. */
   readonly limits: ReadonlyArray<{ readonly value: number; readonly kind: 'alarm' | 'trip'; readonly name: string }>
   /**
@@ -267,7 +290,15 @@ export const framingRules = (plant: CompiledProcessPlant): ReadonlyMap<string, R
   return framed
 }
 
-const stateBinding = (aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, heldBack = false): MimicStateBinding | null => {
+/** The words the equipment owning an on/off signal declares for it (metadata.presentation.states), if it declares any. */
+const declaredWords = (graph: CompiledPlantGraph, path: VariablePath): { readonly on: string; readonly off: string } | undefined => {
+  const owner = graph.signalBindingByPath.get(path)?.owner
+  if (owner?.type !== 'component') return undefined
+  const component = graph.components[owner.componentIndex]!
+  return component.metadata?.presentation?.states?.[String(path).slice(String(component.id).length + 1)]
+}
+
+const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, heldBack = false): MimicStateBinding | null => {
   if (aspect === null) return null
   const declared = aspectOf(aspects, aspect)
   if (declared === undefined) return null
@@ -275,9 +306,12 @@ const stateBinding = (aspects: ReadonlyArray<CompiledStateAspect>, aspect: State
   // A flow read as a state (a turbine runs while steam drives it) has the same no-flow band as a pipe.
   const state = declared.state === undefined ? undefined
     : declared.state.reading === 'flow' ? { ...declared.state, noFlowBelow: flow(declared.state.path) } : declared.state
+  // An on/off state reads in the words its equipment declares for it, where it declares them.
+  const words = state === undefined || (state.reading !== 'true' && state.reading !== 'closedWhileTrue') ? undefined : declaredWords(graph, state.path)
   return {
     aspect,
     ...(state === undefined ? {} : { state }),
+    ...(words === undefined ? {} : { words }),
     ...(declared.command === undefined ? {} : { command: declared.command }),
     // A state the model does not solve is judged by what passes the item.
     ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path), ...(heldBack ? { heldBack: true as const } : {}) } }),
@@ -294,6 +328,7 @@ const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, p
   const signal = graph.signalBindingByPath.get(path)!
   const share = signal.unit === 'fraction' || signal.unit === 'percent'
   const span = signal.limits?.instrumentSpan
+  const range = span ?? signal.limits?.hardRange
   // The compiler holds both instruments of a declared wider range to their spans.
   const wider = component.semantics.widerRanges.find(range => range.reading === path && range.while === undefined)?.wider
   const widerSignal = wider === undefined ? undefined : graph.signalBindingByPath.get(wider)
@@ -302,8 +337,34 @@ const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, p
     unit: signal.unit,
     ...(share && path !== drawnState ? { letters: variableLetters(signal) } : {}),
     ...(span === undefined ? {} : { span }),
+    ...(range === undefined ? {} : { range }),
     ...(widerSignal === undefined || !widerSignal.published ? {} : { wider: { path: widerSignal.path, span: widerSignal.limits!.instrumentSpan! } }),
   }
+}
+
+/**
+ * The on/off shutdown readings of a component that its equipment words,
+ * other than the state its symbol draws, each with what its trips command
+ * it: every command of its own a trip rule writes, once per value.
+ */
+const shutdownBindings = (plant: CompiledProcessPlant, component: CompiledComponent, drawnState: VariablePath | undefined): ReadonlyArray<MimicShutdownBinding> => {
+  const graph = plant.graph
+  const flags = component.semantics.shutdownReadings.filter(path => path !== drawnState && graph.signalBindingByPath.get(path)?.quantity === 'boolean')
+  if (flags.length === 0) return []
+  const demands = new Map<string, { readonly path: VariablePath; readonly value: number | boolean }>()
+  for (const rule of plant.automation.rules) {
+    if (!rule.enabled || effectKind(rule) !== 'trip') continue
+    for (const effect of rule.effects) {
+      if (effect.type !== 'writeSignal') continue
+      const binding = resolveProcessPlantSignalBinding(graph, effect.signal)
+      if (binding.owner.type !== 'component' || binding.owner.componentIndex !== component.index || binding.actuation !== 'command') continue
+      demands.set(`${binding.path}=${effect.value}`, { path: binding.path, value: effect.value })
+    }
+  }
+  return flags.flatMap(path => {
+    const words = declaredWords(graph, path)
+    return words === undefined ? [] : [{ path, words, demands: [...demands.values()] }]
+  })
 }
 
 export const itemBinding = (
@@ -319,13 +380,14 @@ export const itemBinding = (
   const ratings = component.semantics.ratedOutflow.filter(rating => device === undefined || rating.port === device.port).map(rating => rating.flowKgPerS)
   const rated = ratings.length === 0 ? null : Math.max(...ratings)
   const heldBack = device !== undefined && component.semantics.embedded.some(other => other.id !== device.id && other.port === device.port && other.function === 'nonReturn')
-  const state = stateBinding(device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, heldBack)
+  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, heldBack)
   const drawnState = state?.state?.path
   return {
     item,
     label: device === undefined ? labelOf(component) : deviceLabel(component, device),
     state,
     values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path, drawnState)) : [],
+    shutdown: device === undefined ? shutdownBindings(plant, component, drawnState) : [],
     limits: levelLimits(plant, state),
     frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),
   }

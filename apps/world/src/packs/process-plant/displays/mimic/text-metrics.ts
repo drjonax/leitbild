@@ -76,6 +76,6 @@ export const readoutBlockWidth = (integerDigits: number, fractionDigits: number)
 export const smallStateRowWidth = (text: string): number =>
   Math.ceil(textWidth('stateRow', text) * openBridgeDevice.smallTextScale) + openBridgeDevice.stateRowPadding
 
-/** A value row of a small readout stack: up to three digits at 11.5 px, then its unit. */
-export const smallValueRowWidth = (unit: string): number =>
-  Math.ceil(textWidth('stateRow', '000') * openBridgeDevice.smallTextScale) + (unit === '' ? 0 : textWidth('unit', unit)) + openBridgeDevice.valueRowPadding
+/** A value row of a small readout stack: up to three digits (or as many as it declares) at 11.5 px, then its unit. */
+export const smallValueRowWidth = (unit: string, integerDigits = 3): number =>
+  Math.ceil(textWidth('stateRow', '0'.repeat(integerDigits)) * openBridgeDevice.smallTextScale) + (unit === '' ? 0 : textWidth('unit', unit)) + openBridgeDevice.valueRowPadding
