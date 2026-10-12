@@ -169,7 +169,7 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
     emit(islandObservation(island, `lfdd-${stage.id}-operated`, settings.lfddStageOperated, {
       raising: true,
       title: `LFDD ${stage.id} operated`,
-      message: `LFDD ${stage.id} (${stage.thresholdHz} Hz) disconnected feeders in the island at ${station}; restore-lfdd-stage reconnects them`,
+      message: `LFDD ${stage.id} (${stage.thresholdHz} Hz) disconnected feeders in the island at ${station}; restoring the stage reconnects them`,
       value: null,
       limit: stage.thresholdHz,
       unit: 'Hz',
@@ -210,7 +210,7 @@ const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettin
         islandId,
         raising: true,
           title: 'Branch tripped',
-        message: `${definition.label} tripped by its ${trip.element} protection at ${mw(Math.abs(trip.flowMw))} (${trip.loadingPercent.toFixed(0)} % of its derated rating); reset-branch-protection before closing it`,
+        message: `${definition.label} tripped by its ${trip.element} protection at ${mw(Math.abs(trip.flowMw))} (${trip.loadingPercent.toFixed(0)} % of its derated rating); reset its protection before closing it`,
         value: trip.loadingPercent,
         limit: null,
         unit: '%',
@@ -263,8 +263,8 @@ const generatorObservations = (grid: GridRuntimeInstance, settings: GridAlarmSet
       raising: true,
       title: 'Generator tripped',
       message: trip === undefined || trip.element === 'command'
-        ? `${definition.label} is tripped by command; reset-generator-trip returns it to offline`
-        : `${definition.label} tripped by ${trip.element} protection (${trip.elementId}); reset-generator-trip returns it to offline`,
+        ? `${definition.label} is tripped by command; reset the trip, then start it again`
+        : `${definition.label} tripped by ${trip.element} protection (${trip.elementId}); reset the trip, then start it again`,
       value: null,
       limit: null,
       unit: null,
@@ -287,7 +287,7 @@ const hvdcObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings
       islandId: grid.busStates.get(link.fromBusId)!.islandId,
       raising: true,
       title: 'HVDC link tripped',
-      message: `${link.label} ${hvdcTripReason(trip)}; reset-hvdc-trip, then deblock-hvdc`,
+      message: `${link.label} ${hvdcTripReason(trip)}; reset the trip, then deblock the link`,
       value: Math.abs(trip.transferMw),
       limit: null,
       unit: 'MW',
@@ -312,7 +312,7 @@ const externalObservations = (grid: GridRuntimeInstance, settings: GridAlarmSett
       islandId: state.islandId,
       raising: true,
       title: 'External exchange voided by separation',
-      message: `${system.label} was separated from every Norwegian island, which voided its scheduled exchange: ${mw(scheduledExportMw)} scheduled (target ${mw(0 - state.targetImportMw)}) against the Operating Point's ${mw(operatingPointExportMw)}, positive exports from Norway; once a tie is closed, set-external-exchange restores it`,
+      message: `${system.label} was separated from every Norwegian island, which voided its scheduled exchange: ${mw(scheduledExportMw)} scheduled (target ${mw(0 - state.targetImportMw)}) against the Operating Point's ${mw(operatingPointExportMw)}, positive exports from Norway; once a tie is closed, setting the exchange again restores it`,
       value: Math.abs(scheduledExportMw - operatingPointExportMw),
       limit: null,
       unit: 'MW',

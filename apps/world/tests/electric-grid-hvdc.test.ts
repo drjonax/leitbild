@@ -303,7 +303,7 @@ describe('HVDC converter trips', () => {
     expect(tripSignals(run.signals)).toEqual([{ assetId: nordlinkId, element: 'command', elapsedSeconds: 10 }])
     const alarmId = gridAlarmId('hvdc', nordlinkId, 'tripped')
     expect(run.grid.alarms.records.get(alarmId)).toMatchObject({ active: true, priority: 2, scope: 'hvdc', assetId: nordlinkId, value: 800, unit: 'MW' })
-    expect(run.grid.alarms.records.get(alarmId)!.message).toBe('Test NordLink was tripped by command while sending 800 MW; reset-hvdc-trip, then deblock-hvdc')
+    expect(run.grid.alarms.records.get(alarmId)!.message).toBe('Test NordLink was tripped by command while sending 800 MW; reset the trip, then deblock the link')
     expect(reasonOf(run.command(gridDeblockHvdcCommandKind, { assetId: nordlinkId }))).toContain('reset it with reset-hvdc-trip before deblocking it')
     expect(reasonOf(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 100 }))).toContain('reset-hvdc-trip, then deblock-hvdc')
     expect(reasonOf(run.command(gridBlockHvdcCommandKind, { assetId: nordlinkId }))).toContain('already stopped')
