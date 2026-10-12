@@ -20,6 +20,7 @@ import { showToast } from '../toast.ts'
 import { $messageThinking } from '../stores.ts'
 import { decorateProductSourceReferences } from '../modals/source-modal.ts'
 import { mountMessageComparisons } from '../message-comparisons.ts'
+import { mountProposalCards } from '../proposal-card/index.ts'
 import { applyDisplayReply, displayReplyCaptionElement, displayRequestRow, isDisplayReply, offersDisplayRequest } from '../display-request.ts'
 
 // Clipboard writes use the current Async Clipboard API. Returns false when
@@ -381,6 +382,9 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     // Offer to show this answer as a live display. The row stays empty unless
     // the author holds the display Skill.
     if (sender && offersDisplayRequest(msg, sender)) div.appendChild(displayRequestRow(msg, sender.name))
+
+    // An answer whose turn proposed a plant operation shows World's status for it (proposal-card/index.ts).
+    mountProposalCards(div, msg)
 
     // If a script is active in this room, append the whisper attached to
     // THIS specific message (looked up by messageId in stepLogs). No-op
