@@ -92,7 +92,8 @@
       <span class="value-cell">
         {#if typeof value === 'boolean'}
           <!-- A state in the words the model gives its two states, as the detail writes it. -->
-          <span class="value state">{value ? pen.states?.on : pen.states?.off}</span>
+          <!-- A state's words wrap to a second line rather than break mid-word; the title holds them whole. -->
+          <span class="value state" title={value ? pen.states?.on : pen.states?.off}>{value ? pen.states?.on : pen.states?.off}</span>
         {:else if typeof value === 'number'}
           <span class="value" class:low={reading?.offScale !== null}>{valueText(pen, value)}</span>
         {:else}
@@ -135,10 +136,10 @@
   .name { font-size: 11.5px; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* A tag is whole or not shown at all: never an ellipsis through it. */
   .name.tag { text-overflow: clip; }
-  .value-cell { display: flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; }
+  .value-cell { display: flex; align-items: center; gap: 4px; min-width: 0; max-height: 28px; white-space: nowrap; overflow: hidden; }
   /* The current value carries the row: bold, as the trend's end dot marks it on the line. */
   .value { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--element-active-color); }
-  .value.state { font-size: 12px; }
+  .value.state { font-size: 11px; line-height: 12px; white-space: normal; overflow-wrap: normal; word-break: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
   .value.none { font-weight: 400; color: var(--element-neutral-color); }
   /* At an end of its span a reading says only where the quantity is, in low-integrity style. */
   .value.low { color: var(--element-neutral-color); font-style: italic; font-weight: 400; }
