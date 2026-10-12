@@ -60,7 +60,7 @@ export type BoardList = 'work' | 'units'
 /**
  * What a map click names for the selected unit, as the World surface hands
  * it over: an object, or a point on open ground. The Board decides whether an
- * object is a task, a receiving site or no target at all.
+ * object is a task, a site, a track or no target at all.
  */
 export type MapTarget = PackMapTarget
 

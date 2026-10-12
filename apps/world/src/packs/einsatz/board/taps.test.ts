@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
-import { civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, pointAt, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
+import { borderWith, civilConfig, civilKinds, civilWith, createWall, identifiedTrack, onObject, openScreen, pastGuardMs, pointAt, roleScreen, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
+import { borderDefinitions, commanderOf } from '../fixtures/border-harness.ts'
+import { at as northEast, blue, red, types as combatTypes } from '../fixtures/combat-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { refusalCode } from '../refusal.ts'
 import { boardWords } from './text.ts'
@@ -179,4 +181,33 @@ describe('Board verbs and Undo say only what they do', () => {
       expect([run.unit('u1').orders, run.unit('u1').paused, run.unit('u1').atBase]).toEqual([[], true, true])
     })
   })
+})
+
+describe('Board engage taps', () => {
+  const spot = (north: number, east = 0): [number, number] => [...northEast(north, east).coordinates] as [number, number]
+
+  test('an armed asset tapped onto an identified enemy track engages it; an unarmed one is refused in the engine\'s words and stays highlighted', async () => {
+    const items = [
+      unitAt('bt', 'BT', combatTypes.blueGun, spot(0), { side: blue }), unitAt('br', 'BR', combatTypes.blueScout, spot(0, 100), { side: blue }),
+      unitAt('rr', 'RR', combatTypes.redScout, spot(400), { side: red }),
+    ]
+    const run = await openRun({ definition: borderWith(items) })
+    try {
+      const commander = commanderOf(borderDefinitions.scripted, blue, 'effector').roles[0]!.id
+      const screen = await openScreen(run, createWall(), { actor: roleScreen(run, commander) })
+      const track = await identifiedTrack(run, blue, [screen])
+      await screen.mapTap('br')
+      await screen.mapTap(track.id)
+      expect([screen.view().feedback?.text, screen.view().selected, screen.calls]).toEqual(['BR cannot fire', { kind: 'unit', id: 'br' }, []])
+      expect(screen.preview('br', onObject(track.id))).toEqual({ text: 'BR cannot fire', refused: true })
+      await screen.mapTap('bt')
+      expect(screen.preview('bt', onObject(track.id))).toEqual({ text: `${boardWords.engage} BT → ${track.label}`, refused: false })
+      await screen.mapTap(track.id)
+      expect(screen.calls.map(call => [call.capabilityId, call.input, call.result.ok])).toEqual([[ids.send, { units: ['bt'], to: { trackId: track.id } }, true]])
+      expect([screen.view().feedback?.text, screen.view().selected]).toEqual([`✓ ${boardWords.engage} BT → ${track.label}`, null])
+      expect(run.unit('bt').orders.map(step => [step.kind, step.state, step.target])).toEqual([['engage', 'active', { trackId: track.id }]])
+    } finally {
+      await run.close()
+    }
+  }, 120_000)
 })

@@ -43,7 +43,7 @@ export const detectionHover = 'Abstract detection: range × signature × posture
 export const contactIcon = 'circle-question-mark'
 
 /** The side whose picture holds a track: its single audience side; the engine writes no other track. */
-const observingSide = (track: BoardTrack): string => {
+export const observingSide = (track: BoardTrack): string => {
   if (!Array.isArray(track.audience) || track.audience.length !== 1) throw new Error(`Track ${track.label} (${track.id}) names no single observing side`)
   return track.audience[0]!
 }

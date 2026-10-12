@@ -97,11 +97,18 @@ export const sendToTask = (rules: BoardRules, task: BoardTask, units: ReadonlyAr
   }
 }
 
-/** Where a send or a queued step takes a unit, as `world.einsatz.unit.send` and `unit.queue` name it: a task, a site (a unit that does not move) or a point (a move). */
-export type SendTarget = { readonly taskId: string } | { readonly siteId: string } | { readonly point: GeoJsonPoint }
+/**
+ * Where a send or a queued step takes a unit, as `world.einsatz.unit.send`
+ * and `unit.queue` name it: a task, a site (a unit that does not move), a
+ * point (a move), or one of its side's tracks (an engagement).
+ */
+export type SendTarget = { readonly taskId: string } | { readonly siteId: string } | { readonly point: GeoJsonPoint } | { readonly trackId: string }
 
 const targetLabel = (records: BoardRecords, target: SendTarget): string => {
-  const label = 'taskId' in target ? records.tasks.get(target.taskId)?.label : 'siteId' in target ? records.units.get(target.siteId)?.label : 'the map point'
+  const label = 'taskId' in target ? records.tasks.get(target.taskId)?.label
+    : 'siteId' in target ? records.units.get(target.siteId)?.label
+    : 'trackId' in target ? records.tracks.get(target.trackId)?.label
+    : 'the map point'
   if (label === undefined) throw new Error('A map target outside the picture')
   return label
 }
@@ -128,10 +135,10 @@ export const stepText = (records: BoardRecords, step: Step): string => {
   }
 }
 
-/** A unit sent by a map click: to a task, a site or a point. A committed unit is released from its task in the same send. */
+/** A unit sent by a map click: to a task, a site, a point or a track it engages. A committed unit is released from its task in the same send. */
 export const sendFromMap = (rules: BoardRules, records: BoardRecords, unit: BoardUnit, target: SendTarget): CallDraft => {
   const divert = unit.taskId === undefined ? undefined : [{ unitId: unit.id, fromTaskId: unit.taskId }]
-  const verb = 'taskId' in target ? (divert === undefined ? word(rules, 'send') : 'Divert') : word(rules, 'move')
+  const verb = 'taskId' in target ? (divert === undefined ? word(rules, 'send') : 'Divert') : 'trackId' in target ? boardWords.engage : word(rules, 'move')
   const text = `${verb} ${unit.label} → ${targetLabel(records, target)}`
   return {
     capabilityId: boardCommandIds.send,

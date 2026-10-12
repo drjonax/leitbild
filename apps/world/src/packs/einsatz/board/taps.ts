@@ -2,8 +2,9 @@ import type { Recommendation } from '../recommendation-schema.ts'
 import { queueCall, releaseText, sendFromMap, stepText, type CallDraft, type SendTarget } from './calls.ts'
 import { candidateIn } from './recommendations.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
+import { observingSide } from './contacts.ts'
 import { hasLoad, holdsWork, notOrderedText, type BoardRules, type DeclaredRole } from './rules.ts'
-import { classCode, etaText, loadText, namedOnce, unitWord } from './text.ts'
+import { classCode, etaText, loadText, namedOnce, unitWord, word } from './text.ts'
 import type { MapTarget, TargetPreview } from './types.ts'
 
 /**
@@ -44,7 +45,14 @@ export interface TapContext {
   readonly pending: ReadonlyArray<CallDraft>
 }
 
-/** What a target names for the unit: a task, a receiving site or a ground point; otherwise why it is no target. */
+/**
+ * What a target names for the unit: a task, a site, a ground point, or an
+ * enemy track it engages if armed; otherwise why it is no target. A track
+ * the Board can tell is no target (the asset cannot fire, the track is
+ * another side's, destroyed or a contact report only) is refused in the
+ * engine's words; whether it is hostile and of a type the asset engages is
+ * the engine's to judge, since the side knows only what it identified.
+ */
 export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarget): MapOrder => {
   const { rules, records: shown } = context
   const refused = (text: string): MapOrder => ({ kind: 'refused', text })
@@ -65,6 +73,14 @@ export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarg
     if (unit.taskId === task.id) return refused(`${unit.label} already ${unitWord(rules, unit, unit.phase)} to ${task.label}`)
     if (context.pending.some(call => call.taskId === task.id && call.unitIds.includes(unit.id))) return refused(`${unit.label} already ${unitWord(rules, unit, 'en-route')} to ${task.label}`)
     return order({ taskId: task.id })
+  }
+  const track = shown.tracks.get(target.objectId)
+  if (track !== undefined) {
+    if (rules.typeOf(unit).components.effector === undefined) return refused(`${unit.label} cannot fire`)
+    if (observingSide(track) !== unit.side) return refused(`${unit.label} cannot engage another side's track`)
+    if (track.tier === 'destroyed') return refused(`${track.label} is ${word(rules, 'destroyed').toLowerCase()}`)
+    if (track.tier === 'contact') return refused(`${track.label} is a ${word(rules, 'contact').toLowerCase()} report only`)
+    return order({ trackId: track.id })
   }
   const other = shown.units.get(target.objectId)
   if (other === undefined) return { kind: 'elsewhere', text: `Not a target for ${unit.label}` }
@@ -105,7 +121,7 @@ export const taskRefusal = (rules: BoardRules, unit: BoardUnit, task: BoardTask,
   return ineligible === undefined ? null : ineligible.reasons.map(reason => namedOnce(ineligible.label, reason)).join(' · ')
 }
 
-/** Why an order is not sent before it is: a call's refusal (`taskRefusal`); a site or a point leaves it to the engine. */
+/** Why an order is not sent before it is: a call's refusal (`taskRefusal`); a site, a point or a track leaves it to the engine. */
 export const orderRefusal = (rules: BoardRules, order: Extract<MapOrder, { kind: 'order' }>, answer: (taskId: string) => Recommendation | undefined, task: (taskId: string) => BoardTask): string | null =>
   'taskId' in order.target ? taskRefusal(rules, order.unit, task(order.target.taskId), answer(order.target.taskId)) : null
 

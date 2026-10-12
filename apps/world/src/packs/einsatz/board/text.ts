@@ -44,6 +44,7 @@ export const boardWords = {
   doNow: 'Do now',
   addToEnd: 'Add to end',
   addTarget: 'Add a target',
+  engage: 'Engage',
   removeStep: 'Remove',
   resume: 'Resume',
   clear: 'Clear',

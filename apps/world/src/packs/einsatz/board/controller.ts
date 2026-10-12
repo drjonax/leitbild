@@ -26,11 +26,11 @@ import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommend
  *
  * Touch first (A9): a tap on an own asset highlights it, a second tap clears
  * it, a tap on another switches it. With an asset highlighted, a tap on a
- * target sends it: a call (map or Calls row), a receiving site, or open
- * ground, which first asks "Move here" at the point. A free asset goes at
- * once; a busy one (a task, load or job-chain steps) asks "Do now" or "Add
- * to end". An asset row's + makes the next target tap join the end of its
- * job chain; the highlighted row's × removes a step (the active step of a
+ * target sends it: a call (map or Calls row), a site, an enemy track (an
+ * armed asset engages it), or open ground, which first asks "Move here" at
+ * the point. A free asset goes at once; a busy one (a task, load or
+ * job-chain steps) asks "Do now" or "Add to end". An asset row's + makes
+ * the next target tap join the end of its job chain; the highlighted row's × removes a step (the active step of a
  * committed unit asks first, since it releases the call), and its verbs
  * stop, resume, clear or recall it. A send or an added step can be undone
  * for 5 s, by removing the step it created, where that gives the unit back

@@ -8,6 +8,7 @@ import type { BoardEffect, BoardEventBody, BoardKey, BoardView, CallResult, Clic
 import { configurationOutputSchema, type EinsatzConfig, type TaskTemplate, type UnitType } from '../config-schema.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { openModeViewer, type PictureViewer } from '../picture.ts'
+import border from './halden-border.scenario.json'
 import civil from './halden-civil.scenario.json'
 import civilRoles from './halden-civil-roles.scenario.json'
 import type { PackTargetContext } from '../../../core/packs/protocol.ts'
@@ -277,6 +278,28 @@ export const civilRolesWith = (items: ReadonlyArray<Record<string, unknown>>): u
   packs: [{ ...civilRoles.packs[0]!, items }],
   timeline: undefined,
 })
+
+/** halden-border with other items and no timeline: its roles, sides and configuration over a scene a test builds. */
+export const borderWith = (items: ReadonlyArray<Record<string, unknown>>): unknown => ({
+  ...border,
+  packs: [{ ...border.packs[0]!, items }],
+  timeline: undefined,
+})
+
+/**
+ * Runs the Run in 2 s steps, for up to a minute, until the side holds an
+ * identified track, letting the screens see each step; returns the track's
+ * id and the label its side knows it by.
+ */
+export const identifiedTrack = async (run: OpenRun, side: string, screens: ReadonlyArray<Screen> = []): Promise<{ readonly id: string; readonly label: string }> => {
+  const find = () => run.run.snapshot().objects.find(object => object.packId === einsatzPackId
+    && (object.packData as { readonly type?: unknown }).type === 'track' && (object.packData as { readonly tier?: unknown }).tier === 'identified'
+    && Array.isArray(object.audience) && object.audience.includes(side))
+  for (let step = 0; step < 30 && find() === undefined; step++) await runFor(run, 2_000, screens)
+  const track = find()
+  if (track === undefined) throw new Error(`${side} identified no unit in a minute`)
+  return { id: track.id, label: track.label }
+}
 
 /** A screen of a role Run holding these roles, as core resolves its connection. */
 export const roleScreen = (run: OpenRun, ...roleIds: ReadonlyArray<string>): Actor => {

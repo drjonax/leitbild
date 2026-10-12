@@ -2,14 +2,17 @@ import { describe, expect, test } from 'bun:test'
 import { scenarioRoleSchema } from '../../../core/model/index.ts'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
-import { civilConfig, civilKinds, civilRolesWith, civilWith, createWall, openScreen, pastGuardMs, pointAt, roleScreen, runFor, setupActor, taskAt, unitAt, type Screen } from '../fixtures/board-harness.ts'
+import { borderWith, civilConfig, civilKinds, civilRolesWith, civilWith, createWall, identifiedTrack, openScreen, pastGuardMs, pointAt, roleScreen, runFor, setupActor, taskAt, unitAt, type Screen } from '../fixtures/board-harness.ts'
+import { borderDefinitions, commanderOf } from '../fixtures/border-harness.ts'
+import { at as northEast, blue, red, types as combatTypes } from '../fixtures/combat-harness.ts'
 import roles from '../fixtures/halden-civil-roles.scenario.json'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { boardWords } from './text.ts'
 
 /**
  * The dispatcher's tap budgets (A9: dispatch 2, a job-chain step added 2,
- * removed 2, stop 2, a late top-priority divert 3; a committed asset's
+ * removed 2, stop 2, engaging an enemy track 2, a late top-priority divert
+ * 3; a committed asset's
  * active step, whose removal releases its call, and a call-first send of an
  * asset holding steps ask first, 3), counted against the real runtime on a
  * running clock. Each flow runs in both tap modalities: taps on map objects,
@@ -378,6 +381,23 @@ describe('Board tap budgets', () => {
       expect(run.unit('u1').lastAction?.by).toBe(roles.roles.find(role => role.id === loadRole)!.label)
     })
   })
+
+  test('engage an enemy track: 2 taps, the armed asset then the track on the map (sided Run, the commander of the side\'s armed units)', async () => {
+    const spot = (north: number): [number, number] => [...northEast(north).coordinates] as [number, number]
+    const run = await openRun({ definition: borderWith([unitAt('bt', 'BT', combatTypes.blueGun, spot(0), { side: blue }), unitAt('rr', 'RR', combatTypes.redScout, spot(400), { side: red })]) })
+    try {
+      const commander = commanderOf(borderDefinitions.scripted, blue, 'effector').roles[0]!.id
+      const screen = await openScreen(run, createWall(), { actor: roleScreen(run, commander) })
+      const track = await identifiedTrack(run, blue, [screen])
+      expect(await counted(screen, async () => {
+        await screen.mapTap('bt')
+        await screen.mapTap(track.id)
+      })).toBe(2)
+      expect(sentLast(screen)).toEqual({ units: ['bt'], to: { trackId: track.id } })
+    } finally {
+      await run.close()
+    }
+  }, 120_000)
 
   test('a recall of a free unit on a point move: 2 taps, and it returns', async () => {
     await withSeat(open, [unitAt('u1', 'U1', carrier, at(0))], async (run, screen) => {
