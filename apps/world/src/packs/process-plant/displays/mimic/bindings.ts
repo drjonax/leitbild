@@ -341,14 +341,24 @@ const declaredWords = (graph: CompiledPlantGraph, path: VariablePath): { readonl
   return component.metadata?.presentation?.states?.[String(path).slice(String(component.id).length + 1)]
 }
 
-const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, twoState = false): MimicStateBinding | null => {
+/**
+ * A valve's position is drawn only from a signal the Plant publishes: one it
+ * does not (the steam generators' atmospheric relief valves, an accumulator's
+ * check valve) is not measured, and the valve reads POS ? and what passes it
+ * where that is published, never SHUT or OPEN from the model's own state
+ * (HMI review of run 26c: the SG details drew ARV "SHUT" with no data).
+ */
+const published = (graph: CompiledPlantGraph, path: VariablePath): boolean => graph.signalBindingByPath.get(path)?.published === true
+
+const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, twoState = false, valve = false): MimicStateBinding | null => {
   if (aspect === null) return null
   const declared = aspectOf(aspects, aspect)
   if (declared === undefined) return null
   const throughput = aspectOf(aspects, 'throughput')?.state
+  const drawn = declared.state === undefined || (valve && !published(graph, declared.state.path)) ? undefined : declared.state
   // A flow read as a state (a turbine runs while steam drives it) has the same no-flow band as a pipe.
-  const state = declared.state === undefined ? undefined
-    : declared.state.reading === 'flow' ? { ...declared.state, noFlowBelow: flow(declared.state.path) } : declared.state
+  const state = drawn === undefined ? undefined
+    : drawn.reading === 'flow' ? { ...drawn, noFlowBelow: flow(drawn.path) } : drawn
   // An on/off state reads in the words its equipment declares for it, where it declares them.
   const words = state === undefined || (state.reading !== 'true' && state.reading !== 'closedWhileTrue') ? undefined : declaredWords(graph, state.path)
   return {
@@ -358,8 +368,8 @@ const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<Compiled
     ...(declared.command === undefined ? {} : { command: declared.command }),
     ...(declared.travel === undefined ? {} : { travel: declared.travel }),
     ...(twoState && aspect === 'position' ? { twoState: true as const } : {}),
-    // A state the model does not solve is judged by what passes the item.
-    ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path) } }),
+    // A state the model does not solve, or a valve's position the Plant does not publish, is judged by what passes the item.
+    ...(state !== undefined || throughput === undefined || (valve && !published(graph, throughput.path)) ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path) } }),
   }
 }
 
@@ -457,7 +467,7 @@ export const itemBinding = (
   const rated = ratings.length === 0 ? null : Math.max(...ratings)
   const equipmentFunction = device?.function ?? component.semantics.function
   const twoState = equipmentFunction === 'isolating' || equipmentFunction === 'relieving'
-  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, twoState)
+  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, twoState, equipmentFunction !== undefined)
   const drawnState = state?.state?.path
   return {
     item,
