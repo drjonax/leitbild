@@ -74,7 +74,7 @@ describe('turbine-generator signals', () => {
     expect(String(binding('GRID-HZ').path)).toBe('offsiteGrid.frequencyHz')
     expect(binding('GRID-HZ').limits?.normalRange).toEqual({ min: 49, max: 51 })
     expect(binding('GRID-HZ').limits?.hardRange).toEqual({ min: 0, max: 70 })
-    expect(componentOf('offsiteGrid').semantics.meaningfulWhile).toEqual([{ flag: 'offsiteGrid.energized', variables: ['offsiteGrid.frequencyHz'] }] as never)
+    expect(componentOf('offsiteGrid').semantics.meaningfulWhile).toEqual([{ flag: 'offsiteGrid.energized', variables: ['offsiteGrid.frequencyHz', 'offsiteGrid.voltageFraction', 'offsiteGrid.supplyVoltageFraction'] }] as never)
     const plantRun = started()
     plantRun.run(5)
     expect(plantRun.silenced().has('offsiteGrid.frequencyHz' as VariablePath)).toBe(false)
@@ -112,7 +112,7 @@ describe('turbine-generator signals', () => {
   })
 
   test('declare the generator\'s span, its shutdown readings, and the values only the simulator computes', () => {
-    expect(binding('GEN-MW').limits?.instrumentSpan).toEqual({ min: 0, max: 1_300 })
+    expect(binding('GEN-MW').limits?.instrumentSpan).toEqual({ min: -100, max: 1_300 })
     expect(componentOf('turbine').semantics.shutdownReadings).toEqual(['turbine.electricMw', 'turbine.outputBreakerClosed'] as never)
     const simulated = [
       'turbine.exhaustTemperatureC',
