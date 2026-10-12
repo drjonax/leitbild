@@ -198,6 +198,11 @@ describe('electrical Pack connection', () => {
       expect(projectionAfter.frequencyHz!).toBeLessThan(50)
       expect(projectionAfter.frequencyHz!).toBeGreaterThan(49)
       expect(projectionAfter.totalGenerationMw).toBeLessThan(projectionBefore.totalGenerationMw - 500)
+      // The Grid advances on the Run's simulation clock only: a connected Plant's committed port
+      // update, whatever time its envelope carries, never moves it to the wall clock's date and hour.
+      const simulationSecondsAfter = (Date.parse((summaryAfter as { projection: { updatedAt: string } }).projection.updatedAt) - Date.parse(scenario.world.startsAt)) / 1_000
+      expect(simulationSecondsAfter).toBeGreaterThanOrEqual(0)
+      expect(simulationSecondsAfter).toBeLessThan(120)
     } finally {
       unsubscribe()
       await connection.close()

@@ -404,12 +404,14 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
           const definition = compileGridDefinition(gridDefinitionSchema.parse({ id: event.object.id, model: data.model, operatingPoint: data.operatingPoint, automation: data.automation }))
           const current = grids.get(event.object.id)
           if (!current || current.definition.definitionDigest !== definition.definitionDigest) {
+            // The Grid runs on the Run's simulation clock; an event's `at` is when its emitter stamped it.
+            const at = currentSimulationTime()
             const grid = createGridRuntimeInstance({
               definition,
-              at: event.at,
+              at,
               connections: networkConnectionsFor(config.scenario.connections, event.object.id),
             })
-            advanceGrid(grid, 0, event.at)
+            advanceGrid(grid, 0, at)
             grids.set(event.object.id, grid)
             rebuildRecordingPlan()
             structuralChange = true
@@ -420,7 +422,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
         for (const gridId of gridsAffectedBySystemUpdates) affectedGridIds.add(gridId)
         if (systemEvents.length > 0 && gridsAffectedBySystemUpdates.size > 0) latestCause = systemEvents.at(-1)
         balanceReadyStartingDispatch()
-        if (latestCause) emitAffectedGridProjections({ gridIds: affectedGridIds, at: latestCause.at, cause: latestCause.provenance })
+        if (latestCause) emitAffectedGridProjections({ gridIds: affectedGridIds, at: currentSimulationTime(), cause: latestCause.provenance })
         if (structuralChange) await persistence.saveNow()
         else persistence.scheduleSave()
       },
