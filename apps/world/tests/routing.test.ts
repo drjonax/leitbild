@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { geoPointFromLonLat } from '../src/core/model/geo.ts'
 import { createRoutingAdapterFromEnv } from '../src/routing/config.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
-import { createOsrmRoutingAdapter } from '../src/routing/osrm-adapter.ts'
+import { createOsrmRoutingAdapter, maxTableCoordinates } from '../src/routing/osrm-adapter.ts'
 
 const request = { from: geoPointFromLonLat(11.38, 59.12), to: geoPointFromLonLat(11.39, 59.13) }
 const route = {
@@ -150,11 +150,13 @@ const table = {
   code: 'Ok',
   durations: [[120, null], [60, 90]],
   distances: [[1500, null], [700, 1100]],
+  sources: [{ hint: 'a', distance: 12.5, name: '', location: [11.38, 59.12] }, { hint: 'b', distance: 1400, name: '', location: [11.4, 59.1] }],
+  destinations: [{ hint: 'c', distance: 3, name: '', location: [11.39, 59.13] }, { hint: 'd', distance: 0, name: '', location: [11.5, 59.2] }],
 }
 const sources = [geoPointFromLonLat(11.38, 59.12), geoPointFromLonLat(11.4, 59.1)]
 const destinations = [geoPointFromLonLat(11.39, 59.13), geoPointFromLonLat(11.5, 59.2)]
 
-test('an OSRM table asks for every source to every destination and keeps the pairs it found no route for', async () => {
+test('an OSRM table asks for every source to every destination, keeps the pairs it found no route for and says how far each point lies from a road', async () => {
   await withServer(incoming => {
     const url = new URL(incoming.url)
     expect(url.pathname).toBe('/table/v1/driving/11.38,59.12;11.4,59.1;11.39,59.13;11.5,59.2')
@@ -164,8 +166,38 @@ test('an OSRM table asks for every source to every destination and keeps the pai
     return Response.json(table)
   }, async baseUrl => {
     const result = await createOsrmRoutingAdapter({ baseUrl }).table({ sources, destinations })
-    expect(result).toEqual({ durationsSeconds: table.durations, distancesM: table.distances as never, basis: 'routed', provider: 'osrm' })
+    expect(result).toEqual({
+      durationsSeconds: table.durations,
+      distancesM: table.distances as never,
+      sourceSnapsM: [12.5, 1400] as never,
+      destinationSnapsM: [3, 0] as never,
+      basis: 'routed',
+      provider: 'osrm',
+    })
   })
+})
+
+test('an OSRM table with more sources than one request may carry asks in chunks and answers in source order', async () => {
+  const many = Array.from({ length: 2 * maxTableCoordinates + 5 }, (_, index) => geoPointFromLonLat(11 + index / 10_000, 59))
+  const requested: number[] = []
+  await withServer(incoming => {
+    const url = new URL(incoming.url)
+    const coordinates = url.pathname.split('/').at(-1)!.split(';')
+    const chunk = url.searchParams.get('sources')!.split(';').length
+    expect(url.searchParams.get('destinations')).toBe(`${chunk}`)
+    expect(coordinates.length).toBeLessThanOrEqual(maxTableCoordinates)
+    requested.push(chunk)
+    const rows = coordinates.slice(0, chunk).map(coordinate => [Math.round(Number(coordinate.split(',')[0]) * 10_000) - 110_000])
+    return Response.json({ code: 'Ok', durations: rows, distances: rows, sources: rows.map(() => ({ distance: 1 })), destinations: [{ distance: 2 }] })
+  }, async baseUrl => {
+    const result = await createOsrmRoutingAdapter({ baseUrl }).table({ sources: many, destinations: [destinations[0]!] })
+    expect(requested).toEqual([maxTableCoordinates - 1, maxTableCoordinates - 1, 7])
+    expect(result.durationsSeconds).toEqual(many.map((_, index) => [index]))
+    expect(result.sourceSnapsM).toHaveLength(many.length)
+    expect(result.destinationSnapsM).toEqual([2] as never)
+  })
+  await expect(createOsrmRoutingAdapter({ baseUrl: 'http://127.0.0.1:1' }).table({ sources, destinations: many.slice(0, maxTableCoordinates) }))
+    .rejects.toThrow(`An OSRM table takes at most ${maxTableCoordinates - 1} destinations`)
 })
 
 test('an OSRM table that fails, answers other pairs or runs past its deadline is an error, never a straight line', async () => {
@@ -175,6 +207,8 @@ test('an OSRM table that fails, answers other pairs or runs past its deadline is
     () => Response.json({ ...table, durations: [[120, 1]] }),
     () => Response.json({ ...table, distances: [[1500], [700]] }),
     () => Response.json({ ...table, durations: [[-1, 1], [1, 1]] }),
+    () => Response.json({ ...table, sources: [{ distance: 1 }] }),
+    () => Response.json({ ...table, destinations: undefined }),
   ]
   for (const response of cases) await withServer(response, async baseUrl => {
     await expect(createOsrmRoutingAdapter({ baseUrl }).table({ sources, destinations })).rejects.toThrow()
@@ -192,6 +226,7 @@ test('the direct table is straight lines, labelled so, and agrees with direct ro
   const routed = await adapter.route({ from: sources[1]!, to: destinations[0]! })
   expect(result.durationsSeconds[1]![0]).toBeCloseTo(routed.durationSeconds, 9)
   expect(result.distancesM[1]![0]).toBeCloseTo(routed.distanceM, 9)
+  expect([result.sourceSnapsM, result.destinationSnapsM]).toEqual([[0, 0], [0, 0]] as never)
   expect((await adapter.table({ sources: [], destinations })).durationsSeconds).toEqual([])
   await expect(adapter.table({ sources, destinations, signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' })
 })

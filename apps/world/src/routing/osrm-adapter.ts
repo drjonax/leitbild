@@ -22,11 +22,22 @@ const osrmRouteSchema = z.object({
 })
 
 const tableCell = z.number().finite().nonnegative().nullable()
+/** A table waypoint: how far the input coordinate lies from where OSRM snapped it to the road network. */
+const osrmWaypointSchema = z.object({ distance: z.number().finite().nonnegative() })
 const osrmTableSchema = z.object({
   code: z.literal('Ok'),
   durations: z.array(z.array(tableCell)),
   distances: z.array(z.array(tableCell)),
+  sources: z.array(osrmWaypointSchema),
+  destinations: z.array(osrmWaypointSchema),
 })
+
+/**
+ * The most coordinates one table request carries. osrm-routed refuses larger
+ * tables with `TooBig` (its `--max-table-size` defaults to 100, and the
+ * deployed router runs with the default), so sources go in chunks.
+ */
+export const maxTableCoordinates = 100
 
 export interface OsrmRoutingConfig {
   readonly baseUrl: string
@@ -122,20 +133,31 @@ export const createOsrmRoutingAdapter = (config: OsrmRoutingConfig): RoutingAdap
       const destinations = request.destinations.map(point => geoJsonPointSchema.parse(point).coordinates)
       if (sources.length === 0 || destinations.length === 0) {
         const empty = sources.map(() => [])
-        return { durationsSeconds: empty, distancesM: empty, basis: 'routed', provider: 'osrm' }
+        return { durationsSeconds: empty, distancesM: empty, sourceSnapsM: [], destinationSnapsM: [], basis: 'routed', provider: 'osrm' }
       }
-      const coordinates = [...sources, ...destinations].map(formatCoord).join(';')
+      const chunkSize = maxTableCoordinates - destinations.length
+      if (chunkSize < 1) throw new Error(`An OSRM table takes at most ${maxTableCoordinates - 1} destinations; ${destinations.length} were asked for`)
       const indices = (from: number, count: number): string => Array.from({ length: count }, (_, index) => from + index).join(';')
-      const url = `${baseUrl}/table/v1/driving/${coordinates}?sources=${indices(0, sources.length)}&destinations=${indices(sources.length, destinations.length)}&annotations=duration,distance`
-      const parsed = osrmTableSchema.parse(await requestJson(url, request.signal))
-      assertTableShape(parsed.durations, sources.length, destinations.length, 'durations')
-      assertTableShape(parsed.distances, sources.length, destinations.length, 'distances')
-      return {
-        durationsSeconds: parsed.durations,
-        distancesM: parsed.distances.map(row => row.map(cell => cell === null ? null : meters(cell))),
-        basis: 'routed',
-        provider: 'osrm',
+      const durationsSeconds: Array<ReadonlyArray<number | null>> = []
+      const distancesM: Array<ReadonlyArray<Meters | null>> = []
+      const sourceSnapsM: Meters[] = []
+      let destinationSnapsM: ReadonlyArray<Meters> = []
+      for (let first = 0; first < sources.length; first += chunkSize) {
+        const chunk = sources.slice(first, first + chunkSize)
+        const coordinates = [...chunk, ...destinations].map(formatCoord).join(';')
+        const url = `${baseUrl}/table/v1/driving/${coordinates}?sources=${indices(0, chunk.length)}&destinations=${indices(chunk.length, destinations.length)}&annotations=duration,distance`
+        const parsed = osrmTableSchema.parse(await requestJson(url, request.signal))
+        assertTableShape(parsed.durations, chunk.length, destinations.length, 'durations')
+        assertTableShape(parsed.distances, chunk.length, destinations.length, 'distances')
+        if (parsed.sources.length !== chunk.length || parsed.destinations.length !== destinations.length) {
+          throw new Error(`OSRM table waypoints do not match ${chunk.length} sources and ${destinations.length} destinations`)
+        }
+        durationsSeconds.push(...parsed.durations)
+        distancesM.push(...parsed.distances.map(row => row.map(cell => cell === null ? null : meters(cell))))
+        sourceSnapsM.push(...parsed.sources.map(waypoint => meters(waypoint.distance)))
+        destinationSnapsM = parsed.destinations.map(waypoint => meters(waypoint.distance))
       }
+      return { durationsSeconds, distancesM, sourceSnapsM, destinationSnapsM, basis: 'routed', provider: 'osrm' }
     },
   }
 }

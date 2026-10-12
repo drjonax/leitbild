@@ -156,7 +156,7 @@ describe('Einsatz ETAs', () => {
       calls: 0,
       table: async (): Promise<RouteTableResult> => {
         port.calls += 1
-        return { durationsSeconds: [[cell.durationS]], distancesM: [[cell.distanceM === null ? null : meters(cell.distanceM)]], basis: 'routed', provider: 'stub' }
+        return { durationsSeconds: [[cell.durationS]], distancesM: [[cell.distanceM === null ? null : meters(cell.distanceM)]], sourceSnapsM: [meters(0)], destinationSnapsM: [meters(0)], basis: 'routed', provider: 'stub' }
       },
     }
     return port

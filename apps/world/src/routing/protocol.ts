@@ -24,12 +24,17 @@ export interface RouteTableRequest {
 
 /**
  * Rows follow the sources and columns the destinations. A cell is null where
- * the provider found no route between the pair. `basis` says what the numbers
- * are: road routes, or straight lines from a router that models no roads.
+ * the provider found no route between the pair. Each snap is how far a
+ * source or destination lies from the point where the router joined it to
+ * its network; a router that models no network snaps nothing (0). `basis`
+ * says what the numbers are: road routes, or straight lines from a router
+ * that models no roads.
  */
 export interface RouteTableResult {
   readonly durationsSeconds: ReadonlyArray<ReadonlyArray<number | null>>
   readonly distancesM: ReadonlyArray<ReadonlyArray<Meters | null>>
+  readonly sourceSnapsM: ReadonlyArray<Meters>
+  readonly destinationSnapsM: ReadonlyArray<Meters>
   readonly basis: 'routed' | 'straight-line'
   readonly provider: string
 }

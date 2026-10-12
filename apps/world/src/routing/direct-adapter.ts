@@ -38,6 +38,8 @@ export const createDirectRoutingAdapter = (): RoutingAdapter => ({
     return {
       durationsSeconds: distances.map(row => row.map(distanceM => distanceM / directSpeedMps)),
       distancesM: distances.map(row => row.map(distanceM => meters(distanceM))),
+      sourceSnapsM: sources.map(() => meters(0)),
+      destinationSnapsM: destinations.map(() => meters(0)),
       basis: 'straight-line',
       provider: 'direct',
     }
