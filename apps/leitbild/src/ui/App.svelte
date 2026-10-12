@@ -34,6 +34,7 @@
   import { browserWorkspaceMemory } from './workspace-memory.ts'
   import { demosHref, guideHref } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
+  import { errorDiagnostic, plainError } from './error-text.ts'
   import { createStartRunner, startAnnouncement, type StartState, type StartTarget } from './definition-start.ts'
   import { continueItems, featuredStartRevision, openedFromGuide, readFeaturedCatalog, workspaceDemos, type FeaturedCard } from './workspace-page.ts'
 
@@ -203,7 +204,11 @@
         loadWorkspaceCatalog(currentPage.id),
       ])
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause)
+      const plain = plainError(cause)
+      console.error(errorDiagnostic(cause))
+      // A Workspace that no longer exists stops being a launch default or a Recent entry.
+      if (plain.code === 'workspace_not_found') memory.forget(currentPage.id)
+      error = plain.text
     } finally {
       loading = false
     }
@@ -646,7 +651,7 @@
     {#if workspace}
       <!-- Lane L3 import point: <WorkspaceSwitcher current={workspace} /> replaces this link once ux/l3 lands
            (its popover lists Recent and public Workspaces and creates new ones; see $UX/lanes/l5.md). -->
-      <a class="ws-switch" href="/workspaces" title="All Workspaces"><Icon name="layers" size={16} /><span class="ws-kicker">Workspace</span><span class="ws-name">{workspaceTitle}</span><Icon name="down" size={16} /></a>
+      <a class="ws-switch" href="/workspaces" title="All Workspaces"><Icon name="layers" size={16} /><span class="ws-kicker">Workspace</span>{' '}<span class="ws-name">{workspaceTitle}</span><Icon name="down" size={16} /></a>
     {/if}
     <nav class="ws-nav" aria-label="Main">
       <div class="nav-wide">
