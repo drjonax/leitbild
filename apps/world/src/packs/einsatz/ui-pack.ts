@@ -35,7 +35,9 @@ import { boardMapOrders } from './ui/map-orders.ts'
  * this tab only; what a side sees at all stays the Run's, per side.
  *
  * Map labels: a unit shows its callsign and a short code of its phase, and
- * whether it is damaged; a receiving site, its name and whether it is
+ * whether it is damaged; a place that does not move, its name, and whether
+ * it is damaged or destroyed, but no phase and no free or committed status;
+ * a receiving site, its name and whether it is
  * closed; a task, its label; a track, its serial and the age of its last
  * detection. A unit's status tone says whether it is free, committed or out
  * of action.
@@ -121,8 +123,10 @@ const unitStatus = (data: UnitData): PackObjectStatusPresentation => {
   return committed ? { tone: 'working', label: 'Committed', indicator: dot } : { tone: 'ready', label: 'Free', indicator: dot }
 }
 
+/** A unit's callsign, its phase code and whether it is damaged; a place that never moves (an objective, a post) has no phase to show but its loss. */
 const unitLabel = (object: OperationalObject, data: UnitData): string => {
-  const parts = [object.label, phaseCodes[data.phase], ...(data.integrity === 'damaged' ? ['DMG'] : [])]
+  const phase = object.kind === 'facility' && data.phase !== 'destroyed' ? [] : [phaseCodes[data.phase]]
+  const parts = [object.label, ...phase, ...(data.integrity === 'damaged' ? ['DMG'] : [])]
   return parts.join(' · ')
 }
 
@@ -169,7 +173,7 @@ const presentEinsatzObject = (object: OperationalObject, context: PackObjectPres
         muted: object.lifecycle !== 'active' || data.integrity === 'destroyed',
         ...(groupUnseen(data.group, context.seenRoleIds) ? { mapIconVisible: false } : {}),
         fields: [],
-        ...(site ? { mapLabel: data.accepting === true ? object.label : `${object.label} · closed` } : { mapLabel: unitLabel(object, data), status: unitStatus(data) }),
+        ...(site ? { mapLabel: data.accepting === true ? object.label : `${object.label} · closed` } : { mapLabel: unitLabel(object, data), ...(object.kind === 'facility' && data.integrity !== 'destroyed' ? {} : { status: unitStatus(data) }) }),
       }
     }
     case 'task':

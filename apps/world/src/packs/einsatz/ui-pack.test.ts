@@ -7,7 +7,7 @@ import { compileScenarioDefinition } from '../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../routing/direct-adapter.ts'
 import { mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, surfacePanelPackId } from '../../ui/surface-panel-interaction.ts'
 import { einsatzCommandIds } from './capabilities.ts'
-import { civilConfig, civilKinds, civilWith, taskAt, unitAt } from './fixtures/board-harness.ts'
+import { borderWith, civilConfig, civilKinds, civilWith, taskAt, unitAt } from './fixtures/board-harness.ts'
 import { borderDefinitions } from './fixtures/border-harness.ts'
 import { at, blue, config, cycles, place, red, stateWith, types } from './fixtures/combat-harness.ts'
 import { definitionOf, lonLat, openRun, screenOf, taskItem, unitItem } from './fixtures/run-harness.ts'
@@ -171,13 +171,32 @@ describe('Einsatz UI declarations', () => {
     for (const object of objects) {
       const data = object.packData as { readonly type: string; readonly integrity?: string }
       const presentation = presentObject(object, { objects, currentTime })
-      if (data.type === 'unit') expect(presentation.mapLabel).toMatch(new RegExp(`^${object.label} · [A-Z]+( · DMG)?$`))
+      // A place that never moves shows no phase while it stands.
+      if (data.type === 'unit') expect(presentation.mapLabel).toMatch(object.kind === 'facility' ? new RegExp(`^${object.label}( · X)?( · DMG)?$`) : new RegExp(`^${object.label} · [A-Z]+( · DMG)?$`))
       if (data.type === 'unit' && data.integrity === 'damaged') expect(presentation.mapLabel).toEndWith(' · DMG')
       if (data.type === 'unit' && data.integrity === 'destroyed') expect(presentation.status?.tone).toBe('error')
       if (data.type === 'track') {
         expect(presentation.mapLabel).toMatch(new RegExp(`^${object.label} · \\d+:\\d\\d$`))
         expect(presentObject(object, { objects }).mapLabel).toBe(object.label)
       }
+    }
+  })
+
+  test('a place that never moves, an objective or a post, is labelled with its name alone: no phase such as "AV", and no free or committed dot', async () => {
+    const run = await openRun({ definition: borderWith([
+      unitAt('site:objective', 'Objective', 'objective', [11.4605, 59.1345]),
+      unitAt('unit:post', 'Post', 'observation-post', [11.51, 59.175], { side: blue }),
+    ]) })
+    try {
+      const objects = run.run.snapshot().objects
+      for (const id of ['site:objective', 'unit:post']) {
+        const object = objects.find(entry => entry.id === id)!
+        expect(object.kind).toBe('facility')
+        const presentation = presentObject(object, { objects })
+        expect([presentation.mapLabel, presentation.status]).toEqual([object.label, undefined])
+      }
+    } finally {
+      await run.close()
     }
   })
 
