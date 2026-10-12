@@ -14,7 +14,7 @@ import {
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { composeEvidenceRows, type CompiledComposedDisplay, type ComposedEvidenceRow } from '../src/packs/process-plant/displays/compose.ts'
-import { chipName, positionWord } from '../src/packs/process-plant/displays/display-text.ts'
+import { chipName, positionWord, valueText } from '../src/packs/process-plant/displays/display-text.ts'
 import { evidenceItemWidth, evidenceLines, evidenceNameWidth, evidenceNoteWidth, evidenceWhyWidth } from '../src/packs/process-plant/displays/evidence-width.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
 import { firstOutFlag, visibleAlarms } from '../src/ui/embed/composed-display/panel-presenters.ts'
@@ -584,5 +584,15 @@ describe('what a display shows of a trip (HMI review of run 26)', () => {
     const trend = level.display.panels[0]!
     if (trend.kind !== 'trend') throw new Error('expected the trend')
     expect(trend.strips[0]!.pens[0]!.tagId).toBe('SG-A-LVL-NR')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('a valve\'s position reads SHUT or OPEN at the ends of its travel wherever a value is written', () => {
+    // MOV-8000A read "100 %" in a readout and OPEN on its drawing.
+    expect([valueText(1, 'fraction', 0.001, { min: 0, max: 1 }, true), valueText(0, 'fraction', 0.001, { min: 0, max: 1 }, true), valueText(0.35, 'fraction', 0.001, { min: 0, max: 1 }, true)]).toEqual(['OPEN', 'SHUT', '35.0 %'])
+    expect(valueText(1, 'fraction', 0.001, { min: 0, max: 1 }, false)).toBe('>100 %')
+    const { display } = atPower().compose('PORV block valve', ['MOV-8000A-POS'], [{ kind: 'readouts', signals: [signal('MOV-8000A-POS', 'primary'), signal('PORV-456A-POS')] }])
+    const readouts = display.panels[0]!
+    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
+    expect(readouts.pens.map(pen => pen.position)).toEqual([true, true])
   }, PLANT_HANG_GUARD_MS)
 })

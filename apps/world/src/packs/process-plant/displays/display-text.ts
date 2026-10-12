@@ -165,6 +165,16 @@ export const POSITION_OPEN_ABOVE = 0.95
 export const positionWord = (fraction: number): 'SHUT' | 'OPEN' | null =>
   fraction < POSITION_SHUT_BELOW ? 'SHUT' : fraction > POSITION_OPEN_ABOVE ? 'OPEN' : null
 
+/**
+ * A reading as a value cell writes it, with its unit: a valve's position (or
+ * its demand) SHUT or OPEN at the ends of its travel, as its drawing, its
+ * faceplate and every row and readout word it (HMI review of run 26: the
+ * PORV block valve read "100 %" in a readout and OPEN on its drawing); else
+ * as readingText writes it.
+ */
+export const valueText = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined, position: boolean): string =>
+  (position ? positionWord(value) : null) ?? readingText(value, unit, resolution, span)
+
 /** "below range" or "above range" for a reading at an end of its span; empty otherwise. */
 export const offScaleText = (value: number, span: NumericSpan | undefined): string => {
   const end = offScale(value, span)

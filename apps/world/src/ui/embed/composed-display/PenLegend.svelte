@@ -2,7 +2,7 @@
   import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
-  import { readingText, shownReading } from '../../../packs/process-plant/displays/display-text.ts'
+  import { readingText, shownReading, valueText } from '../../../packs/process-plant/displays/display-text.ts'
   import { WIDER_RANGE } from '../../../packs/process-plant/displays/mimic/rows.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { sampledGates } from './panel-presenters.ts'
@@ -72,7 +72,7 @@
     <li>
       {#if live}<span class="swatch live" aria-hidden="true"></span>{:else}<svg class="swatch" width="22" height="8" aria-hidden="true"><line x1="0" x2="22" y1="4" y2="4" style={penStroke(pen.role, index)} /></svg>{/if}
       <span class="name" title={`${displayName(pen)} · ${pen.label} · ${roleLabel[pen.role]}${pen.command ? ' · operator or automation demand, not a measured state' : ''}${live ? ' · not recorded by this Run: current value only' : liveOnly ? ' · no recorded history in this window' : ''}`}>{#if live}<span class="badge">not recorded</span>{/if}{named(pen, (live ? 1 : 0) + (pen.command ? 1 : 0) + (pen.simulatorOnly ? 1 : 0))}{#if pen.command}<span class="badge">demand</span>{/if}{#if pen.simulatorOnly}<span class="badge" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}</span>
-      <span class="value" class:offscale={reading?.offScale != null}>{typeof value === 'number' ? readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
+      <span class="value" class:offscale={reading?.offScale != null}>{typeof value === 'number' ? valueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan, pen.position === true) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
       <span class="state">
         {#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}
         {#if reading?.offScale != null}<svg class="comb-key" width="13" height="8" role="img" aria-label="drawn on the trend as an upright comb"><title>Off its span: drawn on the trend as this upright comb; no recorded data is hatched diagonally</title>{#each [0.5, 3.5, 6.5, 9.5, 12.5] as at (at)}<line x1={at} x2={at} y1="0" y2="8" />{/each}</svg>{/if}

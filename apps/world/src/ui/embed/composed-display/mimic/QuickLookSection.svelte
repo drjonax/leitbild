@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedDisplayPen } from '../../../../packs/process-plant/displays/compose.ts'
-  import { displayValue, formatValue, logarithmicSpan, offScale, readingValueText, shownReading, unitLabel } from '../../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../../packs/process-plant/displays/display-text.ts'
   import { rateWindowMs, trendReading, type TrendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import AlarmChip from '../AlarmChip.svelte'
   import Sparkline from '../Sparkline.svelte'
@@ -68,6 +68,9 @@
   // A value as the detail writes it: at an end of its span only that end, over decades in powers of ten, else to its resolution.
   const valueText = (pen: ComposedDisplayPen, value: number): string => {
     const span = pen.limits?.instrumentSpan
+    // A valve's position SHUT or OPEN at the ends of its travel, as its drawing words it.
+    const word = pen.position === true ? positionWord(value) : null
+    if (word !== null) return word
     const number = offScale(value, span) !== null || logarithmicSpan(span)
       ? readingValueText(value, pen.unit, pen.resolution, span)
       : formatValue(displayValue(value, pen.unit), pen.resolution === null ? null : displayValue(pen.resolution, pen.unit))

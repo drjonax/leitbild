@@ -3,7 +3,7 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { chipName, displayValue, logarithmicSpan, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import { chipName, displayValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
   import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
   import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -110,7 +110,8 @@
     {@const reading = typeof value === 'number' ? readingOf(pen, value) : null}
     {@const inAlarm = reading?.inAlarm ?? null}
     {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
-    {@const asText = end !== null || logarithmicSpan(pen.limits?.instrumentSpan)}
+    {@const word = typeof value === 'number' && pen.position === true ? positionWord(value) : null}
+    {@const asText = word !== null || end !== null || logarithmicSpan(pen.limits?.instrumentSpan)}
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
       <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}><span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
       {#if typeof value === 'boolean'}
@@ -118,14 +119,14 @@
         <span class="state" title={pen.described}>{value ? pen.states?.on : pen.states?.off}</span>
       {:else}
         <span class="reading">
-          <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. A reading over decades is written in powers of ten. -->
+          <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. A reading over decades is written in powers of ten. A valve's position reads SHUT or OPEN at the ends of its travel, as its drawing, the faceplate and the rows World adds word it. -->
           <obc-readout
-            value={typeof value !== 'number' ? null : asText ? readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : displayValue(value, pen.unit)}
+            value={typeof value !== 'number' ? null : word ?? (asText ? readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : displayValue(value, pen.unit))}
             valueType={asText ? 'text' : 'number'}
-            dataQuality={end === null ? undefined : 'low-integrity'}
+            dataQuality={end === null || word !== null ? undefined : 'low-integrity'}
             off={typeof value !== 'number'}
             offText="—"
-            unit={unitLabel(pen.unit)}
+            unit={word === null ? unitLabel(pen.unit) : ''}
             fractionDigits={typeof value === 'number' ? valueDigits(displayValue(value, pen.unit), pen.resolution === null ? null : displayValue(pen.resolution, pen.unit)) : 0}
             size="small"
           ></obc-readout>
