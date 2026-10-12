@@ -164,9 +164,14 @@ export const reactorReferenceIcRules = (
       write('insert-control-rods-overpower-delta-t', { path: 'core.rodInsertionFraction' }, 1),
     ],
   }),
+  // A simulator trip with no counterpart in a Westinghouse reactor protection
+  // system: it reads the model's own RCS inventory balance, a value no plant
+  // instrument measures (simulator-only), and trips the reactor on a net loss
+  // above 250 kg/s. Its name says so; the loss of forced flow trips are the
+  // reactor coolant pump rules below.
   rule({
     id: 'reactor-low-primary-flow-trip',
-    label: 'Reactor low primary flow trip',
+    label: 'RCS inventory loss (simulator trip)',
     ruleClass: 'protection',
     modes: ['powerOperation'],
     condition: comparison({ path: 'vessel.netInventoryFlowKgPerS' }, '<', -250),
@@ -174,8 +179,8 @@ export const reactorReferenceIcRules = (
     effects: [
       trip({
         id: 'low-flow-trip',
-        title: 'Reactor low-flow trip',
-        message: 'Primary inventory loss exceeds the reference low-flow trip threshold.',
+        title: 'RCS inventory loss (simulator trip)',
+        message: 'The model\'s RCS inventory balance, a simulator value no plant instrument measures, shows a net loss above 250 kg/s: a simulator trip with no Westinghouse counterpart.',
         annunciator: reactorAction,
       }),
       ...reactorTripBreakerWrites('low-flow-trip'),
