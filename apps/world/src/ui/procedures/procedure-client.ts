@@ -1,5 +1,6 @@
 import {
   procedureRunCloseCommandKind,
+  procedureRunDriveCommandKind,
   procedureRunResetCommandKind,
   procedureRunStartCommandKind,
   procedureStepUpdateCommandKind,
@@ -190,17 +191,16 @@ export const updateProcedureStep = async (
 }
 
 /** World's command that hands a procedure Run to its driver: claim takes it (a person always may), release shares it again. */
-const procedureRunDriveCapabilityId = 'world.procedure.run.drive'
 
 export const driveProcedureRun = async (
   simulationRunId: SimulationRunId,
   config: { readonly runId: string; readonly action: 'claim' | 'release' },
 ): Promise<void> => {
   const response = await invokeSimulationRunCapability(simulationRunId, {
-    capabilityId: procedureRunDriveCapabilityId,
+    capabilityId: procedureRunDriveCommandKind,
     input: config,
   })
-  if (response.kind !== 'command') throw new Error(`${procedureRunDriveCapabilityId} is not a command`)
+  if (response.kind !== 'command') throw new Error(`${procedureRunDriveCommandKind} is not a command`)
   if (!response.result.ok) throw new Error(response.result.reason ?? 'procedure run drive rejected')
 }
 
