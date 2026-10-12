@@ -1,0 +1,110 @@
+{
+  "lexicon": { "workList": "Jobs", "on-task": "Working" },
+  "loadClasses": [
+    { "id": "L1", "label": "Critical", "code": "C1", "noun": { "one": "person", "other": "people" } },
+    { "id": "L2", "label": "Serious", "code": "C2", "noun": { "one": "person", "other": "people" } },
+    { "id": "L3", "label": "Minor", "code": "C3", "noun": { "one": "person", "other": "people" } }
+  ],
+  "unitTypes": [
+    {
+      "id": "carrier",
+      "label": "Carrier",
+      "icon": "car",
+      "components": {
+        "mobility": { "mode": "road", "mobilizeS": 2 },
+        "service": { "provides": ["aid"], "onSceneS": 3 },
+        "carry": { "capacity": 1, "classes": ["L1", "L2", "L3"] }
+      },
+      "properties": [
+        { "id": "liftKg", "label": "Lift", "kind": "number", "unit": "kg", "min": 0, "max": 1000, "default": 400, "board": true }
+      ],
+      "standingOrders": { "deliver": "nearest-accepting", "return": { "afterIdleS": 60 } }
+    },
+    {
+      "id": "flyer",
+      "label": "Flyer",
+      "icon": "plane",
+      "components": {
+        "mobility": { "mode": "direct", "speedMps": 50 },
+        "service": { "provides": ["aid"], "onSceneS": 3 },
+        "carry": { "capacity": 2, "classes": ["L1", "L2", "L3"] }
+      }
+    },
+    {
+      "id": "hauler",
+      "label": "Hauler",
+      "icon": "forklift",
+      "components": {
+        "mobility": { "mode": "road" },
+        "service": { "provides": ["haul"], "onSceneS": 5 }
+      },
+      "properties": [
+        { "id": "payloadKg", "label": "Payload", "kind": "number", "unit": "kg", "min": 0, "max": 20000, "default": 300, "board": true }
+      ],
+      "standingOrders": { "return": { "afterIdleS": 30 } }
+    },
+    {
+      "id": "guard",
+      "label": "Guard",
+      "icon": "shield",
+      "components": {
+        "mobility": { "mode": "road" },
+        "service": { "provides": ["guard"], "onSceneS": 4 }
+      },
+      "standingOrders": { "return": { "afterIdleS": 30 } }
+    },
+    {
+      "id": "clinic",
+      "label": "Clinic",
+      "icon": "house-plus",
+      "public": true,
+      "components": {
+        "receiving": { "accepts": ["L1", "L2", "L3"], "slots": 1, "handoverS": 4, "accepting": true }
+      }
+    },
+    {
+      "id": "camp",
+      "label": "Camp",
+      "icon": "tent",
+      "components": {
+        "receiving": { "accepts": ["L1", "L2"], "slots": 1, "handoverS": 4, "accepting": true }
+      }
+    },
+    {
+      "id": "store",
+      "label": "Store",
+      "icon": "warehouse",
+      "public": true,
+      "components": {}
+    }
+  ],
+  "taskTemplates": [
+    { "id": "call", "label": "Call", "icon": "heart-pulse" },
+    {
+      "id": "rescue",
+      "label": "Rescue",
+      "icon": "life-buoy",
+      "priorityClass": "L2",
+      "requires": [
+        { "provides": "aid", "count": 1, "label": { "one": "lifting carrier", "other": "lifting carriers" }, "where": [{ "property": "liftKg", "atLeast": 500 }] }
+      ]
+    },
+    {
+      "id": "haul",
+      "label": "Haul",
+      "icon": "package",
+      "priorityClass": "L2",
+      "requires": [
+        { "provides": "haul", "count": 1, "label": { "one": "hauler", "other": "haulers" }, "where": [{ "property": "payloadKg", "atLeast": 500 }] }
+      ]
+    },
+    {
+      "id": "watch",
+      "label": "Watch",
+      "icon": "eye",
+      "priorityClass": "L2",
+      "requires": [{ "provides": "guard", "count": 2, "label": { "one": "guard", "other": "guards" } }]
+    },
+    { "id": "note", "label": "Note", "icon": "message-square", "priorityClass": "L3" }
+  ]
+}

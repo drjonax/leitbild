@@ -31,9 +31,37 @@ export const configurationRefusalCodes = [
 ] as const
 
 export type ConfigurationRefusalCode = typeof configurationRefusalCodes[number]
-export type EinsatzRefusalCode = ConfigurationRefusalCode
 
-const knownCodes: ReadonlySet<string> = new Set(configurationRefusalCodes)
+/**
+ * Refusals of an intent against the current engine state. Intents reuse the
+ * configuration codes where the meaning is the same (an unknown type, an
+ * undeclared property, a load-less task without a floor, a repeated id).
+ */
+export const engineRefusalCodes = [
+  'not_in_picture',
+  'not_a_site',
+  'cross_side_reference',
+  'side_required',
+  'side_not_declared',
+  'public_takes_no_side',
+  'unit_committed',
+  'unit_loaded',
+  'unit_unavailable',
+  'divert_not_lower_priority',
+  'divert_after_arrival',
+  'requirement_unmet',
+  'requirement_covered',
+  'task_closed',
+  'site_not_accepting',
+  'property_out_of_range',
+  'routing_unavailable',
+  'no_road_near_point',
+] as const
+
+export type EngineRefusalCode = typeof engineRefusalCodes[number]
+export type EinsatzRefusalCode = ConfigurationRefusalCode | EngineRefusalCode
+
+const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...engineRefusalCodes])
 
 export const refusal = (code: EinsatzRefusalCode, message: string): string => `${code}: ${message}`
 
