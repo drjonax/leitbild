@@ -248,7 +248,8 @@ export const procedureRunSummaryText = (summary: ProcedureRunSummary): string =>
   `${summary.procedureId}:${summary.step?.label ?? '-'}`
 
 export const procedureRunSummaryTitle = (summary: ProcedureRunSummary): string =>
-  `${summary.procedureId} - ${summary.title}\n${summary.status}\nStep ${summary.step?.label ?? '-'}: ${summary.step?.name ?? 'not started'}`
+  `${summary.procedureId} - ${summary.title}\n${summary.status}\nStep ${summary.step?.label ?? '-'}: ${summary.step?.name ?? 'not started'}${
+    summary.run.driver?.kind === 'ai' ? `\nDriven by AI: ${procedureActorLabel(summary.run.driver.actorId, summary.run.driver.label)}` : ''}`
 
 /** An AI agent's actor id; World gives every AI actor this prefix. */
 export const procedureActorIsAi = (actorId: string): boolean => actorId.startsWith('actor:ai:')
@@ -266,6 +267,33 @@ export const procedurePlantTime = (iso: string, precision: 'seconds' | 'minutes'
   const time = /^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2})(:\d{2})/.exec(iso)
   if (!time) throw new Error(`procedure time is not an ISO timestamp: ${iso}`)
   return precision === 'minutes' ? time[1]! : `${time[1]}${time[2]}`
+}
+
+/** Who drives an active Run, as the window's driver band says it. */
+export interface ProcedureDriverView {
+  readonly kind: 'ai' | 'person'
+  readonly label: string
+  /** When the driver took the Run, as the Run's UTC clock writes it. */
+  readonly since: string
+  /** Steps whose latest decision the driving AI made. */
+  readonly aiSteps: number
+  /** The AI a person driving can hand the Run back to: the latest AI that decided a step. */
+  readonly handBackTo: string | null
+}
+
+export const procedureDriverView = (run: ProcedureRunState | null): ProcedureDriverView | null => {
+  const driver = run?.status === 'active' ? run.driver : undefined
+  if (!run || !driver) return null
+  const decisions = run.stepStates.flatMap(state => state.decision === undefined ? [] : [state.decision])
+  const latestAi = decisions.filter(decision => procedureActorIsAi(decision.selectedBy))
+    .sort((left, right) => left.simulationTime.localeCompare(right.simulationTime)).at(-1)
+  return {
+    kind: driver.kind,
+    label: procedureActorLabel(driver.actorId, driver.label),
+    since: procedurePlantTime(driver.since, 'minutes'),
+    aiSteps: driver.kind === 'ai' ? decisions.filter(decision => decision.selectedBy === driver.actorId).length : 0,
+    handBackTo: latestAi === undefined ? null : procedureActorLabel(latestAi.selectedBy, latestAi.selectedByLabel),
+  }
 }
 
 /** Where a decision led, as short as a summary row needs: a step number, a procedure, or END. */

@@ -8,7 +8,9 @@ import {
   procedureActorLabel,
   procedureDecisionTargetText,
   procedureDecisionTone,
+  procedureDriverView,
   procedureHumanisedId,
+  procedureRunSummaryTitle,
   procedureOffPathConfirmation,
   procedurePlantTime,
   procedureStepRangeText,
@@ -244,5 +246,22 @@ describe('procedure run selectors', () => {
     expect(procedureActorLabel('actor:operator')).toBe('Operator')
     expect(procedureActorLabel('actor:ai:assistant')).toBe('AI')
     expect(procedureActorLabel('actor:ai:assistant', 'Assistant')).toBe('Assistant')
+  })
+
+  test('says who drives an active Run, how many steps the driving AI decided, and whom a person can hand it back to', () => {
+    const ai = 'actor:ai:assistant' as ActorId
+    const decided = (stepId: string, selectedBy: ActorId, time: string, selectedByLabel?: string) => ({
+      stepId, assessment: 'blank' as const, favorite: false, updatedAt: at, updatedBy: selectedBy,
+      decision: { branchIndex: 0, targetKind: 'step' as const, target: 'verify-phase-a-isolation', selectedBy, simulationTime: time as IsoTimestamp, ...(selectedByLabel ? { selectedByLabel } : {}) },
+    })
+    const stepStates = [decided('a', actor, '2026-01-01T10:10:00.000Z'), decided('b', ai, '2026-01-01T10:12:00.000Z', 'Assistant'), decided('c', ai, '2026-01-01T10:14:00.000Z', 'Assistant')]
+    const aiRun = { ...activeRun, stepStates, driver: { kind: 'ai' as const, actorId: ai, label: 'Assistant', since: '2026-01-01T10:11:30.000Z' as IsoTimestamp } } satisfies ProcedureRunState
+    expect(procedureDriverView(aiRun)).toEqual({ kind: 'ai', label: 'Assistant', since: '10:11', aiSteps: 2, handBackTo: 'Assistant' })
+    expect(procedureRunSummaryTitle({ run: aiRun, procedureId: 'E-0', title: 'Reactor Trip', status: 'active', step: null })).toContain('Driven by AI: Assistant')
+    const personRun = { ...aiRun, driver: { kind: 'person' as const, actorId: 'actor:operator' as ActorId, since: '2026-01-01T10:15:00.000Z' as IsoTimestamp } } satisfies ProcedureRunState
+    expect(procedureDriverView(personRun)).toEqual({ kind: 'person', label: 'Operator', since: '10:15', aiSteps: 0, handBackTo: 'Assistant' })
+    expect(procedureDriverView({ ...personRun, stepStates: [] })?.handBackTo).toBeNull()
+    expect(procedureDriverView({ ...aiRun, status: 'completed' })).toBeNull()
+    expect(procedureDriverView(activeRun)).toBeNull()
   })
 })

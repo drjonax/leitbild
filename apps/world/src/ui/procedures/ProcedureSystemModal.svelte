@@ -27,6 +27,7 @@
   import type { EmbeddedViewListing } from '@leitbild/contracts'
   import {
     closeProcedureRun,
+    driveProcedureRun,
     transitionProcedureRun,
     evaluateProcedureCsfs,
     readProcedureSourceEvidence,
@@ -43,9 +44,11 @@
     furthestTouchedStep,
     procedureCurrentStep,
     procedureBranchActionText,
+    procedureActorIsAi,
     procedureActorLabel,
     procedureDecisionTargetText,
     procedureDecisionTone,
+    procedureDriverView,
     procedureFirstStep,
     procedureOffPathConfirmation,
     procedurePlantTime,
@@ -217,6 +220,7 @@
   const currentProcedureStep = $derived(document && selectedProcedureRun
     ? procedureCurrentStep(selectedProcedureRun, document)
     : null)
+  const driverView = $derived(procedureDriverView(selectedProcedureRun))
   const procedureRows = $derived(document ? procedureStepRows(document, selectedProcedureRun) : [])
   const catalogCategories = $derived(procedureCategories(catalog?.procedures ?? []))
   const sourceLabel = $derived(catalog
@@ -852,6 +856,19 @@
     })
   }
 
+  // Take over (claim as a person) also pauses an AI driver; hand back (release) shares the Run again.
+  const driveSelectedRun = async (action: 'claim' | 'release'): Promise<void> => {
+    const run = activeRun
+    const request = latestProcedureLoadRequest
+    if (!run) return
+    try {
+      await driveProcedureRun(simulationRunId, { runId: run.runId, action })
+      await refreshRuns()
+    } catch (err) {
+      if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
+    }
+  }
+
   const resetSelectedProcedure = async (): Promise<void> => {
     const current = document
     const request = latestProcedureLoadRequest
@@ -1187,6 +1204,7 @@
         {:else if state?.assessment === 'unknown'}
           <HelpCircle size={17} aria-hidden="true" />
         {/if}
+        {#if state?.decision && procedureActorIsAi(state.decision.selectedBy)}<span class="procedure-ai-mark" title="This step's branch was selected by an AI">AI</span>{/if}
       </button>
       <div class="procedure-step-content">
         <h3>
@@ -1213,8 +1231,23 @@
                 >
                   <strong>{#if taken}<span class="procedure-taken-mark" aria-hidden="true">✓</span>{/if}{item.branch.label}</strong>
                   <span>{branchActionTextFor(item.branch)}</span>
-                  {#if taken}<small class="procedure-decision-line">Taken {procedurePlantTime(taken.simulationTime)} · {procedureActorLabel(taken.selectedBy, taken.selectedByLabel)}</small>{/if}
+                  {#if taken}
+                    {@const who = procedureActorLabel(taken.selectedBy, taken.selectedByLabel)}
+                    {#if procedureActorIsAi(taken.selectedBy)}
+                      <small class="procedure-decision-line ai">Taken by AI{who === 'AI' ? '' : ` · ${who}`} · {procedurePlantTime(taken.simulationTime)}</small>
+                    {:else}
+                      <small class="procedure-decision-line">Taken {procedurePlantTime(taken.simulationTime)} · {who}</small>
+                    {/if}
+                  {/if}
                 </button>
+                {#if taken && (taken.basis !== undefined || (taken.evidence?.length ?? 0) > 0)}
+                  <div class="procedure-decision-basis" class:ai={procedureActorIsAi(taken.selectedBy)}>
+                    {#if taken.basis}<p>{taken.basis}</p>{/if}
+                    {#each taken.evidence ?? [] as evidence (evidence.tagId)}
+                      <div class="procedure-evidence-row"><b>{evidence.tagId}</b><span>{evidence.reading}</span></div>
+                    {/each}
+                  </div>
+                {/if}
                 {#if item.branch.because}<p class="procedure-branch-rationale"><b>Because</b> {@render procedureText(item.branch.because, item.branch.tagIds)}</p>{/if}
                 {#if item.branch.against}<p class="procedure-branch-rationale"><b>Against</b> {@render procedureText(item.branch.against, item.branch.tagIds)}</p>{/if}
               {/if}
@@ -1291,7 +1324,7 @@
     <span class="procedure-summary-name">{procedureStepDisplayName(step)}</span>
     {#if decision && document}
       <span class="procedure-summary-decision">— {decision.label ?? step.branches[decision.branchIndex]?.label ?? `branch ${decision.branchIndex + 1}`} → {procedureDecisionTargetText(document, decision)}</span>
-      <small>{procedurePlantTime(decision.simulationTime, 'minutes')}</small>
+      <small>{#if procedureActorIsAi(decision.selectedBy)}<span class="procedure-ai-tag" title="Selected by {procedureActorLabel(decision.selectedBy, decision.selectedByLabel)}">AI</span> {/if}{procedurePlantTime(decision.simulationTime, 'minutes')}</small>
     {/if}
   </button>
 {/snippet}
@@ -1513,6 +1546,18 @@
               {/if}
             </div>
           </div>
+          {#if driverView}
+            <div class="procedure-driver-band {driverView.kind}" role="status">
+              {#if driverView.kind === 'ai'}
+                <span class="procedure-ai-tag">AI</span>
+                <span class="procedure-driver-text"><b>{driverView.label} driving {document.procedureId}</b> on {displayUnitName} · since {driverView.since} · {driverView.aiSteps} {driverView.aiSteps === 1 ? 'step' : 'steps'}</span>
+                <button type="button" title="Drive {document.procedureId} yourself; the AI only reads it until you hand it back. Ticking a step or selecting a branch also takes over." onclick={() => void driveSelectedRun('claim')}>Take over</button>
+              {:else}
+                <span class="procedure-driver-text"><b>You are driving {document.procedureId}</b>{driverView.handBackTo ? '' : ' · AI agents only read it'}</span>
+                <button type="button" title={driverView.handBackTo ? `Let ${driverView.handBackTo} continue ${document.procedureId}` : `Share ${document.procedureId} again`} onclick={() => void driveSelectedRun('release')}>{driverView.handBackTo ? `Hand back to ${driverView.handBackTo}` : 'Release'}</button>
+              {/if}
+            </div>
+          {/if}
 
           <div
             class="procedure-document-body"

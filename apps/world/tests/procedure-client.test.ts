@@ -3,6 +3,7 @@ import { workspaceIdSchema } from '@leitbild/contracts'
 import { readFileSync } from 'node:fs'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import { evaluateProcedureCsfs, readProcedureCatalog, readProcedureDocument, readProcedureRuns, readProcedureTagValue, readProcedureSourceEvidence, validateProcedureTags } from '../src/ui/procedures/procedure-client.ts'
+import { driveProcedureRun } from '../src/ui/procedures/procedure-client.ts'
 import { processPlantPackView } from '../src/packs/process-plant/ui-pack.ts'
 import type { PackProcedureContribution } from '../src/core/packs/protocol.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
@@ -259,5 +260,19 @@ describe('procedure client', () => {
       })) as typeof fetch
       await expect(readProcedureTagValue('run-test' as SimulationRunId, 'plant:test', { id: 'NIS-PR-AVG', units: 'percent' }, provider)).rejects.toThrow()
     }
+  })
+
+  test('claims and releases a procedure Run through the drive command and surfaces its refusal', async () => {
+    const calls: Array<{ readonly url: string; readonly body: unknown }> = []
+    let refusal: string | undefined
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+      return Response.json({ kind: 'command', result: refusal === undefined ? { ok: true } : { ok: false, reason: refusal } })
+    }) as typeof fetch
+    await driveProcedureRun('run-a' as SimulationRunId, { runId: 'procedure-run:a', action: 'claim' })
+    expect(calls[0]!.url).toContain('/capabilities/world.procedure.run.drive/invoke')
+    expect(calls[0]!.body).toEqual({ input: { runId: 'procedure-run:a', action: 'claim' } })
+    refusal = 'Only the driver or a person may release this Run.'
+    await expect(driveProcedureRun('run-a' as SimulationRunId, { runId: 'procedure-run:a', action: 'release' })).rejects.toThrow(refusal)
   })
 })

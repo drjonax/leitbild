@@ -2847,6 +2847,16 @@ body.rail-resizing {
   animation: procedure-badge-pulse 1.25s ease-in-out infinite;
 }
 
+.procedure-run-ai {
+  margin-left: 3px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  background: #6d28d9;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
 .procedure-run-badge.completed {
   color: #64748b;
 }
@@ -3372,10 +3382,72 @@ body.rail-resizing {
 .procedure-document {
   position: relative;
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: #f8fafc;
+}
+
+.procedure-document > .procedure-document-body {
+  flex: 1 1 auto;
+}
+
+/* Violet means AI in the procedure window, and nothing else. */
+.procedure-ai-tag {
+  display: inline-block;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #6d28d9;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+.procedure-driver-band {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 16px 3px 22px;
+  border-bottom: 1px solid #d8e0ea;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.procedure-driver-band.ai {
+  border-bottom-color: #c4b5fd;
+  background: #f5f3ff;
+  box-shadow: inset 0 3px 0 #6d28d9;
+  color: #3b0764;
+}
+
+.procedure-driver-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.procedure-driver-band button {
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 1px solid #334155;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.procedure-driver-band.ai button {
+  border-color: #6d28d9;
+  color: #6d28d9;
 }
 
 .procedure-document-loading {
@@ -3842,11 +3914,27 @@ body.rail-resizing {
 }
 
 .procedure-assessment {
+  position: relative;
   width: 28px;
   height: 28px;
   display: grid;
   place-items: center;
   padding: 0;
+}
+
+/* A checkbox whose step an AI decided carries a small violet corner mark. */
+.procedure-ai-mark {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #6d28d9;
+  color: #ffffff;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 11px;
+  pointer-events: none;
 }
 
 .procedure-assessment.complete {
@@ -3988,6 +4076,43 @@ body.rail-resizing {
   color: #334155;
   font-size: calc(12px * var(--procedure-font-scale));
   font-weight: 600;
+}
+
+.procedure-decision-line.ai {
+  color: #6d28d9;
+}
+
+/* Why a branch was taken: the basis sentence, then each cited reading World took. */
+.procedure-decision-basis {
+  display: grid;
+  gap: 2px;
+  margin: -4px 0 9px;
+  padding: 4px 8px;
+  border-left: 2px solid #94a3b8;
+  color: #334155;
+  font-size: calc(12px * var(--procedure-font-scale));
+}
+
+.procedure-decision-basis.ai {
+  border-left-color: #6d28d9;
+  background: #f5f3ff;
+}
+
+.procedure-column .procedure-decision-basis p {
+  margin: 0 0 2px;
+  color: #1e293b;
+  font-size: inherit;
+}
+
+.procedure-evidence-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.procedure-evidence-row b {
+  color: #0f172a;
 }
 
 .procedure-branch:hover:not(:disabled),
