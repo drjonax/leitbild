@@ -106,8 +106,8 @@ export const actorIdForAccessContext = (accessContext: AccessContext): Actor['id
     ? defaultOperatorActorId
     : actorIdSchema.parse(`actor:${accessContext.actor.kind}:${accessContext.actor.id}`)
 
-export const buildSimulationRunActorForAccess = (accessContext: AccessContext): Actor =>
-  buildSimulationRunActor(
+export const buildSimulationRunActorForAccess = (accessContext: AccessContext): Actor => {
+  const actor = buildSimulationRunActor(
     actorIdForAccessContext(accessContext),
     accessContext.actor.kind === 'ai'
       ? 'ai_agent'
@@ -115,6 +115,10 @@ export const buildSimulationRunActorForAccess = (accessContext: AccessContext): 
         ? 'system'
         : 'operator',
   )
+  // Attribution only: a name shown beside what this actor did, never an identity check.
+  const displayName = accessContext.actor.displayName?.trim().slice(0, 80)
+  return displayName === undefined || displayName.length === 0 ? actor : { ...actor, displayName }
+}
 
 const buildSignal = (simulationRunId: SimulationRunId, raw: unknown, defaultActorId: Actor['id']): {
   readonly signal: InteractionSignal

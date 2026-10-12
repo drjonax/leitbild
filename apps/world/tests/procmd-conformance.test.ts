@@ -47,7 +47,7 @@ describe('World consumes the canonical format without semantic projection', () =
       readDocument: async input => { requests.push(input); return document(input.procedureId) } })
     expect(commit).not.toBeNull()
     let seq = 0
-    const events = commit!({ simulationRunId, at, procedures: store.snapshot().procedures,
+    const events = commit!({ simulationRunId, at, procedures: store.snapshot().procedures, actorKind: 'person',
       objectIds: new Set(['plant:test']), factory: { eventId: () => `event:${++seq}` as EventId, nextSeq: () => seq } })
     for (const event of events) store.apply(event)
     expect(requests[0]).toMatchObject({ sourceId: 'pwr-ops', sourceRevision: revision, sourcePath: 'wiki/procedures/E-0.md' })

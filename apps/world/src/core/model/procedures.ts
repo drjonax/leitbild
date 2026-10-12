@@ -275,6 +275,13 @@ export const procedureRunTransitionPayloadSchema = z.object({
   branchIndex: z.number().int().nonnegative(),
 }).merge(procedureDecisionBasisSchema)
 
+/** Claim a Run to work it, or release it to be shared again. */
+export const procedureRunDrivePayloadSchema = z.object({
+  runId: procedureRunIdSchema,
+  action: z.enum(['claim', 'release']),
+})
+export type ProcedureRunDrivePayload = z.infer<typeof procedureRunDrivePayloadSchema>
+
 export const procedureRunResetPayloadSchema = z.object({
   sourceId: procedureSourceIdSchema,
   procedureId: procedureIdSchema,
@@ -366,6 +373,7 @@ export const procedureStepUpdateCommandKind = 'world.procedure.step.update'
 export const procedureRunCloseCommandKind = 'world.procedure.run.close'
 export const procedureRunResetCommandKind = 'world.procedure.run.reset'
 export const procedureRunTransitionCommandKind = 'world.procedure.run.transition'
+export const procedureRunDriveCommandKind = 'world.procedure.run.drive'
 
 export const procedureCommandKindSchema = z.enum([
   procedureRunStartCommandKind,
@@ -373,6 +381,7 @@ export const procedureCommandKindSchema = z.enum([
   procedureRunCloseCommandKind,
   procedureRunResetCommandKind,
   procedureRunTransitionCommandKind,
+  procedureRunDriveCommandKind,
 ])
 export type ProcedureCommandKind = z.infer<typeof procedureCommandKindSchema>
 

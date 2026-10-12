@@ -869,6 +869,7 @@ export const createSimulationRunRuntime = async (config: {
           readDocument: async documentConfig =>
             await procedureSourceService.readDocument(documentConfig),
           ...(procedureSourceService.assertTargetApplicable === undefined ? {} : { assertTargetApplicable: procedureSourceService.assertTargetApplicable }),
+          observations: plantId => procedureObservations(actor, plantId),
         })
         if (commit === null) return null
         await publishGenerated(async () => {
@@ -890,6 +891,8 @@ export const createSimulationRunRuntime = async (config: {
             simulationRunId: config.id, at: nowIso(), procedures: snapshot.procedures,
             simulationTime: runClock.read().currentTime,
             commandSource,
+            actorKind: actor.role === 'ai_agent' ? 'ai' : actor.role === 'system' ? 'system' : 'person',
+            ...(actor.displayName === undefined ? {} : { actorLabel: actor.displayName }),
             objectIds: new Set(snapshot.objects.map(object => object.id)),
             objects: new Map(snapshot.objects.map(object => [object.id, object])),
             factory: { eventId, nextSeq: () => ++seq },

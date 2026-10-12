@@ -84,10 +84,13 @@ describe('procedure evidence through the real Run and process-plant runtime', ()
       expect(runtime.snapshot().clock!.currentTime).toBe(pausedTime)
       expect(current().observations?.[0]).toEqual(pausedEvidence)
 
-      await command(runtime, 'world.procedure.run.transition', { runId, stepId: 'observe-pump', branchIndex: 0 }, agent)
+      // The step cites no plant tag an AI agent could rest a decision on, so a person selects its branch.
+      const refused = await runtime.invokeCapability(agent, { capabilityId: 'world.procedure.run.transition', input: { runId, stepId: 'observe-pump', branchIndex: 0 } })
+      expect(refused.kind === 'command' && !refused.result.ok && refused.result.reason).toContain('Nobody drives PUMP-OBS')
+      await command(runtime, 'world.procedure.run.transition', { runId, stepId: 'observe-pump', branchIndex: 0 })
       expect(current().currentStepId).toBe('record-handover')
       const selected = runtime.events().find(event => event.type === 'procedure.branch.selected')
-      expect(selected).toMatchObject({ type: 'procedure.branch.selected', stepId: 'observe-pump', selectedBy: agent.id,
+      expect(selected).toMatchObject({ type: 'procedure.branch.selected', stepId: 'observe-pump', selectedBy: operator.id,
         outcome: 'normal', simulationTime: pausedTime, observation: pausedEvidence,
       })
       await command(runtime, 'world.process-plant.control.write', { plantId: plant.id, path: 'rcpA.running', value: false })

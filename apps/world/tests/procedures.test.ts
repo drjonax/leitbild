@@ -5,9 +5,10 @@ import { createSimulationRunStateStore } from '../src/core/simulation-runs/state
 import { parseProcedureMarkdown } from '../src/features/procedures/procmd.ts'
 import { prepareProcedureCommand, type ProcedureCommitContext } from '../src/features/procedures/run-state.ts'
 
-const procedureCommandEvents = async (config: Parameters<typeof prepareProcedureCommand>[0] & Omit<ProcedureCommitContext, 'objectIds'>) => {
+// Commands come from a person unless a test names another actor kind.
+const procedureCommandEvents = async (config: Parameters<typeof prepareProcedureCommand>[0] & Omit<ProcedureCommitContext, 'objectIds' | 'actorKind'> & { readonly actorKind?: ProcedureCommitContext['actorKind'] }) => {
   const commit = await prepareProcedureCommand(config)
-  return commit?.({ ...config, objectIds: new Set(['halden-unit-a', 'halden-unit-b']) }) ?? null
+  return commit?.({ ...config, actorKind: config.actorKind ?? 'person', objectIds: new Set(['halden-unit-a', 'halden-unit-b']) }) ?? null
 }
 
 const source = {
@@ -87,7 +88,7 @@ describe('procedure system', () => {
         if ((object.packData as { model: string }).model !== 'expected') throw new Error('owner rejected changed model')
       } })
     let seq = 0
-    const context = { simulationRunId: command.simulationRunId, at: command.issuedAt, procedures: undefined,
+    const context = { simulationRunId: command.simulationRunId, at: command.issuedAt, procedures: undefined, actorKind: 'person' as const,
       objectIds: new Set([target.id]), factory: { eventId: () => `event:${++seq}` as EventId, nextSeq: () => seq } }
     expect(() => commit!({ ...context, objects: new Map([[target.id, { ...target, packData: { model: 'changed' } }]]) })).toThrow('changed model')
     expect(seq).toBe(0)
@@ -134,7 +135,7 @@ describe('procedure system', () => {
     // Independent copy/restore retains the selected branch and destination.
     const copied = createSimulationRunStateStore(); copied.hydrate(store.snapshot())
     expect(copied.snapshot().procedures).toEqual(store.snapshot().procedures)
-    const context = { simulationRunId, at, factory, procedures: store.snapshot().procedures, objectIds: new Set(['halden-unit-a']) }
+    const context = { simulationRunId, at, factory, procedures: store.snapshot().procedures, actorKind: 'person' as const, objectIds: new Set(['halden-unit-a']) }
     expect(() => prepare!(context)).toThrow() // Source/destination changed after asynchronous preparation.
     const fresh = { ...store.snapshot().procedures!, runs: store.snapshot().procedures!.runs.map(run => run.procedureId === 'E-0' ? { ...run, status: 'active' as const } : run) }
     const before = store.snapshot().procedures

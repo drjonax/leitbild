@@ -1,4 +1,4 @@
-import type { ProcedureTag, ProcedureTagId } from '../../core/model/index.ts'
+import type { IsoTimestamp, ProcedureTag, ProcedureTagId } from '../../core/model/index.ts'
 import type { PackProcedureContribution, PackProcedureQuery } from '../../core/packs/protocol.ts'
 
 // The wire semantics every Pack's procedure observations keep (protocol.ts
@@ -240,3 +240,67 @@ export const createProcedureObservationPort = (config: {
     ? new Map()
     : parseProcedureCsfEvaluations(await config.query(config.provider.assessmentsQuery(config.scopeId, assessmentIds))),
 })
+
+/** One procedure tag as World read it on a plant: its binding, and its value or why there is none. */
+export interface ProcedureTagRead {
+  readonly tagId: string
+  /** unchecked: the Pack could not validate it now. */
+  readonly binding: 'resolved' | 'resolved-with-warnings' | 'missing' | 'unchecked'
+  readonly warnings: ReadonlyArray<string>
+  readonly value?: ProcedureTagValue
+  /** The plant time the value was read at, where a clock was given. */
+  readonly readAt?: IsoTimestamp
+  /** Why there is no value. */
+  readonly unavailable?: string
+}
+
+const failureText = (error: unknown): string => error instanceof Error ? error.message : String(error)
+
+/**
+ * Validates and reads tags of a procedure document on its scope, through the
+ * scope's Pack. A tag the document does not declare, the plant lacks or the
+ * Pack cannot read now comes back with its reason, never dropped.
+ */
+export const readProcedureTags = async (config: {
+  readonly observations: () => ProcedureObservationPort
+  readonly declared: ReadonlyArray<ProcedureTag>
+  readonly tagIds: ReadonlyArray<string>
+  readonly clock?: () => IsoTimestamp
+}): Promise<ReadonlyArray<ProcedureTagRead>> => {
+  const tags = config.tagIds.map(tagId => config.declared.find(tag => tag.id === tagId))
+  let port: ProcedureObservationPort | undefined
+  let validations: ReadonlyMap<string, ProcedureTagValidation> = new Map()
+  let failure: string | undefined
+  try {
+    port = config.observations()
+    validations = await port.validateTags(tags.filter((tag): tag is ProcedureTag => tag !== undefined))
+  } catch (error) { failure = failureText(error) }
+  return await Promise.all(config.tagIds.map(async (tagId, index): Promise<ProcedureTagRead> => {
+    const tag = tags[index]
+    if (tag === undefined) return { tagId, binding: 'missing', warnings: [], unavailable: 'not declared in the procedure document' }
+    if (failure !== undefined || port === undefined) return { tagId, binding: 'unchecked', warnings: [], unavailable: failure ?? 'no observation port' }
+    const validation = validations.get(tagId)
+    if (validation === undefined) return { tagId, binding: 'unchecked', warnings: [], unavailable: 'the Pack did not validate this tag' }
+    if (validation.status === 'missing') return { tagId, binding: 'missing', warnings: validation.warnings, unavailable: 'not in the plant model' }
+    try {
+      const value = await port.readTag(tag)
+      return { tagId, binding: validation.status, warnings: validation.warnings, value, ...(config.clock === undefined ? {} : { readAt: config.clock() }) }
+    } catch (error) {
+      return { tagId, binding: validation.status, warnings: validation.warnings, unavailable: failureText(error) }
+    }
+  }))
+}
+
+const evidenceReadingLength = 160
+
+/** A read as a decision records it: the value as formatted with its quality and conversion note, or why there was none. */
+export const procedureTagReadingText = (read: ProcedureTagRead): string => {
+  const text = read.value !== undefined
+    ? [
+        read.value.formatted,
+        ...(read.value.quality === undefined || read.value.quality === 'good' ? [] : [`quality ${read.value.quality}`]),
+        ...(read.value.warning === undefined ? [] : [read.value.warning]),
+      ].join('; ')
+    : `${read.binding === 'missing' ? 'missing' : 'unavailable'}: ${read.unavailable ?? 'no value'}`
+  return text.length <= evidenceReadingLength ? text : `${text.slice(0, evidenceReadingLength - 1)}…`
+}
