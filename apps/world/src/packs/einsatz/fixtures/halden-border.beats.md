@@ -8,7 +8,7 @@ The observations come from a headless play on the Einsatz Board controller (`bor
 
 - Start a Run of the Definition on an iPad in landscape. The groups dialog opens: tap a preset row, then Join. Presets: "Blue (one person)" (EMS, Police, Fire, Blue recce, Blue armour), "Civil desks" (EMS, Police, Fire), "Blue military" (Blue recce, Blue armour) and, with human Red, "Red commander" (Red recce, Red armour). The Controller row stays for an instructor. In `halden-border` Red's groups read "Red recce (scripted)" and "Red armour (scripted)": they are not for players there.
 - Every screen: Board open on the right, map on the left with every object in view (the starting camera fits them beside the Board).
-- The good dispatcher: tap each unserved call as it appears, then the Dispatch button; on a divert, tap again to confirm. Besides that, three beats (below): pull B-Recce 1 back at 11:00, + on P1 then C-11 at 13:55, F1 then C-12 then Add to end at 15:00.
+- The good dispatcher: tap each unserved call as it appears, then the Dispatch button; on a divert, tap again to confirm. Besides that, three beats (below): pull B-Recce 1 back at 11:00, + on P1 then C-11 at 13:55, F1 then C-12 then Add to end at 14:40.
 - The exercise ends at **30:00** (**exact**): every call, civil and military, should be closed by then.
 
 ## On every screen
@@ -23,7 +23,7 @@ The observations come from a headless play on the Einsatz Board controller (`bor
 
 The headless play records, for each preset, when a call newly needs units on its list or a beat falls to one of its groups. No preset waits longer than 3:30 (**exact** bound) from 0:00 to 30:00:
 
-- **Civil desks:** 0:30, 2:30, 4:30, 6:30, 9:00, 10:30, 12:30, 12:50, 13:05, 13:20, 13:55, 15:00, 16:30, 18:30, 21:00, 21:30, 22:30, 24:30, 26:30.
+- **Civil desks:** 0:30, 2:30, 4:30, 6:30, 9:00, 10:30, 12:30, 12:50, 13:05, 13:20, 13:55, 14:40, 16:30, 18:30, 21:00, 21:30, 22:30, 24:30, 26:30.
 - **Blue military:** 0:00, 3:00, 6:00, 8:30, 11:00, 13:00, 15:30, 18:30, 21:00, 22:30, 25:00, 26:30.
 - **Red commander (human Red):** a new Red call at 0:00, 3:00, 6:00, 9:00, 12:00, 15:00, 18:00, 21:00, 24:00 and 26:30.
 
@@ -62,14 +62,14 @@ Scripted Red's three tanks drive onto the Tistedal heights, at the screen post.
 
 - **Civil desks / Blue (one person):** C-11 E6 Svingen needs a patrol car and P1 and P2 are both busy. Tap + on P1, then C-11 (2 taps): the row reads "1 en route · needs 1 more patrol car · No free unit · 2 busy · P1 next, 1 step ahead". Its ambulance part: tap C-11, Dispatch (A3).
 
-## t = 15:00 (beat: Do now or Add to end)
+## t = 14:40 (beat: Do now or Add to end)
 
-- **Civil desks / Blue (one person):** "P3 C-12 Svinesund road · needs 1 more fire engine · No free unit · 1 busy". Tap F1, tap C-12, tap **Add to end** (3 taps). Do now would pull F1 off the building fire. The row then reads "F1 next, 1 step ahead".
+- **Civil desks / Blue (one person):** "P3 C-12 Svinesund road · needs 1 more fire engine · No free unit · 1 busy". Tap F1, tap C-12, tap **Add to end** (3 taps); or call first, tap C-12, then its button "Add to end: F1 → C-12 Svinesund road" (2 taps). Do now would pull F1 off the building fire. The row then reads "F1 next, 1 step ahead".
 - **Blue military:** Contacts: one Red tank destroyed, the others damaged and withdrawing. At 15:30 "P2 Screen the Tistedal heights" (B-Recce 2).
 
 ## t = 16:30 – 18:30
 
-- **Civil desks:** C-13 Remmen (16:30, P3). At 18:00 "Halden emergency clinic — exercise: not accepting" in the log; units carrying patients to it turn to "transporting → Ystehede receiving site — exercise". At 18:30 "P2 C-14 Brattås · needs 1 more patrol car · No free unit · 2 busy": it is served once a car is free.
+- **Civil desks:** C-13 Remmen (16:30, P3). At 18:00 "Halden emergency clinic — exercise: not accepting" in the log; units carrying patients to it turn to "transporting → Ystehede receiving site — exercise". At 18:30 "P2 C-14 Brattås · needs 1 more patrol car · No free unit · 2 busy": its button offers Add to end for a busy car, and it is served once that car is free.
 - **Blue military:** at 18:30 "P2 Screen the border road · needs 1 more recce · B-Recce 1 ≈6:35".
 
 ## t = 21:00 – 24:30

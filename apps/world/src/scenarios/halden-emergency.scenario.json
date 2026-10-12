@@ -247,7 +247,7 @@
       },
       {
         "id": "harbour-car-fire",
-        "at": {"kind": "after_scenario_start", "seconds": 720},
+        "at": {"kind": "after_scenario_start", "seconds": 660},
         "title": "A car catches fire beside the harbour kitchen fire",
         "actions": [
           {

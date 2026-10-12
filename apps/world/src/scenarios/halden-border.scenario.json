@@ -507,7 +507,7 @@
       },
       {
         "id": "call-12",
-        "at": {"kind": "after_scenario_start", "seconds": 900},
+        "at": {"kind": "after_scenario_start", "seconds": 880},
         "title": "C-12 Svinesund road",
         "actions": [
           {

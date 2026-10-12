@@ -116,6 +116,13 @@ describe('halden-border demo plays', () => {
     expect(outcome.calls.filter(call => !call.result.ok)).toEqual([])
   }, 120_000)
 
+  test('at the Do now or Add to end beat the unit at the building fire stays on scene there a minute to a minute and a half or more after C-12 arrives, time for the beat\'s taught taps', async () => {
+    // The call has nothing to carry: it closes when its unit leaves the scene.
+    const windows = await Promise.all((['good', 'road-1.4'] as const).map(async name => (await played(name)).closedAtS.get(cueLabel('call-4'))! - cueS('call-12')))
+    expect(Math.min(...windows)).toBeGreaterThanOrEqual(60)
+    expect(Math.min(...windows)).toBeLessThanOrEqual(120)
+  }, 240_000)
+
   for (const name of ['road-1.4', 'road-1.5'] as const) {
     test(`on a router ${name.slice(5)} times as long and slow as the straight line, as roads are, the good dispatcher still meets every objective`, async () => {
       const outcome = await played(name)
@@ -150,8 +157,9 @@ describe('halden-border demo plays', () => {
 
   test('the good play has its pressure moments: an Add to end for two calls and no free car, a Do now or Add to end, and the civil and military halves busy at once', async () => {
     const outcome = await played('good')
+    // The beats' two Add to end come first; later, a call with no free unit offers one on its own commit button, which the good dispatcher taps.
     const queued = outcome.calls.filter(call => call.capabilityId.endsWith('.unit.queue'))
-    expect(queued.map(call => call.atS)).toEqual([cueS('call-11'), cueS('call-12')])
+    expect(queued.map(call => call.atS).slice(0, 2)).toEqual([cueS('call-11'), cueS('call-12')])
     // Between Red's push and the end of the burst, both halves of the one-person screen act.
     const window = outcome.calls.filter(call => call.atS >= cueS('red-push-1') && call.atS <= cueS('call-12'))
     expect(window.some(call => call.capabilityId.endsWith('.unit.recall'))).toBe(true)

@@ -541,6 +541,40 @@ describe('the pressure moments by Board taps', () => {
     }
   }, 60_000)
 
+  /**
+   * How long the busy unit of a Do now / Add to end beat still stands on
+   * scene when the beat's call arrives, under a dispatcher who sent it at
+   * once on straight lines (the shortest the beat gets) and on travel twice
+   * as slow, as town roads make it.
+   */
+  const beatWindowsS = async (demo: Demo, atS: number, busyAt: (log: PlayLog) => string): Promise<ReadonlyArray<number>> => {
+    const windows: number[] = []
+    for (const factor of [1, 2]) {
+      const log = await play(demo, { kind: 'recommendations', beats: [] }, { factor, reactS: 0 }, atS)
+      try {
+        const unitId = busyAt(log)
+        expect(log.run.unit(unitId).phase).toBe('on-task')
+        let leftS = 0
+        while (log.run.unit(unitId).phase === 'on-task' && leftS < 900) {
+          await runFor(log.run, 5_000)
+          leftS += 5
+        }
+        windows.push(leftS)
+      } finally {
+        await log.run.close()
+      }
+    }
+    return windows
+  }
+
+  test('halden-emergency car fire: the engine at the first fire stays on scene a minute to a minute and a half or more after the car fire arrives, time for the beat\'s taught taps', async () => {
+    const atS = cueAt(emergency, 'harbour-car-fire')
+    const windows = await beatWindowsS(demos.emergency, atS, log => [...createdBy(log.calls, cueAt(emergency, 'guest-harbour-fire')).onScene][0]!)
+    expect(Math.min(...windows)).toBeGreaterThanOrEqual(60)
+    // Not so long that the car fire's four minutes are out of reach behind it.
+    expect(Math.min(...windows)).toBeLessThanOrEqual(120)
+  }, 60_000)
+
   test('supply-run chain, as the description teaches it: tap the unit, then the first request, then the + on the unit and the second; every tap is accepted', async () => {
     const atS = cueAt(supply, 'scout-camp-request')
     const { log, screen } = await boardAt(demos.supply, atS)
