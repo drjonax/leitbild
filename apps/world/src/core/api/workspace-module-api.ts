@@ -13,6 +13,7 @@ import {
   workspaceModuleManifestSchema,
   workspaceDefinitionRevisionReferenceSchema,
   type ModuleCapabilityDescriptor,
+  type ModuleFeaturedDefinitionCollection,
   type ModuleResourceDescriptor
 } from '@leitbild/contracts'
 import { createModuleCapabilityRegistry } from '@leitbild/module-runtime'
@@ -77,11 +78,23 @@ export const worldModuleManifest = workspaceModuleManifestSchema.parse({
     resources: '/internal/workspaces/{workspaceId}/resources',
     capabilities: '/internal/workspaces/{workspaceId}/capabilities',
     invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
+    featuredDefinitions: '/internal/featured-definitions',
   },
   ui: {
     workspace: '/workspaces/{workspaceId}/world',
   },
 })
+
+/**
+ * Serves World's featured Scenarios from bundled memory. It takes no Workspace
+ * registry, so a landing page reading it never loads a Workspace runtime.
+ */
+export const handleWorldFeaturedDefinitions = (
+  request: Request,
+  url: URL,
+  featured: ModuleFeaturedDefinitionCollection,
+): Response | null =>
+  url.pathname === worldModuleManifest.endpoints.featuredDefinitions && request.method === 'GET' ? json(featured) : null
 
 const lifecycleInputSchema = z.object({ workspaceId: workspaceIdSchema }).strict()
 const emptyInputSchema = z.object({}).strict()

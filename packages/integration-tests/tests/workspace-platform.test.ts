@@ -12,6 +12,7 @@ import { compileScenarioDefinition } from '../../../apps/world/src/core/scenario
 import { createScenarioRuntimeResolver } from '../../../apps/world/src/core/scenarios/runtime-resolver.ts'
 import { createDirectRoutingAdapter } from '../../../apps/world/src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../../../apps/world/src/scenarios/definitions.ts'
+import { builtinFeaturedScenarioDefinitions } from '../../../apps/world/src/scenarios/featured.ts'
 import { handleAgentsModuleApi } from '../../../apps/agents/src/api/workspace-module-api.ts'
 import { asAIAgent } from '../../../apps/agents/src/agents/shared.ts'
 import { effectiveAgentToolSelection } from '../../../apps/agents/src/agents/spawn.ts'
@@ -77,6 +78,7 @@ describe('Workspace Host with real Modules', () => {
     })
     const worldServer = createWorldServer({
       workspaces: worldRegistry,
+      featuredDefinitions: builtinFeaturedScenarioDefinitions,
       bindHost: '127.0.0.1',
       port: 0,
       uiDistPath: uiDir,

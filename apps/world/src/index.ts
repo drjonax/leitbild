@@ -8,6 +8,7 @@ import { createWorldWorkspaceRuntimeRegistry } from './core/workspaces/runtime-r
 import { createConfiguredProcedureSourceService } from './procedure-sources.ts'
 import { createRoutingAdapterFromEnv } from './routing/config.ts'
 import { builtinScenarioDefinitions } from './scenarios/definitions.ts'
+import { builtinFeaturedScenarioDefinitions } from './scenarios/featured.ts'
 
 const routing = createRoutingAdapterFromEnv()
 const assembly = createWorldApplicationAssembly({ routing })
@@ -31,7 +32,7 @@ const workspaces = createWorldWorkspaceRuntimeRegistry({
   procedureSourceService: createConfiguredProcedureSourceService({ dataDir }),
 })
 
-const server = createServer({ workspaces, workspaceHostUrl })
+const server = createServer({ workspaces, featuredDefinitions: builtinFeaturedScenarioDefinitions, workspaceHostUrl })
 
 let shuttingDown = false
 const shutdown = (): void => {

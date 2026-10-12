@@ -360,7 +360,7 @@ export const createWireOracle = (declaration: RunRoles) => {
     const created = await createRoleRunWorkspaces(setup.packs, setup.definitions, setup.runtimeAdapters)
     const workspaceId = newWorkspaceId()
     await created.workspaces.provision(workspaceId)
-    const server = createServer({ workspaces: created.workspaces, port: 0, bindHost: '127.0.0.1' })
+    const server = createServer({ workspaces: created.workspaces, featuredDefinitions: { definitions: [] }, port: 0, bindHost: '127.0.0.1' })
     const runId = await created.workspaces.withRuntime(workspaceId, async runtime => (await runtime.simulationRuns.create({ scenarioId: setup.scenarioId })).id)
     current = { workspaces: created.workspaces, dataDir: created.dataDir, workspaceId, server, base: `http://127.0.0.1:${server.port}`, runId }
     // Nothing moves or fires unless a step asks: the oracle runs on a deterministic script.

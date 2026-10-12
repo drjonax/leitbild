@@ -40,6 +40,7 @@ const createModule = (moduleId: ModuleId) => {
             resources: `/internal/${moduleId}/workspaces/{workspaceId}/resources`,
             capabilities: `/internal/${moduleId}/workspaces/{workspaceId}/capabilities`,
             invoke: `/internal/${moduleId}/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke`,
+            featuredDefinitions: `/internal/${moduleId}/featured-definitions`,
           },
           ui: { workspace: `/workspaces/{workspaceId}/${moduleId}` },
         })

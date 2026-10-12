@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import {
   createWorkspaceInputSchema,
   coreModuleIds,
+  featuredDefinitionCatalogSchema,
+  moduleFeaturedDefinitionCollectionSchema,
+  moduleFeaturedDefinitionSchema,
   moduleCapabilityDescriptorSchema,
   moduleCapabilityInvocationSchema,
   moduleDefinitionDescriptorSchema,
@@ -75,6 +78,7 @@ describe('Module contracts', () => {
         resources: '/internal/workspaces/{workspaceId}/resources',
         capabilities: '/internal/workspaces/{workspaceId}/capabilities',
         invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
+        featuredDefinitions: '/internal/featured-definitions',
       },
     })
     expect(String(manifest.module.id)).toBe('world')
@@ -85,6 +89,88 @@ describe('Module contracts', () => {
     })).toThrow()
   })
 
+  test('requires a Workspace-independent featured Definitions path on every Module', () => {
+    const endpoints = {
+      workspace: '/internal/workspaces/{workspaceId}',
+      definitions: '/internal/workspaces/{workspaceId}/definitions',
+      resources: '/internal/workspaces/{workspaceId}/resources',
+      capabilities: '/internal/workspaces/{workspaceId}/capabilities',
+      invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
+    }
+    const manifest = (featuredDefinitions?: string) => ({
+      module: { id: 'agents', title: 'Agents' },
+      endpoints: { ...endpoints, ...(featuredDefinitions === undefined ? {} : { featuredDefinitions }) },
+    })
+    expect(workspaceModuleManifestSchema.parse(manifest('/internal/featured-definitions')).endpoints.featuredDefinitions)
+      .toBe('/internal/featured-definitions')
+    expect(() => workspaceModuleManifestSchema.parse(manifest())).toThrow()
+    expect(() => workspaceModuleManifestSchema.parse(manifest('/internal/workspaces/{workspaceId}/featured'))).toThrow('must not contain a template')
+    expect(() => workspaceModuleManifestSchema.parse(manifest('https://module.test/featured'))).toThrow('origin')
+  })
+})
+
+describe('featured Definitions', () => {
+  const featured = {
+    definition: { moduleId: 'world', type: 'world.scenario', id: 'halden-offsite-power-restoration' },
+    revisionId: 'revision-0123456789abcdef0123456789abcdef',
+    title: 'Halden: loss of offsite power',
+    summary: 'Four simulated nuclear units lose their grid connection.',
+    about: 'A fault cuts four fictional units off the grid; restore offsite power.',
+    tags: ['Nuclear plant + grid', 'Desktop'],
+    previews: [{
+      alt: 'The grid map after the fault',
+      width: 1600,
+      height: 1000,
+      sources: [
+        { path: '/assets/world/scenario-previews/offsite-800.0a1b2c3d.webp', width: 800 },
+        { path: '/assets/world/scenario-previews/offsite-1600.0a1b2c3d.webp', width: 1600 },
+      ],
+    }],
+  }
+  const withPreviewPath = (path: string) => ({
+    ...featured,
+    previews: [{ ...featured.previews[0]!, sources: [{ path, width: 800 }] }],
+  })
+
+  test('names a Definition and its exact revision without a Workspace', () => {
+    const parsed = moduleFeaturedDefinitionSchema.parse(featured)
+    expect(String(parsed.definition.id)).toBe('halden-offsite-power-restoration')
+    expect(parsed).not.toHaveProperty('definition.workspaceId')
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, definition: { ...featured.definition, workspaceId: newWorkspaceId() } })).toThrow()
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, definition: { ...featured.definition, type: 'agents.room-definition' } }))
+      .toThrow('namespaced by its owning Module')
+  })
+
+  test('bounds the copy and requires at least one preview and one tag', () => {
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, previews: [] })).toThrow()
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, tags: [] })).toThrow()
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, tags: ['a', 'b', 'c', 'd', 'e'] })).toThrow()
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, summary: 'x'.repeat(201) })).toThrow()
+    expect(() => moduleFeaturedDefinitionSchema.parse({ ...featured, about: 'x'.repeat(1025) })).toThrow()
+  })
+
+  test('serves previews only from the featuring Module\'s own assets', () => {
+    expect(() => moduleFeaturedDefinitionSchema.parse(withPreviewPath('/assets/agents/offsite.webp'))).toThrow('/assets/world/')
+    expect(() => moduleFeaturedDefinitionSchema.parse(withPreviewPath('/assets/world/../agents/offsite.webp'))).toThrow('/assets/world/')
+    expect(() => moduleFeaturedDefinitionSchema.parse(withPreviewPath('/assets/world/offsite.webp?v=1'))).toThrow('/assets/world/')
+    expect(() => moduleFeaturedDefinitionSchema.parse(withPreviewPath('https://cdn.test/assets/world/offsite.webp'))).toThrow()
+    expect(() => moduleFeaturedDefinitionSchema.parse({
+      ...featured,
+      previews: [{ ...featured.previews[0]!, sources: [featured.previews[0]!.sources[0]!, featured.previews[0]!.sources[0]!] }],
+    })).toThrow('duplicate preview source width')
+  })
+
+  test('lists each featured Definition once, with a ready outcome for its Module', () => {
+    expect(() => moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [featured, featured] })).toThrow('duplicate featured Definition')
+    expect(featuredDefinitionCatalogSchema.parse({
+      modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }],
+      definitions: [featured],
+    }).definitions).toHaveLength(1)
+    expect(() => featuredDefinitionCatalogSchema.parse({
+      modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'offline', retryable: true } }],
+      definitions: [featured],
+    })).toThrow('no ready Module outcome')
+  })
 })
 
 describe('dynamic Resource and Capability discovery', () => {

@@ -10,16 +10,18 @@ import {
 import { moduleQueryOutcomeSchema } from './modules.ts'
 import { relativeUiPathSchema } from './ui.ts'
 
+const requireModuleNamespacedType = (reference: { readonly moduleId: string; readonly type: string }, ctx: z.RefinementCtx): void => {
+  if (!reference.type.startsWith(`${reference.moduleId}.`)) {
+    ctx.addIssue({ code: 'custom', path: ['type'], message: 'Definition type must be namespaced by its owning Module' })
+  }
+}
+
 export const workspaceDefinitionReferenceSchema = z.object({
   workspaceId: workspaceIdSchema,
   moduleId: moduleIdSchema,
   type: definitionTypeSchema,
   id: definitionIdSchema,
-}).strict().superRefine((reference, ctx) => {
-  if (!reference.type.startsWith(`${reference.moduleId}.`)) {
-    ctx.addIssue({ code: 'custom', path: ['type'], message: 'Definition type must be namespaced by its owning Module' })
-  }
-})
+}).strict().superRefine(requireModuleNamespacedType)
 export type WorkspaceDefinitionReference = z.infer<typeof workspaceDefinitionReferenceSchema>
 
 export const workspaceDefinitionRevisionReferenceSchema = workspaceDefinitionReferenceSchema.extend({
@@ -88,3 +90,108 @@ export const workspaceDefinitionCatalogSchema = z.object({
   })
 })
 export type WorkspaceDefinitionCatalog = z.infer<typeof workspaceDefinitionCatalogSchema>
+
+/** A Definition named without a Workspace: the identity every Workspace seeds it under. */
+export const moduleDefinitionIdentitySchema = z.object({
+  moduleId: moduleIdSchema,
+  type: definitionTypeSchema,
+  id: definitionIdSchema,
+}).strict().superRefine(requireModuleNamespacedType)
+export type ModuleDefinitionIdentity = z.infer<typeof moduleDefinitionIdentitySchema>
+
+const definitionIdentityKey = (identity: ModuleDefinitionIdentity): string =>
+  `${identity.moduleId}:${identity.type}:${identity.id}`
+
+/**
+ * One image of a featured Definition. `width` and `height` are its intrinsic
+ * size, so a page reserves its box before it loads; each source is the same
+ * image at one pixel width, for a srcset.
+ */
+export const definitionPreviewSchema = z.object({
+  alt: z.string().trim().min(1).max(300),
+  width: z.number().int().positive().max(8192),
+  height: z.number().int().positive().max(8192),
+  sources: z.array(z.object({
+    path: relativeUiPathSchema,
+    width: z.number().int().positive().max(8192),
+  }).strict()).min(1).max(4),
+}).strict().superRefine((preview, ctx) => {
+  const widths = new Set<number>()
+  preview.sources.forEach((source, index) => {
+    if (widths.has(source.width)) ctx.addIssue({ code: 'custom', path: ['sources', index, 'width'], message: `duplicate preview source width: ${source.width}` })
+    widths.add(source.width)
+  })
+})
+export type DefinitionPreview = z.infer<typeof definitionPreviewSchema>
+
+// A preview is served from its Module's own asset namespace, one plain path
+// with no dot segments, query or fragment.
+const modulePreviewPathPattern = /^\/assets\/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/(?:[A-Za-z0-9_~-][A-Za-z0-9._~-]*\/)*[A-Za-z0-9_~-][A-Za-z0-9._~-]*$/
+
+/**
+ * A Definition a Module features for newcomers, independent of any Workspace.
+ * `revisionId` is the exact revision every Workspace seeds for it.
+ */
+export const moduleFeaturedDefinitionSchema = z.object({
+  definition: moduleDefinitionIdentitySchema,
+  revisionId: definitionRevisionIdSchema,
+  title: z.string().trim().min(1).max(256),
+  summary: z.string().trim().min(1).max(200),
+  about: z.string().trim().min(1).max(1024),
+  tags: z.array(z.string().trim().min(1).max(32)).min(1).max(4),
+  previews: z.array(definitionPreviewSchema).min(1).max(4),
+}).strict().superRefine((featured, ctx) => {
+  featured.previews.forEach((preview, previewIndex) => {
+    preview.sources.forEach((source, sourceIndex) => {
+      if (modulePreviewPathPattern.exec(source.path)?.[1] !== featured.definition.moduleId) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['previews', previewIndex, 'sources', sourceIndex, 'path'],
+          message: `preview must be served under /assets/${featured.definition.moduleId}/`,
+        })
+      }
+    })
+  })
+})
+export type ModuleFeaturedDefinition = z.infer<typeof moduleFeaturedDefinitionSchema>
+
+const requireUniqueFeaturedDefinitions = (
+  definitions: ReadonlyArray<ModuleFeaturedDefinition>,
+  ctx: z.RefinementCtx,
+): void => {
+  const seen = new Set<string>()
+  definitions.forEach((featured, index) => {
+    const key = definitionIdentityKey(featured.definition)
+    if (seen.has(key)) ctx.addIssue({ code: 'custom', path: ['definitions', index, 'definition'], message: `duplicate featured Definition: ${key}` })
+    seen.add(key)
+  })
+}
+
+/** One Module's featured Definitions; array order is the Module's ranking. */
+export const moduleFeaturedDefinitionCollectionSchema = z.object({
+  definitions: z.array(moduleFeaturedDefinitionSchema).max(12),
+}).strict().superRefine((collection, ctx) => requireUniqueFeaturedDefinitions(collection.definitions, ctx))
+export type ModuleFeaturedDefinitionCollection = z.infer<typeof moduleFeaturedDefinitionCollectionSchema>
+
+/** Every installed Module's featured Definitions, with one outcome per Module. */
+export const featuredDefinitionCatalogSchema = z.object({
+  modules: z.array(moduleQueryOutcomeSchema),
+  definitions: z.array(moduleFeaturedDefinitionSchema),
+}).strict().superRefine((catalog, ctx) => {
+  const ready = new Set<string>()
+  const seenModules = new Set<string>()
+  catalog.modules.forEach((outcome, index) => {
+    if (seenModules.has(outcome.moduleId)) {
+      ctx.addIssue({ code: 'custom', path: ['modules', index, 'moduleId'], message: `duplicate Module outcome: ${outcome.moduleId}` })
+    }
+    seenModules.add(outcome.moduleId)
+    if (outcome.status === 'ready') ready.add(outcome.moduleId)
+  })
+  catalog.definitions.forEach((featured, index) => {
+    if (!ready.has(featured.definition.moduleId)) {
+      ctx.addIssue({ code: 'custom', path: ['definitions', index, 'definition', 'moduleId'], message: 'featured Definition has no ready Module outcome' })
+    }
+  })
+  requireUniqueFeaturedDefinitions(catalog.definitions, ctx)
+})
+export type FeaturedDefinitionCatalog = z.infer<typeof featuredDefinitionCatalogSchema>

@@ -146,7 +146,7 @@ const nextOf = async (messages: ReceivedMessage[], type: string, after: number):
 describe('Role sets on the WebSocket', () => {
   const startServer = async () => {
     const { workspaces, workspaceId } = await setup()
-    const server = createServer({ workspaces, port: 0, bindHost: '127.0.0.1' })
+    const server = createServer({ workspaces, featuredDefinitions: { definitions: [] }, port: 0, bindHost: '127.0.0.1' })
     cleanups.push(async () => { await server.stop() })
     const base = `127.0.0.1:${server.port}/api/workspaces/${workspaceId}/world`
     return { workspaces, workspaceId, http: `http://${base}`, ws: `ws://${base}/ws` }
