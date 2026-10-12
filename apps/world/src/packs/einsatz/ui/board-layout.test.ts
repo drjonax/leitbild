@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { defaultRailWidth } from '../../../ui/rail-state.ts'
 import { cameraPaddingFor, noMapCover } from '../../../ui/surface-panel-interaction.ts'
 import type { Arrangement } from '../board/types.ts'
+import { waitingAbove } from './reveal.ts'
 import { boardChromePx, boardEdgeGapPx, boardHeightFor, boardLayoutFor, boardMapCover, boardSections, listContentPx, listHeadingPx, listHeightsFor, listRowsTemplate, listsHeightFor, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
 
 const leads: ReadonlyArray<Arrangement['lead']> = ['work-list', 'map']
@@ -149,6 +150,25 @@ describe('Board layout', () => {
     // The cap holds three lines of text, the bar's gap and the row of buttons.
     const barGap = Number(/gap: (\d+)px/.exec(rule('.bar'))?.[1])
     expect(3 * rowBoxPx.line + barGap + tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
+  })
+
+  test('a call that arrives while Calls is scrolled lands above what it shows, and the marker over its top counts it until the list is back at the top', () => {
+    const row = (index: number, waiting: boolean) => ({ waiting, top: index * rowPx.work, height: rowPx.work - rowBoxPx.gap })
+    // Two served calls, scrolled a little to keep the selected one in view: nothing waits above.
+    const served = [row(0, false), row(1, false)]
+    expect(waitingAbove(served, 30)).toBe(0)
+    // A waiting call arrives and takes the top; the list keeps its scroll, so the new row is out of view above.
+    const arrived = [row(0, true), row(1, false), row(2, false)]
+    expect(waitingAbove(arrived, rowPx.work)).toBe(1)
+    // Half of it showing is enough to see it; back at the top, the marker goes.
+    expect(waitingAbove(arrived, rowPx.work / 3)).toBe(0)
+    expect(waitingAbove(arrived, 0)).toBe(0)
+    // Waiting rows below the fold are no news: Calls lists them first, so the top is where a new one lands.
+    expect(waitingAbove([row(0, false), row(1, true)], 0)).toBe(0)
+    const list = readFileSync(join(import.meta.dir, 'BoardWorkList.svelte'), 'utf8')
+    for (const binding of ['data-waiting={!row.served}', 'onscroll={measure}', 'onclick={toTop}']) expect(list).toContain(binding)
+    // The marker lies over the list, never in its flow: no row moves when it shows.
+    expect(/\n {2}\.above \{([^}]*)\}/.exec(list)?.[1]).toContain('position: absolute;')
   })
 
   test('the lists follow the arrangement: the work list leads for queues, Contacts for map-led roles, and a list left out is not shown', () => {

@@ -55,6 +55,8 @@ export const boardWords = {
   next: 'next',
   mapPoint: 'a map point',
   undo: 'Undo',
+  /** The Calls list's marker for waiting rows scrolled out of view above, after their count: "↑ 2 waiting". */
+  waitingAbove: 'waiting',
   confirmFirst: 'Confirm or cancel first',
   preparing: 'Preparing…',
   nothingToSend: 'Nothing to send',
