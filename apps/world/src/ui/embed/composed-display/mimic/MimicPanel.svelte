@@ -22,6 +22,7 @@
   import { nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_INTENT_MS, QUICK_LOOK_ORDER, type MimicPopoverContext, type MimicPopoverSection, type PopoverEvent, type PopoverState } from './popover.ts'
   import type { MimicQuickLookSource } from './quick-look-source.ts'
   import type { MimicQuickLooks } from '../../../../packs/process-plant/displays/mimic/quick-look.ts'
+  import type { ItemBadges } from '../operation/operation-presenter.ts'
 
   // A generated equipment mimic drawn with OpenBridge: pipes on a canvas by
   // connector-diagram, equipment as positioned OpenBridge elements. The
@@ -33,7 +34,9 @@
   // Where items open (a display World generates in its window), each item's detail dot opens its popover:
   // its quick look (`quickLook`: the lead values World chose with the drawing, and the Run to read them from)
   // and the sections the hosting display adds (`sections`, popover.ts).
-  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, sections = [] }: {
+  // An operated display (OperatedMimic) adds each item's operation badges, the item whose command is selected, and the
+  // item whose popover opens pinned as the display opens on it (a pending proposal to review).
+  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, sections = [], badges, selected = null, pin = null }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
     stale: boolean
@@ -43,6 +46,9 @@
     highlight?: ReadonlySet<string> | null
     quickLook?: { readonly source: MimicQuickLookSource; readonly looks: MimicQuickLooks } | undefined
     sections?: ReadonlyArray<MimicPopoverSection>
+    badges?: ReadonlyMap<string, ItemBadges> | undefined
+    selected?: string | null
+    pin?: string | null
   } = $props()
 
   let openBridge = $state<typeof OpenBridgeMimic | null>(null)
@@ -169,6 +175,14 @@
     if (returnFocus && was.kind === 'open') dotButtons.get(was.item)?.focus()
   }
   const popoverItem = $derived(popover.kind === 'open' ? mimic.items.find(item => item.id === popover.item) : undefined)
+  // Opened on an item with a pending proposal, the display pins its popover once its dot is drawn (QA-10).
+  let pinned: string | null = null
+  $effect(() => {
+    if (pin === null || pin === pinned || dots[pin] === undefined) return
+    pinned = pin
+    clearTimeout(intent)
+    popover = { kind: 'open', item: pin, pinned: true }
+  })
   // Esc closes it first (not the window's Back) and returns focus to its dot; a press outside it and the dots closes it.
   let moved = $state(0)
   // Registered once; each listener acts only while a popover is open.
@@ -213,6 +227,18 @@
     .filter(section => section.applies(popoverItem))
     .sort((left, right) => left.order - right.order))
   const activeRuleIds = $derived(new Set(alarms.map(alarm => alarm.ruleId)))
+  /** What a dot opens: the titles of the sections its popover shows ("Quick look · Control"). */
+  const dotTitle = (item: MimicDrawnItem): string => {
+    const shown = [...(looksOf(item).length > 0 ? [{ title: 'Quick look', order: QUICK_LOOK_ORDER }] : []), ...sections.filter(section => section.applies(item))]
+      .sort((left, right) => left.order - right.order).map(section => section.title)
+    return `${shown.join(' · ')}: ${item.binding.label}`
+  }
+  /** What an item's badges say, for its target's title and its screen reader name. */
+  const badgeWords = (item: MimicDrawnItem): string => {
+    const carried = badges?.get(item.id)
+    if (carried === undefined) return ''
+    return [carried.proposal?.title, carried.attribution?.title, carried.interlock?.title, carried.commandLocked?.title].filter((line): line is string => line !== undefined).map(line => `\n${line}`).join('')
+  }
   const popoverFlap = (item: MimicDrawnItem): string => {
     const alert = alertOf(item)
     return alert === null ? '' : `${alert.label.flap}${alert.others === 0 ? '' : ` · ${flapCount(alert.others)}`}`
@@ -287,7 +313,7 @@
   type Element = HTMLElement & Record<string, unknown>
 
   // Each OpenBridge element is created once and restyled by every sample.
-  const device = (host: HTMLElement, params: { ob: Ob; item: MimicDrawnItem; look: ItemLook; rows: ReturnType<typeof deviceRows>; alert: ReturnType<typeof alertOf> }) => {
+  const device = (host: HTMLElement, params: { ob: Ob; item: MimicDrawnItem; look: ItemLook; rows: ReturnType<typeof deviceRows>; alert: ReturnType<typeof alertOf>; activated: boolean; badges: ItemBadges | null }) => {
     const element = params.ob.createDevice(mimic.readoutSize)
     host.append(element)
     // OpenBridge writes a device's tag in its readout stack; its dot follows it there.
@@ -295,14 +321,16 @@
     tags.set(id, () => element.shadowRoot?.querySelector('obc-automation-button-readout-stack')?.shadowRoot?.querySelector('.tag') ?? null)
     const apply = (next: typeof params) => {
       if (next.item.presentation.element !== 'device') return
+      const textSide = next.item.text?.side === 'bottom' ? 'bottom' : 'right'
       next.ob.updateDevice(element, next.item.presentation.icon, next.look, {
         tag: next.item.binding.label,
         orientation: next.item.orientation,
-        textSide: next.item.text?.side === 'bottom' ? 'bottom' : 'right',
+        textSide,
         rows: next.rows,
         // The frame is drawn around the room the server reserved, so a long flap label is never cut.
         alert: null,
       })
+      next.ob.updateSymbolOperation(element, { activated: next.activated, badges: next.badges, textSide })
     }
     apply(params)
     return { update: apply, destroy: () => { element.remove(); tags.delete(id) } }
@@ -319,6 +347,15 @@
     }
     apply(params)
     return { update: apply, destroy: () => element.remove() }
+  }
+
+  // A vessel's badges sit in the top corners of the box it is drawn in, inside the room the layout gave it.
+  const vesselBadges = (host: HTMLElement, params: { ob: Ob; badges: ItemBadges | null }) => {
+    const corners = { who: Object.assign(document.createElement('span'), { className: 'corner who' }), hold: Object.assign(document.createElement('span'), { className: 'corner hold' }) }
+    host.append(corners.who, corners.hold)
+    const apply = (next: typeof params) => next.ob.updateVesselOperation(corners, next.badges)
+    apply(params)
+    return { update: apply, destroy: () => { corners.who.remove(); corners.hold.remove() } }
   }
 
   // A value row's readout block, before its unit (and after WR where the row reads its wider instrument); at an
@@ -417,10 +454,13 @@
             <div class="abnormal" style={abnormalBox(item)}></div>
           {/if}
           {#if item.presentation.element === 'device'}
-            <div class="anchor" style={`left:${item.box.x + item.box.width / 2}px;top:${item.box.y + item.box.height / 2}px`} use:device={{ ob, item, look, rows: deviceRows(item, look), alert }}></div>
+            <div class="anchor" style={`left:${item.box.x + item.box.width / 2}px;top:${item.box.y + item.box.height / 2}px`} use:device={{ ob, item, look, rows: deviceRows(item, look), alert, activated: selected === item.id, badges: badges?.get(item.id) ?? null }}></div>
           {:else}
             {#if item.presentation.element === 'tank' || item.presentation.element === 'heat-exchanger'}
               <div class="box" style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vessel={{ ob, item, look }}></div>
+              {#if badges?.has(item.id)}
+                <div class="box vessel-badges" class:activated={selected === item.id} style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vesselBadges={{ ob, badges: badges.get(item.id) ?? null }}></div>
+              {/if}
             {/if}
             {#if item.text !== null}
               <!-- A stack over its symbol stands on it: its tag on the body, its rows above, centred (a hub's downstream end). -->
@@ -459,7 +499,7 @@
         <div class="targets">
           {#each mimic.items as item (item.id)}
             {@const area = target(item)}
-            <button type="button" class="target" style={`left:${area.x}px;top:${area.y}px;width:${area.width}px;height:${area.height}px`} title={`Open ${item.binding.label}`} aria-label={`Open ${item.binding.label}: ${looks.get(item.id)?.words || 'no state drawn'}`} onclick={() => opens(item)}></button>
+            <button type="button" class="target" style={`left:${area.x}px;top:${area.y}px;width:${area.width}px;height:${area.height}px`} title={`Open ${item.binding.label}${badgeWords(item)}`} aria-label={`Open ${item.binding.label}: ${looks.get(item.id)?.words || 'no state drawn'}${badgeWords(item).replaceAll('\n', '; ')}`} onclick={() => opens(item)}></button>
             {#if interactive && dots[item.id] !== undefined && dotted(item)}
               <!-- The item's detail dot, after its target in tab order: hover a moment or press to open its popover. -->
               {@const dot = dots[item.id]!}
@@ -469,8 +509,8 @@
                 class="dot"
                 class:open={expanded}
                 style={`left:${dot.x}px;top:${dot.y}px;width:${QUICK_LOOK_DOT.size}px;height:${QUICK_LOOK_DOT.size}px`}
-                title={`Quick look: ${item.binding.label}`}
-                aria-label={`Quick look: ${item.binding.label}`}
+                title={dotTitle(item)}
+                aria-label={dotTitle(item)}
                 aria-expanded={expanded}
                 aria-controls={expanded ? popoverId : undefined}
                 use:dotOf={item.id}
@@ -568,6 +608,12 @@
   .alarm-row.alarm { color: var(--alert-alarm-color); }
   .alarm-row.warning { color: var(--alert-warning-color); }
   .alarm-row.caution { color: var(--alert-caution-color); }
+  /* A vessel's operation badges in its box's top corners; activated while a command for it is selected, as a device is. */
+  .vessel-badges { pointer-events: none; border-radius: 4px; }
+  .vessel-badges.activated { background: var(--container-section-color); }
+  .vessel-badges :global(.corner) { position: absolute; top: 0; display: inline-flex; }
+  .vessel-badges :global(.corner.who) { left: 0; }
+  .vessel-badges :global(.corner.hold) { right: 0; }
   .abnormal { position: absolute; box-sizing: border-box; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 4px; }
   .abnormal-key { padding: 0 3px; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 3px; line-height: 10px; }
   .stale-tag { padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; color: var(--element-active-color); font-weight: 700; line-height: 12px; }

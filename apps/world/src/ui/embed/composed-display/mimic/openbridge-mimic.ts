@@ -2,7 +2,9 @@
 // display has a mimic. Importing a module registers its custom element; the
 // factories below set every property explicitly (the truthful-state recipes),
 // so no OpenBridge default can draw a state the model does not have: no
-// "On"/"Off" text, no "000 %", no trend arrow, no badges, nothing clickable.
+// "On"/"Off" text, no "000 %", no trend arrow, nothing clickable, and no
+// badge but those an operated display sets (updateSymbolOperation).
+import '@oicl/openbridge-webcomponents/dist/automation/automation-badge/automation-badge.js'
 import '@oicl/openbridge-webcomponents/dist/automation/automation-button/automation-button.js'
 import '@oicl/openbridge-webcomponents/dist/automation/automation-tank/automation-tank.js'
 import '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
@@ -37,10 +39,15 @@ import '@oicl/openbridge-webcomponents/dist/icons/icon-converter-dcac.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-converter-dcac-on.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-converter-dcac-off.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-battery-vertical-75.js'
+import '@oicl/openbridge-webcomponents/dist/icons/icon-ai.js'
+import '@oicl/openbridge-webcomponents/dist/icons/icon-ai-pending.js'
+import '@oicl/openbridge-webcomponents/dist/icons/icon-user.js'
+import '@oicl/openbridge-webcomponents/dist/icons/icon-command-request.js'
 import mimicFontUrl from 'virtual:openbridge-mimic-font'
 import { renderSegments, themeFromCss, type Segment, type ThemeVars } from '@oicl/connector-diagram'
 import type { MimicIconFamily } from '../../../../packs/process-plant/displays/mimic/presentation.ts'
 import type { ItemLook } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
+import type { ItemBadges } from '../operation/operation-presenter.ts'
 
 /** The text widths the server reserved were measured in OpenBridge's Noto Sans, so the mimic loads its glyphs (mimic-font.ts). */
 export const loadMimicFont = async (): Promise<void> => {
@@ -175,6 +182,77 @@ export const updateDevice = (
     flap.textContent = config.alert.label
     if (label === null) device.append(flap)
   }
+}
+
+/**
+ * What an operated display's symbol carries (plan §4.3, QA-8/QA-10), in
+ * OpenBridge's own badges: in one corner who acts on it (an enhanced
+ * AI-pending badge while a proposal waits, else who operated it last: a
+ * person, an AI agent, or both for a person's approval of an AI proposal); in
+ * the other what holds it (interlock while a protection actuation holds one
+ * of its commands, else command-locked while another screen's command
+ * travels). Quiet regular and enhanced badges, never an alert badge.
+ */
+export const operationBadges = (badges: ItemBadges | null): { readonly who: ReadonlyArray<HTMLElement>; readonly hold: ReadonlyArray<HTMLElement> } => {
+  if (badges === null) return { who: [], hold: [] }
+  const iconBadge = (mode: 'regular' | 'enhanced', icon: string): HTMLElement => {
+    const badge = element('obc-automation-badge')
+    badge.mode = mode
+    const glyphElement = element(icon)
+    glyphElement.setAttribute('usecsscolor', '')
+    badge.append(glyphElement)
+    return badge
+  }
+  const typed = (type: 'interlock' | 'command-locked'): HTMLElement => {
+    const badge = element('obc-automation-badge')
+    badge.mode = 'regular'
+    badge.type = type
+    return badge
+  }
+  const attribution = badges.attribution?.text
+  const who = badges.proposal !== null ? [iconBadge('enhanced', badges.proposal.text === 'AI ?' ? 'obi-ai-pending' : 'obi-command-request')]
+    : attribution === undefined ? []
+      : attribution === 'OP·AI' ? [iconBadge('regular', 'obi-user'), iconBadge('regular', 'obi-ai')]
+        : [iconBadge('regular', attribution === 'AI' ? 'obi-ai' : 'obi-user')]
+  const hold = badges.interlock !== null ? [typed('interlock')] : badges.commandLocked !== null ? [typed('command-locked')] : []
+  return { who, hold }
+}
+
+const badgesKey = (badges: ItemBadges | null): string =>
+  JSON.stringify([badges?.proposal?.text ?? null, badges?.attribution?.text ?? null, badges?.interlock !== null && badges?.interlock !== undefined, badges?.commandLocked !== null && badges?.commandLocked !== undefined])
+
+/**
+ * A device's operation state: activated while a command for it is selected;
+ * its progress ring while a person's or an AI agent's command travels; and its
+ * badges in the two corners away from its text, so they never take the room
+ * its text stack was laid out in (hasBadgeSpacer stays false: nothing moves).
+ */
+export const updateSymbolOperation = (device: HTMLElement & Props, operation: { readonly activated: boolean; readonly badges: ItemBadges | null; readonly textSide: 'right' | 'bottom' }): void => {
+  device.activated = operation.activated
+  const progress = operation.badges?.progress ?? null
+  device.progress = progress !== null
+  if (progress !== null) {
+    device.progressMode = progress.mode === 'determinate' ? 'determinate' : 'indeterminate'
+    device.progressValue = progress.mode === 'determinate' ? progress.value : 0
+  }
+  const key = `${badgesKey(operation.badges)}|${operation.textSide}`
+  if (device.dataset.badges === key) return
+  device.dataset.badges = key
+  for (const old of device.querySelectorAll('[slot^="badge-"]')) old.remove()
+  const [whoCorner, holdCorner] = operation.textSide === 'bottom' ? ['badge-top-left', 'badge-top-right'] : ['badge-top-left', 'badge-bottom-left']
+  const { who, hold } = operationBadges(operation.badges)
+  for (const badge of who) { badge.slot = whoCorner!; device.append(badge) }
+  for (const badge of hold) { badge.slot = holdCorner!; device.append(badge) }
+}
+
+/** A vessel's badges, in the top corners of the box it is drawn in: who acts on it left, what holds it right. */
+export const updateVesselOperation = (corners: { readonly who: HTMLElement; readonly hold: HTMLElement }, badges: ItemBadges | null): void => {
+  const key = badgesKey(badges)
+  if (corners.who.dataset.badges === key) return
+  corners.who.dataset.badges = key
+  const { who, hold } = operationBadges(badges)
+  corners.who.replaceChildren(...who)
+  corners.hold.replaceChildren(...hold)
 }
 
 /** An `obc-automation-tank` filling its box; its fill is the level, or static when the model draws none. */
