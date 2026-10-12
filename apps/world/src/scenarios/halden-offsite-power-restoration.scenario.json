@@ -1,7 +1,7 @@
 {
   "id": "halden-offsite-power-restoration",
-  "title": "Halden loss of offsite power and restoration",
-  "description": "A summer night: Halden's four independently simulated PWR units export about 4.4 GW through their dedicated 420 kV switchyard, tied by three circuits each to Hasle and Tegneby (NO1). Two minutes in, a busbar fault at the switchyard opens all six circuits. The switchyard has no voltage-forming source of its own, so its ports de-energise, the Plants lose offsite power and each turbine trips on the loss of grid. Losing about 4.4 GW at once, three times the Nordic dimensioning incident of 1,450 MW, pulls the frequency below 49 Hz, and under-frequency load shedding disconnects part of Norway's demand. Restore offsite power by closing a circuit from the grid onto the dead switchyard, close the remaining circuits under synchro-check, then bring the grid back: raise hydro output and reconnect the shed load stage by stage. There are no weather-driven faults.",
+  "title": "Halden: loss of offsite power",
+  "description": "A summer night: four fictional nuclear units (pressurised-water reactors) at Halden export about 4.4 GW through one 420 kV switchyard, tied by three circuits each to Hasle and Tegneby. Two minutes in, a busbar fault opens all six circuits: the units lose offsite power, every turbine trips, and the grid frequency falls until under-frequency load shedding stops it. Restore offsite power by closing a Hasle circuit onto the dead switchyard, then the other circuits under synchro-check, and bring the grid back: raise hydro output and reconnect the shed load stage by stage. There are no weather-driven faults.",
   "objectives": [
     "Before the fault, note the export of the four unit bays, the switchyard voltage and the loading of the Hasle and Tegneby circuits and the NO1 corridors (connection-points.list, power-flow.snapshot).",
     "When the switchyard is isolated, confirm that its bays are de-energised (no voltage, no frequency) and that the Plants report loss of offsite power; follow the island frequency, the LFDD stages that operate and the reserves.",
@@ -197,10 +197,10 @@
   "view": {
     "map": {
       "center": [
-        11.25,
-        59.25
+        11.53,
+        59.18
       ],
-      "zoom": 9
+      "zoom": 9.5
     }
   },
   "timeline": {
@@ -211,14 +211,14 @@
           "kind": "after_scenario_start",
           "seconds": 0
         },
-        "title": "Four units exporting through one switchyard",
+        "title": "In two minutes, a fault cuts Halden off the grid",
         "actions": [
           {
             "type": "show_guidance",
             "guidance": {
               "id": "offsite-power-briefing",
-              "title": "Four units exporting through one switchyard",
-              "message": "Note the bay exports, the switchyard voltage and the Hasle and Tegneby circuits. A busbar fault isolates the switchyard at two minutes.",
+              "title": "In two minutes, a fault cuts Halden off the grid",
+              "message": "To jump ahead, press the stopwatch next to the clock, “Run at maximum pace for a fixed duration”, and choose +2 min. Then follow the grid frequency on the right.",
               "objectIds": [
                 "grid:halden-four-unit",
                 "plant:halden-1",
@@ -226,7 +226,7 @@
                 "plant:halden-3",
                 "plant:halden-4"
               ],
-              "dismissible": true,
+              "dismissible": false,
               "tone": "default"
             }
           }
@@ -292,8 +292,8 @@
             "type": "show_guidance",
             "guidance": {
               "id": "switchyard-busbar-fault",
-              "title": "Halden switchyard isolated",
-              "message": "All six 420 kV circuits are open: the bays are de-energised, the Plants have lost offsite power and each turbine tripped on the loss of grid. Close a Hasle circuit onto the dead switchyard, then the others, and restore the shed load.",
+              "title": "Halden is cut off from the grid",
+              "message": "All six circuits are open and every turbine has tripped. To restore offsite power, open Assets in the grid panel, search “Hasle circuit 1”, choose it and press Close. Or ask the Leitbild Assistant: “Why did the turbine trip?”",
               "objectIds": [
                 "grid:halden-four-unit",
                 "plant:halden-1",
