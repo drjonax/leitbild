@@ -259,7 +259,12 @@ export const gridDefinitionForModel = (model: GridModelDefinition): CompiledGrid
   operatingPoint: {
     id: 'synthetic', title: 'Synthetic', loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0.5,
     hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: 0 })),
-    externalExchanges: model.externalSystems.filter(system => system.synchronous).map(system => ({ systemId: system.id, scheduledExportMw: 0 })),
+    // No exchange: one border per participating area, each at 0 MW.
+    externalExchanges: model.externalSystems.filter(system => system.synchronous).map(system => ({
+      systemId: system.id,
+      scheduledExportMw: 0,
+      borders: (system.areaParticipation ?? []).map(entry => ({ label: entry.area, boundaryBusIds: [...entry.boundaryBusIds], scheduledExportMw: 0 })),
+    })),
     branchStates: model.branches.map(branch => ({ branchId: branch.id, state: 'closed' as const, availability: 1 })),
   },
   automation: gridAutomationPreset(nordicFrequencyAutomationRef),

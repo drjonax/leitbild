@@ -1,6 +1,6 @@
 {
  "schema": "leitbild.electric-grid.norway-reference-dispatch",
- "curatedAt": "2026-10-11",
+ "curatedAt": "2026-10-12",
  "sources": [
   {
    "id": "energy-charts",
@@ -9,7 +9,24 @@
    "url": "https://api.energy-charts.info/",
    "licence": "cc-by-4.0",
    "attribution": "Energy-Charts.info (Fraunhofer ISE); data: ENTSO-E Transparency Platform",
-   "retrievedAt": "2026-10-11"
+   "retrievals": [
+    { "url": "https://api.energy-charts.info/public_power?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z", "retrievedAt": "2026-10-11T18:59:32.505Z", "sha256": "5d3221a2ff5982f092f9c419cdca80e554dd109dbec34f528ed9c9bfdd14351f" },
+    { "url": "https://api.energy-charts.info/cbpf?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z", "retrievedAt": "2026-10-11T18:59:31.946Z", "sha256": "24ffcbe6521365a9822cc466e0a03b1e7ea4ae666c3aa51cd1af05e3e9338912" },
+    { "url": "https://api.energy-charts.info/public_power?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z", "retrievedAt": "2026-10-11T18:59:32.862Z", "sha256": "0f11a3c90197c143aa65c59bbd83a5767999ee876fdf434b0c23cc8e819ed370" },
+    { "url": "https://api.energy-charts.info/cbpf?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z", "retrievedAt": "2026-10-11T18:59:32.171Z", "sha256": "e8f636d0c4fa5d289b0cea96d0ed3f58084415162c4a552c5444e8e25ec03478" }
+   ]
+  },
+  {
+   "id": "svk-physical-flows",
+   "title": "Svenska kraftnät Data Service: Physical Power Flows (net_cross_border_physical_flows), quarter-hourly per bidding-zone border",
+   "publisher": "Svenska kraftnät",
+   "url": "https://data.svk.se/dataset/net_cross_border_physical_flows",
+   "licence": "cc-by-4.0",
+   "attribution": "Svenska kraftnät",
+   "retrievals": [
+    { "url": "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-01-12T07%3A00%3A00%22%2C%222026-01-12T07%3A15%3A00%22%2C%222026-01-12T07%3A30%3A00%22%2C%222026-01-12T07%3A45%3A00%22%5D%7D", "retrievedAt": "2026-10-11T18:51:35.178Z", "sha256": "b9995a8dcc6820aeb6c9f5ab02fd0e87c5d0f8b3be13125192671cdf2b89af4e" },
+    { "url": "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-07-12T04%3A00%3A00%22%2C%222026-07-12T04%3A15%3A00%22%2C%222026-07-12T04%3A30%3A00%22%2C%222026-07-12T04%3A45%3A00%22%5D%7D", "retrievedAt": "2026-10-11T18:51:35.376Z", "sha256": "f12eb4c90d6d41e8b7bfa5c1e102e9d401e64b1a820fde24435a9030f65b8fd7" }
+   ]
   }
  ],
  "hours": {
@@ -33,11 +50,19 @@
     "NL": 12.0,
     "GB": 629.0
    },
+   "acBorderImportMw": [
+    { "priceArea": "NO1", "externalArea": "SE3", "importMw": -1081.2, "source": "svk-physical-flows" },
+    { "priceArea": "NO3", "externalArea": "SE2", "importMw": -151.2, "source": "svk-physical-flows" },
+    { "priceArea": "NO4", "externalArea": "SE1", "importMw": -153.8, "source": "svk-physical-flows" },
+    { "priceArea": "NO4", "externalArea": "SE2", "importMw": -73.8, "source": "svk-physical-flows" },
+    { "priceArea": "NO4", "externalArea": "FI", "importMw": -47.0, "source": "energy-charts" }
+   ],
    "queries": [
     "https://api.energy-charts.info/public_power?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
-    "https://api.energy-charts.info/cbpf?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z"
+    "https://api.energy-charts.info/cbpf?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
+    "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-01-12T07%3A00%3A00%22%2C%222026-01-12T07%3A15%3A00%22%2C%222026-01-12T07%3A30%3A00%22%2C%222026-01-12T07%3A45%3A00%22%5D%7D"
    ],
-   "note": "Means of the quarter-hours 07:00–07:45 UTC (08:00–09:00 Europe/Oslo). other = waste 44.1 + other renewables 69.1 + biomass 0.1 + solar 0.0 MW. Net export 2,150.8 MW. Statnett driftsdata (PhysicalFlowMap/GetFlow, 07:00 UTC) gives NordLink 1,446.7 MW export, Skagerrak 56.7, North Sea Link 539.4 and NorNed 102.4 MW import; its history keeps no AC or internal border flows for this hour."
+   "note": "Means of the quarter-hours 07:00–07:45 UTC (08:00–09:00 Europe/Oslo). AC borders: Svenska kraftnät per Swedish bidding-zone border (sum 1,460.0 MW export; Energy-Charts gives Sweden 1,459.3 MW), Finland from Energy-Charts. other = waste 44.1 + other renewables 69.1 + biomass 0.1 + solar 0.0 MW. Net export 2,150.8 MW. Statnett driftsdata (PhysicalFlowMap/GetFlow, 07:00 UTC) gives NordLink 1,446.7 MW export, Skagerrak 56.7, North Sea Link 539.4 and NorNed 102.4 MW import; its history keeps no AC or internal border flows for this hour."
   },
   "summerLow": {
    "startUtc": "2026-07-12T04:00:00.000Z",
@@ -59,11 +84,19 @@
     "NL": 0.0,
     "GB": -1125.0
    },
+   "acBorderImportMw": [
+    { "priceArea": "NO1", "externalArea": "SE3", "importMw": 990.7, "source": "svk-physical-flows" },
+    { "priceArea": "NO3", "externalArea": "SE2", "importMw": 91.9, "source": "svk-physical-flows" },
+    { "priceArea": "NO4", "externalArea": "SE1", "importMw": -255.3, "source": "svk-physical-flows" },
+    { "priceArea": "NO4", "externalArea": "SE2", "importMw": 18.8, "source": "svk-physical-flows" },
+    { "priceArea": "NO4", "externalArea": "FI", "importMw": -37.0, "source": "energy-charts" }
+   ],
    "queries": [
     "https://api.energy-charts.info/public_power?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
-    "https://api.energy-charts.info/cbpf?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z"
+    "https://api.energy-charts.info/cbpf?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
+    "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-07-12T04%3A00%3A00%22%2C%222026-07-12T04%3A15%3A00%22%2C%222026-07-12T04%3A30%3A00%22%2C%222026-07-12T04%3A45%3A00%22%5D%7D"
    ],
-   "note": "Means of the quarter-hours 04:00–04:45 UTC (06:00–07:00 Europe/Oslo). Hydro pumped storage is not published for this hour (null). other = other renewables 54.0 + waste 40.9 + solar 1.0 MW. Net export 1,919.0 MW."
+   "note": "Means of the quarter-hours 04:00–04:45 UTC (06:00–07:00 Europe/Oslo). AC borders: Svenska kraftnät per Swedish bidding-zone border (sum 846.1 MW import; Energy-Charts gives Sweden 845.2 MW), Finland from Energy-Charts. Hydro pumped storage is not published for this hour (null). other = other renewables 54.0 + waste 40.9 + solar 1.0 MW. Net export 1,919.0 MW."
   }
  }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { validateGridModel, type GridModelV2 } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { composeGridModel, validateGridModelAddition } from '../src/packs/electric-grid/schemas/grid-model-addition.ts'
-import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
+import { gridExchangeBordersOf, gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
 
 const base = validateGridModel(await Bun.file(new URL('./fixtures/grid-model-v2.fixture.json', import.meta.url)).json(), 'fixture')
 const baseArtifact = { kind: 'model', model: base } as const
@@ -120,7 +120,7 @@ const operatingPointJson = () => ({
   ],
   branchStates: [{ assetId: 'branch:osm-fedcba9876543210', state: 'closed', availability: 0.6 }],
   hvdcSchedules: [{ assetId: 'hvdc:test-link', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: -700 }, { localTime: '08:00', transferMw: 1200 }] }],
-  externalExchangeSchedules: [{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '06:00', exportMw: 400 }] }],
+  externalExchangeSchedules: [{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '06:00', borders: [{ priceArea: 'NO1', externalArea: 'SE3', exportMw: 400 }] }] }],
 })
 const targets = gridOperatingPointTargetsForModel(base)
 const validateOperatingPoint = (json: unknown) => validateGridOperatingPoint(json, 'operating-points/winter-peak.json', targets)
@@ -169,6 +169,22 @@ describe('Grid Operating Point v2', () => {
     expect(rejection).toContain('$.hvdcSchedules[0].points[1].localTime: must follow 00:00')
     expect(rejection).toContain('$.branchStates[0].availability')
     expect(message(() => validateOperatingPoint({ ...operatingPointJson(), loadScale: undefined }))).toContain('$.loadScale')
+  })
+
+  test('schedules a synchronous exchange on exactly each AC border of the model, within its ties\' rating', () => {
+    // The fixture's Nordic remainder ties into NO1 at SE3 only (Hasle – Borgvik, 1850 MW).
+    expect(gridExchangeBordersOf(base).get('external:nordic-remainder')).toEqual([{ priceArea: 'NO1', externalArea: 'SE3', boundaryBusIds: ['bus:boundary-SE3@400'], ratingMw: 1850 }])
+    const withBorders = (borders: ReadonlyArray<Record<string, unknown>>) => message(() => validateOperatingPoint({
+      ...operatingPointJson(),
+      externalExchangeSchedules: [{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '06:00', borders }] }],
+    }))
+    const path = '$.externalExchangeSchedules[0].points[0].borders'
+    expect(withBorders([{ priceArea: 'NO2', externalArea: 'SE3', exportMw: 100 }]))
+      .toContain(`${path}: required: external:nordic-remainder has the AC border NO1–SE3`)
+    expect(withBorders([{ priceArea: 'NO1', externalArea: 'SE3', exportMw: 100 }, { priceArea: 'NO2', externalArea: 'SE3', exportMw: 100 }]))
+      .toContain(`${path}[1]: external:nordic-remainder has no AC border NO2–SE3`)
+    expect(withBorders([{ priceArea: 'NO1', externalArea: 'SE3', exportMw: -1851 }])).toContain(`${path}[0].exportMw: must be within ±1850 MW, the rating of the border's ties`)
+    expect(withBorders([{ priceArea: 'NO1', externalArea: 'SE3', exportMw: 1 }, { priceArea: 'NO1', externalArea: 'SE3', exportMw: 2 }])).toContain(`${path}[1]: NO1–SE3 already has an entry`)
   })
 
   test('requires the season, the whole hour and the demand of every price area and group with loads', () => {

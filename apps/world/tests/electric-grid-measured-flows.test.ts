@@ -82,33 +82,26 @@ interface KnownGap {
   readonly boundMw: number
   readonly reason: string
 }
-const exchangeByParticipation = 'the Operating Point gives the Nordic exchange as one national schedule that the model splits over the ties by the inertia participation shares (SE3 88.1 %, SE2 5.4 %, SE1 5.2 %, FI 1.3 %), not by the measured border flows'
 const uniformStorageHydro = 'the Operating Point dispatches storage hydro at one national loading (run-of-river and wind by national capacity share), not at the measured production of each price area (Elhub PRODUCTION_PER_GROUP_MBA_HOUR)'
 const unmodelledLosses = 'the model\'s demand is Elhub\'s metered consumption without the losses of the networks below 132 kV, so national production falls short of the measured by those losses less the model\'s own branch losses'
 const knownGaps: Readonly<Record<string, KnownGap>> = {
-  // Cross-border AC ties.
-  'winterPeak border NO1→SE3': { boundMw: 250, reason: exchangeByParticipation },
-  'winterPeak border NO3→SE2': { boundMw: 100, reason: exchangeByParticipation },
-  'winterPeak border NO4→SE1': { boundMw: 100, reason: exchangeByParticipation },
-  'summerLow border NO1→SE3': { boundMw: 300, reason: exchangeByParticipation },
-  'summerLow border NO4→SE1': { boundMw: 300, reason: `${exchangeByParticipation}: the measured 255 MW export to SE1 becomes a 42 MW import` },
   // Net positions.
-  'winterPeak net NO2': { boundMw: 800, reason: uniformStorageHydro },
-  'winterPeak net NO3': { boundMw: 500, reason: uniformStorageHydro },
+  'winterPeak net NO2': { boundMw: 825, reason: uniformStorageHydro },
+  'winterPeak net NO3': { boundMw: 525, reason: uniformStorageHydro },
   'summerLow net NO1': { boundMw: 175, reason: uniformStorageHydro },
   'summerLow net NO2': { boundMw: 875, reason: uniformStorageHydro },
   'summerLow net NO3': { boundMw: 125, reason: uniformStorageHydro },
   'summerLow net NO4': { boundMw: 825, reason: uniformStorageHydro },
   // Production by area and kind.
   'winterPeak hydro NO1': { boundMw: 325, reason: `${uniformStorageHydro}; ${unmodelledLosses}` },
-  'winterPeak hydro NO2': { boundMw: 925, reason: `${uniformStorageHydro}; ${unmodelledLosses}` },
+  'winterPeak hydro NO2': { boundMw: 950, reason: `${uniformStorageHydro}; ${unmodelledLosses}` },
   'winterPeak hydro NO3': { boundMw: 375, reason: uniformStorageHydro },
   'winterPeak wind NO1': { boundMw: 175, reason: 'wind is shared by national capacity; NO1\'s farms produced 93 MW where their share gives 252 MW' },
   'winterPeak wind NO4': { boundMw: 150, reason: 'wind is shared by national capacity; NO4\'s farms produced 894 MW where their share gives 760 MW' },
   'summerLow hydro NO2': { boundMw: 725, reason: uniformStorageHydro },
   'summerLow hydro NO4': { boundMw: 850, reason: uniformStorageHydro },
   'summerLow wind NO1': { boundMw: 175, reason: 'wind is shared by national capacity; NO1\'s farms produced 197 MW where their share gives 33 MW' },
-  'winterPeak national production': { boundMw: 900, reason: unmodelledLosses },
+  'winterPeak national production': { boundMw: 950, reason: unmodelledLosses },
   'summerLow national production': { boundMw: 450, reason: unmodelledLosses },
 }
 

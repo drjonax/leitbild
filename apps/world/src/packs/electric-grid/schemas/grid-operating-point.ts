@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { gridDataError, parseGridData, type GridDataIssue } from './data-issues.ts'
-import { gridIdPatterns, loadDemandGroups, municipalityLoadGroups, priceAreaSchema, type MunicipalityLoadGroup, type PriceArea } from './grid-ids.ts'
+import { externalAreaSchema, gridIdPatterns, loadDemandGroups, municipalityLoadGroups, priceAreaSchema, type ExternalArea, type MunicipalityLoadGroup, type PriceArea } from './grid-ids.ts'
 import { gridIsoHourSchema, gridProvenanceSchema, type GridModelV2 } from './grid-model.ts'
 
 // Operating Point v2: the initial condition of a Grid Model, keyed by stable asset ids.
@@ -63,11 +63,24 @@ export const gridHvdcScheduleSchema = z.object({
   points: z.array(z.object({ localTime, transferMw: z.number().finite() }).strict()).min(1),
 }).strict().superRefine(requireIncreasingTimes)
 
-/** Positive exportMw flows from Norway into the external area. */
+/**
+ * A synchronous external system's exchange, per AC border (gridExchangeBordersOf): positive exportMw
+ * flows from Norway over the border's ties into the external area. The system's exchange is the sum.
+ */
 export const gridExchangeScheduleSchema = z.object({
   assetId: assetId(gridIdPatterns.externalSystem, 'external system'),
   timeZone: z.literal('Europe/Oslo'),
-  points: z.array(z.object({ localTime, exportMw: z.number().finite() }).strict()).min(1),
+  points: z.array(z.object({
+    localTime,
+    borders: z.array(z.object({ priceArea: priceAreaSchema, externalArea: externalAreaSchema, exportMw: z.number().finite() }).strict()).min(1),
+  }).strict().superRefine((point, context) => {
+    const seen = new Set<string>()
+    point.borders.forEach((border, index) => {
+      const label = gridExchangeBorderLabel(border)
+      if (seen.has(label)) context.addIssue({ code: 'custom', path: ['borders', index], message: `${label} already has an entry` })
+      seen.add(label)
+    })
+  })).min(1),
 }).strict().superRefine(requireIncreasingTimes)
 
 /**
@@ -148,12 +161,57 @@ export const gridOperatingPointSchema = z.object({
 })
 export type GridOperatingPointV2 = z.infer<typeof gridOperatingPointSchema>
 
+/**
+ * An AC border of a synchronous external system: the system's boundary buses in one of its areas
+ * whose ties end in one Norwegian price area (NO1–SE3: Hasle – Borgvik, Halden – Skogssäter and
+ * Eidskog – Charlottenberg). Physical cross-border flows are published per such border.
+ */
+export interface GridExchangeBorder {
+  readonly priceArea: PriceArea
+  readonly externalArea: ExternalArea
+  readonly boundaryBusIds: ReadonlyArray<string>
+  /** Continuous rating of the border's ties (MW). */
+  readonly ratingMw: number
+}
+
+export const gridExchangeBorderLabel = (border: { readonly priceArea: PriceArea; readonly externalArea: ExternalArea }): string => `${border.priceArea}–${border.externalArea}`
+
+/** The AC borders of each synchronous external system of a model, in price-area then external-area order; a boundary bus whose ties end in several price areas, or in none, is refused. */
+export const gridExchangeBordersOf = (model: GridModelV2): ReadonlyMap<string, ReadonlyArray<GridExchangeBorder>> => {
+  const busById = new Map(model.buses.map(bus => [bus.id, bus]))
+  const ties = new Map<string, Array<{ readonly priceArea: PriceArea | undefined; readonly ratingMw: number }>>()
+  for (const branch of model.branches) {
+    for (const [own, other] of [[branch.fromBusId, branch.toBusId], [branch.toBusId, branch.fromBusId]] as const) {
+      ties.set(own, [...(ties.get(own) ?? []), { priceArea: busById.get(other)?.priceArea, ratingMw: branch.ratingMw }])
+    }
+  }
+  return new Map(model.externalSystems.filter(system => system.synchronous).map(system => {
+    const borders = new Map<string, { priceArea: PriceArea; externalArea: ExternalArea; boundaryBusIds: string[]; ratingMw: number }>()
+    for (const busId of system.boundaryBusIds) {
+      const externalArea = busById.get(busId)?.externalArea
+      const busTies = ties.get(busId) ?? []
+      const areas = [...new Set(busTies.map(tie => tie.priceArea))]
+      if (externalArea === undefined || areas.length !== 1 || areas[0] === undefined) {
+        throw new Error(`${system.id}: boundary bus ${busId} must tie into exactly one Norwegian price area, it ties into ${areas.length === 0 ? 'none' : areas.map(area => area ?? 'a non-Norwegian bus').join(', ')}`)
+      }
+      const priceArea = areas[0]
+      const label = gridExchangeBorderLabel({ priceArea, externalArea })
+      const border = borders.get(label) ?? { priceArea, externalArea, boundaryBusIds: [], ratingMw: 0 }
+      border.boundaryBusIds.push(busId)
+      border.ratingMw += busTies.reduce((sum, tie) => sum + tie.ratingMw, 0)
+      borders.set(label, border)
+    }
+    return [system.id, [...borders.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([, border]) => border)] as const
+  }))
+}
+
 /** The assets of one compiled Grid Model that an Operating Point may address. */
 export interface GridOperatingPointTargets {
   readonly generators: ReadonlyMap<string, { readonly capacityMw: number }>
   readonly branches: ReadonlySet<string>
   readonly hvdcLinks: ReadonlyMap<string, { readonly ratingMw: number }>
-  readonly externalSystems: ReadonlyMap<string, { readonly synchronous: boolean }>
+  /** External systems; a synchronous one with its AC borders. */
+  readonly externalSystems: ReadonlyMap<string, { readonly synchronous: boolean; readonly borders: ReadonlyArray<GridExchangeBorder> }>
   readonly loadPriceAreas: ReadonlySet<string>
   /** The Elhub groups the model has loads of, per price area. */
   readonly loadGroupsByPriceArea: ReadonlyMap<string, ReadonlySet<MunicipalityLoadGroup>>
@@ -169,14 +227,17 @@ const loadGroupsByPriceArea = (model: GridModelV2): ReadonlyMap<string, Readonly
   return groups
 }
 
-export const gridOperatingPointTargetsForModel = (model: GridModelV2): GridOperatingPointTargets => ({
-  generators: new Map(model.generators.map(generator => [generator.id, generator])),
-  branches: new Set(model.branches.map(branch => branch.id)),
-  hvdcLinks: new Map(model.hvdcLinks.map(link => [link.id, link])),
-  externalSystems: new Map(model.externalSystems.map(system => [system.id, system])),
-  loadPriceAreas: new Set(model.loads.map(load => load.priceArea)),
-  loadGroupsByPriceArea: loadGroupsByPriceArea(model),
-})
+export const gridOperatingPointTargetsForModel = (model: GridModelV2): GridOperatingPointTargets => {
+  const borders = gridExchangeBordersOf(model)
+  return {
+    generators: new Map(model.generators.map(generator => [generator.id, generator])),
+    branches: new Set(model.branches.map(branch => branch.id)),
+    hvdcLinks: new Map(model.hvdcLinks.map(link => [link.id, link])),
+    externalSystems: new Map(model.externalSystems.map(system => [system.id, { synchronous: system.synchronous, borders: borders.get(system.id) ?? [] }])),
+    loadPriceAreas: new Set(model.loads.map(load => load.priceArea)),
+    loadGroupsByPriceArea: loadGroupsByPriceArea(model),
+  }
+}
 
 /** Issues of an Operating Point's demand against one model: one entry for exactly each price area and group with loads. */
 const demandIssues = (demand: GridOperatingPointV2['demand'], targets: GridOperatingPointTargets): ReadonlyArray<GridDataIssue> => {
@@ -221,8 +282,19 @@ export const gridOperatingPointStateIssues = (state: GridOperatingPointState, ta
   })
   state.externalExchangeSchedules?.forEach((entry, index) => {
     const system = targets.externalSystems.get(entry.assetId)
-    if (system === undefined) fail(['externalExchangeSchedules', index, 'assetId'], `unknown external system ${entry.assetId}`)
-    else if (!system.synchronous) fail(['externalExchangeSchedules', index, 'assetId'], `${entry.assetId} is reached only through HVDC; schedule its links instead`)
+    if (system === undefined) return fail(['externalExchangeSchedules', index, 'assetId'], `unknown external system ${entry.assetId}`)
+    if (!system.synchronous) return fail(['externalExchangeSchedules', index, 'assetId'], `${entry.assetId} is reached only through HVDC; schedule its links instead`)
+    const byLabel = new Map(system.borders.map(border => [gridExchangeBorderLabel(border), border]))
+    entry.points.forEach((point, pointIndex) => {
+      const path = ['externalExchangeSchedules', index, 'points', pointIndex, 'borders'] as const
+      const listed = new Set(point.borders.map(gridExchangeBorderLabel))
+      for (const label of byLabel.keys()) if (!listed.has(label)) fail(path, `required: ${entry.assetId} has the AC border ${label}`)
+      point.borders.forEach((border, borderIndex) => {
+        const target = byLabel.get(gridExchangeBorderLabel(border))
+        if (target === undefined) return fail([...path, borderIndex], `${entry.assetId} has no AC border ${gridExchangeBorderLabel(border)}`)
+        if (Math.abs(border.exportMw) > target.ratingMw) fail([...path, borderIndex, 'exportMw'], `must be within ±${target.ratingMw} MW, the rating of the border's ties`)
+      })
+    })
   })
   state.externalSystemStates?.forEach((entry, index) => {
     const system = targets.externalSystems.get(entry.assetId)

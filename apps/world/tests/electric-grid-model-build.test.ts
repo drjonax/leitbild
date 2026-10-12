@@ -95,6 +95,7 @@ describe('model build: dispatch', () => {
     generationMw: { hydroRunOfRiver: 2000, hydroReservoir: 15000, hydroPumpedStorage: 500, windOnshore: 3000, windOffshore: 0, fossilGas: 0, other: 100 },
     loadMw: 20000,
     importMw: { SE: -50, FI: 0, DK: 0, DE: -100, NL: 0, GB: 0 },
+    acBorderImportMw: [{ priceArea: 'NO1', externalArea: 'SE3', importMw: -50, source: 'fixture' }],
     queries: ['https://example.org/q'],
     note: 'fixture hour',
   }
@@ -102,7 +103,7 @@ describe('model build: dispatch', () => {
   test('schedules the measured exchange and shares measured output by capacity, storage hydro closing the balance', () => {
     const schedules = referenceSchedules(fixture, hour)
     expect(schedules.hvdc).toEqual([{ assetId: 'hvdc:test-link', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: 100 }] }])
-    expect(schedules.exchange).toEqual([{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 50 }] }])
+    expect(schedules.exchange).toEqual([{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', borders: [{ priceArea: 'NO1', externalArea: 'SE3', exportMw: 50 }] }] }])
     // The fixture holds the only wind and run-of-river units: measured 3000 and 2000 MW exceed them, so both run at full output.
     const states = new Map(dispatchGenerators(fixture, () => 100, hour, schedules).map(state => [state.assetId, state]))
     expect(states.get('generator:nve-wind-45')).toMatchObject({ state: 'online', availableMw: 100, targetMw: 100 })
@@ -124,7 +125,7 @@ describe('model build: dispatch', () => {
       busId: 'bus:osm-way-60495669@132', registryIds: [String(plantNumber)], blackStartCapable: false,
     })
     const model = validateGridModel({ ...fixture, generators: [...fixture.generators, unit(901, 100), unit(902, 60), unit(903, 40)] }, 'fixture with run-of-river')
-    const quiet = { ...hour, importMw: { ...hour.importMw, SE: 0, DE: 0 }, generationMw: { ...hour.generationMw, hydroRunOfRiver: 48 } }
+    const quiet = { ...hour, importMw: { ...hour.importMw, SE: 0, DE: 0 }, acBorderImportMw: [{ ...hour.acBorderImportMw[0]!, importMw: 0 }], generationMw: { ...hour.generationMw, hydroRunOfRiver: 48 } }
     // Inflow share 48 / 240 MW = 0.2: the Francis group's 40 MW keeps only the 100 MW unit at its 40 % minimum.
     const states = new Map(dispatchGenerators(model, () => 150, quiet, referenceSchedules(model, quiet)).map(state => [state.assetId, state]))
     expect(states.get('generator:nve-hydro-901')).toMatchObject({ state: 'online', targetMw: 40 })
@@ -136,7 +137,7 @@ describe('model build: dispatch', () => {
   })
 
   test('commits storage hydro at one loading and refuses a balance it cannot cover', () => {
-    const schedules = referenceSchedules(fixture, { ...hour, importMw: { ...hour.importMw, SE: 0, DE: 0 } })
+    const schedules = referenceSchedules(fixture, { ...hour, importMw: { ...hour.importMw, SE: 0, DE: 0 }, acBorderImportMw: [{ ...hour.acBorderImportMw[0]!, importMw: 0 }] })
     const states = new Map(dispatchGenerators(fixture, () => 120, hour, schedules).map(state => [state.assetId, state]))
     expect(states.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', availableMw: 300, targetMw: 100 })
     expect(() => dispatchGenerators(fixture, () => 500, hour, schedules)).toThrow('cannot cover the residual demand')

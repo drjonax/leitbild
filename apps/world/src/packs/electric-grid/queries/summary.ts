@@ -35,7 +35,7 @@ const operatingPointSummary = (operatingPoint: GridOperatingPointDefinition) => 
   return {
     ...values,
     hvdcSetpoints: operatingPoint.hvdcSetpoints.map(entry => ({ ...entry })),
-    externalExchanges: operatingPoint.externalExchanges.map(entry => ({ ...entry })),
+    externalExchanges: operatingPoint.externalExchanges.map(entry => ({ ...entry, borders: entry.borders.map(border => ({ ...border, boundaryBusIds: [...border.boundaryBusIds] })) })),
     initialBranchStates: {
       openCount: branchStates.filter(entry => entry.state === 'open').length,
       deratedCount: branchStates.filter(entry => entry.state === 'closed' && entry.availability < 1).length,
@@ -91,7 +91,15 @@ const summaryResultSchema = z.object({
     generationAvailabilityScale: finite.describe('Multiplies every generator\'s availability.'),
     storageStateOfCharge: finite.nullable().describe('Initial charge of every storage asset; null when the Operating Point gives none.'),
     hvdcSetpoints: z.array(z.object({ linkId: z.string(), setpointMw: finite }).strict()).describe('Initial HVDC set-points (MW, positive from the link\'s fromBusId).'),
-    externalExchanges: z.array(z.object({ systemId: z.string(), scheduledExportMw: finite }).strict()).describe('Scheduled export to each synchronous external system (MW).'),
+    externalExchanges: z.array(z.object({
+      systemId: z.string(),
+      scheduledExportMw: finite,
+      borders: z.array(z.object({
+        label: z.string().describe('The Norwegian price area and the external area, as NO1–SE3.'),
+        boundaryBusIds: z.array(z.string()),
+        scheduledExportMw: finite,
+      }).strict()).describe('The schedule per AC border, the measured flow of the Operating Point\'s hour; they sum to scheduledExportMw.'),
+    }).strict()).describe('Scheduled export to each synchronous external system (MW).'),
     initialBranchStates: z.object({
       openCount: z.number().int().nonnegative(),
       deratedCount: z.number().int().nonnegative(),

@@ -1,4 +1,4 @@
-import type { GridExternalSystemDefinition } from '../grid-model.ts'
+import type { GridExternalExchangeDefinition, GridExternalSystemDefinition } from '../grid-model.ts'
 import type { ExternalFrequencyEquivalent, FrequencyStorageUnit, IslandFrequencyInput } from './frequency/types.ts'
 import { frequencyUnitFor } from './generator-dynamics.ts'
 import { hvdcInjectionIntoIslandMw } from './hvdc.ts'
@@ -107,11 +107,12 @@ export const externalBoundarySharesInto = (
   }
 }
 
-/** Scratch for one external system's boundary buses in one component: bus indices, tie capacities, shares. */
+/** Scratch for one external system's boundary buses in one component: bus indices, tie capacities, shares, imports. */
 export interface ExternalBoundaryScratch {
   readonly buses: Int32Array
   readonly capacities: Float64Array
   readonly shares: Float64Array
+  readonly imports: Float64Array
 }
 
 const boundaryScratches = new WeakMap<GridRuntimeInstance, ExternalBoundaryScratch>()
@@ -121,10 +122,77 @@ export const externalBoundaryScratch = (grid: GridRuntimeInstance): ExternalBoun
   let scratch = boundaryScratches.get(grid)
   if (scratch === undefined) {
     const size = Math.max(0, ...grid.definition.index.externalSystems.map(system => system.boundaryBusIds.length))
-    scratch = { buses: new Int32Array(size), capacities: new Float64Array(size), shares: new Float64Array(size) }
+    scratch = { buses: new Int32Array(size), capacities: new Float64Array(size), shares: new Float64Array(size), imports: new Float64Array(size) }
     boundaryScratches.set(grid, scratch)
   }
   return scratch
+}
+
+/** The Operating Point's exchange of one synchronous external system per border: each bus's border, and each border's scheduled import and the rating of all its ties (MW). */
+interface BorderSchedules {
+  readonly borderOfBus: Int32Array
+  readonly importMw: Float64Array
+  readonly ratedMw: Float64Array
+}
+
+const borderSchedulesByExchange = new WeakMap<GridExternalExchangeDefinition, BorderSchedules>()
+
+/** The border schedules of `system` at the Grid's Operating Point; its borders must hold each of its boundary buses once and sum to its exchange. */
+const borderSchedulesOf = (grid: GridRuntimeInstance, system: GridExternalSystemDefinition): BorderSchedules => {
+  const exchange = grid.definition.operatingPoint.externalExchanges.find(entry => entry.systemId === system.id)
+  if (exchange === undefined) throw new Error(`Grid ${grid.definition.gridId} Operating Point has no scheduled exchange for ${system.id}`)
+  const cached = borderSchedulesByExchange.get(exchange)
+  if (cached !== undefined) return cached
+  const tables = gridTablesFor(grid.definition)
+  const network = tables.network
+  const borderOfBus = new Int32Array(network.busCount).fill(-1)
+  const ratedMw = new Float64Array(exchange.borders.length)
+  exchange.borders.forEach((border, position) => {
+    for (const busId of border.boundaryBusIds) {
+      const bus = network.busIndexById.get(busId)
+      if (bus === undefined || !system.boundaryBusIds.includes(busId)) throw new Error(`${system.id}: border ${border.label} names ${busId}, not one of its boundary buses`)
+      if (borderOfBus[bus] !== -1) throw new Error(`${system.id}: boundary bus ${busId} lies in two borders`)
+      borderOfBus[bus] = position
+      for (let entry = tables.branchesOfBus.start[bus]!; entry < tables.branchesOfBus.start[bus + 1]!; entry += 1) ratedMw[position] = ratedMw[position]! + tables.branchRatingMw[tables.branchesOfBus.items[entry]!]!
+    }
+    if (!(ratedMw[position]! > 0)) throw new Error(`${system.id}: border ${border.label} has no rated tie`)
+  })
+  for (const busId of system.boundaryBusIds) if (borderOfBus[network.busIndexById.get(busId)!] === -1) throw new Error(`${system.id}: boundary bus ${busId} lies in no border of the Operating Point's exchange`)
+  const totalMw = exchange.borders.reduce((sum, border) => sum + border.scheduledExportMw, 0)
+  // The borders' 0.1 MW schedules sum to the exchange up to floating-point rounding.
+  if (!(Math.abs(totalMw - exchange.scheduledExportMw) <= 1e-6)) throw new Error(`${system.id}: its borders schedule ${totalMw} MW, its exchange ${exchange.scheduledExportMw} MW`)
+  const schedules = { borderOfBus, importMw: Float64Array.from(exchange.borders, border => 0 - border.scheduledExportMw), ratedMw }
+  borderSchedulesByExchange.set(exchange, schedules)
+  return schedules
+}
+
+/**
+ * How synchronous external system `system` imports `closingMw` into one AC component through the
+ * given boundary buses of it: each bus takes its border's Operating Point schedule in proportion to
+ * the rating of its closed ties (times their availability) to the rating of all the border's ties,
+ * so at the Operating Point the border carries its schedule and an open or derated tie gives up its
+ * part; the remainder (that part, a change of the system's schedule from the Operating Point's, and
+ * its response to frequency) is shared by externalBoundarySharesInto. Writes the import at
+ * `boundaryBuses[k]` into `scratch.imports[k]` (MW, positive into Norway).
+ */
+export const externalBoundaryImportsInto = (
+  grid: GridRuntimeInstance,
+  system: GridExternalSystemDefinition,
+  boundaryBuses: ArrayLike<number>,
+  count: number,
+  closingMw: number,
+  scratch: ExternalBoundaryScratch,
+): void => {
+  const schedules = borderSchedulesOf(grid, system)
+  externalBoundarySharesInto(grid, system, boundaryBuses, count, scratch.capacities, scratch.shares)
+  let scheduledMw = 0
+  for (let position = 0; position < count; position += 1) {
+    const border = schedules.borderOfBus[boundaryBuses[position]!]!
+    scratch.imports[position] = schedules.importMw[border]! * scratch.capacities[position]! / schedules.ratedMw[border]!
+    scheduledMw += scratch.imports[position]!
+  }
+  const remainderMw = closingMw - scheduledMw
+  for (let position = 0; position < count; position += 1) scratch.imports[position] = scratch.imports[position]! + remainderMw * scratch.shares[position]!
 }
 
 /** Writes the boundary buses of external system `system` in plan component `component` into `buses`, in Model order; returns how many. */

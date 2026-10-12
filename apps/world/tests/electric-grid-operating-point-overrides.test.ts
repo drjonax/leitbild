@@ -42,8 +42,8 @@ describe('Grid Scenario Operating Point overrides', () => {
     const issues = await issuesOf({
       hvdcSchedules: [{ assetId: 'hvdc:no-such-link', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: 500 }] }],
       externalExchangeSchedules: [
-        { assetId: 'external:SE1', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 100 }] },
-        { assetId: 'external:DE', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 100 }] },
+        { assetId: 'external:SE1', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', borders: [{ priceArea: 'NO4', externalArea: 'SE1', exportMw: 100 }] }] },
+        { assetId: 'external:DE', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', borders: [{ priceArea: 'NO2', externalArea: 'DE', exportMw: 100 }] }] },
       ],
     })
     expect(issues.map(issue => [issue.path, issue.message])).toEqual([

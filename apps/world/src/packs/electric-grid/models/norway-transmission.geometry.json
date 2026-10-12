@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "modelId": "electric-grid.norway.transmission",
-  "sourceBuildId": "norway-40c6badba04c9bc5a967",
+  "sourceBuildId": "norway-ae579afc50f522fbd6cf",
   "simplificationMeters": 50,
   "branches": [
     {"id":"branch:curated-follo-lambertseter-47kv-equivalent","path":[[10.78299,59.7289],[10.82829,59.87129]]},

@@ -47,7 +47,9 @@ const model: GridModelDefinition = handBuiltModel({
 
 const definition = (): CompiledGridDefinition => {
   const base = gridDefinitionForModel(model)
-  return { ...base, operatingPoint: { ...base.operatingPoint, externalExchanges: [{ systemId: 'external:nordic-remainder', scheduledExportMw: -scheduledImportMw }] } }
+  // The schedule enters 60 % at SE3 and 40 % at SE1, as the area participation shares a change of it.
+  const borders = [{ label: 'NO1–SE3', boundaryBusIds: [se3], scheduledExportMw: -0.6 * scheduledImportMw }, { label: 'NO4–SE1', boundaryBusIds: [se1], scheduledExportMw: -0.4 * scheduledImportMw }]
+  return { ...base, operatingPoint: { ...base.operatingPoint, externalExchanges: [{ systemId: 'external:nordic-remainder', scheduledExportMw: -scheduledImportMw, borders }] } }
 }
 
 const queryCapability = (id: string) => electricGridQueryCapabilities.find(capability => capability.id === id)!

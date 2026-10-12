@@ -1,6 +1,6 @@
 import { loadDemandGroups, municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
 import type { GridGeneratorV2, GridModelV2 } from '../schemas/grid-model.ts'
-import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
+import { gridExchangeBorderLabel, gridExchangeBordersOf, type GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 import type { GridReferenceHourDispatch } from '../schemas/grid-reference-dispatch.ts'
 import { compareText } from '../topology/ids.ts'
 import { ambientRatingRule, emergencyRule } from './electrical.ts'
@@ -12,7 +12,8 @@ import type { PriceAreaGroupMw } from './profiles.ts'
 // their reference demand. Each is dispatched to the measured national production and exchange of
 // its hour (models/norway-reference-dispatch.json, ENTSO-E data):
 // - HVDC links carry the measured flow of their neighbour country (several links to one country
-//   share it in proportion to rating); the Nordic remainder takes the Swedish and Finnish exchange.
+//   share it in proportion to rating); the Nordic remainder takes the measured flow of each of its
+//   AC borders (Svenska kraftnät per Swedish bidding-zone border, Energy-Charts for Finland).
 // - Wind farms, run-of-river hydro and thermal units each produce the national measured output of
 //   their kind in proportion to capacity (no per-unit or per-area production is published).
 // - A run-of-river unit whose inflow share lies below its minimum stable loading cannot run on it
@@ -46,7 +47,7 @@ export interface ReferenceSchedules {
   readonly exchange: ReadonlyArray<ExchangeSchedule>
   /** Export of each HVDC link's Norwegian converter bus, MW (positive leaves Norway). */
   readonly hvdcExportMw: ReadonlyMap<string, number>
-  /** Export through each synchronous external system's boundary buses, MW. */
+  /** Export through each synchronous external system's boundary buses (the sum of its borders), MW. */
   readonly exchangeExportMw: ReadonlyMap<string, number>
   /** Links whose measured share exceeds their rating and is scheduled at the rating. */
   readonly limited: ReadonlyArray<{ readonly linkId: string; readonly measuredMw: number; readonly ratingMw: number }>
@@ -74,19 +75,32 @@ export const referenceSchedules = (model: GridModelV2, hour: GridReferenceHourDi
     }
   }
   const exchangeExportMw = new Map<string, number>()
+  const exchange: ExchangeSchedule[] = []
+  const bordersOf = gridExchangeBordersOf(model)
+  const measuredBorders = new Map(hour.acBorderImportMw.map(border => [gridExchangeBorderLabel(border), border.importMw]))
+  const scheduledBorders = new Set<string>()
   for (const system of model.externalSystems.filter(candidate => candidate.synchronous)) {
     const neighbours = [...new Set(system.boundaryBusIds.map(busId => neighbourOfArea[areaOfBus.get(busId)!]!))].sort(compareText)
     if (neighbours.some(neighbour => linksByNeighbour.has(neighbour))) throw new Error(`${system.id}: a synchronous neighbour is also reached by HVDC`)
-    exchangeExportMw.set(system.id, roundTo(-neighbours.reduce((sum, neighbour) => sum + hour.importMw[neighbour as keyof GridReferenceHourDispatch['importMw']], 0), 1))
+    const borders = bordersOf.get(system.id)!.map(border => {
+      const label = gridExchangeBorderLabel(border)
+      const importMw = measuredBorders.get(label)
+      if (importMw === undefined) throw new Error(`${system.id}: no measured flow on its AC border ${label}`)
+      scheduledBorders.add(label)
+      return { priceArea: border.priceArea, externalArea: border.externalArea, exportMw: roundTo(-importMw, 1) }
+    })
+    exchangeExportMw.set(system.id, roundTo(borders.reduce((sum, border) => sum + border.exportMw, 0), 1))
+    exchange.push({ assetId: system.id, timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', borders }] })
   }
+  const unscheduled = [...measuredBorders.keys()].filter(label => !scheduledBorders.has(label))
+  if (unscheduled.length > 0) throw new Error(`measured AC border flows on ${unscheduled.join(', ')} have no border of a synchronous external system in the model`)
   const covered = new Set([...linksByNeighbour.keys(), ...model.externalSystems.filter(system => system.synchronous)
     .flatMap(system => system.boundaryBusIds.map(busId => neighbourOfArea[areaOfBus.get(busId)!]!))])
   const missing = (Object.keys(hour.importMw) as Array<keyof GridReferenceHourDispatch['importMw']>).filter(neighbour => !covered.has(neighbour) && hour.importMw[neighbour] !== 0)
   if (missing.length > 0) throw new Error(`measured exchange with ${missing.join(', ')} has no link or external system in the model`)
   return {
     hvdc: model.hvdcLinks.map(link => ({ assetId: link.id, timeZone: 'Europe/Oslo' as const, points: [{ localTime: '00:00', transferMw: hvdcExportMw.get(link.id)! }] })),
-    exchange: model.externalSystems.filter(system => system.synchronous)
-      .map(system => ({ assetId: system.id, timeZone: 'Europe/Oslo' as const, points: [{ localTime: '00:00', exportMw: exchangeExportMw.get(system.id)! }] })),
+    exchange,
     hvdcExportMw,
     exchangeExportMw,
     limited,
@@ -256,7 +270,7 @@ export const dispatchGenerators = (
 const describeHour = (hour: GridReferenceHourDispatch, schedules: ReferenceSchedules): string => {
   const exportMw = [...schedules.hvdcExportMw.values(), ...schedules.exchangeExportMw.values()].reduce((sum, value) => sum + value, 0)
   const limits = schedules.limited.map(entry => ` ${entry.linkId} measured ${entry.measuredMw} MW, scheduled at its ${entry.ratingMw} MW rating.`).join('')
-  return `Dispatch (rule ${dispatchRule.id}): ENTSO-E measured ${roundTo(hour.generationMw.windOnshore + hour.generationMw.windOffshore, 0)} MW wind, ${roundTo(hour.generationMw.hydroRunOfRiver, 0)} MW run-of-river and ${roundTo(hour.generationMw.fossilGas, 0)} MW gas, shared by capacity (run-of-river units below their turbine's minimum stable loading committed per price area); HVDC links and the Nordic exchange at the measured flows (net export ${roundTo(exportMw, 0)} MW); storage hydro closes the balance at one common loading; losses are left to the slack.${limits}`
+  return `Dispatch (rule ${dispatchRule.id}): ENTSO-E measured ${roundTo(hour.generationMw.windOnshore + hour.generationMw.windOffshore, 0)} MW wind, ${roundTo(hour.generationMw.hydroRunOfRiver, 0)} MW run-of-river and ${roundTo(hour.generationMw.fossilGas, 0)} MW gas, shared by capacity (run-of-river units below their turbine's minimum stable loading committed per price area); HVDC links and each AC border of the Nordic exchange at the measured flows (net export ${roundTo(exportMw, 0)} MW); storage hydro closes the balance at one common loading; losses are left to the slack.${limits}`
 }
 
 /** Summer-air ratings of each line or sub-transmission equivalent rated lower than in the model, MW; the emergency rating follows the emergency rule. */

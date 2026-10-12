@@ -2,6 +2,7 @@ import type {
   GridBranchDefinition,
   GridBusDefinition,
   GridDemandProfileDefinition,
+  GridExternalExchangeDefinition,
   GridExternalSystemDefinition,
   GridGenerationKind,
   GridGeneratorDefinition,
@@ -15,7 +16,7 @@ import { localDayType, localHourOfDay, osloLocalMs, profileDayOf } from '../runt
 import { loadDemandGroups, municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
 import type { GridLoadProfiles } from '../schemas/grid-load-profile.ts'
 import type { GridLoadV2, GridModelV2, GridProvenance } from '../schemas/grid-model.ts'
-import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
+import { gridExchangeBorderLabel, gridExchangeBordersOf, type GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 
 // Grid Model v2 and one Operating Point (with any Scenario overrides already applied) → the
 // runtime's Model and Operating Point definitions. Pure: no file access.
@@ -220,7 +221,19 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   })
   const branchStates = new Map((operatingPoint.branchStates ?? []).map(entry => [entry.assetId, entry]))
   const newestInput = [...model.sourceBuild.inputs].map(input => input.snapshotAt).sort().at(-1)!
-  const exchanges = new Map((operatingPoint.externalExchangeSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).exportMw]))
+  const exchanges = new Map((operatingPoint.externalExchangeSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).borders]))
+  const exchangeBorders = gridExchangeBordersOf(model)
+  /** A synchronous system's exchange per AC border; a system the Operating Point schedules nothing for exchanges 0 MW on each. */
+  const externalExchange = (systemId: string): GridExternalExchangeDefinition => {
+    const scheduled = new Map((exchanges.get(systemId) ?? []).map(border => [gridExchangeBorderLabel(border), border.exportMw]))
+    const borders = exchangeBorders.get(systemId)!.map(border => {
+      const label = gridExchangeBorderLabel(border)
+      const exportMw = exchanges.has(systemId) ? scheduled.get(label) : 0
+      if (exportMw === undefined) throw new Error(`Operating Point ${operatingPoint.id} schedules no exchange on the ${label} border of ${systemId}`)
+      return { label, boundaryBusIds: [...border.boundaryBusIds], scheduledExportMw: exportMw }
+    })
+    return { systemId, scheduledExportMw: borders.reduce((sum, border) => sum + border.scheduledExportMw, 0), borders }
+  }
   const hvdcSchedules = new Map((operatingPoint.hvdcSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).transferMw]))
   // The Operating Point sets a synchronous equivalent's inertia and load for its season and hour;
   // the reserve volumes stay as the Model sets them.
@@ -282,7 +295,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       generationAvailabilityScale: scales.generationAvailabilityScale ?? 1,
       storageStateOfCharge: scales.storageStateOfCharge ?? null,
       hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: hvdcSchedules.get(link.id) ?? 0 })),
-      externalExchanges: externalSystems.filter(system => system.synchronous).map(system => ({ systemId: system.id, scheduledExportMw: exchanges.get(system.id) ?? 0 })),
+      externalExchanges: externalSystems.filter(system => system.synchronous).map(system => externalExchange(system.id)),
       // An Operating Point lists only the branches that start open or derated (a summer ambient
       // rating is an availability below 1); every other branch starts closed at its full rating.
       branchStates: model.branches.map(branch => {

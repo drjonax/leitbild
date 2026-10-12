@@ -4,8 +4,8 @@ import { hvdcFromTerminalMw, hvdcToTerminalMw } from './hvdc.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
   boundaryBusesInComponent,
+  externalBoundaryImportsInto,
   externalBoundaryScratch,
-  externalBoundarySharesInto,
   externalKineticEnergyMws,
   generatorSynchronisedAt,
   islandFixedInjectionMw,
@@ -162,9 +162,10 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
 /**
  * Each AC component of the island closes its own balance through the external system's boundary
  * buses in it: the equivalent carries whatever the component's other injections leave over, split
- * between its boundary buses there by externalBoundaryShares. Returns the sum over components,
- * which must equal the external system's import from inertial sharing because the island's
- * injections sum to zero by construction.
+ * between its boundary buses there by externalBoundaryImportsInto (each border's Operating Point
+ * schedule, the rest by area participation). Returns the sum over components, which must equal the
+ * external system's import from inertial sharing because the island's injections sum to zero by
+ * construction.
  */
 const closeComponentsThroughBoundaries = (
   grid: GridRuntimeInstance,
@@ -182,8 +183,8 @@ const closeComponentsThroughBoundaries = (
     let othersMw = 0
     const buses = plan.components[componentIndex]!.busIndices
     for (let busPosition = 0; busPosition < buses.length; busPosition += 1) othersMw += injections[buses[busPosition]!]!
-    externalBoundarySharesInto(grid, grid.definition.index.externalSystems[system]!, scratch.buses, count, scratch.capacities, scratch.shares)
-    for (let position = 0; position < count; position += 1) addAt(injections, scratch.buses[position]!, -othersMw * scratch.shares[position]!)
+    externalBoundaryImportsInto(grid, grid.definition.index.externalSystems[system]!, scratch.buses, count, -othersMw, scratch)
+    for (let position = 0; position < count; position += 1) addAt(injections, scratch.buses[position]!, scratch.imports[position]!)
     closingMw -= othersMw
   }
   return closingMw

@@ -75,7 +75,7 @@ describe('generated Norway companions', () => {
         expect(point.priceAreaDemandScale).toBeUndefined()
         const demandMw = Object.values(point.demand.priceAreaGroupMw).flatMap(groups => Object.values(groups!)).reduce((sum, value) => sum + value * point.loadScale, 0)
         const exportMw = (point.hvdcSchedules ?? []).reduce((sum, entry) => sum + entry.points[0]!.transferMw, 0)
-          + (point.externalExchangeSchedules ?? []).reduce((sum, entry) => sum + entry.points[0]!.exportMw, 0)
+          + (point.externalExchangeSchedules ?? []).reduce((sum, entry) => sum + entry.points[0]!.borders.reduce((total, border) => total + border.exportMw, 0), 0)
         const generationMw = (point.generatorStates ?? []).reduce((sum, entry) => sum + (entry.targetMw ?? 0), 0)
         expect(Math.abs(generationMw - demandMw - exportMw)).toBeLessThan(1)
       }

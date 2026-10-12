@@ -116,9 +116,10 @@ export interface GridExternalSystemDefinition {
   readonly afrrUpMw?: number | undefined
   readonly afrrDownMw?: number | undefined
   /**
-   * Required when synchronous: the share of the system's exchange with Norway (schedule and
-   * response) entering at each of its areas, and that area's boundary buses. Within an area the
-   * buses share by the rating of their closed ties.
+   * Required when synchronous: the share of the system's response to frequency entering at each of
+   * its areas, and that area's boundary buses (within an area the buses share by the rating of
+   * their closed ties). A change of its scheduled exchange from the Operating Point's spreads the
+   * same way; the Operating Point's schedule itself enters per AC border (externalExchanges).
    */
   readonly areaParticipation?: ReadonlyArray<{ readonly area: GridExternalArea; readonly share: number; readonly boundaryBusIds: ReadonlyArray<string> }> | undefined
   readonly provenance: GridAssetProvenance
@@ -292,6 +293,22 @@ export interface GridModelDefinition {
   readonly hvdcRampGroups: ReadonlyArray<GridHvdcRampGroupDefinition>
 }
 
+/** One AC border of a synchronous external system's exchange: boundary buses whose ties join one Norwegian price area to one of the system's areas. */
+export interface GridExchangeBorderDefinition {
+  /** The Norwegian price area and the external area, as NO1–SE3. */
+  readonly label: string
+  readonly boundaryBusIds: ReadonlyArray<string>
+  /** The Operating Point's scheduled export over the border's ties (MW, positive from Norway). */
+  readonly scheduledExportMw: number
+}
+
+export interface GridExternalExchangeDefinition {
+  readonly systemId: string
+  readonly scheduledExportMw: number
+  /** Every boundary bus of the system in exactly one border; the borders' schedules sum to scheduledExportMw. */
+  readonly borders: ReadonlyArray<GridExchangeBorderDefinition>
+}
+
 /** The Operating Point values the runtime applies when a Grid starts; generator states and availability are in the Model's generators. */
 export interface GridOperatingPointDefinition {
   readonly id: string
@@ -304,8 +321,8 @@ export interface GridOperatingPointDefinition {
   readonly storageStateOfCharge: number | null
   /** Initial HVDC set-points (MW, positive from the link's fromBusId), one per link. */
   readonly hvdcSetpoints: ReadonlyArray<{ readonly linkId: string; readonly setpointMw: number }>
-  /** Scheduled export of each synchronous external system's exchange (MW, positive from Norway), one per system. */
-  readonly externalExchanges: ReadonlyArray<{ readonly systemId: string; readonly scheduledExportMw: number }>
+  /** Scheduled export of each synchronous external system's exchange (MW, positive from Norway), one per system: the sum of its borders'. */
+  readonly externalExchanges: ReadonlyArray<GridExternalExchangeDefinition>
   /** Initial switching state and available fraction of the rating of each branch, one per branch in model order. */
   readonly branchStates: ReadonlyArray<{ readonly branchId: string; readonly state: 'closed' | 'open'; readonly availability: number }>
 }

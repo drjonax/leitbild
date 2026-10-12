@@ -63,7 +63,13 @@
    "points": [
     {
      "localTime": "00:00",
-     "exportMw": 0
+     "borders": [
+      {
+       "priceArea": "NO1",
+       "externalArea": "SE3",
+       "exportMw": 0
+      }
+     ]
     }
    ]
   }

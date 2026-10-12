@@ -19,9 +19,9 @@ import type { GridOperatingPointV2 } from '../../../src/packs/electric-grid/sche
 // - HVDC links inject their scheduled transfer at the Norwegian converter bus (reactive power is
 //   balanced at the converter by its filters or VSC control).
 // - The boundary buses of a synchronous external system hold 1 pu with unlimited reactive power
-//   (a strong external grid) and take its scheduled export by the system's area participation, and
-//   within an area by the continuous rating of the closed AC ties ending there, as the runtime
-//   shares it (externalBoundaryShares).
+//   (a strong external grid) and take the scheduled export of their AC border, shared within the
+//   border by the continuous rating of the closed AC ties ending at each, as the runtime shares it at
+//   the Operating Point (externalBoundaryImportsInto).
 // - A branch takes its Operating Point branchRatings where given, scaled by its availability as the
 //   runtime's derate does.
 // - Losses close by a distributed slack over the online storage hydro, in proportion to capacity
@@ -119,32 +119,19 @@ export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperati
     active[from] = active[from]! - transfer
     active[to] = active[to]! + transfer
   }
-  for (const schedule of operatingPoint.externalExchangeSchedules ?? []) {
-    const system = model.externalSystems.find(candidate => candidate.id === schedule.assetId)
-    if (system === undefined) throw new Error(`unknown external system ${schedule.assetId}`)
-    const exportMw = scheduledAt(schedule.points).exportMw
-    const tieMw = (busId: string): number => model.branches.filter(branch => !open.has(branch.id) && (branch.fromBusId === busId || branch.toBusId === busId)).reduce((sum, branch) => sum + branch.ratingMw, 0)
-    const participation = system.areaParticipation
-    if (participation === undefined) throw new Error(`${system.id} has no area participation to share its exchange`)
-    const areaOf = (busId: string): string => {
-      const area = model.buses.find(bus => bus.id === busId)?.externalArea
-      if (area === undefined) throw new Error(`${busId} is not a boundary bus`)
-      return area
-    }
-    const shareOf = (busId: string): number => {
-      const entry = participation.find(candidate => candidate.area === areaOf(busId))
-      if (entry === undefined) throw new Error(`${system.id}: boundary bus ${busId} lies in no participating area`)
-      const areaTieMw = system.boundaryBusIds.filter(other => areaOf(other) === entry.area).reduce((sum, other) => sum + tieMw(other), 0)
-      return entry.share * tieMw(busId) / areaTieMw
-    }
-    const total = system.boundaryBusIds.reduce((sum, busId) => sum + shareOf(busId), 0)
-    for (const busId of system.boundaryBusIds) {
-      const bus = busIndex.get(busId)!
-      active[bus] = active[bus]! - exportMw * shareOf(busId) / total
-      controlled[bus] = 1
-      setpoint[bus] = 1
-      qMinimum[bus] = Number.NEGATIVE_INFINITY
-      qMaximum[bus] = Number.POSITIVE_INFINITY
+  const tieMw = (busId: string): number => model.branches.filter(branch => !open.has(branch.id) && (branch.fromBusId === busId || branch.toBusId === busId)).reduce((sum, branch) => sum + branch.ratingMw, 0)
+  for (const exchange of compiled.operatingPoint.externalExchanges) {
+    for (const border of exchange.borders) {
+      const borderTieMw = border.boundaryBusIds.reduce((sum, busId) => sum + tieMw(busId), 0)
+      if (!(borderTieMw > 0)) throw new Error(`${exchange.systemId}: the ${border.label} border has no closed tie to carry its ${border.scheduledExportMw} MW`)
+      for (const busId of border.boundaryBusIds) {
+        const bus = busIndex.get(busId)!
+        active[bus] = active[bus]! - border.scheduledExportMw * tieMw(busId) / borderTieMw
+        controlled[bus] = 1
+        setpoint[bus] = 1
+        qMinimum[bus] = Number.NEGATIVE_INFINITY
+        qMaximum[bus] = Number.POSITIVE_INFINITY
+      }
     }
   }
 

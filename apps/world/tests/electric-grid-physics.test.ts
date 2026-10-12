@@ -584,13 +584,14 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     exportMw: (branch.toBusId === se3Boundary ? 1 : -1) * grid.branches.get(branch.id)!.flowMw,
     lossesMw: grid.branches.get(branch.id)!.lossesMw,
   }))
-  /** Export towards each Nordic area over all its ties (MW), from the flows at the Norwegian ends. */
-  const exportByArea = (grid: GridRuntimeInstance): ReadonlyMap<string, number> => {
-    const nordic = grid.definition.index.externalSystems.find(system => system.synchronous)!
-    return new Map(nordic.areaParticipation!.map(entry => [entry.area, entry.boundaryBusIds.reduce((sum, busId) =>
-      sum + grid.definition.index.branchesByBus.get(busId)!.reduce((ties, branch) =>
-        ties + (branch.toBusId === busId ? 1 : -1) * grid.branches.get(branch.id)!.flowMw, 0), 0)]))
-  }
+  /** Export over each AC border of the Nordic exchange (MW), from the flows at the Norwegian ends of its ties, beside the border's schedule. */
+  const exportByBorder = (grid: GridRuntimeInstance): ReadonlyArray<{ readonly label: string; readonly exportMw: number; readonly scheduledExportMw: number }> =>
+    grid.definition.operatingPoint.externalExchanges.flatMap(exchange => exchange.borders).map(border => ({
+      label: border.label,
+      scheduledExportMw: border.scheduledExportMw,
+      exportMw: border.boundaryBusIds.reduce((sum, busId) => sum + grid.definition.index.branchesByBus.get(busId)!.reduce((ties, branch) =>
+        ties + (branch.toBusId === busId ? 1 : -1) * grid.branches.get(branch.id)!.flowMw, 0), 0),
+    }))
   const nordicImportMw = (grid: GridRuntimeInstance): number => grid.definition.index.externalSystems
     .filter(system => system.synchronous).reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0)
 
@@ -616,13 +617,12 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     const responseMw = nordic.reduce((sum, system) => sum + system.fcrNMwPerHz! * 0.1 + system.afrrUpMw!, 0)
     const scheduledExportMw = run.grid.definition.operatingPoint.externalExchanges.reduce((sum, exchange) => sum + exchange.scheduledExportMw, 0)
     expect(Math.abs(nordicImportMw(run.grid) + scheduledExportMw)).toBeLessThan(responseMw)
-    // The exchange enters the Nordic area by its area participation: almost all of it over the SE3
-    // ties next to Halden, little over the northern ties and the Finnmark tie to Finland.
-    const byArea = exportByArea(run.grid)
-    const exportMw = [...byArea.values()].reduce((sum, value) => sum + value, 0)
-    console.info(`Halden 4×1,100 MW, export by area: ${[...byArea].map(([area, value]) => `${area} ${value.toFixed(1)} MW`).join(', ')}`)
-    expect(byArea.get('SE3')! / exportMw).toBeGreaterThan(0.8)
-    expect(Math.abs(byArea.get('FI')!) / exportMw).toBeLessThan(0.03)
+    // The exchange enters the Nordic area over each AC border at its measured schedule; only the
+    // equivalent's response (FCR-N, aFRR) and the ties' losses come on top, by area participation.
+    const byBorder = exportByBorder(run.grid)
+    console.info(`Halden 4×1,100 MW, export by border: ${byBorder.map(border => `${border.label} ${border.exportMw.toFixed(1)} MW (schedule ${border.scheduledExportMw} MW)`).join(', ')}`)
+    expect(byBorder.map(border => border.label)).toEqual(['NO1–SE3', 'NO3–SE2', 'NO4–FI', 'NO4–SE1', 'NO4–SE2'])
+    for (const border of byBorder) expect(Math.abs(border.exportMw - border.scheduledExportMw)).toBeLessThan(responseMw)
     // In the DC balance the ties carry exactly what leaves the boundary bus, less half their losses,
     // which it carries as load.
     const boundary = run.grid.busStates.get(se3Boundary)!
