@@ -43,11 +43,10 @@ export const plainError = (error: unknown): PlainError => {
 
   if (message && isServerTransportMessage(message)) return result(TRANSPORT_LOST_TEXT, 'reload')
   if (code === null && status === null && browserTransport.test(message)) return result(HOST_UNREACHABLE_TEXT, 'try-again')
-  if (code === 'workspace_capacity_exceeded' || status === 503) return result(CAPACITY_TEXT, 'wait')
   if (code === 'module_outcome_unknown') return result(OUTCOME_UNKNOWN_TEXT, 'check')
-  if (code === 'module_unavailable' || code === 'module_contract_invalid' || status === 502 || status === 504) {
-    return result(MODULE_UNAVAILABLE_TEXT, 'try-again')
-  }
+  if (code === 'module_unavailable' || code === 'module_contract_invalid') return result(MODULE_UNAVAILABLE_TEXT, 'try-again')
+  if (code === 'workspace_capacity_exceeded' || status === 503) return result(CAPACITY_TEXT, 'wait')
+  if (status === 502 || status === 504) return result(MODULE_UNAVAILABLE_TEXT, 'try-again')
   if (code === 'workspace_not_found') return result(WORKSPACE_GONE_TEXT, 'check')
   // A Module's own refusal ("This Run is paused") is written for people: keep it.
   if (message && message.length <= 240 && !rawDiagnostic.test(message)) return result(message, 'try-again')
