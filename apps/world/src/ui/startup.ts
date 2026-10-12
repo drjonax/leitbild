@@ -134,6 +134,7 @@ export const startupIsReady = (steps: ReadonlyArray<StartupStep>): boolean =>
 export const startupHasFailed = (steps: ReadonlyArray<StartupStep>): boolean =>
   steps.some(step => step.status === 'failed')
 
+/** The startup checklist shows while steps run or after one failed; once every step succeeded there is nothing to read. */
 export const startupModalShouldShow = (config: {
   readonly routeMode: 'picker' | 'simulation-run'
   readonly dismissed: boolean
@@ -141,3 +142,4 @@ export const startupModalShouldShow = (config: {
 }): boolean =>
   config.routeMode === 'simulation-run'
   && !config.dismissed
+  && !startupIsReady(config.steps)
