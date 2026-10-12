@@ -160,7 +160,8 @@ const summaryResultSchema = z.object({
         cumulativeMismatchMwh: finite,
         suppliedEnergyMwh: finite.describe('Generation and imports into islands over the run (MWh).'),
         servedEnergyMwh: finite,
-        lossEnergyMwh: finite,
+        lossEnergyMwh: finite.describe('Branch and HVDC converter losses over the run (MWh).'),
+        networkLossEnergyMwh: finite.describe('Losses of the networks below 132 kV behind the energised loads over the run (MWh): supplied = served + losses + these.'),
       }).strict(),
     }).strict(),
     contingencyWorkerPool: z.object({

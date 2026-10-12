@@ -3,7 +3,7 @@ import type { ExternalFrequencyEquivalent, FrequencyStorageUnit, IslandFrequency
 import { frequencyUnitFor } from './generator-dynamics.ts'
 import { hvdcInjectionIntoIslandMw } from './hvdc.ts'
 import type { GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
-import { connectedGridLoadMw } from './load-service.ts'
+import { connectedGridLoadMw, connectedNetworkLossMw } from './load-service.ts'
 import { generatorIsSynchronised, generatorMinimumStableMw } from './unit-commitment.ts'
 import { noReserves } from './frequency/governors.ts'
 import { branchClosed, generatorOnline, generatorStopping, type GridGeneratorArrays } from './state/arrays.ts'
@@ -297,12 +297,25 @@ export const islandFixedInjectionMw = (grid: GridRuntimeInstance, island: GridTo
   return injectionMw + hvdcInjectionIntoIslandMw(grid, island.busIndices)
 }
 
+/**
+ * Losses an energised island carries as load: its branches' at their ends (from the last solve)
+ * and those of the networks below 132 kV behind its loads. Both are fixed demand: neither follows
+ * frequency, nor is shed (MW).
+ */
 export const islandLossesMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
   let lossesMw = 0
   for (let busPosition = 0; busPosition < island.busIndices.length; busPosition += 1) {
     const bus = island.busIndices[busPosition]!
     lossesMw += grid.lossLoadByBusMw[bus]!
   }
+  return lossesMw + islandNetworkLossMw(grid, island)
+}
+
+/** Losses of the networks below 132 kV behind an island's connected loads (MW). */
+export const islandNetworkLossMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
+  const loads = grid.arrays.loads
+  let lossesMw = 0
+  for (let loadPosition = 0; loadPosition < island.loadIndices.length; loadPosition += 1) lossesMw += connectedNetworkLossMw(loads, island.loadIndices[loadPosition]!)
   return lossesMw
 }
 

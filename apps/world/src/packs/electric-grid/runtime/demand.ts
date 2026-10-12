@@ -37,7 +37,11 @@ export const gridDemandSampleClock = (sample: GridDemandSample): { readonly samp
   dayType: sample.dayType,
 })
 
-/** Sets each load's demand to its profiled value at the demand sample containing `epochMs`, then applies its manual limit. */
+/**
+ * Sets each load's demand to its profiled value at the demand sample containing `epochMs`, then
+ * applies its manual limit; the losses below 132 kV behind the fully connected load follow the
+ * same profile at the Operating Point's load scale (connectedNetworkLossMw draws its connected share).
+ */
 export const applyGridDemand = (grid: GridRuntimeInstance, epochMs: number): void => {
   const tables = gridTablesFor(grid.definition)
   const sample = grid.demandSample
@@ -48,11 +52,13 @@ export const applyGridDemand = (grid: GridRuntimeInstance, epochMs: number): voi
   const loadProfile = tables.loadDemandProfile
   const loads = grid.arrays.loads
   const definitions = grid.definition.model.loads
+  const loadScale = grid.definition.operatingPoint.loadScale
   for (let load = 0; load < definitions.length; load += 1) {
     const definition = definitions[load]!
     const factor = sample.factors[loadProfile[load]!]!
     loads.profileFactor[load] = factor
     loads.demandMw[load] = Math.max(definition.criticalMw, loads.nominalDemandMw[load]! * factor)
+    loads.profiledNetworkLossMw[load] = definition.networkLossMw * loadScale * factor
     curtailGridLoad(loads, load, definition)
   }
 }

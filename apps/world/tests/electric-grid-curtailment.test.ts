@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { gridRestoreLoadCommandKind, gridSetEvChargingDemandCommandKind, gridShedLoadCommandKind } from '../src/packs/electric-grid/commands/load.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
+import { gridTablesFor } from '../src/packs/electric-grid/runtime/state/tables.ts'
 import { parseElectricGridRuntimeState, restoredGridRuntimeStateFor, runtimeStateForElectricGrids } from '../src/packs/electric-grid/sim/runtime-state.ts'
 import { isoAt, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
 import { declaredDailyProfile, flatDemandProfile, gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
@@ -105,4 +106,26 @@ describe('electric grid curtailment and emergency shedding', () => {
     if (shed('load:smelter') > 0) expect(shed('load:town')).toBeCloseTo(run.grid.loads.get('load:town')!.demandMw, 9)
     expect(shed('load:hospital')).toBe(0)
   }, 60_000)
+
+  test('the losses below 132 kV behind a load follow its connected share and never count as demand', () => {
+    // 10 MW of network losses behind the 100 MW town at the Operating Point.
+    const model = { ...curtailmentModel, loads: curtailmentModel.loads.map(load => load.id === 'load:town' ? { ...load, networkLossMw: 10 } : load) }
+    const run = steppedGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test-network-losses' })
+    run.advanceTo(10_000)
+    const town = run.grid.loads.get('load:town')!
+    const fullMw = 10 * town.profileFactor
+    expect(town.networkLossMw).toBeCloseTo(fullMw, 9)
+    expect(run.grid.projection.networkLossesMw).toBeCloseTo(fullMw, 1)
+    // The bus draws its loads' served demand, the town's losses and its half of the line's losses; demand, served and unserved figures leave the network losses out.
+    const busServedMw = ['load:smelter', 'load:town', 'load:hospital', 'load:chargers'].reduce((sum, id) => sum + run.grid.loads.get(id)!.servedMw, 0)
+    const lineLossMw = run.grid.lossLoadByBusMw[gridTablesFor(run.grid.definition).network.busIndexById.get('bus:b')!]!
+    expect(-run.grid.busStates.get('bus:b')!.netInjectionMw).toBeCloseTo(busServedMw + fullMw + lineLossMw, 6)
+    expect(run.grid.projection.servedLoadMw).toBeCloseTo(busServedMw, 0)
+    // Shedding half the town opens half its feeders: half the losses go with them (linear in the connected share).
+    expect(run.command(gridShedLoadCommandKind, { assetId: 'load:town', targetDemandMw: town.demandMw / 2, emergency: true }).ok).toBe(true)
+    expect(town.networkLossMw).toBeCloseTo(fullMw / 2, 9)
+    expect(town.unservedMw).toBeCloseTo(town.demandMw / 2, 9)
+    expect(run.command(gridRestoreLoadCommandKind, { assetId: 'load:town' }).ok).toBe(true)
+    expect(town.networkLossMw).toBeCloseTo(fullMw, 9)
+  })
 })

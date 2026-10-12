@@ -21,6 +21,10 @@
    "NO2": {
     "industry": 250
    }
+  },
+  "networkLossMw": {
+   "NO1": 40,
+   "NO2": 10
   }
  },
  "loadScale": 1,

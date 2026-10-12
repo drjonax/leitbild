@@ -154,6 +154,8 @@ export interface GridLoadState {
   shedMw: number
   shedCauses: ReadonlyArray<GridLoadShedCause>
   servedMw: number
+  /** Losses of the networks below 132 kV drawn behind the load's connected part at the last solution (0 while de-energised); not demand, and no command targets them. */
+  readonly networkLossMw: number
   frequencyHz: number | null
   /** Voltage of the load's bus (pu): the AC result, null while its island has not converged, 0 when de-energised. */
   voltagePu: number | null
@@ -322,10 +324,11 @@ export interface GridEnergyAudit {
   lastMaximumIslandMismatchMw: number
   /** ∫ Σ |island injection sum| dt (MWh). */
   cumulativeMismatchMwh: number
-  /** Energy integrals over the run (MWh): generation and imports into islands, served demand, network losses. */
+  /** Energy integrals over the run (MWh): generation and imports into islands, served demand, branch and converter losses, and the losses below 132 kV the loads carry. */
   suppliedEnergyMwh: number
   servedEnergyMwh: number
   lossEnergyMwh: number
+  networkLossEnergyMwh: number
 }
 
 export interface GridRuntimeDiagnostics {
@@ -607,7 +610,7 @@ export const createGridRuntimeInstance = (config: {
       lastQueryDurationMs: 0,
       persistenceFailureCount: 0,
       lastPersistenceFailure: null,
-      energyAudit: { lastMaximumIslandMismatchMw: 0, cumulativeMismatchMwh: 0, suppliedEnergyMwh: 0, servedEnergyMwh: 0, lossEnergyMwh: 0 },
+      energyAudit: { lastMaximumIslandMismatchMw: 0, cumulativeMismatchMwh: 0, suppliedEnergyMwh: 0, servedEnergyMwh: 0, lossEnergyMwh: 0, networkLossEnergyMwh: 0 },
     },
     projection: initialGridProjection(config.at, model.nominalFrequencyHz, restored?.tick ?? 0),
   }
@@ -637,6 +640,7 @@ const initialGridProjection = (at: string, nominalFrequencyHz: number, tick: num
   servedLoadMw: 0,
   unservedLoadMw: 0,
   lossesMw: 0,
+  networkLossesMw: 0,
   reserveMarginMw: 0,
   highestBranchLoadingPercent: 0,
   activeIslandCount: 0,

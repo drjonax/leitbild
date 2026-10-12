@@ -110,6 +110,9 @@ describe('Grid Model v2 → runtime model', () => {
     // NO1 private at 600 of its 800 MW reference, then the Scenario's NO1 scale of 0.5.
     expect(model.loads.find(load => load.id === 'load:0301-private-osm-way-60495669')!.demandMw).toBeCloseTo(600 * 0.5, 9)
     expect(model.loads.find(load => load.id === 'load:site-test-smelter')!.demandMw).toBeCloseTo(200, 9)
+    // Each area's losses below 132 kV go to its loads by their demand, and scale with the area's demand.
+    expect(model.loads.find(load => load.id === 'load:0301-private-osm-way-60495669')!.networkLossMw).toBeCloseTo(40 * 0.5, 9)
+    expect(model.loads.find(load => load.id === 'load:site-test-smelter')!.networkLossMw).toBeCloseTo(10, 9)
     expect(() => compileGridModelV2(fixture, { ...fixturePoint, demand: { ...demand, priceAreaGroupMw: { NO1: { private: 600 } } } }, v2FixtureLoadProfiles))
       .toThrow('Operating Point electric-grid.test.v2-fixture.peak sets no demand for the NO2 industry loads of electric-grid.test.v2-fixture')
   })

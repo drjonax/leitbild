@@ -140,6 +140,13 @@ export const gridOperatingPointDemandSchema = z.object({
   referenceHour: gridIsoHourSchema,
   /** Demand of each price area and Elhub group at that hour (MW): an entry for every area and group the model has loads in. */
   priceAreaGroupMw: z.partialRecord(priceAreaSchema, z.partialRecord(z.enum(municipalityLoadGroups), positive)),
+  /**
+   * Losses of the networks below 132 kV in each price area at that hour (MW), which no meter in
+   * priceAreaGroupMw sees: an entry for every area the model has loads in. Each of the area's loads
+   * carries a share in proportion to its demand, follows its demand profile with it, and is never
+   * shed or curtailed as consumer demand.
+   */
+  networkLossMw: z.partialRecord(priceAreaSchema, nonNegative),
 }).strict()
 
 export const gridOperatingPointSchema = z.object({
@@ -253,6 +260,12 @@ const demandIssues = (demand: GridOperatingPointV2['demand'], targets: GridOpera
     for (const group of Object.keys(entries ?? {})) {
       if (!targets.loadGroupsByPriceArea.get(area)?.has(group as MunicipalityLoadGroup)) issues.push({ path: [...path, area, group], message: `the model has no ${area} ${group} loads` })
     }
+  }
+  for (const area of targets.loadPriceAreas) {
+    if (demand.networkLossMw[area as PriceArea] === undefined) issues.push({ path: ['demand', 'networkLossMw', area], message: `required: the model has ${area} loads` })
+  }
+  for (const area of Object.keys(demand.networkLossMw)) {
+    if (!targets.loadPriceAreas.has(area)) issues.push({ path: ['demand', 'networkLossMw', area], message: `the model has no loads in ${area}` })
   }
   return issues
 }

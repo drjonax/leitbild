@@ -78,6 +78,7 @@ export const testLoad = (load: Pick<GridLoadDefinition, 'id' | 'busId' | 'demand
   powerFactor: 1,
   priority: 'normal',
   interruptibleMw: 0,
+  networkLossMw: 0,
   ...load,
 })
 
@@ -224,7 +225,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
       loads.push({
         id: `D${index}`, label: `Load ${index}`, kind: 'residential', busId: `B${index}`, location: points[index]!,
         // Q/P = 0.25 (40 Mvar at 160 MW): cos φ = 1/√1.0625.
-        demandMw: 160, demandProfileId: declaredDailyProfile.id, criticalMw: 30, powerFactor: 1 / Math.sqrt(1.0625), priority: 'normal', interruptibleMw: 0,
+        demandMw: 160, demandProfileId: declaredDailyProfile.id, criticalMw: 30, powerFactor: 1 / Math.sqrt(1.0625), priority: 'normal', interruptibleMw: 0, networkLossMw: 0,
       })
     }
   }

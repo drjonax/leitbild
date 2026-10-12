@@ -2,7 +2,7 @@ import type { IsoTimestamp } from '../../../core/model/index.ts'
 import type { GridIslandProjection } from '../model.ts'
 import { gridAlarmCounts, gridIslandAlarmCounts } from './alarms.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
-import { externalReserveVolumes, generatorSynchronisedAt, islandFixedInjectionMw } from './island-input.ts'
+import { externalReserveVolumes, generatorSynchronisedAt, islandFixedInjectionMw, islandNetworkLossMw } from './island-input.ts'
 import { publishedNullable } from './state/arrays.ts'
 import { gridTablesFor } from './state/tables.ts'
 
@@ -103,6 +103,7 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
     loadMw: mw(loadMw),
     servedLoadMw: mw(servedLoadMw),
     lossesMw: mw(lossesMw),
+    networkLossesMw: island.energized ? mw(islandNetworkLossMw(grid, structure)) : 0,
     reserves: {
       fcrNMw: mw(reserves.fcrNMw), fcrDUpMw: mw(reserves.fcrDUpMw), fcrDDownMw: mw(reserves.fcrDDownMw),
       afrrUpMw: mw(reserves.afrrUpMw), afrrDownMw: mw(reserves.afrrDownMw), mfrrUpMw: mw(reserves.mfrrUpMw), mfrrDownMw: mw(reserves.mfrrDownMw),
@@ -155,6 +156,8 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
     servedMw += loads.servedMw[load]!
     unservedMw += loads.unservedMw[load]!
   }
+  let networkLossesMw = 0
+  for (const island of projected) networkLossesMw += island.networkLossesMw
   let lossesMw = 0
   const branchArrays = grid.arrays.branches
   for (let index = 0; index < branchArrays.lossesMw.length; index += 1) lossesMw += branchArrays.lossesMw[index]!
@@ -187,6 +190,7 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
     servedLoadMw: servedMw + plantDemandMw,
     unservedLoadMw: unservedMw,
     lossesMw,
+    networkLossesMw: mw(networkLossesMw),
     reserveMarginMw,
     highestBranchLoadingPercent,
     activeIslandCount: islands.islands.filter(island => island.energized).length,

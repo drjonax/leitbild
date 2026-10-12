@@ -111,7 +111,7 @@ const operatingPointJson = () => ({
   title: 'Winter peak',
   description: 'Fixture Operating Point exercising every per-asset field.',
   compatibleModelRefs: ['electric-grid.test.v2-fixture'],
-  demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00', priceAreaGroupMw: { NO1: { private: 760 }, NO2: { industry: 250 } } },
+  demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00', priceAreaGroupMw: { NO1: { private: 760 }, NO2: { industry: 250 } }, networkLossMw: { NO1: 38, NO2: 9 } },
   loadScale: 1.1,
   priceAreaDemandScale: { NO1: 1.05 },
   generatorStates: [
@@ -189,7 +189,7 @@ describe('Grid Operating Point v2', () => {
 
   test('requires the season, the whole hour and the demand of every price area and group with loads', () => {
     const demand = operatingPointJson().demand
-    expect(validateOperatingPoint(operatingPointJson()).demand).toEqual({ season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00', priceAreaGroupMw: { NO1: { private: 760 }, NO2: { industry: 250 } } })
+    expect(validateOperatingPoint(operatingPointJson()).demand).toEqual({ season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00', priceAreaGroupMw: { NO1: { private: 760 }, NO2: { industry: 250 } }, networkLossMw: { NO1: 38, NO2: 9 } })
     const withDemand = (changed: Record<string, unknown>) => message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { ...demand, ...changed } }))
     expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: undefined }))).toContain('$.demand')
     expect(withDemand({ season: 'autumn' })).toContain('$.demand.season')
@@ -201,5 +201,9 @@ describe('Grid Operating Point v2', () => {
     expect(extra).toContain('$.demand.priceAreaGroupMw.NO1.business: the model has no NO1 business loads')
     expect(extra).toContain('$.demand.priceAreaGroupMw.NO3.industry: the model has no NO3 industry loads')
     expect(withDemand({ priceAreaGroupMw: { ...demand.priceAreaGroupMw, NO1: { private: 0 } } })).toContain('$.demand.priceAreaGroupMw.NO1.private')
+    // The losses below 132 kV: one entry for exactly each price area with loads, never negative.
+    expect(withDemand({ networkLossMw: { NO1: 38 } })).toContain('$.demand.networkLossMw.NO2: required: the model has NO2 loads')
+    expect(withDemand({ networkLossMw: { ...demand.networkLossMw, NO3: 5 } })).toContain('$.demand.networkLossMw.NO3: the model has no loads in NO3')
+    expect(withDemand({ networkLossMw: { ...demand.networkLossMw, NO1: -1 } })).toContain('$.demand.networkLossMw.NO1')
   })
 })

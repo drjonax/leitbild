@@ -11,7 +11,7 @@ import {
   islandFixedInjectionMw,
   islandLossesMw,
 } from './island-input.ts'
-import { completeDeadGridLoad, completeLiveGridLoad } from './load-service.ts'
+import { completeDeadGridLoad, completeLiveGridLoad, connectedNetworkLossMw } from './load-service.ts'
 import { gridBranchFlowsMwInto } from './network/dc-power-flow.ts'
 import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelExternal, voltageModelNotConverged, type GridIslandScratch } from './state/arrays.ts'
 import { externalSystemFrequencyHz } from './boundary-separation.ts'
@@ -56,14 +56,16 @@ const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland)
 interface IslandBalance {
   suppliedMw: number
   servedMw: number
+  networkLossMw: number
 }
 
 /**
  * Electrical injections of one energised island. Within the instant, the accelerating power
- * ΔP = Σ mechanical + fixed injections − served load − losses is shared by the synchronous machines
- * (and synchronous external systems) in proportion to their kinetic energy H·S, so the island's
- * injections sum to zero by construction and its angle-reference bus absorbs nothing. Adds the
- * island's supplied and served power to `balance`.
+ * ΔP = Σ mechanical + fixed injections − served load − losses (the branches' and those below 132 kV
+ * behind the loads) is shared by the synchronous machines (and synchronous external systems) in
+ * proportion to their kinetic energy H·S, so the island's injections sum to zero by construction
+ * and its angle-reference bus absorbs nothing. Adds the island's supplied and served power and its
+ * losses below 132 kV to `balance`.
  */
 const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan, island: GridIsland, injections: Float64Array, balance: IslandBalance): void => {
   const structure = plans.plan.islands[island.planIndex]!
@@ -132,9 +134,13 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     if (islandOf[from] === island.planIndex) addAt(injections, from, hvdcFromTerminalMw(grid, link))
     if (islandOf[to] === island.planIndex) addAt(injections, to, hvdcToTerminalMw(grid, link))
   }
+  let networkLossMw = 0
   for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
     const load = structure.loadIndices[loadPosition]!
-    addAt(injections, tables.loadBus[load]!, -loads.servedMw[load]!)
+    // The load's bus draws its served demand and the losses below 132 kV behind its connected part.
+    loads.networkLossMw[load] = connectedNetworkLossMw(loads, load)
+    addAt(injections, tables.loadBus[load]!, -loads.servedMw[load]! - loads.networkLossMw[load]!)
+    networkLossMw += loads.networkLossMw[load]!
     completeLiveGridLoad(loads, load, frequencyHz, nominalHz)
   }
   for (let busPosition = 0; busPosition < structure.busIndices.length; busPosition += 1) {
@@ -157,6 +163,7 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
   }
   balance.suppliedMw += suppliedMw
   balance.servedMw += servedMw
+  balance.networkLossMw += networkLossMw
 }
 
 /**
@@ -306,6 +313,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   const balance = scratch.balance
   balance.suppliedMw = 0
   balance.servedMw = 0
+  balance.networkLossMw = 0
   for (const system of grid.arrays.externalSystems) {
     system.importMw = 0
     system.islandId = null
@@ -321,6 +329,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   }
   const suppliedMw = balance.suppliedMw
   const servedMw = balance.servedMw
+  const networkLossMw = balance.networkLossMw
   solvePlanInto(plan, solve)
   let maximumMismatchMw = 0
   let mismatchSumMw = 0
@@ -436,4 +445,5 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   audit.suppliedEnergyMwh += suppliedMw * hours
   audit.servedEnergyMwh += servedMw * hours
   audit.lossEnergyMwh += lossesMw * hours
+  audit.networkLossEnergyMwh += networkLossMw * hours
 }

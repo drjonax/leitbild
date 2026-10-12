@@ -1,19 +1,24 @@
-import { compileGridModelV2 } from '../../../src/packs/electric-grid/models/compile-v2.ts'
-import { createAcNetwork, type AcNetwork } from '../../../src/packs/electric-grid/runtime/network/ac-network.ts'
+import { compileGridModelV2 } from '../models/compile-v2.ts'
+import { createAcNetwork, type AcNetwork } from '../runtime/network/ac-network.ts'
 import {
   createAcIslandSystem,
   createAcPowerFlowState,
   solveAcIsland,
   type AcIslandOutcome,
   type AcPowerFlowState,
-} from '../../../src/packs/electric-grid/runtime/network/fdlf.ts'
-import type { GridModelV2 } from '../../../src/packs/electric-grid/schemas/grid-model.ts'
-import type { GridLoadProfiles } from '../../../src/packs/electric-grid/schemas/grid-load-profile.ts'
-import type { GridOperatingPointV2 } from '../../../src/packs/electric-grid/schemas/grid-operating-point.ts'
+} from '../runtime/network/fdlf.ts'
+import type { GridModelV2 } from '../schemas/grid-model.ts'
+import type { GridLoadProfiles } from '../schemas/grid-load-profile.ts'
+import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 
 // AC load flow of a generated Grid Model v2 at one Operating Point, per energised island, with
-// the runtime's fast-decoupled solver. Demand comes from the runtime mapping (compile-v2); the AC
-// data compile-v2 does not carry yet (charging, taps, shunts, power factors, set-points) from v2.
+// the runtime's fast-decoupled solver: the build's measure of the model's own branch losses at an
+// Operating Point (operating-points.ts), and the tests' check of its flows. Demand comes from the
+// runtime mapping (compile-v2); the AC data compile-v2 does not carry yet (charging, taps, shunts,
+// power factors, set-points) from v2.
+//
+// - Loads draw their demand at their power factor and their share of the networks below 132 kV's
+//   losses as active power only.
 //
 // - Online units hold their bus at their set-point within ±ratedMva·sin(acos cos φ) (PV buses).
 // - HVDC links inject their scheduled transfer at the Norwegian converter bus (reactive power is
@@ -33,7 +38,7 @@ export interface IslandFlow {
   readonly outcome: AcIslandOutcome
 }
 
-export interface V2PowerFlow {
+export interface OperatingPointFlow {
   readonly network: AcNetwork
   readonly state: AcPowerFlowState
   readonly islands: ReadonlyArray<IslandFlow>
@@ -53,7 +58,7 @@ const scheduledAt = <Point,>(points: ReadonlyArray<Point>): Point => {
   return points[0]!
 }
 
-export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperatingPointV2, profiles: GridLoadProfiles, options: { readonly tolerancePu: number; readonly maximumIterations: number }): V2PowerFlow => {
+export const solveOperatingPointFlow = (model: GridModelV2, operatingPoint: GridOperatingPointV2, profiles: GridLoadProfiles, options: { readonly tolerancePu: number; readonly maximumIterations: number }): OperatingPointFlow => {
   const compiled = compileGridModelV2(model, operatingPoint, profiles)
   const busIndex = new Map(model.buses.map((bus, index) => [bus.id, index]))
   const open = new Set((operatingPoint.branchStates ?? []).filter(state => state.state === 'open').map(state => state.assetId))
@@ -89,7 +94,7 @@ export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperati
   let solvedDemandMw = 0
   for (const load of compiled.model.loads) {
     const bus = busIndex.get(load.busId)!
-    active[bus] = active[bus]! - load.demandMw
+    active[bus] = active[bus]! - load.demandMw - load.networkLossMw
     reactive[bus] = reactive[bus]! - load.demandMw * Math.tan(Math.acos(load.powerFactor))
     solvedDemandMw += load.demandMw
   }
@@ -209,7 +214,7 @@ export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperati
 }
 
 /** Apparent power of a branch: the larger of its two end flows, MVA. */
-export const branchLoadingMva = (flow: V2PowerFlow, index: number): number => Math.max(
+export const branchLoadingMva = (flow: OperatingPointFlow, index: number): number => Math.max(
   Math.hypot(flow.state.branchFromActiveMw[index]!, flow.state.branchFromReactiveMvar[index]!),
   Math.hypot(flow.state.branchToActiveMw[index]!, flow.state.branchToReactiveMvar[index]!),
 )

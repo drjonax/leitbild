@@ -46,6 +46,20 @@ const loadKinds: Readonly<Record<GridLoadV2['kind'], GridLoadKind>> = {
 const profileKey = (load: GridLoadV2): string => `${load.priceArea}\u0000${loadDemandGroups[load.kind]}`
 
 /**
+ * Each load's share of its price area's Operating Point losses below 132 kV: the area's losses ×
+ * the load's Operating Point demand / the Operating Point demand of all the model's loads in the area.
+ */
+const operatingPointNetworkLossMw = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demandMw: (load: GridLoadV2) => number): ((load: GridLoadV2) => number) => {
+  const areaDemandMw = new Map<string, number>()
+  for (const load of model.loads) areaDemandMw.set(load.priceArea, (areaDemandMw.get(load.priceArea) ?? 0) + demandMw(load))
+  return load => {
+    const areaLossMw = operatingPoint.demand.networkLossMw[load.priceArea]
+    if (areaLossMw === undefined) throw new Error(`Operating Point ${operatingPoint.id} sets no network losses for the ${load.priceArea} loads of ${model.id}`)
+    return areaLossMw * demandMw(load) / areaDemandMw.get(load.priceArea)!
+  }
+}
+
+/**
  * Each load's share of its price area and Elhub group's Operating Point demand: the area and
  * group's demand × its referenceDemandMw / the referenceDemandMw of all the model's loads in it.
  */
@@ -140,6 +154,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const areaScale = operatingPoint.priceAreaDemandScale ?? {}
   const demandAtOperatingPoint = operatingPointDemandMw(model, operatingPoint)
+  const networkLossAtOperatingPoint = operatingPointNetworkLossMw(model, operatingPoint, demandAtOperatingPoint)
   const firstSource = (provenance: GridProvenance): string => provenance.sources[0]!
   const buses: GridBusDefinition[] = model.buses.map(bus => ({
     id: bus.id,
@@ -209,6 +224,8 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       busId: load.busId,
       location: load.location,
       demandMw,
+      // The area's losses scale with its demand.
+      networkLossMw: networkLossAtOperatingPoint(load) * (areaScale[load.priceArea] ?? 1),
       demandProfileId: demandProfiles.get(profileKey(load))!.id,
       // A critical load is protected whole: LFDD and manual shedding never disconnect it.
       criticalMw: load.priority === 'critical' ? demandMw : 0,

@@ -38,7 +38,10 @@ export const gridIslandProjectionSchema = z.object({
   importMw: finiteNumber,
   loadMw: nonNegative,
   servedLoadMw: nonNegative,
+  /** Branch losses the island carries (MW). */
   lossesMw: nonNegative,
+  /** Losses of the networks below 132 kV behind the island's loads, drawn beside their demand (MW); 0 while de-energised. */
+  networkLossesMw: nonNegative,
   reserves: gridReservesByProductSchema,
   /** ac-fdlf: the island's AC load flow converged; not-converged: it did not, and its buses publish no voltage. */
   voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']),
@@ -73,7 +76,10 @@ export const gridProjectionSchema = z.object({
   totalLoadMw: nonNegative,
   servedLoadMw: nonNegative,
   unservedLoadMw: nonNegative,
+  /** Branch and HVDC converter losses (MW). */
   lossesMw: nonNegative,
+  /** Losses of the networks below 132 kV behind the energised loads, drawn beside their demand (MW): not part of totalLoadMw, servedLoadMw or unservedLoadMw. */
+  networkLossesMw: nonNegative,
   reserveMarginMw: finiteNumber,
   highestBranchLoadingPercent: nonNegative,
   /** Energised islands. */
@@ -122,6 +128,7 @@ export const emptyGridProjection = (at: string, nominalFrequencyHz: number): Gri
   servedLoadMw: 0,
   unservedLoadMw: 0,
   lossesMw: 0,
+  networkLossesMw: 0,
   reserveMarginMw: 0,
   highestBranchLoadingPercent: 0,
   activeIslandCount: 0,

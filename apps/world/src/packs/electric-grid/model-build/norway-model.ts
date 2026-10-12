@@ -29,7 +29,7 @@ import { knownGaps, type KnownGap } from './known-gaps.ts'
 import { allocateByPopulation, municipalAttachmentLimitKm, openWaterRule } from './population-weights.ts'
 import { createWaterCrossings } from './water-crossings.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
-import { buildOperatingPoints, dispatchRule } from './operating-points.ts'
+import { buildOperatingPoints, dispatchRule, networkLossRule } from './operating-points.ts'
 import { buildLoadProfiles, meteredDemandSourceId, priceAreaGroupMwAt } from './profiles.ts'
 import { readSidecarFeatures } from './sidecar-features.ts'
 import { modelSources, sha256Hex, sourceBuildId } from './sources.ts'
@@ -50,6 +50,7 @@ export const buildRules = {
   loadAllocation: { minimumShareMw, municipalAttachmentLimitKm, openWater: openWaterRule },
   loadControl: loadControlRule,
   dispatch: dispatchRule,
+  networkLoss: networkLossRule,
 }
 
 /** Topology ledger reasons that only filter the source (wrong voltage, inside one station): ids only. */
@@ -276,10 +277,19 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   }
   const model = validateGridModel(draft, `${norwayModelId} (build)`)
 
+  const profiles = validateGridLoadProfiles(buildLoadProfiles({
+    modelId: model.id,
+    winter: inputs.winterWeek.data,
+    summer: inputs.summerWeek.data,
+    referenceStartUtc: winterHour.priceAreas.startUtc,
+    referenceHour: winterHour.priceAreas.startTime,
+  }), 'norway load profiles (build)')
+
   const summerHour = inputs.referenceHours.data.referenceHours.summerLow
   const operatingPoints = buildOperatingPoints({
     model,
     compatibleModelRefs: [norwayModelId, haldenAdditionId],
+    profiles,
     meteredDemand: {
       winter: priceAreaGroupMwAt(inputs.winterWeek.data, winterHour.priceAreas),
       summer: priceAreaGroupMwAt(inputs.summerWeek.data, summerHour.priceAreas),
@@ -303,14 +313,6 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     validateGridOperatingPoint(operatingPoints.winter, `${operatingPoints.winter.id} (build)`, target)
     validateGridOperatingPoint(operatingPoints.summer, `${operatingPoints.summer.id} (build)`, target)
   }
-
-  const profiles = validateGridLoadProfiles(buildLoadProfiles({
-    modelId: model.id,
-    winter: inputs.winterWeek.data,
-    summer: inputs.summerWeek.data,
-    referenceStartUtc: winterHour.priceAreas.startUtc,
-    referenceHour: winterHour.priceAreas.startTime,
-  }), 'norway load profiles (build)')
 
   const geometry = buildGeometry({ model, branches: main.branches, hvdcLinks: topology.hvdcLinks, curatedPaths: curated.paths, sidecar })
   validateGridGeometryArtifact(geometry.geometry, 'norway geometry (build)')

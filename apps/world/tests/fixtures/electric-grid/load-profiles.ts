@@ -38,4 +38,4 @@ export const v2FixtureReferenceHour = '2026-01-15T17:00:00+01:00'
 /** The Load Profiles of the v2 test fixture model. */
 export const v2FixtureLoadProfiles: GridLoadProfiles = fixtureLoadProfiles({ id: 'electric-grid.test.v2-fixture.load-profiles', modelId: 'electric-grid.test.v2-fixture', referenceHour: v2FixtureReferenceHour })
 /** The demand of an Operating Point of the v2 test fixture model at its reference hour: its NO1 private load and NO2 site at their reference demand. */
-export const v2FixtureDemand = { season: 'winter', referenceHour: v2FixtureReferenceHour, priceAreaGroupMw: { NO1: { private: 800 }, NO2: { industry: 250 } } } as const
+export const v2FixtureDemand = { season: 'winter', referenceHour: v2FixtureReferenceHour, priceAreaGroupMw: { NO1: { private: 800 }, NO2: { industry: 250 } }, networkLossMw: { NO1: 40, NO2: 10 } } as const

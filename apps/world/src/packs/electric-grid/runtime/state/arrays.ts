@@ -127,6 +127,10 @@ export interface GridLoadArrays {
   /** Position of the load's shed-cause list in load-service.ts shedCauseLists. */
   readonly shedCauses: Uint8Array
   readonly servedMw: Float64Array
+  /** Losses of the networks below 132 kV behind the fully connected load at the demand sample (GridLoadDefinition.networkLossMw × load scale × profile factor). */
+  readonly profiledNetworkLossMw: Float64Array
+  /** The part of them drawn at the last network solution: its connected share (load-service.ts connectedNetworkLossMw); 0 while de-energised. */
+  readonly networkLossMw: Float64Array
   readonly frequencyHz: Float64Array
   readonly voltagePu: Float64Array
   readonly serviceState: Uint8Array
@@ -139,7 +143,7 @@ export interface GridIslandScratch {
   solve: Uint8Array
   frequencyHz: Float64Array
   /** Power supplied into and served in the energised islands over one solution (MW). */
-  readonly balance: { suppliedMw: number; servedMw: number }
+  readonly balance: { suppliedMw: number; servedMw: number; networkLossMw: number }
 }
 
 /**
@@ -196,6 +200,8 @@ export const createGridLoadArrays = (count: number): GridLoadArrays => ({
   shedMw: floats(count),
   shedCauses: new Uint8Array(count),
   servedMw: floats(count),
+  profiledNetworkLossMw: floats(count),
+  networkLossMw: floats(count),
   frequencyHz: floats(count, Number.NaN),
   voltagePu: floats(count),
   serviceState: new Uint8Array(count).fill(loadOutage),
@@ -250,7 +256,7 @@ export const createGridStateArrays = (config: {
   externalSystems: config.externalSystems,
   hvdcLinks: config.hvdcLinks,
   connections: config.connections,
-  islands: { energised: new Uint8Array(0), acConverged: new Uint8Array(0), solve: new Uint8Array(0), frequencyHz: new Float64Array(0), balance: { suppliedMw: 0, servedMw: 0 } },
+  islands: { energised: new Uint8Array(0), acConverged: new Uint8Array(0), solve: new Uint8Array(0), frequencyHz: new Float64Array(0), balance: { suppliedMw: 0, servedMw: 0, networkLossMw: 0 } },
 })
 
 /** The island scratch sized for `islandCount` plan islands, zeroed. */

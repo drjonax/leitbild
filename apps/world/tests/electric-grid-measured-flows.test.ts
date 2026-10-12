@@ -7,7 +7,7 @@ import { gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
-import { solveV2PowerFlow } from './fixtures/electric-grid/v2-power-flow.ts'
+import { solveOperatingPointFlow } from '../src/packs/electric-grid/model-build/operating-point-flow.ts'
 
 // Realism gate: the Norway model's AC load flow at each Operating Point against what was measured in
 // that hour (tests/fixtures/electric-grid/norway-measured-exchange.json: Svenska kraftnät, Energy-Charts
@@ -60,8 +60,9 @@ const hvdcTolerance = (measuredMw: number): number => Math.max(25, 0.03 * Math.a
 /**
  * AC border flows and measured net positions: 75 MW or 10 %. 75 MW lies below the standard deviation
  * of the hour's four quarter-hours on the largest AC border (NO1→SE3: 120 MW winter, 78 MW summer), so
- * a quasi-steady model of the hourly mean is held to it; 10 % covers the sub-132 kV losses (5–7 % of
- * demand) that move every area balance and that the model does not carry.
+ * a quasi-steady model of the hourly mean is held to it; 10 % covers the sub-132 kV losses (3.5–4.1 % of
+ * demand at these hours) that move every area balance, which the model carries as a national
+ * estimate shared by consumption, not as measured per area.
  */
 const flowTolerance = (measuredMw: number): number => Math.max(75, 0.1 * Math.abs(measuredMw))
 /**
@@ -82,11 +83,8 @@ interface KnownGap {
   readonly boundMw: number
   readonly reason: string
 }
-const unmodelledLosses = 'the model\'s demand is Elhub\'s metered consumption without the losses of the networks below 132 kV, so national production falls short of the measured by those losses less the model\'s own branch losses'
-const knownGaps: Readonly<Record<string, KnownGap>> = {
-  'winterPeak national production': { boundMw: 1000, reason: unmodelledLosses },
-  'summerLow national production': { boundMw: 375, reason: unmodelledLosses },
-}
+// Every value is within its tolerance: a new gap is added here with its reason and bound.
+const knownGaps: Readonly<Record<string, KnownGap>> = {}
 
 interface Comparison {
   readonly key: string
@@ -118,7 +116,7 @@ const modelHour = async (operatingPointId: string) => {
   if (file === undefined) throw new Error(`no Operating Point file for ${operatingPointId}`)
   const operatingPoint = validateGridOperatingPoint(await loadJson(join(models, file)), file, targets)
   const profiles = gridLoadProfiles(norwayGridModelRef)
-  const flow = solveV2PowerFlow(model, operatingPoint, profiles, { tolerancePu: 1e-6, maximumIterations: 100 })
+  const flow = solveOperatingPointFlow(model, operatingPoint, profiles, { tolerancePu: 1e-6, maximumIterations: 100 })
   const unconverged = flow.islands.filter(island => !island.outcome.converged)
   if (unconverged.length > 0) throw new Error(`${operatingPoint.id}: ${unconverged.length} islands did not converge`)
   const between = new Map<string, number>()
@@ -147,17 +145,18 @@ const modelHour = async (operatingPointId: string) => {
     const area = areaOfBus(link.fromBusId)
     net.set(area, net.get(area)! + transferMw)
   }
+  // Each area's load: its metered demand and the losses below 132 kV its loads carry.
   const load = new Map<string, number>(areaIds.map(area => [area, 0]))
   for (const entry of compileGridModelV2(model, operatingPoint, profiles).model.loads) {
     const area = areaOfBus(entry.busId)
-    load.set(area, load.get(area)! + entry.demandMw)
+    load.set(area, load.get(area)! + entry.demandMw + entry.networkLossMw)
   }
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const fixedByKind = new Map<string, number>()
   for (const generator of model.generators) {
     const state = states.get(generator.id)
     if (state?.state !== 'online' || state.targetMw === undefined) continue
-    // Only storage hydro takes the slack (v2-power-flow.ts); every other unit holds its target.
+    // Only storage hydro takes the slack (model-build/operating-point-flow.ts); every other unit holds its target.
     if (generator.kind === 'hydro-reservoir' || generator.kind === 'hydro-pumped') continue
     const kind = generator.kind === 'wind' ? 'wind' : generator.kind === 'thermal' ? 'thermal' : 'hydro'
     const key = `${generator.priceArea} ${kind}`

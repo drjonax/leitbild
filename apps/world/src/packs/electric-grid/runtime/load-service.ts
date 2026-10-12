@@ -18,6 +18,18 @@ export const curtailGridLoad = (loads: GridLoadArrays, index: number, load: Grid
 /** Demand of load `index` still connected after manual curtailment: what frequency control and LFDD act on. */
 export const connectedGridLoadMw = (loads: GridLoadArrays, index: number): number => loads.demandMw[index]! - loads.curtailedMw[index]!
 
+/**
+ * Losses below 132 kV that load `index` draws while its bus is energised: its profiled losses times
+ * the share of its demand still connected after manual curtailment and LFDD, whose feeders take the
+ * network below them out of service. Never itself curtailed, shed or counted as demand.
+ */
+export const connectedNetworkLossMw = (loads: GridLoadArrays, index: number): number => {
+  const demandMw = loads.demandMw[index]!
+  if (!(demandMw > 0)) return 0
+  // Linear in the connected share, a middle estimate: I²R losses fall roughly with the square of the load, transformer no-load losses not at all.
+  return loads.profiledNetworkLossMw[index]! * Math.max(0, demandMw - loads.curtailedMw[index]! - loads.lfddShedMw[index]!) / demandMw
+}
+
 // The possible cause lists, shared: every live load is completed on every network solution. A
 // load's shedCauses code is its position here.
 export const shedCauseLists: ReadonlyArray<ReadonlyArray<GridLoadShedCause>> = [
@@ -42,6 +54,7 @@ export const completeLiveGridLoad = (loads: GridLoadArrays, index: number, frequ
 /** A load in a de-energised island is out of supply: nothing is served and no LFDD stage holds it. */
 export const completeDeadGridLoad = (loads: GridLoadArrays, index: number): void => {
   loads.servedMw[index] = 0
+  loads.networkLossMw[index] = 0
   loads.lfddShedMw[index] = 0
   loads.outageMw[index] = loads.demandMw[index]! - loads.curtailedMw[index]!
   loads.shedMw[index] = loads.curtailedMw[index]!

@@ -232,6 +232,12 @@ export interface GridLoadDefinition {
   readonly location: GridAssetLocation
   /** Demand at the Operating Point before its load scale (MW). */
   readonly demandMw: number
+  /**
+   * Losses of the networks below 132 kV that the load's demand causes at the Operating Point,
+   * before its load scale (MW): drawn at its bus beside its demand, following the same profile,
+   * while the bus is energised; never shed, curtailed or counted as served or unserved demand.
+   */
+  readonly networkLossMw: number
   /** The Model's demand profile this load follows over the day. */
   readonly demandProfileId: string
   /** Demand that neither manual nor automatic shedding disconnects. */

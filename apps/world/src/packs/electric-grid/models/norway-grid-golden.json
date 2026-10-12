@@ -5453,13 +5453,55 @@
       "label": "Håkøybotn – Tverråsen 132 kV (class-default rating, no published rating found)",
       "operatingPointId": "electric-grid.norway.winter-weekday-peak",
       "maxLoading": 1.05,
-      "reason": "Class-default rating, no published rating found: the line carries the Kvaløya wind farms behind Tverråsen into Håkøybotn, and the model rates it by the 132 kV overhead class rule (203 MW continuous, 244 MW emergency) for want of a published rating. At the winter reference hour NO4's wind runs at its measured 894 MW (Elhub), 77 % of the area's capacity, which loads the line to 1.046 of its class-default rating in the AC load flow; it stays below the emergency rating and its relays do not operate in three simulated hours.",
+      "reason": "Class-default rating, no published rating found: the line carries the Kvaløya wind farms behind Tverråsen into Håkøybotn, and the model rates it by the 132 kV overhead class rule (203 MW continuous, 244 MW emergency) for want of a published rating. At the winter reference hour NO4's wind runs at its measured 894 MW (Elhub), 77 % of the area's capacity, which loads the line to 1.046 of its class-default rating in the AC load flow (1.044 with the losses below 132 kV); it stays below the emergency rating and its relays do not operate in three simulated hours.",
       "evidence": [
         {
           "sourceId": "openstreetmap",
           "url": "https://www.openstreetmap.org/way/586667747",
           "ref": "way/586667747",
           "note": "Håkøybotn - Tverråsen, power=line, voltage=132000, cables=3, operator=Arva; no rating tag"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-a2f2fa00dee1b40c",
+      "label": "Håkøybotn – Kvaløya 132 kV (Arva 2023: a real constraint)",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.02,
+      "reason": "A real constraint: Arva states that the transfer limit of the Håkøybotn – Kvaløya connection is 850 A (summer), set by the cables into Kvaløya transformer station, below the 1,211 A of the 1×3×329 Curlew line, and plans a new station on it to relieve Kvaløya. The model's class-default rating, 203 MW, lies close to that limit (850 A at 132 kV is 194 MVA). With Tromsø's winter demand and its losses below 132 kV at the reference hour the line runs at 1.010 of its rating in the AC load flow; it stays below the emergency rating and its relays do not operate in three simulated hours.",
+      "evidence": [
+        {
+          "sourceId": "nve-case-documents",
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/d95b74ef-df30-4bbd-93e9-e0f3f44ecfbc/202311250/3438653",
+          "ref": "Arva, Konsesjonssøknad for Eidkjosen transformatorstasjon (July 2023, rev. 15.05.24), NVE case 202311250, section 2.1.1, p. 14",
+          "note": "Linjen Håkøybotn-Kvaløya er en 1x3x329 Curlew med en termisk kapasitet på 1211 A (15 grader). Overføringsgrense på forbindelsen er i dag 850 A (sommer) da kablene inn til Kvaløya transformatorstasjon er dimensjonerende."
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/134074790",
+          "ref": "way/134074790",
+          "note": "Håkøybotn - Kvaløya, power=line, voltage=132000, cables=3, operator=Arva; no rating tag"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-b5afdf2c32604596",
+      "label": "Bergløkka – Meen / Hallingsdal – (Solum) – Meen 132 kV (class-default rating, no published rating found)",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.03,
+      "reason": "Class-default rating, no published rating found: Lede's 132 kV line is rated by the 132 kV overhead class rule (203 MW continuous, 244 MW emergency) for want of a published rating. With the winter reference hour's demand and its losses below 132 kV it runs at 1.026 of that rating in the AC load flow; it stays below the emergency rating and its relays do not operate in three simulated hours.",
+      "evidence": [
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/552465578",
+          "ref": "way/552465578",
+          "note": "Bergløkka - Meen, power=line, voltage=132000, circuits=1, operator=Lede; no rating tag"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/100657494",
+          "ref": "way/100657494",
+          "note": "Hallingsdal - (Solum) - Meen, power=line, voltage=132000, circuits=1, operator=Lede; no rating tag"
         }
       ]
     }

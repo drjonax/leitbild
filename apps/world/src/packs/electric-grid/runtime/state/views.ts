@@ -171,6 +171,7 @@ export const loadStateViews = (loadIds: ReadonlyArray<string>, arrays: GridLoadA
     shedMw: numberField(arrays.shedMw),
     shedCauses: readOnly(index => shedCauseLists[arrays.shedCauses[index]!]),
     servedMw: numberField(arrays.servedMw),
+    networkLossMw: readOnly(index => arrays.networkLossMw[index]),
     frequencyHz: nullableField(arrays.frequencyHz, 'load frequencyHz'),
     voltagePu: nullableField(arrays.voltagePu, 'load voltagePu'),
     serviceState: codeField(loadServiceStateCodes, arrays.serviceState, 'load serviceState'),

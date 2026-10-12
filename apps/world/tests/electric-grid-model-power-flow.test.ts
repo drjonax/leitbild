@@ -6,7 +6,7 @@ import { gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
 import { gridGoldenSchema } from '../src/packs/electric-grid/schemas/grid-golden.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
-import { branchLoadingMva, solveV2PowerFlow } from './fixtures/electric-grid/v2-power-flow.ts'
+import { branchLoadingMva, solveOperatingPointFlow } from '../src/packs/electric-grid/model-build/operating-point-flow.ts'
 
 // Gate for the committed generated Norway model: at each committed Operating Point the AC load flow
 // of every energised island converges, every bus voltage stays within the golden band, no branch
@@ -26,7 +26,7 @@ const solveOptions = { tolerancePu: 1e-6, maximumIterations: 100 }
 
 for (const file of ['norway-winter-weekday-peak.operating-point.json', 'norway-summer-night-low.operating-point.json']) {
   const operatingPoint = validateGridOperatingPoint(await load(file), file, targets)
-  const flow = solveV2PowerFlow(model, operatingPoint, gridLoadProfiles(norwayGridModelRef), solveOptions)
+  const flow = solveOperatingPointFlow(model, operatingPoint, gridLoadProfiles(norwayGridModelRef), solveOptions)
   const rows = flow.branches.map((branch, index) => ({ branch, mva: branchLoadingMva(flow, index), ...flow.ratings[index]! }))
   const explained = new Map(golden.powerFlowOverloads.filter(entry => entry.operatingPointId === operatingPoint.id).map(entry => [entry.branchId, entry]))
 

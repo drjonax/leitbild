@@ -148,6 +148,7 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     requireFinite(model, load.powerFactor, `${load.id} powerFactor`, Number.MIN_VALUE)
     if (load.powerFactor > 1) failModel(model, `${load.id} powerFactor must not exceed 1`)
     requireFinite(model, load.interruptibleMw, `${load.id} interruptibleMw`, 0)
+    requireFinite(model, load.networkLossMw, `${load.id} networkLossMw`, 0)
     requireFinite(model, load.location[0], `${load.id} longitude`)
     requireFinite(model, load.location[1], `${load.id} latitude`)
     if (Math.abs(load.location[0]) > 180 || Math.abs(load.location[1]) > 90) failModel(model, `${load.id} has an invalid location`)
