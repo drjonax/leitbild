@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
+  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
   import { tick, untrack } from 'svelte'
   import type { ProcedureSession } from './procedure-session.ts'
+  import { procedureComparisonText, procedureCsfChip, procedureElapsedText } from './procedure-view.ts'
   import { procedureViewKey, procedureCategories, procedureStepItems, procedureStepTagBindings, procedureTextSegments, procedureBlockLabel, procedureObservationEvidence, procedureObservationBasis, procedureObservationLabel, procedureSourceEvidenceRequest, procedureUnitJump } from './procedure-view.ts'
   import type {
     SimulationRunId,
@@ -1035,8 +1036,13 @@
   const validationFor = (tagId: ProcedureTagId): ProcedureTagValidation | undefined =>
     tagValidation.get(tagId)
 
-  const csfEvaluationFor = (csf: string): ProcedureCsfEvaluation | undefined =>
-    csfReadAt !== null && csfPresentationTime - Date.parse(csfReadAt) <= 6_000 ? csfEvaluations.get(csf) : undefined
+  // A status tree read older than 6 s keeps its colour, marked stale: lost data is never shown as blank.
+  const csfStale = $derived(csfReadAt !== null && csfPresentationTime - Date.parse(csfReadAt) > 6_000)
+  const csfAgeText = (): string => {
+    if (csfReadAt === null) return '—'
+    const seconds = Math.max(0, Math.round((csfPresentationTime - Date.parse(csfReadAt)) / 1000))
+    return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`
+  }
 
   const csfSignalTone = (signal: ProcedureCsfEvaluation['signals'][number]): 'satisfied' | 'challenged' | 'unknown' => {
     if (signal.matches === true) return 'satisfied'
@@ -1044,10 +1050,6 @@
     return 'unknown'
   }
 
-  const csfSignalValueText = (signal: ProcedureCsfEvaluation['signals'][number]): string =>
-    signal.operator === undefined
-      ? signal.formatted
-      : `${signal.formatted} ${signal.operator} ${String(signal.expected)}`
 
   const refreshCsfStatus = async (csfs = csfIds): Promise<void> => {
     if (csfs.length === 0 || csfRefreshInFlight || disposed) return
@@ -1055,16 +1057,14 @@
     const unit = currentUnitContext.plantId
     try {
       csfRefreshInFlight = true
-      csfError = null
       const result = await evaluateProcedureCsfs(simulationRunId, unit, csfs, currentProvider)
       if (!disposed && request === latestProcedureLoadRequest && unit === currentUnitContext.plantId) {
         csfEvaluations = result
         csfReadAt = new Date().toISOString()
+        csfError = null
       }
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest && unit === currentUnitContext.plantId) {
-        csfEvaluations = new Map()
-        csfReadAt = null
         csfError = errorMessage(err)
       }
     } finally {
@@ -1252,7 +1252,7 @@
         {:else if state?.assessment === 'failed'}
           <X size={17} aria-hidden="true" />
         {:else if state?.assessment === 'unknown'}
-          <HelpCircle size={17} aria-hidden="true" />
+          <span aria-hidden="true">?</span>
         {/if}
         {#if state?.decision && procedureActorIsAi(state.decision.selectedBy)}<span class="procedure-ai-mark" title="This step's branch was selected by an AI">AI</span>{/if}
       </button>
@@ -1371,12 +1371,6 @@
       <button type="button" aria-label="Dismiss message" onclick={() => { error = null }}><X size={14} aria-hidden="true" /></button>
     </div>
   {/if}
-  {#if csfError}
-    <div class="procedure-error-strip" role="alert">
-      <span title={csfError}>Critical safety functions: {csfError}</span>
-      <button type="button" aria-label="Dismiss message" onclick={() => { csfError = null }}><X size={14} aria-hidden="true" /></button>
-    </div>
-  {/if}
 {/snippet}
 
 {#snippet stepSummary(step: ProcedureStep)}
@@ -1462,10 +1456,13 @@
 
       <div class="procedure-csf-strip" aria-label="Critical safety functions">
         {#each csfIds as csf}
-          {@const evaluation = csfEvaluationFor(csf)}
+          {@const evaluation = csfEvaluations.get(csf)}
+          {@const chip = procedureCsfChip(csf, evaluation, csfStale)}
           <div class="procedure-csf-shell">
-            <button type="button" class="procedure-csf {evaluation?.status ?? 'unknown'}">
-              <span>{evaluation?.label ?? csf.replaceAll('-', ' ')}</span>
+            <button type="button" class="procedure-csf {chip.tone}" class:stale={chip.stale} aria-label="{chip.label}: {evaluation ? evaluation.status.replace('-', ' ') : 'not read yet'}{chip.stale ? ', stale' : ''}">
+              <span class="procedure-csf-glyph" aria-hidden="true">{chip.glyph}</span>
+              <span>{chip.label}</span>
+              {#if chip.stale}<span class="procedure-csf-stale">Stale</span>{/if}
             </button>
             <div class="procedure-csf-popover" role="tooltip">
               {#if evaluation}
@@ -1473,29 +1470,29 @@
                   {evaluation.label}:
                   <span class="procedure-csf-status-text {evaluation.status}">{evaluation.status.replace('-', ' ')}{evaluation.procedure === undefined ? '' : ` · ${evaluation.procedure}`}</span>
                 </strong>
+                {#if chip.stale}<p class="procedure-csf-stale-note">Last read {csfAgeText()} ago; this colour may no longer hold.</p>{/if}
                 {#if evaluation.reason}
                   <p>{evaluation.reason}</p>
                 {/if}
                 <small>Status tree path: {evaluation.signalCount} comparison{evaluation.signalCount === 1 ? '' : 's'}. Criterion: {evaluation.qualification.replaceAll('-', ' ')}, not a qualified plant procedure.</small>
-                {#if evaluation.simTimeMs !== undefined}<small>Simulation time: {(evaluation.simTimeMs / 1000).toFixed(1)} s.</small>{/if}
-                {#if csfReadAt}<small>Snapshot received: {csfReadAt}. Refreshes while this window is open.</small>{/if}
-                {#if evaluation.modelRef}<small>Model: {evaluation.modelRef}{evaluation.modelDigest ? ` (${evaluation.modelDigest})` : ''}.</small>{/if}
+                <small>{evaluation.simTimeMs === undefined ? '' : `Plant time ${procedureElapsedText(evaluation.simTimeMs)} · `}read {csfAgeText()} ago; refreshes while this window is open.</small>
+                {#if evaluation.modelRef}<small>Model: {evaluation.modelRef}{evaluation.modelDigest ? ` (${evaluation.modelDigest.slice(0, 12)})` : ''}.</small>{/if}
                 <div class="procedure-csf-signals">
                   {#each evaluation.signals as signal (signal.id)}
                     <div class="procedure-csf-signal {csfSignalTone(signal)}">
                       <span>{signal.label}</span>
-                      <b>{csfSignalValueText(signal)}</b>
-                      {#if signal.path}<code>{signal.path}</code>{/if}
+                      <b>{procedureComparisonText(signal.formatted, signal.operator, signal.expected)}</b>
                     </div>
                   {/each}
                 </div>
               {:else}
-                <strong>{csf.replaceAll('-', ' ')}: <span class="procedure-csf-status-text unknown">unknown</span></strong>
-                <small>{csfReadAt ? 'Observation snapshot expired. A new acquisition is required.' : 'CSF observation is unavailable.'}</small>
+                <strong>{csf}: <span class="procedure-csf-status-text unknown">not read yet</span></strong>
+                <small>{csfError ? `The status tree could not be read: ${csfError}` : 'Reading the status tree…'}</small>
               {/if}
             </div>
           </div>
         {/each}
+        {#if csfError}<span class="procedure-csf-error" role="status" title={csfError}>Status trees not read: {csfError}</span>{/if}
       </div>
     </header>
 

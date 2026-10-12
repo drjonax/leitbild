@@ -172,3 +172,85 @@ export const procedureCategories = (procedures: ReadonlyArray<ProcedureCatalogIt
   }
   return [...groups].map(([id, procedures]) => ({ id, label: id.replace(/[-_]/g, ' '), procedures }))
 }
+
+const unitText: Readonly<Record<string, string>> = { degC: '°C', degF: '°F', percent: '%', pct: '%' }
+const oneDecimalUnits = new Set(['degC', 'degF', '°C', '°F', 'K', '%', 'percent', 'pct'])
+
+/** A number as an operator reads it: one decimal for temperatures and percentages, else up to three significant decimals. */
+export const procedureNumberText = (value: number, unit?: string): string => {
+  const digits = unit !== undefined && oneDecimalUnits.has(unit) ? 1 : Math.abs(value) >= 100 ? 1 : Math.abs(value) >= 1 ? 2 : 3
+  const fixed = Number.isInteger(value) ? String(value)
+    : Math.abs(value) < 0.001 ? value.toExponential(2) : value.toFixed(digits)
+  return unit === undefined ? fixed : `${fixed} ${unitText[unit] ?? unit}`
+}
+
+/**
+ * A reading as the window shows it. Readings arrive formatted ("287.871 degC"); a number with
+ * its unit is rewritten to sensible precision ("287.9 °C"), any other reading (a state, a word) stays as written.
+ */
+export const procedureDisplayReading = (formatted: string): string => {
+  const reading = /^(-?\d+(?:\.\d+)?(?:e[-+]?\d+)?)(?: (\S+))?$/i.exec(formatted.trim())
+  if (!reading) return formatted
+  const value = Number(reading[1])
+  return Number.isFinite(value) ? procedureNumberText(value, reading[2]) : formatted
+}
+
+/** Plant time since the Plant started, as a status tree reports it ("+01:02:03"). */
+export const procedureElapsedText = (elapsedMs: number): string => {
+  const seconds = Math.floor(elapsedMs / 1000)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `+${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`
+}
+
+/** A procedure's description without its leading Markdown title line, which the window already shows. */
+export const procedureDescriptionText = (description: string): string =>
+  description.replace(/^\s*#[^\n]*\n+/, '').trim()
+
+/** How a critical safety function chip shows its last status tree result: normal quiet, abnormal loud, lost data never blank. */
+export interface ProcedureCsfChip {
+  readonly tone: 'green' | 'yellow' | 'orange' | 'red' | 'unknown' | 'not-monitored' | 'pending'
+  readonly glyph: string
+  readonly label: string
+  readonly stale: boolean
+}
+
+const csfGlyphs: Readonly<Record<ProcedureCsfChip['tone'], string>> = {
+  green: '●', yellow: '▲', orange: '◆', red: '■', unknown: '?', 'not-monitored': '—', pending: '…',
+}
+
+export const procedureCsfChip = (
+  id: string,
+  evaluation: { readonly label: string; readonly status: Exclude<ProcedureCsfChip['tone'], 'pending'> } | undefined,
+  stale: boolean,
+): ProcedureCsfChip => {
+  const tone = evaluation?.status ?? 'pending'
+  return { tone, glyph: csfGlyphs[tone], label: evaluation?.label ?? id, stale: evaluation !== undefined && stale }
+}
+
+/** What a step's ⓘ heads its tag list with, and the worst binding that colours the ⓘ. */
+export const procedureStepBindingSummary = (bindings: ReadonlyArray<ProcedureStepTagBinding>): {
+  readonly text: string
+  readonly worst: 'none' | 'unchecked' | 'resolved' | 'resolved-with-warnings' | 'missing'
+} => {
+  const warnings = bindings.filter(binding => binding.status === 'resolved-with-warnings').length
+  const missing = bindings.filter(binding => binding.status === 'missing').length
+  const unchecked = bindings.filter(binding => binding.status === 'unchecked').length
+  const worst = bindings.length === 0 ? 'none' : missing > 0 ? 'missing' : warnings > 0 ? 'resolved-with-warnings' : unchecked > 0 ? 'unchecked' : 'resolved'
+  return {
+    text: `${bindings.length} ${bindings.length === 1 ? 'tag' : 'tags'} · ${warnings} with warnings · ${missing} missing`,
+    worst,
+  }
+}
+
+export const procedureBindingStatusWord = (status: ProcedureStepTagBinding['status']): string => ({
+  resolved: 'Resolved', 'resolved-with-warnings': 'Warnings', missing: 'Missing', unchecked: 'Not checked',
+})[status]
+
+/** A status tree comparison as one line: the reading, then its criterion in the reading's unit ("287.9 °C > 280.0 °C"). */
+export const procedureComparisonText = (formatted: string, operator?: string, expected?: unknown): string => {
+  const reading = procedureDisplayReading(formatted)
+  if (operator === undefined) return reading
+  const unit = /^-?\d+(?:\.\d+)?(?:e[-+]?\d+)? (\S+)$/i.exec(formatted.trim())?.[1]
+  const criterion = typeof expected === 'number' ? procedureNumberText(expected, unit) : String(expected)
+  return `${reading} ${operator} ${criterion}`
+}

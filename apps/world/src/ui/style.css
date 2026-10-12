@@ -2710,6 +2710,8 @@ body.rail-resizing {
   width: min(1500px, calc(100vw - 48px));
   height: min(940px, calc(100vh - 48px));
   --procedure-font-scale: 1;
+  /* The window is light on the dark app: every text sets its colour here or below, none inherits the app's. */
+  color: #0f172a;
   background: #f8fafc;
   border: 1px solid #cbd5e1;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
@@ -2842,9 +2844,23 @@ body.rail-resizing {
   cursor: pointer;
 }
 
+/* Run badges are static: an active Run a filled green chip, a held or completed one an outline. */
 .procedure-run-badge.active {
-  color: #166534;
-  animation: procedure-badge-pulse 1.25s ease-in-out infinite;
+  min-height: 20px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: #15803d;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.procedure-run-badge.transferred {
+  min-height: 20px;
+  padding: 1px 5px;
+  border: 1px dashed #64748b;
+  border-radius: 3px;
+  color: #334155;
 }
 
 .procedure-run-ai {
@@ -2858,7 +2874,11 @@ body.rail-resizing {
 }
 
 .procedure-run-badge.completed {
-  color: #64748b;
+  min-height: 20px;
+  padding: 1px 5px;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  color: #475569;
 }
 
 .procedure-run-badge.open {
@@ -2869,8 +2889,8 @@ body.rail-resizing {
 
 .procedure-run-badge:hover,
 .procedure-run-badge:focus-visible {
-  color: #1d4ed8;
-  outline: none;
+  outline: 2px solid #1d4ed8;
+  outline-offset: 1px;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -2977,7 +2997,7 @@ body.rail-resizing {
 .procedure-csf-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   background: transparent;
 }
@@ -2989,18 +3009,74 @@ body.rail-resizing {
 
 .procedure-csf {
   appearance: none;
+  position: relative;
+  min-height: 24px;
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   white-space: nowrap;
-  padding: 7px 10px;
+  padding: 2px 8px;
   border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #475569;
+  background: #f8fafc;
+  color: #334155;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
   text-align: left;
-  text-transform: capitalize;
   cursor: help;
+}
+
+.procedure-csf-glyph {
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* Normal is quiet; a challenged function is loud; no data is hatched, never plain white. */
+.procedure-csf.green .procedure-csf-glyph { color: #15803d; }
+.procedure-csf.yellow { border-color: #a16207; background: #facc15; color: #1c1917; }
+.procedure-csf.orange { border-color: #c2410c; background: #c2410c; color: #ffffff; }
+.procedure-csf.red { border-color: #b91c1c; background: #b91c1c; color: #ffffff; }
+.procedure-csf.unknown,
+.procedure-csf.pending {
+  border-color: #64748b;
+  background: repeating-linear-gradient(135deg, #f1f5f9 0 4px, #e2e8f0 4px 8px);
+  color: #334155;
+}
+.procedure-csf.unknown .procedure-csf-glyph { font-size: 12px; font-weight: 900; }
+.procedure-csf.not-monitored { border: 1px dashed #94a3b8; background: #ffffff; color: #475569; }
+
+.procedure-csf.stale::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(135deg, rgba(15, 23, 42, 0.22) 0 2px, transparent 2px 6px);
+  pointer-events: none;
+}
+
+.procedure-csf-stale {
+  padding: 0 3px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.procedure-csf-error {
+  align-self: center;
+  max-width: 420px;
+  overflow: hidden;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.procedure-csf-stale-note {
+  color: #92400e !important;
+  font-weight: 600;
 }
 
 .procedure-csf:focus-visible {
@@ -3014,7 +3090,8 @@ body.rail-resizing {
   left: 0;
   z-index: 6;
   width: max-content;
-  max-width: min(900px, calc(100vw - 80px));
+  max-width: min(420px, calc(100vw - 80px));
+  font-size: 13px;
   display: none;
   gap: 7px;
   padding: 11px 12px;
@@ -3034,7 +3111,8 @@ body.rail-resizing {
 .procedure-csf-popover small,
 .procedure-csf-popover p {
   margin: 0;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .procedure-csf-popover p {
@@ -3044,11 +3122,11 @@ body.rail-resizing {
 .procedure-csf-popover strong {
   display: block;
   color: #0f172a;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .procedure-csf-popover small {
-  color: #64748b;
+  color: #475569;
 }
 
 .procedure-csf-status-text.green,
@@ -3084,10 +3162,10 @@ body.rail-resizing {
 .procedure-csf-signal {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 8px;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .procedure-csf-signal span {
@@ -3101,51 +3179,6 @@ body.rail-resizing {
   font-size: 12px;
 }
 
-.procedure-csf.green {
-  border-color: #bbf7d0;
-  color: #166534;
-  background: #f0fdf4;
-}
-
-.procedure-csf.yellow {
-  border-color: #fde68a;
-  color: #854d0e;
-  background: #fefce8;
-}
-
-.procedure-csf.orange {
-  border-color: #fed7aa;
-  color: #9a3412;
-  background: #fff7ed;
-}
-
-.procedure-csf.red {
-  border-color: #fecaca;
-  color: #991b1b;
-  background: #fff1f2;
-}
-
-@keyframes procedure-soft-pulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.08);
-    opacity: 0.78;
-  }
-}
-
-@keyframes procedure-badge-pulse {
-  0%, 100% {
-    transform: scale(1);
-    text-shadow: none;
-  }
-  50% {
-    transform: scale(1.23);
-    text-shadow: 0 0 16px rgba(22, 101, 52, 0.52);
-  }
-}
 
 .procedure-error {
   padding: 10px 20px;
@@ -3418,7 +3451,6 @@ body.rail-resizing {
 
 .procedure-book-icon.active {
   color: #15803d;
-  animation: status-pulse 1.3s ease-in-out infinite;
 }
 
 .procedure-book-icon.completed {
@@ -3846,12 +3878,7 @@ body.rail-resizing {
   color: #ffffff;
 }
 
-.procedure-mode-actions button.run.running {
-  background: #15803d;
-  border-color: #15803d;
-  color: #ffffff;
-  animation: procedure-run-button-pulse 1.8s ease-in-out infinite;
-}
+
 
 .procedure-mode-actions button.reset:not(:disabled) {
   border-color: #94a3b8;
@@ -3874,10 +3901,7 @@ body.rail-resizing {
   cursor: not-allowed;
 }
 
-.procedure-mode-actions button.run.running:disabled {
-  opacity: 1;
-  cursor: default;
-}
+
 
 .procedure-document.completed-run .procedure-document-body {
   background: #eef2f7;
@@ -4063,6 +4087,10 @@ body.rail-resizing {
   pointer-events: none;
 }
 
+.procedure-assessment.blank {
+  border: 2px solid #64748b;
+}
+
 .procedure-assessment.complete {
   background: #15803d;
   border-color: #15803d;
@@ -4076,17 +4104,11 @@ body.rail-resizing {
 }
 
 .procedure-assessment.unknown {
-  background: #e2e8f0;
-  color: #475569;
-}
-
-@keyframes procedure-run-button-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(21, 128, 61, 0);
-  }
-  50% {
-    box-shadow: 0 0 0 2px rgba(21, 128, 61, 0.1);
-  }
+  background: #b45309;
+  border-color: #b45309;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 900;
 }
 
 .procedure-step-content {
@@ -4401,6 +4423,7 @@ body.rail-resizing {
   padding: 18px;
   border: 1px solid #cbd5e1;
   background: #ffffff;
+  color: #0f172a;
   box-shadow: 0 22px 48px rgba(15, 23, 42, 0.28);
 }
 
@@ -4415,6 +4438,12 @@ body.rail-resizing {
   box-shadow: 0 16px 44px rgba(15, 23, 42, 0.2);
   font-weight: 800;
   animation: procedure-toast-life var(--procedure-toast-duration, 10000ms) ease-in-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .procedure-toast {
+    animation: none;
+  }
 }
 
 .procedure-toast.corner {
@@ -4463,7 +4492,7 @@ body.rail-resizing {
 
 .procedure-confirm p {
   margin: 0;
-  color: #475569;
+  color: #334155;
   line-height: 1.42;
 }
 
