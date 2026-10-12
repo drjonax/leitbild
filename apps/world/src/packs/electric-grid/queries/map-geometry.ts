@@ -22,33 +22,43 @@ export interface GridMapGeometry {
 }
 
 /**
- * A geometry artifact and what it draws: the paths of the first `branchCount` branches of the
- * model it names (a Model Addition appends its branches after its base's, so the base's artifact
- * covers exactly the base's branches).
+ * A geometry artifact and what it draws: the paths of `branchCount` branches from `firstBranch`
+ * of the model it names, and its HVDC links when `hvdcLinks` (a Model Addition appends its branches
+ * after its base's: the base's artifact covers exactly the base's branches and links, the
+ * addition's artifact its own branches).
  */
 export interface GridMapArtifactSource {
   readonly file: string
   readonly modelId: string
+  readonly firstBranch: number
   readonly branchCount: number
+  readonly hvdcLinks: boolean
 }
 
-/** Where map geometry comes from: the artifact of a model (null when it has none) and its reader. */
+/** Where map geometry comes from: the artifacts of a model (none for a model without) and their reader. */
 export interface GridMapGeometrySources {
-  readonly artifactFor: (model: GridModelDefinition) => GridMapArtifactSource | null
+  readonly artifactsFor: (model: GridModelDefinition) => ReadonlyArray<GridMapArtifactSource>
   readonly readArtifact: (file: string) => string
 }
 
-/** HVDC links the runtime model carries apart from its branches; the artifact must cover exactly these. */
+/**
+ * An asset whose path the artifact must hold, and the ends that path runs between. `to` is null
+ * for an interconnector: its path ends abroad where its own mapped route leaves the source data,
+ * which is its boundary bus only for the first of the bus's interconnectors.
+ */
 export interface GridMapLinkEndpoints {
   readonly id: string
   readonly from: LonLat
-  readonly to: LonLat
+  readonly to: LonLat | null
 }
 
 export interface GridArtifactPaths {
   readonly branchPaths: ReadonlyMap<string, ReadonlyArray<LonLat>>
   readonly hvdcLinkPaths: ReadonlyMap<string, ReadonlyArray<LonLat>>
+  /** Boundary buses the map draws at a station abroad: its location and name. */
+  readonly boundaryBuses: ReadonlyMap<string, { readonly location: LonLat; readonly station: string }>
   readonly simplificationMeters: number
+  readonly routes: 'mapped' | 'designed'
   readonly sha256: string
 }
 
@@ -66,13 +76,13 @@ const distanceSquared = (a: LonLat, b: LonLat): number => {
 }
 
 /** A path must start at its from end and finish at its to end; a reversed path would draw flow backwards. */
-const orientationIssue = (path: ReadonlyArray<LonLat>, from: LonLat, to: LonLat): string | null => {
+const orientationIssue = (path: ReadonlyArray<LonLat>, from: LonLat, to: LonLat | null): string | null => {
   const first = path[0]!
   const last = path[path.length - 1]!
-  if (distanceSquared(first, from) > distanceSquared(first, to) || distanceSquared(last, to) > distanceSquared(last, from)) {
-    return 'runs from the toBus end to the fromBus end; paths are ordered from fromBus to toBus'
-  }
-  return null
+  const reversed = to === null
+    ? distanceSquared(first, from) > distanceSquared(last, from)
+    : distanceSquared(first, from) > distanceSquared(first, to) || distanceSquared(last, to) > distanceSquared(last, from)
+  return reversed ? 'runs from the toBus end to the fromBus end; paths are ordered from fromBus to toBus' : null
 }
 
 const coverageIssues = (
@@ -99,16 +109,16 @@ const coverageIssues = (
 }
 
 /**
- * Loads a model's geometry artifact. It must name the model (or, for a Model Addition, its base)
- * and the source build and hold exactly one correctly oriented path per covered branch and per
- * HVDC link; anything else is an error naming the file and JSON path.
+ * Loads a model's geometry artifact. It must name the model (or, for a Model Addition, its base
+ * or the addition itself) and the source build and hold exactly one correctly oriented path per
+ * covered branch and per HVDC link; anything else is an error naming the file and JSON path.
  */
 export const loadGridGeometryArtifact = (config: {
   readonly file: string
   readonly text: string
   readonly model: GridModelDefinition
-  /** The model id the artifact names and the leading branches it covers; the whole model when absent. */
-  readonly coverage?: { readonly modelId: string; readonly branchCount: number }
+  /** The model id the artifact names and the branches it covers; the whole model when absent. */
+  readonly coverage?: { readonly modelId: string; readonly firstBranch: number; readonly branchCount: number }
   readonly hvdcLinks: ReadonlyArray<GridMapLinkEndpoints>
 }): GridArtifactPaths => {
   let json: unknown
@@ -119,23 +129,27 @@ export const loadGridGeometryArtifact = (config: {
   }
   const artifact = validateGridGeometryArtifact(json, config.file)
   const model = config.model
-  const coverage = config.coverage ?? { modelId: model.id, branchCount: model.branches.length }
+  const coverage = config.coverage ?? { modelId: model.id, firstBranch: 0, branchCount: model.branches.length }
   const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
+  const boundaryBusIds = new Set(model.externalSystems.flatMap(system => system.boundaryBusIds))
   const issues: GridDataIssue[] = [
     ...(artifact.modelId === coverage.modelId ? [] : [{ path: ['modelId'], message: `must be the model id ${coverage.modelId}` }]),
     ...(artifact.sourceBuildId === model.sourceBuild.id ? [] : [{ path: ['sourceBuildId'], message: `must be the model's source build ${model.sourceBuild.id}` }]),
-    ...coverageIssues('branches', artifact.branches, model.branches.slice(0, coverage.branchCount).map(branch => ({
+    ...coverageIssues('branches', artifact.branches, model.branches.slice(coverage.firstBranch, coverage.firstBranch + coverage.branchCount).map(branch => ({
       id: branch.id,
       from: busLocation.get(branch.fromBusId)!,
-      to: busLocation.get(branch.toBusId)!,
+      to: boundaryBusIds.has(branch.toBusId) ? null : busLocation.get(branch.toBusId)!,
     }))),
     ...coverageIssues('hvdcLinks', artifact.hvdcLinks, config.hvdcLinks),
+    ...artifact.boundaryBuses.flatMap((entry, position) => boundaryBusIds.has(entry.id) ? [] : [{ path: ['boundaryBuses', position, 'id'], message: `${entry.id} is not a boundary bus of the model` }]),
   ]
   if (issues.length > 0) throw gridDataError(config.file, 'Grid Geometry', issues)
   return {
     branchPaths: new Map(artifact.branches.map(entry => [entry.id, entry.path])),
     hvdcLinkPaths: new Map(artifact.hvdcLinks.map(entry => [entry.id, entry.path])),
+    boundaryBuses: new Map(artifact.boundaryBuses.map(entry => [entry.id, { location: entry.location, station: entry.station.name ?? entry.station.osmId }])),
     simplificationMeters: artifact.simplificationMeters,
+    routes: artifact.routes,
     sha256: sha256(config.text),
   }
 }
@@ -165,14 +179,17 @@ const isNetworkEquivalent = (branch: GridBranch): boolean =>
   branch.kind === 'transformer' && branch.provenance?.method === 'curated' && transformerIdParts(branch.id) === undefined
 
 /** How a branch is drawn; transformers and equivalents always run between their buses. */
-const branchPathSource = (branch: GridBranch, artifactPath: ReadonlyArray<LonLat> | null): GridMapGeometryWire['branches'][number]['pathSource'] =>
+const branchPathSource = (branch: GridBranch, artifactPath: { readonly routes: GridArtifactPaths['routes'] } | null): GridMapGeometryWire['branches'][number]['pathSource'] =>
   isNetworkEquivalent(branch) ? 'network-equivalent'
     : branch.kind === 'transformer' ? 'transformer'
-      : artifactPath === null ? 'bus-to-bus' : 'mapped-route'
+      : artifactPath === null ? 'bus-to-bus' : artifactPath.routes === 'designed' ? 'designed-route' : 'mapped-route'
 
-const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifactPaths | null): GridMapGeometry => {
+const buildGridMapGeometry = (model: GridModelDefinition, artifacts: ReadonlyArray<GridArtifactPaths>): GridMapGeometry => {
   const modelDigest = sha256(JSON.stringify(model))
-  const geometryDigest = sha256(`${modelDigest}\n${artifact?.sha256 ?? 'bus-to-bus'}`)
+  const geometryDigest = sha256(`${modelDigest}\n${artifacts.length === 0 ? 'bus-to-bus' : artifacts.map(artifact => artifact.sha256).join('\n')}`)
+  const branchArtifact = (id: string): GridArtifactPaths | null => artifacts.find(artifact => artifact.branchPaths.has(id)) ?? null
+  const linkPath = (id: string): ReadonlyArray<LonLat> | null => artifacts.find(artifact => artifact.hvdcLinkPaths.has(id))?.hvdcLinkPaths.get(id) ?? null
+  const drawnAt = (id: string) => artifacts.find(artifact => artifact.boundaryBuses.has(id))?.boundaryBuses.get(id)
   const busIndex = new Map(model.buses.map((bus, position) => [bus.id, position]))
   const location = (value: GridAssetLocation): [number, number] => roundPoint(value)
   const externalByBus = new Map(model.externalSystems.flatMap(system => system.boundaryBusIds.map(busId => [busId, system] as const)))
@@ -185,21 +202,25 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifact
       sourceBuildId: model.sourceBuild.id,
       modelDigest,
       geometryDigest,
-      simplificationMeters: artifact?.simplificationMeters ?? null,
+      // The tolerance of the model's own (mapped) artifact; an addition's designed routes are finer.
+      simplificationMeters: artifacts[0]?.simplificationMeters ?? null,
       buses: model.buses.map(bus => {
         const external = externalByBus.get(bus.id)
+        // A boundary bus is drawn at the station abroad its first interconnector reaches, where the artifact says.
+        const drawn = drawnAt(bus.id)
         return {
           id: bus.id,
           label: bus.label,
           kv: bus.nominalKv,
-          location: location(bus.location),
-          ...(external === undefined ? {} : { external: { label: external.label, synchronous: external.synchronous } }),
+          location: drawn === undefined ? location(bus.location) : roundPoint(drawn.location),
+          ...(external === undefined ? {} : { external: { label: external.label, synchronous: external.synchronous, ...(drawn === undefined ? {} : { station: drawn.station }) } }),
         }
       }),
       branches: model.branches.map(branch => {
         const fromBus = busIndex.get(branch.fromBusId)!
         const toBus = busIndex.get(branch.toBusId)!
-        // With an artifact every branch it covers has a path (the loader checks coverage); the others draw bus to bus.
+        // With artifacts every branch they cover has a path (the loader checks coverage); the others draw bus to bus.
+        const artifact = branchArtifact(branch.id)
         const path = artifact?.branchPaths.get(branch.id) ?? null
         return {
           id: branch.id,
@@ -209,15 +230,15 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifact
           fromBus,
           toBus,
           ratingMw: branch.ratingMw,
-          pathSource: branchPathSource(branch, path),
+          pathSource: branchPathSource(branch, artifact),
           path: path === null ? busToBus(fromBus, toBus) : path.map(roundPoint),
         }
       }),
       hvdcLinks: model.hvdcLinks.map(link => {
         const fromBus = busIndex.get(link.fromBusId)!
         const toBus = busIndex.get(link.toBusId)!
-        // The loader requires an artifact to hold a path for every link.
-        const path = artifact?.hvdcLinkPaths.get(link.id) ?? null
+        // The loader requires the model's artifact to hold a path for every link.
+        const path = linkPath(link.id)
         return {
           id: link.id,
           label: link.label,
@@ -260,34 +281,37 @@ export const createGridMapGeometry = (sources: GridMapGeometrySources): ((model:
   return model => {
     const cached = cache.get(model)
     if (cached !== undefined) return cached
-    const source = sources.artifactFor(model)
     const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
-    const artifact = source === null ? null : loadGridGeometryArtifact({
+    const artifacts = sources.artifactsFor(model).map(source => loadGridGeometryArtifact({
       file: source.file,
       text: sources.readArtifact(source.file),
       model,
-      coverage: { modelId: source.modelId, branchCount: source.branchCount },
-      hvdcLinks: model.hvdcLinks.map(link => ({ id: link.id, from: busLocation.get(link.fromBusId)!, to: busLocation.get(link.toBusId)! })),
-    })
-    const geometry = buildGridMapGeometry(model, artifact)
+      coverage: { modelId: source.modelId, firstBranch: source.firstBranch, branchCount: source.branchCount },
+      // Every HVDC link ends at a boundary bus: its path ends where its cable route leaves the source data.
+      hvdcLinks: source.hvdcLinks ? model.hvdcLinks.map(link => ({ id: link.id, from: busLocation.get(link.fromBusId)!, to: null })) : [],
+    }))
+    const geometry = buildGridMapGeometry(model, artifacts)
     cache.set(model, geometry)
     return geometry
   }
 }
 
-/** A catalog model draws with its geometry artifact; an addition with its base's, its own branches bus to bus. */
-const catalogArtifact = (model: GridModelDefinition): GridMapArtifactSource => {
+/** A catalog model draws with its geometry artifact; an addition with its base's, and its own branches with its own. */
+const catalogArtifacts = (model: GridModelDefinition): ReadonlyArray<GridMapArtifactSource> => {
   const entry = gridModelCatalogEntry(model.id)
-  if (entry.source.kind === 'grid-model') return { file: entry.source.geometryFile, modelId: entry.id, branchCount: entry.assetCounts.branch }
+  if (entry.source.kind === 'grid-model') return [{ file: entry.source.geometryFile, modelId: entry.id, firstBranch: 0, branchCount: entry.assetCounts.branch, hvdcLinks: true }]
   const base = gridModelCatalogEntry(entry.source.baseModelRef)
   if (base.source.kind !== 'grid-model') throw new Error(`Grid Model ${entry.id}: base ${base.id} is itself a Model Addition`)
-  return { file: base.source.geometryFile, modelId: base.id, branchCount: base.assetCounts.branch }
+  return [
+    { file: base.source.geometryFile, modelId: base.id, firstBranch: 0, branchCount: base.assetCounts.branch, hvdcLinks: true },
+    { file: entry.source.geometryFile, modelId: entry.id, firstBranch: base.assetCounts.branch, branchCount: entry.assetCounts.branch - base.assetCounts.branch, hvdcLinks: false },
+  ]
 }
 
 const modelsDirectory = new URL('../models/', import.meta.url)
 
 export const gridMapGeometryFor = createGridMapGeometry({
-  artifactFor: catalogArtifact,
+  artifactsFor: catalogArtifacts,
   readArtifact: file => readFileSync(fileURLToPath(new URL(file, modelsDirectory)), 'utf8'),
 })
 

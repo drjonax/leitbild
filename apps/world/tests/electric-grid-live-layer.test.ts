@@ -207,7 +207,7 @@ describe('Grid live layer: MapLibre layers', () => {
     const group = electricGridPackView.presentation.mapLayerGroups!.find(candidate => candidate.id === gridLiveLayerGroupId)!
     expect(gridLiveMapLayer.layerGroupId).toBe(gridLiveLayerGroupId)
     expect(layerIdsMatching(ids, group.layerIdPattern)).toEqual(ids)
-    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'equivalent-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
+    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
     expect(electricGridPackView.presentation.liveMapLayers).toEqual([gridLiveMapLayer])
     expect(electricGridPackView.presentation.mapLegends).toContain(gridLiveStateLegend)
   })
@@ -297,7 +297,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     // The first branch in id order is the curated Follo – Lambertseter equivalent; lines follow their mapped routes.
     expect(norway.model.branches[0]!.id).toBe('branch:curated-follo-lambertseter-47kv-equivalent')
     expect(drawnAs(norway.model.branches.find(branch => branch.kind === 'ac_line' && branch.id.startsWith('branch:osm-'))!.id)).toBe('Mapped route')
-    expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a mapped line)')
+    expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a physical line)')
     expect(drawnAs(norway.model.branches.find(branch => branch.id.startsWith('branch:transformer-'))!.id)).toBe('Transformer, drawn between its buses')
     expect(state.hoverCard(0)!.fields.find(field => field.key === 'voltage')!.value).toBe('420 kV – 132 kV, equivalent of the sub-transmission between them')
   })
@@ -361,7 +361,8 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     for (const busId of ['bus:boundary-DE', 'bus:boundary-DK1', 'bus:boundary-GB', 'bus:boundary-NL']) {
       expect(before.featureStates.get(busFid(busId))).toMatchObject({ external: true, alarm: false, island: -1 })
       const links = norway.model.hvdcLinks.flatMap((link, position) => link.toBusId === busId ? [`link-${position}`] : [])
-      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'role', ...links])
+      // Drawn at the converter abroad its links' mapped routes reach.
+      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'drawn', 'role', ...links])
     }
     expect(before.featureStates.get(busFid('bus:boundary-SE3@420'))).toMatchObject({ external: false, energized: true })
 
@@ -405,7 +406,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     run.advanceTo(12_000)
     expect(run.grid.branches.get('branch:g-a')!.state).toBe('tripped')
     // A hand-built model has no geometry artifact: it draws bus to bus.
-    const geometryFor = createGridMapGeometry({ artifactFor: () => null, readArtifact: file => { throw new Error(`no artifact ${file}`) } })
+    const geometryFor = createGridMapGeometry({ artifactsFor: () => [], readArtifact: file => { throw new Error(`no artifact ${file}`) } })
     const answer = (query: ReturnType<typeof createGridMapStateQuery>): unknown => JSON.parse(JSON.stringify(query.capability.output.parse(
       query.answer({ gridId: run.grid.definition.gridId }, new Map([[run.grid.definition.gridId, run.grid]])))))
     const geometry = gridLiveMapLayer.loadGeometry(answer(createGridMapGeometryQuery(geometryFor)))

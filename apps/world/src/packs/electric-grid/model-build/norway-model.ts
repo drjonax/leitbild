@@ -8,7 +8,7 @@ import { compileGridTopology } from '../topology/compile.ts'
 import { compareText } from '../topology/ids.ts'
 import type { TopologyLedgerEntry } from '../topology/ledger.ts'
 import { adaptNodeSidecar } from '../topology/node-sidecar.ts'
-import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
+import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologyResult, TopologySummary } from '../topology/result.ts'
 import { curatedNetwork } from './curated-branches.ts'
 import { withCuratedCircuits } from './curated-circuits.ts'
 import { curationSourceId, topologyCurationSet, withCuratedTransformerUnits, withoutCuratedExclusions } from './curations.ts'
@@ -18,17 +18,19 @@ import { electricalRules } from './electrical.ts'
 import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverTurbineRule, runOfRiverUtilisationHours } from './generator-rules.ts'
 import { buildGeometry, type GridGeometry } from './geometry.ts'
-import { buildHaldenAddition, haldenAdditionId } from './halden-addition.ts'
+import type { DesignedRoute } from './designed-routes.ts'
+import { buildHaldenAddition, buildHaldenGeometry, haldenAdditionId } from './halden-addition.ts'
 import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, buildHvdcRampGroups, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
-import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
+import { continuationSeeds, continueInterconnectors, type ContinuationSeed, type ContinuedRoute } from './interconnector-continuations.ts'
+import { createBuildLedger, type BuildLedger, type BuildLedgerEntry } from './ledger.ts'
 import { buildLoads, loadControlRule, loadKindRules, minimumShareMw } from './loads.ts'
 import { networkEquivalents } from './network-equivalents.ts'
 import { knownGaps, type KnownGap } from './known-gaps.ts'
 import { allocateByPopulation, municipalAttachmentLimitKm, openWaterRule } from './population-weights.ts'
 import { createWaterCrossings } from './water-crossings.ts'
-import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
+import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer, type MainNetwork } from './network.ts'
 import { buildOperatingPoints, dispatchRule, networkLossRule } from './operating-points.ts'
 import { buildLoadProfiles, meteredDemandSourceId, priceAreaGroupMwAt } from './profiles.ts'
 import { readSidecarFeatures } from './sidecar-features.ts'
@@ -80,6 +82,11 @@ export interface NorwayModelBuild {
   readonly profiles: GridLoadProfiles
   readonly operatingPoints: { readonly winter: GridOperatingPointV2; readonly summer: GridOperatingPointV2 }
   readonly haldenAddition: GridModelAdditionV2
+  readonly haldenGeometry: GridGeometry
+  /** How each Halden circuit's designed route was laid: the corridors it follows and its spur lengths. */
+  readonly haldenRoutes: ReadonlyArray<DesignedRoute>
+  /** Each interconnector's route beyond the extract: the station it reaches and whether the table names it. */
+  readonly continuations: ReadonlyArray<ContinuedRoute>
 }
 
 const failOnCurationLedger = (entries: ReadonlyArray<TopologyLedgerEntry>): void => {
@@ -94,12 +101,13 @@ const stationTerminalsOf = (buses: ReadonlyArray<TopologyBus>): GridModelLedger[
     .sort((left, right) => compareText(left.id, right.id))
     .map(bus => [bus.id, { featureIds: [...bus.stationFeatureIds].sort(compareText), junctionPoints: bus.mergedJunctionLocations.map(point => [point[0], point[1]] as const) }]))
 
-export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayModelBuild => {
-  const sources = modelSources(inputs)
-  const ids = sources.ids
-  const ledger = createBuildLedger()
+/** The sidecar's topology with the curations and the interconnector table applied, and its main network, as the model build compiles them. */
+export const norwayTopology = (
+  inputs: Pick<NorwayModelBuildInputs, 'sidecar' | 'curations' | 'interconnectors'>,
+  ids: { readonly osm: string; readonly interconnectors: string },
+  ledger: BuildLedger,
+): { readonly topology: TopologyResult; readonly main: MainNetwork } => {
   const curations = inputs.curations.data
-
   const adapted = adaptNodeSidecar(inputs.sidecar.data, ids.osm)
   const topologyInput = withCuratedTransformerUnits(withoutCuratedExclusions(adapted.input, curations, ledger), curations, ledger)
   const topology = compileGridTopology(
@@ -108,7 +116,22 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     topologyCurationSet(curations, `curated:norway-grid-curations@${inputs.curations.sha256.slice(0, 12)}`),
   )
   failOnCurationLedger(topology.ledger)
-  const main = mainNetwork(topology, ledger)
+  return { topology, main: mainNetwork(topology, ledger) }
+}
+
+/** The free way ends an interconnector continuation snapshot starts from, as the model build finds them. */
+export const norwayContinuationSeeds = (inputs: Pick<NorwayModelBuildInputs, 'sidecar' | 'curations' | 'interconnectors'>, osmSourceId: string): ReadonlyArray<ContinuationSeed> => {
+  const { topology, main } = norwayTopology(inputs, { osm: osmSourceId, interconnectors: `curated:norway-interconnectors@${inputs.interconnectors.data.curatedAt}` }, createBuildLedger())
+  return continuationSeeds({ branches: main.branches, hvdcLinks: topology.hvdcLinks, table: inputs.interconnectors.data })
+}
+
+export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayModelBuild => {
+  const sources = modelSources(inputs)
+  const ids = sources.ids
+  const ledger = createBuildLedger()
+  const curations = inputs.curations.data
+
+  const { topology, main } = norwayTopology(inputs, ids, ledger)
   const sidecar = readSidecarFeatures(inputs.sidecar.data)
 
   const zones = inputs.biddingZones.data.zones
@@ -314,8 +337,28 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     validateGridOperatingPoint(operatingPoints.summer, `${operatingPoints.summer.id} (build)`, target)
   }
 
-  const geometry = buildGeometry({ model, branches: main.branches, hvdcLinks: topology.hvdcLinks, curatedPaths: curated.paths, sidecar })
+  // The interconnectors beyond the extract: the snapshot must start from this build's free ends.
+  const continuedSystems = new Set(inputs.continuations.data.systems)
+  const seeds = continuationSeeds({ branches: main.branches, hvdcLinks: topology.hvdcLinks, table: inputs.interconnectors.data }).filter(seed => continuedSystems.has(seed.system))
+  if (JSON.stringify(inputs.continuations.data.seeds) !== JSON.stringify(seeds)) {
+    throw new Error('the interconnector continuation snapshot starts from other free ends than this build finds; rerun scripts/electric-grid/snapshot-interconnector-continuations.ts')
+  }
+  const continued = continueInterconnectors({ snapshot: inputs.continuations.data, extractWayIds: sidecar.lineWayIds })
+  const continuationSource = inputs.continuations.data.source
+  const geometry = buildGeometry({
+    model,
+    branches: main.branches,
+    hvdcLinks: topology.hvdcLinks,
+    boundaries: topology.boundaries,
+    curatedPaths: curated.paths,
+    sidecar,
+    continuations: new Map(continued.map(route => [route.interconnectorId, route])),
+    continuedSystems,
+    sources: [{ sourceId: `${continuationSource.id}@${continuationSource.snapshotAt.slice(0, 10)}`, snapshotAt: continuationSource.snapshotAt, sha256: inputs.continuations.sha256, licence: continuationSource.licence.id }],
+  })
   validateGridGeometryArtifact(geometry.geometry, 'norway geometry (build)')
+  const haldenGeometry = buildHaldenGeometry({ base: model, baseGeometry: geometry.geometry, addition: halden.addition, water: createWaterCrossings(inputs.coastline.data.lines) })
+  validateGridGeometryArtifact(haldenGeometry.geometry, 'halden geometry (build)')
   const buildEntries = ledger.entries()
   const counts: Record<string, number> = {}
   for (const entry of buildEntries) counts[entry.reason] = (counts[entry.reason] ?? 0) + 1
@@ -339,5 +382,8 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     profiles,
     operatingPoints,
     haldenAddition: halden.addition,
+    haldenGeometry: haldenGeometry.geometry,
+    haldenRoutes: haldenGeometry.routes,
+    continuations: continued,
   }
 }

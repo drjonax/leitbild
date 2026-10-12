@@ -4,6 +4,7 @@ import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, Simul
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
+import { haversineKm } from '../src/packs/electric-grid/model-build/geo.ts'
 import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
@@ -108,16 +109,40 @@ describe('Grid map query Capabilities', () => {
       expect(link.path.length).toBeGreaterThan(2)
       expect(geometry.buses[link.fromBus]!.id).toBe(model.hvdcLinks.find(candidate => candidate.id === link.id)!.fromBusId)
     }
+    // An interconnector follows its own mapped route to where it leaves the source data, even when its
+    // boundary bus stands at another tie's end: Hasle – Borgvik ends in Värmland, not at the
+    // Halden – Skogssäter end where SE3 420 kV stands, and no straight segment joins the two.
+    const borgvik = geometry.branches.find(branch => branch.id === 'branch:osm-2ead9154d4262ef8')!
+    const borgvikEnd = borgvik.path[borgvik.path.length - 1]!
+    expect(geometry.buses[borgvik.toBus]!.id).toBe('bus:boundary-SE3@420')
+    expect(haversineKm(borgvikEnd, geometry.buses[borgvik.toBus]!.location)).toBeGreaterThan(40)
+    expect(borgvikEnd[0]).toBeGreaterThan(12)
+    for (const tie of geometry.branches.filter(branch => geometry.buses[branch.toBus]!.external !== undefined)) {
+      expect(haversineKm(tie.path[tie.path.length - 2]!, tie.path[tie.path.length - 1]!)).toBeLessThan(5)
+    }
+    // HVDC cables run on along their mapped routes abroad to their converters, where the map draws
+    // their boundary buses; the model keeps the buses where the cables leave the Norway extract.
+    const drawnAt = (busId: string) => geometry.buses.find(bus => bus.id === busId)!
+    expect(drawnAt('bus:boundary-DK1').external?.station).toBe('Jævnstrømsstation Tjele')
+    expect(drawnAt('bus:boundary-DE').external?.station).toBe('NordLink HVDC Wilster')
+    expect(drawnAt('bus:boundary-GB').external?.station).toBe('Cambois Converter Station')
+    expect(drawnAt('bus:boundary-NL').external?.station).toBe('NorNed Converterstation')
+    expect(drawnAt('bus:boundary-SE3@420').external?.station).toBeUndefined()
+    for (const link of geometry.hvdcLinks) expect(haversineKm(link.path[link.path.length - 1]!, geometry.buses[link.toBus]!.location)).toBeLessThan(0.5)
+    // Skagerrak, NordLink and North Sea Link used to stop at sea or at the shore, 40 km and more short of their converters.
+    for (const busId of ['bus:boundary-DK1', 'bus:boundary-DE', 'bus:boundary-GB']) {
+      expect(haversineKm(drawnAt(busId).location, model.buses.find(bus => bus.id === busId)!.location)).toBeGreaterThan(40)
+    }
     // Boundary buses name their external system; HVDC-only systems are asynchronous.
     const external = (busId: string) => geometry.buses.find(bus => bus.id === busId)!.external
-    expect(external('bus:boundary-DE')).toEqual({ label: 'Germany (Continental European synchronous area)', synchronous: false })
+    expect(external('bus:boundary-DE')).toEqual({ label: 'Germany (Continental European synchronous area)', synchronous: false, station: 'NordLink HVDC Wilster' })
     expect(external('bus:boundary-SE3@420')?.synchronous).toBe(true)
     expect(geometry.buses.filter(bus => bus.external !== undefined).map(bus => bus.id).every(id => id.startsWith('bus:boundary-'))).toBe(true)
     expect(ask<GridMapGeometryResult>(grid, geometryId).geometryDigest).toBe(geometry.geometryDigest)
     expect(ask<GridMapStateResult>(grid, stateId).geometryDigest).toBe(geometry.geometryDigest)
   })
 
-  test('a Model Addition draws its base along the base\'s routes and its own branches bus to bus, explicitly', () => {
+  test('a Model Addition draws its base along the base\'s routes and its fictional lines on designed routes along existing corridors', () => {
     const halden = compileGridDefinition(gridDefinitionSchema.parse({
       id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
     }))
@@ -128,10 +153,33 @@ describe('Grid map query Capabilities', () => {
     expect(geometry.branches.slice(0, baseBranchCount).every(branch => branch.pathSource !== 'bus-to-bus')).toBe(true)
     const added = geometry.branches.slice(baseBranchCount)
     expect(added.map(branch => branch.id)).toEqual(halden.model.branches.slice(baseBranchCount).map(branch => branch.id))
+    // Mapped ≥ 300 kV routes of the base: the corridors a designed 420 kV route may follow.
+    const corridorPoints = geometry.branches.slice(0, baseBranchCount)
+      .filter(branch => branch.pathSource === 'mapped-route' && branch.kv >= 300)
+      .flatMap(branch => branch.path.slice(1).flatMap((point, index) => {
+        const previous = branch.path[index]!
+        const steps = Math.max(1, Math.ceil(haversineKm(previous, point) / 0.25))
+        return Array.from({ length: steps }, (_, step) => [previous[0] + (point[0] - previous[0]) * step / steps, previous[1] + (point[1] - previous[1]) * step / steps] as const)
+      }))
     for (const branch of added) {
-      expect(branch.pathSource).toBe('bus-to-bus')
-      expect(branch.path).toEqual([geometry.buses[branch.fromBus]!.location, geometry.buses[branch.toBus]!.location])
+      expect(branch.pathSource).toBe('designed-route')
+      const from = geometry.buses[branch.fromBus]!.location
+      const to = geometry.buses[branch.toBus]!.location
+      expect(branch.path[0]).toEqual(from)
+      expect(branch.path[branch.path.length - 1]).toEqual(to)
+      // Not a straight line: it bends with the corridors, and runs a little longer than the chord.
+      const lengthKm = branch.path.slice(1).reduce((sum, point, index) => sum + haversineKm(branch.path[index]!, point), 0)
+      expect(lengthKm / haversineKm(from, to)).toBeGreaterThan(1.02)
+      expect(lengthKm / haversineKm(from, to)).toBeLessThan(1.25)
+      // Beside existing corridors (lanes 150 m apart), apart from the spur at the plant.
+      const offCorridor = branch.path.filter(point => haversineKm(point, from) > 3
+        && !corridorPoints.some(corridor => haversineKm(point, corridor) < 0.6))
+      expect(offCorridor).toEqual([])
     }
+    // The circuits to one destination share a lane; the two destinations run in separate lanes.
+    const pathOf = (id: string) => added.find(branch => branch.id === id)!.path
+    expect(pathOf('branch:curated-halden-pwr-hasle-2')).toEqual(pathOf('branch:curated-halden-pwr-hasle-1'))
+    expect(pathOf('branch:curated-halden-pwr-tegneby-1')[5]).not.toEqual(pathOf('branch:curated-halden-pwr-hasle-1')[5])
   })
 
   test('state arrays align with the geometry and follow commands', () => {
@@ -204,7 +252,7 @@ describe('Grid map query Capabilities', () => {
     expect(definition.model.branches.length).toBe(3_500)
     const grid = createGridRuntimeInstance({ definition, at })
     advanceGrid(grid, 0, at)
-    const geometryFor = createGridMapGeometry({ artifactFor: () => null, readArtifact: file => { throw new Error(`no artifact ${file}`) } })
+    const geometryFor = createGridMapGeometry({ artifactsFor: () => [], readArtifact: file => { throw new Error(`no artifact ${file}`) } })
     const stateQuery = createGridMapStateQuery(geometryFor)
     const grids = new Map([[grid.definition.gridId, grid]])
     const answer = () => JSON.stringify(stateQuery.capability.output.parse(structuredClone(stateQuery.answer({ gridId: grid.definition.gridId }, grids))))
@@ -237,11 +285,14 @@ const artifactFor = (model: GridModelDefinition, change: (artifact: Record<strin
     modelId: model.id,
     sourceBuildId: model.sourceBuild.id,
     simplificationMeters: 50,
+    routes: 'mapped',
+    sources: [],
     branches: [
       { id: 'branch:osm-0123456789abcdef', path: [[10, 60], [10.5, 60.1], [11, 60]] },
       { id: 'branch:osm-fedcba9876543210', path: [[11, 60], [11.1, 60.5], [11, 61]] },
     ],
     hvdcLinks: [],
+    boundaryBuses: [],
   }
   change(artifact)
   return JSON.stringify(artifact)
@@ -257,7 +308,7 @@ describe('Grid geometry artifact', () => {
     advanceGrid(grid, 0, at)
     const files: string[] = []
     const geometryFor = createGridMapGeometry({
-      artifactFor: candidate => ({ file: `${candidate.id}.geometry.json`, modelId: candidate.id, branchCount: candidate.branches.length }),
+      artifactsFor: candidate => [{ file: `${candidate.id}.geometry.json`, modelId: candidate.id, firstBranch: 0, branchCount: candidate.branches.length, hvdcLinks: true }],
       readArtifact: file => { files.push(file); return artifactFor(model) },
     })
     const query = createGridMapGeometryQuery(geometryFor)
@@ -266,7 +317,7 @@ describe('Grid geometry artifact', () => {
     expect(files).toEqual(['electric-grid.test.v2.geometry.json'])
     expect(result.simplificationMeters).toBe(50)
     expect(result.branches.map(branch => [branch.pathSource, branch.path.length])).toEqual([['mapped-route', 3], ['mapped-route', 3]])
-    const busToBus = createGridMapGeometry({ artifactFor: () => null, readArtifact: () => '' })(model)
+    const busToBus = createGridMapGeometry({ artifactsFor: () => [], readArtifact: () => '' })(model)
     expect(busToBus.geometryDigest).not.toBe(geometryFor(model).geometryDigest)
     expect(busToBus.modelDigest).toBe(geometryFor(model).modelDigest)
   })
@@ -283,6 +334,8 @@ describe('Grid geometry artifact', () => {
       .toThrow("$.sourceBuildId: must be the model's source build build-1")
     expect(() => load(model, artifactFor(model, artifact => { artifact.hvdcLinks = [{ id: 'hvdc:nordlink', path: [[10, 60], [8, 54]] }] })))
       .toThrow('$.hvdcLinks[0].id: hvdc:nordlink is not in the model')
+    expect(() => load(model, artifactFor(model, artifact => { artifact.boundaryBuses = [{ id: 'bus:boundary-DK1', location: [9.57, 56.48], station: { osmId: 'way/1', name: 'Tjele' } }] })))
+      .toThrow('$.boundaryBuses[0].id: bus:boundary-DK1 is not a boundary bus of the model')
     expect(() => load(model, artifactFor(model, artifact => { artifact.extra = true })))
       .toThrow('electric-grid.test.v2.geometry.json: invalid Grid Geometry')
     expect(() => load(model, '{')).toThrow('electric-grid.test.v2.geometry.json: invalid JSON')

@@ -241,7 +241,7 @@ describe('model build: provenance and serialisation', () => {
     const branch = (id: string, osmWayIds: ReadonlyArray<string>, circuitsSource: TopologyBranch['circuitsSource']): TopologyBranch => ({
       id, label: id, kind: 'cable', fromBusId: 'bus:a@300', toBusId: 'bus:b@300', nominalKv: 300, lowKv: null, lengthKm: 0.2, cableLengthKm: 0.2,
       circuits: 1, circuitsSource, voltageSource: 'mapped', ratingMva: null, osmWayIds, sourceFeatureIds: osmWayIds, osmTransformerIds: [], names: [],
-      parallelSpanGroups: 0, interconnectorId: null,
+      parallelSpanGroups: 0, interconnectorId: null, foreignEnd: null,
       provenance: { sources: ['osm:test'], method: 'inferred', confidence: 'medium', note: 'circuit count inferred (1)' },
     })
     const lines = [branch('branch:unit-cables', ['way/1', 'way/2'], 'inferred'), branch('branch:other', ['way/3'], 'cables-tag')]

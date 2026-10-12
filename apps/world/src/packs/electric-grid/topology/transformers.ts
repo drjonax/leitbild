@@ -83,6 +83,7 @@ export const buildTransformerBranches = (input: TransformerInput, ledger: Topolo
       names: [],
       parallelSpanGroups: 0,
       interconnectorId: null,
+      foreignEnd: null,
       provenance: units
         ? units.ids.some(id => id.startsWith('curation:'))
           ? { sources: [...input.sourceIds], method: 'curated', confidence: 'medium', note: `units given by ${[...new Set(units.ids.map(id => id.split('/')[0]!))].join(', ')}` }

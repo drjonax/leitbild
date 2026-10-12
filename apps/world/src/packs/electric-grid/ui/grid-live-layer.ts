@@ -180,11 +180,13 @@ const hvdcColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
 ]
 
 const majorBranch: ReadonlyArray<unknown> = ['>=', ['get', 'kv'], majorBranchKv]
-// A network equivalent stands for out-of-scope sub-transmission, not a mapped line: thin and dashed.
+// A network equivalent stands for out-of-scope sub-transmission, not a physical line, so the map
+// never draws it as one: no line, no flow arrows, no label. Only while it is selected (from the
+// Grid's lists) a thin dotted connector between its buses shows which buses it joins.
 const isEquivalent: ReadonlyArray<unknown> = ['==', ['get', 'equivalent'], true]
 const isMappedBranch: ReadonlyArray<unknown> = ['all', isKind('branch'), ['!', isEquivalent]]
-const equivalentDash = [2, 2]
-const equivalentWidth: ReadonlyArray<unknown> = ['interpolate', ['exponential', 1.4], ['zoom'], 4, 0.8, 8, 1.4, 12, 2.4, 16, 4]
+const equivalentDash = [0.5, 2.5]
+const equivalentWidth: ReadonlyArray<unknown> = ['interpolate', ['exponential', 1.4], ['zoom'], 4, 1.2, 8, 1.8, 12, 2.8, 16, 4]
 // Dash pattern in line widths: a tripped branch reads as broken; an HVDC cable as a dashed DC link.
 const trippedDash = [1.5, 1.5]
 const hvdcDash = [3, 1.5]
@@ -196,7 +198,7 @@ const flowArrows = (direction: 1 | -1): PackLiveMapLayerSpec => ({
   source: 'features',
   type: 'symbol',
   minzoom: detailZoom,
-  filter: ['any', isKind('branch'), isKind('hvdc')],
+  filter: ['any', isMappedBranch, isKind('hvdc')],
   layout: {
     'symbol-placement': 'line',
     'symbol-spacing': 160,
@@ -256,18 +258,17 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
       'line-opacity': ['case', flagState('tripped', false), 1, 0],
     },
   }, {
-    id: 'equivalent-line',
+    id: 'equivalent-selected',
     source: 'features',
     type: 'line',
     filter: ['all', isKind('branch'), isEquivalent],
-    layout: { 'line-join': 'round', 'line-cap': 'butt' },
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: {
-      'line-color': ['case', flagState('selected', false), palette.selected, flagState('hover', false), palette.hover, branchColor(palette)],
+      'line-color': palette.selected,
       'line-width': equivalentWidth,
       'line-dasharray': equivalentDash,
-      'line-opacity': 1,
+      'line-opacity': ['case', flagState('selected', false), 1, 0],
     },
-    interactive: true,
   }, {
     id: 'hvdc-casing',
     source: 'features',
@@ -419,8 +420,9 @@ const percent = (value: number): string => `${value.toFixed(1)} %`
 
 const drawnAs: Readonly<Record<GridMapGeometryResult['branches'][number]['pathSource'], string>> = {
   'mapped-route': 'Mapped route',
+  'designed-route': 'Designed route of a fictional connection, along existing corridors (not a mapped line)',
   transformer: 'Transformer, drawn between its buses',
-  'network-equivalent': 'Network equivalent (not a mapped line)',
+  'network-equivalent': 'Network equivalent (not a physical line)',
   'bus-to-bus': 'Straight line between its buses (no mapped route)',
 }
 
@@ -540,11 +542,13 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
 
   // Tripped branches first ("Tripped" is short enough to fit along a short line), then the most loaded
   // closed ones, within the label limit; every HVDC link carries its transfer or state.
+  // A network equivalent is not drawn, so it carries no label.
+  const drawn = (position: number): boolean => geometry.branches[position]!.pathSource !== 'network-equivalent'
   const branchLabel = (position: number, text: string, tone: 'alarm' | 'normal') => ({ path: geometry.branches[position]!.path, text, tone })
-  const tripped = geometry.branches.flatMap((_branch, position) => result.branches.tripped[position] === 1 ? [branchLabel(position, 'Tripped', 'alarm')] : [])
+  const tripped = geometry.branches.flatMap((_branch, position) => result.branches.tripped[position] === 1 && drawn(position) ? [branchLabel(position, 'Tripped', 'alarm')] : [])
   const loaded = geometry.branches
     .map((branch, position) => ({ branch, position, loading: result.branches.loadingPercent[position]! }))
-    .filter(item => result.branches.closed[item.position] === 1 && item.loading >= watchLoadingPercent)
+    .filter(item => result.branches.closed[item.position] === 1 && item.loading >= watchLoadingPercent && drawn(item.position))
     .sort((left, right) => right.loading - left.loading)
     .map(item => branchLabel(item.position, `${item.branch.label} ${Math.round(item.loading)} %`, item.loading >= overloadLoadingPercent ? 'alarm' : 'normal'))
   const links = geometry.hvdcLinks.map((link, position) => {
@@ -591,11 +595,13 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
       const position = fid - refs.busStart
       const bus = geometry.buses[position]!
       const islandPosition = result.buses.island[position]!
+      const drawnAt = bus.external?.station === undefined ? [] : [packField('drawn', 'Drawn at', bus.external.station)]
       if (islandPosition === null && bus.external?.synchronous === true) {
         return {
           title: bus.label,
           fields: [
             packField('external', 'External system', `${bus.external.label}, behind AC ties`),
+            ...drawnAt,
             packField('voltage', 'Voltage level', `${bus.kv} kV`),
             packField('role', 'Connection', 'Separated from Norway: every tie to this boundary bus is open. The external system holds it energised; closing a tie is checked on frequency difference.'),
           ],
@@ -607,6 +613,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
           title: bus.label,
           fields: [
             ...(bus.external === undefined ? [] : [packField('external', 'External system', bus.external.label)]),
+            ...drawnAt,
             packField('role', 'Connection', 'HVDC terminal outside the modelled AC network and every island; the external system supplies or absorbs its links\' transfer'),
             ...links.map(({ link, linkPosition }) => {
               const linkState = result.hvdcLinks.state[linkPosition]!
@@ -623,6 +630,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
         title: bus.label,
         fields: [
           ...(bus.external === undefined ? [] : [packField('external', 'External system', `${bus.external.label}, behind AC ties`)]),
+          ...drawnAt,
           packField('voltage', 'Voltage level', `${bus.kv} kV`),
           packField('island', 'Island', `${island.id} (${result.islands.length} in the Grid)`),
           packField('energized', 'Energised', island.energized

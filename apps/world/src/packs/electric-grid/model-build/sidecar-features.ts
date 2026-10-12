@@ -34,6 +34,8 @@ export interface StationAnchor {
 
 export interface SidecarFeatures {
   readonly way: (featureId: string) => WayGeometry | undefined
+  /** Every line and cable way of the sidecar ("way/123"). */
+  readonly lineWayIds: ReadonlySet<string>
   readonly outline: (featureId: string) => PolygonGeometry | undefined
   /** Location (node, or outline centroid) of a station or plant feature. */
   readonly anchor: (featureId: string) => StationAnchor | undefined
@@ -63,5 +65,5 @@ export const readSidecarFeatures = (raw: unknown): SidecarFeatures => {
       anchors.set(properties.externalId, { location: lonLat(geometry.coordinates), category: properties.category, name: properties.name })
     }
   }
-  return { way: id => ways.get(id), outline: id => outlines.get(id), anchor: id => anchors.get(id) }
+  return { way: id => ways.get(id), lineWayIds: new Set(ways.keys()), outline: id => outlines.get(id), anchor: id => anchors.get(id) }
 }

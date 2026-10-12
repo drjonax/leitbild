@@ -40,7 +40,7 @@ const fixtureAddition = (overrides: Partial<GridModelCatalogEntry> & Pick<GridMo
   connectionPoints: [...fixtureBase.connectionPoints, { id: 'fixture-unit-420kv', label: 'Fixture unit bay', busId: 'bus:curated-fixture-switchyard@420', nominalKv: 420, maximumExportMw: 50, maximumImportMw: 900 }],
   loadProfilesRef: fixtureBase.loadProfilesRef,
   ...overrides,
-  source: { kind: 'grid-model-addition', baseModelRef: overrides.baseModelRef ?? fixtureBase.id, file: overrides.file },
+  source: { kind: 'grid-model-addition', baseModelRef: overrides.baseModelRef ?? fixtureBase.id, file: overrides.file, geometryFile: 'none.geometry.json' },
 })
 const fixtureModels = [
   fixtureBase,
