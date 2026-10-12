@@ -188,8 +188,8 @@ describe('the values equipment opened from the overview leads with', () => {
       protection.evaluate({ runtime: run, elapsedMs: run.elapsedMs(), simulationRunId: 'run-key-values' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
     }
     expect(leadValuesKey(tripped, now(tripped, run))).toStartWith('hotStandby|')
-    // The reactor trip has acted on the core: its shutdown readings lead its detail now.
-    expect(leadValuesKey(tripped, now(tripped, run))).toEndWith('|core')
+    // The reactor trip has acted on both energy ends: their shutdown readings lead their details now.
+    expect(leadValuesKey(tripped, now(tripped, run))).toEndWith('|core,turbine')
   })
 })
 
@@ -233,15 +233,16 @@ describe('what a display reads as measured, and what as a demand', () => {
 
   test('a published condition outside the Plant reads as measured, and a command never leads', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:measured', loopCount: 4 }))
-    // The grid's voltage is published, writable by a scenario only (a boundary).
-    const voltage = binding(plant, 'GRID-VOLTAGE')
-    expect([voltage.writable, voltage.actuation, readsAsMeasured(voltage), isDemand(voltage)]).toEqual([true, 'boundary', true, false])
+    // The grid's frequency is published, writable by a scenario only (a boundary).
+    const frequency = binding(plant, 'GRID-HZ')
+    expect([frequency.writable, frequency.actuation, readsAsMeasured(frequency), isDemand(frequency)]).toEqual([true, 'boundary', true, false])
     const porv = binding(plant, 'PORV-456A')
     expect([readsAsMeasured(porv), isDemand(porv)]).toEqual([false, true])
     const leak = plant.graph.signalBindingByPath.get('sgA.tubeLeakFraction' as never)!
     expect([leak.published, leak.actuation, readsAsMeasured(leak), isDemand(leak)]).toEqual([true, 'faultInjection', false, false])
-    // So the grid's detail leads with its voltage; its available power, computed by the simulator only, leads nowhere.
-    expect(equipmentKeyValues(plant, [index(plant, 'offsiteGrid')], atPowerOf(plant))).toEqual(['offsiteGrid.voltageFraction'] as never)
+    // So the grid's detail leads with what the turbine trips judge (availability, frequency), then the supply voltage the
+    // undervoltage relays read; its available power, computed by the simulator only, leads nowhere.
+    expect(equipmentKeyValues(plant, [index(plant, 'offsiteGrid')], atPowerOf(plant))).toEqual(['offsiteGrid.available', 'offsiteGrid.frequencyHz', 'offsiteGrid.supplyVoltageFraction'] as never)
   })
 
   test('a published grid frequency with its normal range yields at power and leads once outside it, keeping the subcooling margin', () => {
@@ -255,9 +256,9 @@ describe('what a display reads as measured, and what as a demand', () => {
     const low: PlantNow = { ...atPower, read: path => String(path) === 'offsiteGrid.frequencyHz' ? 48.8 : atPower.read(path) }
     expect(overviewKeyValues(plant, low)).toEqual(['core.powerRangePercent', 'pressurizer.pressureMPa', 'offsiteGrid.frequencyHz', 'vessel.subcoolingMarginC', 'core.coreExitTemperatureC', 'turbine.electricMw'] as never)
     // Published without a normal range it would lead at 50 Hz too, displacing the vessel's level.
-    expect(overviewKeyValues(publishedAlso({ 'offsiteGrid.frequencyHz': { tagId: 'GRID-HZ' } }), atPower)).toContain('offsiteGrid.frequencyHz' as never)
-    // The grid's detail leads with its frequency, which the turbine trips judge, then its voltage.
-    expect(equipmentKeyValues(plant, [index(plant, 'offsiteGrid')], atPower)).toEqual(['offsiteGrid.frequencyHz', 'offsiteGrid.voltageFraction'] as never)
+    expect(overviewKeyValues(publishedAlso({ 'offsiteGrid.frequencyHz': { tagId: 'GRID-HZ', limits: {} } }), atPower)).toContain('offsiteGrid.frequencyHz' as never)
+    // The grid's detail leads with what the turbine trips judge, its availability and frequency, then its supply voltage.
+    expect(equipmentKeyValues(plant, [index(plant, 'offsiteGrid')], atPower)).toEqual(['offsiteGrid.available', 'offsiteGrid.frequencyHz', 'offsiteGrid.supplyVoltageFraction'] as never)
   })
 
   test('a value only the simulator computes leads no overview and no detail, in any mode', () => {
@@ -295,10 +296,10 @@ describe('what equipment leads with after its trip, and beside its program', () 
     const after = tripped(plant, 150)
     expect([after.mode, after.read('core.rodsOnBottom' as never)]).toEqual(['hotStandby', true])
     expect(Number(after.read('core.intermediateRangeStartupRateDpm' as never))).toBeLessThan(0)
-    expect(equipmentKeyValues(plant, [core], after).slice(0, 6)).toEqual(['core.rodsOnBottom', 'core.powerRangePercent', 'core.intermediateRangeStartupRateDpm', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coreExitTemperatureC'] as never)
+    expect(equipmentKeyValues(plant, [core], after).slice(0, 7)).toEqual(['core.rodsOnBottom', 'reactorTripBreakerA.closedState', 'reactorTripBreakerB.closedState', 'core.rodStepsWithdrawn', 'core.powerRangePercent', 'core.intermediateRangeCurrentAmps', 'core.intermediateRangeStartupRateDpm'] as never)
     // With the trip breakers' positions published, as the model lane publishes them, both follow the rods.
     const breakers = publishedAlso({ 'reactorTripBreakerA.closedState': {}, 'reactorTripBreakerB.closedState': {} })
-    expect(equipmentKeyValues(breakers, [core], tripped(breakers, 150)).slice(0, 5)).toEqual(['core.rodsOnBottom', 'reactorTripBreakerA.closedState', 'reactorTripBreakerB.closedState', 'core.powerRangePercent', 'core.intermediateRangeStartupRateDpm'] as never)
+    expect(equipmentKeyValues(breakers, [core], tripped(breakers, 150)).slice(0, 5)).toEqual(['core.rodsOnBottom', 'reactorTripBreakerA.closedState', 'reactorTripBreakerB.closedState', 'core.rodStepsWithdrawn', 'core.powerRangePercent'] as never)
     // At power every reactor trip can still act: the core leads as before. The turbine declares no shutdown readings.
     const runtime = createProcessPlantRuntime({ system: breakers })
     runtime.tick(1_000)
