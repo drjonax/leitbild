@@ -12,6 +12,7 @@ import { createMapFeatureStore } from './map-feature-store.ts'
 import type { MapPerformanceDiagnostics } from './map-performance-diagnostics.ts'
 import { createMapUpdateScheduler } from './map-update-scheduler.ts'
 import { createOperationalDeckLayerFactory, visibleFamiliesKey } from './operational-deck-layers.ts'
+import { fanZoomOf } from './point-declutter.ts'
 import type {
   MapAssignmentHandleFeature,
   MapAssignmentInteraction,
@@ -68,8 +69,10 @@ export interface OperationalRenderController {
   readonly syncInteraction: () => void
   /** Whether the disks pick changed (the pointer, or whether the surface picks targets): redraw which layers pick. */
   readonly syncPicking: () => void
-  /** The object icons as last drawn, in draw order: where each lies and how large it is. */
+  /** The object icons as last drawn, in draw order: where each lies, fanned out where icons would overlap, and how large it is. */
   readonly points: () => ReadonlyArray<OperationalPointFeature>
+  /** The map zoomed: lay the icons out again once it crosses a zoom step (`point-declutter.ts`). */
+  readonly syncZoom: () => void
   /** The presentation key changed: present every object again. */
   readonly syncPresentation: () => void
   /** New catalogue artwork arrived: redraw the symbol layers. */
@@ -142,6 +145,7 @@ const renderSignatureFor = (
   interactionRevision: number,
   catalogueAtlasRevision: number,
   disksPick: boolean,
+  zoom: number,
 ): string => [
   snapshot.revisions.points,
   snapshot.revisions.paths,
@@ -151,6 +155,7 @@ const renderSignatureFor = (
   interactionRevision,
   catalogueAtlasRevision,
   disksPick,
+  zoom,
 ].join('|')
 
 /** Catalogue icons the snapshot draws beyond the compiled atlas. */
@@ -174,6 +179,8 @@ export const createOperationalRenderController = (
   let previousMotionObjects: ReadonlyArray<OperationalObject> = []
   let displayFrame: number | null = null
   let lastRenderSignature: string | null = null
+  /** The zoom step the icons were last laid out for. */
+  let layoutZoom: number | null = null
   let lastDiagnosticAtMs = 0
   let lastRenderDetailsAtMs = -Infinity
   let uiOverlayReported = false
@@ -243,7 +250,9 @@ export const createOperationalRenderController = (
       if (catalogueIds.size > 0) config.catalogueAtlas.request(catalogueIds)
     }
     const catalogueAtlas = config.catalogueAtlas.current()
-    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.disksPick)
+    const zoom = fanZoomOf(runtime.map.getZoom())
+    layoutZoom = zoom
+    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.disksPick, zoom)
     const deckUpdated = renderSignature !== lastRenderSignature
     if (deckUpdated) {
       lastRenderSignature = renderSignature
@@ -255,6 +264,7 @@ export const createOperationalRenderController = (
           visibleFamilies: state.visibleFamilies,
           catalogueAtlas,
           disksPick: state.disksPick,
+          zoom,
           onObjectSelected: point => {
             config.onObjectSelected(point.object)
           },
@@ -392,7 +402,12 @@ export const createOperationalRenderController = (
     syncPicking: () => {
       schedule('diagnostics', 95)
     },
-    points: () => featureStore.snapshot().points,
+    points: () => deckLayerFactory.drawnPoints(),
+    syncZoom: () => {
+      const runtime = config.getRuntime()
+      if (runtime === null || fanZoomOf(runtime.map.getZoom()) === layoutZoom) return
+      schedule('diagnostics', 90)
+    },
     syncPresentation: () => {
       scheduleMany(renderFamiliesForObjects, 75)
     },
@@ -414,6 +429,7 @@ export const createOperationalRenderController = (
       deckLayerFactory.reset()
       pendingFamilies.clear()
       lastRenderSignature = null
+      layoutZoom = null
       lastRenderDetailsAtMs = -Infinity
       uiOverlayReported = false
       previousMotionObjects = []
