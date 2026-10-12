@@ -124,9 +124,13 @@ describe('process plant model composition', () => {
     // turbine-driven AFW pump driven on steam from steam generators B and C
     // through its two steam supply valves, and each steam line given its bank
     // of safety valves ahead of its isolation valve in place of the header's
-    // valve (1592 variables before, 1691 after); PWR Runs checkpointed before
-    // then must be restarted.
-    expect(system.modelDigest).toBe('d937597219e7dc2d0c9081b377457335c805afa0c8158c58317ebce6378389fb')
+    // valve (1592 variables before, 1691 after), and the steam generators
+    // made to boil their feed at its enthalpy rise from a declared 227 °C
+    // feedwater (1,900 kg/s of steam at full power), their boiling swell
+    // calibrated to a fifth of the narrow range, and the feed regulating
+    // valves stood at 75 % at full power (no variable added); PWR Runs
+    // checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('47b82339adddd913ef20d24294ae9c595b104d1c10148bcfb5943bc30aeaf3ea')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
