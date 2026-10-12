@@ -119,6 +119,16 @@ const degradedCoreExitC = 371
 const naturalCirculationSubcoolingC = 16.7
 /** 2.8 °C (5 °F): how close to its steam generator's saturation temperature a cold leg reads under natural circulation. */
 const coldLegAtSaturationC = 2.8
+// ES-0.1 asks for steam generator pressures, hot legs and core exit "stable or
+// falling" and gives no number. This model takes a reading as stable while it
+// moves less than its displays call steady, 0.1 % of the reading a minute:
+// 0.3 °C/min for a temperature near 300 °C, 0.0076 MPa/min for a steam
+// generator at its 7.6 MPa no-load pressure, which moves the saturation
+// temperature of that pressure 0.03 °C/min (3.8 °C per MPa there).
+/** 0.3 °C/min, in °C/s: the most a stable or falling core-exit or hot-leg temperature rises. */
+const stableTemperatureCPerS = 0.3 / 60
+/** 0.03 °C/min, in °C/s: the most a stable or falling steam generator pressure moves its saturation temperature up. */
+const stableSteamGeneratorSaturationCPerS = 0.03 / 60
 
 const coreCooling = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcSafetyFunction => {
   const noPumpRunning = all(loops.map(loop => comparison({ tagId: `RCP-${loop}-RUNNING` }, '==', false)))
@@ -179,6 +189,27 @@ const coreCooling = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPl
           value: coldLegAtSaturationC,
         }))),
         notMet: 'A cold leg is not yet at its steam generator\'s saturation temperature: natural circulation is still forming or a loop is not carrying flow.',
+      },
+      {
+        label: 'Natural circulation: steam generator pressures stable or falling',
+        basis: 'ES-0.1 natural-circulation verification: SG pressures stable or falling; here each pressure moving the saturation temperature it sets up by no more than 0.03 °C/min (0.1 % of 7.6 MPa a minute)',
+        when: noPumpRunning,
+        condition: all(loops.map(loop => comparison({ tagId: `SG-${loop}-TSAT-RATE` }, '<=', stableSteamGeneratorSaturationCPerS))),
+        notMet: 'A steam generator\'s pressure is rising: its steaming does not yet carry the core\'s heat away, or its feed is filling it; natural circulation is not confirmed.',
+      },
+      {
+        label: 'Natural circulation: hot legs stable or falling',
+        basis: 'ES-0.1 natural-circulation verification: RCS hot-leg temperatures stable or falling; here none rising faster than 0.3 °C/min',
+        when: noPumpRunning,
+        condition: all(loops.map(loop => comparison({ tagId: `TE-${loopNumber(loops, loop)}-HOT-RATE` }, '<=', stableTemperatureCPerS))),
+        notMet: 'A hot leg is still heating up: natural circulation is still forming, or not carrying the core\'s heat to the steam generators.',
+      },
+      {
+        label: 'Natural circulation: core exit stable or falling',
+        basis: 'ES-0.1 natural-circulation verification: core-exit thermocouples stable or falling; here not rising faster than 0.3 °C/min',
+        when: noPumpRunning,
+        condition: comparison({ tagId: 'CET-AVG-RATE' }, '<=', stableTemperatureCPerS),
+        notMet: 'The core exit is still heating up: natural circulation is still forming, or not carrying the core\'s heat away.',
       },
     ],
     expectations: [{

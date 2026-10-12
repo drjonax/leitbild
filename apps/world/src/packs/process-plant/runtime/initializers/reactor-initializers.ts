@@ -60,6 +60,7 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'coolantInletTemperatureC') return initialCoolantInlet
       if (localPath === 'coolantOutletTemperatureC') return initialCoolantOutlet
       if (localPath === 'coreExitTemperatureC') return initialCoreExit
+      if (localPath === 'coreExitTemperatureRateCPerS') return 0
       if (localPath === 'averageHotLegFlowKgPerS') return optionalParameterNumber(component, 'nominalPrimaryFlowKgPerS', 0)
       if (localPath === 'fuelTemperatureC') return initialFuelAverage
       if (localPath === 'fuelLowerTemperatureC') return initialFuelLower

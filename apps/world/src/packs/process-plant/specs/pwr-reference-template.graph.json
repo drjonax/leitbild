@@ -212,6 +212,12 @@
           ]
         },
         {
+          "path": "coreExitTemperatureRateCPerS",
+          "tagId": "CET-AVG-RATE",
+          "equipmentId": "rcs",
+          "description": "Core-exit thermocouple average trend, in degrees C a second"
+        },
+        {
           "path": "rodStepsWithdrawn",
           "tagId": "ROD-STEPS",
           "equipmentId": "rod-control-system",
@@ -658,6 +664,12 @@
           "tagId": "SG-A-N16",
           "equipmentId": "sgA",
           "description": "Steam generator A main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
+        },
+        {
+          "path": "saturationTemperatureRateCPerS",
+          "tagId": "SG-A-TSAT-RATE",
+          "equipmentId": "sgA",
+          "description": "Steam generator A pressure trend, as the saturation temperature of its pressure moves, in degrees C a second"
         }
       ],
       "metadata": {
@@ -735,6 +747,12 @@
           "tagId": "SG-B-N16",
           "equipmentId": "sgB",
           "description": "Steam generator B main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
+        },
+        {
+          "path": "saturationTemperatureRateCPerS",
+          "tagId": "SG-B-TSAT-RATE",
+          "equipmentId": "sgB",
+          "description": "Steam generator B pressure trend, as the saturation temperature of its pressure moves, in degrees C a second"
         }
       ],
       "metadata": {
@@ -812,6 +830,12 @@
           "tagId": "SG-C-N16",
           "equipmentId": "sgC",
           "description": "Steam generator C main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
+        },
+        {
+          "path": "saturationTemperatureRateCPerS",
+          "tagId": "SG-C-TSAT-RATE",
+          "equipmentId": "sgC",
+          "description": "Steam generator C pressure trend, as the saturation temperature of its pressure moves, in degrees C a second"
         }
       ],
       "metadata": {
@@ -889,6 +913,12 @@
           "tagId": "SG-D-N16",
           "equipmentId": "sgD",
           "description": "Steam generator D main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
+        },
+        {
+          "path": "saturationTemperatureRateCPerS",
+          "tagId": "SG-D-TSAT-RATE",
+          "equipmentId": "sgD",
+          "description": "Steam generator D pressure trend, as the saturation temperature of its pressure moves, in degrees C a second"
         }
       ],
       "metadata": {
@@ -966,6 +996,12 @@
           "tagId": "SG-E-N16",
           "equipmentId": "sgE",
           "description": "Steam generator E main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
+        },
+        {
+          "path": "saturationTemperatureRateCPerS",
+          "tagId": "SG-E-TSAT-RATE",
+          "equipmentId": "sgE",
+          "description": "Steam generator E pressure trend, as the saturation temperature of its pressure moves, in degrees C a second"
         }
       ],
       "metadata": {
@@ -1043,6 +1079,12 @@
           "tagId": "SG-F-N16",
           "equipmentId": "sgF",
           "description": "Steam generator F main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
+        },
+        {
+          "path": "saturationTemperatureRateCPerS",
+          "tagId": "SG-F-TSAT-RATE",
+          "equipmentId": "sgF",
+          "description": "Steam generator F pressure trend, as the saturation temperature of its pressure moves, in degrees C a second"
         }
       ],
       "metadata": {
@@ -4772,6 +4814,12 @@
           "tagId": "FI-414",
           "equipmentId": "deltaTChannelA",
           "description": "Loop A reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
+        },
+        {
+          "path": "hotLegTemperatureRateCPerS",
+          "tagId": "TE-411-HOT-RATE",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A hot-leg temperature trend from its RTD, in degrees C a second"
         }
       ],
       "metadata": {
@@ -4848,6 +4896,12 @@
           "tagId": "FI-424",
           "equipmentId": "deltaTChannelB",
           "description": "Loop B reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
+        },
+        {
+          "path": "hotLegTemperatureRateCPerS",
+          "tagId": "TE-421-HOT-RATE",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B hot-leg temperature trend from its RTD, in degrees C a second"
         }
       ],
       "metadata": {
@@ -4924,6 +4978,12 @@
           "tagId": "FI-434",
           "equipmentId": "deltaTChannelC",
           "description": "Loop C reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
+        },
+        {
+          "path": "hotLegTemperatureRateCPerS",
+          "tagId": "TE-431-HOT-RATE",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C hot-leg temperature trend from its RTD, in degrees C a second"
         }
       ],
       "metadata": {
@@ -5000,6 +5060,12 @@
           "tagId": "FI-444",
           "equipmentId": "deltaTChannelD",
           "description": "Loop D reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
+        },
+        {
+          "path": "hotLegTemperatureRateCPerS",
+          "tagId": "TE-441-HOT-RATE",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D hot-leg temperature trend from its RTD, in degrees C a second"
         }
       ],
       "metadata": {
@@ -5076,6 +5142,12 @@
           "tagId": "FI-454",
           "equipmentId": "deltaTChannelE",
           "description": "Loop E reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
+        },
+        {
+          "path": "hotLegTemperatureRateCPerS",
+          "tagId": "TE-451-HOT-RATE",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E hot-leg temperature trend from its RTD, in degrees C a second"
         }
       ],
       "metadata": {
@@ -5152,6 +5224,12 @@
           "tagId": "FI-464",
           "equipmentId": "deltaTChannelF",
           "description": "Loop F reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
+        },
+        {
+          "path": "hotLegTemperatureRateCPerS",
+          "tagId": "TE-461-HOT-RATE",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F hot-leg temperature trend from its RTD, in degrees C a second"
         }
       ],
       "metadata": {

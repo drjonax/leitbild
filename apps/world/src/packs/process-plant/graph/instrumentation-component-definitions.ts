@@ -69,6 +69,8 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       // Declared last, so the variables before them keep their places.
       variable({ path: 'deltaTPowerPercent', label: 'Loop delta-T power', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'percent', limits: { hardRange: deltaTChannelSpans.deltaTPowerPercent, instrumentSpan: deltaTChannelSpans.deltaTPowerPercent } }),
       variable({ path: 'forcedFlow', label: 'Loop forced flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      // How fast the loop's hot leg moves, which natural circulation checks stable or falling.
+      variable({ path: 'hotLegTemperatureRateCPerS', label: 'Loop hot-leg temperature rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureRate', unit: 'degC/s' }),
       variable({ path: 'loopFlowFraction', label: 'Loop flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'flow', quantity: 'ratio', unit: 'fraction', limits: { hardRange: deltaTChannelSpans.loopFlowFraction, instrumentSpan: deltaTChannelSpans.loopFlowFraction } }),
     ],
   }),

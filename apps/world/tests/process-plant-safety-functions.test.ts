@@ -87,9 +87,19 @@ describe('critical safety function status trees', () => {
     // Run 23: the answer escalated on a core-exit temperature rising as natural circulation formed.
     const coreCooling = judged(after({ actionId: 'trip-reactor-coolant-pumps' }, 60)).get('core-cooling')!
     expect(coreCooling.status).toBe('green')
-    expect(coreCooling.checks.map(check => [check.basis.slice(0, 5), check.met])).toEqual([['ES-0.', 'yes'], ['ES-0.', 'yes']])
+    // A minute in, subcooling and the cold legs are where natural circulation wants them, while the steam generators'
+    // pressures, the hot legs and the core exit still rise as it forms.
+    expect(coreCooling.checks.map(check => [check.basis.slice(0, 5), check.met])).toEqual([['ES-0.', 'yes'], ['ES-0.', 'yes'], ['ES-0.', 'no'], ['ES-0.', 'no'], ['ES-0.', 'no']])
     expect(coreCooling.checks[1]!.comparisons).toHaveLength(4)
     expect(coreCooling.checks[1]!.comparisons.every(comparison => comparison.combines === 'difference')).toBe(true)
+    expect(coreCooling.checks.slice(2).map(check => check.comparisons.map(comparison => comparison.reads[0]!.signal))).toEqual([
+      ['SG-A-TSAT-RATE', 'SG-B-TSAT-RATE', 'SG-C-TSAT-RATE', 'SG-D-TSAT-RATE'],
+      ['TE-411-HOT-RATE', 'TE-421-HOT-RATE', 'TE-431-HOT-RATE', 'TE-441-HOT-RATE'],
+      ['CET-AVG-RATE'],
+    ])
+    // Twenty minutes on, natural circulation carries the heat: the core exit and the hot legs are steady or falling.
+    const settled = judged(after({ actionId: 'trip-reactor-coolant-pumps' }, 1_200)).get('core-cooling')!
+    expect(settled.checks.slice(3).map(check => check.met)).toEqual(['yes', 'yes'])
     expect(coreCooling.expected[0]).toContain('rises 10–20 °C above the cold legs')
   }, PLANT_HANG_GUARD_MS)
 

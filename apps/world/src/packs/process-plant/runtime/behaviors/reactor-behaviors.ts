@@ -481,7 +481,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     phase: 'updateComponentState',
     componentKind: 'reactorCore',
     reads: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'totalThermalPowerMw', 'pumpHeatMw', 'incoming:temperatureC', 'incoming:flowKgPerS', 'pressurizer.pressureMPa', 'pressurizer.steamMassKg', 'pressurizer.steamVolumeM3', 'reactorVessel.primaryCoolantInventoryKg', 'reactorVessel.loopSteamMassKg', 'reactorVessel.loopSteamVolumeM3'],
-    writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'vapourGenerationKgPerS'],
+    writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'coreExitTemperatureRateCPerS', 'vapourGenerationKgPerS'],
     update: ({ system, component, context }): void => {
       const dt = context.dtSeconds
       const primaryInletLink = (link: ReactorBehaviorLink): boolean =>
@@ -561,6 +561,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       }
       context.write(componentVariablePath(component, 'coolantInletTemperatureC'), inlet)
       context.write(componentVariablePath(component, 'coolantOutletTemperatureC'), outlet)
+      context.write(componentVariablePath(component, 'coreExitTemperatureRateCPerS'), (coreExit - context.readNumber(componentVariablePath(component, 'coreExitTemperatureC'))) / dt)
       context.write(componentVariablePath(component, 'coreExitTemperatureC'), coreExit)
       context.write(componentVariablePath(component, 'vapourGenerationKgPerS'), vapourGeneration)
     },

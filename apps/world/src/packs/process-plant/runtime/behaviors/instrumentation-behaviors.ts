@@ -94,10 +94,15 @@ const deltaTChannelReadings = (system: CompiledProcessPlant, channel: CompiledCo
   }
 }
 
-const deltaTChannelWrites = ['deltaTC', 'averageTemperatureC', 'overtemperatureSetpointC', 'overpowerSetpointC', 'overtemperatureMarginC', 'overpowerMarginC', 'deltaTPowerPercent', 'forcedFlow', 'loopFlowFraction']
+const deltaTChannelWrites = ['deltaTC', 'averageTemperatureC', 'overtemperatureSetpointC', 'overpowerSetpointC', 'overtemperatureMarginC', 'overpowerMarginC', 'deltaTPowerPercent', 'forcedFlow', 'hotLegTemperatureRateCPerS', 'loopFlowFraction']
 
-const writeDeltaTChannel = (system: CompiledProcessPlant, channel: CompiledComponent, context: ProcessPlantBehaviorContext): void => {
+// The hot leg the channel read last, from its own delta-T and average temperature.
+const previousHotLegC = (channel: CompiledComponent, context: ProcessPlantBehaviorContext): number =>
+  context.readNumber(componentVariablePath(channel, 'averageTemperatureC')) + context.readNumber(componentVariablePath(channel, 'deltaTC')) / 2
+
+const writeDeltaTChannel = (system: CompiledProcessPlant, channel: CompiledComponent, context: ProcessPlantBehaviorContext, hotLegRateCPerS: (hotLegC: number) => number): void => {
   const reading = deltaTChannelReadings(system, channel, context)
+  context.write(componentVariablePath(channel, 'hotLegTemperatureRateCPerS'), hotLegRateCPerS(reading.averageTemperature + reading.deltaT / 2))
   context.write(componentVariablePath(channel, 'deltaTC'), reading.deltaT)
   context.write(componentVariablePath(channel, 'averageTemperatureC'), reading.averageTemperature)
   context.write(componentVariablePath(channel, 'overtemperatureSetpointC'), reading.overtemperatureSetpoint)
@@ -178,7 +183,10 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
     componentKind: 'deltaTProtectionChannel',
     reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'cold leg:flowKgPerS', 'loop pump runningState', 'loop pump loopReverseFlowKgPerS', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
     writes: deltaTChannelWrites,
-    update: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
+    update: ({ system, component, context }): void => {
+      const previous = previousHotLegC(component, context)
+      writeDeltaTChannel(system, component, context, hotLeg => (hotLeg - previous) / context.dtSeconds)
+    },
   },
   {
     id: 'rcs-inventory-balance',
@@ -232,7 +240,8 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
     afterLinks: true,
     reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'cold leg:flowKgPerS', 'loop pump runningState', 'loop pump loopReverseFlowKgPerS', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
     writes: deltaTChannelWrites,
-    reconcile: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
+    // With no reading before it, the hot leg has no trend yet.
+    reconcile: ({ system, component, context }): void => writeDeltaTChannel(system, component, context, () => 0),
   },
   {
     id: 'rcs-inventory-balance-initial-state',

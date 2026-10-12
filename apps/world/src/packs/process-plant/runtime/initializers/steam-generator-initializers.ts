@@ -45,6 +45,7 @@ export const steamGeneratorInitialValueDefinitions: ReadonlyArray<ComponentIniti
       if (localPath === 'tubeLeakFraction') return 0
       if (localPath === 'primaryToSecondaryLeakKgPerS') return 0
       if (localPath === 'secondaryRadiationMSvPerH') return 0.02
+      if (localPath === 'saturationTemperatureRateCPerS') return 0
       return undefined
     },
   },

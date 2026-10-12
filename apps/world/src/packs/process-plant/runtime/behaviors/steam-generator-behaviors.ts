@@ -196,6 +196,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       'secondaryInventoryBalanceResidualKg',
       'steamMassBalanceResidualKg',
       'boilingEnergyResidualMw',
+      'saturationTemperatureRateCPerS',
     ],
     update: (input): void => {
       const { system, component, context } = input
@@ -330,7 +331,10 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'temperaturePressureBiasMPa'), temperaturePressureBias)
       context.write(componentVariablePath(component, 'inventoryPressureBiasMPa'), inventoryPressureBias)
       context.write(componentVariablePath(component, 'pressureTargetMPa'), clamp(pressureTarget, nominalPressure * 0.2, nominalPressure * 1.4))
-      context.write(pressurePath, approach(currentPressure, clamp(pressureTarget, nominalPressure * 0.2, nominalPressure * 1.4), 0.08 * context.dtSeconds))
+      const nextPressure = approach(currentPressure, clamp(pressureTarget, nominalPressure * 0.2, nominalPressure * 1.4), 0.08 * context.dtSeconds)
+      context.write(pressurePath, nextPressure)
+      // The pressure's trend, as the saturation temperature it sets moves over the step.
+      context.write(componentVariablePath(component, 'saturationTemperatureRateCPerS'), (saturationTemperatureCFromPressureMPa(nextPressure) - saturationTemperatureCFromPressureMPa(currentPressure)) / context.dtSeconds)
     },
   },
 ]

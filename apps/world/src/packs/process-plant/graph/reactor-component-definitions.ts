@@ -313,6 +313,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       // The rods in steps withdrawn, as their position indication reads them: on average, and bank by bank.
       variable({ path: 'rodStepsWithdrawn', label: 'Rod position, steps withdrawn', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } }),
       ...shutdownRodBanks.map(bank => variable({ path: `shutdownBank${bank}StepsWithdrawn`, label: `Shutdown bank S${bank} position`, kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } })),
+      // How fast the core-exit temperature moves, which natural circulation checks stable or falling.
+      variable({ path: 'coreExitTemperatureRateCPerS', label: 'Core-exit temperature rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureRate', unit: 'degC/s' }),
       ...controlRodBanks.map(bank => variable({ path: `controlBank${bank}StepsWithdrawn`, label: `Control bank ${bank} position`, kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count', limits: { hardRange: { min: 0, max: rodTravelSteps } } })),
     ],
   }),
