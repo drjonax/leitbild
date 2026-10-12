@@ -1155,6 +1155,16 @@ body.rail-resizing {
   font-weight: 700;
 }
 
+.hover-target-preview {
+  margin-bottom: 4px;
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+.hover-target-preview.refused {
+  color: var(--critical) !important;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

@@ -1,4 +1,4 @@
-import type { OperationalObject } from '../model/index.ts'
+import type { GeoJsonPoint, OperationalObject } from '../model/index.ts'
 import type {
   PackCommandRequest,
   PackCreationGeometry,
@@ -6,6 +6,7 @@ import type {
   PackMapFeature,
   PackPresentationContribution,
   PackMapFeatureQuery,
+  PackMapTarget,
   PackTargetContext,
   PackTargetingContribution,
   PackSurfacePanelContribution,
@@ -72,9 +73,9 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
     return owner
   }
 
-  const targetingFor = (object: OperationalObject): PackTargetingContribution | null => {
+  const targetingFor = (object: OperationalObject, context: PackTargetContext): PackTargetingContribution | null => {
     const targeting = ownerForObject(object).targeting
-    return targeting?.isController(object) === true ? targeting : null
+    return targeting?.isController(object, context) === true ? targeting : null
   }
 
   const mapFeatureLayers = [...new Set(packs.flatMap(pack => pack.presentation.mapFeatureLayers ?? []))]
@@ -86,6 +87,11 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
   assertUniqueIds(mapLayerGroups, 'map layer group')
   const surfacePanels = packs.flatMap(pack => pack.ui?.surfacePanels ?? [])
   assertUniqueIds(surfacePanels, 'surface panel')
+  // One panel takes the map's target clicks and one the routed keys, so neither is ever ambiguous.
+  for (const hook of ['mapTargets', 'keymap'] as const) {
+    const declaring = surfacePanels.filter(panel => panel[hook] === true)
+    if (declaring.length > 1) throw new Error(`active Packs declare ${hook} on more than one surface panel: ${declaring.map(panel => panel.id).join(', ')}`)
+  }
 
   const referenceStyles = packs.flatMap(referenceStylesFor)
   if (new Set(referenceStyles.map(style => style.datasetId)).size !== referenceStyles.length) {
@@ -95,6 +101,8 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
   const mapLegends = packs.flatMap(pack => pack.presentation.mapLegends ?? [])
   assertUniqueIds(mapLegends, 'map legend')
   const hasTargeting = packs.some(pack => pack.targeting !== undefined)
+  const describesTargets = packs.some(pack => pack.targeting?.describeTarget !== undefined)
+  const targetsPoints = packs.some(pack => pack.targeting?.pointTargets !== undefined)
 
   return {
     packs,
@@ -164,18 +172,39 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
     ...(hasTargeting
       ? {
           targeting: {
-            isController: (object: OperationalObject) => targetingFor(object) !== null,
+            isController: (object: OperationalObject, context: PackTargetContext) => targetingFor(object, context) !== null,
+            ...(describesTargets
+              ? {
+                  describeTarget: (controller: OperationalObject, target: PackMapTarget, context: PackTargetContext) =>
+                    targetingFor(controller, context)?.describeTarget?.(controller, target, context) ?? null,
+                }
+              : {}),
+            ...(targetsPoints
+              ? {
+                  pointTargets: {
+                    isTarget: (controller: OperationalObject, point: GeoJsonPoint, context: PackTargetContext) =>
+                      targetingFor(controller, context)?.pointTargets?.isTarget(controller, point, context) ?? false,
+                    buildSetTargetCommand: (controller: OperationalObject, point: GeoJsonPoint, context: PackTargetContext) => {
+                      const pointTargets = targetingFor(controller, context)?.pointTargets
+                      if (!pointTargets || !pointTargets.isTarget(controller, point, context)) {
+                        throw new Error(`no active Pack can target a map point from ${controller.id}`)
+                      }
+                      return pointTargets.buildSetTargetCommand(controller, point, context)
+                    },
+                  },
+                }
+              : {}),
             isTarget: (controller: OperationalObject, candidate: OperationalObject, context: PackTargetContext) =>
-              targetingFor(controller)?.isTarget(controller, candidate, context) ?? false,
+              targetingFor(controller, context)?.isTarget(controller, candidate, context) ?? false,
             buildSetTargetCommand: (controller: OperationalObject, target: OperationalObject, context: PackTargetContext) => {
-              const targeting = targetingFor(controller)
+              const targeting = targetingFor(controller, context)
               if (!targeting || !targeting.isTarget(controller, target, context)) {
                 throw new Error(`no active Pack can target ${target.id} from ${controller.id}`)
               }
               return targeting.buildSetTargetCommand(controller, target, context)
             },
             buildCancelTargetCommand: (controller: OperationalObject, context: PackTargetContext) => {
-              const targeting = targetingFor(controller)
+              const targeting = targetingFor(controller, context)
               if (!targeting) throw new Error(`no active Pack can cancel targeting for ${controller.id}`)
               return targeting.buildCancelTargetCommand(controller, context)
             },

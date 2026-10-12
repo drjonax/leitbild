@@ -2,6 +2,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 
 interface CameraInteractionHandler {
   readonly enable: () => void
+  readonly disable: () => void
   readonly isEnabled: () => boolean
 }
 
@@ -24,15 +25,26 @@ export const cameraInteractionDebug = (current: MapLibreMap | null): string => {
     .join(' ')
 }
 
-export const assertCameraInteractionContract = (current: MapLibreMap): void => {
+/** Camera gestures a Pack may switch off; every other gesture is always on. */
+export interface CameraInteraction {
+  readonly doubleClickZoom: boolean
+  readonly keyboard: boolean
+  readonly boxZoom: boolean
+}
+
+const switchedOn = (name: string, interaction: CameraInteraction): boolean =>
+  name === 'doubleClickZoom' || name === 'keyboard' || name === 'boxZoom' ? interaction[name] : true
+
+export const assertCameraInteractionContract = (current: MapLibreMap, interaction: CameraInteraction): void => {
   if (current.cooperativeGestures.isEnabled()) current.cooperativeGestures.disable()
-  for (const { handler } of cameraInteractionHandlers(current)) {
-    if (!handler.isEnabled()) handler.enable()
+  for (const { name, handler } of cameraInteractionHandlers(current)) {
+    if (switchedOn(name, interaction) && !handler.isEnabled()) handler.enable()
+    if (!switchedOn(name, interaction) && handler.isEnabled()) handler.disable()
   }
-  const disabled = cameraInteractionHandlers(current)
-    .filter(({ handler }) => !handler.isEnabled())
-    .map(({ name }) => name)
-  if (disabled.length > 0) {
-    throw new Error(`Map camera interactions disabled: ${disabled.join(', ')}`)
+  const wrong = cameraInteractionHandlers(current)
+    .filter(({ name, handler }) => handler.isEnabled() !== switchedOn(name, interaction))
+    .map(({ name, handler }) => `${name} ${handler.isEnabled() ? 'on' : 'off'}`)
+  if (wrong.length > 0) {
+    throw new Error(`Map camera interactions do not match the contract: ${wrong.join(', ')}`)
   }
 }

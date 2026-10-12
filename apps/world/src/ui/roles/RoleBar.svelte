@@ -57,10 +57,11 @@
       if (step.change) request(step.change)
     }
     const onBlur = (): void => { keyState = idleRoleKeys }
-    window.addEventListener('keydown', onKeydown)
+    // Capture phase: the role keys run before any bubble-phase listener, such as the panel key router, which then sees them defaultPrevented.
+    window.addEventListener('keydown', onKeydown, { capture: true })
     window.addEventListener('blur', onBlur)
     return () => {
-      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('keydown', onKeydown, { capture: true })
       window.removeEventListener('blur', onBlur)
     }
   })

@@ -82,7 +82,8 @@ export interface ScreenPerspective {
 export const storesForPerspective = (
   perspective: RealtimePerspective,
   screen: ScreenPerspective,
-  isController: (object: OperationalObject) => boolean,
+  /** Whether an object may be the starting selection; the first that may is selected. */
+  startsSelected: (object: OperationalObject) => boolean,
 ): RunScopedStores => {
   const { snapshot, compiledScenario } = perspective
   const declaration = runRolesOf(compiledScenario)
@@ -93,7 +94,7 @@ export const storesForPerspective = (
     objects: [...snapshot.objects],
     scenarioState: snapshot.scenario,
     clock: snapshot.clock,
-    selectedControllerId: snapshot.objects.find(isController)?.id ?? null,
+    selectedControllerId: snapshot.objects.find(startsSelected)?.id ?? null,
     seenRevisions: new Map(snapshot.objects.map(object => [object.id, object.revision])),
     packDataRevisions: {},
     packPanelSelections: {},

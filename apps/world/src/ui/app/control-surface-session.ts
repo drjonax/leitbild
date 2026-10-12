@@ -1,5 +1,7 @@
 import type { SimulationRunId, OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
 import type { ActivePackViews } from '../../core/packs/active-views.ts'
+import type { PackSurfacePanelContribution, PackTargetContext } from '../../core/packs/protocol.ts'
+import { startingControllerId } from '../surface-panel-interaction.ts'
 import type { StartupStepId } from '../startup.ts'
 import type { SimulationRunResponse } from '../types.ts'
 
@@ -15,6 +17,10 @@ export interface ControlSurfaceSnapshotStartupConfig {
   readonly setClock: (clock: SimulationClockState | undefined) => void
   readonly setExpectedRealtimeScenarioId: (scenarioId: string) => void
   readonly setSelectedControllerId: (id: string | null) => void
+  /** The targeting context of this screen for a snapshot's objects. */
+  readonly targetContext: (objects: ReadonlyArray<OperationalObject>) => PackTargetContext
+  /** Whether a surface panel is open; an open map-target panel owns the selection. */
+  readonly isSurfacePanelOpen: (panel: PackSurfacePanelContribution) => boolean
   readonly setSeenRevisions: (seen: Map<string, number>) => void
   readonly setSnapshotReady: (ready: boolean) => void
   readonly loadSurfaceForScenario: (scenarioId: string) => Promise<void>
@@ -35,7 +41,7 @@ export const completeControlSurfaceStartupFromSnapshot = async (
   config.setClock(snapshot.clock)
   if (!snapshot.scenario?.scenarioId) throw new Error('simulation run snapshot is missing scenario state')
   config.setExpectedRealtimeScenarioId(snapshot.scenario.scenarioId)
-  config.setSelectedControllerId(snapshot.objects.find(object => config.pack.targeting?.isController(object) === true)?.id ?? null)
+  config.setSelectedControllerId(startingControllerId(snapshot.objects, config.pack, config.targetContext(snapshot.objects), config.isSurfacePanelOpen))
   config.setSeenRevisions(new Map(snapshot.objects.map(object => [object.id, object.revision])))
   config.setSnapshotReady(true)
   config.completeStep('snapshot')

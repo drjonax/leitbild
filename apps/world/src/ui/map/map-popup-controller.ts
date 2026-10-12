@@ -1,6 +1,6 @@
 import { Popup, type Map as MapLibreMap } from 'maplibre-gl'
 import type { GeoJsonPoint, OperationalObject } from '../../core/model/index.ts'
-import type { PackObjectField, PackObjectPresentation } from '../../core/packs/protocol.ts'
+import type { PackObjectField, PackObjectPresentation, PackTargetPreview } from '../../core/packs/protocol.ts'
 import { featureHoverCardHtml, objectHoverCardHtml } from './object-hover-card.ts'
 
 export interface MapPopupController {
@@ -19,6 +19,7 @@ export const createMapPopupController = (config: {
   readonly getMap: () => MapLibreMap | null
   readonly presentationFor: (object: OperationalObject) => PackObjectPresentation
   readonly hasNewInfo: (object: OperationalObject) => boolean
+  readonly targetPreviewFor: (object: OperationalObject) => PackTargetPreview | null
 }): MapPopupController => {
   let markerPopup: Popup | null = null
   let hoveredObjectId: string | null = null
@@ -28,6 +29,7 @@ export const createMapPopupController = (config: {
       object,
       presentation: config.presentationFor(object),
       hasNewInfo: config.hasNewInfo(object),
+      targetPreview: config.targetPreviewFor(object),
     })
 
   const objectById = (

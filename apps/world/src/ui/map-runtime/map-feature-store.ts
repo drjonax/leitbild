@@ -2,7 +2,7 @@ import type { GeoJsonPoint, OperationalObject } from '../../core/model/index.ts'
 import { remainingRouteGeometry } from '../../core/model/index.ts'
 import type { PackMapFeature, PackObjectPresentation } from '../../core/packs/protocol.ts'
 import { colorWithAlpha, hexToRgba, toneColor, white } from './colors.ts'
-import { normalizeSymbolId, symbolSizePx } from './symbol-kit.ts'
+import { symbolAtlasFor, symbolSizePx } from './symbol-kit.ts'
 import {
   lineStringPositions,
   pointPosition,
@@ -101,7 +101,9 @@ const operationalPointFor = (
   if (!point) return null
   if (presentation.mapIconVisible === false) return null
   const tone = presentationTone(presentation)
-  const symbolId = normalizeSymbolId(presentation.icon)
+  const symbolId = presentation.icon
+  const symbolAtlas = symbolAtlasFor(symbolId)
+  const label = presentation.mapLabel ?? null
   const position = pointPosition(point)
   const selected = object.id === context.selectedControllerId
   const highlighted = context.highlightedObjectIds.has(object.id)
@@ -120,12 +122,15 @@ const operationalPointFor = (
     highlighted ? 'h' : '',
     hasNewInfo ? 'n' : '',
     muted ? 'm' : '',
+    label ?? '',
   ].join(':')
   return {
     id: object.id,
     object,
     position,
     symbolId,
+    symbolAtlas,
+    label,
     color,
     statusTone: tone,
     selected,
@@ -191,7 +196,8 @@ const lineObjectPathFor = (
 const areaSymbolFor = (feature: PackMapFeature): OperationalSymbolFeature | null => {
   if (!feature.anchorPoint || !feature.symbol) return null
   const tone = feature.symbol.tone ?? 'idle'
-  const symbolId = normalizeSymbolId(feature.symbol.icon)
+  const symbolId = feature.symbol.icon
+  const symbolAtlas = symbolAtlasFor(symbolId)
   const position = pointPosition(feature.anchorPoint)
   const opacity = feature.symbol.opacity ?? 0.92
   const sizePx = (feature.symbol.size ?? 0.82) * symbolSizePx(symbolId)
@@ -200,6 +206,7 @@ const areaSymbolFor = (feature: PackMapFeature): OperationalSymbolFeature | null
     layerId: feature.layerId ?? 'objects',
     position,
     symbolId,
+    symbolAtlas,
     color: colorWithAlpha(toneColor(tone), opacity * 255),
     opacity,
     sizePx,

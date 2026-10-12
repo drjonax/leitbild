@@ -18,6 +18,7 @@
     PackMapAssignmentHandle,
     PackMapFeatureQuery,
     PackObjectPresentation,
+    PackTargetPreview,
   } from '../core/packs/protocol.ts'
   import type { PackReferenceDatasetStyle } from '../core/packs/reference-style.ts'
   import { createMapPopupController } from './map/map-popup-controller.ts'
@@ -31,7 +32,10 @@
   import { createPackOverlayController } from './map-runtime/pack-overlay-controller.ts'
   import { createPackFeatureLayer } from './map-runtime/pack-feature-layer.ts'
   import { createPackLiveLayerController, maplibreLiveMapPort, type PackLiveMapLayerBinding } from './map-runtime/pack-live-layer.ts'
-  import { rasterizeSymbol } from './map-runtime/map-symbols.ts'
+  import { composeSymbolAtlas, loadMapSymbols, rasterizeSymbol } from './map-runtime/map-symbols.ts'
+  import { createCatalogueSymbolAtlas } from './map-runtime/catalogue-symbol-atlas.ts'
+  import type { CameraInteraction } from './map/map-camera.ts'
+  import { mapClickOutcome } from './map-target-routing.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
     installMapPerformanceDiagnosticsGlobal,
@@ -95,6 +99,12 @@
     readonly onAssignmentHandleSelected?: (controllerId: string) => void
     readonly onAssignmentCancelled?: () => void
     readonly onObjectLongPressed?: (object: OperationalObject) => void
+    /** Camera gestures on or off; only an active Pack switches one off. */
+    readonly cameraInteraction: CameraInteraction
+    /** Reported only when given: a click on open ground, neither an object nor a Pack feature. */
+    readonly onGroundSelected?: (point: GeoJsonPoint) => void
+    /** The order preview a hovered object's card shows, when the selected controller's Pack describes targets. */
+    readonly targetPreviewFor?: (object: OperationalObject) => PackTargetPreview | null
   }
 
   const {
@@ -140,6 +150,9 @@
     onAssignmentHandleSelected = () => {},
     onAssignmentCancelled = () => {},
     onObjectLongPressed = () => {},
+    cameraInteraction,
+    onGroundSelected,
+    targetPreviewFor,
   }: Props = $props()
 
   let mapElement = $state<HTMLDivElement | null>(null)
@@ -147,7 +160,7 @@
   let mapInputDebugEntries = $state<ReadonlyArray<string>>([])
   let mapInputDebugSummary = $state('Waiting for map input')
   let cachedPackMapFeatures = $state<ReadonlyArray<PackMapFeature>>([])
-  const packFeatureLayer = createPackFeatureLayer(selection => { if (!placementMode) onPackFeatureSelected(selection) }, message => onMapError(message))
+  const packFeatureLayer = createPackFeatureLayer(selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) }, message => onMapError(message))
   const syncPackFeatures = () => { if (runtime) packFeatureLayer.update(runtime.map, cachedPackMapFeatures, visibleFamilies()) }
   let appliedTheme: ThemeMode | null = null
   let appliedCameraKey: string | null = null
@@ -159,6 +172,8 @@
   let lastPointerScreen = { x: 0, y: 0 }
   let suppressBackgroundClick = false
   let longPressConsumedUntil = 0
+  // Set while one map click is handled by an object, a Pack feature or a handle, so it is not also a ground click.
+  let clickHandled = false
 
   const assignmentInteraction = (): MapAssignmentInteraction => ({
     revision: interactionRevision,
@@ -201,6 +216,16 @@
     getMap: () => runtime?.map ?? null,
     presentationFor: (object) => presentationFor(object),
     hasNewInfo: (object) => hasNewInfo(object),
+    targetPreviewFor: (object) => targetPreviewFor?.(object) ?? null,
+  })
+
+  // Catalogue icons beyond the compiled atlas: artwork loads only when an object or Pack feature uses one.
+  const catalogueAtlas = createCatalogueSymbolAtlas<ImageData>({
+    loadArtwork: loadMapSymbols,
+    rasterize: rasterizeSymbol,
+    compose: composeSymbolAtlas,
+    onChange: () => operationalRenderController.syncSymbolArtwork(),
+    onError: message => onMapError(message),
   })
 
   const operationalRenderController = createOperationalRenderController({
@@ -219,6 +244,7 @@
     hasNewInfo: object => hasNewInfo(object),
     presentationFor: object => presentationFor(object),
     onObjectSelected: object => {
+      clickHandled = true
       if (performance.now() < longPressConsumedUntil) return
       if (assignmentActive) {
         suppressBackgroundClick = true
@@ -231,7 +257,7 @@
       if (object) popupController.show(object)
       else popupController.hide()
     },
-    onAssignmentHandleSelected: handle => { suppressBackgroundClick = true; onAssignmentHandleSelected(handle.controllerId) },
+    onAssignmentHandleSelected: handle => { clickHandled = true; suppressBackgroundClick = true; onAssignmentHandleSelected(handle.controllerId) },
     setCursor: cursor => {
       const canvas = runtime?.map.getCanvas()
       if (canvas) canvas.style.cursor = cursor
@@ -243,6 +269,7 @@
       onMapDiagnostic(currentRuntime.diagnostics())
     },
     performanceDiagnostics: mapPerformanceDiagnostics,
+    catalogueAtlas,
   })
 
   const referenceLayerController = createReferenceLayerController({
@@ -257,7 +284,7 @@
     query: (request, signal) => queryLiveMapLayer(request, signal),
     rasterize: rasterizeSymbol,
     documentHidden: () => document.hidden,
-    onSelect: selection => { if (!placementMode) onPackFeatureSelected(selection) },
+    onSelect: selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) },
     onHover: hover => { if (hover) popupController.showCard(hover); else popupController.hide() },
     onError: message => onMapError(`Live map layer: ${message}`),
   })
@@ -424,12 +451,20 @@
         styleUrl: styleUrlFor(theme),
         center: mapConfig.center,
         zoom: mapConfig.zoom,
+        cameraInteraction,
         placementActive: () => placementMode !== null,
         onPlacementPoint,
-        onMapClick: () => {
+        onMapClick: point => {
+          // This listener runs first; object, label, Pack feature and handle clicks of the same event follow it
+          // synchronously, because the deck overlay picks with pickAsync 'sync' (map-runtime.ts).
+          // A double-click's extra object click leaves no mark on the next click.
+          clickHandled = false
           queueMicrotask(() => {
-            if (suppressBackgroundClick) { suppressBackgroundClick = false; return }
-            if (assignmentActive) onAssignmentCancelled()
+            const outcome = mapClickOutcome({ suppressed: suppressBackgroundClick, assignmentActive, handled: clickHandled })
+            clickHandled = false
+            if (outcome === 'suppressed') suppressBackgroundClick = false
+            else if (outcome === 'assignment-cancel') onAssignmentCancelled()
+            else if (outcome === 'ground') onGroundSelected?.(point)
           })
         },
         onMoveStart: () => {
@@ -533,6 +568,7 @@
       cleanupMapPerformanceGlobal()
       resetMapInputDebugController()
       operationalRenderController.destroy()
+      catalogueAtlas.reset()
       packFeatureLayer.destroy()
       packOverlayController.destroy()
       popupController.hide()
@@ -629,6 +665,13 @@
     mapConfig.center
     mapConfig.zoom
     applyScenarioCameraDefault()
+  })
+
+  $effect(() => {
+    const interaction = cameraInteraction
+    const currentRuntime = runtime
+    if (!currentRuntime) return
+    untrack(() => currentRuntime.setCameraInteraction(interaction))
   })
 
   $effect(() => {

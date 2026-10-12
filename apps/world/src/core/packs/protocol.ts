@@ -52,6 +52,11 @@ export interface PackObjectPresentation {
   readonly mapLineVisible?: boolean
   readonly mapIconSizePx?: number
   readonly noteworthyUpdates?: boolean
+  /**
+   * Opt-in short text drawn natively beneath the object's map icon, such as a
+   * callsign and phase code. Without it the map draws no label.
+   */
+  readonly mapLabel?: string
 }
 
 export interface PackObjectField {
@@ -480,8 +485,36 @@ export interface PackCreationContribution {
   ) => PackCommandRequest
 }
 
+/** What a map click names for the selected controller: an object, or a point on open ground. */
+export type PackMapTarget =
+  | { readonly kind: 'object'; readonly objectId: ObjectId }
+  | { readonly kind: 'point'; readonly point: GeoJsonPoint }
+
+/** One plain line previewing what a target click would do, in the Pack's words. */
+export interface PackTargetPreview {
+  /** The verb and target, e.g. "Send A3 to C-12", or why the order would be refused. */
+  readonly text: string
+  /** True when the line states a refusal. */
+  readonly refused: boolean
+}
+
+/** Opt-in: a click on open map ground targets that point for the selected controller. */
+export interface PackPointTargeting {
+  readonly isTarget: (controller: OperationalObject, point: GeoJsonPoint, context: PackTargetContext) => boolean
+  readonly buildSetTargetCommand: (controller: OperationalObject, point: GeoJsonPoint, context: PackTargetContext) => PackCommandRequest
+}
+
 export interface PackTargetingContribution {
-  readonly isController: (object: OperationalObject) => boolean
+  /** Whether this screen may select the object to give it map orders; `context.viewer` is its role view. */
+  readonly isController: (object: OperationalObject, context: PackTargetContext) => boolean
+  /**
+   * Opt-in preview shown on the hovered target and used as the feedback line
+   * of a generic send; null when the Pack has nothing to say for that target.
+   * An open map-target panel's own preview, when it connects one, answers
+   * instead for that panel's controllers.
+   */
+  readonly describeTarget?: (controller: OperationalObject, target: PackMapTarget, context: PackTargetContext) => PackTargetPreview | null
+  readonly pointTargets?: PackPointTargeting
   readonly isTarget: (
     controller: OperationalObject,
     candidate: OperationalObject,
@@ -543,11 +576,39 @@ export interface PackSurfacePanelContribution {
   readonly label: string
   readonly defaultOpen: boolean
   readonly load: () => Promise<{ readonly default: Component }>
+  /**
+   * Opt-in: while this panel is open, every map target click for a controller
+   * of the panel's own Pack goes to the `onMapTarget` it connects, and the
+   * generic surface never sends one itself; other Packs' controllers keep
+   * their generic targeting. The panel may also connect `previewMapTarget`,
+   * which then answers the hover preview for its controllers.
+   */
+  readonly mapTargets?: true
+  /**
+   * Opt-in: while this panel is open, the World key router delivers keys to
+   * the `onKey` it connects, whatever element inside the World has focus.
+   */
+  readonly keymap?: true
+}
+
+/** Map gestures a Pack switches off, never inferred; every other gesture stays on. */
+export interface PackMapInteraction {
+  readonly doubleClickZoom?: false
+  /** Keyboard panning and zooming of the map canvas. */
+  readonly keyboard?: false
+  readonly boxZoom?: false
+}
+
+/** Start-state hints for the World surface; the operator may change the layout afterwards. */
+export interface PackSurfaceLayout {
+  readonly railCollapsed?: true
 }
 
 export interface PackUiContribution {
   readonly surfacePanels: ReadonlyArray<PackSurfacePanelContribution>
   readonly settingsEditor?: () => Promise<{ readonly default: Component }>
+  readonly mapInteraction?: PackMapInteraction
+  readonly surfaceLayout?: PackSurfaceLayout
 }
 
 /** Pack-owned inputs to shared procedure observation queries. The generic UI

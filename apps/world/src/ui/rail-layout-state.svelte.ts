@@ -10,6 +10,8 @@ export interface RailLayoutState {
   readonly width: number
   readonly collapsed: boolean
   readonly initialize: () => void
+  /** Collapses the rail for this page without storing it; the operator's stored width returns on the next expand. */
+  readonly collapse: () => void
   readonly startResize: (event: PointerEvent) => void
   readonly stopResize: () => void
 }
@@ -59,6 +61,11 @@ export const createRailLayoutState = (): RailLayoutState => {
     if (width > 0) lastOpenWidth = width
   }
 
+  const collapse = (): void => {
+    if (width > 0) lastOpenWidth = width
+    width = 0
+  }
+
   return {
     get width() {
       return width
@@ -67,6 +74,7 @@ export const createRailLayoutState = (): RailLayoutState => {
       return width === 0
     },
     initialize,
+    collapse,
     startResize,
     stopResize,
   }

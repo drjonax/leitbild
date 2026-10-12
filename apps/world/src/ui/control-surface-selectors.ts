@@ -1,5 +1,5 @@
 import type { OperationalObject } from '../core/model/index.ts'
-import type { PackCreateObjectType } from '../core/packs/protocol.ts'
+import type { PackCreateObjectType, PackTargetContext } from '../core/packs/protocol.ts'
 import type { ActivePackViews } from '../core/packs/active-views.ts'
 import type { IconName } from './icons.ts'
 import { isIconName } from './icons.ts'
@@ -14,8 +14,9 @@ export const selectedControllerObjectFor = (
   objects: ReadonlyArray<OperationalObject>,
   selectedControllerId: string | null,
   pack: ActivePackViews,
+  context: PackTargetContext,
 ): OperationalObject | null =>
-  objects.find(object => object.id === selectedControllerId && pack.targeting?.isController(object) === true) ?? null
+  objects.find(object => object.id === selectedControllerId && pack.targeting?.isController(object, context) === true) ?? null
 
 const compareOperationalObjectsForRail = (left: OperationalObject, right: OperationalObject): number => {
   const labelComparison = left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' })

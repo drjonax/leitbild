@@ -23,3 +23,11 @@ export const rasterizeSymbol = async (svg: string): Promise<ImageData> => {
   context.drawImage(image, 0, 0, 48, 48)
   return context.getImageData(0, 0, 48, 48)
 }
+/** Packs rasterized artwork into one PNG atlas image for the deck icon layers. */
+export const composeSymbolAtlas = (cells: ReadonlyArray<{ readonly image: ImageData; readonly x: number; readonly y: number }>, size: { readonly width: number; readonly height: number }): string => {
+  const canvas = document.createElement('canvas'); canvas.width = size.width; canvas.height = size.height
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Map icon atlas requires a 2D canvas')
+  for (const cell of cells) context.putImageData(cell.image, cell.x, cell.y)
+  return canvas.toDataURL('image/png')
+}

@@ -7,6 +7,7 @@ import {
   reconcileDisplayMotionState,
   type DisplayMotionState,
 } from '../display-motion.ts'
+import type { CatalogueSymbolAtlas } from './catalogue-symbol-atlas.ts'
 import { createMapFeatureStore } from './map-feature-store.ts'
 import type { MapPerformanceDiagnostics } from './map-performance-diagnostics.ts'
 import { createMapUpdateScheduler } from './map-update-scheduler.ts'
@@ -44,6 +45,8 @@ export interface OperationalRenderControllerConfig {
   readonly refreshPopup: (objects: ReadonlyArray<OperationalObject>) => void
   readonly onDiagnostic: (runtime: MapRuntimeHandle) => void
   readonly performanceDiagnostics: MapPerformanceDiagnostics
+  /** Artwork for catalogue icons beyond the compiled atlas; asked for only when a feature uses one. */
+  readonly catalogueAtlas: CatalogueSymbolAtlas
 }
 
 export interface OperationalRenderController {
@@ -53,6 +56,8 @@ export interface OperationalRenderController {
   readonly syncVisibility: () => void
   readonly syncObjectVisibility: () => void
   readonly syncInteraction: () => void
+  /** New catalogue artwork arrived: redraw the symbol layers. */
+  readonly syncSymbolArtwork: () => void
   readonly flushNow: () => void
   readonly destroy: () => void
 }
@@ -107,6 +112,7 @@ const renderSignatureFor = (
   snapshot: OperationalRenderSnapshot,
   visibleFamilies: ReadonlySet<string>,
   interactionRevision: number,
+  catalogueAtlasRevision: number,
 ): string => [
   snapshot.revisions.points,
   snapshot.revisions.paths,
@@ -114,7 +120,16 @@ const renderSignatureFor = (
   snapshot.revisions.placement,
   visibleFamiliesKey(visibleFamilies),
   interactionRevision,
+  catalogueAtlasRevision,
 ].join('|')
+
+/** Catalogue icons the snapshot draws beyond the compiled atlas. */
+export const catalogueSymbolIds = (snapshot: OperationalRenderSnapshot): ReadonlySet<string> => {
+  const ids = new Set<string>()
+  for (const point of snapshot.points) if (point.symbolAtlas === 'catalogue') ids.add(point.symbolId)
+  for (const symbol of snapshot.areaSymbols) if (symbol.symbolAtlas === 'catalogue') ids.add(symbol.symbolId)
+  return ids
+}
 
 export const createOperationalRenderController = (
   config: OperationalRenderControllerConfig,
@@ -192,7 +207,12 @@ export const createOperationalRenderController = (
         },
       )
       : featureStore.snapshot()
-    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision)
+    if (updatesFeatureFamilies) {
+      const catalogueIds = catalogueSymbolIds(snapshot)
+      if (catalogueIds.size > 0) config.catalogueAtlas.request(catalogueIds)
+    }
+    const catalogueAtlas = config.catalogueAtlas.current()
+    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision)
     const deckUpdated = renderSignature !== lastRenderSignature
     if (deckUpdated) {
       lastRenderSignature = renderSignature
@@ -202,6 +222,7 @@ export const createOperationalRenderController = (
         () => deckLayerFactory.createLayers({
           snapshot,
           visibleFamilies: state.visibleFamilies,
+          catalogueAtlas,
           onObjectSelected: point => {
             config.onObjectSelected(point.object)
           },
@@ -335,6 +356,9 @@ export const createOperationalRenderController = (
     },
     syncInteraction: () => {
       schedule('placement', 95)
+    },
+    syncSymbolArtwork: () => {
+      schedule('diagnostics', 60)
     },
     flushNow: () => {
       for (const family of fullRenderFamilies) pendingFamilies.add(family)

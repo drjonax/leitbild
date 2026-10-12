@@ -66,9 +66,9 @@ describe('control surface selectors', () => {
     if (!unit || !site) throw new Error('scenario fixture missing expected objects')
 
     expect(fixturePack.targeting).toBeUndefined()
-    expect(selectedControllerObjectFor(objects, unit.id, fixtureViews)).toBeNull()
-    expect(selectedControllerObjectFor(objects, site.id, fixtureViews)).toBeNull()
-    expect(selectedControllerObjectFor(objects, 'object:missing', fixtureViews)).toBeNull()
+    expect(selectedControllerObjectFor(objects, unit.id, fixtureViews, { objects })).toBeNull()
+    expect(selectedControllerObjectFor(objects, site.id, fixtureViews, { objects })).toBeNull()
+    expect(selectedControllerObjectFor(objects, 'object:missing', fixtureViews, { objects })).toBeNull()
   })
 
   test('creates placement cursor data and rejects unknown pack icons visibly', () => {

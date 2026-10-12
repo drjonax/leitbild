@@ -3,6 +3,8 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { GeoJsonLineString, GeoJsonPoint, GeoJsonPolygon, OperationalObject } from '../../core/model/index.ts'
 import type { PackMapFeature, PackObjectPresentation, PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { MapPerformanceDiagnosticsSnapshot } from './map-performance-diagnostics.ts'
+import type { SymbolAtlas } from './symbol-kit.ts'
+import type { CameraInteraction } from '../map/map-camera.ts'
 
 export type RenderPhase =
   | 'base'
@@ -38,6 +40,9 @@ export interface OperationalPointFeature {
   readonly object: OperationalObject
   readonly position: Position3
   readonly symbolId: string
+  readonly symbolAtlas: SymbolAtlas
+  /** The Pack's opt-in map label; null draws none. */
+  readonly label: string | null
   readonly color: ColorRgba
   readonly statusTone: PackObjectStatusTone
   readonly selected: boolean
@@ -67,6 +72,7 @@ export interface OperationalSymbolFeature {
   readonly id: string
   readonly position: Position3
   readonly symbolId: string
+  readonly symbolAtlas: SymbolAtlas
   readonly color: ColorRgba
   readonly opacity: number
   readonly sizePx: number
@@ -166,6 +172,7 @@ export interface MapRuntimeHandle {
   ) => void
   readonly setStyleUrl: (styleUrl: string) => Promise<void>
   readonly resize: () => void
+  readonly setCameraInteraction: (interaction: CameraInteraction) => void
   readonly diagnostics: () => MapRuntimeDiagnosticsSnapshot
   readonly destroy: () => void
 }

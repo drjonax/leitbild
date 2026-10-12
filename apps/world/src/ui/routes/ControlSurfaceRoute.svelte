@@ -5,6 +5,7 @@
   import type { Component } from 'svelte'
   import { tick, untrack } from 'svelte'
   import type {
+    GeoJsonPoint,
     IsoTimestamp,
     OperationalObject,
     SimulationRunId,
@@ -20,7 +21,7 @@
   } from '../../core/model/index.ts'
   import { deleteObjectCommandKind, roleClassForRoleSet, runRolesOf, viewerForRoleSet } from '../../core/model/index.ts'
   import { createPackPresentationComposer } from '../../core/packs/presentation-composer.ts'
-  import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackMapFeatureQuery, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution, PackTargetContext } from '../../core/packs/protocol.ts'
+  import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackMapFeatureQuery, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution, PackSurfacePanelContribution, PackTargetContext, PackTargetPreview } from '../../core/packs/protocol.ts'
   import type { PackLiveMapLayerBinding } from '../map-runtime/pack-live-layer.ts'
   import type { ActivePackViews } from '../../core/packs/active-views.ts'
   import {
@@ -53,6 +54,10 @@
   import { completeControlSurfaceStartupFromSnapshot } from '../app/control-surface-session.ts'
   import { startupScenarioSource } from '../app/startup-scenario.ts'
   import { loadActivePackViews } from '../pack-loader.ts'
+  import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
+  import { assertPanelInteraction, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
+  import PanelKeyRouter from '../keys/PanelKeyRouter.svelte'
+  import type { PanelKey } from '../keys/panel-key-router.ts'
   import {
     categoryRowsFor,
     placementCursorFor,
@@ -265,8 +270,14 @@
   const placementMode = $derived(placement.mode)
   const placementPoints = $derived(placement.points)
   const createDraft = $derived(placement.draft)
+  // Targeting acts as the screen's role view, from the role set its connection holds.
+  const targetContextFor = (list: ReadonlyArray<OperationalObject>): PackTargetContext => {
+    const declaration = scenarioDefinition ? runRolesOf(scenarioDefinition) : null
+    return declaration !== null && heldRoleIds !== null ? { objects: list, viewer: viewerForRoleSet(declaration, heldRoleIds) } : { objects: list }
+  }
+  const targetContext = $derived(targetContextFor(objects))
   const selectedControllerObject = $derived(activePack
-    ? selectedControllerObjectFor(objects, selectedControllerId, activePack)
+    ? selectedControllerObjectFor(objects, selectedControllerId, activePack, targetContext)
     : null)
   const allCategoryRows = $derived<ReadonlyArray<CategoryRow>>(activePack ? categoryRowsFor(objects, activePack) : [])
   const startingView = $derived(scenarioDefinition?.view ?? null)
@@ -287,6 +298,22 @@
   let categoryMapVisibility = $state<Record<string, boolean>>({})
   const surfacePanels = $derived(activePack?.surfacePanels ?? [])
   const surfacePanelLaunchers = $derived(surfacePanels.map(panel => ({ id: panel.id, label: panel.label, open: surfacePanelOpen[panel.id] ?? panel.defaultOpen })))
+  // Handlers the mounted panels lend the surface; only panels whose contribution declares a hook connect one.
+  let panelInteractions = $state.raw<Readonly<Record<string, SurfacePanelInteraction>>>({})
+  let panelKeysActive = $state(true)
+  const isSurfacePanelOpen = (panel: PackSurfacePanelContribution): boolean => surfacePanelOpen[panel.id] ?? panel.defaultOpen
+  const mapTargetPanelContribution = $derived(openPanelDeclaring(surfacePanels, isSurfacePanelOpen, 'mapTargets'))
+  const mapTargetPanel = $derived<MapTargetPanel | null>(mapTargetPanelContribution && activePack
+    ? {
+        label: mapTargetPanelContribution.label,
+        packId: surfacePanelPackId(activePack.packs, mapTargetPanelContribution),
+        onMapTarget: panelInteractions[mapTargetPanelContribution.id]?.onMapTarget ?? null,
+        previewMapTarget: panelInteractions[mapTargetPanelContribution.id]?.previewMapTarget ?? null,
+      }
+    : null)
+  const keymapPanel = $derived(openPanelDeclaring(surfacePanels, isSurfacePanelOpen, 'keymap'))
+  const mapCameraInteraction = $derived(mapCameraInteractionFor(activePack?.packs ?? []))
+  const mapClickContext = $derived<MapClickContext>({ controller: selectedControllerObject, targeting: activePack?.targeting, context: targetContext, panel: mapTargetPanel })
   const mapStartupFailed = $derived(startupSteps.find(step => step.id === 'map')?.status === 'failed')
   const displayRunJoin = $derived.by<DeckRunJoin>(() => {
     if (simulationRunId !== null) return { state: 'joined' }
@@ -294,11 +321,6 @@
     return step?.status === 'failed' ? { state: 'failed', reason: step.error ?? `${step.label} failed` } : { state: 'joining' }
   })
   const richOperationalUiReady = $derived(!mapVisible || mapReady || mapStartupFailed)
-  // Targeting acts as the screen's role view, from the role set its connection holds.
-  const targetContext = $derived.by<PackTargetContext>(() => {
-    const declaration = scenarioDefinition ? runRolesOf(scenarioDefinition) : null
-    return declaration !== null && heldRoleIds !== null ? { objects, viewer: viewerForRoleSet(declaration, heldRoleIds) } : { objects }
-  })
   const mapAssignmentController = $derived(mapAssignment ? objects.find(object => object.id === mapAssignment.controllerId) ?? null : null)
   const mapAssignmentContribution = $derived(mapAssignmentController && activePack ? activePack.packForObject(mapAssignmentController).mapAssignment ?? null : null)
   const mapAssignmentAnchor = $derived(mapAssignmentController && mapAssignmentContribution && mapAssignment
@@ -1128,12 +1150,23 @@
     return await loadScenarioDefinitionAndPackFromDefinition(body.scenario)
   }
 
+  // A Pack's start-state layout hint applies once per set of active Packs. The key outlives a Run
+  // reset, which reinstalls the same Packs, so the operator's own rail choice stays.
+  let appliedSurfaceLayoutKey = ''
+  const applySurfaceLayoutHint = (pack: ActivePackViews): void => {
+    const key = pack.packs.map(view => view.descriptor.id).join('|')
+    if (key === appliedSurfaceLayoutKey) return
+    appliedSurfaceLayoutKey = key
+    if (railStartsCollapsed(pack.packs)) railLayout.collapse()
+  }
+
   const loadScenarioDefinitionAndPackFromDefinition = async (scenario: CompiledScenario): Promise<CompiledScenario> => {
     markStartup('pack-load:start')
     const nextPack = await loadActivePackViews(scenario.packs)
     markStartup('pack-load:done')
     scenarioDefinition = scenario
     activePack = nextPack
+    applySurfaceLayoutHint(nextPack)
     return scenario
   }
 
@@ -1274,31 +1307,66 @@
     await sendCommand(command.kind, command.payload, `Creating ${draft.objectType.label}`)
   }
 
-  const setDestination = async (destination: OperationalObject): Promise<void> => {
-    const controller = selectedControllerObject
-    if (!controller) {
-      commandFeedback = noteAction(commandFeedback, 'Select a controller first')
+  /** One path for map clicks: a map-target panel takes every target click; otherwise the Pack's targeting sends. */
+  const followMapClick = (route: MapClickRoute): void => {
+    if (route.kind === 'none') return
+    if (route.kind === 'select') {
+      selectedControllerId = route.objectId
+      if (route.note !== null) commandFeedback = noteAction(commandFeedback, route.note)
       return
     }
-    if (destination.id === controller.id) return
-    const pack = requireActivePack()
-    if (!pack.targeting?.isTarget(controller, destination, targetContext)) return
-    const command = pack.targeting.buildSetTargetCommand(controller, destination, targetContext)
-    await sendCommand(command.kind, command.payload, `Sending ${controller.label} to ${destination.label}`)
+    if (route.kind === 'note') {
+      commandFeedback = noteAction(commandFeedback, route.text)
+      return
+    }
+    if (route.kind === 'panel') {
+      const onMapTarget = mapTargetPanel?.onMapTarget
+      if (!onMapTarget) throw new Error('a map target was routed to a panel that has not connected onMapTarget')
+      onMapTarget(route.controllerId, route.target)
+      return
+    }
+    void sendCommand(route.command.kind, route.command.payload, route.subject)
   }
 
   const selectObject = (object: OperationalObject): void => {
     markSeen(object)
-    const pack = requireActivePack()
-    if (pack.targeting?.isController(object)) {
-      selectedControllerId = object.id
-      commandFeedback = noteAction(commandFeedback, `Selected ${object.label}; click a valid target`)
+    requireActivePack()
+    followMapClick(routeObjectClick(object, mapClickContext))
+  }
+
+  const selectGround = (point: GeoJsonPoint): void => {
+    followMapClick(routeGroundClick(point, mapClickContext))
+  }
+
+  const previewTarget = (object: OperationalObject): PackTargetPreview | null =>
+    previewObjectTarget(object, mapClickContext)
+
+  /** A panel's selection, shared with the map; null clears it. */
+  const selectObjectById = (objectId: ObjectId | null): void => {
+    if (objectId === null) {
+      selectedControllerId = null
       return
     }
-    const controller = selectedControllerObject
-    if (controller && pack.targeting?.isTarget(controller, object, targetContext)) {
-      void setDestination(object)
+    const object = objectById.get(objectId)
+    if (!object) throw new Error(`a surface panel selected ${objectId}, which this screen does not hold`)
+    markSeen(object)
+    selectedControllerId = object.id
+  }
+
+  const connectPanelInteraction = (panel: PackSurfacePanelContribution, interaction: SurfacePanelInteraction): (() => void) => {
+    assertPanelInteraction(panel, interaction)
+    panelInteractions = { ...panelInteractions, [panel.id]: interaction }
+    return () => {
+      if (panelInteractions[panel.id] !== interaction) return
+      const { [panel.id]: _released, ...rest } = panelInteractions
+      panelInteractions = rest
     }
+  }
+
+  const deliverPanelKey = (key: PanelKey): boolean => {
+    const panel = keymapPanel
+    if (!panel) return false
+    return panelInteractions[panel.id]?.onKey?.(key) ?? false
   }
 
   const connectWebSocket = (id: SimulationRunId): void => {
@@ -1397,10 +1465,15 @@
 
   /** A fresh snapshot of a new perspective replaces every Run-scoped store; the map view and panel sizes stay. */
   const adoptPerspective = (perspective: RealtimePerspective): void => {
+    const declaration = runRolesOf(perspective.compiledScenario)
+    const perspectiveContext: PackTargetContext = declaration !== null
+      ? { objects: perspective.snapshot.objects, viewer: viewerForRoleSet(declaration, perspective.roleIds) }
+      : { objects: perspective.snapshot.objects }
+    const startingId = activePack ? startingControllerId(perspective.snapshot.objects, activePack, perspectiveContext, isSurfacePanelOpen) : null
     const stores = storesForPerspective(
       perspective,
       { epoch: perspectiveEpoch, roleIds: heldRoleIds, feedback: commandFeedback },
-      object => activePack?.targeting?.isController(object) === true,
+      object => object.id === startingId,
     )
     // A join or reset still installing the Run's scenario and Packs installs
     // this same perspective's Compiled Scenario itself: no switch can be asked
@@ -1547,6 +1620,8 @@
       setSelectedControllerId: id => {
         selectedControllerId = id
       },
+      targetContext: targetContextFor,
+      isSurfacePanelOpen,
       setSeenRevisions: nextSeen => {
         seenRevisions = nextSeen
       },
@@ -1908,6 +1983,9 @@
           onAssignmentHandleSelected={controllerId => { const controller = objects.find(object => object.id === controllerId); if (controller) beginMapAssignment(controller, 'append') }}
           onAssignmentObjectSelected={chooseMapAssignmentTarget}
           onAssignmentCancelled={cancelMapAssignment}
+          cameraInteraction={mapCameraInteraction}
+          onGroundSelected={groundClicksWanted(mapClickContext) ? selectGround : undefined}
+          targetPreviewFor={targetPreviewsWanted(mapClickContext) ? previewTarget : undefined}
         />
       {:else if mapVisible}
         <div class="map-loading">Starting map...</div>
@@ -1945,13 +2023,17 @@
       {#if runRoles && heldRoleIds}
         <RoleBar declaration={runRoles} held={heldRoleIds} switchingTo={pendingRoleIds} describeCommands={describeRoleCommands} request={requestRoleChange} />
       {/if}
+      {#if keymapPanel}
+        <!-- RoleBar listens in the capture phase, so a key it consumes (P, then a digit) arrives here defaultPrevented and never reaches the panel. -->
+        <PanelKeyRouter placementActive={() => placementMode !== null} deliver={deliverPanelKey} onActiveChange={(active: boolean) => { panelKeysActive = active }} />
+      {/if}
       {#if richOperationalUiReady && simulationRunId}
         <!-- A panel's own Run stores belong to one perspective: a role switch remounts it. -->
         {#key perspectiveEpoch}
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}
           {#if (surfacePanelOpen[panel.id] ?? panel.defaultOpen) && Panel}
-            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} />
+            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} />
           {/if}
         {/each}
         {/key}

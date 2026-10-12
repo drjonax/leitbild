@@ -11,7 +11,7 @@ import { MapboxOverlay } from '@deck.gl/mapbox'
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { GeoJsonPoint } from '../../core/model/index.ts'
 import { geoPointFromLonLat } from '../../core/model/index.ts'
-import { assertCameraInteractionContract } from '../map/map-camera.ts'
+import { assertCameraInteractionContract, type CameraInteraction } from '../map/map-camera.ts'
 import {
   baseMapReadinessDetails,
   inspectBaseMapReadiness,
@@ -39,6 +39,8 @@ export interface CreateMapRuntimeConfig {
   readonly center: GeoJsonPoint
   readonly zoom: number
   readonly preserveDrawingBuffer?: boolean
+  /** Camera gestures on or off; only an active Pack switches one off. */
+  readonly cameraInteraction: CameraInteraction
   readonly placementActive: () => boolean
   readonly onPlacementPoint: (point: GeoJsonPoint) => void
   readonly onMapClick: (point: GeoJsonPoint) => void
@@ -190,7 +192,7 @@ export const createMapRuntime = async (
     () => new MapLibre(mapOptions),
     { styleUrl: config.styleUrl, workerUrl },
   )
-  assertCameraInteractionContract(current)
+  assertCameraInteractionContract(current, config.cameraInteraction)
 
   let overlay: MapboxOverlay | null = null
   const installDeckOverlay = (): void => {
@@ -201,6 +203,9 @@ export const createMapRuntime = async (
       () => new MapboxOverlay({
         interleaved: false,
         layers: [],
+        // Layer clicks dispatch inside MapLibre's click event, which is how the map tells an
+        // object click from a ground click; 'auto' would turn async on a WebGPU device.
+        pickAsync: 'sync',
       }),
     )
     overlay = nextOverlay
@@ -348,6 +353,9 @@ export const createMapRuntime = async (
     },
     resize: () => {
       current.resize({ source: 'leitbild-runtime-resize' })
+    },
+    setCameraInteraction: (interaction: CameraInteraction) => {
+      assertCameraInteractionContract(current, interaction)
     },
     diagnostics: snapshot,
     destroy: () => {

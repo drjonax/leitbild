@@ -39,6 +39,7 @@ const createRuntime = (
   setDiagnosticDetails: () => undefined,
   setStyleUrl: async () => undefined,
   resize: () => undefined,
+  setCameraInteraction: () => undefined,
   diagnostics: () => ({ phases: [] }),
   destroy: () => undefined,
 })

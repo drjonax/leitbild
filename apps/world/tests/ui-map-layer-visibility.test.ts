@@ -3,6 +3,7 @@ import {
   createOperationalDeckLayerDataCache,
   createOperationalDeckLayers,
 } from '../src/ui/map-runtime/operational-deck-layers.ts'
+import { emptyCatalogueSymbolAtlas } from '../src/ui/map-runtime/catalogue-symbol-atlas.ts'
 import type { OperationalRenderSnapshot } from '../src/ui/map-runtime/types.ts'
 
 const emptySnapshot = (): OperationalRenderSnapshot => ({
@@ -49,6 +50,7 @@ describe('operational deck layer visibility', () => {
     const layers = createOperationalDeckLayers({
       snapshot: emptySnapshot(),
       visibleFamilies: new Set(['routes']),
+      catalogueAtlas: emptyCatalogueSymbolAtlas,
       onObjectSelected: () => undefined,
       onObjectSeen: () => undefined,
       onObjectHover: () => undefined,
@@ -64,8 +66,8 @@ describe('operational deck layer visibility', () => {
     const snapshot = emptySnapshot()
     const families = new Set(['objects', 'routes'])
 
-    const first = cache.dataFor(snapshot, families)
-    const second = cache.dataFor(snapshot, new Set(['routes', 'objects']))
+    const first = cache.dataFor(snapshot, families, emptyCatalogueSymbolAtlas)
+    const second = cache.dataFor(snapshot, new Set(['routes', 'objects']), emptyCatalogueSymbolAtlas)
 
     expect(second.visiblePaths).toBe(first.visiblePaths)
     expect(second.visibleAreaSymbols).toBe(first.visibleAreaSymbols)

@@ -5,9 +5,15 @@ export type LeitbildIconMapping = Record<string, { x: number; y: number; width: 
 const symbolIds = Object.keys(common) as LeitbildSymbolId[]
 export const leitbildSymbolDefinitions = symbolIds.map(id => ({ id, label: id.replaceAll('-', ' '), defaultSizePx: 23 }))
 export const leitbildSymbolIds = new Set<string>(symbolIds)
-export const normalizeSymbolId = (icon: string): LeitbildSymbolId => {
-  if (!leitbildSymbolIds.has(icon)) throw new Error('Unknown operational map icon: ' + icon)
-  return icon as LeitbildSymbolId
+/**
+ * Which atlas draws an icon: the compiled atlas for its ids, the on-demand
+ * catalogue atlas for any other catalogue id. The UI never imports the
+ * catalogue itself; an id it does not know fails when its artwork loads.
+ */
+export type SymbolAtlas = 'compiled' | 'catalogue'
+export const symbolAtlasFor = (icon: string): SymbolAtlas => {
+  if (icon.length === 0) throw new Error('Operational map icon is empty')
+  return leitbildSymbolIds.has(icon) ? 'compiled' : 'catalogue'
 }
 export const symbolSizePx = (_symbolId: string): number => 23
 const cell = 64, columns = 8
