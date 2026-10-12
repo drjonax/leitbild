@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { withCuratedCircuits } from '../src/packs/electric-grid/model-build/curated-circuits.ts'
+import { buildGenerators, registeredWindUnits } from '../src/packs/electric-grid/model-build/generators.ts'
+import type { Station, StationIndex } from '../src/packs/electric-grid/model-build/stations.ts'
+import type { ModelSourceIds } from '../src/packs/electric-grid/model-build/sources.ts'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from '../src/packs/electric-grid/model-build/curations.ts'
 import { ambientRatingRule, cableRules, lineParameters, networkEquivalentParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/model-build/electrical.ts'
 import { runOfRiverTurbineOf, runOfRiverTurbineRule } from '../src/packs/electric-grid/model-build/generator-rules.ts'
@@ -229,5 +232,42 @@ describe('model build: provenance and serialisation', () => {
     expect(() => withCuratedCircuits(lines, record(['way/9']), createBuildLedger())).toThrow('curation:unit-cables: 0 300 kV lines carry way/9; the record must name exactly one')
     expect(() => withCuratedCircuits(lines, record(['way/1'], 132), createBuildLedger())).toThrow('0 132 kV lines carry way/1')
     expect(gridCurationCollectionSchema.safeParse({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'one', geometry: point, properties: { kind: 'set-circuits', targetOsmIds: ['way/1'], wayOsmIds: ['way/1'], voltageKv: 300, circuits: 1, ...common } }] }).success).toBe(false)
+  })
+
+  test('splits a registered plant over the stations a split-plant record names, by weight', () => {
+    const bus = (stationId: string, location: readonly [number, number]) => ({
+      id: `bus:${stationId}@132`, label: `${stationId} 132 kV`, kind: 'substation' as const, substationId: stationId, nominalKv: 132, location: [location[0], location[1]] as [number, number], priceArea: 'NO4' as const,
+      provenance: { sources: ['osm:test'], method: 'mapped' as const, confidence: 'high' as const },
+    })
+    const station = (stationId: string, location: readonly [number, number]): Station => ({ stationId, kind: 'substation', label: stationId, location, priceArea: 'NO4', buses: [bus(stationId, location)], featureIds: [stationId.replace(/^osm-way-/, 'way/')] })
+    const stations = [station('osm-way-1', [13.02, 65.85]), station('osm-way-2', [13.08, 65.83])]
+    const index: StationIndex = {
+      stations,
+      containing: () => undefined,
+      byFeatureId: featureId => stations.find(candidate => candidate.featureIds.includes(featureId)),
+      nearest: () => ({ station: stations[0]!, km: 0.75 }),
+    }
+    const units = registeredWindUnits([{ farmId: 1, plantNumber: 10269, name: 'Farm', installedMw: 400, normalAnnualProductionGwh: 1146, priceArea: 'NO4', location: [13.01, 65.86], registryStatus: 'D', registryOutOfOperation: null, sharedPlantNumberFarmIds: [] }], 'nve:wind-farms@test', createBuildLedger())
+    const sourceIds = { osm: 'osm:test', hydroHeads: 'nve:hydro-heads@test' } as ModelSourceIds
+    const split = (substationOsmIds: ReadonlyArray<string>, generatorId = 'generator:nve-wind-10269') => new Map([[generatorId, {
+      curationId: 'curation:farm-two-stations', parts: substationOsmIds.map((substationOsmId, position) => ({ substationOsmId, voltageKv: 132, weight: position === 0 ? 140 : 280 })),
+    }]])
+    const ledger = createBuildLedger()
+    const generators = buildGenerators({ units, stations: index, regionalRoutes: new Map(), splits: split(['way/1', 'way/2']), sourceIds, ledger })
+    expect(generators.map(generator => [generator.id, generator.busId, generator.capacityMw, generator.annualProductionGwh, generator.registryIds])).toEqual([
+      ['generator:curated-farm-two-stations-2', 'bus:osm-way-2@132', 266.667, 764, ['10269']],
+      ['generator:nve-wind-10269', 'bus:osm-way-1@132', 133.333, 382, ['10269']],
+    ])
+    expect(generators.every(generator => generator.provenance.method === 'curated' && generator.provenance.sources.includes('curation:farm-two-stations'))).toBe(true)
+    expect(ledger.entries().map(entry => entry.reason)).toEqual(['generator-split-by-curation', 'generator-split-by-curation'])
+    expect(() => buildGenerators({ units, stations: index, regionalRoutes: new Map(), splits: split(['way/1', 'way/9']), sourceIds, ledger: createBuildLedger() })).toThrow('curation:farm-two-stations: way/9 is not a ≥132 kV station of the main island')
+    expect(() => buildGenerators({ units, stations: index, regionalRoutes: new Map(), splits: split(['way/1', 'way/2'], 'generator:nve-wind-7'), sourceIds, ledger: createBuildLedger() })).toThrow('split-plant curations name generators that are not registered plants: generator:nve-wind-7')
+    const point = { type: 'Point', coordinates: [13.05, 65.84] }
+    const common = { licence: 'nve-nlod-2.0', author: 'test', reviewedAt: '2026-10-12', reason: 'two transformer stations', evidence: [{ url: 'https://example.org/e', ref: 'e' }], expiresWhen: [{ kind: 'review-by', date: '2027-01-01' }] }
+    const part = (substationOsmId: string) => ({ substationOsmId, voltageKv: 132, weight: 1 })
+    const record = (parts: ReadonlyArray<ReturnType<typeof part>>) => gridCurationCollectionSchema.safeParse({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'farm-two-stations', geometry: point, properties: { kind: 'split-plant', targetOsmIds: parts.map(entry => entry.substationOsmId), generatorId: 'generator:nve-wind-10269', parts, ...common } }] }).success
+    expect(record([part('way/1'), part('way/2')])).toBe(true)
+    expect(record([part('way/1')])).toBe(false)
+    expect(record([part('way/1'), part('way/1')])).toBe(false)
   })
 })

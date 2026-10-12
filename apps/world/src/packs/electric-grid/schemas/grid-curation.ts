@@ -172,6 +172,18 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     wayOsmIds: z.array(wayId).min(1), voltageKv: kv,
     circuits: z.number().int().min(2),
   }).strict(),
+  /**
+   * A registered plant whose units a published document places at several ≥132 kV stations where
+   * NVE registers one point: the plant becomes one generator per part, each with its weight's share
+   * of the registered capacity and production (weight: what the document gives per part, such as
+   * the part's transformer MVA). The first part keeps the registered generator id; part n (from 2)
+   * is generator:curated-<record id>-<n>.
+   */
+  z.object({
+    kind: z.literal('split-plant'), ...common,
+    generatorId: registeredGeneratorId,
+    parts: z.array(z.object({ substationOsmId: osmId, voltageKv: kv, weight: z.number().finite().positive() }).strict()).min(2),
+  }).strict().refine(properties => new Set(properties.parts.map(part => `${part.substationOsmId}@${part.voltageKv}`)).size === properties.parts.length, 'each part names another station level'),
 ])
 
 const featureSchema = z.object({
@@ -207,6 +219,7 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'add-transformer-units': { required: ['review-by'], allowed: ['review-by'] },
   'normally-open': { required: ['review-by'], allowed: ['review-by'] },
   'set-circuits': { required: ['review-by'], allowed: ['review-by'] },
+  'split-plant': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -228,6 +241,7 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'add-transformer-units': return [properties.substationOsmId]
     case 'normally-open': return properties.wayOsmIds
     case 'set-circuits': return properties.wayOsmIds
+    case 'split-plant': return properties.parts.map(part => part.substationOsmId)
   }
 }
 

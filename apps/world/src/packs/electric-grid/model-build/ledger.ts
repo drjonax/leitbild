@@ -24,6 +24,7 @@ const reasonDispositions = {
   'transformer-units-added': 'curated',
   'branch-normally-open': 'curated',
   'curated-circuits-set': 'curated',
+  'generator-split-by-curation': 'curated',
 } as const
 
 export type BuildLedgerReason = keyof typeof reasonDispositions

@@ -8,6 +8,7 @@ import type { BuildLedger } from './ledger.ts'
 //   exclude-feature, offshore-load             → their target features leave the topology input;
 //   add-line, add-terminal                     → curated branches after compilation (curated-branches.ts);
 //   attach-via-regional-grid                   → a registered plant's bus (generators.ts);
+//   split-plant                                → a registered plant's generators at several stations (generators.ts);
 //   attach-load-via-regional-grid              → a municipality's load bus (loads.ts);
 //   add-shunt-device                           → the shunt of its bus (network.ts);
 //   add-transformer-units                      → transformer units in the topology input, rated (curated-ratings.ts);

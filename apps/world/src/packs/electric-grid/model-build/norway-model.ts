@@ -171,6 +171,9 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
           networkKm: feature.properties.networkKm,
         }] as const]
       : [])),
+    splits: new Map(curations.features.flatMap(feature => feature.properties.kind === 'split-plant'
+      ? [[feature.properties.generatorId, { curationId: curationSourceId(feature), parts: feature.properties.parts }] as const]
+      : [])),
     sourceIds: ids,
     ledger,
   })

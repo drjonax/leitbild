@@ -104,6 +104,12 @@ export interface RegionalRoute {
   readonly networkKm: number
 }
 
+/** A reviewed split-plant curation: the stations a registered plant's units connect at, with their weights. */
+export interface PlantSplit {
+  readonly curationId: string
+  readonly parts: ReadonlyArray<{ readonly substationOsmId: string; readonly voltageKv: number; readonly weight: number }>
+}
+
 interface Attachment {
   readonly unit: RegisteredUnit
   readonly station: Station
@@ -187,6 +193,7 @@ export const buildGenerators = (config: {
   readonly units: ReadonlyArray<RegisteredUnit>
   readonly stations: StationIndex
   readonly regionalRoutes: ReadonlyMap<string, RegionalRoute>
+  readonly splits: ReadonlyMap<string, PlantSplit>
   readonly sourceIds: ModelSourceIds
   readonly ledger: BuildLedger
 }): ReadonlyArray<GridGeneratorV2> => {
@@ -194,9 +201,17 @@ export const buildGenerators = (config: {
   const generators: GridGeneratorV2[] = []
   const aggregates = new Map<string, Attachment[]>()
   const routed = new Set<string>()
+  const split = new Set<string>()
   for (const unit of [...units].sort((left, right) => compareText(left.registryKey, right.registryKey))) {
     const route = config.regionalRoutes.get(registeredGeneratorId(unit))
     if (route !== undefined) routed.add(registeredGeneratorId(unit))
+    const plantSplit = config.splits.get(registeredGeneratorId(unit))
+    if (plantSplit !== undefined) {
+      split.add(registeredGeneratorId(unit))
+      if (route !== undefined) throw new Error(`${plantSplit.curationId}: ${registeredGeneratorId(unit)} also has the regional route ${route.curationId}`)
+      generators.push(...splitGenerators(unit, plantSplit, stations, sourceIds, ledger))
+      continue
+    }
     // A plant on a curated regional route stays its own unit.
     const aggregated = route === undefined && unit.capacityMw < aggregationThresholdMw
     const attachment = route === undefined ? attach(unit, stations, aggregated, ledger) : attachByRoute(unit, route, stations)
@@ -293,7 +308,61 @@ export const buildGenerators = (config: {
   }
   const unknown = [...config.regionalRoutes.keys()].filter(id => !routed.has(id))
   if (unknown.length > 0) throw new Error(`regional-route curations name generators that are not registered plants: ${unknown.join(', ')}`)
+  const unknownSplits = [...config.splits.keys()].filter(id => !split.has(id))
+  if (unknownSplits.length > 0) throw new Error(`split-plant curations name generators that are not registered plants: ${unknownSplits.join(', ')}`)
   return generators.sort((left, right) => compareText(left.id, right.id))
+}
+
+/** One generator per part of a split-plant curation, each at its station level with its weight's share of the plant. */
+const splitGenerators = (unit: RegisteredUnit, plantSplit: PlantSplit, stations: StationIndex, sourceIds: ModelSourceIds, ledger: BuildLedger): ReadonlyArray<GridGeneratorV2> => {
+  if (unit.capacityMw < aggregationThresholdMw) throw new Error(`${plantSplit.curationId}: ${unit.name} (${unit.capacityMw} MW) lies below the ${aggregationThresholdMw} MW aggregation threshold; a split names a plant of its own`)
+  const totalWeight = plantSplit.parts.reduce((sum, part) => sum + part.weight, 0)
+  const minimum = minimumStable(unit)
+  const slug = plantSplit.curationId.slice('curation:'.length)
+  return plantSplit.parts.map((part, index): GridGeneratorV2 => {
+    const station = stations.byFeatureId(part.substationOsmId)
+    if (station === undefined) throw new Error(`${plantSplit.curationId}: ${part.substationOsmId} is not a ≥132 kV station of the main island`)
+    const bus = station.buses.find(candidate => candidate.nominalKv === part.voltageKv)
+    if (bus === undefined) throw new Error(`${plantSplit.curationId}: ${station.label} has no ${part.voltageKv} kV bus`)
+    const share = part.weight / totalWeight
+    const capacityMw = roundTo(unit.capacityMw * share, 3)
+    const parameters = kindParameters(unit.kind, capacityMw, false, minimum.share)
+    const id = index === 0 ? registeredGeneratorId(unit) : `generator:curated-${slug}-${index + 1}`
+    const km = haversineKm(unit.location, bus.location)
+    ledger.add({
+      reason: 'generator-split-by-curation',
+      elementIds: [id, bus.id, plantSplit.curationId],
+      mw: capacityMw,
+      distanceKm: km,
+      detail: `${unit.name} part ${index + 1} of ${plantSplit.parts.length} (weight ${part.weight} of ${totalWeight}) → ${bus.label}`,
+    })
+    return {
+      id,
+      label: `${unit.name} at ${station.label}`,
+      kind: unit.kind,
+      busId: bus.id,
+      location: [unit.location[0], unit.location[1]],
+      capacityMw,
+      ratedMva: parameters.ratedMva,
+      powerFactor: parameters.powerFactor,
+      voltageSetpointPu: parameters.voltageSetpointPu,
+      inertiaSeconds: parameters.inertiaSeconds,
+      synchronous: parameters.synchronous,
+      minimumStableMw: parameters.minimumStableMw,
+      rampMwPerMinute: parameters.rampMwPerMinute,
+      blackStartCapable: parameters.blackStartCapable,
+      annualProductionGwh: roundTo(unit.annualProductionGwh * share, 3),
+      priceArea: unit.priceArea,
+      registryIds: [String(unit.plantNumber)],
+      attachmentKm: roundTo(km, 2),
+      provenance: {
+        sources: [unit.sourceId, ...(minimum.note === null ? [] : [sourceIds.hydroHeads]), sourceIds.osm, plantSplit.curationId],
+        method: 'curated',
+        confidence: 'medium',
+        note: `${unit.kindNote}; part ${index + 1} of ${plantSplit.parts.length} by ${plantSplit.curationId}: ${roundTo(share * 100, 1)} % of the registered ${unit.capacityMw} MW (weight ${part.weight} of ${totalWeight}) at ${station.label}; ${minimum.note === null ? '' : `${minimum.note}; `}rule ${parameters.ruleId}`,
+      },
+    }
+  })
 }
 
 /**
