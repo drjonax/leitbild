@@ -354,14 +354,18 @@ describe('process plant runtime', () => {
       ['pressurizer-porv-block-valve-close', []],
       // At power the SI block cannot hold, so pressing it brings nothing in.
       ['block-low-pressure-safety-injection', []],
-      // Above P-9 a turbine trip trips the reactor; the generator's output and load alarms apply only while it is on line.
+      // The manual turbine trip the action presses; above P-9 the turbine trip trips the reactor. The generator's
+      // output and load alarms apply only while it is on line.
       ['turbine-trip', [
+        'trip:turbine-manual-trip:manual-turbine-trip',
         'trip:reactor-turbine-trip:turbine-trip-reactor-trip',
       ]],
       ['loss-offsite-power', [
         'alarm:loss-of-offsite-power:loss-of-offsite-power',
         'trip:loss-of-offsite-power-afw-actuation:afw-actuation',
       ]],
+      // With the grid available, making it available brings nothing in.
+      ['restore-offsite-power', []],
     ])
 
     for (const action of processPlantActions) {
@@ -423,6 +427,8 @@ describe('process plant runtime', () => {
         'alarm:loss-of-offsite-power:loss-of-offsite-power',
         'trip:loss-of-offsite-power-afw-actuation:afw-actuation',
       ]],
+      // With the grid available, making it available brings nothing in.
+      ['restore-offsite-power', []],
     ])
 
     for (const action of processPlantActions) {
