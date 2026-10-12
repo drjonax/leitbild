@@ -1,7 +1,56 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  color: #172019;
-  background: #edf0e9;
+  color-scheme: light;
+  /* Leitbild.ai design tokens (UX VISUAL-SPEC §1; light theme only). New components use these from scoped styles. */
+  --lb-canvas: #eef1ec;
+  --lb-canvas-deep: #e4e9e1;
+  --lb-surface: #ffffff;
+  --lb-surface-2: #f6f8f4;
+  --lb-line: #d5dcd2;
+  --lb-line-strong: #b7c2b4;
+  --lb-control: #7f8c81; /* ≥ 3:1 on white, canvas and surface-2: input borders, inactive dots */
+  --lb-ink: #172019;
+  --lb-ink-2: #46524a;
+  --lb-ink-3: #5f6b63;
+  --lb-brand-900: #16231a;
+  --lb-brand-800: #1f3326;
+  --lb-brand-700: #263c2b;
+  --lb-brand-600: #355440;
+  --lb-brand-100: #e2ebdf;
+  --lb-brand-50: #f0f5ee;
+  --lb-accent: #1c6f68;
+  --lb-accent-100: #dcefeb;
+  --lb-on-dark: #ecf4e9;
+  --lb-on-dark-2: #b3c3b5;
+  --lb-on-dark-line: #3a4c3e;
+  --lb-focus: #1f5fc4;
+  --lb-focus-on-dark: #9cc4ff;
+  --lb-danger: #8a2d2d;
+  --lb-ok: #2f7a45;
+  --lb-warn: #8a5a12;
+  --lb-font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --lb-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --lb-fs-display: clamp(2.5rem, 2rem + 2.2vw, 3.5rem);
+  --lb-fs-h1: clamp(1.6rem, 1.35rem + 1vw, 2rem);
+  --lb-fs-h2: 1.375rem;
+  --lb-fs-h3: 1.0625rem;
+  --lb-fs-body: .9375rem;
+  --lb-fs-small: .8125rem;
+  --lb-fs-micro: .75rem;
+  --lb-fs-eyebrow: .6875rem;
+  --lb-s1: 4px; --lb-s2: 8px; --lb-s3: 12px; --lb-s4: 16px; --lb-s5: 24px; --lb-s6: 32px; --lb-s7: 48px; --lb-s8: 64px;
+  --lb-gutter: clamp(16px, 3.2vw, 40px);
+  --lb-max: 1280px;
+  --lb-r-xs: 6px; --lb-r-sm: 8px; --lb-r-md: 10px; --lb-r-lg: 14px; --lb-r-xl: 18px; --lb-r-pill: 999px;
+  --lb-shadow-sm: 0 1px 2px rgba(20, 32, 25, .06);
+  --lb-shadow-md: 0 1px 2px rgba(20, 32, 25, .05), 0 10px 28px rgba(20, 32, 25, .08);
+  --lb-shadow-lg: 0 2px 6px rgba(0, 0, 0, .08), 0 28px 80px rgba(10, 18, 12, .32);
+  --lb-shadow-pop: 0 2px 6px rgba(0, 0, 0, .08), 0 16px 40px rgba(10, 18, 12, .22);
+  --lb-t-fast: 120ms; --lb-t-base: 200ms; --lb-t-slow: 300ms;
+  --lb-ease: cubic-bezier(.2, 0, 0, 1);
+  --lb-topbar-h: 56px;
+  font-family: var(--lb-font);
+  color: var(--lb-ink);
+  background: var(--lb-canvas);
   font-synthesis: none;
 }
 
@@ -397,3 +446,41 @@ button:disabled { opacity: .55; cursor: wait; }
 .resource-open { cursor: inherit; }
 .resource-tools.card-control { position: absolute; z-index: 3; }
 @media (prefers-reduced-motion: reduce) { .workspace-card { transition: none; } }
+
+/* ---------- Leitbild.ai shared primitives (landing, guide, Demos, Workspace page) ----------
+   Prefixed `lb-` so they never restyle the Run view or the existing pages. */
+html { scroll-padding-top: calc(var(--lb-topbar-h) + 8px); }
+html:has(dialog.lb-modal[open]) { overflow: hidden; }
+.lb-eyebrow { font-size: var(--lb-fs-eyebrow); font-weight: 750; line-height: 1; letter-spacing: .12em; text-transform: uppercase; color: var(--lb-ink-3); }
+.lb-skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: .6rem .9rem; border-radius: var(--lb-r-sm); background: var(--lb-surface); color: var(--lb-ink); font-weight: 650; text-decoration: none; box-shadow: var(--lb-shadow-pop); transform: translateY(-150%); }
+.lb-skip-link:focus-visible { transform: none; outline: 2px solid var(--lb-focus); outline-offset: 2px; }
+.lb-btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 40px; padding: 0 1rem; border: 1px solid var(--lb-line-strong); border-radius: var(--lb-r-md); background: var(--lb-surface); color: var(--lb-ink); font-weight: 600; font-size: .9rem; line-height: 1.2; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background var(--lb-t-fast) var(--lb-ease), border-color var(--lb-t-fast) var(--lb-ease); }
+.lb-btn:hover { border-color: #7f8f80; background: var(--lb-surface-2); }
+.lb-btn:focus-visible, .lb-icon-btn:focus-visible, .lb-text-link:focus-visible, .lb-prompt-chip:focus-visible, .lb-input:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }
+.lb-btn[disabled], .lb-btn[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+.lb-btn-lg { min-height: 48px; padding: 0 1.35rem; border-radius: 12px; font-size: 1rem; }
+.lb-btn-sm { min-height: 32px; padding: 0 .7rem; border-radius: var(--lb-r-sm); font-size: .8125rem; }
+.lb-btn-primary { border-color: var(--lb-brand-700); background: var(--lb-brand-700); color: #f5fbf2; }
+.lb-btn-primary:hover { border-color: var(--lb-brand-900); background: var(--lb-brand-900); }
+.lb-btn-quiet { border-color: transparent; background: transparent; }
+.lb-btn-quiet:hover { border-color: transparent; background: rgba(23, 32, 25, .06); }
+.lb-btn-danger { border-color: var(--lb-danger); background: var(--lb-danger); color: #fff; }
+.lb-icon-btn { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid transparent; border-radius: var(--lb-r-md); background: transparent; color: var(--lb-ink-2); cursor: pointer; }
+.lb-icon-btn:hover { border-color: transparent; background: rgba(23, 32, 25, .06); color: var(--lb-ink); }
+.lb-chip { display: inline-flex; align-items: center; gap: .35rem; min-height: 26px; padding: 0 .6rem; border: 1px solid var(--lb-brand-100); border-radius: var(--lb-r-pill); background: var(--lb-brand-50); color: var(--lb-ink-2); font-size: var(--lb-fs-micro); font-weight: 600; white-space: nowrap; }
+.lb-prompt-chip { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; min-height: 48px; padding: .7rem 1rem; border: 1px solid var(--lb-line); border-radius: 12px; background: var(--lb-surface); color: var(--lb-ink); font-weight: 550; text-align: left; cursor: pointer; }
+.lb-prompt-chip:hover { border-color: var(--lb-accent); background: #f7fbfa; }
+.lb-text-link { display: inline-flex; align-items: center; gap: .3rem; color: var(--lb-accent); font-size: .875rem; font-weight: 600; text-decoration: none; border-radius: 4px; }
+.lb-text-link:hover { text-decoration: underline; }
+.lb-input { width: 100%; min-height: 44px; padding: .6rem .8rem; border: 1px solid var(--lb-control); border-radius: var(--lb-r-md); background: var(--lb-surface); color: var(--lb-ink); }
+.lb-input::placeholder { color: #6d786f; }
+@media (pointer: coarse) {
+  .lb-btn-sm, .lb-btn { min-height: 44px; }
+  .lb-text-link { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .lb-btn-primary, .lb-chip { border: 1px solid ButtonText; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lb-btn { transition: none; }
+}

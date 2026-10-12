@@ -4,6 +4,7 @@
   import { renderWiki, wikiPageUrl } from './wiki-render.ts'
   import WikiFeedback from './WikiFeedback.svelte'
   import WikiAssistant from './WikiAssistant.svelte'
+  import Wordmark from './Wordmark.svelte'
   import { defaultNavigationWidth, minimumNavigationWidth, maximumNavigationWidth, navigationWidth } from './wiki-layout.ts'
   interface Heading {
     title: string
@@ -329,10 +330,10 @@
   </ul>
 {/snippet}
 <svelte:head
-  ><title>{document?.title ?? 'Knowledge'} · Leitbild</title></svelte:head
+  ><title>{document?.title ?? 'Knowledge'} · Leitbild.ai</title></svelte:head
 >
 <header class="wiki-header">
-  <a class="brand" href="/">Leitbild</a><span class="header-label"
+  <Wordmark href="/workspaces" tone="dark" mark label="Leitbild.ai home" /><span class="header-label"
     >Knowledge & reference</span
   >
   <form
@@ -508,16 +509,11 @@
     display: flex;
     align-items: center;
     gap: 1.4rem;
-    padding: 0.8rem 2rem;
-    background: #17291f;
-    color: #eaf2ed;
-    border-bottom: 1px solid #456252;
-  }
-  .brand {
-    font-size: 1.25rem;
-    font-weight: 750;
-    color: inherit;
-    text-decoration: none;
+    min-height: var(--lb-topbar-h);
+    padding: 0 2rem;
+    background: var(--lb-brand-900);
+    color: var(--lb-on-dark);
+    border-bottom: 1px solid #0d150f;
   }
   .header-label {
     font-size: 0.85rem;
@@ -1006,7 +1002,7 @@
   }
   @media (max-width: 750px) {
     .wiki-header {
-      padding: 0.7rem 1rem;
+      padding: 0.5rem 1rem;
       gap: 0.6rem;
       flex-wrap: wrap;
     }

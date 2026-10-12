@@ -6,6 +6,7 @@ import {
   moduleIdSchema,
   moduleRegistrationSchema,
   newRequestId,
+  newWorkspaceId,
   type ModuleId,
 } from '@leitbild/contracts'
 import { createWorkspaceHost } from '../src/host.ts'
@@ -155,6 +156,17 @@ describe('Leitbild Workspace Host', () => {
       })
       expect(result).toMatchObject({ ok: false, failure: { code: 'module_outcome_unknown', status: 504, retryable: false } })
     } finally { store.close() }
+  })
+  test('a lost Module connection is reported in words, with the transport text kept only for diagnosis', async () => {
+    const raw = 'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'
+    const gateway = createModuleGateway({
+      registrations: [moduleRegistrationSchema.parse({ moduleId: 'world', internalBaseUrl: 'http://127.0.0.1:9', manifestPath: '/manifest' })],
+      fetch: (async () => { throw new Error(raw) }) as unknown as typeof fetch,
+    })
+    const result = await gateway.resources(moduleIdSchema.parse('world'), newWorkspaceId())
+    expect(result).toMatchObject({ ok: false, failure: {
+      code: 'module_unavailable', message: 'Lost the connection to the simulation. Reload to reconnect.', details: { cause: raw },
+    } })
   })
   test('provisions every core Module and owns the complete lifecycle', async () => {
     const { modules, host, store } = createFixture()
