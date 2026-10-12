@@ -25,9 +25,9 @@ import {
 } from '../commands.ts'
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
-import { instructorOnlyRefusal, validateOperatorWrite } from '../operations/command-guard.ts'
+import { aiProposeOnlyRefusal, instructorOnlyRefusal, validateOperatorWrite } from '../operations/command-guard.ts'
 import { processPlantElectricalBoundaries } from '../electrical-ports.ts'
-import { processPlantIdForObject,processPlantPackId,processPlantUnitPackDataSchema } from '../model.ts'
+import { processPlantIdForObject,processPlantPackId,processPlantUnitPackDataSchema,type ProcessPlantUnitPackData } from '../model.ts'
 import { compileProcessPlants } from '../plant-compiler.ts'
 import { answerProcessPlantQuery } from '../query.ts'
 import { defaultSimulationRunRuntimePolicy } from '../../../core/simulation-runs/runtime-persistence-policy.ts'
@@ -302,6 +302,10 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
       }).map(object => [object.id, object]),
     )
 
+    // How AI agents operate each Plant, as its object declares it (ProcessPlantUnitPackData.aiOperation).
+    const aiOperationOf = (plantId: string): ProcessPlantUnitPackData['aiOperation'] =>
+      processPlantUnitPackDataSchema.parse(objectsById.get(plantId as ObjectId)?.packData).aiOperation
+
     let runtimeFailureReason: string | null = null
     let failureAt = nowIso()
     let lastSuccessfulInteractionAt = nowIso()
@@ -414,6 +418,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+          const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+          if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           try {
             const commands = commandsForProcessPlantAction({
               actionId: payload.data.actionId,
@@ -452,6 +458,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+          const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+          if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           if (!plant.protection) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant I&C is not configured for plant: ${payload.data.plantId}` }
           try {
             const events = plant.protection.applyLifecycleAction({
@@ -482,6 +490,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+          const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+          if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           const validation = validateOperatorWrite({
             system: plant.plant,
             runtime: plant.runtime,
@@ -518,6 +528,8 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
         const plant = plants.get(payload.data.plantId)
         if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+        const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+        if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
         try {
           const validation = validateOperatorWrite({
             system: plant.plant,

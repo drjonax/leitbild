@@ -1,6 +1,13 @@
 import type { ProcessSignalBinding, ProcessVariableValue, VariablePath } from '../graph/index.ts'
 import type { CommandOrigin } from '../../../simulation/protocol.ts'
+import {
+  processPlantActionInvokeCommandKind,
+  processPlantControlRampCommandKind,
+  processPlantControlWriteCommandKind,
+  processPlantIcLifecycleCommandKind,
+} from '../command-kinds.ts'
 import type { ProcessPlantControlWritePayload } from '../commands.ts'
+import type { ProcessPlantUnitPackData } from '../model.ts'
 import { validateProcessPlantControlWrite, type ProcessPlantControlWriteValidation } from '../control-write-validation.ts'
 import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
@@ -9,6 +16,10 @@ import { resolveProcessPlantSignalBinding } from '../signals.ts'
 
 // What a command's origin may write, beyond what the I&C validates for
 // everyone (control-write-validation.ts):
+// - On a Plant that does not opt into direct AI operation, an AI agent
+//   proposes and a person approves: its direct writes, ramps, instructor
+//   actions and alarm lifecycle changes are refused (plan-final QA-1). It
+//   may read, validate and propose.
 // - A fault the scenario injects and a condition outside the Plant are the
 //   instructor's: people inject them through instructor actions, the
 //   Scenario timeline writes them directly, and neither a person's nor an AI
@@ -21,6 +32,20 @@ import { resolveProcessPlantSignalBinding } from '../signals.ts'
 //   isolation shut) would defeat it without a word. Such a command is refused
 //   while the actuation stands active or sealed in, naming it (QA-2); after a
 //   reset it is the operators' again.
+
+/** The commands an AI agent issues on a propose-only Plant only through a person's approval. */
+export const aiDirectCommandKinds: ReadonlySet<string> = new Set([
+  processPlantControlWriteCommandKind,
+  processPlantControlRampCommandKind,
+  processPlantActionInvokeCommandKind,
+  processPlantIcLifecycleCommandKind,
+])
+
+/** Why an AI agent may not issue this command on this Plant itself; null where it may, or the origin is no AI agent's. */
+export const aiProposeOnlyRefusal = (kind: string, origin: CommandOrigin | undefined, aiOperation: ProcessPlantUnitPackData['aiOperation']): string | null =>
+  origin === 'ai' && aiOperation !== 'direct' && aiDirectCommandKinds.has(kind)
+    ? 'An AI agent proposes operations on this Plant for a person to approve; it does not operate it directly'
+    : null
 
 /** Why this origin may not write the variable directly; null where it may. A command with no origin (no Run issued it) is no instructor's. */
 export const instructorOnlyRefusal = (binding: ProcessSignalBinding, origin: CommandOrigin | undefined): string | null => {
