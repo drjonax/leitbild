@@ -285,7 +285,7 @@
     {#if missingArtwork !== null}<p class="artwork">{missingArtwork}</p>{/if}
     <div class="foot" style:height={`${boardChromePx.foot}px`}>
       {#if alert !== null}
-        <p class="alert" aria-label={view.headings.alerts}><strong>{alert.label}</strong><span class="message">{alert.message}</span>{#if view.alerts.length > 1}<span class="more num">+{view.alerts.length - 1}</span>{/if}</p>
+        <p class="alert" role="group" aria-label={view.headings.alerts}><strong>{alert.label}</strong><span class="message">{alert.message}</span>{#if view.alerts.length > 1}<span class="more num">+{view.alerts.length - 1}</span>{/if}</p>
       {/if}
       <ol class="log" aria-label={view.headings.log}>
         {#each view.log as entry, index (index)}
