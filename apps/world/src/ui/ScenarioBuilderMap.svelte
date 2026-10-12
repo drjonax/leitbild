@@ -68,7 +68,7 @@
       style: '/map/style.json',
       center: [...center],
       zoom,
-      attributionControl: false,
+      attributionControl: { compact: true },
     })
     map = instance
     instance.addControl(new NavigationControl({ showCompass: false }), 'bottom-right')
