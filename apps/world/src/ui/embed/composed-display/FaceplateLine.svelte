@@ -56,8 +56,8 @@
       {#each line.cells as cell, index (cell.pen.path)}
         {#if index > 0}<span class="sep">·</span>{/if}
         {#if cell.value.kind === 'state'}
-          <!-- A state in its declared words; colour only while an I&C limit on it acts. -->
-          <obc-status-indicator class="state" status={cell.inAlarm !== null ? 'alarm' : cell.value.on ? 'active' : 'inactive'} title={cell.pen.described}><span data-text>{cell.value.words}</span></obc-status-indicator>
+          <!-- A state in its declared words; colour only while an I&C limit on it acts; emphasised where it is not its normal state, quiet where it is. -->
+          <obc-status-indicator class="state" status={cell.inAlarm !== null ? 'alarm' : cell.value.deviates ? 'active' : 'inactive'} title={cell.pen.described}><span data-text>{cell.value.words}</span></obc-status-indicator>
         {:else}
           <span class="tag" data-text title={`${cell.pen.name} · ${cell.pen.label}${cell.pen.command ? ' · operator or automation demand, not a measured state' : ''}`}>{cell.name}</span>
           {#if cell.pen.command}<span class="badge">demand</span>{/if}

@@ -88,6 +88,12 @@ export interface ComposedDisplayPen {
   readonly valueKind: 'number' | 'boolean'
   /** How an on/off signal's two states read (state-words.ts). */
   readonly states?: StateTexts
+  /**
+   * The state an on/off signal reads at the Plant's declared operating point:
+   * its normal state, which a faceplate words quietly, the other emphasised
+   * (HMI review of run 26: "Grid LIVE" bold, OFF LINE grey).
+   */
+  readonly normal?: boolean
   /** A valve's position, or its demand, as a fraction of its travel: worded SHUT and OPEN at its ends, as its drawing words it (display-text.ts positionWord). */
   readonly position?: true
   readonly seriesId: string
@@ -502,6 +508,7 @@ const resolvePens = (
       quantity: binding.quantity,
       valueKind: typeof value === 'number' ? 'number' : 'boolean',
       ...(typeof value === 'boolean' ? { states: stateTexts(system.plant.graph, binding, options.within) } : {}),
+      ...(typeof value === 'boolean' && typeof operatingPointReading(system.plant, binding.path) === 'boolean' ? { normal: operatingPointReading(system.plant, binding.path) as boolean } : {}),
       ...(typeof value === 'number' && servesPosition(system.plant.graph, binding) ? { position: true as const } : {}),
       seriesId,
       recorded: options.recordedSeriesIds.has(seriesId),

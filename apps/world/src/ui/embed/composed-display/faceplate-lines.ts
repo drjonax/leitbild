@@ -46,6 +46,12 @@ export type FaceplateValue =
     /** Its declared words for the state it reads ("Rods on bottom", "Grid LIVE"); "—" where none is sampled. */
     readonly words: string
     readonly on: boolean | null
+    /**
+     * Whether it reads other than its normal state, the one it reads at the
+     * Plant's operating point: drawn emphasised, the normal state quiet (HMI
+     * review of run 26: "Grid LIVE" bold and OFF LINE grey said the reverse).
+     */
+    readonly deviates: boolean
   }
 
 /** One value of a row: its pen, how it is written, its limits as read now, and the I&C limit acting on it, if any. */
@@ -190,7 +196,7 @@ const stateWords = (pen: ComposedDisplayPen, raw: unknown): string =>
   typeof raw !== 'boolean' ? '—' : (raw ? pen.states?.on : pen.states?.off) ?? pen.described
 
 const stateValue = (pen: ComposedDisplayPen, raw: unknown): FaceplateValue =>
-  ({ kind: 'state', words: stateWords(pen, raw), on: typeof raw === 'boolean' ? raw : null })
+  ({ kind: 'state', words: stateWords(pen, raw), on: typeof raw === 'boolean' ? raw : null, deviates: typeof raw === 'boolean' && pen.normal !== undefined && raw !== pen.normal })
 
 /** A reading's limit state where it says something: a margin or a limit passed, never "no … limit" filler (ReadoutsPanel's rule). */
 const shownLimit = (reading: TrendReading): Extract<LimitState, { readonly kind: 'margin' | 'past' }> | null => reading.limit?.kind === 'margin' || reading.limit?.kind === 'past' ? reading.limit : null

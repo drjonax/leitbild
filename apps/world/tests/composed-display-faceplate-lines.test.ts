@@ -266,6 +266,16 @@ describe('the rows say what an operator verifies, in the display\'s words', () =
     expect(allWords(at('loss of offsite power +2:30', 'sink'))).toContain('Grid DEAD')
   })
 
+  test('a state reads quiet where it is normal, as at the Plant\'s operating point, and emphasised where it is not', () => {
+    // HMI review of run 26: "Grid LIVE" and "Grid available" were bold, the abnormal OFF LINE grey.
+    const deviates = (shown: Shown): Readonly<Record<string, boolean>> => Object.fromEntries(shown.columns.flatMap(column => column.lines
+      .flatMap(line => line.kind === 'values' ? line.cells.flatMap(cell => cell.value.kind === 'state' ? [[cell.value.words, cell.value.deviates] as const] : []) : [])))
+    expect(deviates(at('turbine trip +2:30', 'sink'))).toMatchObject({ 'OFF LINE': true, 'Grid LIVE': false, 'Grid available': false })
+    expect(Object.values(deviates(at('at power', 'sink'))).every(deviating => !deviating)).toBe(true)
+    expect(deviates(at('loss of offsite power +2:30', 'sink'))).toMatchObject({ 'OFF LINE': true, 'Grid DEAD': true })
+    expect(deviates(at('turbine trip +2:30', 'source'))).toMatchObject({ 'RTB A OPEN': true, 'RTB B OPEN': true, 'Rods on bottom': true })
+  })
+
   test('a rule row names what decides it in the words of each reading its panel resolves', () => {
     for (const shown of [...states.values()].flat()) {
       const named = new Set(shown.panel.pens.flatMap(pen => [pen.states?.on, pen.states?.off, pen.tagId].filter((text): text is string => text !== undefined)))
