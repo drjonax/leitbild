@@ -71,15 +71,15 @@ describe('Recommendation follower', () => {
     })
   }, 60_000)
 
-  test('on halden-border the closing site reroutes the units carrying load, and the 25:00 top-priority call diverts the unit sent to the 24:00 minor call', async () => {
+  test('on halden-border the closing site reroutes the units carrying load, and the 22:30 top-priority call is served within six minutes', async () => {
     const definition = borderDefinitions.scripted
     const [blue] = (definition.sides ?? []).map(side => side.id) as [string]
     const start = borderStart(definition)
     const [scout] = unitsWhere(start, blue, isScout)
     const borderCue = (id: string) => border.timeline.cues.find(entry => entry.id === id)!
-    const [push, closing, minor, late] = [borderCue('red-push-1'), borderCue('site-closes'), borderCue('call-18'), borderCue('call-19')]
+    const [push, closing, late] = [borderCue('red-push-1'), borderCue('site-closes'), borderCue('call-17')]
     const closedSite = (closing.actions[0]!.input as { readonly siteId: string }).siteId
-    const [minorLabel, lateLabel] = [minor, late].map(cue => (cue.actions[0]!.input as { readonly label: string }).label) as [string, string]
+    const lateLabel = (late.actions[0]!.input as { readonly label: string }).label
 
     const run = await openRun({ definition: border })
     try {
@@ -94,7 +94,7 @@ describe('Recommendation follower', () => {
         pulledBack = true
         expect(await run.invoke(ids.recall, { unitId: scout!.id }, actor)).toMatchObject({ ok: true })
       }
-      await follow(run, dispatcher, { untilMs: startMs + (late.at.seconds + 30) * 1_000, stepMs: 5_000, alongside: pullBack })
+      await follow(run, dispatcher, { untilMs: startMs + (late.at.seconds + 6 * 60) * 1_000, stepMs: 5_000, alongside: pullBack })
 
       // Units carrying load to the closing site were released from it at the closure, with their load, and handed it over at another site.
       const unitRecords = run.journal.flatMap((event, index) => {
@@ -112,21 +112,8 @@ describe('Recommendation follower', () => {
         expect(handover?.unit.siteId).not.toBe(closedSite)
       }
 
-      const tasks = new Map(run.run.snapshot().objects.filter(object => object.kind === 'incident').map(object => [object.label, object.id]))
-      const [minorTask, lateTask] = [tasks.get(minorLabel)!, tasks.get(lateLabel)!]
-      const sentToMinor = dispatcher.calls.find(call => (call.input as { to?: { taskId?: string } }).to?.taskId === minorTask)!
-      expect(sentToMinor).toMatchObject({ result: { ok: true } })
-      expect((sentToMinor.input as { divert?: unknown }).divert).toBeUndefined()
-      const unitSent = (sentToMinor.input as { units: string[] }).units[0]!
-      const divert = dispatcher.calls.find(call => (call.input as { divert?: unknown }).divert !== undefined && (call.input as { to?: { taskId?: string } }).to?.taskId === lateTask)
-      expect(divert).toMatchObject({
-        input: { units: [unitSent], to: { taskId: lateTask }, divert: [{ unitId: unitSent, fromTaskId: minorTask }] },
-        result: { ok: true },
-      })
-      expect(dispatcher.calls.indexOf(divert!)).toBeGreaterThan(dispatcher.calls.indexOf(sentToMinor))
-      expect(run.unit(unitSent)).toMatchObject({ taskId: lateTask, lastAction: { verb: 'divert' } })
-      const minorRow = dispatcher.view().workList.rows.find(row => row.label === minorLabel)!
-      expect([minorRow.served, minorRow.alerts.length]).toEqual([false, 1])
+      const lateTask = run.run.snapshot().objects.find(object => object.kind === 'incident' && object.label === lateLabel)!
+      expect(run.task(lateTask.id).closedAtMs).toBeLessThanOrEqual(startMs + (late.at.seconds + 6 * 60) * 1_000)
       expect(dispatcher.calls.every(call => call.result.ok)).toBe(true)
     } finally {
       await run.close()

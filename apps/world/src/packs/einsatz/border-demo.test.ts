@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { geoPointFromLonLat } from '../../core/model/index.ts'
 import type { ScenarioDefinition } from '../../core/scenarios/definition.ts'
 import { startingZoomFor } from '../../ui/map/map-camera.ts'
-import { borderConfig, borderDefinitions, borderRoles, borderStart, isScout, isShooter, ports, sideTypes, timelineOf, unitsWhere } from './fixtures/border-harness.ts'
-import { addToEnd, askThenAddToEnd, commandIds, playDemo, unitVerb, type Beat, type DemoContext, type DemoOutcome, type RedOrder } from './fixtures/border-demo.ts'
+import { borderConfig, borderDefinitions, borderStart, groupOf, isScout, isShooter, sideTypes, timelineOf, unitsWhere } from './fixtures/border-harness.ts'
+import { addToEnd, askThenAddToEnd, commandIds, playDemo, slowedRouting, unitVerb, type Beat, type DemoContext, type DemoOutcome, type RedOrder } from './fixtures/border-demo.ts'
 import { unitTypeOf } from './engine/model.ts'
 import { boardBottomClearancePx, boardEdgeGapPx, boardLayoutFor, boardTopClearancePx } from './ui/board-layout.ts'
 
@@ -12,16 +11,27 @@ import { boardBottomClearancePx, boardEdgeGapPx, boardLayoutFor, boardTopClearan
  * order tapped on the Board of the first preset's screen. The good
  * dispatcher sends each call's first recommendation as it arrives and gives
  * the three orders the beats call for; a Blue that does nothing taps nothing.
- * The objectives are judged from the Run's state.
+ * The objectives are judged from the Run's state, on the direct router and
+ * on slowed routers standing in for road timings.
  */
 
 const definition = borderDefinitions.scripted
 const [blue, red] = (definition.sides ?? []).map(side => side.id) as [string, string]
 const start = borderStart(definition)
 const cue = (id: string) => definition.timeline!.cues.find(entry => entry.id === id)!
-const cueLabel = (id: string): string => (cue(id).actions[0] as { readonly input: { readonly label: string } }).input.label
+const cueInput = (id: string) => cue(id).actions[0]!.type === 'invoke_capability' ? (cue(id).actions[0] as { readonly input: { readonly label?: string; readonly template?: string; readonly loads?: Readonly<Record<string, number>>; readonly at?: { readonly coordinates: readonly [number, number] } } }).input : {}
+const cueLabel = (id: string): string => cueInput(id).label!
 const cueS = (id: string): number => cue(id).at.seconds
 const [scout] = unitsWhere(start, blue, isScout)
+/** The run second by which the first objective wants every call closed: the end of the exercise. */
+const deadlineS = 30 * 60
+/** A Blue group whose units serve the template a cue's call names. */
+const groupServing = (cueId: string): string => {
+  const template = start.catalog.templates.get(cueInput(cueId).template!)!
+  const type = borderConfig(definition).unitTypes.find(entry => sideTypes(definition, blue).has(entry.id)
+    && template.requires.some(requirement => entry.components.service?.provides.includes(requirement.provides) === true))!
+  return groupOf(definition, blue, type.id)
+}
 
 /** The busy unit that provides what a call requires and is furthest on with its task: on scene before under way. */
 const busyServer = (context: DemoContext, taskId: string): string => {
@@ -37,27 +47,36 @@ const busyServer = (context: DemoContext, taskId: string): string => {
 /** The beats a good Blue plays besides the recommendations. */
 const goodBeats: ReadonlyArray<Beat> = [
   // Red pushes onto the screen post: pull the scout back before it is overrun (2 taps).
-  { atS: cueS('red-push-1'), name: 'pull the scout back', act: async ({ screen, units }) => {
+  { atS: cueS('red-push-1'), name: 'pull the scout back', group: groupOf(definition, blue, scout!.unitType), act: async ({ screen, units }) => {
     if (units().find(unit => unit.id === scout!.id)?.integrity !== 'destroyed') await unitVerb(screen, scout!.id, 'recall')
   } },
-  // Two calls, one free unit: the second waits at the end of the busy unit's chain (2 taps).
-  { atS: cueS('call-11'), name: 'add to the end of a chain', act: async context => {
+  // Two calls, no free unit: the second waits at the end of the busy unit's chain (2 taps).
+  { atS: cueS('call-11'), name: 'add to the end of a chain', group: groupServing('call-11'), act: async context => {
     const taskId = context.cueTask('call-11').id
     await addToEnd(context.screen, busyServer(context, taskId), taskId)
   } },
   // The only unit that serves the call is on scene elsewhere: Add to end, not Do now (3 taps).
-  { atS: cueS('call-12'), name: 'do now or add to end', act: async context => {
+  { atS: cueS('call-12'), name: 'do now or add to end', group: groupServing('call-12'), act: async context => {
     const taskId = context.cueTask('call-12').id
     await askThenAddToEnd(context.screen, busyServer(context, taskId), taskId)
   } },
 ]
 
-const untilS = 36 * 60
+const untilS = deadlineS + 60
+const blueWatchers = ['civil-desks', 'blue-military']
+type PlayName = 'good' | 'again' | 'idle' | 'recommendations' | 'road-1.4' | 'road-1.5'
 const plays = new Map<string, Promise<DemoOutcome>>()
-const played = (name: 'good' | 'again' | 'idle'): Promise<DemoOutcome> => {
+const played = (name: PlayName): Promise<DemoOutcome> => {
   const known = plays.get(name)
   if (known !== undefined) return known
-  const outcome = playDemo({ definition, untilS, dispatch: name !== 'idle', beats: name === 'idle' ? [] : goodBeats, watchers: name === 'good' ? ['civil-desks', 'blue-military'] : [] })
+  const factor = name === 'road-1.4' ? 1.4 : name === 'road-1.5' ? 1.5 : undefined
+  const outcome = playDemo({
+    definition, untilS,
+    dispatch: name !== 'idle',
+    beats: name === 'idle' || name === 'recommendations' ? [] : goodBeats,
+    watchers: name === 'idle' ? [] : blueWatchers,
+    ...(factor === undefined ? {} : { routing: slowedRouting(factor) }),
+  })
   plays.set(name, outcome)
   return outcome
 }
@@ -65,21 +84,45 @@ const played = (name: 'good' | 'again' | 'idle'): Promise<DemoOutcome> => {
 /** The four objectives, each judged from the play's record of the Run. */
 const objectives = (outcome: DemoOutcome) => {
   const blueCalls = [...outcome.sides].filter(([, side]) => side === blue).map(([label]) => label)
-  const late = cueLabel('call-19')
+  const late = cueLabel('call-17')
   return {
-    everyCallClosed: blueCalls.every(label => (outcome.closedAtS.get(label) ?? Number.POSITIVE_INFINITY) <= 35 * 60),
-    lateCallReached: (outcome.closedAtS.get(late) ?? Number.POSITIVE_INFINITY) <= cueS('call-19') + 6 * 60,
+    everyCallClosed: blueCalls.every(label => (outcome.closedAtS.get(label) ?? Number.POSITIVE_INFINITY) <= deadlineS),
+    lateCallReached: (outcome.closedAtS.get(late) ?? Number.POSITIVE_INFINITY) <= cueS('call-17') + 6 * 60,
     identifiedBeforePush: (outcome.firstShooterIdentifiedS ?? Number.POSITIVE_INFINITY) < cueS('red-push-1'),
     heldObjective: outcome.stepsLost[red]! >= 4 && outcome.stepsLost[blue]! < 2,
   }
 }
 
+/** The longest stretch, in Run seconds, in which a preset had nothing new to decide, from the start to the deadline. */
+const longestWait = (times: ReadonlyArray<number>): { readonly seconds: number; readonly from: number } => {
+  const seen = [...new Set([0, ...times.filter(atS => atS <= deadlineS), deadlineS])].sort((a, b) => a - b)
+  return seen.slice(1).map((atS, index) => ({ seconds: atS - seen[index]!, from: seen[index]! })).sort((a, b) => b.seconds - a.seconds)[0]!
+}
+
+/** Every task a play left open, with no non-destroyed unit of its side that serves it. */
+const deadTasks = (outcome: DemoOutcome) => outcome.openAtEnd.filter(task => task.servers === 0)
+
 describe('halden-border demo plays', () => {
+  test('the objectives say what the plays judge: every call closed by 30:00, C-17 reached within six minutes', () => {
+    expect(definition.objectives[0]).toContain('30:00')
+    expect(definition.objectives[1]).toContain(cueLabel('call-17').split(' ').slice(0, 2).join(' '))
+    expect(definition.objectives[1]).toContain('six minutes')
+    expect(cueInput('call-17').loads).toEqual({ P1: 1 })
+  })
+
   test('the good dispatcher meets every objective, and no recommended action or beat is ever refused', async () => {
     const outcome = await played('good')
     expect(objectives(outcome)).toEqual({ everyCallClosed: true, lateCallReached: true, identifiedBeforePush: true, heldObjective: true })
     expect(outcome.calls.filter(call => !call.result.ok)).toEqual([])
   }, 120_000)
+
+  for (const name of ['road-1.4', 'road-1.5'] as const) {
+    test(`on a router ${name.slice(5)} times as long and slow as the straight line, as roads are, the good dispatcher still meets every objective`, async () => {
+      const outcome = await played(name)
+      expect(objectives(outcome)).toEqual({ everyCallClosed: true, lateCallReached: true, identifiedBeforePush: true, heldObjective: true })
+      expect(outcome.calls.filter(call => !call.result.ok)).toEqual([])
+    }, 120_000)
+  }
 
   test('a Blue that does nothing fails objectives: the decisions matter', async () => {
     const outcome = await played('idle')
@@ -100,12 +143,13 @@ describe('halden-border demo plays', () => {
     expect([...outcome.createdAtS.keys()].filter(label => !outcome.closedAtS.has(label))).toEqual([])
   }, 120_000)
 
-  test('the good play has its pressure moments: diverts in the burst and at 25:00, a chain step, an Add to end, and the civil and military halves busy at once', async () => {
+  test('a dispatcher who only follows the recommendations leaves no task that no unit of its side could serve', async () => {
+    const outcome = await played('recommendations')
+    expect(deadTasks(outcome)).toEqual([])
+  }, 120_000)
+
+  test('the good play has its pressure moments: an Add to end for two calls and no free car, a Do now or Add to end, and the civil and military halves busy at once', async () => {
     const outcome = await played('good')
-    const diverts = outcome.calls.filter(call => (call.input as { readonly divert?: unknown }).divert !== undefined)
-    // One divert in the burst, between its first call and the grass fire, and one for the 25:00 top-priority call, within a minute.
-    expect(diverts.some(call => call.atS >= cueS('call-7') && call.atS < cueS('call-12'))).toBe(true)
-    expect(diverts.some(call => call.atS >= cueS('call-19') && call.atS < cueS('call-19') + 60)).toBe(true)
     const queued = outcome.calls.filter(call => call.capabilityId.endsWith('.unit.queue'))
     expect(queued.map(call => call.atS)).toEqual([cueS('call-11'), cueS('call-12')])
     // Between Red's push and the end of the burst, both halves of the one-person screen act.
@@ -114,14 +158,52 @@ describe('halden-border demo plays', () => {
     expect(window.filter(call => call.capabilityId.endsWith('.unit.send')).length).toBeGreaterThanOrEqual(4)
   }, 120_000)
 
-  test('each preset\'s screen has something new at least every three and a half minutes until the last call', async () => {
+  test('the fighting reaches the civil desks: a top-priority call beside Objective KNUT arrives in the burst, as Red attacks, and a carrier reaches it', async () => {
     const outcome = await played('good')
-    const lastCallS = cueS('call-19')
-    for (const [preset, times] of Object.entries(outcome.logTimes)) {
-      const seen = [0, ...times.filter(atS => atS <= lastCallS), lastCallS]
-      const gaps = seen.slice(1).map((atS, index) => atS - seen[index]!)
-      expect(Math.max(...gaps), `${preset}: ${JSON.stringify(seen)}`).toBeLessThanOrEqual(210)
+    const farm = cueInput('call-9')
+    const knut = (definition.packs[0]!.items.find(item => item.id === 'site:knut') as unknown as { readonly position: readonly [number, number] }).position
+    const [east, north] = farm.at!.coordinates
+    const distanceM = Math.hypot((east - knut[0]) * 111_320 * Math.cos(north * Math.PI / 180), (north - knut[1]) * 110_540)
+    expect(distanceM).toBeLessThan(1_000)
+    expect(farm.loads).toEqual({ P1: 1 })
+    expect(cueS('call-9')).toBeGreaterThanOrEqual(cueS('red-attack-1'))
+    expect(cueS('call-9')).toBeLessThan(cueS('call-12'))
+    expect(outcome.closedAtS.get(cueLabel('call-9'))).toBeLessThanOrEqual(deadlineS)
+  }, 120_000)
+
+  test('each Blue unit that arrives by cue is the first recommendation for the call that comes with it, and serves it', async () => {
+    const outcome = await played('good')
+    const arrivals = timelineOf(definition).filter(order => order.capabilityId === commandIds.unitCreate && (order.input as { readonly side: string }).side === blue)
+    const serves = (typeId: string, templateId: string) => start.catalog.templates.get(templateId)!.requires
+      .some(requirement => borderConfig(definition).unitTypes.find(type => type.id === typeId)!.components.service?.provides.includes(requirement.provides) === true)
+    // A call that comes with an arrival: one its type serves, in the same half minute.
+    const withCall = arrivals.flatMap(arrival => {
+      const call = timelineOf(definition).find(order => order.capabilityId === commandIds.taskCreate && order.atS >= arrival.atS && order.atS <= arrival.atS + 30
+        && (order.input as { readonly side: string }).side === blue && serves((arrival.input as { readonly type: string }).type, (order.input as { readonly template: string }).template))
+      return call === undefined ? [] : [{ unit: (arrival.input as { readonly label: string }).label, call: (call.input as { readonly label: string }).label }]
+    })
+    expect(withCall.length).toBeGreaterThanOrEqual(2)
+    for (const { unit, call } of withCall) {
+      const sent = outcome.calls.find(entry => entry.capabilityId === commandIds.send && (entry.input as { readonly to?: { readonly taskId?: string } }).to?.taskId === outcome.taskIds.get(call))
+      expect([call, (sent?.input as { readonly units?: ReadonlyArray<string> } | undefined)?.units]).toEqual([call, [outcome.unitIds.get(unit)!]])
+      expect(outcome.closedAtS.has(call)).toBe(true)
     }
+  }, 120_000)
+
+  test('each preset has something new to decide at least every three and a half minutes until the deadline: a newly unserved call, or a beat for one of its groups', async () => {
+    for (const name of ['good', 'road-1.5'] as const) {
+      const outcome = await played(name)
+      expect(Object.keys(outcome.decisions).sort()).toEqual([definition.rolePresets![0]!.id, ...blueWatchers].sort())
+      for (const [preset, times] of Object.entries(outcome.decisions)) {
+        const wait = longestWait(times)
+        expect([name, preset, wait.seconds <= 210 ? 'ok' : `waits ${wait.seconds} s from ${wait.from} s`]).toEqual([name, preset, 'ok'])
+      }
+    }
+  }, 120_000)
+
+  test('a unit that serves each call can reach it within eight minutes from where the units stand when it comes in, and Blue\'s within five', async () => {
+    const outcome = await played('good')
+    for (const [label, seconds] of outcome.reachS) expect([label, seconds <= 5 * 60 ? 'ok' : `${seconds} s`]).toEqual([label, 'ok'])
   }, 120_000)
 })
 
@@ -185,19 +267,39 @@ describe('halden-border Definitions as demos', () => {
       expect(how).toContain('role chip')
       expect(how).toMatch(/\bTap\b/)
       expect(how).toContain('+ on')
+      expect(how).toContain(configOf(source).lexicon.send!)
       expect(source.objectives.length).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  test('the scripted exercise says Red is not for players there, and its Red groups say they are scripted', () => {
+    const description = definition.description!
+    expect(description).toContain('Red is scripted here')
+    expect(description).toContain(`"${borderDefinitions.humanRed.title}"`)
+    expect(configOf(definition).groups.filter(group => group.side === red).every(group => group.label.endsWith('(scripted)'))).toBe(true)
+    expect(configOf(borderDefinitions.humanRed).groups.some(group => group.label.includes('scripted'))).toBe(false)
+  })
+
+  test('no two units and no two calls of a Definition share a label, so each side names its own', () => {
+    for (const source of definitions) {
+      for (const [kind, create] of [['unit', commandIds.unitCreate], ['task', commandIds.taskCreate]] as const) {
+        const labels = [
+          ...source.packs[0]!.items.filter(item => (item as { readonly type: string }).type === kind).map(item => item.label),
+          ...timelineOf(source).filter(order => order.capabilityId === create).map(order => (order.input as { readonly label: string }).label),
+        ]
+        expect([source.id, kind, labels.filter((label, index) => labels.indexOf(label) !== index)]).toEqual([source.id, kind, []])
+      }
     }
   })
 
   test('the presets after the one-person bundle split Blue by the categories its groups read under in the groups dialog', () => {
     for (const source of definitions) {
-      const roles = borderRoles(source)
       const groupsOf = (category: string) => configOf(source).groups.filter(group => group.side === blue && group.category === category).map(group => `group:${group.id}`)
       const categories = [...new Set(configOf(source).groups.filter(group => group.side === blue).map(group => group.category))]
       expect(categories.length).toBe(2)
       const [, first, second] = source.rolePresets!
       expect([first!.roles, second!.roles]).toEqual(categories.map(groupsOf))
-      expect(roles.filter(role => role.class === 'controller').length).toBe(1)
+      expect((source.roles ?? []).filter(role => role.class === 'controller').length).toBe(1)
     }
   })
 
@@ -236,36 +338,9 @@ describe('halden-border Definitions as demos', () => {
       }
     }
   })
-
-  test('a unit that can serve each of Blue\'s calls reaches it within eight minutes from where the units start, on the headless router', async () => {
-    for (const source of definitions) {
-      const state = borderStart(source)
-      const config = configOf(source)
-      const tasks = [
-        ...source.packs[0]!.items.flatMap(item => (item as { readonly type: string; readonly side?: string }).type === 'task' && (item as { readonly side?: string }).side === blue
-          ? [item as unknown as { readonly template: string; readonly loads?: Readonly<Record<string, number>>; readonly position: readonly [number, number]; readonly label: string }] : []),
-        ...timelineOf(source).flatMap(order => {
-          const input = order.input as { readonly side?: string; readonly template?: string; readonly loads?: Readonly<Record<string, number>>; readonly at?: { readonly coordinates: [number, number] }; readonly label?: string }
-          return order.capabilityId === commandIds.taskCreate && input.side === blue ? [{ template: input.template!, loads: input.loads, position: input.at!.coordinates, label: input.label! }] : []
-        }),
-      ]
-      for (const task of tasks) {
-        const template = config.taskTemplates.find(entry => entry.id === task.template)!
-        const servers = unitsWhere(state, blue, type => template.requires.some(requirement => type.components.service?.provides.includes(requirement.provides) === true)
-          || type.components.carry?.classes.some(carried => Object.keys(task.loads ?? {}).includes(carried)) === true)
-        const minutes = await Promise.all(servers.map(async unit => {
-          const mobility = unitTypeOf(state.catalog, unit).components.mobility!
-          const route = await ports.routing.route({ from: state.motion.get(unit.id)!.point, to: geoPointFromLonLat(task.position[0], task.position[1]) })
-          const travelS = mobility.mode === 'direct' ? route.distanceM / mobility.speedMps : route.durationSeconds / mobility.speedFactor
-          return (mobility.mobilizeS + travelS) / 60
-        }))
-        expect([source.id, task.label, Math.min(...minutes) <= 8]).toEqual([source.id, task.label, true])
-      }
-    }
-  })
 })
 
-/** Red's cautious plan, given on Red's own roles: scout and ambush at 5:00, onto the screen post at 11:00, the attack at 13:00, the reserve at 22:00. */
+/** Red's cautious plan, given on Red's own roles: the scripted column's moves to its ambush and onto the heights. */
 const scriptedRedMoves = (): ReadonlyArray<RedOrder> => timelineOf(definition)
   .filter(order => order.capabilityId === commandIds.send && (order.input as { readonly units: ReadonlyArray<string> }).units.every(unitId => start.units.get(unitId)?.side === red))
   .map(order => ({ atS: order.atS, capabilityId: order.capabilityId, input: order.input }))
@@ -283,35 +358,48 @@ describe('halden-border with Red played by a person', () => {
   const knut = attack.point.coordinates
   const send = (atS: number, units: ReadonlyArray<string>, to: unknown): RedOrder => ({ atS, capabilityId: commandIds.send, input: { units, to } })
   const besideKnut = (east: number) => ({ point: { type: 'Point', coordinates: [knut[0] + east, knut[1] - 0.001] } })
+  const attackers = humanStart.catalog.templates.get(attack.template)!.requires[0]!.count
 
-  /** The cautious plan: the scripted column's moves, with the attack given as Red's own call. */
+  /** The cautious plan: the scripted column's moves to its ambush and the heights, then the attack as Red's own call. */
   const cautious: ReadonlyArray<RedOrder> = [
     ...scriptedRedMoves().filter(order => order.atS < cueS('red-attack-1')),
-    send(cueS('red-attack-1'), shooters.slice(0, 2), { taskId: attack.id }),
+    send(cueS('red-attack-1'), shooters.slice(0, attackers), { taskId: attack.id }),
   ]
-  /** All in at once: the scout to its call, two shooters to the attack and two beside KNUT, and the fourth onto the attack at 10:00. */
+  /** All in at once: the scout to its call, a shooter to the attack and the rest beside KNUT; at 9:00 a healthy free shooter joins the attack. */
   const rush: ReadonlyArray<RedOrder> = [
     send(30, scouts, { taskId: scouting.id }),
-    send(30, shooters.slice(0, 2), { taskId: attack.id }),
-    send(30, [shooters[2]!], besideKnut(0.0006)),
-    send(30, [shooters[3]!], besideKnut(0.004)),
-    send(600, [shooters[3]!], { taskId: attack.id }),
+    send(30, shooters.slice(0, attackers), { taskId: attack.id }),
+    ...shooters.slice(attackers, 4).map((unitId, index) => send(30, [unitId], besideKnut([-0.0006, 0.0006, 0.004][index]!))),
+    { atS: 540, capabilityId: commandIds.send, input: ({ units }: DemoContext) => ({
+      units: units().filter(unit => shooters.includes(unit.id) && unit.integrity === 'healthy' && unit.taskId === undefined).map(unit => unit.id).slice(0, attackers),
+      to: { taskId: attack.id },
+    }) },
   ]
-  const blueBeats = goodBeats
   const humanPlays = new Map<string, Promise<DemoOutcome>>()
-  const humanPlay = (name: 'cautious' | 'rush'): Promise<DemoOutcome> => {
+  const humanPlay = (name: 'cautious' | 'rush' | 'calls'): Promise<DemoOutcome> => {
     const known = humanPlays.get(name)
     if (known !== undefined) return known
-    const outcome = playDemo({ definition: human, untilS: 30 * 60, dispatch: true, beats: blueBeats, red: name === 'cautious' ? cautious : rush })
+    const outcome = playDemo({
+      definition: human, untilS: deadlineS, dispatch: true, beats: goodBeats,
+      red: name === 'cautious' ? cautious : name === 'rush' ? rush : [],
+      redDispatch: name === 'calls',
+      watchers: [...blueWatchers, human.rolePresets!.at(-1)!.id],
+    })
     humanPlays.set(name, outcome)
     return outcome
   }
+
+  test('Red\'s calls start close enough to reach in a few minutes: Red begins on the border road and its attack is a call from the start', () => {
+    expect(human.rolePresets!.at(-1)!.roles.every(role => configOf(human).groups.some(group => `group:${group.id}` === role && group.side === red))).toBe(true)
+    expect(attack.closedAtMs).toBeUndefined()
+    expect(attackers).toBe(1)
+  })
 
   test('a cautious Red that waits in ambush and then attacks loses its column to Blue\'s good play, and KNUT holds', async () => {
     const outcome = await humanPlay('cautious')
     expect(outcome.closedAtS.has(attack.label)).toBe(false)
     expect(outcome.stepsLost[red]!).toBeGreaterThan(outcome.stepsLost[blue]!)
-    // The plan's later orders to a unit Blue has destroyed are refused as such, as the scripted column's are.
+    // The plan's later orders to a unit Blue has destroyed are refused as such.
     expect(outcome.redRefusals.filter(reason => !reason.includes('unit_unavailable'))).toEqual([])
     expect(outcome.calls.filter(call => !call.result.ok)).toEqual([])
   }, 120_000)
@@ -323,4 +411,34 @@ describe('halden-border with Red played by a person', () => {
     expect(outcome.redRefusals).toEqual([])
     expect(outcome.calls.filter(call => !call.result.ok)).toEqual([])
   }, 120_000)
+
+  test('a Red that sends each call\'s first recommendation as it comes is never refused, and loses more steps than Blue', async () => {
+    const outcome = await humanPlay('calls')
+    expect(outcome.redCalls.length).toBeGreaterThan(5)
+    expect(outcome.redCalls.filter(call => !call.result.ok)).toEqual([])
+    expect(outcome.calls.filter(call => !call.result.ok)).toEqual([])
+    expect(outcome.stepsLost[red]!).toBeGreaterThan(outcome.stepsLost[blue]!)
+  }, 120_000)
+
+  test('no Blue task is left open without a non-destroyed unit of its side to serve it, and a side that keeps its force can serve every call it gets', async () => {
+    for (const name of ['cautious', 'rush', 'calls'] as const) expect([name, deadTasks(await humanPlay(name)).filter(task => task.side === blue)]).toEqual([name, []])
+    // Both sides keep a force against a cautious Red: every call of either side comes in with a unit to serve it, and none is left without one.
+    const cautiousPlay = await humanPlay('cautious')
+    expect([...cautiousPlay.reachS].filter(([, seconds]) => !Number.isFinite(seconds)).map(([label]) => label)).toEqual([])
+    expect(deadTasks(cautiousPlay)).toEqual([])
+    // A side wiped out of a kind of unit has lost: the rush leaves Blue's military calls waiting for the reinforcement at 24:00, the Red that follows every call loses its shooters with their calls open.
+    expect(deadTasks(await humanPlay('rush'))).toEqual([])
+  }, 240_000)
+
+  test('Red has something new to decide at least every three and a half minutes until the deadline, and every Red call can be reached within eight minutes', async () => {
+    const redPreset = human.rolePresets!.at(-1)!.id
+    for (const name of ['cautious', 'rush', 'calls'] as const) {
+      const wait = longestWait((await humanPlay(name)).decisions[redPreset]!)
+      expect([name, wait.seconds <= 210 ? 'ok' : `waits ${wait.seconds} s from ${wait.from} s`]).toEqual([name, 'ok'])
+    }
+    const outcome = await humanPlay('calls')
+    const redCalls = [...outcome.reachS].filter(([label]) => outcome.sides.get(label) === red)
+    expect(redCalls.length).toBeGreaterThan(8)
+    for (const [label, seconds] of redCalls) expect([label, seconds <= 8 * 60 ? 'ok' : `${seconds} s`]).toEqual([label, 'ok'])
+  }, 240_000)
 })

@@ -95,19 +95,32 @@ describe('halden-border plays', () => {
     const human = borderDefinitions.humanRed
     expect(human.rolePresets?.slice(0, 3)).toEqual(definition.rolePresets)
     expect(human.rolePresets?.slice(3).map(preset => preset.roles)).toEqual([sideGroups(red)])
-    // Human Red gets Red's orders as its own calls instead of the scripted moves; Blue's timeline is the same.
+    // Human Red gets Red's orders as its own calls, and its reinforcements, instead of the scripted moves; Blue's timeline is the same.
     const redUnits = new Set(unitsWhere(start, red, () => true).map(unit => unit.id))
     const movesRed = (order: TimedOrder): boolean => order.capabilityId === ids.send && (order.input as { readonly units: ReadonlyArray<string> }).units.every(unitId => redUnits.has(unitId))
-    expect(timelineOf(human)).toEqual(timelineOf(definition).filter(order => !movesRed(order)))
+    const redOwn = (order: TimedOrder): boolean => (order.input as { readonly side?: string }).side === red
+    expect(timelineOf(human).filter(order => !redOwn(order))).toEqual(timelineOf(definition).filter(order => !movesRed(order)))
+    expect(new Set(timelineOf(human).filter(redOwn).map(order => order.capabilityId))).toEqual(new Set([ids.taskCreate, ids.unitCreate]))
+    expect(timelineOf(definition).filter(redOwn)).toEqual([])
     expect(new Set(timelineOf(definition).filter(movesRed).flatMap(order => (order.input as { readonly units: ReadonlyArray<string> }).units))).toEqual(redUnits)
     const humanStart = borderStart(human)
     expect([...start.tasks.values()].every(task => task.side === blue)).toBe(true)
     expect([...humanStart.tasks.values()].filter(task => task.side !== blue).map(task => task.side)).toEqual([red, red])
-    const itemsOf = (source: typeof definition) => source.packs[0]!.items.filter(item => (item as { readonly side?: string }).side !== red || (item as { readonly type?: string }).type !== 'task')
-    expect(itemsOf(human)).toEqual(itemsOf(definition))
+    // Blue's items are the same; human Red starts with the same units, assembled further forward on the border road.
+    const sideItems = (source: typeof definition, side: string) => source.packs[0]!.items.filter(item => (item as { readonly side?: string }).side === side)
+    const publicItems = (source: typeof definition) => source.packs[0]!.items.filter(item => (item as { readonly side?: string }).side === undefined)
+    expect(sideItems(human, blue)).toEqual(sideItems(definition, blue))
+    expect(publicItems(human)).toEqual(publicItems(definition))
+    const withoutPosition = (items: ReadonlyArray<unknown>) => items.map(item => ({ ...(item as Record<string, unknown>), position: undefined }))
+    expect(withoutPosition(sideItems(human, red).filter(item => (item as { readonly type: string }).type === 'unit'))).toEqual(withoutPosition(sideItems(definition, red)))
     const { id: _humanId, title: _humanTitle, description: _humanDescription, objectives: _humanObjectives, timeline: _humanTimeline, rolePresets: _humanPresets, packs: humanPacks, ...humanRest } = human
     const { id: _id, title: _title, description: _description, objectives: _objectives, timeline: _timeline, rolePresets: _presets, packs, ...scriptedRest } = definition
-    expect(humanPacks.map(pack => pack.config)).toEqual(packs.map(pack => pack.config))
+    // The configuration is the same but for the scripted exercise's word that Red's groups are scripted.
+    const unscripted = (config: unknown) => {
+      const parsed = config as { readonly groups: ReadonlyArray<{ readonly label: string }> }
+      return { ...parsed, groups: parsed.groups.map(group => ({ ...group, label: group.label.replace(' (scripted)', '') })) }
+    }
+    expect(humanPacks.map(pack => pack.config)).toEqual(packs.map(pack => unscripted(pack.config)))
     expect(humanRest).toEqual(scriptedRest)
   })
 
