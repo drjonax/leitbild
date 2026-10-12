@@ -1,0 +1,399 @@
+{
+  "id": "halden-emergency",
+  "title": "Halden emergency desk",
+  "description": "A fictional 33-minute emergency dispatch exercise in Halden, for one dispatcher or two side by side. A call comes in every minute or two: falls, chest pain and a cardiac arrest for four road ambulances and an air ambulance; crashes, a fight and a break-in for three patrol cars; kitchen, grass and car fires for two fire engines, one of which carries too little water for a building fire. Twice the desk must choose: the Torget fight needs two patrol cars while one is on its way to a fallen tree, and a car catches fire beside the kitchen fire Engine 1 is about to finish. Places, calls, crews and timings are invented for the exercise and make no claim about real services. How to play: tap a call to see its suggested unit, then tap the suggestion to dispatch it; a divert asks you to confirm. Or tap one of your units to highlight it, then tap a call on the map; a busy unit asks Do now or Add to end. The + on a unit adds the next call you tap to the end of its job chain. With two dispatchers, each opens the groups dialog from the role chip and picks the Ambulance desk or the Police and fire desk.",
+  "objectives": [
+    "Get a unit on scene at every top-priority (P1) call within 8 minutes of the call.",
+    "Get a fire engine to the guest harbour car fire within 4 minutes of the call.",
+    "Close every call by 33:00."
+  ],
+  "world": {"startsAt": "2026-09-03T18:00:00.000Z", "environment": {"city": "Halden", "model": "Fictional emergency dispatch exercise; no real patient data"}},
+  "view": {"map": {"center": [11.3985, 59.1275], "zoom": 12.4}},
+  "roles": [{"id": "controller", "label": "Controller", "class": "controller"}],
+  "rolePresets": [
+    {"id": "all-desks", "label": "All desks (one dispatcher)", "roles": ["group:ambulance", "group:air-ambulance", "group:police", "group:fire"]},
+    {"id": "ambulance-desk", "label": "Ambulance desk", "roles": ["group:ambulance", "group:air-ambulance"]},
+    {"id": "police-fire-desk", "label": "Police and fire desk", "roles": ["group:police", "group:fire"]}
+  ],
+  "packs": [
+    {
+      "id": "einsatz",
+      "config": {
+        "lexicon": {"workList": "Calls", "unitBoard": "Units", "noWork": "No calls waiting", "send": "Dispatch", "hold": "Stop", "on-task": "On scene", "at-site": "Handing over"},
+        "loadClasses": [
+          {"id": "acute", "label": "Acute", "code": "P1", "noun": {"one": "patient", "other": "patients"}},
+          {"id": "urgent", "label": "Urgent", "code": "P2", "noun": {"one": "patient", "other": "patients"}},
+          {"id": "routine", "label": "Non-urgent", "code": "P3", "noun": {"one": "patient", "other": "patients"}}
+        ],
+        "unitTypes": [
+          {
+            "id": "ambulance",
+            "label": "Ambulance",
+            "icon": "ambulance",
+            "tags": ["medical"],
+            "components": {
+              "mobility": {"mode": "road", "mobilizeS": 60},
+              "service": {"provides": ["patient-care"], "onSceneS": 180},
+              "carry": {"capacity": 1, "classes": ["acute", "urgent", "routine"]}
+            },
+            "standingOrders": {"deliver": "nearest-accepting", "return": {"afterIdleS": 60}}
+          },
+          {
+            "id": "air-ambulance",
+            "label": "Air ambulance",
+            "icon": "helicopter",
+            "tags": ["medical"],
+            "components": {
+              "mobility": {"mode": "direct", "speedMps": 60, "mobilizeS": 240},
+              "service": {"provides": ["patient-care"], "onSceneS": 180},
+              "carry": {"capacity": 2, "classes": ["acute", "urgent", "routine"]}
+            },
+            "standingOrders": {"deliver": "nearest-accepting", "return": {"afterIdleS": 60}}
+          },
+          {
+            "id": "patrol-car",
+            "label": "Patrol car",
+            "icon": "car",
+            "tags": ["police"],
+            "components": {"mobility": {"mode": "road"}, "service": {"provides": ["policing"], "onSceneS": 300}},
+            "standingOrders": {"return": {"afterIdleS": 60}}
+          },
+          {
+            "id": "fire-engine",
+            "label": "Fire engine",
+            "icon": "fire-extinguisher",
+            "tags": ["fire"],
+            "components": {"mobility": {"mode": "road", "speedFactor": 0.8, "mobilizeS": 60}, "service": {"provides": ["fire-suppression"], "onSceneS": 480}},
+            "properties": [{"id": "waterL", "label": "Water", "kind": "number", "unit": "l", "min": 0, "max": 10000, "default": 3000, "board": true}],
+            "standingOrders": {"return": {"afterIdleS": 60}}
+          },
+          {
+            "id": "clinic",
+            "label": "Emergency clinic",
+            "icon": "hospital",
+            "public": true,
+            "components": {"receiving": {"accepts": ["acute", "urgent", "routine"], "slots": 2, "handoverS": 180, "accepting": true}}
+          },
+          {
+            "id": "triage-post",
+            "label": "Triage post",
+            "icon": "house-plus",
+            "public": true,
+            "components": {"receiving": {"accepts": ["urgent", "routine"], "slots": 2, "handoverS": 120, "accepting": true}}
+          }
+        ],
+        "taskTemplates": [
+          {"id": "medical", "label": "Medical call", "icon": "heart-pulse"},
+          {
+            "id": "road-accident",
+            "label": "Road accident",
+            "icon": "car-front",
+            "priorityClass": "urgent",
+            "requires": [{"provides": "policing", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]
+          },
+          {
+            "id": "public-order",
+            "label": "Public order",
+            "icon": "siren",
+            "priorityClass": "urgent",
+            "requires": [{"provides": "policing", "count": 2, "label": {"one": "patrol car", "other": "patrol cars"}}]
+          },
+          {
+            "id": "road-hazard",
+            "label": "Road hazard",
+            "icon": "traffic-cone",
+            "priorityClass": "routine",
+            "requires": [{"provides": "policing", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]
+          },
+          {
+            "id": "police-call",
+            "label": "Police call",
+            "icon": "shield-alert",
+            "priorityClass": "urgent",
+            "requires": [{"provides": "policing", "count": 1, "label": {"one": "patrol car", "other": "patrol cars"}}]
+          },
+          {
+            "id": "building-fire",
+            "label": "Building fire",
+            "icon": "flame",
+            "priorityClass": "acute",
+            "requires": [{"provides": "fire-suppression", "count": 1, "label": {"one": "fire engine", "other": "fire engines"}, "where": [{"property": "waterL", "atLeast": 2000}]}]
+          },
+          {
+            "id": "outdoor-fire",
+            "label": "Outdoor fire",
+            "icon": "flame-kindling",
+            "priorityClass": "urgent",
+            "requires": [{"provides": "fire-suppression", "count": 1, "label": {"one": "fire engine", "other": "fire engines"}, "where": [{"property": "waterL", "atLeast": 1000}]}]
+          }
+        ],
+        "groups": [
+          {"id": "ambulance", "label": "Ambulances", "category": "Medical"},
+          {"id": "air-ambulance", "label": "Air ambulance", "category": "Medical"},
+          {"id": "police", "label": "Patrol cars", "category": "Police"},
+          {"id": "fire", "label": "Fire engines", "category": "Fire and rescue"}
+        ]
+      },
+      "items": [
+        {"type": "unit", "id": "site:halden-clinic", "label": "Halden emergency clinic — exercise", "unitType": "clinic", "position": [11.384, 59.121]},
+        {"type": "unit", "id": "site:remmen-triage", "label": "Remmen triage post — exercise", "unitType": "triage-post", "position": [11.41, 59.138]},
+        {"type": "unit", "id": "unit:amb-1", "label": "A1", "unitType": "ambulance", "group": "ambulance", "position": [11.392, 59.126]},
+        {"type": "unit", "id": "unit:amb-2", "label": "A2", "unitType": "ambulance", "group": "ambulance", "position": [11.392, 59.126]},
+        {"type": "unit", "id": "unit:amb-3", "label": "A3", "unitType": "ambulance", "group": "ambulance", "position": [11.405, 59.142]},
+        {"type": "unit", "id": "unit:amb-4", "label": "A4", "unitType": "ambulance", "group": "ambulance", "position": [11.437, 59.128]},
+        {"type": "unit", "id": "unit:air-1", "label": "H1", "unitType": "air-ambulance", "group": "air-ambulance", "position": [11.43, 59.108]},
+        {"type": "unit", "id": "unit:patrol-1", "label": "Patrol 1", "unitType": "patrol-car", "group": "police", "position": [11.388, 59.124]},
+        {"type": "unit", "id": "unit:patrol-2", "label": "Patrol 2", "unitType": "patrol-car", "group": "police", "position": [11.388, 59.124]},
+        {"type": "unit", "id": "unit:patrol-3", "label": "Patrol 3", "unitType": "patrol-car", "group": "police", "position": [11.43, 59.131]},
+        {"type": "unit", "id": "unit:engine-1", "label": "Engine 1", "unitType": "fire-engine", "group": "fire", "position": [11.395, 59.122]},
+        {
+          "type": "unit",
+          "id": "unit:engine-2",
+          "label": "Engine 2",
+          "unitType": "fire-engine",
+          "group": "fire",
+          "position": [11.365, 59.142],
+          "properties": {"waterL": 1500}
+        },
+        {"type": "task", "id": "task:tistedal-fall", "label": "C-1 Tistedal fall", "template": "medical", "position": [11.442, 59.124], "loads": {"urgent": 1}}
+      ]
+    }
+  ],
+  "timeline": {
+    "cues": [
+      {
+        "id": "busterud-crash",
+        "at": {"kind": "after_scenario_start", "seconds": 40},
+        "title": "A car hits a cyclist at Busterud",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "road-accident", "label": "C-2 Busterud crash", "at": {"type": "Point", "coordinates": [11.36, 59.133]}, "loads": {"urgent": 1}}
+          }
+        ]
+      },
+      {
+        "id": "guest-harbour-fire",
+        "at": {"kind": "after_scenario_start", "seconds": 150},
+        "title": "Kitchen fire at the guest harbour",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "building-fire", "label": "C-3 Guest harbour kitchen fire", "at": {"type": "Point", "coordinates": [11.389, 59.1205]}}
+          }
+        ]
+      },
+      {
+        "id": "rodsberg-ankle",
+        "at": {"kind": "after_scenario_start", "seconds": 240},
+        "title": "A hiker twists an ankle at Rødsberg",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-4 Rødsberg ankle", "at": {"type": "Point", "coordinates": [11.41, 59.113]}, "loads": {"routine": 1}}
+          }
+        ]
+      },
+      {
+        "id": "fortress-chest-pain",
+        "at": {"kind": "after_scenario_start", "seconds": 330},
+        "title": "A visitor with chest pain at the fortress",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-5 Fortress chest pain", "at": {"type": "Point", "coordinates": [11.398, 59.117]}, "loads": {"acute": 1}}
+          }
+        ]
+      },
+      {
+        "id": "tree-on-road",
+        "at": {"kind": "after_scenario_start", "seconds": 390},
+        "title": "A tree falls across the road near Busterud",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "road-hazard", "label": "C-6 Tree on the road", "at": {"type": "Point", "coordinates": [11.355, 59.139]}}
+          }
+        ]
+      },
+      {
+        "id": "torget-fight",
+        "at": {"kind": "after_scenario_start", "seconds": 450},
+        "title": "A fight breaks out at Torget",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "public-order", "label": "C-7 Torget fight", "at": {"type": "Point", "coordinates": [11.387, 59.124]}}
+          }
+        ]
+      },
+      {
+        "id": "os-fall",
+        "at": {"kind": "after_scenario_start", "seconds": 540},
+        "title": "An elderly man falls at Os",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-8 Os fall", "at": {"type": "Point", "coordinates": [11.4, 59.112]}, "loads": {"routine": 1}}
+          }
+        ]
+      },
+      {
+        "id": "harbour-car-fire",
+        "at": {"kind": "after_scenario_start", "seconds": 660},
+        "title": "A car catches fire beside the harbour kitchen fire",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "outdoor-fire", "label": "C-9 Guest harbour car fire", "at": {"type": "Point", "coordinates": [11.387, 59.1195]}}
+          }
+        ]
+      },
+      {
+        "id": "mall-shoplifter",
+        "at": {"kind": "after_scenario_start", "seconds": 750},
+        "title": "A shoplifter held at the mall",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "police-call", "label": "C-10 Mall shoplifter", "at": {"type": "Point", "coordinates": [11.395, 59.13]}}
+          }
+        ]
+      },
+      {
+        "id": "tosterod-grass-fire",
+        "at": {"kind": "after_scenario_start", "seconds": 810},
+        "title": "A grass fire at Tosterød",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "outdoor-fire", "label": "C-11 Tosterød grass fire", "at": {"type": "Point", "coordinates": [11.358, 59.147]}}
+          }
+        ]
+      },
+      {
+        "id": "sauoy-cut",
+        "at": {"kind": "after_scenario_start", "seconds": 840},
+        "title": "A cut hand at Sauøy",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-12 Sauøy cut hand", "at": {"type": "Point", "coordinates": [11.365, 59.115]}, "loads": {"routine": 1}}
+          }
+        ]
+      },
+      {
+        "id": "tistedal-arrest",
+        "at": {"kind": "after_scenario_start", "seconds": 900},
+        "title": "Cardiac arrest in Tistedal",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-13 Tistedal cardiac arrest", "at": {"type": "Point", "coordinates": [11.435, 59.133]}, "loads": {"acute": 1}}
+          }
+        ]
+      },
+      {
+        "id": "rv21-crash",
+        "at": {"kind": "after_scenario_start", "seconds": 1020},
+        "title": "Two cars collide on Rv 21",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "road-accident", "label": "C-14 Rv 21 collision", "at": {"type": "Point", "coordinates": [11.425, 59.138]}, "loads": {"urgent": 1}}
+          }
+        ]
+      },
+      {
+        "id": "gimle-fever",
+        "at": {"kind": "after_scenario_start", "seconds": 1140},
+        "title": "A child with a high fever at Gimle",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-15 Gimle fever", "at": {"type": "Point", "coordinates": [11.372, 59.13]}, "loads": {"urgent": 1}}
+          }
+        ]
+      },
+      {
+        "id": "loose-cows",
+        "at": {"kind": "after_scenario_start", "seconds": 1230},
+        "title": "Cows loose on the road at Torpum",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "road-hazard", "label": "C-16 Cows on the road", "at": {"type": "Point", "coordinates": [11.44, 59.115]}}
+          }
+        ]
+      },
+      {
+        "id": "kiosk-break-in",
+        "at": {"kind": "after_scenario_start", "seconds": 1320},
+        "title": "A break-in at a kiosk",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "police-call", "label": "C-17 Kiosk break-in", "at": {"type": "Point", "coordinates": [11.405, 59.12]}}
+          }
+        ]
+      },
+      {
+        "id": "station-allergy",
+        "at": {"kind": "after_scenario_start", "seconds": 1410},
+        "title": "An allergic reaction at the railway station",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-18 Station allergic reaction", "at": {"type": "Point", "coordinates": [11.388, 59.128]}, "loads": {"urgent": 1}}
+          }
+        ]
+      },
+      {
+        "id": "harbour-steps-fall",
+        "at": {"kind": "after_scenario_start", "seconds": 1560},
+        "title": "A fall on the harbour steps",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "medical", "label": "C-19 Harbour steps fall", "at": {"type": "Point", "coordinates": [11.386, 59.1215]}, "loads": {"routine": 1}}
+          }
+        ]
+      },
+      {
+        "id": "exercise-end",
+        "at": {"kind": "after_scenario_start", "seconds": 1980},
+        "title": "End of the exercise",
+        "actions": [
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "exercise-end",
+              "title": "End of the exercise",
+              "message": "33:00: the exercise is over. Check the objectives: every P1 call reached within 8 minutes, a fire engine at the harbour car fire within 4, and every call closed.",
+              "dismissible": true,
+              "tone": "update"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

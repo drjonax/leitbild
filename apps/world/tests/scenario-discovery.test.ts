@@ -8,6 +8,7 @@ describe('bundled scenario discovery', () => {
   test('ships editable physical examples and one live Norway observation scenario', () => {
     expect(builtinScenarioDefinitions.map(source => source.id)).toEqual([
       'halden-dispatch',
+      'halden-emergency',
       'halden-offsite-power-restoration',
       'halden-power-complex',
       'halden-weather-response',
@@ -22,7 +23,7 @@ describe('bundled scenario discovery', () => {
     for (const id of ['nordic-frequency-event', 'nordland-corridor-security', 'rogaland-black-start']) {
       expect(builtinScenarioDefinitions.find(source => source.id === id)?.packs.map(pack => pack.id)).toEqual(['electric-grid'])
     }
-    for (const id of ['supply-run']) {
+    for (const id of ['halden-emergency', 'supply-run']) {
       expect(builtinScenarioDefinitions.find(source => source.id === id)?.packs.map(pack => pack.id)).toEqual(['einsatz'])
     }
     for (const id of ['norway-situation-monitor']) {
