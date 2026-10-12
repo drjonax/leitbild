@@ -3,6 +3,7 @@
   "modelId": "electric-grid.norway.transmission",
   "sourceBuildId": "norway-d441a000b5cf34891fff",
   "simplificationMeters": 50,
+  "routes": "mapped",
   "branches": [
     {"id":"branch:curated-follo-lambertseter-47kv-equivalent","path":[[10.78299,59.7289],[10.82829,59.87129]]},
     {"id":"branch:curated-jostedal-plant-terminal","path":[[7.30862,61.52084],[7.28703,61.52613],[7.28181,61.52255],[7.26204,61.5129],[7.25729,61.50273],[7.25332,61.49784],[7.24984,61.49627],[7.24281,61.48569],[7.23928,61.48423],[7.23806,61.4806],[7.24183,61.44817],[7.24438,61.4379],[7.24588,61.43839]]},

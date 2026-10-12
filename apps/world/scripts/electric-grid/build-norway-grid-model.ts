@@ -141,6 +141,7 @@ const main = async (): Promise<void> => {
     ['norway-winter-weekday-peak.operating-point.json', jsonLines(built.operatingPoints.winter, 1)],
     ['norway-summer-night-low.operating-point.json', jsonLines(built.operatingPoints.summer, 1)],
     ['halden-four-unit.grid-model-addition.json', jsonLines(built.haldenAddition, 1)],
+    ['halden-four-unit.geometry.json', jsonLines(built.haldenGeometry, 1)],
   ]
   for (const [name, text] of files) await writeFile(join(out, name), text)
   const written = performance.now()
@@ -149,6 +150,7 @@ const main = async (): Promise<void> => {
   console.log(`built ${model.id} ${model.sourceBuild.id}: ${model.buses.length} buses, ${model.branches.length} branches, ${model.hvdcLinks.length} HVDC links, ${model.externalSystems.length} external systems, ${model.generators.length} generators, ${model.loads.length} loads, ${model.shunts.length} shunts`)
   console.log(`time: read ${((read - started) / 1000).toFixed(2)} s, build ${((compiled - read) / 1000).toFixed(2)} s, audit ${((audited - compiled) / 1000).toFixed(2)} s, write ${((written - audited) / 1000).toFixed(2)} s`)
   for (const [name, text] of files) console.log(`  ${name}: ${(Buffer.byteLength(text) / 1024).toFixed(1)} KiB`)
+  for (const route of built.haldenRoutes) console.log(`designed route ${route.id}: ${route.corridorKm} km along ${route.corridorIds.length} corridors, ${route.spurKm} km of spur`)
   for (const check of report.checks) console.log(`[${check.status.toUpperCase()}] ${check.id}: ${check.summary}`)
   console.log(`audit verdict: ${report.verdict.toUpperCase()}`)
   process.exit(report.verdict === 'pass' ? 0 : 1)

@@ -18,7 +18,8 @@ import { electricalRules } from './electrical.ts'
 import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverTurbineRule, runOfRiverUtilisationHours } from './generator-rules.ts'
 import { buildGeometry, type GridGeometry } from './geometry.ts'
-import { buildHaldenAddition, haldenAdditionId } from './halden-addition.ts'
+import type { DesignedRoute } from './designed-routes.ts'
+import { buildHaldenAddition, buildHaldenGeometry, haldenAdditionId } from './halden-addition.ts'
 import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, buildHvdcRampGroups, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
@@ -80,6 +81,9 @@ export interface NorwayModelBuild {
   readonly profiles: GridLoadProfiles
   readonly operatingPoints: { readonly winter: GridOperatingPointV2; readonly summer: GridOperatingPointV2 }
   readonly haldenAddition: GridModelAdditionV2
+  readonly haldenGeometry: GridGeometry
+  /** How each Halden circuit's designed route was laid: the corridors it follows and its spur lengths. */
+  readonly haldenRoutes: ReadonlyArray<DesignedRoute>
 }
 
 const failOnCurationLedger = (entries: ReadonlyArray<TopologyLedgerEntry>): void => {
@@ -316,6 +320,8 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
 
   const geometry = buildGeometry({ model, branches: main.branches, hvdcLinks: topology.hvdcLinks, curatedPaths: curated.paths, sidecar })
   validateGridGeometryArtifact(geometry.geometry, 'norway geometry (build)')
+  const haldenGeometry = buildHaldenGeometry({ base: model, baseGeometry: geometry.geometry, addition: halden.addition, water: createWaterCrossings(inputs.coastline.data.lines) })
+  validateGridGeometryArtifact(haldenGeometry.geometry, 'halden geometry (build)')
   const buildEntries = ledger.entries()
   const counts: Record<string, number> = {}
   for (const entry of buildEntries) counts[entry.reason] = (counts[entry.reason] ?? 0) + 1
@@ -339,5 +345,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     profiles,
     operatingPoints,
     haldenAddition: halden.addition,
+    haldenGeometry: haldenGeometry.geometry,
+    haldenRoutes: haldenGeometry.routes,
   }
 }

@@ -67,6 +67,7 @@ export const buildGeometry = (config: {
       modelId: config.model.id,
       sourceBuildId: config.model.sourceBuild.id,
       simplificationMeters: geometrySimplificationMeters,
+      routes: 'mapped',
       branches: branches.map(entry => ({ id: entry.id, path: entry.path.map(point => [point[0], point[1]] as [number, number]) })),
       hvdcLinks: hvdcLinks.map(entry => ({ id: entry.id, path: entry.path.map(point => [point[0], point[1]] as [number, number]) })),
     },

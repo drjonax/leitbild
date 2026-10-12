@@ -1,14 +1,19 @@
 import type { PriceArea } from '../schemas/grid-ids.ts'
+import type { GridGeometryArtifact } from '../schemas/grid-geometry.ts'
 import { composeGridModel, type GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { GridBranchV2, GridModelV2, GridSourceInput } from '../schemas/grid-model.ts'
+import { designedRouteRules, designedRoutes, type DesignedRoute } from './designed-routes.ts'
 import { lineParameters } from './electrical.ts'
 import { haversineKm, roundSignificant, roundTo, type LonLat } from './geo.ts'
 import { sha256Hex } from './sources.ts'
+import type { WaterCrossings } from './water-crossings.ts'
 
 // The Halden four-unit plant connection as a Grid Model v2 Addition onto the generated Norway
 // model: a dedicated 420 kV switchyard, three circuits each to Hasle and Tegneby, and four unit
 // bays. The SE3 ties (Hasle – Borgvik, Halden – Skogssäter) and the Nordic equivalent are part of
-// the base model (interconnector table); the addition adds only the plant's own assets.
+// the base model (interconnector table); the addition adds only the plant's own assets. The plant
+// is fictional, so its circuits have no mapped route: its geometry artifact draws them on designed
+// routes along existing corridors, one lane per destination.
 
 export const haldenDesign = {
   sourceId: 'leitbild:halden-four-unit-design@2026-10-10',
@@ -58,6 +63,7 @@ export const buildHaldenAddition = (base: GridModelV2, priceAreaOf: (location: L
       resistancePu: roundSignificant(parameters.resistancePu, 6),
       chargingSusceptancePu: roundSignificant(parameters.chargingSusceptancePu, 6),
       osmWayIds: [],
+      // The note describes the electrical length; the map draws the circuit on its designed route (buildHaldenGeometry).
       provenance: { ...provenance, note: `${note}; straight-line route, electrical rules ${parameters.ruleIds.join(', ')}` },
     }))
   })
@@ -94,4 +100,46 @@ export const buildHaldenAddition = (base: GridModelV2, priceAreaOf: (location: L
   }
   const composed = composeGridModel({ addition, base: { kind: 'model', model: base }, source: `${haldenAdditionId} (build)` })
   return { addition, composed }
+}
+
+/**
+ * The addition's geometry artifact: each circuit on a designed route from the switchyard along the
+ * base model's mapped corridors to its destination, the circuits to one destination in one lane.
+ */
+export const buildHaldenGeometry = (config: {
+  readonly base: GridModelV2
+  readonly baseGeometry: GridGeometryArtifact
+  readonly addition: GridModelAdditionV2
+  readonly water: WaterCrossings
+}): { readonly geometry: GridGeometryArtifact; readonly routes: ReadonlyArray<DesignedRoute> } => {
+  const busLocation = new Map([...config.base.buses, ...config.addition.buses].map(bus => [bus.id, bus.location as LonLat]))
+  const pathOf = new Map(config.baseGeometry.branches.map(entry => [entry.id, entry.path as ReadonlyArray<LonLat>]))
+  const corridors = config.base.branches.flatMap(branch => branch.kind === 'transformer' ? [] : [{
+    id: branch.id,
+    kind: branch.kind,
+    kv: branch.nominalKv,
+    path: pathOf.get(branch.id) ?? [],
+  }])
+  const lanes = haldenDesign.circuits.map(circuit => circuit.target)
+  const routes = designedRoutes({
+    corridors,
+    water: config.water,
+    requests: config.addition.branches.map(branch => {
+      const lane = lanes.indexOf(branch.toBusId as (typeof lanes)[number])
+      if (lane < 0) throw new Error(`Halden geometry: ${branch.id} ends at ${branch.toBusId}, not at a designed destination`)
+      return { id: branch.id, kv: branch.nominalKv, from: busLocation.get(branch.fromBusId)!, to: busLocation.get(branch.toBusId)!, lane: lane + 1 }
+    }),
+  })
+  return {
+    geometry: {
+      schemaVersion: 1,
+      modelId: config.addition.id,
+      sourceBuildId: config.base.sourceBuild.id,
+      simplificationMeters: designedRouteRules.simplificationMeters,
+      routes: 'designed',
+      branches: routes.map(route => ({ id: route.id, path: route.path.map(point => [point[0], point[1]] as [number, number]) })),
+      hvdcLinks: [],
+    },
+    routes,
+  }
 }

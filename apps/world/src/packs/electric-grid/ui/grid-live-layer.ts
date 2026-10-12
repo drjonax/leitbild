@@ -419,6 +419,7 @@ const percent = (value: number): string => `${value.toFixed(1)} %`
 
 const drawnAs: Readonly<Record<GridMapGeometryResult['branches'][number]['pathSource'], string>> = {
   'mapped-route': 'Mapped route',
+  'designed-route': 'Designed route of a fictional connection, along existing corridors (not a mapped line)',
   transformer: 'Transformer, drawn between its buses',
   'network-equivalent': 'Network equivalent (not a mapped line)',
   'bus-to-bus': 'Straight line between its buses (no mapped route)',

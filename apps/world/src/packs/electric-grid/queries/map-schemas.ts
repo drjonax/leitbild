@@ -32,7 +32,7 @@ export const gridMapGeometryResultSchema = z.object({
     fromBus: index.describe('Index into buses.'),
     toBus: index.describe('Index into buses.'),
     ratingMw: finite,
-    pathSource: z.enum(['mapped-route', 'transformer', 'network-equivalent', 'bus-to-bus']).describe('mapped-route: a line or cable along its mapped route from the geometry artifact; transformer: a substation transformer, drawn between its buses; network-equivalent: a curated equivalent of sub-transmission below the model\'s voltage floor, not a mapped line, drawn between its buses; bus-to-bus: a straight segment between the bus locations, because no mapped route exists for the line (a model without an artifact, or a branch a Model Addition adds).'),
+    pathSource: z.enum(['mapped-route', 'designed-route', 'transformer', 'network-equivalent', 'bus-to-bus']).describe('mapped-route: a line or cable along its mapped route from the geometry artifact; designed-route: a fictional line a Model Addition adds, drawn on a route the model build designed along existing corridors, not a mapped line; transformer: a substation transformer, drawn between its buses; network-equivalent: a curated equivalent of sub-transmission below the model\'s voltage floor, not a mapped line, drawn between its buses; bus-to-bus: a straight segment between the bus locations, because the model has no geometry artifact.'),
     path: z.array(lonLat).min(2).describe('[lon, lat] from fromBus to toBus. An interconnector tie\'s mapped route ends abroad where it leaves the source data, at its boundary bus or, when the bus stands at another tie\'s end, apart from it.'),
   }).strict()),
   hvdcLinks: z.array(z.object({

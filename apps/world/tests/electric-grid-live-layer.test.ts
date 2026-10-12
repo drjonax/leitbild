@@ -405,7 +405,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     run.advanceTo(12_000)
     expect(run.grid.branches.get('branch:g-a')!.state).toBe('tripped')
     // A hand-built model has no geometry artifact: it draws bus to bus.
-    const geometryFor = createGridMapGeometry({ artifactFor: () => null, readArtifact: file => { throw new Error(`no artifact ${file}`) } })
+    const geometryFor = createGridMapGeometry({ artifactsFor: () => [], readArtifact: file => { throw new Error(`no artifact ${file}`) } })
     const answer = (query: ReturnType<typeof createGridMapStateQuery>): unknown => JSON.parse(JSON.stringify(query.capability.output.parse(
       query.answer({ gridId: run.grid.definition.gridId }, new Map([[run.grid.definition.gridId, run.grid]])))))
     const geometry = gridLiveMapLayer.loadGeometry(answer(createGridMapGeometryQuery(geometryFor)))

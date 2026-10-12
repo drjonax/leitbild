@@ -27,11 +27,12 @@ export interface GridModelAssetCounts {
 
 /**
  * Where the loader finds a model's data, all in models/: a Grid Model v2 file with its geometry
- * artifact, or a Model Addition v2 file composed onto one base Grid Model.
+ * artifact, or a Model Addition v2 file composed onto one base Grid Model, with the geometry
+ * artifact of its own branches (designed routes: an addition's lines have no mapped route).
  */
 export type GridModelSource =
   | { readonly kind: 'grid-model'; readonly file: string; readonly geometryFile: string }
-  | { readonly kind: 'grid-model-addition'; readonly baseModelRef: string; readonly file: string }
+  | { readonly kind: 'grid-model-addition'; readonly baseModelRef: string; readonly file: string; readonly geometryFile: string }
 
 export interface GridModelCatalogEntry {
   readonly id: string
@@ -123,7 +124,7 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     description: 'Norway transmission grid with a dedicated 420 kV Halden switchyard, three circuits each to Hasle and Tegneby, and four independently connectable unit bays.',
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
-    source: { kind: 'grid-model-addition', baseModelRef: norwayGridModelRef, file: 'halden-four-unit.grid-model-addition.json' },
+    source: { kind: 'grid-model-addition', baseModelRef: norwayGridModelRef, file: 'halden-four-unit.grid-model-addition.json', geometryFile: 'halden-four-unit.geometry.json' },
     loadProfilesRef: norwayLoadProfilesRef,
     assetCounts: { bus: 1000, branch: 1249, generator: 852, load: 3121, storage: 0, connectionPoint: 4, hvdcTerminal: 4 },
     connectionPoints: [1, 2, 3, 4].map(haldenUnitBay),
