@@ -1,5 +1,5 @@
 import type { VariablePath } from '../../graph/index.ts'
-import type { MimicFlowBinding, MimicItemBinding } from './bindings.ts'
+import type { MimicFlowBinding, MimicItemBinding, MimicStubWord } from './bindings.ts'
 import type { DiagramZone, Face, PlacedNode } from './layout/index.ts'
 import { DIAGRAM_ENGINE_VERSION } from './layout/index.ts'
 import type { MimicPresentation } from './presentation.ts'
@@ -13,7 +13,7 @@ import type { MimicIntent } from './scope.ts'
 // restyle it.
 
 /** Changes whenever the same intent on the same model could draw differently. */
-export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-6`
+export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-7`
 
 /**
  * A mimic may be up to 800 px wide (owner decision): OpenBridge's full-size
@@ -79,7 +79,10 @@ export interface MimicDrawnStub {
   readonly end: { readonly x: number; readonly y: number; readonly face: Face }
   readonly text: string
   readonly textBox: PlacedNode['text']
+  /** The lines it stands for: how its pipe is drawn. */
   readonly states: ReadonlyArray<MimicPipeState>
+  /** A power line's: what it says under its name of the equipment it names (MimicStubWord); null for a pipe of fluid. */
+  readonly word: MimicStubWord | null
 }
 
 export interface CompiledMimic {

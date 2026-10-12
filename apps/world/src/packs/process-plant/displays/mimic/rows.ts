@@ -1,4 +1,4 @@
-import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicRangeBinding, MimicShutdownBinding } from './bindings.ts'
+import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicRangeBinding, MimicShutdownBinding, MimicStubWord } from './bindings.ts'
 import { flowLook, itemLook, powerLook, shutdownLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
@@ -332,6 +332,40 @@ export const POWER_STATE_WORDS: ReadonlyArray<string> = ['LIVE', 'DEAD', '?']
 
 /** A power line's far end in words: LIVE, DEAD, or ? where it is not known. */
 export const powerStateWord = (look: 'live' | 'dead' | 'unknown'): string => look === 'live' ? 'LIVE' : look === 'dead' ? 'DEAD' : '?'
+
+/** What a power stub says of lines to or from equipment that declares no energized state: supplied, or no supply. */
+export const SUPPLY_WORDS: ReadonlyArray<string> = ['supplied', 'no supply', '?']
+
+/**
+ * Every text a power stub's word can show, for its room: LIVE, DEAD or ?
+ * for the equipment it names, and with several named, how many are live
+ * ("LIVE 1/2"); or the supply words.
+ */
+export const stubWordTexts = (word: MimicStubWord): ReadonlyArray<string> => word.kind === 'supply'
+  ? SUPPLY_WORDS
+  : ['LIVE', 'DEAD', '?', ...(word.energized.length > 1 ? [`LIVE ${word.energized.length - 1}/${word.energized.length}`] : [])]
+
+/**
+ * What a power stub says under its name for one sample (MimicStubWord):
+ * the named equipment LIVE or DEAD, all of it; with several named and some
+ * live, how many ("LIVE 1/2"); ? where any is not known. Lines to
+ * equipment without a state of its own: supplied while any is live, else
+ * no supply.
+ */
+export const stubWordText = (word: MimicStubWord, index: SampleIndex): string => {
+  const read = (path: string): boolean | null => {
+    const value = index.get(path)?.value
+    return typeof value === 'boolean' ? value : null
+  }
+  if (word.kind === 'supply') {
+    const look = powerLook(word.lines, index)
+    return look === 'live' ? 'supplied' : look === 'dead' ? 'no supply' : '?'
+  }
+  const states = word.energized.map(read)
+  if (states.includes(null)) return '?'
+  const live = states.filter(Boolean).length
+  return live === states.length ? 'LIVE' : live === 0 ? 'DEAD' : `LIVE ${live}/${states.length}`
+}
 
 /** What a value row reading the wider instrument says before its value, read in whole units: the wide range. */
 export const WIDER_RANGE = 'WR'

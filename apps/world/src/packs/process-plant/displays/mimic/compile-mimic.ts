@@ -2,12 +2,12 @@ import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink, Variab
 import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { readingText, unitLabel } from '../display-text.ts'
-import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, type MimicItem, type MimicItemBinding } from './bindings.ts'
+import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, stubWordBinding, type MimicItem, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
 import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
-import { COUNT_WORDS, flapCount, itemRows, POWER_STATE_WORDS, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
+import { COUNT_WORDS, flapCount, itemRows, stubWordTexts, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, QUICK_LOOK_DOT, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
@@ -442,8 +442,8 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const id = `s${at}`
     const component = graph.components[stub.component]!
     stubs.set(id, stub)
-    // A power line's far end says whether it is live on a line under its name ("from UAT", "DEAD"), its room kept for the longest word.
-    const powered = linkCarrier(graph.links[stub.links[0]!]!) === 'electricalPower'
+    // A power line's far end says under its name whether the equipment it names is live ("from UAT", "LIVE"), its room kept for the longest word.
+    const word = stubWordOf(graph, stub)
     const text = stubText(graph, stub, profile.stubLabels)
     const lane = laneOf(component, loopOrder)
     nodes.push({
@@ -456,7 +456,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       ...(lane === undefined ? {} : { lane }),
       text: { lines: [
         { width: measure('tag', text, text), height: openBridgeDevice.tagLine, required: true },
-        ...(powered ? [{ width: Math.max(...POWER_STATE_WORDS.map(word => measure('tag', word, text))), height: openBridgeDevice.tagLine, required: true }] : []),
+        ...(word === null ? [] : [{ width: Math.max(...stubWordTexts(word).map(shown => measure('tag', shown, text))), height: openBridgeDevice.tagLine, required: true }]),
       ] },
       frameable: false,
     })
@@ -469,6 +469,10 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
 
   return { graph: { nodes, edges }, items, edgeLinks, stubs, issues }
 }
+
+/** A power stub's word, about the far ends it names (stubWordBinding); null where its lines carry fluid. */
+const stubWordOf = (graph: CompiledPlantGraph, stub: MimicStub): MimicStubWord | null =>
+  linkCarrier(graph.links[stub.links[0]!]!) !== 'electricalPower' ? null : stubWordBinding(graph, stub.others.map(other => other.component), stub.links)
 
 const pipeState = (graph: CompiledPlantGraph, link: CompiledProcessLink, parallel: ReadonlyArray<number>): MimicPipeState =>
   link.kind === 'electricalPower'
@@ -534,6 +538,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       text: stubText(graph, stub, profile.stubLabels),
       textBox: node.text,
       states: stub.links.map(index => pipeState(graph, graph.links[index]!, [])),
+      word: stubWordOf(graph, stub),
       edge,
     }
   })
@@ -555,6 +560,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     }),
     ...pipes.flatMap(pipe => statePaths(pipe.state)),
     ...stubs.flatMap(stub => stub.states.flatMap(statePaths)),
+    ...stubs.flatMap(stub => stub.word === null ? [] : stub.word.kind === 'equipment' ? stub.word.energized : stub.word.lines),
   ])]
   const equipment = items.flatMap(item => {
     const count = item.rows.find((row): row is Extract<MimicRow, { kind: 'count' }> => row.kind === 'count')

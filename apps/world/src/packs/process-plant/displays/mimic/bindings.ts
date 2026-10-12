@@ -55,6 +55,13 @@ export interface MimicStateBinding {
    * model declares none: the state is awaited, never judged not followed.
    */
   readonly travel?: AspectTravel
+  /**
+   * A valve that isolates or relieves, which stands open or shut: a command
+   * at either end of its travel reads OPEN or SHUT, as its position does,
+   * never "100 %" (HMI review of run 26: MOV-8000A read "100 %" in one
+   * place and "OPEN" in another).
+   */
+  readonly twoState?: true
   /** What passes the item, judging it where its own state is not solved. */
   readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null }
 }
@@ -325,7 +332,7 @@ const declaredWords = (graph: CompiledPlantGraph, path: VariablePath): { readonl
   return component.metadata?.presentation?.states?.[String(path).slice(String(component.id).length + 1)]
 }
 
-const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null): MimicStateBinding | null => {
+const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, twoState = false): MimicStateBinding | null => {
   if (aspect === null) return null
   const declared = aspectOf(aspects, aspect)
   if (declared === undefined) return null
@@ -341,6 +348,7 @@ const stateBinding = (graph: CompiledPlantGraph, aspects: ReadonlyArray<Compiled
     ...(words === undefined ? {} : { words }),
     ...(declared.command === undefined ? {} : { command: declared.command }),
     ...(declared.travel === undefined ? {} : { travel: declared.travel }),
+    ...(twoState && aspect === 'position' ? { twoState: true as const } : {}),
     // A state the model does not solve is judged by what passes the item.
     ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path) } }),
   }
@@ -438,7 +446,9 @@ export const itemBinding = (
   // A device's no-flow band is its host outlet's rating; a component's, its largest rated outflow.
   const ratings = component.semantics.ratedOutflow.filter(rating => device === undefined || rating.port === device.port).map(rating => rating.flowKgPerS)
   const rated = ratings.length === 0 ? null : Math.max(...ratings)
-  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION)
+  const equipmentFunction = device?.function ?? component.semantics.function
+  const twoState = equipmentFunction === 'isolating' || equipmentFunction === 'relieving'
+  const state = stateBinding(graph, device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, twoState)
   const drawnState = state?.state?.path
   return {
     item,
@@ -450,6 +460,28 @@ export const itemBinding = (
     limits: levelLimits(plant, state),
     frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),
   }
+}
+
+/**
+ * What a power line's far end says under its name, about the equipment it
+ * names and never about the line towards it (HMI review of run 26: a stub
+ * read "to Bus A DEAD" through an open offsite breaker while the bus's
+ * diesel held it at 6.60 kV).
+ * - `equipment`: each named equipment's own energized state, where every
+ *   one declares one: LIVE or DEAD as the equipment reads.
+ * - `supply`: where a named equipment declares none (a pump's motor), the
+ *   lines to or from it, worded as supply ("no supply"), never LIVE or DEAD.
+ */
+export type MimicStubWord =
+  | { readonly kind: 'equipment'; readonly energized: ReadonlyArray<VariablePath> }
+  | { readonly kind: 'supply'; readonly lines: ReadonlyArray<VariablePath> }
+
+/** The word a power stub says of the far ends it names (MimicStubWord), from their declared energized aspects. */
+export const stubWordBinding = (graph: CompiledPlantGraph, named: ReadonlyArray<number>, links: ReadonlyArray<number>): MimicStubWord => {
+  const energized = [...new Set(named)].map(component => aspectOf(graph.components[component]!.semantics.aspects, 'energized')?.state?.path)
+  return energized.every((path): path is VariablePath => path !== undefined)
+    ? { kind: 'equipment', energized }
+    : { kind: 'supply', lines: links.map(index => linkPowerBinding(graph, index).energizedPath) }
 }
 
 /** A power line is live while its own solved energized state reads true: what feeds it puts power out through closed contacts. */
