@@ -54,12 +54,16 @@
   let execution = $state<ExecutionState | null>(null)
   let actionBusy = $state(false)
   let actionError = $state('')
-  let minutes = $state(60)
+  /** What the duration dialog offers first: a few minutes, not past a short exercise's end. */
+  let minutes = $state(5)
+  /** One-tap durations, so a touch screen needs no keyboard. */
+  const quickMinutes = [1, 2, 5] as const
   let onComplete = $state<'pause' | 'play-realtime'>('pause')
   let copyName = $state('')
   let wallNow = $state(Date.now())
   let copyDialog = $state<HTMLDialogElement | null>(null)
   let timerDialog = $state<HTMLDialogElement | null>(null)
+  let paceDialog = $state<HTMLDialogElement | null>(null)
   let restrictionsDialog = $state<HTMLDialogElement | null>(null)
   let restrictions = $state<AgentRestrictionsState | null>(null)
   let restrictionObjects = $state<ReadonlyArray<ObjectSearchResult['objects'][number]>>([])
@@ -143,15 +147,33 @@
     })
   }
   const togglePlayback = (): void => setExecution({ playback: execution?.playback === 'playing' ? 'paused' : 'playing' })
-  const togglePace = (): void => setExecution({ pace: execution?.pace === 'maximum' ? 'realtime' : 'maximum' })
-  const advanceByDuration = (): void => {
-    if (!Number.isFinite(minutes) || minutes <= 0) return
+  /**
+   * Maximum pace runs the Run as fast as it can until it is switched back,
+   * with no end: one stray tap could carry an exercise far past its end. So
+   * arming it asks first, and offers a fixed duration instead; switching
+   * back to realtime never asks.
+   */
+  const togglePace = (): void => {
+    if (execution?.pace === 'maximum') return setExecution({ pace: 'realtime' })
+    paceDialog?.showModal()
+  }
+  const armMaximumPace = (): void => {
+    paceDialog?.close()
+    setExecution({ pace: 'maximum' })
+  }
+  const chooseDuration = (): void => {
+    paceDialog?.close()
+    timerDialog?.showModal()
+  }
+  const advanceBy = (duration: number): void => {
+    if (!Number.isFinite(duration) || duration <= 0) return
     void runAction(async () => {
       refreshToken += 1
-      execution = (await invoke<ExecutionState>(resource.ref, 'world.simulation-run.execution.advance', { minutes, onComplete })).result
+      execution = (await invoke<ExecutionState>(resource.ref, 'world.simulation-run.execution.advance', { minutes: duration, onComplete })).result
       timerDialog?.close()
     })
   }
+  const advanceByDuration = (): void => advanceBy(minutes)
   const openRestrictions = (): void => {
     if (restrictionBusy) return
     restrictionBusy = true
@@ -316,11 +338,20 @@
     <section class="progress"><strong>{execution.acceleration.status === 'running' ? `Maximum pace · ${execution.acceleration.measuredSpeed.toFixed(1)}×` : 'Paused · target retained'}</strong><span>{new Date(execution.acceleration.currentSimulationTime).toLocaleString()} → {execution.acceleration.targetSimulationTime ? new Date(execution.acceleration.targetSimulationTime).toLocaleString() : ''}</span></section>
     <div class="actions"><button class="primary" type="button" disabled={actionBusy} onclick={() => setExecution({ playback: execution?.playback === 'playing' ? 'paused' : 'playing' })}>{execution.acceleration.status === 'running' ? 'Pause' : 'Resume'}</button></div>
   {:else}
-    <label>Simulated minutes<input type="number" min="0.01" max="10080" step="1" bind:value={minutes} /></label>
     <fieldset><legend>When the target is reached</legend><label class="choice"><input type="radio" value="pause" bind:group={onComplete} /> Pause</label><label class="choice"><input type="radio" value="play-realtime" bind:group={onComplete} /> Play in realtime</label></fieldset>
+    <div class="quick" role="group" aria-label="Fast-forward by">
+      {#each quickMinutes as quick (quick)}<button type="button" disabled={actionBusy} onclick={() => advanceBy(quick)}>+{quick} min</button>{/each}
+    </div>
+    <label>Or simulated minutes<input type="number" min="0.01" max="10080" step="1" bind:value={minutes} /></label>
     <div class="actions"><button class="primary" type="button" disabled={actionBusy} onclick={advanceByDuration}>{actionBusy ? 'Starting…' : 'Start fast-forward'}</button></div>
   {/if}
   <p class="hint">Live external feeds cannot invent future observations and will reject fast-forward.</p>
+</dialog>
+
+<dialog class="control-dialog" bind:this={paceDialog}>
+  <header><div><small>Simulation time</small><h2>Run at maximum pace?</h2></div><button class="close" type="button" onclick={() => paceDialog?.close()} aria-label="Close">×</button></header>
+  <p class="hint">Maximum pace runs the simulation as fast as it can, without stopping, until you switch it back to realtime. It does not stop at the end of an exercise, and the Run cannot be wound back. To skip a few minutes, fast-forward by a duration instead.</p>
+  <div class="actions"><button type="button" onclick={chooseDuration}>Fast-forward by a duration</button><button class="primary" type="button" disabled={actionBusy} onclick={armMaximumPace}>Run at maximum pace</button></div>
 </dialog>
 
 <dialog class="control-dialog restrictions-dialog" bind:this={restrictionsDialog}>
@@ -364,6 +395,7 @@
   fieldset { margin-top: 1rem !important; padding: .7rem .8rem; display: flex; gap: 1rem; border: 1px solid #cbd5c9; border-radius: 8px; } fieldset legend { padding: 0 .25rem; color: #4c584e; font-size: .78rem; font-weight: 650; } label.choice { display: flex; align-items: center; gap: .35rem; font-size: .8rem; }
   .progress { margin-top: 1rem; padding: .8rem; display: grid; gap: .25rem; border: 1px solid #65a9ea; border-radius: 8px; background: #fff; box-shadow: inset 3px 0 #3988d1; font-size: .8rem; }
   .actions { margin-top: .85rem; display: flex; justify-content: flex-end; gap: .5rem; } .control-dialog .actions button { min-height: 38px; padding: .5rem .8rem; border-color: #aeb9ad; color: #213026; background: #fff; } .control-dialog .actions button.primary { border-color: #263c2b; color: #f5fff2; background: #263c2b; }
+  .quick { margin-top: 1rem; display: flex; gap: .5rem; } .control-dialog .quick button { flex: 1; min-height: 44px; border-color: #263c2b; color: #213026; background: #fff; font-weight: 700; }
   .hint { font-size: .72rem; line-height: 1.4; } @media (max-width: 760px) { .family-control, .run-title { display: none; } .clock { min-width: 96px; } }
   .restrictions-dialog { width: min(680px, calc(100vw - 2rem)); } .object-restrictions { max-height: min(42vh, 420px); overflow: auto; display: grid; gap: .25rem; }
   .object-restrictions > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .8rem; padding: .4rem 0; border-bottom: 1px solid #e1e7df; }
