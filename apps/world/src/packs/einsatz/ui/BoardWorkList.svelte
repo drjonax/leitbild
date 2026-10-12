@@ -12,9 +12,10 @@
    * units hold queued in their job chains says who comes next.
    *
    * Waiting calls come first, so one that arrives while the operator has
-   * scrolled the list lands above what it shows: a marker over the list's
-   * top counts the waiting rows out of view there, and a tap on it scrolls
-   * the list back to the top.
+   * scrolled the list lands above what it shows: a marker in the list's
+   * heading line counts the waiting rows whose title is out of view there,
+   * and a tap on it scrolls the list back to the top. It covers no row: it
+   * is drawn in the heading line, and only its tap area reaches past it.
    */
   interface Props {
     readonly heading: string
@@ -33,7 +34,7 @@
   const measure = (): void => {
     const list = scroller
     if (list === null) return
-    const listed = [...list.querySelectorAll<HTMLElement>('li.row')].map(node => ({ waiting: node.dataset.waiting === 'true', top: node.offsetTop, height: node.offsetHeight }))
+    const listed = [...list.querySelectorAll<HTMLElement>('li.row')].map(node => ({ waiting: node.dataset.waiting === 'true', top: node.offsetTop }))
     above = waitingAbove(listed, list.scrollTop)
   }
   // The rows change with every snapshot; once the list is laid out again, the count follows.
@@ -48,11 +49,13 @@
 </script>
 
 <section class="board-section" aria-label={heading}>
-  <h3 class:focused>{heading}</h3>
+  <div class="head">
+    <h3 class:focused>{heading}</h3>
+    {#if above > 0}
+      {#key above}<button type="button" class="above" onclick={toTop}>↑ {above} {boardWords.waitingAbove}</button>{/key}
+    {/if}
+  </div>
   <div class="list">
-  {#if above > 0}
-    {#key above}<button type="button" class="above" onclick={toTop}>↑ {above} {boardWords.waitingAbove}</button>{/key}
-  {/if}
   <div class="scroll" bind:this={scroller} onscroll={measure}>
     {#if empty !== null}<p class="empty">{empty}</p>{/if}
     <ol class="rows">
@@ -89,11 +92,18 @@
   .board-section { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--heading-gap); }
   h3 { margin: 0; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
   h3.focused { color: var(--accent); }
+  .head { display: flex; align-items: center; gap: 8px; min-width: 0; height: var(--board-line); }
   .list { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
   /* The rows' offsets are measured from the list's own top. */
   .scroll { position: relative; min-height: 0; overflow: auto; overscroll-behavior: contain; }
-  /* Over the list's top, never in its flow, so no row moves when it shows. */
-  .above { position: absolute; z-index: 1; top: 2px; left: 50%; translate: -50% 0; min-height: 44px; min-width: 44px; padding: 4px 14px; border: 1px solid var(--critical); border-radius: 22px; background: var(--panel); color: var(--critical); font: inherit; font-weight: 750; box-shadow: 0 4px 12px rgba(16, 24, 40, .25); cursor: pointer; touch-action: manipulation; animation: fresh 1s ease-in-out 3; }
+  /*
+   * In the heading line, beside the heading, one line high, so no row moves
+   * or hides when it shows. Its tap area, a 44 px target, reaches up over the
+   * left of the status line, where only the feedback text stands, and 4 px
+   * down, into the gap above the first row.
+   */
+  .above { position: relative; z-index: 1; height: var(--board-line); box-sizing: border-box; padding: 0 10px; border: 1px solid var(--critical); border-radius: 8px; background: var(--panel); color: var(--critical); font: inherit; font-size: 12px; font-weight: 750; display: inline-flex; align-items: center; cursor: pointer; touch-action: manipulation; animation: fresh 1s ease-in-out 3; }
+  .above::before { content: ''; position: absolute; inset: -24px -6px -4px; }
   .empty { margin: 0; color: var(--muted); }
   .rows { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--row-gap); }
   .row { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }

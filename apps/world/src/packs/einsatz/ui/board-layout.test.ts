@@ -5,7 +5,7 @@ import { defaultRailWidth } from '../../../ui/rail-state.ts'
 import { cameraPaddingFor, noMapCover } from '../../../ui/surface-panel-interaction.ts'
 import type { Arrangement } from '../board/types.ts'
 import { waitingAbove } from './reveal.ts'
-import { boardChromePx, boardEdgeGapPx, boardHeightFor, foldedContactsPx, boardLayoutFor, boardMapCover, boardSections, listContentPx, listHeadingPx, listHeightsFor, listRowsTemplate, listsHeightFor, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
+import { boardChromePx, boardEdgeGapPx, boardHeightFor, foldedContactsPx, boardLayoutFor, boardMapCover, boardSections, listContentPx, listFloorPx, listHeadingPx, listHeightsFor, listRowsTemplate, listsHeightFor, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
 
 const leads: ReadonlyArray<Arrangement['lead']> = ['work-list', 'map']
 
@@ -61,24 +61,26 @@ describe('Board layout', () => {
     expect(boardRule).not.toMatch(/\b(top|right|bottom|left|width):/)
   })
 
-  test('at 960 × 720 and 1024 × 768, with both lists full, Calls and Assets each show at least two whole rows, Calls the larger, with the alerts strip shown or not', () => {
+  test('at 960 × 720 and 1024 × 768, with both lists full, Calls and Assets each show at least two whole rows, Calls the larger, whether an alert stands or not', () => {
     // The Host's header takes 44 px of the window; the World surface is the rest.
     for (const window of [720, 768]) {
       const board = boardHeightFor(window - 44)
-      for (const alerts of [true, false]) {
-        const heights = listHeightsFor(board, ['work', 'units'], alerts)
-        expect(visibleRows(heights.work!, 'work')).toBeGreaterThanOrEqual(2)
-        expect(visibleRows(heights.units!, 'units')).toBeGreaterThanOrEqual(2)
-        expect(heights.work!).toBeGreaterThan(heights.units!)
-        // With Contacts as well, every list still shows a row.
-        const three = listHeightsFor(board, ['work', 'units', 'contacts'], alerts)
-        for (const section of ['work', 'units', 'contacts'] as const) expect(visibleRows(three[section]!, section)).toBeGreaterThanOrEqual(1)
-        // The parts add up to the Board.
-        const { padding, gap, actionBar, statusLine, log } = boardChromePx
-        const strip = alerts ? boardChromePx.alerts + gap : 0
-        expect(heights.work! + heights.units! + gap + 2 * padding + strip + actionBar + statusLine + log + 3 * gap).toBeCloseTo(board, 6)
-      }
+      const heights = listHeightsFor(board, ['work', 'units'])
+      expect(visibleRows(heights.work!, 'work')).toBeGreaterThanOrEqual(2)
+      expect(visibleRows(heights.units!, 'units')).toBeGreaterThanOrEqual(2)
+      expect(heights.work!).toBeGreaterThan(heights.units!)
+      // With Contacts open as well, Calls and Assets still show two rows each, and Contacts its heading and first group's count.
+      const three = listHeightsFor(board, ['work', 'units', 'contacts'])
+      for (const section of ['work', 'units'] as const) expect(visibleRows(three[section]!, section)).toBeGreaterThanOrEqual(2)
+      expect(three.contacts!).toBeGreaterThanOrEqual(listFloorPx.contacts - 1e-6)
+      // The parts add up to the Board; an alert takes the foot's first line and changes none of them.
+      const { padding, gap, actionBar, statusLine, foot } = boardChromePx
+      expect(heights.work! + heights.units! + gap + 2 * padding + actionBar + statusLine + foot + 3 * gap).toBeCloseTo(board, 6)
     }
+    // At 1024 × 768, two and a half rows of each with Contacts open.
+    const open = listHeightsFor(boardHeightFor(768 - 44), ['work', 'units', 'contacts'])
+    expect(visibleRows(open.work!, 'work')).toBeGreaterThanOrEqual(2.5)
+    expect(visibleRows(open.units!, 'units')).toBeGreaterThanOrEqual(2.5)
     // Two rows: their lines, padding and borders, and one gap between them, below the heading.
     expect(visibleRows(listHeadingPx + 2 * rowPx.work - rowBoxPx.gap, 'work')).toBe(2)
     expect([rowPx.work, rowPx.units, listHeadingPx]).toEqual([70, 52, 20])
@@ -90,7 +92,7 @@ describe('Board layout', () => {
     const panel = source('BoardPanel.svelte')
     expect(panel).toContain('style={rowBoxStyle}')
     expect(panel).toContain('line-height: var(--board-line);')
-    expect(panel).toContain('style:max-height={`${boardChromePx.alerts}px`}')
+    expect(panel).toContain('<div class="foot" style:height={`${boardChromePx.foot}px`}>')
     for (const file of ['BoardWorkList.svelte', 'BoardUnits.svelte', 'BoardContacts.svelte']) {
       const sheet = source(file)
       for (const name of Object.keys(rowBoxVars).filter(entry => entry !== '--board-line')) expect(sheet).toContain(`var(${name})`)
@@ -103,37 +105,39 @@ describe('Board layout', () => {
   test('a short Calls list takes only what its rows need and leaves no gap: Assets takes the rest, at 960 × 720 and 1024 × 768', () => {
     for (const window of [720, 768]) {
       const board = boardHeightFor(window - 44)
-      for (const alerts of [true, false]) {
-        const lists = listsHeightFor(board, alerts)
-        for (const calls of [0, 1, 2]) {
-          const heights = listHeightsFor(board, ['work', 'units'], alerts, { work: listContentPx('work', calls) })
-          expect(heights.work).toBe(listContentPx('work', calls))
-          expect(heights.work! + boardChromePx.gap + heights.units!).toBeCloseTo(lists, 6)
-          // Assets gets more than its share when Calls is short.
-          expect(heights.units!).toBeGreaterThan(lists * 3 / 7)
-        }
+      const lists = listsHeightFor(board)
+      for (const calls of [0, 1, 2]) {
+        const heights = listHeightsFor(board, ['work', 'units'], { work: listContentPx('work', calls) })
+        expect(heights.work).toBe(listContentPx('work', calls))
+        expect(heights.work! + boardChromePx.gap + heights.units!).toBeCloseTo(lists, 6)
+        // Assets gets more than its share when Calls is short.
+        expect(heights.units!).toBeGreaterThan(lists * 3 / 7)
       }
     }
     // At 1024 × 768 with two calls, four whole asset rows, where fixed shares gave two.
-    expect(visibleRows(listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], false, { work: listContentPx('work', 2) }).units!, 'units')).toBeGreaterThanOrEqual(4)
+    expect(visibleRows(listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], { work: listContentPx('work', 2) }).units!, 'units')).toBeGreaterThanOrEqual(4)
   })
 
   test('each list scrolls within its own share, and every row and line holding a tap target is at least 44 px', () => {
-    expect(listRowsTemplate(['work', 'units'])).toBe('fit-content(57.143%) minmax(0, 1fr)')
-    expect(listRowsTemplate(['contacts', 'units'])).toBe('fit-content(50%) minmax(0, 1fr)')
-    expect(listRowsTemplate(['work', 'units', 'contacts'])).toBe('fit-content(40%) fit-content(30%) minmax(0, 1fr)')
+    // Every list but the last fits its rows up to a limit in pixels, so a list's place depends only on the Board's height.
+    const board = boardHeightFor(768 - 44)
+    expect(listRowsTemplate(['work', 'units'], board)).toBe(`fit-content(${+(listsHeightFor(board) * 4 / 7).toFixed(1)}px) minmax(0, 1fr)`)
+    expect(listRowsTemplate(['work', 'units', 'contacts'], board)).toBe(`fit-content(${listFloorPx.work}px) fit-content(${listFloorPx.units}px) minmax(0, 1fr)`)
+    expect(listRowsTemplate(['contacts', 'units'], board)).toMatch(/^fit-content\([\d.]+px\) minmax\(0, 1fr\)$/)
     expect(Math.min(...Object.values(rowPx), boardChromePx.statusLine)).toBeGreaterThanOrEqual(tapPx)
     expect(tapPx).toBe(44)
     const panel = readFileSync(join(import.meta.dir, 'BoardPanel.svelte'), 'utf8')
-    expect(panel).toContain('style:grid-template-rows={listRowsTemplate(sections)}')
+    expect(panel).toContain('style:grid-template-rows={rowsTemplate}')
+    expect(panel).toContain('listRowsTemplate(sections, boardHeightFor(surfaceHeight), folded)')
   })
 
   test('Close call is in view without scrolling the capped action bar: pinned to the right of the first row of buttons, under at most three lines of text, apart from the commit button', () => {
     const bar = readFileSync(join(import.meta.dir, 'BoardActionBar.svelte'), 'utf8')
     const markup = bar.slice(bar.indexOf('<div class="bar"'), bar.indexOf('<style>'))
     const rowStart = markup.indexOf('<div class="buttons">')
-    // Above the row stand only the text line and a confirmation's detail, which never shows beside Close.
-    expect([...markup.slice(0, rowStart).matchAll(/class="([\w-]+)"/g)].map(match => match[1])).toEqual(['bar', 'text', 'detail'])
+    // Above the row stands only the text line: a confirmation's detail stands below it, so the row never moves.
+    expect([...markup.slice(0, rowStart).matchAll(/class="([\w-]+)"/g)].map(match => match[1])).toEqual(['bar', 'text'])
+    expect(markup.indexOf('class="detail"')).toBeGreaterThan(markup.indexOf('</div>', markup.indexOf('class="close"')))
     // In the row, the buttons that act wrap among themselves; Close follows them, outside their wrapping group.
     const row = markup.slice(rowStart, markup.indexOf('{#if task !== null}'))
     const main = row.slice(row.indexOf('<div class="main">'), row.indexOf('</div>'))
@@ -152,35 +156,49 @@ describe('Board layout', () => {
     expect(3 * rowBoxPx.line + barGap + tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
   })
 
-  test('a call that arrives while Calls is scrolled lands above what it shows, and the marker over its top counts it until the list is back at the top', () => {
-    const row = (index: number, waiting: boolean) => ({ waiting, top: index * rowPx.work, height: rowPx.work - rowBoxPx.gap })
+  test('a call that arrives while Calls is scrolled lands above what it shows, and the marker in the heading counts it while its title is out of view', () => {
+    const row = (index: number, waiting: boolean) => ({ waiting, top: index * rowPx.work })
     // Two served calls, scrolled a little to keep the selected one in view: nothing waits above.
     const served = [row(0, false), row(1, false)]
     expect(waitingAbove(served, 30)).toBe(0)
     // A waiting call arrives and takes the top; the list keeps its scroll, so the new row is out of view above.
     const arrived = [row(0, true), row(1, false), row(2, false)]
     expect(waitingAbove(arrived, rowPx.work)).toBe(1)
-    // Half of it showing is enough to see it; back at the top, the marker goes.
-    expect(waitingAbove(arrived, rowPx.work / 3)).toBe(0)
+    // Its title hidden, though most of the row shows, is enough to count it: the walkthrough's list rested 30 px down.
+    expect(waitingAbove(arrived, 30)).toBe(1)
+    expect(waitingAbove(arrived, rowBoxPx.border + rowBoxPx.padding + rowBoxPx.line / 2 + 1)).toBe(1)
+    // Its title readable, or back at the top, the marker goes.
+    expect(waitingAbove(arrived, rowBoxPx.border + rowBoxPx.padding)).toBe(0)
     expect(waitingAbove(arrived, 0)).toBe(0)
     // Waiting rows below the fold are no news: Calls lists them first, so the top is where a new one lands.
     expect(waitingAbove([row(0, false), row(1, true)], 0)).toBe(0)
     const list = readFileSync(join(import.meta.dir, 'BoardWorkList.svelte'), 'utf8')
     for (const binding of ['data-waiting={!row.served}', 'onscroll={measure}', 'onclick={toTop}']) expect(list).toContain(binding)
-    // The marker lies over the list, never in its flow: no row moves when it shows.
-    expect(/\n {2}\.above \{([^}]*)\}/.exec(list)?.[1]).toContain('position: absolute;')
+    // The marker stands in the heading line, one line high, never over a row; its tap area is 44 px high.
+    const markup = list.slice(list.indexOf('<section'), list.indexOf('<style>'))
+    expect(markup.indexOf('class="above"')).toBeLessThan(markup.indexOf('<div class="list">'))
+    expect(markup.indexOf('class="above"')).toBeGreaterThan(markup.indexOf('<div class="head">'))
+    const above = /\n {2}\.above \{([^}]*)\}/.exec(list)?.[1] ?? ''
+    expect(above).toContain('height: var(--board-line);')
+    const inset = /\.above::before \{[^}]*inset: -(\d+)px -\d+px -(\d+)px;/.exec(list)
+    expect(rowBoxPx.line + Number(inset?.[1]) + Number(inset?.[2])).toBeGreaterThanOrEqual(tapPx)
   })
 
-  test('nothing moves under the finger: the action bar and the status line keep their heights, the guard\'s hint takes the text line, the alternatives keep to one row, and alerts stand below the lists', () => {
+  test('nothing moves under the finger: the action bar, the status line and the foot keep their heights, the guard\'s hint takes the text line, the alternatives keep to one row, and the newest alert takes the foot\'s first line', () => {
     const source = (file: string) => readFileSync(join(import.meta.dir, file), 'utf8')
     const panel = source('BoardPanel.svelte')
     expect(panel).toContain('<div class="action" style:height={`${boardChromePx.actionBar}px`}>')
     expect(panel).toContain('<div class="status" style:height={`${boardChromePx.statusLine}px`}>')
-    // The alerts strip comes and goes below the lists and above the log, never above a button or a row.
-    const markup = panel.slice(panel.indexOf('<section'), panel.indexOf('<style>'))
-    expect(markup.indexOf('class="alerts"')).toBeGreaterThan(markup.indexOf('class="body"'))
-    expect(markup.indexOf('class="alerts"')).toBeLessThan(markup.indexOf('class="log"'))
     const rule = (sheet: string, selector: string): string => new RegExp(`\\n {2}${selector.replaceAll('.', '\\.')} \\{([^}]*)\\}`).exec(sheet)?.[1] ?? ''
+    // The alert line comes and goes inside the foot, above the log, which gives way to it: the foot's height never changes.
+    const markup = panel.slice(panel.indexOf('<section'), panel.indexOf('<style>'))
+    expect(markup.indexOf('class="foot"')).toBeGreaterThan(markup.indexOf('class="body"'))
+    expect(markup.indexOf('class="alert"')).toBeGreaterThan(markup.indexOf('class="foot"'))
+    expect(markup.indexOf('class="alert"')).toBeLessThan(markup.indexOf('class="log"'))
+    expect(markup).not.toContain('{#each view.alerts')
+    expect(rule(panel, '.alert')).toContain('white-space: nowrap;')
+    // The foot holds the alert line and one line of the log.
+    expect(rowBoxPx.line + 15).toBeLessThanOrEqual(boardChromePx.foot)
     expect(rule(panel, '.feedback')).toContain('-webkit-line-clamp: 2;')
     const bar = source('BoardActionBar.svelte')
     // The text line is always there, and holds the hint while the guard runs: the hint has no line of its own.
@@ -194,24 +212,25 @@ describe('Board layout', () => {
     expect(rowBoxPx.line + 2 * barGap + 2 * tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
   })
 
-  test('folded Contacts give Calls and Assets the height: at 960 × 720 and 1024 × 768 each shows more rows than beside a full Contacts list', () => {
+  test('folded Contacts give Calls and Assets the height: at 960 × 720 and 1024 × 768 each shows at least as many rows as beside an open Contacts list', () => {
     for (const window of [720, 768]) {
       const board = boardHeightFor(window - 44)
-      for (const alerts of [true, false]) {
-        const three = listHeightsFor(board, ['work', 'units', 'contacts'], alerts)
-        const folded = listHeightsFor(board, ['work', 'units'], alerts, {}, true)
-        expect(folded.work!).toBeGreaterThan(three.work!)
-        expect(folded.units!).toBeGreaterThan(three.units!)
-        expect(folded.work! + folded.units! + boardChromePx.gap + foldedContactsPx + boardChromePx.gap).toBeCloseTo(listsHeightFor(board, alerts), 6)
-      }
+      const three = listHeightsFor(board, ['work', 'units', 'contacts'])
+      const folded = listHeightsFor(board, ['work', 'units'], {}, true)
+      expect(folded.work!).toBeGreaterThanOrEqual(three.work! - 1e-6)
+      expect(folded.units!).toBeGreaterThan(three.units!)
+      expect(folded.work! + folded.units! + boardChromePx.gap + foldedContactsPx + boardChromePx.gap).toBeCloseTo(listsHeightFor(board), 6)
     }
-    // At 1024 × 768 without alerts, two and a half calls and two and a half assets, where a full Contacts list left two of each.
-    const folded = listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], false, {}, true)
+    // At 1024 × 768, two and a half calls and two and a half assets.
+    const folded = listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], {}, true)
     expect(visibleRows(folded.work!, 'work')).toBeGreaterThanOrEqual(2.5)
     expect(visibleRows(folded.units!, 'units')).toBeGreaterThanOrEqual(2.5)
     const panel = readFileSync(join(import.meta.dir, 'BoardPanel.svelte'), 'utf8')
     expect(panel).toContain("boardSections(view.arrangement).filter(section => section !== 'contacts' || !folded)")
     expect(panel).toContain('style:height={`${foldedContactsPx}px`}')
+    // Nothing on the folded line or the heading hides behind a pointer's hover.
+    expect(panel).not.toContain('title={view.contacts')
+    expect(readFileSync(join(import.meta.dir, 'BoardContacts.svelte'), 'utf8')).not.toContain('title=')
   })
 
   test('the lists follow the arrangement: the work list leads for queues, Contacts for map-led roles, and a list left out is not shown', () => {

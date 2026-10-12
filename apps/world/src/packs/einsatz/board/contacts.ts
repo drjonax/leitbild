@@ -38,7 +38,6 @@ export type SideLabel = Pick<ScenarioSide, 'id' | 'label'>
 
 /** The plan's wording for a track without a fire-control fix. */
 export const noFixText = 'No fire-control fix: contact report only'
-export const detectionHover = 'Abstract detection: range × signature × posture; no terrain or line of sight'
 /** The icon of a track the side has not identified: a catalogue icon that says nothing of what was seen. */
 export const contactIcon = 'circle-question-mark'
 
@@ -137,5 +136,5 @@ export const contactsView = (rules: BoardRules, records: BoardRecords, nowMs: nu
   const listed = observing.size <= 1
     ? [sideOf(ranked, null)]
     : sideOrder(observing, sides).map(side => sideOf(ranked.filter(entry => entry.side === side.id), side.label))
-  return { heading: word(rules, 'tracks'), sides: listed, hover: detectionHover }
+  return { heading: word(rules, 'tracks'), sides: listed }
 }

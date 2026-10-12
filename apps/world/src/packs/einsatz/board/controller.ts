@@ -72,6 +72,8 @@ const guardMs = 500
 const prefetchRows = 5
 const freshMs = 5_000
 const undoMs = 8_000
+/** How long a standing alert stays in the header strip, in Run time; its row keeps it, and the log has it. */
+const alertStripMs = 3 * 60_000
 const logLimit = 200
 const alternativesShown = 9
 /** How long a `select` effect waits for the map to echo it; a later report of that object is the operator's. */
@@ -200,6 +202,13 @@ export const createBoardController = (options: {
   /** What a commit would have sent when keys went inactive. */
   let blurKey: string | null = null
   let soundOn = false
+  /**
+   * Whether a track has been engageable on this screen. On a screen led by
+   * its work list, Contacts folds to one line until then; from then on the
+   * list stays open, so a fix that lapses or a track that leaves range never
+   * moves Calls and Assets again.
+   */
+  let contactsOpened = false
   let serial = 0
   let effects: BoardEffect[] = []
   /** The Board's own `select` effects the map has not echoed yet, oldest first, with the wall time each was made. */
@@ -1134,6 +1143,7 @@ export const createBoardController = (options: {
     wallMs = event.wallMs
     const before = commitmentKey()
     handle(event)
+    if (!contactsOpened && rules.arrangement.contacts && records !== null) contactsOpened = contactsView(rules, records, nowMs, options.sides).sides.some(side => side.engageable.rows.length > 0)
     if (records !== null) effects.push(...recommendations.sync(records, nowMs, wanted()))
     updateNumbering()
     const shown = assets()
@@ -1225,7 +1235,12 @@ export const createBoardController = (options: {
     return { unitId: unit.id, point: pending.point, label: pending.queue ? `${boardWords.addToEnd}: ${label}` : label }
   }
 
-  /** Every standing alert in the picture, after the asked rows whose recommendation says no unit could ever serve them. */
+  /**
+   * The header's alerts: the asked rows whose recommendation says no unit
+   * could ever serve them, while that stands, then the standing alerts in
+   * the picture raised within the last `alertStripMs` of Run time, newest
+   * first. An older one stays on its row and in the log.
+   */
   const headerAlerts = (): ReadonlyArray<HeaderAlert> => {
     if (records === null) return []
     const couldServe = couldBecomeEligible(rules, records)
@@ -1234,7 +1249,7 @@ export const createBoardController = (options: {
       const message = answer === undefined ? null : unservableText(answer, couldServe)
       return message === null ? [] : [{ recordId: entry.task.id, label: entry.task.label, code: 'no_unit_can_serve', message, sinceMs: entry.task.createdAtMs }]
     })
-    return [...unservable, ...recordAlerts(records)]
+    return [...unservable, ...recordAlerts(records).filter(alert => nowMs - alert.sinceMs < alertStripMs)]
   }
 
   const selectedView = (): BoardView['selected'] => {
@@ -1280,6 +1295,7 @@ export const createBoardController = (options: {
       workList: { rows: workRows, empty: workRows.some(row => !row.served) ? null : word(rules, 'noWork') },
       unitBoard: { rows: unitRows, empty: unitRows.length === 0 ? word(rules, 'noUnits') : null, sitesHeading: word(rules, 'sites'), sites: sites().map(site => siteRow(rules, site)) },
       contacts: rules.arrangement.contacts && records !== null ? contactsView(rules, records, nowMs, options.sides) : null,
+      contactsFolded: rules.arrangement.contacts && rules.arrangement.lead === 'work-list' && !contactsOpened,
       selected: selectedView(),
       commit: commitElement(),
       feedback,

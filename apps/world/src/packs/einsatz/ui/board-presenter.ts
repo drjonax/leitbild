@@ -52,14 +52,6 @@ export const contactFacts = (row: ContactRow): ReadonlyArray<Fact> => [
   ...fact(row.engagedText),
 ]
 
-/**
- * Whether Contacts folds to one line: on a screen led by its work list,
- * while no track is engageable, the tracks are drawn on the map and Calls
- * and Assets take the height. A screen led by Contacts never folds them.
- */
-export const contactsFolded = (view: Pick<BoardView, 'arrangement' | 'contacts'>): boolean =>
-  view.contacts !== null && view.arrangement.lead === 'work-list' && view.contacts.sides.every(side => side.engageable.rows.length === 0)
-
 /** Folded Contacts' one line, after the heading: each group's count, under its side's label on a screen holding several sides. */
 export const contactsSummary = (contacts: ContactsView): string => contacts.sides
   .map(side => [...(side.label === null ? [] : [side.label]), `${side.engageable.heading} ${side.engageable.rows.length}`, `${side.other.heading} ${side.other.rows.length}`].join(' · '))

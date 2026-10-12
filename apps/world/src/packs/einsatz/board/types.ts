@@ -338,8 +338,6 @@ export interface ContactSide {
 export interface ContactsView {
   readonly heading: string
   readonly sides: ReadonlyArray<ContactSide>
-  /** What detection is and is not: the heading's tooltip, for a pointer; never a line in the player's way. */
-  readonly hover: string
 }
 
 /**
@@ -436,11 +434,14 @@ export interface BoardView {
   readonly keysActive: boolean
   /** Whether sound is on, and what the sound control says: how to enable it, or that it is on. */
   readonly sound: { readonly on: boolean; readonly text: string }
+  /** The header strip's alerts, newest first: the strip shows the first and counts the rest. */
   readonly alerts: ReadonlyArray<HeaderAlert>
   readonly workList: { readonly rows: ReadonlyArray<WorkRow>; readonly empty: string | null }
   readonly unitBoard: { readonly rows: ReadonlyArray<UnitRow>; readonly empty: string | null; readonly sitesHeading: string; readonly sites: ReadonlyArray<SiteRow> }
   /** Null unless the arrangement includes the Contacts list. */
   readonly contacts: ContactsView | null
+  /** Whether Contacts folds to one line of counts: on a screen led by its work list, until a track first becomes engageable on it. */
+  readonly contactsFolded: boolean
   readonly selected: SelectedTask | { readonly kind: 'unit'; readonly id: string } | null
   readonly commit: CommitElement
   readonly feedback: Feedback | null

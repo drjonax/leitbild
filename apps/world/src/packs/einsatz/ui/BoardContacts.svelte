@@ -5,10 +5,10 @@
 
   /**
    * The Contacts list: the screen's tracks, engageable first, each group
-   * nearest first. What detection is and is not is the heading's tooltip.
-   * A screen holding several sides' tracks shows each side under its label.
-   * On a screen led by its work list, while nothing is engageable, the panel
-   * folds the list to one line (`contactsFolded`).
+   * nearest first. A screen holding several sides' tracks shows each side
+   * under its label. On a screen led by its work list, until a track first
+   * becomes engageable, the panel folds the list to one line
+   * (`BoardView.contactsFolded`).
    */
   interface Props {
     readonly contacts: ContactsView
@@ -19,7 +19,7 @@
 </script>
 
 <section class="board-section" aria-label={contacts.heading}>
-  <h3 title={contacts.hover}>{contacts.heading}</h3>
+  <h3>{contacts.heading}</h3>
   <div class="scroll">
   {#each contacts.sides as side, sideIndex (sideIndex)}
     <div class="side" class:labelled={side.label !== null}>

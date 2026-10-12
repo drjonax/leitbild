@@ -42,26 +42,26 @@ export const boardLayoutFor = (surfaceWidthPx: number, lead: Arrangement['lead']
 export type BoardSection = 'work' | 'units' | 'contacts'
 
 /**
- * The Board's height, top to bottom: its padding, the alerts strip while any
- * alert stands (capped, scrolling inside), the action bar (capped, scrolling
- * inside past its cap), the status line (feedback, Undo, sound), the lists
- * and the event log, with a gap between each. The lists share what is left,
- * each scrolling on its own: a list takes what its rows need up to its fair
- * share, and the last list takes the rest, so a short Calls list leaves no
- * gap above Assets and both stay in view however long either grows. Every
- * height a tap target takes is at least `tapPx`.
+ * The Board's height, top to bottom: its padding, the action bar (capped,
+ * scrolling inside past its cap), the status line (feedback, Undo, sound),
+ * the lists, and the foot, with a gap between each. Every part but the lists
+ * keeps its height whatever it holds, so the lists' height never changes
+ * while the Board is open: the foot holds the newest alert on its first line
+ * while any stands, and the event log below it. The lists share their
+ * height, each scrolling on its own: a list takes what its rows need up to
+ * its part (`listLimitsFor`), and the last list takes the rest, so a short
+ * Calls list leaves no gap above Assets and both stay in view however long
+ * either grows. Every height a tap target takes is at least `tapPx`.
  */
 export const tapPx = 44
 export const boardChromePx = {
   padding: 8,
   gap: 6,
-  /** The alerts strip's cap: two alerts. */
-  alerts: 48,
   /** The action bar's cap: the big button, one line of alternatives or verbs, and one line of what is still needed. */
   actionBar: 112,
   statusLine: tapPx,
-  /** Two lines of the event log. */
-  log: 30,
+  /** The foot: the newest alert's line and a line of the event log while an alert stands, two lines of the log otherwise. */
+  foot: 32,
 } as const
 
 /**
@@ -99,43 +99,77 @@ export const boardHeightFor = (surfaceHeightPx: number): number => surfaceHeight
 const shareOf = (sections: ReadonlyArray<BoardSection>, section: BoardSection): number =>
   listShares[section] / sections.reduce((sum, entry) => sum + listShares[entry], 0)
 
+/** The height a list's heading and this many rows fill. */
+export const listContentPx = (section: BoardSection, rows: number): number => listHeadingPx + rows * rowPx[section] - (rows > 0 ? rowBoxPx.gap : 0)
+
 /**
- * The CSS grid rows of the lists: every list but the last fits its content
- * up to its fair share of the lists' height; the last takes all that is left.
+ * The least a full list takes: two and a half rows of Calls or Assets, so
+ * the operator sees there is more below; Contacts its heading and its first
+ * group's line, which counts what it holds.
  */
-export const listRowsTemplate = (sections: ReadonlyArray<BoardSection>): string =>
-  sections.map((section, index) => index === sections.length - 1 ? 'minmax(0, 1fr)' : `fit-content(${+(shareOf(sections, section) * 100).toFixed(3)}%)`).join(' ')
+export const listFloorPx: Readonly<Record<BoardSection, number>> = {
+  work: listContentPx('work', 2.5),
+  units: listContentPx('units', 2.5),
+  contacts: 2 * listHeadingPx,
+}
 
 /** Folded Contacts' one line below the lists: a heading's height. */
 export const foldedContactsPx = rowBoxPx.line + rowBoxPx.headingGap
 
-/** The lists' height on a Board this tall, gaps between the lists included, with the alerts strip shown or not, and Contacts folded to its line or not. */
-export const listsHeightFor = (boardHeightPx: number, alerts: boolean, foldedContacts = false): number => {
-  const { padding, gap, actionBar, statusLine, log } = boardChromePx
-  return boardHeightPx - 2 * padding - (alerts ? boardChromePx.alerts + gap : 0) - (foldedContacts ? foldedContactsPx + gap : 0) - actionBar - statusLine - log - 3 * gap
+/** The lists' height on a Board this tall, gaps between the lists included, with Contacts folded to its line or not. */
+export const listsHeightFor = (boardHeightPx: number, foldedContacts = false): number => {
+  const { padding, gap, actionBar, statusLine, foot } = boardChromePx
+  return boardHeightPx - 2 * padding - (foldedContacts ? foldedContactsPx + gap : 0) - actionBar - statusLine - foot - 3 * gap
+}
+
+/**
+ * The most each list but the last takes on a Board this tall: its fair share
+ * of the lists' height, or its floor when that is more. When those leave the
+ * last list less than its own floor, they give way alike, so the last list
+ * keeps its floor. The last list takes the rest.
+ */
+export const listLimitsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, foldedContacts = false): Readonly<Partial<Record<BoardSection, number>>> => {
+  const lists = listsHeightFor(boardHeightPx, foldedContacts)
+  const tracks = lists - boardChromePx.gap * Math.max(0, sections.length - 1)
+  const upper = sections.slice(0, -1)
+  const last = sections.at(-1)
+  const wanted = upper.map(section => Math.max(shareOf(sections, section) * lists, listFloorPx[section]))
+  const total = wanted.reduce((sum, height) => sum + height, 0)
+  const room = Math.max(0, tracks - (last === undefined ? 0 : listFloorPx[last]))
+  const scale = total > room ? room / total : 1
+  return Object.fromEntries(upper.map((section, index) => [section, wanted[index]! * scale]))
+}
+
+/**
+ * The CSS grid rows of the lists on a Board this tall: every list but the
+ * last fits its content up to its limit (`listLimitsFor`), in pixels, so no
+ * list moves while the Board keeps its height; the last takes all that is
+ * left.
+ */
+export const listRowsTemplate = (sections: ReadonlyArray<BoardSection>, boardHeightPx: number, foldedContacts = false): string => {
+  const limits = listLimitsFor(boardHeightPx, sections, foldedContacts)
+  return sections.map((section, index) => index === sections.length - 1 ? 'minmax(0, 1fr)' : `fit-content(${+Math.max(0, limits[section]!).toFixed(1)}px)`).join(' ')
 }
 
 /**
  * The height each list takes on a Board this tall, as `listRowsTemplate`
  * lays them out, given the height each list's heading and rows would fill
  * (unbounded when absent): every list but the last takes that up to its
- * fair share, the last takes the rest.
+ * limit, the last takes the rest.
  */
-export const listHeightsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, alerts: boolean, content: Readonly<Partial<Record<BoardSection, number>>> = {}, foldedContacts = false): Readonly<Partial<Record<BoardSection, number>>> => {
-  const lists = listsHeightFor(boardHeightPx, alerts, foldedContacts)
+export const listHeightsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, content: Readonly<Partial<Record<BoardSection, number>>> = {}, foldedContacts = false): Readonly<Partial<Record<BoardSection, number>>> => {
+  const lists = listsHeightFor(boardHeightPx, foldedContacts)
+  const limits = listLimitsFor(boardHeightPx, sections, foldedContacts)
   const tracks = lists - boardChromePx.gap * Math.max(0, sections.length - 1)
   const heights: Partial<Record<BoardSection, number>> = {}
   let used = 0
   sections.forEach((section, index) => {
-    const height = index === sections.length - 1 ? tracks - used : Math.min(content[section] ?? Number.POSITIVE_INFINITY, shareOf(sections, section) * lists)
+    const height = index === sections.length - 1 ? tracks - used : Math.min(content[section] ?? Number.POSITIVE_INFINITY, limits[section]!)
     heights[section] = height
     used += height
   })
   return heights
 }
-
-/** The height a list's heading and this many rows fill. */
-export const listContentPx = (section: BoardSection, rows: number): number => listHeadingPx + rows * rowPx[section] - (rows > 0 ? rowBoxPx.gap : 0)
 
 /** How many rows of a list show at once in its share, below its heading; the last row needs no gap after it. */
 export const visibleRows = (listHeightPx: number, section: BoardSection): number => (listHeightPx - listHeadingPx + rowBoxPx.gap) / rowPx[section]

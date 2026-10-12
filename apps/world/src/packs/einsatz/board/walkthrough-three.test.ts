@@ -109,6 +109,20 @@ describe('Fixes from the third tap-only walkthrough', () => {
     })
   })
 
+  test('the header strip keeps an alert three minutes of Run time; its row keeps it after that', async () => {
+    const items = [unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(30), { [top]: 1 })]
+    await withScene(items, async run => {
+      await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
+      const screen = await openScreen(run, createWall())
+      await accepted(run, ids.recall, { unitId: 'u1', fromTaskId: 't1' })
+      await screen.sync()
+      expect(screen.view().alerts.map(alert => alert.recordId)).toContain('t1')
+      await runFor(run, 3 * 60_000, [screen])
+      expect(screen.view().alerts.map(alert => alert.recordId)).not.toContain('t1')
+      expect(screen.view().workList.rows.find(row => row.id === 't1')?.alerts).toHaveLength(1)
+    })
+  })
+
   test('a unit on scene offered only Add to end is titled by Add to end, not by a divert it cannot do', async () => {
     const items = [unitAt('p1', 'P1', pairServer, at(0)), taskAt('o1', 'O1', kinds.templates.single, at(0.2)), taskAt('o2', 'O2', kinds.templates.single, at(3))]
     await withScene(items, async run => {

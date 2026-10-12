@@ -10,8 +10,9 @@
    * lingered highlighted when a call or a site was tapped in the lists is
    * offered as a button of its own. Closing the call is pinned to the right
    * of the first row of buttons, apart from the commit button and in its own
-   * colour: the bar scrolls inside past its cap, and only the text line can
-   * stand above that row, so Close is in view without scrolling. The text
+   * colour: the bar scrolls inside past its cap, and only the text line
+   * stands above that row, so Close is in view without scrolling, and the
+   * row never moves: what a confirmation drops stands below it. The text
    * line is always there, one line high: it holds what the bar says, or
    * while the guard runs, what the next commit acts on, so the guard's hint
    * never pushes the buttons down. The alternatives keep to one row, which
@@ -30,7 +31,6 @@
 
 <div class="bar" data-state={commit.state}>
   <p class="text" class:hint={commit.hint !== null}>{commit.hint ?? (commit.button === commit.text ? '' : commit.text)}</p>
-  {#if commit.detail !== null}<p class="detail">{commit.detail}</p>{/if}
   {#if commit.button !== null || commit.offer !== null || commit.options.length > 0 || commit.verbs.length > 0 || commit.cancel !== null || commit.close !== null}
     <div class="buttons">
       <div class="main">
@@ -55,6 +55,7 @@
       {/if}
     </div>
   {/if}
+  {#if commit.detail !== null}<p class="detail">{commit.detail}</p>{/if}
   {#if task !== null}
     {#if task.alternatives.length > 0}
       <div class="alternatives">

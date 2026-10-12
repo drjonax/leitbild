@@ -12,6 +12,7 @@ import { readBoardRecords } from './records.ts'
 import { createBoardRules } from './rules.ts'
 import { clockText } from './text.ts'
 import type { ContactRow, ContactsView } from './types.ts'
+import { boardHeightFor, boardSections, listRowsTemplate } from '../ui/board-layout.ts'
 
 /**
  * The Contacts list on an engagement: every track in the screen's picture,
@@ -155,6 +156,28 @@ describe('Board Contacts', () => {
     expect([blueView.sides.length, redView.sides.length]).toEqual([1, 1])
     const medicalType = config.unitTypes.find(type => type.components.carry !== undefined && type.components.sensor === undefined && type.components.effector === undefined)!
     expect(screen(roleCommanding(borderDefinitions.scripted, blue, medicalType.id)).contacts).toBeNull()
+  })
+
+  test('on a screen led by Calls, Contacts folds to one line until a track first becomes engageable, then stays open when nothing is engageable again, so the lists keep their heights', async () => {
+    const { objects, nowMs } = await engagement()
+    const quiet = objects.filter(object => (object.packData as { readonly type?: unknown }).type !== 'track')
+    const board = createBoardController({ config, viewer: openModeViewer, declaredRoles: [], sides: declaredSides })
+    const snapshot = (shown: ReadonlyArray<OperationalObject>, wallMs: number) => {
+      board.dispatch({ kind: 'snapshot', objects: shown, currentTime: new Date(nowMs).toISOString() as IsoTimestamp, wallMs })
+      const view = board.view()
+      const sections = boardSections(view.arrangement).filter(section => section !== 'contacts' || !view.contactsFolded)
+      return { folded: view.contactsFolded, engageable: view.contacts!.sides.some(side => side.engageable.rows.length > 0), template: listRowsTemplate(sections, boardHeightFor(768 - 44), view.contactsFolded) }
+    }
+    expect(board.view().arrangement.lead).toBe('work-list')
+    const before = snapshot(quiet, 0)
+    expect([before.folded, before.engageable]).toEqual([true, false])
+    const engaged = snapshot(objects, 1_000)
+    expect([engaged.folded, engaged.engageable]).toEqual([false, true])
+    // The track leaves the picture: nothing is engageable, and the list stays open, the lists as they were.
+    const after = snapshot(quiet, 2_000)
+    expect([after.folded, after.engageable]).toEqual([false, false])
+    expect(after.template).toBe(engaged.template)
+    expect(after.template).not.toBe(before.template)
   })
 
   test('the Controller\'s screen lists each side\'s tracks under the side\'s declared label, in declared order, so no two rows of a group share a serial', async () => {
