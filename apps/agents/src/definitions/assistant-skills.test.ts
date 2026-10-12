@@ -63,7 +63,17 @@ describe('Leitbild Assistant skills', () => {
     expect(runner.body).toContain('It is done only once approved and then seen in a reading of its effect')
     expect(runner.body).toContain('Never advance, pause or play simulation time')
     expect(runner.body).toContain('Never reset or close a Run')
-    expect(runner.body).toContain('10 transitions, 6 waits or 40 calls per turn')
+    expect(runner.body).toContain('10 transitions, 3 waits or 15 calls per turn')
+    // Token savings (2026-10-13): the operations are named with their minimal inputs, so a turn needs no
+    // discovery; start, transition and wait return the next step, and the Core's controls are read alone.
+    expect(runner.body).toContain('## Call these directly')
+    expect(runner.body).toContain('`world.procedure.run.start` {procedureId: "E-0", scope: {plantId, label: <unit>}} → `next`')
+    expect(runner.body).toContain('`world.procedure.run.transition` {runId, stepId, branchIndex, basis, evidenceTagIds} → `next`')
+    expect(runner.body).toContain('`world.simulation-run.wait` {simulationSeconds, procedureRunId} → `next`')
+    expect(runner.body).toContain('`world.procedure.run.step.read` {}: on "continue" or after a refusal')
+    expect(runner.body).toContain('`world.process-plant.controls.list` {plantId, items: ["core"]}, never unfiltered')
+    // A step view's readings are taken just before its simulationTime: the basis quotes that time once.
+    expect(runner.body).toContain('Evidence at <simulationTime>: <tag> <reading> (<quality>)')
     expect(runner.body).toContain('select it in the procedure window, then say continue')
     // Agents discover Plants, tags and controls at runtime; the skill names none.
     expect(runner.body).not.toMatch(/plant:|RX-TRIP-MAN|TRIP-BKR/)
