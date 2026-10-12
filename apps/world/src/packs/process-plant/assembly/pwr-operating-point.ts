@@ -84,7 +84,18 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
     initialLoadFraction: 1, nominalSteamFlowKgPerS: steamFlow, nominalSteamPressureMPa: Number(effective(generators[0]!).nominalPressureMPa), nominalBackPressurePa: balancedCondenser.targetBackPressure,
     nominalElectricMw: thermalMw * Number(t.grossCycleEfficiencyFraction),
   })
-  for (const [service, flow] of [['feedwater', steamFlow], ['condensate', steamFlow], ['coolingWater', coolingWaterFlow]] as const) sizePumps(service, flow)
+  // The feed regulating valves stand at the opening they declare (their
+  // initialPositionFraction) at full power, with margin to pick up load: the
+  // feed pumps and the feedwater tank's outlet are sized so that, wide open,
+  // the valves pass the full-power feed over that opening.
+  const feedsFeedwater = (component: ComponentInstanceSpec): boolean => graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')
+  const feedValveOpenings = [...new Set(graph.components.filter(component => component.kind === 'processValve' && feedsFeedwater(component)).map(valve => Number(effective(valve).initialPositionFraction)))]
+  const feedValveOpening = feedValveOpenings[0]
+  if (feedValveOpenings.length !== 1 || feedValveOpening === undefined || !(feedValveOpening > 0 && feedValveOpening <= 1)) {
+    throw new Error('PWR operating point needs its feed regulating valves to declare one full-power opening above 0 and at most 1')
+  }
+  const feedCapacity = steamFlow / feedValveOpening
+  for (const [service, flow] of [['feedwater', feedCapacity], ['condensate', steamFlow], ['coolingWater', coolingWaterFlow]] as const) sizePumps(service, flow)
   const meanTemperature = (thermal.inlet + thermal.outlet) / 2
   for (const component of graph.components) {
     if (component.kind === 'reactorVessel') {
@@ -102,16 +113,16 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
       const levelControl = z.record(z.string(), z.unknown()).parse(effective(component).levelControl)
       set(component, { levelControl: { ...levelControl, fullLoadAverageTemperatureC: meanTemperature } })
     }
-    if (component.kind === 'processTank' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')) set(component, { makeupFlowKgPerS: 0, maxOutletFlowKgPerS: steamFlow })
+    if (component.kind === 'processTank' && feedsFeedwater(component)) set(component, { makeupFlowKgPerS: 0, maxOutletFlowKgPerS: feedCapacity })
     // Letdown reaches the volume control tank at cold-leg temperature, since
     // the CVCS heat exchangers are not modelled, so in a steady plant the tank
     // and the charging it supplies are at that temperature too.
     if (component.kind === 'processTank' && graph.connections.some(link => String(link.to).startsWith(`${component.id}.`) && link.service === 'letdown')) set(component, { initialTemperatureC: thermal.inlet })
     if (component.kind === 'processTank' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'coolingWater')) set(component, { makeupFlowKgPerS: coolingWaterFlow, maxOutletFlowKgPerS: coolingWaterFlow })
-    if (component.kind === 'processValve' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')) {
+    if (component.kind === 'processValve' && feedsFeedwater(component)) {
       const p = effective(component)
       const controller = z.record(z.string(), z.unknown()).parse(p.controller)
-      set(component, { initialPositionFraction: 1, controller: { ...controller, biasPositionFraction: 1 } })
+      set(component, { initialPositionFraction: feedValveOpening, controller: { ...controller, biasPositionFraction: feedValveOpening } })
     }
   }
   return result

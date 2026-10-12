@@ -1561,12 +1561,12 @@
       "kind": "processValve",
       "label": "Feedwater Control Valve A",
       "parameters": {
-        "initialPositionFraction": 0.82,
+        "initialPositionFraction": 0.75,
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "sgA.levelPercent",
           "setpoint": 55,
-          "biasPositionFraction": 0.82,
+          "biasPositionFraction": 0.75,
           "gainPerUnit": 0.03,
           "direction": "reverse",
           "deadband": 0.5,
@@ -1603,12 +1603,12 @@
       "kind": "processValve",
       "label": "Feedwater Control Valve B",
       "parameters": {
-        "initialPositionFraction": 0.82,
+        "initialPositionFraction": 0.75,
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "sgB.levelPercent",
           "setpoint": 55,
-          "biasPositionFraction": 0.82,
+          "biasPositionFraction": 0.75,
           "gainPerUnit": 0.03,
           "direction": "reverse",
           "deadband": 0.5,
@@ -1642,12 +1642,12 @@
       "kind": "processValve",
       "label": "Feedwater Control Valve C",
       "parameters": {
-        "initialPositionFraction": 0.82,
+        "initialPositionFraction": 0.75,
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "sgC.levelPercent",
           "setpoint": 55,
-          "biasPositionFraction": 0.82,
+          "biasPositionFraction": 0.75,
           "gainPerUnit": 0.03,
           "direction": "reverse",
           "deadband": 0.5,
@@ -1681,12 +1681,12 @@
       "kind": "processValve",
       "label": "Feedwater Control Valve D",
       "parameters": {
-        "initialPositionFraction": 0.82,
+        "initialPositionFraction": 0.75,
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "sgD.levelPercent",
           "setpoint": 55,
-          "biasPositionFraction": 0.82,
+          "biasPositionFraction": 0.75,
           "gainPerUnit": 0.03,
           "direction": "reverse",
           "deadband": 0.5,
@@ -1720,12 +1720,12 @@
       "kind": "processValve",
       "label": "Feedwater Control Valve E",
       "parameters": {
-        "initialPositionFraction": 0.82,
+        "initialPositionFraction": 0.75,
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "sgE.levelPercent",
           "setpoint": 55,
-          "biasPositionFraction": 0.82,
+          "biasPositionFraction": 0.75,
           "gainPerUnit": 0.03,
           "direction": "reverse",
           "deadband": 0.5,
@@ -1759,12 +1759,12 @@
       "kind": "processValve",
       "label": "Feedwater Control Valve F",
       "parameters": {
-        "initialPositionFraction": 0.82,
+        "initialPositionFraction": 0.75,
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "sgF.levelPercent",
           "setpoint": 55,
-          "biasPositionFraction": 0.82,
+          "biasPositionFraction": 0.75,
           "gainPerUnit": 0.03,
           "direction": "reverse",
           "deadband": 0.5,

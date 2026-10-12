@@ -191,7 +191,8 @@ export const pumpInitialReconciliationDefinitions: ReadonlyArray<ComponentInitia
       const nominalFlow = parameterNumber(component, 'nominalFlowKgPerS')
       const nominalHead = parameterNumber(component, 'nominalHeadPa')
       const developedHead = running ? nominalHead * speed * speed : 0
-      const componentFlow = running ? balancedHeaderFlow({ system, component, context }, running) ?? nominalFlow * speed : 0
+      // As it then runs: no more than the valves downstream of it pass (dischargeOpenFraction).
+      const componentFlow = running ? balancedHeaderFlow({ system, component, context }, running) ?? nominalFlow * speed * dischargeOpenFraction({ system, component, context }) : 0
       context.write(componentVariablePath(component, 'flowKgPerS'), componentFlow)
       context.write(componentVariablePath(component, 'speedRpm'), running ? speed * nominalSpeedRpm(component) : 0)
       context.write(componentVariablePath(component, 'demandMw'), running

@@ -101,8 +101,8 @@ describe('steam generator level instruments', () => {
     // Well above the top of the tube bundle, at 12 % of the full-scale inventory: the tubes are covered.
     expect(tag('SG-A-LVL-WR')).toBeGreaterThan(wideRangeOf(12))
     expect(read('sgA.tubeCoverageFraction')).toBe(1)
-    // The narrow range is back on its span, above F-0.3's 10 %, about ten minutes after the loss of feed.
-    plantRun.run(360)
+    // The narrow range is back on its span, above F-0.3's 10 %, about eleven minutes after the loss of feed.
+    plantRun.run(390)
     for (const loop of loops) expect(tag(`SG-${loop}-LVL-NR`)).toBeGreaterThan(10)
   })
 

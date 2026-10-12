@@ -111,6 +111,10 @@ const signal = (ref: string, role = 'context') => ({ ref, role })
 const listed = (evidence: ReadonlyArray<DisplayEvidence>) => evidence.map(entry => [entry.path, entry.kind])
 
 const runback = once(() => situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 3))
+// A minute in, before the main feedwater pumps, running on after the trip, refill SG B through its stuck valve (C2b).
+const runbackEarly = once(() => situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 1))
+// FCV B run back to 20 %, below the feed flow low alarm's 190 kg/s, a minute in.
+const deepRunback = once(() => situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 20 } }, 1))
 const atPower = once(() => situation(null, 1))
 
 /**
@@ -145,8 +149,10 @@ describe('what World adds to a composed display', () => {
   test('SG B runback: the feed valve that does not follow its demand, as it stood across the onset; the wide range in the legend; the auxiliary feed into SG B, the trip check and a healthy steam generator', () => {
     // Run 22: SG B level at 0 % three minutes after FCV B ran back to 35 %, the unit tripped into Hot standby. Run 23:
     // the CAUSE pair read only as it stands now, 35 % against a demand of 0 %, an over-feed (HMI review); across the
-    // onset it is a valve stuck at 35 % while demanded full open, until feedwater isolation shut its demand.
-    const { compose, read } = runback()
+    // onset it is a valve stuck at 35 % while demanded at its 75 % full-power opening, until feedwater isolation shut
+    // its demand. Since C2b the main feedwater pumps run on after the trip and refill SG B through the stuck valve to
+    // its high-high level within three minutes, so the display is read a minute in, SG B still below its span.
+    const { compose, read } = runbackEarly()
     const { result, evidence, display } = compose('SG B low-low and feedwater response', ['SG-B-LVL-NR'], [
       { kind: 'trend', horizon: '10m', signals: [signal('SG-B-LVL-NR', 'primary'), signal('sgB.feedwaterFlowKgPerS'), signal('sgB.steamOutflowKgPerS')] },
       { kind: 'alarms', scope: 'related' },
@@ -158,17 +164,17 @@ describe('what World adds to a composed display', () => {
     ])
     expect([read('feedwaterControlValveB.effectivePositionFraction'), read('feedwaterControlValveB.positionFraction')]).toEqual([expect.closeTo(0.35, 2), 0])
     expect(evidence[0]!.reason).toBe('FCV B does not follow its demand (CMD SHUT)')
-    expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 100 % then, 0 % since 10:00:[0-5]\d$/)
+    expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 75\.\d % then, 0 % since 10:00:[0-5]\d$/)
     // Named by the action that judges the shown level, though every start lines the feed up to SG B.
     expect(evidence[2]!.reason).toBe('Steam generator B low-low level auxiliary feedwater actuation: its flow into SG B')
     const rows = rowsOf(display)
     expect(rows[0]).toEqual({ kind: 'cause', name: '', items: ['MFW-B-CV-POS', 'MFW-B-CV'], note: evidence[0]!.note! })
     expect(rows.filter(row => row.kind === 'trip')).toEqual([reactorCheck, reactorCheckRest, turbineCheck])
-    // After the trip the feed into every steam generator, healthy ones too, is read against the heat sink's minimum; with
-    // Tavg against its no-load program it takes the room the healthy loop's narrow range had (below its span here too).
-    expect(rows.map(row => row.kind)).toEqual(['cause', 'delivers', 'delivers', 'criterion', 'trip', 'trip', 'trip', 'stabilize'])
+    // After the trip the feed into every steam generator, healthy ones too, is read against the heat sink's minimum,
+    // and Tavg against its no-load program and the steam generators' pressures are what stabilizes.
+    expect(rows.map(row => row.kind)).toEqual(['cause', 'delivers', 'criterion', 'trip', 'trip', 'trip', 'stabilize', 'stabilize'])
     expect(rows).toContainEqual(feedCriterion)
-    expect(rows.at(-1)).toEqual(tavgAgainstNoLoad)
+    expect(rows).toContainEqual(tavgAgainstNoLoad)
     // The narrow range is off its span: its legend row reads the wide range in its rate's place, so World adds none.
     expect(read('sgB.levelPercent')).toBe(0)
     expect(listed(evidence).map(([, kind]) => kind)).not.toContain('wider')
@@ -296,16 +302,17 @@ describe('what World adds to a composed display', () => {
 
   test('SG B runback: the feed inflow chip on the SG B detail names the alarm that is active, as its alarm row does', () => {
     // HMI review of run 25: three minutes after FCV B ran back, the SG B detail's feedwater inflow read "LO · ALM"
-    // beside "feedwater flow low" listed as cleared. Two alarms set LO 150 kg/s on that flow: the flow alarm of power
+    // beside "feedwater flow low" listed as cleared. Two alarms set LO 190 kg/s on that flow: the flow alarm of power
     // operation, cleared with its mode at the trip, and the low level with low feed, still active. The chip named the
-    // limit both share, in the cleared row's words; it now names the active alarm as its row does.
-    const { system, ask, read } = runback()
+    // limit both share, in the cleared row's words; it now names the active alarm as its row does. Since C2b a valve
+    // run back to 35 % passes more than the limit (its full-power opening is 75 %), so this reads one run back to 20 %.
+    const { system, ask, read } = deepRunback()
     const snapshot = system.protection!.snapshot()
     const lifecycle = (ruleId: string) => [...snapshot.alarms, ...snapshot.trips].find(entry => entry.ruleId === ruleId)!
     expect([lifecycle('sg-b-feedwater-flow-low').active, lifecycle('sg-b-feedwater-low').active]).toEqual([false, true])
     // The main feedwater pumps run on after the trip (C2b) and feed SG B through its stuck valve with the auxiliary
-    // feed: some 160 kg/s, above the 150 kg/s limit and short of the 180 kg/s its low-feed alarm clears at.
-    expect(Number(read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(180)
+    // feed: some 145 kg/s, below the 190 kg/s limit and the 225 kg/s its low-feed alarm clears at.
+    expect(Number(read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(190)
     const detail = ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ detail: { plantId: system.plant.id, components: ['sgB'] } }), size: { width: 1600, height: 900 } }) as { display: CompiledComposedDisplay }
     const readouts = detail.display.panels.find(panel => panel.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the lead values')

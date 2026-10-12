@@ -629,8 +629,9 @@ describe('alarms that apply only in power operation', () => {
 
   test('clear after a reactor trip, though their own clear condition still reads abnormal', () => {
     const plantRun = started()
-    plantRun.act('steam-generator-b-feedwater-runback')
-    // Long enough for the flow alarm, short of the low-low level trip the runback leads to about 22 s in.
+    // FCV B run back to 20 %, below the feed flow low alarm's 190 kg/s (a valve at 35 % passes more, its full-power
+    // opening being 75 %): long enough for the flow alarm, short of the low-low level trip the runback leads to 20 s in.
+    plantRun.act('steam-generator-b-feedwater-runback', { positionPercent: 20 })
     plantRun.run(15_000)
     const feedLow = 'alarm:sg-b-feedwater-flow-low:feedwater-flow-low'
     expect(plantRun.activeIds()).toContain(feedLow)

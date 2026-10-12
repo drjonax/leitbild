@@ -293,8 +293,8 @@ describe('process plant runtime', () => {
     })
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeGreaterThan(50)
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeLessThan(60)
-    // At full power the operating point opens the feedwater control valves wide.
-    expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeGreaterThan(0.9)
+    // At full power the feed regulating valves stand at their declared 75 % opening, with margin to pick up load.
+    expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeCloseTo(0.75, 1)
   }, PLANT_HANG_GUARD_MS) // A watchdog for hangs: this 600 s trajectory ran 69 s at load 100 to 130.
 
   test('reference protection trips reactor on pressurizer pressure and containment pressure extremes', () => {

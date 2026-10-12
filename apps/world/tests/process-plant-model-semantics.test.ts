@@ -325,10 +325,12 @@ describe('link flow', () => {
 
   test('a link is rated by its own nominal flow or by the equipment that drives it', () => {
     expect(ratedFlowForLink(graph, linkById('rcs-hot-leg-a'))).toBe(4250)
-    // Through the MFW header and FCV B, back to one MFW pump: half the steam
-    // the core's 3,400 MW and the reactor coolant pumps' 18 MW raise from
-    // 227 °C feedwater at 6.9 MPa, 1.80 MJ/kg.
-    expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(951, 0)
+    // Through the MFW header and FCV B, back to one MFW pump: half the feed
+    // the pumps pass with the regulating valves wide open, the full-power
+    // feed (the steam the core's 3,400 MW and the reactor coolant pumps'
+    // 18 MW raise from 227 °C feedwater at 6.9 MPa, 1.80 MJ/kg) over the
+    // valves' 75 % full-power opening.
+    expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(1268, 0)
     expect(ratedFlowForLink(graph, linkById('pressurizer-relief-to-tank'))).toBe(componentById(graph, 'pressurizer').semantics.ratedOutflow[0]!.flowKgPerS)
     // The letdown line carries the vessel's rated letdown, about 75 gpm.
     expect(ratedFlowForLink(graph, linkById('letdown-to-vct'))).toBe(5)
