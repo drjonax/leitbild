@@ -37,7 +37,8 @@
   import { createWorkspaceAdmin } from './workspace-admin.ts'
   import { errorDiagnostic, plainError } from './error-text.ts'
   import { createStartRunner, startAnnouncement, type StartState, type StartTarget } from './definition-start.ts'
-  import { continueItems, featuredStartRevision, openedFromGuide, readFeaturedCatalog, workspaceDemos, type FeaturedCard } from './workspace-page.ts'
+  import { readFeaturedCatalogue } from './featured-catalogue.ts'
+  import { continueItems, featuredStartRevision, openedFromGuide, workspaceDemos, type FeaturedCard } from './workspace-page.ts'
 
   type Page = { readonly kind: 'workspace'; readonly id: string }
   interface InvocationResponse {
@@ -247,7 +248,7 @@
   })
   const loadFeatured = async (): Promise<void> => {
     try {
-      featuredCatalog = await readFeaturedCatalog((input, init) => fetch(input, init))
+      featuredCatalog = await readFeaturedCatalogue((input, init) => fetch(input, init))
       featuredFailed = false
     } catch (cause) {
       console.error('Featured Definitions are unavailable', cause)

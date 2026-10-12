@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { featuredDefinitionCatalogSchema, moduleResourceDescriptorSchema } from '@leitbild/contracts'
 import {
-  confirmsDeletion, CONTINUE_LIMIT, continueItems, deleteConfirmationText, featuredStartRevision, FEATURED_UNAVAILABLE_TEXT,
-  openedFromGuide, previewSrc, previewSrcset, PUBLIC_NOTE, readFeaturedCatalog, sameDefinition, summaryHasMore, summaryLead, workspaceDemos,
+  confirmsDeletion, CONTINUE_LIMIT, continueItems, deleteConfirmationText, featuredStartRevision,
+  openedFromGuide, previewSrc, previewSrcset, PUBLIC_NOTE, sameDefinition, summaryHasMore, summaryLead, workspaceDemos,
 } from './workspace-page.ts'
-import { fakeFetch, hostError, json } from './host-fetch-fake.test-support.ts'
 import { featured, revision, room, run, scenario, WS } from './workspace-page.test-support.ts'
 
 describe('featured demos on the Workspace page', () => {
@@ -49,7 +48,6 @@ describe('featured demos on the Workspace page', () => {
     expect(demos.unavailable.map(String)).toEqual(['world'])
     expect(demos.cards).toEqual([])
     expect(demos.others).toHaveLength(4)
-    expect(FEATURED_UNAVAILABLE_TEXT).toBe('Demos are unavailable right now.')
   })
 
   test('while the featured list is unknown nothing is featured', () => {
@@ -140,22 +138,5 @@ describe('guide hand-off', () => {
     expect(openedFromGuide('?agents=room-1&from=guide')).toBe(true)
     expect(openedFromGuide(new URLSearchParams({ agents: 'room-1' }))).toBe(false)
     expect(openedFromGuide('?from=wiki')).toBe(false)
-  })
-})
-
-describe('featured catalogue', () => {
-  test('is read from the Host without a Workspace and validated', async () => {
-    const body = { modules: [{ moduleId: 'world', status: 'ready' }], definitions: [featured('halden-emergency')] }
-    const host = fakeFetch().on('GET', '/api/featured-definitions', json(body))
-    const catalog = await readFeaturedCatalog(host.fetch)
-    expect(catalog.definitions.map(item => String(item.definition.id))).toEqual(['halden-emergency'])
-    expect(host.calls.map(call => call.path)).toEqual(['/api/featured-definitions'])
-  })
-
-  test('an invalid body or a Host error is thrown, never shown as an empty list', async () => {
-    const invalid = fakeFetch().on('GET', '/api/featured-definitions', json({ modules: [], definitions: [featured('x')] }))
-    await expect(readFeaturedCatalog(invalid.fetch)).rejects.toThrow()
-    const failed = fakeFetch().on('GET', '/api/featured-definitions', hostError(503, 'workspace_capacity_exceeded', 'full'))
-    await expect(readFeaturedCatalog(failed.fetch)).rejects.toMatchObject({ status: 503 })
   })
 })

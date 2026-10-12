@@ -7,7 +7,8 @@
   import Icon from './Icon.svelte'
   import StartProgress from './StartProgress.svelte'
   import type { StartState } from './definition-start.ts'
-  import { FEATURED_UNAVAILABLE_TEXT, previewSrc, previewSrcset, type FeaturedCard } from './workspace-page.ts'
+  import { DEMOS_UNAVAILABLE_TEXT } from './featured-catalogue.ts'
+  import { previewSrc, previewSrcset, type FeaturedCard } from './workspace-page.ts'
 
   let { cards, unavailable, start, keyOf, onstart, onretry, ondismiss, oncancel, onreload }: {
     cards: ReadonlyArray<FeaturedCard>
@@ -71,7 +72,7 @@
 {#if cards.length > 0 || unavailable}
   <section class="demos" aria-labelledby="demos-heading">
     <div class="section-head"><h2 id="demos-heading">Demos</h2>{#if cards.length > 0}<span class="count">{cards.length} featured</span>{/if}</div>
-    {#if unavailable}<p class="unavailable">{FEATURED_UNAVAILABLE_TEXT}</p>{/if}
+    {#if unavailable}<p class="unavailable">{DEMOS_UNAVAILABLE_TEXT}</p>{/if}
     {#if cards.length > 0}
       {#if phone}
         {#key cards.length}

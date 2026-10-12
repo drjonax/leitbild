@@ -39,6 +39,11 @@ describe('the featured catalogue on the Demos surfaces', () => {
     await expect(readFeaturedCatalogue(down.fetch)).rejects.toMatchObject({ status: 503 })
   })
 
+  test('a featured demo from a Module the catalogue does not report is rejected, never shown', async () => {
+    const orphan = fakeFetch().on('GET', FEATURED_PATH, json({ modules: [], definitions: [featured()] }))
+    await expect(readFeaturedCatalogue(orphan.fetch)).rejects.toThrow()
+  })
+
   test('passes the caller’s abort signal', async () => {
     const host = fakeFetch().on('GET', FEATURED_PATH, json(catalogue()))
     const controller = new AbortController()

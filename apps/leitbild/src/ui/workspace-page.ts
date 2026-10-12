@@ -10,10 +10,8 @@ import type {
   ModuleResourceDescriptor,
   ResourceSummaryItem,
 } from '@leitbild/contracts'
-import { readHostJson } from './launch-workspace.ts'
 
 export const PUBLIC_NOTE = 'Public: anyone can see, open, change or delete this Workspace.'
-export const FEATURED_UNAVAILABLE_TEXT = 'Demos are unavailable right now.'
 /** The guide hands a conversation over with `?agents=<room>&from=guide`; the shell then links back. */
 export const FROM_GUIDE = { param: 'from', value: 'guide' } as const
 
@@ -159,19 +157,3 @@ export const deleteConfirmationText = (workspace: { readonly id: string; readonl
 /** Exact after trimming the ends: the point is to make the visitor read the name. */
 export const confirmsDeletion = (typed: string, workspace: { readonly id: string; readonly name: string | null }): boolean =>
   typed.trim() === deleteConfirmationText(workspace)
-
-// ---------- Featured catalogue ----------
-
-type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
-
-/**
- * GET /api/featured-definitions, validated with the contract. It needs no
- * Workspace and wakes no Module runtime. A transport or contract failure is
- * thrown; the page then says "Demos are unavailable right now."
- */
-export const readFeaturedCatalog = async (fetchImpl: FetchLike, signal?: AbortSignal): Promise<FeaturedDefinitionCatalog> => {
-  const response = await fetchImpl('/api/featured-definitions', signal === undefined ? { method: 'GET' } : { method: 'GET', signal })
-  const body = await readHostJson(response)
-  const { featuredDefinitionCatalogSchema } = await import('@leitbild/contracts')
-  return featuredDefinitionCatalogSchema.parse(body)
-}
