@@ -30,8 +30,10 @@ export type ReferenceFirstOutGroupId = (typeof referenceFirstOutGroups)[number][
  * What a reactor trip brings in, as it is expected to, in its first
  * minutes: steam flow falls and the steam generators' levels shrink below
  * their low and low-low set points (starting auxiliary feedwater, and
- * tripping the already tripped reactor again), feed flow stops as feedwater
- * isolates, and Tavg falls to the feedwater isolation after a trip. Each
+ * tripping the already tripped reactor again), feed flow stops as the feed
+ * regulating valves shut, Tavg falls to the feedwater isolation after a trip,
+ * and the steam generators' relief valves lift briefly before the dumps
+ * open. Each
  * such alarm's annunciator declares it, so displays show these as expected
  * after the reactor trip's first-out, never hidden, while the first-out and
  * what came in before it stand out.

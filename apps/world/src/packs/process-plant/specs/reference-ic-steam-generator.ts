@@ -250,12 +250,14 @@ export const steamGeneratorReferenceIcRules = (
       delayMs: 1_000,
       latch: false,
       resetWhenClear: true,
+      // After a trip from power the relief valves lift as the steam piles up ahead of the dumps, which take
+      // some 10 s to open, and shut again within a minute: expected then, as the levels' shrink is.
       effects: [alarm({
         id: 'atmospheric-relief-valve-open',
         title: `Steam generator ${loop} atmospheric relief valve open`,
         message: `Steam generator ${loop} atmospheric relief valve reads open: it is venting steam to the atmosphere.`,
         severity: 'warning',
-        annunciator: annunciator({ system: 'mainSteam', equipmentId: `steamGeneratorReliefValve${loop}`, group: 'main-steam', priority: 'high', role: 'status' }),
+        annunciator: annunciator({ system: 'mainSteam', equipmentId: `steamGeneratorReliefValve${loop}`, group: 'main-steam', priority: 'high', role: 'status', expectedAfter: expectedAfterReactorTrip }),
       })],
     }),
     rule({

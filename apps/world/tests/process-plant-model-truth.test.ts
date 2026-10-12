@@ -1002,6 +1002,10 @@ describe('steam generator atmospheric relief valves as displays read them', () =
     }
     expect(opened).toBeGreaterThan(0.05)
     expect(vented).toBeGreaterThan(1)
+    // Their lifting after the trip is expected then, as the levels' shrink is, never as bright as the first-out.
+    const lifted = plantRun.protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:sg-a-atmospheric-relief-valve-open:atmospheric-relief-valve-open')!
+    expect(lifted.firstActiveElapsedMs).toBeDefined()
+    expect(lifted.annunciator?.expectedAfter).toEqual({ firstOutGroup: 'reactor-trip', withinMs: 300_000 })
     plantRun.run(60_000)
     for (const loop of loops) {
       expect(Number(plantRun.tag(`SG-${loop}-ARV-POS`)), loop).toBeLessThan(0.02)
