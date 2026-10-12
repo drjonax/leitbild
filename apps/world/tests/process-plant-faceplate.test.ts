@@ -4,6 +4,7 @@ import {
   compilePlantGraph,
   compileProcessPlant,
   createProcessPlantProtectionRunner,
+  createProcessPlantRampRunner,
   createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
   processPlantComponentRegistry,
@@ -12,7 +13,11 @@ import {
   type PlantGraphSpec,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
+import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { conditionBindings } from '../src/packs/process-plant/displays/actuations.ts'
+import { compileDetailDisplay, composedPanelPens, type OverviewView } from '../src/packs/process-plant/displays/compose.ts'
+import { PROCESS_DISPLAY_SAMPLE_MAX_PATHS } from '../src/packs/process-plant/displays/composition.ts'
+import { equipmentKeyValues, plantNowOf } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { compileFaceplate, faceplateEnds, groupStates } from '../src/packs/process-plant/displays/faceplate.ts'
 import { faceplateLines, faceplateNow, type CompiledFaceplate, type Faceplate } from '../src/packs/process-plant/displays/faceplate-live.ts'
 import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
@@ -161,4 +166,43 @@ describe('each faceplate column fits the room under the drawing', () => {
       }
     }, 120_000)
   }
+})
+
+describe('an energy end\'s detail draws its faceplate under the drawing', () => {
+  // A process display window as measured on production in a Full HD browser (process-plant-overview.test.ts).
+  const fullHd: OverviewView = { width: 1896, height: 972 }
+  const system = {
+    plant,
+    runtime: createProcessPlantRuntime({ system: plant }),
+    ramps: createProcessPlantRampRunner({ runtime: createProcessPlantRuntime({ system: plant }) }),
+    protection: createProcessPlantProtectionRunner({ system: plant, protection: plant.automation }),
+    performance: createProcessPlantRuntimePerformance(),
+  }
+  const detail = (index: number, view: OverviewView) => {
+    const result = compileDetailDisplay(system, new Set(), [String(plant.graph.components[index]!.id)], view)
+    if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
+    return result.display
+  }
+
+  test('at Full HD: the drawing, the faceplate with every lead value, and the alarms alone beside them, within the window and what a display samples', () => {
+    for (const end of faceplateEnds(plant)) {
+      const display = detail(end, fullHd)
+      expect(display.panels.map(panel => panel.kind)).toEqual(['mimic', 'faceplate', 'alarms'])
+      expect(display.height).toBeLessThanOrEqual(fullHd.height)
+      const faceplate = display.panels.find(panel => panel.kind === 'faceplate')!
+      if (faceplate.kind !== 'faceplate') throw new Error('expected the faceplate')
+      const shown = new Set(composedPanelPens(faceplate).map(pen => String(pen.path)))
+      for (const path of equipmentKeyValues(plant, [end], plantNowOf(system))) expect(shown.has(String(path))).toBe(true)
+      const mimic = display.panels.find(panel => panel.kind === 'mimic')!
+      if (mimic.kind !== 'mimic') throw new Error('expected the mimic')
+      expect(new Set([...mimic.mimic.paths.map(String), ...faceplate.faceplate.paths, ...shown]).size).toBeLessThanOrEqual(PROCESS_DISPLAY_SAMPLE_MAX_PATHS)
+    }
+  }, 60_000)
+
+  test('a window too narrow for its columns keeps the lead values beside the drawing, and other equipment never gets one', () => {
+    const narrow: OverviewView = { width: 700, height: 900 }
+    for (const end of faceplateEnds(plant)) expect(detail(end, narrow).panels.map(panel => panel.kind)).toEqual(['readouts', 'mimic', 'alarms'])
+    const transfer = plant.graph.components.findIndex(component => component.semantics.energy.some(role => role.role === 'transfer'))
+    expect(detail(transfer, fullHd).panels.some(panel => panel.kind === 'faceplate')).toBe(false)
+  }, 60_000)
 })

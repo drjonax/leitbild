@@ -299,6 +299,16 @@ export const composedDisplayLayout = {
    */
   annunciatorTile: { widths: [134, 88], height: 40, inset: 16 },
   annunciatorGap: 4,
+  /**
+   * A faceplate under an energy end's drawing in its detail (faceplate.ts):
+   * each column's head (its chips or name, and a sub-line), its one-line rows
+   * (HF review: 24–28 px, not lead-value blocks), the padding round it, and
+   * the least width a column keeps; it is drawn only where its columns fit.
+   */
+  faceplateHead: 40,
+  faceplateRow: 28,
+  faceplatePad: 8,
+  faceplateColumnMin: 260,
 } as const
 
 // A chat display taller than about 600 px pushes its own lower panels below
@@ -306,6 +316,10 @@ export const composedDisplayLayout = {
 // OpenBridge's full-size symbols, may take up to 900 px (owner decision).
 export const COMPOSED_DISPLAY_MAX_HEIGHT_PX = 660
 export const COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX = 900
+
+/** A faceplate's height: its heads, as many rows as its longest column can take, and the padding round them. */
+export const faceplateHeight = (lines: number): number =>
+  composedDisplayLayout.faceplateHead + lines * composedDisplayLayout.faceplateRow + 2 * composedDisplayLayout.faceplatePad
 
 /** The height a display may take: taller when an equipment mimic leads it. */
 export const composedDisplayMaxHeight = (panels: ReadonlyArray<{ readonly kind: string }>): number =>
@@ -323,6 +337,8 @@ export type ComposedPanelShape =
   | { readonly kind: 'alarms'; readonly rows: number }
   /** A mimic has the height its generated drawing takes. */
   | { readonly kind: 'mimic'; readonly height: number }
+  /** A faceplate has the height its heads and its longest column take (faceplateHeight). */
+  | { readonly kind: 'faceplate'; readonly height: number }
 
 /** A panel shape with its trend plot height decided. */
 export type ComposedPanelSize =
@@ -353,6 +369,7 @@ export const composedPanelHeight = (panel: ComposedPanelSize): number => {
   if (panel.kind === 'readouts') return layout.readoutsRow * Math.ceil(panel.values / layout.readoutsPerRow)
   if (panel.kind === 'evidence') return layout.evidenceCaption + layout.evidenceRow * panel.rows
   if (panel.kind === 'mimic') return panel.height + layout.mimicLegend
+  if (panel.kind === 'faceplate') return panel.height
   return layout.alarms - (layout.alarmRows - panel.rows) * layout.alarmRow
 }
 

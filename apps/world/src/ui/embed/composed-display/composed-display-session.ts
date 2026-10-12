@@ -106,11 +106,15 @@ export const createComposedDisplaySession = (config: {
    * Every displayed signal is sampled once, however many panels show it, with
    * the instrument that reads it over a wider span (its legend reads that one
    * off its span) and the values its drawn gated limits require, so a limit
-   * whose gates do not hold is drawn idle as World reads it (gatesHold).
+   * whose gates do not hold is drawn idle as World reads it (gatesHold); and
+   * everything a faceplate's live rows read (faceplate-live.ts).
    */
   const sampledPaths = (): ReadonlyArray<string> => [...new Set(panels().flatMap(panel => panel.kind === 'mimic'
     ? panel.mimic.paths.map(String)
-    : pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))])))]
+    : [
+      ...pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]),
+      ...(panel.kind === 'faceplate' ? panel.faceplate.paths : []),
+    ]))]
 
   /** Trends keep their horizon; comparisons keep ten minutes for rates. Advice readouts use only the latest sample. */
   const trendPens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> =>

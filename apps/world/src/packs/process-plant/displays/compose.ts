@@ -26,7 +26,9 @@ import {
   COMPOSED_TREND_MAX_SIGNALS,
   COMPOSED_TREND_MAX_STRIPS,
   COMPOSED_TREND_STRIP_MAX_PENS,
+  faceplateHeight,
   LEAD_VALUE_SPARKLINE_MS,
+  PROCESS_DISPLAY_SAMPLE_MAX_PATHS,
   composedDisplayCompositionSchema,
   composedPanelHeight,
   fitComposedDisplay,
@@ -43,7 +45,7 @@ import {
 } from './composition.ts'
 import { displayValue, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
-import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -51,7 +53,9 @@ import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
-import { operatingPointValue } from './operating-point.ts'
+import { operatingPointReading, operatingPointValue } from './operating-point.ts'
+import { compileFaceplate, faceplateEnds } from './faceplate.ts'
+import { faceplateMostLines, type CompiledFaceplate } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
@@ -210,7 +214,21 @@ export interface ComposedEvidencePanel {
   readonly rows: ReadonlyArray<ComposedEvidenceRow>
 }
 
-export type CompiledComposedPanel = ComposedTrendPanel | ComposedComparisonPanel | ComposedReadoutsPanel | ComposedEvidencePanel | ComposedAlarmsPanel | ComposedMimicPanel
+/**
+ * An energy end's faceplate under its drawing in its detail (faceplate.ts):
+ * the compiled faceplate, which reads live from the display's sample
+ * (faceplate-live.ts), every value it shows as a readout shows it, and its
+ * height (faceplateHeight). It takes the detail's lead values: the column
+ * beside the drawing then holds only the alarms.
+ */
+export interface ComposedFaceplatePanel {
+  readonly kind: 'faceplate'
+  readonly faceplate: CompiledFaceplate
+  readonly pens: ReadonlyArray<ComposedDisplayPen>
+  readonly height: number
+}
+
+export type CompiledComposedPanel = ComposedTrendPanel | ComposedComparisonPanel | ComposedReadoutsPanel | ComposedEvidencePanel | ComposedAlarmsPanel | ComposedMimicPanel | ComposedFaceplatePanel
 
 /** Every signal a compiled panel shows, in display order. */
 export const composedPanelPens = (panel: CompiledComposedPanel): ReadonlyArray<ComposedDisplayPen> => {
@@ -559,6 +577,7 @@ const panelShape = (panel: UnsizedPanel): ComposedPanelShape => {
   if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length }
   if (panel.kind === 'evidence') return { kind: 'evidence', rows: panel.rows.length }
   if (panel.kind === 'mimic') return { kind: 'mimic', height: panel.mimic.height }
+  if (panel.kind === 'faceplate') return { kind: 'faceplate', height: panel.height }
   return { kind: 'alarms', rows: panel.rows }
 }
 
@@ -1031,6 +1050,15 @@ export interface GeneratedPanels {
   readonly readouts: number
   readonly annunciators: number
   readonly tileWidth: number
+  /** A faceplate under the drawing: its height, and how many columns share the drawing's width. */
+  readonly faceplate?: { readonly height: number; readonly columns: number }
+}
+
+/** The room a faceplate takes under a drawing, and whether its columns fit the width (each at its least width). */
+const faceplateRoom = (panels: GeneratedPanels, width: number): number | null => {
+  if (panels.faceplate === undefined) return 0
+  const layout = composedDisplayLayout
+  return width < panels.faceplate.columns * layout.faceplateColumnMin ? null : panels.faceplate.height + layout.panelGap
 }
 
 /** Annunciator tiles across a width: as many to a row as fit at their least width (the view's grid does the same). */
@@ -1057,10 +1085,14 @@ export const overviewDrawingRoom = (
   const height = view.height - layout.overviewFrame
   if (arrangement === 'column') {
     const column = overviewColumnHeight(panels)
-    if (column > height) return null
-    return { maxWidth: width - layout.overviewColumnGap - layout.overviewColumn, maxHeight: height - layout.mimicLegend }
+    const drawingWidth = width - layout.overviewColumnGap - layout.overviewColumn
+    const faceplate = faceplateRoom(panels, drawingWidth)
+    if (column > height || faceplate === null) return null
+    return { maxWidth: drawingWidth, maxHeight: height - layout.mimicLegend - faceplate }
   }
-  return { maxWidth: width, maxHeight: height - layout.overviewFooter - stackedPanelsHeight(panels, width) - layout.mimicLegend }
+  const faceplate = faceplateRoom(panels, width)
+  if (faceplate === null) return null
+  return { maxWidth: width, maxHeight: height - layout.overviewFooter - stackedPanelsHeight(panels, width) - layout.mimicLegend - faceplate }
 }
 
 /** The column's least height: its lead values under their title, the annunciator tiles, the alarms and the footer. */
@@ -1080,7 +1112,7 @@ const stackedPanelsHeight = (panels: GeneratedPanels, width: number): number => 
 /** A generated display's whole height in an arrangement across a width: what a window shows without scrolling. */
 const overviewHeight = (arrangement: OverviewArrangement, panels: GeneratedPanels, mimic: CompiledMimic, width: number): number => {
   const layout = composedDisplayLayout
-  const drawing = mimic.height + layout.mimicLegend
+  const drawing = mimic.height + layout.mimicLegend + (panels.faceplate === undefined ? 0 : panels.faceplate.height + layout.panelGap)
   if (arrangement === 'column') return layout.overviewFrame + Math.max(drawing, overviewColumnHeight(panels))
   return layout.overviewFrame + drawing + stackedPanelsHeight(panels, width) + layout.overviewFooter
 }
@@ -1104,6 +1136,7 @@ const fitGenerated = (
   view: OverviewView | null,
   panels: ReadonlyArray<GeneratedPanels>,
   drawings: ReadonlyArray<GeneratedDrawing>,
+  options: { readonly scroll: boolean } = { scroll: true },
 ): { readonly ok: true; readonly arrangement: OverviewArrangement; readonly panels: GeneratedPanels; readonly mimic: CompiledMimic } | { readonly ok: false; readonly issues: ReadonlyArray<string> } => {
   const widest = panels[0]!
   const whole = view === null ? [] : [
@@ -1122,7 +1155,7 @@ const fitGenerated = (
   // A window shorter than its frame still scrolls from the least room a drawing can have.
   const shortest = view === null ? 0 : Math.max(SCROLL_STEP, view.height - composedDisplayLayout.overviewFrame - composedDisplayLayout.mimicLegend)
   const heights = Array.from({ length: Math.floor(shortest / SCROLL_STEP) }, (_, step) => shortest + (step + 1) * SCROLL_STEP)
-  const scrolling = (view === null ? [] : [
+  const scrolling = (view === null || !options.scroll ? [] : [
     { arrangement: 'column' as const, maxWidth: overviewDrawingRoom({ width: view.width, height: UNCONSTRAINED }, 'column', widest)!.maxWidth },
     { arrangement: 'stacked' as const, maxWidth: view.width - 2 * composedDisplayLayout.overviewPadding },
   ]).filter(rung => rung.maxWidth > 0)
@@ -1142,9 +1175,11 @@ const fitGenerated = (
   let refusal: ReadonlyArray<string> = []
   const attempts = [
     ...drawings.flatMap(draw => whole.map(layout => ({ arrangement: layout.arrangement, panels: layout.panels, draw: () => draw(layout.room) }))),
+    ...(!options.scroll ? [] : [
     ...scrolling.flatMap(rung => drawings.map(draw => ({ arrangement: rung.arrangement, panels: widest, draw: () => leastHeight(draw, rung.maxWidth) }))),
     ...(view === null ? [] : drawings.map(draw => ({ arrangement: 'stacked' as const, panels: widest, draw: () => leastHeight(draw, UNCONSTRAINED) }))),
     ...drawings.map(draw => ({ arrangement: 'stacked' as const, panels: widest, draw: () => draw({ maxWidth: UNCONSTRAINED, maxHeight: UNCONSTRAINED }) })),
+    ]),
   ]
   for (const { arrangement, panels: shown, draw } of attempts) {
     const drawn = draw()
@@ -1154,17 +1189,18 @@ const fitGenerated = (
   return { ok: false, issues: refusal }
 }
 
-/** A display World generates: lead values, a drawing and alarms, sized for its arrangement. */
+/** A display World generates: lead values or a faceplate under the drawing, a drawing and alarms, sized for its arrangement. */
 const generatedDisplay = (
   system: ProcessPlantRuntimeInstance,
   title: string,
-  readouts: ComposedReadoutsPanel | undefined,
+  readouts: ComposedReadoutsPanel | ComposedFaceplatePanel | undefined,
   view: OverviewView | null,
   fitted: { readonly arrangement: OverviewArrangement; readonly panels: GeneratedPanels; readonly mimic: CompiledMimic },
   alarms: (panels: ReadonlyArray<CompiledComposedPanel>) => ComposedAlarmsPanel,
 ): CompiledComposedDisplay => {
-  // Nothing generated is a trend, so every panel has its natural height.
-  const shown: ReadonlyArray<CompiledComposedPanel> = [...(readouts === undefined ? [] : [readouts]), { kind: 'mimic', mimic: fitted.mimic }]
+  // Nothing generated is a trend, so every panel has its natural height. Lead values come before the drawing, a faceplate under it.
+  const mimic: ComposedMimicPanel = { kind: 'mimic', mimic: fitted.mimic }
+  const shown: ReadonlyArray<CompiledComposedPanel> = readouts === undefined ? [mimic] : readouts.kind === 'faceplate' ? [mimic, readouts] : [readouts, mimic]
   const width = view === null ? fitted.mimic.width : view.width - 2 * composedDisplayLayout.overviewPadding
   return {
     plantId: system.plant.id,
@@ -1220,6 +1256,38 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
 }
 
 /**
+ * An energy end's faceplate, for its detail alone: compiled for the Plant's
+ * mode as the detail is opened (detailLeadKey), with every value it shows as
+ * a readout shows it, its states without the end's name. Null for any other
+ * detail.
+ */
+const faceplatePanel = (
+  system: ProcessPlantRuntimeInstance,
+  components: ReadonlyArray<number>,
+  recordedSeriesIds: ReadonlySet<string>,
+  issues: ComposedDisplayIssue[],
+): ComposedFaceplatePanel | null => {
+  const end = components.length === 1 && faceplateEnds(system.plant).includes(components[0]!) ? components[0]! : undefined
+  const compiled = end === undefined ? null : compileFaceplate(system.plant, end, plantNow(system), path => operatingPointReading(system.plant, path))
+  if (compiled === null) return null
+  const shown = [...new Set(compiled.faceplate.columns.flatMap(column => column.rows.flatMap(row => row.kind === 'values' ? row.paths
+    : row.kind === 'flows' ? row.branches.map(branch => branch.path)
+      : row.kind === 'loops' ? row.columns.flatMap(entry => entry.cells.flat())
+        : [])))]
+  const pens = resolvePens(system, shown.map(ref => ({ ref, role: 'primary' as const })), 'faceplate', { numericOnly: false, panelName: 'faceplate', recordedSeriesIds, within: components }, issues)
+  if (pens === undefined) return null
+  // As tall as its longest column can grow while it is open (every check unfolded), so nothing under it moves.
+  return { kind: 'faceplate', faceplate: compiled.faceplate, pens, height: faceplateHeight(Math.max(0, ...compiled.faceplate.columns.map(faceplateMostLines))) }
+}
+
+/** How many values a generated display samples: what its drawing draws, what its faceplate reads, and what their limits need. */
+const sampledPathCount = (mimic: CompiledMimic, faceplate: ComposedFaceplatePanel): number => new Set([
+  ...mimic.paths.map(String),
+  ...faceplate.faceplate.paths,
+  ...faceplate.pens.flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).flatMap(gatePaths))]),
+]).size
+
+/**
  * Equipment opened from a generated display: what feeds it and where its
  * outflow goes (narrowed to its loop when all of it belongs to one), drawn by
  * the detail profile as far as the view allows, from the reach a mimic
@@ -1230,6 +1298,11 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
  * is opened (what rules acting in that mode judge first, readings that
  * measure nothing then last); they stay as chosen while the detail is open,
  * and opening it again in another mode chooses again (detailLeadKey).
+ * An energy end's detail draws its faceplate under the drawing instead,
+ * which takes every lead value, so the column beside the drawing holds only
+ * the alarms; where its columns do not fit the view's width, or the drawing
+ * does not fit the height left above it, or the display would sample more
+ * values than it may, the detail keeps its lead values (HF review, HF-03).
  */
 export const compileDetailDisplay = (
   system: ProcessPlantRuntimeInstance,
@@ -1243,6 +1316,7 @@ export const compileDetailDisplay = (
   const components = componentIds.map(id => graph.componentIndexById.get(id as never)!)
   const issues: ComposedDisplayIssue[] = []
   const readouts = leadValues(system, equipmentKeyValues(system.plant, components, plantNow(system)), recordedSeriesIds, issues, components)
+  const faceplate = faceplatePanel(system, components, recordedSeriesIds, issues)
   if (issues.length > 0) return { ok: false, issues }
   const loops = [...new Set(components.map(index => graph.components[index]!.metadata?.loopId))]
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}
@@ -1259,10 +1333,15 @@ export const compileDetailDisplay = (
     return scope.ok ? [withOtherServicesStopped(graph, scope.scope, components, services)] : []
   }))
   const scopes = [...whole.flatMap(scope => scope.ok ? [scope.scope] : []), ...oneService]
-  const fitted = fitGenerated(view, panels, scopes.map(scope => (room: Parameters<GeneratedDrawing>[0]) => compileMimicScope(system.plant, scope, { profile: detailMimicProfile, ...room })))
+  const drawings = scopes.map(scope => (room: Parameters<GeneratedDrawing>[0]) => compileMimicScope(system.plant, scope, { profile: detailMimicProfile, ...room }))
+  // The faceplate under the drawing only at the view's size: it never scrolls the drawing out of a window.
+  const faceplated = faceplate === null ? null
+    : fitGenerated(view, [{ ...panels[0]!, readouts: 0, faceplate: { height: faceplate.height, columns: faceplate.faceplate.columns.length } }], drawings, { scroll: false })
+  const withFaceplate = faceplated !== null && faceplated.ok && sampledPathCount(faceplated.mimic, faceplate!) <= PROCESS_DISPLAY_SAMPLE_MAX_PATHS ? faceplated : null
+  const fitted = withFaceplate ?? fitGenerated(view, panels, drawings)
   if (!fitted.ok) return { ok: false, issues: [{ path: 'detail', message: `nothing around it can be drawn legibly; ${fitted.issues.join('; ')}` }] }
   const title = groupLabel(components.map(index => graph.components[index]!.label))
-  return { ok: true, display: generatedDisplay(system, title, readouts, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows })) }
+  return { ok: true, display: generatedDisplay(system, title, withFaceplate === null ? readouts : faceplate!, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows })) }
 }
 
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const
@@ -1340,6 +1419,7 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
     return [`World added these values from the Plant model, one row each for what bears on the question now, labelled with why ("Added from the Plant model"); cite them as shown: ${rows.join('; ')}`]
   }
   if (panel.kind === 'mimic') return mimicShows(panel.mimic)
+  if (panel.kind === 'faceplate') return [`Faceplate of ${panel.faceplate.end} by function (${panel.faceplate.columns.map(column => column.heads.map(head => head.title).join(' · ')).join('; ')}): ${panel.pens.map(signalName).join('; ')}`]
   return [panel.scope === 'related' ? `Active alarms and trips of the ${panel.ruleIds.length} I&C rules acting on the displayed signals and their equipment` : 'All active alarms and trips of the Plant']
 })
 

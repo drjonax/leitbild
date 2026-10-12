@@ -9,13 +9,18 @@ import { createProcessPlantRuntime, type ProcessPlantRuntime } from '../runtime/
 
 const atOperatingPoint = new WeakMap<CompiledProcessPlant, ProcessPlantRuntime>()
 
-/** A signal's value at the Plant's declared operating point; undefined for one that is not a number there. */
-export const operatingPointValue = (plant: CompiledProcessPlant, path: VariablePath): number | undefined => {
+/** What a signal reads at the Plant's declared operating point: a number or an on/off state (a breaker closed, the grid available). */
+export const operatingPointReading = (plant: CompiledProcessPlant, path: VariablePath): unknown => {
   let runtime = atOperatingPoint.get(plant)
   if (runtime === undefined) {
     runtime = createProcessPlantRuntime({ system: plant })
     atOperatingPoint.set(plant, runtime)
   }
-  const value = runtime.readVariable(path)
+  return runtime.readVariable(path)
+}
+
+/** A signal's value at the Plant's declared operating point; undefined for one that is not a number there. */
+export const operatingPointValue = (plant: CompiledProcessPlant, path: VariablePath): number | undefined => {
+  const value = operatingPointReading(plant, path)
   return typeof value === 'number' ? value : undefined
 }

@@ -324,18 +324,21 @@ describe('equipment opened from the unit overview', () => {
     // Its injection and charging lines stop at it, by name.
     expect(mimic.mimic.stubs.map(stub => stub.text)).toContain('from ACC ×4, CHG ×2, RHR iso, SI header')
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
-    // Opened at power it leads with the power range, Tavg's deviation from Tref, subcooling margin, the RCS leak rate
-    // and the core-exit thermocouples, its outlet once (HMI review of run 23: the model's mixed outlet temperature
-    // beside them repeated it), then its instruments, never a permissive: the de-energized source range as its high
-    // voltage's state, the intermediate range and its startup rate.
-    const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
-    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 5)).toEqual(['NIS-PR-AVG', 'TAVG-TREF', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'CET-AVG'])
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-SR-HV', 'NIS-IR', 'NIS-IR-SUR'])
-    expect(readouts.pens.map(pen => String(pen.path))).not.toContain('core.coolantOutletTemperatureC')
-    expect(readouts.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.valueKind).toBe('boolean')
+    // The core is an energy end: its faceplate under the drawing takes its lead values (C1 plan R1), so the column
+    // beside the drawing holds only the alarms. Opened at power, those are the power range, Tavg's deviation from
+    // Tref, subcooling margin, the RCS leak rate and the core-exit thermocouples, its outlet once (HMI review of run
+    // 23: the model's mixed outlet temperature beside them repeated it), and its instruments, never a permissive:
+    // the de-energized source range as its high voltage's state, the intermediate range and its startup rate.
+    expect(result.display.panels.map(panel => panel.kind)).toEqual(['mimic', 'faceplate', 'alarms'])
+    const faceplate = result.display.panels.find(panel => panel.kind === 'faceplate')!
+    if (faceplate.kind !== 'faceplate') throw new Error('expected the faceplate')
+    const shown = faceplate.pens.map(pen => pen.tagId ?? String(pen.path))
+    expect(shown).toEqual(expect.arrayContaining(['NIS-PR-AVG', 'TAVG-TREF', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'CET-AVG', 'NIS-SR-HV', 'NIS-IR', 'NIS-IR-SUR']))
+    expect(shown).not.toContain('core.coolantOutletTemperatureC')
+    expect(shown.filter(tag => tag === 'P-6' || tag === 'P-10')).toEqual([])
+    expect(faceplate.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.valueKind).toBe('boolean')
     // In the core's own detail its states read without its name (C1 E2): "Source-range HV off", not "… · Core".
-    expect(readouts.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.states).toEqual({ on: 'Source-range HV on', off: 'Source-range HV off' })
+    expect(faceplate.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.states).toEqual({ on: 'Source-range HV on', off: 'Source-range HV off' })
   })
 
   test('every item of the overview opens', () => {
