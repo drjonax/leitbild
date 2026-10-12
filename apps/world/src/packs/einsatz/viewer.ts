@@ -78,7 +78,11 @@ export const unitAuthority = (catalog: Catalog, viewer: EinsatzViewer, unit: Uni
     : `${unit.label} belongs to ${commanders.join(', ')}. Add that role to command it`)
 }
 
-/** Refused unless the task is in the viewer's queue; a task outside its picture is not echoed. */
+/**
+ * Refused unless the task is in the viewer's queue; a task outside its
+ * picture is not echoed. Recommendations answer for the viewer's work list
+ * only; commands take any task in the picture.
+ */
 export const taskAuthority = (catalog: Catalog, viewer: EinsatzViewer, task: TaskRecord): Refused | undefined => {
   if (!inPicture(catalog, viewer, task)) return notInPicture()
   return queuesTask(catalog, viewer, task) ? undefined : refused('task_not_in_role_queue', `${task.label} is not in your roles' queue`)

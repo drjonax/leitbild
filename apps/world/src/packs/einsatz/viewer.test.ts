@@ -63,13 +63,14 @@ describe('Einsatz viewer', () => {
     expect(['t1', 'n1'].filter(id => queuesTask(state.catalog, operatorOf('air'), task(id)))).toEqual(['t1', 'n1'])
   })
 
-  test('commands name the role a unit belongs to, refuse tasks outside the queue and keep creating and adjusting to controllers', async () => {
+  test('commands name the role a unit belongs to, take tasks outside the queue and keep creating and adjusting to controllers', async () => {
     const state = await withAuthority()
     const ground = operatorOf('ground')
     expect(refusalOf(state, ground, ids.send, { units: ['d1'], to: { taskId: 't1' } })).toBe('unit_not_authorized: D1 belongs to air. Add that role to command it')
     expect(refusalOf(state, ground, ids.hold, { unitId: 'g1' })).toBe('unit_not_authorized: G1 is commanded by no role')
-    expect(refusalOf(state, ground, ids.send, { units: ['c1'], to: { taskId: 'n1' } })).toBe('task_not_in_role_queue: N1 is not in your roles\' queue')
-    expect(refusalOf(state, ground, ids.taskClose, { taskId: 'n1' })).toBe('task_not_in_role_queue: N1 is not in your roles\' queue')
+    expect(prepareCommand(contextFor(state, ground), ids.send, { units: ['c1'], to: { taskId: 'n1' } }).ok).toBe(true)
+    expect(prepareCommand(contextFor(state, ground), ids.taskClose, { taskId: 'n1' }).ok).toBe(true)
+    expect(refusalOf(state, ground, ids.send, { units: [], to: { taskId: 't1' } })).toStartWith('invalid_input: units: ')
     expect(refusalOf(state, ground, ids.unitCreate, { type: types.roadCarrier, at: at(0) })).toBe('role_controller_only: Creating a unit needs a controller role')
     expect(refusalCode(refusalOf(state, ground, ids.taskCreate, { template: templates.load, at: at(0), loads: { [low]: 1 }, label: 'X' }))).toBe('role_controller_only')
     expect(refusalCode(refusalOf(state, ground, ids.unitAdjust, { unitId: 'c1', properties: { liftKg: 600 }, reason: 'Test' }))).toBe('role_controller_only')

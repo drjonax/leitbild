@@ -62,8 +62,8 @@ export type EngineRefusalCode = typeof engineRefusalCodes[number]
 
 /**
  * Refusals of a caller by who it plays: a controller-only Capability, a unit
- * its roles do not command, a task outside its roles' queue. Core gates use
- * `role_controller_only` too; Einsatz reuses the code.
+ * its roles do not command, a recommendation for a task outside its roles'
+ * queue. Core gates use `role_controller_only` too; Einsatz reuses the code.
  */
 export const authorityRefusalCodes = ['role_controller_only', 'unit_not_authorized', 'task_not_in_role_queue'] as const
 export type AuthorityRefusalCode = typeof authorityRefusalCodes[number]

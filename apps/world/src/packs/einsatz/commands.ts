@@ -3,7 +3,7 @@ import { commandInputSchemas, einsatzCommandIds, type CommandInput, type Einsatz
 import { notInPicture, refused, type Refused } from './engine/intent-support.ts'
 import type { EngineActor, Intent } from './engine/intents.ts'
 import type { EngineState } from './engine/model.ts'
-import { actorFor, controllerOnly, inPicture, taskAuthority, unitAuthority, type EinsatzViewer } from './viewer.ts'
+import { actorFor, controllerOnly, inPicture, unitAuthority, type EinsatzViewer } from './viewer.ts'
 
 /**
  * A command as the engine runs it: the intent and the actor. Who may ask is
@@ -30,11 +30,11 @@ const commanded = (context: CommandContext, unitId: string): Refused | undefined
   return unit === undefined ? undefined : unitAuthority(context.state.catalog, context.viewer, unit)
 }
 
-const queued = (context: CommandContext, taskId: string): Refused | undefined => {
-  const task = context.state.tasks.get(taskId)
-  return task === undefined ? undefined : taskAuthority(context.state.catalog, context.viewer, task)
-}
-
+/**
+ * Refused unless the record is in the viewer's picture. A task need not be in
+ * the viewer's queue: the queue lists a role's work, it does not gate who may
+ * send to or close a task it sees.
+ */
 const seen = (context: CommandContext, id: string): Refused | undefined => {
   const record = context.state.units.get(id) ?? context.state.tasks.get(id)
   return record === undefined || inPicture(context.state.catalog, context.viewer, record) ? undefined : notInPicture()
@@ -61,7 +61,7 @@ const intentFor = (context: CommandContext, kind: EinsatzCommandId, payload: unk
     case einsatzCommandIds.send: {
       const input = parse(einsatzCommandIds.send)
       const to = input.to
-      const target = 'taskId' in to ? queued(context, to.taskId) : 'siteId' in to ? seen(context, to.siteId) : undefined
+      const target = 'taskId' in to ? seen(context, to.taskId) : 'siteId' in to ? seen(context, to.siteId) : undefined
       return ok({ kind: 'send', ...input },
         ...input.units.map(unitId => commanded(context, unitId)),
         target,
@@ -93,7 +93,7 @@ const intentFor = (context: CommandContext, kind: EinsatzCommandId, payload: unk
     }
     case einsatzCommandIds.taskClose: {
       const input = parse(einsatzCommandIds.taskClose)
-      return ok({ kind: 'task.close', ...input }, queued(context, input.taskId))
+      return ok({ kind: 'task.close', ...input }, seen(context, input.taskId))
     }
     case einsatzCommandIds.siteSet: {
       const input = parse(einsatzCommandIds.siteSet)
