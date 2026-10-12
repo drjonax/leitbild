@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   coreModuleIds,
   featuredDefinitionCatalogSchema,
@@ -50,11 +53,11 @@ const gateway = (): ModuleGateway => ({
   }] : [] }) }),
 })
 
-const startHost = () => {
+const startHost = (uiDistPath?: string) => {
   const store = createWorkspaceStore(':memory:')
   stores.push(store)
   const host = createWorkspaceHost({ store, modules: gateway() })
-  const server = createWorkspaceHostServer({ host, port: 0, bindHost: '127.0.0.1' })
+  const server = createWorkspaceHostServer({ host, port: 0, bindHost: '127.0.0.1', ...(uiDistPath === undefined ? {} : { uiDistPath }) })
   servers.push(server)
   return { host, baseUrl: `http://127.0.0.1:${server.port}` }
 }
@@ -93,16 +96,35 @@ describe('Leitbild server', () => {
     const { host, baseUrl } = startHost()
     const response = await fetch(`${baseUrl}/`, { redirect: 'manual' })
     expect(response.status).toBe(303)
-    expect(response.headers.get('location')).toBe(`${baseUrl}/workspaces`)
+    expect(response.headers.get('location')).toBe('/workspaces')
     expect(response.headers.get('set-cookie')).toBeNull()
     expect(host.list()).toHaveLength(0)
   })
 
-  test('returns directly to the sole Workspace from root', async () => {
+  test('opens the landing page from root even when exactly one Workspace exists', async () => {
     const { host, baseUrl } = startHost()
-    const workspace = await host.create({ name: null })
-    const response = await fetch(`${baseUrl}/`, { redirect: 'manual' })
-    expect(response.headers.get('location')).toBe(`${baseUrl}/workspaces/${workspace.id}`)
+    await host.create({ name: null })
+    const response = await fetch(`${baseUrl}/?guide=start`, { redirect: 'manual', headers: { Host: 'leitbild.ai' } })
+    expect(response.status).toBe(303)
+    expect(response.headers.get('location')).toBe('/workspaces')
+  })
+
+  test('serves built images and fonts with their own content types', async () => {
+    const uiDistPath = await mkdtemp(join(tmpdir(), 'leitbild-host-ui-'))
+    try {
+      await mkdir(join(uiDistPath, 'assets/host'), { recursive: true })
+      const types = {
+        'hero.webp': 'image/webp', 'hero.avif': 'image/avif', 'hero.jpg': 'image/jpeg', 'hero.jpeg': 'image/jpeg',
+        'mark.svg': 'image/svg+xml', 'mark.png': 'image/png', 'text.woff2': 'font/woff2',
+      }
+      for (const file of Object.keys(types)) await writeFile(join(uiDistPath, 'assets/host', file), 'x')
+      const { baseUrl } = startHost(uiDistPath)
+      for (const [file, type] of Object.entries(types)) {
+        const response = await fetch(`${baseUrl}/assets/host/${file}`)
+        expect([file, response.headers.get('content-type')]).toEqual([file, type])
+        expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+      }
+    } finally { await rm(uiDistPath, { recursive: true, force: true }) }
   })
 
   test('supports create, rename, read, and complete delete', async () => {

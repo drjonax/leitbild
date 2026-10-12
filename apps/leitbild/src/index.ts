@@ -21,7 +21,6 @@ const parseEnvironmentJson = <T>(key: string, schema: z.ZodType<T>, fallback: T)
 }
 
 const registrations = parseEnvironmentJson('WORKSPACE_MODULES', z.array(moduleRegistrationSchema), [])
-const publicOrigin = z.string().url().parse(process.env.WORKSPACE_HOST_URL)
 
 const hostHome = resolve(process.env.WORKSPACE_HOST_HOME ?? './data/workspace-host')
 const store = createWorkspaceStore(resolve(hostHome, 'workspaces.sqlite'))
@@ -33,7 +32,6 @@ const server = createWorkspaceHostServer({
   host,
   port: Number(process.env.PORT) || 3100,
   bindHost: process.env.BIND_HOST ?? '127.0.0.1',
-  publicOrigin,
 })
 
 const shutdown = (): void => {

@@ -21,7 +21,11 @@ const contentTypeFor = (path: string): string => {
   if (path.endsWith('.js') || path.endsWith('.mjs')) return 'application/javascript; charset=utf-8'
   if (path.endsWith('.svg')) return 'image/svg+xml'
   if (path.endsWith('.png')) return 'image/png'
+  if (path.endsWith('.webp')) return 'image/webp'
+  if (path.endsWith('.avif')) return 'image/avif'
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg'
   if (path.endsWith('.ico')) return 'image/x-icon'
+  if (path.endsWith('.woff2')) return 'font/woff2'
   return 'application/octet-stream'
 }
 
@@ -78,11 +82,8 @@ export const createWorkspaceHostServer = (config: {
   readonly port?: number
   readonly bindHost?: string
   readonly uiDistPath?: string
-  readonly publicOrigin?: string
 }) => {
   const uiDistPath = resolve(config.uiDistPath ?? `${import.meta.dir}/ui/dist`)
-  const publicOrigin = config.publicOrigin === undefined ? null : new URL(config.publicOrigin).origin
-  const publicUrl = (path: string, requestUrl: URL): string => new URL(path, publicOrigin ?? requestUrl.origin).href
   return Bun.serve({
     port: config.port ?? 3100,
     hostname: config.bindHost ?? '127.0.0.1',
@@ -93,13 +94,10 @@ export const createWorkspaceHostServer = (config: {
           return Response.json({ status: 'ok', workspaces: config.host.list().length })
         }
 
+        // The root always opens the landing page; it never picks a Workspace.
+        // The Location is host-relative so every public domain stays on itself.
         if (url.pathname === '/' && request.method === 'GET') {
-          const workspaces = config.host.list()
-          if (workspaces.length === 1) {
-            const workspace = workspaces[0]!
-            return Response.redirect(publicUrl(`/workspaces/${workspace.id}`, url), 303)
-          }
-          return Response.redirect(publicUrl('/workspaces', url), 303)
+          return new Response(null, { status: 303, headers: { Location: '/workspaces' } })
         }
 
         const uiResponse = request.method === 'GET' ? await serveUi(url.pathname, uiDistPath) : null
