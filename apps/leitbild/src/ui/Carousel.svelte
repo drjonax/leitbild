@@ -120,7 +120,7 @@
   })
 </script>
 
-<section bind:this={root} class="lb-carousel {variant}" class:rotating={!view.stopped} class:held={view.held}
+<section bind:this={root} class="lb-carousel variant-{variant}" class:rotating={!view.stopped} class:held={view.held}
   class:thumbs={nav === 'thumbs' && thumb !== undefined} aria-roledescription="carousel" aria-label={label}
   style:--car-interval={`${intervalMs}ms`} onfocusin={onFocusIn} onpointerenter={onPointerEnter} onpointerleave={onPointerLeave}
 >
@@ -168,14 +168,14 @@
 <style>
   .lb-carousel { position: relative; min-width: 0; --car-controls-reserve: 0px; }
   .frame { position: relative; display: flex; flex-direction: column; overflow: hidden; }
-  .hero .frame { border: 1px solid var(--lb-line); border-radius: var(--lb-r-xl); background: var(--lb-surface); box-shadow: var(--lb-shadow-md); }
+  .variant-hero .frame { border: 1px solid var(--lb-line); border-radius: var(--lb-r-xl); background: var(--lb-surface); box-shadow: var(--lb-shadow-md); }
   .viewport { position: relative; display: grid; touch-action: pan-y; }
   .slide { grid-area: 1 / 1; display: grid; min-width: 0; opacity: 0; visibility: hidden;
     transition: opacity 300ms ease-out, visibility 0s linear 300ms; }
   .slide.active { opacity: 1; visibility: visible; transition: opacity 300ms ease-out, visibility 0s; }
 
   .controls { order: 2; display: flex; align-items: center; gap: 8px; padding: 8px 12px 12px 14px; }
-  .panel .controls { border-top: 1px solid var(--lb-line); }
+  .variant-panel .controls { border-top: 1px solid var(--lb-line); }
   .car-btn { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0;
     border: 1px solid transparent; border-radius: var(--lb-r-md); background: transparent; color: var(--lb-ink-2); cursor: pointer;
     transition: background var(--lb-t-fast) var(--lb-ease), color var(--lb-t-fast) var(--lb-ease); }
@@ -219,8 +219,8 @@
   }
   /* Hero: controls sit inside the caption band, bottom right; captions reserve the room. */
   @media (min-width: 1181px) {
-    .hero { --car-controls-reserve: 360px; }
-    .hero .controls { position: absolute; right: 14px; bottom: 14px; padding: 0; }
+    .variant-hero { --car-controls-reserve: 360px; }
+    .variant-hero .controls { position: absolute; z-index: 2; right: 14px; bottom: 14px; padding: 0; }
   }
   @media (max-width: 700px) {
     .count { display: none; }
