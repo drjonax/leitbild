@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { assistantDestination, assistantPrompt, GUIDE_CONVERSATION_TITLE, handoffStatusText, openAssistantConversation } from './assistant-handoff.ts'
+import { assistantDestination, assistantPrompt, guideConversationTitle, handoffStatusText, openAssistantConversation } from './assistant-handoff.ts'
 import { fakeFetch, hostError, json, workspaceFixture } from './host-fetch-fake.test-support.ts'
 import { createWorkspaceApi } from './launch-workspace.ts'
 import { createWorkspaceMemory } from './workspace-memory.ts'
@@ -33,6 +33,14 @@ describe('Getting started guide context', () => {
     expect(assistantPrompt('Hello', { kind: 'guide-question', lastPageTitle: null })).toBe(
       'Hello\n\nAsked from: Getting started guide · own question · no page viewed',
     )
+  })
+
+  test('names a new conversation after the question, within the 80 characters Agents allows', () => {
+    expect(guideConversationTitle('  Where does the grid data   come from? ')).toBe('Getting started: Where does the grid data come from?')
+    const long = guideConversationTitle('How do I run an Einsatz exercise with several people on their own iPads, and what does each person see?')
+    expect(long).toBe('Getting started: How do I run an Einsatz exercise with several people on their…')
+    expect(long.length).toBeLessThanOrEqual(80)
+    expect(guideConversationTitle('x'.repeat(200)).length).toBeLessThanOrEqual(80)
   })
 
   test('has one status sentence per step', () => {
@@ -70,7 +78,7 @@ describe('Assistant hand-off', () => {
     expect(host.calls.at(-1)!.body).toEqual({
       input: {
         prompt: 'What can I try in Leitbild in my first ten minutes?\n\nAsked from: Getting started guide · suggested question',
-        conversation: 'new', title: GUIDE_CONVERSATION_TITLE,
+        conversation: 'new', title: 'Getting started: What can I try in Leitbild in my first ten minutes?',
       },
       actor: { kind: 'human' },
     })
@@ -92,10 +100,24 @@ describe('Assistant hand-off', () => {
     })
   })
 
-  test('refuses an empty question before any request', async () => {
+  test('refuses an empty question or an over-long title before any request', async () => {
     const { host, ports } = handoffPorts()
     await expect(openAssistantConversation({ text: '   ', origin: { kind: 'guide-suggestion' }, conversation: 'new' }, ports)).rejects.toThrow('Type a question first')
+    await expect(openAssistantConversation({ text: 'Hi', origin: { kind: 'guide-suggestion' }, conversation: 'new', title: 'x'.repeat(81) }, ports))
+      .rejects.toThrow('1–80 characters')
     expect(host.calls).toHaveLength(0)
+  })
+
+  test('a chip may name its conversation with its label', async () => {
+    const { host, ports } = handoffPorts()
+    host.on('POST', '/api/workspaces', json({ workspace: workspaceFixture(WS) }, 201))
+      .on('GET', `/api/workspaces/${WS}/capabilities?moduleId=agents`, capabilities())
+      .on('POST', `/api/workspaces/${WS}/capabilities/agents.assistance.open/invoke`, json({ result: { resource: { workspaceId: WS, id: 'room-2' } } }))
+    await openAssistantConversation({
+      text: 'Where does Leitbild\'s Norwegian grid model come from?', title: 'Where does the grid data come from?',
+      origin: { kind: 'guide-suggestion' }, conversation: 'new',
+    }, ports)
+    expect((host.calls.at(-1)!.body as { input: { title: string } }).input.title).toBe('Where does the grid data come from?')
   })
 
   test('a Workspace without the Workspace-scoped Assistant is a visible error, and nothing is sent', async () => {

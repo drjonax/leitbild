@@ -4,6 +4,7 @@
   // - Esc, ×, the backdrop or `open = false` close it; focus returns to the
   //   opener, or to `fallbackFocus()` when there is none (deep link, Back).
   // - The page behind does not scroll; below 640 px it is a full-screen sheet.
+  // - Body and footer are rendered only while open.
   // It never refuses to close: a busy caller aborts its work in `onclose`.
   import { tick, type Snippet } from 'svelte'
   import Icon from './Icon.svelte'
@@ -103,8 +104,11 @@
     {#if headerExtra}{@render headerExtra()}{/if}
     <button class="close" type="button" aria-label={closeLabel} onclick={() => closeWith('close-button')}><Icon name="close" size={20} /></button>
   </header>
-  <div class="body" class:scroll={scrollBody}>{@render children()}</div>
-  {#if footer}<footer class="foot">{@render footer()}</footer>{/if}
+  <!-- Content exists only while open: images load and carousels start (stopped or not) when the user opens it. -->
+  {#if open}
+    <div class="body" class:scroll={scrollBody}>{@render children()}</div>
+    {#if footer}<footer class="foot">{@render footer()}</footer>{/if}
+  {/if}
 </dialog>
 
 <style>

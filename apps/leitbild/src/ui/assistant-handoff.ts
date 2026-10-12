@@ -20,8 +20,23 @@ export type AssistantOrigin =
   /** A typed question; the last guide page viewed in this modal session, if any. */
   | { readonly kind: 'guide-question'; readonly lastPageTitle: string | null }
 
-export const GUIDE_CONVERSATION_TITLE = 'Getting started question'
 export const ASSISTANT_OPEN_CAPABILITY = 'agents.assistance.open'
+/** Agents names a new conversation exactly this (1–80 characters); a repeated name gets "-2". */
+export const CONVERSATION_TITLE_MAX = 80
+
+/**
+ * A distinctive name for a new conversation from the guide: "Getting started: "
+ * and the question's first words, cut at a word boundary within 80 characters.
+ */
+export const guideConversationTitle = (text: string): string => {
+  const prefix = 'Getting started: '
+  const question = text.trim().replace(/\s+/g, ' ')
+  const room = CONVERSATION_TITLE_MAX - prefix.length
+  if (question.length <= room) return `${prefix}${question}`
+  const cut = question.slice(0, room - 1)
+  const boundary = cut.lastIndexOf(' ')
+  return `${prefix}${(boundary > room / 2 ? cut.slice(0, boundary) : cut).replace(/[\s,;:.–-]+$/, '')}…`
+}
 
 /** The message sent. The wiki form is a visible reference, not a copy of the wiki or an extra system instruction. */
 export const assistantPrompt = (text: string, origin: AssistantOrigin): string => {
@@ -57,7 +72,7 @@ export interface AssistantHandoffRequest {
   readonly origin: AssistantOrigin
   /** 'new' opens a fresh conversation (guide, landing); 'reuse' posts to the Workspace's Assistant conversation (wiki). */
   readonly conversation: 'reuse' | 'new'
-  /** Title of a new conversation; defaults to "Getting started question". */
+  /** Name of a new conversation (1–80 characters); defaults to `guideConversationTitle(text)`. */
   readonly title?: string
   /** A Workspace the user chose here; otherwise the remembered one, else a new one. */
   readonly workspaceId?: string | null
@@ -93,6 +108,10 @@ export const openAssistantConversation = async (
 ): Promise<AssistantHandoff> => {
   const text = request.text.trim()
   if (!text) throw new Error('Type a question first')
+  const title = request.conversation === 'new' ? (request.title ?? guideConversationTitle(text)).trim() : null
+  if (title !== null && (title.length === 0 || title.length > CONVERSATION_TITLE_MAX)) {
+    throw new Error(`A conversation title has 1–${CONVERSATION_TITLE_MAX} characters`)
+  }
   const target = await resolveLaunchWorkspace('agents', ports, {
     workspaceId: request.workspaceId ?? null,
     forceNew: request.forceNewWorkspace === true,
@@ -118,7 +137,7 @@ export const openAssistantConversation = async (
   ports.onstep?.({ kind: 'sending-question', workspace })
   const input = {
     prompt: assistantPrompt(text, request.origin),
-    ...(request.conversation === 'new' ? { conversation: 'new', title: request.title ?? GUIDE_CONVERSATION_TITLE } : {}),
+    ...(title === null ? {} : { conversation: 'new', title }),
   }
   const response = await readHostJson(await ports.fetch(
     `/api/workspaces/${encoded}/capabilities/${ASSISTANT_OPEN_CAPABILITY}/invoke`,
