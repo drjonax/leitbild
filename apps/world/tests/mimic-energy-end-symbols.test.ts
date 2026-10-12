@@ -39,13 +39,16 @@ guardPlantTests()
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:energy-ends', loopCount: 4 }))
 
-const declaring = (): ReadonlyMap<ComponentKind, ComponentDefinition> => {
+// The registry with the core's level declared through its vessel port (or with none: `undeclared`), whether or not the
+// kinds declare them already, and the generator running on its output breaker.
+const declaring = (core: 'declared' | 'undeclared' = 'declared'): ReadonlyMap<ComponentKind, ComponentDefinition> => {
   const registry = new Map(processPlantComponentRegistry)
   const extend = (kind: string, change: (own: ComponentSemantics) => Partial<ComponentSemantics>) => {
     const base = registry.get(kind as ComponentKind)!
     registry.set(kind as ComponentKind, { ...base, semantics: parameters => { const own = base.semantics(parameters); return { ...own, ...change(own) } } })
   }
-  extend('reactorCore', own => ({ aspects: [...own.aspects, aspect('level', { variable: 'collapsedLiquidLevelPercent', reading: 'value', via: 'vesselThermal' })] }))
+  const level = aspect('level', { variable: 'collapsedLiquidLevelPercent', reading: 'value', via: 'vesselThermal' })
+  extend('reactorCore', own => ({ aspects: [...own.aspects.filter(entry => entry.aspect !== 'level'), ...(core === 'declared' ? [level] : [])] }))
   extend('turbineLoadSink', own => ({ aspects: own.aspects.map(entry => entry.aspect === 'running' ? aspect('running', { variable: 'outputBreakerClosed', reading: 'true' }) : entry) }))
   return registry
 }
@@ -113,15 +116,16 @@ describe('the energy ends on the unit overview', () => {
   test('the Full-HD overview keeps its column beside the drawing with the core\'s and the generator\'s rows', () => {
     expect(overview.width).toBeLessThanOrEqual(room.maxWidth)
     expect(overview.height).toBeLessThanOrEqual(room.maxHeight)
-    // Without the declarations it fits too: the core's rods rows come from what its kind already declares.
+    // The Plant as its kinds and graph declare it fits too; the core's rods rows come from its declared shutdown readings.
     const plain = overviewOf(plant)
     expect(plain.width).toBeLessThanOrEqual(room.maxWidth)
     expect(itemOf(plain, 'Core').rows.filter(row => row.kind === 'shutdown')).toHaveLength(2)
   })
 
-  test('the core is filled by the level its vessel computes once its kind reads it there, and static before', () => {
+  test('the core is filled by the level its vessel computes once its kind reads it there, and static where it reads none', () => {
     expect(itemOf(overview, 'Core').binding.state?.state?.path).toBe('vessel.collapsedLiquidLevelPercent' as never)
-    expect(itemOf(overviewOf(plant), 'Core').binding.state).toBeNull()
+    const undeclared: CompiledProcessPlant = { ...plant, graph: compilePlantGraph(declaredSpec(plant.sourceGraph), declaring('undeclared')) }
+    expect(itemOf(overviewOf(undeclared), 'Core').binding.state).toBeNull()
   })
 
   test('the hub\'s tag stands on its body, centred over it, with its rows above', () => {
