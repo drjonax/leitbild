@@ -18,7 +18,6 @@
 // nothing navigates later.
 
 import type {
-  FeaturedDefinitionCatalog,
   ModuleCapabilityDescriptor,
   ModuleDefinitionDescriptor,
   ModuleFeaturedDefinition,
@@ -33,17 +32,13 @@ import {
   type LaunchWorkspaceStep, type RequiredModule, type WorkspaceApi,
 } from './launch-workspace.ts'
 import { demoKey } from './modal-url.ts'
+import { readFeaturedCatalogue } from './featured-catalogue.ts'
 import { WEBGL_MISSING_TEXT } from './webgl-support.ts'
 import type { WorkspaceMemory } from './workspace-memory.ts'
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
-export const FEATURED_PATH = '/api/featured-definitions'
-
-export const NO_DEMOS_TEXT = 'No demos are available right now.'
-export const DEMOS_UNAVAILABLE_TEXT = 'Demos are unavailable right now.'
 export const NOT_FEATURED_TEXT = 'This demo is no longer featured.'
-export const DEEP_LINK_NOT_FEATURED_TEXT = 'That demo is no longer featured.'
 export const NOT_AVAILABLE_TEXT = 'This demo is not available in this Workspace right now.'
 export const SLOW_TEXT = 'Still starting. Large simulations can take up to 30 s.'
 export const VERY_SLOW_TEXT = 'This is taking longer than usual.'
@@ -54,38 +49,6 @@ const contracts = () => import('@leitbild/contracts')
 
 const fail = (failure: ModuleFailure): Error & { code: string; status?: number } =>
   Object.assign(new Error(failure.message), { code: failure.code, ...(failure.status === undefined ? {} : { status: failure.status }) })
-
-/**
- * The Modules' featured Definitions. The Host answers with an ETag and
- * `no-cache`, so the browser revalidates a catalogue it already holds.
- */
-export const readFeaturedCatalogue = async (fetchImpl: FetchLike, signal?: AbortSignal): Promise<FeaturedDefinitionCatalog> => {
-  const response = await fetchImpl(FEATURED_PATH, signal === undefined ? { method: 'GET' } : { method: 'GET', signal })
-  const body = await readHostJson(response)
-  const { featuredDefinitionCatalogSchema } = await contracts()
-  return featuredDefinitionCatalogSchema.parse(body)
-}
-
-/** What the Demos surfaces show for a catalogue: its demos, or why there are none. */
-export const catalogueView = (catalogue: FeaturedDefinitionCatalog, moduleId = 'world'): {
-  readonly demos: ReadonlyArray<ModuleFeaturedDefinition>
-  readonly empty: string | null
-} => {
-  const demos = catalogue.definitions.filter(featured => featured.definition.moduleId === moduleId)
-  if (demos.length > 0) return { demos, empty: null }
-  const outcome = catalogue.modules.find(item => item.moduleId === moduleId)
-  return { demos, empty: outcome?.status === 'failed' ? DEMOS_UNAVAILABLE_TEXT : NO_DEMOS_TEXT }
-}
-
-/** Where `?demos=<key>` opens: that demo's index, or the first with a notice for an unknown key. */
-export const deepLinkedDemo = (demos: ReadonlyArray<ModuleFeaturedDefinition>, key: string | null): {
-  readonly index: number
-  readonly notice: string | null
-} => {
-  if (key === null) return { index: 0, notice: null }
-  const index = demos.findIndex(featured => demoKey(featured.definition) === key)
-  return index >= 0 ? { index, notice: null } : { index: 0, notice: DEEP_LINK_NOT_FEATURED_TEXT }
-}
 
 export const sameDefinition = (descriptor: ModuleDefinitionDescriptor, featured: ModuleFeaturedDefinition): boolean =>
   descriptor.ref.moduleId === featured.definition.moduleId
@@ -122,6 +85,8 @@ const isAbort = (error: unknown, signal: AbortSignal | undefined): boolean =>
 export type DemoLaunchStep =
   | { readonly kind: 'checking' }
   | LaunchWorkspaceStep
+  /** The chosen Workspace lost the demo; a new one is created next. */
+  | { readonly kind: 'moving'; readonly from: Workspace }
   | { readonly kind: 'starting'; readonly workspace: Workspace; readonly original: boolean }
   | { readonly kind: 'opening'; readonly workspace: Workspace; readonly destination: string }
 
@@ -238,6 +203,9 @@ export const startFeaturedInWorkspace = async (
   return { workspace, created: context.created, runId: run.id, destination, original, notice: context.notice }
 }
 
+const movedText = (from: Pick<Workspace, 'id' | 'name'>): string =>
+  `${workspaceLabel(from)} no longer has this demo, so it starts in a new Workspace.`
+
 /** Steps 0–7. Throws `DemoLaunchError`. */
 export const launchDemo = async (request: DemoLaunchRequest, ports: DemoLaunchPorts): Promise<DemoLaunchResult> => {
   let reached: { workspace: Workspace | null; created: boolean; invoked: boolean } = { workspace: null, created: false, invoked: false }
@@ -277,7 +245,8 @@ export const launchDemo = async (request: DemoLaunchRequest, ports: DemoLaunchPo
     let notice = target.notice
     if (!target.created && !workspaceCatalogue.definitions.some(definition => sameDefinition(definition, featured))) {
       // Deleted in the chosen Workspace: start it in a new one and say so.
-      notice = `${workspaceLabel(target.workspace)} no longer has this demo, so it starts in a new Workspace.`
+      notice = movedText(target.workspace)
+      ports.onstep?.({ kind: 'moving', from: target.workspace })
       target = await resolve(true)
       workspaceCatalogue = await readWorkspaceCatalogue(target.workspace, moduleId, ports)
       guard()
@@ -334,6 +303,7 @@ export const launchStatusText = (step: DemoLaunchStep, title: string): string =>
     case 'using-workspace': return `Using ${workspaceLabel(step.workspace)}.`
     case 'creating-workspace': return 'Creating a Workspace…'
     case 'created-workspace': return `Created ${workspaceLabel(step.workspace)}.`
+    case 'moving': return movedText(step.from)
     case 'starting': return step.original ? 'Starting the original demo…' : 'Starting the simulation…'
     case 'opening': return 'Opening the simulation…'
   }
@@ -361,7 +331,8 @@ export const initialLaunchSteps = (destination: Pick<Workspace, 'id' | 'name'> |
 export const advanceLaunchSteps = (steps: ReadonlyArray<LaunchStepView>, step: DemoLaunchStep): ReadonlyArray<LaunchStepView> =>
   steps.map(view => {
     switch (step.kind) {
-      case 'checking': return view
+      case 'checking':
+      case 'moving': return view
       case 'using-workspace':
         if (view.id === 'workspace') return { ...view, label: `Using ${workspaceLabel(step.workspace)}`, detail: 'Your chosen Workspace', state: 'done' }
         return view.id === 'start' ? { ...view, state: 'doing' } : view

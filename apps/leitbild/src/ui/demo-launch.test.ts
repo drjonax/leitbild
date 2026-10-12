@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import type { FeaturedDefinitionCatalog, ModuleFeaturedDefinition, WorkspaceId } from '@leitbild/contracts'
+import type { ModuleFeaturedDefinition, WorkspaceId } from '@leitbild/contracts'
 import {
-  advanceLaunchSteps, catalogueView, createDemoLauncher, deepLinkedDemo, DEEP_LINK_NOT_FEATURED_TEXT, DEMOS_UNAVAILABLE_TEXT,
-  initialLaunchSteps, launchDemo, launchFailureView, launchStatusText, NO_DEMOS_TEXT, NOT_AVAILABLE_TEXT, NOT_FEATURED_TEXT,
-  readFeaturedCatalogue, SLOW_AFTER_MS, stoppedText, VERY_SLOW_AFTER_MS, watchSlowLaunch,
+  advanceLaunchSteps, createDemoLauncher, initialLaunchSteps, launchDemo, launchFailureView, launchStatusText, NOT_AVAILABLE_TEXT,
+  NOT_FEATURED_TEXT, SLOW_AFTER_MS, stoppedText, VERY_SLOW_AFTER_MS, watchSlowLaunch,
   type DemoLaunchError, type DemoLaunchPorts, type DemoLaunchStep,
 } from './demo-launch.ts'
 import { CAPACITY_TEXT, MODULE_UNAVAILABLE_TEXT, OUTCOME_UNKNOWN_TEXT } from './error-text.ts'
@@ -219,7 +218,7 @@ describe('Start demo: the Definition', () => {
   })
 
   test('a demo deleted in the remembered Workspace starts in one new Workspace, and says so', async () => {
-    const { host, memory, ports } = setup()
+    const { host, memory, ports, steps } = setup()
     memory.remember(OLD, 'picked')
     host.on('GET', '/api/featured-definitions', json(catalogue()))
     host.on('GET', `/api/workspaces/${OLD}`, json({ workspace: workspaceFixture(OLD) }))
@@ -231,6 +230,8 @@ describe('Start demo: the Definition', () => {
     const result = await launchDemo({ demo: KEY }, ports)
 
     expect(result).toMatchObject({ created: true, workspace: { id: NEW }, notice: 'Grid study no longer has this demo, so it starts in a new Workspace.' })
+    expect(steps.map(step => step.kind)).toEqual(['checking', 'using-workspace', 'moving', 'creating-workspace', 'created-workspace', 'starting', 'opening'])
+    expect(launchStatusText(steps[2]!, 'x')).toBe('Grid study no longer has this demo, so it starts in a new Workspace.')
     expect(host.calls.filter(call => call.method === 'POST' && call.path === '/api/workspaces')).toHaveLength(1)
     expect(memory.remembered()).toBe(NEW)
   })
@@ -437,29 +438,6 @@ describe('slow states', () => {
     expect(levels).toEqual([1])
     cancel()
     expect(timers.every(timer => !timer.live)).toBe(true)
-  })
-})
-
-describe('the featured catalogue on the Demos surfaces', () => {
-  test('is read from the Modules’ endpoint and validated', async () => {
-    const host = fakeFetch().on('GET', '/api/featured-definitions', json(catalogue()))
-    const read = await readFeaturedCatalogue(host.fetch)
-    expect(read.definitions[0]?.title).toBe('Halden: loss of offsite power')
-    const broken = fakeFetch().on('GET', '/api/featured-definitions', json({ modules: [], definitions: [{ title: 'x' }] }))
-    expect(readFeaturedCatalogue(broken.fetch)).rejects.toThrow()
-  })
-
-  test('an empty catalogue says so honestly; a failed Module says demos are unavailable', () => {
-    expect(catalogueView(catalogue([]) as FeaturedDefinitionCatalog)).toEqual({ demos: [], empty: NO_DEMOS_TEXT })
-    expect(catalogueView(catalogue([], 'failed') as FeaturedDefinitionCatalog)).toEqual({ demos: [], empty: DEMOS_UNAVAILABLE_TEXT })
-    expect(catalogueView(catalogue() as FeaturedDefinitionCatalog).demos).toHaveLength(1)
-  })
-
-  test('a deep link opens its demo, or the first one with a notice when it is unknown', () => {
-    const demos = [featured('nordland-corridor-security'), featured()]
-    expect(deepLinkedDemo(demos, KEY)).toEqual({ index: 1, notice: null })
-    expect(deepLinkedDemo(demos, null)).toEqual({ index: 0, notice: null })
-    expect(deepLinkedDemo(demos, 'world:gone')).toEqual({ index: 0, notice: DEEP_LINK_NOT_FEATURED_TEXT })
   })
 })
 
