@@ -93,7 +93,7 @@ export const shortDate = (at: Date): string => `${at.getDate()} ${months[at.getM
 export const newWorkspaceName = (at: Date): string => `New Workspace · ${shortDateTime(at)}`
 
 /** Never a raw UUID: "Untitled · b56b1d" in rows, "Untitled Workspace · b56b1d" in headers. */
-export const workspaceLabel = (workspace: Pick<Workspace, 'id' | 'name'>, form: 'row' | 'header' = 'row'): string =>
+export const workspaceLabel = (workspace: { readonly id: string; readonly name: string | null }, form: 'row' | 'header' = 'row'): string =>
   workspace.name ?? `${form === 'header' ? 'Untitled Workspace' : 'Untitled'} · ${workspace.id.slice(0, 6)}`
 
 export const moduleReadiness = (workspace: Pick<Workspace, 'modules'>, moduleId: string): ModuleReadiness => {

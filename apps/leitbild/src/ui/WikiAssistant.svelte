@@ -2,6 +2,7 @@
   import type { Workspace } from '@leitbild/contracts'
   import AssistantLauncher from './AssistantLauncher.svelte'
   import { openAssistantConversation, type WikiAssistantPage } from './assistant-handoff.ts'
+  import { errorDiagnostic, plainErrorText } from './error-text.ts'
   import { createWorkspaceApi, workspaceLabel } from './launch-workspace.ts'
   import { browserWorkspaceMemory } from './workspace-memory.ts'
 
@@ -13,7 +14,16 @@
   let workspaceId = $state('')
   let loaded = $state(false)
 
-  const prepare = async (): Promise<void> => {
+  // The launcher shows a thrown message as is: give it plain text, keep the code for the console.
+  const plainly = async (action: () => Promise<void>): Promise<void> => {
+    try { await action() }
+    catch (cause) {
+      console.error(errorDiagnostic(cause))
+      throw new Error(plainErrorText(cause))
+    }
+  }
+
+  const prepare = (): Promise<void> => plainly(async () => {
     loaded = false
     workspaces = await api.list()
     if (!workspaces.some(item => item.id === workspaceId)) {
@@ -21,14 +31,14 @@
       workspaceId = workspaces.some(item => item.id === remembered) ? remembered! : ''
     }
     loaded = true
-  }
+  })
 
-  const ask = async (prompt: string): Promise<void> => {
+  const ask = (prompt: string): Promise<void> => plainly(async () => {
     const handoff = await openAssistantConversation({
       text: prompt, origin: { kind: 'wiki', page }, conversation: 'reuse', workspaceId: workspaceId || null,
     }, { api, memory, now: () => new Date(), fetch: (input, init) => fetch(input, init) })
     location.assign(handoff.destination)
-  }
+  })
 </script>
 
 <AssistantLauncher onOpen={prepare} submit={loaded ? ask : undefined}>
