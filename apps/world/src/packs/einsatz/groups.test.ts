@@ -135,6 +135,35 @@ describe('Einsatz group roles in a role Run', () => {
     })
   })
 
+  test('a group\'s role gives its own unit every job-chain order, and is refused each of them on another group\'s unit, naming that group', async () => {
+    await withRun(async run => {
+      const point = (east: number) => ({ type: 'Point', coordinates: lonLat(east) })
+      expect(await run.invoke(ids.send, { units: ['a1'], to: { point: point(0.006) } }, screens.haulA)).toMatchObject({ ok: true })
+      expect(await run.invoke(ids.send, { units: ['b1'], to: { point: point(0.007) } }, screens.haulB)).toMatchObject({ ok: true })
+      const own: ReadonlyArray<readonly [string, unknown]> = [
+        [ids.queue, { unitId: 'a1', to: { point: point(0.008) } }],
+        [ids.stepRemove, { unitId: 'a1', stepId: 'step-2' }],
+        [ids.hold, { unitId: 'a1' }],
+        [ids.resume, { unitId: 'a1' }],
+        [ids.clear, { unitId: 'a1' }],
+      ]
+      for (const [capabilityId, input] of own) expect([capabilityId, (await run.invoke(capabilityId, input, screens.haulA)).ok]).toEqual([capabilityId, true])
+      expect(run.unit('a1')).toMatchObject({ orders: [], lastAction: { verb: 'clear', by: 'Haulers A' } })
+      const others: ReadonlyArray<readonly [string, unknown]> = [
+        [ids.queue, { unitId: 'b1', to: { point: point(0.008) } }],
+        [ids.stepRemove, { unitId: 'b1', stepId: 'step-1' }],
+        [ids.hold, { unitId: 'b1' }],
+        [ids.resume, { unitId: 'b1' }],
+        [ids.clear, { unitId: 'b1' }],
+      ]
+      for (const [capabilityId, input] of others) {
+        const refusal = await run.refusal(capabilityId, input, screens.haulA)
+        expect([capabilityId, refusal.code, refusal.reason]).toEqual([capabilityId, 'unit_not_authorized', expect.stringContaining('Haulers B')])
+      }
+      expect(run.unit('b1').orders.map(step => [step.id, step.state])).toEqual([['step-1', 'active']])
+    })
+  })
+
   test('a group\'s queue holds the tasks its units can serve, and recommendations take only its own units', async () => {
     await withRun(async run => {
       const listedFor = async (taskId: string, actor: Parameters<OpenRun['query']>[2]) => {
