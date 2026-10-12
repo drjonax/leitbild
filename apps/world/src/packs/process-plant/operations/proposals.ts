@@ -7,6 +7,7 @@ import {
   type ProcessVariableValue,
   type VariablePath,
 } from '../graph/index.ts'
+import { operationConsequenceSchema, type OperationConsequence } from './consequence.ts'
 
 // A proposal is an exact command an AI or a person asks a person to approve:
 // the one write World validated when it was proposed, with the proposer's
@@ -46,8 +47,10 @@ export const processPlantProposalSchema = z.object({
   write: z.object({ path: variablePathSchema, value: processVariableValueSchema }).strict(),
   /** The drawn item that offers the control (controls.ts), where a person reviews it. */
   item: z.string().min(1),
-  /** The control's word for the write ("SHUT"). */
+  /** The control's word for the write ("SHUT", "THROTTLE to 40 %"). */
   word: z.string().min(1),
+  /** What it takes away, as the Plant stood when it was proposed (consequence.ts); absent for an operation that stops, shuts or throttles nothing. */
+  consequence: operationConsequenceSchema.optional(),
   reason: z.string().min(1).max(PROPOSAL_REASON_MAX_LENGTH),
   procedureStep: z.string().min(1).max(PROPOSAL_PROCEDURE_STEP_MAX_LENGTH).optional(),
   /** The published readings it cites, as they read when it was proposed. */
@@ -107,7 +110,7 @@ export interface ProposalStep {
 /** What a proposal is checked against: the controls on offer, the I&C's own validation, and the published readings. */
 export interface ProposalPorts {
   /** The offered control option the write is, on the item that offers it; else why it is not offered. */
-  readonly offered: (write: ProposalWrite) => { readonly ok: true; readonly item: string; readonly word: string } | { readonly ok: false; readonly reason: string }
+  readonly offered: (write: ProposalWrite) => { readonly ok: true; readonly item: string; readonly word: string; readonly consequence?: OperationConsequence } | { readonly ok: false; readonly reason: string }
   /** The write as the I&C would validate it now (validateProcessPlantControlWrite). */
   readonly validate: (write: ProposalWrite) => { readonly accepted: true } | { readonly accepted: false; readonly reason: string }
   /** A published reading by tag, with its value now. */
@@ -200,6 +203,7 @@ export const proposeOperation = (book: ProcessPlantProposalBook, request: Propos
     write: request.write,
     item: offered.item,
     word: offered.word,
+    ...(offered.consequence === undefined ? {} : { consequence: offered.consequence }),
     reason,
     ...(procedureStep === undefined ? {} : { procedureStep }),
     evidence,

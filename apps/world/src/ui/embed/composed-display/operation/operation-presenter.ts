@@ -335,7 +335,7 @@ export const demandOption = (control: ControlView, value: number): OptionView | 
   if (value === demand.max || value === demand.min) return control.options.find(option => option.value === value) ?? null
   // Opening moves it as its OPEN end does, closing as its SHUT end does.
   const end = control.options.find(option => option.value === (value >= demand.position ? demand.max : demand.min))
-  const setting = demandSetting(demand.control, value)
+  const setting = demandSetting(demand.control, value, demand.position)
   if (!setting.ok) return null
   return {
     key: `${control.path}=${String(value)}`,

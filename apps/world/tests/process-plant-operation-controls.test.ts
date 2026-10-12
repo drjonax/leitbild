@@ -24,6 +24,7 @@ import {
 } from '../src/packs/process-plant/operations/controls.ts'
 import { optionStanding, ruleStatesFrom } from '../src/packs/process-plant/operations/control-standing.ts'
 import { protectionHoldRefusal, throttledUnder } from '../src/packs/process-plant/operations/command-guard.ts'
+import { itemCarrier, offVerb, operationConsequence } from '../src/packs/process-plant/operations/consequence.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -61,6 +62,10 @@ const offeredFor = (binding: ProcessSignalBinding): ReadonlyArray<OfferedControl
 const withheldFor = (binding: ProcessSignalBinding) =>
   controls.items.flatMap(entry => entry.withheld.filter(control => control.path === binding.path))
 const option = (control: OfferedControl, word: string) => control.options.find(candidate => candidate.word === word)!
+// The Plant at power, as offeredOption reads where a demand's equipment stands.
+const atPower = createProcessPlantRuntime({ system: plant })
+atPower.tick(1_000)
+const now = (path: VariablePath) => atPower.readVariable(path)
 
 describe('controls an operator is offered', () => {
   test('an isolating valve bundled in its host is a two-state control that opens and shuts it', () => {
@@ -82,7 +87,7 @@ describe('controls an operator is offered', () => {
     const [control] = offeredFor(tag('RCP-A-RUN'))
     expect(control!.options.map(entry => entry.word)).toEqual(['STOP'])
     expect(control!.withheldOptions).toEqual([{ word: 'START', value: true, reason: 'An RCP start needs seal injection and oil lift, which the model does not have: not started from the display' }])
-    expect(offeredOption(plant, controls, { path: tag('RCP-A-RUN').path, value: true })).toEqual({ ok: false, reason: control!.withheldOptions[0]!.reason })
+    expect(offeredOption(plant, controls, { path: tag('RCP-A-RUN').path, value: true }, now)).toEqual({ ok: false, reason: control!.withheldOptions[0]!.reason })
   })
 
   test('a command declared not offered at every value is withheld, saying why', () => {
@@ -153,7 +158,7 @@ describe('a modulating valve no controller drives is set to a %', () => {
     const binding = tag('AFW-A-CV')
     const [control] = offeredFor(binding)
     expect(control!.form).toBe('demand')
-    expect(control!.demand).toEqual({ min: binding.limits!.hardRange!.min, max: binding.limits!.hardRange!.max, step: 0.01, unit: 'fraction', shownUnit: '%', word: 'OPEN' })
+    expect(control!.demand).toEqual({ min: binding.limits!.hardRange!.min, max: binding.limits!.hardRange!.max, step: 0.01, unit: 'fraction', shownUnit: '%', words: { open: 'OPEN', throttle: 'THROTTLE' } })
     expect(control!.options.map(entry => [entry.word, entry.value, entry.state])).toEqual([['OPEN', 1, 'OPEN'], ['SHUT', 0, 'SHUT']])
     const travel = plant.graph.components[ownerIndex(binding)]!.semantics.aspects[0]!.travel!
     expect(control!.options.map(entry => entry.travelMs)).toEqual([1_000 * travel.onS, 1_000 * travel.offS])
@@ -162,15 +167,24 @@ describe('a modulating valve no controller drives is set to a %', () => {
     expect(control!.state).not.toBe(binding.path)
   })
 
-  test('a setting in its span and step reads "OPEN to n %"; anything else is refused with the span', () => {
+  test('a setting above where it stands reads "OPEN to n %", below it "THROTTLE to n %"; anything else is refused with the span', () => {
     const { path } = tag('AFW-A-CV')
     const item = itemOf(controls, ownerIndex(tag('AFW-A-CV'))).id
-    expect(offeredOption(plant, controls, { path, value: 0.4 })).toEqual({ ok: true, item, word: 'OPEN to 40 %' })
-    expect(offeredOption(plant, controls, { path, value: 0.07 })).toEqual({ ok: true, item, word: 'OPEN to 7 %' })
-    expect(offeredOption(plant, controls, { path, value: 0 })).toEqual({ ok: true, item, word: 'SHUT' })
-    expect(offeredOption(plant, controls, { path, value: 1 })).toEqual({ ok: true, item, word: 'OPEN' })
+    // Shut at power: every setting opens it.
+    expect(Number(now(offeredFor(tag('AFW-A-CV'))[0]!.state!))).toBe(0)
+    expect(offeredOption(plant, controls, { path, value: 0.4 }, now)).toEqual({ ok: true, item, word: 'OPEN to 40 %' })
+    // Standing 60 % open: 40 % throttles it, 80 % opens it further, and the ends read OPEN and SHUT.
+    const state = offeredFor(tag('AFW-A-CV'))[0]!.state!
+    const at60 = (read: VariablePath) => read === state ? 0.6 : now(read)
+    expect(offeredOption(plant, controls, { path, value: 0.4 }, at60)).toEqual({ ok: true, item, word: 'THROTTLE to 40 %' })
+    expect(offeredOption(plant, controls, { path, value: 0.8 }, at60)).toEqual({ ok: true, item, word: 'OPEN to 80 %' })
+    expect(offeredOption(plant, controls, { path, value: 0 }, at60)).toEqual({ ok: true, item, word: 'SHUT' })
+    expect(offeredOption(plant, controls, { path, value: 1 }, at60)).toEqual({ ok: true, item, word: 'OPEN' })
+    expect(offeredOption(plant, controls, { path, value: 0.07 }, now)).toEqual({ ok: true, item, word: 'OPEN to 7 %' })
+    expect(offeredOption(plant, controls, { path, value: 0 }, now)).toEqual({ ok: true, item, word: 'SHUT' })
+    expect(offeredOption(plant, controls, { path, value: 1 }, now)).toEqual({ ok: true, item, word: 'OPEN' })
     for (const value of [0.405, 1.2, -0.1, true]) {
-      expect(offeredOption(plant, controls, { path, value })).toEqual({ ok: false, reason: 'AFW-A-CV AFW valve A is set from 0 % to 100 % in steps of 1 %' })
+      expect(offeredOption(plant, controls, { path, value }, now)).toEqual({ ok: false, reason: 'AFW-A-CV AFW valve A is set from 0 % to 100 % in steps of 1 %' })
     }
   })
 
@@ -179,7 +193,7 @@ describe('a modulating valve no controller drives is set to a %', () => {
     const reason = feedValve!.reason
     if (reason.kind !== 'automatic') throw new Error('the feed regulating valve is not held by its controller')
     expect(reason.manual).toBe('Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step')
-    expect(offeredOption(plant, controls, { path: tag('MFW-A-CV').path, value: 0.4 })).toEqual({ ok: false, reason: `${reason.text}. ${reason.manual}` })
+    expect(offeredOption(plant, controls, { path: tag('MFW-A-CV').path, value: 0.4 }, now)).toEqual({ ok: false, reason: `${reason.text}. ${reason.manual}` })
     expect(itemOf(controls, ownerIndex(tag('MFW-A-CV'))).position).toBeDefined()
   })
 
@@ -199,7 +213,7 @@ describe('what is withheld, and why', () => {
     const listed = [...controls.items.flatMap(entry => entry.offered), ...controls.items.flatMap(entry => entry.withheld)]
     for (const control of listed) expect(plant.graph.signalBindingByPath.get(control.path)!.actuation).toBe('command')
     const fault = plant.graph.signalBindings.find(binding => binding.actuation === 'faultInjection')!
-    expect(offeredOption(plant, controls, { path: fault.path, value: true })).toEqual({ ok: false, reason: `${fault.tagId ?? fault.path} is a fault the scenario injects: only instructor actions and the Scenario set it` })
+    expect(offeredOption(plant, controls, { path: fault.path, value: true }, now)).toEqual({ ok: false, reason: `${fault.tagId ?? fault.path} is a fault the scenario injects: only instructor actions and the Scenario set it` })
   })
 
   test('a demand its controller writes every step reads AUTO with what it holds, and is never offered', () => {
@@ -331,6 +345,31 @@ describe('controls depend on the Plant graph, not on equipment ids', () => {
     expect(named.some(entry => entry.between[1]!.length > 0)).toBe(true)
     for (const entry of named) expect(entry.between[0]).toBeNull()
     expect(demands.map(control => judged(anonymous, renamed(control.path)))).toEqual(renamed(named))
+  })
+
+  test('derives the same consequence lines, read from the graph and the Plant now', () => {
+    // The renamed Plant reads what the reference reads at power, path for path.
+    const original = new Map([...opaque].map(([id, unnamed]) => [unnamed, id]))
+    const unrenamed = (path: VariablePath): VariablePath => {
+      const dot = String(path).indexOf('.')
+      const owner = dot > 0 ? original.get(String(path).slice(0, dot)) : undefined
+      return (owner === undefined ? path : `${owner}${String(path).slice(dot)}`) as VariablePath
+    }
+    const mode = processPlantOperatingMode({ system: plant, runtime: atPower, modes: plant.automation.operatingModes })!
+    const context = (system: CompiledProcessPlant, read: (path: VariablePath) => ReturnType<typeof now>) => ({
+      read, mode: system.automation.operatingModes.find(candidate => candidate.id === mode.id)!, standing: () => false,
+    })
+    const unnamedControls = derivePlantControls(anonymous)
+    const lines = (system: CompiledProcessPlant, result: ReturnType<typeof derivePlantControls>, read: (path: VariablePath) => ReturnType<typeof now>) =>
+      result.items.flatMap(entry => entry.offered.flatMap(control => control.options.flatMap(choice => {
+        const carrier = itemCarrier(system, entry.item)
+        if (control.aspect === undefined || control.form === 'pushbutton' || choice.direction !== 'off' || carrier === null) return []
+        return [operationConsequence(system, entry.item, offVerb(control, carrier), context(system, read), choice.consequences)]
+      })))
+    const named = lines(plant, controls, now)
+    expect(named.length).toBeGreaterThan(30)
+    expect(named.some(line => line!.mayActuate.length > 0 && line!.flow?.sharePercent !== null)).toBe(true)
+    expect(lines(anonymous, unnamedControls, path => now(unrenamed(path)))).toEqual(renamed(named))
   })
 
   test('sets the same valves to a %, read from the graph alone', () => {

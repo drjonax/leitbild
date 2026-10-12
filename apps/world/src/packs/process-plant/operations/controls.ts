@@ -20,7 +20,7 @@ import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import { deviceLabel, mimicItemId, type MimicItem } from '../displays/mimic/bindings.ts'
 import { presentationFor } from '../displays/mimic/presentation.ts'
 import { instructorOnlyRefusal } from './command-guard.ts'
-import { modulatingDemandSpan } from './demand-span.ts'
+import { demandStepOf, modulatingDemandSpan } from './demand-span.ts'
 
 // What a person may operate on each drawn item, read from what the model
 // declares: an aspect's writable command is a two-state control in the
@@ -59,6 +59,8 @@ export interface ControlOption {
   readonly word: string
   /** What the command writes. */
   readonly value: ProcessVariableValue
+  /** Whether it takes the equipment to its on state (runs, opens, closes in, presses) or its off state (stops, shuts, opens contacts). */
+  readonly direction: 'on' | 'off'
   /** What the equipment reads once it follows ("RUN", "SHUT"); none for a pushbutton. */
   readonly state?: string
   /**
@@ -91,8 +93,8 @@ export interface AnalogDemand {
   readonly unit: ProcessUnit
   /** The unit a display reads and a person sets it in ("%"). */
   readonly shownUnit: string
-  /** The word a setting between the ends reads with: "OPEN" to 40 %. */
-  readonly word: string
+  /** The words a setting between the ends reads with: OPEN to n % above where it stands, THROTTLE to n % below. */
+  readonly words: { readonly open: string; readonly throttle: string }
 }
 
 export interface OfferedControl {
@@ -163,9 +165,6 @@ const isolationText = 'Automatic isolation input: set by the I&C'
 const unwordedText = 'An input of the equipment logic: no operator words are declared for it'
 const manualText = 'Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step'
 
-/** A demand is set in hundredths of its span: a valve in whole percent of its stroke. */
-const DEMAND_STEP_SHARE = 0.01
-
 interface TwoStateWords {
   readonly on: { readonly word: string; readonly state: string }
   readonly off: { readonly word: string; readonly state: string }
@@ -226,14 +225,16 @@ const automaticReason = (graph: CompiledPlantGraph, controller: { readonly measu
 const analogDemandOf = (aspect: CompiledStateAspect, equipmentFunction: EquipmentFunction | undefined, binding: ProcessSignalBinding): AnalogDemand | null => {
   const span = modulatingDemandSpan(aspect, equipmentFunction, binding)
   if (span === null) return null
-  return { min: span.min, max: span.max, step: Number(((span.max - span.min) * DEMAND_STEP_SHARE).toPrecision(12)), unit: binding.unit, shownUnit: unitLabel(binding.unit), word: valveWords.on.word }
+  return { min: span.min, max: span.max, step: demandStepOf(span), unit: binding.unit, shownUnit: unitLabel(binding.unit), words: { open: valveWords.on.word, throttle: 'THROTTLE' } }
 }
 
 /**
- * The word a demand control's setting reads with ("OPEN to 40 %"), or why
- * the value is no setting of it: outside its span, or between its steps.
+ * The word a demand control's setting reads with from where the equipment
+ * stands (`position`, in the command's unit): "OPEN to 40 %" at or above
+ * it, "THROTTLE to 40 %" below it, OPEN and SHUT at the ends; or why the
+ * value is no setting of it: outside its span, or between its steps.
  */
-export const demandSetting = (control: OfferedControl, value: ProcessVariableValue): { readonly ok: true; readonly word: string } | { readonly ok: false; readonly reason: string } => {
+export const demandSetting = (control: OfferedControl, value: ProcessVariableValue, position: number): { readonly ok: true; readonly word: string } | { readonly ok: false; readonly reason: string } => {
   const demand = control.demand
   if (demand === undefined) throw new Error(`${control.path} is no demand control`)
   const shown = (setting: number): string => formatQuantity(setting, demand.unit, demand.step)
@@ -241,7 +242,9 @@ export const demandSetting = (control: OfferedControl, value: ProcessVariableVal
   if (typeof value !== 'number' || value < demand.min || value > demand.max) return { ok: false, reason: span }
   const steps = (value - demand.min) / demand.step
   if (Math.abs(steps - Math.round(steps)) > 1e-6) return { ok: false, reason: span }
-  return { ok: true, word: `${demand.word} to ${shown(value)}` }
+  const end = control.options.find(option => option.value === value)
+  if (end !== undefined) return { ok: true, word: end.word }
+  return { ok: true, word: `${value < position ? demand.words.throttle : demand.words.open} to ${shown(value)}` }
 }
 
 const labelOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
@@ -323,6 +326,7 @@ const optionFor = (
   return {
     word: choice.word,
     value: choice.value,
+    direction: choice.on ? 'on' : 'off',
     ...(choice.state === undefined ? {} : { state: choice.state }),
     travelMs: context.aspect?.travel === undefined ? null : 1_000 * (choice.on ? context.aspect.travel.onS : context.aspect.travel.offS),
     moves: [...effect].map(([path, value]) => ({ path, value })),
@@ -556,6 +560,7 @@ export const offeredOption = (
   plant: CompiledProcessPlant,
   controls: PlantControls,
   write: { readonly path: VariablePath; readonly value: ProcessVariableValue },
+  read: (path: VariablePath) => ProcessVariableValue,
 ): { readonly ok: true; readonly item: string; readonly word: string } | { readonly ok: false; readonly reason: string } => {
   const binding = plant.graph.signalBindingByPath.get(write.path)
   if (binding === undefined) return { ok: false, reason: `${write.path} is no signal of this Plant` }
@@ -570,7 +575,9 @@ export const offeredOption = (
       const withheldOption = control.withheldOptions.find(candidate => candidate.value === write.value)
       if (withheldOption !== undefined) return { ok: false, reason: withheldOption.reason }
       if (control.demand !== undefined) {
-        const setting = demandSetting(control, write.value)
+        const position = read(control.state!)
+        if (typeof position !== 'number') throw new Error(`${control.state} reads no position`)
+        const setting = demandSetting(control, write.value, position)
         return setting.ok ? { ok: true, item: entry.id, word: setting.word } : setting
       }
       return { ok: false, reason: `${control.target} takes ${control.options.map(candidate => `${candidate.word} (${String(candidate.value)})`).join(' or ')}` }

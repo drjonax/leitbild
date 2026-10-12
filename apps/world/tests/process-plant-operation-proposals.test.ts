@@ -211,7 +211,7 @@ describe('the stuck-open PORV on the four-loop plant (demo beat 4)', () => {
     }
     const controls = derivePlantControls(plant)
     const plantPorts: ProposalPorts = {
-      offered: write => offeredOption(plant, controls, write),
+      offered: write => offeredOption(plant, controls, write, path => runtime.readVariable(path)),
       validate: write => {
         const validation = validateProcessPlantControlWrite({ system: plant, runtime, protection, payload: { plantId: plant.id, path: write.path, value: write.value } })
         return validation.accepted ? { accepted: true } : { accepted: false, reason: validation.reason }

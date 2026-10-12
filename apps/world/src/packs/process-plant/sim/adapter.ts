@@ -28,6 +28,7 @@ import {
   processPlantIcLifecyclePayloadSchema,
 } from '../commands.ts'
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
+import type { ProcessPlantControlProposeResult } from '../capabilities.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
 import { aiProposeOnlyRefusal, instructorOnlyRefusal, throttledUnder, validateOperatorWrite } from '../operations/command-guard.ts'
 import { proposalPortsFor } from '../operations/instance-ports.ts'
@@ -537,7 +538,13 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
             plant.operations.setBook(step.book)
             emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, step.transitions))
             await persistence.saveNow()
-            return { ok: true, commandId: command.id, acceptedAt }
+            // The proposer reads at once what it proposed: the control's word and what the operation takes away now.
+            const recorded = step.book.proposals.find(proposal => proposal.id === command.id)!
+            const accepted: ProcessPlantControlProposeResult = {
+              ok: true, commandId: command.id, acceptedAt, word: recorded.word,
+              ...(recorded.consequence === undefined ? {} : { consequence: recorded.consequence }),
+            }
+            return accepted
           } catch (err) {
             return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: err instanceof Error ? err.message : String(err) }
           }

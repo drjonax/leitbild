@@ -21,6 +21,7 @@ import {
 import { processPlantIcQueryKinds } from './ic-query.ts'
 import { operationRecordSchema } from './operations/plant-operations.ts'
 import { processPlantProposalSchema } from './operations/proposals.ts'
+import { operationConsequenceSchema } from './operations/consequence.ts'
 import { processPlantRampSchema } from './runtime/index.ts'
 import { processPlantQueryKinds } from './query.ts'
 import { processPlantActions } from './actions.ts'
@@ -334,7 +335,7 @@ const queryDescriptionById: Readonly<Record<string, string>> = {
   'world.process-plant.procedure-condition.evaluate': 'Read-only evaluation of an authored, model-digest-pinned condition with explicit native units. Returns satisfied, challenged or unknown and every comparison observation at one simulation time. Values are runtime model evidence, not qualified instrumentation or automatic CSF restoration; authored source citations are retained, not independently verified. No equipment command, protection change or procedure transition is performed.',
   'world.process-plant.control.validate': 'Validate a proposed Process Plant control write without applying it.',
   'world.process-plant.control.proposals': 'Read a Plant\'s operation proposals: pending ones with World\'s review now (whether the I&C allows the stored write, and how each cited reading moved since it was proposed), and the last closed ones with who closed them, when and why (approved, rejected, expired, superseded, withdrawn). Read it before saying what became of a proposal.',
-  'world.process-plant.controls.list': 'List what a person may operate on a Plant\'s drawn items, derived from its model: each offered control with its options (words, values written, the state each leads to), the trips each option would set going and the automation writing against it, where those stand now (armed; acted; a protection actuation holding it, which refuses the option), and how long the equipment takes to follow; a modulating valve\'s demand with the span and step it is set in (any setting there, as OPEN to 40 %) and where it stands now; each valve\'s position; and each withheld command with why (held by its controller as AUTO, a demand or set point, an isolation input, declared not offered). Name items by the ids display.compose reports, or omit them for all.',
+  'world.process-plant.controls.list': 'List what a person may operate on a Plant\'s drawn items, derived from its model: each offered control with its options (words, values written, the state each leads to), the trips each option would set going and the automation writing against it, where those stand now (armed; acted; a protection actuation holding it, which refuses the option), and how long the equipment takes to follow; what each option that stops, shuts or disconnects takes away now (the flow, where it goes, its share, the mode, the protection that may actuate); a modulating valve\'s demand with the span and step it is set in (OPEN to or THROTTLE to any setting there), where it stands now, and the floor a standing actuation lets it be throttled to; each valve\'s position; and each withheld command with why (held by its controller as AUTO, a demand or set point, an isolation input, declared not offered). Name items by the ids display.compose reports, or omit them for all.',
   'world.process-plant.runtime.status': 'Summarize active Process Plant runtime health, elapsed time, and variable publication counts.',
   'world.process-plant.transient.diagnostics': 'Read detailed transient, performance, and instrumentation diagnostics for one Plant.',
   'world.process-plant.ic.status': 'Read the complete current I&C snapshot for one Plant, including inactive alarm and trip lifecycle state.',
@@ -379,12 +380,14 @@ const commandCapability = <T extends { readonly plantId: string }>(config: {
   readonly searchTerms?: ReadonlyArray<string>
   readonly input: z.ZodType<T>
   readonly risk?: 'write' | 'destructive'
+  /** A command result that says more than accepted or refused; the core result where absent. */
+  readonly output?: z.ZodType
 }) => defineSimulationCommandCapability({
   ...config,
   risk: config.risk ?? 'write',
   idempotent: false,
   schedulable: true,
-  output: commandResultSchema,
+  output: config.output ?? commandResultSchema,
   buildCommand: rawInput => {
     const input = config.input.parse(rawInput)
     return {
@@ -393,6 +396,13 @@ const commandCapability = <T extends { readonly plantId: string }>(config: {
     }
   },
 })
+
+/** A proposal's result: accepted, with the control's word and what the operation takes away now (operations/consequence.ts); or refused, with why. */
+export const processPlantControlProposeResultSchema = z.discriminatedUnion('ok', [
+  commandResultSchema.options[0].extend({ word: z.string().min(1), consequence: operationConsequenceSchema.optional() }),
+  commandResultSchema.options[1],
+])
+export type ProcessPlantControlProposeResult = z.infer<typeof processPlantControlProposeResultSchema>
 
 export const processPlantCapabilities = [
   commandCapability({
@@ -410,8 +420,9 @@ export const processPlantCapabilities = [
   commandCapability({
     id: processPlantControlProposeCommandKind,
     title: 'Propose an operation',
-    description: 'Propose one operation of a Plant\'s equipment for a person to approve in the display window; an AI agent operates a Plant this way unless the Plant opts into direct AI operation. Name a control\'s command (path or tagId) and one value it offers, as world.process-plant.controls.list lists them; give the reason in plain words, the procedure step where one applies, and 1-6 published tags it rests on. World records the exact write only if the control is offered, the I&C allows it now and every tag is published; otherwise it refuses with why. Nothing is executed: a person reviews it on the equipment\'s popover, with World\'s own check, the consequences and how the cited readings moved since, and approves (World executes the stored write, validated again, under that person\'s command), rejects, or lets it lapse after 2 plant minutes (a person may extend it once). A newer proposal of yours for the same equipment replaces your older one. After proposing, compose a display around the item so the person can review it there. Read world.process-plant.control.proposals before saying anything happened: until it reads approved, the operation is proposed and awaiting a person\'s decision, never done.',
+    description: 'Propose one operation of a Plant\'s equipment for a person to approve in the display window; an AI agent operates a Plant this way unless the Plant opts into direct AI operation. Name a control\'s command (path or tagId) and one value it offers, as world.process-plant.controls.list lists them; give the reason in plain words, the procedure step where one applies, and 1-6 published tags it rests on. World records the exact write only if the control is offered, the I&C allows it now and every tag is published; otherwise it refuses with why. Nothing is executed: a person reviews it on the equipment\'s popover, with World\'s own check, the consequences and how the cited readings moved since, and approves (World executes the stored write, validated again, under that person\'s command), rejects, or lets it lapse after 2 plant minutes (a person may extend it once). A newer proposal of yours for the same equipment replaces your older one. Accepted, it returns the control\'s word and its consequence: the flow it stops or throttles, where that goes, its share, the mode and the protection that may actuate; tell the person. After proposing, compose a display around the item so the person can review it there. Read world.process-plant.control.proposals before saying anything happened: until it reads approved, the operation is proposed and awaiting a person\'s decision, never done.',
     input: processPlantControlProposePayloadSchema,
+    output: processPlantControlProposeResultSchema,
   }),
   commandCapability({
     id: processPlantControlDecideCommandKind,

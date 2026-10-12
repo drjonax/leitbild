@@ -14,6 +14,7 @@ import {
   processPlantControlProposeCommandKind,
 } from '../src/packs/process-plant/index.ts'
 import type { ListedItem } from '../src/packs/process-plant/operations/instance-ports.ts'
+import type { ProcessPlantControlProposeResult } from '../src/packs/process-plant/capabilities.ts'
 import type { ProcessPlantProposal, ProposalReview } from '../src/packs/process-plant/operations/proposals.ts'
 import { processPlantRuntimeStateSchema } from '../src/packs/process-plant/sim/runtime-state.ts'
 import { scenarios } from './fixtures/scenarios.ts'
@@ -60,6 +61,8 @@ const query = async <T,>(run: SimulationRunRuntime, actor: Actor, capabilityId: 
 }
 const proposals = async (run: SimulationRunRuntime, plantId: string) =>
   (await query<{ readonly proposals: ReadonlyArray<{ readonly proposal: ProcessPlantProposal; readonly review?: ProposalReview }> }>(run, agent, 'world.process-plant.control.proposals', { plantId })).proposals
+/** A propose result read as accepted: what the agent sees of its proposal. */
+type ProposeAccepted = Extract<ProcessPlantControlProposeResult, { readonly ok: true }>
 const signalTypes = (run: SimulationRunRuntime) => run.events().flatMap(event => event.type === 'interaction.signal.received' && event.signal.type.startsWith('process-plant.proposal.') ? [event.signal.type] : [])
 
 const shutBlockValve = (plantId: string) => ({
@@ -164,13 +167,22 @@ describe('a throttle under a standing actuation', () => {
       const opened = await listed()
       expect(opened.now!.demand).toBe(1)
       expect(opened.throttledUnder).toBeUndefined()
+      // The actuation lets it be throttled to its declared floor, and says why.
+      expect(opened.actuationHold!.floor).toMatchObject({ value: 0.2 })
+      expect(opened.actuationHold!.floor!.basis).toContain('FR-H.1')
+      expect(opened.throttleLine!.text).toMatch(/^throttles [0-9.]+ kg\/s aux feedwater AFW header → SG A \(\d+ % of aux feedwater flow\)/)
       const throttle = { ...shutBlockValve(plantId), tagId: 'AFW-A-CV', reason: 'Steam generator A level is recovering: control AFW flow', procedureStep: undefined, evidence: ['SG-A-LVL-NR'] }
       const shut = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0 })
       expect(shut.ok).toBe(false)
       if (!shut.ok) expect(shut.reason).toMatch(/ \(AFW START\) stands (active|sealed in) and holds AFW-A-CV: a command against it is refused until it is reset$/)
-      const proposed = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0.4 })
+      const belowFloor = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0.1 })
+      expect(belowFloor.ok).toBe(false)
+      if (!belowFloor.ok) expect(belowFloor.reason).toMatch(/AFW-A-CV is throttled no lower than 20 % under it, which keeps every steam generator's auxiliary feedwater line open/)
+      const proposed = await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0.4 }) as ProposeAccepted
       expect(proposed.ok).toBe(true)
-      expect((await proposals(run, plantId))[0]!.proposal).toMatchObject({ word: 'OPEN to 40 %', status: 'pending' })
+      // Below where it stands, it reads THROTTLE; the agent sees what it takes away, and so does the stored proposal.
+      expect(proposed).toMatchObject({ word: 'THROTTLE to 40 %', consequence: { verb: 'throttles' } })
+      expect((await proposals(run, plantId))[0]!.proposal).toMatchObject({ word: 'THROTTLE to 40 %', status: 'pending', consequence: proposed.consequence })
       expect((await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: proposed.commandId, decision: 'approve' })).ok).toBe(true)
       // The approved write is queued and applied with the next step.
       const approvedAt = Date.parse(run.snapshot().clock!.currentTime)
@@ -187,6 +199,26 @@ describe('a throttle under a standing actuation', () => {
       const held = await listed()
       expect(held.now!.demand).toBe(0.4)
       expect(held.now!.position).toBeCloseTo(0.4, 2)
+    })
+  })
+})
+
+describe('the consequence of an operation that stops, shuts or disconnects', () => {
+  test('an MSIV shut at power names the steam it stops, its share, the mode and the trips that may actuate, in controls.list, the propose result and the proposal', async () => {
+    await withRun(async (run, plantId) => {
+      const [msiv] = (await query<{ readonly items: ReadonlyArray<ListedItem> }>(run, agent, 'world.process-plant.controls.list', { plantId, items: ['mainSteamIsolationValveA'] })).items[0]!.offered
+      const shutIndex = msiv!.control.options.findIndex(option => option.word === 'SHUT')
+      const line = msiv!.consequenceLines[shutIndex]!
+      expect(msiv!.consequenceLines[msiv!.control.options.findIndex(option => option.word === 'OPEN')]).toBeNull()
+      expect(line).toMatchObject({ verb: 'shuts off', flow: { service: 'mainSteam', from: 'SG A', to: 'Steam header' }, mode: { id: 'powerOperation' } })
+      expect(line.flow!.value).toBeGreaterThan(0)
+      expect(line.flow!.sharePercent).toBeCloseTo(25, 0)
+      expect(line.mayActuate.map(rule => rule.ruleId)).toContain('sg-a-level-low-low-reactor-trip')
+      expect(line.text).toMatch(/^shuts off \d+ kg\/s main steam SG A → Steam header \(25 % of main steam flow\), with the unit in power operation; may actuate: .*Steam generator A low-low level reactor trip/)
+      const proposed = await command(run, agent, 'world.process-plant.control.propose', { ...shutBlockValve(plantId), tagId: 'MSIV-A', reason: 'Isolate steam generator A', evidence: ['SG-A-LVL-NR'] }) as ProposeAccepted
+      expect(proposed).toMatchObject({ ok: true, word: 'SHUT', consequence: { verb: 'shuts off', mode: { id: 'powerOperation' } } })
+      expect(proposed.consequence!.text).toContain('may actuate: ')
+      expect((await proposals(run, plantId))[0]!.proposal.consequence).toEqual(proposed.consequence)
     })
   })
 })

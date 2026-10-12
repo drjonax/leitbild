@@ -460,7 +460,7 @@ describe('demand controls and valve positions', () => {
     const control = itemControlView(plant.listed(plant.itemOffering(valve.path)), plant.now()).controls.find(candidate => candidate.path === valve.path)!
     const shut = control.options.find(option => option.word === 'SHUT')!
     expect(shut.heldBy).toMatch(/auxiliary feedwater actuation holds AFW-A-CV .* overriding it is not offered here$/)
-    expect(demandOption(control, 0.9)).toMatchObject({ word: 'OPEN to 90 %', heldBy: null })
+    expect(demandOption(control, 0.9)).toMatchObject({ word: 'THROTTLE to 90 %', heldBy: null })
     expect(plant.validate({ path: valve.path, value: 0.9 })).toEqual({ accepted: true })
     expect(plant.validate({ path: valve.path, value: 0 })).toMatchObject({ accepted: false })
   }, PLANT_HANG_GUARD_MS)
