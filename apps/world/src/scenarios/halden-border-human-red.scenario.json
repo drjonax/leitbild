@@ -373,7 +373,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "screen", "side": "blue", "at": {"type": "Point", "coordinates": [11.52, 59.168]}, "label": "Screen the border road"}
+            "input": {"template": "screen", "side": "blue", "at": {"type": "Point", "coordinates": [11.505, 59.16]}, "label": "Screen the border road"}
           }
         ]
       },
