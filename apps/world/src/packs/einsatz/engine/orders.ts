@@ -119,7 +119,8 @@ const applySend = (draft: Draft, actor: EngineActor, target: Target, movers: Rea
       putUnit(draft, patch(unit, { ...departing, phase: 'en-route', siteId: undefined, lastAction: actionBy(draft, actor, 'move', to) }))
     }
   }
-  if (target.kind === 'task') {
+  // Work returned to the task is taken up only when a unit joins it; a re-send of units already on it changes nothing.
+  if (target.kind === 'task' && movers.length > 0) {
     const task = taskIn(draft, target.task.id)
     const alerts = clearAlerts(task.alerts, [workReturnedCode])
     if (alerts.length !== task.alerts.length) stageTask(draft, patch(task, { alerts }))

@@ -14,7 +14,7 @@ const point = (east: number, north = 0) => ({ type: 'Point', coordinates: lonLat
 const send = (units: ReadonlyArray<string>, to: unknown, divert?: ReadonlyArray<{ readonly unitId: string; readonly fromTaskId: string }>) =>
   ({ units, to, ...(divert === undefined ? {} : { divert }) })
 
-/** A fleet on the engine fixture configuration: three carriers, a hauler, a flyer, an immobile store, a public site and tasks of every template. */
+/** A fleet on the engine fixture configuration: three carriers, a hauler, a flyer, an immobile store, a public site and tasks of every template, one of them needing two carriers. */
 const fleet = [
   unitItem('c1', types.roadCarrier, lonLat(0)),
   unitItem('c2', types.roadCarrier, lonLat(0, 0.001)),
@@ -30,6 +30,7 @@ const fleet = [
   taskItem('lift1', templates.lift, lonLat(0.01, 0.01)),
   taskItem('haul1', templates.payload, lonLat(0.01, 0.01)),
   taskItem('note1', templates.report, lonLat(0.005, 0.005)),
+  taskItem('two1', templates.load, lonLat(0.008), { [low]: 2 }),
 ]
 
 const withRun = async (options: Parameters<typeof openRun>[0], body: (run: OpenRun) => Promise<void>): Promise<void> => {
@@ -107,6 +108,24 @@ describe('Einsatz commands on a running clock', () => {
       expect(run.unit('c1')).toMatchObject({ taskId: 'top1', lastAction: { verb: 'divert', target: 'top1', cause: 'from LOW1', by: 'actor:operator' } })
       expect(run.task('low1')).toMatchObject({ loads: { [low]: 1 }, alerts: [{ code: 'work_returned' }], coverage: { loads: [{ classId: low, waiting: 1, covered: 0 }] } })
       healthy(run)
+    })
+  })
+
+  test('a re-send to the task a unit serves changes nothing, even while work returned to that task waits', async () => {
+    await withRun({ items: fleet }, async run => {
+      await accepted(run, ids.send, send(['c1', 'c2'], { taskId: 'two1' }))
+      run.forward(1_000)
+      await accepted(run, ids.recall, { unitId: 'c2', fromTaskId: 'two1' })
+      await run.settle()
+      const alerts = run.task('two1').alerts
+      expect(alerts).toMatchObject([{ code: 'work_returned', message: 'C2 released from TWO1 · 2 people waiting' }])
+      const upserts = () => ({ task: durableUpserts(run, 'two1'), unit: durableUpserts(run, 'c1') })
+      const before = upserts()
+      await accepted(run, ids.send, send(['c1'], { taskId: 'two1' }))
+      await run.settle()
+      expect(upserts()).toEqual(before)
+      expect(run.task('two1').alerts).toEqual(alerts)
+      expect(run.unit('c1')).toMatchObject({ phase: 'mobilizing', taskId: 'two1' })
     })
   })
 
