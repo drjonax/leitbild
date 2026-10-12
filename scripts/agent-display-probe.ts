@@ -72,7 +72,8 @@ const scenarios: ReadonlyArray<Scenario> = [
     prompt: 'Why did the Unit 2 turbine trip?', keySignals: ['GRID-AVAIL', 'GEN-BKR', 'GRID-HZ', 'GRID-VOLTAGE', 'TURB-STOP-POS'] },
   { id: 'core-cooling-rcp', fault: { actionId: 'trip-reactor-coolant-pumps' }, advanceMinutes: 3, expect: 'display',
     prompt: 'All reactor coolant pumps tripped on Unit 2. Is core cooling adequate now?', keySignals: ['SUB-MARGIN', 'CET-AVG', 'TDI-411', 'RCP-A-FLOW', 'TE-411-HOT'] },
-  { id: 'grid-connected', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'display',
+  // A single state, as single-state: answered in words; a requested display should carry the breaker and the grid.
+  { id: 'grid-connected', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'none', requested: 'display',
     prompt: 'Is Unit 2 still connected to the grid?', keySignals: ['GEN-BKR', 'GRID-AVAIL', 'GRID-HZ', 'GRID-VOLTAGE'] },
   { id: 'single-state', advanceMinutes: 1, expect: 'none', mimic: 'avoid', requested: 'display', prompt: 'Is main feedwater pump A on Unit 2 running?' },
   { id: 'power-stable', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
