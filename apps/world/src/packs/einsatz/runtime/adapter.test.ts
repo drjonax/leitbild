@@ -286,11 +286,11 @@ describe('Einsatz runtime refusals and faults', () => {
 
   test('input that does not parse is the caller\'s mistake; a fault while running a command fails the runtime, which then refuses every command', async () => {
     await withRun({ items: fleet }, async run => {
-      expect(reasonOf(await run.connection.sendCommand(envelope('bad-input', ids.hold, { unitId: 'c1', extra: true })))).toStartWith('invalid_input: ')
+      expect(reasonOf(await run.connection.sendCommand(envelope('bad-input', ids.hold, { unitId: 'c1', extra: true }), {}))).toStartWith('invalid_input: ')
       healthy(run)
 
       // Core stamps a role set only in a Run that declares roles, and such a Run cannot hold Einsatz: one reaching it is a fault.
-      expect(reasonOf(await run.connection.sendCommand(envelope('forged-roles', ids.hold, { unitId: 'c1' }, ['ground']))))
+      expect(reasonOf(await run.connection.sendCommand(envelope('forged-roles', ids.hold, { unitId: 'c1' }, ['ground']), {})))
         .toBe('runtime_unavailable: The Einsatz runtime failed running world.einsatz.unit.hold: Einsatz is not role-aware, so no role Run can call it (roles ground)')
       expect(run.connection.health?.()).toMatchObject([{ state: 'failed', lastFailure: { operation: 'command' } }])
       expect(await run.refusal(ids.hold, { unitId: 'c1' })).toEqual({ code: 'runtime_unavailable', reason: 'runtime_unavailable: The Einsatz runtime is unavailable; inspect runtime health' })
