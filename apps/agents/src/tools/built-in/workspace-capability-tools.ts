@@ -531,6 +531,8 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
             return {
               key: entry.key,
               operationId: entry.operationId,
+              // The exact target the call went to, kept as evidence: an answer's later reads (a proposal's status) go to the same one.
+              ...(entry.target === undefined ? {} : { target: entry.target }),
               success: true,
               data: body.result,
               ...(view.kind === 'invalid' ? { viewError: view.error } : {}),

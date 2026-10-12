@@ -73,6 +73,7 @@ import type { DocumentMetadata } from './documents/types.ts'
 import { dirname, join } from 'node:path'
 import { createComparisons } from './agents/comparisons.ts'
 import { requestDisplay } from './agents/display-requests.ts'
+import { createProposalCardReader, proposedOperationsOf, type ProposalCard } from './agents/proposal-cards.ts'
 import type { DisplayRequestAccepted } from './core/display-request.ts'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
@@ -185,6 +186,9 @@ export interface AgentsWorkspaceRuntime {
   // Asks the author of an answer to show it as a live display (see
   // core/display-request.ts). Throws DisplayRequestRefusal naming the rule.
   readonly requestDisplay: (roomId: string, messageId: string, requesterId: string) => DisplayRequestAccepted
+  // The operations a turn proposed and where World says each stands now (agents/proposal-cards.ts).
+  // Throws with a code where the Room, the turn or the Workspace Host is missing.
+  readonly readProposalCards: (roomId: string, turnId: string) => Promise<ReadonlyArray<ProposalCard>>
   readonly setOnMessagePosted: (callback: OnMessagePosted) => void
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
@@ -965,6 +969,11 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       })
     }
 
+    // Proposal cards read World's status through the same Host the agents' workspace calls go to.
+    const proposalCards = options.workspaceId !== undefined && options.workspaceHostUrl !== undefined
+      ? createProposalCardReader({ workspaceId: options.workspaceId, hostBaseUrl: options.workspaceHostUrl })
+      : undefined
+
     const system: AgentsWorkspaceRuntime = {
       rooms, createRoom, settings, bookmarks, team, routeMessage, executionStore, comparisons,
       llm, llmService, ollama, providerConfig, providerKeys, gateways, monitors,
@@ -1002,6 +1011,17 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       spawnAIAgent: boundSpawnAIAgent,
       spawnHumanAgent: boundSpawnHumanAgent,
       activateAgentInRoom,
+      readProposalCards: async (roomId, turnId) => {
+        const room = rooms.getRoom(roomId)
+        if (!room) throw Object.assign(new Error('Room not found'), { code: 'room_not_found' })
+        const turn = executionStore.getTurn(room.profile.id, turnId)
+        if (!turn) throw Object.assign(new Error('Execution turn not found'), { code: 'turn_not_found' })
+        const operations = proposedOperationsOf(executionStore.listCalls(room.profile.id, turn.id).map(call => executionStore.getCall(room.profile.id, turn.id, call.id)!))
+        if (operations.length === 0) return []
+        if (proposalCards === undefined) throw Object.assign(new Error('This Agents runtime has no Workspace Host to read proposals from'), { code: 'workspace_host_unavailable' })
+        // An agent removed from the Workspace since is named by its id.
+        return await proposalCards.read(operations, { id: turn.agentId, name: team.getAgent(turn.agentId)?.name ?? turn.agentId })
+      },
       requestDisplay: (roomId, messageId, requesterId) => requestDisplay({
         rooms, team, isScriptRunning: roomId => scriptRunnerRef?.getRun(roomId) !== undefined,
       }, roomId, messageId, requesterId),

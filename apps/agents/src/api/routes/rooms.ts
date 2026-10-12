@@ -38,6 +38,21 @@ export const roomRoutes: RouteEntry[] = [
     },
   },
   {
+    // What the turn proposed and where World says each proposal stands (the answer's proposal card).
+    method: 'GET',
+    pattern: /^\/rooms\/([^/]+)\/executions\/([^/]+)\/proposals$/,
+    handler: async (_req, match, { system }) => {
+      try {
+        return json({ cards: await system.readProposalCards(decodeURIComponent(match[1]!), decodeURIComponent(match[2]!)) })
+      } catch (error) {
+        const code = (error as { code?: unknown }).code
+        if (code === 'room_not_found' || code === 'turn_not_found') return errorResponse((error as Error).message, 404)
+        if (code === 'workspace_host_unavailable') return errorResponse((error as Error).message, 503)
+        throw error
+      }
+    },
+  },
+  {
     method: 'GET',
     pattern: /^\/rooms\/([^/]+)\/executions\/([^/]+)\/calls\/([^/]+)$/,
     handler: (_req, match, { system }) => {
