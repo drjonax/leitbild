@@ -950,7 +950,11 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
       tagsOf('reactor-overtemperature-delta-t-trip'),
       tagsOf('loss-of-offsite-power'),
       tagsOf('safety-bus-a-loss-alarm'),
-    ]).toEqual([['LO-LO · RX TRIP'], ['LO-3 · SI', 'LO-3 · RX TRIP', 'LO-3 · FWI'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['ALM']])
+    ]).toEqual([['LO-LO · RX TRIP'], ['LO-3 · SI', 'LO-3 · RX TRIP', 'LO-3 · FWI'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['DEAD · ALM']])
+    // An alarm with no limit on one value says what it watches, as its drawing's flap does, never a bare ALM (HMI
+    // review of run 23): a pump not running, a level low with low feed flow.
+    expect([tagsOf('rcp-a-trip'), tagsOf('sg-b-feedwater-low'), tagsOf('pzr-porv-flow')]).toEqual([['NOT RUN · ALM'], ['L LO & F LO · ALM'], ['RELIEF VALVE FLOWING · ALM']])
+    expect(Object.values(annunciation.tags)).not.toContain('ALM')
     // A limit inside a combined condition names its row too: the feedwater isolation on low Tavg after a reactor trip.
     expect(tagsOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual(['LO · FWI'])
     expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-3 · RX TRIP')

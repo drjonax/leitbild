@@ -4,7 +4,7 @@ import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
 import { distinguishingNames, idleText, joinedName, limitLabelParts, limitLabelRanks, limitLines, limitLook, limitSeverity, mergedText, stackLabels, TREND_GUTTER, trendGutter } from '../src/ui/embed/composed-display/limit-labels.ts'
 import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
-import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
+import { coincidentMargin, formatQuantity, formatValue, limitKindName, marginLimitName, marginText, marginTextForms, marginTo, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
 import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
 
@@ -94,6 +94,14 @@ describe('composed display panel presenters', () => {
     expect(marginTextForms({ threshold: { ...thresholds[1]!, value: 0.5 }, margin: 0.25 }, 'boolean')).toEqual(['0.250 above LO 0.5 · ALM', '0.250 above LO · ALM'])
     // With nothing in force the way it moves, a single form.
     expect(limitStateForms({ kind: 'clear', direction: 'low' }, '%', null)).toEqual(['no LO limit in force'])
+    // Two alarms at one limit name it once (HMI review of run 25, sg-a-tube-leak: "past HI 0.063 kg/s · ALM + ALM");
+    // an action one of them does in every mode names no mode, one only some do keeps its own.
+    const leak = { ruleId: 'leak-high', label: 'RCS leak rate high', kind: 'alarm', operator: '>', direction: 'high', value: 0.063, order: 1, action: 'ALM' } as const
+    const together = coincidentMargin(marginTo(0.07, leak), [leak, { ...leak, ruleId: 'tube-leak', modeLabel: 'Mode 1' }])
+    expect(marginText(together, 'kg/s')).toBe('past HI 0.063 kg/s · ALM')
+    expect(marginLimitName(together, 'kg/s')).toBe('HI 0.063 kg/s · ALM')
+    const tripAndAfw = coincidentMargin(marginTo(25, thresholds[0]!), [thresholds[0]!, { ...thresholds[0]!, ruleId: 'afw', kind: 'trip', action: 'AFW START', modeLabel: 'Modes 1–3' }, { ...thresholds[0]!, ruleId: 'trip-b', modeLabel: 'Mode 1' }])
+    expect(marginText(tripAndAfw, '%')).toBe('5.00 percentage points above LO-LO 20 % · RX TRIP + AFW START (Modes 1–3)')
   })
 
   test('a value on a limit that acts at equality is past it', () => {

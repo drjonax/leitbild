@@ -276,13 +276,19 @@ export const nearestThresholdMargin = (
 }
 
 /**
- * What the limits a margin names do, most severe first, with the modes each
- * alone acts in where `modes`: "RX TRIP (Modes 1–2) + AFW START".
+ * What the limits a margin names do, most severe first, each action once
+ * (two alarms at one leak rate read "ALM", not "ALM + ALM": HMI review of
+ * run 25), with the modes it alone acts in where `modes`: "RX TRIP (Modes
+ * 1–2) + AFW START". An action one of them does in every mode names none.
  */
-const actionsText = (margin: ThresholdMargin, modes: boolean): string =>
-  [margin.threshold, ...(margin.alongside ?? [])]
-    .map(threshold => `${threshold.action}${modes && threshold.modeLabel !== undefined ? ` (${threshold.modeLabel})` : ''}`)
-    .join(' + ')
+const actionsText = (margin: ThresholdMargin, modes: boolean): string => {
+  const limits = [margin.threshold, ...(margin.alongside ?? [])]
+  return [...new Set(limits.map(threshold => threshold.action))].map(action => {
+    const modeLabels = limits.filter(threshold => threshold.action === action).map(threshold => threshold.modeLabel)
+    const qualified = modes && modeLabels.every(label => label !== undefined)
+    return `${action}${qualified ? ` (${[...new Set(modeLabels)].join(', ')})` : ''}`
+  }).join(' + ')
+}
 
 /**
  * The limit a margin names, as its line is labelled, with every action at

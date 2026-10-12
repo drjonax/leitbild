@@ -6,6 +6,7 @@ import { resolveProcessPlantSignalPath } from '../signals.ts'
 import { composedDisplayLayout } from './composition.ts'
 import { limitOrderName } from './display-text.ts'
 import { icRuleKind, icThresholdsForSignal, UNDECLARED_ACTION } from './ic-thresholds.ts'
+import { flapText } from './mimic/bindings.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
 // The Plant's annunciator systems as its I&C config declares them, in their
@@ -84,7 +85,9 @@ export interface DisplayAnnunciation {
    * and what it annunciates does ("LO-LO · RX TRIP"), or with no limit, what
    * it does. What it does is its own group's, not its rule's: the reactor
    * trip safety injection causes reads "LO-LO · RX TRIP" beside SI's own
-   * "LO-LO · SI" (QA review of run 22).
+   * "LO-LO · SI" (QA review of run 22). An alarm with no limit on one value
+   * says what it watches, in the words its drawing's flap uses ("DEAD ·
+   * ALM", "L LO & F LO · ALM"), never a bare ALM (HMI review of run 23).
    */
   readonly tags: Readonly<Record<string, string>>
   /**
@@ -151,7 +154,8 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
     effect.type === 'alarm.enter' ? 'ALM' : group?.shortLabel ?? UNDECLARED_ACTION
   const tagOf = (entry: (typeof annunciated)[number]): string => {
     const order = orderOf(entry.rule)
-    return order === null ? actionOfEntry(entry) : `${order} · ${actionOfEntry(entry)}`
+    if (order !== null) return `${order} · ${actionOfEntry(entry)}`
+    return entry.effect.type === 'alarm.enter' ? `${flapText(plant, entry.rule, undefined).watches} · ${actionOfEntry(entry)}` : actionOfEntry(entry)
   }
   const declared = plant.automation.firstOutGroups
   const annunciation: DisplayAnnunciation = {
