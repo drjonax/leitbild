@@ -1,6 +1,6 @@
 {
   "name": "@leitbild/agents",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Leitbild Agents module runtime",
   "module": "src/index.ts",
   "type": "module",
