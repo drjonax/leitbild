@@ -2,7 +2,7 @@
   import type { ClickTarget, SiteRow, UnitRow } from '../board/types.ts'
   import BoardIcon from './BoardIcon.svelte'
   import { unitFacts, unitIconTone } from './board-presenter.ts'
-  import { revealWhen } from './reveal.ts'
+  import { revealKey, revealWhen } from './reveal.ts'
 
   /**
    * Assets: the units the screen commands that can move, free first, each one
@@ -37,8 +37,8 @@
   <div class="scroll">
     {#if empty !== null}<p class="empty">{empty}</p>{/if}
     <ol class="rows">
-      {#each rows as row (row.id)}
-        <li class="row" class:selected={row.selected} class:free={row.free} class:armed={row.moveArmed || row.adding} class:destroyed={row.destroyed} use:revealWhen={row.selected}>
+      {#each rows as row, index (row.id)}
+        <li class="row" class:selected={row.selected} class:free={row.free} class:armed={row.moveArmed || row.adding} class:destroyed={row.destroyed} use:revealWhen={revealKey(row.selected, index, row.chain.length, row.alerts.length)}>
           <div class="row-head">
           <button type="button" class="row-main" aria-pressed={row.selected} onclick={() => click({ kind: 'row', list: 'units', id: row.id })}>
             <BoardIcon svg={icon(row.icon)} tone={unitIconTone(row)} />

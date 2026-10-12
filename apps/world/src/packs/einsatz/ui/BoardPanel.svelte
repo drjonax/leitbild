@@ -7,6 +7,8 @@
   import type { ClickTarget } from '../board/types.ts'
   import type { EinsatzConfig } from '../config-schema.ts'
   import { invokeBoardCommand, queryBoardRecommendation, readBoardConfiguration } from './board-client.ts'
+  import type { ObjectId } from '../../../core/model/index.ts'
+  import { shownBesideBoard } from './board-camera.ts'
   import { boardIconIds, createBoardIcons } from './board-icons.ts'
   import { boardBottomClearancePx, boardChromePx, boardEdgeGapPx, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx, listRowsTemplate, rowBoxStyle } from './board-layout.ts'
   import { logTime, stripHeading } from './board-presenter.ts'
@@ -28,7 +30,9 @@
    * after every event, and every word it shows is the view's, or before a
    * configuration is there, the Board's mechanism words. It lies over the
    * map's right edge, narrow enough to leave the map clear, and pads the map
-   * camera by its observed width.
+   * camera by its observed width. A call or asset it selects from its lists
+   * that the map shows only under the Board, or not at all, is brought into
+   * view beside it.
    *
    * Touch first: the action bar on top says what the next tap sends; the
    * status line below it carries the result, Undo and sound; Calls and Assets
@@ -46,6 +50,7 @@
   let problem = $state<string | null>(null)
   let retry = $state.raw<(() => void) | null>(null)
   let surfaceWidth = $state(0)
+  let surfaceHeight = 0
   let root = $state<HTMLElement | null>(null)
   let tone: BoardTone | null = null
 
@@ -64,6 +69,21 @@
   })
   const icon = (id: string): string | undefined => icons.svg(id)
   const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
+
+  /**
+   * Pans the map to an object the Board selected from its lists when the map
+   * shows it only under the Board or the bars, or not at all. Before the map
+   * reports its first view, or for an object without a position, there is
+   * nothing to place it by.
+   */
+  const revealOnMap = (objectId: ObjectId | null): void => {
+    const view = props.mapView
+    const point = objectId === null ? undefined : props.objects.find(object => object.id === objectId)?.spatial.position?.point
+    if (view === null || point === undefined || root === null || surfaceWidth <= 0 || surfaceHeight <= 0) return
+    const cover = boardMapCover(root.getBoundingClientRect().width)
+    if (shownBesideBoard(view, { width: surfaceWidth, height: surfaceHeight }, cover, point.coordinates)) return
+    props.onFocusMap({ kind: 'point', center: [point.coordinates[0], point.coordinates[1]] })
+  }
 
   const click = (target: ClickTarget): void => {
     if (target.kind === 'enable-sound' && tone === null) {
@@ -98,7 +118,10 @@
     const sides = props.roleSet?.declaration.sides ?? []
     const simulationRunId = props.simulationRunId
 
-    const surfaceObserver = new ResizeObserver(() => { surfaceWidth = surface.clientWidth })
+    const surfaceObserver = new ResizeObserver(() => {
+      surfaceWidth = surface.clientWidth
+      surfaceHeight = surface.clientHeight
+    })
     surfaceObserver.observe(surface)
     const boardObserver = new ResizeObserver(() => { props.onMapCover(boardMapCover(element.getBoundingClientRect().width)) })
     boardObserver.observe(element)
@@ -125,7 +148,10 @@
         ports: {
           invoke: async (capabilityId, input) => await invokeBoardCommand(simulationRunId, capabilityId, input),
           recommend: async taskId => await queryBoardRecommendation(simulationRunId, taskId),
-          select: objectId => props.onSelectObject(objectId),
+          select: objectId => {
+            props.onSelectObject(objectId)
+            revealOnMap(objectId)
+          },
           sound: kind => {
             if (tone === null) throw new Error('The Board asked for a tone before sound was enabled')
             tone.play(kind)

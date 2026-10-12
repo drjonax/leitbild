@@ -8,7 +8,7 @@
     "Let standing orders take patients to the nearest accepting hospital and bring units home."
   ],
   "world": { "startsAt": "2026-09-03T08:00:00.000Z", "environment": { "city": "Halden", "model": "Fictional civil dispatch exercise; no real patient data" } },
-  "view": { "map": { "center": [11.29, 59.22], "zoom": 10 } },
+  "view": { "map": { "center": [11.346, 59.221], "zoom": 9.5 } },
   "roles": [
     { "id": "ems", "label": "EMS dispatcher", "class": "operator" },
     { "id": "police", "label": "Police dispatcher", "class": "operator" },

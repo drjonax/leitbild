@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { defaultRailWidth } from '../../../ui/rail-state.ts'
 import { cameraPaddingFor, noMapCover } from '../../../ui/surface-panel-interaction.ts'
 import type { Arrangement } from '../board/types.ts'
-import { boardChromePx, boardEdgeGapPx, boardHeightFor, boardLayoutFor, boardMapCover, boardSections, listHeadingPx, listHeightsFor, listRowsTemplate, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
+import { boardChromePx, boardEdgeGapPx, boardHeightFor, boardLayoutFor, boardMapCover, boardSections, listContentPx, listHeadingPx, listHeightsFor, listRowsTemplate, listsHeightFor, minBoardWidthPx, minMapWidthPx, rowBoxPx, rowBoxStyle, rowBoxVars, rowPx, tapPx, visibleRows } from './board-layout.ts'
 
 const leads: ReadonlyArray<Arrangement['lead']> = ['work-list', 'map']
 
@@ -60,21 +60,23 @@ describe('Board layout', () => {
     expect(boardRule).not.toMatch(/\b(top|right|bottom|left|width):/)
   })
 
-  test('at 960 × 720 Calls and Assets keep fixed shares that each show at least two whole rows, Calls the larger, with the alerts strip shown or not', () => {
-    // The Host's header takes 44 px of a 720 px window; the World surface is the rest.
-    const board = boardHeightFor(720 - 44)
-    for (const alerts of [true, false]) {
-      const heights = listHeightsFor(board, ['work', 'units'], alerts)
-      expect(visibleRows(heights.work!, 'work')).toBeGreaterThanOrEqual(2)
-      expect(visibleRows(heights.units!, 'units')).toBeGreaterThanOrEqual(2)
-      expect(heights.work!).toBeGreaterThan(heights.units!)
-      // With Contacts as well, every list still shows a row.
-      const three = listHeightsFor(board, ['work', 'units', 'contacts'], alerts)
-      for (const section of ['work', 'units', 'contacts'] as const) expect(visibleRows(three[section]!, section)).toBeGreaterThanOrEqual(1)
-      // The parts add up to the Board.
-      const { padding, gap, actionBar, statusLine, log } = boardChromePx
-      const strip = alerts ? boardChromePx.alerts + gap : 0
-      expect(heights.work! + heights.units! + gap + 2 * padding + strip + actionBar + statusLine + log + 3 * gap).toBeCloseTo(board, 6)
+  test('at 960 × 720 and 1024 × 768, with both lists full, Calls and Assets each show at least two whole rows, Calls the larger, with the alerts strip shown or not', () => {
+    // The Host's header takes 44 px of the window; the World surface is the rest.
+    for (const window of [720, 768]) {
+      const board = boardHeightFor(window - 44)
+      for (const alerts of [true, false]) {
+        const heights = listHeightsFor(board, ['work', 'units'], alerts)
+        expect(visibleRows(heights.work!, 'work')).toBeGreaterThanOrEqual(2)
+        expect(visibleRows(heights.units!, 'units')).toBeGreaterThanOrEqual(2)
+        expect(heights.work!).toBeGreaterThan(heights.units!)
+        // With Contacts as well, every list still shows a row.
+        const three = listHeightsFor(board, ['work', 'units', 'contacts'], alerts)
+        for (const section of ['work', 'units', 'contacts'] as const) expect(visibleRows(three[section]!, section)).toBeGreaterThanOrEqual(1)
+        // The parts add up to the Board.
+        const { padding, gap, actionBar, statusLine, log } = boardChromePx
+        const strip = alerts ? boardChromePx.alerts + gap : 0
+        expect(heights.work! + heights.units! + gap + 2 * padding + strip + actionBar + statusLine + log + 3 * gap).toBeCloseTo(board, 6)
+      }
     }
     // Two rows: their lines, padding and borders, and one gap between them, below the heading.
     expect(visibleRows(listHeadingPx + 2 * rowPx.work - rowBoxPx.gap, 'work')).toBe(2)
@@ -97,9 +99,28 @@ describe('Board layout', () => {
     }
   })
 
+  test('a short Calls list takes only what its rows need and leaves no gap: Assets takes the rest, at 960 × 720 and 1024 × 768', () => {
+    for (const window of [720, 768]) {
+      const board = boardHeightFor(window - 44)
+      for (const alerts of [true, false]) {
+        const lists = listsHeightFor(board, alerts)
+        for (const calls of [0, 1, 2]) {
+          const heights = listHeightsFor(board, ['work', 'units'], alerts, { work: listContentPx('work', calls) })
+          expect(heights.work).toBe(listContentPx('work', calls))
+          expect(heights.work! + boardChromePx.gap + heights.units!).toBeCloseTo(lists, 6)
+          // Assets gets more than its share when Calls is short.
+          expect(heights.units!).toBeGreaterThan(lists * 3 / 7)
+        }
+      }
+    }
+    // At 1024 × 768 with two calls, four whole asset rows, where fixed shares gave two.
+    expect(visibleRows(listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], false, { work: listContentPx('work', 2) }).units!, 'units')).toBeGreaterThanOrEqual(4)
+  })
+
   test('each list scrolls within its own share, and every row and line holding a tap target is at least 44 px', () => {
-    expect(listRowsTemplate(['work', 'units'])).toBe('minmax(0, 4fr) minmax(0, 3fr)')
-    expect(listRowsTemplate(['contacts', 'units'])).toBe('minmax(0, 3fr) minmax(0, 3fr)')
+    expect(listRowsTemplate(['work', 'units'])).toBe('fit-content(57.143%) minmax(0, 1fr)')
+    expect(listRowsTemplate(['contacts', 'units'])).toBe('fit-content(50%) minmax(0, 1fr)')
+    expect(listRowsTemplate(['work', 'units', 'contacts'])).toBe('fit-content(40%) fit-content(30%) minmax(0, 1fr)')
     expect(Math.min(...Object.values(rowPx), boardChromePx.statusLine)).toBeGreaterThanOrEqual(tapPx)
     expect(tapPx).toBe(44)
     const panel = readFileSync(join(import.meta.dir, 'BoardPanel.svelte'), 'utf8')

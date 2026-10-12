@@ -7,7 +7,7 @@
     "See why the lighter truck cannot take a request until its payload is raised."
   ],
   "world": { "startsAt": "2026-09-03T08:00:00.000Z", "environment": { "city": "Halden", "model": "Fictional logistics exercise" } },
-  "view": { "map": { "center": [11.39, 59.13], "zoom": 12 } },
+  "view": { "map": { "center": [11.35, 59.14], "zoom": 12 } },
   "packs": [
     {
       "id": "einsatz",

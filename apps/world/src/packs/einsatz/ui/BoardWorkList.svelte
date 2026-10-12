@@ -2,7 +2,7 @@
   import type { ClickTarget, WorkRow } from '../board/types.ts'
   import BoardIcon from './BoardIcon.svelte'
   import { workFacts } from './board-presenter.ts'
-  import { revealWhen } from './reveal.ts'
+  import { revealKey, revealWhen } from './reveal.ts'
 
   /**
    * Calls: one row per open task in the queue, each one tap. With an asset
@@ -27,8 +27,8 @@
   <div class="scroll">
     {#if empty !== null}<p class="empty">{empty}</p>{/if}
     <ol class="rows">
-      {#each rows as row (row.id)}
-        <li class="row" class:selected={row.selected} class:fresh={row.fresh} class:served={row.served} use:revealWhen={row.selected}>
+      {#each rows as row, index (row.id)}
+        <li class="row" class:selected={row.selected} class:fresh={row.fresh} class:served={row.served} use:revealWhen={revealKey(row.selected, index, row.alerts.length)}>
           <button type="button" class="row-main" aria-pressed={row.selected} onclick={() => click({ kind: 'row', list: 'work', id: row.id })}>
             <BoardIcon svg={icon(row.icon)} tone="task" />
             <span class="row-text">
