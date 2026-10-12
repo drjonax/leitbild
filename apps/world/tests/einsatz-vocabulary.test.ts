@@ -10,8 +10,14 @@ import { join } from 'node:path'
 
 const worldRoot = join(import.meta.dir, '..')
 const scopeRoots: ReadonlyArray<string> = ['src/packs/einsatz']
-/** JSON (scenario data and the icon catalogue), built UI output and Process Plant display code, where the word names a vessel. */
-const exempt = (path: string): boolean => path.endsWith('.json') || path.startsWith('src/ui/dist/') || path.startsWith('src/ui/embed/composed-display/')
+/**
+ * JSON (scenario data and the icon catalogue), the walkthrough observations
+ * written against a Definition in its own words, built UI output and Process
+ * Plant display code, where the word names a vessel.
+ */
+const exempt = (path: string): boolean => path.endsWith('.json')
+  || (path.startsWith('src/packs/einsatz/fixtures/') && path.endsWith('.md'))
+  || path.startsWith('src/ui/dist/') || path.startsWith('src/ui/embed/composed-display/')
 
 const demoWord = /^(?:ambulances?|patients?|hospitals?|police|firefighting|firefighters?|paramedics?|recces?|tanks?|armou?r(?:ed)?|casualt(?:y|ies)|ems|triage|helicopters?|patrol|trucks?|lorr(?:y|ies)|kitchens?|shelters?)$/
 /** "fire" alone is mechanism vocabulary; only the sequence names an asset. */
@@ -59,11 +65,11 @@ describe('Einsatz vocabulary', () => {
     for (const text of ['fireRate', 'firedFactor', 'fire', 'items', 'systems', 'XMLParser', 'tanker']) expect(demoWordsIn(text)).toEqual([])
   })
 
-  test('the scope holds the Pack code and its tests, never its JSON fixtures', async () => {
+  test('the scope holds the Pack code and its tests, never its JSON fixtures or walkthrough observations', async () => {
     const files = await filesInScope()
     expect(files.some(path => path.endsWith('.test.ts'))).toBe(true)
     expect(files.some(path => path.endsWith('.ts') && !path.endsWith('.test.ts'))).toBe(true)
-    expect(files.filter(path => path.endsWith('.json'))).toEqual([])
+    expect(files.filter(path => path.endsWith('.json') || path.endsWith('.md'))).toEqual([])
   })
 
   test('no file in scope names a demo asset', async () => {
