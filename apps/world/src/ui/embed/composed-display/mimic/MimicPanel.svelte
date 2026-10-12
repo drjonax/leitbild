@@ -28,6 +28,7 @@
   import VesselSymbol from './VesselSymbol.svelte'
   import { fillTracePath, programMark, stripReading } from './vessel-trends.ts'
   import { sparklineWindowText } from '../sparkline.ts'
+  import { vesselBadgeBox } from './badge-room.ts'
 
   // A generated equipment mimic drawn with OpenBridge: pipes on a canvas by
   // connector-diagram, equipment as positioned OpenBridge elements. The
@@ -591,7 +592,9 @@
               <!-- A reactor vessel drawn from the model in OpenBridge's tokens: its fill the level it reads, its rod banks in its core region. -->
               <div class="box" style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`}><VesselSymbol item={{ ...item, vessel: item.vessel }} level={look.state.kind === 'level' ? look.state.percent : null} {index} /></div>
               {#if badges?.has(item.id)}
-                <div class="box vessel-badges" class:activated={selected === item.id} style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vesselBadges={{ ob, badges: badges.get(item.id) ?? null }}></div>
+                <!-- Its badges in the top corners of the span it stands in (badge-room.ts). -->
+                {@const room = vesselBadgeBox(item)}
+                <div class="box vessel-badges" class:activated={selected === item.id} style={`left:${room.x}px;top:${room.y}px;width:${room.width}px;height:${room.height}px`} use:vesselBadges={{ ob, badges: badges.get(item.id) ?? null }}></div>
               {/if}
             {/if}
             {#if item.text !== null}

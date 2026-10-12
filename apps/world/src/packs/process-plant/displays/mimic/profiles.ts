@@ -77,9 +77,12 @@ export interface MimicProfile {
   /**
    * How a reactor vessel is drawn (vessel-symbol.ts): this many grid cells
    * wide, with its core region below its nozzles (`band`) or overlapping
-   * the lowest of them (`overlap`) where a drawing has no height to spare.
+   * the lowest of them (`overlap`) where a drawing has no height to spare,
+   * and its head this far above its first nozzle (at least the head's own
+   * height, text-metrics.ts; more makes it taller where a drawing has the
+   * height above it).
    */
-  readonly vessel: { readonly cells: number; readonly core: 'band' | 'overlap' }
+  readonly vessel: { readonly cells: number; readonly core: 'band' | 'overlap'; readonly head: number }
   /**
    * Whether vessels show what their reading did over the last minutes
    * (MimicItemTrend): a tank's fill as its trace, a heat exchanger's level
@@ -147,7 +150,7 @@ export const chatMimicProfile: MimicProfile = {
   minScale: MIMIC_MIN_SCALE,
   badges: ['reserved', 'fitted'],
   quickLooks: false,
-  vessel: { cells: 2, core: 'overlap' },
+  vessel: { cells: 2, core: 'overlap', head: openBridgeDevice.reactorVessel.head },
   trends: false,
 }
 
@@ -176,7 +179,7 @@ export const overviewMimicProfile: MimicProfile = {
   minScale: 1,
   badges: ['reserved'],
   quickLooks: true,
-  vessel: { cells: 2, core: 'overlap' },
+  vessel: { cells: 2, core: 'overlap', head: openBridgeDevice.reactorVessel.head },
   trends: true,
 }
 
@@ -192,5 +195,5 @@ export const detailMimicProfile: MimicProfile = {
   valves: 'symbols',
   parallel: 'each',
   stubLabels: 'names',
-  vessel: { cells: 4, core: 'overlap' },
+  vessel: { cells: 4, core: 'overlap', head: openBridgeDevice.reactorVessel.head },
 }

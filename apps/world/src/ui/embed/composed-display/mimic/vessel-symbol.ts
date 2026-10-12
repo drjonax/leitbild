@@ -31,6 +31,8 @@ export interface VesselGeometry {
 }
 
 const { dome: DOME, flange: FLANGE, bottomDome: BOTTOM_DOME, coreBand: CORE_BAND } = openBridgeDevice.reactorVessel
+/** Overlapping its nozzles, a core region takes at least this share of a tall body, so its rods read at a glance. */
+const CORE_SHARE = 0.55
 /** A collar is this tall across its pipe. */
 const COLLAR = 10
 /** The core region keeps this far inside the body, per 72 px of width. */
@@ -48,7 +50,7 @@ export const insertedFraction = (value: number | null, range: { readonly min: nu
 }
 
 export const vesselGeometry = (input: {
-  readonly width: number
+  /** The box's height; the vessel stands across its span of the box (MimicVesselDrawing.span). */
   readonly height: number
   /** The box's place on the drawing: its nozzles are given in drawing px. */
   readonly origin: { readonly x: number; readonly y: number }
@@ -58,31 +60,34 @@ export const vesselGeometry = (input: {
   /** Each part's inserted fraction (insertedFraction), in its groups. */
   readonly groups: ReadonlyArray<ReadonlyArray<number | null>>
 }): VesselGeometry => {
-  const { width: w, height: h } = input
+  // The vessel stands in its own span of the box (MimicVesselDrawing.span), as wide as that span.
+  const { x: left, width: w } = input.drawing.span
+  const h = input.height
   const scale = w / 72
-  // The body sits inside the box, the head's dome on a flange as wide as the box, wider than the body.
+  // The body sits inside the span, the head's dome on a flange as wide as the span, wider than the body.
   const inset = 2 + w / 12
-  const cx = w / 2
-  const domeRx = cx - inset / 2
+  const cx = left + w / 2
+  const domeRx = w / 2 - inset / 2
   const bodyTop = DOME - 2 + FLANGE
   const bodyBottom = h - BOTTOM_DOME
   const dome = `M ${cx - domeRx} ${DOME} A ${domeRx} ${DOME} 0 0 1 ${cx + domeRx} ${DOME} Z`
-  const bottom = `M ${inset} ${bodyBottom} A ${cx - inset} ${BOTTOM_DOME} 0 0 0 ${w - inset} ${bodyBottom} Z`
-  // A collar where each pipe reaches it, from the box's face to the body.
+  const bottom = `M ${left + inset} ${bodyBottom} A ${w / 2 - inset} ${BOTTOM_DOME} 0 0 0 ${left + w - inset} ${bodyBottom} Z`
+  // A collar where each pipe reaches it, from the span's edge to the body.
   const collars = input.drawing.nozzles.map(nozzle => {
     const x = nozzle.x - input.origin.x
     const y = nozzle.y - input.origin.y
-    return nozzle.face === 'left' ? { x: 0, y: y - COLLAR / 2, width: inset, height: COLLAR }
-      : nozzle.face === 'right' ? { x: w - inset, y: y - COLLAR / 2, width: inset, height: COLLAR }
+    return nozzle.face === 'left' ? { x: left, y: y - COLLAR / 2, width: inset, height: COLLAR }
+      : nozzle.face === 'right' ? { x: left + w - inset, y: y - COLLAR / 2, width: inset, height: COLLAR }
         : nozzle.face === 'top' ? { x: x - COLLAR / 2, y: 0, width: COLLAR, height: inset }
           : { x: x - COLLAR / 2, y: h - inset, width: COLLAR, height: inset }
   })
   // The fill spans the interior from the bottom dome's lowest point to the head's highest.
   const fill = input.level === null ? null : { top: (h - 4) - Math.min(1, Math.max(0, input.level / 100)) * (h - 8) }
   const core = input.drawing.core === null ? null : (() => {
-    const x = inset + CORE_INSET * scale
-    const y = Math.max(bodyTop, bodyBottom - CORE_BAND)
-    const width = w - 2 * x
+    const x = left + inset + CORE_INSET * scale
+    const band = input.drawing.core === 'band' ? CORE_BAND : Math.max(CORE_BAND, Math.round(CORE_SHARE * (bodyBottom - bodyTop)))
+    const y = Math.max(bodyTop, bodyBottom - band)
+    const width = w - 2 * (x - left)
     const height = bodyBottom - y
     const hatch = Array.from({ length: Math.ceil((width + height) / HATCH_PITCH) }, (_, index) => {
       const offset = (index + 1) * HATCH_PITCH
@@ -93,18 +98,18 @@ export const vesselGeometry = (input: {
     const gap = w / 36
     const groupGap = w / 12
     const sizes = input.groups.map(group => group.length * bar + (group.length - 1) * gap)
-    let left = cx - (sizes.reduce((sum, size) => sum + size, 0) + (input.groups.length - 1) * groupGap) / 2
+    let next = cx - (sizes.reduce((sum, size) => sum + size, 0) + (input.groups.length - 1) * groupGap) / 2
     const bars = input.groups.flatMap(group => {
-      const placed = group.map((inserted, index) => ({ x: left + index * (bar + gap), width: bar, tick: y - 2, length: inserted === null ? null : inserted * height }))
-      left += group.length * bar + (group.length - 1) * gap + groupGap
+      const placed = group.map((inserted, index) => ({ x: next + index * (bar + gap), width: bar, tick: y - 2, length: inserted === null ? null : inserted * height }))
+      next += group.length * bar + (group.length - 1) * gap + groupGap
       return placed
     })
     return { x, y, width, height, hatch, bars }
   })()
   return {
     dome,
-    flange: { x: 0, y: DOME - 2, width: w, height: FLANGE },
-    body: { x: inset, y: bodyTop, width: w - 2 * inset, height: bodyBottom - bodyTop },
+    flange: { x: left, y: DOME - 2, width: w, height: FLANGE },
+    body: { x: left + inset, y: bodyTop, width: w - 2 * inset, height: bodyBottom - bodyTop },
     bottom,
     collars,
     fill,

@@ -13,7 +13,7 @@ import type { MimicIntent } from './scope.ts'
 // restyle it.
 
 /** Changes whenever the same intent on the same model could draw differently. */
-export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-8`
+export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-9`
 
 /**
  * A mimic may be up to 800 px wide (owner decision): OpenBridge's full-size
@@ -65,6 +65,8 @@ export interface MimicDrawnItem {
  */
 export interface MimicVesselDrawing {
   readonly core: 'band' | 'overlap' | null
+  /** Its own span across its box, in the box's px: a vessel stands taller than wide, in a wider box beside where its pipes arrive (vessel-fit.ts). */
+  readonly span: { readonly x: number; readonly width: number }
   readonly nozzles: ReadonlyArray<{ readonly x: number; readonly y: number; readonly face: Face }>
 }
 

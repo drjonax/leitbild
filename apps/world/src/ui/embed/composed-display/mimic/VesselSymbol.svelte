@@ -19,7 +19,6 @@
   }
   const insertion = $derived(item.binding.insertion)
   const shape = $derived(vesselGeometry({
-    width: item.box.width,
     height: item.box.height,
     origin: { x: item.box.x, y: item.box.y },
     drawing: item.vessel,

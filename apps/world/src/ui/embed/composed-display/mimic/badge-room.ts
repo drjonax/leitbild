@@ -15,9 +15,13 @@ export const BADGE = 20
 export const deviceBadgeCorners = (textSide: 'right' | 'bottom'): { readonly who: 'badge-top-left'; readonly hold: 'badge-top-right' | 'badge-bottom-left' } =>
   textSide === 'bottom' ? { who: 'badge-top-left', hold: 'badge-top-right' } : { who: 'badge-top-left', hold: 'badge-bottom-left' }
 
+/** Where a vessel's badges stand: its box, or the span of it a reactor vessel is drawn in (MimicVesselDrawing.span). */
+export const vesselBadgeBox = (item: MimicDrawnItem): Box =>
+  item.vessel === undefined ? item.box : { x: item.box.x + item.vessel.span.x, y: item.box.y, width: item.vessel.span.width, height: item.box.height }
+
 /** The room an item's badges take at most, in the drawing's px: who acts on it (two badges wide) and what holds it. */
 export const badgeRoom = (item: MimicDrawnItem): ReadonlyArray<Box> => {
-  const { x, y, width, height } = item.box
+  const { x, y, width, height } = item.presentation.element === 'device' ? item.box : vesselBadgeBox(item)
   const who = { x, y, width: 2 * BADGE, height: BADGE }
   if (item.presentation.element !== 'device') return [who, { x: x + width - BADGE, y, width: BADGE, height: BADGE }]
   return deviceBadgeCorners(item.text?.side === 'bottom' ? 'bottom' : 'right').hold === 'badge-top-right'

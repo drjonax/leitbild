@@ -9,6 +9,7 @@ import { embeddedPresentation, presentationFor, type MimicPresentation } from '.
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, stubWordTexts, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { fitVessel } from './vessel-fit.ts'
 import { openBridgeDevice, QUICK_LOOK_DOT, reactorVesselBottom, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
 // Intent (or a scope World resolved itself) → items with their bindings → a
@@ -254,7 +255,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   // an end is as tall as all of them.
   const footprintOf = (planned: PlannedItem): Pick<DiagramNode, 'cells' | 'portInset' | 'ends'> => {
     if (planned.presentation.element === 'vessel') {
-      const head = openBridgeDevice.reactorVessel.head
+      const head = profile.vessel.head
       const bottom = reactorVesselBottom(coreOf(graph, planned, profile) ?? 'overlap')
       return planned.role === 'hub'
         ? { cells: { width: profile.vessel.cells, height: 4 }, portInset: 0, ends: { top: head, bottom } }
@@ -553,11 +554,24 @@ const itemIdOf = (graph: CompiledPlantGraph, item: MimicItem): string =>
 const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profile: MimicProfile, scope: MimicScope, planned: Planned, layout: Extract<DiagramLayoutResult, { ok: true }>): CompiledMimic => {
   const graph = plant.graph
   const placed = new Map(layout.nodes.map(node => [node.id, node]))
+  // A reactor vessel stands in its box as a vessel does (vessel-fit.ts); a pipe reaching its box beside it continues to it.
+  const vesselFits = new Map([...planned.items.values()].filter(item => item.presentation.element === 'vessel').map(item => {
+    const node = placed.get(item.id)!
+    return [item.id, fitVessel({ x: node.x, y: node.y, width: node.width, height: node.height }, Object.values(node.ports), node.text?.side ?? null)] as const
+  }))
+  const routes = [...vesselFits.values()].flatMap(fit => fit.routes)
+  const continued = (point: readonly [number, number]) => routes.find(route => Math.abs(route.from.x - point[0]) < 0.5 && Math.abs(route.from.y - point[1]) < 0.5)
+  const toVessels = (points: ReadonlyArray<readonly [number, number]>): ReadonlyArray<readonly [number, number]> => {
+    const first = continued(points[0]!)
+    const last = continued(points.at(-1)!)
+    return [...(first === undefined ? [] : [...first.points].reverse()), ...points, ...(last === undefined ? [] : last.points)]
+  }
   const items: MimicDrawnItem[] = [...planned.items.values()].map(item => {
     const node = placed.get(item.id)!
     // A stack's first line is the tag; the rows that fit follow it.
     const rows = item.rows.slice(0, Math.max(0, (node.text?.lines ?? 1) - 1))
     const trend = trendOf({ ...item, rows }, profile)
+    const fit = vesselFits.get(item.id)
     return {
       id: item.id,
       binding: item.binding,
@@ -570,7 +584,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       flapLines: item.flapLines,
       marker: item.marker,
       components: item.components.map(component => String(graph.components[component]!.id)),
-      ...(item.presentation.element === 'vessel' ? { vessel: { core: coreOf(graph, item, profile), nozzles: Object.values(node.ports) } } : {}),
+      ...(fit === undefined ? {} : { vessel: { core: coreOf(graph, item, profile), span: fit.span, nozzles: fit.nozzles } }),
       ...(trend === null ? {} : { trend }),
     }
   })
@@ -578,7 +592,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
   const pipes = layout.edges.filter(edge => !edge.id.startsWith('s')).map(edge => {
     const { link: index, parallel } = linkOf(edge.id)
     const link = graph.links[index]!
-    return { id: edge.id, linkId: String(link.id), carrier: linkCarrier(link), points: edge.points, gaps: edge.gaps, state: pipeState(graph, link, parallel) }
+    return { id: edge.id, linkId: String(link.id), carrier: linkCarrier(link), points: toVessels(edge.points), gaps: edge.gaps, state: pipeState(graph, link, parallel) }
   })
   const stubEdges = new Map(layout.edges.filter(edge => edge.id.startsWith('s')).map(edge => [edge.id.slice(0, edge.id.indexOf('.')), edge]))
   const stubs = [...planned.stubs].map(([id, stub]) => {
@@ -600,7 +614,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
   const stubPipes = stubs.map(stub => {
     const { link: index, parallel } = linkOf(stub.edge.id)
     const link = graph.links[index]!
-    return { id: stub.edge.id, linkId: String(link.id), carrier: linkCarrier(link), points: stub.edge.points, gaps: stub.edge.gaps, state: pipeState(graph, link, parallel) }
+    return { id: stub.edge.id, linkId: String(link.id), carrier: linkCarrier(link), points: toVessels(stub.edge.points), gaps: stub.edge.gaps, state: pipeState(graph, link, parallel) }
   })
   const paths = [...new Set([
     ...items.flatMap(item => {

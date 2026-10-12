@@ -11,7 +11,7 @@ const origin = { x: 1512, y: 720 }
 // The Full-HD overview's vessel: two cells wide, its eight nozzles on its left face.
 const nozzles = [48, 60, 72, 84, 96, 108, 120, 144].map(y => ({ x: origin.x, y: origin.y + y, face: 'left' as const }))
 const overview = (level: number | null, groups: ReadonlyArray<ReadonlyArray<number | null>>) =>
-  vesselGeometry({ width: 48, height: 168, origin, drawing: { core: 'overlap', nozzles }, level, groups })
+  vesselGeometry({ height: 168, origin, drawing: { core: 'overlap', span: { x: 0, width: 48 }, nozzles }, level, groups })
 
 describe('the reactor vessel symbol', () => {
   test('a part is in by its reading over its range, from the end it is out at', () => {
@@ -58,7 +58,7 @@ describe('the reactor vessel symbol', () => {
   })
 
   test('equipment that heats nothing has no core region', () => {
-    expect(vesselGeometry({ width: 96, height: 168, origin, drawing: { core: null, nozzles: [] }, level: 80, groups: [] }).core).toBeNull()
+    expect(vesselGeometry({ height: 168, origin, drawing: { core: null, span: { x: 0, width: 96 }, nozzles: [] }, level: 80, groups: [] }).core).toBeNull()
   })
 })
 
