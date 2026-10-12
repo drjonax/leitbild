@@ -88,7 +88,7 @@ describe('Einsatz divert protection', () => {
 
     state = await run(state, send(['a2'], { taskId: 'n1' }, [{ unitId: 'a2', fromTaskId: 'c9' }]))
     expect(unitOf(state, 'a2')).toMatchObject({ taskId: 'n1', phase: 'en-route', lastAction: { verb: 'divert', target: 'n1', cause: 'from C9' } })
-    expect(taskOf(state, 'c9')).toMatchObject({ createdAtMs: start, loads: { [middle]: 1 }, alert: { code: 'work_returned' } })
+    expect(taskOf(state, 'c9')).toMatchObject({ createdAtMs: start, loads: { [middle]: 1 }, alerts: [{ code: 'work_returned' }] })
     expect(taskOf(state, 'c9').coverage.loads).toEqual([{ classId: middle, waiting: 1, covered: 0 }])
     expect(taskOf(state, 'n1').coverage.loads).toEqual([{ classId: top, waiting: 1, covered: 1 }])
   })

@@ -9,7 +9,12 @@ import { byId } from './values.ts'
  * the same validation as commands. `roe`, `withdraw` and `onStepLost` belong
  * to the engagement step.
  */
-export type StandingOrder = 'deliver' | 'return'
+export const standingOrders = ['deliver', 'return'] as const
+export type StandingOrder = typeof standingOrders[number]
+
+/** The unit alert a standing order raises when it cannot be carried out; any new order to the unit clears it. */
+export const orderFailedCode = (order: StandingOrder): string => `${order}_failed`
+export const orderAlertCodes: ReadonlyArray<string> = standingOrders.map(orderFailedCode)
 
 export interface DueReflex {
   readonly unitId: string

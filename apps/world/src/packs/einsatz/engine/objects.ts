@@ -102,9 +102,9 @@ export interface ObjectStamp {
 
 const isoOf = (ms: number): IsoTimestamp => new Date(ms).toISOString() as IsoTimestamp
 
-const alertsOf = (id: string, alert: RecordAlert | undefined): AlertState[] => alert === undefined ? [] : [{
+const alertsOf = (id: string, alerts: ReadonlyArray<RecordAlert>): AlertState[] => alerts.map(alert => ({
   id: `${id}:${alert.code}`, kind: alert.code, severity: 'warning', message: alert.message, raisedAt: isoOf(alert.sinceMs), acknowledged: false,
-}]
+}))
 
 const envelope = (id: string, label: string, stamp: ObjectStamp) => ({
   id: id as ObjectId,
@@ -147,7 +147,7 @@ export const unitObject = (state: EngineState, record: UnitRecord, motion: Pick<
     },
     operational: { status: record.phase, mode: 'simulated' },
     ...(record.taskId === undefined ? {} : { tasking: { currentTaskId: record.taskId as ObjectId } }),
-    alerts: alertsOf(id, record.alert),
+    alerts: alertsOf(id, record.alerts),
     packData: data,
   }
 }
@@ -162,7 +162,7 @@ export const taskObject = (record: TaskRecord, stamp: ObjectStamp): OperationalO
     lifecycle: closed ? 'resolved' : 'active',
     spatial: { frame: { kind: 'wgs84' }, position: { point: record.point, observedAt: stamp.at } },
     operational: { status: closed ? 'closed' : 'open', mode: 'simulated' },
-    alerts: alertsOf(id, record.alert),
+    alerts: alertsOf(id, record.alerts),
     packData: data,
   }
 }

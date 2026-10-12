@@ -106,7 +106,7 @@ describe('Einsatz unit lifecycle', () => {
     state = await run(state, { kind: 'recall', unitId: 'u2', fromTaskId: 't2' })
     expect(unitOf(state, 'u2')).toMatchObject({ phase: 'returning', lastAction: { verb: 'recall', by: 'Controller' } })
     expect(unitOf(state, 'u2').taskId).toBeUndefined()
-    expect(taskOf(state, 't2')).toMatchObject({ createdAtMs: start, loads: { [middle]: 1 }, alert: { code: 'work_returned', message: 'U2 released from T2 · 1 person waiting' } })
+    expect(taskOf(state, 't2')).toMatchObject({ createdAtMs: start, loads: { [middle]: 1 }, alerts: [{ code: 'work_returned', message: 'U2 released from T2 · 1 person waiting' }] })
     expect(taskOf(state, 't2').coverage.loads).toEqual([{ classId: middle, waiting: 1, covered: 0 }])
     expect(taskOf(state, 't2').closedAtMs).toBeUndefined()
   })

@@ -62,7 +62,7 @@ describe('Einsatz release and move', () => {
     const moved = await run(state, send(['u1'], { point: at(0.02) }, [{ unitId: 'u1', fromTaskId: 't1' }]))
     expect(unitOf(moved, 'u1')).toMatchObject({ phase: 'en-route', lastAction: { verb: 'move' } })
     expect(unitOf(moved, 'u1').taskId).toBeUndefined()
-    expect(taskOf(moved, 't1')).toMatchObject({ alert: { code: 'work_returned' }, coverage: { loads: [{ classId: middle, waiting: 1, covered: 0 }] } })
+    expect(taskOf(moved, 't1')).toMatchObject({ alerts: [{ code: 'work_returned' }], coverage: { loads: [{ classId: middle, waiting: 1, covered: 0 }] } })
     expect(unitOf(await run(moved, { kind: 'hold', unitId: 'u1' }), 'u1').phase).toBe('holding')
   })
 

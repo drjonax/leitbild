@@ -4,12 +4,12 @@ import { refusalCode } from '../refusal.ts'
 import { closeDraft, openDraft, putUnit, setMotion, unitIn } from './draft.ts'
 import { refused, type Refused } from './intent-support.ts'
 import { commandsEveryUnit, type EngineActor, type Intent, type Plan, type RouteNeed } from './intents.ts'
-import { motionOf, unitTypeOf, type EngineState, type Leg, type Transition, type UnitRecord } from './model.ts'
+import { motionOf, raiseAlert, unitTypeOf, type EngineState, type Leg, type Transition, type UnitRecord } from './model.ts'
 import { prepareLeg } from './movement.ts'
 import { planHold, planRecall, planSend } from './orders.ts'
 import { settle, stepUntil } from './phases.ts'
 import { planSiteSet, planTaskClose, planTaskCreate, planUnitAdjust, planUnitCreate } from './records.ts'
-import type { DueReflex, StandingOrder } from './reflexes.ts'
+import { orderFailedCode, type DueReflex, type StandingOrder } from './reflexes.ts'
 import { isDestroyed, isSite, linksToSite } from './rules.ts'
 import { patch } from './values.ts'
 import { loadText } from './wording.ts'
@@ -102,18 +102,16 @@ const deliverIntent = (state: EngineState, unit: UnitRecord): { readonly ok: tru
 const orderWords: Readonly<Record<StandingOrder, string>> = { deliver: 'Deliver', return: 'Return' }
 
 /**
- * A standing order that cannot be carried out raises an alert on the unit,
+ * A standing order that cannot be carried out raises its alert on the unit,
  * which holds where it is; the order is evaluated again at the next 2 s
  * boundary. It is never a runtime failure and never skipped silently.
  */
 const reflexFailed = (state: EngineState, due: DueReflex, reason: string): AdvanceOutcome => {
   const draft = openDraft(state)
   const unit = unitIn(draft, due.unitId)
-  const code = refusalCode(reason)
-  const message = `${orderWords[due.order]} failed: ${reason.slice(code.length + 2)}`
+  const message = `${orderWords[due.order]} failed: ${reason.slice(refusalCode(reason).length + 2)}`
   setMotion(draft, unit.id, { reflexAttemptMs: draft.timeMs })
-  const sinceMs = unit.alert?.code === code && unit.alert.message === message ? unit.alert.sinceMs : draft.timeMs
-  putUnit(draft, patch(unit, { alert: { code, message, sinceMs } }))
+  putUnit(draft, patch(unit, { alerts: raiseAlert(unit.alerts, { code: orderFailedCode(due.order), message, sinceMs: draft.timeMs }) }))
   return { state: closeDraft(draft), transitions: draft.transitions }
 }
 

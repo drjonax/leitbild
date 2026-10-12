@@ -3,8 +3,9 @@ import { asAssigned, assignedTo, contributionOf, coverageOf, needFor, roleViewFo
 import { putUnit, setMotion, stageTask, taskIn, unitIn, type Draft } from './draft.ts'
 import { actionBy, committedText, immobile, loadedText, notInPicture, refused, type Refused } from './intent-support.ts'
 import type { EngineActor, IntentOf, Plan, RouteNeed } from './intents.ts'
-import { isLowerClass, motionOf, unitTypeOf, type EngineState, type Leg, type TaskRecord, type UnitRecord } from './model.ts'
+import { clearAlerts, isLowerClass, motionOf, unitTypeOf, workReturnedCode, type EngineState, type Leg, type TaskRecord, type UnitRecord } from './model.ts'
 import { releaseFromTask } from './phases.ts'
+import { orderAlertCodes } from './reflexes.ts'
 import { divertablePhases, hasLoad, isMoving, isSite, linksToSite, linksToTask } from './rules.ts'
 import { patch } from './values.ts'
 import { classCode, phaseWord } from './wording.ts'
@@ -104,7 +105,7 @@ const applySend = (draft: Draft, actor: EngineActor, target: Target, movers: Rea
     const fromTask = mover.fromTaskId === undefined ? undefined : taskIn(draft, mover.fromTaskId)
     const unit = fromTask === undefined ? before : releaseFromTask(draft, before, actionBy(draft, actor, 'release', fromTask.id, target.kind === 'task' ? 'divert' : 'move'))
     setMotion(draft, unit.id, { progressMs: 0 })
-    const departing = { leg: legs.get(unit.id)!, atBase: false, alert: undefined, phaseSinceMs: draft.timeMs, phaseDueMs: undefined }
+    const departing = { leg: legs.get(unit.id)!, atBase: false, alerts: clearAlerts(unit.alerts, orderAlertCodes), phaseSinceMs: draft.timeMs, phaseDueMs: undefined }
     if (target.kind === 'task') {
       const mobilizeMs = unitTypeOf(draft.catalog, unit).components.mobility!.mobilizeS * 1_000
       const turnout = before.phase === 'mobilizing'
@@ -121,7 +122,8 @@ const applySend = (draft: Draft, actor: EngineActor, target: Target, movers: Rea
   }
   if (target.kind === 'task') {
     const task = taskIn(draft, target.task.id)
-    if (task.alert !== undefined) stageTask(draft, patch(task, { alert: undefined }))
+    const alerts = clearAlerts(task.alerts, [workReturnedCode])
+    if (alerts.length !== task.alerts.length) stageTask(draft, patch(task, { alerts }))
   }
 }
 
@@ -167,7 +169,7 @@ export const planRecall = (state: EngineState, intent: IntentOf<'recall'>, actor
       setMotion(draft, unit.id, { progressMs: 0 })
       const leg = legs.get(unit.id)
       putUnit(draft, patch(released, {
-        phase: leg === undefined ? 'available' : 'returning', leg, phaseSinceMs: draft.timeMs, phaseDueMs: undefined, alert: undefined, lastAction: order,
+        phase: leg === undefined ? 'available' : 'returning', leg, phaseSinceMs: draft.timeMs, phaseDueMs: undefined, alerts: clearAlerts(released.alerts, orderAlertCodes), lastAction: order,
       }))
     },
   }
@@ -185,7 +187,8 @@ export const planHold = (state: EngineState, intent: IntentOf<'hold'>, actor: En
     ok: true, routes: [], notes: [],
     apply: draft => {
       setMotion(draft, unit.id, { progressMs: 0 })
-      putUnit(draft, patch(unitIn(draft, unit.id), { phase: 'holding', leg: undefined, phaseSinceMs: draft.timeMs, phaseDueMs: undefined, alert: undefined, lastAction: actionBy(draft, actor, 'hold') }))
+      const current = unitIn(draft, unit.id)
+      putUnit(draft, patch(current, { phase: 'holding', leg: undefined, phaseSinceMs: draft.timeMs, phaseDueMs: undefined, alerts: clearAlerts(current.alerts, orderAlertCodes), lastAction: actionBy(draft, actor, 'hold') }))
     },
   }
 }

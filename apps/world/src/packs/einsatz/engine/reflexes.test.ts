@@ -45,14 +45,14 @@ describe('Einsatz standing orders', () => {
     let attempts = 1
     for (let boundary = nextBoundaryMs(due); boundary <= due + 5_000; boundary = nextBoundaryMs(boundary)) attempts += 1
     expect(control.calls).toBe(2 * attempts)
-    expect(unitOf(failing.state, 'g1')).toMatchObject({ phase: 'available', alert: { code: 'routing_unavailable', message: 'Return failed: No route for G1: Router offline', sinceMs: due } })
+    expect(unitOf(failing.state, 'g1')).toMatchObject({ phase: 'available', alerts: [{ code: 'return_failed', message: 'Return failed: No route for G1: Router offline', sinceMs: due }] })
     expect(unitTransitions(failing.transitions, 'g1')).toHaveLength(1)
 
     control.online = true
     const retry = nextBoundaryMs(due + 5_000)
     const recovered = await advanceEngine(failing.state, retry, ports)
     expect(unitTransitions(recovered.transitions, 'g1').map(entry => [entry.atMs, entry.record.phase])).toEqual([[retry, 'returning']])
-    expect(unitOf(recovered.state, 'g1').alert).toBeUndefined()
+    expect(unitOf(recovered.state, 'g1').alerts).toEqual([])
     expect(unitOf(recovered.state, 'g1').lastAction).toMatchObject({ verb: 'recall', by: 'standing-order:return' })
   })
 
@@ -63,12 +63,12 @@ describe('Einsatz standing orders', () => {
       send(['c1'], { taskId: 't1' }),
     ])
     state = await advance(state, start + 6_000)
-    expect(unitOf(state, 'c1')).toMatchObject({ phase: 'holding', load: { [top]: 1 }, alert: { code: 'site_not_accepting', message: 'Deliver failed: No site accepts 1 person', sinceMs: start + 5_000 } })
+    expect(unitOf(state, 'c1')).toMatchObject({ phase: 'holding', load: { [top]: 1 }, alerts: [{ code: 'deliver_failed', message: 'Deliver failed: No site accepts 1 person', sinceMs: start + 5_000 }] })
     state = await run(state, newUnit('site', types.publicSite, at(0.01)))
     expect(unitOf(state, 'c1').phase).toBe('holding')
     state = await advance(state, start + 8_000)
     expect(unitOf(state, 'c1')).toMatchObject({ phase: 'transporting', siteId: 'site', lastAction: { verb: 'deliver', by: 'standing-order:deliver' } })
-    expect(unitOf(state, 'c1').alert).toBeUndefined()
+    expect(unitOf(state, 'c1').alerts).toEqual([])
   })
 
   test('when a site stops accepting, units under a deliver order reroute at once and others keep going to wait', async () => {

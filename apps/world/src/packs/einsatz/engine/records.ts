@@ -3,7 +3,7 @@ import { coverageOf, rankOf } from './coverage.ts'
 import { putUnit, setMotion, stageTask, unitIn, type Draft } from './draft.ts'
 import { actionBy, notInPicture, refused, sideRefusal, type Refused } from './intent-support.ts'
 import type { EngineActor, IntentOf, Plan } from './intents.ts'
-import { templateOf, unitTypeOf, type EngineState, type PropertyValue, type TaskRecord, type UnitRecord } from './model.ts'
+import { clearAlerts, templateOf, unitTypeOf, workReturnedCode, type EngineState, type PropertyValue, type TaskRecord, type UnitRecord } from './model.ts'
 import { conditionReasons, isSite, meetsRequirement, propertyRefusal } from './rules.ts'
 import { countsOf, patch } from './values.ts'
 import type { UnitType } from '../config-schema.ts'
@@ -53,6 +53,7 @@ export const planUnitCreate = (state: EngineState, intent: IntentOf<'unit.create
       load: {},
       ...(receiving === undefined ? {} : { accepting: receiving.accepting, received: {} }),
       lastAction: actionBy(draft, actor, 'create'),
+      alerts: [],
     })
   })
 }
@@ -110,6 +111,7 @@ export const planTaskCreate = (state: EngineState, intent: IntentOf<'task.create
       rank: rankOf(draft.catalog, fields),
       coverage: coverageOf(draft.catalog, fields, []),
       lastAction: actionBy(draft, actor, 'create'),
+      alerts: [],
     }
     stageTask(draft, task)
   })
@@ -129,7 +131,7 @@ export const planTaskClose = (state: EngineState, intent: IntentOf<'task.close'>
       }))
     }
     stageTask(draft, patch(task, {
-      closedAtMs: draft.timeMs, alert: undefined, coverage: coverageOf(draft.catalog, task, []),
+      closedAtMs: draft.timeMs, alerts: clearAlerts(task.alerts, [workReturnedCode]), coverage: coverageOf(draft.catalog, task, []),
       lastAction: actionBy(draft, actor, 'close', undefined, intent.reason),
     }))
   })

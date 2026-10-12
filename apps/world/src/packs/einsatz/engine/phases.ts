@@ -1,6 +1,6 @@
 import { assignedTo, coverageOf, isDone, rankOf } from './coverage.ts'
 import { closeDraft, openDraft, putUnit, recordTask, setMotion, stageTask, taskIn, unitIn, type Draft } from './draft.ts'
-import { templateOf, unitTypeOf, type EngineState, type LastAction, type TaskRecord, type Transition, type UnitRecord } from './model.ts'
+import { clearAlerts, raiseAlert, templateOf, unitTypeOf, workReturnedCode, type EngineState, type LastAction, type TaskRecord, type Transition, type UnitRecord } from './model.ts'
 import { advanceProgress, hasArrived, legEnd, legPosition, msToArrival, speedFactor } from './movement.ts'
 import { dueReflexes, reflexDueMs, type DueReflex } from './reflexes.ts'
 import { isDestroyed, isMoving, meetsRequirement } from './rules.ts'
@@ -27,7 +27,7 @@ export const releaseFromTask = (draft: Draft, unit: UnitRecord, action: LastActi
   const task = taskIn(draft, unit.taskId)
   if (task.closedAtMs === undefined) {
     const waiting = total(task.loads) > 0 ? ` · ${loadText(draft.catalog, task.loads)} waiting` : ''
-    stageTask(draft, patch(task, { alert: { code: 'work_returned', message: `${unit.label} released from ${task.label}${waiting}`, sinceMs: draft.timeMs } }))
+    stageTask(draft, patch(task, { alerts: raiseAlert(task.alerts, { code: workReturnedCode, message: `${unit.label} released from ${task.label}${waiting}`, sinceMs: draft.timeMs }) }))
   }
   return patch(unit, { taskId: undefined, lastAction: action })
 }
@@ -49,7 +49,7 @@ export const refreshTasks = (draft: Draft): void => {
       setMotion(draft, unit.id, { progressMs: 0 })
       putUnit(draft, patch(unit, { taskId: undefined, leg: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
     }
-    recordTask(draft, patch(current, { closedAtMs: draft.timeMs, alert: undefined, coverage: coverageOf(draft.catalog, current, []) }))
+    recordTask(draft, patch(current, { closedAtMs: draft.timeMs, alerts: clearAlerts(current.alerts, [workReturnedCode]), coverage: coverageOf(draft.catalog, current, []) }))
   }
 }
 

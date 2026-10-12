@@ -38,6 +38,27 @@ export type LastAction = z.output<typeof lastActionSchema>
 /** A standing alert on a record. It stays until what raised it is resolved. */
 export const recordAlertSchema = z.object({ code: z.string().min(1).max(64), message: z.string().min(1).max(500), sinceMs: simulationMs }).strict()
 export type RecordAlert = z.output<typeof recordAlertSchema>
+/**
+ * A record's standing alerts, at most one per code and ordered by code. Each
+ * producer raises and clears only its own codes, so one alert never hides
+ * another.
+ */
+const alertsSchema = z.array(recordAlertSchema).max(16)
+  .refine(alerts => alerts.every((alert, index) => index === 0 || alerts[index - 1]!.code < alert.code), 'At most one alert per code, ordered by code')
+
+/** Raises an alert, replacing the one of its code; one standing with the same message keeps its start. */
+export const raiseAlert = (alerts: ReadonlyArray<RecordAlert>, alert: RecordAlert): RecordAlert[] => {
+  const standing = alerts.find(entry => entry.code === alert.code)
+  const raised = standing?.message === alert.message ? standing : alert
+  return [...alerts.filter(entry => entry.code !== alert.code), raised].sort((a, b) => a.code < b.code ? -1 : a.code > b.code ? 1 : 0)
+}
+
+/** Clears the alerts of the given codes and no other. */
+export const clearAlerts = (alerts: ReadonlyArray<RecordAlert>, codes: ReadonlyArray<string>): RecordAlert[] =>
+  alerts.filter(alert => !codes.includes(alert.code))
+
+/** The task alert raised when a unit is released with the task's work still waiting. */
+export const workReturnedCode = 'work_returned'
 
 /** Presentation copied from the configuration when the object is created. */
 const presentationSchema = z.object({ icon: z.string().min(1).max(100), typeLabel: z.string().min(1).max(120) }).strict()
@@ -69,7 +90,7 @@ export const unitDataSchema = z.object({
   accepting: z.boolean().optional(),
   received: countsSchema.optional(),
   lastAction: lastActionSchema.optional(),
-  alert: recordAlertSchema.optional(),
+  alerts: alertsSchema,
 }).strict()
 
 const tally = z.number().int().nonnegative()
@@ -95,7 +116,7 @@ export const taskDataSchema = z.object({
   coverage: coverageSchema,
   closedAtMs: simulationMs.optional(),
   lastAction: lastActionSchema.optional(),
-  alert: recordAlertSchema.optional(),
+  alerts: alertsSchema,
 }).strict()
 
 export const einsatzDataSchema = z.discriminatedUnion('type', [unitDataSchema, taskDataSchema])
