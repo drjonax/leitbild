@@ -7,6 +7,7 @@ import type { Workspace } from '@leitbild/contracts'
 import { guideConversationTitle, handoffStatusText, type AssistantHandoffRequest, type AssistantHandoffStep } from './assistant-handoff.ts'
 import { QUESTION_MAX_LENGTH, type GuidePrompt } from './guide-content.ts'
 import { workspaceLabel } from './launch-workspace.ts'
+import { FROM_GUIDE } from './workspace-page.ts'
 
 export type GuideQuestion =
   /** A prompt chip. */
@@ -51,7 +52,7 @@ export const questionText = (question: GuideQuestion): string =>
  */
 export const guideConversationUrl = (destination: string): string => {
   const url = new URL(destination, 'https://leitbild.invalid')
-  url.searchParams.set('from', 'guide')
+  url.searchParams.set(FROM_GUIDE.param, FROM_GUIDE.value)
   return `${url.pathname}${url.search}${url.hash}`
 }
 
