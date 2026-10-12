@@ -13,3 +13,14 @@ export const einsatzAdapterId = 'adapter:einsatz.local' as AdapterId
 export const standingOrderByPrefix = 'standing-order:'
 export const standingOrderBy = (order: string): string => `${standingOrderByPrefix}${order}`
 export const isStandingOrderBy = (by: string): boolean => by.startsWith(standingOrderByPrefix)
+
+/**
+ * The operator role a declared group becomes, and back. Configuration ids
+ * never hold a colon, so no authority entry or declared id can take the form;
+ * a declared role of this form naming no group is refused.
+ */
+export const groupRolePrefix = 'group:'
+export const groupRoleId = (groupId: string): string => `${groupRolePrefix}${groupId}`
+/** The group a role id names, or undefined for any other role. */
+export const groupOfRoleId = (roleId: string): string | undefined =>
+  roleId.startsWith(groupRolePrefix) ? roleId.slice(groupRolePrefix.length) : undefined

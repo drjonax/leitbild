@@ -15,7 +15,8 @@ import { einsatzAdapterId, einsatzPackId } from './ids.ts'
  * site) and a task from a declared template. Items expand in order through
  * the same engine intents a command or cue runs, so an item is refused for
  * exactly the reasons `unit.create` or `task.create` would be. An item names
- * its side exactly when the Scenario declares sides.
+ * its side exactly when the Scenario declares sides, and a unit its group
+ * once the configuration declares groups.
  */
 
 const lonLatSchema = z.tuple([z.number().finite().min(-180).max(180), z.number().finite().min(-90).max(90)])
@@ -25,6 +26,8 @@ export const unitItemSchema = z.object({
   ...itemBase,
   type: z.literal('unit'),
   unitType: configIdSchema,
+  /** The unit's group: required once the configuration declares groups, unless the type is public. */
+  group: configIdSchema.optional(),
   base: lonLatSchema.optional(),
   properties: z.record(configIdSchema, propertyValueSchema).optional(),
 }).strict()
@@ -43,7 +46,12 @@ const authored: EngineActor = { by: 'scenario', commandable: commandsEveryUnit }
 const intentOf = (item: Item): Intent => {
   const common = { id: item.id, label: item.label, at: geoPointFromLonLat(...item.position), ...(item.side === undefined ? {} : { side: item.side }) }
   return item.type === 'unit'
-    ? { kind: 'unit.create', ...common, type: item.unitType, ...(item.base === undefined ? {} : { base: geoPointFromLonLat(...item.base) }), ...(item.properties === undefined ? {} : { properties: item.properties }) }
+    ? {
+      kind: 'unit.create', ...common, type: item.unitType,
+      ...(item.group === undefined ? {} : { group: item.group }),
+      ...(item.base === undefined ? {} : { base: geoPointFromLonLat(...item.base) }),
+      ...(item.properties === undefined ? {} : { properties: item.properties }),
+    }
     : { kind: 'task.create', ...common, template: item.template, ...(item.loads === undefined ? {} : { loads: item.loads }) }
 }
 

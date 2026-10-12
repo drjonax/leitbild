@@ -1,8 +1,17 @@
 import type { RoleSees, RunViewer, ScenarioRole } from '../../core/model/index.ts'
 import { commandsEveryUnit, type EngineActor } from './engine/intents.ts'
 import { notInPicture, refused, type Refused } from './engine/intent-support.ts'
-import type { Catalog, TaskRecord, UnitRecord } from './engine/model.ts'
-import { commandsUnit as pictureCommandsUnit, inPicture as pictureInPicture, queuesTask as pictureQueuesTask, roleCommands, type PictureTypes, type PictureViewer } from './picture.ts'
+import type { Catalog, EngineState, TaskRecord, UnitRecord } from './engine/model.ts'
+import {
+  commandsUnit as pictureCommandsUnit,
+  groupUnitTypesOf,
+  inPicture as pictureInPicture,
+  queuesTask as pictureQueuesTask,
+  roleCommands,
+  type GroupUnitTypes,
+  type PictureTypes,
+  type PictureViewer,
+} from './picture.ts'
 
 /**
  * Who a call to Einsatz plays. Every authority check, the commandable set,
@@ -79,9 +88,24 @@ const pictureTypes = (catalog: Catalog): PictureTypes => {
       if (type === undefined) throw new Error(`Unit type ${unitTypeId} is not declared`)
       return type
     },
+    taskTemplate: templateId => {
+      const template = catalog.templates.get(templateId)
+      if (template === undefined) throw new Error(`Task template ${templateId} is not declared`)
+      return template
+    },
   }
   pictureTypesByCatalog.set(catalog, types)
   return types
+}
+
+/** The unit types each group's units have, per set of units the engine holds. */
+const groupUnitTypesByUnits = new WeakMap<ReadonlyMap<string, UnitRecord>, GroupUnitTypes>()
+const groupUnitTypes = (units: ReadonlyMap<string, UnitRecord>): GroupUnitTypes => {
+  const known = groupUnitTypesByUnits.get(units)
+  if (known !== undefined) return known
+  const groups = groupUnitTypesOf(units.values())
+  groupUnitTypesByUnits.set(units, groups)
+  return groups
 }
 
 /** Whether a viewer's picture holds a record: the union of its roles' pictures. */
@@ -92,9 +116,13 @@ export const inPicture = (catalog: Catalog, viewer: EinsatzViewer, record: UnitR
 export const commandsUnit = (catalog: Catalog, viewer: EinsatzViewer, unit: UnitRecord): boolean =>
   pictureCommandsUnit(pictureTypes(catalog), viewer, unit)
 
-/** A task is in a viewer's queue when it is in its picture and a controller holds it, or one of its roles queues it. */
-export const queuesTask = (catalog: Catalog, viewer: EinsatzViewer, task: TaskRecord): boolean =>
-  pictureQueuesTask(pictureTypes(catalog), viewer, task)
+/**
+ * A task is in a viewer's queue when it is in its picture and a controller
+ * holds it, or one of its roles queues it. A group's role queues by what its
+ * group's units can serve, so the queue reads the units the state holds.
+ */
+export const queuesTask = (state: Pick<EngineState, 'catalog' | 'units'>, viewer: EinsatzViewer, task: TaskRecord): boolean =>
+  pictureQueuesTask(pictureTypes(state.catalog), viewer, task, groupUnitTypes(state.units))
 
 const heldText = (viewer: EinsatzViewer): string => rolesText(viewer.roles)
 
@@ -118,9 +146,9 @@ export const unitAuthority = (catalog: Catalog, viewer: EinsatzViewer, declared:
  * picture is not echoed. Recommendations and closing a task answer for the
  * viewer's work list only; sends take any task in the picture.
  */
-export const taskAuthority = (catalog: Catalog, viewer: EinsatzViewer, task: TaskRecord): Refused | undefined => {
-  if (!inPicture(catalog, viewer, task)) return notInPicture()
-  return queuesTask(catalog, viewer, task) ? undefined : refused('task_not_in_role_queue', `${task.label} is not in the queue of ${heldText(viewer)}`)
+export const taskAuthority = (state: Pick<EngineState, 'catalog' | 'units'>, viewer: EinsatzViewer, task: TaskRecord): Refused | undefined => {
+  if (!inPicture(state.catalog, viewer, task)) return notInPicture()
+  return queuesTask(state, viewer, task) ? undefined : refused('task_not_in_role_queue', `${task.label} is not in the queue of ${heldText(viewer)}`)
 }
 
 /** Controller-only Capabilities: creating units and tasks, and adjusting property values. */

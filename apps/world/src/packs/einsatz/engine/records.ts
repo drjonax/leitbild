@@ -3,7 +3,7 @@ import { skipSteps } from './chain-steps.ts'
 import { engagementFieldsAtCreate, isTrackId } from './combat-model.ts'
 import { coverageOf, rankOf } from './coverage.ts'
 import { putUnit, setMotion, stageTask, unitIn, type Draft } from './draft.ts'
-import { actionBy, notInPicture, refused, sideRefusal, type Refused } from './intent-support.ts'
+import { actionBy, groupRefusal, notInPicture, refused, sideRefusal, type Refused } from './intent-support.ts'
 import type { EngineActor, IntentOf, Plan } from './intents.ts'
 import { clearAlerts, templateOf, unitTypeOf, workReturnedCode, type EngineState, type PropertyValue, type TaskRecord, type UnitRecord } from './model.ts'
 import { conditionReasons, isSite, meetsRequirement, propertyRefusal } from './rules.ts'
@@ -35,6 +35,8 @@ export const planUnitCreate = (state: EngineState, intent: IntentOf<'unit.create
   if (type === undefined) return refused('unknown_unit_type', `Unit type "${intent.type}" is not declared`)
   const sided = sideRefusal(state, intent.side, type.public, type.label)
   if (sided) return sided
+  const grouped = groupRefusal(state, intent, type.public, type.label)
+  if (grouped) return grouped
   const invalid = propertiesRefusal(type, intent.properties ?? {})
   if (invalid) return invalid
   return applied(draft => {
@@ -47,6 +49,7 @@ export const planUnitCreate = (state: EngineState, intent: IntentOf<'unit.create
       type: 'unit',
       unitType: type.id,
       ...(intent.side === undefined ? {} : { side: intent.side }),
+      ...(intent.group === undefined ? {} : { group: intent.group }),
       presentation: { icon: type.icon, typeLabel: type.label },
       base,
       atBase: samePoint(base, intent.at),

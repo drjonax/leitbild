@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { SimulationRunId, IsoTimestamp } from '../src/core/model/index.ts'
 import { geoPointFromLonLat } from '../src/core/model/index.ts'
 import {
@@ -69,7 +71,7 @@ describe('MapFeatureLoader', () => {
     let recovered = false
     const loader = createMapFeatureLoader({
       pack: () => createActivePackViews([createPack([{ capabilityId: 'world.weather-test.good', input: {} }, { capabilityId: 'world.weather-test.broken', input: {} }])]),
-      objects: () => [], simulationRunId: () => 'run-test' as SimulationRunId, currentTime: () => generatedAt,
+      objects: () => [], simulationRunId: () => 'run-test' as SimulationRunId, currentTime: () => generatedAt, seenRoleIds: () => null,
       queryCapability: async (_id, request) => { if (!recovered && request.capabilityId === 'world.weather-test.broken') throw new Error('Test provider failed'); return { features: [featureFor('good')], truncated: !recovered } },
       onWarnings: messages => { warnings = messages },
     })
@@ -103,6 +105,7 @@ describe('MapFeatureLoader', () => {
       objects: () => [],
       simulationRunId: () => 'run-test' as SimulationRunId,
       currentTime: () => generatedAt,
+      seenRoleIds: () => null,
       queryCapability,
       queryTimeoutMs: 500,
     })
@@ -115,5 +118,41 @@ describe('MapFeatureLoader', () => {
       'query-feature:world.weather-test.first',
       'query-feature:world.weather-test.second',
     ])
+  })
+  test('hands a Pack\'s map features and map-area queries the roles a role Run\'s screen sees, and none in open mode', async () => {
+    const asked: Array<readonly [string, ReadonlyArray<string> | undefined]> = []
+    const seeing: WorldPack = {
+      ...createPack([]),
+      presentation: {
+        ...createPack([]).presentation,
+        mapFeatures: context => { asked.push(['features', context.seenRoleIds]); return context.seenRoleIds?.includes('group:a') === false ? [] : [featureFor('group-a-path')] },
+        mapFeatureQueries: context => { asked.push(['queries', context.seenRoleIds]); return [{ capabilityId: 'world.weather-test.area', input: {} }] },
+      },
+    }
+    let seen: ReadonlyArray<string> | null = null
+    const loader = createMapFeatureLoader({
+      pack: () => createActivePackViews([seeing]),
+      objects: () => [],
+      simulationRunId: () => 'run-test' as SimulationRunId,
+      currentTime: () => generatedAt,
+      seenRoleIds: () => seen,
+      queryCapability: async () => ({ features: [] }),
+    })
+    expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['group-a-path'])
+    seen = ['group:a', 'group:b']
+    expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['group-a-path'])
+    seen = ['group:b']
+    expect(await loader({ viewport, zoom: 8 })).toEqual([])
+    expect(asked).toEqual([
+      ['features', undefined], ['queries', undefined],
+      ['features', ['group:a', 'group:b']], ['queries', ['group:a', 'group:b']],
+      ['features', ['group:b']], ['queries', ['group:b']],
+    ])
+  })
+
+  test('the World view passes the roles it sees to the loader, and reloads Pack map features when they change', () => {
+    const route = readFileSync(join(import.meta.dir, '..', 'src', 'ui', 'routes', 'ControlSurfaceRoute.svelte'), 'utf8')
+    expect(route).toMatch(/createMapFeatureLoader\(\{[^}]*seenRoleIds:\s*\(\)\s*=>\s*seenRoleIds,/)
+    expect(route).toMatch(/const\s+mapFeatureRevisionKey\s*=\s*\$derived\([^\n]*\[perspectiveEpoch,\s*packDataRevisions,\s*seenRoleIds\]/)
   })
 })

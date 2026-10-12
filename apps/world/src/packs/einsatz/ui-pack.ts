@@ -6,7 +6,7 @@ import { contactIcon } from './board/contacts.ts'
 import { clockText } from './board/text.ts'
 import { plannedPathFeatures } from './chain-path.ts'
 import { einsatzColors } from './colors.ts'
-import { einsatzPackId, einsatzRuntimeId } from './ids.ts'
+import { einsatzPackId, einsatzRuntimeId, groupRoleId } from './ids.ts'
 import { neutralLexicon, unitPhases, type UnitPhase } from './lexicon.ts'
 import { boardMapOrders } from './ui/map-orders.ts'
 
@@ -25,6 +25,11 @@ import { boardMapOrders } from './ui/map-orders.ts'
  *
  * Each unit's job chain shows as its planned path: its route, then a
  * straight segment to each queued step's target (`chain-path.ts`).
+ *
+ * In a role Run a screen chooses which roles it sees (the role dialog's See
+ * boxes, `seenRoleIds`): a unit of a group whose role it does not see is not
+ * drawn on the map, nor is its planned path. That is a display filter of
+ * this tab only; what a side sees at all stays the Run's, per side.
  *
  * Map labels: a unit shows its callsign and a short code of its phase, and
  * whether it is damaged; a receiving site, its name and whether it is
@@ -72,6 +77,7 @@ const einsatzObjectSchema = z.discriminatedUnion('type', [
     phase: z.enum(unitPhases),
     integrity: z.enum(['healthy', 'damaged', 'destroyed']),
     taskId: z.string().min(1).optional(),
+    group: z.string().min(1).optional(),
     load: counts,
     /** Present on a receiving site only. */
     accepting: z.boolean().optional(),
@@ -91,6 +97,17 @@ type TrackData = Extract<EinsatzObjectData, { type: 'track' }>
 
 const dataOf = (object: OperationalObject): EinsatzObjectData => einsatzObjectSchema.parse(object.packData)
 const typeOf = (object: OperationalObject): EinsatzObjectData['type'] | null => object.packId === einsatzPackId ? dataOf(object).type : null
+
+/** Whether the screen chose not to see the role of this unit's group. */
+const groupUnseen = (group: string | undefined, seenRoleIds: ReadonlyArray<string> | undefined): boolean =>
+  group !== undefined && seenRoleIds !== undefined && !seenRoleIds.includes(groupRoleId(group))
+
+/** An Einsatz unit of a group whose role the screen chose not to see. */
+const unitUnseen = (object: OperationalObject, seenRoleIds: ReadonlyArray<string> | undefined): boolean => {
+  if (object.packId !== einsatzPackId) return false
+  const data = dataOf(object)
+  return data.type === 'unit' && groupUnseen(data.group, seenRoleIds)
+}
 
 const tierWord = (tier: TrackData['tier']): string =>
   tier === 'contact' ? neutralLexicon.contact : tier === 'identified' ? neutralLexicon.identified : neutralLexicon.destroyed
@@ -150,6 +167,7 @@ const presentEinsatzObject = (object: OperationalObject, context: PackObjectPres
         color: unitColor,
         summary: data.presentation.typeLabel,
         muted: object.lifecycle !== 'active' || data.integrity === 'destroyed',
+        ...(groupUnseen(data.group, context.seenRoleIds) ? { mapIconVisible: false } : {}),
         fields: [],
         ...(site ? { mapLabel: data.accepting === true ? object.label : `${object.label} · closed` } : { mapLabel: unitLabel(object, data), status: unitStatus(data) }),
       }
@@ -199,7 +217,10 @@ export const einsatzPackView = {
     ],
     presentObject: (object, context) => presentEinsatzObject(object, context),
     /** Each unit's queued steps as straight segments after its route: the planned path of its job chain. */
-    mapFeatures: context => plannedPathFeatures(context.objects, unitsCategory),
+    mapFeatures: context => {
+      const unseen = new Set(context.objects.filter(object => unitUnseen(object, context.seenRoleIds)).map(object => object.id as string))
+      return plannedPathFeatures(context.objects, unitsCategory, unitId => !unseen.has(unitId))
+    },
     mapFeatureLayers: ['routes'],
     mapFeatureSourcePackIds: [einsatzPackId],
   },

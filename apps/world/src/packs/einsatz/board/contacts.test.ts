@@ -65,7 +65,7 @@ const controllerViewer = (): PictureViewer => {
 const engageableInTruth = (state: EngineState, viewer: PictureViewer, trackId: string): boolean => {
   const track = state.combat.tracks.get(trackId)!
   if (track.tier !== 'identified' || !track.fix || track.identity === undefined) return false
-  const rules = createBoardRules(config, viewer)
+  const rules = createBoardRules(config, viewer, () => [])
   const subjectTags = unitTypeOf(state.catalog, state.units.get(track.subjectId)!).tags
   const seenAt = state.combat.sightings.get(track.id)!.point
   const records = readBoardRecords(engineObjects(state, () => ({ at: new Date(state.timeMs).toISOString() as IsoTimestamp, provenance: { source: 'simulator' } })))
@@ -98,7 +98,7 @@ describe('Board Contacts', () => {
   test('groups each of the side\'s tracks as the engine\'s truth would: engageable only when identified, fixed, hostile, a type an own armed unit targets and in its range', async () => {
     const { state, objects, nowMs } = await engagement()
     const viewer = blueCommander()
-    const rules = createBoardRules(config, viewer)
+    const rules = createBoardRules(config, viewer, () => [])
     const records = blueRecords(objects)
     const view = contactsView(rules, records, nowMs, declaredSides)
     const { engageable, other } = onlySide(view)
@@ -119,7 +119,7 @@ describe('Board Contacts', () => {
   test('a row shows only what the side knows: a contact has no type and a neutral icon, a missing fix says so, and "engaged by" counts the own units that fired on it', async () => {
     const { objects, nowMs } = await engagement()
     const records = blueRecords(objects)
-    const view = contactsView(createBoardRules(config, blueCommander()), records, nowMs, declaredSides)
+    const view = contactsView(createBoardRules(config, blueCommander(), () => []), records, nowMs, declaredSides)
     for (const row of rowsOf(view)) {
       const track = records.tracks.get(row.id)!
       expect(row.label).toBe(track.label)
@@ -185,7 +185,7 @@ describe('Board Contacts', () => {
     const identified = [...records.tracks.values()].find(track => track.identity !== undefined)!
     const tracks = new Map(records.tracks)
     tracks.set(identified.id, { ...identified, identity: { ...identified.identity!, typeLabel: 'Unheard-of' } })
-    expect(() => contactsView(createBoardRules(config, blueCommander()), { ...records, tracks }, nowMs, declaredSides))
+    expect(() => contactsView(createBoardRules(config, blueCommander(), () => []), { ...records, tracks }, nowMs, declaredSides))
       .toThrow(`Track ${identified.label} is identified as Unheard-of/${identified.identity!.icon}, which no declared unit type bears`)
   })
 

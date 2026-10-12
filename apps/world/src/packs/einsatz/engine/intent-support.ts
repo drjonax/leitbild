@@ -52,3 +52,19 @@ export const sideRefusal = (state: EngineState, side: string | undefined, isPubl
   if (side === undefined) return refused('side_required', `Name a side: ${state.sides.join(', ')}`)
   return state.sides.includes(side) ? undefined : refused('side_not_declared', `Side "${side}" is not declared`)
 }
+
+/**
+ * Group rules for a new unit: once the configuration declares groups, a unit
+ * that is not of a public type names one of them, on its own side; a public
+ * unit belongs to no side and so to no group; without declared groups a unit
+ * names none.
+ */
+export const groupRefusal = (state: EngineState, intent: { readonly group?: string | undefined; readonly side?: string | undefined }, isPublic: boolean, label: string): Refused | undefined => {
+  const groups = state.catalog.config.groups
+  if (groups.length === 0) return intent.group === undefined ? undefined : refused('group_not_declared', `This configuration declares no groups, so "${intent.group}" is not one`)
+  if (isPublic) return intent.group === undefined ? undefined : refused('public_takes_no_group', `${label} is public and belongs to no group`)
+  if (intent.group === undefined) return refused('group_required', `Name a group: ${groups.map(group => group.id).join(', ')}`)
+  const group = groups.find(entry => entry.id === intent.group)
+  if (group === undefined) return refused('unknown_group', `Group "${intent.group}" is not declared`)
+  return group.side === intent.side ? undefined : refused('group_side_mismatch', `Group "${group.id}" is on side "${group.side ?? 'none'}", not "${intent.side ?? 'none'}"`)
+}

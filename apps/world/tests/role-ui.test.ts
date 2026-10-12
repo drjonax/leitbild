@@ -13,19 +13,17 @@ import {
 import { beginAction, commandFeedbackText, emptyCommandFeedback } from '../src/ui/command-feedback.ts'
 import { createPerspectiveGate, perspectiveKey, storesForPerspective, type RealtimePerspective, type RunScopedStores } from '../src/ui/roles/perspective.ts'
 import {
-  addEntry,
   dropRole,
   idleRoleKeys,
-  pickerCards,
   roleBarModel,
   roleEntries,
   roleKeyArmWindowMs,
   roleKeyStep,
   roleSetText,
   switchToEntry,
-  togglePickerEntry,
   type RoleKeyInput,
 } from '../src/ui/roles/role-controller.ts'
+import { openRoleDialog, roleDialogModel, togglePreset } from '../src/ui/roles/role-dialog.ts'
 import {
   configureActiveRoleSet,
   initialRoleSet,
@@ -61,33 +59,31 @@ const memoryStorage = (): RoleSetStorage & { readonly values: Map<string, string
 const key = (value: string, now: number, extra: Partial<RoleKeyInput> = {}): RoleKeyInput =>
   ({ key: value, repeat: false, modified: false, inert: false, now, ...extra })
 
-describe('role picker and role bar', () => {
-  test('offers one numbered card per role and preset with ticks, holders and a side slot', () => {
+describe('role dialog rows and role bar', () => {
+  test('numbers roles and presets for P then a digit, and offers each as a one-tap row with ticks and holders', () => {
     expect(roleEntries(declaration).map(entry => [entry.kind, entry.id, entry.key])).toEqual([
       ['role', 'dispatch', '1'], ['role', 'field', '2'], ['role', 'control', '3'], ['preset', 'solo', '4'],
     ])
-    const cards = pickerCards(declaration, { ticked: ['dispatch', 'field'], holders: { control: 2 } })
+    const rows = roleDialogModel(declaration, openRoleDialog(declaration, ['dispatch', 'field'], []), { mode: 'join', held: [], holders: { control: 2 } }).presets
     // A Run without sides shows no side colours.
-    expect(cards.map(card => ({ id: card.id, ticked: card.ticked, holders: card.holders, sides: card.sides }))).toEqual([
+    expect(rows.map(row => ({ id: row.id, ticked: row.ticked, holders: row.holders, sides: row.sides }))).toEqual([
+      { id: 'solo', ticked: true, holders: null, sides: [] },
       { id: 'dispatch', ticked: true, holders: 0, sides: [] },
       { id: 'field', ticked: true, holders: 0, sides: [] },
       { id: 'control', ticked: false, holders: 2, sides: [] },
-      { id: 'solo', ticked: true, holders: null, sides: [] },
     ])
   })
 
   test('ticks roles and presets as a union in declaration order', () => {
-    expect(togglePickerEntry(declaration, [], 'control')).toEqual(['control'])
-    expect(togglePickerEntry(declaration, ['control'], 'solo')).toEqual(['dispatch', 'field', 'control'])
-    expect(togglePickerEntry(declaration, ['dispatch', 'field', 'control'], 'solo')).toEqual(['control'])
-    expect(togglePickerEntry(declaration, ['dispatch'], 'solo')).toEqual(['dispatch', 'field'])
-    expect(() => togglePickerEntry(declaration, [], 'ghost')).toThrow('Unknown role or preset')
+    const ticking = (held: ReadonlyArray<string>, entryId: string) => togglePreset(declaration, openRoleDialog(declaration, held, []), entryId).control
+    expect(ticking([], 'control')).toEqual(['control'])
+    expect(ticking(['control'], 'solo')).toEqual(['dispatch', 'field', 'control'])
+    expect(ticking(['dispatch', 'field', 'control'], 'solo')).toEqual(['control'])
+    expect(ticking(['dispatch'], 'solo')).toEqual(['dispatch', 'field'])
+    expect(() => ticking([], 'ghost')).toThrow('Unknown role: ghost')
   })
 
-  test('adds, drops and switches whole role sets', () => {
-    expect(addEntry(declaration, ['control'], 'dispatch')).toEqual({ kind: 'set', roleIds: ['dispatch', 'control'] })
-    expect(addEntry(declaration, ['control'], 'solo')).toEqual({ kind: 'set', roleIds: ['dispatch', 'field', 'control'] })
-    expect(addEntry(declaration, ['dispatch', 'field'], 'solo')).toEqual({ kind: 'unchanged' })
+  test('drops and switches whole role sets', () => {
     expect(dropRole(declaration, ['dispatch', 'control'], 'dispatch')).toEqual({ kind: 'set', roleIds: ['control'] })
     expect(dropRole(declaration, ['control'], 'control').kind).toBe('refused')
     expect(switchToEntry(declaration, ['dispatch', 'control'], 'field')).toEqual({ kind: 'set', roleIds: ['field'] })
@@ -95,7 +91,6 @@ describe('role picker and role bar', () => {
     expect(switchToEntry(declaration, ['control'], 'solo')).toEqual({ kind: 'set', roleIds: ['dispatch', 'field'] })
     const bar = roleBarModel(declaration, ['field', 'dispatch'])
     expect(bar.chips.map(chip => [chip.id, chip.droppable])).toEqual([['dispatch', true], ['field', true]])
-    expect(bar.addable.map(entry => entry.id)).toEqual(['control'])
     expect(roleBarModel(declaration, ['control']).chips).toEqual([{ id: 'control', label: 'Controller', roleClass: 'controller', droppable: false, sides: [] }])
     expect(roleBarModel(declaration, ['dispatch', 'field', 'control']).sidesWarning).toBeNull()
     expect(roleSetText(declaration, ['control', 'dispatch'])).toBe('Dispatcher + Controller')
@@ -131,10 +126,12 @@ describe('role picker and role bar', () => {
 describe('side colours and the several-sides warning', () => {
   const sided: RunRoles = { roles: [...sidedRoles], presets: [], sides: [...sides] }
 
-  test('the picker and the role bar show each role\'s side colour and warn when one screen sees two sides', () => {
-    expect(pickerCards(sided, { ticked: [], holders: {} }).map(card => [card.id, card.sides.map(side => side.colour)])).toEqual([
-      ['red-lead', [sides[0]!.colour]], ['blue-lead', [sides[1]!.colour]], ['umpire', []], ['control', []],
-    ])
+  test('the dialog and the role bar show each role\'s side colour and warn when one screen sees two sides', () => {
+    // The dialog lists the roles of one side at a time, and truth roles on every side.
+    const rowsOn = (side: string) => roleDialogModel(sided, { side, control: [], hidden: [] }, { mode: 'join', held: [], holders: {} }).presets
+      .map(row => [row.id, row.sides.map(entry => entry.colour)])
+    expect(rowsOn('red')).toEqual([['red-lead', [sides[0]!.colour]], ['umpire', []], ['control', []]])
+    expect(rowsOn('blue')).toEqual([['blue-lead', [sides[1]!.colour]], ['umpire', []], ['control', []]])
     expect(roleBarModel(sided, ['red-lead']).sidesWarning).toBeNull()
     expect(roleBarModel(sided, ['red-lead', 'control']).sidesWarning).toBeNull()
     expect(roleBarModel(sided, ['red-lead', 'blue-lead']).sidesWarning).toBe('This screen sees Red and Blue together: play fair')
@@ -387,16 +384,17 @@ describe('realtime connection in a role Run', () => {
 })
 
 describe('inert in a Run without roles', () => {
-  test('the role picker and the role bar mount only for a Run that declares roles', async () => {
+  test('the role dialog and the role bar mount only for a Run that declares roles', async () => {
     expect(runRolesOf(await compileWithRolePacks(openRunDefinition))).toBeNull()
     expect(runRolesOf(await compileWithRolePacks(roleRunDefinition))).toEqual(declaration)
     const route = readFileSync(join(import.meta.dir, '..', 'src', 'ui', 'routes', 'ControlSurfaceRoute.svelte'), 'utf8')
     const markup = route.slice(route.indexOf('</script>'))
     expect(markup.match(/<RoleBar\b/g)).toHaveLength(1)
-    expect(markup.match(/<RolePicker\b/g)).toHaveLength(1)
+    expect(markup.match(/<RoleDialog\b/g)).toHaveLength(2)
     // Each mounts only under its role guard, however the markup is laid out.
     expect(markup).toMatch(/\{#if\s+runRoles\s*&&\s*heldRoleIds\s*\}\s*<RoleBar\b/)
-    expect(markup).toMatch(/\{#if\s+rolePicker\s*\}\s*<RolePicker\b/)
+    expect(markup).toMatch(/\{#if\s+rolePicker\s*\}\s*<RoleDialog\b/)
+    expect(markup).toMatch(/\{#if\s+roleDialogOpen\s*&&\s*runRoles\s*&&\s*heldRoleIds\s*\}\s*<RoleDialog\b/)
     // The picker opens only on the Run's own refusal of a screen without (valid) roles.
     expect(route.match(/rolePicker\s*=\s*\{/g)).toHaveLength(1)
     expect(route).toMatch(/if\s*\(\s*code\s*!==\s*'role_required'\s*&&\s*code\s*!==\s*'unknown_role'\s*\)\s*throw\s+err\b/)

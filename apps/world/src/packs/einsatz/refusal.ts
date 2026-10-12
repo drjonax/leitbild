@@ -37,11 +37,24 @@ export type ConfigurationRefusalCode = typeof configurationRefusalCodes[number]
  * Refusals of a configuration against the Scenario it runs in: authority
  * needs declared roles and names operator roles only, hostility names
  * declared sides, and the roles' labels fit `lastAction.by` and never read
- * as a standing order there. An authority
+ * as a standing order there. Groups need declared roles, name a declared
+ * side exactly when the Scenario declares sides, and alone hold role ids of
+ * the form `group:<id>`. An authority
  * entry naming an undeclared role is `authority_unknown_role`, apart from
  * core's `unknown_role` for a caller asking for an undeclared role.
  */
-export const scenarioConfigRefusalCodes = ['authority_without_roles', 'authority_unknown_role', 'controller_authority', 'unknown_side', 'role_labels_too_long', 'role_label_reserved'] as const
+export const scenarioConfigRefusalCodes = [
+  'authority_without_roles',
+  'authority_unknown_role',
+  'controller_authority',
+  'unknown_side',
+  'role_labels_too_long',
+  'role_label_reserved',
+  'groups_without_roles',
+  'group_side_required',
+  'group_side_not_declared',
+  'reserved_role_id',
+] as const
 export type ScenarioConfigRefusalCode = typeof scenarioConfigRefusalCodes[number]
 
 /**
@@ -74,6 +87,11 @@ export const engineRefusalCodes = [
   'reserved_id',
   'chain_full',
   'step_not_found',
+  'group_required',
+  'unknown_group',
+  'group_not_declared',
+  'group_side_mismatch',
+  'public_takes_no_group',
 ] as const
 
 export type EngineRefusalCode = typeof engineRefusalCodes[number]

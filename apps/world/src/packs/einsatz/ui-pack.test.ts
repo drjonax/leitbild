@@ -6,9 +6,11 @@ import { einsatzCommandIds } from './capabilities.ts'
 import { civilConfig, civilKinds, civilWith, taskAt, unitAt } from './fixtures/board-harness.ts'
 import { borderDefinitions } from './fixtures/border-harness.ts'
 import { at, blue, config, cycles, place, red, stateWith, types } from './fixtures/combat-harness.ts'
-import { openRun } from './fixtures/run-harness.ts'
+import { definitionOf, lonLat, openRun, screenOf, taskItem, unitItem } from './fixtures/run-harness.ts'
 import { trackDataSchema } from './engine/combat-model.ts'
 import { engineObjects } from './engine/objects.ts'
+import { low, templates, types as engineTypes } from './fixtures/engine-harness.ts'
+import fixture from './fixtures/engine.config.json'
 import { neutralLexicon } from './lexicon.ts'
 import { einsatzBoardPanelId, einsatzPackView } from './ui-pack.ts'
 
@@ -147,6 +149,42 @@ describe('Einsatz UI declarations', () => {
         expect(presentation.mapLabel).toMatch(new RegExp(`^${object.label} · \\d+:\\d\\d$`))
         expect(presentObject(object, { objects }).mapLabel).toBe(object.label)
       }
+    }
+  })
+
+  test('a unit of a group whose role the screen does not see is not drawn, nor is its planned path; without a See choice, and for other objects, nothing changes', async () => {
+    const declared = {
+      roles: [{ id: 'control', label: 'Control', class: 'controller' as const }],
+      config: { ...fixture, groups: [{ id: 'near', label: 'Near', category: 'Crews' }, { id: 'far', label: 'Far', category: 'Crews' }] },
+    }
+    const run = await openRun({
+      definition: definitionOf([
+        { ...unitItem('n1', engineTypes.roadCarrier, lonLat(0)), group: 'near' },
+        { ...unitItem('f1', engineTypes.roadCarrier, lonLat(0.001)), group: 'far' },
+        unitItem('clinic', engineTypes.publicSite, lonLat(0.002)),
+        taskItem('t1', templates.load, lonLat(0.003), { [low]: 1 }),
+      ], undefined, declared),
+      paused: true,
+    })
+    try {
+      const seen = (seenRoleIds?: ReadonlyArray<string>) => seenRoleIds === undefined ? {} : { seenRoleIds }
+      const drawn = (seenRoleIds?: ReadonlyArray<string>) =>
+        ['n1', 'f1', 'clinic', 't1'].filter(id => presentObject(run.object(id)!, { objects: [run.object(id)!], ...seen(seenRoleIds) }).mapIconVisible !== false)
+      expect(drawn()).toEqual(['n1', 'f1', 'clinic', 't1'])
+      expect(drawn(['control', 'group:near', 'group:far'])).toEqual(['n1', 'f1', 'clinic', 't1'])
+      expect(drawn(['control', 'group:near'])).toEqual(['n1', 'clinic', 't1'])
+      expect(drawn([])).toEqual(['clinic', 't1'])
+
+      const control = screenOf(declared, 'control')
+      expect((await run.invoke(einsatzCommandIds.send, { units: ['n1'], to: { point: { type: 'Point', coordinates: lonLat(0.004) } } }, control)).ok).toBe(true)
+      expect((await run.invoke(einsatzCommandIds.queue, { unitId: 'n1', to: { taskId: 't1' } }, control)).ok).toBe(true)
+      const paths = (seenRoleIds?: ReadonlyArray<string>) =>
+        einsatzPackView.presentation.mapFeatures({ objects: run.run.snapshot().objects, ...seen(seenRoleIds) }).map(feature => feature.id)
+      expect(paths()).toEqual([expect.stringMatching(/^einsatz-plan:n1:step-/)])
+      expect(paths(['control', 'group:near'])).toEqual(paths())
+      expect(paths(['control', 'group:far'])).toEqual([])
+    } finally {
+      await run.close()
     }
   })
 })

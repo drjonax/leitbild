@@ -244,7 +244,8 @@ const projectObjects = (
     if (context.hiddenObjectCategoryIds.has(presentation.categoryId)) continue
     const point = operationalPointFor(object, presentation, context)
     if (point) points.push(point)
-    const route = routePathFor(object, input.selectedControllerId)
+    // A route belongs to its object's icon: an object the Pack does not draw draws no route either.
+    const route = presentation.mapIconVisible === false ? null : routePathFor(object, input.selectedControllerId)
     if (route) objectPaths.push(route)
     const line = lineObjectPathFor(object, presentation)
     if (line) objectPaths.push(line)

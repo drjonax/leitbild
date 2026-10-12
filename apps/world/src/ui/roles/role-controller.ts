@@ -1,12 +1,16 @@
 import { seesForRoleSet, type RoleClass, type RunRoles, type ScenarioSide } from '../../core/model/index.ts'
 
 /**
- * The role picker's and role bar's interaction logic, free of the DOM. A
- * screen holds a set of roles and plays their union; every change produces a
- * whole new set, which the screen applies in place.
+ * The role bar's interaction logic, free of the DOM. A screen holds a set of
+ * roles and plays their union; every change produces a whole new set, which
+ * the screen applies in place. The role dialog (`role-dialog.ts`) picks whole
+ * sets; the bar shows the held roles, drops one, and keeps P then a digit as
+ * a hidden desktop accelerator that plays one role or preset alone. A tap on
+ * a held role opens the dialog rather than switching, so a stray tap never
+ * drops the other roles a screen holds.
  */
 
-/** A role or preset as the picker and the switcher offer it, numbered for P then digit. */
+/** A role or preset, numbered for P then digit. */
 export interface RoleEntry {
   readonly kind: 'role' | 'preset'
   readonly id: string
@@ -51,34 +55,6 @@ export const sidesWarning = (declaration: RunRoles, roleIds: ReadonlyArray<strin
 /** A role-aware Pack may say what a role commands; with no such Pack the line is absent. */
 export type RoleCommandsDescriber = (roleId: string) => string | null
 
-export interface RoleCard extends RoleEntry {
-  readonly ticked: boolean
-  /** Screens holding this role now (role cards only). */
-  readonly holders: number | null
-  /** The sides this role or preset sees, each shown in its colour; none for a truth role. */
-  readonly sides: ReadonlyArray<ScenarioSide>
-}
-
-export const pickerCards = (declaration: RunRoles, config: {
-  readonly ticked: ReadonlyArray<string>
-  readonly holders: Readonly<Record<string, number>>
-}): ReadonlyArray<RoleCard> => roleEntries(declaration).map(entry => ({
-  ...entry,
-  ticked: entry.roleIds.every(roleId => config.ticked.includes(roleId)),
-  holders: entry.kind === 'role' ? config.holders[entry.id] ?? 0 : null,
-  sides: sidesSeen(declaration, entry.roleIds),
-}))
-
-/** Ticking a preset ticks all its roles; unticking it unticks them. */
-export const togglePickerEntry = (declaration: RunRoles, ticked: ReadonlyArray<string>, entryId: string): ReadonlyArray<string> => {
-  const entry = roleEntries(declaration).find(candidate => candidate.id === entryId)
-  if (!entry) throw new Error(`Unknown role or preset: ${entryId}`)
-  const allTicked = entry.roleIds.every(roleId => ticked.includes(roleId))
-  return orderedRoleSet(declaration, allTicked
-    ? ticked.filter(roleId => !entry.roleIds.includes(roleId))
-    : [...ticked, ...entry.roleIds])
-}
-
 export type RoleSetChange =
   | { readonly kind: 'set'; readonly roleIds: ReadonlyArray<string> }
   | { readonly kind: 'unchanged' }
@@ -90,13 +66,6 @@ const changeTo = (held: ReadonlyArray<string>, next: ReadonlyArray<string>): Rol
 const entryFor = (declaration: RunRoles, entryId: string): RoleEntry | undefined =>
   roleEntries(declaration).find(entry => entry.id === entryId)
 
-/** `+`: hold this role or preset too. */
-export const addEntry = (declaration: RunRoles, held: ReadonlyArray<string>, entryId: string): RoleSetChange => {
-  const entry = entryFor(declaration, entryId)
-  if (!entry) return { kind: 'refused', reason: `Unknown role or preset: ${entryId}` }
-  return changeTo(held, orderedRoleSet(declaration, [...held, ...entry.roleIds]))
-}
-
 /** `×`: stop holding a role. A screen always keeps at least one. */
 export const dropRole = (declaration: RunRoles, held: ReadonlyArray<string>, roleId: string): RoleSetChange => {
   if (!held.includes(roleId)) return { kind: 'unchanged' }
@@ -105,7 +74,7 @@ export const dropRole = (declaration: RunRoles, held: ReadonlyArray<string>, rol
   return changeTo(held, next)
 }
 
-/** A chip click or P then digit: hold exactly this role or preset. */
+/** P then digit: hold exactly this role or preset. */
 export const switchToEntry = (declaration: RunRoles, held: ReadonlyArray<string>, entryId: string): RoleSetChange => {
   const entry = entryFor(declaration, entryId)
   if (!entry) return { kind: 'refused', reason: `Unknown role or preset: ${entryId}` }
@@ -121,25 +90,32 @@ export interface RoleBarChip {
   readonly sides: ReadonlyArray<ScenarioSide>
 }
 
+/**
+ * The held roles the role bar shows as chips. A screen playing groups often
+ * holds many roles; past this many, the first ones show and the rest collapse
+ * into one "+N" chip that opens the role dialog, so the bar stays one row
+ * over the map beside a full-width rail at 960 px.
+ */
+export const roleBarChipLimit = 2
+
 export interface RoleBarModel {
+  /** The held roles shown as chips, in declaration order. */
   readonly chips: ReadonlyArray<RoleBarChip>
-  /** Entries the `+` menu offers: those not already wholly held. */
-  readonly addable: ReadonlyArray<RoleEntry>
-  readonly entries: ReadonlyArray<RoleEntry>
+  /** How many further held roles the "+N" chip stands for; 0 when every held role has its chip. */
+  readonly more: number
+  /** The labels of the roles behind "+N", for its accessible name. */
+  readonly moreLabels: ReadonlyArray<string>
   /** Shown as a band when the held set sees more than one side. */
   readonly sidesWarning: string | null
 }
 
 export const roleBarModel = (declaration: RunRoles, held: ReadonlyArray<string>): RoleBarModel => {
-  const entries = roleEntries(declaration)
-  return {
-    chips: declaration.roles.filter(role => held.includes(role.id)).map(role => ({
-      id: role.id, label: role.label, roleClass: role.class, droppable: held.length > 1, sides: sidesSeen(declaration, [role.id]),
-    })),
-    addable: entries.filter(entry => !entry.roleIds.every(roleId => held.includes(roleId))),
-    entries,
-    sidesWarning: sidesWarning(declaration, held),
-  }
+  const chips = declaration.roles.filter(role => held.includes(role.id)).map(role => ({
+    id: role.id, label: role.label, roleClass: role.class, droppable: held.length > 1, sides: sidesSeen(declaration, [role.id]),
+  }))
+  const shown = chips.length > roleBarChipLimit ? chips.slice(0, roleBarChipLimit) : chips
+  const collapsed = chips.slice(shown.length)
+  return { chips: shown, more: collapsed.length, moreLabels: collapsed.map(chip => chip.label), sidesWarning: sidesWarning(declaration, held) }
 }
 
 /** After P, the next digit within this window switches. */

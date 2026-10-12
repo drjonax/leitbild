@@ -16,6 +16,52 @@ export const executionClockReading = (
     ? { currentTime: execution.currentSimulationTime as IsoTimestamp, paused: true, updatedAt: execution.updatedAt as IsoTimestamp }
     : undefined
 
+/** An execution read as it was asked for: which Run clock the view held, and the read's place among the reads. */
+export interface ClockReadTicket {
+  readonly generation: number
+  readonly serial: number
+}
+
+/**
+ * The order of the view's clock readings, kept by the Run's own sequence of
+ * clocks rather than by wall time. A clock the Run publishes (a joined
+ * snapshot, a ready message, a clock event, a perspective) always applies,
+ * rewinds such as a reset or a restore included, and supersedes every
+ * execution read still in flight. An execution read's clock applies only when
+ * no published clock arrived after it was asked for and no later read applied
+ * first. So a late poll answer can never roll back a newer clock, such as the
+ * one a maximum-pace execution publishes where it stops.
+ */
+export interface WorldClockOrder {
+  /** A clock the Run published; returns it to apply. */
+  readonly published: (clock: SimulationClockState | undefined) => SimulationClockState | undefined
+  /** An execution read is about to be asked for. */
+  readonly readAsked: () => ClockReadTicket
+  /** Whether that read's clock still applies; once it does, no earlier-asked read applies any more. */
+  readonly readApplies: (ticket: ClockReadTicket) => boolean
+}
+
+export const createWorldClockOrder = (): WorldClockOrder => {
+  let generation = 0
+  let asked = 0
+  let applied = 0
+  return {
+    published: clock => {
+      generation += 1
+      return clock
+    },
+    readAsked: () => {
+      asked += 1
+      return { generation, serial: asked }
+    },
+    readApplies: ticket => {
+      if (ticket.generation !== generation || ticket.serial <= applied) return false
+      applied = ticket.serial
+      return true
+    },
+  }
+}
+
 /**
  * The World view's clock: the Run's simulated time of day, which is the
  * scenario's start time plus the Run time. It reads the one Run clock the view

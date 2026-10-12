@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { IsoTimestamp, SimulationClockState } from '../src/core/model/index.ts'
-import { worldClockView } from '../src/ui/world-clock.ts'
+import { createWorldClockOrder, worldClockView } from '../src/ui/world-clock.ts'
 
 const readAt = Date.parse('2026-09-03T12:00:00.000Z')
 
@@ -50,5 +50,37 @@ describe('World clock', () => {
 
   test('shows nothing before the Run clock is known', () => {
     expect(worldClockView({ clock: undefined, execution: null }, readAt)).toBeNull()
+  })
+})
+
+describe('World clock order', () => {
+  test('a read asked before a clock the Run published never applies, so a late poll answer cannot roll the clock back', () => {
+    const order = createWorldClockOrder()
+    const late = order.readAsked()
+    const stopped = clockAt('2026-09-03T08:05:00.000Z', true)
+    expect(order.published(stopped)).toBe(stopped)
+    expect(order.readApplies(late)).toBe(false)
+    // A read asked after it applies.
+    expect(order.readApplies(order.readAsked())).toBe(true)
+  })
+
+  test('reads apply in the order they were asked: an answer overtaken by a later read is dropped', () => {
+    const order = createWorldClockOrder()
+    const first = order.readAsked()
+    const second = order.readAsked()
+    expect(order.readApplies(second)).toBe(true)
+    expect(order.readApplies(first)).toBe(false)
+    const third = order.readAsked()
+    expect(order.readApplies(third)).toBe(true)
+    expect(order.readApplies(third)).toBe(false)
+  })
+
+  test('a clock the Run publishes always applies, so a reset or a restore still rewinds after any read', () => {
+    const order = createWorldClockOrder()
+    expect(order.readApplies(order.readAsked())).toBe(true)
+    const rewound = clockAt('2026-09-03T08:00:00.000Z', true)
+    expect(order.published(rewound)).toBe(rewound)
+    expect(order.published(undefined)).toBeUndefined()
+    expect(order.readApplies(order.readAsked())).toBe(true)
   })
 })

@@ -60,6 +60,29 @@ export const initialRoleSet = (config: {
 }): ReadonlyArray<string> | null =>
   roleSetFromSearch(config.search) ?? readStoredRoleSet(config.storage, config.key)
 
+/**
+ * The roles this tab does not see: the role dialog's unticked See boxes, a
+ * display filter only. Like the role set it lives per tab in sessionStorage,
+ * never in a cookie; a tab that stored none sees every role.
+ */
+export const hiddenRolesStorageKey = (workspaceId: string, simulationRunId: string): string =>
+  `leitbild.world.hidden-roles:${workspaceId}:${simulationRunId}`
+
+export const readStoredHiddenRoles = (storage: RoleSetStorage, key: string): ReadonlyArray<string> => {
+  const raw = storage.getItem(key)
+  if (raw === null) return []
+  const parsed = JSON.parse(raw) as unknown
+  if (!Array.isArray(parsed) || !parsed.every(value => typeof value === 'string')) {
+    throw new Error(`Stored unseen roles are not a list of role ids: ${key}`)
+  }
+  return roleIdsFromList(parsed.join(','))
+}
+
+export const writeStoredHiddenRoles = (storage: RoleSetStorage, key: string, roleIds: ReadonlyArray<string>): void => {
+  if (roleIds.length === 0) storage.removeItem(key)
+  else storage.setItem(key, JSON.stringify(roleIds))
+}
+
 export const sameRoleSet = (left: ReadonlyArray<string> | null, right: ReadonlyArray<string> | null): boolean =>
   (left ?? []).length === (right ?? []).length && (left ?? []).every(roleId => (right ?? []).includes(roleId))
 

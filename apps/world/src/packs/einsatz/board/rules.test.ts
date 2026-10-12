@@ -3,22 +3,26 @@ import { dirname, join, relative } from 'node:path'
 import { roleClassForRoleSet, scenarioRoleSchema, seesForRoleSet, type OperationalObject } from '../../../core/model/index.ts'
 import { scenarioDefinitionSchema } from '../../../core/scenarios/definition.ts'
 import { sideViewOfSnapshot } from '../../../core/simulation-runs/side-view.ts'
+import { einsatzCommandIds } from '../capabilities.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { assignedTo, loadAllocation, residualNeed, roleViewFor } from '../engine/coverage.ts'
 import { createCatalog, einsatzDataSchema, emptyEngineState, type EngineState, type TaskRecord, type UnitRecord } from '../engine/model.ts'
 import { divertablePhases, hasLoad, isDestroyed, isFree } from '../engine/rules.ts'
 import { createWall, follow, openScreen, roleScreen } from '../fixtures/board-harness.ts'
+import { types as groupUnitTypes } from '../fixtures/engine-harness.ts'
+import { groupConfig, groupDeclaration, groupItems } from '../fixtures/groups-run.ts'
 import border from '../fixtures/halden-border.scenario.json'
 import civil from '../fixtures/halden-civil.scenario.json'
 import roles from '../fixtures/halden-civil-roles.scenario.json'
-import { openRun } from '../fixtures/run-harness.ts'
+import { lonLat, openRun, screenOf } from '../fixtures/run-harness.ts'
+import { groupRoleId } from '../ids.ts'
 import { openModeViewer, type PictureViewer } from '../picture.ts'
 import type { Recommendation } from '../recommendation-schema.ts'
 import { commandsUnit, inPicture, openViewer, queuesTask, type EinsatzViewer } from '../viewer.ts'
 import { boardQueryIds } from './calls.ts'
 import { intentOf } from './keymap.ts'
 import { readBoardRecords } from './records.ts'
-import { createBoardRules, loadShareOf } from './rules.ts'
+import { boardGroupUnitTypes, createBoardRules, loadShareOf } from './rules.ts'
 import { workEntries } from './work-list.ts'
 
 /**
@@ -51,7 +55,7 @@ describe('Board rules agree with the engine', () => {
     try {
       const screen = await openScreen(run, createWall())
       const config = einsatzConfigSchema.parse(civil.packs[0]!.config)
-      const rules = createBoardRules(config, openModeViewer)
+      const rules = createBoardRules(config, openModeViewer, () => [])
       const catalog = createCatalog(config)
       let compared = 0
       const shares = { all: 0, multiClass: 0, twoLoads: 0 }
@@ -104,14 +108,14 @@ describe('Board rules agree with the engine', () => {
         ...[{ class: 'operator', sees: 'all', roles: operators } as const, { class: 'operator', sees: ['north'], roles: [operators[0]!] } as const].map(viewer => [viewer, viewer] as const),
       ]
       for (const [viewer, seat] of seats) {
-        const rules = createBoardRules(roleConfig, seat)
+        const rules = createBoardRules(roleConfig, seat, boardGroupUnitTypes(() => board))
         for (const unit of engine.units) {
           const mine = board.units.get(unit.id)!
           expect([unit.id, rules.inPicture(mine), rules.commands(mine)]).toEqual([unit.id, inPicture(catalog, viewer, unit), commandsUnit(catalog, viewer, unit)])
         }
         for (const task of engine.tasks) {
           const mine = board.tasks.get(task.id)!
-          expect([task.id, rules.inPicture(mine), rules.queues(mine)]).toEqual([task.id, inPicture(catalog, viewer, task), queuesTask(catalog, viewer, task)])
+          expect([task.id, rules.inPicture(mine), rules.queues(mine)]).toEqual([task.id, inPicture(catalog, viewer, task), queuesTask({ catalog, units: new Map(engine.units.map(unit => [unit.id, unit])) }, viewer, task)])
         }
       }
     } finally {
@@ -163,13 +167,13 @@ describe('Board rules agree with the engine', () => {
         }
         for (const roleIds of seats) {
           const viewer = viewerOf(roleIds)
-          const rules = createBoardRules(config, viewer)
           // The Board reads only what the seat's screen holds.
           const board = readBoardRecords(viewer.sees === 'all' ? snapshot.objects : sideViewOfSnapshot(snapshot, viewer.sees).objects)
+          const rules = createBoardRules(config, viewer, boardGroupUnitTypes(() => board))
           const seat = roleIds.join('+')
           for (const task of board.tasks.values()) {
             const truth = state.tasks.get(task.id)!
-            expect([seat, task.id, rules.inPicture(task), rules.queues(task)]).toEqual([seat, task.id, inPicture(catalog, viewer, truth), queuesTask(catalog, viewer, truth)])
+            expect([seat, task.id, rules.inPicture(task), rules.queues(task)]).toEqual([seat, task.id, inPicture(catalog, viewer, truth), queuesTask(state, viewer, truth)])
             if (!rules.queues(task) || task.closedAtMs !== undefined) continue
             const view = rules.roleView(board, task)
             const engineView = roleViewFor(state, unit => commandsUnit(catalog, viewer, unit), truth)
@@ -193,6 +197,79 @@ describe('Board rules agree with the engine', () => {
       await run.close()
     }
   }, 120_000)
+})
+
+describe('Board rules agree with the engine for group roles', () => {
+  test('seats holding one group role, two of one side, groups of both sides, and a group role beside a declared role picture, command and queue as the engine does while the groups\' units change', async () => {
+    const run = await openRun({ items: groupItems, declared: groupDeclaration })
+    try {
+      const declaration = run.run.roles()!
+      const config = einsatzConfigSchema.parse(groupConfig)
+      const catalog = createCatalog(config)
+      const control = screenOf(groupDeclaration, 'control')
+      const seats: ReadonlyArray<ReadonlyArray<string>> = [
+        [groupRoleId('haul-a')],
+        [groupRoleId('guards')],
+        [groupRoleId('raid')],
+        [groupRoleId('haul-a'), groupRoleId('haul-b')],
+        [groupRoleId('haul-a'), groupRoleId('raid')],
+        ['north-desk', groupRoleId('haul-b')],
+        ['north-desk', groupRoleId('guards')],
+      ]
+      const viewerOf = (roleIds: ReadonlyArray<string>): EinsatzViewer => ({
+        class: roleClassForRoleSet(declaration, roleIds),
+        sees: seesForRoleSet(declaration, roleIds),
+        roles: declaration.roles.filter(role => roleIds.includes(role.id)),
+      })
+      const queued = new Set<string>()
+      const compare = (): void => {
+        const snapshot = run.run.snapshot()
+        const engine = engineRecords(snapshot.objects)
+        const state: EngineState = {
+          ...emptyEngineState({ config, sides: declaration.sides!.map(side => side.id), timeMs: run.nowMs() }),
+          units: new Map(engine.units.map(unit => [unit.id, unit])),
+          tasks: new Map(engine.tasks.map(task => [task.id, task])),
+        }
+        for (const roleIds of seats) {
+          const viewer = viewerOf(roleIds)
+          const seat = roleIds.join('+')
+          // The Board reads only what the seat's screen holds, and counts its groups' unit types from those records.
+          const board = readBoardRecords(viewer.sees === 'all' ? snapshot.objects : sideViewOfSnapshot(snapshot, viewer.sees).objects)
+          const rules = createBoardRules(config, viewer, boardGroupUnitTypes(() => board))
+          for (const unit of board.units.values()) {
+            const truth = state.units.get(unit.id)!
+            expect([seat, unit.id, rules.inPicture(unit), rules.commands(unit)]).toEqual([seat, unit.id, inPicture(catalog, viewer, truth), commandsUnit(catalog, viewer, truth)])
+          }
+          for (const task of board.tasks.values()) {
+            const truth = state.tasks.get(task.id)!
+            expect([seat, task.id, rules.inPicture(task), rules.queues(task)]).toEqual([seat, task.id, inPicture(catalog, viewer, truth), queuesTask(state, viewer, truth)])
+            if (!rules.queues(task) || task.closedAtMs !== undefined) continue
+            queued.add(`${seat}:${task.id}`)
+            const view = rules.roleView(board, task)
+            const engineView = roleViewFor(state, unit => commandsUnit(catalog, viewer, unit), truth)
+            expect([seat, task.id, [...view.provides].sort(), [...view.carries].sort()]).toEqual([seat, task.id, [...engineView.provides].sort(), [...engineView.carries].sort()])
+            expect([seat, task.id, rules.needFor(task, view) ?? null]).toEqual([seat, task.id, residualNeed(state, truth, engineView, []) ?? null])
+          }
+        }
+      }
+      compare()
+      expect(await run.invoke(einsatzCommandIds.send, { units: ['a1'], to: { taskId: 'load' } }, control)).toMatchObject({ ok: true })
+      expect(await run.invoke(einsatzCommandIds.send, { units: ['g1'], to: { taskId: 'pair' } }, control)).toMatchObject({ ok: true })
+      // A carrier joins the guards, whose queue then holds the carriage task too.
+      expect(await run.invoke(einsatzCommandIds.unitCreate, { type: groupUnitTypes.roadCarrier, side: 'north', group: 'guards', at: { type: 'Point', coordinates: lonLat(0.005) }, label: 'Spare' }, control)).toMatchObject({ ok: true })
+      for (let minute = 0; minute < 6; minute++) {
+        compare()
+        run.forward(60_000)
+        await run.settle()
+      }
+      compare()
+      // Each group's own queue was compared: carriers queue the carriage task, the guards the pairing, and then the carriage task as well.
+      expect([...queued].filter(entry => ['group:haul-a:load', 'group:guards:pair', 'group:guards:load', 'north-desk+group:haul-b:note'].includes(entry)).sort())
+        .toEqual(['group:guards:load', 'group:guards:pair', 'group:haul-a:load', 'north-desk+group:haul-b:note'])
+    } finally {
+      await run.close()
+    }
+  })
 })
 
 describe('Board module boundary', () => {
@@ -265,13 +342,13 @@ describe('Board arrangement', () => {
         { roleId: 'both', units: { all: true }, taskTemplates: ['job'] },
       ],
     })
-    const arrangement = (viewer: PictureViewer) => createBoardRules(config, viewer).arrangement
+    const arrangement = (viewer: PictureViewer) => createBoardRules(config, viewer, () => []).arrangement
     const operator = (roleId: string): PictureViewer => ({ class: 'operator', sees: 'all', roles: [{ id: roleId, class: 'operator' }] })
     expect(arrangement(operator('watch'))).toEqual({ lead: 'map', workList: false, unitBoard: true, contacts: true })
     expect(arrangement(operator('haul'))).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: false })
     expect(arrangement(operator('both'))).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })
     expect(arrangement({ class: 'operator', sees: 'all', roles: [{ id: 'watch', class: 'operator' }, { id: 'haul', class: 'operator' }] })).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })
     expect(arrangement(openModeViewer)).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })
-    expect(createBoardRules(einsatzConfigSchema.parse(civil.packs[0]!.config), openModeViewer).arrangement).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: false })
+    expect(createBoardRules(einsatzConfigSchema.parse(civil.packs[0]!.config), openModeViewer, () => []).arrangement).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: false })
   })
 })

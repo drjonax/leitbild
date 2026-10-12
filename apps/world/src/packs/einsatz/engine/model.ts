@@ -92,6 +92,8 @@ export const unitDataSchema = z.object({
   type: z.literal('unit'),
   unitType: configIdSchema,
   side: configIdSchema.optional(),
+  /** The declared group the unit belongs to, set at create; absent when the configuration declares no groups, and on a public unit. */
+  group: configIdSchema.optional(),
   presentation: presentationSchema,
   base: pointSchema,
   atBase: z.boolean(),

@@ -25,7 +25,7 @@ const sorted = (issues: ReadonlyArray<ExpectedIssue>): string[] => issues.map(is
 
 describe('Einsatz configuration', () => {
   test('an empty configuration declares nothing and has a JSON Schema for authoring', () => {
-    expect(einsatzConfigSchema.parse({})).toEqual({ hostility: {}, lexicon: {}, loadClasses: [], unitTypes: [], taskTemplates: [], authority: [] })
+    expect(einsatzConfigSchema.parse({})).toEqual({ hostility: {}, lexicon: {}, loadClasses: [], unitTypes: [], taskTemplates: [], authority: [], groups: [] })
     expect(z.toJSONSchema(einsatzConfigSchema)).toMatchObject({ type: 'object', additionalProperties: false })
   })
 

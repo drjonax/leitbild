@@ -201,7 +201,7 @@ export const scenarioExecutionStateSchema = z.object({
   timeline: scenarioTimelineProgressStateSchema.optional(),
 }).strict().superRefine((state, ctx) => {
   if (state.roles === undefined) return
-  for (const issue of roleDeclarationIssues(state.roles.roles, state.roles.presets, state.roles.sides)) {
+  for (const issue of roleDeclarationIssues(state.roles.roles, state.roles.presets, state.roles.sides, 'complete')) {
     const [field, ...rest] = issue.path
     ctx.addIssue({ code: 'custom', path: ['roles', field === 'rolePresets' ? 'presets' : field ?? 'roles', ...rest], message: issue.message, ...issueParams(issue) })
   }
@@ -368,7 +368,7 @@ export const compiledScenarioSchema = z.object({
   recording: z.array(scenarioRecordingSelectionSchema).default([]),
   timeline: scenarioTimelineSchema.optional(),
 }).superRefine((scenario, ctx) => {
-  for (const issue of roleDeclarationIssues(scenario.roles, scenario.rolePresets, scenario.sides)) {
+  for (const issue of roleDeclarationIssues(scenario.roles, scenario.rolePresets, scenario.sides, 'complete')) {
     ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message, ...issueParams(issue) })
   }
   if (scenario.sides !== undefined) {

@@ -77,8 +77,8 @@ describe('Einsatz viewer', () => {
     expect(['c1', 'd1', 'g1'].filter(id => commandsUnit(state.catalog, operatorOf('ground'), unit(id)))).toEqual(['c1'])
     expect(['c1', 'd1', 'g1'].filter(id => commandsUnit(state.catalog, operatorOf('ground', 'air'), unit(id)))).toEqual(['c1', 'd1'])
     expect(['c1', 'd1', 'g1'].filter(id => commandsUnit(state.catalog, operatorOf(), unit(id)))).toEqual([])
-    expect(['t1', 'n1'].filter(id => queuesTask(state.catalog, operatorOf('ground'), task(id)))).toEqual(['t1'])
-    expect(['t1', 'n1'].filter(id => queuesTask(state.catalog, operatorOf('air'), task(id)))).toEqual(['t1', 'n1'])
+    expect(['t1', 'n1'].filter(id => queuesTask(state, operatorOf('ground'), task(id)))).toEqual(['t1'])
+    expect(['t1', 'n1'].filter(id => queuesTask(state, operatorOf('air'), task(id)))).toEqual(['t1', 'n1'])
   })
 
   test('commands name the role a unit belongs to, send to tasks outside the queue but close only queued ones, and keep creating and adjusting to controllers', async () => {
@@ -171,7 +171,7 @@ describe('Einsatz viewer', () => {
     ]
     const both = resolveViewer({ roleIds: ['north-ground', 'south-air'], class: 'operator', sees: ['north', 'south'] }, sidedRoles)
     expect(['nc', 'nd', 'sc', 'sd'].filter(id => commandsUnit(state.catalog, both, state.units.get(id)!))).toEqual(['nc', 'sd'])
-    expect(['nl', 'nr', 'sl', 'sr'].filter(id => queuesTask(state.catalog, both, state.tasks.get(id)!))).toEqual(['nl', 'sr'])
+    expect(['nl', 'nr', 'sl', 'sr'].filter(id => queuesTask(state, both, state.tasks.get(id)!))).toEqual(['nl', 'sr'])
     const prepared = prepareCommand({ state, viewer: both, roles: sidedRoles, by: attributionOf(both, 'actor:tester'), newId: kind => `${kind}:new` }, ids.hold, { unitId: 'sc' })
     expect(prepared.ok ? null : prepared.reason).toBe('unit_not_authorized: North ground and South air do not command SC, and no operator role does')
   })

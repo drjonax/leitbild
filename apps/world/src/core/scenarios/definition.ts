@@ -68,7 +68,8 @@ export const scenarioDefinitionSchema = z.object({
     values.forEach((id, index) => { if (seen.has(id)) ctx.addIssue({ code: 'custom', path: [...path, index], message: `duplicate id: ${id}` }); seen.add(id) })
   }
   checkIds(source.view.rail?.sections.map(section => section.categoryId) ?? [], ['view', 'rail', 'sections'])
-  for (const issue of roleDeclarationIssues(source.roles, source.rolePresets, source.sides)) {
+  // A preset may name a role a Pack derives; compile checks every member against the merged roles.
+  for (const issue of roleDeclarationIssues(source.roles, source.rolePresets, source.sides, 'declared')) {
     ctx.addIssue({ code: 'custom', path: [...issue.path], message: issue.message, ...issueParams(issue) })
   }
   if (source.roles !== undefined && !agentRestrictionsAreEmpty(source.agentRestrictions)) {

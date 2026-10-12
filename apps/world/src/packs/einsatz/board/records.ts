@@ -36,6 +36,7 @@ const unitDataSchema = z.object({
   type: z.literal('unit'),
   unitType: configIdSchema,
   side: configIdSchema.optional(),
+  group: configIdSchema.optional(),
   presentation,
   atBase: z.boolean(),
   properties: z.record(configIdSchema, z.union([z.number(), z.boolean(), z.string()])),

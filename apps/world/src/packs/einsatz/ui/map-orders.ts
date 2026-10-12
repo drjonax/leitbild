@@ -41,16 +41,22 @@ export interface MapOrders {
 }
 
 const recordTypeSchema = z.object({ type: z.string().min(1) }).loose()
-const unitSchema = z.object({ type: z.literal('unit'), unitType: configIdSchema, side: configIdSchema.optional() }).loose()
+const unitSchema = z.object({ type: z.literal('unit'), unitType: configIdSchema, side: configIdSchema.optional(), group: configIdSchema.optional() }).loose()
 
 const pictureTypesOf = (config: EinsatzConfig): PictureTypes => {
   const types = new Map(config.unitTypes.map(type => [type.id, type]))
+  const templates = new Map(config.taskTemplates.map(template => [template.id, template]))
   return {
     authority: config.authority,
     unitType: unitTypeId => {
       const type = types.get(unitTypeId)
       if (type === undefined) throw new Error(`Unit type ${unitTypeId} is not declared`)
       return type
+    },
+    taskTemplate: templateId => {
+      const template = templates.get(templateId)
+      if (template === undefined) throw new Error(`Task template ${templateId} is not declared`)
+      return template
     },
   }
 }

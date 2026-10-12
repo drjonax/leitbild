@@ -215,7 +215,7 @@ export const recommend = async (input: {
   const { state, viewer } = input
   const task = state.tasks.get(input.taskId)
   if (task === undefined) throw rejected({ reason: refusal('not_in_picture', 'Not in your picture') }, 'capability_target_not_found')
-  const unauthorized = taskAuthority(state.catalog, viewer, task)
+  const unauthorized = taskAuthority(state, viewer, task)
   if (unauthorized) throw rejected(unauthorized, unauthorized.reason.startsWith('not_in_picture') ? 'capability_target_not_found' : 'capability_input_rejected')
   if (task.closedAtMs !== undefined) throw rejected({ reason: refusal('task_closed', `${task.label} is closed`) }, 'capability_input_rejected')
 

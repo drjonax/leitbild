@@ -1,7 +1,7 @@
 import type { PackScenarioConfigContext, PackScenarioConfigIssue } from '../../core/packs/protocol.ts'
 import { einsatzConfigShapeSchema } from './config-schema.ts'
 import { lastActionByMaxLength } from './engine/model.ts'
-import { isStandingOrderBy, standingOrderByPrefix } from './ids.ts'
+import { groupOfRoleId, groupRoleId, isStandingOrderBy, standingOrderByPrefix } from './ids.ts'
 import { refusal, type ScenarioConfigRefusalCode } from './refusal.ts'
 import { rolesText } from './viewer.ts'
 
@@ -18,9 +18,19 @@ import { rolesText } from './viewer.ts'
  *   configuration as a whole): a Run must never write a record it cannot
  *   read back;
  * - no role's label starts as `lastAction.by` names a standing order
- *   (`role_label_reserved`, at the configuration as a whole), so a person's
- *   order never reads as a reflex's, neither to the withdraw reflex nor on
- *   the Board.
+ *   (`role_label_reserved`), so a person's order never reads as a reflex's,
+ *   neither to the withdraw reflex nor on the Board: a group's label is
+ *   refused at the group's label, a declared role's at the configuration as
+ *   a whole;
+ * - groups need the Scenario to declare roles (`groups_without_roles`), since
+ *   each becomes a role; a group names a side exactly when the Scenario
+ *   declares sides (`group_side_required`, `group_side_not_declared`), and
+ *   that side is declared (`unknown_side`);
+ * - only a declared group's own role has an id of the form `group:<id>`
+ *   (`reserved_role_id`, at the configuration as a whole).
+ *
+ * The roles checked include those the groups derive (`groups.ts`), which core
+ * adds before this check runs.
  */
 export const validateEinsatzScenarioConfig = (raw: unknown, context: PackScenarioConfigContext): ReadonlyArray<PackScenarioConfigIssue> => {
   const config = einsatzConfigShapeSchema.parse(raw)
@@ -46,7 +56,23 @@ export const validateEinsatzScenarioConfig = (raw: unknown, context: PackScenari
   const attribution = rolesText(context.roles)
   const labels = attribution.length <= lastActionByMaxLength ? [] : [issue([], 'role_labels_too_long',
     `The labels of all ${context.roles.length} declared roles, held at once, read ${attribution.length} characters; Einsatz names the roles that gave an order in at most ${lastActionByMaxLength}: shorten the labels`)]
-  const reserved = context.roles.filter(role => isStandingOrderBy(role.label)).map(role => issue([], 'role_label_reserved',
-    `Role "${role.id}" is labelled "${role.label}"; Einsatz names its standing orders "${standingOrderByPrefix}…" where it names the roles that gave an order, so the label would make a person's order read as a standing order: relabel the role`))
-  return [...authority, ...hostility, ...labels, ...reserved]
+  const reservedWhy = `Einsatz names its standing orders "${standingOrderByPrefix}…" where it names the roles that gave an order, so the label would make a person's order read as a standing order`
+  const reserved = context.roles.filter(role => isStandingOrderBy(role.label)).map(role => {
+    const group = config.groups.findIndex(entry => groupRoleId(entry.id) === role.id)
+    return group < 0
+      ? issue([], 'role_label_reserved', `Role "${role.id}" is labelled "${role.label}"; ${reservedWhy}: relabel the role`)
+      : issue(['groups', group, 'label'], 'role_label_reserved', `Group "${config.groups[group]!.id}" is labelled "${role.label}"; ${reservedWhy}: relabel the group`)
+  })
+  const groups = context.roles.length === 0
+    ? config.groups.length === 0 ? [] : [issue(['groups'], 'groups_without_roles', 'Groups become roles, but the Scenario declares none: declare roles, at least a controller, to play groups')]
+    : config.groups.flatMap((group, index) => {
+      const path = ['groups', index, 'side']
+      if (context.sides.length === 0) return group.side === undefined ? [] : [issue(path, 'group_side_not_declared', `Group "${group.id}" names side "${group.side}", but the Scenario declares no sides`)]
+      if (group.side === undefined) return [issue(path, 'group_side_required', `Group "${group.id}" needs a side: ${context.sides.map(side => side.id).join(', ')}`)]
+      return sides.has(group.side) ? [] : [issue(path, 'unknown_side', undeclaredSide(group.side))]
+    })
+  const groupRoles = new Set(config.groups.map(group => groupRoleId(group.id)))
+  const imitations = context.roles.filter(role => groupOfRoleId(role.id) !== undefined && !groupRoles.has(role.id)).map(role => issue([], 'reserved_role_id',
+    `Role "${role.id}" takes the form of a group's role, but no group "${groupOfRoleId(role.id)}" is declared: rename the role`))
+  return [...authority, ...hostility, ...labels, ...reserved, ...groups, ...imitations]
 }

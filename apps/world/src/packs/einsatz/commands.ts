@@ -58,7 +58,7 @@ const trackSeen = (context: CommandContext, trackId: string): Refused | undefine
  */
 const queued = (context: CommandContext, taskId: string): Refused | undefined => {
   const task = context.state.tasks.get(taskId)
-  return task === undefined ? undefined : taskAuthority(context.state.catalog, context.viewer, task)
+  return task === undefined ? undefined : taskAuthority(context.state, context.viewer, task)
 }
 
 /** Refused unless a target is in the viewer's picture: its task, site or track. A point is open ground. */

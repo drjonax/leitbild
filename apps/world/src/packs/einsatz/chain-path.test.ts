@@ -62,6 +62,6 @@ describe('Einsatz job chain paths', () => {
       ['einsatz-plan:c1:step-3', { type: 'LineString', coordinates: [at(-0.01).coordinates, at(0.02).coordinates] }],
     ])
     expect(features.map(feature => feature.summary)).toEqual(['C1 · next: FAR', 'C1 · next: a map point'])
-    expect(plannedPathFeatures(objectsOf(state), 'units')).toHaveLength(2)
+    expect(plannedPathFeatures(objectsOf(state), 'units', () => true)).toHaveLength(2)
   })
 })

@@ -1,7 +1,8 @@
 /**
  * Test-only renaming for the generality test: a copy of a Definition in which
  * every unit type, tag, task template, load class, property, enum value,
- * service, role and side id, every label and every lexicon word is replaced
+ * service, group, role and side id, every label, category and lexicon word
+ * is replaced
  * by an opaque token. Icons, positions, instance ids and timings stay. The
  * renaming also maps what a Run of the original wrote into the copy's words,
  * so the two Runs can be compared record by record. Production code never
@@ -10,7 +11,7 @@
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 type JsonObject = { [key: string]: Json }
-export type Namespace = 'type' | 'template' | 'class' | 'property' | 'value' | 'tag' | 'service' | 'role' | 'side'
+export type Namespace = 'type' | 'template' | 'class' | 'property' | 'value' | 'tag' | 'service' | 'group' | 'role' | 'side'
 
 export interface Renaming {
   readonly definition: unknown
@@ -131,6 +132,12 @@ export const renameDefinition = (original: unknown): Renaming => {
       }
     }
   }
+  for (const group of objects(config.groups)) {
+    set(group, 'id', value => id('group', value))
+    set(group, 'label', value => word(value))
+    set(group, 'category', value => word(value))
+    set(group, 'side', value => id('side', value))
+  }
   for (const entry of objects(config.authority)) {
     set(entry, 'roleId', value => id('role', value))
     setList(entry, 'taskTemplates', value => id('template', value))
@@ -144,6 +151,7 @@ export const renameDefinition = (original: unknown): Renaming => {
   const renameRecordInput = (input: JsonObject): void => {
     set(input, 'label', value => word(value))
     set(input, 'side', value => id('side', value))
+    set(input, 'group', value => id('group', value))
     set(input, 'reason', value => word(value))
     if (input.type !== 'unit' && input.type !== 'task') set(input, 'type', value => id('type', value))
     set(input, 'unitType', value => id('type', value))

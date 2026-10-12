@@ -116,6 +116,21 @@ export const unitSelectorSchema = z.union([
 /** The units an operator role commands and the task templates in its queue. */
 export const authoritySchema = z.object({ roleId: configIdSchema, units: unitSelectorSchema, taskTemplates: idList(100) }).strict()
 
+/**
+ * A group of units. Once any group is declared, every unit that is not of a
+ * public type names exactly one, and each group becomes an operator role
+ * (`group:<id>`) commanding exactly its units. `category` is the heading the
+ * role picker lists the group under, in the Scenario's own words ("Haulers",
+ * "Crews"); `side` is required exactly when the Scenario declares sides.
+ * The labels are role labels, so they keep a role label's length.
+ */
+export const groupSchema = z.object({
+  id: configIdSchema,
+  label: z.string().trim().min(1).max(80),
+  category: z.string().trim().min(1).max(80),
+  side: configIdSchema.optional(),
+}).strict()
+
 /** Every field defaults to empty, so `{}` is a valid configuration declaring nothing. */
 export const einsatzConfigShapeSchema = z.object({
   hostility: z.record(configIdSchema, idList(16)).default({}),
@@ -124,6 +139,7 @@ export const einsatzConfigShapeSchema = z.object({
   unitTypes: z.array(unitTypeSchema).max(100).default([]),
   taskTemplates: z.array(taskTemplateSchema).max(100).default([]),
   authority: z.array(authoritySchema).max(50).default([]),
+  groups: z.array(groupSchema).max(100).default([]),
 }).strict()
 
 export type EinsatzConfig = z.output<typeof einsatzConfigShapeSchema>
@@ -145,3 +161,4 @@ export type Requirement = z.output<typeof requirementSchema>
 export type Condition = z.output<typeof conditionSchema>
 export type LoadClass = z.output<typeof loadClassSchema>
 export type Authority = z.output<typeof authoritySchema>
+export type Group = z.output<typeof groupSchema>

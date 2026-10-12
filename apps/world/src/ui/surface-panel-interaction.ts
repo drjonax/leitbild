@@ -96,6 +96,13 @@ export interface SurfacePanelProps {
    * latest reports count.
    */
   readonly onMapCover: (cover: MapCover) => void
+  /**
+   * In a role Run, the roles this screen shows (the role dialog's See boxes;
+   * every held role is shown); null in open mode. A display filter only: the
+   * panel may hide its own Pack's objects of roles not shown, never anything
+   * the Run's per-side visibility decides.
+   */
+  readonly seenRoleIds: ReadonlyArray<string> | null
 }
 
 /** A panel connects the handlers its contribution declares, and only those. */

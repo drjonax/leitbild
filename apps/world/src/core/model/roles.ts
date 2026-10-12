@@ -34,10 +34,18 @@ export const scenarioRoleSchema = z.object({
   class: roleClassSchema,
   /** Required in a Scenario that declares sides, refused in one without. */
   sees: roleSeesSchema.optional(),
+  /**
+   * A heading the role picker lists the role under, such as "Haulers" or
+   * "Crews". Display grouping only: no gate, filter or Pack rule reads it.
+   */
+  category: z.string().trim().min(1).max(80).optional(),
 }).strict()
 export type ScenarioRole = z.infer<typeof scenarioRoleSchema>
 
-/** A one-click bundle of roles offered beside the roles themselves. Data only. */
+/**
+ * A one-click bundle of roles offered beside the roles themselves. Data only.
+ * It may bundle declared roles and roles a Pack derives at compile.
+ */
 export const scenarioRolePresetSchema = z.object({
   id: idSchema,
   label: z.string().trim().min(1).max(80),
@@ -66,42 +74,62 @@ export interface RoleDeclarationIssue {
   readonly code?: string
 }
 
-const seesIssues = (
-  roles: ReadonlyArray<ScenarioRole>,
+/**
+ * What is wrong with what one role sees, given the Scenario's sides, with
+ * paths relative to the role. Compile also checks each role a Pack derives
+ * with it, before the derived role joins the declared ones.
+ */
+export const roleSeesIssues = (
+  role: ScenarioRole,
   sides: ReadonlyArray<ScenarioSide> | undefined,
 ): ReadonlyArray<RoleDeclarationIssue> => {
-  const sideIds = new Set((sides ?? []).map(side => side.id))
-  return roles.flatMap((role, index): ReadonlyArray<RoleDeclarationIssue> => {
-    const path = ['roles', index, 'sees']
-    if (sides === undefined) {
-      return role.sees === undefined ? [] : [{ path, message: `role ${role.id} declares sees, but the Scenario declares no sides: without sides every role sees everything` }]
-    }
-    if (role.sees === undefined) {
-      return [{ path, code: 'role_sees_required', message: `role_sees_required: role ${role.id} must declare what it sees in a Scenario with sides: 'all' or the sides whose picture it plays` }]
-    }
-    if (role.class === 'controller' && role.sees !== 'all') {
-      return [{ path, code: 'role_sees_required', message: `role_sees_required: controller role ${role.id} sees everything; declare sees: 'all'` }]
-    }
-    if (role.sees === 'all') return []
-    const seen = new Set<string>()
-    return role.sees.flatMap((sideId, sideIndex) => {
-      const issues: RoleDeclarationIssue[] = []
-      if (!sideIds.has(sideId)) issues.push({ path: [...path, sideIndex], message: `role ${role.id} sees an undeclared side: ${sideId}` })
-      if (seen.has(sideId)) issues.push({ path: [...path, sideIndex], message: `role ${role.id} names a side twice: ${sideId}` })
-      seen.add(sideId)
-      return issues
-    })
+  const path = ['sees']
+  if (sides === undefined) {
+    return role.sees === undefined ? [] : [{ path, message: `role ${role.id} declares sees, but the Scenario declares no sides: without sides every role sees everything` }]
+  }
+  if (role.sees === undefined) {
+    return [{ path, code: 'role_sees_required', message: `role_sees_required: role ${role.id} must declare what it sees in a Scenario with sides: 'all' or the sides whose picture it plays` }]
+  }
+  if (role.class === 'controller' && role.sees !== 'all') {
+    return [{ path, code: 'role_sees_required', message: `role_sees_required: controller role ${role.id} sees everything; declare sees: 'all'` }]
+  }
+  if (role.sees === 'all') return []
+  const sideIds = new Set(sides.map(side => side.id))
+  const seen = new Set<string>()
+  return role.sees.flatMap((sideId, sideIndex) => {
+    const issues: RoleDeclarationIssue[] = []
+    if (!sideIds.has(sideId)) issues.push({ path: [...path, sideIndex], message: `role ${role.id} sees an undeclared side: ${sideId}` })
+    if (seen.has(sideId)) issues.push({ path: [...path, sideIndex], message: `role ${role.id} names a side twice: ${sideId}` })
+    seen.add(sideId)
+    return issues
   })
 }
 
+const seesIssues = (
+  roles: ReadonlyArray<ScenarioRole>,
+  sides: ReadonlyArray<ScenarioSide> | undefined,
+): ReadonlyArray<RoleDeclarationIssue> =>
+  roles.flatMap((role, index) => roleSeesIssues(role, sides).map(issue => ({ ...issue, path: ['roles', index, ...issue.path] })))
+
+/**
+ * Which roles a preset may name. `complete`: the roles given are every role
+ * of the Run (a Compiled Scenario, a Run's state), so a preset names only
+ * those. `declared`: the roles given are a Definition's declared roles, and
+ * the roles Packs derive join them only at compile, so a preset may also
+ * name a role not given here; compile checks it against the merged roles.
+ */
+export type PresetMembers = 'complete' | 'declared'
+
 /**
  * Every problem in one role declaration, with paths relative to the object
- * that holds `roles`, `rolePresets` and `sides` (a Definition or Compiled Scenario).
+ * that holds `roles`, `rolePresets` and `sides` (a Definition or Compiled
+ * Scenario). `presetMembers` says whether the roles given are all the Run's.
  */
 export const roleDeclarationIssues = (
   roles: ReadonlyArray<ScenarioRole> | undefined,
   presets: ReadonlyArray<ScenarioRolePreset> | undefined,
   sides: ReadonlyArray<ScenarioSide> | undefined,
+  presetMembers: PresetMembers,
 ): ReadonlyArray<RoleDeclarationIssue> => {
   const issues: RoleDeclarationIssue[] = []
   if (roles === undefined) {
@@ -127,7 +155,7 @@ export const roleDeclarationIssues = (
     presetIds.add(preset.id)
     const members = new Set<string>()
     preset.roles.forEach((roleId, roleIndex) => {
-      if (!roleIds.has(roleId)) issues.push({ path: ['rolePresets', index, 'roles', roleIndex], message: `role preset names an undeclared role: ${roleId}` })
+      if (presetMembers === 'complete' && !roleIds.has(roleId)) issues.push({ path: ['rolePresets', index, 'roles', roleIndex], message: `role preset names an undeclared role: ${roleId}` })
       if (members.has(roleId)) issues.push({ path: ['rolePresets', index, 'roles', roleIndex], message: `role preset names a role twice: ${roleId}` })
       members.add(roleId)
     })

@@ -10,9 +10,14 @@ import {
   type IsoTimestamp,
   type ObjectId,
   type OperationalObject,
+  roleDeclarationIssues,
+  roleSeesIssues,
+  scenarioRoleSchema,
+  type ScenarioRole,
   type ScenarioSide,
   type StartingView,
 } from '../model/index.ts'
+import { issueParams } from '../model/scenario.ts'
 import type { PackScenarioItemContribution, PackScenarioItemSpec, WorldPack } from '../packs/protocol.ts'
 
 import { scenarioDefinitionSchema, type ScenarioDefinition } from './definition.ts'
@@ -99,9 +104,73 @@ const assertRolePacks = (source: ScenarioDefinition, packs: ReadonlyArray<WorldP
   if (issues.length > 0) throw new z.ZodError(issues)
 }
 
-/** Each Pack's own check of its parsed configuration against the Scenario's roles and sides. */
-const assertPackConfigs = (source: ScenarioDefinition, packs: ReadonlyArray<WorldPack>, packConfigs: Record<string, unknown>): void => {
-  const context = { roles: source.roles ?? [], sides: source.sides ?? [] }
+type CompileIssue = { readonly code: 'custom'; readonly path: Array<string | number>; readonly message: string; readonly params: { readonly code: string } }
+
+/** A role an active Pack derived, with the index of its Pack Selection. */
+interface DerivedRole {
+  readonly packIndex: number
+  readonly role: ScenarioRole
+}
+
+/** A refusal of something a Pack derived, at that Pack's configuration. */
+const packConfigIssue = (source: ScenarioDefinition, packIndex: number, code: string, message: string): CompileIssue =>
+  ({ code: 'custom', path: ['packs', packIndex, 'config'], message: `${code}: Pack ${source.packs[packIndex]!.id} ${message}`, params: { code } })
+
+/**
+ * The Run's roles: those the Scenario declares, then the operator roles each
+ * active Pack derives from its parsed configuration (WorldPack.scenarioRoles),
+ * in Pack order. A Scenario without roles is open mode and gets none. A
+ * derived role must be a valid role (`derived_role_invalid`), an operator
+ * role (`derived_role_not_operator`) and have an id no other role has
+ * (`duplicate_role`); each is refused at its Pack's configuration. What it
+ * sees is checked after the Pack's own configuration check
+ * (`assertDerivedRoles`), which says more precisely what is wrong.
+ */
+const runRolesFor = (source: ScenarioDefinition, packs: ReadonlyArray<WorldPack>, packConfigs: Record<string, unknown>): { readonly roles: ReadonlyArray<ScenarioRole>; readonly derived: ReadonlyArray<DerivedRole> } | undefined => {
+  if (source.roles === undefined) return undefined
+  const roles: ScenarioRole[] = [...source.roles]
+  const derived: DerivedRole[] = []
+  const issues: CompileIssue[] = []
+  source.packs.forEach((selection, index) => {
+    for (const candidate of packs[index]?.scenarioRoles?.(packConfigs[selection.id], { sides: source.sides ?? [] }) ?? []) {
+      const parsed = scenarioRoleSchema.safeParse(candidate)
+      if (!parsed.success) {
+        const named = typeof (candidate as { readonly id?: unknown }).id === 'string' ? ` ${(candidate as { readonly id: string }).id}` : ''
+        issues.push(packConfigIssue(source, index, 'derived_role_invalid', `derives the role${named}, which is not a valid role: ${parsed.error.issues.map(issue => `${issue.path.join('.') || 'role'} ${issue.message}`).join('; ')}`))
+        continue
+      }
+      const role = parsed.data
+      if (role.class !== 'operator') issues.push(packConfigIssue(source, index, 'derived_role_not_operator', `derives the ${role.class} role ${role.id}; a Pack derives operator roles only, and controller roles stay declared`))
+      else if (roles.some(known => known.id === role.id)) issues.push(packConfigIssue(source, index, 'duplicate_role', `derives the role ${role.id}, which the Scenario declares or another Pack derives already`))
+      else { roles.push(role); derived.push({ packIndex: index, role }) }
+    }
+  })
+  if (issues.length > 0) throw new z.ZodError(issues)
+  return { roles, derived }
+}
+
+/**
+ * The Run's roles, once each Pack has checked its configuration: what each
+ * derived role sees follows the role rules (`derived_role_invalid`, at its
+ * Pack's configuration), and every role a preset names is a declared or a
+ * derived role (at `rolePresets.<i>.roles.<j>`, like every preset problem).
+ */
+const assertDerivedRoles = (source: ScenarioDefinition, runRoles: { readonly roles: ReadonlyArray<ScenarioRole>; readonly derived: ReadonlyArray<DerivedRole> }): void => {
+  const derived = runRoles.derived.flatMap(({ packIndex, role }) => roleSeesIssues(role, source.sides).map(issue =>
+    packConfigIssue(source, packIndex, 'derived_role_invalid', `derives the role ${role.id}, which breaks a role rule: ${issue.message}`)))
+  if (derived.length > 0) throw new z.ZodError(derived)
+  const declaration = roleDeclarationIssues(runRoles.roles, source.rolePresets, source.sides, 'complete').map(issue => ({
+    code: 'custom' as const,
+    path: [...issue.path],
+    message: issue.message,
+    ...issueParams(issue),
+  }))
+  if (declaration.length > 0) throw new z.ZodError(declaration)
+}
+
+/** Each Pack's own check of its parsed configuration against the Scenario's roles, derived ones included, and sides. */
+const assertPackConfigs = (source: ScenarioDefinition, packs: ReadonlyArray<WorldPack>, packConfigs: Record<string, unknown>, roles: ReadonlyArray<ScenarioRole> | undefined): void => {
+  const context = { roles: roles ?? [], sides: source.sides ?? [] }
   const issues = source.packs.flatMap((selection, index) =>
     (packs[index]?.validateScenarioConfig?.(packConfigs[selection.id], context) ?? []).map(issue => ({
       code: 'custom' as const,
@@ -139,7 +208,10 @@ export const compileScenarioDefinition = async (
     const pack = registeredPackFor(packsById, selection.id)
     return [selection.id, pack.scenarioConfigSchema.parse(selection.config)]
   }))
-  assertPackConfigs(source, activePacks, packConfigs)
+  const runRoles = runRolesFor(source, activePacks, packConfigs)
+  assertPackConfigs(source, activePacks, packConfigs, runRoles?.roles)
+  if (runRoles !== undefined) assertDerivedRoles(source, runRoles)
+  const roles = runRoles?.roles
   const objectMap = new Map<ObjectId, OperationalObject>()
   const initialObjects: OperationalObject[] = []
   const pending = source.packs.flatMap(selection => selection.items.map(item => ({ selection, item })))
@@ -175,7 +247,7 @@ export const compileScenarioDefinition = async (
     ...(source.description === undefined ? {} : { description: source.description }),
     objectives: source.objectives,
     agentRestrictions: source.agentRestrictions,
-    ...(source.roles === undefined ? {} : { roles: source.roles }),
+    ...(roles === undefined ? {} : { roles }),
     ...(source.rolePresets === undefined ? {} : { rolePresets: source.rolePresets }),
     ...(source.sides === undefined ? {} : { sides: source.sides }),
     packs: source.packs.map(selection => selection.id),

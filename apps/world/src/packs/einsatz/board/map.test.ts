@@ -174,7 +174,8 @@ describe('Board map targets and previews', () => {
   test('with the Board open, a click on a receiving site while a carrier is selected reaches the Board through the World\'s map routing as the carrier\'s target, and sends it there', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), unitAt('h1', 'H1', site, at(1, 1))], async run => {
       const screen = await openScreen(run, createWall())
-      const rules = createBoardRules(civilConfig, openModeViewer)
+      // Open mode plays no group.
+      const rules = createBoardRules(civilConfig, openModeViewer, () => [])
       const objects = run.run.snapshot().objects
       const object = (id: string): OperationalObject => objects.find(entry => entry.id === id)!
       const record = (id: string) => readBoardRecords([object(id)]).units.get(id)!

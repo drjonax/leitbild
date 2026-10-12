@@ -8,7 +8,7 @@ import { intentOf, type BoardIntent } from './keymap.ts'
 import { logChange, recordAlerts } from './log.ts'
 import { alternativeRows, candidateIn, createRecommendations, droppedReason, proposalUnits, type Candidate } from './recommendations.ts'
 import { readBoardRecords, type BoardRecords, type BoardTask, type BoardUnit } from './records.ts'
-import { createBoardRules } from './rules.ts'
+import { boardGroupUnitTypes, createBoardRules } from './rules.ts'
 import { boardWords, classCode, etaText, reasonText, unitWord, word } from './text.ts'
 import type { BoardEffect, BoardEvent, BoardEventBody, BoardKey, BoardList, BoardView, CallResult, ClickTarget, CommitElement, Feedback, HeaderAlert, LogEntry, MapTarget, TargetPreview } from './types.ts'
 import { contactsView, type SideLabel } from './contacts.ts'
@@ -103,10 +103,10 @@ export const createBoardController = (options: {
   /** The sides the Run declares, whose labels name each side's tracks on a screen holding several; none in a Run that declares none. */
   readonly sides: ReadonlyArray<SideLabel>
 }): BoardController => {
-  const rules = createBoardRules(options.config, options.viewer)
+  let records: BoardRecords | null = null
+  const rules = createBoardRules(options.config, options.viewer, boardGroupUnitTypes(() => records))
   const recommendations = createRecommendations(rules)
 
-  let records: BoardRecords | null = null
   let nowMs = 0
   let wallMs = 0
   let focus: BoardList = 'work'

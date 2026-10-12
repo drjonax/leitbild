@@ -1,5 +1,5 @@
 import type { EinsatzConfig, LoadClass, TaskTemplate, UnitType } from '../config-schema.ts'
-import { commandedTypes, commandsUnit, inPicture, ordersOnMap, queuesTask, type PictureTypes, type PictureViewer } from '../picture.ts'
+import { commandedTypes, commandsUnit, groupUnitTypesOf, inPicture, ordersOnMap, queuesAnyTask, queuesTask, type GroupUnitTypes, type PictureTypes, type PictureViewer } from '../picture.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
 import type { Arrangement } from './types.ts'
 
@@ -29,6 +29,22 @@ export interface RoleView {
   readonly carries: ReadonlySet<string>
 }
 
+/**
+ * The unit types each group's units have in the records the Board shows now,
+ * read afresh whenever the records change: what a group's role queues and
+ * commands. The Board's records are this screen's picture, which holds every
+ * unit of the groups its roles play.
+ */
+export const boardGroupUnitTypes = (current: () => BoardRecords | null): GroupUnitTypes => {
+  let read: { readonly records: BoardRecords; readonly groups: GroupUnitTypes } | null = null
+  return groupId => {
+    const records = current()
+    if (records === null) return []
+    if (read?.records !== records) read = { records, groups: groupUnitTypesOf(records.units.values()) }
+    return read.groups(groupId)
+  }
+}
+
 export interface BoardRules {
   readonly config: EinsatzConfig
   readonly viewer: PictureViewer
@@ -52,6 +68,7 @@ export interface BoardRules {
    * which its divert protection depends.
    */
   readonly dispatchClass: (records: BoardRecords, unit: BoardUnit) => string
+  /** Read afresh: a group's role draws on the types its units have now. */
   readonly arrangement: Arrangement
 }
 
@@ -64,23 +81,29 @@ const lookup = <T extends { readonly id: string }>(entries: ReadonlyArray<T>, wh
   }
 }
 
-export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer): BoardRules => {
+export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer, groups: GroupUnitTypes): BoardRules => {
   const type = lookup(config.unitTypes, 'Unit type')
   const template = lookup(config.taskTemplates, 'Task template')
   const loadClass = lookup(config.loadClasses, 'Load class')
   const classOrder = new Map(config.loadClasses.map((entry, index) => [entry.id, index]))
   const typeOf = (unit: BoardUnit): UnitType => type(unit.unitType)
   const templateOf = (task: BoardTask): TaskTemplate => template(task.template)
-  const types: PictureTypes = { authority: config.authority, unitType: type }
+  const types: PictureTypes = { authority: config.authority, unitType: type, taskTemplate: template }
   const commands = (unit: BoardUnit): boolean => commandsUnit(types, viewer, unit)
 
   const isReport = (task: BoardTask): boolean => templateOf(task).requires.length === 0 && total(task.loads) === 0 && total(task.pickedUp) === 0
 
-  const commanded = commandedTypes(types, viewer, config.unitTypes)
-  const queuesAny = viewer.class === 'controller'
-    ? config.taskTemplates.length > 0
-    : viewer.roles.some(role => role.class === 'operator' && config.authority.some(entry => entry.roleId === role.id && entry.taskTemplates.length > 0))
-  const senses = commanded.some(entry => entry.components.sensor !== undefined || entry.components.effector !== undefined)
+  const arrangement = (): Arrangement => {
+    const commanded = commandedTypes(types, viewer, config.unitTypes, groups)
+    const queuesAny = queuesAnyTask(types, viewer, config.taskTemplates, groups)
+    const senses = commanded.some(entry => entry.components.sensor !== undefined || entry.components.effector !== undefined)
+    return {
+      lead: queuesAny || !senses ? 'work-list' : 'map',
+      workList: queuesAny,
+      unitBoard: commanded.some(entry => entry.components.mobility !== undefined),
+      contacts: senses,
+    }
+  }
 
   return {
     config,
@@ -96,7 +119,7 @@ export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer): 
     inPicture: record => inPicture(types, viewer, record),
     commands,
     ordersOnMap: unit => ordersOnMap(types, viewer, unit),
-    queues: task => queuesTask(types, viewer, task),
+    queues: task => queuesTask(types, viewer, task, groups),
     roleView: (records, task) => {
       const serving = [...records.units.values()]
         .filter(unit => commands(unit) && unit.side === task.side && unit.integrity !== 'destroyed')
@@ -123,12 +146,7 @@ export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer): 
       if (task === undefined) throw new Error(`${unit.id} is committed to ${unit.taskId}, which is not in the picture`)
       return `divertable:${task.id}:${task.rank}`
     },
-    arrangement: {
-      lead: queuesAny || !senses ? 'work-list' : 'map',
-      workList: queuesAny,
-      unitBoard: commanded.some(entry => entry.components.mobility !== undefined),
-      contacts: senses,
-    },
+    get arrangement() { return arrangement() },
   }
 }
 

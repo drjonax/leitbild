@@ -18,6 +18,7 @@ export const uniqueIds: ConfigCheck = config => [
     ...repeatedValues(entry.taskTemplates, listItem(['authority', index, 'taskTemplates']), 'Task template'),
   ]),
   ...Object.entries(config.hostility).flatMap(([side, hostile]) => repeatedValues(hostile, listItem(['hostility', side]), 'Hostile side')),
+  ...repeatedValues(config.groups.map(group => group.id), index => ['groups', index, 'id'], 'Group'),
 ]
 
 const uniqueWithinType = (type: UnitType, at: ConfigPath): ConfigIssue[] => {

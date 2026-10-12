@@ -140,7 +140,7 @@ export const einsatzCapabilities: ReadonlyArray<SimulationCapability> = [
   command({
     id: einsatzCommandIds.unitCreate,
     title: 'Create unit',
-    description: 'Controller only. Add a unit of a declared type at a point, with an optional base, label and property values; unnamed properties take the type\'s defaults. The runtime gives the id. A side is required exactly when the Run declares sides.',
+    description: 'Controller only. Add a unit of a declared type at a point, with an optional base, label and property values; unnamed properties take the type\'s defaults. The runtime gives the id. A side is required exactly when the Run declares sides, and a group of that side once the configuration declares groups, unless the type is public.',
     idempotent: false,
     targets: () => [],
   }),

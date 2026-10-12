@@ -59,7 +59,7 @@ describe('Einsatz map controllers', () => {
       const roleSets = [[roleCommanding(carrier)], [roleCommanding(pairServer)], [roleCommanding(carrier), roleCommanding(pairServer)], [declaration.roles.find(role => role.class === 'controller')!.id]]
       for (const roleIds of roleSets) {
         const viewer = viewerForRoleSet(declaration, roleIds)
-        const rules = createBoardRules(roleConfig, screenViewerFor({ declaration, roleIds }))
+        const rules = createBoardRules(roleConfig, screenViewerFor({ declaration, roleIds }), () => [])
         const records = readBoardRecords(objects)
         for (const id of ['u1', 'p1', 'h1', 't1']) {
           const record = records.units.get(id)

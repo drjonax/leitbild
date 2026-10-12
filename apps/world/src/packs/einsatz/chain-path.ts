@@ -78,11 +78,12 @@ const pathColor = '#2f6f9f'
 
 /**
  * The queued segments as Pack map features in the routes layer, one per
- * step, keyed by unit and step id. The active leg is the unit's own route,
- * which the map draws already.
+ * step, keyed by unit and step id, for the units `drawn` keeps: the screen's
+ * display filter (a group it chose not to see) hides a unit's path with its
+ * icon. The active leg is the unit's own route, which the map draws already.
  */
-export const plannedPathFeatures = (objects: ReadonlyArray<OperationalObject>, categoryId: string): PackMapFeature[] =>
-  plannedPaths(objects).flatMap(path => path.segments.map(segment => ({
+export const plannedPathFeatures = (objects: ReadonlyArray<OperationalObject>, categoryId: string, drawn: (unitId: string) => boolean): PackMapFeature[] =>
+  plannedPaths(objects).filter(path => drawn(path.unitId)).flatMap(path => path.segments.map(segment => ({
     id: `einsatz-plan:${path.unitId}:${segment.stepId}`,
     categoryId,
     geometry: { type: 'LineString' as const, coordinates: [segment.from.coordinates, segment.to.coordinates] },

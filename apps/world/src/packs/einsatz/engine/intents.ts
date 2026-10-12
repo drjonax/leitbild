@@ -39,7 +39,7 @@ export const intentFields = {
   taskCreate: { template: configIdSchema, side: configIdSchema.optional(), at: pointSchema, loads: loadsSchema.optional(), label: labelSchema },
   taskClose: { taskId: idSchema, reason: reasonSchema.optional() },
   siteSet: { siteId: idSchema, accepting: z.boolean() },
-  unitCreate: { type: configIdSchema, side: configIdSchema.optional(), at: pointSchema, base: pointSchema.optional(), label: labelSchema, properties: propertiesSchema.optional() },
+  unitCreate: { type: configIdSchema, side: configIdSchema.optional(), group: configIdSchema.optional(), at: pointSchema, base: pointSchema.optional(), label: labelSchema, properties: propertiesSchema.optional() },
   unitAdjust: { unitId: idSchema, properties: propertiesSchema.refine(properties => Object.keys(properties).length > 0, 'Name at least one property'), reason: reasonSchema },
   setRoe: { unitId: idSchema, roe: z.enum(roeModes) },
   engage: { unitId: idSchema, trackId: idSchema },
@@ -83,7 +83,11 @@ export const taskCreateIntentSchema = z.object({ kind: z.literal('task.create'),
 export const taskCloseIntentSchema = z.object({ kind: z.literal('task.close'), ...intentFields.taskClose }).strict()
 export const siteSetIntentSchema = z.object({ kind: z.literal('site.set'), ...intentFields.siteSet }).strict()
 
-/** A new unit of a declared type. Its base is where it is created unless one is named. */
+/**
+ * A new unit of a declared type. Its base is where it is created unless one
+ * is named. Once the configuration declares groups, a unit that is not of a
+ * public type names exactly one, of its own side.
+ */
 export const unitCreateIntentSchema = z.object({ kind: z.literal('unit.create'), id: idSchema, ...intentFields.unitCreate }).strict()
 export const unitAdjustIntentSchema = z.object({ kind: z.literal('unit.adjust'), ...intentFields.unitAdjust }).strict()
 

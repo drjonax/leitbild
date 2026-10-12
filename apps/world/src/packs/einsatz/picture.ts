@@ -1,5 +1,6 @@
 import type { RoleClass, RoleSees } from '../../core/model/index.ts'
-import type { Authority, UnitType } from './config-schema.ts'
+import type { Authority, TaskTemplate, UnitType } from './config-schema.ts'
+import { groupOfRoleId } from './ids.ts'
 
 /**
  * Who sees, commands and queues which Einsatz record (§3.1), as pure rules
@@ -14,6 +15,11 @@ import type { Authority, UnitType } from './config-schema.ts'
  *   its sides, never a public one, though every side sees it.
  * - A controller-class viewer commands every unit and queues every task in
  *   its picture.
+ * - A group's role (`group:<id>`, derived from a declared group) commands
+ *   exactly the units of its group, and queues the tasks of its picture that
+ *   those units can serve: a requirement one of their types provides, or a
+ *   load class one of them carries. Which types a group holds is Run state,
+ *   so the queue reads it from the units the caller holds (`GroupUnitTypes`).
  */
 
 /** A held role as the Scenario declares it; without sides a role declares no `sees` and sees everything. */
@@ -33,22 +39,55 @@ export interface PictureViewer {
 /** Open mode: no role, the whole truth, commanding every unit. */
 export const openModeViewer: PictureViewer = Object.freeze({ class: 'controller', sees: 'all', roles: Object.freeze([]) })
 
-/** The configuration the rules read: authority entries and each unit type's visibility, tags and components. */
+/** The configuration the rules read: authority entries, each unit type's visibility, tags and components, and each template's requirements. */
 export interface PictureTypes {
   readonly authority: ReadonlyArray<Authority>
   readonly unitType: (unitTypeId: string) => Pick<UnitType, 'public' | 'tags' | 'components'>
+  readonly taskTemplate: (templateId: string) => Pick<TaskTemplate, 'requires'>
 }
 
 export interface PictureUnit {
   readonly type: 'unit'
   readonly unitType: string
   readonly side?: string | undefined
+  readonly group?: string | undefined
 }
 export interface PictureTask {
   readonly type: 'task'
   readonly template: string
   readonly side?: string | undefined
+  /** Load waiting and load picked up, per class: what a carrier could serve. */
+  readonly loads: Readonly<Record<string, number>>
+  readonly pickedUp: Readonly<Record<string, number>>
 }
+
+/** The unit types the units of a group have now; none for a group without units. */
+export type GroupUnitTypes = (groupId: string) => ReadonlyArray<string>
+
+/** The unit types of each group among these units, in the order first met. */
+export const groupUnitTypesOf = (units: Iterable<PictureUnit>): GroupUnitTypes => {
+  const byGroup = new Map<string, string[]>()
+  for (const unit of units) {
+    if (unit.group === undefined) continue
+    const known = byGroup.get(unit.group) ?? []
+    if (!known.includes(unit.unitType)) known.push(unit.unitType)
+    byGroup.set(unit.group, known)
+  }
+  return groupId => byGroup.get(groupId) ?? []
+}
+
+/** Whether units of these types can serve a task: one provides a requirement of its template, or carries a class of its load. */
+const typesServe = (types: PictureTypes, unitTypeIds: ReadonlyArray<string>, task: PictureTask): boolean => {
+  const required = types.taskTemplate(task.template).requires.map(requirement => requirement.provides)
+  const classes = [...Object.keys(task.loads), ...Object.keys(task.pickedUp)]
+  return unitTypeIds.some(unitTypeId => {
+    const { service, carry } = types.unitType(unitTypeId).components
+    return service?.provides.some(provided => required.includes(provided)) === true || carry?.classes.some(carried => classes.includes(carried)) === true
+  })
+}
+
+/** The group a held role plays, when it is a group's operator role. */
+const groupOf = (role: PictureRole): string | undefined => role.class === 'operator' ? groupOfRoleId(role.id) : undefined
 
 const seesOf = (role: PictureRole): RoleSees => role.sees ?? 'all'
 
@@ -76,16 +115,25 @@ const authorityOf = (types: PictureTypes, role: PictureRole): Authority | undefi
 const commandableBy = (sees: RoleSees, unit: PictureUnit): boolean =>
   sees === 'all' || (unit.side !== undefined && sees.includes(unit.side))
 
-/** One role's commandable set: a controller role commands every unit; an operator role, the units its authority selects on a side it sees. */
+/**
+ * One role's commandable set: a controller role commands every unit; a
+ * group's role, the units of its group; another operator role, the units its
+ * authority selects; an operator role only on a side it sees.
+ */
 export const roleCommands = (types: PictureTypes, role: PictureRole, unit: PictureUnit): boolean => {
   if (role.class === 'controller') return true
+  const group = groupOf(role)
+  if (group !== undefined) return unit.group === group && commandableBy(seesOf(role), unit)
   const entry = authorityOf(types, role)
   return entry !== undefined && selectsType(entry.units, unit.unitType, types.unitType(unit.unitType).tags) && commandableBy(seesOf(role), unit)
 }
 
-const roleQueues = (types: PictureTypes, role: PictureRole, task: PictureTask): boolean => {
+const roleQueues = (types: PictureTypes, role: PictureRole, task: PictureTask, groups: GroupUnitTypes): boolean => {
   if (role.class === 'controller') return true
-  return authorityOf(types, role)?.taskTemplates.includes(task.template) === true && inPictureOf(types, seesOf(role), task)
+  if (!inPictureOf(types, seesOf(role), task)) return false
+  const group = groupOf(role)
+  if (group !== undefined) return typesServe(types, groups(group), task)
+  return authorityOf(types, role)?.taskTemplates.includes(task.template) === true
 }
 
 /** The commandable set: a controller commands every unit in its picture; an operator, the union of what each of its roles commands. */
@@ -102,15 +150,42 @@ export const ordersOnMap = (types: PictureTypes, viewer: PictureViewer, unit: Pi
   commandsUnit(types, viewer, unit) && types.unitType(unit.unitType).components.mobility !== undefined
 
 /** The queue: a controller queues every task in its picture; an operator, the union of its roles' queues, each within its own picture. */
-export const queuesTask = (types: PictureTypes, viewer: PictureViewer, task: PictureTask): boolean =>
-  inPicture(types, viewer, task) && (viewer.class === 'controller' || viewer.roles.some(role => roleQueues(types, role, task)))
+export const queuesTask = (types: PictureTypes, viewer: PictureViewer, task: PictureTask, groups: GroupUnitTypes): boolean =>
+  inPicture(types, viewer, task) && (viewer.class === 'controller' || viewer.roles.some(role => roleQueues(types, role, task, groups)))
 
-/** The declared unit types an operator's roles select: what its unit board and arrangement draw on. A controller holds them all. */
-export const commandedTypes = <T extends Pick<UnitType, 'id' | 'tags'>>(types: PictureTypes, viewer: PictureViewer, unitTypes: ReadonlyArray<T>): ReadonlyArray<T> => {
+/**
+ * The declared unit types an operator's roles select, and those its groups'
+ * units have: what its unit board and arrangement draw on. A controller holds
+ * them all.
+ */
+export const commandedTypes = <T extends Pick<UnitType, 'id' | 'tags'>>(types: PictureTypes, viewer: PictureViewer, unitTypes: ReadonlyArray<T>, groups: GroupUnitTypes): ReadonlyArray<T> => {
   if (viewer.class === 'controller') return unitTypes
-  const entries = viewer.roles.flatMap(role => {
-    const entry = role.class === 'operator' ? authorityOf(types, role) : undefined
+  const operators = viewer.roles.filter(role => role.class === 'operator')
+  const entries = operators.flatMap(role => {
+    const entry = groupOf(role) === undefined ? authorityOf(types, role) : undefined
     return entry === undefined ? [] : [entry]
   })
-  return unitTypes.filter(type => entries.some(entry => selectsType(entry.units, type.id, type.tags)))
+  const grouped = new Set(operators.flatMap(role => {
+    const group = groupOf(role)
+    return group === undefined ? [] : groups(group)
+  }))
+  return unitTypes.filter(type => grouped.has(type.id) || entries.some(entry => selectsType(entry.units, type.id, type.tags)))
+}
+
+/**
+ * Whether an operator's queue can ever hold a task: a role's authority names
+ * a template, or a group's units provide a service or carry load. A
+ * controller's can whenever templates are declared.
+ */
+export const queuesAnyTask = (types: PictureTypes, viewer: PictureViewer, templates: ReadonlyArray<Pick<TaskTemplate, 'id'>>, groups: GroupUnitTypes): boolean => {
+  if (viewer.class === 'controller') return templates.length > 0
+  return viewer.roles.some(role => {
+    if (role.class !== 'operator') return false
+    const group = groupOf(role)
+    if (group === undefined) return (authorityOf(types, role)?.taskTemplates.length ?? 0) > 0
+    return groups(group).some(unitTypeId => {
+      const { service, carry } = types.unitType(unitTypeId).components
+      return service !== undefined || carry !== undefined
+    })
+  })
 }

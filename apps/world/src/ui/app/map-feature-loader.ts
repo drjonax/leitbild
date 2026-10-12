@@ -1,5 +1,5 @@
 import type { SimulationRunId, GeoJsonPolygon, IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
-import { packMapFeatureSchema, type PackMapFeature, type PackMapFeatureQuery } from '../../core/packs/protocol.ts'
+import { packMapFeatureSchema, type PackMapFeature, type PackMapFeatureQuery, type PackObjectPresentationContext } from '../../core/packs/protocol.ts'
 import type { ActivePackViews } from '../../core/packs/active-views.ts'
 import { querySimulationRunCapability, type SimulationRunRequestOptions } from '../simulation-run-client.ts'
 
@@ -15,6 +15,13 @@ export interface MapFeatureRuntimeConfig {
   readonly objects: () => ReadonlyArray<OperationalObject>
   readonly simulationRunId: () => SimulationRunId | null
   readonly currentTime: () => IsoTimestamp | undefined
+  /**
+   * The roles the screen shows Packs in a role Run (the role dialog's See
+   * boxes), or null in open mode. A Pack's map features receive it as its
+   * object presentation does, so what a screen does not see stays off the
+   * map in every layer a Pack draws.
+   */
+  readonly seenRoleIds: () => ReadonlyArray<string> | null
   readonly queryTimeoutMs?: number
   readonly onWarnings?: (messages: ReadonlyArray<string>) => void
   readonly queryCapability?: (
@@ -66,13 +73,13 @@ export const createMapFeatureLoader = (
 ): ((context: MapFeatureLoaderContext) => Promise<ReadonlyArray<PackMapFeature>>) =>
   async (context: MapFeatureLoaderContext): Promise<ReadonlyArray<PackMapFeature>> => {
     const currentTime = context.currentTime ?? config.currentTime()
-    const presentationContext = {
+    const seenRoleIds = config.seenRoleIds()
+    const presentationContextWithTime: PackObjectPresentationContext = {
       objects: config.objects(),
       map: { viewport: context.viewport, zoom: context.zoom },
+      ...(currentTime === undefined ? {} : { currentTime }),
+      ...(seenRoleIds === null ? {} : { seenRoleIds }),
     }
-    const presentationContextWithTime = currentTime === undefined
-      ? presentationContext
-      : { ...presentationContext, currentTime }
     const pack = config.pack()
     if (!pack) { config.onWarnings?.([]); return [] }
     const syncFeatures = pack.presentation.mapFeatures?.(presentationContextWithTime) ?? []

@@ -42,10 +42,11 @@
     applySimulationRunEventBatchMessage,
   } from '../simulation-run-events.ts'
   import RoleBar from '../roles/RoleBar.svelte'
-  import RolePicker from '../roles/RolePicker.svelte'
+  import RoleDialog from '../roles/RoleDialog.svelte'
   import { roleSetText, type RoleCommandsDescriber, type RoleSetChange } from '../roles/role-controller.ts'
+  import { hiddenOnceHeld, roleDialogChange, seenRoleIdsFor, type RoleDialogResult } from '../roles/role-dialog.ts'
   import { perspectiveKey, storesForPerspective, type RealtimePerspective } from '../roles/perspective.ts'
-  import { configureActiveRoleSet, currentActiveRoleSet, initialRoleSet, roleSetFromSearch, roleSetStorageKey, searchWithRoleSet, writeStoredRoleSet } from '../roles/role-session.ts'
+  import { configureActiveRoleSet, currentActiveRoleSet, hiddenRolesStorageKey, initialRoleSet, readStoredHiddenRoles, roleSetFromSearch, roleSetStorageKey, searchWithRoleSet, writeStoredHiddenRoles, writeStoredRoleSet } from '../roles/role-session.ts'
   import { beginAction, completeAction, commandFeedbackText, emptyCommandFeedback, failAction, noteAction, settleCommand, type CommandFeedback } from '../command-feedback.ts'
   import { parseDroneMotionFramesRealtimeMessage, type DroneMotionFrame } from '../../packs/drone/realtime.ts'
   import { createMapFeatureLoader } from '../app/map-feature-loader.ts'
@@ -66,7 +67,7 @@
   import { createPlacementState } from '../placement-state.svelte.ts'
   import { createRailLayoutState } from '../rail-layout-state.svelte.ts'
   import { simulationTimeAt } from '../simulation-clock.ts'
-  import { executionClockReading } from '../world-clock.ts'
+  import { createWorldClockOrder, executionClockReading } from '../world-clock.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ControlRail from '../ControlRail.svelte'
   import ScenarioGuidance from '../ScenarioGuidance.svelte'
@@ -163,6 +164,8 @@
   let objects = $state<OperationalObject[]>([])
   let scenarioState = $state<ScenarioExecutionState | undefined>(undefined)
   let clock = $state<SimulationClockState | undefined>(undefined)
+  // Clocks the Run publishes always apply; an execution read's only if none arrived since it was asked for.
+  const clockOrder = createWorldClockOrder()
   let scenarioDefinition = $state<CompiledScenario | null>(null)
   let selectedControllerId = $state<string | null>(null)
   let status = $state('Starting')
@@ -185,6 +188,10 @@
   let pendingRoleIds = $state<ReadonlyArray<string> | null>(null)
   let perspectiveEpoch = $state(0)
   let rolePicker = $state<{ readonly runTitle: string; readonly declaration: RunRoles; readonly holders: Readonly<Record<string, number>> } | null>(null)
+  // This tab's unseen roles (the role dialog's See boxes), a display filter no
+  // server reads, and whether the role bar opened the dialog.
+  let hiddenRoleIds = $state<ReadonlyArray<string>>([])
+  let roleDialogOpen = $state(false)
   let panelMapView = $state<MapView | null>(null)
   let startupSteps = $state<ReadonlyArray<StartupStep>>(createStartupSteps())
   let mapReady = $state(false)
@@ -372,10 +379,12 @@
     if (!scenario || views.length === 0) return undefined
     return roleId => views.flatMap(({ packId, roles }) => roles.commandsLine(roleId, scenario.packConfigs[packId]) ?? []).join(' · ') || null
   })
+  // The roles this screen shows Packs: every declared role but the unseen ones, and always the held ones.
+  const seenRoleIds = $derived(runRoles !== null && heldRoleIds !== null ? seenRoleIdsFor(runRoles, heldRoleIds, hiddenRoleIds) : null)
   // Reset, signal and delete are controller acts in a role Run; open mode offers them to everyone.
   const controllerControls = $derived(runRoles === null || (heldRoleIds !== null && roleClassForRoleSet(runRoles, heldRoleIds) === 'controller'))
-  // Pack map features belong to one perspective, like every Run store.
-  const mapFeatureRevisionKey = $derived(perspectiveEpoch === 0 ? JSON.stringify(packDataRevisions) : JSON.stringify([perspectiveEpoch, packDataRevisions]))
+  // Pack map features belong to one perspective, like every Run store, and are drawn for the roles this tab sees.
+  const mapFeatureRevisionKey = $derived(perspectiveEpoch === 0 && seenRoleIds === null ? JSON.stringify(packDataRevisions) : JSON.stringify([perspectiveEpoch, packDataRevisions, seenRoleIds]))
 
   const toggleTheme = (): void => {
     theme = toggleThemeMode()
@@ -467,6 +476,7 @@
       pack: activePack,
       objects,
       currentTime: currentPackTime(),
+      ...(seenRoleIds === null ? {} : { seenRoleIds }),
     }),
   })
 
@@ -504,6 +514,7 @@
     objects: () => objects,
     simulationRunId: () => simulationRunId,
     currentTime: currentPackTime,
+    seenRoleIds: () => seenRoleIds,
     onWarnings: messages => { mapWarnings = messages.join(' · ') },
   })
 
@@ -901,9 +912,10 @@
   const refreshExecution = async (): Promise<void> => {
     if (!simulationRunId) return
     try {
+      const ticket = clockOrder.readAsked()
       executionState = await fetchRunExecution(simulationRunId)
       const reading = executionClockReading(executionState)
-      if (reading) clock = reading
+      if (reading && clockOrder.readApplies(ticket)) clock = reading
     } catch (err) {
       status = err instanceof Error ? err.message : String(err)
     }
@@ -1190,7 +1202,7 @@
     if (perspectiveKey(currentActiveRoleSet()) !== askedAs) return
     objects = [...body.snapshot.objects]
     scenarioState = body.snapshot.scenario
-    clock = body.snapshot.clock
+    clock = clockOrder.published(body.snapshot.clock)
   }
 
   const switchUnderWay = (): boolean => {
@@ -1418,7 +1430,7 @@
           return
         }
         realtimeAttached = true
-        if (parsed.clock) clock = parsed.clock
+        if (parsed.clock) clock = clockOrder.published(parsed.clock)
         if (parsed.perspective) adoptPerspective(parsed.perspective)
         status = 'Connected'
         completeStep('realtime')
@@ -1437,7 +1449,7 @@
           scenarioState = applied.scenarioUpdate
         }
         if (applied.clockUpdate) {
-          clock = applied.clockUpdate
+          clock = clockOrder.published(applied.clockUpdate)
         }
         if (applied.routesChanged) {
           routeRevision += 1
@@ -1488,7 +1500,7 @@
     if (scenarioDefinition !== null) scenarioDefinition = stores.compiledScenario
     objects = [...stores.objects]
     scenarioState = stores.scenarioState
-    clock = stores.clock
+    clock = clockOrder.published(stores.clock)
     selectedControllerId = stores.selectedControllerId
     seenRevisions = new Map(stores.seenRevisions)
     packDataRevisions = { ...stores.packDataRevisions }
@@ -1505,6 +1517,8 @@
     heldRoleIds = perspective.roleIds
     configureActiveRoleSet(perspective.roleIds)
     keepRoleSet(perspective.roleIds)
+    // A held role is seen, so holding it, however gained, ticks its See box for good.
+    keepHiddenRoles(hiddenOnceHeld(hiddenRoleIds, perspective.roleIds))
   }
 
   const failRoleSwitch = (roleIds: ReadonlyArray<string>, reason: string): void => {
@@ -1523,6 +1537,28 @@
   const keepRoleSet = (roleIds: ReadonlyArray<string> | null): void => {
     writeStoredRoleSet(sessionStorage, roleSetKey(), roleIds)
     history.replaceState(history.state, '', `${location.pathname}${searchWithRoleSet(location.search, roleIds)}`)
+  }
+
+  const hiddenRolesKey = (): string => {
+    const route = activeRoute()
+    return hiddenRolesStorageKey(route.workspaceId, route.mode === 'simulation-run' ? route.simulationRunId : '')
+  }
+
+  /** This tab's unseen roles live in sessionStorage only: a display filter, never sent to the Run. */
+  const keepHiddenRoles = (roleIds: ReadonlyArray<string>): void => {
+    const changed = roleIds.length !== hiddenRoleIds.length || roleIds.some(roleId => !hiddenRoleIds.includes(roleId))
+    hiddenRoleIds = roleIds
+    writeStoredHiddenRoles(sessionStorage, hiddenRolesKey(), roleIds)
+    // The map projects its objects again, so what this tab no longer sees leaves it, and what it sees again returns.
+    if (changed) routeRevision += 1
+  }
+
+  /** The role bar's dialog: keep what this tab sees, and ask the Run for the role set when it changed. */
+  const applyRoleDialog = (result: RoleDialogResult): void => {
+    if (!heldRoleIds) throw new Error('The role dialog applies to a screen that holds roles')
+    roleDialogOpen = false
+    keepHiddenRoles(result.hidden)
+    requestRoleChange(roleDialogChange(heldRoleIds, result))
   }
 
   const requestRoleChange = (change: RoleSetChange): void => {
@@ -1569,8 +1605,9 @@
     return presence.roles.holders
   }
 
-  const joinWithRoles = (roleIds: ReadonlyArray<string>): void => {
-    keepRoleSet(roleIds)
+  const joinWithRoles = (result: RoleDialogResult): void => {
+    keepRoleSet(result.roleIds)
+    keepHiddenRoles(result.hidden)
     rolePicker = null
     void joinSimulationRun()
   }
@@ -1619,7 +1656,7 @@
         scenarioState = nextState
       },
       setClock: nextClock => {
-        clock = nextClock
+        clock = clockOrder.published(nextClock)
       },
       setExpectedRealtimeScenarioId: scenarioId => {
         expectedRealtimeScenarioId = scenarioId
@@ -1666,6 +1703,12 @@
       }
       configureActiveRoleSet(requestedRoleIds)
       heldRoleIds = requestedRoleIds
+      try {
+        hiddenRoleIds = readStoredHiddenRoles(sessionStorage, hiddenRolesKey())
+      } catch (err) {
+        keepHiddenRoles([])
+        commandFeedback = noteAction(commandFeedback, `Stored See choices were unreadable and were cleared: ${err instanceof Error ? err.message : String(err)}`)
+      }
       pendingRoleIds = null
       perspectiveEpoch = 0
       markStartup('join-request:start')
@@ -2029,7 +2072,7 @@
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if runRoles && heldRoleIds}
-        <RoleBar declaration={runRoles} held={heldRoleIds} switchingTo={pendingRoleIds} describeCommands={describeRoleCommands} request={requestRoleChange} />
+        <RoleBar declaration={runRoles} held={heldRoleIds} switchingTo={pendingRoleIds} request={requestRoleChange} openDialog={() => { roleDialogOpen = true }} />
       {/if}
       {#if keymapPanel}
         <!-- RoleBar listens in the capture phase, so a key it consumes (P, then a digit) arrives here defaultPrevented and never reaches the panel. -->
@@ -2041,7 +2084,7 @@
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}
           {#if (surfacePanelOpen[panel.id] ?? panel.defaultOpen) && Panel}
-            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} roleSet={panelRoleSet} onMapCover={(cover: MapCover) => { panelMapCovers = { ...panelMapCovers, [panel.id]: assertMapCover(panel.id, cover) } }} />
+            <Panel {simulationRunId} {objects} {seenRoleIds} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} roleSet={panelRoleSet} onMapCover={(cover: MapCover) => { panelMapCovers = { ...panelMapCovers, [panel.id]: assertMapCover(panel.id, cover) } }} />
           {/if}
         {/each}
         {/key}
@@ -2149,12 +2192,32 @@
 {/if}
 
 {#if rolePicker}
-  <RolePicker
+  <RoleDialog
+    mode="join"
     runTitle={rolePicker.runTitle}
     declaration={rolePicker.declaration}
+    held={[]}
+    hidden={hiddenRoleIds}
     initialHolders={rolePicker.holders}
     loadHolders={loadRoleHolders}
-    join={joinWithRoles}
+    describeCommands={undefined}
+    apply={joinWithRoles}
+    cancel={undefined}
+  />
+{/if}
+
+{#if roleDialogOpen && runRoles && heldRoleIds}
+  <RoleDialog
+    mode="switch"
+    runTitle={scenarioDefinition?.title ?? ''}
+    declaration={runRoles}
+    held={heldRoleIds}
+    hidden={hiddenRoleIds}
+    initialHolders={null}
+    loadHolders={loadRoleHolders}
+    describeCommands={describeRoleCommands}
+    apply={applyRoleDialog}
+    cancel={() => { roleDialogOpen = false }}
   />
 {/if}
 

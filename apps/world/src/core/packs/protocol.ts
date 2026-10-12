@@ -146,6 +146,16 @@ export interface PackObjectPresentationContext {
   readonly currentTime?: IsoTimestamp
   readonly map?: PackMapRenderContext
   readonly tier?: PackObjectPresentationTier
+  /**
+   * In a role Run, the roles this screen shows (the role dialog's See boxes;
+   * every held role is shown); absent in open mode. The World view passes
+   * it to every presentation hook it calls with this context: `presentObject`,
+   * `contextualFields`, `mapFeatures` and `mapFeatureQueries`. A per-tab
+   * display filter no server reads: a Pack may hide its own objects of roles
+   * not shown, in every layer it draws, and a Pack that ignores it is
+   * unaffected. Visibility between sides stays the Run's, per side.
+   */
+  readonly seenRoleIds?: ReadonlyArray<string>
 }
 
 export interface PackMapRenderContext {
@@ -733,6 +743,21 @@ export interface WorldPack extends WorldPackView {
    * compiles; each issue is refused at its path within the configuration.
    */
   readonly validateScenarioConfig?: (config: unknown, context: PackScenarioConfigContext) => ReadonlyArray<PackScenarioConfigIssue>
+  /**
+   * Operator roles this role-aware Pack derives from its parsed Scenario
+   * configuration, such as one role per group of units. When a Scenario
+   * declares roles, compile adds them after the declared ones; a Scenario
+   * without roles is open mode and gets none. Controller roles stay
+   * declared: compile refuses a derived controller role
+   * (`derived_role_not_operator`), an id that repeats a declared role or
+   * another derived one (`duplicate_role`), and a role that breaks the role
+   * schema or, after `validateScenarioConfig`, the rules of what a role sees
+   * (`derived_role_invalid`), each at the Pack's configuration. Derived roles
+   * then count as declared everywhere: `validateScenarioConfig` receives
+   * them, a declared preset may bundle them, the role dialog lists them,
+   * screens hold them and core stamps them on viewers.
+   */
+  readonly scenarioRoles?: (config: unknown, context: PackScenarioRolesContext) => ReadonlyArray<ScenarioRole>
   readonly authoring?: PackScenarioAuthoringContribution
   readonly recording?: PackRecordingContribution
   readonly knowledge?: PackKnowledgeContribution
@@ -741,8 +766,14 @@ export interface WorldPack extends WorldPackView {
   readonly interactions?: PackInteractionContribution
 }
 
+/** What a Pack derives its roles against: the Scenario's sides, empty when it declares none. */
+export interface PackScenarioRolesContext {
+  readonly sides: ReadonlyArray<ScenarioSide>
+}
+
 /** The declarations a Pack's configuration is checked against. */
 export interface PackScenarioConfigContext {
+  /** The declared roles, then the roles every active Pack derives (`WorldPack.scenarioRoles`). */
   readonly roles: ReadonlyArray<ScenarioRole>
   readonly sides: ReadonlyArray<ScenarioSide>
 }

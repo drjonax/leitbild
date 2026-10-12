@@ -78,7 +78,9 @@ describe('Scenario roles', () => {
     expect(refused({ ...roleRunDefinition, roles: [declaredRoles[0], declaredRoles[0]] })).toContain('duplicate role: dispatch')
     expect(refused({ ...roleRunDefinition, roles: [] })).toContain('roles')
     expect(refused({ ...roleRunDefinition, roles: [{ id: 'x', label: 'X', class: 'observer' }] })).toContain('roles.0.class')
-    expect(refused({ ...roleRunDefinition, rolePresets: [{ id: 'p', label: 'P', roles: ['ghost'] }] })).toContain('undeclared role: ghost')
+    // A preset may bundle a role a Pack derives, so compile checks its members against the merged roles (derived-roles.test.ts).
+    expect(scenarioDefinitionSchema.safeParse({ ...roleRunDefinition, rolePresets: [{ id: 'p', label: 'P', roles: ['ghost'] }] }).success).toBe(true)
+    expect(refused({ ...roleRunDefinition, rolePresets: [{ id: 'p', label: 'P', roles: ['dispatch', 'dispatch'] }] })).toContain('rolePresets.0.roles.1: role preset names a role twice: dispatch')
     expect(refused({ ...roleRunDefinition, rolePresets: [{ id: 'control', label: 'P', roles: ['dispatch'] }] })).toContain('already a role id')
     expect(refused({ ...openRunDefinition, rolePresets: declaredPresets })).toContain('Role presets need declared roles')
   })

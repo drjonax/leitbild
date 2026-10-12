@@ -9,6 +9,8 @@ export interface PackPresentationComposerContext {
   readonly pack: ActivePackViews | null
   readonly objects: ReadonlyArray<OperationalObject>
   readonly currentTime?: IsoTimestamp
+  /** The roles the screen shows in a role Run (`PackObjectPresentationContext.seenRoleIds`). */
+  readonly seenRoleIds?: ReadonlyArray<string>
 }
 
 export interface PackPresentationRequest {
@@ -72,7 +74,7 @@ const snapshotDiagnostics = (
 
 const contextKeyFor = (
   context: PackPresentationComposerContext,
-): string => `${context.pack?.packIds.join(',') ?? 'no-pack'}:${context.currentTime ?? 'no-time'}`
+): string => `${context.pack?.packIds.join(',') ?? 'no-pack'}:${context.currentTime ?? 'no-time'}:${context.seenRoleIds?.join(',') ?? 'all-roles'}`
 
 const objectsForPackLookup = (
   objects: ReadonlyArray<OperationalObject>,
@@ -141,6 +143,7 @@ export const createPackPresentationComposer = (
           objectsForPack,
           tier,
           ...(context.currentTime === undefined ? {} : { currentTime: context.currentTime }),
+          ...(context.seenRoleIds === undefined ? {} : { seenRoleIds: context.seenRoleIds }),
         })
         cache.set(key, presentation)
         return presentation

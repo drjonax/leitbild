@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import type { OperationalObject } from '../../../core/model/index.ts'
+import type { Actor } from '../../../core/simulation-runs/actors.ts'
 import { einsatzDataSchema, type LastAction, type TaskData, type UnitData } from '../engine/model.ts'
-import { createWall, follow, openScreen, type Screen } from '../fixtures/board-harness.ts'
+import { createWall, follow, openScreen, roleScreen, type Screen } from '../fixtures/board-harness.ts'
+import { groupDeclaration, groupItems, groups } from '../fixtures/groups-run.ts'
 import civil from '../fixtures/halden-civil.scenario.json'
 import { renameDefinition, type Namespace, type Renaming } from '../fixtures/renaming.ts'
-import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
+import { definitionOf, openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import supplyRun from '../fixtures/supply-run.scenario.json'
+import { groupRoleId } from '../ids.ts'
 import { refusalCode } from '../refusal.ts'
 
 /**
@@ -26,10 +29,10 @@ interface Followed {
   readonly results: ReadonlyArray<readonly [string, unknown, string]>
 }
 
-const followed = async (definition: unknown, untilS: number, inspect?: (run: OpenRun, screen: Screen) => void): Promise<Followed> => {
+const followed = async (definition: unknown, untilS: number, inspect?: (run: OpenRun, screen: Screen) => void, actor?: (run: OpenRun) => Actor): Promise<Followed> => {
   const run = await openRun({ definition })
   try {
-    const screen = await openScreen(run, createWall())
+    const screen = await openScreen(run, createWall(), actor === undefined ? {} : { actor: actor(run) })
     const startMs = run.nowMs()
     await follow(run, screen, { untilMs: startMs + untilS * 1_000, stepMs: 5_000 })
     inspect?.(run, screen)
@@ -69,23 +72,29 @@ const mapKeys = (record: Readonly<Record<string, number>> | undefined, rename: (
 /** What a Run of the original wrote, in the renamed copy's words. */
 const renamedObject = (renaming: Renaming, object: OperationalObject): OperationalObject => {
   const id = (namespace: Namespace) => (value: string) => renaming.id(namespace, value)
-  const action = (last: LastAction | undefined) => last === undefined ? {} : { lastAction: { ...last, ...(last.cause === undefined ? {} : { cause: renaming.text(last.cause) }) } }
+  // In a role Run an order names the roles that gave it by their labels, which the copy renames.
+  const action = (last: LastAction | undefined) => last === undefined ? {} : { lastAction: { ...last, by: renaming.text(last.by), ...(last.cause === undefined ? {} : { cause: renaming.text(last.cause) }) } }
   const alerts = <T extends { readonly message: string }>(list: ReadonlyArray<T>): T[] => list.map(alert => ({ ...alert, message: renaming.text(alert.message) }))
   const data = einsatzDataSchema.parse(object.packData)
   const packData: UnitData | TaskData = data.type === 'unit'
     ? {
       ...data,
       unitType: renaming.id('type', data.unitType),
+      ...(data.side === undefined ? {} : { side: renaming.id('side', data.side) }),
+      ...(data.group === undefined ? {} : { group: renaming.id('group', data.group) }),
       presentation: { ...data.presentation, typeLabel: renaming.text(data.presentation.typeLabel) },
       properties: Object.fromEntries(Object.entries(data.properties).map(([key, value]) => [renaming.id('property', key), value])),
       load: mapKeys(data.load, id('class'))!,
       ...(data.received === undefined ? {} : { received: mapKeys(data.received, id('class'))! }),
+      // A job-chain step names who gave it as an order does.
+      orders: data.orders.map(step => ({ ...step, by: renaming.text(step.by) })),
       ...action(data.lastAction),
       alerts: alerts(data.alerts),
     }
     : {
       ...data,
       template: renaming.id('template', data.template),
+      ...(data.side === undefined ? {} : { side: renaming.id('side', data.side) }),
       presentation: { ...data.presentation, typeLabel: renaming.text(data.presentation.typeLabel) },
       loads: mapKeys(data.loads, id('class'))!,
       pickedUp: mapKeys(data.pickedUp, id('class'))!,
@@ -125,4 +134,22 @@ describe('Renaming generality', () => {
       expect(original.results.length).toBeGreaterThan(1)
     }, 60_000)
   }
+
+  test('a sided Run with groups, played by a screen holding its North groups, and its renamed copy journal the same transitions', async () => {
+    const definition = definitionOf(groupItems, undefined, groupDeclaration)
+    const renaming = renameDefinition(definition)
+    const northGroups = groups.filter(group => group.side === 'north').map(group => group.id)
+    const [original, renamed] = [
+      await followed(definition, 600, undefined, run => roleScreen(run, ...northGroups.map(groupRoleId))),
+      await followed(renaming.definition, 600, undefined, run => roleScreen(run, ...northGroups.map(group => groupRoleId(renaming.id('group', group))))),
+    ]
+    expect(JSON.stringify(renaming.definition)).not.toMatch(/haul|guard|raid|north|south/)
+    expect(renamed.journal.map(comparable)).toEqual(original.journal.map(object => comparable(renamedObject(renaming, object))))
+    // Each journaled unit names its group and side, renamed in the copy, and the screen's groups gave orders.
+    expect(original.journal.some(object => (object.packData as { readonly group?: unknown }).group === 'haul-a')).toBe(true)
+    expect(original.journal.some(object => (object.packData as { readonly lastAction?: { readonly by?: unknown } }).lastAction?.by === 'Haulers A, Haulers B and Guards')).toBe(true)
+    expect(renamed.actions).toBe(original.actions)
+    expect(renamed.results).toEqual(original.results)
+    expect(original.results.length).toBeGreaterThan(1)
+  }, 60_000)
 })
