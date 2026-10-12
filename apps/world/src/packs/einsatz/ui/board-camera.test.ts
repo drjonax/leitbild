@@ -13,7 +13,10 @@ import { boardLayoutFor, boardMapCover } from './board-layout.ts'
  * The map beside the Board: a call or asset selected from the lists that
  * lies under the Board, under the bars or off the map is brought into view,
  * and every Einsatz scenario's Starting View shows all its objects beside
- * the Board on an iPad (1024 × 768) and at 960 × 720.
+ * the Board on an iPad (1024 × 768) and at 960 × 720. The border exercises
+ * keep their close-up of the fighting: a receiving site far behind it, and
+ * the units based there, may lie off that view, since they are picked from
+ * the lists, which bring them into view.
  */
 
 /** The World surface below the Host's 44 px header, for these windows. */
@@ -59,18 +62,41 @@ describe('the map beside the Board', () => {
     expect(shownBesideBoard(camera, size, noMapCover, at(clear.right + 20, size.height / 2))).toBe(true)
   })
 
-  const scenarios = { civil, civilRoles, supplyRun, border, borderHumanRed } as const
-  for (const [name, scenario] of Object.entries(scenarios)) {
-    test(`the ${name} Starting View shows every starting object beside the Board at 1024 × 768 and 960 × 720`, () => {
-      const items: ReadonlyArray<{ readonly label: string; readonly position?: ReadonlyArray<number> }> = scenario.packs[0]!.items
-      const placed = items.flatMap(item => item.position === undefined ? [] : [{ label: item.label, position: [item.position[0]!, item.position[1]!] as const }])
+  interface PlacedItem { readonly label: string; readonly unitType?: string; readonly position?: ReadonlyArray<number> }
+  interface Scenario {
+    readonly packs: ReadonlyArray<{ readonly items: ReadonlyArray<PlacedItem>; readonly config: { readonly unitTypes: ReadonlyArray<{ readonly id: string; readonly components: Readonly<Record<string, unknown>> }> } }>
+    readonly view: { readonly map: { readonly center: ReadonlyArray<number>; readonly zoom: number } }
+  }
+  /** How near a receiving site a unit stands to be based there, in degrees (about 1 km). */
+  const basedAtDeg = 0.01
+  /** A receiving site, and the units standing at one: what a close-up of the fighting may leave off its view. */
+  const atReceivingSite = (scenario: Scenario): ((item: PlacedItem) => boolean) => {
+    const pack = scenario.packs[0]!
+    const receiving = new Set(pack.config.unitTypes.filter(type => type.components['receiving'] !== undefined).map(type => type.id))
+    const sites = pack.items.filter(item => item.unitType !== undefined && receiving.has(item.unitType) && item.position !== undefined)
+    return item => item.position !== undefined && sites.some(site => Math.hypot(site.position![0]! - item.position![0]!, site.position![1]! - item.position![1]!) <= basedAtDeg)
+  }
+  const scenarios: ReadonlyArray<readonly [string, Scenario, ReadonlyArray<string>]> = [
+    ['civil', civil, []],
+    ['civilRoles', civilRoles, []],
+    ['supplyRun', supplyRun, []],
+    ['border', border, ['Kalnes receiving site — exercise', 'H1']],
+    ['borderHumanRed', borderHumanRed, ['Kalnes receiving site — exercise', 'H1']],
+  ]
+  for (const [name, scenario, offView] of scenarios) {
+    test(`the ${name} Starting View shows every starting object beside the Board at 1024 × 768 and 960 × 720${offView.length === 0 ? '' : ', but a distant receiving site and the units based there'}`, () => {
+      const items = scenario.packs[0]!.items
+      const placed = items.flatMap(item => item.position === undefined ? [] : [{ ...item, position: [item.position[0]!, item.position[1]!] as const }])
       expect(placed.length).toBeGreaterThan(0)
+      // Only a receiving site and the units standing at it may be left off, and only where the scenario says so.
+      const distant = atReceivingSite(scenario)
+      expect(offView.every(label => placed.some(item => item.label === label && distant(item)))).toBe(true)
       for (const size of surfaces) {
         const cover = coverAt(size.width)
         const { center, zoom } = scenario.view.map
-        const camera: CameraView = { center: center as unknown as readonly [number, number], zoom: startingZoomFor(zoom, size, cover), bearing: 0 }
+        const camera: CameraView = { center: [center[0]!, center[1]!], zoom: startingZoomFor(zoom, size, cover), bearing: 0 }
         const hidden = placed.filter(item => !shownBesideBoard(camera, size, cover, item.position)).map(item => item.label)
-        expect(hidden).toEqual([])
+        expect(hidden).toEqual([...offView])
       }
     })
   }
