@@ -23,5 +23,8 @@ describe('Leitbild Assistant skills', () => {
     const assistance = store.get('leitbild-assistance')!
     expect(assistance.body).toContain('world.process-plant.control.propose')
     expect(assistance.body).toContain('never say it was done')
+    // Run-26 SME: E-0 concludes its SI decision, and an SI line-up gets a verdict.
+    expect(assistance.body).toContain('conclude "go to ES-0.1"')
+    expect(assistance.body).toContain('readiness verdict')
   })
 })
