@@ -108,6 +108,13 @@ export interface DisplayAnnunciation {
    */
   readonly expected: Readonly<Record<string, { readonly after: string; readonly withinMs: number }>>
   /**
+   * The equipment each alarm or trip annunciates on, by id, as its
+   * annunciator declares it: an alarm that came in with a first-out on the
+   * same equipment is the first-out's own condition, never expected after it
+   * (panel-presenters.ts expectedAfter).
+   */
+  readonly equipment: Readonly<Record<string, string>>
+  /**
    * The energy ends (energyEnds) each group's own actuations command, by the
    * group's name, so its banner label opens them: RX TRIP the core whose rods
    * it inserts, TURB TRIP the turbine. A group that commands none opens
@@ -201,6 +208,7 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
       const commanded = energyEnds(plant.graph).filter(end => commanding.some(action => action.writes.some(write => write.component === end.component.index)))
       return commanded.length === 0 ? [] : [[group.shortLabel, [...new Set(commanded.map(end => String(end.component.id)))]]]
     })),
+    equipment: Object.fromEntries(annunciated.flatMap(({ id, effect }) => effect.annunciator?.equipmentId === undefined ? [] : [[id, effect.annunciator.equipmentId]])),
     expected: Object.fromEntries(annunciated.flatMap(({ id, effect }) => {
       const expected = effect.annunciator?.expectedAfter
       const after = expected === undefined ? undefined : declared.find(group => group.id === expected.firstOutGroup)

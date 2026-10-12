@@ -47,26 +47,28 @@ export const sampledGates = (latest: Pick<ComposedDisplaySample, 'values'> | und
  * The first-out group an alarm came in as the expected consequence of
  * ("RX TRIP"), or null: one its annunciator declares expected after that
  * group's actuation (DisplayAnnunciation.expected), not first out itself,
- * that came in with the group's first-out or after it, within the declared
- * time of it. Steam generator low-low levels from the shrink after a reactor
- * trip read so, and so do the other generators' low-low levels that came in
- * with the one that tripped it (HMI review of run 26c: after a loss of feed,
- * four generators as red as the first-out); the low-low level that tripped
- * the reactor, first out, and anything before the trip never do (HMI review
- * of run 23: all four generators red alike, the initiator not set apart).
- * Such an alarm is shown de-emphasised, never hidden.
+ * that came in after the group's first-out, or with it on other equipment,
+ * within the declared time of it. Steam generator low-low levels from the
+ * shrink after a reactor trip read so, and so do the other generators'
+ * low-low levels that came in with the one that tripped it (HMI review of
+ * run 26c: after a loss of feed, four generators as red as the first-out);
+ * the low-low level that tripped the reactor, its other alarms that came in
+ * with it, and anything before the trip never do (HMI review of run 23: all
+ * four generators red alike, the initiator not set apart). Such an alarm is
+ * shown de-emphasised, never hidden.
  */
 export const expectedAfter = (
   alarm: Pick<ComposedDisplayAlarm, 'id' | 'firstOut' | 'firstActiveElapsedMs'>,
   alarms: ReadonlyArray<Pick<ComposedDisplayAlarm, 'id' | 'firstOut' | 'firstActiveElapsedMs'>>,
-  annunciation: Pick<DisplayAnnunciation, 'expected' | 'groups'>,
+  annunciation: Pick<DisplayAnnunciation, 'expected' | 'groups' | 'equipment'>,
 ): string | null => {
   const expected = annunciation.expected[alarm.id]
   if (expected === undefined || alarm.firstOut || alarm.firstActiveElapsedMs === undefined) return null
   const trigger = alarms.find(candidate => candidate.firstOut && annunciation.groups[candidate.id] === expected.after && candidate.firstActiveElapsedMs !== undefined)
   if (trigger === undefined) return null
   const lag = alarm.firstActiveElapsedMs - trigger.firstActiveElapsedMs!
-  return lag >= 0 && lag <= expected.withinMs ? expected.after : null
+  const own = annunciation.equipment[alarm.id] !== undefined && annunciation.equipment[alarm.id] === annunciation.equipment[trigger.id]
+  return (lag > 0 || (lag === 0 && !own)) && lag <= expected.withinMs ? expected.after : null
 }
 
 /**
@@ -80,7 +82,7 @@ export const expectedAfter = (
 export const expectedOfRule = (
   ruleId: string,
   alarms: ReadonlyArray<Pick<ComposedDisplayAlarm, 'id' | 'ruleId' | 'active' | 'firstOut' | 'firstActiveElapsedMs'>>,
-  annunciation: Pick<DisplayAnnunciation, 'expected' | 'groups'>,
+  annunciation: Pick<DisplayAnnunciation, 'expected' | 'groups' | 'equipment'>,
 ): string | null => {
   const active = alarms.filter(alarm => alarm.active && alarm.ruleId === ruleId)
   const after = new Set(active.map(alarm => expectedAfter(alarm, alarms, annunciation)))

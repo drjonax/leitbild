@@ -961,6 +961,10 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     // The first out stands out; the others, which came in with it, are expected after it, not as red as it.
     const tripC = idOf('trip', 'sg-c-level-low-low-reactor-trip')
     expect(expectedAfter(at(tripC, 93), [...alarms, at(tripC, 93)], annunciation)).toBe('RX TRIP')
+    // The first-out's own condition, on its equipment, that came in with it is never expected after it.
+    const levelLowB = idOf('alarm', 'sg-b-level-low')
+    expect(annunciation.expected[levelLowB]).toBeDefined()
+    expect(expectedAfter(at(levelLowB, 93), [...alarms, at(levelLowB, 93)], annunciation)).toBeNull()
     // A limit's chip is faded only where every active alarm of its rule is so expected.
     const lifecycles = [...alarms, at(tripC, 93)].map(alarm => ({ ...alarm, ruleId: alarm.id.split(':')[1]!, active: true }))
     expect(expectedOfRule('sg-a-level-low-low-afw-actuation', lifecycles, annunciation)).toBe('RX TRIP')
