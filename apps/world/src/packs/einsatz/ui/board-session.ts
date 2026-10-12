@@ -39,8 +39,8 @@ export interface BoardPorts {
   readonly invoke: (capabilityId: EinsatzCommandId, input: unknown) => Promise<CallResult>
   /** Queries `world.einsatz.recommend` for a task as the screen's role set and resolves with the answer as received. */
   readonly recommend: (taskId: string) => Promise<unknown>
-  /** Mirrors the Board's selection on the map. */
-  readonly select: (objectId: ObjectId | null) => void
+  /** Mirrors the Board's selection on the map; `reveal` when the operator picked it from a list, so the map brings it into view. */
+  readonly select: (objectId: ObjectId | null, reveal: boolean) => void
   readonly sound: (tone: 'new-work') => void
   readonly wallMs: () => number
   /** The view changed. */
@@ -116,7 +116,7 @@ export const createBoardSession = (options: {
     switch (effect.kind) {
       case 'invoke': void call(effect); return
       case 'recommend': void ask(effect); return
-      case 'select': ports.select(effect.objectId); return
+      case 'select': ports.select(effect.objectId, effect.reveal); return
       case 'sound': ports.sound(effect.tone); return
     }
   }

@@ -4,17 +4,19 @@ import { borderWith, civilConfig, civilKinds, civilWith, createWall, identifiedT
 import { borderDefinitions, commanderOf } from '../fixtures/border-harness.ts'
 import { at as northEast, blue, red, types as combatTypes } from '../fixtures/combat-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
+import { wordFor } from '../lexicon.ts'
 import { refusalCode } from '../refusal.ts'
 import { boardWords } from './text.ts'
 
 /**
  * Tap safety (A9: no accidental orders), against the real runtime on a
- * running clock: a tap on a Calls row never sends, even with an asset
- * highlighted, so a row that just moved under the finger sends nothing; it
- * selects the call and offers the asset as a button of its own. A target the
- * Board can tell is refused is not sent or offered, and says why; a refusal
- * the engine gives highlights the asset again; a row tap during a
- * confirmation cancels it and then acts.
+ * running clock: a call or a site in the lists takes the highlighted asset
+ * only right after the asset's own tap, and a call row only when it has not
+ * just moved under the finger; otherwise the tap selects the call and offers
+ * the asset as a button of its own, or offers the site. A target the Board
+ * can tell is refused is not sent or offered, and says why; a refusal the
+ * engine gives highlights the asset again; a row tap during a confirmation
+ * cancels it and then acts.
  */
 
 const kinds = civilKinds(civilConfig)
@@ -32,7 +34,7 @@ const accepted = async (run: OpenRun, capabilityId: string, input: unknown): Pro
 }
 
 describe('Board tap safety', () => {
-  test('a Calls row tapped with an asset highlighted sends nothing, even one that just moved under the finger: it selects the call and offers the asset beside the call\'s suggestion', async () => {
+  test('a Calls row tapped right after the asset\'s own row takes the asset as the call on the map does; one that moved under the finger just before sends nothing, but selects the call and offers the asset beside its suggestion', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)), taskAt('t1', 'T1', kinds.templates.load, at(1), { [low]: 1 })], async run => {
       const screen = await openScreen(run, createWall())
       await screen.wait(pastGuardMs)
@@ -44,36 +46,53 @@ describe('Board tap safety', () => {
       await screen.wait(120)
       await screen.click({ kind: 'row', list: 'work', id: 't1' })
       const selected = screen.view().selected
-      expect([screen.calls.length, selected?.kind, selected?.id, screen.view().commit.offer]).toEqual([0, 'task', 't1', `${civilConfig.lexicon.send} U2 here`])
+      expect([screen.calls.length, selected?.kind, selected?.id, screen.view().commit.offer, screen.view().feedback?.text]).toEqual([0, 'task', 't1', `${civilConfig.lexicon.send} U2 here`, 'Not sent: the list changed'])
       // The call's own suggestion stands beside the offer, each its own button.
       expect(screen.view().commit.button).toStartWith(`${civilConfig.lexicon.send} U1 → T1`)
       await screen.wait(pastGuardMs)
       await screen.click({ kind: 'offer' })
       expect(screen.calls.map(call => [call.input, call.result.ok])).toEqual([[{ units: ['u2'], to: { taskId: 't1' } }, true]])
-      // Cancel lets an offer go without sending.
+      // Once the list stands still, the call row right after the asset's own row sends it: 2 taps, and the highlight lets go.
+      await screen.wait(pastGuardMs)
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       await screen.click({ kind: 'row', list: 'work', id: 'task:1' })
-      expect(screen.view().commit.offer).toBe(`${civilConfig.lexicon.send} U1 here`)
-      await screen.click({ kind: 'cancel' })
-      expect([screen.view().commit.offer, screen.view().selected?.id, screen.calls.length]).toEqual([null, 'task:1', 1])
+      expect([screen.calls.at(-1)!.input, screen.calls.at(-1)!.result.ok, screen.view().selected]).toEqual([{ units: ['u1'], to: { taskId: 'task:1' } }, true, null])
     })
   })
 
-  test('an asset tapped onto a report, or onto a call it serves nothing of, is not sent and says why: in Calls the call is selected with no offer, on the map the asset stays highlighted', async () => {
-    const items = [unitAt('u1', 'U1', carrier, at(0)), unitAt('p1', 'P1', pairServer, at(0, 1)), taskAt('r1', 'R1', kinds.templates.report, at(1)), taskAt('t1', 'T1', kinds.templates.load, at(2), { [low]: 1 })]
+  test('an asset tapped onto a report, or onto a call it serves nothing of, is not sent, says why and stays highlighted; a call or a site tapped later in the lists only offers the lingering asset, and Cancel lets the offer go', async () => {
+    const items = [
+      unitAt('u1', 'U1', carrier, at(0)), unitAt('p1', 'P1', pairServer, at(0, 1)), unitAt('h1', 'H1', site, at(1, 1)),
+      taskAt('r1', 'R1', kinds.templates.report, at(1)), taskAt('t1', 'T1', kinds.templates.load, at(2), { [low]: 1 }),
+    ]
     await withScene(items, async run => {
       const screen = await openScreen(run, createWall())
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       await screen.click({ kind: 'row', list: 'work', id: 'r1' })
-      expect([screen.view().feedback?.text, screen.view().selected?.id, screen.view().commit.offer]).toEqual(['R1 is a report: nothing to send', 'r1', null])
+      expect([screen.view().feedback?.text, screen.view().selected]).toEqual(['R1 is a report: nothing to send', { kind: 'unit', id: 'u1' }])
       expect(screen.preview('u1', onObject('r1'))).toEqual({ text: 'R1 is a report: nothing to send', refused: true })
+      // The highlight now lingers: a call tapped in the list is selected, and the asset only offered beside its suggestion.
+      await screen.click({ kind: 'row', list: 'work', id: 't1' })
+      expect([screen.view().selected?.id, screen.view().commit.offer, screen.calls.length]).toEqual(['t1', `${civilConfig.lexicon.send} U1 here`, 0])
+      await screen.click({ kind: 'cancel' })
+      expect([screen.view().commit.offer, screen.view().selected?.id, screen.calls.length]).toEqual([null, 't1', 0])
+      // A site tapped under a lingering highlight is offered as the order it would send; the asset stays highlighted.
+      await screen.click({ kind: 'row', list: 'units', id: 'u1' })
+      await screen.mapTap('r1')
+      await screen.click({ kind: 'site', id: 'h1' })
+      expect([screen.view().commit.state, screen.view().commit.offer, screen.view().selected, screen.calls.length]).toEqual(['asset', `${wordFor(civilConfig.lexicon, 'move')} U1 → H1`, { kind: 'unit', id: 'u1' }, 0])
+      await screen.click({ kind: 'offer' })
+      expect(screen.calls.map(call => [call.input, call.result.ok])).toEqual([[{ units: ['u1'], to: { siteId: 'h1' } }, true]])
+      // P1 serves nothing T1 needs: refused right after its own tap, and a later tap on T1 selects it with no offer, saying why.
       await screen.click({ kind: 'row', list: 'units', id: 'p1' })
+      await screen.click({ kind: 'row', list: 'work', id: 't1' })
+      expect([screen.view().feedback?.text, screen.view().selected]).toEqual(['P1 provides nothing T1 needs', { kind: 'unit', id: 'p1' }])
       await screen.click({ kind: 'row', list: 'work', id: 't1' })
       expect([screen.view().feedback?.text, screen.view().selected?.id, screen.view().commit.offer]).toEqual(['P1 provides nothing T1 needs', 't1', null])
       await screen.click({ kind: 'row', list: 'units', id: 'p1' })
       await screen.mapTap('t1')
       expect([screen.view().feedback?.text, screen.view().selected, screen.mapSelection()]).toEqual(['P1 provides nothing T1 needs', { kind: 'unit', id: 'p1' }, 'p1'])
-      expect(screen.calls).toHaveLength(0)
+      expect(screen.calls).toHaveLength(1)
     })
   })
 
@@ -93,6 +112,31 @@ describe('Board tap safety', () => {
       if (refused.ok) throw new Error('expected a refusal')
       expect(refusalCode(refused.reason)).toBe('unit_committed')
       expect([mine.view().feedback?.tone, mine.view().selected, mine.mapSelection()]).toEqual(['refused', { kind: 'unit', id: 'u1' }, 'u1'])
+      // Highlighted again by the Board, not picked from a list: the camera stays.
+      expect(mine.revealed()).toEqual(['u1'])
+    })
+  })
+
+  test('the offer waits out the guard as the commit button does: an offer whose order changes under the finger is disabled and refused for 500 ms', async () => {
+    const items = [unitAt('u1', 'U1', carrier, at(0)), taskAt('r1', 'R1', kinds.templates.report, at(1)), taskAt('t1', 'T1', kinds.templates.load, at(2), { [top]: 1 }), taskAt('far', 'FAR', kinds.templates.load, at(30), { [low]: 1 })]
+    await withScene(items, async run => {
+      const screen = await openScreen(run, createWall())
+      await screen.click({ kind: 'row', list: 'units', id: 'u1' })
+      // Refused on the map: the highlight lingers, so T1 in the list only offers U1.
+      await screen.mapTap('r1')
+      await screen.click({ kind: 'row', list: 'work', id: 't1' })
+      expect(screen.view().commit.offer).toBe(`${civilConfig.lexicon.send} U1 here`)
+      // Another dispatcher sends U1 elsewhere: under the finger the offer turns into a divert.
+      await accepted(run, ids.send, { units: ['u1'], to: { taskId: 'far' } })
+      await screen.sync()
+      expect([screen.view().commit.offer, screen.view().commit.enabled]).toEqual(['Divert U1 here', false])
+      await screen.click({ kind: 'offer' })
+      expect([screen.calls.length, screen.view().feedback?.text]).toEqual([0, 'Not sent: the list changed · Confirm next: T1'])
+      await screen.wait(pastGuardMs)
+      expect(screen.view().commit.enabled).toBe(true)
+      await screen.click({ kind: 'offer' })
+      // U1 now holds a call: doing this now diverts it, so it asks first.
+      expect([screen.view().commit.state, screen.calls.length]).toEqual(['choice', 0])
     })
   })
 
@@ -108,7 +152,6 @@ describe('Board tap safety', () => {
       expect([screen.view().commit.state, screen.view().selected?.id, screen.view().feedback?.text]).toEqual(['none', 'low', 'Cancelled'])
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       await screen.click({ kind: 'row', list: 'work', id: 'top' })
-      await screen.click({ kind: 'offer' })
       expect(screen.view().commit.state).toBe('choice')
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       expect([screen.view().commit.state, screen.view().selected, screen.view().feedback?.text]).toEqual(['asset', { kind: 'unit', id: 'u1' }, 'Cancelled'])
@@ -118,6 +161,23 @@ describe('Board tap safety', () => {
 })
 
 describe('Board verbs and Undo say only what they do', () => {
+  test('Cancel on a "Move here", or on a move armed by M, lets the asset go as the verbs do: the next tap on open ground brings back no bubble', async () => {
+    await withScene([unitAt('u1', 'U1', carrier, at(0))], async run => {
+      const screen = await openScreen(run, createWall())
+      await screen.mapTap('u1')
+      await screen.groundTap(at(1, 1))
+      expect(screen.view().mapPrompt?.unitId).toBe('u1')
+      await screen.click({ kind: 'cancel' })
+      expect([screen.view().feedback?.text, screen.view().selected, screen.mapSelection(), screen.view().mapPrompt]).toEqual(['Move cancelled', null, null, null])
+      await screen.groundTap(at(1, 2))
+      expect([screen.view().mapPrompt, screen.calls]).toEqual([null, []])
+      await screen.mapTap('u1')
+      await screen.key('m')
+      await screen.key('Escape')
+      expect([screen.view().feedback?.text, screen.view().selected]).toEqual(['Move cancelled', null])
+    })
+  })
+
   test('Stop is offered for every asset and Resume once it is paused; Clear while it holds steps; recall always; each lets the highlight go', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 })], async run => {
       await accepted(run, ids.send, { units: ['u2'], to: { taskId: 't1' } })

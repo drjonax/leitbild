@@ -3,7 +3,7 @@ import { queueCall, releaseText, sendFromMap, stepText, type CallDraft, type Sen
 import { candidateIn } from './recommendations.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
 import { observingSide } from './contacts.ts'
-import { hasLoad, holdsWork, notOrderedText, type BoardRules, type DeclaredRole } from './rules.ts'
+import { hasLoad, holdsWork, notOrderedText, usableSite, type BoardRules, type DeclaredRole } from './rules.ts'
 import { classCode, etaText, loadText, namedOnce, unitWord, word } from './text.ts'
 import type { MapTarget, TargetPreview } from './types.ts'
 
@@ -84,8 +84,11 @@ export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarg
   }
   const other = shown.units.get(target.objectId)
   if (other === undefined) return { kind: 'elsewhere', text: `Not a target for ${unit.label}` }
-  // A unit that does not move is a site: a receiving one takes deliveries, any other is a place to go to.
-  if (other.id !== unit.id && rules.typeOf(other).components.mobility === undefined) return order({ siteId: other.id })
+  // A unit that does not move is a site: a receiving one takes deliveries, any other is a place to go to; another side's only where it is public.
+  if (other.id !== unit.id && rules.typeOf(other).components.mobility === undefined) {
+    if (!usableSite(rules, unit, other)) return refused(`${unit.label} cannot use another side's ${other.label}`)
+    return order({ siteId: other.id })
+  }
   if (rules.typeOf(other).components.mobility !== undefined && !rules.ordersOnMap(other)) return refused(notOrderedText(rules, context.declaredRoles, other))
   return refused(`${other.label} is not a target for ${unit.label}`)
 }

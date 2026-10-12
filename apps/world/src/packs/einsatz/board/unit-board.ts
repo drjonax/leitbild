@@ -2,7 +2,7 @@ import { roeWords, wordFor } from '../lexicon.ts'
 import { maxSteps } from '../steps.ts'
 import { stepText } from './calls.ts'
 import type { BoardRecords, BoardUnit } from './records.ts'
-import { hasLoad, isFree, type BoardRules } from './rules.ts'
+import { hasLoad, isFree, usableSite, type BoardRules } from './rules.ts'
 import { boardWords, clockText, loadText, propertyText, unitWord, word } from './text.ts'
 import type { ChainStepRow, SiteRow, UnitRow } from './types.ts'
 
@@ -17,10 +17,17 @@ export const boardUnits = (rules: BoardRules, records: BoardRecords): ReadonlyAr
     .filter(unit => rules.commands(unit) && rules.typeOf(unit).components.mobility !== undefined)
     .sort((a, b) => Number(isFree(b)) - Number(isFree(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 
-/** The places a unit can be sent to: the living units in the picture that do not move, in id order. */
-export const boardSites = (rules: BoardRules, records: BoardRecords): ReadonlyArray<BoardUnit> =>
+/**
+ * The places the screen's assets can be sent to, in id order: the living
+ * units in the picture that do not move, and of those another side's only
+ * where its type is public, as the engine allows (`linksToSite`). A site no
+ * asset of the screen could use, such as another side's post in open mode
+ * or for the Controller, is left out.
+ */
+export const boardSites = (rules: BoardRules, records: BoardRecords, assets: ReadonlyArray<BoardUnit>): ReadonlyArray<BoardUnit> =>
   [...records.units.values()]
     .filter(unit => rules.typeOf(unit).components.mobility === undefined && unit.integrity !== 'destroyed')
+    .filter(site => assets.some(asset => usableSite(rules, asset, site)))
     .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
 export const siteRow = (rules: BoardRules, unit: BoardUnit): SiteRow => {

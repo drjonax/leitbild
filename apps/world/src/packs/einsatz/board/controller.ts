@@ -26,32 +26,41 @@ import { completeSeconds, couldBecomeEligible, isFreeIn, isUnserved, noRecommend
  *
  * Touch first (A9): a tap on an own asset highlights it, a second tap clears
  * it, a tap on another switches it. With an asset highlighted, a tap on a
- * target sends it: a call (map or Calls row), a site, an enemy track (an
- * armed asset engages it), or open ground, which first asks "Move here" at
- * the point. A free asset goes at once; a busy one (a task, load or
- * job-chain steps) asks "Do now" or "Add to end". An asset row's + makes
- * the next target tap join the end of its job chain; the highlighted row's × removes a step (the active step of a
- * committed unit asks first, since it releases the call), and its verbs
- * stop, resume, clear or recall it; each of these lets the highlight go, so
- * the next tap on a call selects it. A send or an added step can be undone
- * for 8 s, by removing the step it created, where that gives the unit back
- * as it stood (`undoRestores`); an undo puts things back quietly, raising no
- * release alert. A tap on a call in the list never sends by itself: it
- * selects the call and the action bar offers its proposal as one button, its
- * alternatives one tap each, and, while an asset was highlighted, "Send
- * <asset> here" as a button of its own; a proposed unit holding job-chain
- * steps asks "Do now" or "Add to end" there too, and one of a group the
- * screen chose not to see is named with its group. Closing a call is a verb
- * apart from the commit button and asks to confirm while the call is still
- * unserved. A new action clears the feedback line of the last one's words.
- * Keys stay as hidden desktop accelerators.
+ * target sends it: a call, a site, an enemy track (an armed asset engages
+ * it), or open ground, which first asks "Move here" at the point. A free
+ * asset goes at once; a busy one (a task, load or job-chain steps) asks "Do
+ * now" or "Add to end". An asset row's + makes the next target tap join the
+ * end of its job chain; the highlighted row's × removes a step (the active
+ * step of a committed unit asks first, since it releases the call), and its
+ * verbs stop, resume, clear or recall it; each of these, and a cancelled
+ * move, lets the highlight go. A send or an added step can be undone for
+ * 8 s, by removing the step it created, where that gives the unit back as
+ * it stood (`undoRestores`); an undo puts things back quietly, raising no
+ * release alert.
+ *
+ * In the lists, a call or a site takes the highlighted asset as on the map
+ * only when the asset's own tap, or its +, was the operator's tap just
+ * before, and a call row only while it has not just moved under the
+ * finger: asset first stays 2 taps. A highlight that lingers from earlier
+ * (a refusal, a cancelled choice, a Move here let go) sends nothing: a call
+ * tapped then is selected and the action bar offers its proposal as one
+ * button, its alternatives one tap each, and the asset as a button of its
+ * own; a site tapped then is offered as a button of its own. A proposed unit
+ * holding job-chain steps asks "Do now" or "Add to end" there too, and one
+ * of a group the screen chose not to see is named with its group. Closing a
+ * call is a verb apart from the commit button and asks to confirm while the
+ * call is still unserved. A new action clears the feedback line of the last
+ * one's words. Keys stay as hidden desktop accelerators.
  *
  * - What is shown is exactly what commits: the action bar and the call it
  *   sends are built from the same draft.
  * - Recommendations are asked for the selected row and the top unserved rows
  *   and kept stable (`recommendations.ts`).
- * - The guard: when the selected row's commitment changes without operator
- *   input, commits are refused for 500 ms; navigation ends it.
+ * - The guard: when the selected row's commitment or the offered asset's
+ *   order changes without operator input, commits and the offer are refused
+ *   for 500 ms; navigation ends it. A Calls row that moved in the list
+ *   within that time takes no asset tapped onto it: the tap may have been
+ *   aimed at the row that was there before.
  * - A call stays locked from sending until the Run shows it: a task with a
  *   call on its way, or accepted but not yet shown, takes no second commit.
  * - After an own commit from Calls, once the Run shows it, the selection
@@ -156,11 +165,16 @@ export const createBoardController = (options: {
   /** The asset whose + was tapped: its next target tap joins the end of its chain. */
   let adding: string | null = null
   /**
-   * The asset highlighted when the operator tapped the selected call in the
-   * list: the action bar offers to send it there, or, after its +, to add the
-   * call to the end of its chain.
+   * The asset highlighted from earlier when the operator tapped a call or a
+   * site in the lists: the action bar offers to send it to the selected call,
+   * or to the site (`siteId`) while it stays highlighted, or, after its +, to
+   * add the target to the end of its chain.
    */
-  let offered: { readonly unitId: string; readonly queue: boolean } | null = null
+  let offered: { readonly unitId: string; readonly queue: boolean; readonly siteId: string | null } | null = null
+  /** Operator taps so far: clicks, keys the Board handles, and taps on the map. */
+  let taps = 0
+  /** The asset the operator's tap highlighted or armed with its +, and that tap's number: a call or a site the next tap names in the lists takes it. */
+  let highlightTap: { readonly unitId: string; readonly tap: number } | null = null
   let guardUntilMs = Number.NEGATIVE_INFINITY
   /** Sent, with no result yet. */
   const inFlight = new Map<string, Call>()
@@ -182,6 +196,10 @@ export const createBoardController = (options: {
   /** The Board's own `select` effects the map has not echoed yet, oldest first, with the wall time each was made. */
   let echoes: Array<{ readonly objectId: string | null; readonly wallMs: number }> = []
 
+  /** Each Calls row's place in the list, and the wall time it last took a new place without operator input. */
+  let rowPlaces = new Map<string, number>()
+  const movedAtMs = new Map<string, number>()
+
   let entriesOf: { readonly records: BoardRecords; readonly entries: ReadonlyArray<WorkEntry> } | null = null
   const entries = (): ReadonlyArray<WorkEntry> => {
     if (records === null) return []
@@ -192,8 +210,8 @@ export const createBoardController = (options: {
   let seen: ReadonlyArray<string> | null = null
   /** Assets: the units the screen commands that can move, but those of groups it chose not to see. */
   const units = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardUnits(rules, records).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
-  /** The sites listed under Assets, but those of groups the screen chose not to see. */
-  const sites = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardSites(rules, records).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
+  /** The sites listed under Assets: places the screen's assets can be sent to, but those of groups it chose not to see. */
+  const sites = (): ReadonlyArray<BoardUnit> => records === null ? [] : boardSites(rules, records, units()).filter(unit => !groupUnseen(unit.group, seen ?? undefined))
   /** A unit's label, naming its group when the screen chose not to see that group: Calls may still offer it, drawn nowhere else. */
   const shownLabel = (unitId: string, label: string): string => {
     const group = records?.units.get(unitId)?.group
@@ -215,6 +233,14 @@ export const createBoardController = (options: {
   const startAction = (): void => { feedback = null }
   const guardActive = (): boolean => wallMs < guardUntilMs
   const armGuard = (): void => { guardUntilMs = wallMs + guardMs }
+  /** An operator's tap begins. */
+  const tapped = (): void => { taps += 1 }
+  /** Whether the operator's tap just before this one highlighted the asset, or armed it with its +. */
+  const highlightedJustNow = (unitId: string): boolean => highlightTap !== null && highlightTap.unitId === unitId && highlightTap.tap === taps - 1
+  /** This tap highlighted the asset, or armed it with its +. */
+  const markHighlight = (unitId: string): void => { highlightTap = { unitId, tap: taps } }
+  /** Whether the Calls row moved in the list without operator input just now, so a tap on it may have been aimed at the row before. */
+  const rowMoved = (taskId: string): boolean => wallMs - (movedAtMs.get(taskId) ?? Number.NEGATIVE_INFINITY) < guardMs
 
   const selectedTask = (): BoardTask | undefined => {
     if (selection?.kind !== 'task' || records === null) return undefined
@@ -239,8 +265,12 @@ export const createBoardController = (options: {
     numbering = { taskId: task.id, entries: [...kept, ...offered.filter(entry => !numbered.has(entry.unitId))].slice(0, alternativesShown) }
   }
 
-  /** Selects a row; `mirror` tells the map. Numbering and a chosen alternative belong to the selected row. */
-  const select = (next: Selection | null, mirror: boolean): void => {
+  /**
+   * Selects a row; `mirror` tells the map, and `reveal`, for a row the
+   * operator picked from a list, asks it to bring the object into view.
+   * Numbering and a chosen alternative belong to the selected row.
+   */
+  const select = (next: Selection | null, mirror: boolean, reveal = false): void => {
     const same = next !== null && selection?.kind === next.kind && selection.id === next.id
     selection = next
     chosen = null
@@ -251,7 +281,7 @@ export const createBoardController = (options: {
     updateNumbering()
     if (mirror && !same) {
       const objectId = (next?.id ?? null) as ObjectId | null
-      effects.push({ kind: 'select', objectId })
+      effects.push({ kind: 'select', objectId, reveal: reveal && objectId !== null })
       echoes.push({ objectId, wallMs })
     }
   }
@@ -327,12 +357,17 @@ export const createBoardController = (options: {
     return { kind: 'none', state: 'none', text: `Tap a row in ${word(rules, 'workList')} or ${word(rules, 'unitBoard')}` }
   }
 
-  /** What a commit would send now; null when nothing can be committed. */
+  /** What a commit or the offer would send now; null when nothing can be sent. */
   const commitmentKey = (): string | null => {
     if (confirmation !== null) return `confirm ${callKey(confirmation.call)}`
     if (busy()) return null
     const current = commitment()
-    return current.kind === 'call' ? callKey(current.call) : null
+    const offer = offerOrder()
+    const parts = [
+      current.kind === 'call' ? callKey(current.call) : null,
+      offer === null ? null : `offer ${callKey(offered?.queue === true ? offer.queue : offer.call)}`,
+    ].filter(part => part !== null)
+    return parts.length === 0 ? null : parts.join(' · ')
   }
 
   const send = (call: CallDraft, undoable: boolean, rehighlight: string | null = null): void => {
@@ -417,14 +452,14 @@ export const createBoardController = (options: {
     if (list.length === 0) return info(word(rules, focus === 'work' ? 'noWork' : 'noUnits'))
     const index = list.findIndex(entry => entry.kind === selection?.kind && entry.id === selection.id)
     const next = index < 0 ? (delta > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, index + delta))
-    select(list[next]!, true)
+    select(list[next]!, true, true)
   }
 
   const urgent = (): void => {
     focus = 'work'
     const first = entries().find(isUnserved)
     if (first === undefined) return info(word(rules, 'noWork'))
-    select({ kind: 'task', id: first.task.id, byOperator: true }, true)
+    select({ kind: 'task', id: first.task.id, byOperator: true }, true, true)
   }
 
   /** Switches the focused list; Assets opens on a unit of the selected task, Calls on its first row. */
@@ -434,13 +469,13 @@ export const createBoardController = (options: {
       if (selection?.kind === 'unit') return
       const task = selectedTask()
       const related = units().find(unit => task !== undefined && unit.taskId === task.id) ?? units()[0]
-      if (related !== undefined) select({ kind: 'unit', id: related.id, byOperator: true }, true)
+      if (related !== undefined) select({ kind: 'unit', id: related.id, byOperator: true }, true, true)
       return
     }
     focus = 'work'
     if (selection?.kind === 'task') return
     const first = entries()[0]
-    if (first !== undefined) select({ kind: 'task', id: first.task.id, byOperator: true }, true)
+    if (first !== undefined) select({ kind: 'task', id: first.task.id, byOperator: true }, true, true)
   }
 
   /** Chooses a numbered alternative of the selected call; one no longer offered says why, naming its unit once. */
@@ -471,12 +506,13 @@ export const createBoardController = (options: {
     if (selection?.kind === 'unit' && selection.id === unitId) select(null, true)
   }
 
-  /** Highlights an asset, or clears the highlight when it is the highlighted one. */
-  const toggleAsset = (unitId: string, mirror: boolean): void => {
+  /** Highlights an asset, or clears the highlight when it is the highlighted one; `reveal` for a tap on its row. */
+  const toggleAsset = (unitId: string, mirror: boolean, reveal: boolean): void => {
     navigate()
     focus = 'units'
     if (selection?.kind === 'unit' && selection.id === unitId) return select(null, true)
-    select({ kind: 'unit', id: unitId, byOperator: true }, mirror)
+    select({ kind: 'unit', id: unitId, byOperator: true }, mirror, reveal)
+    markHighlight(unitId)
   }
 
   const unitVerb = (verb: UnitVerb): void => {
@@ -491,6 +527,7 @@ export const createBoardController = (options: {
     if (verb === 'add') {
       pendingMove = null
       adding = unit.id
+      markHighlight(unit.id)
       return info(`Tap a target to add to ${unit.label}`)
     }
     // A second press while a call naming the unit is on its way sends nothing: the line keeps showing that call.
@@ -553,8 +590,11 @@ export const createBoardController = (options: {
       return info('Cancelled')
     }
     if (armedMove !== null || pendingMove !== null) {
+      // A cancelled move lets its asset go, as the verbs do: the next tap on open ground brings back no "Move here".
+      const unitId = pendingMove?.unitId ?? armedMove!
       armedMove = null
       pendingMove = null
+      letGo(unitId)
       return info('Move cancelled')
     }
     if (adding !== null) {
@@ -630,7 +670,7 @@ export const createBoardController = (options: {
   /** A target tap for a highlighted asset, on the map or in Calls. A tap on open ground asks "Move here" first, unless M armed the move. */
   const targetTap = (unitId: string, target: MapTarget): void => {
     if (confirmFirst()) return
-    if (target.kind === 'object' && target.objectId === unitId) return toggleAsset(unitId, true)
+    if (target.kind === 'object' && target.objectId === unitId) return toggleAsset(unitId, true, false)
     const order = mapOrder(unitId, target)
     if (order.kind !== 'order') return info(order.text)
     // What the Board can tell is refused is not sent: the tap says why, and the asset stays highlighted.
@@ -699,31 +739,35 @@ export const createBoardController = (options: {
   }
 
   /**
-   * A call tapped in the list while an asset is highlighted: the call is
-   * selected like any other, and the asset is offered as a button of its own
-   * beside the call's suggestion, never sent by the tap itself. An asset the
-   * Board can tell is refused is not offered; the line says why.
+   * A call or a site tapped in the lists while an asset highlighted from
+   * earlier stands: the asset is offered as a button of its own, beside the
+   * selected call's suggestion or for the site, never sent by the tap
+   * itself. An asset the Board can tell is refused is not offered; the line
+   * says why.
    */
-  const offerAsset = (unitId: string, taskId: string, queue: boolean): void => {
-    const order = mapOrder(unitId, { kind: 'object', objectId: taskId as ObjectId })
+  const offerAsset = (unitId: string, to: { readonly taskId: string } | { readonly siteId: string }, queue: boolean): void => {
+    const order = mapOrder(unitId, { kind: 'object', objectId: ('taskId' in to ? to.taskId : to.siteId) as ObjectId })
     if (order.kind !== 'order') return info(order.text)
     const refusal = refusalOf(order)
     if (refusal !== null) return info(refusal)
-    offered = { unitId, queue }
+    offered = { unitId, queue, siteId: 'siteId' in to ? to.siteId : null }
   }
 
-  /** The offered asset's order for the selected call; null when either is gone. */
+  /** The offered asset's order: for the selected call, or for its site while the asset stays highlighted; null when any of them is gone. */
   const offerOrder = (): Extract<MapOrder, { kind: 'order' }> | null => {
-    const task = selectedTask()
     const unit = offered === null ? undefined : records?.units.get(offered.unitId)
-    if (task === undefined || unit === undefined || !units().includes(unit)) return null
-    const order = mapOrder(unit.id, { kind: 'object', objectId: task.id as ObjectId })
+    if (offered === null || unit === undefined || !units().includes(unit)) return null
+    const site = offered.siteId === null ? undefined : records?.units.get(offered.siteId)
+    const target = offered.siteId === null ? selectedTask() : selectedUnit() === unit && site !== undefined && sites().includes(site) ? site : undefined
+    if (target === undefined) return null
+    const order = mapOrder(unit.id, { kind: 'object', objectId: target.id as ObjectId })
     return order.kind === 'order' && refusalOf(order) === null ? order : null
   }
 
-  /** The offer's button: the asset sent to the selected call, or added to the end of its chain, as a tap on the call on the map does. */
+  /** The offer's button: the asset sent to the selected call or the site, or added to the end of its chain, as a tap on the target on the map does. Like the big button, it waits out a guard. */
   const sendOffered = (): void => {
     if (confirmFirst()) return
+    if (guardActive()) return guardRefusal('Not sent: the list changed')
     const order = offerOrder()
     const queue = offered?.queue === true
     offered = null
@@ -734,6 +778,7 @@ export const createBoardController = (options: {
   }
 
   const click = (target: ClickTarget): void => {
+    tapped()
     if (target.kind !== 'enable-sound') startAction()
     switch (target.kind) {
       case 'row': {
@@ -742,13 +787,17 @@ export const createBoardController = (options: {
           confirmation = null
           info('Cancelled')
         }
-        if (target.list === 'units') return toggleAsset(target.id, true)
+        if (target.list === 'units') return toggleAsset(target.id, true, true)
         const asset = selectedUnit()
+        // Right after the asset's own tap or its +, the call takes it as on the map, unless the row just moved under the finger.
+        if (asset !== undefined && highlightedJustNow(asset.id) && !rowMoved(target.id)) return targetTap(asset.id, { kind: 'object', objectId: target.id as ObjectId })
         const queue = asset !== undefined && adding === asset.id
         navigate()
         focus = 'work'
-        select({ kind: 'task', id: target.id, byOperator: true }, true)
-        if (asset !== undefined) offerAsset(asset.id, target.id, queue)
+        select({ kind: 'task', id: target.id, byOperator: true }, true, true)
+        if (asset === undefined) return
+        if (highlightedJustNow(asset.id)) info('Not sent: the list changed')
+        offerAsset(asset.id, { taskId: target.id }, queue)
         return
       }
       case 'offer': return sendOffered()
@@ -765,12 +814,15 @@ export const createBoardController = (options: {
       case 'cancel': return cancel()
       case 'remove-step': return removeStep(target.unitId, target.stepId)
       case 'site': {
-        // A site under Assets is a target for the highlighted asset, as on the map; with none, it says to tap one first.
+        // A site under Assets takes the asset highlighted just before as on the map; one highlighted from earlier is offered; with none, it says to tap one first.
         const site = records?.units.get(target.id)
         if (site === undefined || !sites().includes(site)) return info('Not in your picture')
         const asset = selectedUnit()
         if (asset === undefined) return info(`Tap one of ${word(rules, 'unitBoard')} first, then ${site.label}`)
-        return targetTap(asset.id, { kind: 'object', objectId: site.id as ObjectId })
+        if (highlightedJustNow(asset.id)) return targetTap(asset.id, { kind: 'object', objectId: site.id as ObjectId })
+        const queue = adding === asset.id
+        navigate()
+        return offerAsset(asset.id, { siteId: site.id }, queue)
       }
       case 'verb':
         if (confirmFirst()) return
@@ -782,11 +834,11 @@ export const createBoardController = (options: {
         navigate()
         if (target.verb === 'close') {
           focus = 'work'
-          select({ kind: 'task', id: target.id, byOperator: true }, true)
+          select({ kind: 'task', id: target.id, byOperator: true }, true, true)
           return closeSelected()
         }
         focus = 'units'
-        select({ kind: 'unit', id: target.id, byOperator: true }, true)
+        select({ kind: 'unit', id: target.id, byOperator: true }, true, true)
         return unitVerb(target.verb)
       case 'enable-sound':
         soundOn = true
@@ -809,6 +861,7 @@ export const createBoardController = (options: {
     }
     echoes = []
     if (objectId === (selection?.id ?? null)) return
+    tapped()
     startAction()
     if (confirmFirst()) return
     navigate()
@@ -816,7 +869,8 @@ export const createBoardController = (options: {
     const task = objectId === null ? undefined : records?.tasks.get(objectId)
     if (unit !== undefined && units().includes(unit)) {
       focus = 'units'
-      return select({ kind: 'unit', id: unit.id, byOperator: true }, false)
+      select({ kind: 'unit', id: unit.id, byOperator: true }, false)
+      return markHighlight(unit.id)
     }
     if (task !== undefined && task.closedAtMs === undefined && rules.queues(task)) {
       focus = 'work'
@@ -878,6 +932,11 @@ export const createBoardController = (options: {
       if (queuedWork && soundOn) effects.push({ kind: 'sound', tone: 'new-work' })
     }
     records = next
+    // Rows that took a new place, or are new, since the last snapshot; the first one sets the places.
+    const places = new Map(entries().map((entry, index) => [entry.task.id, index]))
+    if (previous !== null) for (const [id, place] of places) if (rowPlaces.get(id) !== place) movedAtMs.set(id, wallMs)
+    for (const id of movedAtMs.keys()) if (!places.has(id)) movedAtMs.delete(id)
+    rowPlaces = places
     for (const id of freshUntil.keys()) {
       const task = next.tasks.get(id)
       if (task === undefined || task.closedAtMs !== undefined) freshUntil.delete(id)
@@ -941,12 +1000,14 @@ export const createBoardController = (options: {
         if (!keysActive) return
         const intent = intentOf(event.key, event.shift)
         if (intent === undefined) return
+        tapped()
         startAction()
         return act(intent)
       }
       case 'click': return click(event.target)
       case 'selection': return mapSelect(event.objectId)
       case 'map-target':
+        tapped()
         startAction()
         return targetTap(event.controllerId, event.target)
       case 'focus': {
@@ -1032,23 +1093,25 @@ export const createBoardController = (options: {
       return prompt === null ? bar({ state: 'none', text: boardWords.nothingToSend }) : bar({ state: 'move', text: prompt.label, button: prompt.label, enabled: true, cancel: boardWords.cancel })
     }
     const asset = selectedUnit()
+    const offerOf = offerOrder()
     if (asset !== undefined) {
       const text = armedMove === asset.id
         ? `Tap the map to move ${asset.label}`
         : adding === asset.id ? `${boardWords.addToEnd}: tap a call, a site or the map for ${asset.label}` : `${asset.label} · tap a call, a site or the map`
-      return bar({ state: 'asset', text, verbs: assetVerbs(asset), enabled: true, cancel: boardWords.cancel })
+      // A site offered for the asset: the order as it would read, to do now or to add to the end.
+      const offer = offerOf === null ? null : offered?.queue === true ? offerOf.queue.text : offerOf.call.text
+      return bar({ state: 'asset', text, offer, verbs: assetVerbs(asset), enabled: !guarded, hint: offer === null ? null : hint, cancel: boardWords.cancel })
     }
     const task = selectedTask()
     const lock = task === undefined ? undefined : lockOf(task.id)
     if (lock !== undefined) return bar({ state: 'sending', text: callLine(lock).text })
     const current = commitment()
     const close: CommitElement['close'] = task === undefined || rules.isReport(task) ? null : { label: word(rules, 'close'), id: task.id }
-    const offerOf = offerOrder()
     const offer = offerOf === null ? null
       : offered?.queue === true ? `${boardWords.addToEnd}: ${offerOf.unit.label} here`
       : `${offerOf.unit.taskId === undefined ? word(rules, 'send') : boardWords.divert} ${offerOf.unit.label} here`
     const cancelable = chosen !== null || armedMove !== null || offer !== null ? boardWords.cancel : null
-    if (current.kind === 'none') return bar({ state: current.state, text: current.text, offer, close, enabled: offer !== null, cancel: cancelable })
+    if (current.kind === 'none') return bar({ state: current.state, text: current.text, offer, close, enabled: offer !== null && !guarded, hint: offer === null ? null : hint, cancel: cancelable })
     const text = `${current.call.text}${current.etaText === null ? '' : ` · ${current.etaText}`}`
     return bar({ state: 'ready', text, button: text, offer, close, enabled: !guarded, hint, cancel: cancelable })
   }

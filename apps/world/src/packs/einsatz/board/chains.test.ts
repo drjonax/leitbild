@@ -119,7 +119,6 @@ describe('Board job chains', () => {
       const screen = await openScreen(run, createWall())
       await screen.click({ kind: 'row', list: 'units', id: 'c1' })
       await screen.click({ kind: 'row', list: 'work', id: 'k1' })
-      await screen.click({ kind: 'offer' })
       await screen.click({ kind: 'verb', verb: 'add', id: 'c1' })
       await screen.mapTap('far')
       expect(screen.calls.map(call => [call.capabilityId, call.input, call.result.ok])).toEqual([
@@ -133,7 +132,7 @@ describe('Board job chains', () => {
     })
   })
 
-  test('supply-run: a place from the sites under Assets, then two requests from Calls, by taps, served in that order', async () => {
+  test('supply-run: a place from the sites under Assets, then two requests from Calls, by taps, 2 each, served in that order', async () => {
     const run = await openRun({ definition: supplyRun })
     try {
       // Past the cues that add the heavier vehicle and the second request.
@@ -153,10 +152,9 @@ describe('Board job chains', () => {
       await screen.click({ kind: 'row', list: 'units', id: heavier.id })
       await screen.click({ kind: 'site', id: place.id })
       for (const request of [first, second]) {
+        // The + right before makes the call row add it to the end of the chain.
         await screen.click({ kind: 'verb', verb: 'add', id: heavier.id })
         await screen.click({ kind: 'row', list: 'work', id: request.id })
-        expect(screen.view().commit.offer).toBe(`${boardWords.addToEnd}: ${heavier.label} here`)
-        await screen.click({ kind: 'offer' })
       }
       expect(screen.calls.map(call => [call.capabilityId, call.input, call.result.ok])).toEqual([
         [ids.send, { units: [heavier.id], to: { siteId: place.id } }, true],

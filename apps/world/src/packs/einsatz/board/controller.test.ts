@@ -531,7 +531,7 @@ describe('Board recommendation stability, selection and wording', () => {
       const asked = screen.raw({ kind: 'snapshot', objects: run.run.snapshot().objects, currentTime: isoAt(run.nowMs()) })
       expect(asked).toEqual([{ kind: 'recommend', taskId: 'task:1', key: expect.any(String) }])
       const selected = screen.raw({ kind: 'key', key: 'n', code: 'KeyN', shift: false })
-      expect(selected).toEqual([{ kind: 'select', objectId: 'task:1' as ObjectId }])
+      expect(selected).toEqual([{ kind: 'select', objectId: 'task:1' as ObjectId, reveal: true }])
       expect(screen.view().commit).toMatchObject({ state: 'preparing', text: 'Preparing…', enabled: false })
       expect(invokes(screen.raw({ kind: 'key', key: 'Enter', code: 'Enter', shift: false }))).toEqual([])
       expect(screen.view().feedback?.text).toBe('Preparing…')

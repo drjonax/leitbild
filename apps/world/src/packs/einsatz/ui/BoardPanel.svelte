@@ -30,9 +30,10 @@
    * after every event, and every word it shows is the view's, or before a
    * configuration is there, the Board's mechanism words. It lies over the
    * map's right edge, narrow enough to leave the map clear, and pads the map
-   * camera by its observed width. A call or asset it selects from its lists
-   * that the map shows only under the Board, or not at all, is brought into
-   * view beside it.
+   * camera by its observed width. A call or asset the operator picks from its
+   * lists that the map shows only under the Board, or not at all, is brought
+   * into view beside it; a selection the Board makes itself, such as the
+   * next call after a commit, moves no camera.
    *
    * Touch first: the action bar on top says what the next tap sends; the
    * status line below it carries the result, Undo and sound; Calls and Assets
@@ -71,10 +72,10 @@
   const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
   /**
-   * Pans the map to an object the Board selected from its lists when the map
-   * shows it only under the Board or the bars, or not at all. Before the map
-   * reports its first view, or for an object without a position, there is
-   * nothing to place it by.
+   * Pans the map to an object the operator picked from the Board's lists when
+   * the map shows it only under the Board or the bars, or not at all. Before
+   * the map reports its first view, or for an object without a position,
+   * there is nothing to place it by.
    */
   const revealOnMap = (objectId: ObjectId | null): void => {
     const view = props.mapView
@@ -148,9 +149,9 @@
         ports: {
           invoke: async (capabilityId, input) => await invokeBoardCommand(simulationRunId, capabilityId, input),
           recommend: async taskId => await queryBoardRecommendation(simulationRunId, taskId),
-          select: objectId => {
+          select: (objectId, reveal) => {
             props.onSelectObject(objectId)
-            revealOnMap(objectId)
+            if (reveal) revealOnMap(objectId)
           },
           sound: kind => {
             if (tone === null) throw new Error('The Board asked for a tone before sound was enabled')

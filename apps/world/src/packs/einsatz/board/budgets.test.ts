@@ -17,10 +17,11 @@ import { boardWords } from './text.ts'
  * asset holding steps ask first, 3), counted against the real runtime on a
  * running clock. Each flow runs in both tap modalities: taps on map objects,
  * routed exactly as the World surface routes them with the Board open
- * (`ui/map-target-routing.ts`), and taps on the Board's rows. A tap on a call
- * in the list never sends: with an asset highlighted it selects the call and
- * offers the asset as a button of its own, so asset-first flows through the
- * list take one tap more than on the map. Waiting out a guard is not a tap. Budgets run in open mode and in the role that queues
+ * (`ui/map-target-routing.ts`), and taps on the Board's rows: a call row
+ * tapped right after the asset's own row, or its +, takes the asset as the
+ * call on the map does, so asset first holds the same budgets through the
+ * lists (`taps.test.ts` covers a highlight that lingers). Waiting out a
+ * guard is not a tap. Budgets run in open mode and in the role that queues
  * the load template; dispatch and alternatives also as Controller. A role's
  * Board runs on a real role Run, so core's gates and the Einsatz adapter
  * enforce its authority on every call. Keys remain hidden desktop accelerators; their
@@ -77,20 +78,6 @@ const confirm = async (screen: Screen, state: 'confirm' | 'choice'): Promise<voi
   await (state === 'confirm' ? tapButton(screen) : screen.click({ kind: 'option', option: 'do-now' }))
 }
 const sentLast = (screen: Screen) => screen.calls.at(-1)!.input
-/**
- * The call's tap after an asset's. On the map it sends. In the list it only
- * selects the call and offers the asset: nothing is sent until the offer is
- * tapped.
- */
-const tapCallOffered = async (screen: Screen, modality: Modality, callId: string, offer: string): Promise<void> => {
-  const before = screen.calls.length
-  await tapCall(screen, modality, callId)
-  if (modality === 'map') return
-  expect([screen.calls.length - before, screen.view().selected?.id, screen.view().commit.offer]).toEqual([0, callId, offer])
-  await screen.click({ kind: 'offer' })
-}
-/** The extra tap an asset-first flow takes through the list. */
-const listTap = (modality: Modality): number => modality === 'rows' ? 1 : 0
 
 /** A scene with another role's more urgent work and unit beside the load template's, so a role's Board must skip them. */
 const dispatchScene = [
@@ -101,20 +88,20 @@ const dispatchScene = [
 describe('Board tap budgets', () => {
   for (const seat of [open, operatorSeat(loadRole), controller]) {
     for (const modality of modalities) {
-      test(`dispatch, asset then call: 2 taps on the map, 3 through the list, shown as sent with Undo (${seat.name}, ${modality})`, async () => {
+      test(`dispatch, asset then call: 2 taps, shown as sent with Undo (${seat.name}, ${modality})`, async () => {
         await withSeat(seat, dispatchScene, async (_run, screen) => {
           const commandable = screen.view().unitBoard.rows.map(entry => entry.id)
           expect(commandable).toEqual(seat === open || seat === controller ? ['e1', 'u1', 'u2'] : ['u1', 'u2'])
           const taps = await counted(screen, async () => {
             await tapAsset(screen, modality, 'u2')
             expect(screen.view().selected).toEqual({ kind: 'unit', id: 'u2' })
-            await tapCallOffered(screen, modality, 't1', `${civilConfig.lexicon.send} U2 here`)
+            await tapCall(screen, modality, 't1')
           })
-          expect(taps).toBe(2 + listTap(modality))
+          expect(taps).toBe(2)
           expect(sentLast(screen)).toEqual({ units: ['u2'], to: { taskId: 't1' } })
           expect([screen.view().feedback?.text, screen.view().undo]).toEqual([`✓ ${civilConfig.lexicon.send} U2 → T1`, boardWords.undo])
-          // On the map the highlight lets go; through the list the call stays selected.
-          expect(screen.view().selected?.id ?? null).toBe(modality === 'map' ? null : 't1')
+          // The highlight lets go once the asset is sent.
+          expect(screen.view().selected).toBeNull()
         })
       })
 
@@ -190,7 +177,7 @@ describe('Board tap budgets', () => {
         })
       })
 
-      test(`a late top-priority call with no free unit, divert and confirm: 3 taps call first, asset first 3 on the map and 4 through the list (${seat.name}, ${modality})`, async () => {
+      test(`a late top-priority call with no free unit, divert and confirm: 3 taps, call first or asset first (${seat.name}, ${modality})`, async () => {
         const items = [
           unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)),
           taskAt('low', 'LOW', kinds.templates.load, at(25), { [low]: 1 }), taskAt('low2', 'LOW2', kinds.templates.load, at(25, 1), { [low]: 1 }),
@@ -211,10 +198,10 @@ describe('Board tap budgets', () => {
           expect(screen.view().undo).toBeNull()
           expect(await counted(screen, async () => {
             await tapAsset(screen, modality, 'u2')
-            await tapCallOffered(screen, modality, 'top2', 'Divert U2 here')
+            await tapCall(screen, modality, 'top2')
             expect(screen.view().commit).toMatchObject({ state: 'choice', text: 'Divert U2 → TOP2', options: [{ option: 'do-now', label: boardWords.doNow }, { option: 'add-to-end', label: boardWords.addToEnd }] })
             await confirm(screen, 'choice')
-          })).toBe(3 + listTap(modality))
+          })).toBe(3)
           expect(sentLast(screen)).toEqual({ units: ['u2'], to: { taskId: 'top2' }, divert: [{ unitId: 'u2', fromTaskId: 'low2' }] })
         })
       })
@@ -240,14 +227,14 @@ describe('Board tap budgets', () => {
         })
       })
 
-      test(`add a job-chain step: 2 taps, the asset's + then the target on the map; 3 through the list (${seat.name}, ${modality})`, async () => {
+      test(`add a job-chain step: 2 taps, the asset's + then the target (${seat.name}, ${modality})`, async () => {
         await withSeat(seat, [unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(6), { [low]: 1 })], async (run, screen) => {
           await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
           await screen.sync()
           expect(await counted(screen, async () => {
             await screen.click({ kind: 'verb', verb: 'add', id: 'u1' })
-            await tapCallOffered(screen, modality, 't2', `${boardWords.addToEnd}: U1 here`)
-          })).toBe(2 + listTap(modality))
+            await tapCall(screen, modality, 't2')
+          })).toBe(2)
           expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.queue, input: { unitId: 'u1', to: { taskId: 't2' } } })
           expect(run.unit('u1').orders.map(step => [step.id, step.state])).toEqual([['step-1', 'active'], ['step-2', 'queued']])
         })

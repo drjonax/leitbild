@@ -146,8 +146,13 @@ export type BoardEffect =
   | { readonly kind: 'invoke'; readonly callId: string; readonly capabilityId: EinsatzCommandId; readonly input: unknown }
   /** Query `world.einsatz.recommend` for the task, then feed back `recommendation` or `recommendation-failed` with this key. */
   | { readonly kind: 'recommend'; readonly taskId: string; readonly key: string }
-  /** Mirror the Board's selection on the map (`onSelectObject`). */
-  | { readonly kind: 'select'; readonly objectId: ObjectId | null }
+  /**
+   * Mirror the Board's selection on the map (`onSelectObject`). `reveal`: the
+   * operator picked it from a list, so the map brings it into view beside the
+   * Board; a selection the Board makes itself (the next call after a commit,
+   * an asset highlighted again after a refusal) moves no camera.
+   */
+  | { readonly kind: 'select'; readonly objectId: ObjectId | null; readonly reveal: boolean }
   | { readonly kind: 'sound'; readonly tone: 'new-work' }
 
 export interface WorkRow {

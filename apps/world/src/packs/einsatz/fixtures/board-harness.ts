@@ -57,6 +57,8 @@ export interface Screen {
   readonly sounds: () => number
   /** The map's selection as the Board's `select` effects left it. */
   readonly mapSelection: () => string | null
+  /** The objects the Board's `select` effects asked the map to bring into view, in order. */
+  readonly revealed: () => ReadonlyArray<string | null>
   /** Recommendation queries this screen made. */
   readonly queries: () => number
   /**
@@ -143,6 +145,7 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
   let sounds = 0
   let queries = 0
   let mapSelection: string | null = null
+  const revealed: Array<string | null> = []
   let frozen = false
 
   const perform = async (effects: ReadonlyArray<BoardEffect>): Promise<void> => {
@@ -167,7 +170,9 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
         }
         await dispatch({ kind: 'recommendation', taskId: effect.taskId, key: effect.key, answer })
       } else if (effect.kind === 'sound') sounds += 1
-      else if (effect.objectId !== mapSelection) {
+      else {
+        if (effect.reveal) revealed.push(effect.objectId)
+        if (effect.objectId === mapSelection) continue
         // The map takes the selection, and the panel's selectedObjectId prop echoes it back.
         mapSelection = effect.objectId
         await dispatch({ kind: 'selection', objectId: effect.objectId })
@@ -215,6 +220,7 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
     calls,
     sounds: () => sounds,
     mapSelection: () => mapSelection,
+    revealed: () => [...revealed],
     queries: () => queries,
     raw: event => {
       if (event.kind === 'key' || event.kind === 'click' || event.kind === 'selection' || event.kind === 'map-target') actions += 1

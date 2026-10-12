@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
-import { civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, pointAt, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
+import { borderWith, civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, pointAt, roleScreen, runFor, taskAt, unitAt } from '../fixtures/board-harness.ts'
+import { blue, red } from '../fixtures/combat-harness.ts'
+import border from '../fixtures/halden-border.scenario.json'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { neutralLexicon, wordFor } from '../lexicon.ts'
 import { boardWords } from './text.ts'
@@ -61,6 +63,50 @@ describe('Fixes from the tap-only walkthrough', () => {
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       await screen.click({ kind: 'site', id: 'h1' })
       expect(screen.calls.map(call => [call.input, call.result.ok])).toEqual([[{ units: ['u1'], to: { siteId: 'h1' } }, true]])
+    })
+  })
+
+  test('Sites lists only places the screen\'s assets can be sent to: another side\'s post is left out, and an asset tapped onto it on the map is refused at once', async () => {
+    const post = { id: 'post', label: 'Post', icon: 'binoculars', tags: ['post'], components: { sensor: { detectM: 3000, identifyM: 2000 } } }
+    const definition = borderWith([
+      unitAt('amb', 'AMB', 'ambulance', at(0), { side: blue }),
+      unitAt('post-blue', 'BLUE POST', 'post', at(1), { side: blue }),
+      unitAt('post-red', 'RED POST', 'post', at(2), { side: red }),
+      unitAt('kalnes', 'KALNES', 'hospital', at(3)),
+    ]) as { readonly packs: ReadonlyArray<{ readonly config: { readonly unitTypes: ReadonlyArray<unknown> } }> }
+    const pack = definition.packs[0]!
+    const run = await openRun({ definition: { ...definition, packs: [{ ...pack, config: { ...pack.config, unitTypes: [...pack.config.unitTypes, post] } }] } })
+    try {
+      // The Controller sees both sides' posts; its only asset is Blue's, so Red's post is no place it can send anything.
+      const controller = border.roles.find(role => role.class === 'controller')!.id
+      const screen = await openScreen(run, createWall(), { actor: roleScreen(run, controller) })
+      expect(screen.view().unitBoard.rows.map(row => row.id)).toEqual(['amb'])
+      expect(screen.view().unitBoard.sites.map(entry => entry.id)).toEqual(['kalnes', 'post-blue'])
+      await screen.mapTap('amb')
+      await screen.mapTap('post-red')
+      expect([screen.view().feedback?.text, screen.view().selected, screen.calls]).toEqual(['AMB cannot use another side\'s RED POST', { kind: 'unit', id: 'amb' }, []])
+    } finally {
+      await run.close()
+    }
+  })
+
+  test('the map brings into view only what the operator picks from the lists: the next call the Board selects itself after a commit moves no camera', async () => {
+    const items = [unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)), taskAt('t1', 'T1', kinds.templates.load, at(1), { [top]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(2), { [low]: 1 })]
+    await withScene(items, async run => {
+      const screen = await openScreen(run, createWall())
+      await screen.click({ kind: 'row', list: 'work', id: 't1' })
+      expect(screen.revealed()).toEqual(['t1'])
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'commit' })
+      // Once the Run shows the send, the Board selects the next unserved call by itself.
+      expect([screen.view().selected?.id, screen.mapSelection(), screen.revealed()]).toEqual(['t2', 't2', ['t1']])
+      // An asset row, and the urgent key, are the operator's picks.
+      await screen.click({ kind: 'row', list: 'units', id: 'u2' })
+      await screen.key('n')
+      expect(screen.revealed()).toEqual(['t1', 'u2', 't2'])
+      // A tap on the map selects without moving the camera.
+      await screen.mapTap('u2')
+      expect([screen.view().selected, screen.revealed()]).toEqual([{ kind: 'unit', id: 'u2' }, ['t1', 'u2', 't2']])
     })
   })
 

@@ -23,6 +23,10 @@ export const hasLoad = (unit: BoardUnit): boolean => total(unit.load) > 0
 /** Free: no task and no load, not destroyed, in any phase. */
 export const isFree = (unit: BoardUnit): boolean => unit.taskId === undefined && !hasLoad(unit) && unit.integrity !== 'destroyed'
 
+/** Whether a unit may go to or deliver at a site, as the engine allows (`linksToSite`): one of its own side's, or one whose type is public. */
+export const usableSite = (rules: Pick<BoardRules, 'typeOf'>, unit: BoardUnit, site: BoardUnit): boolean =>
+  rules.typeOf(site).public || unit.side === site.side
+
 /**
  * Whether a new target would interrupt work the unit holds or wait behind
  * it: a task, load, or steps in its job chain. Such a unit asks "Do now" or
