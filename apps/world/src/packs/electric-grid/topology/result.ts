@@ -51,6 +51,7 @@ export type TopologyBranch = {
   readonly names: ReadonlyArray<string>
   readonly parallelSpanGroups: number               // phase-split/parallel span groups merged into the corridor
   readonly interconnectorId: string | null
+  readonly foreignEnd: LonLat | null                // an interconnector tie: where its mapped route leaves the source extract abroad
   readonly provenance: TopologyProvenance
 }
 
@@ -64,6 +65,7 @@ export type TopologyHvdcLink = {
   readonly lengthKm: number
   readonly osmWayIds: ReadonlyArray<string>
   readonly sourceFeatureIds: ReadonlyArray<string>
+  readonly foreignEnd: LonLat                       // where its mapped route leaves the source extract abroad
   readonly provenance: TopologyProvenance
 }
 

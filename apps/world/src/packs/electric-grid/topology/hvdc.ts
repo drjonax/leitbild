@@ -146,6 +146,7 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
       lengthKm: Math.round(entryLines.reduce((sum, line) => sum + polylineKm(line.coordinates), 0) * 10_000) / 10_000,
       osmWayIds: present,
       sourceFeatureIds: entryLines.map(line => line.featureId).sort(compareText),
+      foreignEnd: foreignEnd.coordinate,
       provenance,
     })
   }

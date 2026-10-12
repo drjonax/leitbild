@@ -38,11 +38,15 @@ export interface GridMapGeometrySources {
   readonly readArtifact: (file: string) => string
 }
 
-/** HVDC links the runtime model carries apart from its branches; the artifact must cover exactly these. */
+/**
+ * An asset whose path the artifact must hold, and the ends that path runs between. `to` is null
+ * for an interconnector: its path ends abroad where its own mapped route leaves the source data,
+ * which is its boundary bus only for the first of the bus's interconnectors.
+ */
 export interface GridMapLinkEndpoints {
   readonly id: string
   readonly from: LonLat
-  readonly to: LonLat
+  readonly to: LonLat | null
 }
 
 export interface GridArtifactPaths {
@@ -66,13 +70,13 @@ const distanceSquared = (a: LonLat, b: LonLat): number => {
 }
 
 /** A path must start at its from end and finish at its to end; a reversed path would draw flow backwards. */
-const orientationIssue = (path: ReadonlyArray<LonLat>, from: LonLat, to: LonLat): string | null => {
+const orientationIssue = (path: ReadonlyArray<LonLat>, from: LonLat, to: LonLat | null): string | null => {
   const first = path[0]!
   const last = path[path.length - 1]!
-  if (distanceSquared(first, from) > distanceSquared(first, to) || distanceSquared(last, to) > distanceSquared(last, from)) {
-    return 'runs from the toBus end to the fromBus end; paths are ordered from fromBus to toBus'
-  }
-  return null
+  const reversed = to === null
+    ? distanceSquared(first, from) > distanceSquared(last, from)
+    : distanceSquared(first, from) > distanceSquared(first, to) || distanceSquared(last, to) > distanceSquared(last, from)
+  return reversed ? 'runs from the toBus end to the fromBus end; paths are ordered from fromBus to toBus' : null
 }
 
 const coverageIssues = (
@@ -121,13 +125,14 @@ export const loadGridGeometryArtifact = (config: {
   const model = config.model
   const coverage = config.coverage ?? { modelId: model.id, branchCount: model.branches.length }
   const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
+  const boundaryBusIds = new Set(model.externalSystems.flatMap(system => system.boundaryBusIds))
   const issues: GridDataIssue[] = [
     ...(artifact.modelId === coverage.modelId ? [] : [{ path: ['modelId'], message: `must be the model id ${coverage.modelId}` }]),
     ...(artifact.sourceBuildId === model.sourceBuild.id ? [] : [{ path: ['sourceBuildId'], message: `must be the model's source build ${model.sourceBuild.id}` }]),
     ...coverageIssues('branches', artifact.branches, model.branches.slice(0, coverage.branchCount).map(branch => ({
       id: branch.id,
       from: busLocation.get(branch.fromBusId)!,
-      to: busLocation.get(branch.toBusId)!,
+      to: boundaryBusIds.has(branch.toBusId) ? null : busLocation.get(branch.toBusId)!,
     }))),
     ...coverageIssues('hvdcLinks', artifact.hvdcLinks, config.hvdcLinks),
   ]
@@ -267,7 +272,8 @@ export const createGridMapGeometry = (sources: GridMapGeometrySources): ((model:
       text: sources.readArtifact(source.file),
       model,
       coverage: { modelId: source.modelId, branchCount: source.branchCount },
-      hvdcLinks: model.hvdcLinks.map(link => ({ id: link.id, from: busLocation.get(link.fromBusId)!, to: busLocation.get(link.toBusId)! })),
+      // Every HVDC link ends at a boundary bus: its path ends where its cable route leaves the source data.
+      hvdcLinks: model.hvdcLinks.map(link => ({ id: link.id, from: busLocation.get(link.fromBusId)!, to: null })),
     })
     const geometry = buildGridMapGeometry(model, artifact)
     cache.set(model, geometry)

@@ -4,6 +4,7 @@ import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, Simul
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
+import { haversineKm } from '../src/packs/electric-grid/model-build/geo.ts'
 import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
@@ -107,6 +108,17 @@ describe('Grid map query Capabilities', () => {
       expect(link.pathSource).toBe('mapped-route')
       expect(link.path.length).toBeGreaterThan(2)
       expect(geometry.buses[link.fromBus]!.id).toBe(model.hvdcLinks.find(candidate => candidate.id === link.id)!.fromBusId)
+    }
+    // An interconnector follows its own mapped route to where it leaves the source data, even when its
+    // boundary bus stands at another tie's end: Hasle – Borgvik ends in Värmland, not at the
+    // Halden – Skogssäter end where SE3 420 kV stands, and no straight segment joins the two.
+    const borgvik = geometry.branches.find(branch => branch.id === 'branch:osm-2ead9154d4262ef8')!
+    const borgvikEnd = borgvik.path[borgvik.path.length - 1]!
+    expect(geometry.buses[borgvik.toBus]!.id).toBe('bus:boundary-SE3@420')
+    expect(haversineKm(borgvikEnd, geometry.buses[borgvik.toBus]!.location)).toBeGreaterThan(40)
+    expect(borgvikEnd[0]).toBeGreaterThan(12)
+    for (const tie of geometry.branches.filter(branch => geometry.buses[branch.toBus]!.external !== undefined)) {
+      expect(haversineKm(tie.path[tie.path.length - 2]!, tie.path[tie.path.length - 1]!)).toBeLessThan(5)
     }
     // Boundary buses name their external system; HVDC-only systems are asynchronous.
     const external = (busId: string) => geometry.buses.find(bus => bus.id === busId)!.external

@@ -1,6 +1,7 @@
 import { chainCableKm, chainCircuits, chainLengthKm, chainParallelGroups, chainPieces, isWholeCircuitCount } from './corridor-chain.ts'
 import { freeNodeKey } from './corridor-graph.ts'
 import { acBoundaryBusId, compareText, corridorBranchId, junctionBusId, stationBusId } from './ids.ts'
+import type { LonLat } from './geometry.ts'
 import type { TopologyKeyMode } from './input.ts'
 import type { PreparedInterconnectors } from './interconnectors.ts'
 import type { TopologyLedger } from './ledger.ts'
@@ -26,7 +27,7 @@ const roundKm = (km: number): number => Math.round(km * 10_000) / 10_000
 
 export const corridorBranch = (
   link: LevelLink,
-  interconnectorId: string | null,
+  interconnector: { readonly id: string; readonly foreignEnd: LonLat } | null,
   context: BranchContext,
   ledger: TopologyLedger,
 ): TopologyBranch => {
@@ -85,7 +86,8 @@ export const corridorBranch = (
     osmTransformerIds: [],
     names,
     parallelSpanGroups: chainParallelGroups(link.chain),
-    interconnectorId,
+    interconnectorId: interconnector?.id ?? null,
+    foreignEnd: interconnector?.foreignEnd ?? null,
     provenance,
   }
 }

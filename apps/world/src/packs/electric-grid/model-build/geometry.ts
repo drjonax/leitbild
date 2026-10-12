@@ -8,7 +8,9 @@ import type { SidecarFeatures } from './sidecar-features.ts'
 // Map geometry for the live map (schemas/grid-geometry.ts): one path per branch and HVDC link,
 // ordered from its from-bus to its to-bus and Douglas–Peucker simplified. Lines and cables follow
 // their mapped ways; transformers, and the corridors whose ways do not chain (listed in the ledger
-// summary as geometryUnresolved), draw from bus to bus.
+// summary as geometryUnresolved), draw from bus to bus. An interconnector ends where its own mapped
+// route leaves the source extract: a boundary bus stands at the first of its interconnectors' ends,
+// and framing the others to it would draw a straight line that no way follows.
 
 export const geometrySimplificationMeters = 50
 
@@ -31,13 +33,13 @@ export const buildGeometry = (config: {
   const topologyBranch = new Map(config.branches.map(branch => [branch.id, branch]))
   const topologyLink = new Map(config.hvdcLinks.map(link => [link.id, link]))
   const unresolved: string[] = []
-  const path = (id: string, featureIds: ReadonlyArray<string>, fromBusId: string, toBusId: string): ReadonlyArray<readonly [number, number]> | undefined => {
+  const path = (id: string, featureIds: ReadonlyArray<string>, from: LonLat, to: LonLat): ReadonlyArray<readonly [number, number]> | undefined => {
     const ways = featureIds.map(featureId => {
       const way = config.sidecar.way(featureId)
       if (way === undefined) throw new Error(`${id}: way ${featureId} is not a line or cable of the sidecar`)
       return way
     })
-    const ordered = corridorPath(ways, busLocation.get(fromBusId)!, busLocation.get(toBusId)!)
+    const ordered = corridorPath(ways, from, to)
     if (ordered === undefined) {
       unresolved.push(id)
       return undefined
@@ -51,12 +53,13 @@ export const buildGeometry = (config: {
     if (curated !== undefined) return { id: branch.id, path: simplifyPath(curated, geometrySimplificationMeters).map(roundLonLat) }
     const source = topologyBranch.get(branch.id)
     if (source === undefined) throw new Error(`${branch.id} has neither topology ways nor a curated path`)
-    return { id: branch.id, path: path(branch.id, source.sourceFeatureIds, branch.fromBusId, branch.toBusId) ?? busToBus(branch.fromBusId, branch.toBusId) }
+    const to = source.foreignEnd ?? busLocation.get(branch.toBusId)!
+    return { id: branch.id, path: path(branch.id, source.sourceFeatureIds, busLocation.get(branch.fromBusId)!, to) ?? busToBus(branch.fromBusId, branch.toBusId) }
   })
   const hvdcLinks = config.model.hvdcLinks.flatMap(link => {
     const source = topologyLink.get(link.id)
     if (source === undefined) throw new Error(`${link.id} has no topology ways`)
-    return [{ id: link.id, path: path(link.id, source.sourceFeatureIds, link.fromBusId, link.toBusId) ?? busToBus(link.fromBusId, link.toBusId) }]
+    return [{ id: link.id, path: path(link.id, source.sourceFeatureIds, busLocation.get(link.fromBusId)!, source.foreignEnd) ?? busToBus(link.fromBusId, link.toBusId) }]
   })
   return {
     geometry: {
