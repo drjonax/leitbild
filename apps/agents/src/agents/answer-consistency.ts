@@ -298,6 +298,24 @@ const spanIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent)
   })))
 }
 
+// A first-out the answer cites: "the first-out was Manual turbine trip", "1st TURB TRIP".
+const FIRST_OUT = /\bfirst[- ]out\b|\b1st\s+[A-Z]/i
+// What a display names first-outs in: its alarms panel, an annunciator.
+const ANNUNCIATION_WORDS = ['alarm', 'annunciator', 'annunciation', 'first']
+
+/**
+ * A first-out the answer cites while its display shows no alarms or
+ * annunciation that could name it (run 26 why-turbine-trip: the answer cited
+ * "Manual turbine trip", which its display did not show).
+ */
+const firstOutIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
+  const shown = new Set(view.items.flatMap(item => [...item.names, item.state ?? ''].flatMap(wordsOf)))
+  if (ANNUNCIATION_WORDS.some(word => shown.has(word))) return []
+  return sentences.flatMap(sentence => FIRST_OUT.test(sentence) && !NOT_SHOWN.test(sentence)
+    ? [`It cites a first-out ("${sentence}"), but the display shows no alarms that name it: show the alarms panel, or mark the citation "(not shown)".`]
+    : [])
+}
+
 const leadIssues = (prose: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
   if (view.lead === null) return []
   const item = view.items[view.lead.item]!
@@ -624,10 +642,10 @@ const projectionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewCo
  * Where an answer and the display it presents disagree: quantities and
  * "watch" items the display does not show (unless the answer says so), a
  * value cited more finely than the display writes it, a time window longer
- * than the display's axis, the display's lead left out or another named as
- * its lead, a direction the display shows otherwise, a limit other than the
- * one the display names ahead, and a time to a limit the display does not
- * project.
+ * than the display's axis or record, a first-out a display without alarms
+ * cannot name, the display's lead left out or another named as its lead, a
+ * direction the display shows otherwise, a limit other than the one the
+ * display names ahead, and a time to a limit the display does not project.
  */
 export const answerViewIssues = (answer: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
   const prose = stripMarkdown(answer)
@@ -640,6 +658,7 @@ export const answerViewIssues = (answer: string, view: EmbeddedViewContent): Rea
     ...precisionIssues(sentences, view),
     ...watchIssues(sentences, view),
     ...spanIssues(sentences, view),
+    ...firstOutIssues(sentences, view),
     ...directionIssues(sentences, view),
     ...limitAheadIssues(sentences, view),
     ...projectionIssues(sentences, view),

@@ -94,6 +94,20 @@ describe('answers that cite what their display does not show', () => {
     ])
   })
 
+  test('why-turbine-trip (run 26): a first-out cited beside a display that shows no alarms', () => {
+    const turbine = view([
+      signal(['GEN-MW', 'turbine.electricMw', 'Generator electrical output'], 0, 'MW'),
+      drawn(['Turbine stop valves', 'turbineStopValve'], 'SHUT'),
+    ])
+    const answer = 'The turbine tripped first: its first-out is Manual turbine trip, and the reactor tripped 1 s later on the turbine trip.' + FENCE
+    expect(answerViewIssues(answer, turbine)).toEqual([
+      'It cites a first-out ("The turbine tripped first: its first-out is Manual turbine trip, and the reactor tripped 1 s later on the turbine trip."), but the display shows no alarms that name it: show the alarms panel, or mark the citation "(not shown)".',
+    ])
+    // Marked not shown, or beside the alarms panel that names it, the citation stands.
+    expect(answerViewIssues('Its first-out is Manual turbine trip (not shown).' + FENCE, turbine)).toEqual([])
+    expect(answerViewIssues(answer, view([...turbine.items, alarms]))).toEqual([])
+  })
+
   test('porv-path: the display leads with pressure past its alarm, and the answer never names it', () => {
     const issues = answerViewIssues(
       'At sim 10:02:00, coolant leaving Unit 2’s pressurizer is going to the **pressurizer relief tank**. The relief path is passing about **7.7 kg/s**, so the PORV is **not confirmed shut**: it is commanded shut, but its position is not measured.' + FENCE,
