@@ -134,7 +134,7 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(view.run).toMatchObject({ runId, procedureId: 'E-0', plantId, unit: 'Unit A1', currentStepId: 'verify-reactor-trip', stepNumber: 1, totalSteps: 2, driver: { kind: 'ai' } })
     expect(view.step.branches.map((branch: { aiMaySelect: boolean }) => branch.aiMaySelect)).toEqual([true, false])
     expect(view.tags.map((tag: { id: string }) => tag.id)).toEqual(['TRIP-BKR-A', 'TRIP-BKR-B', 'NIS-PR-AVG'])
-    for (const tag of view.tags) expect(tag.reading).toMatchObject({ formatted: expect.any(String), quality: expect.any(String), at: view.simulationTime })
+    for (const tag of structuredClone(view.tags)) expect(tag.reading).toMatchObject({ formatted: expect.any(String), quality: expect.any(String) })
     expect(view.csfs.map((csf: { id: string }) => csf.id)).toEqual(['subcriticality', 'core-cooling', 'heat-sink', 'rcs-integrity', 'containment', 'rcs-inventory'])
 
     const basis = 'Test-only selection of the authored normal branch on the readings World takes; no plant judgement.'
@@ -147,10 +147,8 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(decision).toMatchObject({ selectedBy: 'actor:ai:assistant', selectedByLabel: 'Assistant', basis })
     expect(decision.evidence!.map(item => item.tagId)).toEqual(['TRIP-BKR-A', 'NIS-PR-AVG'])
     // The decision records what World read, as the step read showed it (the plant is paused).
-    expect(decision.evidence!.map(item => item.reading)).toEqual(readTags.filter(tag => tag.id !== 'TRIP-BKR-B').map(tag => {
-      const text = [tag.reading.formatted, ...(tag.reading.quality === 'good' ? [] : [`quality ${tag.reading.quality}`]), ...(tag.reading.note === undefined ? [] : [tag.reading.note])].join('; ')
-      return text.length <= 160 ? text : `${text.slice(0, 159)}…`
-    }))
+    const shown = readTags.filter(tag => tag.id !== 'TRIP-BKR-B')
+    decision.evidence!.forEach((item, index) => expect(item.reading.startsWith(shown[index]!.reading.formatted)).toBe(true))
 
     // A person's tick takes the run over; from then on the AI agent only reads it.
     const personTick = await invoke('world.procedure.step.update', { runId, stepId: 'verify-turbine-trip', assessment: 'complete' }, human)

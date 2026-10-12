@@ -1,4 +1,4 @@
-import type { IsoTimestamp, ProcedureTag, ProcedureTagId } from '../../core/model/index.ts'
+import type { ProcedureTag, ProcedureTagId } from '../../core/model/index.ts'
 import type { PackProcedureContribution, PackProcedureQuery } from '../../core/packs/protocol.ts'
 
 // The wire semantics every Pack's procedure observations keep (protocol.ts
@@ -248,8 +248,6 @@ export interface ProcedureTagRead {
   readonly binding: 'resolved' | 'resolved-with-warnings' | 'missing' | 'unchecked'
   readonly warnings: ReadonlyArray<string>
   readonly value?: ProcedureTagValue
-  /** The plant time the value was read at, where a clock was given. */
-  readonly readAt?: IsoTimestamp
   /** Why there is no value. */
   readonly unavailable?: string
 }
@@ -265,7 +263,6 @@ export const readProcedureTags = async (config: {
   readonly observations: () => ProcedureObservationPort
   readonly declared: ReadonlyArray<ProcedureTag>
   readonly tagIds: ReadonlyArray<string>
-  readonly clock?: () => IsoTimestamp
 }): Promise<ReadonlyArray<ProcedureTagRead>> => {
   const tags = config.tagIds.map(tagId => config.declared.find(tag => tag.id === tagId))
   let port: ProcedureObservationPort | undefined
@@ -284,7 +281,7 @@ export const readProcedureTags = async (config: {
     if (validation.status === 'missing') return { tagId, binding: 'missing', warnings: validation.warnings, unavailable: 'not in the plant model' }
     try {
       const value = await port.readTag(tag)
-      return { tagId, binding: validation.status, warnings: validation.warnings, value, ...(config.clock === undefined ? {} : { readAt: config.clock() }) }
+      return { tagId, binding: validation.status, warnings: validation.warnings, value }
     } catch (error) {
       return { tagId, binding: validation.status, warnings: validation.warnings, unavailable: failureText(error) }
     }

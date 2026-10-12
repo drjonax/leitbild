@@ -28,12 +28,11 @@ const runSummarySchema = z.object({
   totalSteps: z.number().int().nonnegative(),
 }).strict()
 
+/** A value World read for the view, just before its simulationTime. */
 const tagReadingSchema = z.object({
   formatted: z.string(),
   quality: z.string().optional(),
-  /** Plant time of the read. */
-  at: isoTimestampSchema.optional(),
-  /** The Pack's caveat on this value, such as a requested unit it could not convert to. */
+  /** The Pack's caveat on this value (such as a requested unit it could not convert to), unless a binding warning says it. */
   note: z.string().optional(),
 }).strict()
 
@@ -63,7 +62,8 @@ const stepBranchSchema = z.object({
 const stepSchema = z.object({
   id: z.string(),
   label: z.string(),
-  title: z.string(),
+  /** Where it says more than "Step <label>". */
+  title: z.string().optional(),
   blocks: z.array(z.object({ kind: procedureTextBlockSchema.shape.kind, text: z.string() }).strict()),
   branches: z.array(stepBranchSchema),
   observation: z.object({ status: z.enum(['satisfied', 'challenged', 'unknown']), reason: z.string().optional(), simulationTime: isoTimestampSchema }).strict().optional(),
@@ -136,8 +136,7 @@ const tagRow = (document: ProcedureDocument, read: ProcedureTagRead) => {
     ...(read.value === undefined ? {} : { reading: {
       formatted: read.value.formatted,
       ...(read.value.quality === undefined ? {} : { quality: read.value.quality }),
-      ...(read.readAt === undefined ? {} : { at: read.readAt }),
-      ...(read.value.warning === undefined ? {} : { note: read.value.warning }),
+      ...(read.value.warning === undefined || read.warnings.includes(read.value.warning) ? {} : { note: read.value.warning }),
     } }),
     ...(read.value === undefined ? { unavailable: read.unavailable ?? 'no value' } : {}),
   }
@@ -193,7 +192,7 @@ export const composeProcedureStepView = async (config: {
     throw Object.assign(new Error(`Procedure ${document.procedureId} has no step ${stepId}; its steps are ${document.steps.map(candidate => candidate.id).join(', ')}.`), { code: procedureStepNotFoundCode })
   }
   const [reads, csfs] = await Promise.all([
-    readProcedureTags({ observations: ports.observations, declared: document.tags, tagIds: step.tagIds, clock: () => ports.clock().currentTime }),
+    readProcedureTags({ observations: ports.observations, declared: document.tags, tagIds: step.tagIds }),
     csfRows(document, ports),
   ])
   const readableTagIds = new Set(reads.filter(read => read.value !== undefined).map(read => read.tagId))
@@ -209,7 +208,7 @@ export const composeProcedureStepView = async (config: {
     step: {
       id: step.id,
       label: step.label,
-      title: step.title,
+      ...(step.title === `Step ${step.label}` ? {} : { title: step.title }),
       blocks: step.blocks.filter(block => !omittedBlockKinds.has(block.kind)).map(block => ({ kind: block.kind, text: withoutLinkTargets(block.text) })),
       branches: step.branches.map((branch, index) => {
         const verdict = procedureBranchVerdict({ run, step, branch, readableTagIds })

@@ -116,10 +116,10 @@ describe('procedure step view', () => {
     ])
     expect(view.tags).toEqual([
       { id: 'TRIP-BKR-A', description: 'reactor trip breaker A position', binding: 'resolved', notes: { 'model-note': 'the model reports closed as a boolean' },
-        reading: { formatted: 'false', quality: 'good', at: plantTime } },
-      { id: 'TRIP-BKR-B', description: 'reactor trip breaker B position', binding: 'resolved', reading: { formatted: 'false', quality: 'uncertain', at: plantTime } },
+        reading: { formatted: 'false', quality: 'good' } },
+      { id: 'TRIP-BKR-B', description: 'reactor trip breaker B position', binding: 'resolved', reading: { formatted: 'false', quality: 'uncertain' } },
       { id: 'NIS-PR-AVG', description: 'power range neutron flux average', binding: 'resolved', warnings: ['requested percent unavailable'],
-        reading: { formatted: '3.1 MW', quality: 'good', at: plantTime, note: 'requested percent is not available' } },
+        reading: { formatted: '3.1 MW', quality: 'good', note: 'requested percent is not available' } },
     ])
     expect(view.csfs).toEqual([{ id: 'subcriticality', status: 'green' }, { id: 'core-cooling', status: 'orange', procedure: 'FR-C.2', reason: 'core exit hot' }])
     expect(view.step!.state).toBeUndefined()
