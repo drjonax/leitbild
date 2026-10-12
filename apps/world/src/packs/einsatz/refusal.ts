@@ -68,9 +68,17 @@ export type EngineRefusalCode = typeof engineRefusalCodes[number]
 export const authorityRefusalCodes = ['role_controller_only', 'unit_not_authorized', 'task_not_in_role_queue'] as const
 export type AuthorityRefusalCode = typeof authorityRefusalCodes[number]
 
-export type EinsatzRefusalCode = ConfigurationRefusalCode | EngineRefusalCode | AuthorityRefusalCode
+/**
+ * Refusals of a command the runtime does not run: it is unavailable, does
+ * not accept the command kind, the input does not parse, or the Run kept
+ * deleting Einsatz records while the command was routing.
+ */
+export const runtimeRefusalCodes = ['runtime_unavailable', 'command_not_accepted', 'invalid_input', 'records_changed'] as const
+export type RuntimeRefusalCode = typeof runtimeRefusalCodes[number]
 
-const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...engineRefusalCodes, ...authorityRefusalCodes])
+export type EinsatzRefusalCode = ConfigurationRefusalCode | EngineRefusalCode | AuthorityRefusalCode | RuntimeRefusalCode
+
+const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...engineRefusalCodes, ...authorityRefusalCodes, ...runtimeRefusalCodes])
 
 export const refusal = (code: EinsatzRefusalCode, message: string): string => `${code}: ${message}`
 

@@ -4,7 +4,7 @@ import type { RoutingAdapter } from '../../../routing/protocol.ts'
 import type { PackRuntimeAdapter, PackRuntimeConnection, PackRuntimeConnectionConfig, PackRuntimeEvent, PackRuntimeEventHandler, PackRuntimeHealth } from '../../../simulation/protocol.ts'
 import { createRuntimeStateWriter } from '../../../simulation/runtime-state-writer.ts'
 import { einsatzCapabilities, einsatzQueryIds, isEinsatzCommand, recommendInputSchema } from '../capabilities.ts'
-import { payloadIssue, prepareCommand } from '../commands.ts'
+import { prepareCommand } from '../commands.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { advanceEngine, commitIntent, planIntent, prepareLegs, type EnginePorts } from '../engine/engine.ts'
 import { loadedText } from '../engine/intent-support.ts'
@@ -24,13 +24,13 @@ import { savedStateSchema, type SavedState } from './saved-state.ts'
  * the current engine state outside it. Canonical objects change only on
  * transitions (`record`); positions and route progress between them are
  * `snapshot-only`. A refused command or a standing order that cannot be
- * carried out is never a runtime failure: only a fault in advancing the
- * engine fails it.
+ * carried out is never a runtime failure: only a fault in running the engine
+ * (advancing it, or executing a command it accepted) fails it.
  */
 
 /** Wall-time cadence at which positions follow the Run clock between explicit advances. */
 const tickIntervalMs = 1_000
-/** How often one command plans and routes again when the Run deleted a record it involved while it was routing. */
+/** How often one command plans and routes again when the Run deleted Einsatz records while it was routing. */
 const routingAttempts = 3
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
@@ -149,6 +149,7 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
     persistence.scheduleSave()
   }
 
+  /** Brings the engine to `targetMs`. A fault fails the runtime and is thrown to the caller. */
   const advance = async (targetMs: number): Promise<void> => {
     if (unavailable()) return
     try {
@@ -182,11 +183,22 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
     }
   }
 
+  const unavailableReason = refusal('runtime_unavailable', 'The Einsatz runtime is unavailable; inspect runtime health')
+
+  /**
+   * Runs one command. A refusal reads `<code>: <message>`. Anything thrown
+   * past the refusals is a fault in the engine or runtime, never the
+   * caller's: it fails the runtime, and the command is refused as unavailable.
+   */
   const runCommand = async (command: CommandEnvelope): Promise<CommandResult> => {
     const refused = (reason: string): CommandResult => ({ ok: false, commandId: command.id, rejectedAt: nowIso(), reason })
-    if (unavailable()) return refused('The Einsatz runtime is unavailable; inspect runtime health')
-    if (!isEinsatzCommand(command.kind)) return refused(`Einsatz does not accept ${command.kind}`)
-    try { await advance(clockMs()) } catch (error) { return refused(message(error)) }
+    if (unavailable()) return refused(unavailableReason)
+    if (!isEinsatzCommand(command.kind)) return refused(refusal('command_not_accepted', `Einsatz does not accept ${command.kind}`))
+    try {
+      await advance(clockMs())
+    } catch (error) {
+      return refused(refusal('runtime_unavailable', `The Einsatz runtime failed while advancing: ${message(error)}`))
+    }
     try {
       const viewer = resolveViewer(command)
       for (let attempt = 0; attempt < routingAttempts; attempt++) {
@@ -206,6 +218,7 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
         if (!plan.ok) return refused(plan.reason)
         const legs = await prepareLegs(base, plan.routes, routing)
         if (!legs.ok) return refused(legs.reason)
+        // The Run may have deleted Einsatz records while this command was routing; then it plans and routes again.
         commit(current, [])
         if (current !== base) continue
         const outcome = commitIntent(base, prepared.intent, prepared.actor, legs.legs)
@@ -216,17 +229,32 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
         succeeded()
         return { ok: true, commandId: command.id, acceptedAt: nowIso() }
       }
-      return refused(`The Run deleted records this command involved while it was routing, ${routingAttempts} times; send it again`)
+      return refused(refusal('records_changed', `Einsatz records were deleted from the Run each time this command was routed, ${routingAttempts} times in a row; send it again`))
     } catch (error) {
-      return refused(payloadIssue(error) ?? message(error))
+      fault('command', error, 'failed')
+      return refused(refusal('runtime_unavailable', `The Einsatz runtime failed running ${command.kind}: ${message(error)}`))
     }
   }
 
+  /**
+   * One wall-time tick. It has no caller to report to: a fault has already
+   * failed the runtime in `advance`, and recording it again changes nothing,
+   * so runtime health is where it shows.
+   */
   let tickPending = false
+  const tick = async (): Promise<void> => {
+    try {
+      await serialize(() => advance(clockMs()))
+    } catch (error) {
+      fault('advance', error, 'failed')
+    } finally {
+      tickPending = false
+    }
+  }
   const interval = setInterval(() => {
     if (unavailable() || tickPending) return
     tickPending = true
-    void serialize(() => advance(clockMs())).catch(() => undefined).finally(() => { tickPending = false })
+    void tick()
   }, tickIntervalMs)
 
   return {
@@ -237,7 +265,7 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
     },
     sendCommand: command => serialize(() => runCommand(command)),
     invokeQuery: async query => {
-      if (unavailable()) throw new Error('The Einsatz runtime is unavailable; inspect runtime health')
+      if (unavailable()) throw new Error(unavailableReason)
       const viewer = resolveViewer({})
       if (query.capabilityId === einsatzQueryIds.recommend) {
         const input = recommendInputSchema.parse(query.input)

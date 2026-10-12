@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { commandEnvelopeSchema, nowIso, type CommandEnvelope } from '../../../core/model/index.ts'
 import { compileScenarioDefinition } from '../../../core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../../../routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../../../routing/protocol.ts'
@@ -9,6 +10,7 @@ import fixture from '../fixtures/engine.config.json'
 import { definitionOf, isoAt, lonLat, openRun, taskItem, unitItem, type OpenRun } from '../fixtures/run-harness.ts'
 import { einsatzPackId, einsatzRuntimeId } from '../ids.ts'
 import { einsatzPack } from '../pack.ts'
+import { refusalCode } from '../refusal.ts'
 
 const point = (east: number, north = 0) => ({ type: 'Point', coordinates: lonLat(east, north) })
 const send = (units: ReadonlyArray<string>, to: unknown, divert?: ReadonlyArray<{ readonly unitId: string; readonly fromTaskId: string }>) =>
@@ -261,6 +263,31 @@ describe('Einsatz recommendations through the Run', () => {
         expect(entry.eta.kind === 'unavailable' && entry.eta.straightDistanceM).toBeGreaterThan(0)
       }
       healthy(run)
+    })
+  })
+})
+
+describe('Einsatz runtime refusals and faults', () => {
+  const envelope = (id: string, kind: string, payload: unknown, roleIds?: ReadonlyArray<string>): CommandEnvelope => commandEnvelopeSchema.parse({
+    id, simulationRunId: 'run-einsatz-open', actorId: 'actor:operator', kind, targetObjectIds: [], payload, issuedAt: nowIso(), ...(roleIds === undefined ? {} : { roleIds }),
+  })
+  const reasonOf = (result: Awaited<ReturnType<OpenRun['connection']['sendCommand']>>): string => {
+    if (result.ok) throw new Error('Expected a refusal')
+    refusalCode(result.reason)
+    return result.reason
+  }
+
+  test('input that does not parse is the caller\'s mistake; a fault while running a command fails the runtime, which then refuses every command', async () => {
+    await withRun({ items: fleet }, async run => {
+      expect(reasonOf(await run.connection.sendCommand(envelope('bad-input', ids.hold, { unitId: 'c1', extra: true })))).toStartWith('invalid_input: ')
+      healthy(run)
+
+      // Core stamps a role set only in a Run that declares roles, and such a Run cannot hold Einsatz: one reaching it is a fault.
+      expect(reasonOf(await run.connection.sendCommand(envelope('forged-roles', ids.hold, { unitId: 'c1' }, ['ground']))))
+        .toBe('runtime_unavailable: The Einsatz runtime failed running world.einsatz.unit.hold: Einsatz is not role-aware, so no role Run can call it (roles ground)')
+      expect(run.connection.health?.()).toMatchObject([{ state: 'failed', lastFailure: { operation: 'command' } }])
+      expect(await run.refusal(ids.hold, { unitId: 'c1' })).toEqual({ code: 'runtime_unavailable', reason: 'runtime_unavailable: The Einsatz runtime is unavailable; inspect runtime health' })
+      expect(run.unit('c1').phase).toBe('available')
     })
   })
 })

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { commandInputSchemas, einsatzCommandIds, type CommandInput, type EinsatzCommandId } from './capabilities.ts'
-import { notInPicture, type Refused } from './engine/intent-support.ts'
+import { notInPicture, refused, type Refused } from './engine/intent-support.ts'
 import type { EngineActor, Intent } from './engine/intents.ts'
 import type { EngineState } from './engine/model.ts'
 import { actorFor, controllerOnly, inPicture, taskAuthority, unitAuthority, type EinsatzViewer } from './viewer.ts'
@@ -102,13 +102,15 @@ const intentFor = (context: CommandContext, kind: EinsatzCommandId, payload: unk
   }
 }
 
+/** A payload that does not parse is the caller's mistake, refused `invalid_input` with the schema's own words. */
+const inputIssues = (error: z.ZodError): Refused =>
+  refused('invalid_input', error.issues.map(issue => `${issue.path.join('.') || 'input'}: ${issue.message}`).join('; '))
+
 /** Parses a command's payload, checks the viewer may ask for it, and names the intent and actor the engine runs. */
 export const prepareCommand = (context: CommandContext, kind: EinsatzCommandId, payload: unknown): PreparedCommand => {
-  const prepared = intentFor(context, kind, payload)
+  const parsed = commandInputSchemas[kind].safeParse(payload)
+  if (!parsed.success) return inputIssues(parsed.error)
+  const prepared = intentFor(context, kind, parsed.data)
   if (!prepared.ok) return prepared
   return { ok: true, intent: prepared.intent, actor: actorFor(context.state.catalog, context.viewer, context.by) }
 }
-
-/** A payload that does not parse is the caller's mistake, refused with the schema's own words. */
-export const payloadIssue = (error: unknown): string | undefined =>
-  error instanceof z.ZodError ? error.issues.map(issue => `${issue.path.join('.') || 'input'}: ${issue.message}`).join('; ') : undefined
