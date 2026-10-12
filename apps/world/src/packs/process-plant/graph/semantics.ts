@@ -25,6 +25,7 @@ export const ratioMeasurandSchema = z.enum([
   'coverage',
   'depletion',
   'effectiveness',
+  'flow',
   'humidity',
   'insertion',
   'leak',

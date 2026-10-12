@@ -144,6 +144,24 @@ describe('model semantics declared per component kind', () => {
     expect(() => compilePlantGraph(spec, registry)).toThrow('component pump semantics: running state running is writable, so it would draw a demand as the state')
   })
 
+  test('a ratio may measure a flow, a loop\'s flow in percent of its rated flow', () => {
+    const base = processPlantComponentRegistry.get('centrifugalPump' as ComponentKind)!
+    const withFlowShare: ReadonlyMap<ComponentKind, ComponentDefinition> = new Map([...processPlantComponentRegistry, ['centrifugalPump' as ComponentKind, {
+      ...base,
+      variables: [...base.variables, variable({ path: 'flowPercent', label: 'Flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'flow', quantity: 'ratio', unit: 'percent' })],
+    }]])
+    const spec = plantGraph({
+      id: 'semantics.flow-share',
+      title: 'Flow share',
+      fixedStepMs: 100,
+      components: [component('pump', 'centrifugalPump', 'Pump', { nominalFlowKgPerS: 10, nominalHeadPa: 1e5 })],
+      connections: [],
+    })
+    const compiled = compilePlantGraph(spec, withFlowShare)
+    expect(compiled.variables.find(entry => String(entry.path) === 'pump.flowPercent')!.descriptor).toMatchObject({ quantity: 'ratio', unit: 'percent', measurand: 'flow' })
+    expect(() => variable({ path: 'flowPercent', label: 'Flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'throughput' as never, quantity: 'ratio', unit: 'percent' })).toThrow()
+  })
+
   test('an energy role must name circuits the kind\'s ports have', () => {
     const faulty: ComponentDefinition = {
       ...processPlantComponentRegistry.get('centrifugalPump' as ComponentKind)!,
