@@ -245,3 +245,11 @@ export const createStartRunner = (ports: StartRunnerPorts): StartRunner => {
     },
   }
 }
+
+/** The page's one status sentence for the current state (empty when idle or failed; failures are alerts). */
+export const startAnnouncement = (state: StartState): string => {
+  if (state.phase !== 'busy') return ''
+  if (state.slow === 'long') return LONG_START_TEXT
+  if (state.slow === 'still') return STILL_STARTING_TEXT
+  return startStepStatus(state.moduleId, state.step)
+}

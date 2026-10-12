@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
-  createStartRunner, LONG_START_MS, STILL_STARTING_MS, startStepStatus, startSteps, type StartScheduler, type StartState, type StartTarget,
+  createStartRunner, LONG_START_MS, LONG_START_TEXT, STILL_STARTING_MS, STILL_STARTING_TEXT, startAnnouncement, startStepStatus, startSteps, type StartScheduler, type StartState, type StartTarget,
 } from './definition-start.ts'
 import { CAPACITY_TEXT } from './error-text.ts'
 import { fakeFetch, hostError, json } from './host-fetch-fake.test-support.ts'
@@ -45,6 +45,15 @@ describe('steps', () => {
     expect(startSteps('world').map(step => step.label)).toEqual(['Checking the scenario', 'Starting the simulation', 'Opening'])
     expect(startSteps('agents').map(step => step.label)).toEqual(['Checking the definition', 'Creating the conversation', 'Opening'])
     expect(startStepStatus('world', 'starting')).toBe('Starting the simulation…')
+  })
+
+  test('one status sentence per step; the slow states replace it; nothing while idle or failed', () => {
+    const busy = { phase: 'busy', key: 'k', moduleId: 'world', step: 'checking', slow: 'none' } as const
+    expect(startAnnouncement(busy)).toBe('Checking the scenario…')
+    expect(startAnnouncement({ ...busy, slow: 'still' })).toBe(STILL_STARTING_TEXT)
+    expect(startAnnouncement({ ...busy, slow: 'long' })).toBe(LONG_START_TEXT)
+    expect(startAnnouncement({ phase: 'idle' })).toBe('')
+    expect(startAnnouncement({ phase: 'failed', key: 'k', moduleId: 'world', step: 'starting', text: 'x', action: 'try-again' })).toBe('')
   })
 })
 
