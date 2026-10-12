@@ -23,9 +23,12 @@ test('Halden recording preview uses Pack-owned series selection and sampling cad
     // power range, startup rate, P-6 and P-10, Tref and Tavg's deviation from it, each steam generator's
     // auxiliary feedwater flow and wide-range level, and the feedwater tank's level control valve and the hotwell
     // reject valve and its flow; and, 55 more a Plant, its rod position and rod bottom, its diesels' meters, load
-    // sequencers and sequenced loads, its buses' kilovolts, and its relief tank and tailpipes.
-    expect(plants.initialSeriesCount).toBe(2880)
-    expect(plants.samplesPerSimulationSecond).toBe(2880)
+    // sequencers and sequenced loads, its buses' kilovolts, and its relief tank and tailpipes; and, 41 more a Plant
+    // (C1), its rod steps and bank positions, source-range startup rate, trip breakers, each loop's ΔT power, flow and
+    // forced flow, the turbine's load, speed and breaker, the grid's frequency, availability and supply voltage, and
+    // the natural-circulation checks' rates.
+    expect(plants.initialSeriesCount).toBe(3044)
+    expect(plants.samplesPerSimulationSecond).toBe(3044)
     expect(preview.recording.selections.every(selection => selection.initialSeriesCount !== null)).toBe(true)
     expect(preview.recording.sampleWindowSimulationSeconds).toBeLessThan(138)
     const slower = await registry.previewScenario({ ...definition, packs: definition.packs.map(pack => pack.id === 'process-plant' ? { ...pack, recording: { profileId: 'operations', intervalMs: 5000 } } : pack) })

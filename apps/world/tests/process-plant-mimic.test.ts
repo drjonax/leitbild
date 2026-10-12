@@ -179,10 +179,11 @@ describe('alarm badges in a chat column', () => {
     const bus = generated(system, { to: ['safetyBusA'] })
     expect(places(bus)).toContain('Grid')
     // All four primary loops have none to spare: they are drawn as before, each badge reserving only what it watches,
-    // the core's two rows of whether its rods are on bottom (and a trip it does not follow) above its tag.
+    // the core's rows of its flux in the range that reads it and whether its rods are on bottom (and a trip it does
+    // not follow) above its tag.
     const loops = generated(system, { services: ['primaryCoolant'] })
     expect(places(loops)).toEqual([])
-    expect([loops.width, loops.height]).toEqual([747, 522])
+    expect([loops.width, loops.height]).toEqual([747, 538])
   })
 })
 
