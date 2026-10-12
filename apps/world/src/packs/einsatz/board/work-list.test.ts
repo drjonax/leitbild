@@ -44,6 +44,7 @@ const answer = (fields: Partial<Recommendation>): Recommendation => ({
   ineligible: [],
   committed: [],
   next: [],
+  nextRemainder: [remainder],
   servable: false,
   ...fields,
 })

@@ -62,6 +62,8 @@ export const boardWords = {
   coveredNext: 'Covered next by',
   /** After it, where alternatives can still be sent at once. */
   orSendNow: 'or send another now',
+  /** Inside a line, before what a call held next still needs beside the units that hold it: "U1 next · still needs 1 more server". */
+  stillNeeds: 'still needs',
   /** The Calls list's marker for waiting rows scrolled out of view above, after their count: "↑ 2 waiting". */
   waitingAbove: 'waiting',
   confirmFirst: 'Confirm or cancel first',

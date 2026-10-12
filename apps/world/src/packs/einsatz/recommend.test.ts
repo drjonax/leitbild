@@ -123,6 +123,31 @@ describe('Einsatz smallest covering sets', () => {
     expect(unitIds(recommendation.alternatives)).toEqual(['c1', 'c2'])
   })
 
+  test('units holding a task as their next job are counted for what it would still need: nothing when they bring all of it, the rest by name when they bring part', async () => {
+    let state = await runAll(emptyState(), [
+      newUnit('c1', types.roadCarrier, at(0.001)),
+      newUnit('c2', types.roadCarrier, at(0.002)),
+      // T1 and T2 are as urgent as the tasks queued behind them, so neither carrier may be diverted.
+      newTask('t1', templates.load, far(0), { [top]: 1 }),
+      newTask('t2', templates.load, far(1), { [top]: 1 }),
+      newTask('both', templates.load, at(0.01), { [top]: 1, [middle]: 1 }),
+      newTask('one', templates.load, at(0.02), { [top]: 1 }),
+      send(['c1'], { taskId: 't1' }),
+      send(['c2'], { taskId: 't2' }),
+      { kind: 'queue', unitId: 'c1', to: { taskId: 'both' } },
+      { kind: 'queue', unitId: 'c2', to: { taskId: 'one' } },
+    ])
+    state = await advance(state, start + 1_000)
+    const both = await recommendFor(state, 'both')
+    expect(unitIds(both.next)).toEqual(['c1'])
+    // A queued step counts towards nothing: the remainder after the proposal is all of it, and C1 would bring the top load.
+    expect(both.nextRemainder).toEqual(['C2×1'])
+    const one = await recommendFor(state, 'one')
+    expect(unitIds(one.next)).toEqual(['c2'])
+    expect(one.nextRemainder).toEqual([])
+    expect(one.proposal.covers).toBe(false)
+  })
+
   test('without enough units the best partial set is proposed and the remainder named', async () => {
     const state = await runAll(emptyState(), [
       newUnit('c1', types.roadCarrier, at(0.001)),

@@ -66,6 +66,14 @@ export const recommendationSchema = z.object({
    */
   next: z.array(z.object({ unitId: idSchema, label: z.string().min(1), stepId: idSchema, stepsAhead: z.number().int().nonnegative() }).strict()),
   /**
+   * What the task would still need from the caller's units, in configuration
+   * words, were the units under `next` whose next job it is (queued behind at
+   * most the step they are carrying out) on their way beside those assigned
+   * now: empty when they would serve it. A call they serve is covered next;
+   * one they serve only in part still needs the rest.
+   */
+  nextRemainder: z.array(z.string().min(1)),
+  /**
    * False when no unit of the task's side, commanded by the caller or not and
    * busy or not, could ever serve what the task still needs after the
    * proposal: no unit provides a short requirement and meets its conditions,

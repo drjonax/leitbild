@@ -142,6 +142,32 @@ describe('Fixes from the third tap-only walkthrough', () => {
     })
   })
 
+  test('a call a unit holds queued that it would serve only in part is not covered next: the bar names the unit and what is still missing, and sends no second unit', async () => {
+    // U2 and P1 serve O1 and U1 serves T1, all as urgent as TX: none is free or may be diverted, and U1 brings TX only its load.
+    const items = [
+      unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 0.5)), unitAt('p1', 'P1', pairServer, at(0, 1)),
+      taskAt('t1', 'T1', kinds.templates.load, at(3), { [top]: 1 }),
+      taskAt('o1', 'O1', kinds.templates.single, at(2), { [top]: 1 }),
+      taskAt('tx', 'TX', kinds.templates.single, at(4), { [top]: 1 }),
+    ]
+    await withScene(items, async run => {
+      await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
+      await accepted(run, ids.send, { units: ['u2', 'p1'], to: { taskId: 'o1' } })
+      const screen = await openScreen(run, createWall())
+      await screen.click({ kind: 'row', list: 'units', id: 'u1' })
+      await screen.click({ kind: 'row', list: 'work', id: 'tx' })
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'option', option: 'add-to-end' })
+      await screen.sync()
+      expect(run.unit('u1').orders.map(step => step.target)).toEqual([{ taskId: 't1' }, { taskId: 'tx' }])
+      expect(screen.view().selected).toMatchObject({ kind: 'task', id: 'tx' })
+      const commit = screen.view().commit
+      expect(commit).toMatchObject({ state: 'none', button: null })
+      expect(commit.text).toStartWith(`U1 ${boardWords.next} · ${boardWords.stillNeeds} 1 more `)
+      expect(commit.text).not.toContain(boardWords.coveredNext)
+    })
+  })
+
   test('Add to end offered from a call with no free unit passes over a paused unit for one that is not', async () => {
     const items = [unitAt('p1', 'P1', pairServer, at(0)), unitAt('p2', 'P2', pairServer, at(0, 0.5)), taskAt('o1', 'O1', kinds.templates.single, at(0.2)), taskAt('o2', 'O2', kinds.templates.single, at(0.2, 0.5)), taskAt('o3', 'O3', kinds.templates.single, at(3))]
     await withScene(items, async run => {
@@ -230,6 +256,7 @@ describe('Words that the third walkthrough found wrong', () => {
     ineligible: [],
     committed: [],
     next: [],
+    nextRemainder: [],
     servable: true,
     ...overrides,
   })

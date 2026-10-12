@@ -314,8 +314,8 @@ export const createBoardController = (options: {
     const task = selectedTask()
     const answer = task === undefined ? undefined : recommendations.answer(task.id)
     if (task === undefined || answer === undefined) return
-    // A call covered next shows no proposal as its button: its units are numbered among the alternatives, first.
-    const offered = [...(coveredNext(answer) ? answer.proposal.units.filter(unit => !answer.alternatives.some(entry => entry.unitId === unit.unitId)) : []), ...answer.alternatives]
+    // A call held next shows no proposal as its button: its units are numbered among the alternatives, first.
+    const offered = [...(heldNext(answer) ? answer.proposal.units.filter(unit => !answer.alternatives.some(entry => entry.unitId === unit.unitId)) : []), ...answer.alternatives]
       .map(unit => ({ unitId: unit.unitId, label: unit.label }))
     const kept = numbering?.taskId === task.id ? numbering.entries : []
     const numbered = new Set(kept.map(entry => entry.unitId))
@@ -392,17 +392,20 @@ export const createBoardController = (options: {
 
   /**
    * Whether units holding the task as their next job, behind at most the
-   * step they are carrying out (`nextJob`), would bring what the proposal sends: one of each proposed unit's
-   * type for every proposed unit. Such a call is covered next; sending the
-   * proposal too would send a second unit, so it is only offered among the
-   * alternatives. A unit with other queued steps ahead of the task covers
-   * nothing yet: the proposal stays the call's button.
+   * step they are carrying out (`nextJob`), would bring what the proposal
+   * sends: one of each proposed unit's type for every proposed unit. Such a
+   * call is held next; sending the proposal too would send a second unit, so
+   * it is only offered among the alternatives. It is covered next only when
+   * the engine finds those units would serve it (`nextRemainder` empty);
+   * otherwise the call still needs what they do not bring. A unit with other
+   * queued steps ahead of the task holds nothing yet: the proposal stays the
+   * call's button.
    */
   const nextJob = (answer: Recommendation): Recommendation['next'] => answer.next.filter(entry => {
     const unit = records!.units.get(entry.unitId)
     return unit !== undefined && unit.orders.slice(0, entry.stepsAhead).every(step => step.state === 'active')
   })
-  const coveredNext = (answer: Recommendation): boolean => {
+  const heldNext = (answer: Recommendation): boolean => {
     const next = nextJob(answer)
     if (next.length === 0) return false
     const types = next.map(entry => records!.units.get(entry.unitId)?.unitType)
@@ -413,7 +416,8 @@ export const createBoardController = (options: {
       return true
     })
   }
-  /** A call units hold queued, and whose proposal they would bring: tapped, it says who comes next rather than offering a second unit as its button. */
+  const coveredNext = (answer: Recommendation): boolean => heldNext(answer) && answer.nextRemainder.length === 0
+  /** A call units hold queued, and would serve: in hand, so the selection moves past it. */
   const nextCovers = (taskId: string): boolean => {
     const answer = answerOf(taskId)
     return answer !== undefined && coveredNext(answer)
@@ -429,9 +433,12 @@ export const createBoardController = (options: {
         : { kind: 'none', state: 'none', text: noRecommendationText(failure) }
     }
     let sent: ReadonlyArray<Candidate> = answer.proposal.units
-    if (chosen === null && coveredNext(answer)) {
+    // Held next, it says who comes rather than offering a second unit as its button: covered, or what is still missing beside them.
+    if (chosen === null && heldNext(answer)) {
+      const units = joinUnits(nextJob(answer).map(entry => entry.label))
+      const held = answer.nextRemainder.length === 0 ? `${boardWords.coveredNext} ${units}` : `${units} ${boardWords.next} · ${boardWords.stillNeeds} ${answer.nextRemainder.join(', ')}`
       const more = answer.proposal.units.length + answer.alternatives.length > 0 ? ` · ${boardWords.orSendNow}` : ''
-      return { kind: 'none', state: 'none', text: `${boardWords.coveredNext} ${joinUnits(nextJob(answer).map(entry => entry.label))}${more}` }
+      return { kind: 'none', state: 'none', text: `${held}${more}` }
     }
     if (chosen !== null) {
       const entry = numbering?.entries[chosen - 1]
@@ -1329,7 +1336,7 @@ export const createBoardController = (options: {
       id: task.id,
       proposal: answer === undefined ? [] : proposalUnits(answer),
       // Only units still offered are shown; a dropped one keeps its number for the digit keys.
-      alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen, !coveredNext(answer)).map(row => ({ ...row, label: shownLabel(row.unitId, row.label) })),
+      alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen, !heldNext(answer)).map(row => ({ ...row, label: shownLabel(row.unitId, row.label) })),
       ineligible: answer?.ineligible.map(item => item.reasons.map(reason => namedOnce(item.label, reason)).join(' · ')) ?? [],
       remainder,
       remainderText: remainder.length === 0 ? null : `${boardWords.remainder} ${remainder.join(', ')}`,

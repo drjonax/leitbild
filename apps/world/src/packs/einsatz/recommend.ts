@@ -24,7 +24,9 @@ import { commandsUnit, inPicture, taskAuthority, type EinsatzViewer } from './vi
  *   requirements and load classes with the same free capacity fill alike, so
  *   the search picks among them by ETA, nearest first.
  * - Only a unit's active step counts: a unit holding the task queued behind
- *   other work is named under `next`, never as covering it. A free unit may
+ *   other work is named under `next`, never as covering it; `nextRemainder`
+ *   says what the task would still need were those whose next job it is on
+ *   their way. A free unit may
  *   hold steps (a move, an engagement, a paused chain); each candidate says
  *   how many, so the caller can ask whether to do it now or add it to the end.
  */
@@ -202,6 +204,18 @@ const queuedFor = (state: EngineState, viewer: EinsatzViewer, task: TaskRecord):
   .sort((a, b) => a.stepsAhead - b.stepsAhead || (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0))
 
 /**
+ * What the task would still need from the caller's units were the units
+ * holding it as their next job, queued behind at most the step they are
+ * carrying out, on their way to it beside those assigned now: empty when
+ * they would serve it.
+ */
+const nextRemainderOf = (state: EngineState, task: TaskRecord, view: RoleView, next: Recommendation['next']): string[] =>
+  remainderOf(state, task, view, next.flatMap(entry => {
+    const unit = state.units.get(entry.unitId)
+    return unit !== undefined && unit.orders.slice(0, entry.stepsAhead).every(step => step.state === 'active') ? [unit] : []
+  }))
+
+/**
  * The recommendation for a task as the viewer sees it: proposal,
  * alternatives, ineligible and busy units. A task outside the viewer's
  * picture is not in it; one outside its queue or closed is refused.
@@ -258,6 +272,7 @@ export const recommend = async (input: {
     .sort((a, b) => b.gain - a.gain || byEta(a.entry, b.entry))
     .map(({ entry }) => entry)
   const need = residualNeed(state, task, view, [])
+  const next = queuedFor(state, viewer, task)
 
   return {
     taskId: task.id,
@@ -274,6 +289,7 @@ export const recommend = async (input: {
       .filter(unit => !inProposal.has(unit.id) && !divertIds.has(unit.id))
       .map(unit => ({ unitId: unit.id, label: unit.label, reason: hasLoad(unit) ? loadedText(state, unit) : committedText(state, unit) })),
     servable: servableAfter(state, task, proposed),
-    next: queuedFor(state, viewer, task),
+    next,
+    nextRemainder: nextRemainderOf(state, task, view, next),
   }
 }
