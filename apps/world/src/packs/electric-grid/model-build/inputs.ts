@@ -121,6 +121,22 @@ export const hydroHeadsSnapshotSchema = z.object({
 })
 export type HydroHeadsSnapshot = z.infer<typeof hydroHeadsSnapshotSchema>
 
+/**
+ * OSM coastline snapshot (scripts/electric-grid/snapshot-osm-coastline.ts): the natural=coastline
+ * ways of the pinned PBF, simplified, as [lon, lat] polylines.
+ */
+export const coastlineSnapshotSchema = z.object({
+  kind: z.literal('osm-coastline'),
+  source: z.object({
+    id: z.string().min(1),
+    snapshot: z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/), dataTimestamp: isoInstant }),
+    licence: z.object({ id: z.literal('osm-odbl-1.0') }),
+  }),
+  simplifyToleranceM: z.number().finite().positive(),
+  lines: z.array(z.array(lonLat).min(2)).min(1),
+})
+export type CoastlineSnapshot = z.infer<typeof coastlineSnapshotSchema>
+
 const referenceHourSchema = z.object({
   priceAreas: z.object({
     startUtc: isoInstant,
