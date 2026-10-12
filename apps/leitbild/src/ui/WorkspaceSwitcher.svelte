@@ -264,7 +264,8 @@
 
 <style>
   .switch { position: relative; min-width: 0; }
-  .ws-button { display: inline-flex; align-items: center; gap: .5rem; max-width: 300px; min-height: 36px; padding: 0 .6rem 0 .65rem;
+  /* Never wider than the room the bar leaves it: the name ellipsises instead of running under the links beside it. */
+  .ws-button { display: inline-flex; align-items: center; gap: .5rem; max-width: min(300px, 100%); min-height: 36px; padding: 0 .6rem 0 .65rem;
     border: 1px solid var(--lb-on-dark-line); border-radius: var(--lb-r-sm); background: #1d2d22; color: var(--lb-on-dark);
     font-size: .8125rem; font-weight: 550; cursor: pointer; }
   .ws-button:hover { border-color: #4d6352; background: #24372a; }
@@ -319,6 +320,10 @@
   .sheet-head { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 0 6px 0 16px; }
   .sheet-head h2 { margin: 0; font-size: 1.0625rem; font-weight: 700; }
   .sheet .body { max-height: none; min-height: 0; flex: 1; }
+  /* Mid widths: the name gets the room; "Workspace:" stays in the button's accessible name. */
+  @media (max-width: 899px) {
+    .kicker { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
   @media (max-width: 639px) {
     .ws-button { min-height: 40px; gap: 2px; padding: 0 6px; }
   }
