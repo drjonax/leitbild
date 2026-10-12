@@ -20,7 +20,7 @@ import { compileScenarioDefinition } from '../../../apps/world/src/core/scenario
 import { createScenarioRuntimeResolver } from '../../../apps/world/src/core/scenarios/runtime-resolver.ts'
 import { createDirectRoutingAdapter } from '../../../apps/world/src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../../../apps/world/src/scenarios/definitions.ts'
-import { builtinFeaturedScenarioDefinitions, featuredScenarioDefinitionsFor } from '../../../apps/world/src/scenarios/featured.ts'
+import { builtinFeaturedScenarioDefinitions } from '../../../apps/world/src/scenarios/featured.ts'
 import { handleAgentsModuleApi } from '../../../apps/agents/src/api/workspace-module-api.ts'
 import { asAIAgent } from '../../../apps/agents/src/agents/shared.ts'
 import { effectiveAgentToolSelection } from '../../../apps/agents/src/agents/spawn.ts'
@@ -497,19 +497,9 @@ describe('Workspace Host with real Modules', () => {
       await rm(dataDir, { recursive: true, force: true })
     })
 
-    // World's featured.json is still empty, so one bundled Scenario goes
-    // through the same loader. Once World features its demos, serve
-    // builtinFeaturedScenarioDefinitions here instead: every entry must pass.
-    const featuredDefinitions = featuredScenarioDefinitionsFor({
-      source: [{
-        scenarioId: 'halden-emergency',
-        summary: 'Run a fictional emergency desk in Halden.',
-        about: 'Calls arrive every few minutes; send the suggested unit to each.',
-        tags: ['Emergency dispatch'],
-        previews: [{ alt: 'The dispatch board', width: 1600, height: 1000, sources: [{ file: 'halden-emergency-1600.0a1b2c3d.webp', width: 1600 }] }],
-      }],
-      scenarios: builtinScenarioDefinitions,
-    })
+    // Every demo World features must start this way.
+    const featuredDefinitions = builtinFeaturedScenarioDefinitions
+    expect(featuredDefinitions.definitions.length).toBeGreaterThan(0)
 
     const routing = createDirectRoutingAdapter()
     const worldAssembly = createWorldApplicationAssembly({ routing })
@@ -522,6 +512,8 @@ describe('Workspace Host with real Modules', () => {
       scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(worldAssembly.packs),
       runtimeAdapters: worldAssembly.runtimeAdapters,
     })
+    // Stop the started demos before their data directory goes.
+    cleanup.push(() => worldRegistry.shutdown())
     const worldServer = createWorldServer({
       workspaces: worldRegistry,
       featuredDefinitions,
@@ -547,10 +539,15 @@ describe('Workspace Host with real Modules', () => {
     cleanup.push(() => store.close())
     const host = createWorkspaceHost({
       store,
-      modules: createModuleGateway({ registrations: [
-        moduleRegistrationSchema.parse({ moduleId: 'world', internalBaseUrl: `http://127.0.0.1:${worldServer.port}`, manifestPath: '/.well-known/workspace-module' }),
-        moduleRegistrationSchema.parse({ moduleId: 'agents', internalBaseUrl: `http://127.0.0.1:${agentsServer.port}`, manifestPath: '/.well-known/workspace-module' }),
-      ] }),
+      modules: createModuleGateway({
+        registrations: [
+          moduleRegistrationSchema.parse({ moduleId: 'world', internalBaseUrl: `http://127.0.0.1:${worldServer.port}`, manifestPath: '/.well-known/workspace-module' }),
+          moduleRegistrationSchema.parse({ moduleId: 'agents', internalBaseUrl: `http://127.0.0.1:${agentsServer.port}`, manifestPath: '/.well-known/workspace-module' }),
+        ],
+        // Starting four detailed plants and the national grid takes a few
+        // seconds; on a busy shared test machine it can pass the 30 s default.
+        requestTimeoutMs: 120_000,
+      }),
     })
     const hostServer = createWorkspaceHostServer({ host, bindHost: '127.0.0.1', port: 0 })
     cleanup.push(() => hostServer.stop(true))
@@ -595,5 +592,5 @@ describe('Workspace Host with real Modules', () => {
       const resources = workspaceResourceCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/resources?moduleId=${moduleId}`)).json())
       expect(resources.resources.some(resource => resource.ref.type === 'world.simulation-run' && resource.ref.id === runId)).toBe(true)
     }
-  })
+  }, 300_000)
 })
