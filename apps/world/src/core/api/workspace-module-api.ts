@@ -51,6 +51,7 @@ import { describeScenarioAuthoring, scenarioAuthoringCatalogSchema, scenarioAuth
 import { scenarioDefinitionSchema } from '../scenarios/definition.ts'
 import { scenarioRevisionIdSchema } from '../scenarios/library.ts'
 import { CommandIdempotencyConflictError } from '../simulation-runs/command-idempotency.ts'
+import { drivenRunsOf, runWaitInputSchema, runWaitMaxMs, runWaitResultSchema, waitForRunChange } from '../simulation-runs/run-wait.ts'
 import { executionAdvanceInputSchema,executionSetInputSchema,runCopyInputSchema,runCopyOriginSchema,runExecutionStateSchema } from '../simulation-runs/execution.ts'
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import { aiRoleRunRefusal, hiddenInRoleRun, isRoleGateRefusal, roleRequiredRefusal, roleRunOpenCapabilityIds } from '../simulation-runs/role-gates.ts'
@@ -1560,6 +1561,48 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
         if (typeof failure.status === 'number' && typeof failure.code === 'string') return apiError(failure.status, failure.code, failure.message)
         throw error
       }
+    },
+  },
+  {
+    descriptor: {
+      id: 'world.simulation-run.wait',
+      moduleId: WORLD_MODULE_ID,
+      kind: 'query',
+      scope: { kind: 'resource', resourceType: 'world.simulation-run' },
+      title: 'Wait for a Run change',
+      description: `Waits in your turn, at most ${runWaitMaxMs / 1_000} s of wall time, for the plant to respond or a person to act. Input {afterSequence?, maxWaitMs? (1000-${runWaitMaxMs}), simulationSeconds? (1-600), events? [{type, procedureRunId?, signalType?}] (up to 8)}; name simulationSeconds, events or both. Returns at the first of: a durable event after afterSequence (a step read's sequence; omitted: from now) matching events, e.g. {"type":"interaction.signal.received","signalType":"process-plant.proposal.approved"}; simulationSeconds of plant time from now; someone else taking over, releasing, closing or resetting a procedure Run you drive (reason driver-changed: stop and report); or maxWaitMs (timeout). Waiting for plant time on a paused clock returns clock-paused at once: it never plays or advances time. Returns reason, fromSequence, sequence, simulationTime, waitedMs, the matching events and driverChanged. Call it alone, then re-read the step.`,
+      searchTerms: ['wait for plant response', 'wait plant time', 'wait for approval', 'simulation seconds', 'procedure wait'],
+      risk: 'read',
+      idempotent: true,
+      inputSchema: z.toJSONSchema(runWaitInputSchema, { io: 'input' }),
+      outputSchema: capabilityJsonSchema(runWaitResultSchema),
+    },
+    invoke: async (registry, invocation) => {
+      const input = runWaitInputSchema.parse(invocation.input)
+      const runtime = await registry.load(requireSimulationRunResource(invocation))
+      const caller = buildSimulationRunActorForAccess(invocation.access).id
+      const clock = () => {
+        const current = runtime.snapshot().clock
+        if (!current) throw new Error('Simulation Run clock is not initialized')
+        return current
+      }
+      const result = await waitForRunChange({
+        input,
+        caller,
+        driven: drivenRunsOf(caller, runtime.snapshot().procedures?.runs ?? [], runtime.events()),
+        ports: {
+          events: afterSequence => visibleChangeEvents(runtime, invocation, runtime.events({ afterSeq: afterSequence })),
+          sequence: () => runtime.snapshot().seq,
+          clock,
+          subscribe: wake => runtime.subscribe(() => wake()),
+          now: () => performance.now(),
+          schedule: (callback, delayMs) => {
+            const timer = setTimeout(callback, delayMs)
+            return () => clearTimeout(timer)
+          },
+        },
+      })
+      return json({ result })
     },
   },
   {

@@ -53,10 +53,10 @@ const gateway = (): ModuleGateway => ({
   }] : [] }) }),
 })
 
-const startHost = (uiDistPath?: string) => {
+const startHost = (uiDistPath?: string, modules: ModuleGateway = gateway()) => {
   const store = createWorkspaceStore(':memory:')
   stores.push(store)
-  const host = createWorkspaceHost({ store, modules: gateway() })
+  const host = createWorkspaceHost({ store, modules })
   const server = createWorkspaceHostServer({ host, port: 0, bindHost: '127.0.0.1', ...(uiDistPath === undefined ? {} : { uiDistPath }) })
   servers.push(server)
   return { host, baseUrl: `http://127.0.0.1:${server.port}` }
@@ -156,4 +156,18 @@ describe('Leitbild server', () => {
     const { baseUrl } = startHost()
     expect((await fetch(`${baseUrl}/api/compositions`)).status).toBe(404)
   })
+
+  test('answers a capability invocation that takes longer than Bun\'s 10 s idle limit', async () => {
+    // Test-only gateway: a Module that answers after 12 s, as a run wait may.
+    const { host, baseUrl } = startHost(undefined, { ...gateway(), invoke: async () => {
+      await Bun.sleep(12_000)
+      return { ok: true, value: { result: { reason: 'timeout' } } }
+    } })
+    const workspace = await host.create({ name: null })
+    const response = await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities/world.simulation-run.wait/invoke`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: {}, actor: { kind: 'ai', id: 'waiter' } }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ result: { reason: 'timeout' } })
+  }, 60_000)
 })

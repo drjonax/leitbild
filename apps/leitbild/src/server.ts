@@ -77,6 +77,10 @@ const parseJson = async (request: Request): Promise<unknown> => {
   }
 }
 
+// Bun drops a request idle for 10 s. A Module Capability may answer later than
+// that (World's run wait holds up to 20 s); the gateway gives a Module 30 s.
+const capabilityInvokeIdleSeconds = 35
+
 export const createWorkspaceHostServer = (config: {
   readonly host: WorkspaceHost
   readonly port?: number
@@ -87,7 +91,7 @@ export const createWorkspaceHostServer = (config: {
   return Bun.serve({
     port: config.port ?? 3100,
     hostname: config.bindHost ?? '127.0.0.1',
-    async fetch(request) {
+    async fetch(request, server) {
       const url = new URL(request.url)
       try {
         if (url.pathname === '/health' && request.method === 'GET') {
@@ -121,6 +125,7 @@ export const createWorkspaceHostServer = (config: {
 
         const invocationMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/capabilities\/([^/]+)\/invoke$/)
         if (invocationMatch && request.method === 'POST') {
+          server.timeout(request, capabilityInvokeIdleSeconds)
           const workspaceId = workspaceIdSchema.parse(decodeURIComponent(invocationMatch[1] ?? ''))
           const capabilityId = capabilityIdSchema.parse(decodeURIComponent(invocationMatch[2] ?? ''))
           const requestInput = workspaceCapabilityInvocationRequestSchema.parse(await parseJson(request))

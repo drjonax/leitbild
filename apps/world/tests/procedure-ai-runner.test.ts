@@ -201,4 +201,42 @@ describe('the AI procedure runner through the World Module API', () => {
     const named = await invoker(several.registry, several.workspaceId, several.run.id)('world.procedure.run.start', { sourceId: 'runner-other', procedureId: 'E-0', scope: { plantId: several.plantId } }, severalAi)
     expect(named.body.result.pinned).toMatchObject({ sourceId: 'runner-other', sourceRevision: revision })
   })
+
+  test('an AI agent waits for a named change, a person taking over its run, or plant time, and sees only what it may inspect', async () => {
+    const { registry, workspaceId, run, plantId } = await setup()
+    const invoke = invoker(registry, workspaceId, run.id)
+    const ai = access(workspaceId, { kind: 'ai', id: 'assistant' })
+    const human = access(workspaceId, { kind: 'human' })
+    const started = await invoke('world.procedure.run.start', { procedureId: 'E-0', scope: { plantId } }, ai)
+    const runId = started.body.result.pinned.runId
+    const before = started.body.result.next.sequence
+
+    // A paused plant clock ends a wait for plant time at once.
+    const paused = await invoke('world.simulation-run.wait', { simulationSeconds: 30 }, ai)
+    expect(paused.body.result).toMatchObject({ reason: 'clock-paused', paused: true, fromSequence: run.snapshot().seq })
+
+    // An event already committed after afterSequence answers at once.
+    await invoke('world.procedure.run.transition', { runId, stepId: 'verify-reactor-trip', branchIndex: 0, basis: 'Test-only selection.', evidenceTagIds: ['NIS-PR-AVG'] }, ai)
+    const selected = await invoke('world.simulation-run.wait', { afterSequence: before, events: [{ type: 'procedure.branch.selected', procedureRunId: runId }] }, ai)
+    expect(selected.body.result).toMatchObject({ reason: 'event', fromSequence: before, events: [{ type: 'procedure.branch.selected', runId, branchIndex: 0 }] })
+    expect(selected.body.result.waitedMs).toBeLessThan(1_000)
+
+    // A person's take-over ends the AI agent's wait, whatever it waited for.
+    const waiting = invoke('world.simulation-run.wait', { events: [{ type: 'interaction.signal.received', signalType: 'process-plant.proposal.approved' }], maxWaitMs: 10_000 }, ai)
+    await Bun.sleep(300)
+    expect((await invoke('world.procedure.run.drive', { runId, action: 'claim' }, human)).status).toBe(200)
+    const changed = (await waiting).body.result
+    expect(changed).toMatchObject({ reason: 'driver-changed', driverChanged: { runId, procedureId: 'E-0', change: 'procedure.run.driver.changed', by: 'actor:operator', driver: { kind: 'person' } } })
+    expect(changed.waitedMs).toBeLessThan(5_000)
+
+    // Events of a plant the AI agent may not inspect never answer its wait.
+    const operator = { id: actorIdSchema.parse('operator:runner'), label: 'Runner operator', role: 'operator' as const }
+    const hiddenFrom = run.snapshot().seq
+    await invoke('world.procedure.run.transition', { runId, stepId: 'verify-turbine-trip', branchIndex: 0 }, human)
+    await run.setAgentRestrictions(operator, { operationIds: [], objects: [{ objectId: objectIdSchema.parse(plantId), deny: ['inspect'] }] }, 0)
+    const hidden = await invoke('world.simulation-run.wait', { afterSequence: hiddenFrom, events: [{ type: 'procedure.branch.selected' }], maxWaitMs: 1_000 }, ai)
+    expect(hidden.body.result).toMatchObject({ reason: 'timeout', fromSequence: hiddenFrom })
+    expect(hidden.body.result.events).toBeUndefined()
+    expect((await invoke('world.simulation-run.wait', { afterSequence: hiddenFrom, events: [{ type: 'procedure.branch.selected' }], maxWaitMs: 1_000 }, human)).body.result.reason).toBe('event')
+  })
 })
