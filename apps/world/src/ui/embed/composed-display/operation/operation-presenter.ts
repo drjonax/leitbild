@@ -641,7 +641,7 @@ export const proposalCard = (
     consequences: option.consequences,
     opposing: option.opposing,
     reversibility: control.protection?.role === 'block' ? 'Not reversed here: the block stands until its logic resets it'
-      : control.form === 'pushbutton' ? 'Not reversed here: what it actuates latches until reset, which is not offered'
+      : control.form === 'pushbutton' ? 'Not reversed here: what it actuates latches until it is reset, which is offered once its condition has cleared'
       : other === undefined ? 'No opposite command is offered' : `Reversible: ${other.action} is a new command`,
     approve: !pending ? null : {
       label: approveLabel(option.action),
