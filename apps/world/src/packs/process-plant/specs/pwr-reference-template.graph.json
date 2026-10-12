@@ -12836,6 +12836,10 @@
     "containmentFanCoolersB.energized",
     "pressurizerReliefTank.pressureMPa",
     "pressurizerReliefTank.ruptureDiskBurst",
-    "pressurizer.reliefValveFlowing"
+    "pressurizer.reliefValveFlowing",
+    "reactorTripBreakerA.closed",
+    "reactorTripBreakerA.closedState",
+    "reactorTripBreakerB.closed",
+    "reactorTripBreakerB.closedState"
   ]
 }
