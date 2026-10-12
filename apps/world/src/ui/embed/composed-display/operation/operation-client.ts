@@ -39,6 +39,14 @@ export interface OperationClient {
   readonly units: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<VariablePath>) => Promise<ReadonlyMap<VariablePath, ProcessUnit>>
 }
 
+/**
+ * How long a read may take before the display gives up on it and says so: a
+ * read that never returns (a dropped connection) would otherwise hold back
+ * every later one, and the popover would show controls as they stood then.
+ */
+export const OPERATION_READ_TIMEOUT_MS = 10_000
+const timed = () => ({ signal: AbortSignal.timeout(OPERATION_READ_TIMEOUT_MS) })
+
 const commandOutcome = async (runId: SimulationRunId, capabilityId: string, input: unknown): Promise<OperationOutcome> => {
   const response = await invokeSimulationRunCapability(runId, { capabilityId, input })
   if (response.kind !== 'command') throw new Error(`${capabilityId} is not a command`)
@@ -46,9 +54,9 @@ const commandOutcome = async (runId: SimulationRunId, capabilityId: string, inpu
 }
 
 export const operationClient: OperationClient = {
-  controls: (runId, plantId, items) => querySimulationRunCapability<ListedControls>(runId, 'world.process-plant.controls.list', { plantId, ...(items === null ? {} : { items: [...items] }) }),
+  controls: (runId, plantId, items) => querySimulationRunCapability<ListedControls>(runId, 'world.process-plant.controls.list', { plantId, ...(items === null ? {} : { items: [...items] }) }, timed()),
   validate: async (runId, plantId, write) => {
-    const result = await querySimulationRunCapability<{ readonly accepted: boolean; readonly reason?: string }>(runId, 'world.process-plant.control.validate', { plantId, path: write.path, value: write.value })
+    const result = await querySimulationRunCapability<{ readonly accepted: boolean; readonly reason?: string }>(runId, 'world.process-plant.control.validate', { plantId, path: write.path, value: write.value }, timed())
     if (result.accepted) return { accepted: true }
     if (result.reason === undefined) throw new Error('control.validate refused a write without a reason')
     return { accepted: false, reason: result.reason }
@@ -56,10 +64,10 @@ export const operationClient: OperationClient = {
   write: (runId, plantId, write) => commandOutcome(runId, 'world.process-plant.control.write', { plantId, path: write.path, value: write.value }),
   decide: (runId, plantId, proposalId, decision, reason) =>
     commandOutcome(runId, 'world.process-plant.control.decide', { plantId, proposalId, decision, ...(reason === null ? {} : { reason }) }),
-  proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }),
+  proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }, timed()),
   units: async (runId, plantId, paths) => {
     if (paths.length === 0) return new Map()
-    const resolved = await querySimulationRunCapability<{ readonly signals: ReadonlyArray<{ readonly path: VariablePath; readonly unit: ProcessUnit }> }>(runId, 'world.process-plant.signals.resolve', { plantId, signals: paths.map(path => ({ path })) })
+    const resolved = await querySimulationRunCapability<{ readonly signals: ReadonlyArray<{ readonly path: VariablePath; readonly unit: ProcessUnit }> }>(runId, 'world.process-plant.signals.resolve', { plantId, signals: paths.map(path => ({ path })) }, timed())
     return new Map(resolved.signals.map(signal => [signal.path, signal.unit]))
   },
 }
