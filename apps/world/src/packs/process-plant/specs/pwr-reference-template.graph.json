@@ -67,7 +67,7 @@
         "nominalPrimaryFlowKgPerS": 17000,
         "nominalPressureDropMPa": 0.35,
         "coreBypassFlowFraction": 0.05,
-        "nominalSourceRangeCountRateCps": 100000,
+        "nominalSourceRangeCountRateCps": 25000,
         "nominalIntermediateRangeCurrentAmps": 0.0005,
         "p6IntermediateRangeCurrentAmps": 1e-10,
         "p10PowerRangePercent": 10,

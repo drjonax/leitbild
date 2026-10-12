@@ -166,9 +166,10 @@ describe('a reactor trip from full power', () => {
       expect(sample.p6).toBe((sample.intermediateRange as number) >= 1e-10)
       if (!sample.highVoltage) expect(sample.sourceRange).toBe(0)
     }
-    // It comes on at the top of its range, overlapping the intermediate range, and counts down from there.
-    expect(at(clearedAt).sourceRange as number).toBeGreaterThan(5e4)
-    expect(at(clearedAt).sourceRange as number).toBeLessThanOrEqual(1e5 + 10)
+    // It comes on overlapping the intermediate range, at the 2.5e4 cps a Westinghouse source range reads at P-6,
+    // and counts down from there.
+    expect(at(clearedAt).sourceRange as number).toBeGreaterThan(2e4)
+    expect(at(clearedAt).sourceRange as number).toBeLessThanOrEqual(2.5e4 + 10)
     expect(at(1_200).sourceRange as number).toBeLessThan(at(clearedAt).sourceRange as number)
     expect(at(1_200).sourceRange as number).toBeGreaterThan(10)
   }, PLANT_HANG_GUARD_MS)
