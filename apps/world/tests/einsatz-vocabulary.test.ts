@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 
 // No asset type is built into Einsatz: its code, tests included, never names a
-// demo asset, role or casualty concept, not even inside an identifier such as
+// demo asset, role, place or casualty concept of a shipped Definition
+// (halden-emergency, supply-run, halden-border), not even inside an identifier such as
 // `isTank`. Every such word comes from configuration. This file lies outside
 // the scope because it must spell the words out. The scope widens at the cut
 // to ui/**, core/**, simulation/**, tests/helpers* and the integration tests.
@@ -12,7 +13,7 @@ const scopeRoots: ReadonlyArray<string> = ['src/packs/einsatz']
 /** JSON (scenario data and the icon catalogue), built UI output and Process Plant display code, where the word names a vessel. */
 const exempt = (path: string): boolean => path.endsWith('.json') || path.startsWith('src/ui/dist/') || path.startsWith('src/ui/embed/composed-display/')
 
-const demoWord = /^(?:ambulances?|patients?|hospitals?|police|firefighting|recces?|tanks?|armou?r(?:ed)?|casualt(?:y|ies)|ems|triage|helicopters?|patrol|trucks?)$/
+const demoWord = /^(?:ambulances?|patients?|hospitals?|police|firefighting|firefighters?|paramedics?|recces?|tanks?|armou?r(?:ed)?|casualt(?:y|ies)|ems|triage|helicopters?|patrol|trucks?|lorr(?:y|ies)|kitchens?|shelters?)$/
 /** "fire" alone is mechanism vocabulary; only the sequence names an asset. */
 const demoSequences: ReadonlyArray<readonly [string, RegExp]> = [['fire', /^engines?$/]]
 
@@ -51,6 +52,7 @@ describe('Einsatz vocabulary', () => {
     expect(demoWordsIn('casualties')).toEqual(['casualties'])
     expect(demoWordsIn("'fire-engine'")).toEqual(['fire engine'])
     expect(demoWordsIn('isTank || EMSBoard || unit2Patrol')).toEqual(['tank', 'ems', 'patrol'])
+    expect(demoWordsIn('shelterId, kitchen_count, paramedicCrew')).toEqual(['shelter', 'kitchen', 'paramedic'])
   })
 
   test('the scanner leaves mechanism words and words that merely contain a demo word alone', () => {
