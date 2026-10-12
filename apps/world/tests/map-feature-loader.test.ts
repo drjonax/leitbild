@@ -71,7 +71,7 @@ describe('MapFeatureLoader', () => {
     let recovered = false
     const loader = createMapFeatureLoader({
       pack: () => createActivePackViews([createPack([{ capabilityId: 'world.weather-test.good', input: {} }, { capabilityId: 'world.weather-test.broken', input: {} }])]),
-      objects: () => [], simulationRunId: () => 'run-test' as SimulationRunId, currentTime: () => generatedAt, seenRoleIds: () => null,
+      objects: () => [], simulationRunId: () => 'run-test' as SimulationRunId, currentTime: () => generatedAt, seenRoleIds: () => null, selectedObjectId: () => null,
       queryCapability: async (_id, request) => { if (!recovered && request.capabilityId === 'world.weather-test.broken') throw new Error('Test provider failed'); return { features: [featureFor('good')], truncated: !recovered } },
       onWarnings: messages => { warnings = messages },
     })
@@ -106,6 +106,7 @@ describe('MapFeatureLoader', () => {
       simulationRunId: () => 'run-test' as SimulationRunId,
       currentTime: () => generatedAt,
       seenRoleIds: () => null,
+      selectedObjectId: () => null,
       queryCapability,
       queryTimeoutMs: 500,
     })
@@ -136,6 +137,7 @@ describe('MapFeatureLoader', () => {
       simulationRunId: () => 'run-test' as SimulationRunId,
       currentTime: () => generatedAt,
       seenRoleIds: () => seen,
+      selectedObjectId: () => null,
       queryCapability: async () => ({ features: [] }),
     })
     expect((await loader({ viewport, zoom: 8 })).map(feature => feature.id)).toEqual(['group-a-path'])
@@ -150,9 +152,30 @@ describe('MapFeatureLoader', () => {
     ])
   })
 
-  test('the World view passes the roles it sees to the loader, and reloads Pack map features when they change', () => {
+  test('hands a Pack\'s map features the object the map selects, and none while nothing is selected', async () => {
+    const asked: Array<string | undefined> = []
+    const selecting: WorldPack = {
+      ...createPack([]),
+      presentation: { ...createPack([]).presentation, mapFeatures: context => { asked.push(context.selectedObjectId); return [] } },
+    }
+    let selected: string | null = null
+    const loader = createMapFeatureLoader({
+      pack: () => createActivePackViews([selecting]),
+      objects: () => [],
+      simulationRunId: () => null,
+      currentTime: () => generatedAt,
+      seenRoleIds: () => null,
+      selectedObjectId: () => selected,
+    })
+    await loader({ viewport, zoom: 8 })
+    selected = 'unit-1'
+    await loader({ viewport, zoom: 8 })
+    expect(asked).toEqual([undefined, 'unit-1'])
+  })
+
+  test('the World view passes the roles it sees and the object it selects to the loader, and reloads Pack map features when either changes', () => {
     const route = readFileSync(join(import.meta.dir, '..', 'src', 'ui', 'routes', 'ControlSurfaceRoute.svelte'), 'utf8')
-    expect(route).toMatch(/createMapFeatureLoader\(\{[^}]*seenRoleIds:\s*\(\)\s*=>\s*seenRoleIds,/)
-    expect(route).toMatch(/const\s+mapFeatureRevisionKey\s*=\s*\$derived\([^\n]*\[perspectiveEpoch,\s*packDataRevisions,\s*seenRoleIds\]/)
+    expect(route).toMatch(/createMapFeatureLoader\(\{[^}]*seenRoleIds:\s*\(\)\s*=>\s*seenRoleIds,\s*selectedObjectId:\s*\(\)\s*=>\s*selectedControllerId,/)
+    expect(route).toMatch(/const\s+mapFeatureRevisionKey\s*=\s*\$derived\([^\n]*\[perspectiveEpoch,\s*packDataRevisions,\s*seenRoleIds,\s*selectedControllerId\]/)
   })
 })

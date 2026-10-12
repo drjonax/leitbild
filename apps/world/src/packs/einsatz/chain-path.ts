@@ -76,21 +76,26 @@ export const plannedPaths = (objects: ReadonlyArray<OperationalObject>): Planned
 
 const pathColor = '#2f6f9f'
 
+/** How a planned path is drawn: faint for every unit, strong for the one the map selects (the Board's highlighted asset). */
+const pathLine = {
+  plain: { lineOpacity: 0.5, lineWidth: 2, sortKey: 22 },
+  selected: { lineOpacity: 0.95, lineWidth: 4, sortKey: 23 },
+} as const
+
 /**
  * The queued segments as Pack map features in the routes layer, one per
  * step, keyed by unit and step id, for the units `drawn` keeps: the screen's
  * display filter (a group it chose not to see) hides a unit's path with its
- * icon. The active leg is the unit's own route, which the map draws already.
+ * icon. The selected unit's path is drawn strongly, above the others. The
+ * active leg is the unit's own route, which the map draws already.
  */
-export const plannedPathFeatures = (objects: ReadonlyArray<OperationalObject>, categoryId: string, drawn: (unitId: string) => boolean): PackMapFeature[] =>
+export const plannedPathFeatures = (objects: ReadonlyArray<OperationalObject>, categoryId: string, drawn: (unitId: string) => boolean, selectedId?: string): PackMapFeature[] =>
   plannedPaths(objects).filter(path => drawn(path.unitId)).flatMap(path => path.segments.map(segment => ({
     id: `einsatz-plan:${path.unitId}:${segment.stepId}`,
     categoryId,
     geometry: { type: 'LineString' as const, coordinates: [segment.from.coordinates, segment.to.coordinates] },
     color: pathColor,
     lineColor: pathColor,
-    lineOpacity: 0.5,
-    lineWidth: 2,
+    ...(path.unitId === selectedId ? pathLine.selected : pathLine.plain),
     summary: `${path.label} · next: ${segment.targetLabel ?? 'a map point'}`,
-    sortKey: 22,
   })))

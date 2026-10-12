@@ -25,7 +25,9 @@ import { boardMapOrders } from './ui/map-orders.ts'
  * never drawn on the map.
  *
  * Each unit's job chain shows as its planned path: its route, then a
- * straight segment to each queued step's target (`chain-path.ts`).
+ * straight segment to each queued step's target (`chain-path.ts`). The path
+ * of the unit the map selects, the Board's highlighted asset, is drawn
+ * strongly; every other one faintly.
  *
  * In a role Run a screen chooses which roles it sees (the role dialog's See
  * boxes, `seenRoleIds`): a unit of a group whose role it does not see is not
@@ -215,10 +217,10 @@ export const einsatzPackView = {
       { id: trackIndexesCategory, label: 'Track indexes', emptyLabel: 'No track indexes', matches: object => typeOf(object) === 'track-index', rail: false },
     ],
     presentObject: (object, context) => presentEinsatzObject(object, context),
-    /** Each unit's queued steps as straight segments after its route: the planned path of its job chain. */
+    /** Each unit's queued steps as straight segments after its route: the planned path of its job chain, the selected unit's drawn strongly. */
     mapFeatures: context => {
       const unseen = new Set(context.objects.filter(object => unitUnseen(object, context.seenRoleIds)).map(object => object.id as string))
-      return plannedPathFeatures(context.objects, unitsCategory, unitId => !unseen.has(unitId))
+      return plannedPathFeatures(context.objects, unitsCategory, unitId => !unseen.has(unitId), context.selectedObjectId)
     },
     mapFeatureLayers: ['routes'],
     mapFeatureSourcePackIds: [einsatzPackId],

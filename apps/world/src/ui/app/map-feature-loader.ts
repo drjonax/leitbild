@@ -22,6 +22,8 @@ export interface MapFeatureRuntimeConfig {
    * map in every layer a Pack draws.
    */
   readonly seenRoleIds: () => ReadonlyArray<string> | null
+  /** The object the map selects, or null: a Pack may draw what belongs to it more strongly. */
+  readonly selectedObjectId: () => string | null
   readonly queryTimeoutMs?: number
   readonly onWarnings?: (messages: ReadonlyArray<string>) => void
   readonly queryCapability?: (
@@ -74,11 +76,13 @@ export const createMapFeatureLoader = (
   async (context: MapFeatureLoaderContext): Promise<ReadonlyArray<PackMapFeature>> => {
     const currentTime = context.currentTime ?? config.currentTime()
     const seenRoleIds = config.seenRoleIds()
+    const selectedObjectId = config.selectedObjectId()
     const presentationContextWithTime: PackObjectPresentationContext = {
       objects: config.objects(),
       map: { viewport: context.viewport, zoom: context.zoom },
       ...(currentTime === undefined ? {} : { currentTime }),
       ...(seenRoleIds === null ? {} : { seenRoleIds }),
+      ...(selectedObjectId === null ? {} : { selectedObjectId }),
     }
     const pack = config.pack()
     if (!pack) { config.onWarnings?.([]); return [] }

@@ -162,6 +162,13 @@ export interface PackObjectPresentationContext {
    * unaffected. Visibility between sides stays the Run's, per side.
    */
   readonly seenRoleIds?: ReadonlyArray<string>
+  /**
+   * The object the map selects, for `mapFeatures` and `mapFeatureQueries`
+   * (the map feature loader passes it; absent while nothing is selected). A
+   * Pack may draw what belongs to the selected object more strongly, such
+   * as its planned path; selection is this tab's alone.
+   */
+  readonly selectedObjectId?: string
 }
 
 export interface PackMapRenderContext {
