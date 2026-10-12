@@ -165,8 +165,7 @@ describe('Board Contacts', () => {
     const snapshot = (shown: ReadonlyArray<OperationalObject>, wallMs: number) => {
       board.dispatch({ kind: 'snapshot', objects: shown, currentTime: new Date(nowMs).toISOString() as IsoTimestamp, wallMs })
       const view = board.view()
-      const sections = boardSections(view.arrangement).filter(section => section !== 'contacts' || !view.contactsFolded)
-      return { folded: view.contactsFolded, engageable: view.contacts!.sides.some(side => side.engageable.rows.length > 0), template: listRowsTemplate(sections, boardHeightFor(768 - 44), view.contactsFolded) }
+      return { folded: view.contactsFolded, engageable: view.contacts!.sides.some(side => side.engageable.rows.length > 0), template: listRowsTemplate(boardSections(view.arrangement), boardHeightFor(768 - 44), view.contactsFolded) }
     }
     expect(board.view().arrangement.lead).toBe('work-list')
     const before = snapshot(quiet, 0)

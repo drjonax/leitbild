@@ -126,10 +126,13 @@ export const listsHeightFor = (boardHeightPx: number, foldedContacts = false): n
  * The most each list but the last takes on a Board this tall: its fair share
  * of the lists' height, or its floor when that is more. When those leave the
  * last list less than its own floor, they give way alike, so the last list
- * keeps its floor. The last list takes the rest.
+ * keeps its floor. The last list takes the rest. The limits are those of the
+ * arrangement's lists all open: Contacts folded to its line changes none of
+ * them, so unfolding it shortens the list above it from below and moves no
+ * row in view.
  */
-export const listLimitsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, foldedContacts = false): Readonly<Partial<Record<BoardSection, number>>> => {
-  const lists = listsHeightFor(boardHeightPx, foldedContacts)
+export const listLimitsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>): Readonly<Partial<Record<BoardSection, number>>> => {
+  const lists = listsHeightFor(boardHeightPx)
   const tracks = lists - boardChromePx.gap * Math.max(0, sections.length - 1)
   const upper = sections.slice(0, -1)
   const last = sections.at(-1)
@@ -140,31 +143,37 @@ export const listLimitsFor = (boardHeightPx: number, sections: ReadonlyArray<Boa
   return Object.fromEntries(upper.map((section, index) => [section, wanted[index]! * scale]))
 }
 
+/** The arrangement's lists the grid shows: all of them, but Contacts while it is folded to its line below the grid. */
+export const shownSections = (sections: ReadonlyArray<BoardSection>, foldedContacts = false): ReadonlyArray<BoardSection> =>
+  foldedContacts ? sections.filter(section => section !== 'contacts') : sections
+
 /**
- * The CSS grid rows of the lists on a Board this tall: every list but the
- * last fits its content up to its limit (`listLimitsFor`), in pixels, so no
- * list moves while the Board keeps its height; the last takes all that is
- * left.
+ * The CSS grid rows of the arrangement's lists on a Board this tall: every
+ * shown list but the last fits its content up to its limit
+ * (`listLimitsFor`), in pixels, so no list moves while the Board keeps its
+ * height; the last takes all that is left.
  */
 export const listRowsTemplate = (sections: ReadonlyArray<BoardSection>, boardHeightPx: number, foldedContacts = false): string => {
-  const limits = listLimitsFor(boardHeightPx, sections, foldedContacts)
-  return sections.map((section, index) => index === sections.length - 1 ? 'minmax(0, 1fr)' : `fit-content(${+Math.max(0, limits[section]!).toFixed(1)}px)`).join(' ')
+  const limits = listLimitsFor(boardHeightPx, sections)
+  const shown = shownSections(sections, foldedContacts)
+  return shown.map((section, index) => index === shown.length - 1 ? 'minmax(0, 1fr)' : `fit-content(${+Math.max(0, limits[section]!).toFixed(1)}px)`).join(' ')
 }
 
 /**
- * The height each list takes on a Board this tall, as `listRowsTemplate`
- * lays them out, given the height each list's heading and rows would fill
- * (unbounded when absent): every list but the last takes that up to its
- * limit, the last takes the rest.
+ * The height each shown list of the arrangement takes on a Board this tall,
+ * as `listRowsTemplate` lays them out, given the height each list's heading
+ * and rows would fill (unbounded when absent): every shown list but the last
+ * takes that up to its limit, the last takes the rest.
  */
 export const listHeightsFor = (boardHeightPx: number, sections: ReadonlyArray<BoardSection>, content: Readonly<Partial<Record<BoardSection, number>>> = {}, foldedContacts = false): Readonly<Partial<Record<BoardSection, number>>> => {
+  const shown = shownSections(sections, foldedContacts)
   const lists = listsHeightFor(boardHeightPx, foldedContacts)
-  const limits = listLimitsFor(boardHeightPx, sections, foldedContacts)
-  const tracks = lists - boardChromePx.gap * Math.max(0, sections.length - 1)
+  const limits = listLimitsFor(boardHeightPx, sections)
+  const tracks = lists - boardChromePx.gap * Math.max(0, shown.length - 1)
   const heights: Partial<Record<BoardSection, number>> = {}
   let used = 0
-  sections.forEach((section, index) => {
-    const height = index === sections.length - 1 ? tracks - used : Math.min(content[section] ?? Number.POSITIVE_INFINITY, limits[section]!)
+  shown.forEach((section, index) => {
+    const height = index === shown.length - 1 ? tracks - used : Math.min(content[section] ?? Number.POSITIVE_INFINITY, limits[section]!)
     heights[section] = height
     used += height
   })

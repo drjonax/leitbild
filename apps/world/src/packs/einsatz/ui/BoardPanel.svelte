@@ -10,7 +10,7 @@
   import type { ObjectId } from '../../../core/model/index.ts'
   import { shownBesideBoard } from './board-camera.ts'
   import { boardIconIds, createBoardIcons } from './board-icons.ts'
-  import { boardBottomClearancePx, boardChromePx, boardEdgeGapPx, boardHeightFor, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx, foldedContactsPx, listRowsTemplate, rowBoxStyle } from './board-layout.ts'
+  import { boardBottomClearancePx, boardChromePx, boardEdgeGapPx, boardHeightFor, boardLayoutFor, boardMapCover, boardSections, boardTopClearancePx, foldedContactsPx, listRowsTemplate, rowBoxStyle, shownSections } from './board-layout.ts'
   import { contactsSummary, logTime, stripHeading } from './board-presenter.ts'
   import { createBoardSession, type BoardSession } from './board-session.ts'
   import { createBoardTone, type BoardTone } from './board-tone.ts'
@@ -66,10 +66,11 @@
   })
   // Until the configuration arrives the Board takes the work list's width.
   const layout = $derived(boardLayoutFor(surfaceWidth, view?.arrangement.lead ?? 'work-list'))
-  // Folded Contacts leave the lists' grid for one line below it.
+  // Folded Contacts leave the lists' grid for one line below it; the lists above keep the parts they have with it open.
   const folded = $derived(view !== null && view.contactsFolded)
-  const sections = $derived(view === null ? [] : boardSections(view.arrangement).filter(section => section !== 'contacts' || !folded))
-  const rowsTemplate = $derived(listRowsTemplate(sections, boardHeightFor(surfaceHeight), folded))
+  const arranged = $derived(view === null ? [] : boardSections(view.arrangement))
+  const sections = $derived(shownSections(arranged, folded))
+  const rowsTemplate = $derived(listRowsTemplate(arranged, boardHeightFor(surfaceHeight), folded))
   // The foot's alert line: the newest alert, and how many more stand.
   const alert = $derived(view?.alerts[0] ?? null)
   const heading = $derived(view === null ? boardWords.board : stripHeading(view))

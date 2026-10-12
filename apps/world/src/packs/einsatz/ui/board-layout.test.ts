@@ -123,12 +123,14 @@ describe('Board layout', () => {
     const board = boardHeightFor(768 - 44)
     expect(listRowsTemplate(['work', 'units'], board)).toBe(`fit-content(${+(listsHeightFor(board) * 4 / 7).toFixed(1)}px) minmax(0, 1fr)`)
     expect(listRowsTemplate(['work', 'units', 'contacts'], board)).toBe(`fit-content(${listFloorPx.work}px) fit-content(${listFloorPx.units}px) minmax(0, 1fr)`)
+    // Contacts folded to its line: Calls keeps the part it has with Contacts open, and Assets takes the rest.
+    expect(listRowsTemplate(['work', 'units', 'contacts'], board, true)).toBe(`fit-content(${listFloorPx.work}px) minmax(0, 1fr)`)
     expect(listRowsTemplate(['contacts', 'units'], board)).toMatch(/^fit-content\([\d.]+px\) minmax\(0, 1fr\)$/)
     expect(Math.min(...Object.values(rowPx), boardChromePx.statusLine)).toBeGreaterThanOrEqual(tapPx)
     expect(tapPx).toBe(44)
     const panel = readFileSync(join(import.meta.dir, 'BoardPanel.svelte'), 'utf8')
     expect(panel).toContain('style:grid-template-rows={rowsTemplate}')
-    expect(panel).toContain('listRowsTemplate(sections, boardHeightFor(surfaceHeight), folded)')
+    expect(panel).toContain('listRowsTemplate(arranged, boardHeightFor(surfaceHeight), folded)')
   })
 
   test('Close call is in view without scrolling the capped action bar: pinned to the right of the first row of buttons, under at most three lines of text, apart from the commit button', () => {
@@ -212,21 +214,28 @@ describe('Board layout', () => {
     expect(rowBoxPx.line + 2 * barGap + 2 * tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
   })
 
-  test('folded Contacts give Calls and Assets the height: at 960 × 720 and 1024 × 768 each shows at least as many rows as beside an open Contacts list', () => {
+  test('folded Contacts give Assets the height, and unfolding them moves no row: Calls keeps its height, so Assets\' first row stays where it was, at 960 × 720 and 1024 × 768', () => {
     for (const window of [720, 768]) {
       const board = boardHeightFor(window - 44)
       const three = listHeightsFor(board, ['work', 'units', 'contacts'])
-      const folded = listHeightsFor(board, ['work', 'units'], {}, true)
-      expect(folded.work!).toBeGreaterThanOrEqual(three.work! - 1e-6)
+      const folded = listHeightsFor(board, ['work', 'units', 'contacts'], {}, true)
+      expect(Object.keys(folded)).toEqual(['work', 'units'])
+      // Calls, full or short, takes the same height folded or open, so Assets begins at the same place.
+      expect(folded.work!).toBe(three.work!)
+      for (const calls of [1, 2, 4]) {
+        const content = { work: listContentPx('work', calls) }
+        expect(listHeightsFor(board, ['work', 'units', 'contacts'], content, true).work).toBe(listHeightsFor(board, ['work', 'units', 'contacts'], content).work)
+      }
       expect(folded.units!).toBeGreaterThan(three.units!)
       expect(folded.work! + folded.units! + boardChromePx.gap + foldedContactsPx + boardChromePx.gap).toBeCloseTo(listsHeightFor(board), 6)
     }
-    // At 1024 × 768, two and a half calls and two and a half assets.
-    const folded = listHeightsFor(boardHeightFor(768 - 44), ['work', 'units'], {}, true)
+    // At 1024 × 768, two and a half calls and more than two and a half assets.
+    const folded = listHeightsFor(boardHeightFor(768 - 44), ['work', 'units', 'contacts'], {}, true)
     expect(visibleRows(folded.work!, 'work')).toBeGreaterThanOrEqual(2.5)
     expect(visibleRows(folded.units!, 'units')).toBeGreaterThanOrEqual(2.5)
     const panel = readFileSync(join(import.meta.dir, 'BoardPanel.svelte'), 'utf8')
-    expect(panel).toContain("boardSections(view.arrangement).filter(section => section !== 'contacts' || !folded)")
+    expect(panel).toContain('const arranged = $derived(view === null ? [] : boardSections(view.arrangement))')
+    expect(panel).toContain('const sections = $derived(shownSections(arranged, folded))')
     expect(panel).toContain('style:height={`${foldedContactsPx}px`}')
     // Nothing on the folded line or the heading hides behind a pointer's hover.
     expect(panel).not.toContain('title={view.contacts')
