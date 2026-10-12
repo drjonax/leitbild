@@ -414,9 +414,12 @@ describe('a Run without sides on the WebSocket', () => {
       socket.send(JSON.stringify({ type: 'capability.invoke', requestId: 'loose', capabilityId: fixtureCommandIds.createItem, invocation: { input: { item: { type: 'unit', id: `unit:unsided-${nonce}`, label: `unsided ${nonce}`, position: [10.74, 59.92], speedMps: 10 } } } }))
       socket.send(JSON.stringify({ type: 'capability.invoke', requestId: 'announce', capabilityId: fixtureCommandIds.announce, invocation: { input: { text: 'all hear this' } } }))
       await waitForCondition('unsided runtime message', () => received.some(message => message.type === 'runtime.realtime'))
+      // Each request is answered on its own: the announce's runtime message says nothing of when the earlier loose request's result arrives.
+      await waitForCondition('the loose request answered', () => received.some(message => message.type === 'capability.result' && message.requestId === 'loose'))
       expect(received.find(message => message.requestId === 'loose')).toMatchObject({ type: 'capability.result', outcome: { result: { ok: true } } })
-      const types = received.filter(message => message.type === 'events').flatMap(message => (message.events as Array<{ type: string }>).map(event => event.type))
-      expect(types).toEqual(expect.arrayContaining(['command.issued', 'object.upserted', 'command.result']))
+      const types = () => received.filter(message => message.type === 'events').flatMap(message => (message.events as Array<{ type: string }>).map(event => event.type))
+      await waitForCondition('the loose command\'s events', () => ['command.issued', 'object.upserted', 'command.result'].every(type => types().includes(type)))
+      expect(types()).toEqual(expect.arrayContaining(['command.issued', 'object.upserted', 'command.result']))
     } finally { socket.close() }
   })
 })
