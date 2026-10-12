@@ -37,7 +37,6 @@
   import OperationsLogDialog from './OperationsLogDialog.svelte'
   import PlantActionsDialog from './PlantActionsDialog.svelte'
   import ProposalsChip from './ProposalsChip.svelte'
-  import { readPendingProposals } from './window-operations.ts'
   import {
     acknowledgeShown,
     buildDisplayDeck,
@@ -642,38 +641,11 @@
 
   // --- Proposals and the operations log --------------------------------------
 
-  // The pending proposals of the shown display's Plant, read every two seconds (QA-10): the toolbar's chip lists them,
-  // most time-critical first, and is absent while none waits.
-  const PROPOSALS_READ_MS = 2_000
-  let proposalEntries = $state.raw<ReadonlyArray<ProposalListEntry>>([])
-  let proposalsFailure = $state<string | null>(null)
-  const proposalsPlantId = $derived(plantTarget.ok ? plantTarget.plant.plantId : null)
-  $effect(() => {
-    const plantId = proposalsPlantId
-    proposalEntries = []
-    proposalsFailure = null
-    if (plantId === null) return
-    let stopped = false
-    let reading = false
-    const read = async (): Promise<void> => {
-      if (reading) return
-      reading = true
-      try {
-        const next = await readPendingProposals(runId, plantId)
-        if (!stopped) { proposalEntries = next; proposalsFailure = null }
-      } catch (err) {
-        if (!stopped) proposalsFailure = `Proposals cannot be read: ${errorText(err)}`
-      } finally {
-        reading = false
-      }
-    }
-    void read()
-    const timer = setInterval(() => { void read() }, PROPOSALS_READ_MS)
-    return () => {
-      stopped = true
-      clearInterval(timer)
-    }
-  })
+  // The pending proposals on the shown display's Plant (QA-10), as the operated display reads them with its own samples
+  // and reports them: the window installs no poller. The chip lists the shown display's, and is absent while none waits.
+  let proposalsByFrame = $state.raw<ReadonlyMap<string, ReadonlyArray<ProposalListEntry>>>(new Map())
+  const proposalEntries = $derived(current === null ? [] : proposalsByFrame.get(current.key) ?? [])
+  const frameProposals = (key: string, entries: ReadonlyArray<ProposalListEntry>): void => { proposalsByFrame = withValue(proposalsByFrame, key, entries) }
 
   // A proposal opens its item's own detail after the shown display, which pins the proposal's popover as it opens on it.
   const reviewProposal = (entry: ProposalListEntry): void => {
@@ -926,7 +898,6 @@
       {#if tier === 'wide' || tier === 'medium'}
         <div class="display-window-plant" role="group" aria-label="Plant">
           <ProposalsChip entries={proposalEntries} open={reviewProposal} />
-          {#if proposalsFailure !== null}<span class="display-window-caption" role="status" title={proposalsFailure}>Proposals unavailable</span>{/if}
           <ProcedureRunBadges summaries={procedureSummaries} onOpen={openProcedures} />
           <button
             type="button"
@@ -1016,6 +987,7 @@
           back={returnTo.get(mounted.entry.key)?.title ?? null}
           onOpen={frameOpen}
           onBack={frameBack}
+          onProposals={frameProposals}
         />
       {/each}
       {#if current === null}

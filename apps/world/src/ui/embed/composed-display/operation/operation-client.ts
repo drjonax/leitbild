@@ -1,6 +1,7 @@
 import type { SimulationRunId } from '../../../../core/model/index.ts'
 import type { ProcessUnit, ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
 import type { ListedItem } from '../../../../packs/process-plant/operations/instance-ports.ts'
+import type { ProposalListEntry } from './operation-presenter.ts'
 import type { ProcessPlantProposal, ProposalDecision, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
 import { invokeSimulationRunCapability, querySimulationRunCapability } from '../../../simulation-run-client.ts'
 
@@ -82,6 +83,8 @@ export interface DisplayOperation {
   readonly plantId: string
   readonly client: OperationClient
   readonly sampled: (paths: ReadonlyArray<string>) => void
+  /** Tells the display window the Plant's pending proposals, most time-critical first, for its toolbar's chip. */
+  readonly proposals: (entries: ReadonlyArray<ProposalListEntry>) => void
   /**
    * Names each time the window shows a display opened on equipment (an item's
    * detail, or an answer's display around it): each time, a pending

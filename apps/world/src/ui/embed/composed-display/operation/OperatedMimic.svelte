@@ -13,7 +13,7 @@
   import type { MimicQuickLookSource } from '../mimic/quick-look-source.ts'
   import ControlSection from './ControlSection.svelte'
   import type { DisplayOperation, OperationOutcome } from './operation-client.ts'
-  import { itemBadges, itemControlView, operationNow, shownProposal, type ItemBadges, type ListedItem, type OperationNow } from './operation-presenter.ts'
+  import { itemBadges, itemControlView, operationNow, pendingProposals, shownProposal, type ItemBadges, type ListedItem, type OperationNow, type ProposalListEntry } from './operation-presenter.ts'
   import ProposalReview from './ProposalReview.svelte'
 
   // A drawing operated in the process display window (plan §4.2-§4.4, §12):
@@ -58,6 +58,8 @@
   // A proposal used as a draft: CONTROL opens with its command selected, as this person's own.
   let draft = $state.raw<{ readonly item: string; readonly write: Write; readonly at: number } | null>(null)
   let pin = $state.raw<{ readonly item: string } | null>(null)
+  // The Plant's pending proposals, as control.proposals read them with the last sample.
+  let plantPending = $state.raw<ReadonlyArray<ProcessPlantProposal>>([])
 
   const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
   /**
@@ -105,17 +107,21 @@
       const known = owners !== null && ownersDrawn === drawing ? owners : ownersOf((await operation.client.controls(operation.runId, operation.plantId, null)).items)
       owners = known
       ownersDrawn = drawing
-      const result = await operation.client.controls(operation.runId, operation.plantId, [...known.keys()])
+      // The Plant's proposals, pending ones with World's review: what the drawing's items show, and what the window's chip
+      // lists (the window installs no poller of its own). An item a pending proposal names is read even where this
+      // drawing does not draw it, so the chip can word it and open its detail.
+      const held = await operation.client.proposals(operation.runId, operation.plantId)
+      const pendingNow = held.proposals.map(entry => entry.proposal).filter(proposal => proposal.status === 'pending')
+      const result = await operation.client.controls(operation.runId, operation.plantId, [...new Set([...known.keys(), ...pendingNow.map(proposal => proposal.item)])])
       const next = new Map(result.items.map(item => [item.id, item]))
       const paths = controlPaths(next.values())
       operation.sampled(paths)
-      const cited = proposals.flatMap(proposal => proposal.evidence.map(entry => String(entry.path)))
+      const cited = [...proposals, ...pendingNow].flatMap(proposal => proposal.evidence.map(entry => String(entry.path)))
       const missing = [...new Set([...paths, ...cited])].filter(path => !units.has(path))
       if (missing.length > 0) units = new Map([...units, ...await operation.client.units(operation.runId, operation.plantId, missing as ReadonlyArray<VariablePath>)])
-      // World's review of each pending proposal drawn here: whether the I&C allows it now, how its readings moved.
-      reviews = proposals.some(proposal => proposal.status === 'pending')
-        ? new Map((await operation.client.proposals(operation.runId, operation.plantId)).proposals.flatMap(entry => entry.review === undefined ? [] : [[entry.proposal.id, entry.review] as const]))
-        : new Map()
+      // World's review of each pending proposal: whether the I&C allows it now, how its readings moved.
+      reviews = new Map(held.proposals.flatMap(entry => entry.review === undefined ? [] : [[entry.proposal.id, entry.review] as const]))
+      plantPending = pendingNow
       listed = next
       failure = null
     } catch (error) {
@@ -135,6 +141,14 @@
     const needed = [...controlPaths(listed.values()), ...proposals.flatMap(proposal => proposal.evidence.map(entry => String(entry.path)))]
     return needed.every(path => units.has(path)) ? operationNow(latest, units) : null
   })
+
+  // The window's chip: the Plant's pending proposals, most time-critical first, reported whenever they change.
+  const pendingEntries = $derived.by((): ReadonlyArray<ProposalListEntry> => {
+    if (now === null || listed === null) return []
+    const items = [...listed.values()]
+    return pendingProposals(plantPending.filter(proposal => listed!.has(proposal.item)), items, () => [], now)
+  })
+  $effect(() => { operation.proposals(pendingEntries) })
 
   /** What a drawn item offers: its equipment's controls, a group's members' and its undrawn bundled devices' together. */
   const listedOf = (item: MimicDrawnItem): ListedItem | undefined => {

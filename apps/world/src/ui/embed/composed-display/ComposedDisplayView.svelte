@@ -227,6 +227,7 @@
     plantId,
     client: operationClient,
     sampled: paths => { operatedPaths.set(panelIndex, paths) },
+    proposals: entries => { embeddedDisplayFrame().reportProposals(entries) },
     review: advice !== null || view?.kind === 'detail' ? `${shownTimes}|${shownState ?? envelope.state}|${trail.length}` : null,
   }
   // Where items open, each one's detail dot opens its quick look: the lead values World chose for it with the

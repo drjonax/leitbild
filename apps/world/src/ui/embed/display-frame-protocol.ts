@@ -61,11 +61,38 @@ export interface DisplayFrameBack {
   readonly type: 'world:display-back'
 }
 
-export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | DisplayFrameZoomRequest | DisplayFrameOpen | DisplayFrameBack
+/** One pending proposal on the frame's Plant as the window's toolbar lists it (operation-presenter ProposalListEntry). */
+export interface DisplayFrameProposalEntry {
+  readonly id: string
+  readonly item: string
+  /** The components the item's own detail draws around: what the window opens to review it. */
+  readonly components: ReadonlyArray<string>
+  readonly action: string
+  readonly proposer: 'AI' | 'OP'
+  readonly minutes: number | null
+  readonly text: string
+}
+
+/**
+ * Frame -> window: the pending proposals on the Plant an operated display
+ * reads with its samples, most time-critical first; none clears the window's
+ * chip. The window installs no poller of its own: what its toolbar lists
+ * comes from the display it shows.
+ */
+export interface DisplayFrameProposals {
+  readonly type: 'world:display-proposals'
+  readonly entries: ReadonlyArray<DisplayFrameProposalEntry>
+}
+
+export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | DisplayFrameZoomRequest | DisplayFrameOpen | DisplayFrameBack | DisplayFrameProposals
 
 /** The longest state and title an open request carries (a detail's state is far shorter). */
 const OPEN_STATE_MAX = 4_096
 const OPEN_TITLE_MAX = 120
+/** The most proposals, components and characters a proposals message carries. */
+const PROPOSALS_MAX = 64
+const PROPOSAL_COMPONENTS_MAX = 16
+const PROPOSAL_TEXT_MAX = 600
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -85,6 +112,15 @@ export const parseDisplayFramePresentation = (value: unknown): DisplayFramePrese
   if (value.zoom < DISPLAY_ZOOM_MIN || value.zoom > DISPLAY_ZOOM_MAX) return null
   if ('back' in value && !text(value.back, OPEN_TITLE_MAX)) return null
   return { type: 'world:display-frame', shown: value.shown, zoom: value.zoom, ...(typeof value.back === 'string' ? { back: value.back } : {}) }
+}
+
+const parseProposalEntry = (value: unknown): DisplayFrameProposalEntry | null => {
+  if (!isRecord(value) || !hasKeys(value, ['id', 'item', 'components', 'action', 'proposer', 'minutes', 'text'])) return null
+  if (!text(value.id, OPEN_TITLE_MAX) || !text(value.item, OPEN_TITLE_MAX) || !text(value.action, PROPOSAL_TEXT_MAX) || !text(value.text, PROPOSAL_TEXT_MAX)) return null
+  if (value.proposer !== 'AI' && value.proposer !== 'OP') return null
+  if (value.minutes !== null && !(typeof value.minutes === 'number' && Number.isFinite(value.minutes) && value.minutes >= 0)) return null
+  if (!Array.isArray(value.components) || value.components.length === 0 || value.components.length > PROPOSAL_COMPONENTS_MAX || !value.components.every(component => text(component, OPEN_TITLE_MAX))) return null
+  return { id: value.id, item: value.item, components: value.components as ReadonlyArray<string>, action: value.action, proposer: value.proposer, minutes: value.minutes as number | null, text: value.text }
 }
 
 export const parseDisplayFrameMessage = (value: unknown): DisplayFrameMessage | null => {
@@ -108,5 +144,10 @@ export const parseDisplayFrameMessage = (value: unknown): DisplayFrameMessage | 
     return { type: 'world:display-open', state: value.state, title: value.title }
   }
   if (value.type === 'world:display-back') return hasKeys(value, ['type']) ? { type: 'world:display-back' } : null
+  if (value.type === 'world:display-proposals') {
+    if (!hasKeys(value, ['type', 'entries']) || !Array.isArray(value.entries) || value.entries.length > PROPOSALS_MAX) return null
+    const entries = value.entries.map(parseProposalEntry)
+    return entries.every((entry): entry is DisplayFrameProposalEntry => entry !== null) ? { type: 'world:display-proposals', entries } : null
+  }
   return null
 }
