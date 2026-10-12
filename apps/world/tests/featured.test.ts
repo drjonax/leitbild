@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,12 +39,121 @@ const entry = {
 const featuredFrom = (source: unknown): ModuleFeaturedDefinitionCollection =>
   featuredScenarioDefinitionsFor({ source, scenarios: builtinScenarioDefinitions })
 
+// Vite copies src/ui/public into the build unchanged, so a published preview
+// path is a file under it.
+const publicDir = join(import.meta.dir, '../src/ui/public')
+
+// The pixel size a WebP file declares in its first chunk (lossy, lossless or
+// extended), read from the RIFF header.
+const webpSize = (bytes: Buffer): { readonly width: number; readonly height: number } => {
+  expect(bytes.toString('ascii', 0, 4)).toBe('RIFF')
+  expect(bytes.toString('ascii', 8, 12)).toBe('WEBP')
+  const chunk = bytes.toString('ascii', 12, 16)
+  if (chunk === 'VP8 ') return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff }
+  if (chunk === 'VP8L') {
+    const bits = bytes.readUInt32LE(21)
+    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 }
+  }
+  expect(chunk).toBe('VP8X')
+  return { width: bytes.readUIntLE(24, 3) + 1, height: bytes.readUIntLE(27, 3) + 1 }
+}
+
+const words = (text: string): number => text.split(/\s+/).filter(Boolean).length
+// A sentence ends in . ! or ? (optionally closed by a quote or bracket) before
+// a space and a capital, so "4.4 GW" stays inside its sentence.
+const sentences = (text: string): string[] => {
+  const parts = text.split(/(?<=[.!?]["”’)]?)\s+(?=[A-Z“"])/)
+  for (const part of parts) expect(part).toMatch(/[.!?]["”’)]?$/)
+  return parts
+}
+
+// Phrases the newcomer copy never uses: over-claims, retired demos and
+// internal plant ids, and speed-up factors such as "130×" (the speed-up
+// depends on the model, so no factor is promised).
+const bannedPhrases: ReadonlyArray<RegExp> = [
+  /any question|anything about/i,
+  /realistic/i,
+  /(?<!not a )qualified/i,
+  /(?<!not )certified/i,
+  /live Norway/i,
+  /Ambulance pack|halden-dispatch|halden-weather-response/i,
+  /LD-01|SM-01/i,
+  /\d+(?:\.\d+)?\s*[x×](?![a-z0-9])/i,
+  /people decide/i,
+  /stays under human control/i,
+]
+
+// Plain words for newcomers: no grid or plant jargon, no platform terms, and
+// "simulation" rather than the defined term Run, which the demo copy never
+// introduces.
+const jargon: ReadonlyArray<RegExp> = [
+  /busbar|switchyard|four-loop|LFDD|under-frequency|N-1|\bbus(?:es)?\b|\bbranch(?:es)?\b|\bLOOP\b/i,
+  /Capabilit(?:y|ies)|\bRooms?\b|\bModules?\b/,
+  /\b(?:a|the|this|that|your|each|both|every)\s+Runs?\b|\bRuns\b/,
+]
+
 describe('World featured Scenarios', () => {
   test('publishes the bundled featured list through a Workspace-independent manifest path', () => {
     expect(worldModuleManifest.endpoints.featuredDefinitions).toBe('/internal/featured-definitions')
     expect(moduleFeaturedDefinitionCollectionSchema.parse(builtinFeaturedScenarioDefinitions)).toEqual(builtinFeaturedScenarioDefinitions)
     const bundledIds = new Set(builtinScenarioDefinitions.map(scenario => scenario.id))
     for (const featured of builtinFeaturedScenarioDefinitions.definitions) expect(bundledIds.has(featured.definition.id)).toBe(true)
+  })
+
+  test('features the three curated demos in order, each titled by its bundled Scenario', () => {
+    expect(builtinFeaturedScenarioDefinitions.definitions.map(featured => featured.definition.id)).toEqual([
+      'halden-offsite-power-restoration',
+      'nordland-corridor-security',
+      'halden-emergency',
+    ] as never)
+    for (const featured of builtinFeaturedScenarioDefinitions.definitions) {
+      const scenario = builtinScenarioDefinitions.find(candidate => candidate.id === featured.definition.id)!
+      expect(featured.definition).toEqual({ moduleId: 'world', type: 'world.scenario', id: scenario.id } as never)
+      expect(featured.title).toBe(scenario.title)
+    }
+  })
+
+  test('keeps each demo\'s copy short, plain and free of banned phrases', () => {
+    for (const featured of builtinFeaturedScenarioDefinitions.definitions) {
+      const label = featured.definition.id
+      expect({ label, sentences: sentences(featured.summary).length }).toEqual({ label, sentences: 1 })
+      expect(words(featured.summary)).toBeLessThanOrEqual(25)
+      const about = sentences(featured.about)
+      expect(about.join(' ')).toBe(featured.about)
+      expect(about.length).toBeGreaterThanOrEqual(3)
+      expect(about.length).toBeLessThanOrEqual(4)
+      expect(words(featured.about)).toBeLessThanOrEqual(80)
+      // The last sentence says what the demo shows about Leitbild.
+      expect(about.at(-1)).toMatch(/\bshows\b.*\bLeitbild/)
+      for (const preview of featured.previews) {
+        expect(preview.alt.length).toBeGreaterThan(0)
+        expect(preview.alt.length).toBeLessThanOrEqual(140)
+        expect(preview.alt.toLowerCase()).not.toContain(featured.title.toLowerCase())
+      }
+      const texts = [featured.summary, featured.about, ...featured.tags, ...featured.previews.map(preview => preview.alt)]
+      for (const text of texts) {
+        for (const pattern of [...bannedPhrases, ...jargon]) expect({ label, text, match: pattern.exec(text)?.[0] }).toEqual({ label, text, match: undefined })
+      }
+    }
+  })
+
+  test('serves every preview from a World asset whose name carries its content hash and whose pixels match its declared size', () => {
+    for (const featured of builtinFeaturedScenarioDefinitions.definitions) {
+      for (const preview of featured.previews) {
+        for (const source of preview.sources) {
+          expect(source.path.startsWith(scenarioPreviewPath)).toBe(true)
+          const file = source.path.slice(scenarioPreviewPath.length)
+          expect(file).toStartWith(`${featured.definition.id}-${source.width}.`)
+          const bytes = readFileSync(join(publicDir, source.path))
+          // A new capture gets a new name, so no browser keeps an old preview.
+          const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 8)
+          expect(file).toBe(`${featured.definition.id}-${source.width}.${hash}.webp`)
+          expect(webpSize(bytes)).toEqual({ width: source.width, height: Math.round(source.width * preview.height / preview.width) })
+          expect(bytes.byteLength).toBeLessThanOrEqual(200_000)
+        }
+        expect(preview.sources.map(source => source.width)).toContain(preview.width)
+      }
+    }
   })
 
   test('takes the title from the bundled Scenario and maps preview files into World assets', () => {
@@ -65,7 +176,7 @@ describe('World featured Scenarios', () => {
     }
   })
 
-  test('names the exact revision a fresh Workspace lists for that Scenario', async () => {
+  test('names the exact revision a fresh Workspace lists for each featured Scenario', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'world-featured-'))
     const registry = createWorldWorkspaceRuntimeRegistry({
       dataDir,
@@ -84,12 +195,13 @@ describe('World featured Scenarios', () => {
     expect((await call(`/internal/workspaces/${workspaceId}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceId }),
     })).status).toBe(201)
-    const listed = moduleDefinitionCollectionSchema.parse(await (await call(`/internal/workspaces/${workspaceId}/definitions`)).json())
-      .definitions.find(definition => definition.ref.id === bundled.id)!
-    const [featured] = featuredFrom([entry]).definitions
-    const { workspaceId: _workspaceId, ...identity } = listed.ref
-    expect(featured?.definition).toEqual(identity)
-    expect(featured?.revisionId).toBe(listed.currentRevisionId)
+    const listed = moduleDefinitionCollectionSchema.parse(await (await call(`/internal/workspaces/${workspaceId}/definitions`)).json()).definitions
+    for (const featured of builtinFeaturedScenarioDefinitions.definitions) {
+      const descriptor = listed.find(definition => definition.ref.id === featured.definition.id)!
+      const { workspaceId: _workspaceId, ...identity } = descriptor.ref
+      expect(featured.definition).toEqual(identity)
+      expect(featured.revisionId).toBe(descriptor.currentRevisionId)
+    }
   })
 
   test('serves the list from bundled memory without touching a Workspace runtime', async () => {
