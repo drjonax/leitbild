@@ -59,9 +59,18 @@ export const engineRefusalCodes = [
 ] as const
 
 export type EngineRefusalCode = typeof engineRefusalCodes[number]
-export type EinsatzRefusalCode = ConfigurationRefusalCode | EngineRefusalCode
 
-const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...engineRefusalCodes])
+/**
+ * Refusals of a caller by who it plays: a controller-only Capability, a unit
+ * its roles do not command, a task outside its roles' queue. Core gates use
+ * `role_controller_only` too; Einsatz reuses the code.
+ */
+export const authorityRefusalCodes = ['role_controller_only', 'unit_not_authorized', 'task_not_in_role_queue'] as const
+export type AuthorityRefusalCode = typeof authorityRefusalCodes[number]
+
+export type EinsatzRefusalCode = ConfigurationRefusalCode | EngineRefusalCode | AuthorityRefusalCode
+
+const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...engineRefusalCodes, ...authorityRefusalCodes])
 
 export const refusal = (code: EinsatzRefusalCode, message: string): string => `${code}: ${message}`
 

@@ -17,56 +17,54 @@ export const sendTargetSchema = z.union([
   z.object({ point: pointSchema }).strict(),
 ])
 
+const propertiesSchema = z.record(configIdSchema, propertyValueSchema)
+const loadsSchema = z.record(configIdSchema, z.number().int().min(1).max(1_000))
+const labelSchema = z.string().trim().min(1).max(120)
+const reasonSchema = z.string().trim().min(1).max(500)
+
+/**
+ * The fields each intent carries besides its `kind`. Command Capabilities
+ * accept the same fields on the wire; a create's id is the runtime's to give.
+ */
+export const intentFields = {
+  send: {
+    units: z.array(idSchema).min(1).max(20).refine(distinct, 'Each unit is named once'),
+    to: sendTargetSchema,
+    divert: z.array(z.object({ unitId: idSchema, fromTaskId: idSchema }).strict()).min(1).max(20).optional(),
+  },
+  recall: { unitId: idSchema, fromTaskId: idSchema.optional() },
+  hold: { unitId: idSchema },
+  taskCreate: { template: configIdSchema, side: configIdSchema.optional(), at: pointSchema, loads: loadsSchema.optional(), label: labelSchema },
+  taskClose: { taskId: idSchema, reason: reasonSchema.optional() },
+  siteSet: { siteId: idSchema, accepting: z.boolean() },
+  unitCreate: { type: configIdSchema, side: configIdSchema.optional(), at: pointSchema, base: pointSchema.optional(), label: labelSchema, properties: propertiesSchema.optional() },
+  unitAdjust: { unitId: idSchema, properties: propertiesSchema.refine(properties => Object.keys(properties).length > 0, 'Name at least one property'), reason: reasonSchema },
+} as const
+
+/** Every divert names a unit of the send, once. */
+export const divertsNameSendUnits = (send: { readonly units: ReadonlyArray<string>; readonly divert?: ReadonlyArray<{ readonly unitId: string }> | undefined }): boolean =>
+  send.divert === undefined || (distinct(send.divert.map(entry => entry.unitId)) && send.divert.every(entry => send.units.includes(entry.unitId)))
+export const divertsNameSendUnitsIssue = { message: 'Every divert names a unit of the send, once', path: ['divert'] }
+
 /**
  * Send units to a task, a site or a point, all or nothing. Units not named
  * in `divert` must be free; a divert names the task the unit is released
  * from. A divert to a site or point is a release and a move in one.
  */
-export const sendIntentSchema = z.object({
-  kind: z.literal('send'),
-  units: z.array(idSchema).min(1).max(20).refine(distinct, 'Each unit is named once'),
-  to: sendTargetSchema,
-  divert: z.array(z.object({ unitId: idSchema, fromTaskId: idSchema }).strict()).min(1).max(20).optional(),
-}).strict().refine(intent => intent.divert === undefined || (distinct(intent.divert.map(entry => entry.unitId)) && intent.divert.every(entry => intent.units.includes(entry.unitId))), {
-  message: 'Every divert names a unit of the send, once', path: ['divert'],
-})
+export const sendIntentSchema = z.object({ kind: z.literal('send'), ...intentFields.send }).strict().refine(divertsNameSendUnits, divertsNameSendUnitsIssue)
 
 /** Release a unit from its task, if any, and bring it back to base. */
-export const recallIntentSchema = z.object({ kind: z.literal('recall'), unitId: idSchema, fromTaskId: idSchema.optional() }).strict()
+export const recallIntentSchema = z.object({ kind: z.literal('recall'), ...intentFields.recall }).strict()
 /** Halt a free unit in place. */
-export const holdIntentSchema = z.object({ kind: z.literal('hold'), unitId: idSchema }).strict()
+export const holdIntentSchema = z.object({ kind: z.literal('hold'), ...intentFields.hold }).strict()
 
-const loadsSchema = z.record(configIdSchema, z.number().int().min(1).max(1_000))
-export const taskCreateIntentSchema = z.object({
-  kind: z.literal('task.create'),
-  id: idSchema,
-  template: configIdSchema,
-  side: configIdSchema.optional(),
-  at: pointSchema,
-  loads: loadsSchema.optional(),
-  label: z.string().trim().min(1).max(120),
-}).strict()
-export const taskCloseIntentSchema = z.object({ kind: z.literal('task.close'), taskId: idSchema, reason: z.string().trim().min(1).max(500).optional() }).strict()
-export const siteSetIntentSchema = z.object({ kind: z.literal('site.set'), siteId: idSchema, accepting: z.boolean() }).strict()
+export const taskCreateIntentSchema = z.object({ kind: z.literal('task.create'), id: idSchema, ...intentFields.taskCreate }).strict()
+export const taskCloseIntentSchema = z.object({ kind: z.literal('task.close'), ...intentFields.taskClose }).strict()
+export const siteSetIntentSchema = z.object({ kind: z.literal('site.set'), ...intentFields.siteSet }).strict()
 
-const propertiesSchema = z.record(configIdSchema, propertyValueSchema)
 /** A new unit of a declared type. Its base is where it is created unless one is named. */
-export const unitCreateIntentSchema = z.object({
-  kind: z.literal('unit.create'),
-  id: idSchema,
-  type: configIdSchema,
-  side: configIdSchema.optional(),
-  at: pointSchema,
-  base: pointSchema.optional(),
-  label: z.string().trim().min(1).max(120),
-  properties: propertiesSchema.optional(),
-}).strict()
-export const unitAdjustIntentSchema = z.object({
-  kind: z.literal('unit.adjust'),
-  unitId: idSchema,
-  properties: propertiesSchema.refine(properties => Object.keys(properties).length > 0, 'Name at least one property'),
-  reason: z.string().trim().min(1).max(500),
-}).strict()
+export const unitCreateIntentSchema = z.object({ kind: z.literal('unit.create'), id: idSchema, ...intentFields.unitCreate }).strict()
+export const unitAdjustIntentSchema = z.object({ kind: z.literal('unit.adjust'), ...intentFields.unitAdjust }).strict()
 
 export const intentSchema = z.discriminatedUnion('kind', [
   sendIntentSchema,
