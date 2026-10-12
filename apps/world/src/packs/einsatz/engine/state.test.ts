@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { EventId, IsoTimestamp, OperationalObject, SimulationRunEvent, SimulationRunId } from '../../../core/model/index.ts'
 import { persistenceDispositionFor } from '../../../core/simulation-runs/persistence-policy.ts'
-import { arrivalAt, at, config, emptyState, low, newTask, newUnit, pointOf, ports, runAll, send, start, templates, types, unitOf } from '../fixtures/engine-harness.ts'
+import { arrivalAt, at, config, emptyState, low, newTask, newUnit, pointOf, ports, run, runAll, send, start, templates, types, unitOf } from '../fixtures/engine-harness.ts'
 import { advanceEngine } from './engine.ts'
 import type { EngineState } from './model.ts'
 import { engineObjects, readEngineState, runtimeStateOf, transitionObject, unitObject } from './objects.ts'
@@ -52,7 +52,10 @@ describe('Einsatz state discipline', () => {
   test('leg progress lives in the runtime state; a restore without it is refused rather than guessed', async () => {
     const moving = (await advanceEngine(await travelling(), start + 10_000, ports)).state
     const runtime = runtimeStateOf(moving)
-    expect(runtime).toEqual({ timeMs: start + 10_000, units: { u1: { progressMs: 8_000 } } })
+    const leg = unitOf(moving, 'u1').leg!
+    expect(runtime).toEqual({ timeMs: start + 10_000, units: { u1: { progressMs: 8_000, leg: {
+      provider: leg.provider, durationMs: leg.durationMs, distanceM: leg.distanceM, from: leg.geometry.coordinates[0], to: leg.geometry.coordinates.at(-1),
+    } } } })
     const objects = engineObjects(moving, () => ({ at: isoAt(moving.timeMs), provenance: { source: 'simulator' } }))
     expect(objects.find(object => object.id === 'u1')?.packData).not.toHaveProperty('progressMs')
     expect(() => readEngineState({ config, sides: [], objects, runtime: { timeMs: runtime.timeMs, units: {} } })).toThrow('leg progress is missing')
@@ -60,5 +63,15 @@ describe('Einsatz state discipline', () => {
     expect(restored.motion.get('u1')).toEqual(moving.motion.get('u1')!)
     expect([...restored.units.values()]).toEqual([...moving.units.values()])
     expect([...restored.tasks.values()]).toEqual([...moving.tasks.values()])
+  })
+
+  test('saved progress names its leg; progress saved for a leg the unit has since left is refused, never applied to its new leg', async () => {
+    const moving = (await advanceEngine(await travelling(), start + 10_000, ports)).state
+    const recalled = await run(moving, { kind: 'recall', unitId: 'u1' })
+    expect(unitOf(recalled, 'u1').leg).not.toEqual(unitOf(moving, 'u1').leg)
+    const objects = engineObjects(recalled, () => ({ at: isoAt(recalled.timeMs), provenance: { source: 'simulator' } }))
+    expect(() => readEngineState({ config, sides: [], objects, runtime: runtimeStateOf(moving) }))
+      .toThrow('u1: the saved leg progress measures another leg than the unit\'s canonical one')
+    expect(readEngineState({ config, sides: [], objects, runtime: runtimeStateOf(recalled) }).motion.get('u1')).toEqual(recalled.motion.get('u1')!)
   })
 })

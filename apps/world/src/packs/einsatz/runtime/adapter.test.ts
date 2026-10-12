@@ -374,4 +374,18 @@ describe('Einsatz checkpoint and restore', () => {
       })
     })
   })
+
+  test('a restore whose saved progress belongs to a leg the unit has since left is refused, never applied to its new leg', async () => {
+    const items = [unitItem('c1', types.roadCarrier, lonLat(0)), taskItem('t1', templates.load, lonLat(0.03), { [top]: 1 })]
+    await withRun({ items, paused: true }, async original => {
+      await accepted(original, ids.send, send(['c1'], { taskId: 't1' }))
+      await original.run.runMaximumPace(isoAt(start + 20_000), { shouldStop: () => false })
+      const beforeRecall = await original.run.checkpointForCopy()
+      await accepted(original, ids.recall, { unitId: 'c1' })
+      const afterRecall = await original.run.checkpointForCopy()
+      expect(original.unit('c1')).toMatchObject({ phase: 'returning', lastAction: { verb: 'recall' } })
+      await expect(openRun({ items, restore: { snapshot: afterRecall.snapshot, runtimeState: beforeRecall.runtimeStates[einsatzRuntimeId] } }))
+        .rejects.toThrow('c1: the saved leg progress measures another leg than the unit\'s canonical one')
+    })
+  })
 })

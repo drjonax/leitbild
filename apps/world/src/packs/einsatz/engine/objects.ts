@@ -1,10 +1,11 @@
 import { z } from 'zod'
-import { idSchema, meters, type AlertState, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId, type Provenance } from '../../../core/model/index.ts'
+import { geoJsonPosition2DSchema, idSchema, meters, type AlertState, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId, type Provenance } from '../../../core/model/index.ts'
 import type { EinsatzConfig } from '../config-schema.ts'
 import { einsatzPackId } from '../ids.ts'
-import { einsatzDataSchema, emptyEngineState, motionOf, templateOf, unitTypeOf, type EngineState, type RecordAlert, type TaskRecord, type Transition, type UnitMotion, type UnitRecord } from './model.ts'
+import { einsatzDataSchema, emptyEngineState, motionOf, templateOf, unitTypeOf, type EngineState, type Leg, type RecordAlert, type TaskRecord, type Transition, type UnitMotion, type UnitRecord } from './model.ts'
 import { legPosition, speedFactor } from './movement.ts'
 import { committedPhases, isMoving, isSite, linksToSite, linksToTask, movingPhases } from './rules.ts'
+import { sameValue } from './values.ts'
 
 /**
  * Canonical objects and the engine state. Units and tasks are
@@ -13,10 +14,32 @@ import { committedPhases, isMoving, isSite, linksToSite, linksToTask, movingPhas
  * per-cycle values kept in the runtime state store, never journaled.
  */
 
+/**
+ * Names the leg a saved progress measures: its router, travel time,
+ * distance and end points. Legs are journaled at once while the runtime
+ * state is saved later, so after a crash the saved progress may belong to
+ * a leg the unit has since left; it is never applied to another leg.
+ */
+const legKeySchema = z.object({
+  provider: z.string().min(1),
+  durationMs: z.number().finite().nonnegative(),
+  distanceM: z.number().finite().nonnegative(),
+  from: geoJsonPosition2DSchema,
+  to: geoJsonPosition2DSchema,
+}).strict()
+type LegKey = z.output<typeof legKeySchema>
+
+const legKeyOf = (leg: Leg): LegKey => {
+  const [from, to] = [leg.geometry.coordinates[0]!, leg.geometry.coordinates.at(-1)!]
+  return { provider: leg.provider, durationMs: leg.durationMs, distanceM: leg.distanceM, from: [from[0], from[1]], to: [to[0], to[1]] }
+}
+
 export const einsatzRuntimeStateSchema = z.object({
   timeMs: z.number().finite().nonnegative(),
   units: z.record(idSchema, z.object({
     progressMs: z.number().finite().nonnegative(),
+    /** The leg `progressMs` measures; absent while the unit has no leg. */
+    leg: legKeySchema.optional(),
     reflexAttemptMs: z.number().finite().nonnegative().optional(),
   }).strict()),
 }).strict()
@@ -24,10 +47,14 @@ export type EinsatzRuntimeState = z.output<typeof einsatzRuntimeStateSchema>
 
 export const runtimeStateOf = (state: EngineState): EinsatzRuntimeState => ({
   timeMs: state.timeMs,
-  units: Object.fromEntries([...state.motion].map(([id, motion]) => [id, {
-    progressMs: motion.progressMs,
-    ...(motion.reflexAttemptMs === undefined ? {} : { reflexAttemptMs: motion.reflexAttemptMs }),
-  }])),
+  units: Object.fromEntries([...state.motion].map(([id, motion]) => {
+    const leg = state.units.get(id)?.leg
+    return [id, {
+      progressMs: motion.progressMs,
+      ...(leg === undefined ? {} : { leg: legKeyOf(leg) }),
+      ...(motion.reflexAttemptMs === undefined ? {} : { reflexAttemptMs: motion.reflexAttemptMs }),
+    }]
+  })),
 })
 
 const fail = (id: string, message: string): never => { throw new Error(`${id}: ${message}`) }
@@ -81,6 +108,9 @@ export const readEngineState = (input: {
     const point = object.spatial.position?.point ?? fail(object.id, 'an Einsatz unit needs a canonical point')
     const saved = runtime.units[object.id]
     if (data.leg !== undefined && saved === undefined) fail(object.id, 'leg progress is missing from the runtime state')
+    if (data.leg !== undefined && !sameValue(saved!.leg, legKeyOf(data.leg))) {
+      fail(object.id, 'the saved leg progress measures another leg than the unit\'s canonical one, so where the unit is on its route is unknown')
+    }
     units.set(object.id, { ...data, id: object.id, label: object.label })
     motion.set(object.id, {
       point,
