@@ -2,6 +2,7 @@ import type { EmbeddedViewContent } from '@leitbild/contracts'
 import type { CompiledPlantGraph, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantIcComparisonOperator } from '../runtime/index.ts'
 import type { SafetyFunctionComparison, SafetyFunctionEvaluation, SafetyFunctionStatus, SafetyFunctionStep } from '../safety-functions.ts'
+import { signalMeasuredOn } from '../signals.ts'
 import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } from './display-text.ts'
 
 // How a display words the critical safety functions the Plant declares: a
@@ -81,7 +82,7 @@ const decidingEquipment = (evaluation: SafetyFunctionEvaluation, graph: Compiled
   const owners = (deciding.length > 0 ? deciding : step.comparisons).flatMap(comparison => comparison.reads).flatMap(read => {
     const owner = graph.signalBindingByPath.get(read.path as VariablePath)?.owner
     if (owner === undefined) return []
-    return [String(graph.components[owner.type === 'component' ? owner.componentIndex : graph.links[owner.linkIndex]!.toComponentIndex]!.id)]
+    return [String(signalMeasuredOn(graph, owner).id)]
   })
   return [...new Set(owners)].slice(0, most)
 }

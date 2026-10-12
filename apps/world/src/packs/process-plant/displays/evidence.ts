@@ -2,6 +2,7 @@ import { recordingSeriesIdFor } from '../../../core/model/index.ts'
 import { linkCarrier, nextLinks, previousLinks, type ProcessSignalBinding, type VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { safetyFunctionSignals } from '../safety-functions.ts'
+import { signalMeasuredOn } from '../signals.ts'
 import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, branchFlows, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
 import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, COMPOSED_EVIDENCE_MAX_ROWS, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
@@ -125,10 +126,7 @@ export const displayEvidence = (
   const drawnDevices = new Set(mimics.flatMap(mimic => mimic.items.flatMap(item => item.binding.item.kind === 'device' ? [`${item.binding.item.component}|${item.binding.item.device}`] : [])))
   const bindingOf = (path: VariablePath): ProcessSignalBinding => graph.signalBindingByPath.get(path)!
   // A value is measured on the component that owns it, or a line's on the equipment it flows into.
-  const measuredOn = (path: VariablePath): number => {
-    const owner = bindingOf(path).owner
-    return owner.type === 'component' ? owner.componentIndex : graph.links[owner.linkIndex]!.toComponentIndex
-  }
+  const measuredOn = (path: VariablePath): number => signalMeasuredOn(graph, bindingOf(path).owner).index
   const penEquipment = [...new Set(pens.map(pen => measuredOn(pen.path)))]
   const shownEquipment = new Set([...penEquipment, ...drawn])
   // What a row may show: a measured reading (a condition outside the Plant, the grid's voltage, among them), or a
