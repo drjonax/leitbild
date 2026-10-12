@@ -19,8 +19,8 @@ export const phaseWord = (catalog: Catalog, unit: UnitRecord): string => unitWor
 
 /**
  * "2 pallets, 1 crate" in declared class order. Classes that share a noun
- * count together, so two classes of patients read "2 patients", never
- * "1 patient, 1 patient".
+ * count together, so two classes of crates read "2 crates", never
+ * "1 crate, 1 crate".
  */
 export const loadText = (catalog: Catalog, load: Counts): string => {
   const byNoun = new Map<string, { readonly noun: { readonly one: string; readonly other: string }; count: number }>()

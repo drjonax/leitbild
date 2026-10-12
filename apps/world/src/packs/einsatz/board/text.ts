@@ -79,12 +79,12 @@ export const etaText = (eta: Eta): string => {
 
 /**
  * "1 pallet, 2 crates" in declared class order. Classes that share a noun
- * count together, so two classes of patients read "2 patients", never
- * "1 patient, 1 patient".
+ * count together, so two classes of crates read "2 crates", never
+ * "1 crate, 1 crate".
  */
 export const loadText = (rules: BoardRules, load: Readonly<Record<string, number>>): string => nounCounts(rules.config.loadClasses, classId => load[classId] ?? 0)
 
-/** Counts per noun, in the order each noun is first declared: "2 patients", "1 pallet, 2 crates". */
+/** Counts per noun, in the order each noun is first declared: "2 crates", "1 pallet, 2 crates". */
 const nounCounts = (classes: ReadonlyArray<{ readonly id: string; readonly noun: { readonly one: string; readonly other: string } }>, countOf: (classId: string) => number): string => {
   const byNoun = new Map<string, { readonly noun: { readonly one: string; readonly other: string }; count: number }>()
   for (const entry of classes) {

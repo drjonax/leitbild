@@ -270,7 +270,7 @@ export interface UnitRow {
 
 /**
  * A place an asset can be sent to, listed under Assets: a unit in the
- * picture that does not move (a hospital, a depot, a post). A tap on it with
+ * picture that does not move (a receiving site, a depot, a post). A tap on it with
  * an asset highlighted is a tap on its target, even where units parked on it
  * cover it on the map.
  */

@@ -22,6 +22,11 @@ const kinds = civilKinds(civilConfig)
 const { carrier, pairServer, conditionedServer, site } = kinds.types
 const [top, , low] = kinds.classes as [string, string, string]
 const at = (eastKm: number, northKm = 0): [number, number] => [11.38 + eastKm / 57.12, 59.12 + northKm / 110.54]
+const borderTypes: ReadonlyArray<{ readonly id: string; readonly components: Readonly<Record<string, unknown>> }> = border.packs[0]!.config.unitTypes
+/** The border configuration's first unit type with exactly these components. */
+const borderType = (...components: ReadonlyArray<string>): string => borderTypes.find(type => Object.keys(type.components).sort().join() === [...components].sort().join())!.id
+/** What the civil configuration calls the units its two-unit template needs, counted more than one. */
+const pairNeed = civilConfig.taskTemplates.find(template => template.id === kinds.templates.pair)!.requires[0]!.label!.other
 
 const withScene = async (items: ReadonlyArray<Record<string, unknown>>, body: (run: OpenRun) => Promise<void>): Promise<void> => {
   const run = await openRun({ definition: civilWith(items) })
@@ -41,7 +46,7 @@ describe('Fixes from the tap-only walkthrough', () => {
       // No detail line stands above the row Close is pinned to (`ui/board-layout.test.ts`).
       expect([civilConfig.lexicon.close, screen.view().commit.close, screen.view().commit.verbs, screen.view().commit.detail]).toEqual(['Close call', { label: 'Close call', id: 'o1' }, [], null])
       await screen.click({ kind: 'verb', verb: 'close', id: 'o1' })
-      expect(screen.view().commit).toMatchObject({ state: 'confirm', text: 'Close call O1', detail: `${boardWords.remainder} 2 more patrol cars` })
+      expect(screen.view().commit).toMatchObject({ state: 'confirm', text: 'Close call O1', detail: `${boardWords.remainder} 2 more ${pairNeed}` })
       expect(screen.calls).toHaveLength(0)
       await screen.click({ kind: 'cancel' })
       await accepted(run, ids.send, { units: ['p1', 'p2'], to: { taskId: 'o2' } })
@@ -70,10 +75,10 @@ describe('Fixes from the tap-only walkthrough', () => {
   test('Sites lists only places the screen\'s assets can be sent to: another side\'s post is left out, and an asset tapped onto it on the map is refused at once', async () => {
     const post = { id: 'post', label: 'Post', icon: 'binoculars', tags: ['post'], components: { sensor: { detectM: 3000, identifyM: 2000 } } }
     const definition = borderWith([
-      unitAt('amb', 'AMB', 'ambulance', at(0), { side: blue }),
+      unitAt('amb', 'AMB', borderType('carry', 'mobility', 'service'), at(0), { side: blue }),
       unitAt('post-blue', 'BLUE POST', 'post', at(1), { side: blue }),
       unitAt('post-red', 'RED POST', 'post', at(2), { side: red }),
-      unitAt('kalnes', 'KALNES', 'hospital', at(3)),
+      unitAt('kalnes', 'KALNES', borderType('receiving'), at(3)),
     ]) as { readonly packs: ReadonlyArray<{ readonly config: { readonly unitTypes: ReadonlyArray<unknown> } }> }
     const pack = definition.packs[0]!
     const run = await openRun({ definition: { ...definition, packs: [{ ...pack, config: { ...pack.config, unitTypes: [...pack.config.unitTypes, post] } }] } })
@@ -146,7 +151,7 @@ describe('Fixes from the tap-only walkthrough', () => {
     expect([neutralLexicon.hold, wordFor({}, 'hold'), neutralLexicon.close]).toEqual(['Stop', 'Stop', 'Close task'])
   })
 
-  test('a release names the load waiting once per noun: "2 patients waiting", never "1 patient, 1 patient"', async () => {
+  test('a release names the load waiting once per noun: two classes sharing a noun read "2 <noun> waiting", never "1 <noun>, 1 <noun>"', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(20), { [top]: 1, [low]: 1 })], async run => {
       await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
       await accepted(run, ids.recall, { unitId: 'u1', fromTaskId: 't1' })
