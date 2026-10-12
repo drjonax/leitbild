@@ -7,6 +7,10 @@ import {
 import {
   processPlantActionInvokeCommandKind,
   processPlantActionInvokePayloadSchema,
+  processPlantControlDecideCommandKind,
+  processPlantControlDecidePayloadSchema,
+  processPlantControlProposeCommandKind,
+  processPlantControlProposePayloadSchema,
   processPlantControlRampCommandKind,
   processPlantControlRampPayloadSchema,
   processPlantControlWriteCommandKind,
@@ -24,6 +28,8 @@ import { processPlantActionsSearchInputSchema, processPlantCatalogInputSchema } 
 import {
   assessmentsEvaluateQuerySchema,
   conditionsEvaluateQuerySchema,
+  controlProposalsQuerySchema,
+  controlsListQuerySchema,
   procedureConditionEvaluateQuerySchema,
 } from './queries/control-query.ts'
 import {
@@ -164,6 +170,20 @@ const queryOutputById: Readonly<Record<string, z.ZodType>> = {
     targetPath: z.string(),
     currentValue: z.union([z.number(), z.boolean()]),
   }).strict(),
+  'world.process-plant.control.proposals': z.object({
+    plantId: plantIdSchema,
+    plantElapsedMs: z.number(),
+    proposals: z.array(z.object({
+      proposal: processPlantProposalSchema,
+      review: z.object({
+        permitted: z.boolean(),
+        refusal: z.string().optional(),
+        evidence: z.array(z.object({ tagId: z.string(), then: z.union([z.number(), z.boolean()]), now: z.union([z.number(), z.boolean()]) }).strict()),
+        changed: z.boolean(),
+      }).strict().optional(),
+    }).strict()),
+  }).strict(),
+  'world.process-plant.controls.list': z.object({ plantId: plantIdSchema, plantElapsedMs: z.number(), items: recordArraySchema }).strict(),
   'world.process-plant.runtime.status': z.object({
     active: z.boolean(),
     plantCount: z.number().int().nonnegative(),
@@ -277,6 +297,8 @@ const queryInputById: Readonly<Record<string, z.ZodType>> = {
   'world.process-plant.procedure-condition.evaluate': procedureConditionEvaluateQuerySchema,
   'world.process-plant.assessments.evaluate': assessmentsEvaluateQuerySchema,
   'world.process-plant.control.validate': processPlantControlWritePayloadSchema,
+  'world.process-plant.control.proposals': controlProposalsQuerySchema,
+  'world.process-plant.controls.list': controlsListQuerySchema,
   'world.process-plant.runtime.status': processPlantCatalogInputSchema,
   'world.process-plant.transient.diagnostics': plantQuerySchema,
   ...Object.fromEntries(processPlantIcQueryKinds.map(id => [id, plantQuerySchema])),
@@ -311,6 +333,8 @@ const queryDescriptionById: Readonly<Record<string, string>> = {
   'world.process-plant.assessments.evaluate': 'Judge each critical safety function the Plant\'s I&C declares by its status tree, now: per function the status (green, yellow, orange, red; unknown where a signal a branch needs is not published or readable; not-monitored where it is judged only after a reactor trip), the function restoration procedure its colour sends operators to, what it means, the branch path with every value read against its threshold, the further checks that apply (such as natural circulation with no coolant pump running, or makeup at its maximum at power) and the trends the tree treats as expected. Omit assessmentIds for every function; catalog.list names them. Judge the plant by these, not by one value off its normal: a trend the tree expects is no challenge. The trees are reference-model criteria after the generic Westinghouse ERG status trees, not qualified plant procedures; values are runtime model evidence that do not establish instrument validity or safety-function adequacy at a real plant.',
   'world.process-plant.procedure-condition.evaluate': 'Read-only evaluation of an authored, model-digest-pinned condition with explicit native units. Returns satisfied, challenged or unknown and every comparison observation at one simulation time. Values are runtime model evidence, not qualified instrumentation or automatic CSF restoration; authored source citations are retained, not independently verified. No equipment command, protection change or procedure transition is performed.',
   'world.process-plant.control.validate': 'Validate a proposed Process Plant control write without applying it.',
+  'world.process-plant.control.proposals': 'Read a Plant\'s operation proposals: pending ones with World\'s review now (whether the I&C allows the stored write, and how each cited reading moved since it was proposed), and the last closed ones with who closed them, when and why (approved, rejected, expired, superseded, withdrawn). Read it before saying what became of a proposal.',
+  'world.process-plant.controls.list': 'List what a person may operate on a Plant\'s drawn items, derived from its model: each offered control with its options (words, values written, the state each leads to), the trips each option would set going and the automation writing against it, where those stand now (armed; acted; a protection actuation holding it, which refuses the option), and how long the equipment takes to follow; and each withheld command with why (held by its controller as AUTO, a demand or set point, an isolation input, declared not offered). Name items by the ids display.compose reports, or omit them for all.',
   'world.process-plant.runtime.status': 'Summarize active Process Plant runtime health, elapsed time, and variable publication counts.',
   'world.process-plant.transient.diagnostics': 'Read detailed transient, performance, and instrumentation diagnostics for one Plant.',
   'world.process-plant.ic.status': 'Read the complete current I&C snapshot for one Plant, including inactive alarm and trip lifecycle state.',
@@ -374,14 +398,26 @@ export const processPlantCapabilities = [
   commandCapability({
     id: processPlantControlWriteCommandKind,
     title: 'Write process control',
-    description: 'Write one validated Process Plant signal or variable.',
+    description: 'Write one validated Process Plant signal or variable. An AI agent proposes instead (world.process-plant.control.propose) unless the Plant opts into direct AI operation.',
     input: processPlantControlWritePayloadSchema,
   }),
   commandCapability({
     id: processPlantControlRampCommandKind,
     title: 'Ramp process control',
-    description: 'Ramp one Process Plant signal or variable to a target over simulation time.',
+    description: 'Ramp one Process Plant signal or variable to a target over simulation time. An AI agent proposes instead (world.process-plant.control.propose) unless the Plant opts into direct AI operation.',
     input: processPlantControlRampPayloadSchema,
+  }),
+  commandCapability({
+    id: processPlantControlProposeCommandKind,
+    title: 'Propose an operation',
+    description: 'Propose one operation of a Plant\'s equipment for a person to approve in the display window; an AI agent operates a Plant this way unless the Plant opts into direct AI operation. Name a control\'s command (path or tagId) and one value it offers, as world.process-plant.controls.list lists them; give the reason in plain words, the procedure step where one applies, and 1-6 published tags it rests on. World records the exact write only if the control is offered, the I&C allows it now and every tag is published; otherwise it refuses with why. Nothing is executed: a person reviews it on the equipment\'s popover, with World\'s own check, the consequences and how the cited readings moved since, and approves (World executes the stored write, validated again, under that person\'s command), rejects, or lets it lapse after 2 plant minutes (a person may extend it once). A newer proposal of yours for the same equipment replaces your older one. After proposing, compose a display around the item so the person can review it there. Read world.process-plant.control.proposals before saying anything happened: until it reads approved, the operation is proposed and awaiting a person\'s decision, never done.',
+    input: processPlantControlProposePayloadSchema,
+  }),
+  commandCapability({
+    id: processPlantControlDecideCommandKind,
+    title: 'Decide on a proposal',
+    description: 'A person\'s decision on a pending operation proposal: approve executes its stored write, validated again by the I&C, under the approver\'s command; reject closes it (optional reason); extend gives it one more plant minute, once; withdraw takes back the proposer\'s own proposal. Only people approve, reject or extend.',
+    input: processPlantControlDecidePayloadSchema,
   }),
   commandCapability({
     id: processPlantIcLifecycleCommandKind,

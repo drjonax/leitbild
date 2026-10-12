@@ -31,7 +31,7 @@ guardPlantTests()
 const operator: Actor = { id: 'actor:human:origin-operator' as ActorId, label: 'Origin test operator', role: 'operator' }
 const agent: Actor = { id: 'actor:ai:origin-agent' as ActorId, label: 'Origin test agent', role: 'ai_agent' }
 const scenario: Actor = { id: 'actor:origin-scenario' as ActorId, label: 'Origin test scenario', role: 'system' }
-const proposeOnly = 'An AI agent proposes operations on this Plant for a person to approve; it does not operate it directly'
+const proposeOnly = 'An AI agent proposes operations on this Plant for a person to approve (world.process-plant.control.propose); it does not operate it directly'
 
 const withRun = async (body: (run: SimulationRunRuntime, plantId: string) => Promise<void>): Promise<void> => {
   const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-command-origin-'))

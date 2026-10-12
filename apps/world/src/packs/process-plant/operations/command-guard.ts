@@ -44,7 +44,7 @@ export const aiDirectCommandKinds: ReadonlySet<string> = new Set([
 /** Why an AI agent may not issue this command on this Plant itself; null where it may, or the origin is no AI agent's. */
 export const aiProposeOnlyRefusal = (kind: string, origin: CommandOrigin | undefined, aiOperation: ProcessPlantUnitPackData['aiOperation']): string | null =>
   origin === 'ai' && aiOperation !== 'direct' && aiDirectCommandKinds.has(kind)
-    ? 'An AI agent proposes operations on this Plant for a person to approve; it does not operate it directly'
+    ? 'An AI agent proposes operations on this Plant for a person to approve (world.process-plant.control.propose); it does not operate it directly'
     : null
 
 /** Why this origin may not write the variable directly; null where it may. A command with no origin (no Run issued it) is no instructor's. */

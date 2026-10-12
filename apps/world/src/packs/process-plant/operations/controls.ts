@@ -424,6 +424,17 @@ const commandedEnds = (plant: CompiledProcessPlant, component: CompiledComponent
   return [...ends].sort((left, right) => left - right)
 }
 
+const controlsByPlant = new WeakMap<CompiledProcessPlant, PlantControls>()
+
+/** derivePlantControls, once per compiled Plant: its declarations do not change while it runs. */
+export const plantControlsFor = (plant: CompiledProcessPlant): PlantControls => {
+  const cached = controlsByPlant.get(plant)
+  if (cached !== undefined) return cached
+  const derived = derivePlantControls(plant)
+  controlsByPlant.set(plant, derived)
+  return derived
+}
+
 /**
  * Every drawn item's controls, with the pushbuttons of undrawn logic (a
  * manual trip, the SI block) on the energy ends their rules command (QA-11):

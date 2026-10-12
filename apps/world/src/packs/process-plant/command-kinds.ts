@@ -2,3 +2,5 @@ export const processPlantControlWriteCommandKind = 'world.process-plant.control.
 export const processPlantControlRampCommandKind = 'world.process-plant.control.ramp'
 export const processPlantIcLifecycleCommandKind = 'world.process-plant.ic.lifecycle'
 export const processPlantActionInvokeCommandKind = 'world.process-plant.action.invoke'
+export const processPlantControlProposeCommandKind = 'world.process-plant.control.propose'
+export const processPlantControlDecideCommandKind = 'world.process-plant.control.decide'

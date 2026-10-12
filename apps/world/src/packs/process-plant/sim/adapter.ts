@@ -16,6 +16,10 @@ import { processPlantCapabilities } from '../capabilities.ts'
 import {
   processPlantActionInvokeCommandKind,
   processPlantActionInvokePayloadSchema,
+  processPlantControlDecideCommandKind,
+  processPlantControlDecidePayloadSchema,
+  processPlantControlProposeCommandKind,
+  processPlantControlProposePayloadSchema,
   processPlantControlRampCommandKind,
   processPlantControlRampPayloadSchema,
   processPlantControlWriteCommandKind,
@@ -26,6 +30,9 @@ import {
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
 import { aiProposeOnlyRefusal, instructorOnlyRefusal, validateOperatorWrite } from '../operations/command-guard.ts'
+import { proposalPortsFor } from '../operations/instance-ports.ts'
+import { decideProposal, proposeOperation } from '../operations/proposals.ts'
+import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import { processPlantElectricalBoundaries } from '../electrical-ports.ts'
 import { processPlantIdForObject,processPlantPackId,processPlantUnitPackDataSchema,type ProcessPlantUnitPackData } from '../model.ts'
 import { compileProcessPlants } from '../plant-compiler.ts'
@@ -501,6 +508,59 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
               reason: err instanceof Error ? err.message : String(err),
             }
           }
+        }
+        if (command.kind === processPlantControlProposeCommandKind) {
+          const payload = processPlantControlProposePayloadSchema.safeParse(command.payload)
+          if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
+          const plant = plants.get(payload.data.plantId)
+          if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+          if (plant.operations === undefined) throw new Error(`process plant ${payload.data.plantId} keeps no operations record`)
+          if (context.origin !== 'person' && context.origin !== 'ai') return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: 'Only a person or an AI agent proposes an operation' }
+          try {
+            const binding = resolveProcessPlantSignalBinding(plant.plant.graph, payload.data.path !== undefined ? { path: payload.data.path } : { tagId: payload.data.tagId! })
+            const step = proposeOperation(plant.operations.book(), {
+              id: command.id,
+              plantId: payload.data.plantId,
+              write: { path: binding.path, value: payload.data.value },
+              reason: payload.data.reason,
+              ...(payload.data.procedureStep === undefined ? {} : { procedureStep: payload.data.procedureStep }),
+              evidence: payload.data.evidence,
+              proposer: { actorId: command.actorId, origin: context.origin },
+              at: { elapsedMs: plant.runtime.elapsedMs(), wallMs: Date.now() },
+            }, proposalPortsFor(plant, context.origin))
+            if (!step.ok) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: step.reason! }
+            plant.operations.setBook(step.book)
+            emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, step.transitions))
+            await persistence.saveNow()
+            return { ok: true, commandId: command.id, acceptedAt }
+          } catch (err) {
+            return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: err instanceof Error ? err.message : String(err) }
+          }
+        }
+        if (command.kind === processPlantControlDecideCommandKind) {
+          const payload = processPlantControlDecidePayloadSchema.safeParse(command.payload)
+          if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
+          const plant = plants.get(payload.data.plantId)
+          if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
+          if (plant.operations === undefined) throw new Error(`process plant ${payload.data.plantId} keeps no operations record`)
+          if (context.origin === undefined) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: 'A decision on a proposal needs who takes it' }
+          const step = decideProposal(plant.operations.book(), {
+            proposalId: payload.data.proposalId,
+            decision: payload.data.decision,
+            decider: { actorId: command.actorId, origin: context.origin },
+            commandId: command.id,
+            ...(payload.data.reason === undefined ? {} : { reason: payload.data.reason }),
+            at: { elapsedMs: plant.runtime.elapsedMs(), wallMs: Date.now() },
+          }, proposalPortsFor(plant, context.origin))
+          plant.operations.setBook(step.book)
+          emitPackRuntimeEvents(handlers, proposalSignalEvents(config.simulationRunId, step.transitions))
+          // An approval executes the stored write, validated again under the approver's guards, as a control write does.
+          if (step.ok && step.execute !== undefined) {
+            plant.runtime.writeCommand({ type: 'setVariable', path: step.execute.path, value: step.execute.value })
+            recordOperation(plant, command, context, { path: step.execute.path, value: step.execute.value, kind: 'approval', proposalId: payload.data.proposalId })
+          }
+          await persistence.saveNow()
+          return step.ok ? { ok: true, commandId: command.id, acceptedAt } : { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: step.reason! }
         }
         if (command.kind === processPlantControlRampCommandKind) {
           const payload = processPlantControlRampPayloadSchema.safeParse(command.payload)
