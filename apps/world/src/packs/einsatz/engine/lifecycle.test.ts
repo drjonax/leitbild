@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { routeDistanceMeters, type IsoTimestamp, type RouteImpact } from '../../../core/model/index.ts'
+import { meters, routeDistanceMeters, type IsoTimestamp, type RouteImpact } from '../../../core/model/index.ts'
+import type { RoutingAdapter } from '../../../routing/protocol.ts'
 import { advance, arrivalAt, at, config, controller, emptyState, low, middle, newTask, newUnit, pointOf, ports, refusalOf, run, runAll, send, start, taskOf, templates, top, types, unitOf } from '../fixtures/engine-harness.ts'
 import { advanceEngine, commitIntent, executeIntent, planIntent, prepareLegs, setRouteImpacts } from './engine.ts'
 import type { EngineState } from './model.ts'
@@ -86,6 +87,32 @@ describe('Einsatz unit lifecycle', () => {
     expect(unitOf(state, 'site').received).toEqual({ [top]: 1, [middle]: 1, [low]: 1 })
   })
 
+  test('a site serves an earlier arrival first even when its id sorts later', async () => {
+    let state = await runAll(emptyState(), [
+      newUnit('a', types.directCarrier, at(0)),
+      newUnit('b', types.directCarrier, at(0.002)),
+      newUnit('site', types.publicSite, at(0.003)),
+      newTask('t1', templates.load, at(0), { [top]: 1 }),
+      newTask('t2', templates.load, at(0.002), { [low]: 1 }),
+      send(['a'], { taskId: 't1' }),
+      send(['b'], { taskId: 't2' }),
+    ])
+    state = await advance(state, start + 3_000)
+    state = await run(state, send(['a', 'b'], { siteId: 'site' }))
+    state = await run(state, { kind: 'site.set', siteId: 'site', accepting: false })
+    const [first, second] = [arrivalAt(state, 'b'), arrivalAt(state, 'a')]
+    expect(first).toBeLessThan(second)
+    const reopenAt = second + 1_000
+    state = await advance(state, reopenAt)
+    expect([unitOf(state, 'a'), unitOf(state, 'b')].map(unit => [unit.phase, unit.phaseSinceMs, unit.phaseDueMs])).toEqual([['at-site', second, undefined], ['at-site', first, undefined]])
+    state = await run(state, { kind: 'site.set', siteId: 'site', accepting: true })
+    expect(unitOf(state, 'b').phaseDueMs).toBe(reopenAt + 4_000)
+    expect(unitOf(state, 'a').phaseDueMs).toBeUndefined()
+    state = await advance(state, reopenAt + 4_000)
+    expect(unitOf(state, 'b')).toMatchObject({ phase: 'available', load: {} })
+    expect(unitOf(state, 'a').phaseDueMs).toBe(reopenAt + 8_000)
+  })
+
   test('a unit turning out is still at base, so a task closed or a recall then leaves it there with no return order', async () => {
     const turningOut = await runAll(emptyState(), [
       newUnit('u1', types.roadCarrier, at(0)),
@@ -141,28 +168,55 @@ describe('Einsatz unit lifecycle', () => {
     expect(state.timeMs).toBe(start + Math.ceil(durationMs))
   })
 
-  test('a canonical route impact slows actual progress and the ETA, and a zero factor stops the unit without losing its phase', async () => {
+  test('a canonical route impact slows actual progress and the ETA, and a zero factor stops the unit mid-route without losing its phase', async () => {
     let state = await runAll(emptyState(), [
       newUnit('u1', types.roadCarrier, at(0)),
       newTask('t1', templates.load, at(0.01), { [low]: 1 }),
       send(['u1'], { taskId: 't1' }),
     ])
-    state = await advance(state, start + 2_000)
+    state = await advance(state, start + 5_000)
+    const travelled = state.motion.get('u1')!
+    expect(travelled.progressMs).toBe(3_000)
+    expect(travelled.point).not.toEqual(at(0))
     const impact = (speedFactor: number): RouteImpact => ({ source: { kind: 'runtime', id: 'test.impact' }, label: 'Synthetic constraint', severity: 'high', speedFactor, updatedAt: stampAt })
     state = setRouteImpacts(state, 'u1', [impact(0)])
-    const stoppedAt = pointOf(state, 'u1')
-    state = await advance(state, start + 22_000)
-    expect(pointOf(state, 'u1')).toEqual(stoppedAt)
+    state = await advance(state, start + 25_000)
+    expect(state.motion.get('u1')).toMatchObject({ point: travelled.point, progressMs: 3_000 })
     expect(unitObject(state, unitOf(state, 'u1'), state.motion.get('u1')!, stamp()).spatial.route?.etaSeconds).toBeUndefined()
     expect(unitOf(state, 'u1').phase).toBe('en-route')
 
     state = setRouteImpacts(state, 'u1', [impact(0.5)])
-    const remainingMs = unitOf(state, 'u1').leg!.durationMs
+    const remainingMs = unitOf(state, 'u1').leg!.durationMs - 3_000
     expect(unitObject(state, unitOf(state, 'u1'), state.motion.get('u1')!, stamp()).spatial.route?.etaSeconds).toBeCloseTo(remainingMs * 2 / 1_000, 6)
-    state = await advance(state, start + 22_000 + Math.ceil(remainingMs * 2) - 1)
+    state = await advance(state, start + 25_000 + Math.ceil(remainingMs * 2) - 1)
     expect(unitOf(state, 'u1').phase).toBe('en-route')
-    state = await advance(state, start + 22_000 + Math.ceil(remainingMs * 2))
+    state = await advance(state, start + 25_000 + Math.ceil(remainingMs * 2))
     expect(unitOf(state, 'u1').phase).toBe('on-task')
+  })
+
+  test('a road leg follows dense router geometry by distance and arrives on the provider travel time', async () => {
+    const corners = [at(0), at(0, 0.002), at(0.01, 0.002), at(0.01)]
+    const dogleg: RoutingAdapter = {
+      id: 'dogleg',
+      route: async () => ({ geometry: { type: 'LineString', coordinates: corners.map(point => point.coordinates) }, distanceM: meters(1_100), durationSeconds: 100, provider: 'dogleg' }),
+    }
+    const routed = { routing: dogleg }
+    const sent = await executeIntent(await runAll(emptyState(), [
+      newUnit('u1', types.roadCarrier, at(0)),
+      newTask('t1', templates.load, at(0.01), { [low]: 1 }),
+    ]), send(['u1'], { taskId: 't1' }), controller, routed)
+    if (!sent.ok) throw new Error(sent.reason)
+    expect(unitOf(sent.state, 'u1').leg).toMatchObject({ durationMs: 100_000, distanceM: 1_100, provider: 'dogleg' })
+    const lengths = corners.slice(1).map((point, index) => routeDistanceMeters(corners[index]!, point))
+    const halfway = lengths.reduce((sum, length) => sum + length, 0) / 2
+    const midway = (await advanceEngine(sent.state, start + 2_000 + 50_000, routed)).state
+    expect(unitObject(midway, unitOf(midway, 'u1'), midway.motion.get('u1')!, stamp()).spatial.route?.progress?.segmentIndex).toBe(2)
+    const [lon, lat] = pointOf(midway, 'u1').coordinates
+    expect(lat).toBeCloseTo(corners[1]!.coordinates[1], 9)
+    expect(lon).toBeCloseTo(corners[1]!.coordinates[0] + (corners[2]!.coordinates[0] - corners[1]!.coordinates[0]) * (halfway - lengths[0]!) / lengths[1]!, 9)
+    const arrived = (await advanceEngine(midway, start + 2_000 + 100_000, routed)).state
+    expect(unitOf(arrived, 'u1').phase).toBe('on-task')
+    expect(pointOf(arrived, 'u1')).toEqual(at(0.01))
   })
 
   test('legs routed on an earlier state are refused at commit; legs routed on the current state start where the unit is', async () => {
