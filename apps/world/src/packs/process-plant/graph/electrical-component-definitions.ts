@@ -75,10 +75,10 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
     }).strict(),
     semantics: fixedSemantics({
       aspects: [aspect('energized', { variable: 'energized', reading: 'true' })],
-      // The grid's own voltage and frequency are measured on the live grid: with the grid lost or the Plant
-      // isolated from it there is none to measure, whatever numbers the boundary last held. The supply voltage
-      // the relays read is the Plant's side, and reads none then.
-      meaningfulWhile: [{ flag: 'energized', variables: ['frequencyHz', 'voltageFraction'] }],
+      // The grid's voltage and frequency are measured on the live grid: with the grid lost or the Plant isolated
+      // from it there is none to measure, whatever numbers the boundary last held, and the supply voltage the
+      // relays read on the Plant's side reads none then.
+      meaningfulWhile: [{ flag: 'energized', variables: ['frequencyHz', 'voltageFraction', 'supplyVoltageFraction'] }],
     }),
     variables: [
       variable({ path: 'available', label: 'Grid source available', kind: 'control', discipline: 'electrical', writable: true, publish: 'telemetry', actuation: 'boundary', quantity: 'boolean', unit: 'boolean' }),
