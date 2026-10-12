@@ -767,7 +767,7 @@
         <span class="key badge-key"><obc-automation-badge mode={glyph.mode} type={glyph.type}>{#if glyph.icon === 'obi-ai-pending'}<obi-ai-pending usecsscolor></obi-ai-pending>{:else if glyph.icon === 'obi-command-request'}<obi-command-request usecsscolor></obi-command-request>{:else if glyph.icon === 'obi-user'}<obi-user usecsscolor></obi-user>{:else if glyph.icon === 'obi-ai'}<obi-ai usecsscolor></obi-ai>{:else if glyph.icon === 'obi-manual'}<obi-manual usecsscolor></obi-manual>{/if}</obc-automation-badge>{mimicLegend[key]}</span>
       {/each}
     {/if}
-    {#if drawsRelief}<span>{mimicLegend.notComputed}</span>{/if}
+    {#if drawsRelief}<span>{mimicLegend.notMeasured}</span>{/if}
     {#each expectedGroups as group (group)}<span class="key"><span class="expected-key"></span>{mimicLegend.expected} {group}</span>{/each}
     {#if traces && trends !== undefined}<span>{mimicLegend.trend} {sparklineWindowText(trends.windowMs)}</span>{/if}
     <span>{mimicLegend.simulator}</span>

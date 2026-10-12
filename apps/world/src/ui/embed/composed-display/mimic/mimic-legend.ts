@@ -9,7 +9,8 @@ export const mimicLegend = {
   unknownFlow: 'not known',
   command: 'CMD',
   commandMeaning: 'command not followed',
-  notComputed: 'POS ?: not computed',
+  /** A valve whose position the model does not solve, or the Plant does not publish (an ARV). */
+  notMeasured: 'POS ?: not measured',
   simulator: 'simulator',
   /** Beside a faded alarm frame: what its alarms are expected after ("expected after RX TRIP"). */
   expected: 'expected after',
