@@ -1,45 +1,56 @@
 <script lang="ts">
   import type { Workspace } from '@leitbild/contracts'
   import AssistantLauncher from './AssistantLauncher.svelte'
-  import { request, jsonRequest } from './api.ts'
-  import { wikiAssistantPrompt, wikiAssistantDestination, type WikiAssistantPage } from './wiki-assistant.ts'
+  import { openAssistantConversation, type WikiAssistantPage } from './assistant-handoff.ts'
+  import { errorDiagnostic, plainErrorText } from './error-text.ts'
+  import { createWorkspaceApi, workspaceLabel } from './launch-workspace.ts'
+  import { browserWorkspaceMemory } from './workspace-memory.ts'
 
   let { page }: { page: WikiAssistantPage | null } = $props()
-  let workspaces = $state<Workspace[]>([])
+  const api = createWorkspaceApi()
+  const memory = browserWorkspaceMemory()
+  // '' = a new Workspace is created for this conversation.
+  let workspaces = $state<ReadonlyArray<Workspace>>([])
   let workspaceId = $state('')
   let loaded = $state(false)
 
-  const prepare = async (): Promise<void> => {
+  // The launcher shows a thrown message as is: give it plain text, keep the code for the console.
+  const plainly = async (action: () => Promise<void>): Promise<void> => {
+    try { await action() }
+    catch (cause) {
+      console.error(errorDiagnostic(cause))
+      throw new Error(plainErrorText(cause))
+    }
+  }
+
+  const prepare = (): Promise<void> => plainly(async () => {
     loaded = false
-    const result = await request<{ workspaces: Workspace[] }>('/api/workspaces')
-    workspaces = result.workspaces
+    workspaces = await api.list()
     if (!workspaces.some(item => item.id === workspaceId)) {
-      workspaceId = workspaces.length === 1 ? workspaces[0]!.id : ''
+      const remembered = memory.remembered()
+      workspaceId = workspaces.some(item => item.id === remembered) ? remembered! : ''
     }
     loaded = true
-  }
+  })
 
-  const ask = async (prompt: string): Promise<void> => {
-    if (!loaded || !workspaces.some(item => item.id === workspaceId)) throw new Error('Choose a workspace for this conversation.')
-    const response = await request<{ result: { resource: { workspaceId: string; id: string } } }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/capabilities/agents.assistance.open/invoke`,
-      jsonRequest('POST', { input: { prompt: wikiAssistantPrompt(prompt, page) }, actor: { kind: 'human' } }),
-    )
-    location.assign(wikiAssistantDestination(response.result.resource.workspaceId, response.result.resource.id))
-  }
+  const ask = (prompt: string): Promise<void> => plainly(async () => {
+    const handoff = await openAssistantConversation({
+      text: prompt, origin: { kind: 'wiki', page }, conversation: 'reuse', workspaceId: workspaceId || null,
+    }, { api, memory, now: () => new Date(), fetch: (input, init) => fetch(input, init) })
+    location.assign(handoff.destination)
+  })
 </script>
 
-<AssistantLauncher onOpen={prepare} submit={loaded && workspaceId ? ask : undefined}>
+<AssistantLauncher onOpen={prepare} submit={loaded ? ask : undefined}>
   {#snippet details(busy)}
-    {#if loaded && workspaces.length === 0}
-      <p>Create a <a href="/workspaces">workspace</a> to keep your Assistant conversation.</p>
-    {:else if loaded}
-      <label>Conversation workspace
-        <select bind:value={workspaceId} disabled={busy} aria-label="Conversation workspace">
-          <option value="" disabled>Choose a workspace…</option>
-          {#each workspaces as item (item.id)}<option value={item.id}>{item.name ?? item.id}</option>{/each}
+    {#if loaded}
+      <label>Conversation Workspace
+        <select bind:value={workspaceId} disabled={busy} aria-label="Conversation Workspace">
+          <option value="">A new Workspace</option>
+          {#each workspaces as item (item.id)}<option value={item.id}>{workspaceLabel(item)}</option>{/each}
         </select>
       </label>
+      <p class="page-reference">Workspaces are public: anyone can see, open, change or delete them.</p>
     {/if}
     {#if page}
       <p class="page-reference">Includes a reference to <strong>{page.title}</strong>, at revision <code title={page.revision}>{page.revision.slice(0, 12)}</code>. The Assistant can read this page and follow links as needed. Your conversation opens in Agents.</p>
