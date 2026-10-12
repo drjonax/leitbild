@@ -2,6 +2,8 @@
 // agent is generating, plus update helpers for label, preview text, tool
 // status, context icon, and warnings.
 
+import { isFocusedRoomView } from '../focused-room.ts'
+
 export const renderThinkingIndicator = (
   container: HTMLElement,
   agentName: string,
@@ -40,6 +42,14 @@ export const renderThinkingIndicator = (
   header.appendChild(stopBtn)
 
   div.appendChild(header)
+
+  // A newcomer in the Host's conversation view learns that silence is normal.
+  if (isFocusedRoomView) {
+    const expectation = document.createElement('div')
+    expectation.className = 'text-xs text-text-muted'
+    expectation.textContent = 'Answers usually take up to two minutes.'
+    div.appendChild(expectation)
+  }
 
   const toolStatus = document.createElement('div')
   toolStatus.className = 'text-xs text-text-muted'

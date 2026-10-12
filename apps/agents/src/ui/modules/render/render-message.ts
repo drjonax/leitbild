@@ -15,6 +15,7 @@ import '../map/index.ts'
 import '../live-view/index.ts'
 import { getPostRenderProcessors } from '../extensions/post-render-registry.ts'
 import { icon } from '../icon.ts'
+import { isFocusedRoomView } from '../focused-room.ts'
 import { appendWhisperBadge } from '../whisper-badge.ts'
 import { showToast } from '../toast.ts'
 import { $messageThinking } from '../stores.ts'
@@ -107,7 +108,8 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   const isJoinLeave = msg.type === 'join' || msg.type === 'leave'
   const ageMs = Date.now() - msg.timestamp
   // Join/leave messages auto-fade 10s after posting; skip rendering if already expired.
-  if (isJoinLeave && ageMs > 10_000) return
+  // The Host's conversation view shows membership in its member row instead.
+  if (isJoinLeave && (ageMs > 10_000 || isFocusedRoomView)) return
 
   const div = document.createElement('div')
   div.setAttribute('data-msg-id', msg.id)
