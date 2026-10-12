@@ -54,6 +54,7 @@ import { renderSegments, themeFromCss, type Segment, type ThemeVars } from '@oic
 import type { MimicIconFamily } from '../../../../packs/process-plant/displays/mimic/presentation.ts'
 import type { ItemLook } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
 import type { ItemBadges } from '../operation/operation-presenter.ts'
+import { deviceBadgeCorners } from './badge-room.ts'
 
 /** The text widths the server reserved were measured in OpenBridge's Noto Sans, so the mimic loads its glyphs (mimic-font.ts). */
 export const loadMimicFont = async (): Promise<void> => {
@@ -245,10 +246,10 @@ export const updateSymbolOperation = (device: HTMLElement & Props, operation: { 
   if (device.dataset.badges === key) return
   device.dataset.badges = key
   for (const old of device.querySelectorAll('[slot^="badge-"]')) old.remove()
-  const [whoCorner, holdCorner] = operation.textSide === 'bottom' ? ['badge-top-left', 'badge-top-right'] : ['badge-top-left', 'badge-bottom-left']
+  const corners = deviceBadgeCorners(operation.textSide)
   const { who, hold } = operationBadges(operation.badges)
-  for (const badge of who) { badge.slot = whoCorner!; device.append(badge) }
-  for (const badge of hold) { badge.slot = holdCorner!; device.append(badge) }
+  for (const badge of who) { badge.slot = corners.who; device.append(badge) }
+  for (const badge of hold) { badge.slot = corners.hold; device.append(badge) }
 }
 
 /** A vessel's badges, in the top corners of the box it is drawn in: who acts on it left, what holds it right. */
