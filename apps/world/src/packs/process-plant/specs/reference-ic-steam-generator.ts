@@ -52,6 +52,11 @@ export const levelLowLowPercent = 20
 // model stands one valve for the bank, lifting in proportion over that range.
 const pressureHighMPa = 8.1
 
+// A generator's feedwater flow is low below 40 % of the 476 kg/s it takes at
+// full power, and clears above 47 % of it.
+const feedwaterFlowLowKgPerS = 190
+const feedwaterFlowLowClearKgPerS = 225
+
 export const steamGeneratorReferenceIcRules = (
   loop: ProcessPlantReferenceLoop,
   loops: ReadonlyArray<ProcessPlantReferenceLoop>,
@@ -286,11 +291,11 @@ export const steamGeneratorReferenceIcRules = (
       ruleClass: 'alarm',
       condition: all([
         comparison({ path: `${sg}.levelPercent` }, '<', 40),
-        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', 150),
+        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', feedwaterFlowLowKgPerS),
       ]),
       clearCondition: any([
         comparison({ path: `${sg}.levelPercent` }, '>', 45),
-        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', 180),
+        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', feedwaterFlowLowClearKgPerS),
       ]),
       clearDelayMs: 2_000,
       delayMs: 3_000,
@@ -309,8 +314,8 @@ export const steamGeneratorReferenceIcRules = (
       label: `Steam generator ${loop} feedwater flow low`,
       ruleClass: 'alarm',
       modes: ['powerOperation'],
-      condition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', 150),
-      clearCondition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', 180),
+      condition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', feedwaterFlowLowKgPerS),
+      clearCondition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', feedwaterFlowLowClearKgPerS),
       clearDelayMs: 2_000,
       delayMs: 3_000,
       latch: false,

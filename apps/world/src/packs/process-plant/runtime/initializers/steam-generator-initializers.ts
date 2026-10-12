@@ -1,7 +1,6 @@
 import { optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
-import { latentHeatSteamMjPerKg } from '../thermophysics.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
-import { steamGeneratorLevelOnSpanPercent, steamGeneratorOperatingLevel, steamGeneratorWideRange } from '../../steam-generator-operating-level.ts'
+import { steamGeneratorFeedToSteamEnthalpyMjPerKg, steamGeneratorLevelOnSpanPercent, steamGeneratorOperatingLevel, steamGeneratorWideRange } from '../../steam-generator-operating-level.ts'
 
 export const steamGeneratorInitialValueDefinitions: ReadonlyArray<ComponentInitialValueDefinition> = [
   {
@@ -13,7 +12,7 @@ export const steamGeneratorInitialValueDefinitions: ReadonlyArray<ComponentIniti
       if (localPath === 'levelPercent') return parameterNumber(component, 'nominalLevelPercent') * 100
       if (localPath === 'wideRangeLevelPercent') return steamGeneratorLevelOnSpanPercent(steamGeneratorWideRange(component.parameters as Record<string, unknown>), level.collapsed + level.swell)
       if (localPath === 'pressureMPa') return parameterNumber(component, 'nominalPressureMPa')
-      if (localPath === 'heatTransferMw') return initialSteamFlow * latentHeatSteamMjPerKg
+      if (localPath === 'heatTransferMw') return initialSteamFlow * steamGeneratorFeedToSteamEnthalpyMjPerKg(component.parameters as Record<string, unknown>)
       if (localPath === 'primaryInletTemperatureC') return optionalParameterNumber(component, 'initialPrimaryInletTemperatureC', 322)
       if (localPath === 'primaryOutletTemperatureC') return optionalParameterNumber(component, 'initialPrimaryOutletTemperatureC', 290)
       if (localPath === 'tubeMetalTemperatureC') {

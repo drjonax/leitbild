@@ -629,7 +629,7 @@ describe('alarms that apply only in power operation', () => {
   test('clear after a reactor trip, though their own clear condition still reads abnormal', () => {
     const plantRun = started()
     plantRun.act('steam-generator-b-feedwater-runback')
-    // Long enough for the flow alarm, short of the low-low level trip the runback leads to about 28 s in.
+    // Long enough for the flow alarm, short of the low-low level trip the runback leads to about 22 s in.
     plantRun.run(15_000)
     const feedLow = 'alarm:sg-b-feedwater-flow-low:feedwater-flow-low'
     expect(plantRun.activeIds()).toContain(feedLow)
@@ -639,7 +639,7 @@ describe('alarms that apply only in power operation', () => {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: path as VariablePath, value })
     }
     plantRun.run(5_000)
-    expect(Number(plantRun.read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(180)
+    expect(Number(plantRun.read('sgB.feedwaterFlowKgPerS'))).toBeLessThan(225)
     expect(lifecycleOf(plantRun, feedLow)).toMatchObject({ active: false, clearCount: 1 })
     expect(plantRun.activeIds()).not.toContain('alarm:generator-output-low:generator-output-low')
     expect(plantRun.activeIds()).not.toContain('alarm:turbine-load-low:load-low')

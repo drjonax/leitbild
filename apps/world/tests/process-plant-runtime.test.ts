@@ -35,7 +35,7 @@ import { componentBehaviorDefinitions, initialComponentValueFor } from '../src/p
 import { componentInitialValueDefinitions } from '../src/packs/process-plant/runtime/component-initial-values.ts'
 import { componentInitialReconciliationDefinitions } from '../src/packs/process-plant/runtime/component-behaviors.ts'
 import { processLinkBehaviorDefinitions } from '../src/packs/process-plant/runtime/links/process-link-behaviors.ts'
-import { latentHeatSteamMjPerKg } from '../src/packs/process-plant/runtime/thermophysics.ts'
+import { steamGeneratorFeedToSteamEnthalpyMjPerKg } from '../src/packs/process-plant/steam-generator-operating-level.ts'
 import { createProcessPlantVariableTable } from '../src/packs/process-plant/runtime/variable-table.ts'
 import { componentFlowBalanceForService } from '../src/packs/process-plant/runtime/links/link-flow-helpers.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
@@ -969,13 +969,16 @@ describe('process plant runtime', () => {
   })
 
   test('steam generator boiling rate remains energy-consistent with heat transfer', () => {
-    const runtime = createProcessPlantRuntime({ system: compiledSystem() })
+    const system = compiledSystem()
+    const runtime = createProcessPlantRuntime({ system })
 
     for (let index = 0; index < 50; index += 1) runtime.tick(100)
 
     const heatTransferMw = Number(runtime.readVariable(valueOf('sgA.heatTransferMw')))
     const boilingRateKgPerS = Number(runtime.readVariable(valueOf('sgA.boilingRateKgPerS')))
-    expect(boilingRateKgPerS * latentHeatSteamMjPerKg).toBeCloseTo(heatTransferMw, 6)
+    // Each kilogram boiled takes the generator's feedwater-to-steam enthalpy rise.
+    const enthalpyRise = steamGeneratorFeedToSteamEnthalpyMjPerKg(system.graph.components.find(component => component.id === 'sgA')!.parameters as Record<string, unknown>)
+    expect(boilingRateKgPerS * enthalpyRise).toBeCloseTo(heatTransferMw, 6)
     expect(Number(runtime.readVariable(valueOf('sgA.boilingEnergyResidualMw')))).toBeCloseTo(0, 6)
   })
 

@@ -24,6 +24,8 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
     },
     parametersSchema: z.object({
       nominalPressureMPa: z.number().finite().positive(),
+      /** The feedwater temperature the plant's feedwater heaters deliver at full power: with the nominal pressure it sets the energy each kilogram of steam takes. */
+      designFeedwaterTemperatureC: z.number().finite(),
       nominalLevelPercent: normalized,
       heatTransferCoefficientMwPerK: z.number().finite().positive(),
       initialPrimaryInletTemperatureC: z.number().finite().optional(),

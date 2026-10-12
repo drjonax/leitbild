@@ -2,8 +2,9 @@ import { z } from 'zod'
 import type { ComponentInstanceSpec, PlantGraphSpec } from '../graph/index.ts'
 import { reactorInitialThermalState } from '../reactor-initial-conditions.ts'
 import { condenserThermalBalance } from '../runtime/condenser-thermodynamics.ts'
-import { latentHeatSteamMjPerKg, saturationTemperatureCFromPressureMPa, specificHeatWaterKjPerKgK } from '../runtime/thermophysics.ts'
+import { saturationTemperatureCFromPressureMPa, specificHeatWaterKjPerKgK } from '../runtime/thermophysics.ts'
 import { compressedWaterState } from '../runtime/water-properties.ts'
+import { steamGeneratorFeedToSteamEnthalpyMjPerKg } from '../steam-generator-operating-level.ts'
 
 /** Fixed total Plant rating, divided over the selected loops. These are model
  * sizing equations, evaluated once before compilation, never output corrections. */
@@ -43,7 +44,10 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
   set(core, { ...result[core.id], reactorCoolantPumpHeatMw: pumpHeatMw })
   const thermal = reactorInitialThermalState(effective(core))
   const thermalMw = thermal.coreHeatMw + thermal.pumpHeatMw
-  const steamFlow = thermalMw / latentHeatSteamMjPerKg
+  // Each generator boils its share of the heat at its feedwater-to-steam enthalpy rise.
+  const generatorSteamFlow = (generator: ComponentInstanceSpec): number =>
+    thermalMw / generators.length / steamGeneratorFeedToSteamEnthalpyMjPerKg(effective(generator))
+  const steamFlow = generators.reduce((sum, generator) => sum + generatorSteamFlow(generator), 0)
   set(core, { ...result[core.id], referenceCoolantOutletTemperatureC: thermal.outlet, referenceFuelTemperatureC: thermal.average })
   for (const generator of generators) {
     const p = effective(generator)
@@ -55,7 +59,7 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
     const tube = thermal.steamGeneratorOutlet
     if (tube <= secondary || thermal.outlet <= tube) throw new Error('PWR full-power operating point has no positive primary/secondary temperature approach')
     set(generator, {
-      initialSteamFlowFraction: 1, nominalSteamFlowKgPerS: steamFlow / generators.length,
+      initialSteamFlowFraction: 1, nominalSteamFlowKgPerS: generatorSteamFlow(generator),
       heatTransferCoefficientMwPerK: thermalMw / generators.length / (recirculation * (tube - secondary)),
       initialPrimaryInletTemperatureC: thermal.outlet, initialPrimaryOutletTemperatureC: thermal.steamGeneratorOutlet,
       initialSecondaryTemperatureC: secondary, tubeMetalInitialTemperatureC: tube,

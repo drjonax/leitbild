@@ -320,16 +320,16 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     expect(Math.min(...read('SUB-MARGIN', 300, 120_000, hotStandby).trace.filter(point => point.t >= 60_000).map(point => point.v))).toBeGreaterThan(32)
   })
 
-  test('forty seconds after a feed regulating valve failed part-open, the steam generator level is projected to its low-low limit, which it reaches', () => {
+  test('half a minute after a feed regulating valve failed part-open, the steam generator level is projected to its low-low limit, which it reaches', () => {
     // A loss of all main feedwater takes the narrow range, a quarter of the wide range, to its low-low limit within
-    // about 24 s, before half a minute of trend can found a time to it. Feed regulating valve B failed at 70 % lets
+    // about 20 s, before half a minute of trend can found a time to it. Feed regulating valve B failed at 70 % lets
     // generator B boil down more slowly: the trend is established before the level gets there.
     const read = qaCase('steam-generator-b-feedwater-runback', 90, ['SG-B-LVL-NR'], { positionPercent: 70 })
     // The two-minute trend projects it; the ten-minute trend's longer window has not yet the history to.
-    expect(read('SG-B-LVL-NR', 40, 120_000, powerOperation).text).toBe('9.9 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈16 s')
-    expect(read('SG-B-LVL-NR', 40, 600_000, powerOperation).reading.limit).toMatchObject({ minutes: null })
-    // It does, 16 s later.
+    expect(read('SG-B-LVL-NR', 32, 120_000, powerOperation).text).toBe('9.8 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈12 s')
+    expect(read('SG-B-LVL-NR', 32, 600_000, powerOperation).reading.limit).toMatchObject({ minutes: null })
+    // It does, 13 s later.
     const crossed = read('SG-B-LVL-NR', 90, 120_000, powerOperation).trace.find(point => point.v < 20)!
-    expect(crossed.t / 1000).toBe(56)
+    expect(crossed.t / 1000).toBe(45)
   })
 })
