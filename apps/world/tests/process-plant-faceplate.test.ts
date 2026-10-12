@@ -13,15 +13,8 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { conditionBindings } from '../src/packs/process-plant/displays/actuations.ts'
-import {
-  faceplateEnds,
-  faceplateLayout,
-  faceplateLines,
-  faceplateNow,
-  groupStates,
-  type Faceplate,
-  type FaceplateLayout,
-} from '../src/packs/process-plant/displays/faceplate.ts'
+import { compileFaceplate, faceplateEnds, groupStates } from '../src/packs/process-plant/displays/faceplate.ts'
+import { faceplateLines, faceplateNow, type CompiledFaceplate, type Faceplate } from '../src/packs/process-plant/displays/faceplate-live.ts'
 import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
 import { evaluateSafetyFunctions } from '../src/packs/process-plant/safety-functions.ts'
 
@@ -75,14 +68,14 @@ const running = (system: CompiledProcessPlant, seconds: number, actionId: string
 
 const faceplatesOf = (system: CompiledProcessPlant, run: ReturnType<typeof running>) => {
   const mode = processPlantOperatingMode({ system, runtime: run.runtime, modes: system.automation.operatingModes })?.id ?? null
-  const read = (path: VariablePath): unknown => run.runtime.readVariable(path)
+  const read = (path: string): unknown => run.runtime.readVariable(path as VariablePath)
   const snapshot = run.protection.snapshot()
-  const active = new Map([...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active).map(lifecycle => [lifecycle.ruleId, lifecycle.firstActiveElapsedMs ?? 0]))
-  const firstOut = new Map(snapshot.trips.flatMap(lifecycle => lifecycle.firstOut && lifecycle.annunciator?.firstOutGroup !== undefined ? [[lifecycle.annunciator.firstOutGroup, lifecycle.ruleId] as const] : []))
-  const live = { mode, read, active, firstOut, safetyFunctions: evaluateSafetyFunctions(system, run.runtime) }
+  // As a display's sample carries them: the annunciated alarms and trips, and each safety function's status.
+  const alarms = [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService && (lifecycle.active || lifecycle.phase === 'clearedUnacknowledged'))
+  const live = { mode, read, alarms, functions: evaluateSafetyFunctions(system, run.runtime) }
   return faceplateEnds(system).map(end => {
-    const layout = faceplateLayout(system, end, { mode, read }, path => run.nominal.readVariable(path))!
-    return { layout, now: faceplateNow(system, layout, live), active }
+    const { faceplate } = compileFaceplate(system, end, { mode, read: path => read(path) }, path => run.nominal.readVariable(path))!
+    return { faceplate, now: faceplateNow(faceplate, live), active: new Set(alarms.filter(alarm => alarm.active).map(alarm => alarm.ruleId)) }
   })
 }
 
@@ -90,12 +83,12 @@ const faceplatesOf = (system: CompiledProcessPlant, run: ReturnType<typeof runni
 const withOpaqueIds = <T,>(value: T): T => renamed(value)
 
 /** What a faceplate shows: its layout and how it reads now. */
-const shown = (faceplates: ReturnType<typeof faceplatesOf>) => faceplates.map(({ layout, now }) => ({ layout, now }))
+const shown = (faceplates: ReturnType<typeof faceplatesOf>) => faceplates.map(({ faceplate, now }) => ({ faceplate, now }))
 
-const shownPaths = (layout: FaceplateLayout): ReadonlyArray<string> => layout.columns.flatMap(column => column.rows.flatMap(row =>
-  row.kind === 'values' ? row.paths.map(String)
-    : row.kind === 'flows' ? row.branches.map(branch => String(branch.path))
-      : row.kind === 'loops' ? row.table.columns.flatMap(entry => entry.cells.flat().map(String))
+const shownPaths = (faceplate: CompiledFaceplate): ReadonlyArray<string> => faceplate.columns.flatMap(column => column.rows.flatMap(row =>
+  row.kind === 'values' ? row.paths
+    : row.kind === 'flows' ? row.branches.map(branch => branch.path)
+      : row.kind === 'loops' ? row.columns.flatMap(entry => entry.cells.flat())
         : []))
 
 // The pinned states the C1 displays are reviewed at (plan-v3 §5).
@@ -114,7 +107,7 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
   test('only the energy ends get one, sources first', () => {
     expect(faceplateEnds(plant).map(index => plant.graph.components[index]!.semantics.energy.map(role => role.role))).toEqual([['source'], ['sink']])
     const other = plant.graph.components.findIndex(component => component.semantics.energy.every(role => role.role === 'transfer'))
-    expect(faceplateLayout(plant, other, { mode: null, read: () => undefined }, () => undefined)).toBeNull()
+    expect(compileFaceplate(plant, other, { mode: null, read: () => undefined }, () => undefined)).toBeNull()
   })
 
   test('the opaque Plant lays out the same faceplates at its operating point', () => {
@@ -129,8 +122,8 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
 
   test('a protection column\'s states are exactly what every rule of its group commands: the trip breakers, the turbine stop valve', () => {
     const statesOf = (system: CompiledProcessPlant) => faceplateEnds(system).map(end => {
-      const layout = faceplateLayout(system, end, { mode: null, read: () => undefined }, () => undefined)!
-      return layout.columns.flatMap(column => column.heads.flatMap((head): ReadonlyArray<VariablePath> => head.kind === 'group' ? groupStates(system, head.group) : []))
+      const { faceplate } = compileFaceplate(system, end, { mode: null, read: () => undefined }, () => undefined)!
+      return faceplate.columns.flatMap(column => column.heads.flatMap((head): ReadonlyArray<VariablePath> => head.kind === 'group' ? groupStates(system, head.group) : []))
     })
     const tags = statesOf(plant).map(paths => paths.map(path => String(plant.graph.signalBindingByPath.get(path)!.tagId)))
     expect(tags).toEqual([['TRIP-BKR-A-POS', 'TRIP-BKR-B-POS'], ['TURB-STOP-POS']])
@@ -146,8 +139,8 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
   })
 
   test('no signal appears twice on a faceplate', () => {
-    for (const { layout } of faceplatesOf(plant, running(plant, 30))) {
-      const paths = shownPaths(layout)
+    for (const { faceplate } of faceplatesOf(plant, running(plant, 30))) {
+      const paths = shownPaths(faceplate)
       expect(paths.length).toBe(new Set(paths).size)
     }
   }, 60_000)
@@ -155,7 +148,7 @@ describe('a faceplate depends on the model and its I&C, not on equipment ids', (
 
 describe('each faceplate column fits the room under the drawing', () => {
   // Rows that ask for attention: an active rule, a count of rules acting, a failing check, a value an active rule judges.
-  const busy = (faceplate: Faceplate, active: ReadonlyMap<string, number>) => {
+  const busy = (faceplate: Faceplate, active: ReadonlySet<string>) => {
     const judgedNow = new Set(plant.automation.rules.filter(rule => active.has(rule.id)).flatMap(rule => conditionBindings(plant, rule.condition).map(binding => String(binding.path))))
     return faceplate.columns.map(column => column.rows.filter(row => row.kind === 'rule' || row.kind === 'acting' || row.kind === 'check'
       || (row.kind === 'values' && row.paths.some(path => judgedNow.has(String(path))))).length)
