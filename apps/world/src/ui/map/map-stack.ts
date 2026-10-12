@@ -13,6 +13,23 @@ import type { OperationalPointFeature, Position3 } from '../map-runtime/types.ts
 export interface ScreenPoint { readonly x: number; readonly y: number }
 
 /**
+ * The object a tap on a stack picks without asking: while no controller is
+ * highlighted, the one controller the stack holds, when it holds exactly
+ * one, as a unit standing on its own task's marker. The tap then highlights
+ * it as a tap on it alone would. With a controller highlighted, the tap
+ * names a target, and the chooser asks which.
+ */
+export const stackPick = (
+  stack: ReadonlyArray<OperationalObject>,
+  controllerHighlighted: boolean,
+  isController: (object: OperationalObject) => boolean,
+): OperationalObject | null => {
+  if (controllerHighlighted) return null
+  const controllers = stack.filter(isController)
+  return controllers.length === 1 ? controllers[0]! : null
+}
+
+/**
  * The objects whose icons lie under a point on the map's canvas itself, top
  * first (the last drawn): those whose coloured disk, which covers its glyph,
  * holds the point. No picking radius widens it, so icons that only stand

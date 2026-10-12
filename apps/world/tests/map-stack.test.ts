@@ -5,7 +5,7 @@ import { createMapFeatureStore } from '../src/ui/map-runtime/map-feature-store.t
 import { createOperationalDeckLayers } from '../src/ui/map-runtime/operational-deck-layers.ts'
 import { operationalIconPx, statusDiskRadiusPx } from '../src/ui/map-runtime/symbol-kit.ts'
 import type { OperationalPointFeature, Position3 } from '../src/ui/map-runtime/types.ts'
-import { objectsUnder } from '../src/ui/map/map-stack.ts'
+import { objectsUnder, stackPick } from '../src/ui/map/map-stack.ts'
 
 const at = '2026-10-12T08:00:00.000Z' as IsoTimestamp
 /** One screen px is 0.00001° here, east right and north up, from the origin. */
@@ -56,6 +56,15 @@ describe('objects stacked under one tap', () => {
     const apart = pointsOf([objectOf('a'), objectOf('b', 40)])
     for (let x = -30; x <= 70; x += 1) expect(objectsUnder(apart, screenOf, { x, y: 0 }).length).toBeLessThanOrEqual(1)
     expect(objectsUnder(apart, screenOf, { x: 0, y: disk + 1 })).toEqual([])
+  })
+
+  test('with nothing highlighted, a stack holding exactly one controller picks it without the chooser; with a controller highlighted, or two controllers, the chooser asks', () => {
+    const [task, unit, other] = [objectOf('task'), objectOf('unit'), objectOf('other')]
+    const controls = (object: OperationalObject): boolean => object.id !== 'task'
+    expect(stackPick([unit, task], false, controls)).toBe(unit)
+    expect(stackPick([unit, task], true, controls)).toBeNull()
+    expect(stackPick([unit, other, task], false, controls)).toBeNull()
+    expect(stackPick([task, objectOf('site')], false, object => object.id === 'unit')).toBeNull()
   })
 
   test('the disk a stack is judged by is the one the map draws beneath each icon, which covers its glyph', () => {

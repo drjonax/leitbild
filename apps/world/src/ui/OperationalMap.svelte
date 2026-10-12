@@ -41,7 +41,7 @@
   import type { MapCover } from './surface-panel-contract.ts'
   import { createMapPromptController } from './map/map-prompt.ts'
   import { createMapStackChooser } from './map/map-stack-chooser.ts'
-  import { objectsUnder } from './map/map-stack.ts'
+  import { objectsUnder, stackPick } from './map/map-stack.ts'
   import { disksPickFor, hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
   import { operationalIconPx } from './map-runtime/symbol-kit.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
@@ -60,6 +60,10 @@
   interface Props {
     readonly objects: ReadonlyArray<OperationalObject>
     readonly selectedControllerId: string | null
+    /** Whether the selected object is a controller, highlighted for an order: a tap on a stack then names a target. */
+    readonly controllerHighlighted?: boolean
+    /** Whether an object is one the screen orders: a stack holding exactly one, tapped while none is highlighted, picks it without the chooser. */
+    readonly isController?: (object: OperationalObject) => boolean
     readonly placementMode: PackCreateObjectType | null
     readonly placementCursor: { readonly icon: string; readonly color: string } | null
     readonly placementPoints: ReadonlyArray<GeoJsonPoint>
@@ -141,6 +145,8 @@
   const {
     objects,
     selectedControllerId,
+    controllerHighlighted = false,
+    isController = () => false,
     placementMode,
     placementCursor,
     placementPoints,
@@ -325,7 +331,12 @@
       clickHandled = true
       if (performance.now() < longPressConsumedUntil) return
       const stack = stackUnderPointer()
-      if (stack.length > 1) return showStackChooser(stack)
+      if (stack.length > 1) {
+        const picked = stackPick(stack, controllerHighlighted, isController)
+        if (picked === null) return showStackChooser(stack)
+        onObjectSeen(picked)
+        return pickObject(picked)
+      }
       pickObject(object)
     },
     onObjectSeen: object => onObjectSeen(object),

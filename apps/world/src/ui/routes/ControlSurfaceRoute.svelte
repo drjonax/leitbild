@@ -2012,6 +2012,8 @@
         <OperationalMap
           {objects}
           {selectedControllerId}
+          controllerHighlighted={selectedControllerObject !== null}
+          isController={object => activePack?.targeting?.isController(object, targetContext) === true}
           {placementMode}
           {placementCursor}
           {placementPoints}
