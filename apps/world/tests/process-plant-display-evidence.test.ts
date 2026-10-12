@@ -14,6 +14,7 @@ import {
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { composeEvidenceRows, type CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
+import { positionWord } from '../src/packs/process-plant/displays/display-text.ts'
 import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -257,6 +258,19 @@ describe('what World adds to a composed display', () => {
     expect(evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
     expect(evidence[1]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers to SG A, SG B, SG C and SG D')
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+    // The trip check reads as the drawing does (HMI review of run 23: "ON" and "0 %"): the rods by the words the core
+    // declares for them, the stop valve SHUT at the end of its travel.
+    const panel = display.panels.find(candidate => candidate.kind === 'evidence')!
+    if (panel.kind !== 'evidence') throw new Error('expected the evidence panel')
+    const items = panel.rows.find(row => row.kind === 'trip')!.items
+    const rods = items.find(item => item.label === 'ROD-BOTTOM')!.pen
+    expect(turbineTrip.read('core.rodsOnBottom')).toBe(true)
+    expect(rods.states?.on).toStartWith('Rods on bottom')
+    const stopValve = items.find(item => item.label === 'TURB-STOP-POS')!.pen
+    expect(stopValve.position).toBe(true)
+    expect(positionWord(Number(turbineTrip.read('turbineStopValve.effectivePositionFraction')))).toBe('SHUT')
+    expect(items.find(item => item.label === 'NIS-PR-AVG')!.pen.position).toBeUndefined()
+    expect([positionWord(0.049), positionWord(0.05), positionWord(0.95), positionWord(0.951)]).toEqual(['SHUT', null, null, 'OPEN'])
   }, PLANT_HANG_GUARD_MS)
 
   test('a narrow range on its span whose fall reaches its end within the trend brings its wide range', () => {

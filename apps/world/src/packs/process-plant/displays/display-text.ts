@@ -157,6 +157,14 @@ export const readingText = (value: number, unit: string, resolution: number | nu
   return `${readingValueText(value, unit, resolution, span)}${label === '' ? '' : ` ${label}`}`
 }
 
+/** A valve reads SHUT below and OPEN above these fractions of its travel, between them its opening, as its drawing words it (mimic/evaluate.ts). */
+export const POSITION_SHUT_BELOW = 0.05
+export const POSITION_OPEN_ABOVE = 0.95
+
+/** A valve's position (or demand) as a fraction of its travel, in the words its drawing uses at its ends; null between them, where its opening is the value. */
+export const positionWord = (fraction: number): 'SHUT' | 'OPEN' | null =>
+  fraction < POSITION_SHUT_BELOW ? 'SHUT' : fraction > POSITION_OPEN_ABOVE ? 'OPEN' : null
+
 /** "below range" or "above range" for a reading at an end of its span; empty otherwise. */
 export const offScaleText = (value: number, span: NumericSpan | undefined): string => {
   const end = offScale(value, span)

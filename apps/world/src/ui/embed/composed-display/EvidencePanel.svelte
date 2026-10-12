@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ComposedDisplayPen, ComposedEvidencePanel, ComposedEvidenceRow } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout, type DisplayEvidenceKind } from '../../../packs/process-plant/displays/composition.ts'
-  import { offScale, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { readingStateText, trendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { sampledGates } from './panel-presenters.ts'
@@ -40,19 +40,22 @@
     readonly inAlarm: ReturnType<typeof trendReading>['inAlarm']
   }
 
-  // A value as its row reads it now: as a readout shows it, "<0" at an end of its span, a state as on or off.
+  // A value as its row reads it now: as a readout shows it, "<0" at an end of its span; a state in the words its
+  // equipment declares for it ("Rods on bottom", "RTB A OPEN"), a valve's position SHUT or OPEN at its ends, as its
+  // drawing words them (HMI review of run 23: "ON", "OFF" and "0 %" said less than the drawing).
   const readingOf = (pen: ComposedDisplayPen): ItemReading => {
     const raw = latest?.values.find(entry => entry.path === String(pen.path))?.value
-    if (typeof raw === 'boolean') return { text: raw ? 'ON' : 'OFF', unit: '', state: '', offSpan: false, beyond: false, inAlarm: null }
+    if (typeof raw === 'boolean') return { text: pen.states === undefined ? (raw ? 'ON' : 'OFF') : raw ? pen.states.on : pen.states.off, unit: '', state: '', offSpan: false, beyond: false, inAlarm: null }
     if (typeof raw !== 'number') return { text: '—', unit: '', state: '', offSpan: false, beyond: false, inAlarm: null }
     const value = shownReading(raw, pen.resolution)
     const span = pen.limits?.instrumentSpan
     const reading = trendReading({ value, points: null, windowMs: 0, unit: pen.unit, thresholds: pen.thresholds, mode: latest?.mode, gates: sampledGates(latest), activeRuleIds, resolution: pen.resolution, ...(span === undefined ? {} : { span }) })
     // A row says what limits act on its value, not that it has none.
     const limit = reading.limit === null || reading.limit.kind === 'unlimited' || reading.limit.kind === 'idle' ? null : reading.limit
+    const word = pen.position === true ? positionWord(value) : null
     return {
-      text: readingValueText(value, pen.unit, pen.resolution, span),
-      unit: unitLabel(pen.unit),
+      text: word ?? readingValueText(value, pen.unit, pen.resolution, span),
+      unit: word === null ? unitLabel(pen.unit) : '',
       state: readingStateText({ offScale: reading.offScale, limit }, pen.unit, pen.resolution),
       offSpan: offScale(value, span) !== null,
       beyond: reading.offScale !== null || reading.limit?.kind === 'past',
@@ -61,8 +64,8 @@
   }
 
   // One unit after the last value where every value shares it ("SG A 28.5 · SG B 28.5 kg/s"), else after each, as
-  // beside a demand ("35.0 % · 0 % DEMAND").
-  const sharedUnit = (row: ComposedEvidenceRow): boolean => new Set(row.items.map(item => unitLabel(item.pen.unit))).size === 1 && !row.items.some(item => item.pen.command)
+  // beside a demand ("35.0 % · SHUT DEMAND").
+  const sharedUnit = (row: ComposedEvidenceRow, readings: ReadonlyArray<ItemReading>): boolean => new Set(readings.map(reading => reading.unit)).size === 1 && !row.items.some(item => item.pen.command)
   const rowText = (row: ComposedEvidenceRow, readings: ReadonlyArray<ItemReading>): string => [
     WORDS[row.kind].toUpperCase(),
     row.name,
@@ -78,7 +81,7 @@
   <ul style={`grid-auto-rows:${composedDisplayLayout.evidenceRow}px`}>
     {#each panel.rows as row, rowIndex (rowIndex)}
       {@const readings = row.items.map(item => readingOf(item.pen))}
-      {@const unitOnce = sharedUnit(row)}
+      {@const unitOnce = sharedUnit(row, readings)}
       <li title={`${rowText(row, readings)}\nAdded by World from the Plant model: ${row.reason}`}>
         <span class="why">{WORDS[row.kind]}</span>
         {#if row.name !== ''}<span class="name">{row.name}</span>{/if}

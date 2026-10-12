@@ -31,3 +31,11 @@ export const stateTexts = (graph: CompiledPlantGraph, binding: ProcessSignalBind
   const name = `${owner.metadata?.presentation?.shortLabel ?? owner.label}${served.command === binding.path ? ' CMD' : ''}`
   return { on: `${name} ${words[0]}`, off: `${name} ${words[1]}` }
 }
+
+/** Whether a signal is a valve's position or its demand read as a fraction of its travel (the state or command of a position aspect). */
+export const servesPosition = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): boolean => {
+  if (binding.owner.type !== 'component' || binding.quantity !== 'ratio') return false
+  const owner = graph.components[binding.owner.componentIndex]!
+  return [...owner.semantics.aspects, ...owner.semantics.embedded.flatMap(device => device.aspects)]
+    .some(aspect => aspect.aspect === 'position' && (aspect.command === binding.path || aspect.state?.path === binding.path))
+}

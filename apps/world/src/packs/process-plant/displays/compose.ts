@@ -47,7 +47,7 @@ import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gateStatesOf, li
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
-import { stateTexts, type StateTexts } from './state-words.ts'
+import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
@@ -81,6 +81,8 @@ export interface ComposedDisplayPen {
   readonly valueKind: 'number' | 'boolean'
   /** How an on/off signal's two states read (state-words.ts). */
   readonly states?: StateTexts
+  /** A valve's position, or its demand, as a fraction of its travel: worded SHUT and OPEN at its ends, as its drawing words it (display-text.ts positionWord). */
+  readonly position?: true
   readonly seriesId: string
   /** Recorded by this Run's historian, so a trend has history from before the view opened. */
   readonly recorded: boolean
@@ -447,6 +449,7 @@ const resolvePens = (
       quantity: binding.quantity,
       valueKind: typeof value === 'number' ? 'number' : 'boolean',
       ...(typeof value === 'boolean' ? { states: stateTexts(system.plant.graph, binding) } : {}),
+      ...(typeof value === 'number' && servesPosition(system.plant.graph, binding) ? { position: true as const } : {}),
       seriesId,
       recorded: options.recordedSeriesIds.has(seriesId),
       command: binding.writable,
