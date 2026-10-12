@@ -676,6 +676,7 @@
   .frequency small {
     font-weight: 800;
     font-size: 12px;
+    white-space: nowrap;
   }
 
   .metric-grid {
