@@ -835,6 +835,14 @@ export const createSimulationRunRegistry = (config: {
     return state
   }
 
+  // A maximum-pace job that has committed its terminal state is completing: it
+  // still holds the Run's lease until its final persistence settles. Callers that
+  // would act on that terminal state wait for it; a job still running is not waited on.
+  const settleCompletingMaximumPace = async (id: SimulationRunId): Promise<void> => {
+    const job = maximumPaceJobs.get(id)
+    if (job && executionStates.get(id)?.acceleration?.status !== 'running') await job.done
+  }
+
   const applyExecution = async (id: SimulationRunId, input: ExecutionSetInput): Promise<RunExecutionState> => {
     let current = await executionStatus(id)
     let active = maximumPaceJobs.get(id)
@@ -846,7 +854,11 @@ export const createSimulationRunRegistry = (config: {
       playback: input.playback ?? current.playback,
       pace: input.pace ?? current.pace,
     }
-    if (destination.playback === current.playback && destination.pace === current.pace) return current
+    if (destination.playback === current.playback && destination.pace === current.pace) {
+      if (!active || executionStates.get(id)?.acceleration?.status === 'running') return current
+      await active.done
+      return await executionStatus(id)
+    }
     if (active) {
       active.destination = destination
       active.preserveAcceleration = destination.playback === 'paused' && destination.pace === 'maximum'
@@ -964,6 +976,7 @@ export const createSimulationRunRegistry = (config: {
     await creatingSimulationRuns.get(id)?.catch(() => undefined)
     const runtime = simulationRuns.get(id)
     if (!runtime) return false
+    await settleCompletingMaximumPace(id)
     const leases = leaseSummary(id).leasesByKind
     if (!shuttingDown && leases.api > 0) throw Object.assign(new Error('Simulation Run has active requests; retry after they complete'), { code: 'simulation_run_busy' })
     if (!shuttingDown && leases['maximum-pace'] > 0) throw Object.assign(new Error('Simulation Run is playing at maximum pace; pause it before closing'), { code: 'simulation_run_busy' })
@@ -980,6 +993,7 @@ export const createSimulationRunRegistry = (config: {
 
   const reset = (id: SimulationRunId): Promise<SimulationRunRuntime> => lifecycle.run(id, async () => {
     await assertSimulationRunRecoveryNotRequired(join(simulationRunRoot, id, 'snapshot.json'))
+    await settleCompletingMaximumPace(id)
     const leases = leaseSummary(id).leasesByKind
     if (leases.api > 0) throw Object.assign(new Error('Simulation Run has active requests; retry after they complete'), { code: 'simulation_run_busy' })
     if (leases['maximum-pace'] > 0) throw Object.assign(new Error('Simulation Run is playing at maximum pace; pause it before resetting'), { code: 'simulation_run_busy' })
