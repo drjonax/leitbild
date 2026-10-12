@@ -338,10 +338,12 @@ describe('what World adds to a composed display', () => {
       reactorCheckRest,
       turbineCheck,
       tavgAgainstNoLoad,
+      // The turbine-driven AFW pump draws its steam from SG B and C (C2b), so their pressures no longer move as one:
+      // no "each rising" note follows.
       { kind: 'stabilize', name: '', items: ['SG-A-PRESS', 'SG-B-PRESS', 'SG-C-PRESS', 'SG-D-PRESS'] },
-      { kind: 'stabilize', name: '', items: [], note: expect.stringMatching(/^each (rising|falling) \d+\.\d+ MPa\/min over 30 s$/), continued: true },
-      // The feedwater isolation on low Tavg shuts the feed regulating valves only and stops no pump (C2b): the
-      // evidence names what an actuation starts or stops, so it adds no "isolates" row here.
+      // The feedwater isolation on low Tavg shuts the feed regulating valves by their isolation inputs while the pumps
+      // run on (C2b): what it isolates is the main feedwater header's outlet flow they take.
+      { kind: 'isolates', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
     ])
     expect(evidence.filter(entry => entry.kind === 'trip').map(entry => entry.reason.replace(/\d\d:\d\d:\d\d/, 'hh:mm:ss'))).toEqual([
       ...Array(7).fill('Reactor trip at hh:mm:ss: what says Core stopped'),

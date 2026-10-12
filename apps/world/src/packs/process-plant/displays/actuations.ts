@@ -161,17 +161,40 @@ const writeEffect = (plant: CompiledProcessPlant, write: AutomaticAction['writes
 const startsOrStops = (plant: CompiledProcessPlant, write: AutomaticAction['writes'][number]): 'starts' | 'stops' | null =>
   plant.graph.components[write.component]!.semantics.aspects.some(aspect => aspect.aspect === 'running' && aspect.command === write.binding.path) ? writeEffect(plant, write) : null
 
+/** Whether a write shuts a valve by its isolation input, whatever its demand (feed regulating valves under a feedwater isolation). */
+const isolatesValve = (plant: CompiledProcessPlant, write: AutomaticAction['writes'][number]): boolean =>
+  plant.graph.components[write.component]!.semantics.aspects.some(aspect => aspect.aspect === 'position' && aspect.isolation === write.binding.path)
+  && writeEffect(plant, write) === 'stops'
+
+/**
+ * What a valve shuts off: the throughput of what feeds it, read once for the
+ * valves one header feeds (the main feedwater header's outlet flow for the
+ * feed regulating valves), else the flows of the lines it sends its flow on.
+ */
+const shutOffBy = (plant: CompiledProcessPlant, component: number): ReadonlyArray<VariablePath> => {
+  const graph = plant.graph
+  const feeding = [...new Set((graph.incomingLinksByComponent[component] ?? []).map(index => graph.links[index]!)
+    .filter(link => link.kind === 'fluidFlow')
+    .flatMap(link => graph.components[link.fromComponentIndex]!.semantics.aspects.flatMap(aspect => aspect.aspect === 'throughput' && aspect.state !== undefined ? [aspect.state.path] : [])))]
+  if (feeding.length > 0) return feeding
+  return (graph.outgoingLinksByComponent[component] ?? []).map(index => graph.links[index]!)
+    .filter(link => link.kind === 'fluidFlow' && link.variables.some(variable => String(variable.path).endsWith('.flowKgPerS')))
+    .map(link => linkFlowBinding(graph, link.index).flowPath)
+}
+
 /**
  * What an action delivers or isolates: the throughput downstream of the
  * running equipment it starts (the auxiliary feedwater it pumps) or stops
- * (the main feedwater it isolates).
+ * (the main feedwater pumps it trips), and what the valves it shuts by their
+ * isolation inputs shut off (the feed regulating valves a feedwater isolation
+ * shuts while the pumps run on).
  */
 export const actionFlows = (plant: CompiledProcessPlant, action: AutomaticAction, reach: number): ReadonlyArray<{ readonly path: VariablePath; readonly effect: 'starts' | 'stops' }> => {
   const flows = new Map<VariablePath, 'starts' | 'stops'>()
   for (const write of action.writes) {
     const effect = startsOrStops(plant, write)
-    if (effect === null) continue
-    for (const path of throughputDownstream(plant, write.component, reach)) if (!flows.has(path)) flows.set(path, effect)
+    const paths = effect !== null ? throughputDownstream(plant, write.component, reach) : isolatesValve(plant, write) ? shutOffBy(plant, write.component) : []
+    for (const path of paths) if (!flows.has(path)) flows.set(path, effect ?? 'stops')
   }
   return [...flows].map(([path, effect]) => ({ path, effect }))
 }

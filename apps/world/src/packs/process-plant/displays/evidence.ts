@@ -368,8 +368,10 @@ export const displayEvidence = (
     for (const flow of flows) {
       const effect = flow.effect === 'starts' ? (active ? 'what it delivers' : 'what it would deliver') : (active ? 'what it isolates' : 'what it would isolate')
       add(flow.path, flow.effect === 'starts' ? 'delivers' : 'isolates', `${named}${active ? '' : ', its limit ahead'}: ${effect}`)
-      // Delivering, the header's flow alone cannot say whether a destination is unfed: its flow to each is read beside it.
-      const branches = active && flow.effect === 'starts' ? toEach(ownerOf(flow.path)) : null
+      // Delivering, the header's flow alone cannot say whether a destination is unfed: its flow to each is read beside
+      // it, where it feeds what the display shows (a pressurizer's display after safety injection reads the auxiliary
+      // feed the SI signal starts as a header's flow only, leaving the room to what judges the leak).
+      const branches = active && flow.effect === 'starts' && fed.length > 0 ? toEach(ownerOf(flow.path)) : null
       for (const [at, path] of (branches?.paths ?? []).entries()) {
         const reason = `${named}: what it delivers to ${branches!.to}`
         add(path, 'delivers', reason)
