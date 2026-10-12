@@ -10,8 +10,8 @@ import supplyJson from '../../scenarios/supply-run.scenario.json'
 import { startingZoomFor } from '../../ui/map/map-camera.ts'
 import { openRoleDialog, roleDialogModel, togglePreset } from '../../ui/roles/role-dialog.ts'
 import { einsatzCommandIds as ids, einsatzQueryIds } from './capabilities.ts'
-import { createWall, openScreen, pastGuardMs, roleScreen, runFor } from './fixtures/board-harness.ts'
-import { addToEndOfNearestBusy, chainViaNearestSite, configOf, metresBetween, playDemo, reachS, slowedRouting, type Beat, type CallLog, type PlayLog, type Policy } from './fixtures/demo-play.ts'
+import { createWall, openScreen, pastGuardMs, roleScreen, runFor, type Screen } from './fixtures/board-harness.ts'
+import { addToEndOfNearestBusy, chainBoth, configOf, metresBetween, playDemo, slowedRouting, type Beat, type CallLog, type PlayLog, type Policy } from './fixtures/demo-play.ts'
 import { openRun, operator } from './fixtures/run-harness.ts'
 import { groupRoleId } from './ids.ts'
 import { einsatzPack } from './pack.ts'
@@ -23,9 +23,12 @@ import { boardBottomClearancePx, boardLayoutFor, boardMapCover, boardTopClearanc
  * quality bar: words, pacing, the start view on an iPad, objectives that a
  * good dispatcher meets and a passive one does not, groups, icons and no call
  * that nobody but the Controller can close. Plays run headless on the direct
- * router, and again with travel twice as slow, as town roads make it.
- * Everything is found from the Definitions themselves: cues by id, calls by
- * when a cue made them, units and places by their records.
+ * router, and again with travel twice and two and a half times as slow, as
+ * town roads make it, by a dispatcher who reacts at once, after 30 s and
+ * after 60 s. Objectives are judged when the exercise ends, from the Run's
+ * state: a call still waiting then has waited until then. Everything is
+ * found from the Definitions themselves: cues by id, calls by when a cue made
+ * them, units and places by their records.
  */
 
 type Definition = ScenarioDefinition & { readonly timeline: NonNullable<ScenarioDefinition['timeline']> }
@@ -40,14 +43,16 @@ const cueAt = (definition: Definition, cueId: string): number => {
 }
 /** The Run second the exercise ends: the last cue, which shows its end. */
 const endOf = (definition: Definition): number => Math.max(...definition.timeline.cues.map(cue => cue.at.seconds))
-/** A number the objective's own words state, so the check and the text cannot drift apart. */
-const stated = (definition: Definition, index: number, pattern: RegExp): number => {
+/** What the objective's own words state, so the check and the text cannot drift apart. */
+const stated = (definition: Definition, index: number, pattern: RegExp): string => {
   const match = pattern.exec(definition.objectives[index] ?? '')
   if (match === null) throw new Error(`${definition.id} objective ${index} does not state ${pattern}`)
-  return Number(match[1])
+  return match[1]!
 }
+const statedS = (definition: Definition, index: number, pattern: RegExp): number => Number(stated(definition, index, pattern)) * 60
 const minutes = /within (\d+) minutes of the (?:call|request)/
-const fromStart = /within (\d+) minutes of the start/
+const waitsAtMost = /more than (\d+) minutes/
+const classCode = /every (?:top-priority )?\(?(P\d)\)? call/
 
 interface Demo {
   readonly definition: Definition
@@ -55,12 +60,24 @@ interface Demo {
   readonly beats: ReadonlyArray<Beat>
   /** Each objective, judged from a play. */
   readonly objectives: (log: PlayLog) => ReadonlyArray<boolean>
+  /** The least slack, in seconds, any call has against the objectives that set a response time for every call of a class. */
+  readonly slack: (log: PlayLog) => number
   /** The roles one dispatcher holds: the first preset in a Definition with groups. */
   readonly roleIds?: ReadonlyArray<string>
 }
 
 const topClass = (definition: Definition): string => configOf(definition).loadClasses[0]!.id
-const closedBy = (calls: ReadonlyArray<CallLog>, seconds: number): boolean => calls.every(call => call.closedS !== undefined && call.closedS <= seconds)
+/** The load class an objective names by its code. */
+const classNamed = (definition: Definition, index: number): string => {
+  const code = stated(definition, index, classCode)
+  const found = configOf(definition).loadClasses.find(entry => entry.code === code)
+  if (found === undefined) throw new Error(`${definition.id} has no class ${code}`)
+  return found.id
+}
+/** How long a call waited for its first unit, as the Run stands when the exercise ends. */
+const waitedS = (definition: Definition, call: CallLog): number => Math.min(call.firstOnSceneS ?? Number.POSITIVE_INFINITY, endOf(definition)) - call.createdS
+/** The calls the exercise holds: those a cue made before it ended. */
+const inExercise = (definition: Definition, calls: ReadonlyArray<CallLog>): ReadonlyArray<CallLog> => calls.filter(call => call.createdS <= endOf(definition))
 const createdBy = (calls: ReadonlyArray<CallLog>, atS: number): CallLog => {
   const found = calls.filter(call => call.createdS === atS)
   if (found.length !== 1) throw new Error(`Expected one call created at ${atS} s, found ${found.length}`)
@@ -71,32 +88,62 @@ const demos: Readonly<Record<'emergency' | 'supply', Demo>> = {
   emergency: {
     definition: emergency,
     beats: [addToEndOfNearestBusy('second fire beside the first', cueAt(emergency, 'harbour-car-fire'))],
-    objectives: ({ calls }) => [
-      calls.filter(call => call.rank === topClass(emergency)).every(call => reachS(call) <= stated(emergency, 0, minutes) * 60),
-      reachS(createdBy(calls, cueAt(emergency, 'harbour-car-fire'))) <= stated(emergency, 1, minutes) * 60,
-      closedBy(calls, stated(emergency, 2, fromStart) * 60),
-    ],
+    objectives: ({ calls }) => {
+      const held = inExercise(emergency, calls)
+      return [
+        held.filter(call => call.rank === classNamed(emergency, 0)).every(call => waitedS(emergency, call) <= statedS(emergency, 0, minutes)),
+        waitedS(emergency, createdBy(held, cueAt(emergency, 'harbour-car-fire'))) <= statedS(emergency, 1, minutes),
+        held.filter(call => call.rank === classNamed(emergency, 2)).every(call => waitedS(emergency, call) <= statedS(emergency, 2, minutes)),
+      ]
+    },
+    slack: ({ calls }) => Math.min(...[0, 2].flatMap(index => inExercise(emergency, calls)
+      .filter(call => call.rank === classNamed(emergency, index))
+      .map(call => statedS(emergency, index, minutes) - waitedS(emergency, call)))),
     roleIds: emergency.rolePresets![0]!.roles,
   },
   supply: {
     definition: supply,
-    beats: [chainViaNearestSite('two requests side by side', cueAt(supply, 'scout-camp-request'))],
-    objectives: ({ calls }) => [
-      calls.filter(call => call.rank === topClass(supply)).every(call => reachS(call) <= stated(supply, 0, minutes) * 60),
-      closedBy(calls, stated(supply, 1, fromStart) * 60),
+    beats: [
+      chainBoth('two requests side by side', cueAt(supply, 'scout-camp-request')),
+      addToEndOfNearestBusy('the heavy unit stays home', cueAt(supply, 'harbour-request')),
     ],
+    objectives: ({ calls }) => {
+      const held = inExercise(supply, calls)
+      return [
+        held.filter(call => call.rank === topClass(supply)).every(call => waitedS(supply, call) <= statedS(supply, 0, minutes)),
+        held.every(call => waitedS(supply, call) <= statedS(supply, 1, waitsAtMost)),
+      ]
+    },
+    slack: ({ calls }) => Math.min(...inExercise(supply, calls).map(call => statedS(supply, 1, waitsAtMost) - waitedS(supply, call))),
   },
 }
 
-const play = async (demo: Demo, policy: Policy, factor = 1): Promise<PlayLog> => await playDemo({
+interface Pace {
+  /** Travel this many times as slow as the direct model's straight lines. */
+  readonly factor: number
+  /** The dispatcher acts this long after each call or beat. */
+  readonly reactS: number
+}
+const play = async (demo: Demo, policy: Policy, pace: Pace = { factor: 1, reactS: 0 }, untilS = endOf(demo.definition)): Promise<PlayLog> => await playDemo({
   definition: demo.definition,
   screens: [{ name: 'dispatcher', ...(demo.roleIds === undefined ? {} : { roleIds: demo.roleIds }), policy }],
-  untilS: endOf(demo.definition),
-  ...(factor === 1 ? {} : { routing: slowedRouting(factor) }),
+  untilS,
+  reactS: pace.reactS,
+  ...(pace.factor === 1 ? {} : { routing: slowedRouting(pace.factor) }),
 })
 const good = (demo: Demo): Policy => ({ kind: 'recommendations', beats: demo.beats })
-/** Production routes on town roads: about twice as slow as a straight line at the direct model's speed. */
-const roadFactor = 2
+/**
+ * Production routes on town roads are unmeasured here: about twice as slow as
+ * a straight line at the direct model's speed, so every play also runs at
+ * twice and at two and a half times, with a dispatcher who reacts at once,
+ * after 30 s and after 60 s, as a person at an iPad does.
+ */
+const paces: ReadonlyArray<Pace> = [
+  ...[1, 2].flatMap(factor => [0, 30, 60].map(reactS => ({ factor, reactS }))),
+  { factor: 2.5, reactS: 30 },
+]
+/** Every call's slack against a per-call objective is at least this in every play. */
+const slackS = 3 * 60
 
 const describeLog = (log: PlayLog): string => JSON.stringify({
   orders: log.orders.map(order => [order.atS, order.capabilityId, order.input, order.ok ? 'ok' : order.reason]),
@@ -117,23 +164,27 @@ for (const demo of Object.values(demos)) {
     test('its title and description say what it is: fictional, without national markings, ending in a short How to play in the touch idiom', () => {
       expect(definition.title.length).toBeLessThanOrEqual(40)
       expect(definition.description).toMatch(/\bfictional\b/)
-      expect(`${definition.title} ${definition.description}`).not.toMatch(/Norw|Swed|Danish|NATO|Politi|Sykehus|\b11[023]\b/)
+      const words = [
+        definition.title, definition.description, ...definition.objectives, ...items.map(item => item.label),
+        ...definition.timeline.cues.flatMap(cue => [cue.title, ...cue.actions.map(action => action.type === 'invoke_capability' ? (action.input as { readonly label?: string }).label ?? '' : action.type === 'show_guidance' ? action.guidance.message : '')]),
+      ].join(' ')
+      expect(words).not.toMatch(/Norw|Swed|Danish|NATO|Politi|Sykehus|\b11[023]\b|\b[RE]v ?\d|\bE ?\d{1,2}\b/)
       const [, howTo] = definition.description!.split('How to play: ')
       expect(howTo).toBeDefined()
       const sentences = howTo!.split(/(?<=\.) /)
       expect(sentences.length).toBeGreaterThanOrEqual(2)
       expect(sentences.length).toBeLessThanOrEqual(4)
-      for (const idiom of ['tap', 'Do now or Add to end', 'The + on']) expect(howTo).toContain(idiom)
+      for (const idiom of [/\btap\b/, /Do now or Add to end/, /\bthe \+ on\b/i]) expect(howTo).toMatch(idiom)
       if (config.groups.length > 0) expect(howTo).toMatch(/groups dialog from the role chip/)
       expect(definition.objectives.length).toBeGreaterThanOrEqual(2)
     })
 
-    test('a call is waiting within a minute, calls keep coming, and it ends between 25 and 35 minutes', () => {
+    test('a call is waiting within a minute, calls keep coming until a few minutes before the end, and it ends between 25 and 35 minutes', () => {
       expect(callTimes[0]).toBeLessThanOrEqual(60)
       expect(callTimes.length).toBeGreaterThanOrEqual(12)
       expect(endOf(definition)).toBeGreaterThanOrEqual(25 * 60)
       expect(endOf(definition)).toBeLessThanOrEqual(35 * 60)
-      expect(endOf(definition) - callTimes.at(-1)!).toBeLessThanOrEqual(11 * 60)
+      expect(endOf(definition) - callTimes.at(-1)!).toBeLessThanOrEqual(3 * 60)
     })
 
     test('on a 1024 × 768 iPad in landscape every object stands in the map the Board leaves clear at the starting fit, and units start a short drive from every call', () => {
@@ -167,36 +218,61 @@ for (const demo of Object.values(demos)) {
       for (const entry of [...config.unitTypes, ...config.taskTemplates]) expect(isMapSymbol(entry.icon)).toBe(true)
       const compiled = await compileScenarioDefinition(definition, [einsatzPack], { routing: createDirectRoutingAdapter() })
       expect(compiled.id).toBe(definition.id)
-      // Every call's template needs a service a unit provides, or the call holds load a unit carries: never a report.
+      // Every call needs a service, or holds load, or both: never a report, which only the Controller could close.
+      // Each part must be served by a unit some role holds: in a Definition with groups, by a grouped unit, and
+      // under each preset split by a unit of a group one desk of the split holds.
       const tasks = [...items.filter(item => item.type === 'task').map(item => ({ template: item.template!, loads: (item as { readonly loads?: Record<string, number> }).loads })), ...created.filter(entry => entry.capabilityId === ids.taskCreate).map(entry => ({ template: entry.input.template!, loads: entry.input.loads }))]
-      for (const task of tasks) {
+      const typeOf = (id: string) => config.unitTypes.find(type => type.id === id)!
+      const unitsIn = (groups: ReadonlySet<string> | null) => [
+        ...items.filter(item => item.type === 'unit' && (groups === null || (item.group !== undefined && groups.has(item.group)))).map(item => typeOf(item.unitType!)),
+        // A unit a cue creates joins no group; it counts only in a Definition without groups.
+        ...(groups === null ? created.filter(entry => entry.capabilityId === ids.unitCreate).map(entry => typeOf(entry.input.type!)) : []),
+      ]
+      const servedBy = (task: typeof tasks[number], units: ReturnType<typeof unitsIn>): ReadonlyArray<string> => {
         const template = config.taskTemplates.find(entry => entry.id === task.template)!
-        const served = template.requires.length > 0 || Object.keys(task.loads ?? {}).length > 0
-        expect([task.template, served]).toEqual([task.template, true])
-        const able = config.unitTypes.filter(type => template.requires.every(requirement => type.components.service?.provides.includes(requirement.provides) === true)
-          || Object.keys(task.loads ?? {}).every(classId => type.components.carry?.classes.includes(classId) === true))
-        // In a Definition with groups, a unit of that type sits in a group, so a group's role queues the call.
-        const grouped = config.groups.length === 0 || items.some(item => item.type === 'unit' && able.some(type => type.id === item.unitType) && item.group !== undefined)
-        expect([task.template, able.length > 0, grouped]).toEqual([task.template, true, true])
+        const loads = Object.keys(task.loads ?? {}).filter(classId => (task.loads![classId] ?? 0) > 0)
+        return [
+          ...(template.requires.length === 0 && loads.length === 0 ? ['a report'] : []),
+          ...template.requires.filter(requirement => !units.some(type => type.components.service?.provides.includes(requirement.provides) === true)).map(requirement => requirement.provides),
+          ...loads.filter(classId => !units.some(type => type.components.carry?.classes.includes(classId) === true)),
+        ]
+      }
+      const presetGroups = (definition.rolePresets ?? []).map(preset => new Set(preset.roles.flatMap(roleId => config.groups.filter(group => groupRoleId(group.id) === roleId).map(group => group.id))))
+      const splits = presetGroups.length < 2 ? [] : presetGroups.slice(1)
+      for (const task of tasks) {
+        expect([task.template, servedBy(task, unitsIn(config.groups.length === 0 ? null : new Set(config.groups.map(group => group.id))))]).toEqual([task.template, []])
+        // Under a split, each part the task needs is served by a group some desk of the split holds.
+        if (splits.length > 0) {
+          const missing = servedBy(task, unitsIn(new Set(splits.flatMap(groups => [...groups]))))
+          expect([task.template, missing]).toEqual([task.template, []])
+        }
       }
     })
 
-    test('a good dispatcher meets every objective, on straight lines and on roads twice as slow, and no order it gives is refused', async () => {
-      for (const factor of [1, roadFactor]) {
-        const log = await play(demo, good(demo), factor)
+    for (const pace of paces) {
+      test(`a good dispatcher meets every objective with travel ${pace.factor}× as slow, reacting after ${pace.reactS} s, with something to do every 3 minutes until the end and no order refused`, async () => {
+        const log = await play(demo, good(demo), pace)
         try {
-          expect([factor, ...demo.objectives(log)], describeLog(log)).toEqual([factor, ...demo.objectives(log).map(() => true)])
+          expect(demo.objectives(log), describeLog(log)).toEqual(demo.objectives(log).map(() => true))
+          if (pace.factor <= 2) expect(demo.slack(log)).toBeGreaterThanOrEqual(slackS)
           expect(log.orders.filter(order => !order.ok)).toEqual([])
-          expect(log.orders.some(order => order.beat !== undefined)).toBe(true)
-          // Something to do at least every 3 minutes until the last call: a new call, or an order the dispatcher gives.
-          const moments = [...new Set([...log.calls.map(call => call.createdS), ...log.orders.map(order => order.atS)])].sort((a, b) => a - b)
-            .filter(at => at <= callTimes.at(-1)!)
-          expect([factor, Math.max(...moments.slice(1).map((at, index) => at - moments[index]!)) <= 180]).toEqual([factor, true])
-          // Every call closes: none is left to the Controller.
-          expect(log.calls.every(call => call.closedS !== undefined)).toBe(true)
+          expect(new Set(log.orders.flatMap(order => order.beat === undefined ? [] : [order.beat]))).toEqual(new Set(demo.beats.map(beat => beat.name)))
+          // Something to do at least every 3 minutes over the whole exercise: a new call, or an order the dispatcher gives.
+          const moments = [...new Set([...log.calls.map(call => call.createdS), ...log.orders.map(order => order.atS), endOf(definition)])].sort((a, b) => a - b)
+          expect(Math.max(...moments.slice(1).map((at, index) => at - moments[index]!))).toBeLessThanOrEqual(180)
         } finally {
           await log.run.close()
         }
+      }, 60_000)
+    }
+
+    test('in a good play every call is served in the end: none is left for the Controller to close', async () => {
+      const log = await play(demo, good(demo), { factor: 1, reactS: 0 }, endOf(definition) + 15 * 60)
+      try {
+        expect(log.calls.filter(call => call.closedS === undefined).map(call => call.label)).toEqual([])
+        expect(log.orders.filter(order => !order.ok)).toEqual([])
+      } finally {
+        await log.run.close()
       }
     }, 60_000)
 
@@ -225,9 +301,15 @@ for (const demo of Object.values(demos)) {
 }
 
 describe('halden-emergency pressure moments and desks', () => {
-  test('the good play diverts the unit on its way to the fallen tree to the fight, and adds the car fire to the end of the chain of the unit busy at the first fire', async () => {
+  test('the good play reaches the chest pain before the ankle that arrives with it, diverts the unit on its way to the fallen tree to the fight, and adds the car fire to the end of the chain of the unit busy at the first fire', async () => {
     const log = await play(demos.emergency, good(demos.emergency))
     try {
+      // Two calls arrive together; the top-priority one is reached first.
+      expect(cueAt(emergency, 'rodsberg-ankle')).toBe(cueAt(emergency, 'fortress-chest-pain'))
+      const together = log.calls.filter(call => call.createdS === cueAt(emergency, 'fortress-chest-pain'))
+      const [top, other] = [together.filter(call => call.rank === topClass(emergency)), together.filter(call => call.rank !== topClass(emergency))]
+      expect([top.length, other.length]).toEqual([1, 1])
+      expect(top[0]!.firstOnSceneS!).toBeLessThan(other[0]!.firstOnSceneS!)
       const fight = createdBy(log.calls, cueAt(emergency, 'torget-fight'))
       const tree = createdBy(log.calls, cueAt(emergency, 'tree-on-road'))
       const divert = log.orders.find(order => order.capabilityId === ids.send && (order.input as { readonly divert?: ReadonlyArray<{ readonly fromTaskId: string }> }).divert !== undefined)
@@ -326,19 +408,36 @@ describe('halden-emergency pressure moments and desks', () => {
 })
 
 describe('supply-run pressure moments', () => {
-  test('the good play diverts the heavy unit to the urgent bulk request, and chains a place and the two side-by-side requests on one unit', async () => {
+  test('the good play diverts a heavy unit to the first urgent bulk request, gives the two side-by-side requests to one unit in one chain, and adds the guest harbour to the end of a busy unit\'s chain', async () => {
     const log = await play(demos.supply, good(demos.supply))
     try {
       const bulk = createdBy(log.calls, cueAt(supply, 'pumping-station-bulk'))
       const divert = log.orders.find(order => (order.input as { readonly divert?: unknown }).divert !== undefined)
       expect(divert).toMatchObject({ atS: bulk.createdS, input: { to: { taskId: bulk.id } }, ok: true })
-      const chain = log.orders.filter(order => order.beat !== undefined)
+      const [chainBeat, homeBeat] = demos.supply.beats
+      const chain = log.orders.filter(order => order.beat === chainBeat!.name)
       const pair = log.calls.filter(call => call.createdS === cueAt(supply, 'scout-camp-request')).map(call => call.id)
-      expect(chain.map(order => [order.capabilityId, Object.keys((order.input as { readonly to: object }).to)[0], order.ok])).toEqual([[ids.queue, 'siteId', true], [ids.queue, 'taskId', true], [ids.queue, 'taskId', true]])
-      expect(chain.slice(1).map(order => (order.input as { readonly to: { readonly taskId: string } }).to.taskId)).toEqual(pair)
-      const unitId = (chain[0]!.input as { readonly unitId: string }).unitId
-      expect(chain.every(order => (order.input as { readonly unitId: string }).unitId === unitId)).toBe(true)
+      expect(pair.length).toBe(2)
+      expect(chain.map(order => [order.capabilityId, (order.input as { readonly to: { readonly taskId: string } }).to.taskId, order.ok])).toEqual([[ids.send, pair[0]!, true], [ids.queue, pair[1]!, true]])
+      const unitId = (chain[1]!.input as { readonly unitId: string }).unitId
+      expect((chain[0]!.input as { readonly units: ReadonlyArray<string> }).units).toEqual([unitId])
       for (const call of log.calls.filter(entry => pair.includes(entry.id))) expect([...call.onScene]).toEqual([unitId])
+      // The guest harbour goes to the end of a busy unit's chain, so the free heavy unit stays home.
+      const harbour = createdBy(log.calls, cueAt(supply, 'harbour-request'))
+      const home = log.orders.filter(order => order.beat === homeBeat!.name)
+      expect(home.map(order => [order.capabilityId, (order.input as { readonly to: { readonly taskId: string } }).to.taskId, order.ok])).toEqual([[ids.queue, harbour.id, true]])
+    } finally {
+      await log.run.close()
+    }
+  }, 60_000)
+
+  test('a dispatcher who sends the free heavy unit to the guest harbour instead, reacting after a minute, misses the last urgent bulk request', async () => {
+    const [chainBeat, homeBeat] = demos.supply.beats
+    const log = await play({ ...demos.supply, beats: [chainBeat!] }, { kind: 'recommendations', beats: [chainBeat!] }, { factor: 1, reactS: 60 })
+    try {
+      expect(log.orders.some(order => order.beat === homeBeat!.name)).toBe(false)
+      expect(demos.supply.objectives(log)[0]).toBe(false)
+      expect(waitedS(supply, createdBy(log.calls, cueAt(supply, 'community-centre-bulk')))).toBeGreaterThan(statedS(supply, 0, minutes))
     } finally {
       await log.run.close()
     }
@@ -388,4 +487,84 @@ describe('the first two minutes on the Board, by taps', () => {
   test('supply-run: the two requests waiting at the start are each sent in 2 taps', async () => {
     expect(await dispatchByTaps(supply, undefined, [0, 1])).toBe(2)
   })
+})
+
+describe('the pressure moments by Board taps', () => {
+  /**
+   * Plays the good dispatcher up to a beat, without the beat's own move, then
+   * opens a Board on the Run as that dispatcher: the Run as a person would
+   * find it when the beat's call arrives.
+   */
+  const boardAt = async (demo: Demo, atS: number): Promise<{ readonly log: PlayLog; readonly screen: Screen }> => {
+    const log = await play(demo, { kind: 'recommendations', beats: demo.beats.filter(beat => beat.atS < atS) }, { factor: 1, reactS: 0 }, atS)
+    const actor = demo.roleIds === undefined ? operator : roleScreen(log.run, ...demo.roleIds)
+    const screen = await openScreen(log.run, createWall(), { actor })
+    await screen.wait(pastGuardMs)
+    return { log, screen }
+  }
+  const optionsOf = (screen: Screen) => screen.view().commit.options.map(entry => entry.option)
+
+  test('halden-emergency car fire, unit first: the engine on scene at the first fire offers only Add to end for the car fire, and Add to end is accepted', async () => {
+    const atS = cueAt(emergency, 'harbour-car-fire')
+    const firstFire = (log: PlayLog) => createdBy(log.calls, cueAt(emergency, 'guest-harbour-fire'))
+    const tap = async (log: PlayLog, screen: Screen): Promise<string> => {
+      const [engine] = [...firstFire(log).onScene]
+      expect(engine).toBeDefined()
+      await screen.mapTap(engine!)
+      await screen.mapTap(createdBy(log.calls, atS).id)
+      return engine!
+    }
+    const first = await boardAt(demos.emergency, atS)
+    let offered: ReadonlyArray<string>
+    try {
+      const engine = await tap(first.log, first.screen)
+      expect(first.log.run.unit(engine).phase).toBe('on-task')
+      expect(emergency.description).toContain(`${first.log.run.object(engine)!.label} is about to finish`)
+      expect(first.screen.view().commit).toMatchObject({ state: 'choice', detail: expect.stringContaining(firstFire(first.log).label) })
+      offered = optionsOf(first.screen)
+      expect(offered).toEqual(['add-to-end'])
+    } finally {
+      await first.log.run.close()
+    }
+    // Every option offered is accepted: each is tried on its own replay of the same deterministic play.
+    for (const option of offered) {
+      const { log, screen } = await boardAt(demos.emergency, atS)
+      try {
+        const engine = await tap(log, screen)
+        await screen.wait(pastGuardMs)
+        await screen.click({ kind: 'option', option: option as 'do-now' | 'add-to-end' })
+        expect(screen.calls.map(call => [call.capabilityId, call.result])).toEqual([[option === 'add-to-end' ? ids.queue : ids.send, { ok: true }]])
+        expect(log.run.unit(engine).orders.map(step => step.state)).toEqual(['active', 'queued'])
+      } finally {
+        await log.run.close()
+      }
+    }
+  }, 60_000)
+
+  test('supply-run chain, as the description teaches it: tap the unit, then the first request, then the + on the unit and the second; every tap is accepted', async () => {
+    const atS = cueAt(supply, 'scout-camp-request')
+    const { log, screen } = await boardAt(demos.supply, atS)
+    try {
+      const [first, second] = log.calls.filter(call => call.createdS === atS)
+      const unitId = (await log.run.query<Recommendation>(einsatzQueryIds.recommend, { taskId: first!.id }, operator)).proposal.units[0]!.unitId
+      const chosen = log.run.unit(unitId)
+      const label = log.run.object(unitId)!.label
+      const code = (callLabel: string) => callLabel.split(' ')[0]!
+      expect(supply.description).toContain(`tap ${label}, then ${code(first!.label)}, then the + on ${label} and ${code(second!.label)}`)
+      // The unit stands free, so the first tap sends it at once.
+      expect([chosen.phase, chosen.taskId, chosen.orders.length]).toEqual(['available', undefined, 0])
+      await screen.mapTap(unitId)
+      await screen.mapTap(first!.id)
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'verb', verb: 'add', id: unitId })
+      await screen.mapTap(second!.id)
+      expect(screen.calls.map(call => [call.capabilityId, call.input, call.result])).toEqual([
+        [ids.send, { units: [unitId], to: { taskId: first!.id } }, { ok: true }],
+        [ids.queue, { unitId, to: { taskId: second!.id } }, { ok: true }],
+      ])
+      expect(log.run.unit(unitId).orders.map(step => step.state)).toEqual(['active', 'queued'])
+    } finally {
+      await log.run.close()
+    }
+  }, 60_000)
 })

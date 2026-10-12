@@ -1,10 +1,10 @@
 {
   "id": "supply-run",
   "title": "Supply run",
-  "description": "A fictional 30-minute logistics exercise in Halden that proves Einsatz is open: a supply truck that no code knows, with a payload property and its own icons. Brekke and Tosterød depots send trucks of 300, 800 and 1,500 kg; a 1,000 kg truck joins at 2 minutes and a hired 700 kg truck at 7. Supply requests need a truck of at least 500 kg and urgent bulk requests a heavy truck of at least 1,000 kg, so the 300 kg Truck 1 waits for its upgrade to 600 kg at 5 minutes. Twice you must choose: divert the 1,000 kg truck from a routine request to an urgent bulk one, and serve two requests beside Tosterød depot with one truck's chain, so the 1,500 kg truck stays free for the next bulk request. How to play: tap a request to see the suggested truck, then tap the suggestion to send it; a divert asks you to confirm. Or tap a truck to highlight it, then tap a request or a depot on the map; a busy truck asks Do now or Add to end. The + on a truck adds the next depot or request you tap to the end of its chain.",
-  "objectives": ["Get a heavy truck to every urgent bulk request within 4 minutes of the request.", "Serve every request within 30 minutes of the start."],
+  "description": "A fictional 30-minute logistics exercise in Halden: keep kitchens, shelters, a clinic and a pumping station supplied from two depots, Tosterød in the west and Brekke in the east, with trucks of different payloads. A routine request needs a truck of at least 500 kg and an urgent bulk request a heavy truck of at least 1,000 kg; only Truck 2 and Truck 4 are heavy. Truck 2 joins at 2 minutes, the 300 kg Truck 1 is upgraded to 600 kg at 3 and a hired 700 kg Truck 5 joins at 5½. Three choices matter: divert Truck 2 from a routine request to the pumping station; give the scout camp and the farm shop to Truck 3 in one chain, so Truck 4 stays home for the clinic; and add the guest harbour to the end of a busy truck's chain rather than send Truck 4 across town. Places and requests are invented for the exercise. How to play: tap a request to see the suggested truck, then tap the suggestion to send it; a divert asks you to confirm. Or tap one of your trucks to highlight it, then tap a request; a busy truck offers Do now or Add to end, or only Add to end once it is unloading. For a chain, tap Truck 3, then R-5, then the + on Truck 3 and R-6.",
+  "objectives": ["Get a heavy truck to every urgent bulk request within 4 minutes of the request.", "Let no request wait more than 10 minutes for a truck."],
   "world": {"startsAt": "2026-09-03T08:00:00.000Z", "environment": {"city": "Halden", "model": "Fictional logistics exercise"}},
-  "view": {"map": {"center": [11.3775, 59.1315], "zoom": 12.2}},
+  "view": {"map": {"center": [11.3775, 59.1315], "zoom": 12.7}},
   "packs": [
     {
       "id": "einsatz",
@@ -21,7 +21,7 @@
             "label": "Supply truck",
             "icon": "truck",
             "tags": ["logistics"],
-            "components": {"mobility": {"mode": "road"}, "service": {"provides": ["supply"], "onSceneS": 240}},
+            "components": {"mobility": {"mode": "road"}, "service": {"provides": ["supply"], "onSceneS": 180}},
             "properties": [{"id": "payloadKg", "label": "Payload", "kind": "number", "unit": "kg", "min": 0, "max": 20000, "default": 1000, "board": true}],
             "standingOrders": {"return": {"afterIdleS": 60}}
           }
@@ -44,13 +44,13 @@
         ]
       },
       "items": [
-        {"type": "unit", "id": "site:brekke-depot", "label": "Brekke depot", "unitType": "depot", "position": [11.4, 59.12]},
-        {"type": "unit", "id": "site:tosterod-depot", "label": "Tosterød depot", "unitType": "depot", "position": [11.345, 59.148]},
-        {"type": "unit", "id": "unit:truck-1", "label": "Truck 1", "unitType": "supply-truck", "position": [11.4, 59.12], "properties": {"payloadKg": 300}},
-        {"type": "unit", "id": "unit:truck-3", "label": "Truck 3", "unitType": "supply-truck", "position": [11.345, 59.148], "properties": {"payloadKg": 800}},
-        {"type": "unit", "id": "unit:truck-4", "label": "Truck 4", "unitType": "supply-truck", "position": [11.345, 59.148], "properties": {"payloadKg": 1500}},
-        {"type": "task", "id": "task:field-kitchen", "label": "R-1 Field kitchen", "template": "supply", "position": [11.325, 59.155]},
-        {"type": "task", "id": "task:sports-hall-tank", "label": "U-1 Sports hall water tank", "template": "bulk", "position": [11.36, 59.138]}
+        {"type": "unit", "id": "site:brekke-depot", "label": "Brekke depot", "unitType": "depot", "position": [11.3944, 59.1229]},
+        {"type": "unit", "id": "site:tosterod-depot", "label": "Tosterød depot", "unitType": "depot", "position": [11.3531, 59.1439]},
+        {"type": "unit", "id": "unit:truck-1", "label": "Truck 1", "unitType": "supply-truck", "position": [11.3944, 59.1229], "properties": {"payloadKg": 300}},
+        {"type": "unit", "id": "unit:truck-3", "label": "Truck 3", "unitType": "supply-truck", "position": [11.3531, 59.1439], "properties": {"payloadKg": 800}},
+        {"type": "unit", "id": "unit:truck-4", "label": "Truck 4", "unitType": "supply-truck", "position": [11.3531, 59.1439], "properties": {"payloadKg": 1500}},
+        {"type": "task", "id": "task:field-kitchen", "label": "R-1 Field kitchen", "template": "supply", "position": [11.3381, 59.1491]},
+        {"type": "task", "id": "task:sports-hall-tank", "label": "U-1 Sports hall water tank", "template": "bulk", "position": [11.36, 59.142]}
       ]
     }
   ],
@@ -64,7 +64,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.unit.create",
-            "input": {"type": "supply-truck", "label": "Truck 2", "at": {"type": "Point", "coordinates": [11.4, 59.12]}, "properties": {"payloadKg": 1000}}
+            "input": {"type": "supply-truck", "label": "Truck 2", "at": {"type": "Point", "coordinates": [11.3944, 59.1229]}, "properties": {"payloadKg": 1000}}
           }
         ]
       },
@@ -76,25 +76,25 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-2 Shelter", "at": {"type": "Point", "coordinates": [11.43, 59.135]}}
+            "input": {"template": "supply", "label": "R-2 Shelter", "at": {"type": "Point", "coordinates": [11.4169, 59.1341]}}
           }
         ]
       },
       {
         "id": "pumping-station-bulk",
-        "at": {"kind": "after_scenario_start", "seconds": 210},
+        "at": {"kind": "after_scenario_start", "seconds": 180},
         "title": "The pumping station needs a fuel tank at once",
         "actions": [
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "bulk", "label": "U-2 Pumping station fuel", "at": {"type": "Point", "coordinates": [11.41, 59.128]}}
+            "input": {"template": "bulk", "label": "U-2 Pumping station fuel", "at": {"type": "Point", "coordinates": [11.4019, 59.1289]}}
           }
         ]
       },
       {
         "id": "lighter-truck-upgraded",
-        "at": {"kind": "after_scenario_start", "seconds": 300},
+        "at": {"kind": "after_scenario_start", "seconds": 180},
         "title": "The lighter truck is upgraded to 600 kg",
         "actions": [
           {
@@ -106,37 +106,37 @@
       },
       {
         "id": "hired-truck",
-        "at": {"kind": "after_scenario_start", "seconds": 420},
+        "at": {"kind": "after_scenario_start", "seconds": 330},
         "title": "A hired 700 kg truck joins at Brekke depot",
         "actions": [
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.unit.create",
-            "input": {"type": "supply-truck", "label": "Truck 5", "at": {"type": "Point", "coordinates": [11.4, 59.12]}, "properties": {"payloadKg": 700}}
+            "input": {"type": "supply-truck", "label": "Truck 5", "at": {"type": "Point", "coordinates": [11.3944, 59.1229]}, "properties": {"payloadKg": 700}}
           }
         ]
       },
       {
         "id": "ferry-request",
-        "at": {"kind": "after_scenario_start", "seconds": 450},
+        "at": {"kind": "after_scenario_start", "seconds": 360},
         "title": "The ferry quay asks for supplies",
         "actions": [
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-3 Ferry quay", "at": {"type": "Point", "coordinates": [11.38, 59.118]}}
+            "input": {"template": "supply", "label": "R-3 Ferry quay", "at": {"type": "Point", "coordinates": [11.3794, 59.1214]}}
           }
         ]
       },
       {
         "id": "church-request",
-        "at": {"kind": "after_scenario_start", "seconds": 570},
+        "at": {"kind": "after_scenario_start", "seconds": 540},
         "title": "The church hall asks for supplies",
         "actions": [
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-4 Church hall", "at": {"type": "Point", "coordinates": [11.42, 59.122]}}
+            "input": {"template": "supply", "label": "R-4 Church hall", "at": {"type": "Point", "coordinates": [11.4094, 59.1244]}}
           }
         ]
       },
@@ -148,7 +148,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-5 Scout camp", "at": {"type": "Point", "coordinates": [11.335, 59.153]}}
+            "input": {"template": "supply", "label": "R-5 Scout camp", "at": {"type": "Point", "coordinates": [11.3456, 59.1476]}}
           }
         ]
       },
@@ -160,7 +160,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-6 Farm shop", "at": {"type": "Point", "coordinates": [11.33, 59.147]}}
+            "input": {"template": "supply", "label": "R-6 Farm shop", "at": {"type": "Point", "coordinates": [11.3419, 59.1431]}}
           }
         ]
       },
@@ -172,7 +172,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "bulk", "label": "U-3 Clinic generator", "at": {"type": "Point", "coordinates": [11.36, 59.14]}}
+            "input": {"template": "bulk", "label": "U-3 Clinic generator", "at": {"type": "Point", "coordinates": [11.342, 59.1445]}}
           }
         ]
       },
@@ -184,7 +184,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-7 Care home", "at": {"type": "Point", "coordinates": [11.375, 59.108]}}
+            "input": {"template": "supply", "label": "R-7 Care home", "at": {"type": "Point", "coordinates": [11.3756, 59.1139]}}
           }
         ]
       },
@@ -196,7 +196,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-8 Library", "at": {"type": "Point", "coordinates": [11.395, 59.128]}}
+            "input": {"template": "supply", "label": "R-8 Library", "at": {"type": "Point", "coordinates": [11.3906, 59.1289]}}
           }
         ]
       },
@@ -208,7 +208,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-9 School", "at": {"type": "Point", "coordinates": [11.35, 59.132]}}
+            "input": {"template": "supply", "label": "R-9 School", "at": {"type": "Point", "coordinates": [11.374, 59.1285]}}
           }
         ]
       },
@@ -220,7 +220,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-10 Guest harbour", "at": {"type": "Point", "coordinates": [11.388, 59.121]}}
+            "input": {"template": "supply", "label": "R-10 Guest harbour", "at": {"type": "Point", "coordinates": [11.3854, 59.1236]}}
           }
         ]
       },
@@ -232,7 +232,55 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "supply", "label": "R-11 Marina", "at": {"type": "Point", "coordinates": [11.39, 59.113]}}
+            "input": {"template": "supply", "label": "R-11 Marina", "at": {"type": "Point", "coordinates": [11.3869, 59.1176]}}
+          }
+        ]
+      },
+      {
+        "id": "community-centre-bulk",
+        "at": {"kind": "after_scenario_start", "seconds": 1260},
+        "title": "The community centre needs a water tank at once",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "bulk", "label": "U-4 Community centre water tank", "at": {"type": "Point", "coordinates": [11.359, 59.1465]}}
+          }
+        ]
+      },
+      {
+        "id": "youth-club-request",
+        "at": {"kind": "after_scenario_start", "seconds": 1350},
+        "title": "The youth club asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "supply", "label": "R-12 Youth club", "at": {"type": "Point", "coordinates": [11.3659, 59.1416]}}
+          }
+        ]
+      },
+      {
+        "id": "allotments-request",
+        "at": {"kind": "after_scenario_start", "seconds": 1470},
+        "title": "The allotments ask for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "supply", "label": "R-13 Allotments", "at": {"type": "Point", "coordinates": [11.3681, 59.1266]}}
+          }
+        ]
+      },
+      {
+        "id": "bus-depot-request",
+        "at": {"kind": "after_scenario_start", "seconds": 1620},
+        "title": "The bus depot asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "supply", "label": "R-14 Bus depot", "at": {"type": "Point", "coordinates": [11.4094, 59.1191]}}
           }
         ]
       },
@@ -246,7 +294,7 @@
             "guidance": {
               "id": "exercise-end",
               "title": "End of the exercise",
-              "message": "30 minutes in, the exercise is over. Check the objectives: a heavy truck at every urgent bulk request within 4 minutes, and every request served.",
+              "message": "30 minutes in, the exercise is over. Check the objectives: a heavy truck at every urgent bulk request within 4 minutes, and no request waiting more than 10 minutes for a truck.",
               "dismissible": true,
               "tone": "update"
             }

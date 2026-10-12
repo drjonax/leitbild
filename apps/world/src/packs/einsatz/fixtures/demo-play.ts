@@ -35,8 +35,6 @@ export interface BeatContext {
   /** The calls a cue created at this Run second, in the order the Run holds them: the order the cues created them. */
   readonly callsCreatedAt: (atS: number) => ReadonlyArray<OperationalObject>
   readonly units: () => ReadonlyArray<OperationalObject>
-  /** Units of a type without mobility: places a step can go to. */
-  readonly places: () => ReadonlyArray<OperationalObject>
   readonly recommend: (taskId: string) => Promise<Recommendation>
 }
 
@@ -128,21 +126,25 @@ interface Screen {
 
 /**
  * Plays the Definition until `untilS` in `stepS` steps. Each screen names a
- * dispatcher by the roles it holds (none in open mode) and its policy.
+ * dispatcher by the roles it holds (none in open mode) and its policy. A
+ * dispatcher reacts `reactS` after each call arrives, as a person at an iPad
+ * does: it acts on a call, and gives a beat's orders, only once that long
+ * has passed since the call or the beat.
  */
 export const playDemo = async (options: {
   readonly definition: unknown
   readonly screens: ReadonlyArray<{ readonly name: string; readonly roleIds?: ReadonlyArray<string>; readonly policy: Policy }>
   readonly untilS: number
   readonly stepS?: number
+  readonly reactS?: number
   readonly routing?: RoutingAdapter
 }): Promise<PlayLog> => {
   const stepS = options.stepS ?? 5
+  const reactS = options.reactS ?? 0
   const run = await openRun({ definition: options.definition, ...(options.routing === undefined ? {} : { routing: options.routing }) })
   const startMs = run.nowMs()
   const config = configOf(options.definition)
   const classOrder = config.loadClasses.map(entry => entry.id)
-  const immobile = new Set(config.unitTypes.filter(type => type.components.mobility === undefined).map(type => type.id))
   const screens: Screen[] = options.screens.map(screen => ({
     name: screen.name,
     actor: screen.roleIds === undefined ? operator : roleScreen(run, ...screen.roleIds),
@@ -182,17 +184,16 @@ export const playDemo = async (options: {
       nowS: nowS(),
       callsCreatedAt: atS => objects().filter(object => isTask(object.packData) && secondsOf(object.packData.createdAtMs) === atS),
       units: () => objects().filter(object => isUnit(object.packData)),
-      places: () => objects().filter(object => isUnit(object.packData) && immobile.has(object.packData.unitType)),
       recommend: recommendFor(screen),
     }
     for (const beat of screen.policy.beats) {
       const key = `${screen.name}:${beat.name}`
-      if (beatsDone.has(key) || beat.atS > nowS()) continue
+      if (beatsDone.has(key) || beat.atS + reactS > nowS()) continue
       beatsDone.add(key)
       for (const order of await beat.plan(context)) await give(screen, order, beat.name)
     }
     const open = objects()
-      .flatMap(object => isTask(object.packData) && object.packData.closedAtMs === undefined ? [{ id: object.id, data: object.packData }] : [])
+      .flatMap(object => isTask(object.packData) && object.packData.closedAtMs === undefined && secondsOf(object.packData.createdAtMs) + reactS <= nowS() ? [{ id: object.id, data: object.packData }] : [])
       .sort((a, b) => classOrder.indexOf(a.data.rank) - classOrder.indexOf(b.data.rank) || a.data.createdAtMs - b.data.createdAtMs || (a.id < b.id ? -1 : 1))
     for (const task of open) {
       let answer: Recommendation
@@ -220,13 +221,10 @@ export const playDemo = async (options: {
   return { calls: [...calls.values()], orders, run }
 }
 
-/** Seconds from a call to its first unit on scene; Infinity when none came. */
-export const reachS = (call: CallLog): number => call.firstOnSceneS === undefined ? Number.POSITIVE_INFINITY : call.firstOnSceneS - call.createdS
-
 /**
- * A beat: when a call arrives that a busy unit could serve next, add it to the
- * end of the chain of the nearest such unit instead of sending a free one
- * from further away.
+ * A beat: when a call arrives that a busy unit already at work could serve
+ * next, add it to the end of the chain of the nearest such unit instead of
+ * sending a free one from further away.
  */
 export const addToEndOfNearestBusy = (name: string, atS: number): Beat => ({
   name,
@@ -235,7 +233,7 @@ export const addToEndOfNearestBusy = (name: string, atS: number): Beat => ({
     const [call] = context.callsCreatedAt(atS)
     if (call === undefined) throw new Error(`${name}: no call arrived at ${atS} s`)
     const busy = new Set((await context.recommend(call.id)).committed.map(entry => entry.unitId))
-    const nearest = context.units().filter(unit => busy.has(unit.id))
+    const nearest = context.units().filter(unit => busy.has(unit.id) && isUnit(unit.packData) && unit.packData.phase === 'on-task')
       .sort((a, b) => metresBetween(lonLatOf(a), lonLatOf(call)) - metresBetween(lonLatOf(b), lonLatOf(call)))[0]
     if (nearest === undefined) throw new Error(`${name}: no busy unit could serve ${call.label}`)
     return [{ capabilityId: ids.queue, input: { unitId: nearest.id, to: { taskId: call.id } } }]
@@ -244,10 +242,11 @@ export const addToEndOfNearestBusy = (name: string, atS: number): Beat => ({
 
 /**
  * A beat: when two calls arrive together, give both to the unit recommended
- * for the first, in one chain: the nearest place that does not move, then the
- * first call, then the second, instead of sending a second unit.
+ * for the first, in one chain, instead of sending a second unit: send it to
+ * the first, then add the second to the end of its chain, as the Board's
+ * taps do (the unit, the first call, + and the second call).
  */
-export const chainViaNearestSite = (name: string, atS: number): Beat => ({
+export const chainBoth = (name: string, atS: number): Beat => ({
   name,
   atS,
   plan: async context => {
@@ -255,13 +254,8 @@ export const chainViaNearestSite = (name: string, atS: number): Beat => ({
     if (first === undefined || second === undefined) throw new Error(`${name}: two calls should arrive at ${atS} s`)
     const unitId = (await context.recommend(first.id)).proposal.units[0]?.unitId
     if (unitId === undefined) throw new Error(`${name}: no unit is recommended for ${first.label}`)
-    const unit = context.units().find(entry => entry.id === unitId)!
-    const place = [...context.places()]
-      .sort((a, b) => metresBetween(lonLatOf(a), lonLatOf(unit)) - metresBetween(lonLatOf(b), lonLatOf(unit)))[0]
-    if (place === undefined) throw new Error(`${name}: no place that does not move`)
     return [
-      { capabilityId: ids.queue, input: { unitId, to: { siteId: place.id } } },
-      { capabilityId: ids.queue, input: { unitId, to: { taskId: first.id } } },
+      { capabilityId: ids.send, input: { units: [unitId], to: { taskId: first.id } } },
       { capabilityId: ids.queue, input: { unitId, to: { taskId: second.id } } },
     ]
   },

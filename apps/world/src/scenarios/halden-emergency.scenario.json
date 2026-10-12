@@ -1,11 +1,11 @@
 {
   "id": "halden-emergency",
-  "title": "Halden emergency desk",
-  "description": "A fictional 33-minute emergency dispatch exercise in Halden, for one dispatcher or two side by side. A call comes in every minute or two: falls, chest pain and a cardiac arrest for four road ambulances and an air ambulance; crashes, a fight and a break-in for three patrol cars; kitchen, grass and car fires for two fire engines, one of which carries too little water for a building fire. Twice the desk must choose: the Torget fight needs two patrol cars while one is on its way to a fallen tree, and a car catches fire beside the kitchen fire Engine 1 is about to finish. Places, calls, crews and timings are invented for the exercise and make no claim about real services. How to play: tap a call to see its suggested unit, then tap the suggestion to dispatch it; a divert asks you to confirm. Or tap one of your units to highlight it, then tap a call on the map; a busy unit asks Do now or Add to end. The + on a unit adds the next call you tap to the end of its job chain. With two dispatchers, each opens the groups dialog from the role chip and picks the Ambulance desk or the Police and fire desk.",
+  "title": "Halden dispatch: medical, police, fire",
+  "description": "A fictional 30-minute emergency dispatch exercise in Halden, for one dispatcher or two side by side. Calls keep coming: falls, chest pain and a cardiac arrest for four road ambulances and an air ambulance; crashes, a fight and a break-in for three patrol cars; kitchen, grass, shed and car fires for two fire engines, one of which carries too little water for a building fire. Three moments test the desk: a twisted ankle and chest pain arrive together, the Torget fight needs two patrol cars while one is on its way to a fallen tree, and a car catches fire beside the kitchen fire Engine 1 is about to finish. Places, calls, crews and timings are invented for the exercise and make no claim about real services. How to play: tap a call to see its suggested unit, then tap the suggestion to dispatch it; a divert asks you to confirm. Or tap one of your units to highlight it, then tap a call on the map; a busy unit offers Do now or Add to end, or only Add to end once it is on scene. The + on a unit adds the next call you tap to the end of its job chain. With two dispatchers, each opens the groups dialog from the role chip and picks the Ambulance desk or the Police and fire desk.",
   "objectives": [
     "Get a unit on scene at every top-priority (P1) call within 8 minutes of the call.",
     "Get a fire engine to the guest harbour car fire within 4 minutes of the call.",
-    "Close every call within 33 minutes of the start."
+    "Get a unit on scene at every P2 call within 12 minutes of the call."
   ],
   "world": {"startsAt": "2026-09-03T18:00:00.000Z", "environment": {"city": "Halden", "model": "Fictional emergency dispatch exercise; no real patient data"}},
   "view": {"map": {"center": [11.3985, 59.1275], "zoom": 12.4}},
@@ -187,7 +187,7 @@
       },
       {
         "id": "rodsberg-ankle",
-        "at": {"kind": "after_scenario_start", "seconds": 240},
+        "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "A hiker twists an ankle at Rødsberg",
         "actions": [
           {
@@ -199,7 +199,7 @@
       },
       {
         "id": "fortress-chest-pain",
-        "at": {"kind": "after_scenario_start", "seconds": 330},
+        "at": {"kind": "after_scenario_start", "seconds": 300},
         "title": "A visitor with chest pain at the fortress",
         "actions": [
           {
@@ -247,7 +247,7 @@
       },
       {
         "id": "harbour-car-fire",
-        "at": {"kind": "after_scenario_start", "seconds": 660},
+        "at": {"kind": "after_scenario_start", "seconds": 720},
         "title": "A car catches fire beside the harbour kitchen fire",
         "actions": [
           {
@@ -306,14 +306,14 @@
         ]
       },
       {
-        "id": "rv21-crash",
+        "id": "tistedal-road-crash",
         "at": {"kind": "after_scenario_start", "seconds": 1020},
-        "title": "Two cars collide on Rv 21",
+        "title": "Two cars collide on the Tistedal road",
         "actions": [
           {
             "type": "invoke_capability",
             "capabilityId": "world.einsatz.task.create",
-            "input": {"template": "road-accident", "label": "C-14 Rv 21 collision", "at": {"type": "Point", "coordinates": [11.425, 59.138]}, "loads": {"urgent": 1}}
+            "input": {"template": "road-accident", "label": "C-14 Tistedal road collision", "at": {"type": "Point", "coordinates": [11.425, 59.138]}, "loads": {"urgent": 1}}
           }
         ]
       },
@@ -367,7 +367,7 @@
       },
       {
         "id": "harbour-steps-fall",
-        "at": {"kind": "after_scenario_start", "seconds": 1560},
+        "at": {"kind": "after_scenario_start", "seconds": 1530},
         "title": "A fall on the harbour steps",
         "actions": [
           {
@@ -378,8 +378,20 @@
         ]
       },
       {
+        "id": "allotment-shed-fire",
+        "at": {"kind": "after_scenario_start", "seconds": 1650},
+        "title": "A shed burns at the allotments",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {"template": "outdoor-fire", "label": "C-20 Allotment shed fire", "at": {"type": "Point", "coordinates": [11.375, 59.136]}}
+          }
+        ]
+      },
+      {
         "id": "exercise-end",
-        "at": {"kind": "after_scenario_start", "seconds": 1980},
+        "at": {"kind": "after_scenario_start", "seconds": 1800},
         "title": "End of the exercise",
         "actions": [
           {
@@ -387,7 +399,7 @@
             "guidance": {
               "id": "exercise-end",
               "title": "End of the exercise",
-              "message": "33 minutes in, the exercise is over. Check the objectives: every P1 call reached within 8 minutes, a fire engine at the guest harbour car fire within 4, and every call closed.",
+              "message": "30 minutes in, the exercise is over. Check the objectives: every P1 call reached within 8 minutes, a fire engine at the guest harbour car fire within 4, and every P2 call reached within 12.",
               "dismissible": true,
               "tone": "update"
             }
