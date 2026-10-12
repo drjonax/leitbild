@@ -109,6 +109,36 @@ describe('critical safety function status trees', () => {
     expect(inventory.checks).toMatchObject([{ met: 'no', notMet: expect.stringContaining('trip the reactor and actuate SI') }])
   }, PLANT_HANG_GUARD_MS)
 
+  test('after a trip subcriticality is judged every second of the first 30 minutes, through the source range\'s return', () => {
+    const runtime = createProcessPlantRuntime({ system: plant })
+    const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+    const step = (): void => {
+      runtime.tick(1_000)
+      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-safety-functions' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    for (let second = 0; second < 10; second += 1) step()
+    runtime.writeCommand({ type: 'setVariable', path: 'manualReactorTrip.pushbutton' as never, value: true })
+    const subcriticality = plant.automation.safetyFunctions.find(safetyFunction => safetyFunction.id === 'subcriticality')!
+    const statuses = new Map<string, number>()
+    let highVoltageBackAt: number | null = null
+    // The press is acted on at the end of the first second; the trip breakers' commands drop, and the tree is in
+    // service, from the second after.
+    step()
+    for (let second = 2; second <= 1_800; second += 1) {
+      step()
+      const status = evaluateSafetyFunction({ system: plant, runtime, safetyFunction: subcriticality }).status
+      statuses.set(status, (statuses.get(status) ?? 0) + 1)
+      if (highVoltageBackAt === null && runtime.readVariable('core.sourceRangeEnergized' as never) === true) highVoltageBackAt = second
+    }
+    // The source range comes back some 14 minutes in, and its startup rate keeps the tree answerable from there.
+    expect(highVoltageBackAt).toBeGreaterThan(10 * 60)
+    expect(statuses.get('unknown')).toBeUndefined()
+    expect(statuses.get('not-monitored')).toBeUndefined()
+    // Red only for the second or two the power range takes to fall below 5 %, then green.
+    expect([...statuses.keys()].sort()).toEqual(['green', 'red'])
+    expect(statuses.get('red')!).toBeLessThanOrEqual(10)
+  }, PLANT_HANG_GUARD_MS)
+
   test('a reactor that does not trip on demand reads subcriticality red; an unpublished signal leaves its branch unknown', () => {
     const runtime = after(null, 2)
     // An ATWS: the trip breakers' close commands dropped, the breakers still closed, power range at 100 %.
