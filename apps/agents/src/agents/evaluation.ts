@@ -18,6 +18,7 @@ import { parseMapBody, formatMapErrors } from '../core/render-validators/map-sch
 import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/render-validators/view-fence.ts'
 import { embeddedViewContentSchema, type EmbeddedViewContent } from '@leitbild/contracts'
 import { answerViewIssues } from './answer-consistency.ts'
+import { collectTurnOperations, operationClaimIssues, type TurnOperation } from './operation-claims.ts'
 
 // Max times the eval loop will ask the LLM to fix an invalid map/geojson
 // fence before giving up and posting the broken response (the UI banner
@@ -364,10 +365,19 @@ const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
   `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite values and watch items only as the display shows them, or mark one "(not shown)"; ` +
   'name what the display leads with; give its time span as the display draws it. Keep the assessment and actions.'
 
+// An answer that says done what its turn only proposed (operation-claims.ts),
+// with any disagreement with its display, in one correction.
+const claimCorrection = (claims: ReadonlyArray<string>, viewIssues: ReadonlyArray<string>): string =>
+  `The answer says something happened that did not:\n${claims.map(issue => `- ${issue}`).join('\n')}\n\n` +
+  (viewIssues.length === 0 ? '' : `It also disagrees with the display it presents:\n${viewIssues.map(issue => `- ${issue}`).join('\n')}\n\n`) +
+  'Re-emit the FULL corrected response, keeping any display block. A proposal is executed only when a person approves it in the display window: ' +
+  'say what you proposed and that it awaits their approval, or that World refused it and why. Keep the assessment.'
+
 const correctResponse = async (
   initialContent: string,
   viewRefs: ReadonlySet<string>,
   viewContents: ReadonlyMap<string, EmbeddedViewContent>,
+  operations: ReadonlyArray<TurnOperation>,
   context: Array<ChatRequest['messages'][number]>,
   config: AIAgentConfig,
   llmProvider: LLMProvider,
@@ -394,11 +404,13 @@ const correctResponse = async (
         `Your previous response contained one or more invalid fenced blocks:\n\n${validation.errors}\n\n` +
         `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`
     } else {
-      // Valid fences: does the answer agree with the display it presents?
-      const issues = consistencyCorrections === MAX_CONSISTENCY_CORRECTIONS ? [] : presentedViewIssues(content, viewContents)
-      if (issues.length === 0) return content
+      // Valid fences: does the answer agree with the display it presents, and with what its turn did?
+      const done = consistencyCorrections === MAX_CONSISTENCY_CORRECTIONS
+      const issues = done ? [] : presentedViewIssues(content, viewContents)
+      const claims = done ? [] : operationClaimIssues(content, operations)
+      if (issues.length === 0 && claims.length === 0) return content
       consistencyCorrections++
-      correction = consistencyCorrection(issues)
+      correction = claims.length > 0 ? claimCorrection(claims, issues) : consistencyCorrection(issues)
     }
     // Append the response + a precise correction prompt. The next LLM call
     // will see (a) what it just emitted, (b) why it must change,
@@ -485,6 +497,8 @@ export const evaluate = async (
   // round of the agent's own; they do not count against its iteration limit.
   let insistRounds = 0
   const viewContents = new Map<string, EmbeddedViewContent>()
+  // What this turn's workspace calls issued: an answer may not say done what it only proposed.
+  const turnOperations: TurnOperation[] = []
   let lastGenerationQuery: GenerationQuery | undefined
   const captureRequest = (request: ChatRequest): void => {
     // ChatRequest is JSON-shaped. Clone at the call boundary so subsequent
@@ -616,6 +630,7 @@ export const evaluate = async (
           if (!call || !result) continue
           collectViewRefs(viewRefs, call.tool, result)
           collectViewContents(viewContents, call.tool, result)
+          collectTurnOperations(turnOperations, call.tool, call.arguments, result)
           const operationOutcomes = operationOutcomesFor(call.tool, result)
           const traceSuccess = result.success && (operationOutcomes?.every(outcome => outcome.success) ?? true)
           onEvent?.({ kind: 'tool_result', tool: call.tool, callId: call.callId ?? String(i), success: traceSuccess, preview: traceSuccess ? undefined : result.error ?? 'One or more requested operations failed' })
@@ -699,6 +714,7 @@ export const evaluate = async (
         content,
         viewRefs,
         viewContents,
+        turnOperations,
         context,
         config,
         llmProvider,

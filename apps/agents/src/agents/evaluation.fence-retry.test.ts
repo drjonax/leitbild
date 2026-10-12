@@ -405,3 +405,46 @@ describe('evaluation answer-display consistency', () => {
     expect((await run([inconsistent], {})).calls).toHaveLength(2)
   })
 })
+
+describe('evaluation operation claims', () => {
+  // Demo beat 4: the turn proposes shutting MOV-8000A; only a person executes it.
+  const proposeInput = { plantId: 'plant:halden-1', tagId: 'MOV-8000A', value: 0, reason: 'PORV-456A does not follow its SHUT demand', evidence: ['PT-455'] }
+  const run = async (answers: ReadonlyArray<string>) => {
+    const scripted = [
+      { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [{ key: 'propose', operationId: 'world.process-plant.control.propose', input: proposeInput }] } } }] },
+      ...answers.map(content => ({ content })),
+    ]
+    let index = 0
+    const calls: ChatRequest[] = []
+    const provider: LLMProvider = {
+      models: async () => [],
+      chat: async request => { calls.push(request); return { ...mkResponse(''), ...scripted[index++]! } },
+    }
+    const executor = async () => [{
+      success: true,
+      data: { results: [{ key: 'propose', operationId: 'world.process-plant.control.propose', success: true, data: { ok: true, commandId: 'command:p1', acceptedAt: '2026-10-12T10:02:40.000Z' } }] },
+    }]
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+    })
+    return { calls, result }
+  }
+
+  test('an answer saying done what its turn only proposed is corrected once', async () => {
+    const claimed = 'I shut the PORV block valve MOV-8000A; pressure will recover.'
+    const proposed = 'I proposed shutting the PORV block valve MOV-8000A; it is awaiting your approval in the display window.'
+    const { calls, result } = await run([claimed, proposed])
+    expect(calls).toHaveLength(3)
+    const correction = calls[2]!.messages.at(-1)!.content
+    expect(correction).toContain('but this turn only proposed the operation of MOV-8000A')
+    expect(correction).toContain('awaits their approval')
+    expect(result.decision.response).toEqual({ action: 'respond', content: proposed })
+  })
+
+  test('an answer saying it proposed is posted as it is', async () => {
+    const proposed = 'Proposed: SHUT MOV-8000A, awaiting a person\'s approval.'
+    const { calls, result } = await run([proposed])
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: proposed })
+  })
+})
