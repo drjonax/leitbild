@@ -78,6 +78,22 @@ describe('answers that cite what their display does not show', () => {
     expect(issues).toEqual(['It says "10-minute window", but the display\'s time axis spans the last 1 min now; it widens to 10 min as the Run continues.'])
   })
 
+  test('sg-b-runback (run 25): "throughout the last 10 min" on a trend whose record reaches back 3 min', () => {
+    const fcv = { ...signal(['FCV B position', 'feedwaterControlValveB.effectivePositionFraction', 'MFW-B-CV-POS'], 35, '%'), recordedMs: 180_000 }
+    const level = { ...signal(['SG-B-LVL-NR', 'sgB.levelPercent', 'Steam generator B level'], 22.4, '%', [20, 30]), recordedMs: 590_000 }
+    const content = view([fcv, level], { span: { shownMs: 600_000, horizonMs: 600_000 } })
+    expect(answerViewIssues('FCV B position has read 35.0 % throughout the last 10 min.' + FENCE, content)).toEqual([
+      'It says "last 10 min", but the display\'s recorded samples of FCV B position reach back only 3 min: claim no more than the record covers.',
+    ])
+    // Within its record, and for an item recorded longer, the same window stands.
+    expect(answerViewIssues('FCV B position has read 35.0 % for the last 3 minutes.' + FENCE, content)).toEqual([])
+    expect(answerViewIssues('SG B level has been falling over the last 10 minutes.' + FENCE, content).filter(issue => issue.includes('last 10'))).toEqual([])
+    // Naming no item, the longest record shown is the most it may claim.
+    expect(answerViewIssues('Over the last 15 minutes nothing recovered.' + FENCE, view([fcv], { span: { shownMs: 600_000, horizonMs: 900_000 } }))).toEqual([
+      'It says "last 15 minutes", but the display\'s recorded samples reach back only 3 min: claim no more than the record covers.',
+    ])
+  })
+
   test('porv-path: the display leads with pressure past its alarm, and the answer never names it', () => {
     const issues = answerViewIssues(
       'At sim 10:02:00, coolant leaving Unit 2’s pressurizer is going to the **pressurizer relief tank**. The relief path is passing about **7.7 kg/s**, so the PORV is **not confirmed shut**: it is commanded shut, but its position is not measured.' + FENCE,

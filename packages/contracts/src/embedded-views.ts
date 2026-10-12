@@ -63,6 +63,12 @@ export const embeddedViewContentSchema = z.object({
     limits: z.array(viewQuantitySchema).max(16),
     /** Whether the view shows its recent history, so earlier values of it may be cited too. */
     history: z.boolean(),
+    /**
+     * How far back the recorded samples it shows reach now, where it shows its
+     * history: a Run's historian may have recorded it for less time than the
+     * view's axis spans. A claim about it "over the last N min" must fit this.
+     */
+    recordedMs: z.number().int().nonnegative().optional(),
     /** Its state as the view draws it, in words ("running", "level 29.6 %"). */
     state: z.string().min(1).max(200).optional(),
     /** Which way the view shows it going: its rate per minute in `unit` per minute, where the view shows a rate. */
@@ -78,6 +84,9 @@ export const embeddedViewContentSchema = z.object({
   }).strict().superRefine((item, ctx) => {
     if (item.timeToLimitMs !== undefined && item.limitAhead === undefined) {
       ctx.addIssue({ code: 'custom', path: ['timeToLimitMs'], message: 'A time to a limit needs the limit ahead' })
+    }
+    if (item.recordedMs !== undefined && !item.history) {
+      ctx.addIssue({ code: 'custom', path: ['recordedMs'], message: 'Only an item whose history the view shows has a recorded span' })
     }
   })).max(64),
   /** How far back the view's time axis reaches now, and the horizon it widens to; null without one. */

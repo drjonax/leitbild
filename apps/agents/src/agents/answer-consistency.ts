@@ -268,17 +268,34 @@ const durationMs = (count: string | undefined, unit: string): number =>
 
 const minutes = (ms: number): string => `${Number((ms / 60_000).toFixed(1))} min`
 
-const spanIssues = (prose: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
+// Half a step of the axis's growth for rounding ("the last 1.5 minutes").
+const WINDOW_ROUNDING_MS = 30_000
+
+/**
+ * A time window the answer claims, longer than what the display can back:
+ * its time axis, and where it says how far back the recorded samples reach,
+ * that record. A sentence naming trended items is held to their records
+ * (run 25: "35.0 % throughout the last 10 min" on a 3-min record); one
+ * naming none, to the longest record the display shows.
+ */
+const spanIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
   const span = view.span
-  if (span === null) return []
-  return WINDOW_PHRASES.flatMap(pattern => [...prose.matchAll(pattern)].flatMap(match => {
+  const recordedItems = view.items.filter(item => item.recordedMs !== undefined)
+  if (span === null && recordedItems.length === 0) return []
+  return sentences.flatMap(sentence => WINDOW_PHRASES.flatMap(pattern => [...sentence.matchAll(pattern)].flatMap(match => {
     // The first pattern's count is required; the second's is optional ("the recorded minute").
     const said = durationMs(match[1], match[2]!)
-    // Half a step of the axis's growth for rounding ("the last 1.5 minutes").
-    if (said <= span.shownMs + 30_000) return []
+    const named = itemsNamed(sentence, recordedItems)
+    const recorded = named.length > 0 ? named : recordedItems
+    const recordMs = recorded.length === 0 ? undefined : Math.max(...recorded.map(item => item.recordedMs!))
+    if (recordMs !== undefined && said > recordMs + WINDOW_ROUNDING_MS && (span === null || recordMs < span.shownMs)) {
+      const whose = named.length > 0 ? ` of ${names(named)}` : ''
+      return [`It says "${match[0]}", but the display's recorded samples${whose} reach back only ${minutes(recordMs)}: claim no more than the record covers.`]
+    }
+    if (span === null || said <= span.shownMs + WINDOW_ROUNDING_MS) return []
     const widens = span.shownMs < span.horizonMs ? ` now; it widens to ${minutes(span.horizonMs)} as the Run continues` : ''
     return [`It says "${match[0]}", but the display's time axis spans the last ${minutes(span.shownMs)}${widens}.`]
-  }))
+  })))
 }
 
 const leadIssues = (prose: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
@@ -622,7 +639,7 @@ export const answerViewIssues = (answer: string, view: EmbeddedViewContent): Rea
     ...quantityIssues(sentences, view),
     ...precisionIssues(sentences, view),
     ...watchIssues(sentences, view),
-    ...spanIssues(prose, view),
+    ...spanIssues(sentences, view),
     ...directionIssues(sentences, view),
     ...limitAheadIssues(sentences, view),
     ...projectionIssues(sentences, view),

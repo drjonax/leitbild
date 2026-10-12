@@ -77,6 +77,12 @@ describe('embedded view content', () => {
     expect(embeddedViewContentSchema.parse(content)).toEqual(content)
   })
 
+  test('says how far back an item\'s recorded samples reach, only for an item whose history it shows', () => {
+    const recorded = { ...content, items: [{ ...content.items[0]!, recordedMs: 180_000 }] }
+    expect(embeddedViewContentSchema.parse(recorded)).toEqual(recorded)
+    expect(embeddedViewContentSchema.safeParse({ ...content, items: [{ ...content.items[0]!, history: false, recordedMs: 180_000 }] }).success).toBe(false)
+  })
+
   test('rejects a lead that is not one of the items, and unknown fields', () => {
     expect(embeddedViewContentSchema.safeParse({ ...content, lead: { item: 1, reason: 'x' } }).success).toBe(false)
     expect(embeddedViewContentSchema.safeParse({ ...content, note: 'x' }).success).toBe(false)
