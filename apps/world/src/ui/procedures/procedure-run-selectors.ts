@@ -7,6 +7,7 @@ import type {
   ProcedureRunState,
   ProcedureSourceId,
   ProcedureStep,
+  ProcedureStepDecision,
 } from '../../core/model/index.ts'
 
 export type ProcedureRunVisualState = 'idle' | 'active' | 'transferred' | 'completed'
@@ -248,6 +249,91 @@ export const procedureRunSummaryText = (summary: ProcedureRunSummary): string =>
 
 export const procedureRunSummaryTitle = (summary: ProcedureRunSummary): string =>
   `${summary.procedureId} - ${summary.title}\n${summary.status}\nStep ${summary.step?.label ?? '-'}: ${summary.step?.name ?? 'not started'}`
+
+/** An AI agent's actor id; World gives every AI actor this prefix. */
+export const procedureActorIsAi = (actorId: string): boolean => actorId.startsWith('actor:ai:')
+
+/** Who an actor is in the window: the name the request carried, else "AI" or the id's last part. */
+export const procedureActorLabel = (actorId: string, label?: string): string => {
+  if (label !== undefined) return label
+  if (procedureActorIsAi(actorId)) return 'AI'
+  const name = actorId.split(':').at(-1) ?? actorId
+  return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
+/** A Run timestamp as the plant clock writes it ("10:14:45", or "10:14"): the Run's clock is UTC. */
+export const procedurePlantTime = (iso: string, precision: 'seconds' | 'minutes' = 'seconds'): string => {
+  const time = /^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2})(:\d{2})/.exec(iso)
+  if (!time) throw new Error(`procedure time is not an ISO timestamp: ${iso}`)
+  return precision === 'minutes' ? time[1]! : `${time[1]}${time[2]}`
+}
+
+/** Where a decision led, as short as a summary row needs: a step number, a procedure, or END. */
+export const procedureDecisionTargetText = (document: ProcedureDocument, decision: ProcedureStepDecision): string =>
+  decision.targetKind === 'step' ? procedureStepById(document, decision.target)?.label ?? decision.target : decision.target
+
+/** How a taken branch is coloured: by its declared outcome, or plainly taken where it declares none. */
+export const procedureDecisionTone = (decision: ProcedureStepDecision): 'normal' | 'rno' | 'unknown' | 'taken' =>
+  decision.outcome ?? 'taken'
+
+/**
+ * One row of the procedure document. The current step and open steps show in full;
+ * a decided step folds to its summary; untouched steps a branch jumped over fold into one row.
+ */
+export type ProcedureStepRow =
+  | { readonly kind: 'step'; readonly step: ProcedureStep; readonly role: 'current' | 'decided' | 'open' }
+  | {
+    readonly kind: 'bypassed'
+    readonly steps: ReadonlyArray<ProcedureStep>
+    readonly from: ProcedureStep
+    readonly to: ProcedureStep
+  }
+
+export const procedureStepRows = (
+  document: ProcedureDocument,
+  run: ProcedureRunState | null,
+): ReadonlyArray<ProcedureStepRow> => {
+  const states = new Map((run?.stepStates ?? []).map(state => [state.stepId, state]))
+  const currentId = run?.status === 'active' ? procedureCurrentStep(run, document)?.step.id : undefined
+  const indexById = new Map(document.steps.map((step, index) => [step.id, index]))
+  const rows: ProcedureStepRow[] = []
+  let jump: { readonly from: ProcedureStep; readonly toIndex: number } | undefined
+  let bypassed: ProcedureStep[] = []
+  const flush = (): void => {
+    if (bypassed.length > 0 && jump) rows.push({ kind: 'bypassed', steps: bypassed, from: jump.from, to: document.steps[jump.toIndex]! })
+    bypassed = []
+  }
+  document.steps.forEach((step, index) => {
+    if (jump && index >= jump.toIndex) { flush(); jump = undefined }
+    const state = states.get(step.id)
+    const touched = state !== undefined && (state.decision !== undefined || state.assessment !== 'blank')
+    if (jump && !touched && step.id !== currentId) {
+      bypassed.push(step)
+      return
+    }
+    flush()
+    rows.push({ kind: 'step', step, role: step.id === currentId ? 'current' : state?.decision ? 'decided' : 'open' })
+    const decision = state?.decision
+    const target = decision?.targetKind === 'step' ? indexById.get(decision.target) : undefined
+    if (target !== undefined && target > index + 1) jump = { from: step, toIndex: target }
+  })
+  flush()
+  return rows
+}
+
+/** Step labels as short ranges in document order: "5–10, 12". */
+export const procedureStepRangeText = (steps: ReadonlyArray<ProcedureStep>, document: ProcedureDocument): string => {
+  const indices = steps.map(step => document.steps.indexOf(step)).filter(index => index >= 0).sort((left, right) => left - right)
+  const ranges: Array<[number, number]> = []
+  for (const index of indices) {
+    const last = ranges.at(-1)
+    if (last && index === last[1] + 1) last[1] = index
+    else ranges.push([index, index])
+  }
+  return ranges.map(([start, end]) => start === end
+    ? document.steps[start]!.label
+    : `${document.steps[start]!.label}–${document.steps[end]!.label}`).join(', ')
+}
 
 const findLast = <T>(
   values: ReadonlyArray<T>,

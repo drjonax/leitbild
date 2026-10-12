@@ -3705,11 +3705,133 @@ body.rail-resizing {
 }
 
 .procedure-step.complete {
-  border-left: 4px solid #15803d;
+  box-shadow: inset 4px 0 0 #15803d;
 }
 
 .procedure-step.failed {
-  border-left: 4px solid #b42318;
+  box-shadow: inset 4px 0 0 #b42318;
+}
+
+.procedure-step.unknown {
+  box-shadow: inset 4px 0 0 #b45309;
+}
+
+/* Where the Run stands: an accent bar, a light header band and a CURRENT chip. */
+.procedure-step.current {
+  border-color: #1d4ed8;
+  background: linear-gradient(#eff6ff, #eff6ff) top / 100% 46px no-repeat, #ffffff;
+  box-shadow: inset 4px 0 0 #1d4ed8;
+}
+
+.procedure-current-chip {
+  align-self: center;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: #1d4ed8;
+  color: #ffffff !important;
+  font-size: calc(10px * var(--procedure-font-scale)) !important;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.procedure-step-collapse {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  font: inherit;
+  font-size: calc(12px * var(--procedure-font-scale));
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* A decided step folded to one row: its checkmark, name, the branch taken and when. */
+.procedure-step-summary {
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 12px 3px 13px;
+  border: 1px solid #d8e0ea;
+  background: #ffffff;
+  box-shadow: inset 3px 0 0 #1d4ed8;
+  color: #0f172a;
+  font: inherit;
+  font-size: calc(13px * var(--procedure-font-scale));
+  text-align: left;
+  cursor: pointer;
+}
+
+.procedure-step-summary.tone-normal { box-shadow: inset 3px 0 0 #15803d; }
+.procedure-step-summary.tone-rno { box-shadow: inset 3px 0 0 #b42318; }
+.procedure-step-summary.tone-unknown { box-shadow: inset 3px 0 0 #b45309; }
+
+.procedure-step-summary:hover,
+.procedure-step-summary:focus-visible {
+  border-color: #2563eb;
+  outline: none;
+}
+
+.procedure-step-summary > span,
+.procedure-step-summary > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.procedure-summary-name { color: #334155; font-weight: 600; }
+.procedure-summary-decision { color: #1e293b; }
+.procedure-step-summary small { color: #475569; font-variant-numeric: tabular-nums; }
+
+.procedure-summary-box {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #64748b;
+  background: #ffffff;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.procedure-summary-box.complete { border-color: #15803d; background: #15803d; }
+.procedure-summary-box.failed { border-color: #b42318; background: #b42318; }
+.procedure-summary-box.unknown { border-color: #b45309; background: #b45309; }
+
+/* Untouched steps a branch jumped over, folded into one row. */
+.procedure-bypassed {
+  min-height: 28px;
+  width: 100%;
+  padding: 3px 12px;
+  border: 1px dashed #94a3b8;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  font-size: calc(12px * var(--procedure-font-scale));
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Folded rows sit closer together than full steps. */
+.procedure-step-summary + .procedure-step-summary,
+.procedure-step-summary + .procedure-bypassed,
+.procedure-bypassed + .procedure-step-summary {
+  margin-top: -6px;
+}
+
+.procedure-bypassed:hover,
+.procedure-bypassed:focus-visible {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  outline: none;
 }
 
 .procedure-step-main {
@@ -3837,6 +3959,35 @@ body.rail-resizing {
 
 .procedure-branch.off-path span {
   color: #475569;
+}
+
+/* The branch a decision took, coloured by its outcome; the others muted by colour, not opacity. */
+.procedure-branch.taken {
+  border-style: solid;
+  border-color: #1d4ed8;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px #1d4ed8;
+}
+
+.procedure-branch.taken.tone-normal { border-color: #15803d; background: #f0fdf4; box-shadow: inset 0 0 0 1px #15803d; }
+.procedure-branch.taken.tone-rno { border-color: #b42318; background: #fef2f2; box-shadow: inset 0 0 0 1px #b42318; }
+.procedure-branch.taken.tone-unknown { border-color: #b45309; background: #fffbeb; box-shadow: inset 0 0 0 1px #b45309; }
+
+.procedure-taken-mark {
+  margin-right: 6px;
+  color: inherit !important;
+  font-weight: 900;
+}
+
+.procedure-branch.untaken strong,
+.procedure-branch.untaken span {
+  color: #64748b;
+}
+
+.procedure-decision-line {
+  color: #334155;
+  font-size: calc(12px * var(--procedure-font-scale));
+  font-weight: 600;
 }
 
 .procedure-branch:hover:not(:disabled),

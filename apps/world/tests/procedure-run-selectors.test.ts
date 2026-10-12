@@ -4,8 +4,15 @@ import {
   furthestTouchedStep,
   procedureCurrentStep,
   procedureBranchActionText,
+  procedureActorIsAi,
+  procedureActorLabel,
+  procedureDecisionTargetText,
+  procedureDecisionTone,
   procedureHumanisedId,
   procedureOffPathConfirmation,
+  procedurePlantTime,
+  procedureStepRangeText,
+  procedureStepRows,
   procedureRunDocumentKey,
   procedureRunSummariesForScope,
   procedureRunSummaryText,
@@ -200,5 +207,42 @@ describe('procedure run selectors', () => {
     )
     expect(summaries.active.map(procedureRunSummaryText)).toEqual(['E-0:6'])
     expect(summaries.inactive).toEqual([])
+  })
+
+  test('folds decided steps, groups the untouched steps a branch jumped over, and marks the current step', () => {
+    const steps = Array.from({ length: 8 }, (_, index) => ({
+      id: `s${index + 1}`, label: String(index + 1), title: `Step ${index + 1}`, level: 2,
+      blocks: [], branches: [], tagIds: [], sourceLine: index * 10 + 1, sourceEndLine: index * 10 + 9,
+    }))
+    const document = { ...procedure, steps } satisfies ProcedureDocument
+    const decision = (target: string) => ({ branchIndex: 0, label: 'Go on', targetKind: 'step' as const, target, selectedBy: actor, simulationTime: '2026-01-01T10:14:45.000Z' as IsoTimestamp })
+    const state = (stepId: string, extra: Record<string, unknown>) => ({ stepId, assessment: 'blank' as const, favorite: false, updatedAt: at, updatedBy: actor, ...extra })
+    const run = {
+      ...activeRun,
+      currentStepId: 's7',
+      stepStates: [state('s1', { decision: decision('s2') }), state('s2', { decision: decision('s7') }), state('s4', { assessment: 'complete' })],
+    } satisfies ProcedureRunState
+    const rows = procedureStepRows(document, run)
+    expect(rows.map(row => row.kind === 'step' ? `${row.step.label}:${row.role}` : `bypassed ${row.steps.map(step => step.label).join(',')} (${row.from.label}→${row.to.label})`)).toEqual([
+      '1:decided', '2:decided', 'bypassed 3 (2→7)', '4:open', 'bypassed 5,6 (2→7)', '7:current', '8:open',
+    ])
+    expect(procedureStepRows(document, { ...run, status: 'completed' }).find(row => row.kind === 'step' && row.step.id === 's7')).toMatchObject({ role: 'open' })
+    expect(procedureStepRows(document, null).every(row => row.kind === 'step' && row.role === 'open')).toBe(true)
+    expect(procedureStepRangeText([steps[4]!, steps[5]!, steps[6]!, steps[0]!], document)).toBe('1, 5–7')
+    expect(procedureDecisionTargetText(document, decision('s7'))).toBe('7')
+    expect(procedureDecisionTargetText(document, { ...decision('FR-S.1'), targetKind: 'procedure' })).toBe('FR-S.1')
+    expect(procedureDecisionTone(decision('s2'))).toBe('taken')
+    expect(procedureDecisionTone({ ...decision('s2'), outcome: 'rno' })).toBe('rno')
+  })
+
+  test('names who decided and when by the plant clock', () => {
+    expect(procedurePlantTime('2026-01-01T10:14:45.120Z')).toBe('10:14:45')
+    expect(procedurePlantTime('2026-01-01T10:14:45.120Z', 'minutes')).toBe('10:14')
+    expect(() => procedurePlantTime('yesterday')).toThrow()
+    expect(procedureActorIsAi('actor:ai:assistant')).toBe(true)
+    expect(procedureActorIsAi('actor:operator')).toBe(false)
+    expect(procedureActorLabel('actor:operator')).toBe('Operator')
+    expect(procedureActorLabel('actor:ai:assistant')).toBe('AI')
+    expect(procedureActorLabel('actor:ai:assistant', 'Assistant')).toBe('Assistant')
   })
 })

@@ -43,8 +43,14 @@
     furthestTouchedStep,
     procedureCurrentStep,
     procedureBranchActionText,
+    procedureActorLabel,
+    procedureDecisionTargetText,
+    procedureDecisionTone,
     procedureFirstStep,
     procedureOffPathConfirmation,
+    procedurePlantTime,
+    procedureStepRangeText,
+    procedureStepRows,
     procedureRunFor,
     procedureRunSummariesForScope,
     procedureRunVisualStateFor as selectedProcedureRunVisualStateFor,
@@ -166,6 +172,8 @@
   let basisReadGeneration = 0
   let openTagId = $state<ProcedureTagId | null>(null)
   let commentOpen = $state<Record<string, boolean>>({})
+  /** Decided steps and bypassed groups the person opened, by view key; the rest stay folded. */
+  let expandedSteps = $state<Record<string, boolean>>({})
   let commentDrafts = $state<Record<string, string>>({})
   let pendingTransition = $state<ProcedureTransition | null>(null)
   let pendingOffPath = $state<{ readonly from: ProcedureStep; readonly branch: ProcedureBranch } | null>(null)
@@ -209,6 +217,7 @@
   const currentProcedureStep = $derived(document && selectedProcedureRun
     ? procedureCurrentStep(selectedProcedureRun, document)
     : null)
+  const procedureRows = $derived(document ? procedureStepRows(document, selectedProcedureRun) : [])
   const catalogCategories = $derived(procedureCategories(catalog?.procedures ?? []))
   const sourceLabel = $derived(catalog
     ? `${catalog.source.repository}@${catalog.source.revision.slice(0, 8)}`
@@ -559,6 +568,10 @@
   }
 
   const draftKey = (stepId: string): string => `${document ? procedureViewKey(document, currentScope) : ''}:${stepId}`
+
+  const setStepExpanded = (stepId: string, expanded: boolean): void => {
+    expandedSteps = { ...expandedSteps, [draftKey(stepId)]: expanded }
+  }
 
   const rememberCurrentProcedureScroll = (): void => {
     if (!document || !procedureDocumentBodyElement) return
@@ -1154,6 +1167,135 @@
   </span>
 {/snippet}
 
+{#snippet stepArticle(step: ProcedureStep, role: 'current' | 'decided' | 'open')}
+  {@const state = stepStates.get(step.id)}
+  {@const observation = selectedProcedureRun?.observations?.find(item => item.stepId === step.id)}
+  <article data-procedure-step-id={step.id} class="procedure-step {role}" class:complete={state?.assessment === 'complete'} class:failed={state?.assessment === 'failed'} class:unknown={state?.assessment === 'unknown'}>
+    <div class="procedure-step-main">
+      <button
+        type="button"
+        class="procedure-assessment {assessmentClass(state)}"
+        disabled={!selectedRun}
+        title="Human placekeeping assessment; not an automatic equipment check"
+        aria-label="Cycle human assessment"
+        onclick={() => void cycleStepAssessment(step)}
+      >
+        {#if state?.assessment === 'complete'}
+          <Check size={17} aria-hidden="true" />
+        {:else if state?.assessment === 'failed'}
+          <X size={17} aria-hidden="true" />
+        {:else if state?.assessment === 'unknown'}
+          <HelpCircle size={17} aria-hidden="true" />
+        {/if}
+      </button>
+      <div class="procedure-step-content">
+        <h3>
+          {#if role === 'current'}<span class="procedure-current-chip">Current</span>{/if}
+          Step {step.label}<span>{procedureStepDisplayName(step)}</span>{@render stepInfo(step)}
+          {#if role === 'decided'}<button type="button" class="procedure-step-collapse" onclick={() => setStepExpanded(step.id, false)}>Collapse</button>{/if}
+        </h3>
+        <div class="procedure-two-column">
+          {#each procedureStepItems(step) as item}
+            <div class="procedure-column" class:response={!item.primary}>
+              {#if item.kind === 'block'}
+                <p class="block-{item.block.kind}">{#if item.block.kind !== 'text'}<b>{procedureBlockLabel(item.block.kind)}</b>{/if} {@render procedureText(item.block.text, item.block.tagIds)}</p>
+                {#if item.block.paths?.length}<ol>{#each item.block.paths as path}<li>{@render procedureText(path, item.block.tagIds)}</li>{/each}</ol>{/if}
+              {:else}
+                {@const taken = state?.decision !== undefined && state.decision.branchIndex === step.branches.indexOf(item.branch) ? state.decision : undefined}
+                <button
+                  type="button"
+                  class="procedure-branch {taken ? `taken tone-${procedureDecisionTone(taken)}` : ''}"
+                  class:untaken={state?.decision !== undefined && taken === undefined}
+                  class:off-path={activeRun !== null && branchIsOffPath(step)}
+                  disabled={!activeRun || transitionInProgress || item.branch.targetKind === 'unknown'}
+                  title={!selectedRun ? 'Start the procedure to use branch actions' : branchIsOffPath(step) ? `Step ${step.label} is not the current step: asks before moving ${document?.procedureId ?? 'the Run'}` : branchActionTextFor(item.branch)}
+                  onclick={() => void requestBranch(step, item.branch)}
+                >
+                  <strong>{#if taken}<span class="procedure-taken-mark" aria-hidden="true">✓</span>{/if}{item.branch.label}</strong>
+                  <span>{branchActionTextFor(item.branch)}</span>
+                  {#if taken}<small class="procedure-decision-line">Taken {procedurePlantTime(taken.simulationTime)} · {procedureActorLabel(taken.selectedBy, taken.selectedByLabel)}</small>{/if}
+                </button>
+                {#if item.branch.because}<p class="procedure-branch-rationale"><b>Because</b> {@render procedureText(item.branch.because, item.branch.tagIds)}</p>{/if}
+                {#if item.branch.against}<p class="procedure-branch-rationale"><b>Against</b> {@render procedureText(item.branch.against, item.branch.tagIds)}</p>{/if}
+              {/if}
+            </div>
+          {/each}
+        </div>
+        {#if step.assessment}
+          <details class="procedure-observation">
+            <summary>Evaluation criteria — authored specification</summary>
+            <p>Declared evidence and decision rules, not a live assessment or automatic command.</p>
+            <pre>{JSON.stringify(step.assessment, null, 2)}</pre>
+          </details>
+        {/if}
+        {#if step.observation}
+          <details class="procedure-observation">
+            <summary>Read-only observation specification</summary>
+            <p>The configured query is separate from its latest result and human placekeeping.</p>
+            <pre>{JSON.stringify(step.observation, null, 2)}</pre>
+          </details>
+        {/if}
+        {#if observation}
+          <details class="procedure-observation">
+            <summary>{procedureObservationLabel(observation.result)}: {observation.result.status} · acquired at simulation time {observation.simulationTime}</summary>
+            {#if observation.result.reason}<p>{observation.result.reason}</p>{/if}
+            <p>{@render procedureText(procedureObservationBasis(observation.result), [])}</p>
+            {#each procedureObservationEvidence(observation.result) as evidence}
+              <p><b>{evidence.label}</b>: {evidence.value} · criterion {evidence.criterion} · {evidence.status}{evidence.reason ? ` · ${evidence.reason}` : ''}</p>
+            {/each}
+            <small>{procedureObservationLabel(observation.result) === 'Model comparison' ? 'Comparison of runtime model values; instrumentation validity is not established. ' : ''}Last acquisition shown in simulation time, not proof that evidence remains current. Human placekeeping remains separately recorded.</small>
+          </details>
+        {/if}
+        {#if commentOpen[draftKey(step.id)]}
+          <div class="procedure-comment-editor">
+            <textarea
+              value={commentDrafts[draftKey(step.id)] ?? state?.comment ?? ''}
+              oninput={(event) => { commentDrafts = { ...commentDrafts, [draftKey(step.id)]: event.currentTarget.value } }}
+              placeholder="Add handling annotation..."
+            ></textarea>
+            <button type="button" onclick={() => void saveComment(step)}>Save comment</button>
+          </div>
+        {/if}
+        {#if state?.comment}
+          <div class="procedure-comment">{state.comment}</div>
+        {/if}
+      </div>
+    </div>
+    <div class="procedure-step-actions">
+      <button type="button" class:active={commentOpen[draftKey(step.id)] === true} disabled={!selectedRun} title="Comment" aria-label="Comment" onclick={() => { commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
+        <MessageSquare size={16} aria-hidden="true" />
+      </button>
+      <button type="button" class:active={state?.favorite === true} disabled={!selectedRun} title="Favorite" aria-label="Favorite" onclick={() => void toggleFavorite(step)}>
+        <Star size={16} aria-hidden="true" />
+      </button>
+      <button type="button" title="Report procedure issue" aria-label="Report procedure issue" onclick={() => openIssue(step)}>
+        <Bug size={16} aria-hidden="true" />
+      </button>
+    </div>
+  </article>
+{/snippet}
+
+{#snippet stepSummary(step: ProcedureStep)}
+  {@const state = stepStates.get(step.id)}
+  {@const decision = state?.decision}
+  <button
+    type="button"
+    class="procedure-step-summary {decision ? `tone-${procedureDecisionTone(decision)}` : ''}"
+    data-procedure-step-id={step.id}
+    aria-expanded="false"
+    title="Show step {step.label}"
+    onclick={() => setStepExpanded(step.id, true)}
+  >
+    <span class="procedure-summary-box {assessmentClass(state)}" aria-hidden="true">{state?.assessment === 'complete' ? '✓' : state?.assessment === 'failed' ? '✗' : state?.assessment === 'unknown' ? '?' : ''}</span>
+    <strong>Step {step.label}</strong>
+    <span class="procedure-summary-name">{procedureStepDisplayName(step)}</span>
+    {#if decision && document}
+      <span class="procedure-summary-decision">— {decision.label ?? step.branches[decision.branchIndex]?.label ?? `branch ${decision.branchIndex + 1}`} → {procedureDecisionTargetText(document, decision)}</span>
+      <small>{procedurePlantTime(decision.simulationTime, 'minutes')}</small>
+    {/if}
+  </button>
+{/snippet}
+
 <div class="procedure-window-layer">
   <div
     class="procedure-modal procedure-window"
@@ -1378,105 +1520,25 @@
             onscroll={rememberCurrentProcedureScroll}
           >
             <div class="procedure-steps">
-              {#each document.steps as step (step.id)}
-                {@const state = stepStates.get(step.id)}
-                {@const observation = selectedProcedureRun?.observations?.find(item => item.stepId === step.id)}
-                <article data-procedure-step-id={step.id} class="procedure-step" class:complete={state?.assessment === 'complete'} class:failed={state?.assessment === 'failed'}>
-                  <div class="procedure-step-main">
-                    <button
-                      type="button"
-                      class="procedure-assessment {assessmentClass(state)}"
-                      disabled={!selectedRun}
-                      title="Human placekeeping assessment; not an automatic equipment check"
-                      aria-label="Cycle human assessment"
-                      onclick={() => void cycleStepAssessment(step)}
-                    >
-                      {#if state?.assessment === 'complete'}
-                        <Check size={17} aria-hidden="true" />
-                      {:else if state?.assessment === 'failed'}
-                        <X size={17} aria-hidden="true" />
-                      {:else if state?.assessment === 'unknown'}
-                        <HelpCircle size={17} aria-hidden="true" />
-                      {/if}
-                    </button>
-                    <div class="procedure-step-content">
-                      <h3>Step {step.label}<span>{procedureStepDisplayName(step)}</span>{@render stepInfo(step)}</h3>
-                      <div class="procedure-two-column">
-                        {#each procedureStepItems(step) as item}
-                          <div class="procedure-column" class:response={!item.primary}>
-                            {#if item.kind === 'block'}
-                              <p class="block-{item.block.kind}">{#if item.block.kind !== 'text'}<b>{procedureBlockLabel(item.block.kind)}</b>{/if} {@render procedureText(item.block.text, item.block.tagIds)}</p>
-                              {#if item.block.paths?.length}<ol>{#each item.block.paths as path}<li>{@render procedureText(path, item.block.tagIds)}</li>{/each}</ol>{/if}
-                            {:else}
-                              <button
-                                type="button"
-                                class="procedure-branch"
-                                class:off-path={activeRun !== null && branchIsOffPath(step)}
-                                disabled={!activeRun || transitionInProgress || item.branch.targetKind === 'unknown'}
-                                title={!selectedRun ? 'Start the procedure to use branch actions' : branchIsOffPath(step) ? `Step ${step.label} is not the current step: asks before moving ${document.procedureId}` : branchActionTextFor(item.branch)}
-                                onclick={() => void requestBranch(step, item.branch)}
-                              >
-                                <strong>{item.branch.label}</strong>
-                                <span>{branchActionTextFor(item.branch)}</span>
-                              </button>
-                              {#if item.branch.because}<p class="procedure-branch-rationale"><b>Because</b> {@render procedureText(item.branch.because, item.branch.tagIds)}</p>{/if}
-                              {#if item.branch.against}<p class="procedure-branch-rationale"><b>Against</b> {@render procedureText(item.branch.against, item.branch.tagIds)}</p>{/if}
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                      {#if step.assessment}
-                        <details class="procedure-observation">
-                          <summary>Evaluation criteria — authored specification</summary>
-                          <p>Declared evidence and decision rules, not a live assessment or automatic command.</p>
-                          <pre>{JSON.stringify(step.assessment, null, 2)}</pre>
-                        </details>
-                      {/if}
-                      {#if step.observation}
-                        <details class="procedure-observation">
-                          <summary>Read-only observation specification</summary>
-                          <p>The configured query is separate from its latest result and human placekeeping.</p>
-                          <pre>{JSON.stringify(step.observation, null, 2)}</pre>
-                        </details>
-                      {/if}
-                      {#if observation}
-                        <details class="procedure-observation">
-                          <summary>{procedureObservationLabel(observation.result)}: {observation.result.status} · acquired at simulation time {observation.simulationTime}</summary>
-                          {#if observation.result.reason}<p>{observation.result.reason}</p>{/if}
-                          <p>{@render procedureText(procedureObservationBasis(observation.result), [])}</p>
-                          {#each procedureObservationEvidence(observation.result) as evidence}
-                            <p><b>{evidence.label}</b>: {evidence.value} · criterion {evidence.criterion} · {evidence.status}{evidence.reason ? ` · ${evidence.reason}` : ''}</p>
-                          {/each}
-                          <small>{procedureObservationLabel(observation.result) === 'Model comparison' ? 'Comparison of runtime model values; instrumentation validity is not established. ' : ''}Last acquisition shown in simulation time, not proof that evidence remains current. Human placekeeping remains separately recorded.</small>
-                        </details>
-                      {/if}
-                      {#if commentOpen[draftKey(step.id)]}
-                        <div class="procedure-comment-editor">
-                          <textarea
-                            value={commentDrafts[draftKey(step.id)] ?? state?.comment ?? ''}
-                            oninput={(event) => { commentDrafts = { ...commentDrafts, [draftKey(step.id)]: event.currentTarget.value } }}
-                            placeholder="Add handling annotation..."
-                          ></textarea>
-                          <button type="button" onclick={() => void saveComment(step)}>Save comment</button>
-                        </div>
-                      {/if}
-                      {#if state?.comment}
-                        <div class="procedure-comment">{state.comment}</div>
-                      {/if}
-                    </div>
-                  </div>
-                  <div class="procedure-step-actions">
-                    <button type="button" class:active={commentOpen[draftKey(step.id)] === true} disabled={!selectedRun} title="Comment" aria-label="Comment" onclick={() => { commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
-                      <MessageSquare size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" class:active={state?.favorite === true} disabled={!selectedRun} title="Favorite" aria-label="Favorite" onclick={() => void toggleFavorite(step)}>
-                      <Star size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" title="Report procedure issue" aria-label="Report procedure issue" onclick={() => openIssue(step)}>
-                      <Bug size={16} aria-hidden="true" />
-                    </button>
-                  </div>
-                </article>
+              {#each procedureRows as row (row.kind === 'step' ? row.step.id : `bypassed:${row.steps[0]!.id}`)}
+                {#if row.kind === 'bypassed'}
+                  {@const bypassKey = draftKey(`bypassed:${row.steps[0]!.id}`)}
+                  <button
+                    type="button"
+                    class="procedure-bypassed"
+                    aria-expanded={expandedSteps[bypassKey] === true}
+                    onclick={() => { expandedSteps = { ...expandedSteps, [bypassKey]: !expandedSteps[bypassKey] } }}
+                  >
+                    {row.steps.length === 1 ? `Step ${row.steps[0]!.label}` : `Steps ${procedureStepRangeText(row.steps, document)}`} bypassed (step {row.from.label} → {row.to.label})
+                  </button>
+                  {#if expandedSteps[bypassKey]}
+                    {#each row.steps as step (step.id)}{@render stepArticle(step, 'open')}{/each}
+                  {/if}
+                {:else if row.role === 'decided' && !expandedSteps[draftKey(row.step.id)]}
+                  {@render stepSummary(row.step)}
+                {:else}
+                  {@render stepArticle(row.step, row.role)}
+                {/if}
               {/each}
             </div>
           </div>
