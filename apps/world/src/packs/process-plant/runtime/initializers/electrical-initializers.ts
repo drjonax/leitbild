@@ -11,7 +11,9 @@ export const electricalInitialValueDefinitions: ReadonlyArray<ComponentInitialVa
       if (localPath === 'frequencyHz') return optionalParameterNumber(component, 'initialFrequencyHz', 50)
       if (localPath === 'energized') return available
       if (localPath === 'availablePowerMw') return available ? parameterNumber(component, 'nominalPowerMw') : 0
-      if (localPath === 'voltageFraction') return available ? voltageFraction : 0
+      // The boundary's voltage, whether or not the source is available; the Plant's side has it only while it is.
+      if (localPath === 'voltageFraction') return voltageFraction
+      if (localPath === 'supplyVoltageFraction') return available ? voltageFraction : 0
       return undefined
     },
   },

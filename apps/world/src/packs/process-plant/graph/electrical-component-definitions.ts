@@ -75,14 +75,18 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
     }).strict(),
     semantics: fixedSemantics({
       aspects: [aspect('energized', { variable: 'energized', reading: 'true' })],
-      // The grid's frequency is measured on its voltage: with the grid lost or the Plant isolated from it there
-      // is none to measure, whatever number the boundary last held.
-      meaningfulWhile: [{ flag: 'energized', variables: ['frequencyHz'] }],
+      // The grid's own voltage and frequency are measured on the live grid: with the grid lost or the Plant
+      // isolated from it there is none to measure, whatever numbers the boundary last held. The supply voltage
+      // the relays read is the Plant's side, and reads none then.
+      meaningfulWhile: [{ flag: 'energized', variables: ['frequencyHz', 'voltageFraction'] }],
     }),
     variables: [
       variable({ path: 'available', label: 'Grid source available', kind: 'control', discipline: 'electrical', writable: true, publish: 'telemetry', actuation: 'boundary', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'frequencyHz', label: 'Grid frequency', kind: 'control', discipline: 'electrical', writable: true, publish: 'telemetry', actuation: 'boundary', quantity: 'frequency', unit: 'Hz', limits: { hardRange: { min: 0, max: 70 } } }),
       ...energizedVariables('Grid source', { kind: 'control', writable: true }),
+      // What the Plant's undervoltage relays read on the offsite supply: the grid's voltage while it is available,
+      // none while it is lost. Declared last, so the variables before it keep their places.
+      variable({ path: 'supplyVoltageFraction', label: 'Offsite supply voltage', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', measurand: 'voltage', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1.2 } } }),
     ],
   }),
   defineComponent({

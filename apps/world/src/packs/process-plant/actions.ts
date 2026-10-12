@@ -182,6 +182,15 @@ export const processPlantActions: ReadonlyArray<ProcessPlantActionDefinition> = 
       ...commandsForRole(graph, 'offsite-power-breaker', 'closed', false),
     ],
   },
+  {
+    // The offsite source returns; its voltage and frequency are the boundary's (in a Grid-connected Run the Grid's,
+    // which refuses a plant-side write of them), and reclosing the offsite and unit bus breakers stays the operators'.
+    id: 'restore-offsite-power',
+    title: 'Restore offsite power',
+    description: "Mark the offsite grid available again after a loss of offsite power, ending a Grid-connected Plant's isolation from its Grid.",
+    parameters: [],
+    commands: (_values, graph) => commandsForRole(graph, 'offsite-power-source', 'available', true),
+  },
 ]
 
 const actionById = new Map(processPlantActions.map(action => [action.id, action]))

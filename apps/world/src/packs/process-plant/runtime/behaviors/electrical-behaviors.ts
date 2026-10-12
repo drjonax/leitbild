@@ -137,18 +137,23 @@ const passThroughAvailablePower = (
   }
 }
 
+// The grid source's voltage and frequency are its boundary's, never its own to
+// write: an unavailable source keeps the voltage the boundary holds, energizing
+// nothing, so it stands at that voltage again the moment it is available. The
+// Plant's side of the supply, which its undervoltage relays read, has the
+// grid's voltage only while the grid is available.
 const gridSourceBehavior: ComponentBehaviorDefinition = {
   id: 'electrical-grid-source',
   phase: 'solveElectrical',
   componentKind: 'electricalGridSource',
   reads: ['available', 'voltageFraction', 'frequencyHz'],
-  writes: ['energized', 'availablePowerMw', 'voltageFraction'],
+  writes: ['energized', 'availablePowerMw', 'supplyVoltageFraction'],
   update: ({ component, context }): void => {
     const available = context.readBoolean(componentVariablePath(component, 'available'))
-    const voltageFraction = clamp(context.readNumber(componentVariablePath(component, 'voltageFraction')), 0, 1.2)
+    const voltageFraction = context.readNumber(componentVariablePath(component, 'voltageFraction'))
     context.write(componentVariablePath(component, 'energized'), available && voltageFraction > 0)
     context.write(componentVariablePath(component, 'availablePowerMw'), available && voltageFraction > 0 ? parameterNumber(component, 'nominalPowerMw') : 0)
-    context.write(componentVariablePath(component, 'voltageFraction'), available ? voltageFraction : 0)
+    context.write(componentVariablePath(component, 'supplyVoltageFraction'), available ? voltageFraction : 0)
   },
 }
 

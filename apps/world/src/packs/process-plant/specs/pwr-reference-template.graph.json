@@ -3634,10 +3634,10 @@
           "description": "Offsite grid available electrical power"
         },
         {
-          "path": "voltageFraction",
+          "path": "supplyVoltageFraction",
           "tagId": "GRID-VOLTAGE",
           "equipmentId": "offsiteGrid",
-          "description": "Offsite grid voltage fraction"
+          "description": "Offsite supply voltage fraction, as the undervoltage relays read it on the Plant's side: the grid's voltage while the grid is available, none while it is lost"
         },
         {
           "path": "frequencyHz",
@@ -13067,6 +13067,7 @@
     "deltaTChannelE.loopFlowFraction",
     "deltaTChannelF.deltaTPowerPercent",
     "deltaTChannelF.forcedFlow",
-    "deltaTChannelF.loopFlowFraction"
+    "deltaTChannelF.loopFlowFraction",
+    "offsiteGrid.supplyVoltageFraction"
   ]
 }
