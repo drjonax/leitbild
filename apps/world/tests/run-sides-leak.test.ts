@@ -360,6 +360,14 @@ describe('the wire oracle on a sided fixture Run', () => {
     expect(assigned).toMatchObject({ kind: 'command', result: { ok: true } })
     const refused = await command(red, fixtureCommandIds.assign, { unitId: names.blueUnit.id, taskId: names.redTask.id })
     expect(refused.kind === 'command' && !refused.result.ok ? refused.result.reason : null).toMatch(/^not_in_picture: /)
+    // An id taken by another side's object, or a place on one, is refused as not in the picture, never as taken.
+    for (const item of [
+      { type: 'unit', id: names.redUnit.id, label: `copy ${nonce}`, position: [10.70, 59.91], speedMps: 10, audience: ['blue'] },
+      attempt({ type: 'unit', id: `unit:bluenear-${nonce}`, label: `bluenear ${nonce}`, atObject: names.redTask.id, speedMps: 10, audience: ['blue'] }),
+    ]) {
+      const taken = await command(blue, fixtureCommandIds.createItem, { item })
+      expect(taken.kind === 'command' && !taken.result.ok ? taken.result.reason : null).toMatch(/^not_in_picture: /)
+    }
     const state = await asScreen(blue, async () => await querySimulationRunCapability<{ units: Array<{ id: string }>; tasks: Array<{ id: string }>; sites: Array<{ id: string }> }>(runId, fixtureQueryIds.state, {}))
     expect([...state.units, ...state.tasks, ...state.sites].map(object => object.id).sort()).toEqual([names.depot.id, names.blueTask.id, names.blueUnit.id].sort())
     await barrier(red, blue)
@@ -433,7 +441,7 @@ describe('the wire oracle on a sided fixture Run', () => {
     expect(restricted.success ? null : restricted.error.issues.map(issue => (issue as { readonly params?: { readonly code?: string } }).params?.code)).toContain('agent_restrictions_in_role_run')
   })
 
-  test('case 9: side screens call only allow-listed routes and, after a reset, re-join through the Run read', async () => {
+  test('case 9: every request this script\'s side screens made reached an allow-listed route with their role set, other routes refuse a side view, and after a reset a side screen re-joins through the Run read', async () => {
     const director = createScreen('director', ['control'])
     await join(director)
     const readies = blue.applied.filter(entry => entry.kind === 'ready').length
@@ -444,6 +452,8 @@ describe('the wire oracle on a sided fixture Run', () => {
     // A screen re-joining reads the Run, never the Scenario fetch.
     const reread = await readRun(blue)
     expect(reread.snapshot.objects.map(object => String(object.id)).sort()).toEqual([names.depot.id, names.blueTask.id, names.blueUnit.id].sort())
+    // This proves the requests the client modules made for the steps scripted
+    // here, not every request a full World screen could make.
     const runPath = `/api/workspaces/${workspaceId}/world/simulation-runs/${runId}`
     const allowed = (screen: Screen) => new RegExp(`^${runPath.replaceAll('.', '\\.')}(/snapshot|/presence|/capabilities/world\\.fixture\\.[a-z.-]+/invoke)?\\?roles=${encodeURIComponent(screen.roleIds.join(','))}$`)
     for (const screen of [red, blue]) {

@@ -182,7 +182,7 @@ const stateOf = (objects: ReadonlyArray<OperationalObject>): z.infer<typeof stat
 const refusal = (code: string, message: string): Error => new Error(`${code}: ${message}`)
 
 /** A role-aware Pack answers only within the stamped viewer's picture; without a viewer it sees everything. */
-const inPicture = (object: OperationalObject, viewer: RunViewer | undefined): boolean =>
+const inPicture = (object: { readonly audience?: OperationalObject['audience'] }, viewer: RunViewer | undefined): boolean =>
   viewer === undefined || audienceVisibleTo(object.audience, viewer.sees)
 
 const createRecorder = (selection: ScenarioRecordingSelection, startsAtMs: number) => {
@@ -305,9 +305,15 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
     const apply = (command: CommandEnvelope, viewer: RunViewer | undefined): Change[] => {
       if (command.kind === fixtureCommandIds.createItem) {
         const { item } = createItemInput.parse(command.payload)
-        const object = createFixtureObject(item, { at: nowIso(), objectById })
-        if (!inPicture(object, viewer)) throw refusal('not_in_picture', 'a screen creates only objects in its own picture')
-        return [{ object, history: 'record' }]
+        // Every picture check comes before construction, which would say an id
+        // is taken or read a place: a side view learns nothing that way of an
+        // object outside its picture, and the refusal echoes no id.
+        if (!inPicture(item, viewer)) throw refusal('not_in_picture', 'a screen creates only objects in its own picture')
+        for (const id of [item.id, ...(item.atObject === undefined ? [] : [item.atObject])]) {
+          const existing = objectById(id)
+          if (existing !== undefined && !inPicture(existing, viewer)) throw refusal('not_in_picture', 'an object this command names is not in your picture')
+        }
+        return [{ object: createFixtureObject(item, { at: nowIso(), objectById }), history: 'record' }]
       }
       if (command.kind === fixtureCommandIds.assign) {
         const { unitId, taskId } = assignInput.parse(command.payload)
