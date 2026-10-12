@@ -10,6 +10,12 @@ import { fixedSemantics } from './semantics.ts'
 const positive = z.number().finite().positive()
 const nonnegative = z.number().finite().nonnegative()
 
+/** The spans a loop's delta-T power and flow indicators read over: 0 to 150 % of rated power, 0 to 120 % of rated flow. */
+export const deltaTChannelSpans = {
+  deltaTPowerPercent: { min: 0, max: 150 },
+  loopFlowFraction: { min: 0, max: 1.2 },
+} as const
+
 export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
   defineComponent({
     kind: 'deltaTProtectionChannel' as ComponentKind,
@@ -29,6 +35,13 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
     // the setpoints are their steady-state values. dT0, T' (= T'') and P'
     // are the model's own rated loop delta-T, rated Tavg and nominal
     // pressurizer pressure.
+    // The same delta-T over dT0 is the loop's delta-T power, the board's
+    // check of the power range, calibrated at forced flow: in natural
+    // circulation the loop's delta-T measures its slow flow, not its power,
+    // so it reads power only while the loop's reactor coolant pump runs. The
+    // loop's flow instruments on its cold leg read the loop's forward flow as
+    // a share of its rated flow; a loop the others drive backwards reads none.
+    // Both indicators pin at the ends of their spans.
     ports: {},
     parametersSchema: z.object({
       /** Overtemperature delta-T margin at T' and P', a fraction of dT0. */
@@ -42,7 +55,10 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       /** Fall of the overpower setpoint per degree of Tavg above T'', a fraction of dT0 per degC. */
       overpowerK6PerC: nonnegative,
     }).strict(),
-    semantics: fixedSemantics({ keyValues: ['overtemperatureMarginC', 'overpowerMarginC'] }),
+    semantics: fixedSemantics({
+      keyValues: ['overtemperatureMarginC', 'overpowerMarginC'],
+      meaningfulWhile: [{ flag: 'forcedFlow', variables: ['deltaTPowerPercent'] }],
+    }),
     variables: [
       variable({ path: 'deltaTC', label: 'Loop delta-T', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
       variable({ path: 'averageTemperatureC', label: 'Loop average temperature', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
@@ -50,6 +66,10 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       variable({ path: 'overpowerSetpointC', label: 'Overpower delta-T setpoint', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
       variable({ path: 'overtemperatureMarginC', label: 'Overtemperature delta-T margin', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
       variable({ path: 'overpowerMarginC', label: 'Overpower delta-T margin', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
+      // Declared last, so the variables before them keep their places.
+      variable({ path: 'deltaTPowerPercent', label: 'Loop delta-T power', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'percent', limits: { hardRange: deltaTChannelSpans.deltaTPowerPercent, instrumentSpan: deltaTChannelSpans.deltaTPowerPercent } }),
+      variable({ path: 'forcedFlow', label: 'Loop forced flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'loopFlowFraction', label: 'Loop flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'flow', quantity: 'ratio', unit: 'fraction', limits: { hardRange: deltaTChannelSpans.loopFlowFraction, instrumentSpan: deltaTChannelSpans.loopFlowFraction } }),
     ],
   }),
   defineComponent({

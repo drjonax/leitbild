@@ -1,4 +1,4 @@
-import type { CompiledComponent, CompiledProcessLink } from '../../graph/index.ts'
+import { primaryLoopPumpForLink, ratedFlowForLink, type CompiledComponent, type CompiledProcessLink } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
 import {
@@ -8,12 +8,18 @@ import {
   type ComponentInitialReconciliationDefinition,
   type ProcessPlantBehaviorContext,
 } from '../behavior-contract.ts'
-import { parameterNumber, relaxToward } from '../component-helpers.ts'
+import { deltaTChannelSpans } from '../../graph/instrumentation-component-definitions.ts'
+import { clamp, parameterNumber, relaxToward } from '../component-helpers.ts'
+import { primaryLoopLegReversed } from '../primary-loop-hydraulics.ts'
 import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 
 interface LoopLegs {
   readonly hotLeg: CompiledProcessLink
   readonly coldLeg: CompiledProcessLink
+  /** The loop's reactor coolant pump, whose run feedback says the loop has forced flow. */
+  readonly pump: CompiledComponent
+  /** The flow the cold leg is rated for, the loop's share of the core's. */
+  readonly ratedFlowKgPerS: number
 }
 
 const loopLegsCache = new WeakMap<CompiledComponent, LoopLegs>()
@@ -44,13 +50,15 @@ const loopLegsFor = (system: CompiledProcessPlant, channel: CompiledComponent): 
     outgoing(steamGenerator).find(link => link.service === 'primaryCoolant'),
     `delta-T channel ${channel.id} finds no cold leg leaving ${steamGenerator.id}`,
   )
-  const legs = { hotLeg, coldLeg }
+  const pump = required(primaryLoopPumpForLink(system.graph, coldLeg), `delta-T channel ${channel.id} finds no reactor coolant pump on cold leg ${coldLeg.id}`)
+  const ratedFlowKgPerS = required(ratedFlowForLink(system.graph, coldLeg), `delta-T channel ${channel.id} finds no rated flow for cold leg ${coldLeg.id}`)
+  const legs = { hotLeg, coldLeg, pump, ratedFlowKgPerS }
   loopLegsCache.set(channel, legs)
   return legs
 }
 
 const deltaTChannelReadings = (system: CompiledProcessPlant, channel: CompiledComponent, context: ProcessPlantBehaviorContext) => {
-  const { hotLeg, coldLeg } = loopLegsFor(system, channel)
+  const { hotLeg, coldLeg, pump, ratedFlowKgPerS } = loopLegsFor(system, channel)
   const core = primarySystemReactorCore(system)!
   const pressurizer = required(primarySystemPressurizer(system), `delta-T channel ${channel.id} needs a pressurizer pressure channel`)
   const hot = context.readNumber(processLinkVariablePath(hotLeg, 'temperatureC'))
@@ -73,10 +81,20 @@ const deltaTChannelReadings = (system: CompiledProcessPlant, channel: CompiledCo
     parameterNumber(channel, 'overpowerK4')
     - parameterNumber(channel, 'overpowerK6PerC') * Math.max(0, temperatureDeviation)
   ))
-  return { deltaT, averageTemperature, overtemperatureSetpoint, overpowerSetpoint }
+  // The cold leg carries the loop's flow forward, or, driven backwards by the other loops, none it would read.
+  const forwardFlow = primaryLoopLegReversed(system, coldLeg, context) ? 0 : Math.max(0, context.readNumber(processLinkVariablePath(coldLeg, 'flowKgPerS')))
+  return {
+    deltaT,
+    averageTemperature,
+    overtemperatureSetpoint,
+    overpowerSetpoint,
+    deltaTPowerPercent: clamp(deltaT / ratedDeltaT * 100, deltaTChannelSpans.deltaTPowerPercent.min, deltaTChannelSpans.deltaTPowerPercent.max),
+    forcedFlow: context.readBoolean(componentVariablePath(pump, 'runningState')),
+    loopFlowFraction: clamp(forwardFlow / ratedFlowKgPerS, deltaTChannelSpans.loopFlowFraction.min, deltaTChannelSpans.loopFlowFraction.max),
+  }
 }
 
-const deltaTChannelWrites = ['deltaTC', 'averageTemperatureC', 'overtemperatureSetpointC', 'overpowerSetpointC', 'overtemperatureMarginC', 'overpowerMarginC']
+const deltaTChannelWrites = ['deltaTC', 'averageTemperatureC', 'overtemperatureSetpointC', 'overpowerSetpointC', 'overtemperatureMarginC', 'overpowerMarginC', 'deltaTPowerPercent', 'forcedFlow', 'loopFlowFraction']
 
 const writeDeltaTChannel = (system: CompiledProcessPlant, channel: CompiledComponent, context: ProcessPlantBehaviorContext): void => {
   const reading = deltaTChannelReadings(system, channel, context)
@@ -86,6 +104,9 @@ const writeDeltaTChannel = (system: CompiledProcessPlant, channel: CompiledCompo
   context.write(componentVariablePath(channel, 'overpowerSetpointC'), reading.overpowerSetpoint)
   context.write(componentVariablePath(channel, 'overtemperatureMarginC'), reading.overtemperatureSetpoint - reading.deltaT)
   context.write(componentVariablePath(channel, 'overpowerMarginC'), reading.overpowerSetpoint - reading.deltaT)
+  context.write(componentVariablePath(channel, 'deltaTPowerPercent'), reading.deltaTPowerPercent)
+  context.write(componentVariablePath(channel, 'forcedFlow'), reading.forcedFlow)
+  context.write(componentVariablePath(channel, 'loopFlowFraction'), reading.loopFlowFraction)
 }
 
 const balanceVessel = (system: CompiledProcessPlant, balance: CompiledComponent): CompiledComponent =>
@@ -125,7 +146,7 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
     // solved: a one-second RTD lag, shorter than a real RTD's few seconds.
     phase: 'updateComponentState',
     componentKind: 'deltaTProtectionChannel',
-    reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
+    reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'cold leg:flowKgPerS', 'loop pump runningState', 'loop pump loopReverseFlowKgPerS', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
     writes: deltaTChannelWrites,
     update: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
   },
@@ -170,7 +191,7 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
     componentKind: 'deltaTProtectionChannel',
     // Its RTDs read the loop legs, so it starts from their temperatures once the links are solved.
     afterLinks: true,
-    reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
+    reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'cold leg:flowKgPerS', 'loop pump runningState', 'loop pump loopReverseFlowKgPerS', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
     writes: deltaTChannelWrites,
     reconcile: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
   },

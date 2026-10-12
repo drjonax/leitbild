@@ -4651,11 +4651,32 @@
           "tagId": "OPDT-411-MARGIN",
           "equipmentId": "deltaTChannelA",
           "description": "Loop A overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "deltaTPowerPercent",
+          "tagId": "TDI-411-PWR",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A delta-T power: loop delta-T over its value at rated thermal power, in percent over its 0 to 150 % span; reads power only with forced flow, while reactor coolant pump A runs (TDI-411-FORCED-FLOW)"
+        },
+        {
+          "path": "forcedFlow",
+          "tagId": "TDI-411-FORCED-FLOW",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A forced flow: reactor coolant pump A running, so the loop's delta-T power reads power"
+        },
+        {
+          "path": "loopFlowFraction",
+          "tagId": "FI-414",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
         }
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "dT channel A"
+          "shortLabel": "dT channel A",
+          "states": {
+            "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
+          }
         }
       }
     },
@@ -4706,11 +4727,32 @@
           "tagId": "OPDT-421-MARGIN",
           "equipmentId": "deltaTChannelB",
           "description": "Loop B overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "deltaTPowerPercent",
+          "tagId": "TDI-421-PWR",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B delta-T power: loop delta-T over its value at rated thermal power, in percent over its 0 to 150 % span; reads power only with forced flow, while reactor coolant pump B runs (TDI-421-FORCED-FLOW)"
+        },
+        {
+          "path": "forcedFlow",
+          "tagId": "TDI-421-FORCED-FLOW",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B forced flow: reactor coolant pump B running, so the loop's delta-T power reads power"
+        },
+        {
+          "path": "loopFlowFraction",
+          "tagId": "FI-424",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
         }
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "dT channel B"
+          "shortLabel": "dT channel B",
+          "states": {
+            "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
+          }
         }
       }
     },
@@ -4761,11 +4803,32 @@
           "tagId": "OPDT-431-MARGIN",
           "equipmentId": "deltaTChannelC",
           "description": "Loop C overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "deltaTPowerPercent",
+          "tagId": "TDI-431-PWR",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C delta-T power: loop delta-T over its value at rated thermal power, in percent over its 0 to 150 % span; reads power only with forced flow, while reactor coolant pump C runs (TDI-431-FORCED-FLOW)"
+        },
+        {
+          "path": "forcedFlow",
+          "tagId": "TDI-431-FORCED-FLOW",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C forced flow: reactor coolant pump C running, so the loop's delta-T power reads power"
+        },
+        {
+          "path": "loopFlowFraction",
+          "tagId": "FI-434",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
         }
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "dT channel C"
+          "shortLabel": "dT channel C",
+          "states": {
+            "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
+          }
         }
       }
     },
@@ -4816,11 +4879,32 @@
           "tagId": "OPDT-441-MARGIN",
           "equipmentId": "deltaTChannelD",
           "description": "Loop D overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "deltaTPowerPercent",
+          "tagId": "TDI-441-PWR",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D delta-T power: loop delta-T over its value at rated thermal power, in percent over its 0 to 150 % span; reads power only with forced flow, while reactor coolant pump D runs (TDI-441-FORCED-FLOW)"
+        },
+        {
+          "path": "forcedFlow",
+          "tagId": "TDI-441-FORCED-FLOW",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D forced flow: reactor coolant pump D running, so the loop's delta-T power reads power"
+        },
+        {
+          "path": "loopFlowFraction",
+          "tagId": "FI-444",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
         }
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "dT channel D"
+          "shortLabel": "dT channel D",
+          "states": {
+            "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
+          }
         }
       }
     },
@@ -4871,11 +4955,32 @@
           "tagId": "OPDT-451-MARGIN",
           "equipmentId": "deltaTChannelE",
           "description": "Loop E overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "deltaTPowerPercent",
+          "tagId": "TDI-451-PWR",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E delta-T power: loop delta-T over its value at rated thermal power, in percent over its 0 to 150 % span; reads power only with forced flow, while reactor coolant pump E runs (TDI-451-FORCED-FLOW)"
+        },
+        {
+          "path": "forcedFlow",
+          "tagId": "TDI-451-FORCED-FLOW",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E forced flow: reactor coolant pump E running, so the loop's delta-T power reads power"
+        },
+        {
+          "path": "loopFlowFraction",
+          "tagId": "FI-454",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
         }
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "dT channel E"
+          "shortLabel": "dT channel E",
+          "states": {
+            "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
+          }
         }
       }
     },
@@ -4926,11 +5031,32 @@
           "tagId": "OPDT-461-MARGIN",
           "equipmentId": "deltaTChannelF",
           "description": "Loop F overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "deltaTPowerPercent",
+          "tagId": "TDI-461-PWR",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F delta-T power: loop delta-T over its value at rated thermal power, in percent over its 0 to 150 % span; reads power only with forced flow, while reactor coolant pump F runs (TDI-461-FORCED-FLOW)"
+        },
+        {
+          "path": "forcedFlow",
+          "tagId": "TDI-461-FORCED-FLOW",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F forced flow: reactor coolant pump F running, so the loop's delta-T power reads power"
+        },
+        {
+          "path": "loopFlowFraction",
+          "tagId": "FI-464",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F reactor coolant flow on its cold leg, forward flow as a share of the loop's rated flow over its 0 to 120 % span; none while the other loops drive it backwards"
         }
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "dT channel F"
+          "shortLabel": "dT channel F",
+          "states": {
+            "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
+          }
         }
       }
     },
@@ -12862,6 +12988,24 @@
     "reactorTripBreakerB.closed",
     "reactorTripBreakerB.closedState",
     "core.sourceRangeStartupRateDpm",
-    "core.sourceRangeStartupRateValid"
+    "core.sourceRangeStartupRateValid",
+    "deltaTChannelA.deltaTPowerPercent",
+    "deltaTChannelA.forcedFlow",
+    "deltaTChannelA.loopFlowFraction",
+    "deltaTChannelB.deltaTPowerPercent",
+    "deltaTChannelB.forcedFlow",
+    "deltaTChannelB.loopFlowFraction",
+    "deltaTChannelC.deltaTPowerPercent",
+    "deltaTChannelC.forcedFlow",
+    "deltaTChannelC.loopFlowFraction",
+    "deltaTChannelD.deltaTPowerPercent",
+    "deltaTChannelD.forcedFlow",
+    "deltaTChannelD.loopFlowFraction",
+    "deltaTChannelE.deltaTPowerPercent",
+    "deltaTChannelE.forcedFlow",
+    "deltaTChannelE.loopFlowFraction",
+    "deltaTChannelF.deltaTPowerPercent",
+    "deltaTChannelF.forcedFlow",
+    "deltaTChannelF.loopFlowFraction"
   ]
 }
