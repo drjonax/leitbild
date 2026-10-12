@@ -1768,11 +1768,12 @@ export const widerReading = (pen: ComposedDisplayPen, value: number, read: (path
 export interface ComposedDisplayReading {
   readonly now: ComposedDisplayNow
   readonly readings: ReadonlyArray<PenReading>
+  /** The signal it leads with (readComposedDisplay); none where nothing it draws may lead. */
+  readonly lead?: VariablePath
 }
 
-/** The signal a display leads with as read: the first ranked reading (readComposedDisplay); none where nothing ranks. */
-export const composedDisplayLead = ({ readings }: ComposedDisplayReading): VariablePath | undefined =>
-  readings[0]?.rank === null ? undefined : readings[0]?.pen.path
+/** The signal a display leads with as read (readComposedDisplay); none where nothing it draws may lead. */
+export const composedDisplayLead = (reading: ComposedDisplayReading): VariablePath | undefined => reading.lead
 
 /**
  * A display drawn with its lead first within the panel that holds it, so the
@@ -1793,12 +1794,26 @@ export const leadFirst = (display: CompiledComposedDisplay, lead: VariablePath |
   }
 }
 
-/** Reads a display once as it opens; its margins and view content are stated from this. */
+/**
+ * Reads a display once as it opens; its margins and view content are stated
+ * from this. It leads with what it draws first (leadFirst), never a value
+ * World added under it (HMI review of run 26: rcp-trip led with the
+ * pressurizer level of its MODE WATCH row, show-tavg with the deviation of its
+ * PROGRAM row); and while it draws the question's subject (a primary
+ * signal), only off normal (heading for a limit, or past one) does another
+ * signal lead over it, never by being nearest its limit (a steam
+ * generator's pressure near its alarm on top of a level question).
+ */
 export const readComposedDisplay = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ComposedDisplayReading => {
   const readings = penReadings(display, now)
   const ranked = readings.filter(entry => entry.rank !== null)
     .sort((left, right) => left.rank!.order - right.rank!.order || left.rank!.by - right.rank!.by)
-  return { now, readings: [...ranked, ...readings.filter(entry => entry.rank === null)] }
+  const drawn = display.panels.filter(panel => panel.kind !== 'evidence').flatMap(composedPanelPens)
+  const drawnPaths = new Set(drawn.map(pen => pen.path))
+  const subjects = new Set(drawn.filter(pen => pen.role === 'primary').map(pen => pen.path))
+  const leads = (entry: PenReading): boolean => drawnPaths.has(entry.pen.path)
+    && (subjects.size === 0 || subjects.has(entry.pen.path) || entry.rank!.order < 3)
+  return { now, readings: [...ranked, ...readings.filter(entry => entry.rank === null)], ...(ranked.find(leads) === undefined ? {} : { lead: ranked.find(leads)!.pen.path }) }
 }
 
 /**
@@ -1852,7 +1867,7 @@ const travelContent = (entry: PenReading | undefined): Pick<EmbeddedViewContent[
  */
 export const composedDisplayContent = (
   display: CompiledComposedDisplay,
-  { now, readings }: ComposedDisplayReading,
+  { now, readings, lead: leads }: ComposedDisplayReading,
   historyMs: number,
   equipment: EmbeddedViewContent['items'],
 ): EmbeddedViewContent => {
@@ -1879,7 +1894,7 @@ export const composedDisplayContent = (
     ? [{ names: [panel.scope === 'plant' ? 'Active alarms and trips of the Plant' : 'Active alarms and trips of the displayed signals and equipment'], values: [], limits: [], history: false }]
     : [])
   const trend = display.panels.find(panel => panel.kind === 'trend')
-  const lead = readings.find(entry => entry.pen.path === composedDisplayLead({ now, readings }))
+  const lead = readings.find(entry => entry.pen.path === leads)
   return {
     items: [...items, ...equipment, ...alarms],
     span: trend === undefined ? null : { shownMs: trendSpanMs(trend.horizonMs, historyMs), horizonMs: trend.horizonMs },

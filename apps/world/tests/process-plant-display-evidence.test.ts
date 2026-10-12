@@ -567,4 +567,22 @@ describe('what a display shows of a trip (HMI review of run 26)', () => {
     expect(all.map(line => [line.items.length, line.note])).toEqual([[3, false], [0, true]])
   }, PLANT_HANG_GUARD_MS)
 
+  test('a display leads with what it draws, and with its subject over a value only nearest its limit', () => {
+    // rcp-trip led with the pressurizer level of its MODE WATCH row, show-tavg with the deviation of its PROGRAM row:
+    // values World adds under the agent's panels never lead.
+    const power = atPower()
+    const tavg = power.compose('Tavg over ten minutes', ['TAVG'], [{ kind: 'trend', horizon: '10m', signals: [signal('TAVG', 'primary')] }])
+    const leadOf = (result: { readonly viewContent: unknown }) => {
+      const content = embeddedViewContentSchema.parse(result.viewContent)
+      return content.lead === null ? null : content.items[content.lead.item]!.names[0]
+    }
+    expect(rowsOf(tavg.display)).toEqual([{ kind: 'program', name: '', items: ['TREF', 'TAVG-TREF'] }])
+    expect(leadOf(tavg.result)).not.toBe('TAVG-TREF')
+    // A steam generator's pressure nearest its alarm does not lead a level question whose level the display draws.
+    const level = power.compose('SG A level at power', ['SG-A-LVL-NR'], [{ kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), signal('SG-A-PRESS')] }])
+    expect(leadOf(level.result)).toBe('SG-A-LVL-NR')
+    const trend = level.display.panels[0]!
+    if (trend.kind !== 'trend') throw new Error('expected the trend')
+    expect(trend.strips[0]!.pens[0]!.tagId).toBe('SG-A-LVL-NR')
+  }, PLANT_HANG_GUARD_MS)
 })
