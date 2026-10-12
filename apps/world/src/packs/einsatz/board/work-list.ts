@@ -59,10 +59,26 @@ export const recommendationKey = (rules: BoardRules, records: BoardRecords, task
     [...records.units.values()]
       .filter(unit => unit.side === task.side && counts(unit))
       .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
-      // An uncommanded unit counts only towards whether the task could ever be served.
-      .map(unit => [unit.id, rules.commands(unit) ? rules.dispatchClass(records, unit) : unit.integrity === 'destroyed' ? 'destroyed' : 'uncommanded', unit.properties]),
+      // An uncommanded unit counts only towards whether the task could ever be served; any unit holding the task queued is its "next".
+      .map(unit => [unit.id, rules.commands(unit) ? rules.dispatchClass(records, unit) : unit.integrity === 'destroyed' ? 'destroyed' : 'uncommanded', unit.properties, chainKey(unit, task)]),
   ])
 }
+
+/**
+ * What a recommendation reads of a unit's job chain: how many steps it
+ * holds (a candidate says so, for "Do now" or "Add to end") and where it
+ * holds the task queued (the answer's `next`).
+ */
+const chainKey = (unit: BoardUnit, task: BoardTask): ReadonlyArray<unknown> => [
+  unit.orders.length,
+  unit.paused === true,
+  unit.orders.flatMap((step, index) => step.state === 'queued' && 'taskId' in step.target && step.target.taskId === task.id ? [`${step.id}@${index}`] : []),
+]
+
+/** "A3 next, 2 steps ahead": the units holding the task queued in their job chains, as the recommendation names them. */
+export const nextText = (answer: Recommendation): string | null => answer.next.length === 0 ? null : answer.next
+  .map(entry => entry.stepsAhead === 0 ? `${entry.label} next` : `${entry.label} next, ${entry.stepsAhead} ${entry.stepsAhead === 1 ? 'step' : 'steps'} ahead`)
+  .join(' · ')
 
 /** What the task still needs from the viewer's units, in configuration words: "2 more guards", "P3×1". */
 export const remainderFor = (rules: BoardRules, task: BoardTask, view: RoleView): string[] => {
@@ -211,6 +227,7 @@ export const workRow = (rules: BoardRules, records: BoardRecords, entry: WorkEnt
     ageText: ageText(task, context.nowMs),
     coverageText: coverageText(rules, records, entry),
     etaText: context.answer === undefined ? null : proposalText(context.answer),
+    nextText: context.answer === undefined ? null : nextText(context.answer),
     statusText: context.answer !== undefined ? statusText(context.answer, unitId => isFreeIn(records, unitId), couldBecomeEligible(rules, records)) : context.failure === undefined ? null : noRecommendationText(context.failure),
     alerts: task.alerts.map(alert => alert.message),
     closeLabel: word(rules, 'close'),

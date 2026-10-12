@@ -68,11 +68,14 @@ export type TargetPreview = PackTargetPreview
 export type BoardKey = PanelKey
 
 /**
- * What a busy asset may do with a new target. "Do now" replaces its current
- * job; "Add to end" joins once job chains land and `world.einsatz.unit.queue`
- * exists.
+ * What a busy asset may do with a new target: "Do now" replaces the step it
+ * carries out (`world.einsatz.unit.send`); "Add to end" puts the target at
+ * the end of its job chain (`world.einsatz.unit.queue`).
  */
-export type ChoiceOption = 'do-now'
+export type ChoiceOption = 'do-now' | 'add-to-end'
+
+/** The verbs an asset offers: recall; hold (the Stop of its chain) or, while paused, resume; clear its chain; add a target (+); move (the M key). */
+export type UnitVerb = 'recall' | 'hold' | 'resume' | 'clear' | 'add' | 'move'
 
 /**
  * What a tap or click hit on the Board.
@@ -93,8 +96,15 @@ export type ClickTarget =
   | { readonly kind: 'move-here' }
   | { readonly kind: 'undo' }
   | { readonly kind: 'cancel' }
-  /** A verb button in the action bar: recall or hold the highlighted asset, close the selected call; move arms a move (the M key). */
-  | { readonly kind: 'verb'; readonly verb: 'recall' | 'hold' | 'move' | 'close'; readonly id: string }
+  /**
+   * A verb button: recall, stop (hold), resume or clear an asset, close the
+   * selected call; move arms a move (the M key); add (an asset row's +)
+   * highlights the asset for its next target tap to join the end of its
+   * job chain.
+   */
+  | { readonly kind: 'verb'; readonly verb: UnitVerb | 'close'; readonly id: string }
+  /** A step's × on the highlighted asset's job chain. */
+  | { readonly kind: 'remove-step'; readonly unitId: string; readonly stepId: string }
   | { readonly kind: 'enable-sound' }
 
 /** A command's outcome as the Run answered this screen; a transport failure is a refusal with its reason. */
@@ -147,6 +157,8 @@ export interface WorkRow {
   readonly coverageText: string
   /** The shown proposal and its complete arrival: "A3 + A5 ≈4:20". */
   readonly etaText: string | null
+  /** Units holding the task queued in their job chains, which count towards nothing yet: "A3 next, 2 steps ahead". */
+  readonly nextText: string | null
   /**
    * Why no unit is proposed, or a divert: "Divert A2 from C-9 (P3) · 3:10";
    * "No eligible unit · Unit 2 · Payload 300 kg · needs ≥ 500 kg" when a free
@@ -232,6 +244,24 @@ export interface UnitRow {
   readonly selected: boolean
   /** Move is armed for this unit: the next map click moves it. */
   readonly moveArmed: boolean
+  /** Its job chain: the active step, then the queued ones as "next". */
+  readonly chain: ReadonlyArray<ChainStepRow>
+  /** Paused by Stop: it starts no further step until Resume or a new order. */
+  readonly pausedText: string | null
+  /** Whether its + is offered: a living unit whose chain has room. */
+  readonly canAdd: boolean
+  /** The + was tapped: the next target tap joins the end of its chain. */
+  readonly adding: boolean
+}
+
+/** One step of an asset's job chain, as its row shows it. */
+export interface ChainStepRow {
+  readonly stepId: string
+  /** The active step as it is, "C-1" or "to S1"; a queued one as "next: deliver to H1", "next: to a map point", "next: engage T-3". */
+  readonly text: string
+  readonly active: boolean
+  /** Whether its × is offered: not the delivery of the load the unit carries, which the engine keeps. */
+  readonly removable: boolean
 }
 
 /** A track in the Contacts list, in its side's knowledge only. */
@@ -292,7 +322,7 @@ export interface ContactsView {
  * - confirm: a divert, or closing a call with waiting load; the detail names
  *   what is dropped, once; the button confirms.
  * - choice: a busy asset sent to a new target; the options say what it may
- *   do ("Do now" today).
+ *   do: "Do now" or "Add to end".
  * - move: a tap on open ground; the button moves the asset there, as does
  *   the prompt on the map.
  * - asset: an asset is highlighted; its verbs are the buttons.
@@ -309,8 +339,8 @@ export interface CommitElement {
   readonly button: string | null
   /** A busy asset's options, each a button. */
   readonly options: ReadonlyArray<{ readonly option: ChoiceOption; readonly label: string }>
-  /** The highlighted asset's verbs, or the selected call's close verb. */
-  readonly verbs: ReadonlyArray<{ readonly verb: 'recall' | 'hold' | 'close'; readonly label: string; readonly id: string }>
+  /** The highlighted asset's verbs (Stop or Resume, Clear, recall), or the selected call's close verb. */
+  readonly verbs: ReadonlyArray<{ readonly verb: Exclude<UnitVerb, 'add' | 'move'> | 'close'; readonly label: string; readonly id: string }>
   readonly enabled: boolean
   /** Why it is disabled for now: "Confirm next: C-14" during a guard. */
   readonly hint: string | null
@@ -379,7 +409,7 @@ export interface BoardView {
   readonly selected: SelectedTask | { readonly kind: 'unit'; readonly id: string } | null
   readonly commit: CommitElement
   readonly feedback: Feedback | null
-  /** The Undo button's label for a few seconds after a send of free units was accepted; null otherwise. */
+  /** The Undo button's label for 5 s after a send or a queue was accepted and the Run shows the step it created; null otherwise. */
   readonly undo: string | null
   /** The prompt to show on the map after a tap on open ground; null when there is none. */
   readonly mapPrompt: BoardMapPrompt | null

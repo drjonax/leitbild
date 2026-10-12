@@ -2,11 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { einsatzCommandIds as ids } from '../capabilities.ts'
 import { civilConfig, civilKinds, civilWith, createWall, onObject, openScreen, pastGuardMs, pointAt, taskAt, unitAt } from '../fixtures/board-harness.ts'
 import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
-import { openModeViewer } from '../picture.ts'
 import { refusalCode } from '../refusal.ts'
-import { sendFromMap, undoCalls } from './calls.ts'
-import { readBoardRecords } from './records.ts'
-import { createBoardRules } from './rules.ts'
 import { boardWords } from './text.ts'
 
 /**
@@ -108,43 +104,43 @@ describe('Board tap safety', () => {
 })
 
 describe('Board verbs and Undo say only what they do', () => {
-  test('Hold is offered for a free asset only; a committed one offers its recall alone', async () => {
+  test('Stop is offered for every asset and Resume once it is paused; Clear while it holds steps; recall always', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 })], async run => {
       await accepted(run, ids.send, { units: ['u2'], to: { taskId: 't1' } })
       const screen = await openScreen(run, createWall())
       await screen.click({ kind: 'row', list: 'units', id: 'u1' })
       expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['hold', 'recall'])
       await screen.click({ kind: 'row', list: 'units', id: 'u2' })
-      expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['recall'])
+      expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['hold', 'clear', 'recall'])
+      await screen.click({ kind: 'verb', verb: 'hold', id: 'u2' })
+      expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['resume', 'clear', 'recall'])
+      expect(screen.view().unitBoard.rows.find(row => row.id === 'u2')?.pausedText).toBe(boardWords.paused)
+      await screen.click({ kind: 'verb', verb: 'resume', id: 'u2' })
+      expect(screen.calls.map(call => [call.capabilityId, call.result.ok])).toEqual([[ids.hold, true], [ids.resume, true]])
+      expect(run.unit('u2').paused).toBeUndefined()
     })
   })
 
-  test('a send to a call offers Undo; a send to a site or to open ground does not, nor would a send of a loaded unit or of one holding queued steps', async () => {
+  test('a send of a free asset to a call, a site or open ground offers Undo, which removes the step the send created; a send that drops a step offers none', async () => {
     await withScene([unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)), unitAt('h1', 'H1', site, at(1, 1)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 })], async run => {
       const screen = await openScreen(run, createWall())
       await screen.mapTap('u1')
       await screen.mapTap('h1')
-      expect([screen.calls.at(-1)!.input, screen.view().undo]).toEqual([{ units: ['u1'], to: { siteId: 'h1' } }, null])
+      expect([screen.calls.at(-1)!.input, screen.view().undo]).toEqual([{ units: ['u1'], to: { siteId: 'h1' } }, boardWords.undo])
+      await screen.click({ kind: 'undo' })
+      expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.stepRemove, input: { unitId: 'u1', stepId: 'step-1' }, result: { ok: true } })
+      expect(run.unit('u1').orders).toEqual([])
       await screen.mapTap('u2')
       await screen.groundTap(at(2, 2))
       await screen.click({ kind: 'move-here' })
-      expect([screen.calls.at(-1)!.input, screen.view().undo]).toEqual([{ units: ['u2'], to: { point: pointAt(at(2, 2)) } }, null])
+      expect([screen.calls.at(-1)!.input, screen.view().undo]).toEqual([{ units: ['u2'], to: { point: pointAt(at(2, 2)) } }, boardWords.undo])
+      // U2 now holds a step: a call tapped for it asks, and doing it now drops the move, so it offers no Undo.
       await screen.mapTap('u2')
       await screen.mapTap('t1')
-      expect([screen.calls.at(-1)!.input, screen.view().undo]).toEqual([{ units: ['u2'], to: { taskId: 't1' } }, boardWords.undo])
-      expect(screen.calls.every(call => call.result.ok)).toBe(true)
-
-      // A recall refuses a loaded unit, so its send has no Undo.
-      const rules = createBoardRules(civilConfig, openModeViewer, () => [])
-      const records = readBoardRecords(run.run.snapshot().objects)
-      const u1 = records.units.get('u1')!
-      const loaded = { ...records, units: new Map([...records.units, ['u1', { ...u1, load: { [low]: 1 } }]]) }
-      const send = sendFromMap(rules, loaded, loaded.units.get('u1')!, { taskId: 't1' })
-      expect(undoCalls(rules, loaded, send)).toBeNull()
-      // A recall clears a unit's whole job chain, so a send of one holding queued steps has no Undo either.
-      const chained = { ...records, units: new Map([...records.units, ['u1', { ...u1, orders: [{ id: 'step-9', kind: 'serve' as const, target: { taskId: 't1' }, state: 'queued' as const, by: 'Dispatcher' }] }]]) }
-      expect(undoCalls(rules, chained, sendFromMap(rules, chained, chained.units.get('u1')!, { taskId: 't1' }))).toBeNull()
-      expect(() => undoCalls(rules, { ...records, units: new Map() }, send)).toThrow('The Board sent u1, which is not in its picture')
+      expect(screen.view().commit).toMatchObject({ state: 'choice', detail: 'U2 stops: to a map point' })
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'option', option: 'do-now' })
+      expect([screen.calls.at(-1)!.input, screen.calls.at(-1)!.result.ok, screen.view().undo]).toEqual([{ units: ['u2'], to: { taskId: 't1' } }, true, null])
     })
   })
 })

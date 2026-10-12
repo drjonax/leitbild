@@ -7,7 +7,8 @@
   /**
    * Calls: one row per open task in the queue, each one tap. With an asset
    * highlighted a tap sends it to the call; with none it selects the call,
-   * whose proposal and alternatives the action bar then offers.
+   * whose proposal and alternatives the action bar then offers. A call that
+   * units hold queued in their job chains says who comes next.
    */
   interface Props {
     readonly heading: string
@@ -38,6 +39,7 @@
                 <span class="num age">{row.ageText}</span>
               </span>
               <span class="line sub">{workFacts(row).map(entry => entry.text).join(' · ')}</span>
+              {#if row.nextText !== null}<span class="line sub next">{row.nextText}</span>{/if}
               {#if row.etaText !== null || row.statusText !== null}
                 <span class="line sub">
                   {#if row.etaText !== null}<span class="num">{row.etaText}</span>{/if}
@@ -73,6 +75,7 @@
   .need { color: var(--warning); }
   .age { margin-left: auto; color: var(--muted); }
   .status { color: var(--text); }
+  .next { color: var(--accent); }
   .alert { color: var(--critical); font-size: 12px; }
   .num { font-variant-numeric: tabular-nums; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

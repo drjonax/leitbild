@@ -25,6 +25,8 @@ const lastAction = z.object({
   by: z.string().min(1),
   cause: z.string().min(1).optional(),
   atMs: ms,
+  /** The job-chain step the order created or removed: a send or a queue names the step it created. */
+  stepId: z.string().min(1).optional(),
 }).loose()
 const alert = z.object({ code: z.string().min(1), message: z.string().min(1), sinceMs: ms }).loose()
 const tally = z.number().int().nonnegative()
@@ -57,6 +59,8 @@ const unitDataSchema = z.object({
   revealed: z.literal(true).optional(),
   /** The unit's job chain (`steps.ts`): the active step first, then the queued ones. */
   orders: ordersSchema,
+  /** The number of the last step the unit was given: the next step it is given is `step-<stepSerial + 1>`. */
+  stepSerial: z.number().int().positive().optional(),
   paused: z.literal(true).optional(),
 }).loose()
 

@@ -1,9 +1,9 @@
 import type { Recommendation } from '../recommendation-schema.ts'
-import { releaseText, sendFromMap, type CallDraft, type SendTarget } from './calls.ts'
+import { queueCall, releaseText, sendFromMap, stepText, type CallDraft, type SendTarget } from './calls.ts'
 import { candidateIn } from './recommendations.ts'
 import type { BoardRecords, BoardTask, BoardUnit } from './records.ts'
-import { notOrderedText, type BoardRules, type DeclaredRole } from './rules.ts'
-import { classCode, etaText, namedOnce, unitWord } from './text.ts'
+import { hasLoad, holdsWork, notOrderedText, type BoardRules, type DeclaredRole } from './rules.ts'
+import { classCode, etaText, loadText, namedOnce, unitWord } from './text.ts'
 import type { MapTarget, TargetPreview } from './types.ts'
 
 /**
@@ -14,9 +14,23 @@ import type { MapTarget, TargetPreview } from './types.ts'
  * targets and the per-step verbs here.
  */
 
-/** What a target tap would do for a unit: send (asking first when that releases it), nothing and why, or nothing to say. */
+/**
+ * What a target tap would do for a unit: send, nothing and why, or nothing
+ * to say. An order carries both ways to give it: `call` does it now, `queue`
+ * adds it to the end of the unit's job chain. A unit that holds work
+ * (`busy`) asks which; `release` names what doing it now takes from it.
+ */
 export type MapOrder =
-  | { readonly kind: 'order'; readonly unit: BoardUnit; readonly target: SendTarget; readonly call: CallDraft; readonly release: string | null }
+  | {
+    readonly kind: 'order'
+    readonly unit: BoardUnit
+    readonly target: SendTarget
+    readonly call: CallDraft
+    readonly queue: CallDraft
+    readonly busy: boolean
+    /** What "Do now" drops: the task it leaves and the load returning there, or the step it stops; null when it drops nothing. */
+    readonly release: string | null
+  }
   | { readonly kind: 'refused'; readonly text: string }
   /** The object is no Einsatz record in the picture: a tap says so, a hover shows nothing. */
   | { readonly kind: 'elsewhere'; readonly text: string }
@@ -38,11 +52,11 @@ export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarg
   if (shown === null || unit === undefined) return refused('Not in your picture')
   if (!rules.ordersOnMap(unit)) return refused(notOrderedText(rules, context.declaredRoles, unit))
   const order = (to: SendTarget): MapOrder => {
-    const call = sendFromMap(rules, shown, unit, to)
-    if (unit.taskId === undefined) return { kind: 'order', unit, target: to, call, release: null }
+    const both = { kind: 'order' as const, unit, target: to, call: sendFromMap(rules, shown, unit, to), queue: queueCall(shown, unit, to), busy: holdsWork(unit) }
+    if (unit.taskId === undefined) return { ...both, release: dropText(shown, unit) }
     const from = shown.tasks.get(unit.taskId)
     if (from === undefined) throw new Error(`${unit.id} is committed to ${unit.taskId}, which is not in the picture`)
-    return { kind: 'order', unit, target: to, call, release: releaseText(rules, shown, unit, { taskId: from.id, label: from.label, code: classCode(rules, from.rank) }) }
+    return { ...both, release: releaseText(rules, shown, unit, { taskId: from.id, label: from.label, code: classCode(rules, from.rank) }) }
   }
   if (target.kind === 'point') return order({ point: target.point })
   const task = shown.tasks.get(target.objectId)
@@ -54,9 +68,24 @@ export const mapOrderFor = (context: TapContext, unitId: string, target: MapTarg
   }
   const other = shown.units.get(target.objectId)
   if (other === undefined) return { kind: 'elsewhere', text: `Not a target for ${unit.label}` }
-  if (other.id !== unit.id && rules.typeOf(other).components.receiving !== undefined) return order({ siteId: other.id })
+  // A unit that does not move is a site: a receiving one takes deliveries, any other is a place to go to.
+  if (other.id !== unit.id && rules.typeOf(other).components.mobility === undefined) return order({ siteId: other.id })
   if (rules.typeOf(other).components.mobility !== undefined && !rules.ordersOnMap(other)) return refused(notOrderedText(rules, context.declaredRoles, other))
   return refused(`${other.label} is not a target for ${unit.label}`)
+}
+
+/** What doing a new target now stops of a unit that holds no task: its active step; nothing while it is paused with its first step waiting. */
+const dropText = (records: BoardRecords, unit: BoardUnit): string | null => {
+  const active = unit.orders[0]?.state === 'active' ? unit.orders[0] : undefined
+  if (active !== undefined) return `${unit.label} stops: ${stepText(records, active)}`
+  return null
+}
+
+/** What a busy asset's choice says when doing it now drops nothing: the steps it holds, or the load it carries. */
+export const holdingText = (rules: BoardRules, unit: BoardUnit): string => {
+  const steps = unit.orders.length
+  if (steps > 0) return `${unit.label} holds ${steps} ${steps === 1 ? 'step' : 'steps'}`
+  return hasLoad(unit) ? `${unit.label} carries ${loadText(rules, unit.load)}` : unit.label
 }
 
 /**

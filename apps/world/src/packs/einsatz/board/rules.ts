@@ -23,6 +23,13 @@ export const hasLoad = (unit: BoardUnit): boolean => total(unit.load) > 0
 /** Free: no task and no load, not destroyed, in any phase. */
 export const isFree = (unit: BoardUnit): boolean => unit.taskId === undefined && !hasLoad(unit) && unit.integrity !== 'destroyed'
 
+/**
+ * Whether a new target would interrupt work the unit holds or wait behind
+ * it: a task, load, or steps in its job chain. Such a unit asks "Do now" or
+ * "Add to end"; one holding none is sent at once.
+ */
+export const holdsWork = (unit: BoardUnit): boolean => unit.taskId !== undefined || hasLoad(unit) || unit.orders.length > 0
+
 /** What the viewer's units can serve on a task: the services they provide and the load classes they carry. */
 export interface RoleView {
   readonly provides: ReadonlySet<string>

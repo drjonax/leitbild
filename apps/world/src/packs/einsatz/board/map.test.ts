@@ -155,16 +155,21 @@ describe('Board map targets and previews', () => {
       expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { siteId: 'h1' } }, result: { ok: true } })
       expect([screen.view().mapPrompt, screen.view().selected]).toEqual([null, null])
 
-      // A tap on the prompt moves it.
+      // A tap on the prompt moves it. U1 now holds its step to H1, so it asks whether to do it now or add it to the end.
       await screen.mapSelect('u1')
       await screen.mapTarget('u1', onGround(at(0, 3)))
       await screen.click({ kind: 'move-here' })
+      expect(screen.view().commit).toMatchObject({ state: 'choice', text: 'Move U1 → the map point', detail: 'U1 stops: to H1' })
+      await screen.wait(pastGuardMs)
+      await screen.click({ kind: 'option', option: 'do-now' })
       expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { point: pointAt(at(0, 3)) } }, result: { ok: true } })
 
-      // M arms the move: the next ground click moves at once.
+      // M arms the move: the next ground click needs no prompt.
       await screen.mapSelect('u1')
       await screen.key('m')
       await screen.mapTarget('u1', onGround(at(0, 4)))
+      await screen.wait(pastGuardMs)
+      await screen.key('Enter')
       expect(screen.calls.at(-1)).toMatchObject({ input: { units: ['u1'], to: { point: pointAt(at(0, 4)) } }, result: { ok: true } })
       expect(screen.calls.every(call => call.result.ok)).toBe(true)
     })

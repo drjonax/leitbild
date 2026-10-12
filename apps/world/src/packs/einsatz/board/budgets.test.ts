@@ -8,7 +8,8 @@ import { openRun, type OpenRun } from '../fixtures/run-harness.ts'
 import { boardWords } from './text.ts'
 
 /**
- * The dispatcher's tap budgets (A9), counted against the real runtime on a
+ * The dispatcher's tap budgets (A9: dispatch 2, a job-chain step added 2,
+ * removed 2, stop 2, a late top-priority divert 3), counted against the real runtime on a
  * running clock. Each flow runs in both tap modalities: taps on map objects,
  * routed exactly as the World surface routes them with the Board open
  * (`ui/map-target-routing.ts`), and taps on the Board's rows. Waiting out a
@@ -188,7 +189,7 @@ describe('Board tap budgets', () => {
           expect(await counted(screen, async () => {
             await tapAsset(screen, modality, 'u2')
             await tapCall(screen, modality, 'top2')
-            expect(screen.view().commit).toMatchObject({ state: 'choice', text: 'Divert U2 → TOP2', options: [{ option: 'do-now', label: boardWords.doNow }] })
+            expect(screen.view().commit).toMatchObject({ state: 'choice', text: 'Divert U2 → TOP2', options: [{ option: 'do-now', label: boardWords.doNow }, { option: 'add-to-end', label: boardWords.addToEnd }] })
             await confirm(screen, 'choice')
           })).toBe(3)
           expect(sentLast(screen)).toEqual({ units: ['u2'], to: { taskId: 'top2' }, divert: [{ unitId: 'u2', fromTaskId: 'low2' }] })
@@ -202,17 +203,45 @@ describe('Board tap budgets', () => {
           await screen.sync()
           expect(await counted(screen, async () => {
             await tapAsset(screen, modality, 'u1')
-            expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['hold', 'recall'])
+            expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['hold', 'clear', 'recall'])
             await screen.click({ kind: 'verb', verb: 'hold', id: 'u1' })
           })).toBe(2)
           expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.hold, input: { unitId: 'u1' } })
           expect(run.unit('u1').phase).toBe('holding')
           expect(await counted(screen, async () => {
             await tapAsset(screen, modality, 'u2')
-            expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['recall'])
+            expect(screen.view().commit.verbs.map(entry => entry.verb)).toEqual(['hold', 'clear', 'recall'])
             await screen.click({ kind: 'verb', verb: 'recall', id: 'u2' })
           })).toBe(2)
           expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.recall, input: { unitId: 'u2', fromTaskId: 't1' } })
+        })
+      })
+
+      test(`add a job-chain step: 2 taps, the asset's + then the target (${seat.name}, ${modality})`, async () => {
+        await withSeat(seat, [unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(6), { [low]: 1 })], async (run, screen) => {
+          await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
+          await screen.sync()
+          expect(await counted(screen, async () => {
+            await screen.click({ kind: 'verb', verb: 'add', id: 'u1' })
+            await tapCall(screen, modality, 't2')
+          })).toBe(2)
+          expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.queue, input: { unitId: 'u1', to: { taskId: 't2' } } })
+          expect(run.unit('u1').orders.map(step => [step.id, step.state])).toEqual([['step-1', 'active'], ['step-2', 'queued']])
+        })
+      })
+
+      test(`remove a job-chain step: 2 taps, the asset then the step's × (${seat.name}, ${modality})`, async () => {
+        await withSeat(seat, [unitAt('u1', 'U1', carrier, at(0)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 }), taskAt('t2', 'T2', kinds.templates.load, at(6), { [low]: 1 })], async (run, screen) => {
+          await accepted(run, ids.send, { units: ['u1'], to: { taskId: 't1' } })
+          await accepted(run, ids.queue, { unitId: 'u1', to: { taskId: 't2' } })
+          await screen.sync()
+          expect(await counted(screen, async () => {
+            await tapAsset(screen, modality, 'u1')
+            expect(screen.view().unitBoard.rows.find(entry => entry.id === 'u1')?.chain.map(step => [step.stepId, step.removable])).toEqual([['step-1', true], ['step-2', true]])
+            await screen.click({ kind: 'remove-step', unitId: 'u1', stepId: 'step-2' })
+          })).toBe(2)
+          expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.stepRemove, input: { unitId: 'u1', stepId: 'step-2' } })
+          expect(run.unit('u1').orders.map(step => step.id)).toEqual(['step-1'])
         })
       })
 
@@ -260,14 +289,14 @@ describe('Board tap budgets', () => {
     }
   }
 
-  test('Undo, for 5 s after a send of free units, recalls them from the call they were sent to; then it is gone', async () => {
+  test('Undo, for 5 s after a send of free units, removes the step the send created, as the unit\'s last order names it; then it is gone', async () => {
     await withSeat(open, [unitAt('u1', 'U1', carrier, at(0)), unitAt('u2', 'U2', carrier, at(0, 1)), taskAt('t1', 'T1', kinds.templates.load, at(5), { [low]: 1 })], async (run, screen) => {
       await screen.mapTap('u1')
       await screen.mapTap('t1')
-      expect(screen.view().undo).toBe(boardWords.undo)
+      expect([screen.view().undo, run.unit('u1').lastAction?.stepId]).toEqual([boardWords.undo, 'step-1'])
       await screen.click({ kind: 'undo' })
-      expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.recall, input: { unitId: 'u1', fromTaskId: 't1' }, result: { ok: true } })
-      expect([screen.view().undo, run.unit('u1').taskId]).toEqual([null, undefined])
+      expect(screen.calls.at(-1)).toMatchObject({ capabilityId: ids.stepRemove, input: { unitId: 'u1', stepId: 'step-1' }, result: { ok: true } })
+      expect([screen.view().undo, run.unit('u1').taskId, run.unit('u1').orders]).toEqual([null, undefined, []])
       await screen.mapTap('u2')
       await screen.mapTap('t1')
       expect(screen.view().undo).toBe(boardWords.undo)

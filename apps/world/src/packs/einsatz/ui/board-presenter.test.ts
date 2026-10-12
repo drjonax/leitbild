@@ -21,6 +21,7 @@ const unitRow = (changes: Partial<UnitRow> = {}): UnitRow => ({
   id: 'u1', label: 'U1', typeLabel: 'Carrier', icon: 'container', recallLabel: 'Recall', holdLabel: 'Hold', moveLabel: 'Move', phaseText: 'en route', phaseAgeText: '1:05',
   taskText: null, etaText: null, loadText: null, properties: [], propertiesText: null, integrityText: null,
   roeText: null, targetText: null, postureText: null, alerts: [], free: true, destroyed: false, selected: false, moveArmed: false,
+  chain: [], pausedText: null, canAdd: true, adding: false,
   ...changes,
 })
 const contactRow = (changes: Partial<ContactRow> = {}): ContactRow => ({
@@ -30,7 +31,7 @@ const contactRow = (changes: Partial<ContactRow> = {}): ContactRow => ({
 })
 const workRow = (changes: Partial<WorkRow> = {}): WorkRow => ({
   id: 't1', label: 'T1', noun: 'Job', icon: 'package', code: 'C1', needText: null, served: false, ageText: '0:42',
-  coverageText: '', etaText: null, statusText: null, alerts: [], closeLabel: 'Close', fresh: false, selected: false,
+  coverageText: '', etaText: null, nextText: null, statusText: null, alerts: [], closeLabel: 'Close', fresh: false, selected: false,
   ...changes,
 })
 
@@ -50,6 +51,11 @@ describe('Board presenter', () => {
       { text: '→ T-7', numeric: false },
       { text: 'Halting 0:12', numeric: true },
     ])
+  })
+
+  test('a unit holding a job chain shows its task in the chain, not twice, and says when it is paused', () => {
+    const chain = [{ stepId: 'step-1', text: 'T1', active: true, removable: true }, { stepId: 'step-2', text: 'next: deliver to S1', active: false, removable: false }]
+    expect(unitFacts(unitRow({ taskText: 'T1', chain, pausedText: 'paused' })).map(entry => entry.text)).toEqual(['paused'])
   })
 
   test('a work row\'s second line is its noun and coverage; a contact\'s facts say what it is, how far and old, and why it cannot be fired on', () => {

@@ -1,8 +1,10 @@
 import { roeWords, wordFor } from '../lexicon.ts'
+import { maxSteps } from '../steps.ts'
+import { stepText } from './calls.ts'
 import type { BoardRecords, BoardUnit } from './records.ts'
-import { isFree, type BoardRules } from './rules.ts'
+import { hasLoad, isFree, type BoardRules } from './rules.ts'
 import { boardWords, clockText, loadText, propertyText, unitWord, word } from './text.ts'
-import type { UnitRow } from './types.ts'
+import type { ChainStepRow, UnitRow } from './types.ts'
 
 /**
  * The unit board: the units the viewer commands that can move, free first,
@@ -35,10 +37,25 @@ const postureText = (rules: BoardRules, unit: BoardUnit, nowMs: number): string 
   return left > 0 ? `Halting ${clockText(left)}` : 'Concealed'
 }
 
+/**
+ * A unit's job chain as its row shows it, the active step first. A step's ×
+ * is offered except on the delivery of the load the unit carries now, the
+ * first step to a site, which the engine keeps; a removal the engine judges
+ * on load the unit will only pick up on the way is refused with its reason.
+ */
+export const chainRows = (records: BoardRecords, unit: BoardUnit): ReadonlyArray<ChainStepRow> => {
+  const delivery = hasLoad(unit) ? unit.orders.find(step => 'siteId' in step.target)?.id : undefined
+  return unit.orders.map(step => {
+    const active = step.state === 'active'
+    return { stepId: step.id, text: active ? stepText(records, step) : `${boardWords.next}: ${stepText(records, step)}`, active, removable: step.id !== delivery }
+  })
+}
+
 export const unitRow = (rules: BoardRules, records: BoardRecords, unit: BoardUnit, context: {
   readonly nowMs: number
   readonly selected: boolean
   readonly moveArmed: boolean
+  readonly adding: boolean
 }): UnitRow => {
   const type = rules.typeOf(unit)
   const task = unit.taskId === undefined ? undefined : records.tasks.get(unit.taskId)
@@ -68,5 +85,9 @@ export const unitRow = (rules: BoardRules, records: BoardRecords, unit: BoardUni
     destroyed: unit.integrity === 'destroyed',
     selected: context.selected,
     moveArmed: context.moveArmed,
+    chain: chainRows(records, unit),
+    pausedText: unit.paused === true ? boardWords.paused : null,
+    canAdd: unit.integrity !== 'destroyed' && unit.orders.length < maxSteps,
+    adding: context.adding,
   }
 }

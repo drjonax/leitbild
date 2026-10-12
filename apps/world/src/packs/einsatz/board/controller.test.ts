@@ -189,7 +189,7 @@ describe('Board keys after the map', () => {
         state: 'choice',
         text: 'Divert U1 → TOP',
         detail: `LOW (${code(low)}) · 1 ${civilConfig.loadClasses[2]!.noun.one} returns to the queue`,
-        options: [{ option: 'do-now', label: 'Do now' }],
+        options: [{ option: 'do-now', label: 'Do now' }, { option: 'add-to-end', label: 'Add to end' }],
         enabled: false,
       })
       await screen.mapSelect('top')

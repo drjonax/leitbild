@@ -23,9 +23,14 @@ const fact = (text: string | null, numeric = false): ReadonlyArray<Fact> => text
 export const stripHeading = (view: Pick<BoardView, 'arrangement' | 'headings'>): string =>
   view.arrangement.lead === 'work-list' ? view.headings.workList : view.headings.unitBoard
 
-/** A unit's detail line: task and ETA, load, board properties, integrity, rules of engagement, target and posture. */
+/**
+ * A unit's detail line: task (unless its job chain shows it), whether it is
+ * paused, ETA, load, board properties, integrity, rules of engagement,
+ * target and posture.
+ */
 export const unitFacts = (row: UnitRow): ReadonlyArray<Fact> => [
-  ...fact(row.taskText === null ? null : `→ ${row.taskText}`),
+  ...fact(row.taskText === null || row.chain.length > 0 ? null : `→ ${row.taskText}`),
+  ...fact(row.pausedText),
   ...fact(row.etaText, true),
   ...fact(row.loadText),
   ...row.properties.map(property => ({ text: `${property.label} ${property.value}`, numeric: true })),
