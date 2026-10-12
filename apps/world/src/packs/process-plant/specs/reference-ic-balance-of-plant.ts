@@ -388,6 +388,27 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       annunciator: annunciator({ ...turbineAlarm, equipmentId: 'condenser', priority: 'high', role: 'symptom' }),
     })],
   }),
+  // The manual turbine trip: a pushbutton on the control board
+  // (manualActuation) whose demand shuts the turbine stop valves and rejects
+  // the generator's load, a turbine trip like any other, sealed in and
+  // annunciated in the turbine trip's first-out group; above P-9 the shut stop
+  // valves then trip the reactor. The demand holds until the generator is off
+  // line.
+  rule({
+    id: 'turbine-manual-trip',
+    label: 'Manual turbine trip',
+    ruleClass: 'protection',
+    condition: comparison({ tagId: 'TURB-TRIP-MAN-DEMAND' }, '==', true),
+    effects: [
+      trip({
+        id: 'manual-turbine-trip',
+        title: 'Manual turbine trip',
+        message: 'The manual turbine trip pushbutton was pressed: the turbine stop valves shut and the generator\'s load is rejected.',
+        annunciator: annunciator({ ...turbineAlarm, firstOutGroup: 'turbine-trip', priority: 'urgent', role: 'automaticAction' }),
+      }),
+      ...turbineTripWrites('manual-turbine-trip'),
+    ],
+  }),
   rule({
     id: 'main-steam-safety-valve-open',
     label: 'Main steam safety valve open',

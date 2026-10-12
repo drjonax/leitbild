@@ -607,7 +607,8 @@ describe('what each trip does', () => {
       expect(groupsOf(ruleId), ruleId).toEqual(['auxiliary-feedwater'])
     }
     expect(groupsOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual(['feedwater-isolation'])
-    expect(groupsOf('sg-b-level-high-high-feedwater-isolation')).toEqual(['feedwater-isolation'])
+    // P-14 isolates feedwater and trips the turbine, each annunciated in its own group.
+    expect(groupsOf('sg-b-level-high-high-feedwater-isolation')).toEqual(['feedwater-isolation', 'turbine-trip'])
     expect(groupsOf('turbine-trip-on-loss-of-load')).toEqual(['turbine-trip'])
     expect(declared.get('auxiliary-feedwater')?.shortLabel).toBe('AFW START')
   })

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ComponentDefinition, ComponentKind } from './model.ts'
+import { variablePathSchema, type ComponentDefinition, type ComponentKind } from './model.ts'
 import { defineComponent, variable } from './component-definition-helpers.ts'
 import { fixedSemantics } from './semantics.ts'
 
@@ -117,6 +117,29 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       variable({ path: 'blockPushbutton', label: 'Low pressurizer pressure SI block pushbutton', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'blocked', label: 'Low pressurizer pressure SI blocked', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'belowP11', label: 'P-11 pressurizer pressure below setpoint', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+    ],
+  }),
+  defineComponent({
+    kind: 'manualActuation' as ComponentKind,
+    label: 'Manual Actuation',
+    // A control-board pushbutton that demands one protective actuation by
+    // hand: a manual reactor trip, a manual turbine trip, manual safety
+    // injection. Pressed, it springs back within the step; its logic holds
+    // the demand until the actuation has acted, as the equipment it commands
+    // reads it (`actedWhen`: the reactor trip breakers open, the generator
+    // off line, the safety injection pumps commanded to run), so the
+    // protection rule that acts on the demand, evaluated after the step, sees
+    // every press, and acts once on it. A press with the actuation already
+    // acted demands nothing.
+    ports: {},
+    parametersSchema: z.object({
+      /** The on/off readings that say the demanded actuation has acted, each with the value it then reads. */
+      actedWhen: z.array(z.object({ path: variablePathSchema, equals: z.boolean() }).strict()).min(1),
+    }).strict(),
+    semantics: fixedSemantics({}),
+    variables: [
+      variable({ path: 'pushbutton', label: 'Pushbutton', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'demanded', label: 'Actuation demanded', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),
 ]

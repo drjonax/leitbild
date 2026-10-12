@@ -163,14 +163,12 @@ export const processPlantActions: ReadonlyArray<ProcessPlantActionDefinition> = 
     },
   },
   {
+    // The turbine protection acts on the press as on any turbine trip, so the trip's first-out names it.
     id: 'turbine-trip',
     title: 'Turbine trip',
-    description: 'Close the turbine stop valve and reject turbine load.',
+    description: 'Press the manual turbine trip pushbutton: the turbine stop valves shut and turbine load is rejected.',
     parameters: [],
-    commands: (_values, graph) => [
-      ...commandsForRole(graph, 'turbine-stop', 'positionFraction', 0),
-      ...commandsForRole(graph, 'turbine-generator', 'loadFraction', 0),
-    ],
+    commands: (_values, graph) => commandsForRole(graph, 'manual-turbine-trip', 'pushbutton', true),
   },
   {
     id: 'loss-offsite-power',

@@ -208,6 +208,14 @@ export const steamGeneratorReferenceIcRules = (
           message: `Steam generator ${loop} high-high level (P-14) isolates main feedwater, tripping its pumps and shutting every feed regulating valve, and trips the turbine.`,
           annunciator: annunciator({ ...sgAction, firstOutGroup: 'feedwater-isolation' }),
         }),
+        // The turbine trip it causes is annunciated in the turbine trip's first-out group too, on the same
+        // system, so a P-14 trip below P-9, which trips no reactor, still shows the turbine trip and its cause.
+        trip({
+          id: 'turbine-trip',
+          title: `Turbine trip on steam generator ${loop} high-high level (P-14)`,
+          message: `Steam generator ${loop} high-high level (P-14) trips the turbine: the stop valves shut and the generator's load is rejected.`,
+          annunciator: annunciator({ ...sgAction, firstOutGroup: 'turbine-trip' }),
+        }),
         ...feedwaterIsolationWrites('feedwater-isolation', loops),
         ...turbineTripWrites('turbine-trip'),
       ],

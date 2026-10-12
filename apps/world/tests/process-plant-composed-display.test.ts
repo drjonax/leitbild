@@ -971,6 +971,7 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     expect(annunciation.actuations.find(actuation => actuation.name === 'SI')?.ids).toEqual([
       'trip:safety-injection-low-pzr-pressure:safety-injection',
       'trip:safety-injection-containment-pressure-high-1:safety-injection',
+      'trip:safety-injection-manual:safety-injection',
     ])
     // Every actuation is named by its declared group.
     expect(annunciation.actuations.find(actuation => of(actuation.ids, 'sg-b-level-low-low-afw-actuation').length > 0)?.name).toBe('AFW START')

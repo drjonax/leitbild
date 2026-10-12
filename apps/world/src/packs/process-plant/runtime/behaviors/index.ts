@@ -81,6 +81,7 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('delta-t-protection-channel'),
   behaviorDefinitionById('rcs-inventory-balance'),
   behaviorDefinitionById('safety-injection-block-logic'),
+  behaviorDefinitionById('manual-actuation'),
 ]
 
 export const componentInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
@@ -127,4 +128,5 @@ export const processPlantComponentBehaviorSourcePathByKind: ReadonlyMap<Componen
   ['deltaTProtectionChannel' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
   ['rcsInventoryBalance' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
   ['safetyInjectionBlockLogic' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
+  ['manualActuation' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
 ])

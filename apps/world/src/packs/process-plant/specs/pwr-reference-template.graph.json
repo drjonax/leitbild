@@ -5187,11 +5187,120 @@
         "presentation": {
           "shortLabel": "SI block logic",
           "states": {
-            "blockPushbutton": { "on": "SI block pushed", "off": "SI block released" },
+            "blockPushbutton": { "on": "BLOCK SI", "off": "SI block released" },
             "blocked": { "on": "Low-pressure SI blocked", "off": "Low-pressure SI unblocked" },
             "belowP11": { "on": "Below P-11", "off": "Above P-11" }
           },
           "momentary": ["blockPushbutton"]
+        }
+      }
+    },
+    {
+      "id": "manualReactorTrip",
+      "kind": "manualActuation",
+      "label": "Manual Reactor Trip",
+      "parameters": {
+        "actedWhen": [
+          { "path": "reactorTripBreakerA.closedState", "equals": false },
+          { "path": "reactorTripBreakerB.closedState", "equals": false }
+        ]
+      },
+      "variables": [
+        {
+          "path": "pushbutton",
+          "tagId": "RX-TRIP-MAN",
+          "equipmentId": "manualReactorTrip",
+          "description": "Manual reactor trip pushbutton command; momentary: pressed, it opens both reactor trip breakers in any mode"
+        },
+        {
+          "path": "demanded",
+          "tagId": "RX-TRIP-MAN-DEMAND",
+          "equipmentId": "manualReactorTrip",
+          "description": "Manual reactor trip demanded: held from a press until both reactor trip breakers read open"
+        }
+      ],
+      "metadata": {
+        "role": "manual-reactor-trip",
+        "presentation": {
+          "shortLabel": "Manual RX trip",
+          "states": {
+            "pushbutton": { "on": "TRIP REACTOR", "off": "Reactor trip pushbutton released" },
+            "demanded": { "on": "Manual reactor trip demanded", "off": "No manual reactor trip demanded" }
+          },
+          "momentary": ["pushbutton"]
+        }
+      }
+    },
+    {
+      "id": "manualTurbineTrip",
+      "kind": "manualActuation",
+      "label": "Manual Turbine Trip",
+      "parameters": {
+        "actedWhen": [
+          { "path": "turbine.outputBreakerClosed", "equals": false }
+        ]
+      },
+      "variables": [
+        {
+          "path": "pushbutton",
+          "tagId": "TURB-TRIP-MAN",
+          "equipmentId": "manualTurbineTrip",
+          "description": "Manual turbine trip pushbutton command; momentary: pressed, it shuts the turbine stop valves and rejects the generator load"
+        },
+        {
+          "path": "demanded",
+          "tagId": "TURB-TRIP-MAN-DEMAND",
+          "equipmentId": "manualTurbineTrip",
+          "description": "Manual turbine trip demanded: held from a press until the generator is off line"
+        }
+      ],
+      "metadata": {
+        "role": "manual-turbine-trip",
+        "presentation": {
+          "shortLabel": "Manual turbine trip",
+          "states": {
+            "pushbutton": { "on": "TRIP TURBINE", "off": "Turbine trip pushbutton released" },
+            "demanded": { "on": "Manual turbine trip demanded", "off": "No manual turbine trip demanded" }
+          },
+          "momentary": ["pushbutton"]
+        }
+      }
+    },
+    {
+      "id": "manualSafetyInjection",
+      "kind": "manualActuation",
+      "label": "Manual Safety Injection",
+      "parameters": {
+        "actedWhen": [
+          { "path": "safetyInjectionPumpA.running", "equals": true },
+          { "path": "safetyInjectionPumpB.running", "equals": true },
+          { "path": "reactorTripBreakerA.closedState", "equals": false },
+          { "path": "reactorTripBreakerB.closedState", "equals": false }
+        ]
+      },
+      "variables": [
+        {
+          "path": "pushbutton",
+          "tagId": "SI-MAN",
+          "equipmentId": "manualSafetyInjection",
+          "description": "Manual safety injection pushbutton command, both trains; momentary: pressed, it actuates the SI signal in any mode"
+        },
+        {
+          "path": "demanded",
+          "tagId": "SI-MAN-DEMAND",
+          "equipmentId": "manualSafetyInjection",
+          "description": "Manual safety injection demanded: held from a press until both SI pumps are commanded to run and both reactor trip breakers read open"
+        }
+      ],
+      "metadata": {
+        "role": "manual-safety-injection",
+        "presentation": {
+          "shortLabel": "Manual SI",
+          "states": {
+            "pushbutton": { "on": "ACTUATE SI", "off": "SI pushbutton released" },
+            "demanded": { "on": "Manual SI demanded", "off": "No manual SI demanded" }
+          },
+          "momentary": ["pushbutton"]
         }
       }
     }
@@ -13068,6 +13177,12 @@
     "deltaTChannelF.deltaTPowerPercent",
     "deltaTChannelF.forcedFlow",
     "deltaTChannelF.loopFlowFraction",
-    "offsiteGrid.supplyVoltageFraction"
+    "offsiteGrid.supplyVoltageFraction",
+    "manualReactorTrip.pushbutton",
+    "manualReactorTrip.demanded",
+    "manualTurbineTrip.pushbutton",
+    "manualTurbineTrip.demanded",
+    "manualSafetyInjection.pushbutton",
+    "manualSafetyInjection.demanded"
   ]
 }

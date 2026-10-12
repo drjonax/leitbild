@@ -1,4 +1,4 @@
-import { primaryLoopPumpForLink, ratedFlowForLink, type CompiledComponent, type CompiledProcessLink } from '../../graph/index.ts'
+import { primaryLoopPumpForLink, ratedFlowForLink, type CompiledComponent, type CompiledProcessLink, type VariablePath } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
 import {
@@ -124,6 +124,36 @@ const rcsInventoryKg = (system: CompiledProcessPlant, balance: CompiledComponent
 
 const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'pressurizer.reliefFlowKgPerS', 'pressurizer.safetyValveFlowKgPerS', 'vessel.primaryCoolantInventoryKg', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'leakRateKgPerS', 'balancedInventoryKg']
 
+interface ActedReading {
+  readonly path: VariablePath
+  readonly equals: boolean
+}
+
+const actedReadingsCache = new WeakMap<CompiledComponent, ReadonlyArray<ActedReading>>()
+
+// The readings a manual actuation is acted by, each an on/off variable of the Plant.
+const actedReadingsFor = (system: CompiledProcessPlant, logic: CompiledComponent): ReadonlyArray<ActedReading> => {
+  const cached = actedReadingsCache.get(logic)
+  if (cached !== undefined) return cached
+  const readings = (logic.parameters as { readonly actedWhen: ReadonlyArray<ActedReading> }).actedWhen.map(reading => {
+    const variable = required(system.graph.variables.find(candidate => candidate.path === reading.path), `manual actuation ${logic.id} is acted when ${reading.path} reads ${reading.equals}, which is not a variable of the Plant`)
+    if (variable.descriptor.quantity !== 'boolean') throw new Error(`manual actuation ${logic.id} is acted when ${reading.path} reads ${reading.equals}, which is not an on/off reading`)
+    return reading
+  })
+  actedReadingsCache.set(logic, readings)
+  return readings
+}
+
+const manualActuationWrites = ['pushbutton', 'demanded']
+
+// The demand, held from a press until the actuation has acted; the pushbutton springs back.
+const writeManualActuation = (system: CompiledProcessPlant, logic: CompiledComponent, context: ProcessPlantBehaviorContext): void => {
+  const acted = actedReadingsFor(system, logic).every(reading => context.readBoolean(reading.path) === reading.equals)
+  const pressed = context.readBoolean(componentVariablePath(logic, 'pushbutton'))
+  context.write(componentVariablePath(logic, 'demanded'), !acted && (pressed || context.readBoolean(componentVariablePath(logic, 'demanded'))))
+  context.write(componentVariablePath(logic, 'pushbutton'), false)
+}
+
 const siBlockWrites = ['blockPushbutton', 'blocked', 'belowP11']
 
 // P-11, P-4 and the block memory, from this step's pressure and breaker contacts; the pushbutton springs back.
@@ -183,6 +213,15 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
     update: ({ system, component, context }): void =>
       writeSafetyInjectionBlock(system, component, context, context.readBoolean(componentVariablePath(component, 'blocked'))),
   },
+  {
+    id: 'manual-actuation',
+    // After the electrical solution, so the trip breakers' contacts and the generator's breaker are this step's.
+    phase: 'updateComponentState',
+    componentKind: 'manualActuation',
+    reads: ['pushbutton', 'demanded', 'actedWhen readings'],
+    writes: manualActuationWrites,
+    update: ({ system, component, context }): void => writeManualActuation(system, component, context),
+  },
 ]
 
 export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
@@ -206,6 +245,15 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
       context.write(componentVariablePath(component, 'leakRateKgPerS'), 0)
       context.write(componentVariablePath(component, 'balancedInventoryKg'), rcsInventoryKg(system, component, context))
     },
+  },
+  {
+    id: 'manual-actuation-initial-state',
+    componentKind: 'manualActuation',
+    reads: ['actedWhen readings'],
+    writes: manualActuationWrites,
+    // A Plant starts with no button pressed and nothing demanded; this checks what its actuation is acted by.
+    afterLinks: true,
+    reconcile: ({ system, component, context }): void => writeManualActuation(system, component, context),
   },
   {
     id: 'safety-injection-block-logic-initial-state',

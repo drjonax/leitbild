@@ -109,6 +109,28 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       ...safetyInjectionWrites('safety-injection-containment', loops),
     ],
   }),
+  // Manual safety injection: a pushbutton on the control board
+  // (manualActuation), both trains' switches folded into one, whose demand is
+  // the SI signal with all its effects, in any mode and whatever the
+  // low-pressure block. The demand holds until both pumps are commanded to run
+  // and both reactor trip breakers read open.
+  rule({
+    id: 'safety-injection-manual',
+    label: 'Manual safety injection',
+    ruleClass: 'protection',
+    condition: comparison({ tagId: 'SI-MAN-DEMAND' }, '==', true),
+    effects: [
+      trip({
+        id: 'safety-injection',
+        title: 'Safety injection actuated manually',
+        message: 'The manual safety injection pushbutton was pressed: the SI signal starts both high-head safety injection pumps, trips the reactor and isolates main feedwater.',
+        annunciator: siAction,
+      }),
+      reactorTripOnSafetyInjection('manual actuation'),
+      feedwaterIsolationOnSafetyInjection('manual actuation'),
+      ...safetyInjectionWrites('safety-injection-manual', loops),
+    ],
+  }),
   // The BLOCK pushbutton is accepted only where the block can hold: below
   // P-11, with the reactor tripped. Anywhere else it is refused.
   rule({

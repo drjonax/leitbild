@@ -257,4 +257,24 @@ export const reactorReferenceIcRules = (
     ],
   }),
   ...averageTemperatureDeviationRules(),
+  // The manual reactor trip: a pushbutton on the control board (manualActuation)
+  // whose demand opens both reactor trip breakers in any mode, so the trip's
+  // first-out names it. The demand holds until both breakers read open; the
+  // trip, like every reactor trip, latches until it is reset.
+  rule({
+    id: 'reactor-manual-trip',
+    label: 'Manual reactor trip',
+    ruleClass: 'protection',
+    condition: comparison({ tagId: 'RX-TRIP-MAN-DEMAND' }, '==', true),
+    effects: [
+      trip({
+        id: 'manual-reactor-trip',
+        title: 'Manual reactor trip',
+        message: 'The manual reactor trip pushbutton was pressed: both reactor trip breakers open and the rods drop.',
+        annunciator: reactorAction,
+      }),
+      ...reactorTripBreakerWrites('manual-reactor-trip'),
+      write('insert-control-rods-manual-reactor-trip', { path: 'core.rodInsertionFraction' }, 1),
+    ],
+  }),
 ]
