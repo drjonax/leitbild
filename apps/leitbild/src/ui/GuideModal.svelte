@@ -73,10 +73,14 @@
 
   const cardHeadingId = (cardId: string): string => `guide-card-${cardId}`
 
+  // Scrolls only the region (scrollIntoView would also scroll the dialog itself).
   const focusCard = (cardId: string): boolean => {
     const heading = document.getElementById(cardHeadingId(cardId))
-    if (!heading) return false
-    heading.closest('article')?.scrollIntoView({ block: 'start' })
+    const article = heading?.closest('article')
+    if (!heading || !article || !region) return false
+    // Short viewports scroll the dialog, not the region.
+    if (region.scrollHeight > region.clientHeight) region.scrollTo({ top: article.offsetTop - 12 })
+    else article.scrollIntoView({ block: 'start' })
     heading.focus({ preventScroll: true })
     return true
   }
@@ -509,7 +513,7 @@
 <style>
   /* Layout: rail + scrolling region (the Modal's body does not scroll itself). */
   .guide { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100%; min-height: 0; }
-  .rail { overflow-y: auto; padding: 16px 12px; border-right: 1px solid var(--lb-line); background: var(--lb-surface-2); }
+  .rail { position: relative; overflow-y: auto; padding: 16px 12px; border-right: 1px solid var(--lb-line); background: var(--lb-surface-2); }
   .rail ol { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
   .rail-item { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: start; justify-content: stretch; gap: 10px; width: 100%; min-height: 0;
     padding: 9px 10px; border: 0; border-radius: var(--lb-r-md); background: transparent; color: var(--lb-ink-2); text-align: left; }
@@ -526,7 +530,8 @@
     color: var(--lb-ink-2); font-size: var(--lb-fs-micro); line-height: 1.35; text-align: left; justify-content: flex-start; }
   .rail-cards button:hover { background: rgba(23, 32, 25, .05); color: var(--lb-ink); }
 
-  .region { min-height: 0; padding: 28px 32px 40px; overflow-y: auto; overscroll-behavior: contain; }
+  /* Positioned, so visually hidden text inside stays in the region and never makes the dialog scroll. */
+  .region { position: relative; min-height: 0; padding: 28px 32px 40px; overflow-y: auto; overscroll-behavior: contain; }
   .chapter-head { display: grid; gap: 6px; max-width: 72ch; margin-bottom: 22px; }
   .chapter-head h3 { margin: 0; font-size: var(--lb-fs-h1); line-height: 1.15; font-weight: 750; letter-spacing: -.025em; text-wrap: balance; }
   .chapter-head h3:focus { outline: none; }
@@ -536,11 +541,12 @@
   /* Cards: image above the text at full card width. */
   .cards { display: grid; gap: 20px; }
   .card { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--lb-line); border-radius: var(--lb-r-lg); background: var(--lb-surface); scroll-margin-top: 12px; }
-  .shot { position: relative; display: grid; place-items: center; width: 100%; min-height: 0; padding: 0; overflow: hidden;
+  .shot { position: relative; display: flex; justify-content: center; width: 100%; min-height: 0; padding: 0; overflow: hidden;
     border: 1px solid var(--lb-line); border-radius: var(--lb-r-md); background: var(--lb-surface-2); cursor: zoom-in; }
   .shot:hover { border-color: var(--lb-line-strong); }
   .shot:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }
-  .shot img { display: block; width: 100%; max-width: calc(36vh * 1.6); height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: center top; }
+  /* A definite width, so a lazy image reserves its 16:10 box before it loads (deep links scroll to the right card). */
+  .shot img { display: block; width: min(100%, calc(36vh * 1.6)); height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: center top; }
   .enlarge { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
     background: rgba(255, 255, 255, .92); color: var(--lb-ink-2); box-shadow: var(--lb-shadow-sm); }
   .diagram { display: grid; place-items: center; margin: 0; padding: 20px 16px; border-radius: var(--lb-r-md); background: var(--lb-brand-50); }
@@ -600,7 +606,7 @@
   .note { margin: 0; color: var(--lb-ink-3); font-size: var(--lb-fs-small); }
 
   /* Footer: Previous · n / 6 (Contents below 1024 px) · Next */
-  .nav { flex: 0 1 auto; min-width: 0; max-width: 340px; gap: .4rem; }
+  .nav { position: relative; flex: 0 1 auto; min-width: 0; max-width: 340px; gap: .4rem; }
   .nav-label { overflow: hidden; text-overflow: ellipsis; }
   .next { margin-left: auto; }
   /* Basis 0: the footer's minimum width never includes the Contents label, which ellipsises instead. */
@@ -632,7 +638,8 @@
     .contents { display: block; }
   }
   @media (max-width: 639px) {
-    .region { padding: 20px 16px 28px; }
+    .region { padding: 16px 16px 28px; }
+    .chapter-head { margin-bottom: 16px; }
     .card { padding: 12px; gap: 12px; }
     .audiences { grid-template-columns: minmax(0, 1fr); }
     .nav { width: 44px; min-width: 44px; padding: 0; }
