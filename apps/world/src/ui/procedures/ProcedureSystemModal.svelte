@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, HelpCircle, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
+  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Info, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
   import { tick, untrack } from 'svelte'
   import type { ProcedureSession } from './procedure-session.ts'
-  import { procedureViewKey, procedureCategories, procedureStepItems, procedureTextSegments, procedureBlockLabel, procedureObservationEvidence, procedureObservationBasis, procedureObservationLabel, procedureSourceEvidenceRequest } from './procedure-view.ts'
+  import { procedureViewKey, procedureCategories, procedureStepItems, procedureStepTagBindings, procedureTextSegments, procedureBlockLabel, procedureObservationEvidence, procedureObservationBasis, procedureObservationLabel, procedureSourceEvidenceRequest, procedureUnitJump } from './procedure-view.ts'
   import type {
     SimulationRunId,
     ObjectId,
@@ -217,7 +217,6 @@
     label: 'Unit status unavailable',
     indicator: { shape: 'dot' },
   } satisfies PackObjectStatusPresentation)
-  const currentUnitProcedureSummaries = $derived(procedureRunSummariesForScope(runs, currentScope, runDocuments))
   const csfIds = $derived([...new Set(catalog?.procedures.flatMap(item => item.csfsMonitored) ?? [])])
 
   const procedureRunVisualStateFor = (procedureId: string): ProcedureRunVisualState => {
@@ -624,6 +623,28 @@
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
     }
+  }
+
+  // A unit in the strip opens where that unit stands: the same procedure where it runs it,
+  // else its first active procedure, else the same procedure there, not yet run.
+  const jumpToUnit = async (unit: ProcedureUnitContext): Promise<void> => {
+    const jump = procedureUnitJump(unitProcedureSummariesFor(unit).active, document?.procedureId ?? null)
+    if (unit.plantId === plantId) {
+      if (jump.kind === 'run' && jump.summary.procedureId !== document?.procedureId) await openProcedureRunSummary(jump.summary, unit)
+      else if (currentProcedureStep) scrollToProcedureStep(currentProcedureStep.step.id)
+      return
+    }
+    if (jump.kind === 'run') {
+      await openProcedureRunSummary(jump.summary, unit)
+      return
+    }
+    if (unit.targetObjectId === undefined) {
+      error = 'procedure unit requires a target object'
+      return
+    }
+    // The scope effect reloads the selected procedure for the new unit.
+    rememberCurrentProcedureScroll()
+    selectUnit(unit.targetObjectId)
   }
 
   const targetDocumentForBranch = (branch: ProcedureBranch): ProcedureDocument | undefined =>
@@ -1074,6 +1095,37 @@
   {/each}
 {/snippet}
 
+{#snippet stepInfo(step: ProcedureStep)}
+  {@const bindings = document ? procedureStepTagBindings(step, document.tags, tagValidation) : []}
+  <span class="procedure-info-shell step">
+    <button type="button" class="procedure-info-button small" aria-label="Plant tags in step {step.label}">
+      <Info size={15} aria-hidden="true" />
+    </button>
+    <div class="procedure-info-popover procedure-step-info-popover" role="tooltip">
+      {#if bindings.length === 0}
+        <p>No plant tags in this step: its indications are read and judged by the operator.</p>
+      {:else}
+        <p class="procedure-step-info-heading">Plant tags in this step</p>
+        {#each bindings as binding (binding.tagId)}
+          <div class="procedure-step-info-tag {binding.status}">
+            <span><b>{binding.tagId}</b>{binding.description ? ` — ${binding.description}` : ''}</span>
+            {#if binding.status === 'missing'}
+              <em>Not in this unit's plant model.</em>
+            {:else if binding.status === 'unchecked'}
+              <em>Binding not checked yet.</em>
+            {:else if binding.reads}
+              <span>Reads {binding.reads}</span>
+            {/if}
+            {#each binding.warnings as warning}<em>{warning}</em>{/each}
+            {#each binding.notes as note}<span class="procedure-step-info-note"><b>{note.label}</b> {note.text}</span>{/each}
+          </div>
+        {/each}
+      {/if}
+      <small>World does not evaluate this step's checks; a selected branch records a judgement.</small>
+    </div>
+  </span>
+{/snippet}
+
 <div class="procedure-window-layer">
   <div
     class="procedure-modal procedure-window"
@@ -1086,23 +1138,37 @@
   >
     <header class="procedure-header">
       <div
-        class="procedure-header-top"
+        class="procedure-header-bar"
         role="toolbar"
         tabindex="0"
-        aria-label="Procedure system window controls"
+        aria-label="Units and procedure window controls"
         onpointerdown={(event) => startWindowDrag(event, 'move')}
         onpointermove={updateWindowDrag}
         onpointerup={finishWindowDrag}
         onpointercancel={finishWindowDrag}
       >
-        <div class="procedure-current-unit-line">
-          <StatusIndicator tone={displayUnitStatus.tone} label={displayUnitStatus.label} indicator={displayUnitStatus.indicator} />
-          <strong>{displayUnitName}</strong>
-          <ProcedureRunBadges
-            summaries={currentUnitProcedureSummaries}
-            openProcedureId={document?.procedureId ?? null}
-            onOpen={(summary) => openProcedureRunSummary(summary, currentUnitContext)}
-          />
+        <div class="procedure-cross-unit-strip" aria-label="Units and their procedures">
+          {#each procedureUnits as unit (unit.plantId)}
+            {@const unitStatusPresentation = statusForUnit(unit)}
+            {@const unitSummaries = unitProcedureSummariesFor(unit)}
+            <div class="procedure-cross-unit" class:current={unit.plantId === plantId}>
+              <button
+                type="button"
+                class="procedure-unit-jump"
+                aria-current={unit.plantId === plantId ? 'true' : undefined}
+                title={unit.plantId === plantId ? `${unit.label}: shown` : `Show ${unit.label}`}
+                onclick={() => void jumpToUnit(unit)}
+              >
+                <StatusIndicator tone={unitStatusPresentation.tone} label={unitStatusPresentation.label} indicator={unitStatusPresentation.indicator} />
+                <span class="procedure-cross-unit-name">{unit.label}</span>
+              </button>
+              <ProcedureRunBadges
+                summaries={unitSummaries}
+                openProcedureId={unit.plantId === plantId ? document?.procedureId ?? null : null}
+                onOpen={(summary) => openProcedureRunSummary(summary, unit)}
+              />
+            </div>
+          {/each}
         </div>
         <div class="procedure-header-actions">
           <button class="procedure-font-button large" type="button" title="Increase procedure font size" aria-label="Increase procedure font size" onclick={increaseProcedureFontSize}>
@@ -1112,28 +1178,12 @@
             A
           </button>
           <button type="button" title="Refresh procedure source" aria-label="Refresh procedure source" onclick={() => void loadCatalogAndRuns(true)}>
-            <RefreshCw size={18} aria-hidden="true" />
+            <RefreshCw size={16} aria-hidden="true" />
           </button>
           <button type="button" title="Close procedures" aria-label="Close procedures" onclick={close}>
-            <X size={20} aria-hidden="true" />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
-      </div>
-
-      <div class="procedure-cross-unit-strip" aria-label="Cross-unit procedure status">
-        {#each procedureUnits as unit (unit.plantId)}
-          {@const unitStatusPresentation = statusForUnit(unit)}
-          {@const unitSummaries = unitProcedureSummariesFor(unit)}
-          <div class="procedure-cross-unit" class:current={unit.plantId === plantId}>
-            <StatusIndicator tone={unitStatusPresentation.tone} label={unitStatusPresentation.label} indicator={unitStatusPresentation.indicator} />
-            <span class="procedure-cross-unit-name">{unit.label}</span>
-            <ProcedureRunBadges
-              summaries={unitSummaries}
-              openProcedureId={unit.plantId === plantId ? document?.procedureId ?? null : null}
-              onOpen={(summary) => openProcedureRunSummary(summary, unit)}
-            />
-          </div>
-        {/each}
       </div>
 
       <div class="procedure-csf-strip" aria-label="Critical safety functions">
@@ -1248,18 +1298,24 @@
           aria-busy={loadingProcedureId !== null}
         >
           {#if document}
-          {#if document.appliesTo}
-            <p class="procedure-applicability">Applicability: {document.appliesTo}</p>
-          {/if}
           <div class="procedure-document-toolbar">
             <div class="procedure-document-title">
               <h2>{document.procedureId} — {document.title}</h2>
-              {#if document.description}
-                <button type="button" class="procedure-summary-help" aria-label="Procedure summary">
-                  <HelpCircle size={17} aria-hidden="true" />
-                  <span class="procedure-summary-popover">{document.description}</span>
+              <span class="procedure-info-shell">
+                <button type="button" class="procedure-info-button" aria-label="About this procedure">
+                  <Info size={17} aria-hidden="true" />
                 </button>
-              {/if}
+                <div class="procedure-info-popover procedure-summary-popover" role="tooltip">
+                  {#if document.description}<p class="procedure-summary-text">{@render procedureText(document.description, [])}</p>{/if}
+                  {#if document.appliesTo}<p><b>Applies to</b> {document.appliesTo}</p>{/if}
+                  {#if document.referencePlant}<p><b>Reference plant</b> {document.referencePlant}</p>{/if}
+                  {#each Object.entries(document.annotations ?? {}) as [key, value]}<p><b>{key}</b> {value}</p>{/each}
+                  {#if document.diagnostics?.length}
+                    <p><b>Format notes</b></p>
+                    <ul>{#each document.diagnostics as diagnostic}<li>{diagnostic}</li>{/each}</ul>
+                  {/if}
+                </div>
+              </span>
               <button type="button" class="procedure-source-icon" onclick={() => document && void loadBasis({ sourceId: document.source.sourceId, sourceRevision: document.source.revision, sourcePath: document.sourcePath, lineCount: 100 })} title="Read retained procedure source" aria-label="Read retained procedure source">
                 <ExternalLink size={15} aria-hidden="true" />
               </button>
@@ -1293,15 +1349,6 @@
             bind:this={procedureDocumentBodyElement}
             onscroll={rememberCurrentProcedureScroll}
           >
-            {#if document.appliesTo || document.referencePlant || document.diagnostics?.length || Object.keys(document.annotations ?? {}).length}
-              <details class="procedure-format-notes">
-                <summary>Applicability and format notes{document.diagnostics?.length ? ` (${document.diagnostics.length})` : ''}</summary>
-                {#if document.appliesTo}<p><b>Applies to:</b> {document.appliesTo}</p>{/if}
-                {#if document.referencePlant}<p><b>Reference plant:</b> {document.referencePlant}</p>{/if}
-                {#each Object.entries(document.annotations ?? {}) as [key, value]}<p><b>{key}:</b> {value}</p>{/each}
-                {#if document.diagnostics?.length}<ul>{#each document.diagnostics as diagnostic}<li>{diagnostic}</li>{/each}</ul>{/if}
-              </details>
-            {/if}
             <div class="procedure-steps">
               {#each document.steps as step (step.id)}
                 {@const state = stepStates.get(step.id)}
@@ -1325,7 +1372,7 @@
                       {/if}
                     </button>
                     <div class="procedure-step-content">
-                      <h3>Step {step.label}<span>{procedureStepDisplayName(step)}</span></h3>
+                      <h3>Step {step.label}<span>{procedureStepDisplayName(step)}</span>{@render stepInfo(step)}</h3>
                       <div class="procedure-two-column">
                         {#each procedureStepItems(step) as item}
                           <div class="procedure-column" class:response={!item.primary}>

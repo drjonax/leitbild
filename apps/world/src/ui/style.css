@@ -2795,40 +2795,22 @@ body.rail-resizing {
 }
 
 .procedure-header {
-  min-height: 74px;
   display: grid;
-  gap: 9px;
-  padding: 16px 20px;
+  gap: 8px;
+  padding: 8px 12px 10px;
   border-bottom: 1px solid #d8e0ea;
   background: #ffffff;
 }
 
-.procedure-header strong {
-  display: block;
-  font-size: 22px;
-  color: #0f172a;
-}
-
-.procedure-header-top {
+/* The unit strip is also the window's title bar: drag it to move the window. */
+.procedure-header-bar {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   cursor: move;
   touch-action: none;
-}
-
-.procedure-current-unit-line {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-}
-
-.procedure-current-unit-line strong {
-  display: inline;
 }
 
 .procedure-run-comma {
@@ -2896,28 +2878,56 @@ body.rail-resizing {
   flex-wrap: wrap;
   align-items: center;
   gap: 5px;
-  min-height: 28px;
-  padding: 4px 8px;
+  min-height: 30px;
+  padding: 2px 8px 2px 2px;
   border: 1px solid #d8e0ea;
   background: #f8fafc;
   white-space: nowrap;
 }
 
 .procedure-cross-unit.current {
-  border-color: #bfdbfe;
+  border-color: #93c5fd;
   background: #eff6ff;
+  box-shadow: inset 0 -2px 0 #2563eb;
+}
+
+.procedure-unit-jump {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 4px 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.procedure-unit-jump:hover .procedure-cross-unit-name,
+.procedure-unit-jump:focus-visible .procedure-cross-unit-name {
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.procedure-unit-jump:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
 }
 
 .procedure-cross-unit-name {
   color: #334155;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 900;
 }
 
 .procedure-header-actions {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .procedure-header-actions button,
@@ -2934,8 +2944,8 @@ body.rail-resizing {
 }
 
 .procedure-header-actions button {
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
 }
@@ -2947,11 +2957,11 @@ body.rail-resizing {
 }
 
 .procedure-header-actions .procedure-font-button.large {
-  font-size: 22px;
+  font-size: 19px;
 }
 
 .procedure-header-actions .procedure-font-button.small {
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .procedure-csf-strip {
@@ -3019,6 +3029,12 @@ body.rail-resizing {
 
 .procedure-csf-popover p {
   color: #475569;
+}
+
+.procedure-csf-popover strong {
+  display: block;
+  color: #0f172a;
+  font-size: 16px;
 }
 
 .procedure-csf-popover small {
@@ -3399,10 +3415,10 @@ body.rail-resizing {
 
 .procedure-document-toolbar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 18px 22px 14px;
+  padding: 10px 16px 9px 22px;
   border-bottom: 1px solid #d8e0ea;
   background: #f8fafc;
 }
@@ -3425,37 +3441,136 @@ body.rail-resizing {
   white-space: nowrap;
 }
 
-.procedure-summary-help {
+/* A small circled i: hover or focus shows the popover; its top padding bridges the gap so links stay reachable. */
+.procedure-info-shell {
   position: relative;
+  display: inline-flex;
+  align-self: center;
+}
+
+.procedure-info-button {
   display: inline-grid;
   place-items: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
+  border-radius: 50%;
   background: transparent;
   color: #64748b;
   cursor: help;
 }
 
-.procedure-summary-popover {
+.procedure-info-button.small {
+  width: 20px;
+  height: 20px;
+  color: #94a3b8;
+}
+
+.procedure-info-button:hover,
+.procedure-info-button:focus-visible {
+  color: #1d4ed8;
+  outline: none;
+  background: #eff6ff;
+}
+
+.procedure-info-popover {
   position: absolute;
-  top: calc(100% + 8px);
+  top: 100%;
   left: 50%;
-  z-index: 4;
-  width: min(520px, 70vw);
+  z-index: 6;
+  width: min(560px, 70vw);
+  max-height: min(60vh, 520px);
+  overflow: auto;
   display: none;
+  gap: 6px;
   transform: translateX(-50%);
+  margin-top: 6px;
   padding: 10px 12px;
   border: 1px solid #cbd5e1;
   background: #ffffff;
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
-  color: #64748b;
+  color: #334155;
   font-size: 13px;
-  line-height: 1.35;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
-.procedure-summary-help:hover .procedure-summary-popover,
-.procedure-summary-help:focus-visible .procedure-summary-popover {
-  display: block;
+.procedure-info-popover::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  right: 0;
+  left: 0;
+  height: 8px;
+}
+
+.procedure-info-shell:hover .procedure-info-popover,
+.procedure-info-shell:focus-within .procedure-info-popover {
+  display: grid;
+}
+
+.procedure-info-popover p,
+.procedure-info-popover ul {
+  margin: 0;
+}
+
+.procedure-info-popover p b {
+  margin-right: 6px;
+  color: #475569;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.procedure-info-popover small {
+  color: #64748b;
+}
+
+.procedure-summary-text {
+  white-space: pre-wrap;
+}
+
+.procedure-info-shell.step .procedure-info-popover {
+  left: 0;
+  width: min(460px, 60vw);
+  transform: none;
+}
+
+.procedure-step-info-heading {
+  color: #475569;
+  font-weight: 700;
+}
+
+.procedure-step-info-tag {
+  display: grid;
+  gap: 2px;
+  padding: 5px 0 5px 8px;
+  border-left: 3px solid #93c5fd;
+}
+
+.procedure-step-info-tag.resolved-with-warnings {
+  border-left-color: #f59e0b;
+}
+
+.procedure-step-info-tag.missing {
+  border-left-color: #94a3b8;
+}
+
+.procedure-step-info-tag em {
+  color: #92400e;
+  font-style: normal;
+}
+
+.procedure-step-info-tag.missing em {
+  color: #64748b;
+}
+
+.procedure-step-info-note b {
+  margin-right: 4px;
+  color: #475569;
 }
 
 .procedure-source-icon {
@@ -3754,15 +3869,6 @@ body.rail-resizing {
 .procedure-basis-link { display: inline; border: 0; padding: 0; color: #1d4ed8; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
 .procedure-confirm.procedure-basis-dialog { width: min(960px, 86vw); max-width: 86vw; max-height: 84vh; overflow: auto; }
 .procedure-basis-content { white-space: pre-wrap; overflow-wrap: anywhere; background: #f8fafc; padding: 12px; font-size: 13px; }
-
-.procedure-format-notes {
-  margin: 0 0 12px;
-  padding: 8px;
-  color: #64748b;
-  border: 1px solid #d8e0ea;
-  font-size: calc(13px * var(--procedure-font-scale));
-}
-.procedure-format-notes summary { cursor: pointer; }
 
 .procedure-tag {
   display: inline;

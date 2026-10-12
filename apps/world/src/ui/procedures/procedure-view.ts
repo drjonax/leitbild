@@ -1,4 +1,4 @@
-import type { ProcedureBranch, ProcedureCatalogItem, ProcedureDocument, ProcedureRunScope, ProcedureStep, ProcedureTextBlock } from '../../core/model/index.ts'
+import type { ProcedureBranch, ProcedureCatalogItem, ProcedureDocument, ProcedureRunScope, ProcedureStep, ProcedureTag, ProcedureTextBlock } from '../../core/model/index.ts'
 import type { ProcedureSourceEvidenceRequest } from './procedure-client.ts'
 
 const primaryKinds = new Set(['check', 'action', 'expected', 'decision', 'when', 'until', 'within', 'concurrent', 'caution', 'note', 'text'])
@@ -100,6 +100,63 @@ export const procedureTextSegments = (text: string, tagIds: readonly string[], s
   }
   if (cursor < text.length) segments.push({ kind: 'text', text: text.slice(cursor) })
   return segments
+}
+
+/** What a step's ⓘ says about one of its tags, read from the live binding check, never from authored prose. */
+export interface ProcedureStepTagBinding {
+  readonly tagId: string
+  readonly description?: string
+  readonly status: 'resolved' | 'resolved-with-warnings' | 'missing' | 'unchecked'
+  /** The Plant signal the tag reads: its label, path and native unit. */
+  readonly reads?: string
+  readonly warnings: ReadonlyArray<string>
+  /** Authored tag fields the binding check does not judge, such as a model note. */
+  readonly notes: ReadonlyArray<{ readonly label: string; readonly text: string }>
+}
+
+const signalReadsText = (signal: Record<string, unknown> | undefined): string | undefined => {
+  if (signal === undefined) return undefined
+  const label = typeof signal.label === 'string' ? signal.label : undefined
+  const path = typeof signal.path === 'string' ? signal.path : undefined
+  const unit = typeof signal.unit === 'string' && signal.unit.length > 0 ? signal.unit : undefined
+  const named = label ?? path
+  if (named === undefined) return undefined
+  return [named, label !== undefined && path !== undefined ? `(${path}${unit === undefined ? '' : `, ${unit}`})` : unit === undefined ? undefined : `(${unit})`]
+    .filter(Boolean).join(' ')
+}
+
+export const procedureStepTagBindings = (
+  step: ProcedureStep,
+  tags: ReadonlyArray<ProcedureTag>,
+  validations: ReadonlyMap<string, { readonly status: 'resolved' | 'resolved-with-warnings' | 'missing'; readonly signal?: Record<string, unknown>; readonly warnings: ReadonlyArray<string> }>,
+): ReadonlyArray<ProcedureStepTagBinding> => step.tagIds.map(tagId => {
+  const tag = tags.find(candidate => candidate.id === tagId)
+  const validation = validations.get(tagId)
+  const reads = validation?.status === 'missing' ? undefined : signalReadsText(validation?.signal)
+  return {
+    tagId,
+    ...(tag?.description === undefined ? {} : { description: tag.description }),
+    status: validation?.status ?? 'unchecked',
+    ...(reads === undefined ? {} : { reads }),
+    warnings: validation?.warnings ?? [],
+    notes: Object.entries(tag?.annotations ?? {}).map(([key, text]) => ({ label: key.replace(/[-_]/g, ' '), text })),
+  }
+})
+
+export type ProcedureUnitJump<Summary> =
+  | { readonly kind: 'run'; readonly summary: Summary }
+  | { readonly kind: 'procedure'; readonly procedureId: string }
+  | { readonly kind: 'unit' }
+
+/** Where a click on a unit in the strip lands: the open procedure where that unit runs it,
+ * else that unit's first active procedure, else the same procedure there, not yet run. */
+export const procedureUnitJump = <Summary extends { readonly procedureId: string }>(
+  active: ReadonlyArray<Summary>,
+  openProcedureId: string | null,
+): ProcedureUnitJump<Summary> => {
+  const summary = active.find(candidate => candidate.procedureId === openProcedureId) ?? active[0]
+  if (summary !== undefined) return { kind: 'run', summary }
+  return openProcedureId === null ? { kind: 'unit' } : { kind: 'procedure', procedureId: openProcedureId }
 }
 
 export const procedureViewKey = (document: ProcedureDocument, scope: ProcedureRunScope): string =>

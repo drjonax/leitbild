@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { parseProcedureMarkdown } from '../src/features/procedures/procmd.ts'
-import { procedureBlockLabel, procedureObservationBasis, procedureObservationEvidence, procedureObservationLabel, procedureSourceEvidenceRequest, procedureStepItems, procedureTextSegments } from '../src/ui/procedures/procedure-view.ts'
+import { procedureBlockLabel, procedureObservationBasis, procedureObservationEvidence, procedureObservationLabel, procedureSourceEvidenceRequest, procedureStepItems, procedureStepTagBindings, procedureTextSegments, procedureUnitJump } from '../src/ui/procedures/procedure-view.ts'
 import { procedureTestSource } from './procedure-fixtures.ts'
 
 test('technical basis links keep the selected knowledge revision and executable URLs stay inert', () => {
@@ -124,4 +124,38 @@ Unknown: Retain uncertain evidence.
     .toEqual(['caution', 'check', 'check', 'action', 'note', 'expected'])
   expect(items.filter(item => !item.primary).map(item => item.kind === 'block' && item.block.kind))
     .toEqual(['rno', 'unknown'])
+})
+
+test("a step's ⓘ reads each tag's live binding and its authored notes, never authored binding prose", () => {
+  const document = parseProcedureMarkdown({ source: procedureTestSource, sourcePath: 'world/procedures/E-0.md', sourceUrl: `/wiki?path=world%2Fprocedures%2FE-0.md&revision=${procedureTestSource.revision}`,
+    rawMarkdown: [
+      '---', 'type: procedure', 'procedure-md: 0.7', 'procedure-id: E-0', 'title: Test', '---',
+      '## Step 1 [id: first]', 'Check: breakers «TRIP-BKR-A» open and margin «SUB-MARGIN» and «SI-SIG»', '- Verified [outcome: normal] → #second',
+      '## Step 2 [id: second]', 'Check: all turbine stop valves CLOSED', '- Done [outcome: normal] → END',
+      '## Tags', '', '- id: TRIP-BKR-A', '  description: reactor trip breaker A position', '  units: enum[OPEN,CLOSED]',
+      '- id: SUB-MARGIN', '  description: subcooling margin', '  model-note: the model measures a different quantity',
+      '- id: SI-SIG', '  description: SI actuation signal',
+    ].join('\n') })
+  const [first, second] = document.steps
+  const validations = new Map([
+    ['TRIP-BKR-A', { status: 'resolved-with-warnings' as const, signal: { label: 'Reactor trip breaker A closed', path: 'reactorTripBreakerA.closed', unit: 'bool' }, warnings: ['requested enum[OPEN,CLOSED] unavailable'] }],
+    ['SUB-MARGIN', { status: 'resolved' as const, signal: { path: 'core.subcoolingMarginC', unit: 'C' }, warnings: [] }],
+    ['SI-SIG', { status: 'missing' as const, warnings: [] }],
+  ])
+  expect(procedureStepTagBindings(first!, document.tags, validations)).toEqual([
+    { tagId: 'TRIP-BKR-A', description: 'reactor trip breaker A position', status: 'resolved-with-warnings', reads: 'Reactor trip breaker A closed (reactorTripBreakerA.closed, bool)', warnings: ['requested enum[OPEN,CLOSED] unavailable'], notes: [] },
+    { tagId: 'SUB-MARGIN', description: 'subcooling margin', status: 'resolved', reads: 'core.subcoolingMarginC (C)', warnings: [], notes: [{ label: 'model note', text: 'the model measures a different quantity' }] },
+    { tagId: 'SI-SIG', description: 'SI actuation signal', status: 'missing', warnings: [], notes: [] },
+  ])
+  expect(procedureStepTagBindings(first!, document.tags, new Map()).map(binding => binding.status)).toEqual(['unchecked', 'unchecked', 'unchecked'])
+  expect(procedureStepTagBindings(second!, document.tags, validations)).toEqual([])
+})
+
+test('a unit in the strip opens the same procedure where that unit runs it, else its first active one, else the same procedure unstarted', () => {
+  const es01 = { procedureId: 'ES-0.1', id: 'es01' }
+  const e0 = { procedureId: 'E-0', id: 'e0' }
+  expect(procedureUnitJump([es01, e0], 'E-0')).toEqual({ kind: 'run', summary: e0 })
+  expect(procedureUnitJump([es01, e0], 'FR-S.1')).toEqual({ kind: 'run', summary: es01 })
+  expect(procedureUnitJump([], 'FR-S.1')).toEqual({ kind: 'procedure', procedureId: 'FR-S.1' })
+  expect(procedureUnitJump([], null)).toEqual({ kind: 'unit' })
 })
