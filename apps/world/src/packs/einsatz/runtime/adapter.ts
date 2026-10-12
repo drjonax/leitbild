@@ -1,4 +1,4 @@
-import { nowIso, type CommandEnvelope, type CommandResult, type GeoJsonPoint, type IsoTimestamp, type ObjectId, type OperationalObject, type Provenance } from '../../../core/model/index.ts'
+import { nowIso, type CommandEnvelope, type CommandResult, type GeoJsonPoint, type IsoTimestamp, type ObjectAudience, type ObjectId, type OperationalObject, type Provenance, type RoleSees, type RunViewer } from '../../../core/model/index.ts'
 import { defaultSimulationRunRuntimePolicy } from '../../../core/simulation-runs/runtime-persistence-policy.ts'
 import type { RoutingAdapter } from '../../../routing/protocol.ts'
 import type { PackRuntimeAdapter, PackRuntimeConnection, PackRuntimeConnectionConfig, PackRuntimeEvent, PackRuntimeEventHandler, PackRuntimeHealth } from '../../../simulation/protocol.ts'
@@ -9,11 +9,11 @@ import { einsatzConfigSchema } from '../config-validation.ts'
 import { advanceEngine, commitIntent, planIntent, prepareLegs, type EnginePorts } from '../engine/engine.ts'
 import { loadedText } from '../engine/intent-support.ts'
 import { motionOf, type EngineState, type Transition } from '../engine/model.ts'
-import { readEngineState, runtimeStateOf, transitionObject, unitObject, type ObjectStamp } from '../engine/objects.ts'
+import { audienceOf, readEngineState, runtimeStateOf, transitionObject, unitObject, type ObjectStamp } from '../engine/objects.ts'
 import { hasLoad } from '../engine/rules.ts'
 import { recommend } from '../recommend.ts'
 import { refusal } from '../refusal.ts'
-import { resolveViewer } from '../viewer.ts'
+import { attributionOf, resolveViewer } from '../viewer.ts'
 import { removeRecords } from './removal.ts'
 import { einsatzAdapterId, einsatzPackId, einsatzRuntimeId } from '../ids.ts'
 import { savedStateSchema, type SavedState } from './saved-state.ts'
@@ -36,6 +36,26 @@ const routingAttempts = 3
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const samePoint = (a: GeoJsonPoint, b: GeoJsonPoint): boolean => a.coordinates[0] === b.coordinates[0] && a.coordinates[1] === b.coordinates[1]
 
+/** A command whose commit is being published, and what its caller sees. */
+export interface Commander {
+  readonly id: CommandEnvelope['id']
+  readonly sees: RoleSees
+}
+
+/**
+ * The command an object may name as its cause. A command id is its caller's
+ * own, and core sends provenance as it is, so an object names the command
+ * only when everyone who sees the object also sees the command: never a
+ * public object or another side's when a side view commanded.
+ */
+export const causedBy = (commander: Commander | undefined, audience: ObjectAudience | undefined): CommandEnvelope['id'] | undefined => {
+  if (commander === undefined) return undefined
+  if (commander.sees === 'all' || audience === undefined) return commander.id
+  if (audience === 'public') return undefined
+  const sees = commander.sees
+  return audience.length > 0 && audience.every(side => sees.includes(side)) ? commander.id : undefined
+}
+
 const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: RoutingAdapter): Promise<PackRuntimeConnection> => {
   const runClock = config.runClock
   if (runClock === undefined) throw new Error('The Einsatz runtime runs only on its Run clock')
@@ -50,9 +70,11 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
   const engineConfig = saved?.config ?? einsatzConfigSchema.parse(config.scenario.runtimeConfig)
   let serials = saved?.serials ?? { unit: 1, task: 1 }
   const objects = (config.initialObjects ?? config.scenario.initialObjects).filter(object => object.packId === einsatzPackId)
+  /** The Run's declared roles and sides; none of either in open mode. */
+  const roles = config.scenario.roles ?? []
   let current: EngineState = readEngineState({
     config: engineConfig,
-    sides: [],
+    sides: (config.scenario.sides ?? []).map(side => side.id),
     objects,
     runtime: saved?.engine ?? { timeMs: clockMs(), units: {} },
   })
@@ -87,16 +109,18 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
   })
   if (saved === null) await persistence.saveNow()
 
-  const stamp = (id: string, at: IsoTimestamp, commandId: CommandEnvelope['id'] | undefined): ObjectStamp => {
+  /** How an object is written: for its audience, and naming the command only where `causedBy` lets it. */
+  const stamp = (id: string, audience: ObjectAudience | undefined, at: IsoTimestamp, commander: Commander | undefined): ObjectStamp => {
+    const commandId = causedBy(commander, audience)
     const provenance: Provenance = commandId === undefined
       ? { source: 'simulator', adapterId: einsatzAdapterId, externalId: id }
       : { source: 'operator', adapterId: einsatzAdapterId, externalId: id, causedByCommandId: commandId }
     const previous = published.get(id)
-    return { at, provenance, ...(previous === undefined ? {} : { previous }) }
+    return { at, provenance, ...(audience === undefined ? {} : { audience }), ...(previous === undefined ? {} : { previous }) }
   }
 
   /** Publishes each transition as a durable object, then every unit that moved since it was last published. */
-  const publish = (state: EngineState, transitions: ReadonlyArray<Transition>, commandId?: CommandEnvelope['id']): void => {
+  const publish = (state: EngineState, transitions: ReadonlyArray<Transition>, commander?: Commander): void => {
     const at = nowIso()
     const events: PackRuntimeEvent[] = []
     const upsert = (object: OperationalObject, history: 'record' | 'snapshot-only'): void => {
@@ -104,14 +128,14 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
       events.push({ type: 'object.upserted', object, at, history, provenance: object.provenance })
     }
     for (const transition of transitions) {
-      upsert(transitionObject(state, transition, stamp(transition.record.id, at, commandId)), 'record')
+      upsert(transitionObject(state, transition, stamp(transition.record.id, audienceOf(state, transition.record), at, commander)), 'record')
       if (transition.kind === 'unit') publishedMotion.set(transition.record.id, { point: transition.point, progressMs: transition.progressMs })
     }
     for (const unit of state.units.values()) {
       const motion = motionOf(state, unit.id)
       const last = publishedMotion.get(unit.id)
       if (last !== undefined && samePoint(last.point, motion.point) && last.progressMs === motion.progressMs) continue
-      upsert(unitObject(state, unit, motion, stamp(unit.id, at, commandId)), 'snapshot-only')
+      upsert(unitObject(state, unit, motion, stamp(unit.id, audienceOf(state, unit), at, commander)), 'snapshot-only')
       publishedMotion.set(unit.id, { point: motion.point, progressMs: motion.progressMs })
     }
     if (events.length === 0) return
@@ -136,7 +160,7 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
   }
 
   /** Makes a state current: drops what the Run deleted meanwhile, publishes the change and schedules a save. */
-  const commit = (next: EngineState, transitions: ReadonlyArray<Transition>, commandId?: CommandEnvelope['id']): void => {
+  const commit = (next: EngineState, transitions: ReadonlyArray<Transition>, commander?: Commander): void => {
     const pruned = withoutDeleted(next)
     if (next === current && transitions.length === 0 && pruned.deleted.size === 0) return
     for (const id of pruned.deleted) {
@@ -145,7 +169,7 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
       deletedByRun.delete(id)
     }
     current = pruned.state
-    publish(current, [...transitions.filter(transition => !pruned.deleted.has(transition.record.id)), ...pruned.transitions], commandId)
+    publish(current, [...transitions.filter(transition => !pruned.deleted.has(transition.record.id)), ...pruned.transitions], commander)
     persistence.scheduleSave()
   }
 
@@ -186,11 +210,12 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
   const unavailableReason = refusal('runtime_unavailable', 'The Einsatz runtime is unavailable; inspect runtime health')
 
   /**
-   * Runs one command. A refusal reads `<code>: <message>`. Anything thrown
-   * past the refusals is a fault in the engine or runtime, never the
-   * caller's: it fails the runtime, and the command is refused as unavailable.
+   * Runs one command as the viewer core stamped for it. A refusal reads
+   * `<code>: <message>`. Anything thrown past the refusals is a fault in the
+   * engine or runtime, never the caller's: it fails the runtime, and the
+   * command is refused as unavailable.
    */
-  const runCommand = async (command: CommandEnvelope): Promise<CommandResult> => {
+  const runCommand = async (command: CommandEnvelope, stamped: RunViewer | undefined): Promise<CommandResult> => {
     const refused = (reason: string): CommandResult => ({ ok: false, commandId: command.id, rejectedAt: nowIso(), reason })
     if (unavailable()) return refused(unavailableReason)
     if (!isEinsatzCommand(command.kind)) return refused(refusal('command_not_accepted', `Einsatz does not accept ${command.kind}`))
@@ -200,13 +225,13 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
       return refused(refusal('runtime_unavailable', `The Einsatz runtime failed while advancing: ${message(error)}`))
     }
     try {
-      const viewer = resolveViewer(command)
+      const viewer = resolveViewer(stamped, roles)
       for (let attempt = 0; attempt < routingAttempts; attempt++) {
         commit(current, [])
         const base = current
         let nextSerials = serials
         const prepared = prepareCommand({
-          state: base, viewer, by: command.actorId,
+          state: base, viewer, roles, by: attributionOf(viewer, command.actorId),
           newId: kind => {
             const fresh = freshId(kind)
             nextSerials = fresh.serials
@@ -225,7 +250,7 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
         if (!outcome.ok) return refused(outcome.reason)
         const settled = await advanceEngine(outcome.state, outcome.state.timeMs, ports)
         serials = nextSerials
-        commit(settled.state, [...outcome.transitions, ...settled.transitions], command.id)
+        commit(settled.state, [...outcome.transitions, ...settled.transitions], { id: command.id, sees: viewer.sees })
         succeeded()
         return { ok: true, commandId: command.id, acceptedAt: nowIso() }
       }
@@ -263,10 +288,10 @@ const connectEinsatz = async (config: PackRuntimeConnectionConfig, routing: Rout
       handlers.add(handler)
       return () => { handlers.delete(handler) }
     },
-    sendCommand: command => serialize(() => runCommand(command)),
+    sendCommand: (command, context) => serialize(() => runCommand(command, context.viewer)),
     invokeQuery: async query => {
       if (unavailable()) throw new Error(unavailableReason)
-      const viewer = resolveViewer({})
+      const viewer = resolveViewer(query.viewer, roles)
       if (query.capabilityId === einsatzQueryIds.recommend) {
         const input = recommendInputSchema.parse(query.input)
         return await recommend({ state: withoutDeleted(current).state, viewer, taskId: input.taskId, routing })

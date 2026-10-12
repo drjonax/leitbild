@@ -16,6 +16,7 @@ import { createSimulationRunRegistry, type SimulationRunRegistry } from '../../s
 import { createWorldModuleState } from '../../src/core/workspaces/module-state.ts'
 import { createWorldWorkspaceRuntimeRegistry, type WorldWorkspaceRuntimeRegistry } from '../../src/core/workspaces/runtime-registry.ts'
 import { createDirectRoutingAdapter } from '../../src/routing/direct-adapter.ts'
+import type { PackRuntimeAdapter } from '../../src/simulation/protocol.ts'
 import { fixturePack } from './fixture-pack.ts'
 import { createFixturePackRuntimeAdapter } from './fixture-runtime.ts'
 
@@ -137,12 +138,12 @@ export const sidedRunDefinition = (nonce: string, options: { readonly sided: boo
 export const compileWithRolePacks = async (source: unknown, packs: ReadonlyArray<WorldPack> = roleRunPacks) =>
   await compileScenarioDefinition(source, packs, { routing: createDirectRoutingAdapter() })
 
-const authoring = (packs: ReadonlyArray<WorldPack>, extraDefinitions: ReadonlyArray<unknown> = []) => ({
+const authoring = (packs: ReadonlyArray<WorldPack>, extraDefinitions: ReadonlyArray<unknown> = [], runtimeAdapters: ReadonlyArray<PackRuntimeAdapter> = []) => ({
   scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs }),
   scenarioDefinitions: [roleRunDefinition, openRunDefinition, ...extraDefinitions].map(definition => scenarioDefinitionSchema.parse(definition)),
   compileScenarioDefinition: (source: unknown) => compileWithRolePacks(source, packs),
   scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(packs),
-  runtimeAdapters: [createFixturePackRuntimeAdapter()],
+  runtimeAdapters: [createFixturePackRuntimeAdapter(), ...runtimeAdapters],
 })
 
 export const createRoleRunRegistry = async (extraDefinitions: ReadonlyArray<unknown> = []): Promise<SimulationRunRegistry> =>
@@ -152,14 +153,15 @@ export const createRoleRunRegistry = async (extraDefinitions: ReadonlyArray<unkn
     ...authoring(roleRunPacks, extraDefinitions),
   })
 
-/** Workspaces whose Packs are the role-aware fixture Pack, plus any a test adds to compile against. */
+/** Workspaces whose Packs are the role-aware fixture Pack, plus any a test adds to compile against and the runtimes those run on. */
 export const createRoleRunWorkspaces = async (
   packs: ReadonlyArray<WorldPack> = roleRunPacks,
   extraDefinitions: ReadonlyArray<unknown> = [],
+  runtimeAdapters: ReadonlyArray<PackRuntimeAdapter> = [],
 ): Promise<{ readonly workspaces: WorldWorkspaceRuntimeRegistry; readonly dataDir: string }> => {
   const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-role-workspaces-'))
   return {
     dataDir,
-    workspaces: createWorldWorkspaceRuntimeRegistry({ dataDir, moduleState: createWorldModuleState({ dataDir }), ...authoring(packs, extraDefinitions) }),
+    workspaces: createWorldWorkspaceRuntimeRegistry({ dataDir, moduleState: createWorldModuleState({ dataDir }), ...authoring(packs, extraDefinitions, runtimeAdapters) }),
   }
 }

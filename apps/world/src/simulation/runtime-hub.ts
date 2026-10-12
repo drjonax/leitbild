@@ -48,6 +48,8 @@ const scenarioFor = (
     initialObjects: scenario.initialObjects.filter(object => object.packId === adapter.packId),
     connections: scenario.connections,
     runtimeConfig: scenario.runtimeConfigByRuntimeId?.[adapter.id] ?? scenario.runtimeConfig,
+    ...(scenario.roles === undefined ? {} : { roles: scenario.roles }),
+    ...(scenario.sides === undefined ? {} : { sides: scenario.sides }),
   }
 }
 

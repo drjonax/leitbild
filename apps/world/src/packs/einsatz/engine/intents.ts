@@ -84,7 +84,8 @@ export type IntentOf<K extends Intent['kind']> = Extract<Intent, { kind: K }>
 /** Who acts. Roles, scenario cues and standing orders all act through this. */
 export interface EngineActor {
   /**
-   * Who acted, recorded in `lastAction.by` as an id: the core actor, `scenario`
+   * Who acted, recorded in `lastAction.by`: the labels of the roles a caller
+   * holds in a Run with roles; otherwise an id: the core actor, `scenario`
    * for authored items, or `standing-order:<id>`. Refusal wording never shows it.
    */
   readonly by: string

@@ -1,5 +1,5 @@
-import type { CommandResult, IsoTimestamp, OperationalObject, ScenarioTimeline, SimulationRunEvent, SimulationRunId } from '../../../core/model/index.ts'
-import { nowIso } from '../../../core/model/index.ts'
+import type { CommandResult, IsoTimestamp, OperationalObject, ScenarioRole, ScenarioSide, ScenarioTimeline, SimulationRunEvent, SimulationRunId } from '../../../core/model/index.ts'
+import { nowIso, roleClassForRoleSet, runRolesOf } from '../../../core/model/index.ts'
 import { createSimulationClock } from '../../../core/model/time.ts'
 import { compileScenarioDefinition } from '../../../core/scenarios/compiler.ts'
 import type { Actor } from '../../../core/simulation-runs/actors.ts'
@@ -24,8 +24,9 @@ import { start } from './engine-harness.ts'
  * Definition with an Einsatz Pack Selection is compiled, its runtime runs
  * behind the Runtime Hub, and calls go through the Run's Capability path.
  * Only persistence is in memory, and the Run clock reads a monotonic source
- * the test moves, so a running clock is deterministic. Production code never
- * imports this file.
+ * the test moves, so a running clock is deterministic. A role Run declares
+ * roles, and sides when given, and its calls are made by screens holding
+ * roles. Production code never imports this file.
  */
 
 export interface UnitItem { readonly type: 'unit'; readonly id: string; readonly label: string; readonly unitType: string; readonly position: readonly [number, number]; readonly [key: string]: unknown }
@@ -37,16 +38,32 @@ export const unitItem = (id: string, unitType: string, position: readonly [numbe
 export const taskItem = (id: string, template: string, position: readonly [number, number], loads?: Readonly<Record<string, number>>): TaskItem =>
   ({ type: 'task', id, label: id.toUpperCase(), template, position, ...(loads === undefined ? {} : { loads }) })
 
-export const definitionOf = (items: ReadonlyArray<UnitItem | TaskItem>, timeline?: ScenarioTimeline) => ({
-  id: 'einsatz-open-run',
-  title: 'Einsatz open run',
-  packs: [{ id: einsatzPackId, config: fixture, items }],
+/** What a role Run declares beside its items: its roles, its sides when it has them, and the Einsatz configuration that names them. */
+export interface RoleRunDeclaration {
+  readonly roles: ReadonlyArray<ScenarioRole>
+  readonly sides?: ReadonlyArray<ScenarioSide>
+  readonly config: unknown
+}
+
+export const definitionOf = (items: ReadonlyArray<UnitItem | TaskItem>, timeline?: ScenarioTimeline, declared?: RoleRunDeclaration) => ({
+  id: declared === undefined ? 'einsatz-open-run' : 'einsatz-role-run',
+  title: declared === undefined ? 'Einsatz open run' : 'Einsatz role run',
+  ...(declared === undefined ? {} : { roles: declared.roles, ...(declared.sides === undefined ? {} : { sides: declared.sides }) }),
+  packs: [{ id: einsatzPackId, config: declared === undefined ? fixture : declared.config, items }],
   world: { startsAt: new Date(start).toISOString(), environment: {} },
   view: { map: { center: lonLat(0), zoom: 12 } },
   ...(timeline === undefined ? {} : { timeline }),
 })
 
 export const operator: Actor = { id: 'actor:operator' as Actor['id'], label: 'actor:operator', role: 'operator' }
+
+/** A screen of a role Run holding these roles, as core resolves its connection. */
+export const screenOf = (declared: RoleRunDeclaration, ...roleIds: ReadonlyArray<string>): Actor => ({
+  id: `actor:screen-${roleIds.join('-')}` as Actor['id'],
+  label: `Screen ${roleIds.join(', ')}`,
+  role: roleClassForRoleSet({ roles: declared.roles, presets: [] }, roleIds),
+  roleIds,
+})
 
 const memoryEventLog = (events: SimulationRunEvent[]): EventLog => ({
   appendMany: async batch => { events.push(...batch) },
@@ -71,8 +88,8 @@ export interface OpenRun {
   /** Brings the runtime to the Run clock and waits until the Run has published what changed. */
   readonly settle: () => Promise<void>
   readonly invoke: (capabilityId: string, input: unknown, actor?: Actor) => Promise<CommandResult>
-  readonly refusal: (capabilityId: string, input: unknown) => Promise<{ readonly code: EinsatzRefusalCode; readonly reason: string }>
-  readonly query: <T>(capabilityId: string, input: unknown) => Promise<T>
+  readonly refusal: (capabilityId: string, input: unknown, actor?: Actor) => Promise<{ readonly code: EinsatzRefusalCode; readonly reason: string }>
+  readonly query: <T>(capabilityId: string, input: unknown, actor?: Actor) => Promise<T>
   readonly object: (id: string) => OperationalObject | undefined
   readonly unit: (id: string) => UnitData
   readonly task: (id: string) => TaskData
@@ -81,16 +98,18 @@ export interface OpenRun {
   readonly close: () => Promise<void>
 }
 
-/** A Run of the Einsatz engine fixture configuration with these items: running unless `paused`, or restored from a checkpoint. */
+/** A Run of the Einsatz engine fixture configuration with these items, or a role Run as declared: running unless `paused`, or restored from a checkpoint. */
 export const openRun = async (options: {
   readonly items: ReadonlyArray<UnitItem | TaskItem>
   readonly timeline?: ScenarioTimeline
+  readonly declared?: RoleRunDeclaration
   readonly paused?: boolean
   readonly routing?: RoutingAdapter
   readonly restore?: RestorePoint
 }): Promise<OpenRun> => {
   const direct = createDirectRoutingAdapter()
-  const compiled = await compileScenarioDefinition(definitionOf(options.items, options.timeline), [einsatzPack], { routing: direct })
+  const compiled = await compileScenarioDefinition(definitionOf(options.items, options.timeline, options.declared), [einsatzPack], { routing: direct })
+  const runRoles = runRolesOf(compiled)
   const adapter = createEinsatzPackRuntimeAdapter({ routing: options.routing ?? direct })
   let monotonicMs = 0
   const runClock = createSimulationClock(
@@ -113,6 +132,8 @@ export const openRun = async (options: {
       connections: [],
       runtimeConfigByRuntimeId: { [einsatzRuntimeId]: compiled.packConfigs[einsatzPackId] },
       runtimeConfig: {},
+      ...(compiled.roles === undefined ? {} : { roles: compiled.roles }),
+      ...(compiled.sides === undefined ? {} : { sides: compiled.sides }),
     },
     runtimeStateStores: { [einsatzRuntimeId]: { load: async () => saved, save: async value => { saved = structuredClone(value) } } },
     ...(options.restore === undefined ? {} : { initialObjects: options.restore.snapshot.objects }),
@@ -130,8 +151,10 @@ export const openRun = async (options: {
       id: compiled.id,
       startsAt: compiled.world.startsAt,
       agentRestrictions: compiled.agentRestrictions,
+      ...(runRoles === null ? {} : { roles: runRoles }),
       ...(compiled.timeline === undefined ? {} : { timeline: compiled.timeline }),
     },
+    roleAwarePackIds: [einsatzPackId],
     runtimeCapabilities: [
       ...adapter.capabilities.map(capability => ({ packId: einsatzPackId, runtimeId: einsatzRuntimeId, capability })),
       ...worldCoreCapabilities.map(capability => ({ packId: 'world', runtimeId: 'world.core', capability })),
@@ -159,13 +182,13 @@ export const openRun = async (options: {
     forward: ms => { monotonicMs += ms },
     settle: async () => { await run.setClock({}) },
     invoke,
-    refusal: async (capabilityId, input) => {
-      const result = await invoke(capabilityId, input)
+    refusal: async (capabilityId, input, actor) => {
+      const result = await invoke(capabilityId, input, actor)
       if (result.ok) throw new Error(`Expected ${capabilityId} to be refused`)
       return { code: refusalCode(result.reason), reason: result.reason }
     },
-    query: async <T>(capabilityId: string, input: unknown): Promise<T> => {
-      const outcome = await run.invokeCapability(operator, { capabilityId, input })
+    query: async <T>(capabilityId: string, input: unknown, actor: Actor = operator): Promise<T> => {
+      const outcome = await run.invokeCapability(actor, { capabilityId, input })
       if (outcome.kind !== 'query') throw new Error(`${capabilityId} is not a query`)
       return outcome.result as T
     },

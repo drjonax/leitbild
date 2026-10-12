@@ -228,6 +228,7 @@ describe('drone pack native runtime', () => {
       objectById: () => undefined,
       routing: createDirectRoutingAdapter(),
       packConfigs: { drone: { maxDrones: 10 } },
+      sides: [],
     })
 
     const object = contribution.objects[0]!

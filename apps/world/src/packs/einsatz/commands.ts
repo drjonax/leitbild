@@ -1,9 +1,10 @@
 import { z } from 'zod'
+import type { ScenarioRole } from '../../core/model/index.ts'
 import { commandInputSchemas, einsatzCommandIds, type CommandInput, type EinsatzCommandId } from './capabilities.ts'
 import { notInPicture, refused, type Refused } from './engine/intent-support.ts'
 import type { EngineActor, Intent } from './engine/intents.ts'
 import type { EngineState } from './engine/model.ts'
-import { actorFor, controllerOnly, inPicture, unitAuthority, type EinsatzViewer } from './viewer.ts'
+import { actorFor, controllerOnly, inPicture, taskAuthority, unitAuthority, type EinsatzViewer } from './viewer.ts'
 
 /**
  * A command as the engine runs it: the intent and the actor. Who may ask is
@@ -14,7 +15,9 @@ import { actorFor, controllerOnly, inPicture, unitAuthority, type EinsatzViewer 
 export interface CommandContext {
   readonly state: EngineState
   readonly viewer: EinsatzViewer
-  /** Attribution written to `lastAction.by`. */
+  /** Every role the Run declares, to name those that command a unit the viewer does not; none in open mode. */
+  readonly roles: ReadonlyArray<ScenarioRole>
+  /** Attribution written to `lastAction.by`: the held roles' labels, or the core actor in open mode and for the timeline. */
   readonly by: string
   /** An id no object of the Run holds, for the record a create adds. */
   readonly newId: (kind: 'unit' | 'task') => string
@@ -27,17 +30,28 @@ const firstRefusal = (...checks: ReadonlyArray<Refused | undefined>): Refused | 
 /** Refused unless the viewer commands the unit; an id the state does not hold is left to the engine, which refuses it without echoing it. */
 const commanded = (context: CommandContext, unitId: string): Refused | undefined => {
   const unit = context.state.units.get(unitId)
-  return unit === undefined ? undefined : unitAuthority(context.state.catalog, context.viewer, unit)
+  return unit === undefined ? undefined : unitAuthority(context.state.catalog, context.viewer, context.roles, unit)
 }
 
 /**
- * Refused unless the record is in the viewer's picture. A task need not be in
- * the viewer's queue: the queue lists a role's work, it does not gate who may
- * send to or close a task it sees.
+ * Refused unless the record is in the viewer's picture. A send's target need
+ * not be in the viewer's queue: a role may send its own units to any task it
+ * sees, and the units it sends stay under its authority.
  */
 const seen = (context: CommandContext, id: string): Refused | undefined => {
   const record = context.state.units.get(id) ?? context.state.tasks.get(id)
   return record === undefined || inPicture(context.state.catalog, context.viewer, record) ? undefined : notInPicture()
+}
+
+/**
+ * Refused unless the task is in the viewer's queue. Closing a task releases
+ * every unit on it, whoever commands them, so only a role whose work it is
+ * may close it; other roles see it read-only. An id the state does not hold
+ * is left to the engine, which refuses it without echoing it.
+ */
+const queued = (context: CommandContext, taskId: string): Refused | undefined => {
+  const task = context.state.tasks.get(taskId)
+  return task === undefined ? undefined : taskAuthority(context.state.catalog, context.viewer, task)
 }
 
 /**
@@ -93,7 +107,7 @@ const intentFor = (context: CommandContext, kind: EinsatzCommandId, payload: unk
     }
     case einsatzCommandIds.taskClose: {
       const input = parse(einsatzCommandIds.taskClose)
-      return ok({ kind: 'task.close', ...input }, seen(context, input.taskId))
+      return ok({ kind: 'task.close', ...input }, queued(context, input.taskId))
     }
     case einsatzCommandIds.siteSet: {
       const input = parse(einsatzCommandIds.siteSet)

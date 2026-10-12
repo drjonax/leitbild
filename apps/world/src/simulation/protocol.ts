@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,RecordedSample,RunViewer,ScenarioRecordingSelection,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
+import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,RecordedSample,RunViewer,ScenarioRecordingSelection,ScenarioRole,ScenarioSide,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
 import type { PackRuntimeClock } from '../core/packs/protocol.ts'
 
 export interface PackRuntimeSnapshot {
@@ -188,6 +188,13 @@ export interface PackScenarioRuntimeConfig {
   readonly connections: ReadonlyArray<ElectricalConnectionDefinition>
   readonly runtimeConfigByRuntimeId?: Readonly<Record<string, unknown>>
   readonly runtimeConfig: unknown
+  /**
+   * The Scenario's roles and sides, fixed for the Run's lifetime, for a
+   * role-aware runtime that words and judges by them. Each is absent when the
+   * Scenario declares none.
+   */
+  readonly roles?: ReadonlyArray<ScenarioRole>
+  readonly sides?: ReadonlyArray<ScenarioSide>
 }
 
 /**

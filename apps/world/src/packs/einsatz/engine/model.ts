@@ -12,6 +12,14 @@ const countsSchema = z.record(configIdSchema, z.number().int().positive())
 export const propertyValueSchema = z.union([z.number().finite(), z.boolean(), configIdSchema])
 export type PropertyValue = z.output<typeof propertyValueSchema>
 
+/**
+ * The longest `lastAction.by`. In a Run with roles it names the roles a
+ * caller holds by label, so compile refuses a Scenario whose declared roles,
+ * all held at once, would name more (`role_labels_too_long`). An actor id or
+ * a standing order is far shorter.
+ */
+export const lastActionByMaxLength = 1_000
+
 /** A prepared route: geometry, travel time at this unit's own full speed, distance and the router that produced it. */
 export const legSchema = z.object({
   geometry: geoJsonLineStringSchema,
@@ -26,7 +34,8 @@ export const actionVerbs = ['create', 'send', 'divert', 'move', 'deliver', 'reca
 export const lastActionSchema = z.object({
   verb: z.enum(actionVerbs),
   target: idSchema.optional(),
-  by: z.string().trim().min(1).max(200),
+  /** The core actor, `scenario` or `standing-order:<id>`; in a Run with roles, the labels of the roles the caller holds. */
+  by: z.string().trim().min(1).max(lastActionByMaxLength),
   cause: z.string().trim().min(1).max(500).optional(),
   atMs: simulationMs,
 }).strict()

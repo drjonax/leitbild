@@ -22,9 +22,9 @@ export const actionBy = (draft: Draft, actor: EngineActor, verb: LastAction['ver
 
 /**
  * "A2 now en route to C-20", worded from the unit's phase and task. It names
- * no actor: `lastAction.by` records a core actor id or a standing order, not
- * a word for people, and a Run without roles holds no role to name, since
- * every screen acts as the same operator.
+ * no actor: outside role Runs `lastAction.by` records a core actor id or a
+ * standing order, not a word for people, and a Run without roles holds no
+ * role to name, since every screen acts as the same operator.
  */
 export const committedText = (state: EngineState, unit: UnitRecord): string => {
   const task = unit.taskId === undefined ? undefined : state.tasks.get(unit.taskId)

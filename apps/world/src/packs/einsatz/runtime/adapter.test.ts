@@ -289,9 +289,9 @@ describe('Einsatz runtime refusals and faults', () => {
       expect(reasonOf(await run.connection.sendCommand(envelope('bad-input', ids.hold, { unitId: 'c1', extra: true }), {}))).toStartWith('invalid_input: ')
       healthy(run)
 
-      // Core stamps a role set only in a Run that declares roles, and such a Run cannot hold Einsatz: one reaching it is a fault.
-      expect(reasonOf(await run.connection.sendCommand(envelope('forged-roles', ids.hold, { unitId: 'c1' }, ['ground']), {})))
-        .toBe('runtime_unavailable: The Einsatz runtime failed running world.einsatz.unit.hold: Einsatz is not role-aware, so no role Run can call it (roles ground)')
+      // Core stamps a viewer only from roles the Run declares, and this Run declares none: a viewer reaching it is a fault.
+      expect(reasonOf(await run.connection.sendCommand(envelope('forged-roles', ids.hold, { unitId: 'c1' }, ['ground']), { viewer: { roleIds: ['ground'], class: 'operator', sees: 'all' } })))
+        .toBe('runtime_unavailable: The Einsatz runtime failed running world.einsatz.unit.hold: The caller holds role ground, which this Run does not declare')
       expect(run.connection.health?.()).toMatchObject([{ state: 'failed', lastFailure: { operation: 'command' } }])
       expect(await run.refusal(ids.hold, { unitId: 'c1' })).toEqual({ code: 'runtime_unavailable', reason: 'runtime_unavailable: The Einsatz runtime is unavailable; inspect runtime health' })
       expect(run.unit('c1').phase).toBe('available')

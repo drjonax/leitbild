@@ -10,6 +10,7 @@ import {
   type IsoTimestamp,
   type ObjectId,
   type OperationalObject,
+  type ScenarioSide,
   type StartingView,
 } from '../model/index.ts'
 import type { PackScenarioItemContribution, PackScenarioItemSpec, WorldPack } from '../packs/protocol.ts'
@@ -66,6 +67,7 @@ const expandItem = async (
     readonly objectMap: Map<ObjectId, OperationalObject>
     readonly routing: RoutingAdapter
     readonly packConfigs: Record<string, unknown>
+    readonly sides: ReadonlyArray<ScenarioSide>
   },
 ): Promise<PackScenarioItemContribution> => {
   const pack = packFor(context.packs, spec.pack)
@@ -79,6 +81,7 @@ const expandItem = async (
     objectById: (id: ObjectId) => context.objectMap.get(id),
     routing: context.routing,
     packConfigs: context.packConfigs,
+    sides: context.sides,
   }
   return await pack.scenario!.expandItem(parsedSpec, expansionContext)
 }
@@ -150,6 +153,7 @@ export const compileScenarioDefinition = async (
         objectMap,
         routing: options.routing,
         packConfigs,
+        sides: source.sides ?? [],
       })
       for (const expandedObject of contribution.objects) {
         if (objectMap.has(expandedObject.id)) throw new Error(`scenario ${source.id} has duplicate object id: ${expandedObject.id}`)
@@ -159,7 +163,7 @@ export const compileScenarioDefinition = async (
       }
   }
   for (const pack of activePacks)
-    pack.scenario?.validateInitialObjects?.(initialObjects, packConfigs[pack.descriptor.id], startsAt)
+    pack.scenario?.validateInitialObjects?.(initialObjects, packConfigs[pack.descriptor.id], startsAt, source.sides ?? [])
   // Connections describe the initial physical topology. Timeline expansion may
   // create or delete later objects, but it must not rewrite that topology.
   const connections = compileElectricalConnections(source.connections, objectMap)

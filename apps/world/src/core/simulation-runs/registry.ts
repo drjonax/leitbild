@@ -594,6 +594,8 @@ export const createSimulationRunRegistry = (config: {
           connections: scenarioRuntime.scenario.connections,
           runtimeConfigByRuntimeId: scenarioRuntime.runtimeConfigByRuntimeId,
           runtimeConfig: {},
+          ...(scenarioRuntime.scenario.roles === undefined ? {} : { roles: scenarioRuntime.scenario.roles }),
+          ...(scenarioRuntime.scenario.sides === undefined ? {} : { sides: scenarioRuntime.scenario.sides }),
         },
         ...(restoredSnapshot ? { initialObjects: restoredSnapshot.objects } : {}),
         runtimeStateStores,

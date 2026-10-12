@@ -1,6 +1,7 @@
 // The wire oracle: Red, Blue and Controller screens, each driven by the real
-// World client modules, play one scripted sided fixture Run over a real
-// server. Every id and label carries a per-run nonce. After each step the
+// World client modules, play one scripted sided Run over a real server: the
+// fixture Pack's objects and Einsatz units, tasks and a public site side by
+// side. Every id and label carries a per-run nonce. After each step the
 // oracle deep-scans every HTTP body and WebSocket message a side screen
 // received, and every store it built, for any id or label of an object
 // outside that side's audience and for any command id another side issued.
@@ -32,14 +33,27 @@ import {
 } from '../src/ui/simulation-run-client.ts'
 import { applySimulationRunEventBatchMessage } from '../src/ui/simulation-run-events.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
+import { einsatzCommandIds, einsatzQueryIds, type Recommendation } from '../src/packs/einsatz/capabilities.ts'
+import { createEinsatzSidedRuntimeAdapter, einsatzCrossSideCue, einsatzSidedNames, einsatzSidedSelection } from '../src/packs/einsatz/fixtures/sided-run.ts'
+import { einsatzPack } from '../src/packs/einsatz/pack.ts'
 import { fixtureRuntimeId } from './fixtures/fixture-pack.ts'
 import { fixtureAnnouncementType, fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
-import { createRoleRunWorkspaces, sidedNames, sidedRoles, sidedRunDefinition, sides } from './fixtures/role-runs.ts'
+import { createRoleRunWorkspaces, roleAwareFixturePack, sidedNames, sidedRoles, sidedRunDefinition, sides } from './fixtures/role-runs.ts'
 import { waitForCondition } from './helpers.ts'
 
 const nonce = crypto.randomUUID().slice(0, 8)
 const names = sidedNames(nonce)
-const definition = sidedRunDefinition(nonce)
+/** Einsatz plays Blue as its first side: Red's carrier, tagged like Blue's, lies nearer Blue's task. */
+const einsatz = (() => {
+  const named = einsatzSidedNames(nonce)
+  return { blueCarrier: named.firstCarrier, redCarrier: named.secondCarrier, blueTask: named.firstTask, redTask: named.secondTask, site: named.site }
+})()
+const fixtureDefinition = sidedRunDefinition(nonce)
+const definition = {
+  ...fixtureDefinition,
+  packs: [...fixtureDefinition.packs, einsatzSidedSelection(nonce, { side: 'blue', role: 'blue-lead' }, { side: 'red', role: 'red-lead' })],
+  timeline: { cues: [...fixtureDefinition.timeline.cues, einsatzCrossSideCue(nonce)] },
+}
 const declaration: RunRoles = { roles: [...sidedRoles], presets: [], sides: [...sides] }
 
 /** Event types a side socket may receive at all. */
@@ -176,7 +190,18 @@ const join = async (screen: Screen): Promise<void> => {
   await waitForCondition(`${screen.name} ready`, () => screen.applied.some(entry => entry.kind === 'ready'))
 }
 
-const objectIds = (screen: Screen): ReadonlyArray<string> => (screen.stores?.objects ?? []).map(object => object.id).sort()
+/** The ids of one Pack's objects a screen holds: the fixture Pack's unless named. */
+const objectIds = (screen: Screen, packId = 'fixture'): ReadonlyArray<string> =>
+  (screen.stores?.objects ?? []).filter(object => object.packId === packId).map(object => object.id).sort()
+const einsatzIds = (screen: Screen): ReadonlyArray<string> => objectIds(screen, 'einsatz')
+
+/** Whom the Einsatz objects a screen holds name as giving their last order. */
+const attributions = (screen: Screen): ReadonlyArray<string> => [...new Set((screen.stores?.objects ?? [])
+  .filter(object => object.packId === 'einsatz')
+  .flatMap(object => {
+    const by = (object.packData as { readonly lastAction?: { readonly by?: unknown } } | undefined)?.lastAction?.by
+    return typeof by === 'string' ? [by] : []
+  }))].sort()
 
 /** Everything a store holds, Maps included, as text to search. */
 const storeText = (stores: RunScopedStores | null): string =>
@@ -244,13 +269,21 @@ const eventsReceived = (screen: Screen, since = 0): ReadonlyArray<{ readonly typ
 
 const command = async (screen: Screen, capabilityId: string, input: unknown) =>
   await asScreen(screen, async () => await invokeSimulationRunCapability(runId, { capabilityId, input }))
+const refusalOf = (outcome: Awaited<ReturnType<typeof command>>): string | null => outcome.kind === 'command' && !outcome.result.ok ? outcome.result.reason : null
+
+const recommendAs = async (screen: Screen, taskId: string): Promise<Recommendation> =>
+  await asScreen(screen, async () => await querySimulationRunCapability<Recommendation>(runId, einsatzQueryIds.recommend, { taskId }))
+/** Every unit a recommendation names: proposed, alternatives, ineligible and busy. */
+const recommended = (recommendation: Recommendation): ReadonlyArray<string> => [
+  ...recommendation.proposal.units, ...recommendation.alternatives, ...recommendation.ineligible, ...recommendation.committed,
+].map(entry => entry.unitId).sort()
 
 let red: Screen
 let blue: Screen
 let controller: Screen
 
 beforeAll(async () => {
-  const created = await createRoleRunWorkspaces(undefined, [definition, sidedRunDefinition(nonce, { sided: false })])
+  const created = await createRoleRunWorkspaces([roleAwareFixturePack, einsatzPack], [definition, sidedRunDefinition(nonce, { sided: false })], [createEinsatzSidedRuntimeAdapter()])
   workspaces = created.workspaces
   dataDir = created.dataDir
   workspaceId = newWorkspaceId()
@@ -282,6 +315,9 @@ describe('the wire oracle on a sided fixture Run', () => {
     expect(objectIds(red)).toEqual([names.depot.id, names.redTask.id, names.redUnit.id].sort())
     expect(objectIds(blue)).toEqual([names.depot.id, names.blueTask.id, names.blueUnit.id].sort())
     expect(objectIds(controller)).toHaveLength(6)
+    expect(einsatzIds(red)).toEqual([einsatz.redCarrier.id, einsatz.redTask.id, einsatz.site.id].sort())
+    expect(einsatzIds(blue)).toEqual([einsatz.blueCarrier.id, einsatz.blueTask.id, einsatz.site.id].sort())
+    expect(einsatzIds(controller)).toHaveLength(5)
     // The opening highlights the Red unit for truth views only; its guidance names the public depot for all.
     expect(controller.stores?.scenarioState?.highlightedObjectIds as ReadonlyArray<string> | undefined).toEqual([names.redUnit.id])
     for (const side of [red, blue]) {
@@ -392,6 +428,57 @@ describe('the wire oracle on a sided fixture Run', () => {
     await expectNoLeak(blue, 'blue')
   })
 
+  test('case 5: a Red unit tagged like Blue\'s is absent from Blue\'s recommendation, a Blue send naming it is refused as not in the picture, and only a truth view sets the public site, which both sides then see', async () => {
+    const marks = { http: blue.http.length, ws: blue.ws.length }
+    const asBlue = await recommendAs(blue, einsatz.blueTask.id)
+    expect(asBlue.proposal.units.map(entry => entry.unitId)).toEqual([einsatz.blueCarrier.id])
+    expect(recommended(asBlue)).toEqual([einsatz.blueCarrier.id])
+    expect(recommended(await recommendAs(red, einsatz.redTask.id))).toEqual([einsatz.redCarrier.id])
+    const send = { units: [einsatz.redCarrier.id], to: { taskId: einsatz.blueTask.id } }
+    expect(refusalOf(await command(blue, einsatzCommandIds.send, send))).toBe('not_in_picture: Not in your picture')
+    expect(await blue.connection.invokeCapability(runId, { capabilityId: einsatzCommandIds.send, input: send })).toMatchObject({ result: { ok: false, reason: 'not_in_picture: Not in your picture' } })
+    // A side role commands no public unit: Blue's command on the public site is refused within Blue's picture.
+    const refused = await command(blue, einsatzCommandIds.siteSet, { siteId: einsatz.site.id, accepting: false })
+    if (refused.kind !== 'command' || refused.result.ok) throw new Error(`Expected Blue's command on the public site to be refused: ${JSON.stringify(refused)}`)
+    expect(refused.result.reason).toBe(`unit_not_authorized: Blue lead does not command ${einsatz.site.label}, and no operator role does`)
+    // The Controller closes and reopens it, and each side sees each change.
+    for (const accepting of [false, true]) {
+      const outcome = await command(controller, einsatzCommandIds.siteSet, { siteId: einsatz.site.id, accepting })
+      if (outcome.kind !== 'command' || !outcome.result.ok) throw new Error(`The Controller could not set the public site: ${JSON.stringify(outcome)}`)
+      await barrier(red, blue, controller)
+      for (const side of [red, blue]) {
+        expect(side.stores?.objects.find(object => object.id === einsatz.site.id)?.packData).toMatchObject({ accepting, lastAction: { verb: 'set', by: 'Controller' } })
+      }
+    }
+    // No Einsatz object a side holds names the other side's role as the one that gave its last order.
+    for (const side of [red, blue]) expect(attributions(side)).toContain('Controller')
+    expect(attributions(red).filter(by => by.includes('Blue lead'))).toEqual([])
+    expect(attributions(blue).filter(by => by.includes('Red lead'))).toEqual([])
+    await expectNoLeak(blue, 'blue', marks)
+    await expectNoLeak(blue, 'blue')
+    await expectNoLeak(red, 'red')
+    // The oracle watched Red's screen for Blue's refused command.
+    expect(sideCommands.get(refused.result.commandId)).toEqual(['blue'])
+  })
+
+  test('case 6: the Controller\'s recommendation for a Blue task lists no Red unit, and cross-side sends by the Controller or a cue are refused', async () => {
+    expect(recommended(await recommendAs(controller, einsatz.blueTask.id))).toEqual([einsatz.blueCarrier.id])
+    const send = { units: [einsatz.redCarrier.id], to: { taskId: einsatz.blueTask.id } }
+    expect(refusalOf(await command(controller, einsatzCommandIds.send, send))).toBe(`cross_side_reference: ${einsatz.redCarrier.label} cannot serve another side's ${einsatz.blueTask.label}`)
+    // The cue a minute in, fired by case 2's advance, was refused alike, and only truth views heard of it.
+    const events = (await liveRun()).events()
+    const cued = events.find(event => event.type === 'command.issued' && event.command.kind === einsatzCommandIds.send && event.command.roleIds === undefined)
+    if (cued?.type !== 'command.issued') throw new Error('expected the cross-side cue to issue its send')
+    expect(cued.command.payload).toEqual(send)
+    const result = events.find(event => event.type === 'command.result' && event.result.commandId === cued.command.id)
+    expect(result?.type === 'command.result' && !result.result.ok ? result.result.reason : null).toMatch(/^cross_side_reference: /)
+    await barrier(red, blue, controller)
+    expect(red.stores?.objects.find(object => object.id === einsatz.redCarrier.id)?.packData).toMatchObject({ phase: 'available' })
+    expect(controller.stores?.objects.find(object => object.id === einsatz.blueTask.id)?.packData).toMatchObject({ coverage: { loads: [expect.objectContaining({ covered: 0 })] } })
+    await expectNoLeak(red, 'red')
+    await expectNoLeak(blue, 'blue')
+  })
+
   test('case 8: side sockets get only side-visible event types, deletions by their audience, and no runtime messages', async () => {
     const marks = { red: red.ws.length, blue: blue.ws.length }
     for (const objectId of [names.hidden.id, names.redCued.id]) {
@@ -424,6 +511,7 @@ describe('the wire oracle on a sided fixture Run', () => {
     const readyIndex = controller.ws.findIndex(entry => entry.type === 'realtime.ready' && entry.epoch === 2)
     expect(controller.roleIds).toEqual(['blue-lead'])
     expect(objectIds(controller)).toEqual(objectIds(blue))
+    expect(einsatzIds(controller)).toEqual(einsatzIds(blue))
     expect(controller.stores?.scenarioState?.highlightedObjectIds).toEqual([])
     expect(controller.stores?.compiledScenario.initialObjects).toEqual([])
     // A late message of the old epoch is dropped at the gate.
@@ -449,13 +537,14 @@ describe('the wire oracle on a sided fixture Run', () => {
     await (await liveRun()).setClock({ paused: true })
     await waitForCondition('Blue adopts the reset Run', () => blue.applied.filter(entry => entry.kind === 'ready').length > readies)
     expect(objectIds(blue)).toEqual([names.depot.id, names.blueTask.id, names.blueUnit.id].sort())
+    expect(einsatzIds(blue)).toEqual([einsatz.blueCarrier.id, einsatz.blueTask.id, einsatz.site.id].sort())
     // A screen re-joining reads the Run, never the Scenario fetch.
     const reread = await readRun(blue)
-    expect(reread.snapshot.objects.map(object => String(object.id)).sort()).toEqual([names.depot.id, names.blueTask.id, names.blueUnit.id].sort())
+    expect(reread.snapshot.objects.map(object => String(object.id)).sort()).toEqual([names.depot.id, names.blueTask.id, names.blueUnit.id, einsatz.blueCarrier.id, einsatz.blueTask.id, einsatz.site.id].sort())
     // This proves the requests the client modules made for the steps scripted
     // here, not every request a full World screen could make.
     const runPath = `/api/workspaces/${workspaceId}/world/simulation-runs/${runId}`
-    const allowed = (screen: Screen) => new RegExp(`^${runPath.replaceAll('.', '\\.')}(/snapshot|/presence|/capabilities/world\\.fixture\\.[a-z.-]+/invoke)?\\?roles=${encodeURIComponent(screen.roleIds.join(','))}$`)
+    const allowed = (screen: Screen) => new RegExp(`^${runPath.replaceAll('.', '\\.')}(/snapshot|/presence|/capabilities/world\\.(fixture|einsatz)\\.[a-z.-]+/invoke)?\\?roles=${encodeURIComponent(screen.roleIds.join(','))}$`)
     for (const screen of [red, blue]) {
       expect(screen.http.map(entry => entry.url).filter(url => !allowed(screen).test(url))).toEqual([])
       expect(screen.http.some(entry => entry.url.includes('/scenarios/'))).toBe(false)

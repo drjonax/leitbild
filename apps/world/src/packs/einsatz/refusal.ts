@@ -33,6 +33,16 @@ export const configurationRefusalCodes = [
 export type ConfigurationRefusalCode = typeof configurationRefusalCodes[number]
 
 /**
+ * Refusals of a configuration against the Scenario it runs in: authority
+ * needs declared roles and names operator roles only, hostility names
+ * declared sides, and the roles' labels fit `lastAction.by`. An authority
+ * entry naming an undeclared role is `authority_unknown_role`, apart from
+ * core's `unknown_role` for a caller asking for an undeclared role.
+ */
+export const scenarioConfigRefusalCodes = ['authority_without_roles', 'authority_unknown_role', 'controller_authority', 'unknown_side', 'role_labels_too_long'] as const
+export type ScenarioConfigRefusalCode = typeof scenarioConfigRefusalCodes[number]
+
+/**
  * Refusals of an intent against the current engine state. Intents reuse the
  * configuration codes where the meaning is the same (an unknown type, an
  * undeclared property, a load-less task without a floor, a repeated id).
@@ -76,9 +86,9 @@ export type AuthorityRefusalCode = typeof authorityRefusalCodes[number]
 export const runtimeRefusalCodes = ['runtime_unavailable', 'command_not_accepted', 'invalid_input', 'records_changed'] as const
 export type RuntimeRefusalCode = typeof runtimeRefusalCodes[number]
 
-export type EinsatzRefusalCode = ConfigurationRefusalCode | EngineRefusalCode | AuthorityRefusalCode | RuntimeRefusalCode
+export type EinsatzRefusalCode = ConfigurationRefusalCode | ScenarioConfigRefusalCode | EngineRefusalCode | AuthorityRefusalCode | RuntimeRefusalCode
 
-const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...engineRefusalCodes, ...authorityRefusalCodes, ...runtimeRefusalCodes])
+const knownCodes: ReadonlySet<string> = new Set<string>([...configurationRefusalCodes, ...scenarioConfigRefusalCodes, ...engineRefusalCodes, ...authorityRefusalCodes, ...runtimeRefusalCodes])
 
 export const refusal = (code: EinsatzRefusalCode, message: string): string => `${code}: ${message}`
 

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { geoJsonPosition2DSchema, idSchema, meters, type AlertState, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId, type Provenance } from '../../../core/model/index.ts'
+import { geoJsonPosition2DSchema, idSchema, meters, type AlertState, type IsoTimestamp, type ObjectAudience, type ObjectId, type OperationalObject, type PackId, type Provenance } from '../../../core/model/index.ts'
 import type { EinsatzConfig } from '../config-schema.ts'
 import { einsatzPackId } from '../ids.ts'
 import { einsatzDataSchema, emptyEngineState, motionOf, templateOf, unitTypeOf, type EngineState, type Leg, type RecordAlert, type TaskRecord, type Transition, type UnitMotion, type UnitRecord } from './model.ts'
@@ -124,10 +124,15 @@ export const readEngineState = (input: {
   return state
 }
 
-/** When and by whom an object is written; `previous` carries its revision and creation time forward. */
+/**
+ * When, by whom and for whom an object is written; `previous` carries its
+ * revision and creation time forward. `audience` is required exactly in a
+ * Run that declares sides: `audienceOf` for units and tasks.
+ */
 export interface ObjectStamp {
   readonly at: IsoTimestamp
   readonly provenance: Provenance
+  readonly audience?: ObjectAudience
   readonly previous?: OperationalObject
 }
 
@@ -137,6 +142,18 @@ const alertsOf = (id: string, alerts: ReadonlyArray<RecordAlert>): AlertState[] 
   id: `${id}:${alert.code}`, kind: alert.code, severity: 'warning', message: alert.message, raisedAt: isoOf(alert.sinceMs), acknowledged: false,
 }))
 
+/**
+ * Whose picture a record belongs to in a Run that declares sides: a public
+ * type's object reaches every side, any other only its own side. A Run
+ * without sides writes no audience.
+ */
+export const audienceOf = (state: Pick<EngineState, 'catalog' | 'sides'>, record: UnitRecord | TaskRecord): ObjectAudience | undefined => {
+  if (state.sides.length === 0) return undefined
+  if (record.type === 'unit' && unitTypeOf(state.catalog, record).public) return 'public'
+  if (record.side === undefined) throw new Error(`${record.id}: a record of a Run that declares sides has no side`)
+  return [record.side]
+}
+
 const envelope = (id: string, label: string, stamp: ObjectStamp) => ({
   id: id as ObjectId,
   packId: einsatzPackId as PackId,
@@ -144,6 +161,7 @@ const envelope = (id: string, label: string, stamp: ObjectStamp) => ({
   revision: stamp.previous === undefined ? 0 : stamp.previous.revision + 1,
   provenance: stamp.provenance,
   timestamps: { createdAt: stamp.previous?.timestamps.createdAt ?? stamp.at, updatedAt: stamp.at },
+  ...(stamp.audience === undefined ? {} : { audience: stamp.audience }),
 })
 
 /** A unit as an object: its record is `packData`; position, route progress and ETA come from its motion. */

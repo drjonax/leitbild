@@ -387,6 +387,8 @@ export interface PackScenarioExpansionContext {
   readonly objectById: (id: ObjectId) => OperationalObject | undefined
   readonly routing: RoutingAdapter
   readonly packConfigs: Record<string, unknown>
+  /** The Scenario's declared sides, for a Pack whose items belong to one; empty when it declares none. */
+  readonly sides: ReadonlyArray<ScenarioSide>
 }
 
 
@@ -399,6 +401,8 @@ export interface PackScenarioSupport {
     objects: ReadonlyArray<OperationalObject>,
     config: unknown,
     at: IsoTimestamp,
+    /** As PackScenarioExpansionContext.sides. */
+    sides: ReadonlyArray<ScenarioSide>,
   ) => void
   readonly itemSchemas: Readonly<Record<string, z.ZodType>>
   readonly expandItem: (
