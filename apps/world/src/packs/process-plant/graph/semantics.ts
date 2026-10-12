@@ -188,6 +188,24 @@ export interface ComponentSemantics {
   readonly shutdownReadings: ReadonlyArray<string>
   /** What the equipment does with energy, by port circuit. */
   readonly energy: ReadonlyArray<EnergyRole>
+  /**
+   * How far what the equipment inserts is in, part by part: a core's rod
+   * banks, each read in steps withdrawn. A drawing shows each part's
+   * inserted length, in its groups (shutdown banks, then control banks).
+   */
+  readonly insertion?: InsertionDeclaration
+}
+
+/**
+ * Parts read one by one (`groups`, each a list of the equipment's own
+ * readings) of what one reading reads on average (`reading`): all in the
+ * reading's quantity and unit, each over its hard range, fully inserted at
+ * that range's `insertedAt` end (rods are in at zero steps withdrawn).
+ */
+export interface InsertionDeclaration {
+  readonly reading: string
+  readonly insertedAt: 'min' | 'max'
+  readonly groups: ReadonlyArray<ReadonlyArray<string>>
 }
 
 export interface ProgramDeclaration {
@@ -274,6 +292,14 @@ export interface CompiledComponentSemantics {
   readonly programs: ReadonlyArray<{ readonly reading: VariablePath; readonly program: VariablePath; readonly deviation?: VariablePath }>
   readonly shutdownReadings: ReadonlyArray<VariablePath>
   readonly energy: ReadonlyArray<CompiledEnergyRole>
+  readonly insertion?: CompiledInsertion
+}
+
+/** An insertion with its parts as full variable paths, each with the hard range it moves over. */
+export interface CompiledInsertion {
+  readonly reading: VariablePath
+  readonly insertedAt: 'min' | 'max'
+  readonly groups: ReadonlyArray<ReadonlyArray<{ readonly path: VariablePath; readonly range: { readonly min: number; readonly max: number } }>>
 }
 
 /** An energy role with its rate as the full variable path. */

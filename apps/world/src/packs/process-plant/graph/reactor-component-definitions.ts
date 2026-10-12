@@ -260,6 +260,12 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       // verifies the trip by, in the order a faceplate reads them.
       shutdownReadings: ['rodsOnBottom', 'rodStepsWithdrawn', 'powerRangePercent', 'intermediateRangeCurrentAmps', 'intermediateRangeStartupRateDpm'],
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
+      // The rods' average steps, bank by bank: the shutdown banks, then the control banks, each in at no steps withdrawn.
+      insertion: {
+        reading: 'rodStepsWithdrawn',
+        insertedAt: 'min',
+        groups: [shutdownRodBanks.map(bank => `shutdownBank${bank}StepsWithdrawn`), controlRodBanks.map(bank => `controlBank${bank}StepsWithdrawn`)],
+      },
     }),
     variables: [
       // Fission power is what the power-range channels read: calibrated so that

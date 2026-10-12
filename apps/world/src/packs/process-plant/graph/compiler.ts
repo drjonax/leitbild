@@ -29,8 +29,10 @@ import {
   readingAccepts,
   type CompiledComponentSemantics,
   type CompiledEnergyRole,
+  type CompiledInsertion,
   type CompiledStateAspect,
   type ComponentSemantics,
+  type InsertionDeclaration,
   type ProgramDeclaration,
   type StateAspectDeclaration,
   type WiderRangeDeclaration,
@@ -290,6 +292,28 @@ const compileWiderRanges = (
   return compiled
 }
 
+// An insertion's parts read what its reading reads, one by one: solved, in its
+// quantity and unit, each over a hard range a drawing scales it on, and each
+// part named once.
+const compileInsertion = (context: string, declaration: InsertionDeclaration, resolve: VariableResolver): CompiledInsertion => {
+  const reading = resolve(declaration.reading as LocalVariablePath)
+  if (reading.writable) throw new Error(`${context}: insertion reading ${declaration.reading} must be a solved reading`)
+  const named = declaration.groups.flat()
+  if (declaration.groups.length === 0 || declaration.groups.some(group => group.length === 0)) throw new Error(`${context}: an insertion names its parts in groups, none empty`)
+  if (new Set(named).size !== named.length || named.includes(declaration.reading)) throw new Error(`${context}: an insertion names each part once, apart from its reading`)
+  return {
+    reading: reading.path,
+    insertedAt: declaration.insertedAt,
+    groups: declaration.groups.map(group => group.map(local => {
+      const part = resolve(local as LocalVariablePath)
+      if (part.writable || part.quantity !== reading.quantity || part.unit !== reading.unit) throw new Error(`${context}: insertion part ${local} must be a solved reading of what ${declaration.reading} reads`)
+      const range = part.limits?.hardRange
+      if (range === undefined || !(range.max > range.min)) throw new Error(`${context}: insertion part ${local} must declare the hard range it moves over`)
+      return { path: part.path, range: { min: range.min, max: range.max } }
+    })),
+  }
+}
+
 // A kind's semantics name its own variables and ports; every name must exist,
 // a state must be solved (or an outside boundary), and a command must be one.
 const compileComponentSemantics = (
@@ -379,6 +403,7 @@ const compileComponentSemantics = (
       if (rate.quantity !== 'power' || rate.writable) throw new Error(`${context}: energy ${role.role} rate ${role.rate} must be a solved power`)
       return { ...role, rate: variablePathFor(componentId, role.rate as LocalVariablePath) }
     }),
+    ...(semantics.insertion === undefined ? {} : { insertion: compileInsertion(context, semantics.insertion, resolve) }),
   }
 }
 
