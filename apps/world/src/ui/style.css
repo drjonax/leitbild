@@ -1028,6 +1028,11 @@ body.rail-resizing {
   width: min(460px, calc(100vw - 36px));
 }
 
+/* A Run with roles keeps its role bar in the same corner, so the guidance sits below it. */
+.app-shell:has(.role-bar) .scenario-guidance {
+  top: 66px;
+}
+
 .scenario-guidance strong {
   display: block;
   font-size: 13px;
