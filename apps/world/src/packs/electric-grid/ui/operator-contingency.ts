@@ -43,6 +43,9 @@ export interface GridContingencyRow {
 const mw = (value: number): string => `${Math.round(value).toLocaleString('en-GB')} MW`
 const percent = (value: number): string => `${value.toFixed(1)} %`
 
+/** The rating a screening judges loading against, named as the rating selector and the branch loading alarms name it. */
+export const gridRatingBasisLabel = (basis: GridContingencyScreenResult['ratingBasis']): string => basis === 'emergency' ? 'emergency rating' : 'continuous rating'
+
 /** What a loading is judged on: apparent power on an AC island, active power on a DC one. */
 export const gridLoadingBasisLabel = (basis: ScreenedBranch['loadingBasis']): string => basis === 'mva' ? 'MVA (AC base)' : 'MW (DC base)'
 

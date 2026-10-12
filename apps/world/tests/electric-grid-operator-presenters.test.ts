@@ -24,6 +24,7 @@ import {
   gridDefaultScreening,
   gridFlowModelSummary,
   gridOutageText,
+  gridRatingBasisLabel,
   gridRemedialComparison,
 } from '../src/packs/electric-grid/ui/operator-contingency.ts'
 import { corridorDefinition, corridorModel, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
@@ -121,6 +122,9 @@ describe('Grid operator N-1 presenter', () => {
     expect(violating.worst!.overloaded).toBe(true)
     expect(violating.overloaded.length).toBeGreaterThan(0)
     expect(gridFlowModelSummary(screening)).toBe('Base flows: AC load flow in 1 island; outage increments DC.')
+    // The screen names its rating as the branch loading alarms do, so its base case never reads as contradicting them.
+    expect(gridRatingBasisLabel(screening.ratingBasis)).toBe('emergency rating')
+    expect(gridRatingBasisLabel('normal')).toBe('continuous rating')
     expect(gridFlowModelSummary({ baseFlowModels: [{ islandId: 'a', flowModel: 'ac' }, { islandId: 'b', flowModel: 'dc' }], incrementModel: 'dc' }))
       .toBe('Base flows: AC load flow in 1 island, DC solution in 1 island whose AC load flow did not converge; outage increments DC.')
 
