@@ -15,10 +15,20 @@ import supplyRun from '../../../scenarios/supply-run.scenario.json'
 
 const config = einsatzConfigSchema.parse(supplyRun.packs[0]!.config)
 const startMs = Date.parse(supplyRun.world.startsAt)
-/** The cue invoking a Capability; the Definition has one of each. */
+type Cue = typeof supplyRun.timeline.cues[number]
+/** The Capability call a cue makes; the closing cue shows guidance instead. */
+const invoked = (entry: Cue) => {
+  const action = entry.actions[0]!
+  if (!('capabilityId' in action)) throw new Error(`${entry.id} invokes no Capability`)
+  return action
+}
+/** The first cue invoking a Capability. */
 const cue = (capabilityId: string) => {
-  const found = supplyRun.timeline.cues.filter(entry => entry.actions[0]!.capabilityId === capabilityId)
-  if (found.length !== 1) throw new Error(`supply-run needs exactly one ${capabilityId} cue`)
+  const found = supplyRun.timeline.cues.filter(entry => {
+    const action = entry.actions[0]!
+    return 'capabilityId' in action && action.capabilityId === capabilityId
+  })
+  if (found.length === 0) throw new Error(`supply-run needs a ${capabilityId} cue`)
   return found[0]!
 }
 const created = cue(ids.unitCreate)
@@ -32,7 +42,25 @@ const unitOf = (property.kind === 'number' ? property.unit : undefined) ?? ''
 const lighter = supplyRun.packs[0]!.items.find(item => item.type === 'unit' && item.unitType === mover.id)!
 const lighterPayload = (lighter as { properties: Record<string, number> }).properties[property.id]!
 const atLeast = 'atLeast' in condition ? condition.atLeast : Number.NaN
-const raise = raised.actions[0]!.input as { unitId: string; properties: Record<string, number> }
+const raise = invoked(raised).input as { unitId: string; properties: Record<string, number> }
+/**
+ * The openness core of supply-run: its first place, the lighter vehicle and
+ * the first request of the first template, with the first cues that add a
+ * vehicle and a request and the raise. The rest of the exercise sends other
+ * vehicles to the requests first.
+ */
+const core = {
+  ...supplyRun,
+  packs: [{
+    ...supplyRun.packs[0]!,
+    items: [
+      supplyRun.packs[0]!.items.find(item => item.type === 'unit' && item.unitType !== mover.id)!,
+      lighter,
+      supplyRun.packs[0]!.items.find(item => item.type === 'task' && item.template === template.id)!,
+    ],
+  }],
+  timeline: { cues: [created, requested, raised] },
+}
 
 describe('Board openness on supply-run', () => {
   test('the Definition carries the T1 supply configuration unchanged', () => {
@@ -40,7 +68,7 @@ describe('Board openness on supply-run', () => {
   })
 
   test('the cue-created unit is dispatched in 2 actions; the lighter one is free but not eligible, says why naming itself once, then becomes eligible once raised', async () => {
-    const run = await openRun({ definition: supplyRun })
+    const run = await openRun({ definition: core })
     try {
       const wall = createWall()
       const screen = await openScreen(run, wall)
@@ -57,7 +85,7 @@ describe('Board openness on supply-run', () => {
 
       await runFor(run, created.at.seconds * 1_000 + 1_000, [screen])
       const newcomer = screen.view().unitBoard.rows.find(row => row.id !== lighter.id)!
-      expect(newcomer.properties).toEqual([{ label: property.label, value: `${(created.actions[0]!.input as { properties: Record<string, number> }).properties[property.id]} ${unitOf}` }])
+      expect(newcomer.properties).toEqual([{ label: property.label, value: `${(invoked(created).input as { properties: Record<string, number> }).properties[property.id]} ${unitOf}` }])
       await screen.wait(pastGuardMs)
       screen.resetActions()
       await screen.key('n')
@@ -87,7 +115,7 @@ describe('Board openness on supply-run', () => {
   })
 
   test('the unit and request icons are catalogue icons the atlas never drew, and the Board shows them as declared', async () => {
-    const run = await openRun({ definition: supplyRun, paused: true })
+    const run = await openRun({ definition: core, paused: true })
     try {
       const screen = await openScreen(run, createWall())
       const view = screen.view()
