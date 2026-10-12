@@ -23,6 +23,7 @@
   import StatusIndicator from '../components/StatusIndicator.svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ProcedureRunBadges from './ProcedureRunBadges.svelte'
+  import { procedureDialog } from './procedure-dialog.ts'
   import ProcedureTagDisplay from './ProcedureTagDisplay.svelte'
   import type { EmbeddedViewListing } from '@leitbild/contracts'
   import {
@@ -935,11 +936,26 @@
 
   const confirmationTitle = (): string => {
     if (!document || !confirmation) return ''
-    if (confirmation === 'transition') return 'Confirm procedure transition'
+    if (confirmation === 'transition') return pendingTransition ? `${transitionAction(pendingTransition)} on ${displayUnitName}?` : ''
     if (confirmation === 'off-path') return offPathConfirmation?.title ?? ''
-    if (confirmation === 'run') return `Run ${document.procedureId} on ${displayUnitName}?`
+    if (confirmation === 'run') return `${selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'} ${document.procedureId} on ${displayUnitName}?`
     if (confirmation === 'completed') return `Complete ${document.procedureId} on ${displayUnitName}?`
     return `Reset ${document.procedureId} on ${displayUnitName}?`
+  }
+
+  // Every confirmation's primary button says what it does.
+  const transitionAction = (transition: ProcedureTransition): string => {
+    const target = procedureRunFor(runs, { sourceId: transition.targetProcedure.source.sourceId, procedureId: transition.targetProcedure.procedureId, scope: currentScope })
+    return `${target?.status === 'transferred' ? 'Resume' : 'Go to'} ${transition.targetProcedure.procedureId}`
+  }
+
+  const confirmationAction = (): string => {
+    if (!document || !confirmation) return ''
+    if (confirmation === 'transition') return pendingTransition ? transitionAction(pendingTransition) : ''
+    if (confirmation === 'off-path') return offPathConfirmation?.action ?? ''
+    if (confirmation === 'run') return selectedProcedureRun?.status === 'transferred' ? `Resume ${document.procedureId}` : `Run ${document.procedureId} on ${displayUnitName}`
+    if (confirmation === 'completed') return `Complete ${document.procedureId}`
+    return `Reset ${document.procedureId}`
   }
 
   const confirmationBody = (): string => {
@@ -1680,28 +1696,34 @@
 
     {#if basisRequest}
       <div class="procedure-confirm-backdrop" role="presentation" onmousedown={closeBasis}>
-        <div class="procedure-confirm procedure-basis-dialog" role="dialog" aria-modal="true" aria-label="Retained technical basis" tabindex="-1" onmousedown={(event) => event.stopPropagation()}>
-          <h2>{basisEvidence?.title ?? 'Retained technical basis'}</h2>
-          <p>{basisRequest.sourcePath}{basisRequest.section ? ` · ${basisRequest.section}` : ''}</p>
-          <small>Exact source revision: {basisRequest.sourceRevision}</small>
-          {#if basisLoading}<p role="status">Reading retained source…</p>{/if}
-          {#if basisError}<p class="procedure-error">{basisError}</p>{/if}
-          {#if basisEvidence}
-            <p>Lines {basisEvidence.startLine}–{basisEvidence.endLine} of {basisEvidence.totalLines}</p>
-            <pre class="procedure-basis-content">{basisEvidence.content}</pre>
-          {/if}
-          <div class="procedure-confirm-actions">
-            {#if basisEvidence?.nextLine}<button type="button" onclick={() => basisRequest && basisEvidence?.nextLine && void loadBasis({ ...basisRequest, startLine: basisEvidence.nextLine })}>Read next lines</button>{/if}
-            {#if basisError}<button type="button" onclick={() => basisRequest && void loadBasis(basisRequest)}>Retry</button>{/if}
-            <button type="button" onclick={closeBasis}>Close</button>
+        <div class="procedure-confirm procedure-basis-dialog" role="dialog" aria-modal="true" aria-label="Retained technical basis" tabindex="-1" onmousedown={(event) => event.stopPropagation()} {@attach procedureDialog(closeBasis)}>
+          <header class="procedure-basis-header">
+            <h2>{basisEvidence?.title ?? 'Retained technical basis'}</h2>
+            <button type="button" class="procedure-dialog-close" aria-label="Close retained source" data-dialog-primary onclick={closeBasis}><X size={16} aria-hidden="true" /></button>
+          </header>
+          <div class="procedure-basis-body">
+            <p>{basisRequest.sourcePath}{basisRequest.section ? ` · ${basisRequest.section}` : ''}</p>
+            <small>Exact source revision: {basisRequest.sourceRevision}</small>
+            {#if basisLoading}<p role="status">Reading retained source…</p>{/if}
+            {#if basisError}<p class="procedure-error">{basisError}</p>{/if}
+            {#if basisEvidence}
+              <p>Lines {basisEvidence.startLine}–{basisEvidence.endLine} of {basisEvidence.totalLines}</p>
+              <pre class="procedure-basis-content">{basisEvidence.content}</pre>
+            {/if}
           </div>
+          {#if basisEvidence?.nextLine || basisError}
+            <div class="procedure-confirm-actions">
+              {#if basisEvidence?.nextLine}<button type="button" onclick={() => basisRequest && basisEvidence?.nextLine && void loadBasis({ ...basisRequest, startLine: basisEvidence.nextLine })}>Read next lines</button>{/if}
+              {#if basisError}<button type="button" onclick={() => basisRequest && void loadBasis(basisRequest)}>Retry</button>{/if}
+            </div>
+          {/if}
         </div>
       </div>
     {/if}
 
     {#if confirmation}
       <div class="procedure-confirm-backdrop" role="presentation" onmousedown={cancelConfirmation}>
-        <div class="procedure-confirm" role="dialog" aria-modal="true" aria-label={confirmationTitle()} tabindex="-1" onmousedown={(event) => event.stopPropagation()}>
+        <div class="procedure-confirm" role="dialog" aria-modal="true" aria-label={confirmationTitle()} tabindex="-1" onmousedown={(event) => event.stopPropagation()} {@attach procedureDialog(cancelConfirmation)}>
           <h2>{confirmationTitle()}</h2>
           {#if confirmation === 'transition' && pendingTransition}
             <p>
@@ -1715,7 +1737,7 @@
           {/if}
           <div class="procedure-confirm-actions">
             <button type="button" onclick={cancelConfirmation}>Cancel</button>
-            <button type="button" class="primary" disabled={busy} onclick={() => void confirmProcedureAction()}>Confirm</button>
+            <button type="button" class="primary" class:critical={confirmation === 'reset'} data-dialog-primary disabled={busy} onclick={() => void confirmProcedureAction()}>{confirmationAction()}</button>
           </div>
         </div>
       </div>
