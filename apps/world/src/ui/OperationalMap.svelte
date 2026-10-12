@@ -36,6 +36,7 @@
   import { createCatalogueSymbolAtlas } from './map-runtime/catalogue-symbol-atlas.ts'
   import type { CameraInteraction } from './map/map-camera.ts'
   import { mapClickOutcome } from './map-target-routing.ts'
+  import { noMapCover, type MapCover } from './surface-panel-interaction.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
     installMapPerformanceDiagnosticsGlobal,
@@ -101,6 +102,8 @@
     readonly onObjectLongPressed?: (object: OperationalObject) => void
     /** Camera gestures on or off; only an active Pack switches one off. */
     readonly cameraInteraction: CameraInteraction
+    /** How far open surface panels reach over the map: the camera centres and fits clear of them, and so do the map's own controls. */
+    readonly cameraPadding?: MapCover
     /** Reported only when given: a click on open ground, neither an object nor a Pack feature. */
     readonly onGroundSelected?: (point: GeoJsonPoint) => void
     /** The order preview a hovered object's card shows, when the selected controller's Pack describes targets. */
@@ -151,6 +154,7 @@
     onAssignmentCancelled = () => {},
     onObjectLongPressed = () => {},
     cameraInteraction,
+    cameraPadding = noMapCover,
     onGroundSelected,
     targetPreviewFor,
   }: Props = $props()
@@ -675,6 +679,17 @@
   })
 
   $effect(() => {
+    const { top, right, bottom, left } = cameraPadding
+    const current = runtime?.map
+    if (!current) return
+    untrack(() => {
+      const applied = current.getPadding()
+      if (applied.top === top && applied.right === right && applied.bottom === bottom && applied.left === left) return
+      current.easeTo({ padding: { top, right, bottom, left }, duration: 250 })
+    })
+  })
+
+  $effect(() => {
     runtime
     referenceStyles
     mapLayerGroups
@@ -702,6 +717,8 @@
 <div
   class="map"
   class:placing={placementCursor !== null}
+  style:--map-cover-right={`${cameraPadding.right}px`}
+  style:--map-cover-left={`${cameraPadding.left}px`}
   bind:this={mapElement}
 ></div>
 {#if debugMapInput}
@@ -715,3 +732,16 @@
     </ol>
   </aside>
 {/if}
+
+<style>
+  /* The map's own controls and attribution stay clear of panels lying over the map's edges. */
+  .map :global(.maplibregl-ctrl-top-right),
+  .map :global(.maplibregl-ctrl-bottom-right) {
+    right: var(--map-cover-right);
+  }
+
+  .map :global(.maplibregl-ctrl-top-left),
+  .map :global(.maplibregl-ctrl-bottom-left) {
+    left: var(--map-cover-left);
+  }
+</style>

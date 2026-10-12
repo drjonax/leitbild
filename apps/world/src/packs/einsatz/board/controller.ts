@@ -1,5 +1,6 @@
 import { audienceVisibleTo, type IsoTimestamp, type ObjectId } from '../../../core/model/index.ts'
 import type { EinsatzConfig } from '../config-schema.ts'
+import { wordFor } from '../lexicon.ts'
 import type { PictureViewer } from '../picture.ts'
 import { recommendationSchema } from '../recommendation-schema.ts'
 import { boardCommandIds, callKey, closeCall, closeDropText, holdCall, recallCall, releaseText, sendFromMap, sendToTask, type CallDraft, type SendTarget } from './calls.ts'
@@ -8,8 +9,9 @@ import { logChange, recordAlerts } from './log.ts'
 import { alternativeRows, candidateIn, createRecommendations, droppedReason, proposalUnits, type Candidate } from './recommendations.ts'
 import { readBoardRecords, type BoardRecords, type BoardTask, type BoardUnit } from './records.ts'
 import { createBoardRules } from './rules.ts'
-import { classCode, etaText, reasonText, unitWord, word } from './text.ts'
+import { boardWords, classCode, etaText, reasonText, unitWord, word } from './text.ts'
 import type { BoardEffect, BoardEvent, BoardEventBody, BoardKey, BoardList, BoardView, CallResult, ClickTarget, CommitElement, Feedback, HeaderAlert, LogEntry, MapTarget, TargetPreview } from './types.ts'
+import { contactsView, type SideLabel } from './contacts.ts'
 import { boardUnits, unitRow } from './unit-board.ts'
 import { completeSeconds, isUnserved, noRecommendationText, remainderFor, statusText, unservableText, workEntries, workRow, type WorkEntry } from './work-list.ts'
 
@@ -95,7 +97,12 @@ const runTimeMs = (currentTime: IsoTimestamp): number => {
 const issueText = (issues: ReadonlyArray<{ readonly path: ReadonlyArray<PropertyKey>; readonly message: string }>): string =>
   issues.slice(0, 3).map(issue => `${issue.path.map(String).join('.') || 'answer'}: ${issue.message}`).join('; ')
 
-export const createBoardController = (options: { readonly config: EinsatzConfig; readonly viewer: PictureViewer }): BoardController => {
+export const createBoardController = (options: {
+  readonly config: EinsatzConfig
+  readonly viewer: PictureViewer
+  /** The sides the Run declares, whose labels name each side's tracks on a screen holding several; none in a Run that declares none. */
+  readonly sides: ReadonlyArray<SideLabel>
+}): BoardController => {
   const rules = createBoardRules(options.config, options.viewer)
   const recommendations = createRecommendations(rules)
 
@@ -224,7 +231,10 @@ export const createBoardController = (options: { readonly config: EinsatzConfig;
     const task = selectedTask()
     if (task !== undefined) return taskCommitment(task)
     const unit = selectedUnit()
-    if (unit !== undefined) return { kind: 'none', state: 'none', text: `R recall · H ${unitWord(rules, unit, 'hold')} · M move` }
+    if (unit !== undefined) {
+      const hold = wordFor(rules.config.lexicon, 'hold', rules.typeOf(unit).lexicon)
+      return { kind: 'none', state: 'none', text: `R ${word(rules, 'recall')} · H ${hold} · M ${word(rules, 'move')}` }
+    }
     return { kind: 'none', state: 'none', text: `N · most urgent of ${word(rules, 'workList')}` }
   }
 
@@ -306,7 +316,7 @@ export const createBoardController = (options: { readonly config: EinsatzConfig;
     const list: ReadonlyArray<Selection> = focus === 'work'
       ? entries().map(entry => ({ kind: 'task', id: entry.task.id, byOperator: true }))
       : units().map(unit => ({ kind: 'unit', id: unit.id, byOperator: true }))
-    if (list.length === 0) return info(focus === 'work' ? word(rules, 'noWork') : `No ${word(rules, 'unitBoard').toLowerCase()}`)
+    if (list.length === 0) return info(word(rules, focus === 'work' ? 'noWork' : 'noUnits'))
     const index = list.findIndex(entry => entry.kind === selection?.kind && entry.id === selection.id)
     const next = index < 0 ? (delta > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, index + delta))
     select(list[next]!, true)
@@ -538,10 +548,10 @@ export const createBoardController = (options: { readonly config: EinsatzConfig;
     if (dropped.kind === 'task') {
       const task = records?.tasks.get(dropped.id)
       const label = task?.label ?? previous?.tasks.get(dropped.id)?.label ?? dropped.id
-      return task?.closedAtMs !== undefined ? `${label} closed` : `${label} left ${word(rules, 'workList').toLowerCase()}`
+      return task?.closedAtMs !== undefined ? `${label} closed` : `${label} left ${word(rules, 'workList')}`
     }
     const label = records?.units.get(dropped.id)?.label ?? previous?.units.get(dropped.id)?.label ?? dropped.id
-    return `${label} left ${word(rules, 'unitBoard').toLowerCase()}`
+    return `${label} left ${word(rules, 'unitBoard')}`
   }
 
   const snapshot = (objects: Parameters<typeof readBoardRecords>[0], at: number): void => {
@@ -685,13 +695,15 @@ export const createBoardController = (options: { readonly config: EinsatzConfig;
     if (task === undefined) return selectedUnit() === undefined ? null : { kind: 'unit', id: selection!.id }
     const answer = recommendations.answer(task.id)
     const entry = entries().find(item => item.task.id === task.id)!
+    const remainder = answer?.proposal.remainder ?? remainderFor(rules, task, entry.view)
     return {
       kind: 'task',
       id: task.id,
       proposal: answer === undefined ? [] : proposalUnits(answer),
       alternatives: answer === undefined || numbering?.taskId !== task.id ? [] : alternativeRows(answer, numbering.entries, chosen),
       ineligible: answer?.ineligible.map(item => ({ label: item.label, reasons: item.reasons })) ?? [],
-      remainder: answer?.proposal.remainder ?? remainderFor(rules, task, entry.view),
+      remainder,
+      remainderText: remainder.length === 0 ? null : `${boardWords.remainder} ${remainder.join(', ')}`,
     }
   }
 
@@ -703,21 +715,21 @@ export const createBoardController = (options: { readonly config: EinsatzConfig;
       fresh: (freshUntil.get(entry.task.id) ?? Number.NEGATIVE_INFINITY) > wallMs,
       selected: selection?.kind === 'task' && selection.id === entry.task.id,
     }))
+    const unitRows = records === null ? [] : units().map(unit => unitRow(rules, records!, unit, {
+      nowMs,
+      selected: selection?.kind === 'unit' && selection.id === unit.id,
+      moveArmed: armedMove === unit.id,
+    }))
     return {
-      headings: { workList: word(rules, 'workList'), unitBoard: word(rules, 'unitBoard') },
+      headings: { workList: word(rules, 'workList'), unitBoard: word(rules, 'unitBoard'), alerts: boardWords.alerts, log: boardWords.log },
       arrangement: rules.arrangement,
       focus,
       keysActive,
-      sound: { on: soundOn, text: soundOn ? null : 'Sound off · click to enable' },
+      sound: { on: soundOn, text: soundOn ? boardWords.soundOn : boardWords.soundOff },
       alerts: headerAlerts(),
       workList: { rows: workRows, empty: workRows.some(row => !row.served) ? null : word(rules, 'noWork') },
-      unitBoard: {
-        rows: records === null ? [] : units().map(unit => unitRow(rules, records!, unit, {
-          nowMs,
-          selected: selection?.kind === 'unit' && selection.id === unit.id,
-          moveArmed: armedMove === unit.id,
-        })),
-      },
+      unitBoard: { rows: unitRows, empty: unitRows.length === 0 ? word(rules, 'noUnits') : null },
+      contacts: rules.arrangement.contacts && records !== null ? contactsView(rules, records, nowMs, options.sides) : null,
       selected: selectedView(),
       commit: commitElement(),
       feedback,

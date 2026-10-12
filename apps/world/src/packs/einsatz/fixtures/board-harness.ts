@@ -5,8 +5,7 @@ import { sideViewOfSnapshot } from '../../../core/simulation-runs/side-view.ts'
 import { createBoardController, type BoardController } from '../board/controller.ts'
 import { boardQueryIds } from '../board/calls.ts'
 import type { BoardEffect, BoardEventBody, BoardKey, BoardView, CallResult, ClickTarget, MapTarget, TargetPreview } from '../board/types.ts'
-import { configurationOutputSchema } from '../capabilities.ts'
-import type { EinsatzConfig, TaskTemplate, UnitType } from '../config-schema.ts'
+import { configurationOutputSchema, type EinsatzConfig, type TaskTemplate, type UnitType } from '../config-schema.ts'
 import { einsatzConfigSchema } from '../config-validation.ts'
 import { openModeViewer, type PictureViewer } from '../picture.ts'
 import civil from './halden-civil.scenario.json'
@@ -111,7 +110,7 @@ export const openScreen = async (run: OpenRun, wall: Wall, options: { readonly v
   const viewer = screenViewer(run, actor, options.viewer)
   // The panel reads the configuration once at join, through the configuration query.
   const config = options.config ?? configurationOutputSchema.parse(await run.query(boardQueryIds.configuration, {}, actor)).config
-  const board = createBoardController({ config, viewer })
+  const board = createBoardController({ config, viewer, sides: run.run.roles()?.sides ?? [] })
   /** The Run's objects through this screen's lens: a side picture holds only what its audience lets it see. */
   const lensed = (): ReadonlyArray<OperationalObject> => {
     const snapshot = run.run.snapshot()

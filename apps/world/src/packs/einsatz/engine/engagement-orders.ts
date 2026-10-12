@@ -1,5 +1,5 @@
 import type { UnitComponents } from '../config-schema.ts'
-import { wordFor } from '../lexicon.ts'
+import { roeWords, wordFor } from '../lexicon.ts'
 import type { TrackRecord } from './combat-model.ts'
 import { putUnit, unitIn } from './draft.ts'
 import { actionBy, notInPicture, refused, type Refused } from './intent-support.ts'
@@ -16,12 +16,6 @@ import { unitWord } from './wording.ts'
  */
 
 type Effector = NonNullable<UnitComponents['effector']>
-
-export const roeWords: Readonly<Record<NonNullable<UnitRecord['roe']>, string>> = {
-  hold: 'weapons hold',
-  'return-fire': 'return fire',
-  free: 'weapons free',
-}
 
 const armed = (state: EngineState, unitId: string): { readonly ok: true; readonly unit: UnitRecord; readonly effector: Effector } | Refused => {
   const unit = state.units.get(unitId)

@@ -27,13 +27,35 @@ export const clockText = (seconds: number): string => {
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`
 }
 
-const distanceText = (metres: number): string => metres < 1_000 ? `${Math.round(metres)} m` : `${(metres / 1_000).toFixed(1)} km`
+/** "850 m", or "1.4 km" from a kilometre on. */
+export const distanceText = (metres: number): string => metres < 1_000 ? `${Math.round(metres)} m` : `${(metres / 1_000).toFixed(1)} km`
+
+/**
+ * The Board's neutral mechanism words: what the sound control, an ETA and a
+ * selected task's remainder say, the names of its strip and log, and what
+ * the panel says before a configuration is there to word anything. Domain
+ * words and verbs are the lexicon's.
+ */
+export const boardWords = {
+  soundOff: 'Sound off · click to enable',
+  soundOn: 'Sound on',
+  eta: 'ETA',
+  remainder: 'Still needs',
+  alerts: 'Alerts',
+  log: 'Event log',
+  board: 'Board',
+  loading: 'Reading the configuration…',
+  retry: 'Retry',
+  readFailed: 'The Board could not read the configuration',
+  failed: 'The Board failed',
+  soundFailed: 'Sound could not start',
+} as const
 
 /** An ETA as shown: a routed time, a straight-line time marked "≈", or why there is none with the straight distance. */
 export const etaText = (eta: Eta): string => {
   if (eta.kind === 'routed') return clockText(eta.seconds)
   if (eta.kind === 'straight-line') return `≈${clockText(eta.seconds)}`
-  return `ETA unavailable · ${distanceText(eta.straightDistanceM)}`
+  return `${boardWords.eta} unavailable · ${distanceText(eta.straightDistanceM)}`
 }
 
 /** "1 pallet, 2 crates" in declared class order. */

@@ -6,7 +6,7 @@ import { assertCameraInteractionContract } from '../src/ui/map/map-camera.ts'
 import { knownUiPackIds, loadUiPack } from '../src/ui/pack-loader.ts'
 import { geoPointFromLonLat, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId } from '../src/core/model/index.ts'
 import { groundClicksWanted, mapClickOutcome, targetPreviewsWanted } from '../src/ui/map-target-routing.ts'
-import { assertPanelInteraction, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId } from '../src/ui/surface-panel-interaction.ts'
+import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, noMapCover, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId } from '../src/ui/surface-panel-interaction.ts'
 
 const panelOf = (id: string, hooks: Pick<PackSurfacePanelContribution, 'mapTargets' | 'keymap'> = {}): PackSurfacePanelContribution => ({
   id,
@@ -136,6 +136,19 @@ describe('surface panel hooks', () => {
     expect(mapCameraInteractionFor([keyboardPack, boxPack])).toEqual({ doubleClickZoom: false, keyboard: false, boxZoom: false })
     expect(railStartsCollapsed([keyboardPack])).toBe(false)
     expect(railStartsCollapsed([keyboardPack, boxPack])).toBe(true)
+  })
+})
+
+describe('camera padding from surface panels', () => {
+  test('each edge is padded by the farthest any open panel reaches over it, and nothing without a panel', () => {
+    expect(cameraPaddingFor([])).toEqual(noMapCover)
+    expect(cameraPaddingFor([{ top: 0, right: 300, bottom: 10, left: 0 }, { top: 40, right: 120, bottom: 0, left: 0 }])).toEqual({ top: 40, right: 300, bottom: 10, left: 0 })
+  })
+
+  test('a panel\'s report that is no length is refused, naming the panel and the edge', () => {
+    const cover = { top: 0, right: 492, bottom: 0, left: 0 }
+    expect(assertMapCover('first.board', cover)).toBe(cover)
+    expect(() => assertMapCover('first.board', { top: 0, right: -1, bottom: Number.NaN, left: 0 })).toThrow('Surface panel first.board reported a map cover that is no length: right -1, bottom NaN')
   })
 })
 

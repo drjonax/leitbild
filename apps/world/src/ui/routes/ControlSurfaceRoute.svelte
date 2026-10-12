@@ -55,7 +55,7 @@
   import { startupScenarioSource } from '../app/startup-scenario.ts'
   import { loadActivePackViews } from '../pack-loader.ts'
   import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
-  import { assertPanelInteraction, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
+  import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapCover, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
   import PanelKeyRouter from '../keys/PanelKeyRouter.svelte'
   import type { PanelKey } from '../keys/panel-key-router.ts'
   import {
@@ -277,9 +277,11 @@
     return declaration !== null && heldRoleIds !== null ? { objects: list, viewer: viewerForRoleSet(declaration, heldRoleIds) } : { objects: list }
   }
   const targetContext = $derived(targetContextFor(objects))
-  const selectedControllerObject = $derived(activePack
-    ? selectedControllerObjectFor(objects, selectedControllerId, activePack, targetContext)
-    : null)
+  // A panel lending its handlers may change which objects its Pack makes controllers, so the selected controller follows them.
+  const selectedControllerObject = $derived.by(() => {
+    void panelInteractions
+    return activePack ? selectedControllerObjectFor(objects, selectedControllerId, activePack, targetContext) : null
+  })
   const allCategoryRows = $derived<ReadonlyArray<CategoryRow>>(activePack ? categoryRowsFor(objects, activePack) : [])
   const startingView = $derived(scenarioDefinition?.view ?? null)
   const railConfig = $derived(startingView?.rail ?? null)
@@ -302,6 +304,8 @@
   // Handlers the mounted panels lend the surface; only panels whose contribution declares a hook connect one.
   let panelInteractions = $state.raw<Readonly<Record<string, SurfacePanelInteraction>>>({})
   let panelKeysActive = $state(true)
+  // How far each panel last reported reaching over the map; only open panels' reports pad the camera.
+  let panelMapCovers = $state.raw<Readonly<Record<string, MapCover>>>({})
   const isSurfacePanelOpen = (panel: PackSurfacePanelContribution): boolean => surfacePanelOpen[panel.id] ?? panel.defaultOpen
   const mapTargetPanelContribution = $derived(openPanelDeclaring(surfacePanels, isSurfacePanelOpen, 'mapTargets'))
   const mapTargetPanel = $derived<MapTargetPanel | null>(mapTargetPanelContribution && activePack
@@ -313,6 +317,7 @@
       }
     : null)
   const keymapPanel = $derived(openPanelDeclaring(surfacePanels, isSurfacePanelOpen, 'keymap'))
+  const mapCameraPadding = $derived(cameraPaddingFor(surfacePanels.filter(isSurfacePanelOpen).flatMap(panel => panelMapCovers[panel.id] ?? [])))
   const mapCameraInteraction = $derived(mapCameraInteractionFor(activePack?.packs ?? []))
   const mapClickContext = $derived<MapClickContext>({ controller: selectedControllerObject, targeting: activePack?.targeting, context: targetContext, panel: mapTargetPanel })
   const mapStartupFailed = $derived(startupSteps.find(step => step.id === 'map')?.status === 'failed')
@@ -359,6 +364,8 @@
     steps: startupSteps,
   }) || startupStatusModalOpen))
   const runRoles = $derived(scenarioDefinition ? runRolesOf(scenarioDefinition) : null)
+  // A surface panel plays the screen's role set; a role switch remounts it.
+  const panelRoleSet = $derived(runRoles !== null && heldRoleIds !== null ? { declaration: runRoles, roleIds: heldRoleIds } : null)
   const describeRoleCommands = $derived.by<RoleCommandsDescriber | undefined>(() => {
     const scenario = scenarioDefinition
     const views = activePack?.packs.flatMap(view => view.roles ? [{ packId: view.descriptor.id, roles: view.roles }] : []) ?? []
@@ -1984,6 +1991,7 @@
           onAssignmentObjectSelected={chooseMapAssignmentTarget}
           onAssignmentCancelled={cancelMapAssignment}
           cameraInteraction={mapCameraInteraction}
+          cameraPadding={mapCameraPadding}
           onGroundSelected={groundClicksWanted(mapClickContext) ? selectGround : undefined}
           targetPreviewFor={targetPreviewsWanted(mapClickContext) ? previewTarget : undefined}
         />
@@ -2033,7 +2041,7 @@
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}
           {#if (surfacePanelOpen[panel.id] ?? panel.defaultOpen) && Panel}
-            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} />
+            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} currentTime={currentPackTime} selectedObjectId={selectedControllerId} onSelectObject={selectObjectById} connectInteraction={(interaction: SurfacePanelInteraction) => connectPanelInteraction(panel, interaction)} keysActive={panelKeysActive} roleSet={panelRoleSet} onMapCover={(cover: MapCover) => { panelMapCovers = { ...panelMapCovers, [panel.id]: assertMapCover(panel.id, cover) } }} />
           {/if}
         {/each}
         {/key}

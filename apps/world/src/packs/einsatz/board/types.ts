@@ -9,7 +9,8 @@ import type { EinsatzCommandId } from '../capabilities.ts'
  * renders its view. The controller never reads a clock, the DOM or the
  * network itself, so Bun tests drive it exactly as the panel does.
  *
- * The panel is a World surface panel (`SurfacePanelProps` in
+ * The panel (`ui/BoardPanel.svelte`, running the controller through
+ * `ui/board-session.ts`) is a World surface panel (`SurfacePanelProps` in
  * ui/surface-panel-interaction.ts) whose contribution declares
  * `mapTargets: true` and `keymap: true`. Its obligations, prop by prop:
  * - One controller per perspective: on a role-set switch, which starts a new
@@ -123,6 +124,8 @@ export interface WorkRow {
   /** A divert proposal, "No free unit · 4 committed", "No unit can serve: needs …" or "No recommendation: …". */
   readonly statusText: string | null
   readonly alerts: ReadonlyArray<string>
+  /** The configuration's verb for closing a task: the C key's label. */
+  readonly closeLabel: string
   /** Flashes for a few seconds after the row appeared. */
   readonly fresh: boolean
   readonly selected: boolean
@@ -157,6 +160,8 @@ export interface SelectedTask {
   readonly ineligible: ReadonlyArray<{ readonly label: string; readonly reasons: ReadonlyArray<string> }>
   /** What the task still needs after the shown proposal, in configuration words. */
   readonly remainder: ReadonlyArray<string>
+  /** The remainder as the row says it: "Still needs 2 more guards, P3×1"; null when nothing remains. */
+  readonly remainderText: string | null
 }
 
 export interface UnitRow {
@@ -164,21 +169,87 @@ export interface UnitRow {
   readonly label: string
   readonly typeLabel: string
   readonly icon: string
+  /** The configuration's verb for recalling a unit: the R key's label. */
+  readonly recallLabel: string
+  /** The type's word for halting in place, as a heading: the H verb's label. */
+  readonly holdLabel: string
+  /** The configuration's verb for moving a unit to a point: the M key's label. */
+  readonly moveLabel: string
   readonly phaseText: string
   /** Time in the current phase. */
   readonly phaseAgeText: string
   readonly taskText: string | null
-  /** Time still needed on the current leg. */
+  /** Time still needed on the current leg: "ETA 3:10". */
   readonly etaText: string | null
   readonly loadText: string | null
   /** At most two properties the type shows on the board. */
   readonly properties: ReadonlyArray<{ readonly label: string; readonly value: string }>
+  /** Every property of the unit, for the row's hover: "Payload: 300 kg · Crew: 4". */
+  readonly propertiesText: string | null
   readonly integrityText: string | null
+  /** The rules of engagement of a unit with an effector: "weapons free". */
+  readonly roeText: string | null
+  /** The track it fired on in the last engagement step: "→ T-7". */
+  readonly targetText: string | null
+  /** A unit others can detect, standing still or having fired: "Halting 0:12", "Concealed", "Revealed". */
+  readonly postureText: string | null
   readonly alerts: ReadonlyArray<string>
   readonly free: boolean
+  readonly destroyed: boolean
   readonly selected: boolean
   /** Move is armed for this unit: the next map click moves it. */
   readonly moveArmed: boolean
+}
+
+/** A track in the Contacts list, in its side's knowledge only. */
+export interface ContactRow {
+  readonly id: string
+  /** The side's own serial: "T-14". */
+  readonly label: string
+  /** The tier in the configuration's words: contact, identified or destroyed. */
+  readonly tierText: string
+  /** What the side identified: the type's label; null for a contact. */
+  readonly typeLabel: string | null
+  /** The identified type's icon, or a neutral one for a contact. */
+  readonly icon: string
+  /** Since the last detection. */
+  readonly ageText: string | null
+  /** From the nearest of the viewer's units on the track's side. */
+  readonly distanceText: string | null
+  /** "No fire-control fix: contact report only" while the track holds no fix. */
+  readonly fixText: string | null
+  /** "engaged by 2": own units that fired on it in the last engagement step. */
+  readonly engagedText: string | null
+  readonly destroyed: boolean
+}
+
+/** One group of the Contacts list, nearest first, in the configuration's words. */
+export interface ContactGroup {
+  readonly heading: string
+  readonly rows: ReadonlyArray<ContactRow>
+  /** What the group says while it holds no track; null while it holds one. */
+  readonly empty: string | null
+}
+
+/** The tracks one side's picture holds, in their two groups. */
+export interface ContactSide {
+  /** The side's label as the Run declares it, when the screen holds more than one side's tracks; null when it holds one side's only. */
+  readonly label: string | null
+  /** Tracks one of the viewer's armed units of that side could fire on now, its rules of engagement aside. */
+  readonly engageable: ContactGroup
+  readonly other: ContactGroup
+}
+
+/**
+ * The Contacts list, nothing collapsed. A side's serials are its own, so a
+ * screen holding several sides' tracks (a truth role, a role set across
+ * opposing sides) lists them side by side, in declared side order.
+ */
+export interface ContactsView {
+  readonly heading: string
+  readonly sides: ReadonlyArray<ContactSide>
+  /** What detection is and is not, for the list's hover. */
+  readonly hover: string
 }
 
 /**
@@ -225,23 +296,29 @@ export interface Feedback {
 /**
  * Derived from the declarations: roles with a queue lead with the work list;
  * roles commanding only sensing or firing units lead with the map; mixed
- * roles show both. The Contacts list joins once tracks give it rows (T5).
+ * roles show both. Roles commanding a sensing or firing unit get the
+ * Contacts list.
  */
 export interface Arrangement {
   readonly lead: 'work-list' | 'map'
   readonly workList: boolean
   readonly unitBoard: boolean
+  readonly contacts: boolean
 }
 
 export interface BoardView {
-  readonly headings: { readonly workList: string; readonly unitBoard: string }
+  /** The lists' headings in the configuration's words; the alert strip's and the event log's names. */
+  readonly headings: { readonly workList: string; readonly unitBoard: string; readonly alerts: string; readonly log: string }
   readonly arrangement: Arrangement
   readonly focus: BoardList
   readonly keysActive: boolean
-  readonly sound: { readonly on: boolean; readonly text: string | null }
+  /** Whether sound is on, and what the sound control says: how to enable it, or that it is on. */
+  readonly sound: { readonly on: boolean; readonly text: string }
   readonly alerts: ReadonlyArray<HeaderAlert>
   readonly workList: { readonly rows: ReadonlyArray<WorkRow>; readonly empty: string | null }
-  readonly unitBoard: { readonly rows: ReadonlyArray<UnitRow> }
+  readonly unitBoard: { readonly rows: ReadonlyArray<UnitRow>; readonly empty: string | null }
+  /** Null unless the arrangement includes the Contacts list. */
+  readonly contacts: ContactsView | null
   readonly selected: SelectedTask | { readonly kind: 'unit'; readonly id: string } | null
   readonly commit: CommitElement
   readonly feedback: Feedback | null

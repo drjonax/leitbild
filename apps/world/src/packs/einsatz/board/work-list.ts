@@ -170,6 +170,7 @@ export const workRow = (rules: BoardRules, records: BoardRecords, entry: WorkEnt
     etaText: context.answer === undefined ? null : proposalText(context.answer),
     statusText: context.answer !== undefined ? statusText(context.answer) : context.failure === undefined ? null : noRecommendationText(context.failure),
     alerts: task.alerts.map(alert => alert.message),
+    closeLabel: word(rules, 'close'),
     fresh: context.fresh,
     selected: context.selected,
   }

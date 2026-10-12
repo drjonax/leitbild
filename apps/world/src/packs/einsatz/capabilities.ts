@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { commandResultSchema, idSchema, objectIdSchema, type ObjectId } from '../../core/model/index.ts'
 import { defineSimulationCommandCapability, defineSimulationQueryCapability } from '../../simulation/capabilities.ts'
 import type { SimulationCapability } from '../../simulation/protocol.ts'
-import { einsatzConfigShapeSchema } from './config-schema.ts'
+import { configurationOutputSchema } from './config-schema.ts'
 import { divertsNameSendUnits, divertsNameSendUnitsIssue, intentFields } from './engine/intents.ts'
 import { recommendationSchema } from './recommendation-schema.ts'
 
@@ -49,8 +49,6 @@ export type CommandInput<K extends EinsatzCommandId> = z.output<typeof commandIn
 export const isEinsatzCommand = (kind: string): kind is EinsatzCommandId => Object.hasOwn(commandInputSchemas, kind)
 
 export const recommendInputSchema = z.object({ taskId: idSchema }).strict()
-
-export const configurationOutputSchema = z.object({ revision: z.number().int().nonnegative(), config: einsatzConfigShapeSchema }).strict()
 
 const objectIds = (...ids: ReadonlyArray<string>): ReadonlyArray<ObjectId> => ids.map(id => objectIdSchema.parse(id))
 

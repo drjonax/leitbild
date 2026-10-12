@@ -127,6 +127,14 @@ export const einsatzConfigShapeSchema = z.object({
 }).strict()
 
 export type EinsatzConfig = z.output<typeof einsatzConfigShapeSchema>
+
+/**
+ * The `world.einsatz.configuration` answer: the whole configuration in force
+ * and its revision. It lives here, beside the structure it carries, so the
+ * Board validates the answer in the browser with the schema the Capability
+ * declares, without loading the engine.
+ */
+export const configurationOutputSchema = z.object({ revision: z.number().int().nonnegative(), config: einsatzConfigShapeSchema }).strict()
 export type UnitType = z.output<typeof unitTypeSchema>
 export type UnitComponents = z.output<typeof componentsSchema>
 export type Mobility = z.output<typeof mobilitySchema>

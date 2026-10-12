@@ -596,7 +596,7 @@ describe('Board sound and flashes', () => {
       await screen.sync()
       expect([screen.view().sound, screen.sounds()]).toEqual([{ on: false, text: 'Sound off · click to enable' }, 0])
       await screen.click({ kind: 'enable-sound' })
-      expect(screen.view().sound).toEqual({ on: true, text: null })
+      expect(screen.view().sound).toEqual({ on: true, text: 'Sound on' })
 
       await screen.wait(3_000)
       await createTask(run, kinds.templates.load, 'T2', at(6), { [low]: 1 })

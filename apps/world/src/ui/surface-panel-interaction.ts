@@ -1,4 +1,4 @@
-import type { IsoTimestamp, ObjectId, OperationalObject, SimulationRunId } from '../core/model/index.ts'
+import type { IsoTimestamp, ObjectId, OperationalObject, RunRoles, SimulationRunId } from '../core/model/index.ts'
 import type { ActivePackViews } from '../core/packs/active-views.ts'
 import type { PackMapTarget, PackSurfacePanelContribution, PackTargetContext, PackTargetPreview, WorldPackView } from '../core/packs/protocol.ts'
 import type { PanelKey } from './keys/panel-key-router.ts'
@@ -30,6 +30,42 @@ export interface SurfacePanelInteraction {
   readonly onKey?: (key: PanelKey) => boolean
 }
 
+/** How far a panel reaches over the map from each edge, in CSS pixels. */
+export interface MapCover {
+  readonly top: number
+  readonly right: number
+  readonly bottom: number
+  readonly left: number
+}
+
+export const noMapCover: MapCover = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 })
+
+const coverEdges = ['top', 'right', 'bottom', 'left'] as const
+
+/** A panel's report, refused when an edge is not a finite, non-negative length. */
+export const assertMapCover = (panelId: string, cover: MapCover): MapCover => {
+  const wrong = coverEdges.filter(edge => !Number.isFinite(cover[edge]) || cover[edge] < 0)
+  if (wrong.length > 0) throw new Error(`Surface panel ${panelId} reported a map cover that is no length: ${wrong.map(edge => `${edge} ${cover[edge]}`).join(', ')}`)
+  return cover
+}
+
+/**
+ * The map camera's padding: per edge, the farthest any open panel reaches
+ * over the map, so the camera centres and fits within the part left clear.
+ */
+export const cameraPaddingFor = (covers: ReadonlyArray<MapCover>): MapCover => ({
+  top: Math.max(0, ...covers.map(cover => cover.top)),
+  right: Math.max(0, ...covers.map(cover => cover.right)),
+  bottom: Math.max(0, ...covers.map(cover => cover.bottom)),
+  left: Math.max(0, ...covers.map(cover => cover.left)),
+})
+
+/** The role set a screen plays in a Run that declares roles, with the Run's declaration. */
+export interface PanelRoleSet {
+  readonly declaration: RunRoles
+  readonly roleIds: ReadonlyArray<string>
+}
+
 /** The props the World surface passes to every surface panel. */
 export interface SurfacePanelProps {
   readonly simulationRunId: SimulationRunId
@@ -52,6 +88,14 @@ export interface SurfacePanelProps {
   readonly connectInteraction: (interaction: SurfacePanelInteraction) => () => void
   /** False while the World window lacks focus, so no key can reach the panel. */
   readonly keysActive: boolean
+  /** The role set this screen plays; null in a Run that declares no roles. A role switch remounts the panel. */
+  readonly roleSet: PanelRoleSet | null
+  /**
+   * Reports how far the panel reaches over the map, from its observed size;
+   * the map camera then centres and fits clear of it. Only open panels'
+   * latest reports count.
+   */
+  readonly onMapCover: (cover: MapCover) => void
 }
 
 /** A panel connects the handlers its contribution declares, and only those. */

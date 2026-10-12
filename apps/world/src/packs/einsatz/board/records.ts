@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { GeoJsonPoint, ObjectAudience, OperationalObject } from '../../../core/model/index.ts'
-import { configIdSchema } from '../config-schema.ts'
+import { configIdSchema, roeModes } from '../config-schema.ts'
+import type { TrackData } from '../engine/combat-model.ts'
 import type { TaskData, Transition, UnitData } from '../engine/model.ts'
 import { einsatzPackId } from '../ids.ts'
 import { unitPhases } from '../lexicon.ts'
@@ -47,6 +48,11 @@ const unitDataSchema = z.object({
   accepting: z.boolean().optional(),
   lastAction: lastAction.optional(),
   alerts: z.array(alert),
+  roe: z.enum(roeModes).optional(),
+  /** The own-side track fired on in the last engagement step. */
+  target: z.string().min(1).optional(),
+  stillSinceMs: ms.optional(),
+  revealed: z.literal(true).optional(),
 }).loose()
 
 const taskDataSchema = z.object({
@@ -65,21 +71,28 @@ const taskDataSchema = z.object({
   alerts: z.array(alert),
 }).loose()
 
-const recordSchema = z.discriminatedUnion('type', [unitDataSchema, taskDataSchema])
+/** A side's track: what that side knows of a unit it detected, and nothing more. */
+const trackDataSchema = z.object({
+  type: z.literal('track'),
+  tier: z.enum(['contact', 'identified', 'destroyed']),
+  fix: z.boolean(),
+  identity: z.object({ typeLabel: z.string().min(1), icon: z.string().min(1), side: configIdSchema, rangeM: z.number().finite().positive().optional() }).loose().optional(),
+}).loose()
+
+const recordSchema = z.discriminatedUnion('type', [unitDataSchema, taskDataSchema, trackDataSchema])
 
 /**
- * The Pack's other records, whose data the Board does not read: a side's
- * tracks and the truth-only track indexes. They are named here, so a record
- * of any other type is still an error; the check at the end of this file
- * holds this list and the Board's own types to every record type the engine
- * writes. Of a track the Board keeps only its label and audience, so the
- * log can name a track a unit was ordered to engage.
+ * The Pack's other records, whose data the Board does not read: the
+ * truth-only track indexes. They are named here, so a record of any other
+ * type is still an error; the check at the end of this file holds this list
+ * and the Board's own types to every record type the engine writes.
  */
-const passedOverTypes = ['track', 'track-index'] as const
+const passedOverTypes = ['track-index'] as const
 const passedOverSchema = z.object({ type: z.enum(passedOverTypes) }).loose()
 
 type BoardUnitData = z.output<typeof unitDataSchema>
 type BoardTaskData = z.output<typeof taskDataSchema>
+type BoardTrackData = z.output<typeof trackDataSchema>
 
 export type BoardAlert = z.output<typeof alert>
 export type BoardLastAction = z.output<typeof lastAction>
@@ -97,11 +110,17 @@ export type BoardTask = BoardTaskData & {
   readonly label: string
 }
 
-/** A side's track as the Board names it: its label, the side's own serial, and whose picture holds it. */
-export interface BoardTrack {
+/**
+ * A side's track as the Board shows it: its label (the side's own serial),
+ * whose picture holds it, what the side knows of its unit, and where and when
+ * that unit was last detected.
+ */
+export type BoardTrack = BoardTrackData & {
   readonly id: string
   readonly label: string
   readonly audience: ObjectAudience | undefined
+  readonly point: GeoJsonPoint | undefined
+  readonly observedAtMs: number | undefined
 }
 
 export interface BoardRecords {
@@ -111,9 +130,9 @@ export interface BoardRecords {
 }
 
 /**
- * The Einsatz units and tasks among the Run's objects, and the labels of its
- * tracks. Track data and track indexes are passed over by type; any other
- * Einsatz object whose record does not parse is an error, never skipped.
+ * The Einsatz units, tasks and tracks among the Run's objects. Track indexes
+ * are passed over by type; any other Einsatz object whose record does not
+ * parse is an error, never skipped.
  */
 export const readBoardRecords = (objects: ReadonlyArray<OperationalObject>): BoardRecords => {
   const units = new Map<string, BoardUnit>()
@@ -121,16 +140,22 @@ export const readBoardRecords = (objects: ReadonlyArray<OperationalObject>): Boa
   const tracks = new Map<string, BoardTrack>()
   for (const object of objects) {
     if (object.packId !== einsatzPackId) continue
-    const passedOver = passedOverSchema.safeParse(object.packData)
-    if (passedOver.success) {
-      if (passedOver.data.type === 'track') tracks.set(object.id, { id: object.id, label: object.label, audience: object.audience })
-      continue
-    }
+    if (passedOverSchema.safeParse(object.packData).success) continue
     const parsed = recordSchema.safeParse(object.packData)
     if (!parsed.success) throw new Error(`Einsatz object ${object.id} has a record the Board cannot read: ${parsed.error.message}`)
     const data = parsed.data
     if (data.type === 'task') tasks.set(object.id, { ...data, id: object.id, label: object.label })
-    else {
+    else if (data.type === 'track') {
+      const position = object.spatial.position
+      tracks.set(object.id, {
+        ...data,
+        id: object.id,
+        label: object.label,
+        audience: object.audience,
+        point: position?.point,
+        observedAtMs: position === undefined ? undefined : Date.parse(position.observedAt),
+      })
+    } else {
       units.set(object.id, {
         ...data,
         id: object.id,
@@ -146,11 +171,11 @@ export const readBoardRecords = (objects: ReadonlyArray<OperationalObject>): Boa
 /** Compile-time agreement: every engine record is a record the Board can read, so the Board reads no field the engine does not write. */
 type Readable<Engine, Board> = [Engine] extends [Board] ? true : false
 type Holds<T extends true> = T
-export type BoardRecordsAgree = Holds<Readable<UnitData, BoardUnitData>> & Holds<Readable<TaskData, BoardTaskData>>
+export type BoardRecordsAgree = Holds<Readable<UnitData, BoardUnitData>> & Holds<Readable<TaskData, BoardTaskData>> & Holds<Readable<TrackData, BoardTrackData>>
 
 /** Every record type the engine writes as an object: the records of its transitions, a dropped track being deleted instead. */
 type EngineRecordType = Exclude<Transition, { readonly kind: 'track-dropped' }>['record']['type']
-type BoardKnownType = BoardUnitData['type'] | BoardTaskData['type'] | typeof passedOverTypes[number]
+type BoardKnownType = BoardUnitData['type'] | BoardTaskData['type'] | BoardTrackData['type'] | typeof passedOverTypes[number]
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 /** Compile-time agreement: the Board reads or passes over exactly the record types the engine writes, no more and no fewer. */
 export type BoardRecordTypesAgree = Holds<Same<EngineRecordType, BoardKnownType>>

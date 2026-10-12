@@ -127,6 +127,7 @@ export const createBoardRules = (config: EinsatzConfig, viewer: PictureViewer): 
       lead: queuesAny || !senses ? 'work-list' : 'map',
       workList: queuesAny,
       unitBoard: commanded.some(entry => entry.components.mobility !== undefined),
+      contacts: senses,
     },
   }
 }

@@ -35,9 +35,10 @@ import {
 import { applySimulationRunEventBatchMessage } from '../src/ui/simulation-run-events.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
 import { createBoardController } from '../src/packs/einsatz/board/controller.ts'
-import { configurationOutputSchema, einsatzCommandIds, einsatzQueryIds } from '../src/packs/einsatz/capabilities.ts'
+import { einsatzCommandIds, einsatzQueryIds } from '../src/packs/einsatz/capabilities.ts'
+import { configurationOutputSchema } from '../src/packs/einsatz/config-schema.ts'
 import type { Recommendation } from '../src/packs/einsatz/recommendation-schema.ts'
-import { roeWords } from '../src/packs/einsatz/engine/engagement-orders.ts'
+import { roeWords } from '../src/packs/einsatz/lexicon.ts'
 import { createEinsatzSidedRuntimeAdapter, einsatzCrossSideCue, einsatzSidedCombat, einsatzSidedNames, einsatzSidedSelection } from '../src/packs/einsatz/fixtures/sided-run.ts'
 import { einsatzPack } from '../src/packs/einsatz/pack.ts'
 import { fixtureRuntimeId } from './fixtures/fixture-pack.ts'
@@ -310,6 +311,7 @@ const boardText = async (screen: Screen, earlier?: Shown): Promise<string> => {
   const board = createBoardController({
     config: configuration,
     viewer: { class: roleClassForRoleSet(declaration, screen.roleIds), sees: seesForRoleSet(declaration, screen.roleIds), roles: declaration.roles.filter(role => screen.roleIds.includes(role.id)) },
+    sides: declaration.sides ?? [],
   })
   const show = async (shown: Shown): Promise<void> => {
     const asked = board.dispatch({ kind: 'snapshot', objects: shown.objects, currentTime: shown.currentTime, wallMs: 0 })

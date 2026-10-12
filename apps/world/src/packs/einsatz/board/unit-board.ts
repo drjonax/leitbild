@@ -1,6 +1,7 @@
+import { roeWords, wordFor } from '../lexicon.ts'
 import type { BoardRecords, BoardUnit } from './records.ts'
 import { isFree, type BoardRules } from './rules.ts'
-import { clockText, loadText, propertyText, unitWord } from './text.ts'
+import { boardWords, clockText, loadText, propertyText, unitWord, word } from './text.ts'
 import type { UnitRow } from './types.ts'
 
 /**
@@ -13,6 +14,26 @@ export const boardUnits = (rules: BoardRules, records: BoardRecords): ReadonlyAr
   [...records.units.values()]
     .filter(unit => rules.commands(unit) && rules.typeOf(unit).components.mobility !== undefined)
     .sort((a, b) => Number(isFree(b)) - Number(isFree(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+/** The track a unit fired on, by its label in the screen's picture. */
+const targetLabel = (records: BoardRecords, trackId: string): string | null => {
+  const track = records.tracks.get(trackId)
+  return track === undefined ? null : `→ ${track.label}`
+}
+
+/**
+ * How visible a unit with a signature stands: revealed for a while after it
+ * fired; standing still, counting down to concealment; concealed once it has
+ * stood still long enough. A moving or destroyed unit shows nothing.
+ */
+const postureText = (rules: BoardRules, unit: BoardUnit, nowMs: number): string | null => {
+  const signature = rules.typeOf(unit).components.signature
+  if (signature === undefined || unit.integrity === 'destroyed') return null
+  if (unit.revealed === true) return 'Revealed'
+  if (unit.stillSinceMs === undefined) return null
+  const left = signature.concealAfterS - (nowMs - unit.stillSinceMs) / 1_000
+  return left > 0 ? `Halting ${clockText(left)}` : 'Concealed'
+}
 
 export const unitRow = (rules: BoardRules, records: BoardRecords, unit: BoardUnit, context: {
   readonly nowMs: number
@@ -28,15 +49,23 @@ export const unitRow = (rules: BoardRules, records: BoardRecords, unit: BoardUni
     label: unit.label,
     typeLabel: type.label,
     icon: type.icon,
+    recallLabel: word(rules, 'recall'),
+    holdLabel: wordFor(rules.config.lexicon, 'hold', type.lexicon),
+    moveLabel: word(rules, 'move'),
     phaseText: unitWord(rules, unit, unit.phase),
     phaseAgeText: clockText((context.nowMs - unit.phaseSinceMs) / 1_000),
     taskText: task?.label ?? site?.label ?? null,
-    etaText: unit.etaSeconds === undefined ? null : clockText(unit.etaSeconds),
+    etaText: unit.etaSeconds === undefined ? null : `${boardWords.eta} ${clockText(unit.etaSeconds)}`,
     loadText: load === '' ? null : load,
     properties: type.properties.filter(property => property.board).map(property => ({ label: property.label, value: propertyText(property, unit.properties[property.id]) })),
+    propertiesText: type.properties.length === 0 ? null : type.properties.map(property => `${property.label}: ${propertyText(property, unit.properties[property.id])}`).join(' · '),
     integrityText: unit.integrity === 'healthy' ? null : unit.integrity === 'destroyed' ? unitWord(rules, unit, 'destroyed') : 'damaged',
+    roeText: unit.roe === undefined ? null : roeWords[unit.roe],
+    targetText: unit.target === undefined ? null : targetLabel(records, unit.target),
+    postureText: postureText(rules, unit, context.nowMs),
     alerts: unit.alerts.map(alert => alert.message),
     free: isFree(unit),
+    destroyed: unit.integrity === 'destroyed',
     selected: context.selected,
     moveArmed: context.moveArmed,
   }

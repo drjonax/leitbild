@@ -251,7 +251,7 @@ describe('Board role Definition', () => {
 })
 
 describe('Board arrangement', () => {
-  test('roles with a queue lead with the work list; roles commanding only sensing units lead with the map; mixed roles show both', () => {
+  test('roles with a queue lead with the work list; roles commanding only sensing units lead with the map; mixed roles show both; sensing roles get Contacts', () => {
     const config = einsatzConfigSchema.parse({
       loadClasses: [{ id: 'c1', label: 'One', code: 'C1', noun: { one: 'item', other: 'items' } }],
       unitTypes: [
@@ -267,11 +267,11 @@ describe('Board arrangement', () => {
     })
     const arrangement = (viewer: PictureViewer) => createBoardRules(config, viewer).arrangement
     const operator = (roleId: string): PictureViewer => ({ class: 'operator', sees: 'all', roles: [{ id: roleId, class: 'operator' }] })
-    expect(arrangement(operator('watch'))).toEqual({ lead: 'map', workList: false, unitBoard: true })
-    expect(arrangement(operator('haul'))).toEqual({ lead: 'work-list', workList: true, unitBoard: true })
-    expect(arrangement(operator('both'))).toEqual({ lead: 'work-list', workList: true, unitBoard: true })
-    expect(arrangement({ class: 'operator', sees: 'all', roles: [{ id: 'watch', class: 'operator' }, { id: 'haul', class: 'operator' }] })).toEqual({ lead: 'work-list', workList: true, unitBoard: true })
-    expect(arrangement(openModeViewer)).toEqual({ lead: 'work-list', workList: true, unitBoard: true })
-    expect(createBoardRules(einsatzConfigSchema.parse(civil.packs[0]!.config), openModeViewer).arrangement).toEqual({ lead: 'work-list', workList: true, unitBoard: true })
+    expect(arrangement(operator('watch'))).toEqual({ lead: 'map', workList: false, unitBoard: true, contacts: true })
+    expect(arrangement(operator('haul'))).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: false })
+    expect(arrangement(operator('both'))).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })
+    expect(arrangement({ class: 'operator', sees: 'all', roles: [{ id: 'watch', class: 'operator' }, { id: 'haul', class: 'operator' }] })).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })
+    expect(arrangement(openModeViewer)).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })
+    expect(createBoardRules(einsatzConfigSchema.parse(civil.packs[0]!.config), openModeViewer).arrangement).toEqual({ lead: 'work-list', workList: true, unitBoard: true, contacts: false })
   })
 })
