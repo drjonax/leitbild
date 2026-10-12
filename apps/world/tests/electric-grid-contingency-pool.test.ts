@@ -149,7 +149,7 @@ describe('electric grid N-1 worker pool', () => {
     expect(poolCost).toBeLessThan(inlineCost / 3)
   }, 120_000)
 
-  test('a parallel screening is byte-identical to the inline one on a synthetic 10k-bus grid, and faster', async () => {
+  test('a parallel screening is byte-identical to the inline one on a synthetic 10k-bus grid, and runs its kernel on every worker, off the main thread', async () => {
     const grid = intactSynthetic(10_000)
     const live = liveContingencyCase(grid)
     // Its AC load flow converges at the fixture's declared demand (1.0 at 08:00), so the base flows are AC.
@@ -168,10 +168,15 @@ describe('electric grid N-1 worker pool', () => {
     const firstPoolMs = await wallMs(async () => { parallel = JSON.stringify(await screened(live, contingencies, 'normal', onPool(pool))) })
     expect(parallel).toBe(alone)
     const poolMs = await wallMs(() => screened(live, contingencies, 'normal', onPool(pool)))
-    console.info(`N-1 10k synthetic, ${contingencies.length} contingencies (${(screeningWorkUnits(snapshot) / 1e6).toFixed(0)} M work units): inline ${inlineMs.toFixed(0)} ms, 3 workers ${firstPoolMs.toFixed(0)} ms cold, ${poolMs.toFixed(0)} ms warm`)
-    // Measured 3.6x with four workers at load 4–7; the gate only asks that three beat one.
-    expect(poolMs).toBeLessThan(inlineMs)
-  }, 120_000)
+    const inlineCost = await mainThreadCostInReferences(() => screened(live, contingencies, 'normal', inline), 3)
+    const poolCost = await mainThreadCostInReferences(() => screened(live, contingencies, 'normal', onPool(pool)), 3)
+    console.info(`N-1 10k synthetic, ${contingencies.length} contingencies (${(screeningWorkUnits(snapshot) / 1e6).toFixed(0)} M work units): inline ${inlineMs.toFixed(0)} ms, ${inlineCost.toFixed(2)} references main thread; 3 workers ${firstPoolMs.toFixed(0)} ms cold, ${poolMs.toFixed(0)} ms warm, ${poolCost.toFixed(2)} references main thread`)
+    // Wall-time speedup depends on how many cores are free at the time (3.6x with four workers at load
+    // 4–7, none at load 60), so the gate judges what the pool does: every worker started, the same bytes,
+    // and the kernel's CPU off the main thread, against the reference computation (cpu-cost.ts).
+    expect(pool.liveWorkerCount()).toBe(3)
+    expect(poolCost).toBeLessThan(inlineCost / 3)
+  }, 600_000) // Hang guard: the inline screenings are single-threaded, about load/8-fold slower in wall time
 
   test('screening on the pool is read-only: the snapshot, the Grid state, its topology plan and factors are unchanged', async () => {
     const grid = await v2Grid()
