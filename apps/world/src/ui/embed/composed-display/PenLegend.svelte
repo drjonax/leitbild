@@ -9,7 +9,7 @@
   import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
-  import { changeBesideState, rateText, rateWindowMs, readingStateText, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { changeBesideState, rateText, rateWindowMs, readingStateText, trendReading, turnText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import AlarmChip from './AlarmChip.svelte'
 
   // One row per pen, columns aligned: what it is, its value, how close it is
@@ -82,7 +82,7 @@
         {#if state !== ''}<span class:beyond={reading?.offScale != null || reading?.limit?.kind === 'past'}>{state}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}
       </span>
-      <span class="rate" class:wider={wider !== null} title={wider === null ? undefined : `${pen.wider!.tagId ?? pen.wider!.path}: the same quantity on the instrument with the wider span`}>{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? rateText(reading.rate, value, pen.unit, { windowMs, change: changeBesideState(reading), resolution: pen.resolution }) : wider ?? 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
+      <span class="rate" class:wider={wider !== null} title={wider === null ? undefined : `${pen.wider!.tagId ?? pen.wider!.path}: the same quantity on the instrument with the wider span`}>{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? (reading.turn !== null ? turnText(reading.turn, pen.unit, pen.resolution, points.at(-1)?.t ?? reading.turn.at.t, pen.limits?.instrumentSpan) : rateText(reading.rate, value, pen.unit, { windowMs, change: changeBesideState(reading), resolution: pen.resolution })) : wider ?? 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
     </li>
   {/each}
 </ul>

@@ -46,7 +46,7 @@ import {
 } from './composition.ts'
 import { displayValue, formatQuantity, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
-import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, turnWords, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -1808,7 +1808,9 @@ const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplay
   const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin' || reading.limit?.kind === 'past'
   const state = readingStateText({ offScale: reading.offScale, limit: worded ? reading.limit : null }, pen.unit, pen.resolution)
   // A change the limit state already gives as its reason for no time ("· reversing") is not said twice.
-  const travel = travelText(reading.rate, value, pen.unit, worded ? changeBesideState(reading) : reading.change, pen.resolution, overTime === null ? undefined : windowMs)
+  // A curve that has turned against its stated rate is read by its turn, as its legend leads with it.
+  const travel = reading.turn !== null ? turnWords(reading.turn, pen.unit, pen.resolution, now.simulationMs, pen.limits?.instrumentSpan)
+    : travelText(reading.rate, value, pen.unit, worded ? changeBesideState(reading) : reading.change, pen.resolution, overTime === null ? undefined : windowMs)
   if (state === '' && travel === '') return []
   // The alarm chip beside the value names the active limit, where the words do not say it is past one.
   const saysPast = worded && reading.limit?.kind === 'past'
@@ -1956,7 +1958,7 @@ const travelContent = (entry: PenReading | undefined): Pick<EmbeddedViewContent[
   if (entry === undefined) return {}
   const { pen, reading } = entry
   const unit = unitLabel(pen.unit)
-  const trend = reading.travel === null || reading.rate === null ? {} : { trend: { rate: Number(displayValue(reading.rate, pen.unit).toPrecision(6)), unit, direction: reading.travel } }
+  const trend = reading.travel === null || reading.rate === null ? {} : { trend: { rate: Number(displayValue(reading.rate, pen.unit).toPrecision(6)), unit, direction: reading.travel, ...(reading.change === null ? {} : { change: reading.change }) } }
   const limit = reading.limit
   if (!entry.legend || limit?.kind !== 'margin') return trend
   const threshold = limit.margin.threshold

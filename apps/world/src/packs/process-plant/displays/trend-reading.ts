@@ -1,4 +1,4 @@
-import { bySeverity, coincidentMargin, displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
+import { bySeverity, coincidentMargin, displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, readingText, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
 import type { ComposedDisplayThreshold, LimitGate } from './ic-thresholds.ts'
 
 // How a signal's recent history reads: its rate over the display's window,
@@ -137,6 +137,50 @@ export const rateChange = (points: ReadonlyArray<TrendPoint>, windowMs: number, 
 
 // A rate holds while a shorter window reads at least nine tenths of a longer one's.
 const HOLDING = 0.9
+
+/** A curve that has turned within its window: the way its end goes now, against the rate the window states, and the low or high it turned at. */
+export interface TrendTurn {
+  readonly travel: 'rising' | 'falling'
+  readonly at: TrendPoint
+}
+
+/**
+ * Where a curve's end goes against the rate its window states (rateChange's
+ * reversing at its end, not the longer window's): the way it goes now and
+ * the low or high it turned at within the window, from the trend's own
+ * samples, the latest where it held there. A reader takes the current
+ * direction from it at a glance (run 26c, rcp-trip: a hot leg rising for
+ * 12 s off its low read "▼ … reversing", taken for falling). Null where its
+ * end goes the stated way, or has not yet moved a step off its low or high.
+ */
+export const turnOf = (points: ReadonlyArray<TrendPoint>, windowMs: number, value: number, resolution: number | null = null): TrendTurn | null => {
+  if (rateChange(points, windowMs, value, resolution) !== 'reversing') return null
+  const stated = ratePerMinute(points, windowMs)
+  const end = ratePerMinute(points, Math.max(RATE_MIN_SPAN_MS, windowMs / 3))
+  if (stated === null || end === null || isSteady(end, value, resolution) || Math.sign(end) === Math.sign(stated)) return null
+  const last = points.at(-1)!
+  const recent = points.filter(point => point.t >= last.t - Math.max(windowMs, CHANGE_MIN_WINDOW_MS))
+  const at = recent.reduce((best, point) => (end > 0 ? point.v <= best.v : point.v >= best.v) ? point : best)
+  // A turn the curve has not moved off by a step it reads in is a curve levelling off, not one going the other way.
+  if (Math.abs(value - at.v) < (resolution ?? Math.abs(value) * 0.001)) return null
+  return { travel: end > 0 ? 'rising' : 'falling', at }
+}
+
+/**
+ * A turn as a legend leads with it, the way it goes now first: "▲ turning up
+ * (was falling, low 295.5 °C 12 s ago)"; `now` is the time its age is read at.
+ */
+export const turnText = (turn: TrendTurn, unit: string, resolution: number | null, now: number, span?: { readonly min: number; readonly max: number }): string =>
+  `${turn.travel === 'rising' ? '▲' : '▼'} ${turnWords(turn, unit, resolution, now, span)}`
+
+/** A turn in words, for text beside the display: "turning up (was falling, low 295.5 °C 12 s ago)". */
+export const turnWords = (turn: TrendTurn, unit: string, resolution: number | null, now: number, span?: { readonly min: number; readonly max: number }): string => {
+  const ago = Math.max(0, Math.round((now - turn.at.t) / 1000))
+  const when = ago < 90 ? `${ago} s` : `${Math.round(ago / 60)} min`
+  return turn.travel === 'rising'
+    ? `turning up (was falling, low ${readingText(turn.at.v, unit, resolution, span)} ${when} ago)`
+    : `turning down (was rising, high ${readingText(turn.at.v, unit, resolution, span)} ${when} ago)`
+}
 
 export const windowText = (windowMs: number): string => `${Math.round(windowMs / 1000)} s`
 
@@ -403,6 +447,8 @@ export interface TrendReading {
   readonly rate: number | null
   readonly travel: Travel | null
   readonly change: RateChange | null
+  /** Where its end has turned against the stated rate (turnOf): what a legend leads with. */
+  readonly turn: TrendTurn | null
   /** The most severe of its limits in force active now: the alarm chip beside it. */
   readonly inAlarm: ComposedDisplayThreshold | null
   /** Where the reading sits at an end of its instrument's span: it says only that the quantity is there or beyond. */
@@ -441,6 +487,7 @@ export const trendReading = (config: {
     rate,
     travel,
     change,
+    turn: change === 'reversing' && points !== null ? turnOf(points, windowMs, value, resolution) : null,
     inAlarm: activeThreshold(thresholds, activeRuleIds, mode, gates),
     offScale: end,
   }

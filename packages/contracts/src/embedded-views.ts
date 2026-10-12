@@ -76,6 +76,13 @@ export const embeddedViewContentSchema = z.object({
       rate: z.number().finite(),
       unit: z.string().min(1).max(16),
       direction: z.enum(['rising', 'falling', 'steady']),
+      /**
+       * How the rate is changing, as the view says it: reversing where the
+       * curve goes against its stated rate at its end (the view then leads
+       * with the turn: "▲ turning up") or over the longer window, so the
+       * direction alone is no sure reading of where it goes now.
+       */
+      change: z.enum(['accelerating', 'slowing', 'reversing']).optional(),
     }).strict().optional(),
     /** The limit the view names ahead of it in its direction of travel, not yet passed ("LO ALM 14.8 MPa"). */
     limitAhead: viewQuantitySchema.extend({ name: z.string().min(1).max(64) }).strict().optional(),

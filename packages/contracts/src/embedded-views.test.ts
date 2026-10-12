@@ -77,6 +77,12 @@ describe('embedded view content', () => {
     expect(embeddedViewContentSchema.parse(content)).toEqual(content)
   })
 
+  test('says how a trend\'s rate is changing, so a reversing trend\'s direction is not taken for where it goes now', () => {
+    const reversing = { ...content, items: [{ ...content.items[0]!, trend: { rate: -0.4, unit: '°C', direction: 'falling' as const, change: 'reversing' as const } }] }
+    expect(embeddedViewContentSchema.parse(reversing)).toEqual(reversing)
+    expect(embeddedViewContentSchema.safeParse({ ...content, items: [{ ...content.items[0]!, trend: { rate: -0.4, unit: '°C', direction: 'falling', change: 'turning' } }] }).success).toBe(false)
+  })
+
   test('says how far back an item\'s recorded samples reach, only for an item whose history it shows', () => {
     const recorded = { ...content, items: [{ ...content.items[0]!, recordedMs: 180_000 }] }
     expect(embeddedViewContentSchema.parse(recorded)).toEqual(recorded)

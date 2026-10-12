@@ -4,7 +4,7 @@ import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displa
 import { marginLimitName, marginTextForms, readingResolution, shownReading } from '../src/packs/process-plant/displays/display-text.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { commandsForProcessPlantAction, compileProcessPlant, createProcessPlantProtectionRunner, createProcessPlantRuntime, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
-import { activeThreshold, changeBesideState, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, type LimitState, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { activeThreshold, changeBesideState, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, turnText, turnWords, type LimitState, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -33,6 +33,31 @@ const readLevel = (points: ReadonlyArray<TrendPoint> | null, value: number, extr
   read(points, value, { unit: 'percent', thresholds: levelLimits, resolution: 0.1, span: { min: 0, max: 100 }, ...extra })
 
 describe('how a trend reads now', () => {
+  test('a curve that has turned against its stated rate leads with the turn, from its own samples', () => {
+    // Run 26c, rcp-trip: the hot leg bottomed at 295.54 °C and had risen for 12 s, its 30-s rate still negative; both
+    // reviewers read the legend's "▼ … reversing" as falling, while the answer said rising, rightly.
+    const curve = seconds(120, second => second <= 108 ? 300 - (second / 108) * 4.46 : 295.54 + (second - 108) * 0.02)
+    const value = curve.at(-1)!.v
+    const reading = read(curve, value, { unit: 'degC', thresholds: [], resolution: 0.1 })
+    expect(reading.travel).toBe('falling')
+    expect(reading.change).toBe('reversing')
+    expect(reading.turn).toEqual({ travel: 'rising', at: { t: 108_000, v: 295.54 } })
+    expect(turnText(reading.turn!, 'degC', 0.1, curve.at(-1)!.t)).toBe('▲ turning up (was falling, low 296 °C 12 s ago)')
+    // Its low is written as the legend writes the value (whole degrees above 100 °C).
+    // Mirrored: a curve that has topped turns down from its high.
+    const topped = seconds(120, second => second <= 108 ? 10 + second / 10 : 20.8 - (second - 108) * 0.05)
+    const down = read(topped, topped.at(-1)!.v, { unit: 'percent', thresholds: [], resolution: 0.1 })
+    expect(down.turn?.travel).toBe('falling')
+    expect(turnWords(down.turn!, 'percent', 0.1, topped.at(-1)!.t)).toBe('turning down (was rising, high 20.8 % 12 s ago)')
+    // A curve going its stated way, or reversing only against the longer window, has no turn; nor has one levelling
+    // off, not yet a step off its high (the subcooling margin after a trip).
+    const falling = seconds(120, second => 300 - second / 30)
+    expect(read(falling, falling.at(-1)!.v, { unit: 'degC', thresholds: [], resolution: 0.1 }).turn).toBeNull()
+    const levelling = seconds(120, second => second <= 105 ? 30 + second / 10 : 40.5 - (second - 105) * 0.006)
+    const level = read(levelling, levelling.at(-1)!.v, { unit: 'degC', thresholds: [], resolution: 0.1 })
+    expect([level.change, level.turn]).toEqual(['reversing', null])
+  })
+
   test('a falling pressure names the low alarm ahead of it, not the nearer high one behind it', () => {
     // Production: 15.458 MPa falling, 0.542 MPa below HI ALM 16 but heading for LO ALM 14.8.
     const falling = seconds(120, second => 17.458 - second / 60)
