@@ -29,7 +29,7 @@ import {
 } from '../water-properties.ts'
 import { pressurizerSprayFlowKgPerS } from './pressurizer-behaviors.ts'
 import { primaryBreakFlow } from '../links/primary-break-flow.ts'
-import { intermediateRangeStartupRateDpm, nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
+import { intermediateRangeStartupRateDpm, nuclearInstrumentationReading, sourceRangeStartupRate } from '../nuclear-instrumentation.ts'
 import { decayHeatGroupCount, delayedNeutronGroupCount, reactorNeutronics, reactorTemperatureProgram } from '../../graph/reactor-component-definitions.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
@@ -285,6 +285,8 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'reactorVessel.boronConcentrationPpm',
       'reactorVessel.loopVoidFraction',
       'intermediateRangeCurrentAmps',
+      'sourceRangeEnergized',
+      'sourceRangeCountRateCps',
     ],
     writes: [
       'powerMw',
@@ -313,6 +315,8 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'aboveP6',
       'sourceRangeEnergized',
       'sourceRangeCountRateCps',
+      'sourceRangeStartupRateDpm',
+      'sourceRangeStartupRateValid',
     ],
     update: ({ system, component, context }): void => {
       const ratedPower = parameterNumber(component, 'ratedPowerMw')
@@ -411,7 +415,12 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'coreHeatRemovalDeficitMw'), heatRemovalDeficit)
       context.write(componentVariablePath(component, 'fuelHeatupRateCPerS'), (nextAverageFuelTemperature - currentFuelTemperature) / Math.max(context.dtSeconds, 1e-9))
       const previousIntermediateRangeCurrent = context.readNumber(componentVariablePath(component, 'intermediateRangeCurrentAmps'))
+      const previousSourceRange = {
+        energized: context.readBoolean(componentVariablePath(component, 'sourceRangeEnergized')),
+        countRateCps: context.readNumber(componentVariablePath(component, 'sourceRangeCountRateCps')),
+      }
       const instruments = nuclearInstrumentationReading(component, nextPower)
+      const sourceRangeRate = sourceRangeStartupRate(previousSourceRange, { energized: instruments.sourceRangeEnergized, countRateCps: instruments.sourceRangeCountRateCps }, context.dtSeconds)
       context.write(componentVariablePath(component, 'powerRangePercent'), instruments.powerRangePercent)
       context.write(componentVariablePath(component, 'aboveP10'), instruments.aboveP10)
       context.write(componentVariablePath(component, 'intermediateRangeCurrentAmps'), instruments.intermediateRangeCurrentAmps)
@@ -419,6 +428,8 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'aboveP6'), instruments.aboveP6)
       context.write(componentVariablePath(component, 'sourceRangeEnergized'), instruments.sourceRangeEnergized)
       context.write(componentVariablePath(component, 'sourceRangeCountRateCps'), instruments.sourceRangeCountRateCps)
+      context.write(componentVariablePath(component, 'sourceRangeStartupRateDpm'), sourceRangeRate.startupRateDpm)
+      context.write(componentVariablePath(component, 'sourceRangeStartupRateValid'), sourceRangeRate.valid)
     },
   },
   {

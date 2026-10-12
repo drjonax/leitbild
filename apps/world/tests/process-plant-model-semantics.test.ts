@@ -194,7 +194,11 @@ describe('model semantics declared per component kind', () => {
   })
 
   test('readings are meaningful only while a solved flag says so', () => {
-    expect(componentById(graph, 'core').semantics.meaningfulWhile).toEqual([{ flag: 'core.sourceRangeEnergized', variables: ['core.sourceRangeCountRateCps'] }] as never)
+    // The source range counts while its high voltage is on; its startup rate measures once it has counted through a step.
+    expect(componentById(graph, 'core').semantics.meaningfulWhile).toEqual([
+      { flag: 'core.sourceRangeEnergized', variables: ['core.sourceRangeCountRateCps'] },
+      { flag: 'core.sourceRangeStartupRateValid', variables: ['core.sourceRangeStartupRateDpm'] },
+    ] as never)
     const base = processPlantComponentRegistry.get('reactorCore' as ComponentKind)!
     const faulty: ComponentDefinition = { ...base, semantics: fixedSemantics({ meaningfulWhile: [{ flag: 'sourceRangeCountRateCps', variables: ['intermediateRangeCurrentAmps'] }] }) }
     const registry = new Map([...processPlantComponentRegistry, ['reactorCore' as ComponentKind, faulty]])

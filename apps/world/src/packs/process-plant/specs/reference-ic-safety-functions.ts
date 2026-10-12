@@ -9,8 +9,8 @@ import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 // model publishes against the generic ERG value, or this model's own set
 // point where the ERG brackets a plant-specific one, and cites which. Where
 // the generic tree needs what the model does not publish, the tree says so:
-// a branch on a signal it lacks (the source-range startup rate) reads
-// unknown; core cooling, without a vessel level referenced to core cover,
+// a branch on a signal the Plant lacks reads unknown; core cooling, without
+// a vessel level referenced to core cover,
 // shows the core covered only while the RCS is liquid-full and takes the
 // lower-level side otherwise; integrity, without a cooldown over an hour or
 // a vessel pressure-temperature limit, names the yellow path as the least a
@@ -85,7 +85,7 @@ const subcriticality = (): ProcessPlantIcSafetyFunction => {
           condition: comparison({ tagId: 'NIS-SR-HV' }, '==', true),
           yes: branch({
             question: 'Source-range startup rate zero or negative',
-            basis: 'ERG F-0.1: source-range SUR zero or negative; this reference model publishes no source-range startup rate (NIS-SR-SUR)',
+            basis: 'ERG F-0.1: source-range SUR zero or negative; the rate reads zero on the step the high voltage comes back, before it has a count to compare (NIS-SR-SUR-VALID)',
             condition: comparison({ tagId: 'NIS-SR-SUR' }, '<=', 0),
             yes: status('green', 'The core is subcritical with the source range in service.'),
             no: status('yellow', 'The source-range count rate is rising: the core may be approaching criticality slowly.', 'FR-S.2'),

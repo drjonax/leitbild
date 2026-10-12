@@ -197,6 +197,21 @@
           "tagId": "TAVG-TREF",
           "equipmentId": "rod-control-system",
           "description": "Average coolant temperature (TAVG) minus its reference (TREF); the deviation rod control would act on"
+        },
+        {
+          "path": "sourceRangeStartupRateDpm",
+          "tagId": "NIS-SR-SUR",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range startup rate in decades a minute over its -0.5 to +5 DPM span, from the count rate's change; valid only once the source range has counted through a step with its high voltage on (NIS-SR-SUR-VALID), and zero otherwise",
+          "externalRefs": [
+            "nis.source_range.startup_rate"
+          ]
+        },
+        {
+          "path": "sourceRangeStartupRateValid",
+          "tagId": "NIS-SR-SUR-VALID",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range startup rate valid: the source range counted through the whole last step with its high voltage on, so its rate measures the flux; false while the high voltage is off and on the step it comes back"
         }
       ],
       "metadata": {
@@ -206,7 +221,8 @@
             "sourceRangeEnergized": { "on": "Source-range HV on", "off": "Source-range HV off" },
             "aboveP6": { "on": "Above P-6", "off": "Below P-6" },
             "aboveP10": { "on": "Above P-10", "off": "Below P-10" },
-            "rodsOnBottom": { "on": "Rods on bottom", "off": "Rods off bottom" }
+            "rodsOnBottom": { "on": "Rods on bottom", "off": "Rods off bottom" },
+            "sourceRangeStartupRateValid": { "on": "Source-range SUR valid", "off": "Source-range SUR not valid" }
           }
         }
       }
@@ -12840,6 +12856,8 @@
     "reactorTripBreakerA.closed",
     "reactorTripBreakerA.closedState",
     "reactorTripBreakerB.closed",
-    "reactorTripBreakerB.closedState"
+    "reactorTripBreakerB.closedState",
+    "core.sourceRangeStartupRateDpm",
+    "core.sourceRangeStartupRateValid"
   ]
 }

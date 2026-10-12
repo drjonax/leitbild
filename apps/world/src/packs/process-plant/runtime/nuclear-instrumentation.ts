@@ -50,15 +50,28 @@ export const nuclearInstrumentationReading = (core: CompiledComponent, fissionPo
   }
 }
 
-/**
- * The intermediate range's startup rate, in decades a minute, from how its
- * indicated current changed over the step: a flux pinned at the end of the
- * span reads no change, and the meter pins at its own span, as it does on the
- * prompt drop of a trip.
- */
+// A startup-rate meter, in decades a minute, from how its range's indication
+// changed over the step: a reading pinned at the end of its span reads no
+// change, and the meter pins at its own span, as it does on the prompt drop of
+// a trip.
+const startupRateDpm = (previous: number, current: number, dtSeconds: number, span: { readonly min: number; readonly max: number }): number =>
+  clamp(60 * Math.log10(current / previous) / dtSeconds, span.min, span.max)
+
+/** The intermediate range's startup rate, from how its indicated current changed over the step. */
 export const intermediateRangeStartupRateDpm = (previousCurrentAmps: number, currentAmps: number, dtSeconds: number): number =>
-  clamp(
-    60 * Math.log10(currentAmps / previousCurrentAmps) / dtSeconds,
-    nuclearInstrumentSpans.intermediateRangeStartupRateDpm.min,
-    nuclearInstrumentSpans.intermediateRangeStartupRateDpm.max,
-  )
+  startupRateDpm(previousCurrentAmps, currentAmps, dtSeconds, nuclearInstrumentSpans.intermediateRangeStartupRateDpm)
+
+/**
+ * The source range's startup rate, from how its count rate changed over the
+ * step. It measures only while the source range counted through the whole
+ * step: on the step its high voltage comes back the count rate jumps from
+ * nothing, which is no rate of the flux, so the meter reads zero and says it
+ * is not yet valid; it holds no earlier reading.
+ */
+export const sourceRangeStartupRate = (previous: { readonly energized: boolean; readonly countRateCps: number }, current: { readonly energized: boolean; readonly countRateCps: number }, dtSeconds: number): { readonly valid: boolean; readonly startupRateDpm: number } => {
+  const valid = previous.energized && current.energized
+  return {
+    valid,
+    startupRateDpm: valid ? startupRateDpm(previous.countRateCps, current.countRateCps, dtSeconds, nuclearInstrumentSpans.sourceRangeStartupRateDpm) : 0,
+  }
+}

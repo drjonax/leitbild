@@ -179,7 +179,7 @@ describe('the values equipment opened from the overview leads with', () => {
       mode: processPlantOperatingMode({ system, runtime: run, modes: system.automation.operatingModes })?.id ?? null,
       read: path => run.readVariable(path),
     })
-    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps|')
+    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps,core.sourceRangeStartupRateDpm|')
     const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:equipment-values-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
     const run = createProcessPlantRuntime({ system: tripped })
     const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })

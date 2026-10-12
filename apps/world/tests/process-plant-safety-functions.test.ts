@@ -3,7 +3,7 @@ import { answerProcessPlantQuery, commandsForProcessPlantAction, compileProcessP
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, type ProcessPlantRuntime } from '../src/packs/process-plant/runtime/index.ts'
 import { assertProcessPlantIcSafetyFunctionsValid } from '../src/packs/process-plant/runtime/ic/control-protection-validation.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
-import { evaluateSafetyFunctions, safetyFunctionSignals, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
+import { evaluateSafetyFunction, evaluateSafetyFunctions, safetyFunctionSignals, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -104,11 +104,18 @@ describe('critical safety function status trees', () => {
     // An ATWS: the trip breakers' close commands dropped, the breakers still closed, power range at 100 %.
     const atws = judged(reading(runtime, { 'reactorTripBreakerA.closed': false })).get('subcriticality')!
     expect(atws).toMatchObject({ status: 'red', procedure: 'FR-S.1' })
-    // Tripped with the source range energized, the tree asks for its startup rate, which this model does not publish.
-    const tripped = reading(runtime, { 'reactorTripBreakerA.closed': false, 'core.powerRangePercent': 0, 'core.intermediateRangeStartupRateDpm': -0.1, 'core.sourceRangeEnergized': true })
-    const subcriticality = judged(tripped).get('subcriticality')!
-    expect(subcriticality).toMatchObject({ status: 'unknown', missingSignals: ['NIS-SR-SUR'] })
-    expect(subcriticality.meaning).toContain('NIS-SR-SUR is not published')
+    // Tripped with the source range energized, the tree judges the source range's startup rate.
+    const tripped = { 'reactorTripBreakerA.closed': false, 'core.powerRangePercent': 0, 'core.intermediateRangeStartupRateDpm': -0.1, 'core.sourceRangeEnergized': true }
+    const falling = judged(reading(runtime, { ...tripped, 'core.sourceRangeStartupRateDpm': -0.3 })).get('subcriticality')!
+    expect(falling).toMatchObject({ status: 'green', missingSignals: [] })
+    expect(falling.path.at(-1)).toMatchObject({ answer: 'yes', comparisons: [{ reads: [{ signal: 'NIS-SR-SUR', value: -0.3 }] }] })
+    expect(judged(reading(runtime, { ...tripped, 'core.sourceRangeStartupRateDpm': 0.2 })).get('subcriticality')).toMatchObject({ status: 'yellow', procedure: 'FR-S.2' })
+    // A tree on a signal the Plant does not publish stands no value in for it.
+    const subcriticalityTree = plant.automation.safetyFunctions[0]!
+    const onAbsent = { ...subcriticalityTree, tree: { question: 'Absent', basis: 'test', condition: { type: 'comparison' as const, signal: { tagId: 'NIS-ABSENT' }, operator: '<=' as const, value: 0 }, yes: { status: 'green' as const, meaning: 'ok' }, no: { status: 'yellow' as const, meaning: 'not' } } }
+    const subcriticality = evaluateSafetyFunction({ system: plant, runtime: reading(runtime, tripped), safetyFunction: onAbsent as never })
+    expect(subcriticality).toMatchObject({ status: 'unknown', missingSignals: ['NIS-ABSENT'] })
+    expect(subcriticality.meaning).toContain('NIS-ABSENT is not published')
     expect(subcriticality.path.at(-1)).toMatchObject({ answer: 'unknown', comparisons: [{ answer: 'unknown', reads: [] }] })
     // A reading that fails is unknown too, never a value stood in for it.
     const failed = { ...runtime, readVariableSnapshot: (path: Parameters<ProcessPlantRuntime['readVariableSnapshot']>[0]) => {

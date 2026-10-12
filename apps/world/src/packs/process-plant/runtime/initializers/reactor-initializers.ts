@@ -47,6 +47,9 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'aboveP6') return nuclearInstrumentationReading(component, initialFissionPower).aboveP6
       if (localPath === 'sourceRangeEnergized') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeEnergized
       if (localPath === 'sourceRangeCountRateCps') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeCountRateCps
+      // Its meter has counted through no step yet.
+      if (localPath === 'sourceRangeStartupRateDpm') return 0
+      if (localPath === 'sourceRangeStartupRateValid') return false
       if (localPath === 'coolantInletTemperatureC') return initialCoolantInlet
       if (localPath === 'coolantOutletTemperatureC') return initialCoolantOutlet
       if (localPath === 'coreExitTemperatureC') return initialCoreExit

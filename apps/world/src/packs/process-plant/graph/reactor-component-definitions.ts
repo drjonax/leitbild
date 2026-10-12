@@ -17,13 +17,15 @@ const primaryLoopIdsFrom = (parameters: unknown): ReadonlyArray<string> => {
  * beyond pins at the end of its span: the power range 0 to 120 % of rated power, the
  * intermediate range's compensated ion chamber 1e-11 A to 1e-3 A and its
  * startup-rate meter -0.5 to +5 decades a minute, the source range's
- * proportional counter up to 1e6 counts a second.
+ * proportional counter up to 1e6 counts a second and its startup-rate meter
+ * over the same -0.5 to +5 decades a minute.
  */
 export const nuclearInstrumentSpans = {
   powerRangePercent: { min: 0, max: 120 },
   intermediateRangeCurrentAmps: { min: 1e-11, max: 1e-3 },
   intermediateRangeStartupRateDpm: { min: -0.5, max: 5 },
   sourceRangeCountRateCps: { min: 0, max: 1e6 },
+  sourceRangeStartupRateDpm: { min: -0.5, max: 5 },
 } as const
 
 // How a core behaves once it is shut down, as its parameters declare it. The
@@ -208,8 +210,12 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       // The core-exit thermocouples are the instrument an operator reads the core's outlet by; the mixed outlet
       // temperature beside them is the model's, at the same point (HMI review of run 23: a detail repeated both).
       keyValues: ['coreExitTemperatureC'],
-      // Above P-6 the source range's high voltage is cut and it counts nothing.
-      meaningfulWhile: [{ flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] }],
+      // Above P-6 the source range's high voltage is cut and it counts nothing; its startup rate measures once it
+      // has counted through a whole step.
+      meaningfulWhile: [
+        { flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] },
+        { flag: 'sourceRangeStartupRateValid', variables: ['sourceRangeStartupRateDpm'] },
+      ],
       permissives: ['aboveP6', 'aboveP10'],
       // Rod control holds the coolant's average temperature, as the vessel the core heats reads it, to Tref.
       programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'referenceAverageTemperatureC', deviation: 'averageTemperatureDeviationC' }],
@@ -264,6 +270,9 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       // which the drives follow, until the trip breakers drop them.
       variable({ path: 'rodInsertedFraction', label: 'Rod position', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 }, instrumentSpan: { min: 0, max: 1 } } }),
       variable({ path: 'rodsOnBottom', label: 'Rods on bottom', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      // Declared last, so the variables before them keep their places.
+      variable({ path: 'sourceRangeStartupRateDpm', label: 'Source-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.sourceRangeStartupRateDpm, instrumentSpan: nuclearInstrumentSpans.sourceRangeStartupRateDpm } }),
+      variable({ path: 'sourceRangeStartupRateValid', label: 'Source-range startup rate valid', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),
   defineComponent({
