@@ -4,6 +4,7 @@ import {
   moduleCapabilityCollectionSchema,
   moduleCapabilityInvocationSchema,
   moduleDefinitionCollectionSchema,
+  moduleFeaturedDefinitionCollectionSchema,
   moduleIdSchema,
   moduleResourceCollectionSchema,
   workspaceIdSchema,
@@ -39,9 +40,14 @@ export const agentsModuleManifest = workspaceModuleManifestSchema.parse({
     resources: '/internal/workspaces/{workspaceId}/resources',
     capabilities: '/internal/workspaces/{workspaceId}/capabilities',
     invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
+    featuredDefinitions: '/internal/featured-definitions',
   },
   ui: { workspace: '/workspaces/{workspaceId}/agents' },
 })
+
+// Agents features no Definition for newcomers; it still answers the endpoint
+// every Module publishes, with an empty list rather than an absent route.
+const agentsFeaturedDefinitions = moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [] })
 
 const AGENTS_MODULE_ID = moduleIdSchema.parse('agents')
 
@@ -892,6 +898,7 @@ export const handleAgentsModuleApi = async (
 ): Promise<Response | null> => {
   try {
     if (url.pathname === '/.well-known/workspace-module' && request.method === 'GET') return json(agentsModuleManifest)
+    if (url.pathname === agentsModuleManifest.endpoints.featuredDefinitions && request.method === 'GET') return json(agentsFeaturedDefinitions)
 
     const match = url.pathname.match(/^\/internal\/workspaces\/([^/]+)(?:\/(definitions|resources|capabilities)|\/capabilities\/([^/]+)\/invoke)?$/)
     if (!match) return null

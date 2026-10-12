@@ -4,6 +4,7 @@ import {
   moduleCapabilityInvocationSchema,
   moduleDefinitionCollectionSchema,
   moduleFailureSchema,
+  moduleFeaturedDefinitionCollectionSchema,
   moduleIdSchema,
   moduleRegistrationSchema,
   moduleResourceCollectionSchema,
@@ -14,6 +15,7 @@ import {
   type ModuleCapabilityInvocationResult,
   type ModuleDefinitionCollection,
   type ModuleFailure,
+  type ModuleFeaturedDefinitionCollection,
   type ModuleId,
   type ModuleRegistration,
   type ModuleResourceCollection,
@@ -35,6 +37,8 @@ export interface ModuleGateway {
   readonly definitions: (moduleId: ModuleId, workspaceId: WorkspaceId) => Promise<ModuleCallResult<ModuleDefinitionCollection>>
   readonly resources: (moduleId: ModuleId, workspaceId: WorkspaceId) => Promise<ModuleCallResult<ModuleResourceCollection>>
   readonly capabilities: (moduleId: ModuleId, workspaceId: WorkspaceId) => Promise<ModuleCallResult<ModuleCapabilityCollection>>
+  /** The Definitions a Module features for newcomers; Workspace-independent. */
+  readonly featuredDefinitions: (moduleId: ModuleId) => Promise<ModuleCallResult<ModuleFeaturedDefinitionCollection>>
   readonly invoke: (moduleId: ModuleId, invocation: ModuleCapabilityInvocation, signal?: AbortSignal) => Promise<ModuleCallResult<ModuleCapabilityInvocationResult>>
 }
 
@@ -68,8 +72,11 @@ const responseFailure = async <T>(
   })
 }
 
+const workspacePath = (pathTemplate: string, workspaceId: WorkspaceId): string =>
+  pathTemplate.replaceAll('{workspaceId}', encodeURIComponent(workspaceId))
+
 const expandWorkspacePath = (baseUrl: string, pathTemplate: string, workspaceId: WorkspaceId): string =>
-  `${baseUrl}${pathTemplate.replaceAll('{workspaceId}', encodeURIComponent(workspaceId))}`
+  `${baseUrl}${workspacePath(pathTemplate, workspaceId)}`
 
 const expandInvocationPath = (
   baseUrl: string,
@@ -181,15 +188,15 @@ export const createModuleGateway = (config: {
 
   const readCollection = async <T>(config: {
     readonly moduleId: ModuleId
-    readonly workspaceId: WorkspaceId
-    readonly endpoint: 'definitions' | 'resources' | 'capabilities'
+    readonly endpoint: 'definitions' | 'resources' | 'capabilities' | 'featuredDefinitions'
+    readonly path: (manifest: WorkspaceModuleManifest) => string
     readonly parse: (value: unknown) => T
   }): Promise<ModuleCallResult<T>> => {
     const registration = byId.get(config.moduleId)
     if (!registration) return failure({ code: 'module_not_installed', message: `Module is not installed: ${config.moduleId}`, retryable: false })
     const manifest = await discover(registration)
     if ('code' in manifest) return { ok: false, failure: manifest }
-    const url = expandWorkspacePath(registration.internalBaseUrl, manifest.endpoints[config.endpoint], config.workspaceId)
+    const url = `${registration.internalBaseUrl}${config.path(manifest)}`
     let response: Response
     try {
       response = await fetchImpl(url, { headers: { Accept: 'application/json' } })
@@ -252,21 +259,27 @@ export const createModuleGateway = (config: {
     remove: (moduleId, workspaceId) => operate(moduleId, workspaceId, 'DELETE'),
     definitions: (moduleId, workspaceId) => readCollection({
       moduleId,
-      workspaceId,
       endpoint: 'definitions',
+      path: manifest => workspacePath(manifest.endpoints.definitions, workspaceId),
       parse: value => moduleDefinitionCollectionSchema.parse(value),
     }),
     resources: (moduleId, workspaceId) => readCollection({
       moduleId,
-      workspaceId,
       endpoint: 'resources',
+      path: manifest => workspacePath(manifest.endpoints.resources, workspaceId),
       parse: value => moduleResourceCollectionSchema.parse(value),
     }),
     capabilities: (moduleId, workspaceId) => readCollection({
       moduleId,
-      workspaceId,
       endpoint: 'capabilities',
+      path: manifest => workspacePath(manifest.endpoints.capabilities, workspaceId),
       parse: value => moduleCapabilityCollectionSchema.parse(value),
+    }),
+    featuredDefinitions: moduleId => readCollection({
+      moduleId,
+      endpoint: 'featuredDefinitions',
+      path: manifest => manifest.endpoints.featuredDefinitions,
+      parse: value => moduleFeaturedDefinitionCollectionSchema.parse(value),
     }),
     invoke,
   }

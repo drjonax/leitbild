@@ -6,6 +6,7 @@ import {
   inspectionViewSchema,
   moduleCapabilityCollectionSchema,
   moduleDefinitionCollectionSchema,
+  moduleFeaturedDefinitionCollectionSchema,
   moduleResourceCollectionSchema,
   newWorkspaceId,
   workspaceModuleManifestSchema,
@@ -327,6 +328,13 @@ describe('Agents Workspace Module API', () => {
   test('publishes one strict Agents manifest', async () => {
     const body = await (await request('GET', '/.well-known/workspace-module')).json()
     expect(workspaceModuleManifestSchema.parse(body)).toEqual(agentsModuleManifest)
+  })
+
+  test('features no Definitions, without any Workspace', async () => {
+    const response = await request('GET', agentsModuleManifest.endpoints.featuredDefinitions)
+    expect(response.status).toBe(200)
+    expect(moduleFeaturedDefinitionCollectionSchema.parse(await response.json())).toEqual({ definitions: [] })
+    expect(registry.list()).toEqual([])
   })
 
   test('provisions and discovers Rooms and Agent Profiles through one Module', async () => {

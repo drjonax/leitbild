@@ -29,16 +29,18 @@ import {
 import { createSimulationRunRealtimeManager, emptyRealtimeStatus, type ClientPerspective, type RealtimeStatus, type SimulationRunRealtimeManager } from './realtime.ts'
 import { actorForPerspective, assertHoldsRole, isRoleGateRefusal, parseRoleSetParameter, resolveRunPerspective, roleSetParameter } from '../simulation-runs/role-gates.ts'
 import { apiError, json } from './responses.ts'
-import { workspaceIdSchema, type WorkspaceId } from '@leitbild/contracts'
+import { workspaceIdSchema, type ModuleFeaturedDefinitionCollection, type WorkspaceId } from '@leitbild/contracts'
 import { createOpenAccessContext } from '../workspaces/request-context.ts'
 import type { WorldWorkspaceRuntime, WorldWorkspaceRuntimeRegistry } from '../workspaces/runtime-registry.ts'
-import { handleWorldModuleApi } from './workspace-module-api.ts'
+import { handleWorldFeaturedDefinitions, handleWorldModuleApi } from './workspace-module-api.ts'
 
 const frameAncestorsHeader = "frame-ancestors 'self'"
 const defaultRealtimeInputActorId = actorIdSchema.parse('actor:operator')
 
 interface ServerConfig {
   readonly workspaces: WorldWorkspaceRuntimeRegistry
+  /** The bundled featured Scenarios, served without any Workspace. */
+  readonly featuredDefinitions: ModuleFeaturedDefinitionCollection
   readonly port?: number
   readonly bindHost?: string
   readonly uiDistPath?: string
@@ -396,6 +398,8 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
           })),
         }))
       }
+      const featuredResponse = handleWorldFeaturedDefinitions(req, url, config.featuredDefinitions)
+      if (featuredResponse) return secure(featuredResponse)
       const workspaceModuleResponse = await handleWorldModuleApi(req, url, config.workspaces)
       if (workspaceModuleResponse) return secure(workspaceModuleResponse)
       if ((url.pathname === '/' || url.pathname === '/index.html') && req.method === 'GET') {

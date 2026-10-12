@@ -68,16 +68,30 @@ export interface RevisionedDefinitionStore<TDocument> {
   readonly delete: (definitionId: string, expectedRevisionId: string) => Promise<boolean>
 }
 
+// Keys sort by UTF-16 code unit, not localeCompare: a revision id must not
+// depend on the process locale that happened to compute it.
 export const stableJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
       .join(',')}}`
   }
   return JSON.stringify(value)
 }
+
+const definitionDigest = (document: unknown): string => createHash('sha256').update(stableJson(document)).digest('hex')
+const revisionIdForDigest = (digest: string): string => `revision-${digest.slice(0, 32)}`
+
+/**
+ * The revision id a Definition Store assigns to this document: a hash of the
+ * document as the store's schema parses it, independent of any Workspace. A
+ * Module can name the exact revision of a bundled Definition with it before
+ * any Workspace has seeded that Definition.
+ */
+export const definitionRevisionIdFor = <TDocument>(documentSchema: z.ZodType<TDocument>, document: TDocument): string =>
+  revisionIdForDigest(definitionDigest(documentSchema.parse(document)))
 
 const atomicWrite = async (path: string, value: unknown): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
@@ -150,9 +164,9 @@ export const createRevisionedDefinitionStore = <TDocument>(config: {
   const revisionFor = (rawDocument: TDocument): DefinitionRevision<TDocument> => {
     const document = config.documentSchema.parse(rawDocument)
     const metadata = config.metadata(document)
-    const digest = createHash('sha256').update(stableJson(document)).digest('hex')
+    const digest = definitionDigest(document)
     return revisionSchema.parse({
-      id: `revision-${digest.slice(0, 32)}`,
+      id: revisionIdForDigest(digest),
       workspaceId: config.workspaceId,
       definitionId: metadata.id,
       digest,

@@ -16,6 +16,13 @@ const relativePathTemplateSchema = z.string().min(1).max(512).superRefine((value
   if (!value.includes('{workspaceId}')) ctx.addIssue({ code: 'custom', message: 'path template must contain {workspaceId}' })
 })
 
+// A Module-level path answers without any Workspace, so it carries no template.
+const modulePathSchema = z.string().min(1).max(512).superRefine((value, ctx) => {
+  if (!value.startsWith('/')) ctx.addIssue({ code: 'custom', message: 'Module path must start with /' })
+  if (value.includes('://')) ctx.addIssue({ code: 'custom', message: 'Module path must not contain an origin' })
+  if (value.includes('{') || value.includes('}')) ctx.addIssue({ code: 'custom', message: 'Module path must not contain a template' })
+})
+
 const invocationPathTemplateSchema = relativePathTemplateSchema.superRefine((value, ctx) => {
   if (!value.includes('{capabilityId}')) ctx.addIssue({ code: 'custom', message: 'invocation path must contain {capabilityId}' })
 })
@@ -32,6 +39,7 @@ export const workspaceModuleManifestSchema = z.object({
     resources: relativePathTemplateSchema,
     capabilities: relativePathTemplateSchema,
     invoke: invocationPathTemplateSchema,
+    featuredDefinitions: modulePathSchema,
   }).strict(),
   ui: z.object({
     workspace: relativePathTemplateSchema,

@@ -2,7 +2,15 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { moduleRegistrationSchema, workspaceIdSchema, workspaceResourceCatalogSchema } from '@leitbild/contracts'
+import {
+  featuredDefinitionCatalogSchema,
+  moduleRegistrationSchema,
+  workspaceCapabilityCatalogSchema,
+  workspaceDefinitionCatalogSchema,
+  workspaceIdSchema,
+  workspaceResourceCatalogSchema,
+  workspaceSchema,
+} from '@leitbild/contracts'
 import { createServer as createWorldServer } from '../../../apps/world/src/core/api/server.ts'
 import { createWorldModuleState } from '../../../apps/world/src/core/workspaces/module-state.ts'
 import { createWorldWorkspaceRuntimeRegistry } from '../../../apps/world/src/core/workspaces/runtime-registry.ts'
@@ -12,6 +20,7 @@ import { compileScenarioDefinition } from '../../../apps/world/src/core/scenario
 import { createScenarioRuntimeResolver } from '../../../apps/world/src/core/scenarios/runtime-resolver.ts'
 import { createDirectRoutingAdapter } from '../../../apps/world/src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../../../apps/world/src/scenarios/definitions.ts'
+import { builtinFeaturedScenarioDefinitions, featuredScenarioDefinitionsFor } from '../../../apps/world/src/scenarios/featured.ts'
 import { handleAgentsModuleApi } from '../../../apps/agents/src/api/workspace-module-api.ts'
 import { asAIAgent } from '../../../apps/agents/src/agents/shared.ts'
 import { effectiveAgentToolSelection } from '../../../apps/agents/src/agents/spawn.ts'
@@ -26,6 +35,7 @@ import {
   type WorkspaceRuntimeRegistry as AgentsWorkspaceRuntimeRegistry,
 } from '../../../apps/agents/src/core/workspaces/runtime-registry.ts'
 import { createWorkspaceHost } from '../../../apps/leitbild/src/host.ts'
+import { cardCapability } from '../../../apps/leitbild/src/ui/card-actions.ts'
 import { createModuleGateway } from '../../../apps/leitbild/src/module-gateway.ts'
 import { createWorkspaceHostServer } from '../../../apps/leitbild/src/server.ts'
 import { createWorkspaceStore } from '../../../apps/leitbild/src/store.ts'
@@ -77,6 +87,7 @@ describe('Workspace Host with real Modules', () => {
     })
     const worldServer = createWorldServer({
       workspaces: worldRegistry,
+      featuredDefinitions: builtinFeaturedScenarioDefinitions,
       bindHost: '127.0.0.1',
       port: 0,
       uiDistPath: uiDir,
@@ -468,5 +479,121 @@ describe('Workspace Host with real Modules', () => {
     expect((await fetch(`${baseUrl}/api/workspaces/${workspace.id}`, { method: 'DELETE' })).status).toBe(204)
     expect(await worldRegistry.list()).toEqual([])
     expect(await leitbildState.has(workspaceIdSchema.parse(workspace.id))).toBe(false)
+  })
+
+  test('starts a featured demo in a new Workspace through that Workspace\'s own Definition and primary Capability', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'workspace-featured-world-'))
+    const agentsHome = await mkdtemp(join(tmpdir(), 'workspace-featured-agents-'))
+    const originalLeitbildHome = process.env.LEITBILD_HOME
+    const originalProvider = process.env.PROVIDER
+    process.env.LEITBILD_HOME = agentsHome
+    process.env.PROVIDER = 'ollama'
+    cleanup.push(async () => {
+      if (originalLeitbildHome === undefined) delete process.env.LEITBILD_HOME
+      else process.env.LEITBILD_HOME = originalLeitbildHome
+      if (originalProvider === undefined) delete process.env.PROVIDER
+      else process.env.PROVIDER = originalProvider
+      await rm(agentsHome, { recursive: true, force: true })
+      await rm(dataDir, { recursive: true, force: true })
+    })
+
+    // World's featured.json is still empty, so one bundled Scenario goes
+    // through the same loader. Once World features its demos, serve
+    // builtinFeaturedScenarioDefinitions here instead: every entry must pass.
+    const featuredDefinitions = featuredScenarioDefinitionsFor({
+      source: [{
+        scenarioId: 'halden-emergency',
+        summary: 'Run a fictional emergency desk in Halden.',
+        about: 'Calls arrive every few minutes; send the suggested unit to each.',
+        tags: ['Emergency dispatch'],
+        previews: [{ alt: 'The dispatch board', width: 1600, height: 1000, sources: [{ file: 'halden-emergency-1600.0a1b2c3d.webp', width: 1600 }] }],
+      }],
+      scenarios: builtinScenarioDefinitions,
+    })
+
+    const routing = createDirectRoutingAdapter()
+    const worldAssembly = createWorldApplicationAssembly({ routing })
+    const worldRegistry = createWorldWorkspaceRuntimeRegistry({
+      dataDir,
+      moduleState: createWorldModuleState({ dataDir }),
+      scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: worldAssembly.packs }),
+      scenarioDefinitions: builtinScenarioDefinitions,
+      compileScenarioDefinition: source => compileScenarioDefinition(source, worldAssembly.packs, { routing }),
+      scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(worldAssembly.packs),
+      runtimeAdapters: worldAssembly.runtimeAdapters,
+    })
+    const worldServer = createWorldServer({
+      workspaces: worldRegistry,
+      featuredDefinitions,
+      bindHost: '127.0.0.1',
+      port: 0,
+      uiDistPath: dataDir,
+      mapArtifacts: { rootDir: join(dataDir, 'maps') },
+    })
+    cleanup.push(() => worldServer.stop())
+    const agentsState = createAgentsModuleState()
+    const agentsRegistry = createAgentsWorkspaceRuntimeRegistry({ deployment: createDeploymentRuntime(), moduleState: agentsState, idleMs: 1_000_000 })
+    cleanup.push(() => agentsRegistry.shutdown())
+    const agentsServer = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        return await handleAgentsModuleApi(request, new URL(request.url), { state: agentsState, registry: agentsRegistry })
+          ?? new Response('Not found', { status: 404 })
+      },
+    })
+    cleanup.push(() => agentsServer.stop(true))
+    const store = createWorkspaceStore(':memory:')
+    cleanup.push(() => store.close())
+    const host = createWorkspaceHost({
+      store,
+      modules: createModuleGateway({ registrations: [
+        moduleRegistrationSchema.parse({ moduleId: 'world', internalBaseUrl: `http://127.0.0.1:${worldServer.port}`, manifestPath: '/.well-known/workspace-module' }),
+        moduleRegistrationSchema.parse({ moduleId: 'agents', internalBaseUrl: `http://127.0.0.1:${agentsServer.port}`, manifestPath: '/.well-known/workspace-module' }),
+      ] }),
+    })
+    const hostServer = createWorkspaceHostServer({ host, bindHost: '127.0.0.1', port: 0 })
+    cleanup.push(() => hostServer.stop(true))
+    const baseUrl = `http://127.0.0.1:${hostServer.port}`
+
+    // 1. The catalogue answers before any Workspace exists and wakes none.
+    const catalog = featuredDefinitionCatalogSchema.parse(await (await fetch(`${baseUrl}/api/featured-definitions`)).json())
+    expect(catalog.modules.map(outcome => [String(outcome.moduleId), outcome.status])).toEqual([['world', 'ready'], ['agents', 'ready']])
+    expect(catalog.definitions).toEqual(featuredDefinitions.definitions)
+    expect(host.list()).toEqual([])
+    expect(await worldRegistry.list()).toEqual([])
+
+    for (const featured of catalog.definitions) {
+      // 2. A new Workspace, with every core Module ready.
+      const created = await fetch(`${baseUrl}/api/workspaces`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Workspace' }),
+      })
+      expect(created.status).toBe(201)
+      const workspace = workspaceSchema.parse((await created.json() as { workspace: unknown }).workspace)
+      expect(workspace.modules.every(state => state.status === 'ready')).toBe(true)
+
+      // 3. That Workspace's own Definition, matched by identity and exact revision.
+      const moduleId = featured.definition.moduleId
+      const definitions = workspaceDefinitionCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/definitions?moduleId=${moduleId}`)).json())
+      const capabilities = workspaceCapabilityCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities?moduleId=${moduleId}`)).json())
+      const descriptor = definitions.definitions.find(definition =>
+        definition.ref.moduleId === moduleId && definition.ref.type === featured.definition.type && definition.ref.id === featured.definition.id)
+      expect(descriptor?.currentRevisionId).toBe(featured.revisionId)
+
+      // 4. Its published primary Capability, never a guessed id.
+      const primary = cardCapability(descriptor!, 'primary', capabilities.capabilities)
+      expect(primary).toBeDefined()
+      const invoked = await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities/${primary!.id}/invoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ definition: { ...descriptor!.ref, revisionId: featured.revisionId }, input: {}, actor: { kind: 'human' } }),
+      })
+      expect(invoked.status).toBe(200)
+      const runId = (await invoked.json() as { result: { id: string } }).result.id
+
+      // 5. The Run exists in that Workspace.
+      const resources = workspaceResourceCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/resources?moduleId=${moduleId}`)).json())
+      expect(resources.resources.some(resource => resource.ref.type === 'world.simulation-run' && resource.ref.id === runId)).toBe(true)
+    }
   })
 })
