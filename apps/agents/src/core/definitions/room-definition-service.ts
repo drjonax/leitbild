@@ -70,7 +70,7 @@ export const startRoomDefinition = async (
   library: RoomDefinitionLibrary,
   definitionId: string,
   revisionId: string,
-  scoped?: { readonly scope: WorkspaceRoomScope; readonly title: string },
+  scoped?: { readonly scope: WorkspaceRoomScope; readonly name: string },
 ): Promise<StartedRoomDefinition> => {
   const revision = await library.getRevision(revisionId)
   if (!revision || revision.definitionId !== definitionId) throw new Error(`Unknown Room Definition Revision "${revisionId}"`)
@@ -82,7 +82,7 @@ export const startRoomDefinition = async (
   if (!human) throw new Error('This Workspace has no human agent')
 
   const room = (await system.createRoom({
-    name: scoped ? `${scoped.title.slice(0, 115)} · Agents` : definition.title,
+    name: scoped?.name ?? definition.title,
     scope: scoped?.scope ?? { kind: 'workspace' },
     roomPrompt: definition.room.prompt,
     createdBy: SYSTEM_SENDER_ID,

@@ -18,7 +18,7 @@ import {
 import { createModuleCapabilityRegistry } from '@leitbild/module-runtime'
 import { asAIAgent } from '../agents/shared.ts'
 import { runPromptDeckEntry, startRoomDefinition, validateRoomDefinition } from '../core/definitions/room-definition-service.ts'
-import { AssistanceRoomError, createAssistanceRoom, ensureAssistanceRoom } from '../core/definitions/assistant-room.ts'
+import { AssistanceRoomError, createAssistanceRoom, ensureAssistanceRoom, openNewAssistanceRoom } from '../core/definitions/assistant-room.ts'
 import type { RoomDefinitionLibrary } from '../core/definitions/room-definition-library.ts'
 import { roomDefinitionSchema, type RoomDefinition } from '../core/definitions/room-definition-catalog.ts'
 import type { AgentsModuleState } from '../core/workspaces/module-state.ts'
@@ -63,12 +63,28 @@ const runPromptDeckEntrySchema = z.object({
 }).strict()
 const writeRoomDefinitionSchema = z.object({ definition: roomDefinitionSchema }).strict()
 const emptyInputSchema = z.object({}).strict()
-const assistantOpenInputSchema = z.object({
-  scope: workspaceRoomScopeSchema.default({ kind: 'workspace' }),
-  title: z.string().trim().min(1).max(256).optional(),
-  prompt: z.string().trim().min(1).max(64_000).optional(),
-  focusedSubjects: z.array(workspaceSubjectReferenceSchema).max(4).default([]),
-}).strict()
+const assistantPromptSchema = z.string().trim().min(1).max(64_000)
+const assistantFocusSchema = z.array(workspaceSubjectReferenceSchema).max(4).default([])
+// 'reuse' joins the Scope's existing Assistance Room; 'new' starts a separate
+// conversation that carries its own title and opens with the request. The
+// title becomes the Room name, so it leaves headroom under the 100-character
+// Room name limit for a uniqueness suffix.
+const assistantOpenInputSchema = z.union([
+  z.object({
+    conversation: z.literal('reuse').default('reuse'),
+    scope: workspaceRoomScopeSchema.default({ kind: 'workspace' }),
+    title: z.string().trim().min(1).max(256).optional(),
+    prompt: assistantPromptSchema.optional(),
+    focusedSubjects: assistantFocusSchema,
+  }).strict(),
+  z.object({
+    conversation: z.literal('new'),
+    scope: workspaceRoomScopeSchema.default({ kind: 'workspace' }),
+    title: z.string().trim().min(1).max(80),
+    prompt: assistantPromptSchema,
+    focusedSubjects: assistantFocusSchema,
+  }).strict(),
+])
 const assistanceCreateInputSchema = z.object({
   scope: workspaceRoomScopeSchema,
   title: z.string().trim().min(1).max(128),
@@ -329,7 +345,7 @@ const agentsCapabilities = createModuleCapabilityRegistry<{ runtime: AgentsWorks
       id: 'agents.assistance.open', moduleId: AGENTS_MODULE_ID,
       kind: 'command', scope: { kind: 'workspace' },
       title: 'Open assistance',
-      description: 'Reuses or creates an ordinary Assistance Room for the Workspace or a selected Resource collection, optionally posting the first request.',
+      description: 'Reuses or creates an ordinary Assistance Room for the Workspace or a selected Resource collection, optionally posting the first request. With conversation "new", starts a separate titled Assistance Room that opens with the request.',
       risk: 'write', idempotent: false,
       inputSchema: z.toJSONSchema(assistantOpenInputSchema),
       outputSchema: z.toJSONSchema(assistantOpenResultSchema),
@@ -346,12 +362,19 @@ const agentsCapabilities = createModuleCapabilityRegistry<{ runtime: AgentsWorks
           : input.scope.collection.workspaceId
       if (scopeWorkspace !== invocation.workspaceId) return apiError(409, 'workspace_scope_mismatch', 'Room Scope belongs to another Workspace')
       try {
-        const opened = await ensureAssistanceRoom(runtime, library, flush, {
-          scope: input.scope,
-          title: input.title,
-          prompt: input.prompt,
-          focusedSubjects: input.focusedSubjects,
-        })
+        const opened = input.conversation === 'new'
+          ? await openNewAssistanceRoom(runtime, library, flush, {
+            scope: input.scope,
+            title: input.title,
+            prompt: input.prompt,
+            focusedSubjects: input.focusedSubjects,
+          })
+          : await ensureAssistanceRoom(runtime, library, flush, {
+            scope: input.scope,
+            title: input.title,
+            prompt: input.prompt,
+            focusedSubjects: input.focusedSubjects,
+          })
         const resource = workspaceResourceReferenceSchema.parse({
           workspaceId: invocation.workspaceId,
           moduleId: AGENTS_MODULE_ID,
