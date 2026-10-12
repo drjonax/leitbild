@@ -20,12 +20,16 @@ export const actionBy = (draft: Draft, actor: EngineActor, verb: LastAction['ver
   ...(cause === undefined ? {} : { cause }),
 })
 
-/** "A2 now en route to C-20 · Dispatcher", worded from the unit's phase and last order. */
+/**
+ * "A2 now en route to C-20", worded from the unit's phase and task. It names
+ * no actor: `lastAction.by` records a core actor id or a standing order, not
+ * a word for people, and a Run without roles holds no role to name, since
+ * every screen acts as the same operator.
+ */
 export const committedText = (state: EngineState, unit: UnitRecord): string => {
   const task = unit.taskId === undefined ? undefined : state.tasks.get(unit.taskId)
   const where = task === undefined ? '' : ` ${unit.phase === 'on-task' ? 'at' : 'to'} ${task.label}`
-  const by = unit.lastAction === undefined ? '' : ` · ${unit.lastAction.by}`
-  return `${unit.label} now ${phaseWord(state.catalog, unit)}${where}${by}`
+  return `${unit.label} now ${phaseWord(state.catalog, unit)}${where}`
 }
 
 export const loadedText = (state: EngineState, unit: UnitRecord): string =>

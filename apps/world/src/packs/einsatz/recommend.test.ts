@@ -48,7 +48,7 @@ describe('Einsatz recommendations with diverts', () => {
     expect(recommendation.proposal).toMatchObject({ covers: true, remainder: [], units: [{ unitId: 'a6', divertFrom: { taskId: 'low6', label: 'LOW6', rank: { id: low, code: 'C3' } } }] })
     expect(recommendation.alternatives).toEqual([])
     expect(unitIds(recommendation.committed)).toEqual(['a1', 'a2', 'a3', 'a4'])
-    expect(recommendation.committed.find(entry => entry.unitId === 'a3')?.reason).toBe('A3 now working at LOW3 · Controller')
+    expect(recommendation.committed.find(entry => entry.unitId === 'a3')?.reason).toBe('A3 now working at LOW3')
   })
 
   test('a new top-class task is proposed the nearer divert, from low-class work; the unit heading to middle-class work is the one alternative', async () => {

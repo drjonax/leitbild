@@ -83,7 +83,7 @@ describe('Einsatz divert protection', () => {
     expect((await refusalOf(state, send(['a4'], { taskId: 'n1' }, [{ unitId: 'a4', fromTaskId: 'c20' }]))).code).toBe('divert_not_lower_priority')
     expect((await refusalOf(state, send(['a3'], { taskId: 'n1' }, [{ unitId: 'a3', fromTaskId: 'low3' }]))).code).toBe('divert_after_arrival')
     const stale = await refusalOf(state, send(['a2'], { taskId: 'n1' }, [{ unitId: 'a2', fromTaskId: 'low6' }]))
-    expect(stale.reason).toBe('unit_committed: A2 now en route to C9 · Controller')
+    expect(stale.reason).toBe('unit_committed: A2 now en route to C9')
     expect((await refusalOf(state, send(['a2'], { taskId: 'n1' }))).code).toBe('unit_committed')
 
     state = await run(state, send(['a2'], { taskId: 'n1' }, [{ unitId: 'a2', fromTaskId: 'c9' }]))
@@ -224,6 +224,6 @@ describe('Einsatz coverage and eligibility', () => {
     state = await run(state, send(['u1'], { taskId: 't1' }))
     expect(unitOf(state, 'u1').phase).toBe('mobilizing')
     expect(isFree(unitOf(state, 'u1'))).toBe(false)
-    expect((await refusalOf(state, { kind: 'hold', unitId: 'u1' })).reason).toBe('unit_committed: U1 now mobilizing to T1 · Controller; recall first (R), or move it (M)')
+    expect((await refusalOf(state, { kind: 'hold', unitId: 'u1' })).reason).toBe('unit_committed: U1 now mobilizing to T1; recall first (R), or move it (M)')
   })
 })
