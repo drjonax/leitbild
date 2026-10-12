@@ -6,7 +6,7 @@
     "Before the fault, note the export of the four unit bays, the switchyard voltage and the loading of the Hasle and Tegneby circuits and the NO1 corridors (connection-points.list, power-flow.snapshot).",
     "When the switchyard is isolated, confirm that its bays are de-energised (no voltage, no frequency) and that the Plants report loss of offsite power; follow the island frequency, the LFDD stages that operate and the reserves.",
     "Restore offsite power: close one Hasle circuit onto the dead switchyard (dead-bus closing), check that the bays are energised and the Plants draw station service from the grid, then close the remaining five circuits; synchro-check limits the voltage-angle difference across each loop you close.",
-    "Restore the grid: raise hydro output until the frequency is back within the ±100 mHz standard range, then reconnect the operated LFDD stages one at a time (restore-lfdd-stage) without another under-frequency excursion, and re-arm them (rearm-lfdd-stage)."
+    "Restore the grid: raise hydro output until the frequency is back within the ±100 mHz standard range, then reconnect the load that automatic under-frequency shedding cut, one stage at a time, without another under-frequency excursion, and re-arm each stage."
   ],
   "connections": [
     {
