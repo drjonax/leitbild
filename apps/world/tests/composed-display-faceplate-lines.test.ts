@@ -11,7 +11,7 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { compileDetailDisplay, type ComposedFaceplatePanel, type OverviewView } from '../src/packs/process-plant/displays/compose.ts'
-import { composedDisplayLayout } from '../src/packs/process-plant/displays/composition.ts'
+import { composedDisplayLayout, PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../src/packs/process-plant/displays/composition.ts'
 import { faceplateEnds } from '../src/packs/process-plant/displays/faceplate.ts'
 import { faceplateNow, type FaceplateRow } from '../src/packs/process-plant/displays/faceplate-live.ts'
 import { safetyFunctionChip } from '../src/packs/process-plant/displays/safety-function-content.ts'
@@ -76,7 +76,7 @@ const shownAt = (state: (typeof pinned)[number]): ReadonlyArray<Shown> => {
       simulationTime: new Date(Date.UTC(2026, 9, 12, 12) + runtime.elapsedMs()).toISOString(),
       plantElapsedMs: runtime.elapsedMs(),
       mode: mode === null ? null : { id: mode.id, label: mode.label },
-      safetyFunctions: evaluateSafetyFunctions(plant, runtime).map(safetyFunctionChip),
+      safetyFunctions: evaluateSafetyFunctions(plant, runtime).map(evaluation => safetyFunctionChip(evaluation, plant.graph, PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS)),
       alarms: alarms as NonNullable<ComposedDisplaySample['alarms']>,
       values: paths.map(path => ({ path, value: runtime.readVariable(path as VariablePath) as number | boolean, quality: 'good' as const })),
     }
