@@ -117,7 +117,7 @@ describe('Weather ↔ Ambulance integration', () => {
     const connection = await hub.connect(config)
     try {
       await connection.setClock({ currentTime: compiled.world.startsAt, updatedAt: nowIso(), paused: true })
-      expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
+      expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
       const snapshot = await connection.getSnapshot()
       const vehicle = snapshot.objects.find((o) => o.kind === 'mobile_entity')!
       const initialImpact = vehicle.spatial.route?.impacts?.find(impact => impact.source.kind === 'runtime' && impact.source.id === 'ambulance.road-weather')
@@ -135,6 +135,7 @@ describe('Weather ↔ Ambulance integration', () => {
         (
           await connection.sendCommand(
             command('world.weather.update', { item: definition, expectedRevision: area.revision }),
+            {},
           )
         ).ok,
       ).toBe(true)
@@ -142,6 +143,7 @@ describe('Weather ↔ Ambulance integration', () => {
         (
           await connection.sendCommand(
             command('world.ambulance.set-road-weather-policy', { enabled: true, lowVisibilityFactor: 0.25 }),
+            {},
           )
         ).ok,
       ).toBe(true)
@@ -163,7 +165,7 @@ describe('Weather ↔ Ambulance integration', () => {
       // Preset ground is still wet: removing the area is not a magic ground reset.
       expect(cleared.spatial.route?.impacts?.[0]?.speedFactor).toBeCloseTo(0.92)
       expect(
-        (await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: false }))).ok,
+        (await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: false }), {})).ok,
       ).toBe(true)
       expect((await connection.getSnapshot()).objects.find((o) => o.id === vehicle.id)!.spatial.route?.impacts).toEqual(
         [],
@@ -194,12 +196,12 @@ describe('Ambulance weather preparation boundaries', () => {
   test('provider failure after dispatch preserves the accepted assignment and stops further advancement', async () => {
     const connection = await isolatedConnection(async () => { throw new Error('Weather provider failed') })
     try {
-      const result = await connection.sendCommand(dispatchCommand())
+      const result = await connection.sendCommand(dispatchCommand(), {})
       expect(result.ok).toBe(true)
       const snapshot = await connection.getSnapshot()
       expect(snapshot.objects.find(object => object.id === 'amb:response')!.operational.status).not.toBe('available')
       expect(connection.health?.()[0]).toMatchObject({ state: 'failed', failureCount: 1, lastFailure: { operation: 'post-command-road-weather' } })
-      expect((await connection.sendCommand(command('world.ambulance.cancel', { unitId: 'amb:response' }))).ok).toBe(false)
+      expect((await connection.sendCommand(command('world.ambulance.cancel', { unitId: 'amb:response' }), {})).ok).toBe(false)
       expect((await connection.getSnapshot()).objects).toEqual(snapshot.objects)
     } finally { await connection.close() }
   })
@@ -210,8 +212,8 @@ describe('Ambulance weather preparation boundaries', () => {
       runtimeStateStore: { load: async () => null, save: async value => { persisted.push(structuredClone(value)) } },
     })
     try {
-      expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
-      expect((await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true }))).ok).toBe(false)
+      expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
+      expect((await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true }), {})).ok).toBe(false)
       expect(await connection.invokeQuery({ capabilityId: 'world.ambulance.road-weather-policy', input: {} })).toMatchObject({ enabled: false })
       expect(persisted).toEqual([])
       expect(connection.health?.()[0]?.state).toBe('ready')
@@ -237,9 +239,9 @@ describe('Ambulance weather preparation boundaries', () => {
       if (saving) { began(); await gate }
     } } })
     try {
-      expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
+      expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
       saving = true
-      const update = connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true, lowVisibilityFactor: .2 }))
+      const update = connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true, lowVisibilityFactor: .2 }), {})
       await persisted
       await connection.afterCommittedEvents!([weatherCommit()])
       release()
@@ -266,15 +268,15 @@ describe('Ambulance weather preparation boundaries', () => {
     })
     let closed = false
     try {
-      expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
+      expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
       delayed = true
       const pending = connection.afterCommittedEvents!([weatherCommit()])
       await requested
       if (changed === 'route') {
-        expect((await connection.sendCommand(command('world.ambulance.cancel', { unitId: 'amb:response' }))).ok).toBe(true)
-        expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
+        expect((await connection.sendCommand(command('world.ambulance.cancel', { unitId: 'amb:response' }), {})).ok).toBe(true)
+        expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
       } else if (changed === 'policy') {
-        expect((await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true, lowVisibilityFactor: .2 }))).ok).toBe(true)
+        expect((await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true, lowVisibilityFactor: .2 }), {})).ok).toBe(true)
       } else if (changed === 'sample') {
         await connection.afterCommittedEvents!([weatherCommit()])
       } else if (changed === 'position') {
@@ -302,7 +304,7 @@ describe('Ambulance weather preparation boundaries', () => {
       return providerSamples(request)
     })
     try {
-      expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
+      expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
       const before = (await connection.getSnapshot()).objects
       reject = true
       await expect(connection.afterCommittedEvents!([weatherCommit()])).rejects.toThrow('Provider became unavailable')
@@ -313,7 +315,7 @@ describe('Ambulance weather preparation boundaries', () => {
 
   test('a failure in a later weather batch does not partially mutate the fleet', async () => {
     const original = await isolatedConnection(async request => providerSamples(request))
-    expect((await original.sendCommand(dispatchCommand())).ok).toBe(true)
+    expect((await original.sendCommand(dispatchCommand(), {})).ok).toBe(true)
     const snapshot = (await original.getSnapshot()).objects
     await original.close()
     const unit = snapshot.find(object => object.id === 'amb:response')!
@@ -345,11 +347,11 @@ describe('Ambulance weather preparation boundaries', () => {
       return providerSamples(request)
     }, true, { runClock: { read: () => ({ currentTime, updatedAt: nowIso(), paused: false }) } })
     try {
-      expect((await connection.sendCommand(dispatchCommand())).ok).toBe(true)
+      expect((await connection.sendCommand(dispatchCommand(), {})).ok).toBe(true)
       const before = (await connection.getSnapshot()).objects
       currentTime = new Date(Date.parse(currentTime) + 1_000).toISOString() as IsoTimestamp
       reject = true
-      if (path === 'command') expect((await connection.sendCommand(command('world.ambulance.cancel', { unitId: 'amb:response' }))).ok).toBe(false)
+      if (path === 'command') expect((await connection.sendCommand(command('world.ambulance.cancel', { unitId: 'amb:response' }), {})).ok).toBe(false)
       else if (path === 'clock') await expect(connection.setClock({ currentTime, updatedAt: nowIso(), paused: true })).rejects.toThrow('Advance provider failed')
       else {
         const deadline = Date.now() + 2_000
@@ -370,7 +372,7 @@ test('combined restart preserves Weather ground and the configured vehicle polic
   const hub = createRuntimeHub([createLocalAmbulancePackRuntimeAdapter({ routing }), createLocalWeatherPackRuntimeAdapter()])
   const connection = await hub.connect({ ...config, runtimeStateStores: stores })
   await connection.setClock({ currentTime: compiled.world.startsAt, updatedAt: nowIso(), paused: true })
-  expect((await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true, iceFactor: .11 }))).ok).toBe(true)
+  expect((await connection.sendCommand(command('world.ambulance.set-road-weather-policy', { enabled: true, iceFactor: .11 }), {})).ok).toBe(true)
   const point = { type: 'Point', coordinates: [11.41, 59.13] }
   const sample = await connection.invokeQuery({ capabilityId: 'world.weather.sample-at-point', input: { point } })
   const snapshot = await connection.getSnapshot()

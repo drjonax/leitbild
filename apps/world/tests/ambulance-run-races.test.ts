@@ -43,7 +43,7 @@ const setup = async (options: {
   const adapter = { ...actual, connect: async (config: Parameters<typeof actual.connect>[0]) => {
     const connection = await actual.connect(config)
     return { ...connection, checkpoint: async () => { await options.beforeCheckpoint?.(); await connection.checkpoint!() }, sendCommand: async (command: Parameters<typeof connection.sendCommand>[0]) => {
-      const result = await connection.sendCommand(command)
+      const result = await connection.sendCommand(command, {})
       if (command.kind === 'world.ambulance.assign') options.onDispatchResult?.(result)
       return result
     } }

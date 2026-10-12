@@ -177,7 +177,7 @@ describe('electrical Pack connection', () => {
         targetObjectIds: ['plant:halden-1' as ObjectId],
         payload: { plantId: 'plant:halden-1', actionId: 'turbine-trip', parameters: {} },
         issuedAt: nowIso(),
-      })
+      }, {})
       expect(trip.ok).toBe(true)
       await Bun.sleep(8_500)
       await committed
@@ -229,7 +229,7 @@ describe('electrical Pack connection', () => {
       targetObjectIds: ['grid:halden-four-unit' as ObjectId],
       payload: { assetId },
       issuedAt: nowIso(),
-    })
+    }, {})
     const ports = async () => {
       await committed
       const snapshot = await connection.getSnapshot()

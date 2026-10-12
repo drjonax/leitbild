@@ -166,7 +166,7 @@ describe('createRuntimeHub', () => {
     expect(active.connectCount()).toBe(1)
     expect(inactive.connectCount()).toBe(0)
 
-    const inactiveCommand = await connection.sendCommand(command('inactive.command'))
+    const inactiveCommand = await connection.sendCommand(command('inactive.command'), {})
     expect(inactiveCommand.ok).toBe(false)
     if (!inactiveCommand.ok) expect(inactiveCommand.reason).toMatch(/no pack runtime accepts/)
 
@@ -271,6 +271,25 @@ describe('createRuntimeHub', () => {
     await connection.close()
   })
 
+  test('a query between Packs reaches its provider without a viewer, so only core stamps one', async () => {
+    const received: unknown[] = []
+    const provider = withConnection(createStubAdapter('provider.runtime', 'provider', 'world.provider.command', { queryKind: 'world.provider.status' }), base => ({
+      ...base,
+      invokeQuery: async query => {
+        received.push(query)
+        return { adapterId: 'provider.runtime' }
+      },
+    }))
+    let peerConfig: PackRuntimeConnectionConfig | undefined
+    const peer = withConnection(createStubAdapter('peer.runtime', 'peer', 'world.peer.command'), (base, config) => { peerConfig = config; return base })
+    const connection = await createRuntimeHub([provider, peer]).connect(connectionConfig([provider.id, peer.id]))
+    try {
+      const claimed = { capabilityId: 'world.provider.status', input: {}, viewer: { roleIds: ['control'], class: 'controller', sees: 'all' } }
+      await expect(peerConfig!.queries!.invoke(claimed)).resolves.toEqual({ adapterId: 'provider.runtime' })
+      expect(received).toEqual([{ capabilityId: 'world.provider.status', input: {} }])
+    } finally { await connection.close() }
+  })
+
   test('exact-advancement failures identify the Pack Runtime and underlying error', async () => {
     const base = createStubAdapter('failing.runtime', 'failing-pack', 'world.failing.command')
     const adapter = withConnection({ ...base, clock: 'simulation' }, connection => ({
@@ -349,7 +368,7 @@ describe('createRuntimeHub', () => {
       expect(peerConfig?.isObjectProviderAvailable?.(observed.id)).toBe(false)
       await expect(connection.invokeQuery({ capabilityId: 'world.failure.query', input: {} })).rejects.toThrow('missed committed state')
       await expect(peerConfig!.queries!.invoke({ capabilityId: 'world.failure.query', input: {} })).rejects.toThrow('missed committed state')
-      await expect(connection.sendCommand(command('world.failure.command'))).rejects.toThrow('missed committed state')
+      await expect(connection.sendCommand(command('world.failure.command'), {})).rejects.toThrow('missed committed state')
       await expect(connection.setClock({ currentTime: '2026-01-01T00:00:00Z' as IsoTimestamp, updatedAt: '2026-01-01T00:00:00Z' as IsoTimestamp, paused: true })).rejects.toThrow('missed committed state')
       expect(connection.health?.()[0]?.state).toBe('failed')
     } finally { errors.mockRestore(); await connection.close() }

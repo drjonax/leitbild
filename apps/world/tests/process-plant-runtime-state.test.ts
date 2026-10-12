@@ -119,7 +119,7 @@ describe('process plant Pack runtime lifecycle', () => {
         plantId: basePlant.id,
         path: 'rcpA.running',
         value: false,
-      }))
+      }), {})
       expect(accepted.ok).toBe(true)
       await advance(connection, runClock, 1_000)
 
@@ -150,7 +150,7 @@ describe('process plant Pack runtime lifecycle', () => {
       plantId: basePlant.id,
       path: 'rcpA.running',
       value: false,
-    }))).ok).toBe(true)
+    }), {})).ok).toBe(true)
     await first.close()
 
     const runClock = pausedRunClock()
@@ -186,7 +186,7 @@ describe('process plant Pack runtime lifecycle', () => {
         path: 'turbine.loadFraction',
         targetValue: 0.5,
         durationSeconds: 1,
-      }))).ok).toBe(true)
+      }), {})).ok).toBe(true)
       await advance(connection, runClock, 1_000)
 
       const read = await connection.invokeQuery(query('world.process-plant.variables.read', {

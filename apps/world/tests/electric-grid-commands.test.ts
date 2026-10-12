@@ -420,7 +420,7 @@ describe('electric grid command Capabilities', () => {
           targetObjectIds: ['grid:norway' as ObjectId],
           payload,
           issuedAt: isoAt(0),
-        })
+        }, {})
         expect(result.ok).toBe(true)
         const upsert = emitted.find(event => event.type === 'object.upserted')!
         expect(upsert.provenance.causedByCommandId).toBe(result.commandId)

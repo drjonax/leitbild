@@ -77,7 +77,7 @@ export type PackRuntimeEventHandler = (emission: PackRuntimeEmission) => void
 export interface PackRuntimeConnection {
   readonly getSnapshot: () => Promise<PackRuntimeSnapshot>
   readonly subscribe: (handler: PackRuntimeEventHandler) => () => void
-  readonly sendCommand: (command: CommandEnvelope, context?: PackCommandContext) => Promise<CommandResult>
+  readonly sendCommand: (command: CommandEnvelope, context: PackCommandContext) => Promise<CommandResult>
   readonly receiveRealtimeInput?: (input: PackRuntimeRealtimeInput) => Promise<void>
   readonly commandEventHistory?: (command: CommandEnvelope) => PackRuntimeEventHistory
   readonly invokeQuery: (query: PackRuntimeQuery) => Promise<unknown>
@@ -207,7 +207,8 @@ export interface PackRuntimeRecordedHistory {
 
 export interface PackRuntimeQueries {
   readonly has: (capabilityId: string) => boolean
-  readonly invoke: (query: PackRuntimeQuery) => Promise<unknown>
+  /** A query between Packs carries no viewer: only core stamps one, from a caller's connection. */
+  readonly invoke: (query: Omit<PackRuntimeQuery, 'viewer'>) => Promise<unknown>
 }
 export interface PackRuntimeConnectionConfig {
   /** Workspace-owned persistence scope. Required only by adapters with shared local data. */

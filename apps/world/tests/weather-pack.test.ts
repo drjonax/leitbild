@@ -334,7 +334,7 @@ describe('Weather runtime controls and lifecycle', () => {
       const result = await connection.sendCommand(envelope('world.weather.update', {
         expectedRevision: current.revision,
         item: { ...data.definition, keyframes: [{ atSeconds: 120 }, { atSeconds: 300, atmosphere: { windSpeedMps: 29 } }] },
-      }))
+      }), {})
       expect(result.ok).toBe(true)
       expect(weatherSampleSchema.parse(await sample()).state.atmosphere.windSpeedMps).toBe(9)
       const updated = (await connection.getSnapshot()).objects.find(item => item.id === current.id)!
@@ -358,7 +358,7 @@ describe('Weather runtime controls and lifecycle', () => {
     try {
       await connection.setClock({ currentTime: at, updatedAt: nowIso(), paused: true })
       expect(
-        (await connection.sendCommand(envelope('world.weather.create', area({ atmosphere: { windSpeedMps: 15 } })))).ok,
+        (await connection.sendCommand(envelope('world.weather.create', area({ atmosphere: { windSpeedMps: 15 } })), {})).ok,
       ).toBe(true)
       const snapshot = await connection.getSnapshot()
       const sample = weatherPackDataSchema.parse(snapshot.objects.find((o) => o.id === probe.id)!.packData).sample
@@ -372,6 +372,7 @@ describe('Weather runtime controls and lifecycle', () => {
       const obj = snapshot.objects.find((o) => o.id === 'weather:rain')!
       const result = await connection.sendCommand(
         envelope('world.weather.set-enabled', { objectId: obj.id, enabled: false }),
+        {},
       )
       expect(result.ok).toBe(true)
       expect(
@@ -383,6 +384,7 @@ describe('Weather runtime controls and lifecycle', () => {
         (
           await connection.sendCommand(
             envelope('world.weather.update', { item: weatherPackDataSchema.parse(obj.packData).definition, expectedRevision: obj.revision }),
+            {},
           )
         ).ok,
       ).toBe(false)

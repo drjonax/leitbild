@@ -308,7 +308,7 @@ describe('drone pack native runtime', () => {
         axes: { forward: 1, right: 0, vertical: 1, yaw: 0 },
         inputSource: { kind: 'keyboard', label: 'Keyboard' },
         commandTtlMs: 500,
-      }, [initial.id]))).ok).toBe(true)
+      }, [initial.id]), {})).ok).toBe(true)
       await waitForCondition('manual flight moves and climbs from rest', () => {
         const current = seen.get(initial.id)
         if (!current) return false
@@ -355,7 +355,7 @@ describe('drone pack native runtime', () => {
         axes: { forward: 0, right: 0, vertical: 0, yaw: 1 },
         inputSource: { kind: 'keyboard', label: 'Keyboard E' },
         commandTtlMs: 500,
-      }, [initial.id]))).ok).toBe(true)
+      }, [initial.id]), {})).ok).toBe(true)
       await waitForCondition('positive manual yaw increases geospatial heading', () => {
         const current = seen.get(initial.id)
         if (!current) return false
@@ -566,8 +566,8 @@ describe('drone pack native runtime', () => {
     })
 
     try {
-      expect((await connection.sendCommand(command(armDroneCommandKind, { droneId: initial.id, armed: true }, [initial.id]))).ok).toBe(true)
-      expect((await connection.sendCommand(command(takeoffDroneCommandKind, { droneId: initial.id, altitudeM: 20 }, [initial.id]))).ok).toBe(true)
+      expect((await connection.sendCommand(command(armDroneCommandKind, { droneId: initial.id, armed: true }, [initial.id]), {})).ok).toBe(true)
+      expect((await connection.sendCommand(command(takeoffDroneCommandKind, { droneId: initial.id, altitudeM: 20 }, [initial.id]), {})).ok).toBe(true)
       await waitForCondition('native takeoff climbs', () => (droneData(seen.get(initial.id) ?? initial).pose.altitudeM > 1), { intervalMs: 20 })
 
       expect((await connection.sendCommand(command(navigateDroneCommandKind, {
@@ -577,7 +577,7 @@ describe('drone pack native runtime', () => {
           altitudeM: 20,
           speedMps: 20,
         },
-      }, [initial.id]))).ok).toBe(true)
+      }, [initial.id]), {})).ok).toBe(true)
       await waitForCondition('native goto moves east', () => {
         const current = seen.get(initial.id)
         return current !== undefined && droneData(current).pose.point.coordinates[0] > initial.spatial.position!.point.coordinates[0]
@@ -592,7 +592,7 @@ describe('drone pack native runtime', () => {
         axes: { forward: 1, right: 0, vertical: 0, yaw: 0 },
         inputSource: { kind: 'keyboard', label: 'Keyboard' },
         commandTtlMs: 300,
-      }, [initial.id]))).ok).toBe(true)
+      }, [initial.id]), {})).ok).toBe(true)
       await waitForCondition('manual control records controller binding', () => {
         const object = seen.get(initial.id)
         return object !== undefined && droneData(object).control.inputSource?.kind === 'keyboard'
@@ -613,7 +613,7 @@ describe('drone pack native runtime', () => {
         point: point(10.75, 59.91),
         modelId: 'native-survey-quad',
         altitudeM: 35,
-      }))
+      }), {})
       expect(result.ok).toBe(true)
       const snapshot = await connection.getSnapshot()
       expect(snapshot.objects.some(object => object.id === 'drone:created-native')).toBe(true)

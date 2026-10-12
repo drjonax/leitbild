@@ -239,7 +239,7 @@ describe('electric grid alarms', () => {
         targetObjectIds: ['grid:norway' as ObjectId],
         payload,
         issuedAt: isoAt(0),
-      })
+      }, {})
       const unitId = norway.model.generators[0]!.id
       expect((await send(gridTripGeneratorCommandKind, { assetId: unitId })).ok).toBe(true)
       const signals = emitted.flatMap(event => event.type === 'interaction.signal' ? [event.signal] : [])

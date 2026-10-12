@@ -345,7 +345,7 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
           return { ok: true, commandId: command.id, acceptedAt: nowIso() }
         }
         let changes: Change[]
-        try { changes = apply(command, context?.viewer) }
+        try { changes = apply(command, context.viewer) }
         catch (error) {
           return { ok: false, commandId: command.id, rejectedAt: nowIso(), reason: error instanceof Error ? error.message : String(error) }
         }

@@ -97,12 +97,13 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
       )
       const queries = {
         has: (id: string) => availableQueries.has(id),
-        invoke: async (query: PackRuntimeQuery): Promise<unknown> => {
+        invoke: async (query: Omit<PackRuntimeQuery, 'viewer'>): Promise<unknown> => {
           const reader = readers.get(query.capabilityId)
           if (!reader) throw new Error('Active query provider is not ready: ' + query.capabilityId)
           assertAvailable(reader.runtimeId)
           const input = reader.capability.input.parse(query.input)
-          return reader.capability.output.parse(await reader.connection.invokeQuery({ ...query, input }))
+          // Forward exactly the Capability and its input, so a Pack cannot pass a viewer of its own.
+          return reader.capability.output.parse(await reader.connection.invokeQuery({ capabilityId: query.capabilityId, input }))
         },
       }
       const connectionResults = await Promise.allSettled(
@@ -266,7 +267,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         }
       }
 
-      const sendCommand = async (command: CommandEnvelope, context?: PackCommandContext): Promise<CommandResult> => {
+      const sendCommand = async (command: CommandEnvelope, context: PackCommandContext): Promise<CommandResult> => {
         const target = commandTargets.get(command.kind)
         if (!target) {
           return {
