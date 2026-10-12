@@ -10,7 +10,7 @@ const operatingPoint = (branchRatings: ReadonlyArray<Record<string, unknown>>): 
   title: 'Summer',
   description: 'Summer ratings',
   compatibleModelRefs: [model.id],
-  demand: { season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00', priceAreaGroupMw: { NO1: { private: 300 }, NO2: { industry: 200 } } },
+  demand: { season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00', priceAreaGroupMw: { NO1: { private: 300 }, NO2: { industry: 200 } }, networkLossMw: { NO1: 12, NO2: 8 } },
   loadScale: 1,
   branchRatings,
 })
