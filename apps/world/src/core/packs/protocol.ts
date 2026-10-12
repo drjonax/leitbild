@@ -654,7 +654,12 @@ export interface WorldPack extends WorldPackView {
    *   (`PackRuntimeQuery.viewer`, `PackCommandContext.viewer`), which core
    *   stamps from the caller's connection, never from input;
    * - keeps sided ids out of public objects;
+   * - sets no `causedByCommandId` on an object or event whose audience is
+   *   wider than the commanding side's view, since core sends a Pack's
+   *   provenance as it is and a command id is that side's own;
    * - emits side-visible realtime messages only for public authoring changes.
+   * Core refuses a Pack's emission whose object breaks the audience rules as
+   * a whole, and reports it on that Pack Runtime's health, never to a caller.
    */
   readonly roleAware?: true
   /**

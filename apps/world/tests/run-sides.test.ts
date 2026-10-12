@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { accessContextSchema, moduleResourceCollectionSchema, newRequestId, newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
 import { handleSimulationRunApi } from '../src/core/api/simulation-run-routes.ts'
@@ -24,6 +24,7 @@ import type { SimulationRunRegistry } from '../src/core/simulation-runs/registry
 import { compiledScenarioSideViewRules, executionStateSideViewRules, snapshotSideViewRules } from '../src/core/simulation-runs/side-view.ts'
 import { simulationRunStateSnapshotSchema } from '../src/core/simulation-runs/state-store.ts'
 import type { WorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runtime-registry.ts'
+import { fixtureRuntimeId } from './fixtures/fixture-pack.ts'
 import { fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
 import {
   compileWithRolePacks,
@@ -178,19 +179,35 @@ describe('Scenario sides and what each role sees', () => {
 })
 
 describe('object and event audience in a sided Run', () => {
-  test('an upsert without a valid audience is refused before anything commits, and an audience never changes', async () => {
+  test('a Pack write without a valid audience is refused whole, before anything commits, as that Pack\'s fault; an audience never changes', async () => {
     const registry = await registryWithSidedRuns()
     const run = await registry.create({ scenarioId: 'sided-run' })
     const seqBefore = run.snapshot().seq
-    const refused = await callRoute<ErrorBody>(registry, invokePath(run.id, fixtureCommandIds.createItem, 'control'), post({ input: unit(`unit:loose-${nonce}`, 'Loose') }))
-    expect(refused).toMatchObject({ status: 400, body: { error: { code: 'audience_required' } } })
-    const undeclared = await callRoute<ErrorBody>(registry, invokePath(run.id, fixtureCommandIds.createItem, 'control'), post({ input: unit(`unit:green-${nonce}`, 'Green', ['green']) }))
-    expect(undeclared).toMatchObject({ status: 400, body: { error: { code: 'audience_undeclared_side' } } })
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // The fixture Pack accepts both commands; the Run refuses what it then
+      // writes. The refusal is the Pack's fault, so no caller is handed it.
+      for (const item of [unit(`unit:loose-${nonce}`, 'Loose'), unit(`unit:green-${nonce}`, 'Green', ['green'])]) {
+        const accepted = await callRoute<{ result: { ok: boolean } }>(registry, invokePath(run.id, fixtureCommandIds.createItem, 'control'), post({ input: item }))
+        expect(accepted).toMatchObject({ status: 200, body: { result: { ok: true } } })
+      }
+      // Only the server log names the object.
+      expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`unit:loose-${nonce}`)
+    } finally { logged.mockRestore() }
     expect(run.snapshot().objects.some(object => object.id.startsWith('unit:loose') || object.id.startsWith('unit:green'))).toBe(false)
     expect(run.events({ afterSeq: seqBefore }).some(event => event.type === 'object.upserted')).toBe(false)
-    const changed = sidedObjectAudienceIssue({ id: 'a', audience: ['blue'] }, { audience: ['red'] }, sides)
+    expect(run.health().find(entry => entry.runtimeId === fixtureRuntimeId)).toMatchObject({
+      state: 'degraded', failureCount: 2, lastFailure: { operation: 'emission', message: expect.stringMatching(/^audience_undeclared_side: a fixture object /) },
+    })
+    expect(JSON.stringify(run.health())).not.toContain(nonce)
+    expect(run.health().some(entry => entry.runtimeId === 'world.core')).toBe(false)
+    // A later command of the Run is answered as usual.
+    const assigned = await callRoute<{ result: { ok: boolean } }>(registry, invokePath(run.id, fixtureCommandIds.assign, 'blue-lead'), post({ input: { unitId: names.blueUnit.id, taskId: names.blueTask.id } }))
+    expect(assigned).toMatchObject({ status: 200, body: { result: { ok: true } } })
+    const changed = sidedObjectAudienceIssue({ id: 'unit:secret', packId: 'fixture', audience: ['blue'] }, { audience: ['red'] }, sides)
     expect(changed?.code).toBe('audience_changed')
-    expect(sidedObjectAudienceIssue({ id: 'a', audience: ['blue', 'red'] }, { audience: ['red', 'blue'] }, sides)).toBeNull()
+    expect(changed?.message).not.toContain('unit:secret')
+    expect(sidedObjectAudienceIssue({ id: 'unit:secret', packId: 'fixture', audience: ['blue', 'red'] }, { audience: ['red', 'blue'] }, sides)).toBeNull()
   })
 
   test('a deletion carries its object\'s audience from the commit on', async () => {

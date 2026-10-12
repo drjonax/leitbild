@@ -4,7 +4,7 @@
 // oracle deep-scans every HTTP body and WebSocket message a side screen
 // received, and every store it built, for any id or label of an object
 // outside that side's audience and for any command id another side issued.
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
 import { createServer } from '../src/core/api/server.ts'
@@ -29,10 +29,10 @@ import {
   joinSimulationRun,
   querySimulationRunCapability,
   resetSimulationRun,
-  worldApiErrorCode,
 } from '../src/ui/simulation-run-client.ts'
 import { applySimulationRunEventBatchMessage } from '../src/ui/simulation-run-events.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
+import { fixtureRuntimeId } from './fixtures/fixture-pack.ts'
 import { fixtureAnnouncementType, fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
 import { createRoleRunWorkspaces, sidedNames, sidedRoles, sidedRunDefinition, sides } from './fixtures/role-runs.ts'
 import { waitForCondition } from './helpers.ts'
@@ -182,8 +182,16 @@ const objectIds = (screen: Screen): ReadonlyArray<string> => (screen.stores?.obj
 const storeText = (stores: RunScopedStores | null): string =>
   JSON.stringify(stores, (_key, value: unknown) => value instanceof Map ? [...value.entries()] : value)
 
-/** Every object the Run has held, with its audience: initial ones, and every upsert journaled or projected since. */
+/**
+ * Every object the Run has held, with its audience: initial ones, every
+ * upsert journaled or projected since, and every object the script asked for,
+ * so an id the Run refused is still watched for.
+ */
 const inventory = new Map<string, { readonly label: string; readonly audience: ObjectAudience | undefined }>()
+const attempt = <T extends { readonly id: string; readonly label: string; readonly audience?: ObjectAudience }>(item: T): T => {
+  inventory.set(item.id, { label: item.label, audience: item.audience })
+  return item
+}
 /** Every command a side role issued, by the sides it sees. */
 const sideCommands = new Map<string, ReadonlyArray<string>>()
 const takeInventory = async (): Promise<void> => {
@@ -285,18 +293,51 @@ describe('the wire oracle on a sided fixture Run', () => {
     await expectNoLeak(blue, 'blue')
   })
 
-  test('case 7: an upsert without an audience is refused and reaches no one; a public site reaches both sides', async () => {
-    const marks = { red: red.ws.length, blue: blue.ws.length }
-    let refused: unknown
-    try { await command(controller, fixtureCommandIds.createItem, { item: { type: 'unit', id: `unit:loose-${nonce}`, label: `loose ${nonce}`, position: [10.74, 59.92], speedMps: 10 } }) }
-    catch (error) { refused = error }
-    expect(worldApiErrorCode(refused)).toBe('audience_required')
+  test('case 7: a Pack write without an audience is refused whole and reaches no one, Blue\'s later commands are answered without it, and a public site reaches both sides', async () => {
+    const marks = { red: red.ws.length, blue: blue.ws.length, blueHttp: blue.http.length }
+    const loose = attempt({ type: 'unit', id: `unit:loose-${nonce}`, label: `loose ${nonce}`, position: [10.74, 59.92], speedMps: 10 } as const)
+    const job = attempt({ type: 'task', id: `task:loosejob-${nonce}`, label: `loosejob ${nonce}`, position: [10.74, 59.92], priority: 'low', audience: [] } as const)
+    const run = await liveRun()
+    const faults = () => run.health().find(entry => entry.runtimeId === fixtureRuntimeId)?.failureCount ?? 0
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // The fixture Pack accepts the unit without an audience and keeps it;
+      // the Run refuses each emission that writes it, as the Pack's fault.
+      expect(await command(controller, fixtureCommandIds.createItem, { item: loose })).toMatchObject({ result: { ok: true } })
+      expect(await command(controller, fixtureCommandIds.createItem, { item: job })).toMatchObject({ result: { ok: true } })
+      expect(await command(controller, fixtureCommandIds.assign, { unitId: loose.id, taskId: job.id })).toMatchObject({ result: { ok: true } })
+      // On the Run's clock the Pack moves the unit it kept: a refused write no
+      // caller made, which a later caller's command must not be handed.
+      const before = faults()
+      await (await registry()).setExecution(runId, { playback: 'playing' })
+      await waitForCondition('the Pack writes the refused unit on its own', () => faults() > before)
+      await (await registry()).setExecution(runId, { playback: 'paused' })
+      // Blue commands over HTTP and over its realtime connection.
+      expect(await command(blue, fixtureCommandIds.setPriority, { taskId: names.blueTask.id, priority: 'high' })).toMatchObject({ result: { ok: true } })
+      expect(await blue.connection.invokeCapability(runId, { capabilityId: fixtureCommandIds.setPriority, input: { taskId: names.blueTask.id, priority: 'low' } })).toMatchObject({ result: { ok: true } })
+      let deleteRefusal: unknown
+      try { await blue.connection.invokeCapability(runId, { capabilityId: 'world.object.delete', input: { objectId: names.redUnit.id } }) }
+      catch (error) { deleteRefusal = error }
+      expect(deleteRefusal).toBeInstanceOf(Error)
+      const refusal = blue.ws.slice(marks.blue).find(entry => entry.type === 'capability.error')
+      expect(refusal === undefined ? null : (JSON.parse(refusal.text) as { readonly code?: string }).code).toBe('role_controller_only')
+      // Blue asks the Pack for a Red object by id: the Pack answers as if it did not exist.
+      expect(await asScreen(blue, async () => await querySimulationRunCapability<{ readonly object: unknown }>(runId, fixtureQueryIds.object, { objectId: names.redUnit.id }))).toEqual({ object: null })
+    } finally { logged.mockRestore() }
     await barrier(red, blue, controller)
-    for (const screen of [red, blue, controller]) expect(objectIds(screen)).not.toContain(`unit:loose-${nonce}`)
-    expect(red.ws.slice(marks.red).map(entry => entry.type)).toEqual(['events'])
-    expect(blue.ws.slice(marks.blue).map(entry => entry.type)).toEqual(['events'])
+    for (const screen of [red, blue, controller]) expect(objectIds(screen)).not.toContain(loose.id)
+    expect(objectIds(controller)).toContain(job.id)
+    expect(eventsReceived(red, marks.red).filter(event => event.type === 'object.upserted')).toEqual([])
+    expect(eventsReceived(blue, marks.blue).filter(event => event.type === 'object.upserted').map(event => event.object?.id)).toEqual([names.blueTask.id, names.blueTask.id])
+    // The fault is the Pack's: on its runtime's health, naming no object, and the Run itself has not failed.
+    expect(run.health().find(entry => entry.runtimeId === fixtureRuntimeId)).toMatchObject({ state: 'degraded', lastFailure: { operation: 'emission', message: expect.stringMatching(/^audience_required: /) } })
+    expect(JSON.stringify(run.health())).not.toContain(nonce)
+    expect(run.health().some(entry => entry.runtimeId === 'world.core')).toBe(false)
     expect(objectIds(red)).toContain(names.depot.id)
     expect(objectIds(blue)).toContain(names.depot.id)
+    await expectNoLeak(blue, 'blue', { http: marks.blueHttp, ws: marks.blue })
+    await expectNoLeak(blue, 'blue')
+    await expectNoLeak(red, 'red')
   })
 
   test('case 1: the Controller creates a Red unit and Blue receives nothing about it', async () => {

@@ -39,6 +39,10 @@ export const isRoleGateRefusal = (error: unknown): error is RoleGateRefusal =>
   && 'code' in error
   && (roleGateCodes as ReadonlyArray<unknown>).includes((error as { readonly code: unknown }).code)
 
+/** A sided Run's refusal of an object for its audience. */
+export const isAudienceRefusal = (error: unknown): error is RoleGateRefusal =>
+  isRoleGateRefusal(error) && (audienceRefusalCodes as ReadonlyArray<string>).includes(error.code)
+
 /** Who a call or connection plays in a Run. */
 export type RunPerspective =
   | { readonly kind: 'open' }

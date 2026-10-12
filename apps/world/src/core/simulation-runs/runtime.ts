@@ -7,12 +7,12 @@ import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
 import type { PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
 import type { AgentRestrictions,RunRoles,ScenarioSide,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
-import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema } from '../model/index.ts'
+import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema,type AudienceIssue } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
 import type { PackWikiRef } from '../packs/protocol.ts'
 import type { ScenarioRevisionId } from '../scenarios/library.ts'
 import { canIssueCommand,type Actor } from './actors.ts'
-import { assertRunCapabilityAllowed,assertTruthView,roleGateRefusal,viewerForActor } from './role-gates.ts'
+import { assertRunCapabilityAllowed,assertTruthView,isAudienceRefusal,roleGateRefusal,viewerForActor,type RoleGateRefusal } from './role-gates.ts'
 import {
   CommandIdempotencyConflictError,
   commandIdempotencyConfigFromEnv,
@@ -205,6 +205,13 @@ export const createSimulationRunRuntime = async (config: {
   let scenarioRunner: ScenarioTimelineRunner | null = null
   let pendingRuntimeEmissions = 0
   let runtimeEmissionFailure: unknown = null
+  /**
+   * Pack Runtimes whose writes this sided Run refused for audience. Each is a
+   * fault of that Pack, reported on its health and never thrown at a later,
+   * unrelated caller. The Pack may still hold what the Run refused, so the
+   * fault stays until the Run is reset or reloaded.
+   */
+  const audienceFaults = new Map<string, { readonly failureCount: number; readonly lastFailure: NonNullable<PackRuntimeHealth['lastFailure']> }>()
   const maximumPaceNotificationBuffer = new Map<string, SimulationRunEvent>()
   const maximumPaceRealtimeBuffer = new Map<string, PackRuntimeRealtimeMessage>()
   let lastFastForwardNotificationAt = 0
@@ -368,6 +375,34 @@ export const createSimulationRunRuntime = async (config: {
   }
 
 
+  /** The refusal names no object, since it may reach a view that does not see it; the server log keeps the id. */
+  const audienceRefusal = (issue: AudienceIssue): RoleGateRefusal => {
+    console.error(`Simulation Run ${config.id} refused an object: ${issue.message} (${issue.objectId})`)
+    return roleGateRefusal(issue.code, issue.message)
+  }
+
+  /**
+   * The first audience problem in a batch of object events, checked against
+   * the admission state and the batch's own earlier events.
+   */
+  const firstAudienceIssue = (
+    events: ReadonlyArray<{ readonly type: string; readonly object?: OperationalObject; readonly objectId?: ObjectId }>,
+    sides: ReadonlyArray<ScenarioSide>,
+  ): AudienceIssue | null => {
+    const candidates = new Map<ObjectId, OperationalObject | undefined>()
+    const current = (objectId: ObjectId): OperationalObject | undefined =>
+      candidates.has(objectId) ? candidates.get(objectId) : state.getObject(objectId)
+    for (const event of events) {
+      if (event.type === 'object.upserted' && event.object !== undefined) {
+        const issue = sidedObjectAudienceIssue(event.object, current(event.object.id), sides)
+        if (issue !== null) return issue
+        candidates.set(event.object.id, event.object)
+      }
+      if (event.type === 'object.deleted' && event.objectId !== undefined) candidates.set(event.objectId, undefined)
+    }
+    return null
+  }
+
   /**
    * A sided Run refuses the whole batch before canonical state changes when an
    * upsert lacks a valid audience or changes it, and writes each deletion's
@@ -377,13 +412,13 @@ export const createSimulationRunRuntime = async (config: {
     events: ReadonlyArray<SimulationRunEvent>,
     sides: ReadonlyArray<ScenarioSide>,
   ): ReadonlyArray<SimulationRunEvent> => {
+    const issue = firstAudienceIssue(events, sides)
+    if (issue !== null) throw audienceRefusal(issue)
     const candidates = new Map<ObjectId, OperationalObject | undefined>()
     const current = (objectId: ObjectId): OperationalObject | undefined =>
       candidates.has(objectId) ? candidates.get(objectId) : state.getObject(objectId)
     return events.map(event => {
       if (event.type === 'object.upserted') {
-        const issue = sidedObjectAudienceIssue(event.object, current(event.object.id), sides)
-        if (issue !== null) throw roleGateRefusal(issue.code, issue.message)
         candidates.set(event.object.id, event.object)
         return event
       }
@@ -400,7 +435,7 @@ export const createSimulationRunRuntime = async (config: {
     if (declaredSides === undefined) return
     for (const object of objects) {
       const issue = sidedObjectAudienceIssue(object, undefined, declaredSides)
-      if (issue !== null) throw roleGateRefusal(issue.code, issue.message)
+      if (issue !== null) throw audienceRefusal(issue)
     }
   }
 
@@ -908,8 +943,25 @@ export const createSimulationRunRuntime = async (config: {
     }
   }
 
+  const recordAudienceFault = (runtimeId: string, message: string): void => {
+    audienceFaults.set(runtimeId, {
+      failureCount: (audienceFaults.get(runtimeId)?.failureCount ?? 0) + 1,
+      lastFailure: { at: nowIso(), operation: 'emission', message },
+    })
+  }
+
   const publishPackRuntimeEmission = async (emission: PackRuntimeEmission): Promise<void> => {
     metrics.recordPackEmission(emission.runtimeId, emission.events.length, emission.emittedAt)
+    if (declaredSides !== undefined) {
+      // A Pack's emission is one change: refused whole, before its recording
+      // or realtime messages, when any object in it breaks the audience rules.
+      const issue = firstAudienceIssue(emission.events, declaredSides)
+      if (issue !== null) {
+        console.error(`Simulation Run ${config.id} dropped a Pack Runtime emission from ${emission.runtimeId}: ${issue.message} (${issue.objectId})`)
+        recordAudienceFault(emission.runtimeId, issue.message)
+        return
+      }
+    }
     if (emission.recording !== undefined) {
       if (!config.historian) throw new Error(`Pack Runtime ${emission.runtimeId} emitted recording samples without an active Run Historian`)
       config.historian.record(emission.runtimeId, emission.recording)
@@ -957,6 +1009,12 @@ export const createSimulationRunRuntime = async (config: {
     try {
       await publishPackRuntimeEmission(emission)
     } catch (err) {
+      // Refused at commit, after the emission's own check passed (an
+      // interaction it carried changed the Run first). Logged with its object.
+      if (isAudienceRefusal(err)) {
+        recordAudienceFault(emission.runtimeId, err.message)
+        return
+      }
       runtimeEmissionFailure = err
       console.error(err)
     }
@@ -1526,11 +1584,30 @@ export const createSimulationRunRuntime = async (config: {
         })
     }),
     metrics: () => metrics.snapshot(),
-    health: () => [
-      ...(config.runtimeConnection.health?.() ?? []),
-      ...(commitFailure ? [{ runtimeId: 'world.core', state: 'failed' as const, failureCount: 1,
-        lastSuccessfulInteractionAt: lastCommitAt, lastFailure: { at: commitFailedAt!, operation: 'commit', message: commitFailure.message } }] : []),
-    ],
+    health: () => {
+      const reported = config.runtimeConnection.health?.() ?? []
+      const withAudienceFaults = reported.map((entry): PackRuntimeHealth => {
+        const fault = audienceFaults.get(entry.runtimeId)
+        if (fault === undefined) return entry
+        return {
+          ...entry,
+          state: entry.state === 'failed' ? 'failed' : 'degraded',
+          failureCount: entry.failureCount + fault.failureCount,
+          lastFailure: entry.lastFailure !== undefined && entry.lastFailure.at > fault.lastFailure.at ? entry.lastFailure : fault.lastFailure,
+        }
+      })
+      // A connection that reports no health of its own for a faulty runtime.
+      const unreported = [...audienceFaults].flatMap(([runtimeId, fault]): ReadonlyArray<PackRuntimeHealth> =>
+        reported.some(entry => entry.runtimeId === runtimeId) ? [] : [{
+          runtimeId, state: 'degraded', failureCount: fault.failureCount, lastSuccessfulInteractionAt: lastCommitAt, lastFailure: fault.lastFailure,
+        }])
+      return [
+        ...withAudienceFaults,
+        ...unreported,
+        ...(commitFailure ? [{ runtimeId: 'world.core', state: 'failed' as const, failureCount: 1,
+          lastSuccessfulInteractionAt: lastCommitAt, lastFailure: { at: commitFailedAt!, operation: 'commit', message: commitFailure.message } }] : []),
+      ]
+    },
     recordingStatus: () => config.historian?.status() ?? null,
     recordingSeries: () => config.historian?.listSeries() ?? [],
     recordedSamples: (input) => {

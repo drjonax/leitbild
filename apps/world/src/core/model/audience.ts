@@ -39,7 +39,10 @@ export type AudienceRefusalCode = typeof audienceRefusalCodes[number]
 
 export interface AudienceIssue {
   readonly code: AudienceRefusalCode
+  /** Names the code and the Pack, never the object: a refusal may reach a view that does not see it. */
   readonly message: string
+  /** For the server log and authoring paths only. */
+  readonly objectId: string
 }
 
 /**
@@ -48,19 +51,20 @@ export interface AudienceIssue {
  * earlier revision had.
  */
 export const sidedObjectAudienceIssue = (
-  object: { readonly id: string; readonly audience?: ObjectAudience | undefined },
+  object: { readonly id: string; readonly packId: string; readonly audience?: ObjectAudience | undefined },
   previous: { readonly audience?: ObjectAudience | undefined } | undefined,
   sides: ReadonlyArray<ScenarioSide>,
 ): AudienceIssue | null => {
+  const issue = (code: AudienceRefusalCode, message: string): AudienceIssue => ({ code, message: `${code}: ${message}`, objectId: object.id })
   if (object.audience === undefined) {
-    return { code: 'audience_required', message: `audience_required: object ${object.id} has no audience; every object of a Run that declares sides says whose picture it belongs to` }
+    return issue('audience_required', `a ${object.packId} object has no audience; every object of a Run that declares sides says whose picture it belongs to`)
   }
   if (object.audience !== 'public') {
     const undeclared = object.audience.filter(sideId => !sides.some(side => side.id === sideId))
-    if (undeclared.length > 0) return { code: 'audience_undeclared_side', message: `audience_undeclared_side: object ${object.id} names sides this Run does not declare: ${undeclared.join(', ')}` }
+    if (undeclared.length > 0) return issue('audience_undeclared_side', `a ${object.packId} object names sides this Run does not declare: ${undeclared.join(', ')}`)
   }
   if (previous !== undefined && !sameAudience(previous.audience, object.audience)) {
-    return { code: 'audience_changed', message: `audience_changed: object ${object.id} cannot change its audience` }
+    return issue('audience_changed', `a ${object.packId} object cannot change its audience`)
   }
   return null
 }

@@ -324,12 +324,13 @@ export const scenarioTimelineSchema = z.object({
  */
 const sidedScenarioIssues = (
   sides: ReadonlyArray<ScenarioSide>,
-  initialObjects: ReadonlyArray<{ readonly id: string; readonly audience?: ObjectAudience | undefined }>,
+  initialObjects: ReadonlyArray<{ readonly id: string; readonly packId: string; readonly audience?: ObjectAudience | undefined }>,
   timeline: { readonly cues: ReadonlyArray<{ readonly actions: ReadonlyArray<{ readonly type: string; readonly guidance?: { readonly id: string; readonly objectIds: ReadonlyArray<string> } }> }> } | undefined,
 ): ReadonlyArray<RoleDeclarationIssue> => {
   const issues: RoleDeclarationIssue[] = initialObjects.flatMap((object, index) => {
     const issue = sidedObjectAudienceIssue(object, undefined, sides)
-    return issue === null ? [] : [{ path: ['initialObjects', index, 'audience'], code: issue.code, message: issue.message }]
+    // The Scenario is open authoring material, so its author is told which object.
+    return issue === null ? [] : [{ path: ['initialObjects', index, 'audience'], code: issue.code, message: `${issue.message} (${issue.objectId})` }]
   })
   const audiences = new Map<string, ObjectAudience | undefined>(initialObjects.map(object => [object.id, object.audience]))
   ;(timeline?.cues ?? []).forEach((cue, cueIndex) => cue.actions.forEach((action, actionIndex) => {
