@@ -47,3 +47,13 @@ export const touchTargetPx = 44
  */
 export const pickingRadiusFor = (pointerType: string | null, iconPx: number): number =>
   pointerType === null || pointerType === 'mouse' ? 0 : Math.max(0, Math.ceil((touchTargetPx - iconPx) / 2))
+
+/**
+ * Whether an icon's coloured disk takes a click, not only its glyph's
+ * strokes: only while the surface picks map targets (`targetPicking`) and the
+ * pointer picks exactly, with no radius, as a mouse does. A click between the
+ * strokes is then the object's, never the ground's. A finger or a pen already
+ * picks within a radius around the strokes, which the larger disk would
+ * widen; every other surface picks the glyph alone, as it always has.
+ */
+export const disksPickFor = (targetPicking: boolean, pickingRadiusPx: number): boolean => targetPicking && pickingRadiusPx === 0

@@ -51,7 +51,7 @@ describe('operational deck layer visibility', () => {
       snapshot: emptySnapshot(),
       visibleFamilies: new Set(['routes']),
       catalogueAtlas: emptyCatalogueSymbolAtlas,
-      exactPointer: true,
+      disksPick: false,
       onObjectSelected: () => undefined,
       onObjectSeen: () => undefined,
       onObjectHover: () => undefined,

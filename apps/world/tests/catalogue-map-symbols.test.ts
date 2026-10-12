@@ -5,7 +5,8 @@ import { createCatalogueSymbolAtlas, emptyCatalogueSymbolAtlas, type CatalogueAt
 import { createMapFeatureStore } from '../src/ui/map-runtime/map-feature-store.ts'
 import { createOperationalDeckLayers } from '../src/ui/map-runtime/operational-deck-layers.ts'
 import { catalogueSymbolIds } from '../src/ui/map-runtime/operational-render-controller.ts'
-import { leitbildSymbolIds, symbolAtlasFor } from '../src/ui/map-runtime/symbol-kit.ts'
+import { leitbildSymbolIds, operationalIconPx, symbolAtlasFor } from '../src/ui/map-runtime/symbol-kit.ts'
+import { disksPickFor, pickingRadiusFor } from '../src/ui/map/map-pointer.ts'
 import type { OperationalRenderSnapshot } from '../src/ui/map-runtime/types.ts'
 
 const at = '2026-10-12T08:00:00.000Z' as IsoTimestamp
@@ -53,7 +54,7 @@ const layersOf = (snapshot: OperationalRenderSnapshot, catalogueAtlas: Catalogue
   snapshot,
   visibleFamilies: new Set(['objects', 'routes']),
   catalogueAtlas,
-  exactPointer: true,
+  disksPick: false,
   onObjectSelected: () => undefined,
   onObjectSeen: () => undefined,
   onObjectHover: () => undefined,
@@ -144,7 +145,7 @@ describe('operational map icons', () => {
       snapshot,
       visibleFamilies: new Set(['objects', 'routes']),
       catalogueAtlas: emptyCatalogueSymbolAtlas,
-      exactPointer: true,
+      disksPick: false,
       onObjectSelected: point => { selected.push(point.id) },
       onObjectSeen: point => { seen.push(point.id) },
       onObjectHover: point => { hovered.push(point?.id ?? null) },
@@ -256,39 +257,47 @@ describe('catalogue symbol atlas', () => {
     expect(run.atlas.current().url).toBeNull()
   })
 
-  test('a mouse click on an icon\'s coloured disk between the glyph\'s strokes picks its object; a finger or pen picks as before, around the strokes only', () => {
+  test('while the surface picks targets, a mouse click on an icon\'s coloured disk between the glyph\'s strokes picks its object; otherwise the disks never pick, so every other Pack and a finger or pen pick as before', () => {
     const snapshot = snapshotOf([objectOf('a', 11.3), objectOf('b', 11.4)], presentationWith({}, { b: 'B2 · ENR' }))
     type Pick = (info: { readonly object: unknown }) => void
-    const layersFor = (exactPointer: boolean, selected: string[], hovered: Array<string | null>) => createOperationalDeckLayers({
+    const layersFor = (disksPick: boolean, selected: string[], hovered: Array<string | null>) => createOperationalDeckLayers({
       snapshot,
       visibleFamilies: new Set(['objects', 'routes']),
       catalogueAtlas: emptyCatalogueSymbolAtlas,
-      exactPointer,
+      disksPick,
       onObjectSelected: point => { selected.push(point.id) },
       onObjectSeen: () => undefined,
       onObjectHover: point => { hovered.push(point?.id ?? null) },
     })
     const selected: string[] = []
     const hovered: Array<string | null> = []
-    const mouse = layersFor(true, selected, hovered)
-    const disks = mouse.find(layer => layer.id === 'leitbild-object-status-disks')
+    // A mouse on a surface whose open panel takes map targets.
+    const targets = layersFor(disksPickFor(true, pickingRadiusFor('mouse', operationalIconPx)), selected, hovered)
+    const disks = targets.find(layer => layer.id === 'leitbild-object-status-disks')
     expect(disks?.props.pickable).toBe(true)
     ;(disks?.props.onClick as unknown as Pick)({ object: snapshot.points[0] })
     ;(disks?.props.onHover as unknown as Pick)({ object: snapshot.points[0] })
     expect(selected).toEqual([snapshot.points[0]!.id])
     expect(hovered).toEqual([snapshot.points[0]!.id])
-    const touch = layersFor(false, [], [])
-    const touchDisks = touch.find(layer => layer.id === 'leitbild-object-status-disks')
-    expect(touchDisks?.props.pickable).toBe(false)
-    expect(touchDisks?.props.onClick ?? null).toBeNull()
-    // The glyphs and labels pick the same for either pointer.
+    // A Pack whose surface takes no map targets, with any pointer, and a finger or pen on one that does.
+    const plain = [
+      ...[null, 'mouse', 'touch', 'pen'].map(type => layersFor(disksPickFor(false, pickingRadiusFor(type, operationalIconPx)), [], [])),
+      ...['touch', 'pen'].map(type => layersFor(disksPickFor(true, pickingRadiusFor(type, operationalIconPx)), [], [])),
+    ]
+    for (const layers of plain) {
+      const plainDisks = layers.find(layer => layer.id === 'leitbild-object-status-disks')
+      expect(plainDisks?.props.pickable).toBe(false)
+      expect(plainDisks?.props.onClick ?? null).toBeNull()
+      expect(plainDisks?.props.onHover ?? null).toBeNull()
+    }
+    // The glyphs and labels pick the same either way.
     for (const id of ['leitbild-object-symbols', 'leitbild-object-labels']) {
-      expect(mouse.find(layer => layer.id === id)?.props.pickable).toBe(true)
-      expect(touch.find(layer => layer.id === id)?.props.pickable).toBe(true)
+      expect(targets.find(layer => layer.id === id)?.props.pickable).toBe(true)
+      for (const layers of plain) expect(layers.find(layer => layer.id === id)?.props.pickable).toBe(true)
     }
     // Halos and new-info rings never pick.
     for (const id of ['leitbild-object-halos', 'leitbild-object-new-info']) {
-      expect(mouse.find(layer => layer.id === id)?.props.pickable).toBe(false)
+      expect(targets.find(layer => layer.id === id)?.props.pickable).toBe(false)
     }
   })
 })

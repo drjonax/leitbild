@@ -91,6 +91,15 @@ export const routeGroundClick = (point: GeoJsonPoint, click: MapClickContext): M
 export const groundClicksWanted = (click: Pick<MapClickContext, 'targeting' | 'panel'>): boolean =>
   click.panel !== null || click.targeting?.pointTargets !== undefined
 
+/**
+ * Whether map taps pick targets for an order, so each must reach exactly the
+ * object it lands on: only while an open panel takes map targets. The map
+ * then lets a mouse click an icon's coloured disk, and shows a chooser for a
+ * tap on overlapping icons (`OperationalMap.svelte`, `targetPicking`);
+ * without such a panel every surface picks as it always has.
+ */
+export const targetPickingWanted = (click: Pick<MapClickContext, 'panel'>): boolean => click.panel !== null
+
 /** Whether hovered objects can show an order preview: a panel connected one, or a Pack describes targets. */
 export const targetPreviewsWanted = (click: Pick<MapClickContext, 'targeting' | 'panel'>): boolean =>
   click.panel?.previewMapTarget != null || click.targeting?.describeTarget !== undefined

@@ -5,6 +5,8 @@ export type LeitbildIconMapping = Record<string, { x: number; y: number; width: 
 const symbolIds = Object.keys(common) as LeitbildSymbolId[]
 /** The size the map draws an operational icon at, unless its presentation sets another. */
 export const operationalIconPx = 23
+/** The radius of the coloured status disk drawn beneath an icon this large, in px: it covers the whole glyph. */
+export const statusDiskRadiusPx = (iconPx: number): number => iconPx * 0.74
 export const leitbildSymbolDefinitions = symbolIds.map(id => ({ id, label: id.replaceAll('-', ' '), defaultSizePx: operationalIconPx }))
 export const leitbildSymbolIds = new Set<string>(symbolIds)
 /**

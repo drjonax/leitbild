@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { OperationalObject } from '../src/core/model/index.ts'
-import { hoverCardsFor, longPressObject, pickingRadiusFor, touchTargetPx, type MapPress } from '../src/ui/map/map-pointer.ts'
+import { disksPickFor, hoverCardsFor, longPressObject, pickingRadiusFor, touchTargetPx, type MapPress } from '../src/ui/map/map-pointer.ts'
 import { operationalIconPx } from '../src/ui/map-runtime/symbol-kit.ts'
 
 /** Only the identity matters to the press rules. */
@@ -50,5 +50,11 @@ describe('map pointer gestures', () => {
     expect([pickingRadiusFor('mouse', operationalIconPx), pickingRadiusFor(null, operationalIconPx)]).toEqual([0, 0])
     // An icon already as big as the target needs no radius.
     expect(pickingRadiusFor('touch', 48)).toBe(0)
+  })
+
+  test('an icon\'s coloured disk takes a click only while the surface picks targets and the pointer picks exactly; a surface that does not opt in picks the glyph alone for every pointer', () => {
+    const radius = (type: string | null) => pickingRadiusFor(type, operationalIconPx)
+    expect([null, 'mouse', 'touch', 'pen'].map(type => disksPickFor(false, radius(type)))).toEqual([false, false, false, false])
+    expect([null, 'mouse', 'touch', 'pen'].map(type => disksPickFor(true, radius(type)))).toEqual([true, true, false, false])
   })
 })

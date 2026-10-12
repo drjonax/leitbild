@@ -177,12 +177,6 @@ export interface MapRuntimeHandle {
   readonly setCameraInteraction: (interaction: CameraInteraction) => void
   /** How far around a press the map picks operational objects, in px (`map/map-pointer.ts`, `pickingRadiusFor`). */
   readonly setPickingRadius: (radiusPx: number) => void
-  /**
-   * Every object of the named layers under a screen point, within the
-   * current picking radius, top first, as the deck overlay picks them; at most
-   * `depth`. A point on the map's canvas, in CSS px from its top left.
-   */
-  readonly pickObjectsAt: (screen: { readonly x: number; readonly y: number }, layerIds: ReadonlyArray<string>, depth: number) => ReadonlyArray<{ readonly object?: unknown }>
   readonly diagnostics: () => MapRuntimeDiagnosticsSnapshot
   readonly destroy: () => void
 }

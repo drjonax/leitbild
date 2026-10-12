@@ -6,7 +6,7 @@ import { defaultDroneVehicleModels, requireDroneVehicleModel } from '../src/pack
 import { navigateDroneCommandKind } from '../src/packs/drone/commands.ts'
 import { createScenarioDroneObject } from '../src/packs/drone/native/object-state.ts'
 import { dronePackView } from '../src/packs/drone/ui-pack.ts'
-import { groundClicksWanted, mapClickOutcome, previewObjectTarget, routeGroundClick, routeObjectClick, targetPreviewsWanted, type MapClickContext, type MapClickOutcome, type MapTargetPanel } from '../src/ui/map-target-routing.ts'
+import { groundClicksWanted, mapClickOutcome, previewObjectTarget, routeGroundClick, routeObjectClick, targetPickingWanted, targetPreviewsWanted, type MapClickContext, type MapClickOutcome, type MapTargetPanel } from '../src/ui/map-target-routing.ts'
 
 const at = '2026-10-12T08:00:00.000Z' as IsoTimestamp
 const ground = geoPointFromLonLat(11.38, 59.12)
@@ -71,6 +71,8 @@ describe('map clicks without a map-target panel', () => {
   test('ignore open ground and show no preview unless a Pack opts in', () => {
     const click = clickContext(sendTargeting)
     expect(groundClicksWanted(click)).toBe(false)
+    // Nor do they pick targets exactly: the map picks glyphs and the top object, as it always has.
+    expect(targetPickingWanted(click)).toBe(false)
     expect(routeGroundClick(ground, click)).toEqual({ kind: 'none' })
     expect(previewObjectTarget(site, click)).toBeNull()
   })
@@ -138,6 +140,8 @@ describe('map clicks with a map-target panel', () => {
   test('targets carry the selected controller and the clicked object or point', () => {
     const click = clickContext(sendTargeting, { panel })
     expect(groundClicksWanted(click)).toBe(true)
+    // The map picks targets exactly for the panel, with or without a controller selected.
+    expect([targetPickingWanted(click), targetPickingWanted(clickContext(sendTargeting, { panel, controller: null }))]).toEqual([true, true])
     expect(routeObjectClick(site, click)).toEqual({ kind: 'panel', controllerId: unit.id, target: { kind: 'object', objectId: site.id } })
     expect(routeObjectClick(other, click)).toEqual({ kind: 'panel', controllerId: unit.id, target: { kind: 'object', objectId: other.id } })
     expect(routeGroundClick(ground, click)).toEqual({ kind: 'panel', controllerId: unit.id, target: { kind: 'point', point: ground } })
@@ -268,7 +272,7 @@ describe('Drone targeting is unchanged', () => {
     const sent = routeObjectClick(target, { ...click, controller: drone })
     expect(sent).toEqual({ kind: 'send', command: dronePackView.targeting.buildSetTargetCommand(drone, target), subject: 'Sending Drone A to T1' })
     expect(sent.kind === 'send' ? sent.command.kind : null).toBe(navigateDroneCommandKind)
-    expect(groundClicksWanted(click)).toBe(false)
+    expect([groundClicksWanted(click), targetPickingWanted(click)]).toEqual([false, false])
     expect(routeGroundClick(ground, { ...click, controller: drone })).toEqual({ kind: 'none' })
     expect(views.targeting?.describeTarget).toBeUndefined()
     expect(views.targeting?.pointTargets).toBeUndefined()

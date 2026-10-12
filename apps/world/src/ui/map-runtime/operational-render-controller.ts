@@ -16,6 +16,7 @@ import type {
   MapAssignmentHandleFeature,
   MapAssignmentInteraction,
   MapRuntimeHandle,
+  OperationalPointFeature,
   OperationalRenderSnapshot,
   RenderFamily,
 } from './types.ts'
@@ -31,8 +32,8 @@ export interface OperationalRenderControllerState {
   readonly visibleFamilies: ReadonlySet<string>
   readonly placementCursorActive: boolean
   readonly assignmentInteraction: MapAssignmentInteraction
-  /** Whether the last pointer picks exactly, as a mouse does: the icons' disks then take clicks too (`OperationalDeckLayerConfig`). */
-  readonly exactPointer: boolean
+  /** Whether the icons' disks take clicks and hover too (`OperationalDeckLayerConfig`, `disksPick`). */
+  readonly disksPick: boolean
   /**
    * What an object's presentation depends on besides the object itself, such
    * as the roles a screen chose to see: a change presents every object again.
@@ -65,8 +66,10 @@ export interface OperationalRenderController {
   readonly syncVisibility: () => void
   readonly syncObjectVisibility: () => void
   readonly syncInteraction: () => void
-  /** The pointer changed between exact (a mouse) and a finger or pen: redraw which layers pick. */
+  /** Whether the disks pick changed (the pointer, or whether the surface picks targets): redraw which layers pick. */
   readonly syncPicking: () => void
+  /** The object icons as last drawn, in draw order: where each lies and how large it is. */
+  readonly points: () => ReadonlyArray<OperationalPointFeature>
   /** The presentation key changed: present every object again. */
   readonly syncPresentation: () => void
   /** New catalogue artwork arrived: redraw the symbol layers. */
@@ -138,7 +141,7 @@ const renderSignatureFor = (
   visibleFamilies: ReadonlySet<string>,
   interactionRevision: number,
   catalogueAtlasRevision: number,
-  exactPointer: boolean,
+  disksPick: boolean,
 ): string => [
   snapshot.revisions.points,
   snapshot.revisions.paths,
@@ -147,7 +150,7 @@ const renderSignatureFor = (
   visibleFamiliesKey(visibleFamilies),
   interactionRevision,
   catalogueAtlasRevision,
-  exactPointer,
+  disksPick,
 ].join('|')
 
 /** Catalogue icons the snapshot draws beyond the compiled atlas. */
@@ -240,7 +243,7 @@ export const createOperationalRenderController = (
       if (catalogueIds.size > 0) config.catalogueAtlas.request(catalogueIds)
     }
     const catalogueAtlas = config.catalogueAtlas.current()
-    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.exactPointer)
+    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.disksPick)
     const deckUpdated = renderSignature !== lastRenderSignature
     if (deckUpdated) {
       lastRenderSignature = renderSignature
@@ -251,7 +254,7 @@ export const createOperationalRenderController = (
           snapshot,
           visibleFamilies: state.visibleFamilies,
           catalogueAtlas,
-          exactPointer: state.exactPointer,
+          disksPick: state.disksPick,
           onObjectSelected: point => {
             config.onObjectSelected(point.object)
           },
@@ -389,6 +392,7 @@ export const createOperationalRenderController = (
     syncPicking: () => {
       schedule('diagnostics', 95)
     },
+    points: () => featureStore.snapshot().points,
     syncPresentation: () => {
       scheduleMany(renderFamiliesForObjects, 75)
     },

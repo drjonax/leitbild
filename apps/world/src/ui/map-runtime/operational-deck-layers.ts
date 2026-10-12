@@ -6,6 +6,7 @@ import { ObjectLabelLayer } from './object-label-layer.ts'
 import {
   leitbildSymbolAtlasUrl,
   leitbildSymbolIconMapping,
+  statusDiskRadiusPx,
 } from './symbol-kit.ts'
 import type {
   ColorRgba,
@@ -27,13 +28,14 @@ export interface OperationalDeckLayerConfig {
   readonly onObjectSeen: (object: OperationalPointFeature) => void
   readonly onObjectHover: (object: OperationalPointFeature | null) => void
   /**
-   * Whether the last pointer picks exactly, as a mouse does (and before any
-   * pointer): the icon's coloured disk then takes the click and hover too,
-   * not only the glyph's strokes. A finger or a pen picks within a radius
-   * around the strokes instead (`map/map-pointer.ts`), which the disk would
-   * widen, so it stays out of their picking.
+   * Whether the icons' coloured disks take a click and hover too, not only
+   * the glyphs' strokes (`map/map-pointer.ts`, `disksPickFor`): only while
+   * the surface picks map targets and the last pointer picks exactly, as a
+   * mouse does. A finger or a pen picks within a radius around the strokes,
+   * which the disk would widen, and every other surface picks the glyph
+   * alone, as it always has.
    */
-  readonly exactPointer: boolean
+  readonly disksPick: boolean
   readonly assignmentInteraction?: MapAssignmentInteraction
   readonly onAssignmentHandleSelected?: (handle: MapAssignmentHandleFeature) => void
   readonly layerData?: OperationalDeckLayerData
@@ -345,19 +347,19 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
     new ScatterplotLayer<OperationalPointFeature>({
       id: 'leitbild-object-status-disks',
       data: snapshot.points,
-      // A mouse click between the glyph's strokes lands on the disk: it is the object's, never the ground's.
-      pickable: config.exactPointer,
+      // While the surface picks targets, a mouse click between the glyph's strokes lands on the disk: it is the object's, never the ground's.
+      pickable: config.disksPick,
       visible: visible(visibleFamilies, 'objects'),
       radiusUnits: 'pixels',
       lineWidthUnits: 'pixels',
       stroked: true,
       filled: true,
       getPosition: point => point.position,
-      getRadius: point => point.sizePx * 0.74,
+      getRadius: point => statusDiskRadiusPx(point.sizePx),
       getFillColor: pointFill,
       getLineColor: darkStroke(185),
       getLineWidth: 1,
-      ...(config.exactPointer ? { onClick: onSymbolClick, onHover: onSymbolHover } : {}),
+      ...(config.disksPick ? { onClick: onSymbolClick, onHover: onSymbolHover } : {}),
       updateTriggers: {
         getPosition: snapshot.revisions.points,
         getRadius: snapshot.revisions.points,

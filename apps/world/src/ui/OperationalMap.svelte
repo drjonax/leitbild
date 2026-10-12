@@ -40,8 +40,8 @@
   import { noMapCover, type MapCover, type MapPrompt } from './surface-panel-interaction.ts'
   import { createMapPromptController } from './map/map-prompt.ts'
   import { createMapStackChooser } from './map/map-stack-chooser.ts'
-  import { stackDepth, stackedObjects, stackLayerIds } from './map/map-stack.ts'
-  import { hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
+  import { objectsUnder } from './map/map-stack.ts'
+  import { disksPickFor, hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
   import { operationalIconPx } from './map-runtime/symbol-kit.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
@@ -122,12 +122,15 @@
     /** How far open surface panels reach over the map: the camera centres and fits clear of them, and so do the map's own controls. */
     readonly cameraPadding?: MapCover
     /**
-     * Whether a tap that lands on several objects' icons shows a chooser
-     * listing them, instead of taking the top one; the surface opts in while
-     * a panel takes map targets, whose operator must reach a site beneath
-     * the units parked on it.
+     * Whether map taps pick targets for an order, so each must reach exactly
+     * the object it lands on; the surface opts in while a panel takes map
+     * targets (`map-target-routing.ts`, `targetPickingWanted`). A mouse click
+     * on an icon's coloured disk then picks its object, not the ground
+     * beneath, and a tap on several overlapping icons shows a chooser listing
+     * them, so a site beneath the units parked on it can be reached. Off, the
+     * map picks as it always has: the glyph's strokes, the top object.
      */
-    readonly chooseStacked?: boolean
+    readonly targetPicking?: boolean
     /** Reported only when given: a click on open ground, neither an object nor a Pack feature. */
     readonly onGroundSelected?: (point: GeoJsonPoint) => void
     /** The order preview a hovered object's card shows, when the selected controller's Pack describes targets. */
@@ -183,7 +186,7 @@
     canLongPress = () => false,
     cameraInteraction,
     cameraPadding = noMapCover,
-    chooseStacked = false,
+    targetPicking = false,
     onGroundSelected,
     targetPreviewFor,
   }: Props = $props()
@@ -204,8 +207,8 @@
   let hoveredObject: OperationalObject | null = null
   /** The type of the last pointer seen on the canvas; hover cards and the long press are for a mouse only (map-pointer.ts). */
   let lastPointerType: string | null = null
-  /** Whether that pointer picks exactly (a mouse, or none seen yet): the icons' disks then take clicks too. */
-  let exactPointer = true
+  /** How far around a press the map picks, for the last pointer seen: a mouse's 0 until a finger or a pen sets more. */
+  let pickingRadius = 0
   let assignmentPointer = $state<GeoJsonPoint | null>(null)
   let interactionRevision = $state(0)
   let lastPointerScreen = { x: 0, y: 0 }
@@ -262,11 +265,11 @@
     } else onObjectSelected(object)
   }
 
-  /** The objects whose icons lie under the last press, when the surface opted in to choosing among a stack. */
+  /** The objects whose icons lie under the last press itself, while the surface picks targets. */
   const stackUnderPointer = (): ReadonlyArray<OperationalObject> => {
     const current = runtime
-    if (!chooseStacked || assignmentActive || current === null) return []
-    return stackedObjects(current.pickObjectsAt(lastPointerScreen, stackLayerIds, stackDepth))
+    if (!targetPicking || assignmentActive || current === null) return []
+    return objectsUnder(operationalRenderController.points(), position => current.map.project([position[0], position[1]]), lastPointerScreen)
   }
 
   const showStackChooser = (stack: ReadonlyArray<OperationalObject>): void => {
@@ -312,7 +315,7 @@
       visibleFamilies: visibleFamilies(),
       placementCursorActive: placementCursor !== null,
       assignmentInteraction: assignmentInteraction(),
-      exactPointer,
+      disksPick: disksPickFor(targetPicking, pickingRadius),
       presentationKey,
     }),
     hasNewInfo: object => hasNewInfo(object),
@@ -579,14 +582,12 @@
       let holdStart: { x: number; y: number } | null = null
       const clearHold = () => { if (holdTimer !== null) clearTimeout(holdTimer); holdTimer = null; holdStart = null }
       // A finger picks objects within a 44 px target around the tap; a mouse only under it.
-      let pickingRadius = 0
       const trackPointer = (pointerType: string) => {
         lastPointerType = pointerType
         const radius = pickingRadiusFor(pointerType, operationalIconPx)
         if (radius === pickingRadius) return
         pickingRadius = radius
         nextRuntime.setPickingRadius(radius)
-        exactPointer = radius === 0
         operationalRenderController.syncPicking()
       }
       const pointerPoint = (event: PointerEvent): GeoJsonPoint => {
@@ -722,6 +723,14 @@
   $effect(() => {
     presentationKey
     untrack(() => operationalRenderController.syncPresentation())
+  })
+
+  $effect(() => {
+    targetPicking
+    untrack(() => {
+      if (!targetPicking) stackChooser.hide()
+      operationalRenderController.syncPicking()
+    })
   })
 
   $effect(() => {

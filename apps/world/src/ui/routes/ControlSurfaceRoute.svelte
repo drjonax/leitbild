@@ -55,7 +55,7 @@
   import { completeControlSurfaceStartupFromSnapshot } from '../app/control-surface-session.ts'
   import { startupScenarioSource } from '../app/startup-scenario.ts'
   import { loadActivePackViews } from '../pack-loader.ts'
-  import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
+  import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPickingWanted, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
   import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapCover, type MapPrompt, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
   import PanelKeyRouter from '../keys/PanelKeyRouter.svelte'
   import type { PanelKey } from '../keys/panel-key-router.ts'
@@ -2058,7 +2058,7 @@
           onAssignmentCancelled={cancelMapAssignment}
           cameraInteraction={mapCameraInteraction}
           cameraPadding={mapCameraPadding}
-          chooseStacked={mapTargetPanelContribution !== null}
+          targetPicking={targetPickingWanted(mapClickContext)}
           onGroundSelected={groundClicksWanted(mapClickContext) ? selectGround : undefined}
           targetPreviewFor={targetPreviewsWanted(mapClickContext) ? previewTarget : undefined}
         />
