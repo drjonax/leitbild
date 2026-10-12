@@ -9,7 +9,7 @@
   "branches": 1243,
   "hvdcLinks": 7,
   "generators": 852,
-  "loads": 3130
+  "loads": 3032
  },
  "oracles": {
   "nveCoverage": "not-supplied"

@@ -1,13 +1,13 @@
 import type { PriceArea } from '../schemas/grid-ids.ts'
 import { compareText } from '../topology/ids.ts'
 import { haversineKm, type LonLat } from './geo.ts'
-import type { Station, StationIndex } from './stations.ts'
+import { servesLoad, type Station, type StationIndex } from './stations.ts'
 
 // Where a municipality's demand enters the ≥132 kV grid: Elhub meters demand per municipality only,
 // so the municipality's residents (SSB 1 km grid) stand in for its consumers. Each populated square
 // belongs to the municipality whose Kartverket bounding box contains it and whose representative
 // point is nearest (Kartverket publishes no outline with the point), and is served by the nearest
-// ≥132 kV substation of that municipality's price area. A substation's share of the municipality's
+// ≥132 kV substation of that municipality's price area that serves load (stations.ts servesLoad). A substation's share of the municipality's
 // demand is its share of the municipality's residents.
 
 export interface PopulationSquare {
@@ -52,7 +52,7 @@ export const allocateByPopulation = (config: {
   const municipalities = [...config.municipalities].sort((left, right) => compareText(left.municipalityNumber, right.municipalityNumber))
   const eligibleOf = new Map<PriceArea, Station[]>()
   for (const station of config.stations.stations) {
-    if (station.kind !== 'substation') continue
+    if (!servesLoad(station)) continue
     eligibleOf.set(station.priceArea, [...(eligibleOf.get(station.priceArea) ?? []), station])
   }
   const nearestOf = <T extends object>(point: LonLat, items: ReadonlyArray<T>, locate: (item: T) => LonLat): { readonly item: T; readonly km: number } => {

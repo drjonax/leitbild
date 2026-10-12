@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { allocateByPopulation } from '../src/packs/electric-grid/model-build/population-weights.ts'
 import type { Station, StationIndex } from '../src/packs/electric-grid/model-build/stations.ts'
 
-const station = (stationId: string, location: readonly [number, number], priceArea: Station['priceArea'], kind: Station['kind'] = 'substation'): Station => ({
-  stationId, kind, label: stationId, location, priceArea, buses: [], featureIds: [],
+const station = (stationId: string, location: readonly [number, number], priceArea: Station['priceArea'], kind: Station['kind'] = 'substation', transitionOnly = false): Station => ({
+  stationId, kind, label: stationId, location, priceArea, buses: [], featureIds: [], transitionOnly,
 })
 
 const index = (stations: ReadonlyArray<Station>): StationIndex => ({
@@ -18,6 +18,7 @@ describe('model build: population allocation', () => {
     station('west', [10, 60], 'NO1'),
     station('east', [11, 60], 'NO1'),
     station('plant', [10.4, 60], 'NO1', 'plant-terminal'),
+    station('cable-transition', [10.12, 60], 'NO1', 'substation', true),
     station('other-area', [10.5, 60], 'NO2'),
   ])
   const allocation = allocateByPopulation({
@@ -35,7 +36,8 @@ describe('model build: population allocation', () => {
   })
 
   test("shares a municipality's residents over the nearest substations of its price area", () => {
-    // b lies nearest the plant terminal and the NO2 station, but only NO1 substations serve it.
+    // a lies nearest a cable transition point and b nearest the plant terminal and the NO2 station,
+    // but only NO1 substations with a transformation serve load.
     const shares = allocation.sharesOf('0001')!
     expect(shares.map(entry => [entry.station.stationId, entry.residents, entry.share])).toEqual([['west', 400, 1]])
     expect(shares[0]!.centre[0]).toBeCloseTo((10.1 * 300 + 10.45 * 100) / 400, 9)

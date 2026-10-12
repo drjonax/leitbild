@@ -5,7 +5,7 @@ import { compareText } from '../topology/ids.ts'
 import { haversineKm, roundTo, type LonLat } from './geo.ts'
 import type { MunicipalitySnapshot, ReferenceHour } from './inputs.ts'
 import type { BuildLedger } from './ledger.ts'
-import { lowestLevel, type Station, type StationIndex } from './stations.ts'
+import { lowestLevel, servesLoad, type Station, type StationIndex } from './stations.ts'
 import type { PopulationAllocation } from './population-weights.ts'
 import type { ModelSourceIds } from './sources.ts'
 
@@ -109,7 +109,7 @@ const siteBus = (site: GridMajorSite, demandMw: number, stations: StationIndex, 
   if (carrying !== undefined) return carrying
   const strongest = [...candidates].sort((left, right) => lineCapacityMw(right.bus.id) - lineCapacityMw(left.bus.id))[0]
   if (strongest !== undefined) return { bus: strongest.bus, how: `${strongest.how}; no listed level carries ${Math.round(demandMw)} MW, so its strongest level` }
-  const nearest = stations.nearest(site.location, station => station.kind === 'substation' && station.priceArea === site.priceArea)
+  const nearest = stations.nearest(site.location, station => servesLoad(station) && station.priceArea === site.priceArea)
   if (nearest === undefined || nearest.km > siteSearchKm) return undefined
   return { bus: lowestLevel(nearest.station), how: `nearest ≥132 kV substation (${nearest.station.label}); the listed stations are not ≥132 kV model stations` }
 }
@@ -209,7 +209,7 @@ export const buildLoads = (config: {
       industry: industryMw - sites.reduce((sum, site) => sum + siteShare(site), 0),
     }
     const point: [number, number] = [roundTo(place.point[0], 6), roundTo(place.point[1], 6)]
-    const eligible = (station: Station): boolean => station.kind === 'substation' && station.priceArea === priceArea
+    const eligible = (station: Station): boolean => servesLoad(station) && station.priceArea === priceArea
     const nearest = stations.nearest(place.point, eligible)
     if (nearest === undefined) throw new Error(`municipality ${nr}: no ≥132 kV substation in ${priceArea}`)
     const supply = config.regionalSupplies.get(nr)

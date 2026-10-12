@@ -19,6 +19,8 @@ export interface Station {
   /** Voltage-level buses, lowest voltage first. */
   readonly buses: ReadonlyArray<GridBusV2>
   readonly featureIds: ReadonlyArray<string>
+  /** Every OSM feature of the station is tagged substation=transition: a line-to-cable transition point without transformation. */
+  readonly transitionOnly: boolean
 }
 
 export interface StationIndex {
@@ -38,11 +40,15 @@ export const createStationIndex = (
   outlineOf: (featureId: string) => PolygonGeometry | undefined,
 ): StationIndex => {
   const featureIdsOf = new Map<string, Set<string>>()
+  const rolesOf = new Map<string, Set<string>>()
   for (const bus of topologyBuses) {
     if (bus.stationId === null) continue
     const set = featureIdsOf.get(bus.stationId) ?? new Set<string>()
     for (const id of bus.stationFeatureIds) set.add(id)
     featureIdsOf.set(bus.stationId, set)
+    const roles = rolesOf.get(bus.stationId) ?? new Set<string>()
+    for (const role of bus.stationRoles) roles.add(role)
+    rolesOf.set(bus.stationId, roles)
   }
   const grouped = new Map<string, GridBusV2[]>()
   for (const bus of buses) {
@@ -63,6 +69,10 @@ export const createStationIndex = (
       priceArea: first.priceArea!,
       buses: sorted,
       featureIds: [...new Set([representative(stationId), ...(featureIdsOf.get(stationId) ?? [])])].sort(compareText),
+      transitionOnly: (() => {
+        const roles = [...(rolesOf.get(stationId) ?? [])]
+        return roles.length > 0 && roles.every(role => role === 'transition')
+      })(),
     }
   })
   const byFeature = new Map<string, Station>()
@@ -96,6 +106,12 @@ export const createStationIndex = (
  */
 export const levelForCapacity = (station: Station, capacityMw: number): GridBusV2 =>
   station.buses.find(bus => overheadRules[voltageClassOf(bus.nominalKv)].ratingMvaPerCircuit >= capacityMw) ?? station.buses.at(-1)!
+
+/**
+ * Demand reaches the grid through a substation's transformation: a plant terminal or a
+ * line-to-cable transition point (OSM substation=transition) serves no load.
+ */
+export const servesLoad = (station: Station): boolean => station.kind === 'substation' && !station.transitionOnly
 
 /** Distributed demand connects at the station's lowest (regional) level. */
 export const lowestLevel = (station: Station): GridBusV2 => station.buses[0]!

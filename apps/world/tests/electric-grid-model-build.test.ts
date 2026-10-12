@@ -239,7 +239,7 @@ describe('model build: provenance and serialisation', () => {
       id: `bus:${stationId}@132`, label: `${stationId} 132 kV`, kind: 'substation' as const, substationId: stationId, nominalKv: 132, location: [location[0], location[1]] as [number, number], priceArea: 'NO4' as const,
       provenance: { sources: ['osm:test'], method: 'mapped' as const, confidence: 'high' as const },
     })
-    const station = (stationId: string, location: readonly [number, number]): Station => ({ stationId, kind: 'substation', label: stationId, location, priceArea: 'NO4', buses: [bus(stationId, location)], featureIds: [stationId.replace(/^osm-way-/, 'way/')] })
+    const station = (stationId: string, location: readonly [number, number]): Station => ({ stationId, kind: 'substation', label: stationId, location, priceArea: 'NO4', buses: [bus(stationId, location)], featureIds: [stationId.replace(/^osm-way-/, 'way/')], transitionOnly: false })
     const stations = [station('osm-way-1', [13.02, 65.85]), station('osm-way-2', [13.08, 65.83])]
     const index: StationIndex = {
       stations,
