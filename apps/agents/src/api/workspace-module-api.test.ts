@@ -53,6 +53,10 @@ const withAssistantCatalog = (deployment: DeploymentRuntime): DeploymentRuntime 
     name: 'operator-displays', description: 'Test display Skill', body: 'Compose displays when useful.',
     tools: [], allowedToolNames: ['workspace_explore', 'workspace_call'], dirPath: home,
   })
+  deployment.sharedSkillStore.register({
+    name: 'procedure-runner', description: 'Test procedure Skill', body: 'Step through procedures.',
+    tools: [], allowedToolNames: ['workspace_explore', 'workspace_call'], dirPath: home,
+  })
   for (const name of ['product_search', 'product_read', 'place_resolve', 'get_time']) {
     deployment.sharedToolRegistry.register({
       name,
@@ -159,6 +163,10 @@ describe('Agents Workspace Module API', () => {
       name: 'operator-displays', description: 'Test display Skill', body: 'Compose displays when useful.',
       tools: [], allowedToolNames: [], dirPath: home,
     })
+    runtime.skillStore.register({
+      name: 'procedure-runner', description: 'Test procedure Skill', body: 'Step through procedures.',
+      tools: [], allowedToolNames: [], dirPath: home,
+    })
     const focusedResource = workspaceResourceReferenceSchema.parse({
       workspaceId, moduleId: 'world', type: 'world.simulation-run', id: 'run-one',
     })
@@ -190,7 +198,7 @@ describe('Agents Workspace Module API', () => {
     expect(assistant.getConfig().maxToolIterations).toBeUndefined()
     // The default model brings its own effort when the definition names neither.
     expect(assistant.getConfig()).toMatchObject({ model: DEFAULT_MODEL_ID, reasoningEffort: DEFAULT_REASONING_EFFORT })
-    expect(assistant.getSkills()).toEqual(['leitbild-assistance', 'operator-displays'])
+    expect(assistant.getSkills()).toEqual(['leitbild-assistance', 'operator-displays', 'procedure-runner'])
 
     const reused = await open('Now create a scenario.')
     expect(reused.status).toBe(200)

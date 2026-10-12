@@ -140,6 +140,10 @@ describe('Workspace Host with real Modules', () => {
       name: 'operator-displays', description: 'Test display Skill', body: 'Compose displays when useful.',
       tools: [], allowedToolNames: [], dirPath: leitbildHome,
     })
+    deployment.sharedSkillStore.register({
+      name: 'procedure-runner', description: 'Test procedure Skill', body: 'Step through procedures.',
+      tools: [], allowedToolNames: [], dirPath: leitbildHome,
+    })
     deployment.sharedToolRegistry.registerAll(createProductKnowledgeTools())
     deployment.sharedToolRegistry.register(createPlaceResolveTool())
     deployment.sharedToolRegistry.register(createGetTimeTool())
