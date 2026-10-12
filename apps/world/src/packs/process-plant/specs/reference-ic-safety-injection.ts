@@ -2,6 +2,7 @@ import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
 import { containmentPressureHigh1MPa } from './reference-ic-containment.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { auxiliaryFeedwaterThrottleFloor } from './reference-ic-afw-throttle.ts'
 
 // Safety injection on low pressurizer pressure: below 12.7 MPa (about
 // 1,830 psig, within the 1,807 to 1,870 psig Westinghouse plants set it at)
@@ -57,6 +58,29 @@ const feedwaterIsolationOnSafetyInjection = (cause: string) => trip({
 // actuated loads have started and sequenced before operators take them back.
 const safetyInjectionResetAfterMs = 60_000
 
+// The SI signal also starts auxiliary feedwater (NUREG-1431 Table 3.3.2-1,
+// function 6.c): both motor-driven pumps start and auxiliary feedwater is
+// lined up to every steam generator, as on every other start, so the heat
+// sink is fed whatever the steam generators' levels. The turbine-driven pump
+// is not started by it: in the reference design it starts on low-low level in
+// two steam generators and on the loss of offsite power, and its steam supply
+// valves open with those starts only. Annunciated, like the reactor trip and
+// the feedwater isolation SI causes, on the SI signal's own system in the AFW
+// start's first-out group; an operator throttles it no lower than any other
+// AFW start allows.
+const auxiliaryFeedwaterStartOnSafetyInjection = (cause: string) => trip({
+  id: 'afw-start',
+  title: `Auxiliary feedwater start on safety injection, ${cause}`,
+  message: `The safety injection signal, on ${cause}, starts both motor-driven auxiliary feedwater pumps and lines auxiliary feedwater up to every steam generator.`,
+  annunciator: annunciator({ ...siAction, firstOutGroup: 'auxiliary-feedwater' }),
+})
+
+const auxiliaryFeedwaterStartWrites = (idPrefix: string, loops: ReadonlyArray<ProcessPlantReferenceLoop>) => [
+  write(`${idPrefix}-start-motor-afw-a`, { path: 'auxFeedwaterPumpMotor.running' }, true),
+  write(`${idPrefix}-start-motor-afw-b`, { path: 'auxFeedwaterPumpMotorB.running' }, true),
+  ...loops.map(loop => write(`${idPrefix}-open-afw-valve-${loop.toLowerCase()}`, { path: `auxFeedwaterValve${loop}.positionFraction` }, 1)),
+]
+
 const siPumps = [
   { id: 'safetyInjectionPumpA', train: 'A' },
   { id: 'safetyInjectionPumpB', train: 'B' },
@@ -67,6 +91,7 @@ const safetyInjectionWrites = (idPrefix: string, loops: ReadonlyArray<ProcessPla
   ...reactorTripBreakerWrites(idPrefix),
   write(`insert-control-rods-${idPrefix}`, { path: 'core.rodInsertionFraction' }, 1),
   ...feedwaterIsolationWrites(`${idPrefix}-feedwater-isolation`, loops),
+  ...auxiliaryFeedwaterStartWrites(`${idPrefix}-afw`, loops),
 ]
 
 export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
@@ -84,14 +109,16 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       trip({
         id: 'safety-injection',
         title: 'Safety injection actuated',
-        message: `Pressurizer pressure is below ${lowPressurizerPressureSiMPa} MPa: the SI signal starts both high-head safety injection pumps, trips the reactor and isolates main feedwater.`,
+        message: `Pressurizer pressure is below ${lowPressurizerPressureSiMPa} MPa: the SI signal starts both high-head safety injection pumps, trips the reactor, isolates main feedwater and starts auxiliary feedwater.`,
         annunciator: siAction,
       }),
       reactorTripOnSafetyInjection('low pressurizer pressure'),
       feedwaterIsolationOnSafetyInjection('low pressurizer pressure'),
+      auxiliaryFeedwaterStartOnSafetyInjection('low pressurizer pressure'),
       ...safetyInjectionWrites('safety-injection', loops),
     ],
     resetAfterMs: safetyInjectionResetAfterMs,
+    throttleFloor: auxiliaryFeedwaterThrottleFloor,
   }),
   // Containment pressure Hi-1 (NUREG-1431 Table 3.3.2-1, function 1.c), in
   // modes 1 to 4: a break inside containment pressurizes it before the
@@ -107,14 +134,16 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       trip({
         id: 'safety-injection',
         title: 'Safety injection actuated on containment pressure Hi-1',
-        message: `Containment pressure is above Hi-1, ${containmentPressureHigh1MPa} MPa (3.86 psig): the SI signal starts both high-head safety injection pumps, trips the reactor and isolates main feedwater.`,
+        message: `Containment pressure is above Hi-1, ${containmentPressureHigh1MPa} MPa (3.86 psig): the SI signal starts both high-head safety injection pumps, trips the reactor, isolates main feedwater and starts auxiliary feedwater.`,
         annunciator: siAction,
       }),
       reactorTripOnSafetyInjection('containment pressure Hi-1'),
       feedwaterIsolationOnSafetyInjection('containment pressure Hi-1'),
+      auxiliaryFeedwaterStartOnSafetyInjection('containment pressure Hi-1'),
       ...safetyInjectionWrites('safety-injection-containment', loops),
     ],
     resetAfterMs: safetyInjectionResetAfterMs,
+    throttleFloor: auxiliaryFeedwaterThrottleFloor,
   }),
   // Manual safety injection: a pushbutton on the control board
   // (manualActuation), both trains' switches folded into one, whose demand is
@@ -130,14 +159,16 @@ export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlan
       trip({
         id: 'safety-injection',
         title: 'Safety injection actuated manually',
-        message: 'The manual safety injection pushbutton was pressed: the SI signal starts both high-head safety injection pumps, trips the reactor and isolates main feedwater.',
+        message: 'The manual safety injection pushbutton was pressed: the SI signal starts both high-head safety injection pumps, trips the reactor, isolates main feedwater and starts auxiliary feedwater.',
         annunciator: siAction,
       }),
       reactorTripOnSafetyInjection('manual actuation'),
       feedwaterIsolationOnSafetyInjection('manual actuation'),
+      auxiliaryFeedwaterStartOnSafetyInjection('manual actuation'),
       ...safetyInjectionWrites('safety-injection-manual', loops),
     ],
     resetAfterMs: safetyInjectionResetAfterMs,
+    throttleFloor: auxiliaryFeedwaterThrottleFloor,
   }),
   // The BLOCK pushbutton is accepted only where the block can hold: below
   // P-11, with the reactor tripped. Anywhere else it is refused.

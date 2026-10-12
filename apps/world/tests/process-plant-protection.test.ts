@@ -613,10 +613,35 @@ describe('what each trip does', () => {
     expect(declared.get('auxiliary-feedwater')?.shortLabel).toBe('AFW START')
   })
 
-  test('safety injection annunciates its own actuation first, then the reactor trip and the feedwater isolation it causes in their groups', () => {
-    expect(groupsOf('safety-injection-low-pzr-pressure')).toEqual(['safety-injection', 'reactor-trip', 'feedwater-isolation'])
-    expect(groupsOf('safety-injection-containment-pressure-high-1')).toEqual(['safety-injection', 'reactor-trip', 'feedwater-isolation'])
+  test('safety injection annunciates its own actuation first, then the reactor trip, the feedwater isolation and the auxiliary feedwater start it causes in their groups', () => {
+    for (const ruleId of ['safety-injection-low-pzr-pressure', 'safety-injection-containment-pressure-high-1', 'safety-injection-manual']) {
+      expect(groupsOf(ruleId), ruleId).toEqual(['safety-injection', 'reactor-trip', 'feedwater-isolation', 'auxiliary-feedwater'])
+    }
   })
+
+  test('safety injection starts the motor-driven AFW pumps and lines them up to every steam generator (NUREG-1431 Table 3.3.2-1, 6.c), not the turbine-driven pump or its steam', () => {
+    const loops = ['A', 'B', 'C', 'D']
+    for (const ruleId of ['safety-injection-low-pzr-pressure', 'safety-injection-containment-pressure-high-1', 'safety-injection-manual']) {
+      const rule = plant.automation.rules.find(candidate => candidate.id === ruleId)!
+      const writes = rule.effects.flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
+      expect(writes, ruleId).toEqual(expect.arrayContaining(['auxFeedwaterPumpMotor.running=true', 'auxFeedwaterPumpMotorB.running=true', ...loops.map(loop => `auxFeedwaterValve${loop}.positionFraction=1`)]))
+      expect(writes.filter(write => write.startsWith('auxFeedwaterPumpTurbine') || write.startsWith('AFW-PUMP-T') || write.startsWith('TDAFW-STM')), ruleId).toEqual([])
+      // Throttled no lower than any other AFW start allows while it stands.
+      expect(rule.throttleFloor?.value, ruleId).toBe(0.2)
+      const start = rule.effects.find(effect => effect.type === 'trip.enter' && effect.annunciator?.firstOutGroup === 'auxiliary-feedwater')
+      expect(start?.type === 'trip.enter' ? start.title : '', ruleId).toMatch(/^Auxiliary feedwater start on safety injection, /)
+    }
+    // A manual SI at power: auxiliary feedwater comes in with the SI signal, not seconds later on the generators' shrink.
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'manualSafetyInjection.pushbutton' as VariablePath, value: true })
+    expect(plantRun.secondsUntil('trip:safety-injection-manual:afw-start', 3)).not.toBeNull()
+    plantRun.run(2_000)
+    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('AFW-PUMP-B-RUNNING')).toBe(true)
+    expect(plantRun.tag('AFW-PUMP-T')).toBe(false)
+    expect(plantRun.tag('TDAFW-STM-B')).toBe(0)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a reactor trip trips the turbine through P-4 and annunciates it with the other turbine trips', () => {
     expect(groupsOf('reactor-trip-turbine-trip')).toEqual(['turbine-trip'])

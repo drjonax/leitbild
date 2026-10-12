@@ -1002,7 +1002,7 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
       tagsOf('reactor-overtemperature-delta-t-trip'),
       tagsOf('loss-of-offsite-power'),
       tagsOf('safety-bus-a-loss-alarm'),
-    ]).toEqual([['LO-LO · RX TRIP'], ['LO-3 · SI', 'LO-3 · RX TRIP', 'LO-3 · FWI'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['DEAD · ALM']])
+    ]).toEqual([['LO-LO · RX TRIP'], ['LO-3 · SI', 'LO-3 · RX TRIP', 'LO-3 · FWI', 'LO-3 · AFW START'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['DEAD · ALM']])
     // An alarm with no limit on one value says what it watches, as its drawing's flap does, never a bare ALM (HMI
     // review of run 23): a pump not running, a level low with low feed flow.
     expect([tagsOf('rcp-a-trip'), tagsOf('sg-b-feedwater-low'), tagsOf('pzr-porv-flow')]).toEqual([['NOT RUN · ALM'], ['L LO & F LO · ALM'], ['RELIEF VALVE FLOWING · ALM']])
@@ -1010,8 +1010,9 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     // A limit inside a combined condition names its row too: the feedwater isolation on low Tavg after a reactor trip.
     expect(tagsOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual(['LO · FWI'])
     expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-3 · RX TRIP')
-    // The feedwater isolation the SI signal causes is a feedwater isolation.
+    // The feedwater isolation the SI signal causes is a feedwater isolation, and its auxiliary feedwater start an AFW start.
     expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:feedwater-isolation']).toBe('LO-3 · FWI')
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:afw-start']).toBe('LO-3 · AFW START')
     expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('LO-3 · SI')
     // Every alarm and trip has a tag, and every one naming a group its group's short label for the tiles.
     const annunciated = compiled.automation.rules.filter(rule => rule.enabled).flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter' ? [{ rule, effect }] : []))

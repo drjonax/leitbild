@@ -119,6 +119,7 @@ describe('a throttle under an actuation that drove a demand to an end of its spa
     const floored = plant.automation.rules.filter(rule => rule.throttleFloor !== undefined)
     expect(floored.map(rule => rule.id).sort()).toEqual([
       'loss-of-offsite-power-afw-actuation', 'main-feedwater-pumps-tripped-afw-start',
+      'safety-injection-containment-pressure-high-1', 'safety-injection-low-pzr-pressure', 'safety-injection-manual',
       'sg-a-level-low-low-afw-actuation', 'sg-b-level-low-low-afw-actuation', 'sg-c-level-low-low-afw-actuation', 'sg-d-level-low-low-afw-actuation',
     ])
     for (const rule of floored) expect(rule.throttleFloor!.basis).toContain('FR-H.1')
