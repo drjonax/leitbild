@@ -19,7 +19,7 @@
     {
       "id": "einsatz",
       "config": {
-        "lexicon": {"workList": "Calls", "unitBoard": "Units", "noWork": "No calls waiting", "send": "Dispatch", "hold": "Stop", "on-task": "On scene", "at-site": "Handing over"},
+        "lexicon": {"workList": "Calls", "unitBoard": "Units", "noWork": "No calls waiting", "close": "Close call", "send": "Dispatch", "hold": "Stop", "on-task": "On scene", "at-site": "Handing over"},
         "loadClasses": [
           {"id": "acute", "label": "Acute", "code": "P1", "noun": {"one": "patient", "other": "patients"}},
           {"id": "urgent", "label": "Urgent", "code": "P2", "noun": {"one": "patient", "other": "patients"}},

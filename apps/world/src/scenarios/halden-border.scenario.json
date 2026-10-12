@@ -38,7 +38,7 @@
           },
           {
             "id": "helicopter",
-            "label": "Medical helicopter",
+            "label": "Air ambulance",
             "icon": "helicopter",
             "tags": ["medical", "air"],
             "components": {"mobility": {"mode": "direct", "speedMps": 60, "mobilizeS": 120}, "service": {"provides": ["medical"], "onSceneS": 180}, "carry": {"capacity": 2, "classes": ["P1", "P2", "P3"]}},
