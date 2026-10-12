@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { z } from 'zod'
 import { workspaceIdSchema } from '@leitbild/contracts'
-import { createRevisionedDefinitionStore } from './revision-store.ts'
+import { createRevisionedDefinitionStore, definitionRevisionIdFor, stableJson } from './revision-store.ts'
 
 const workspaceId = workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111')
 const documentSchema = z.object({
@@ -100,5 +100,23 @@ describe('revisioned definition store', () => {
     expect((await definitions.getRevision(revision!.id))?.document.value).toBe(1)
     expect(JSON.parse(await readFile(join(rootDir, 'deleted-definitions.json'), 'utf8')))
       .toEqual({ definitionIds: ['example'] })
+  })
+
+  test('names the seeded revision of a bundled document without a Workspace', async () => {
+    const definitions = await store()
+    const bundled = { id: 'example', title: 'Example', value: 1 }
+    await definitions.seed([bundled])
+
+    expect(definitionRevisionIdFor(documentSchema, bundled)).toBe((await definitions.get('example'))!.currentRevisionId)
+    expect(definitionRevisionIdFor(documentSchema, { title: 'Example', value: 1, id: 'example' }))
+      .toBe(definitionRevisionIdFor(documentSchema, bundled))
+    expect(() => definitionRevisionIdFor(documentSchema, { ...bundled, extra: true } as never)).toThrow()
+  })
+})
+
+describe('stable JSON', () => {
+  test('orders keys by code unit whatever the process locale', () => {
+    expect(stableJson({ b: 1, B: 2, a: { z: 3, Z: 4 }, _: 5, aa: 6, 'å': 7 }))
+      .toBe('{"B":2,"_":5,"a":{"Z":4,"z":3},"aa":6,"b":1,"å":7}')
   })
 })
