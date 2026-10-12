@@ -1,4 +1,4 @@
-import { assignedTo, coverageOf, isDone, rankOf } from './coverage.ts'
+import { assignedTo, coverageOf, isDone, loadAllocation, rankOf } from './coverage.ts'
 import { closeDraft, openDraft, putUnit, recordTask, setMotion, stageTask, taskIn, unitIn, type Draft } from './draft.ts'
 import { clearAlerts, raiseAlert, templateOf, unitTypeOf, workReturnedCode, type EngineState, type LastAction, type TaskRecord, type Transition, type UnitRecord } from './model.ts'
 import { advanceProgress, hasArrived, legEnd, legPosition, msToArrival, speedFactor } from './movement.ts'
@@ -53,23 +53,20 @@ export const refreshTasks = (draft: Draft): void => {
   }
 }
 
-/** On-task time is over: count the unit towards the requirements it meets and pick up load, most urgent class first, up to free capacity. */
+/**
+ * On-task time is over: the unit counts towards the requirements it meets
+ * and picks up its share of the load as coverage allocates it over the units
+ * still assigned, itself included. It takes nothing beyond that share: any
+ * other waiting load is either another assigned carrier's share or more than
+ * the carriers can take, and in that case this unit's share already fills it.
+ */
 const finishTask = (draft: Draft, unit: UnitRecord): void => {
   const task = taskIn(draft, unit.taskId!)
-  const type = unitTypeOf(draft.catalog, unit)
   const served = Object.fromEntries(templateOf(draft.catalog, task).requires.flatMap(requirement => meetsRequirement(draft.catalog, unit, requirement)
     ? [[requirement.provides, Math.min(requirement.count, countOf(task.served, requirement.provides) + 1)] as const]
     : []))
-  let room = type.components.carry === undefined ? 0 : type.components.carry.capacity - total(unit.load)
-  const picked = new Map<string, number>()
-  for (const classId of draft.catalog.classIds) {
-    if (room <= 0 || type.components.carry?.classes.includes(classId) !== true) continue
-    const taken = Math.min(room, countOf(task.loads, classId))
-    if (taken > 0) picked.set(classId, taken)
-    room -= taken
-  }
+  const pickedUp = loadAllocation(draft.catalog, task, assignedTo(draft.units.values(), task)).get(unit.id) ?? {}
   const ids = draft.catalog.classIds
-  const pickedUp = countsOf(picked)
   stageTask(draft, patch(task, {
     served: { ...task.served, ...served },
     loads: countsOf(ids.map(id => [id, countOf(task.loads, id) - countOf(pickedUp, id)] as const)),

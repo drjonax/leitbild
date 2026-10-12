@@ -31,6 +31,16 @@
       }
     },
     {
+      "id": "runner",
+      "label": "Runner",
+      "icon": "bike",
+      "components": {
+        "mobility": { "mode": "direct", "speedMps": 50 },
+        "service": { "provides": ["aid"], "onSceneS": 3 },
+        "carry": { "capacity": 1, "classes": ["L1"] }
+      }
+    },
+    {
       "id": "hauler",
       "label": "Hauler",
       "icon": "forklift",

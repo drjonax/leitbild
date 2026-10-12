@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { advance, at, emptyState, low, middle, newTask, newUnit, refusalOf, run, runAll, send, start, taskOf, templates, top, types, unitOf } from '../fixtures/engine-harness.ts'
-import { assignedTo, coverageOf, isDivertCandidate, needFor, rankOf, residualNeed, roleViewFor, roleViewOf } from './coverage.ts'
+import { countedFor, isDivertCandidate, needFor, rankOf, residualNeed, roleViewFor, roleViewOf } from './coverage.ts'
 import { commandsEveryUnit } from './intents.ts'
 import type { EngineState } from './model.ts'
 import { isFree } from './rules.ts'
@@ -34,10 +34,10 @@ const protectionScenario = async (): Promise<EngineState> => {
 
 const candidatesFor = (state: EngineState, taskId: string, proposal: ReadonlyArray<string> = []): string[] => {
   const task = taskOf(state, taskId)
-  const view = roleViewFor(state, commandsEveryUnit, task)
-  const residual = residualNeed(state, task, view, proposal.map(id => unitOf(state, id)))
-  const coverage = coverageOf(state.catalog, task, assignedTo(state.units.values(), task))
-  return [...state.units.values()].filter(unit => isDivertCandidate(state, { unit, task, coverage, residual, commandable: commandsEveryUnit })).map(unit => unit.id).sort()
+  const units = proposal.map(id => unitOf(state, id))
+  const residual = residualNeed(state, task, roleViewFor(state, commandsEveryUnit, task), units)
+  const counted = countedFor(state, task, units)
+  return [...state.units.values()].filter(unit => isDivertCandidate(state, { unit, task, counted, residual, commandable: commandsEveryUnit })).map(unit => unit.id).sort()
 }
 
 describe('Einsatz divert protection', () => {
@@ -91,6 +91,41 @@ describe('Einsatz divert protection', () => {
     expect(taskOf(state, 'c9')).toMatchObject({ createdAtMs: start, loads: { [middle]: 1 }, alerts: [{ code: 'work_returned' }] })
     expect(taskOf(state, 'c9').coverage.loads).toEqual([{ classId: middle, waiting: 1, covered: 0 }])
     expect(taskOf(state, 'n1').coverage.loads).toEqual([{ classId: top, waiting: 1, covered: 1 }])
+  })
+})
+
+describe('Einsatz carriers of different load classes', () => {
+  /** A carrier of any class at the task and a carrier of the top class only further away; the task holds one top and one low load. */
+  const mixed = () => runAll(emptyState(), [
+    newUnit('near', types.roadCarrier, at(0)),
+    newUnit('solo', types.narrowCarrier, at(0.01)),
+    newTask('t1', templates.load, at(0), { [top]: 1, [low]: 1 }),
+  ])
+  const bothCovered = [{ classId: top, waiting: 1, covered: 1 }, { classId: low, waiting: 1, covered: 1 }]
+
+  test('a send is judged the same whichever order it names its units in', async () => {
+    const state = await mixed()
+    for (const units of [['near', 'solo'], ['solo', 'near']]) expect(taskOf(await run(state, send(units, { taskId: 't1' })), 't1').coverage.loads).toEqual(bothCovered)
+  })
+
+  test('a unit that would add nothing beside the rest of the send is refused, whichever position it holds', async () => {
+    const state = await run(await mixed(), newUnit('spare', types.narrowCarrier, at(0.02)))
+    for (const units of [['spare', 'near', 'solo'], ['near', 'solo', 'spare']]) {
+      expect((await refusalOf(state, send(units, { taskId: 't1' }))).code).toBe('requirement_covered')
+    }
+  })
+
+  test('each carrier picks up the load coverage allocated to it, though the any-class carrier arrives first, and the task closes', async () => {
+    let state = await run(await mixed(), send(['near', 'solo'], { taskId: 't1' }))
+    expect(taskOf(state, 't1').coverage.loads).toEqual(bothCovered)
+    state = await advance(state, start + 6_000)
+    expect(unitOf(state, 'near')).toMatchObject({ phase: 'holding', load: { [low]: 1 } })
+    expect(unitOf(state, 'solo')).toMatchObject({ phase: 'en-route', taskId: 't1' })
+    expect(taskOf(state, 't1')).toMatchObject({ loads: { [top]: 1 }, coverage: { loads: [{ classId: top, waiting: 1, covered: 1 }] } })
+    state = await advance(state, start + 30_000)
+    expect(unitOf(state, 'solo').load).toEqual({ [top]: 1 })
+    expect(taskOf(state, 't1')).toMatchObject({ loads: {}, pickedUp: { [top]: 1, [low]: 1 }, alerts: [] })
+    expect(taskOf(state, 't1').closedAtMs).toBeDefined()
   })
 })
 

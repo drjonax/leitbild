@@ -1,5 +1,5 @@
 import type { GeoJsonPoint } from '../../../core/model/index.ts'
-import { asAssigned, assignedTo, contributionOf, coverageOf, needFor, roleViewFor } from './coverage.ts'
+import { contributionOf, countedFor, residualNeed, roleViewFor } from './coverage.ts'
 import { putUnit, setMotion, stageTask, taskIn, unitIn, type Draft } from './draft.ts'
 import { actionBy, committedText, immobile, loadedText, notInPicture, refused, type Refused } from './intent-support.ts'
 import type { EngineActor, IntentOf, Plan, RouteNeed } from './intents.ts'
@@ -68,27 +68,25 @@ const checkSender = (state: EngineState, unit: UnitRecord, target: Target, fromT
 }
 
 /**
- * Coverage at commit: every unit must add something the task still lacks,
- * counting the send's non-divert units first; then each divert must come
- * from a task strictly lower than the residual need those units leave.
+ * Coverage at commit: every unit must add something the task still lacks
+ * beside the assigned units and every other unit of the send, so the outcome
+ * never depends on the order the send names them in. Then each divert must
+ * come from a task strictly lower than the residual need the send's
+ * non-divert units leave.
  */
 const checkTaskCoverage = (state: EngineState, task: TaskRecord, movers: ReadonlyArray<Mover>, actor: EngineActor): Refused | undefined => {
-  const assigned = assignedTo(state.units.values(), task)
-  const plain = movers.filter(mover => mover.fromTaskId === undefined).map(mover => mover.unit)
-  const diverted = movers.filter(mover => mover.fromTaskId !== undefined)
-  const counted: UnitRecord[] = []
-  for (const unit of [...plain, ...diverted.map(mover => mover.unit)]) {
-    const coverage = coverageOf(state.catalog, task, [...assigned, ...asAssigned(counted, task)])
-    const contribution = contributionOf(state.catalog, task, coverage, unit)
-    if (!contribution.adds) {
-      if (contribution.unmet[0] !== undefined) return refused('requirement_unmet', contribution.unmet[0])
-      if (contribution.covered) return refused('requirement_covered', `${task.label} needs nothing more that ${unit.label} provides`)
-      return refused('requirement_unmet', `${unit.label} provides nothing ${task.label} needs`)
-    }
-    counted.push(unit)
+  const counted = countedFor(state, task, movers.map(mover => mover.unit))
+  for (const { unit } of movers) {
+    const contribution = contributionOf(state.catalog, task, counted, unit)
+    if (contribution.adds) continue
+    if (contribution.unmet[0] !== undefined) return refused('requirement_unmet', contribution.unmet[0])
+    if (contribution.covered) return refused('requirement_covered', `${task.label} needs nothing more that ${unit.label} provides`)
+    return refused('requirement_unmet', `${unit.label} provides nothing ${task.label} needs`)
   }
+  const diverted = movers.filter(mover => mover.fromTaskId !== undefined)
   if (diverted.length === 0) return undefined
-  const residual = needFor(state.catalog, task, coverageOf(state.catalog, task, [...assigned, ...asAssigned(plain, task)]), roleViewFor(state, actor.commandable, task))
+  const plain = movers.filter(mover => mover.fromTaskId === undefined).map(mover => mover.unit)
+  const residual = residualNeed(state, task, roleViewFor(state, actor.commandable, task), plain)
   for (const mover of diverted) {
     const from = taskIn(state, mover.fromTaskId!)
     if (residual === undefined) return refused('divert_not_lower_priority', `${task.label} needs nothing ${mover.unit.label} could be diverted for`)

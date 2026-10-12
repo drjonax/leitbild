@@ -1,7 +1,7 @@
 import type { UnitType } from '../config-schema.ts'
 import { classRankOf, isLowerClass, templateOf, unitTypeOf, type Catalog, type EngineState, type TaskCoverage, type TaskRecord, type UnitRecord } from './model.ts'
 import { committedPhases, conditionReasons, divertablePhases, hasLoad, isDestroyed, linksToTask, meetsRequirement, providesFor } from './rules.ts'
-import { byId, countOf, total } from './values.ts'
+import { byId, countOf, countsOf, total, type Counts } from './values.ts'
 
 /** What a role can serve on a task's side: the services its commandable units provide and the load classes they carry. */
 export interface RoleView {
@@ -33,31 +33,44 @@ const carries = (type: UnitType, classId: string): boolean => type.components.ca
 
 const freeCapacity = (type: UnitType, unit: UnitRecord): number => {
   const carry = type.components.carry
-  return carry === undefined ? 0 : carry.capacity - total(unit.load)
+  return carry === undefined ? 0 : Math.max(0, carry.capacity - total(unit.load))
 }
 
 /**
- * Free carry capacity against waiting load, most urgent class first. Within
- * a class, units carrying fewer classes take load first, keeping a unit that
- * could carry something else for it; ties go by unit id.
+ * Which waiting load each assigned unit's free carry capacity takes, most
+ * urgent class first. Within a class, units carrying fewer classes take load
+ * first, keeping a unit that could carry something else for it; ties go by
+ * unit id. Coverage reports this allocation and pickup follows it, so load
+ * shown as covered is the load its unit picks up.
  */
-const loadCoverage = (catalog: Catalog, task: Pick<TaskRecord, 'loads'>, assigned: ReadonlyArray<UnitRecord>): TaskCoverage['loads'] => {
-  const typed = assigned.map(unit => ({ unit, type: unitTypeOf(catalog, unit) }))
-  const room = new Map(typed.map(({ unit, type }) => [unit.id, freeCapacity(type, unit)]))
-  return catalog.classes.filter(loadClass => countOf(task.loads, loadClass.id) > 0).map(loadClass => {
-    const waiting = countOf(task.loads, loadClass.id)
-    const carriers = typed
-      .filter(({ type }) => carries(type, loadClass.id))
-      .sort((a, b) => a.type.components.carry!.classes.length - b.type.components.carry!.classes.length || byId(a.unit, b.unit))
-    let covered = 0
-    for (const { unit } of carriers) {
-      const free = room.get(unit.id)!
-      const taken = Math.min(free, waiting - covered)
-      room.set(unit.id, free - taken)
-      covered += taken
+export const loadAllocation = (catalog: Catalog, task: Pick<TaskRecord, 'loads'>, assigned: ReadonlyArray<UnitRecord>): ReadonlyMap<string, Counts> => {
+  const carriers = assigned
+    .map(unit => ({ unit, type: unitTypeOf(catalog, unit) }))
+    .filter(({ type }) => type.components.carry !== undefined)
+    .sort((a, b) => a.type.components.carry!.classes.length - b.type.components.carry!.classes.length || byId(a.unit, b.unit))
+  const room = new Map(carriers.map(({ unit, type }) => [unit.id, freeCapacity(type, unit)]))
+  const shares = new Map<string, Array<readonly [string, number]>>(carriers.map(({ unit }) => [unit.id, []]))
+  for (const classId of catalog.classIds) {
+    let waiting = countOf(task.loads, classId)
+    for (const { unit, type } of carriers) {
+      if (!carries(type, classId)) continue
+      const share = Math.min(room.get(unit.id)!, waiting)
+      if (share <= 0) continue
+      room.set(unit.id, room.get(unit.id)! - share)
+      shares.get(unit.id)!.push([classId, share])
+      waiting -= share
     }
-    return { classId: loadClass.id, waiting, covered }
-  })
+  }
+  return new Map([...shares].map(([id, entries]) => [id, countsOf(entries)]))
+}
+
+const loadCoverage = (catalog: Catalog, task: Pick<TaskRecord, 'loads'>, assigned: ReadonlyArray<UnitRecord>): TaskCoverage['loads'] => {
+  const shares = [...loadAllocation(catalog, task, assigned).values()]
+  return catalog.classIds.filter(classId => countOf(task.loads, classId) > 0).map(classId => ({
+    classId,
+    waiting: countOf(task.loads, classId),
+    covered: shares.reduce((sum, share) => sum + countOf(share, classId), 0),
+  }))
 }
 
 /**
@@ -123,33 +136,53 @@ export const needFor = (catalog: Catalog, task: TaskRecord, coverage: TaskCovera
   return requirementShort || isReport(catalog, task) ? task.rank : undefined
 }
 
+/** The units a task's coverage counts with a proposal: those assigned to it, and the proposal's as if sent now. */
+export const countedFor = (state: EngineState, task: TaskRecord, proposal: ReadonlyArray<UnitRecord>): UnitRecord[] =>
+  [...assignedTo(state.units.values(), task), ...asAssigned(proposal, task)]
+
 /**
  * The residual need: the task's need for the role after the proposal's units
  * are counted on their way. With no proposal it is the need itself.
  */
 export const residualNeed = (state: EngineState, task: TaskRecord, view: RoleView, proposal: ReadonlyArray<UnitRecord>): string | undefined =>
-  needFor(state.catalog, task, coverageOf(state.catalog, task, [...assignedTo(state.units.values(), task), ...asAssigned(proposal, task)]), view)
+  needFor(state.catalog, task, coverageOf(state.catalog, task, countedFor(state, task, proposal)), view)
 
 export interface Contribution {
-  /** The unit fills a requirement still short of its count, or carries waiting load beyond what is covered. */
+  /** Counting the unit changes how far some requirement is filled, up to its count, or how much load of some class is covered. */
   readonly adds: boolean
   /** Why the unit fails the `where` of requirements whose service it provides. */
   readonly unmet: ReadonlyArray<string>
-  /** Something the unit could serve is already covered. */
+  /** Something the unit could serve is already covered without it. */
   readonly covered: boolean
 }
 
-export const contributionOf = (catalog: Catalog, task: TaskRecord, coverage: TaskCoverage, unit: UnitRecord): Contribution => {
+/** How far each requirement is filled, up to its count, then the load covered per class. */
+const filled = (coverage: TaskCoverage): number[] => [
+  ...coverage.requirements.map(entry => Math.min(entry.count, entry.enRoute + entry.onTask + entry.completed)),
+  ...coverage.loads.map(entry => entry.covered),
+]
+
+/**
+ * What a unit contributes to a task beside `counted`: the assigned units and
+ * the rest of a proposal, counted as on their way (`countedFor`); the unit
+ * itself is set aside if listed. It adds only when counting it changes a
+ * requirement or a covered load class, so the judgement never depends on the
+ * order in which a proposal names its units.
+ */
+export const contributionOf = (catalog: Catalog, task: TaskRecord, counted: ReadonlyArray<UnitRecord>, unit: UnitRecord): Contribution => {
+  const others = counted.filter(other => other.id !== unit.id)
+  const without = coverageOf(catalog, task, others)
+  const withUnit = filled(coverageOf(catalog, task, [...others, ...asAssigned([unit], task)]))
   const type = unitTypeOf(catalog, unit)
   const requirements = templateOf(catalog, task).requires.flatMap((requirement, index) => {
     if (!providesFor(type, requirement)) return []
     const reasons = conditionReasons(catalog, unit, requirement)
-    return [{ reasons, open: reasons.length === 0 && short(coverage.requirements[index]!) }]
+    return [{ reasons, open: reasons.length === 0 && short(without.requirements[index]!) }]
   })
-  const loads = coverage.loads.filter(entry => carries(type, entry.classId) && freeCapacity(type, unit) > 0)
+  const loads = without.loads.filter(entry => carries(type, entry.classId) && freeCapacity(type, unit) > 0)
   const matched = requirements.filter(entry => entry.reasons.length === 0)
   return {
-    adds: matched.some(entry => entry.open) || loads.some(entry => entry.covered < entry.waiting),
+    adds: filled(without).some((value, index) => value !== withUnit[index]),
     unmet: requirements.flatMap(entry => entry.reasons),
     covered: matched.some(entry => !entry.open) || loads.some(entry => entry.covered >= entry.waiting),
   }
@@ -164,8 +197,8 @@ export const contributionOf = (catalog: Catalog, task: TaskRecord, coverage: Tas
 export const isDivertCandidate = (state: EngineState, input: {
   readonly unit: UnitRecord
   readonly task: TaskRecord
-  /** The task's coverage with the proposal's free units counted, as for the residual need. */
-  readonly coverage: TaskCoverage
+  /** The units the task counts with the proposal's free units, as for the residual need (`countedFor`). */
+  readonly counted: ReadonlyArray<UnitRecord>
   readonly residual: string | undefined
   readonly commandable: (unit: UnitRecord) => boolean
 }): boolean => {
@@ -174,5 +207,5 @@ export const isDivertCandidate = (state: EngineState, input: {
   if (!input.commandable(unit) || !linksToTask(unit, task) || hasLoad(unit) || isDestroyed(unit) || !divertablePhases.includes(unit.phase)) return false
   const from = state.tasks.get(unit.taskId)
   if (from === undefined) throw new Error(`${unit.id}: committed to missing task ${unit.taskId}`)
-  return isLowerClass(state.catalog, from.rank, residual) && contributionOf(state.catalog, task, input.coverage, unit).adds
+  return isLowerClass(state.catalog, from.rank, residual) && contributionOf(state.catalog, task, input.counted, unit).adds
 }

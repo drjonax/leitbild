@@ -29,11 +29,15 @@ const typeWhere = (what: string, predicate: (type: UnitType) => boolean): string
 const templateWhere = (what: string, predicate: (template: TaskTemplate) => boolean): string => only(config.taskTemplates.filter(predicate), what)
 const whereOn = (template: TaskTemplate, property: string): boolean => template.requires.some(requirement => requirement.where.some(condition => condition.property === property))
 
+const carriesEveryClass = (type: UnitType): boolean => type.components.carry?.classes.length === config.loadClasses.length
+
 export const types = {
-  /** Road mobility, serves, carries one load, delivers and returns by standing order. */
-  roadCarrier: typeWhere('road carrier', type => type.components.carry !== undefined && type.components.mobility?.mode === 'road'),
-  /** Direct mobility, serves, carries two loads, no standing orders. */
-  directCarrier: typeWhere('direct carrier', type => type.components.carry !== undefined && type.components.mobility?.mode === 'direct'),
+  /** Road mobility, serves, carries one load of any class, delivers and returns by standing order. */
+  roadCarrier: typeWhere('road carrier', type => carriesEveryClass(type) && type.components.mobility?.mode === 'road'),
+  /** Direct mobility, serves, carries two loads of any class, no standing orders. */
+  directCarrier: typeWhere('direct carrier', type => carriesEveryClass(type) && type.components.mobility?.mode === 'direct'),
+  /** Direct mobility, serves, carries one load of the top class only, no standing orders. */
+  narrowCarrier: typeWhere('narrow carrier', type => type.components.carry !== undefined && !carriesEveryClass(type)),
   /** Serves the requirement with a payload condition. */
   payloadServer: typeWhere('payload server', type => type.properties.some(property => property.id === 'payloadKg')),
   /** Serves the requirement counted twice; carries nothing. */
