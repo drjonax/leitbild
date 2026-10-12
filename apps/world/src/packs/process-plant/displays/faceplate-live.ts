@@ -50,6 +50,8 @@ export type FaceplateHead =
 /** Parallel loops, one row each; a column's cells may hold two values (two margins its protection judges). */
 export interface FaceplateLoopColumn {
   readonly cells: ReadonlyArray<ReadonlyArray<string>>
+  /** A value a cell shows only while a flag reads true (delta-T power with forced flow), by path: the flag's path. */
+  readonly qualifiers?: Readonly<Record<string, string>>
   readonly source: FaceplateSource
   /** The modes each rule that judges the column acts in (null for every mode); none where no rule judges it. */
   readonly judgedIn: ReadonlyArray<ReadonlyArray<string> | null>
@@ -323,7 +325,11 @@ export const faceplateNow = (faceplate: CompiledFaceplate, live: FaceplateLive):
       return [{
         kind: 'loops',
         loops: spec.loops,
-        columns: spec.columns.map(column => ({ cells: column.cells, idle: column.judgedIn.length > 0 && !column.judgedIn.some(modes => actsIn(modes, live.mode)) })),
+        columns: spec.columns.map(column => ({
+          // A value measured only under a flag leaves its cell while the flag does not hold.
+          cells: column.cells.map(cell => cell.filter(path => column.qualifiers?.[path] === undefined || live.read(column.qualifiers[path]) === true)),
+          idle: column.judgedIn.length > 0 && !column.judgedIn.some(modes => actsIn(modes, live.mode)),
+        })),
       }]
     }
     return [spec]

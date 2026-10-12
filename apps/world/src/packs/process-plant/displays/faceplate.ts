@@ -261,6 +261,10 @@ const circuitReach = (plant: CompiledProcessPlant, end: number, port: string): R
 
 type Column = { readonly heads: FaceplateHead[]; readonly rows: FaceplateRowSpec[]; readonly rules: FaceplateRowSpec[]; readonly causeFirst: boolean }
 
+/** The last of `among` that comes before position `at` of `order`. */
+const lastBefore = <T,>(among: ReadonlyArray<T>, at: number, order: ReadonlyArray<T>): T | undefined =>
+  [...among].reverse().find(item => order.indexOf(item) < at)
+
 const lastIndex = <T,>(items: ReadonlyArray<T>, test: (item: T) => boolean): number => {
   for (let at = items.length - 1; at >= 0; at -= 1) if (test(items[at]!)) return at
   return -1
@@ -310,8 +314,9 @@ export const compileFaceplate = (
     if (!readable(binding) || placed.has(path) || permissives.has(path)) return null
     const flag = flagOf.get(path) ?? (flagged.has(path) ? path : undefined)
     const program = programOf.get(path)
+    // A flag's row carries the instruments it qualifies (tagged readings), not a boundary input it qualifies too.
     const paths = flag !== undefined && readable(bindingOf(flag))
-      ? [flag, ...flagged.get(flag)!]
+      ? [flag, ...flagged.get(flag)!.filter(variable => variable === path || bindingOf(variable)?.tagId !== undefined)]
       : [path, ...(program === undefined ? [] : [program.program, ...(program.deviation === undefined ? [] : [program.deviation])])]
     const shown = paths.filter(variable => readable(bindingOf(variable)) && !placed.has(variable))
     for (const variable of shown) placed.add(variable)
@@ -366,11 +371,24 @@ export const compileFaceplate = (
     judgedBy.set(group, new Set(members.flatMap(rule => conditionBindings(plant, rule.condition).map(binding => binding.path))))
     columns.push(into)
   }
+  // What says the end has stopped, states first, under the protection the trip banner leads with (what E-0
+  // verifies the trip by); each with the readings of its system that read the same quantity, on one row after it
+  // (the rod banks after the rods' average steps). An end whose protection no banner states reads them as its own.
   const protection = columns[0]
-  if (protection !== undefined) {
-    const stopped = component.semantics.shutdownReadings
+  const stopped = component.semantics.shutdownReadings
+  const besideStopped = (path: VariablePath): FaceplateRowSpec | null => {
+    const binding = bindingOf(path)
+    const alike = binding === undefined ? [] : graph.signalBindings.filter(other => other.tagId !== undefined && other.path !== path && onEnd(other) && readable(other)
+      && systemOf(other) === systemOf(binding) && other.quantity === binding.quantity && other.unit === binding.unit && !flagOf.has(other.path) && !placed.has(other.path) && !stopped.includes(other.path))
+    for (const other of alike) placed.add(other.path)
+    return alike.length === 0 ? null : { kind: 'values', source: 'protection', paths: alike.map(other => String(other.path)), criteria: [] }
+  }
+  if (protection !== undefined && !protection.causeFirst) {
     const isState = (path: VariablePath) => bindingOf(path)?.quantity === 'boolean'
-    for (const path of [...stopped.filter(isState), ...stopped.filter(path => !isState(path))]) push(protection, valuesRow(path, 'protection'))
+    for (const path of [...stopped.filter(isState), ...stopped.filter(path => !isState(path))]) {
+      push(protection, valuesRow(path, 'protection'))
+      push(protection, besideStopped(path))
+    }
   }
 
   // (2) Critical safety functions judging a reading of the end's equipment: every leaf of the tree under the chip.
@@ -450,7 +468,11 @@ export const compileFaceplate = (
     const row = valuesRow(path, source)
     if (row === null) return
     const system = systemOf(binding)
-    const home = [...columns, ...circuits.map(entry => entry.column), programColumn].find(candidate => systemsIn(candidate).includes(system))
+    // The end's own readings join the port circuit of their discipline (its electrical output with the generator
+    // breaker), others the column holding their instrument system.
+    const byDiscipline = onEnd(binding) ? circuits.find(entry => carriedBy[binding.discipline] === entry.carrier)?.column : undefined
+    const home = byDiscipline
+      ?? [...columns, ...circuits.map(entry => entry.column), programColumn].find(candidate => systemsIn(candidate).includes(system))
       ?? circuits.find(entry => carriedBy[binding.discipline] === entry.carrier)?.column
       ?? ownColumn
     const sameSystem = (candidate: FaceplateRowSpec) => candidate.kind === 'values' && candidate.paths.some(variable => {
@@ -458,10 +480,12 @@ export const compileFaceplate = (
       return other !== undefined && systemOf(other) === system
     })
     // After the last shutdown reading of its system (IR beside the intermediate-range startup rate), else after the last of its system.
+    // In a port column the end's own readings lead, before what its line reaches.
     const stopping = lastIndex(home.rows, candidate => sameSystem(candidate) && candidate.kind === 'values' && candidate.source === 'protection')
     const after = stopping >= 0 ? stopping : lastIndex(home.rows, sameSystem)
-    home.rows.splice(after < 0 ? home.rows.length : after + 1, 0, row)
+    home.rows.splice(after >= 0 ? after + 1 : home === byDiscipline ? 0 : home.rows.length, 0, row)
   }
+  if (protection === undefined || protection.causeFirst) for (const path of stopped) besideItsSystem(path, 'equipment')
   for (const binding of graph.signalBindings) {
     if (binding.tagId !== undefined && onEnd(binding) && !verified.has(systemOf(binding))) besideItsSystem(binding.path, 'equipment')
   }
@@ -479,13 +503,19 @@ export const compileFaceplate = (
   }
 
   // Protection and safety functions first, then the end itself, its port circuits, and what its control holds.
-  const finished = (entry: Column): FaceplateColumnSpec => ({ heads: entry.heads, rows: entry.causeFirst ? [...entry.rules, ...entry.rows] : [...entry.rows, ...entry.rules] })
+  // In a column: its readings, then its checks, then its loop table; the rules before them or after as the banner decides.
+  const ordered = (rows: ReadonlyArray<FaceplateRowSpec>) => [
+    ...rows.filter(row => row.kind !== 'checks' && row.kind !== 'loops'),
+    ...rows.filter(row => row.kind === 'checks'),
+    ...rows.filter(row => row.kind === 'loops'),
+  ]
+  const finished = (entry: Column): FaceplateColumnSpec => ({ heads: entry.heads, rows: entry.causeFirst ? [...entry.rules, ...ordered(entry.rows)] : [...ordered(entry.rows), ...entry.rules] })
   const shown = [...columns, ownColumn, ...circuits.map(entry => entry.column), programColumn].filter(entry => entry.rows.length + entry.rules.length > 0).map(finished)
   const stoppedWhen = groups.length === 0 ? [] : writesOf(commonWrites(plant, groupMembers(plant, groups[0]!)))
   const read = shown.flatMap(entry => entry.rows).flatMap((row): ReadonlyArray<string> => {
     if (row.kind === 'values') return row.paths
     if (row.kind === 'flows') return row.branches.map(branch => branch.path)
-    if (row.kind === 'loops') return row.columns.flatMap(entry => entry.cells.flat())
+    if (row.kind === 'loops') return row.columns.flatMap(entry => [...entry.cells.flat(), ...Object.values(entry.qualifiers ?? {})])
     if (row.kind === 'checks') return row.checks.flatMap(check => [...(check.when === undefined ? [] : conditionPaths(check.when)), ...conditionPaths(check.condition)])
     const rules = row.kind === 'rules' ? row.rules : [row.rule]
     return [...(row.kind === 'rules' ? row.does : row.writes).map(write => write.path), ...rules.flatMap(rule => [...rule.triggers, ...rule.gates].flatMap(conditionPaths))]
@@ -557,12 +587,27 @@ const loopTable = (plant: CompiledProcessPlant, end: number, judged: ReadonlyArr
     const path = channel === undefined ? undefined : `${channel.id}.${local}` as VariablePath
     return path !== undefined && tagged(graph.signalBindingByPath.get(path)) ? [String(path)] : []
   })
-  const measured = channelReadings.filter(entry => !judgedSet.has(entry.binding.path) && entry.binding.discipline !== 'control' && !lineQuantities.has(entry.binding.quantity))
+  // A channel's flag qualifies its readings and is no column; a reading measured only while it holds (delta-T
+  // power with forced flow) shares the cell of the measurement declared before it, shown only while the flag holds.
+  const qualifiedBy = new Map(channels[0]?.semantics.meaningfulWhile.flatMap(entry => entry.variables.map(variable => [String(variable).slice(String(channels[0]!.id).length + 1), String(entry.flag).slice(String(channels[0]!.id).length + 1)] as const)) ?? [])
+  const flags = new Set(qualifiedBy.values())
+  const measured = channelReadings.filter(entry => !judgedSet.has(entry.binding.path) && entry.binding.discipline !== 'control' && !lineQuantities.has(entry.binding.quantity) && !flags.has(entry.local))
+  const own = measured.filter(entry => !qualifiedBy.has(entry.local))
+  const sharing = (entry: (typeof measured)[number]) => measured.filter(other => qualifiedBy.has(other.local) && lastBefore(own, measured.indexOf(other), measured) === entry)
+  const flagOfCell = (local: string) => loops.map(loop => {
+    const channel = channelOf(loop)
+    return channel === undefined ? undefined : `${channel.id}.${local}`
+  })
   const protectionJudges = channelReadings.filter(entry => judgedSet.has(entry.binding.path))
   const judgingRules = plant.automation.rules.filter(rule => rule.enabled && conditionBindings(plant, rule.condition).some(binding => protectionJudges.some(entry => String(binding.path).endsWith(`.${entry.local}`))))
   const columns: ReadonlyArray<FaceplateLoopColumn> = [
     ...[...lines.values()].map(cells => ({ cells: loops.map(loop => cells.has(loop) ? [String(cells.get(loop)!)] : []), source: 'circuit' as const, judgedIn: [] })),
-    ...measured.map(entry => ({ cells: cellsOf(entry.local), source: 'channel' as const, judgedIn: [] })),
+    ...own.map(entry => {
+      const joined = sharing(entry)
+      const cells = loops.map((_, at) => [...cellsOf(entry.local)[at]!, ...joined.flatMap(other => cellsOf(other.local)[at]!)])
+      const qualifiers = Object.fromEntries(joined.flatMap(other => cellsOf(other.local).flatMap((cell, at) => cell.map(path => [path, flagOfCell(qualifiedBy.get(other.local)!)[at]!] as const))))
+      return { cells, source: 'channel' as const, judgedIn: [], ...(joined.length === 0 ? {} : { qualifiers }) }
+    }),
     ...(protectionJudges.length === 0 ? [] : [{
       cells: loops.map((_, at) => protectionJudges.flatMap(entry => cellsOf(entry.local)[at]!)),
       source: 'channel' as const,
