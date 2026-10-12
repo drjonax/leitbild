@@ -94,7 +94,7 @@ describe('electric grid Pack', () => {
     expect(() => compileGridModelIndex(rekinded('bus:boundary-DE', 'substation'))).toThrow('bus:boundary-DE is a substation bus but external:DE uses it as a boundary bus')
     expect(() => compileGridModelIndex(rekinded(halden.model.loads[0]!.busId, 'boundary'))).toThrow(`boundary bus ${halden.model.loads[0]!.busId} belongs to no external system`)
     // A published model is an immutable artifact used by persisted Run state; regenerating the model data, its Load Profiles or its Operating Point's demand changes this digest.
-    expect(halden.definitionDigest).toBe('bb92e593f9c9e99e28c162da4f126e31c826cc628970ff4d7502bf9b4ad37e68')
+    expect(halden.definitionDigest).toBe('813e06d9cab6a69d6f330c8a5afdafffbdd3b307ee92e4c1afce31b66144652d')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(halden.model.connectionPoints).toHaveLength(4)
   })

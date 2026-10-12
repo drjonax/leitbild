@@ -2271,6 +2271,67 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "flesaker-mjondalen-feal-240",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.856366,
+          59.717716
+        ]
+      },
+      "properties": {
+        "kind": "set-line-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/164654100",
+          "way/46832310"
+        ],
+        "wayOsmIds": [
+          "way/164654100",
+          "way/46832310"
+        ],
+        "voltageKv": 132,
+        "designRatingMva": 374,
+        "reason": "Statnett lists Glitre Nett's 132 kV Flesaker – Mjøndalen 1 and 2 under licence 96/4862, item 25 Flesaker – Kjenner, and Glitre's 2026 detail plan restates that line's concession as two 132 kV circuits of 3 × 1 × 240 FeAl on shared towers with a 2 × 1 × 120 FeAl railway circuit, which OSM maps on the same ways (verified). Norwegian FeAl 240 (54/7) is 382-AL1/49-ST1A (Statnett SDOK-39-30), where the rule assumes 243-AL1/39-ST1A. The rule's 147 MVA per circuit at 35 °C design air is scaled by the two conductors' ampacity ratio in one EN 50182 A1/ST1A table (516 A against 406 A at 75 °C conductor): 2 × 147 × 516/406 = 374 MVA (inferred: no published rating at 35 °C). Glitre and Statnett rebuild the Flesaker end for Eiker station from 2027.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-ost/eiker-transformatorstasjon/konsesjonssoknad-nye-eiker-transformatorstasjon.pdf",
+            "ref": "Statnett, konsesjonssøknad nye Eiker transformatorstasjon (2023), section 2.3.1, table of existing licences (p. 12)",
+            "note": "132 kV Flesaker – Mjøndalen 1 og 2: 96/4862 (pkt. 25 Flesaker – Kjenner)"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/f41649cf-7e55-40ad-8740-f0169f21397b/202615521/3454819",
+            "ref": "Glitre Nett, detaljplan 132 kV Eiker (NVE 202615521, July 2026), Tabell 1-2 (p. 10), content of concession NVE 202303971-95",
+            "note": "ca. 30 km luftledning fra Flesaker (Petraborg) til Kjenner: to stk. luftledninger 132 kV, tverrsnitt 3 x 1 x 240 FeAl; en 2 x 1 x 120 FeAl"
+          },
+          {
+            "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/systemansvaret/fosweb/beregning-av-termisk-grenselast-pa-kraftledninger-statnett-sf.pdf",
+            "ref": "Statnett SDOK-39-30 rev 6.0, revision log",
+            "note": "382-AL1/49-ST1A (FeAl 240 (54/7))"
+          },
+          {
+            "url": "https://luminoindustries.com/wp-content/uploads/2024/04/EN-50182-2001-TYPE-A1-ST1A.pdf",
+            "ref": "EN 50182 (2001) type A1/ST1A conductor table, current capacity @ 75 °C",
+            "note": "243-AL1/39-ST1A 406 A; 382-AL1/49-ST1A 516 A"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/46832310",
+            "ref": "way/46832310 and way/164654100",
+            "note": "Flesaker - Mjøndalen: circuits=3, frequency=50;16.67;50 (2 × 3-phase 50 Hz and one railway circuit); circuits=2"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
     }
   ]
 }

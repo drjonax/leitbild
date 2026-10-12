@@ -97,6 +97,12 @@ describe('curated topology of the Norway model', () => {
     expect(lead.ratingMw).toBeGreaterThanOrEqual(transformer.ratingMw)
   })
 
+  test('Flesaker – Mjøndalen carries its two FeAl 240 circuits\' rating', () => {
+    const line = model.branches.find(branch => branch.provenance.sources.includes('curation:flesaker-mjondalen-feal-240'))!
+    // 2 × 147 MVA × 516/406 = 374 MVA at the 35 °C design air, at the model's 0 °C reference air.
+    expect([line.id, line.circuits, line.ratingMw]).toEqual(['branch:osm-ee73974c4b9512fd', 2, 515])
+  })
+
   test('the Ålefjær tap operated at 110 kV is not part of the ≥132 kV model', () => {
     expect(model.buses.filter(bus => bus.substationId === 'osm-relation-14027918')).toEqual([])
     expect(model.branches.filter(branch => branch.osmWayIds.includes('988971051'))).toEqual([])
