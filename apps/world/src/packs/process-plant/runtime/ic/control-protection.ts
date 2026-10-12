@@ -438,12 +438,13 @@ export const createProcessPlantProtectionRunner = (config: {
         for (const effect of rule.effects) {
           try {
             if (effect.type === 'writeSignal') {
-              config.onWrite?.(applyProcessPlantIcWriteEffect({
+              const written = applyProcessPlantIcWriteEffect({
                 system: config.system,
                 runtime,
                 effect,
                 evaluateWrite: signal => evaluateWriteAgainstGates({ runtime, signal, elapsedMs }),
-              }))
+              })
+              config.onWrite?.(written)
               continue
             }
             events.push(...enterLifecycle({ rule, effect, elapsedMs, simulationRunId, sourceRuntimeId }))
