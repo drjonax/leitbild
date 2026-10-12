@@ -4,12 +4,13 @@ import type { RunHistorian } from '../../features/historian/store.ts'
 import type { RunHistorianStatus } from '../../features/historian/policy.ts'
 import { recordingSeriesQuerySchema, type RecordingPage } from '../model/recording.ts'
 import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
+import { createProcedureObservationPort,type ProcedureObservationPort } from '../../features/procedures/pack-observations.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
 import type { CommandOrigin,PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
 import type { AgentRestrictions,RunRoles,ScenarioSide,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
 import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,isSideView,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema,type AudienceIssue } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
-import type { PackWikiRef } from '../packs/protocol.ts'
+import type { PackProcedureContribution,PackWikiRef } from '../packs/protocol.ts'
 import type { ScenarioRevisionId } from '../scenarios/library.ts'
 import { canIssueCommand,type Actor } from './actors.ts'
 import { assertRunCapabilityAllowed,isAudienceRefusal,roleGateRefusal,roleViewNotSupportedRefusal,viewerForActor,type RoleGateRefusal } from './role-gates.ts'
@@ -82,6 +83,11 @@ export interface SimulationRunRuntime {
     readonly sourcePath?: string
   }) => Promise<ProcedureDocument>
   readonly procedureEvidence: (config: ProcedureEvidenceRequest) => Promise<ProcedureEvidence>
+  /**
+   * A procedure scope's live observations through its owning Pack's procedure
+   * contribution, read as `actor` so that actor's restrictions apply.
+   */
+  readonly procedureObservations: (actor: Actor, plantId: string) => ProcedureObservationPort
   readonly publishInteractionSignal: (signal: InteractionSignal, provenance: Provenance) => Promise<void>
   readonly metrics: () => SimulationRunRuntimeMetricsSnapshot
   readonly health: () => ReadonlyArray<PackRuntimeHealth>
@@ -175,6 +181,8 @@ export const createSimulationRunRuntime = async (config: {
    */
   readonly roleAwarePackIds?: ReadonlyArray<string>
   readonly procedureSourceService?: ProcedureSourceService
+  /** The procedure contribution of the Pack that owns an object, where that Pack offers one. */
+  readonly procedureProvider?: (object: OperationalObject) => PackProcedureContribution | undefined
   /** Wall-time transport health bound; never a physical qualification duration. */
   readonly observationAcquisitionTimeoutMs?: number
   readonly historian?: RunHistorian
@@ -1430,6 +1438,25 @@ export const createSimulationRunRuntime = async (config: {
     finally { if (mutating) activeMutations-- }
   }
 
+  // The scope's owning Pack answers through its declared read Capabilities,
+  // invoked as the caller: World interprets none of its plant logic.
+  const procedureObservations = (actor: Actor, plantId: string): ProcedureObservationPort => {
+    const object = state.snapshot().objects.find(candidate => candidate.id === plantId)
+    if (!object) throw new Error(`procedure target no longer exists: ${plantId}`)
+    const provider = config.procedureProvider?.(object)
+    if (!provider) throw new Error(`Pack ${object.packId} offers no procedure observations for ${plantId}`)
+    if (provider.scopeIdForObject(object) !== plantId) throw new Error(`Pack ${object.packId} does not scope procedures on ${plantId}`)
+    return createProcedureObservationPort({
+      scopeId: plantId,
+      provider,
+      query: async query => {
+        const outcome = await invokeCapability(actor, { capabilityId: query.capabilityId, input: query.input })
+        if (outcome.kind !== 'query') throw new Error(`procedure observation ${query.capabilityId} is not a read`)
+        return outcome.result
+      },
+    })
+  }
+
   const checkpointForCopy = async (): Promise<SimulationRunCopyCheckpoint> => await enqueueOperation(async () => {
     if (activeMutations > 0 || pendingCues > 0) throw Object.assign(
       new Error('Simulation Run has commands preparing changes; retry copy when they finish'),
@@ -1608,6 +1635,7 @@ export const createSimulationRunRuntime = async (config: {
     procedureCatalog: async (catalogConfig = {}) => await procedureSourceService.readCatalog(catalogConfig),
     procedureDocument: async (documentConfig) => await procedureSourceService.readDocument(documentConfig),
     procedureEvidence: async evidenceConfig => await procedureSourceService.readEvidence(evidenceConfig),
+    procedureObservations,
     publishInteractionSignal: async (signal: InteractionSignal, provenance: Provenance): Promise<void> => await enqueueOperation(async () => {
         await enqueuePublish(async () => {
           await handleInteractionSignalNow(signal, provenance)

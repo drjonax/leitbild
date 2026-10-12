@@ -654,6 +654,7 @@ export const createSimulationRunRegistry = (config: {
           || scenarioRuntime.runtimes.some(runtime => runtime.runtimeId === entry.runtimeId)),
         roleAwarePackIds: scenarioRuntime.packs.flatMap(pack => pack.roleAware === true ? [pack.descriptor.id] : []),
         procedureSourceService,
+        procedureProvider: object => scenarioRuntime.packs.find(pack => pack.descriptor.id === object.packId)?.procedures,
         runtimeStateLoaders: Object.fromEntries(Object.entries(runtimeStateStores).map(([runtimeId, store]) => [runtimeId, store.load])),
         ...(historian === undefined ? {} : { historian }),
       })
