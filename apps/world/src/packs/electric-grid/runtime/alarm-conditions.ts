@@ -14,6 +14,10 @@ const mw = (value: number): string => `${value.toFixed(1)} MW`
 
 type Emit = (observation: GridAlarmObservation) => void
 
+/** How a message names an island: by the station of its anchor bus, as the alarm list and islands.list name it. */
+const islandStation = (grid: GridRuntimeInstance, structure: GridTopologyIsland): string =>
+  grid.definition.index.busById.get(structure.anchorBusId)!.label
+
 const islandObservation = (island: GridIsland, condition: string, timing: GridAlarmTiming, fields: Pick<GridAlarmObservation, 'raising' | 'title' | 'message' | 'value' | 'limit' | 'unit'>): GridAlarmObservation => ({
   id: gridAlarmId('island', island.id, condition),
   scope: 'island',
@@ -24,7 +28,7 @@ const islandObservation = (island: GridIsland, condition: string, timing: GridAl
   ...fields,
 })
 
-const frequencyObservations = (settings: GridAlarmSettings, nominalHz: number, island: GridIsland, emit: Emit): void => {
+const frequencyObservations = (settings: GridAlarmSettings, nominalHz: number, island: GridIsland, station: string, emit: Emit): void => {
   const frequencyHz = island.workspace!.frequencyHz!
   const deviationHz = frequencyHz - nominalHz
   const side = deviationHz < 0 ? 'under' : 'over'
@@ -34,7 +38,7 @@ const frequencyObservations = (settings: GridAlarmSettings, nominalHz: number, i
     emit(islandObservation(island, `${side}-frequency-${band.id}`, band, {
       raising: Math.abs(deviationHz) > band.deviationHz,
       title: `${side === 'under' ? 'Under' : 'Over'}-frequency (${band.id})`,
-      message: `Island ${island.id} at ${frequencyHz.toFixed(3)} Hz, ${side === 'under' ? 'below' : 'above'} ${limitHz.toFixed(2)} Hz`,
+      message: `Island at ${station}: ${frequencyHz.toFixed(3)} Hz, ${side === 'under' ? 'below' : 'above'} ${limitHz.toFixed(2)} Hz`,
       value: frequencyHz,
       limit: limitHz,
       unit: 'Hz',
@@ -117,7 +121,7 @@ const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSetti
     emit(islandObservation(island, `reserve-deficit-${product}`, alarm, {
       raising: deficitMw > alarm.raiseMw,
       title: `Reserve deficit (${product})`,
-      message: `Island ${island.id} holds ${mw(heldMw)} of the ${mw(requiredMw)} ${product} requirement`,
+      message: `Island at ${islandStation(grid, structure)} holds ${mw(heldMw)} of the ${mw(requiredMw)} ${product} requirement`,
       value: deficitMw,
       limit: alarm.raiseMw,
       unit: 'MW',
@@ -127,12 +131,13 @@ const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSetti
 
 const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, state: GridAlarmState, island: GridIsland, structure: GridTopologyIsland, emit: Emit): void => {
   const automation = grid.definition.automation
-  frequencyObservations(settings, automation.swing.nominalFrequencyHz, island, emit)
+  const station = islandStation(grid, structure)
+  frequencyObservations(settings, automation.swing.nominalFrequencyHz, island, station, emit)
   if (state.baseIslandIds !== null && !state.baseIslandIds.has(island.id)) {
     emit(islandObservation(island, 'formed', settings.islandFormed, {
       raising: true,
       title: 'Island formed',
-      message: `Island ${island.id} (${structure.busIndices.length} buses) runs separated from the Grid's starting topology`,
+      message: `Island at ${station} (${structure.busIndices.length} buses) runs separated from the Grid's starting topology`,
       value: null,
       limit: null,
       unit: null,
@@ -153,7 +158,7 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
     emit(islandObservation(island, 'unserved-load', settings.unservedLoad, {
       raising: shedMw > settings.unservedLoad.raiseMw,
       title: 'Unserved load',
-      message: `Island ${island.id} sheds ${mw(shedMw)}: ${mw(lfddMw)} by LFDD, ${mw(emergencyMw)} by emergency shedding, ${mw(shedMw - lfddMw - emergencyMw)} by curtailment`,
+      message: `Island at ${station} sheds ${mw(shedMw)}: ${mw(lfddMw)} by LFDD, ${mw(emergencyMw)} by emergency shedding, ${mw(shedMw - lfddMw - emergencyMw)} by curtailment`,
       value: shedMw,
       limit: settings.unservedLoad.raiseMw,
       unit: 'MW',
@@ -164,7 +169,7 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
     emit(islandObservation(island, `lfdd-${stage.id}-operated`, settings.lfddStageOperated, {
       raising: true,
       title: `LFDD ${stage.id} operated`,
-      message: `LFDD ${stage.id} (${stage.thresholdHz} Hz) disconnected feeders in island ${island.id}; restore-lfdd-stage reconnects them`,
+      message: `LFDD ${stage.id} (${stage.thresholdHz} Hz) disconnected feeders in the island at ${station}; restore-lfdd-stage reconnects them`,
       value: null,
       limit: stage.thresholdHz,
       unit: 'Hz',
@@ -175,7 +180,7 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
     emit(islandObservation(island, 'ac-non-convergence', settings.acNonConvergence, {
       raising: true,
       title: 'AC load flow did not converge',
-      message: `Island ${island.id}: ${acReason}`,
+      message: `Island at ${station}: ${acReason}`,
       value: null,
       limit: null,
       unit: null,
@@ -335,7 +340,7 @@ export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIs
     emit(islandObservation(island, 'de-energised', settings.islandDeEnergised, {
       raising: true,
       title: 'Island de-energised',
-      message: `Island ${island.id} has no voltage-forming source: ${mw(demandMw)} of demand${plantConnections > 0 ? ` and ${plantConnections} Plant connection${plantConnections === 1 ? '' : 's'}` : ''} without supply`,
+      message: `Island at ${islandStation(grid, structure)} has no voltage-forming source: ${mw(demandMw)} of demand${plantConnections > 0 ? ` and ${plantConnections} Plant connection${plantConnections === 1 ? '' : 's'}` : ''} without supply`,
       value: demandMw,
       limit: null,
       unit: 'MW',

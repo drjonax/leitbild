@@ -189,7 +189,8 @@ describe('Grid AC load flow that does not converge', () => {
     expect(grid.projection).toMatchObject({ voltageModel: 'ac-fdlf', voltageMinPu: null, voltageMaxPu: null, notConvergedIslandCount: 1 })
     expect(grid.projection.islands[0]).toMatchObject({ voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null, flowModel: 'dc' })
     const alarm = [...grid.alarms.records.values()].find(record => record.active && record.id.includes('ac-non-convergence'))!
-    expect(alarm.message).toContain(island.id)
+    // The message names the island after its anchor bus's station, as the alarm list does.
+    expect(alarm.message).toStartWith(`Island at ${grid.definition.index.busById.get(grid.islandPlan!.plan.islands[island.planIndex]!.anchorBusId)!.label}: `)
     // The port stays energised with its frequency, and reports no voltage.
     expect(gridElectricalPortsAt({ grid, at: iso(2) })[0]!.state).toMatchObject({ energized: true, voltagePu: null, frequencyHz: grid.busStates.get('bus:l')!.frequencyHz })
 

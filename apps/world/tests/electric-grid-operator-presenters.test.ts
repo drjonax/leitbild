@@ -94,6 +94,8 @@ describe('Grid operator alarms presenter', () => {
     const island = islands.islands.find(candidate => formed.id === `island:${candidate.id.slice('island:'.length)}:formed`)!
     expect([island.anchorBus.id, island.referenceBus.id]).toEqual(['bus:l', 'bus:b'])
     expect(formed).toMatchObject({ mapAssetId: 'bus:l', assetLabel: 'Island at bus:l' })
+    // Its message names it the same way, never by its raw id.
+    expect(formed.message).toStartWith('Island at bus:l (')
   })
 })
 
