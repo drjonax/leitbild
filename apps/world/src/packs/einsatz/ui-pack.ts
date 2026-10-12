@@ -4,6 +4,7 @@ import { createWorldPackDescriptor, type PackObjectField, type PackObjectPresent
 import { packField } from '../../core/packs/presentation.ts'
 import { contactIcon } from './board/contacts.ts'
 import { clockText } from './board/text.ts'
+import { plannedPathFeatures } from './chain-path.ts'
 import { einsatzColors } from './colors.ts'
 import { einsatzPackId, einsatzRuntimeId } from './ids.ts'
 import { neutralLexicon, unitPhases, type UnitPhase } from './lexicon.ts'
@@ -21,6 +22,9 @@ import { boardMapOrders } from './ui/map-orders.ts'
  * a destroyed track keeps what it had and is muted. A side's track index,
  * which names the unit each track follows, reaches truth roles only and is
  * never drawn on the map.
+ *
+ * Each unit's job chain shows as its planned path: its route, then a
+ * straight segment to each queued step's target (`chain-path.ts`).
  *
  * Map labels: a unit shows its callsign and a short code of its phase, and
  * whether it is damaged; a receiving site, its name and whether it is
@@ -194,6 +198,10 @@ export const einsatzPackView = {
       { id: trackIndexesCategory, label: 'Track indexes', emptyLabel: 'No track indexes', matches: object => typeOf(object) === 'track-index' },
     ],
     presentObject: (object, context) => presentEinsatzObject(object, context),
+    /** Each unit's queued steps as straight segments after its route: the planned path of its job chain. */
+    mapFeatures: context => plannedPathFeatures(context.objects, unitsCategory),
+    mapFeatureLayers: ['routes'],
+    mapFeatureSourcePackIds: [einsatzPackId],
   },
   targeting: {
     isController: boardMapOrders.isController,

@@ -366,19 +366,12 @@ describe('Board divert protection', () => {
 
 describe('Board release and move', () => {
   for (const modality of modalities) {
-    test(`a committed unit refuses H; moved to a point it confirms, and its task reopens (${modality})`, async () => {
+    test(`a committed unit moved to a point confirms, and its task reopens; H then pauses it (${modality})`, async () => {
       await withScene([unitAt('e1', 'E1', conditionedServer, at(0)), taskAt('f1', 'F1', kinds.templates.conditioned, at(8))], async run => {
         await accepted(run, ids.send, { units: ['e1'], to: { taskId: 'f1' } })
         await runFor(run, 61_000)
         const screen = await openScreen(run, createWall())
-        if (modality === 'keys') {
-          await screen.key(']')
-          await screen.key('h')
-        } else await screen.click({ kind: 'verb', verb: 'hold', id: 'e1' })
-        const held = lastCall(screen)!.result
-        if (held.ok) throw new Error('expected a refusal')
-        expect(refusalCode(held.reason)).toBe('unit_committed')
-        expect(screen.view().feedback?.text).toEndWith('recall first (R), or move it (M)')
+        if (modality === 'keys') await screen.key(']')
 
         if (modality === 'keys') await screen.key('m')
         else await screen.click({ kind: 'verb', verb: 'move', id: 'e1' })
@@ -389,6 +382,10 @@ describe('Board release and move', () => {
         expect(lastCall(screen)).toMatchObject({ input: { units: ['e1'], divert: [{ unitId: 'e1', fromTaskId: 'f1' }] }, result: { ok: true } })
         const reopened = screen.view().workList.rows.find(row => row.id === 'f1')!
         expect([reopened.served, reopened.coverageText]).toEqual([false, `needs 1 more ${civilConfig.taskTemplates.find(entry => entry.id === kinds.templates.conditioned)!.requires[0]!.label.one}`])
+
+        if (modality === 'keys') await screen.key('h')
+        else await screen.click({ kind: 'verb', verb: 'hold', id: 'e1' })
+        expect(lastCall(screen)).toMatchObject({ capabilityId: ids.hold, input: { unitId: 'e1' }, result: { ok: true } })
       })
     })
   }

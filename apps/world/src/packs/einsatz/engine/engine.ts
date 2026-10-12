@@ -1,6 +1,8 @@
 import { routeDistanceMeters, type RouteImpact } from '../../../core/model/index.ts'
 import { standingOrderBy } from '../ids.ts'
 import { refusalCode } from '../refusal.ts'
+import { planChainNext, planClear, planQueue, planResume, planStepRemove, skipHead } from './chain.ts'
+import { chainBy } from './chain-steps.ts'
 import { planEngage, planSetRoe } from './engagement-orders.ts'
 import { closeDraft, openDraft, putUnit, setMotion, unitIn } from './draft.ts'
 import { refused, type Refused } from './intent-support.ts'
@@ -10,7 +12,7 @@ import { prepareLeg, type RoutePort } from './movement.ts'
 import { planHold, planRecall, planSend } from './orders.ts'
 import { settle, stepUntil } from './phases.ts'
 import { planSiteSet, planTaskClose, planTaskCreate, planUnitAdjust, planUnitCreate } from './records.ts'
-import { orderFailedCode, type DueReflex, type StandingOrder } from './reflexes.ts'
+import { orderFailedCode, type DueReflex, type Reflex } from './reflexes.ts'
 import { isDestroyed, isSite, linksToSite } from './rules.ts'
 import { patch, sameValue } from './values.ts'
 import { loadText } from './wording.ts'
@@ -49,6 +51,11 @@ export const planIntent = (state: EngineState, intent: Intent, actor: EngineActo
     case 'unit.adjust': return planUnitAdjust(state, intent, actor)
     case 'set-roe': return planSetRoe(state, intent, actor)
     case 'engage': return planEngage(state, intent, actor)
+    case 'queue': return planQueue(state, intent, actor)
+    case 'step.remove': return planStepRemove(state, intent, actor)
+    case 'resume': return planResume(state, intent, actor)
+    case 'clear': return planClear(state, intent, actor)
+    case 'chain.next': return planChainNext(state, intent, actor)
   }
 }
 
@@ -123,12 +130,13 @@ const deliverIntent = (state: EngineState, unit: UnitRecord): { readonly ok: tru
   return { ok: true, intent: { kind: 'send', units: [unit.id], to: { siteId: nearest.site.id } } }
 }
 
-const orderWords: Readonly<Record<StandingOrder, string>> = { deliver: 'Deliver', return: 'Return', withdraw: 'Withdraw' }
+const orderWords: Readonly<Record<Reflex, string>> = { deliver: 'Deliver', return: 'Return', withdraw: 'Withdraw', chain: 'Next step' }
 
 /**
  * A standing order that cannot be carried out raises its alert on the unit,
  * which holds where it is; the order is evaluated again at the next 2 s
- * boundary. It is never a runtime failure and never skipped silently.
+ * boundary. It is never a runtime failure and never skipped silently. So
+ * does the next step of a chain while the router is unavailable.
  */
 const reflexFailed = (state: EngineState, due: DueReflex, reason: string): AdvanceOutcome => {
   const draft = openDraft(state)
@@ -139,8 +147,24 @@ const reflexFailed = (state: EngineState, due: DueReflex, reason: string): Advan
   return { state: closeDraft(draft), transitions: draft.transitions }
 }
 
+/**
+ * The next step of a chain could not be routed. While the router is
+ * unavailable the step waits and is tried again at the next boundary; a
+ * point no road reaches will never be, so that step is skipped.
+ */
+const chainUnrouted = (state: EngineState, due: DueReflex, reason: string): AdvanceOutcome => {
+  if (refusalCode(reason) === 'routing_unavailable') return reflexFailed(state, due, reason)
+  const draft = openDraft(state)
+  skipHead(draft, due.unitId, unitIn(state, due.unitId).orders[0]!, reason)
+  return { state: closeDraft(draft), transitions: draft.transitions }
+}
+
 const runReflex = async (state: EngineState, due: DueReflex, ports: EnginePorts): Promise<AdvanceOutcome> => {
   const unit = unitIn(state, due.unitId)
+  if (due.order === 'chain') {
+    const outcome = await runIntent(state, { kind: 'chain.next', unitId: unit.id }, { by: chainBy, commandable: commandsEveryUnit }, ports)
+    return outcome.ok ? outcome : chainUnrouted(state, due, outcome.reason)
+  }
   const actor: EngineActor = { by: standingOrderBy(due.order), commandable: commandsEveryUnit }
   const order = due.order === 'deliver' ? deliverIntent(state, unit) : { ok: true as const, intent: { kind: 'recall' as const, unitId: unit.id } }
   const outcome = order.ok ? await runIntent(state, order.intent, actor, ports) : order

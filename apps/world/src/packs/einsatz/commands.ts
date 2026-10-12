@@ -4,6 +4,7 @@ import { commandInputSchemas, einsatzCommandIds, type CommandInput, type Einsatz
 import { notInPicture, refused, type Refused } from './engine/intent-support.ts'
 import type { EngineActor, Intent } from './engine/intents.ts'
 import type { EngineState } from './engine/model.ts'
+import type { StepTarget } from './steps.ts'
 import { actorFor, controllerOnly, inPicture, taskAuthority, unitAuthority, type EinsatzViewer } from './viewer.ts'
 
 /**
@@ -60,6 +61,10 @@ const queued = (context: CommandContext, taskId: string): Refused | undefined =>
   return task === undefined ? undefined : taskAuthority(context.state.catalog, context.viewer, task)
 }
 
+/** Refused unless a target is in the viewer's picture: its task, site or track. A point is open ground. */
+const targetSeen = (context: CommandContext, to: StepTarget): Refused | undefined =>
+  'taskId' in to ? seen(context, to.taskId) : 'siteId' in to ? seen(context, to.siteId) : 'trackId' in to ? trackSeen(context, to.trackId) : undefined
+
 /**
  * A label for a unit created without one: the type's label and the next
  * number no unit of the Run carries. An undeclared type keeps its id; the
@@ -80,12 +85,26 @@ const intentFor = (context: CommandContext, kind: EinsatzCommandId, payload: unk
   switch (kind) {
     case einsatzCommandIds.send: {
       const input = parse(einsatzCommandIds.send)
-      const to = input.to
-      const target = 'taskId' in to ? seen(context, to.taskId) : 'siteId' in to ? seen(context, to.siteId) : undefined
       return ok({ kind: 'send', ...input },
         ...input.units.map(unitId => commanded(context, unitId)),
-        target,
+        targetSeen(context, input.to),
         ...(input.divert ?? []).map(entry => seen(context, entry.fromTaskId)))
+    }
+    case einsatzCommandIds.queue: {
+      const input = parse(einsatzCommandIds.queue)
+      return ok({ kind: 'queue', ...input }, commanded(context, input.unitId), targetSeen(context, input.to))
+    }
+    case einsatzCommandIds.stepRemove: {
+      const input = parse(einsatzCommandIds.stepRemove)
+      return ok({ kind: 'step.remove', ...input }, commanded(context, input.unitId))
+    }
+    case einsatzCommandIds.resume: {
+      const input = parse(einsatzCommandIds.resume)
+      return ok({ kind: 'resume', ...input }, commanded(context, input.unitId))
+    }
+    case einsatzCommandIds.clear: {
+      const input = parse(einsatzCommandIds.clear)
+      return ok({ kind: 'clear', ...input }, commanded(context, input.unitId))
     }
     case einsatzCommandIds.recall: {
       const input = parse(einsatzCommandIds.recall)

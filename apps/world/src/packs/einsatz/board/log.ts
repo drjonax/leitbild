@@ -44,6 +44,10 @@ const actionText = (rules: BoardRules, records: BoardRecords, record: BoardUnit 
     set: record.type === 'unit' && record.accepting !== undefined ? (record.accepting ? 'accepting' : 'not accepting') : 'set',
     close: 'closed',
     engage: target === undefined ? 'engaging a target' : `engaging${to}`,
+    queue: target === undefined ? 'queued a move' : `queued${to}`,
+    remove: target === undefined ? 'step removed' : `step removed:${to}`,
+    resume: 'resumed',
+    clear: 'chain cleared',
   }
   const known = (verb: string): verb is ActionVerb => Object.hasOwn(verbs, verb)
   if (!known(action.verb)) throw new Error(`Unknown Einsatz order ${action.verb}`)

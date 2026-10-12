@@ -556,6 +556,14 @@ describe('the wire oracle on a sided fixture Run', () => {
     }
     const scout = idOf(named.scout.label)
     const farGun = idOf(named.farGun.label)
+    // Each side gives its carrier a job chain: a long move, then its own task queued behind it, so steps naming each side's ids ride through the fight.
+    const away = { type: 'Point', coordinates: [10.40, 59.91] }
+    for (const [screen, carrier, task] of [[red, einsatz.redCarrier.id, einsatz.redTask.id], [blue, einsatz.blueCarrier.id, einsatz.blueTask.id]] as const) {
+      for (const [capabilityId, input] of [[einsatzCommandIds.send, { units: [carrier], to: { point: away } }], [einsatzCommandIds.queue, { unitId: carrier, to: { taskId: task } }]] as const) {
+        const outcome = await command(screen, capabilityId, input)
+        if (outcome.kind !== 'command' || !outcome.result.ok) throw new Error(`${screen.name} could not chain ${carrier}: ${JSON.stringify(outcome)}`)
+      }
+    }
     const before = { red: shownOn(red), blue: shownOn(blue) }
     // Red orders its far shooter to hold fire: a side's order, which only Red and truth views hear of.
     const held = await command(red, einsatzCommandIds.setRoe, { unitId: farGun, roe: 'hold' })
@@ -578,6 +586,10 @@ describe('the wire oracle on a sided fixture Run', () => {
     const logOf = (board: string): ReadonlyArray<string> => (JSON.parse(board) as { readonly log: ReadonlyArray<{ readonly recordId: string; readonly text: string }> }).log.filter(entry => entry.recordId === farGun).map(entry => entry.text)
     expect(logOf(boards.red)).toContain(`${named.farGun.label}: set · ${roeWords.hold}`)
     expect(logOf(boards.blue)).toEqual([])
+    // Each side's carrier holds its queued step on its side's screen alone.
+    const queuedTask = (screen: Screen, carrier: string) => (screen.stores?.objects.find(object => object.id === carrier)?.packData as { readonly orders?: ReadonlyArray<{ readonly target: unknown; readonly state: string }> } | undefined)?.orders?.find(step => step.state === 'queued')?.target
+    expect(queuedTask(red, einsatz.redCarrier.id)).toEqual({ taskId: einsatz.redTask.id })
+    expect(queuedTask(blue, einsatz.blueCarrier.id)).toEqual({ taskId: einsatz.blueTask.id })
     await expectNoLeak(red, 'red', {}, [boards.red])
     await expectNoLeak(blue, 'blue', {}, [boards.blue])
     expect(sideCommands.get(held.result.commandId)).toEqual(['red'])

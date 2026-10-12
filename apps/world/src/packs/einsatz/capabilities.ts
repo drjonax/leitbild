@@ -12,6 +12,13 @@ import { recommendationSchema } from './recommendation-schema.ts'
  * <message>` in the configuration's own words. Every command is schedulable
  * from the Scenario timeline; creating units and tasks and adjusting
  * property values are controller-only.
+ *
+ * Every unit carries out a job chain (`orders`, see `steps.ts`): send does
+ * it now, queue adds it at the end, step.remove takes one step out, hold
+ * pauses the chain and resume continues it, clear empties it and recall
+ * empties it and brings the unit home. A command result carries no data, so
+ * a send or queue names the step it created in the unit's
+ * `lastAction.stepId`, which is how a caller undoes it.
  */
 
 export const einsatzCommandIds = {
@@ -25,6 +32,10 @@ export const einsatzCommandIds = {
   siteSet: 'world.einsatz.site.set',
   setRoe: 'world.einsatz.unit.set-roe',
   engage: 'world.einsatz.unit.engage',
+  queue: 'world.einsatz.unit.queue',
+  stepRemove: 'world.einsatz.unit.step.remove',
+  resume: 'world.einsatz.unit.resume',
+  clear: 'world.einsatz.unit.clear',
 } as const
 export const einsatzQueryIds = {
   recommend: 'world.einsatz.recommend',
@@ -42,6 +53,10 @@ export const commandInputSchemas = {
   [einsatzCommandIds.siteSet]: z.object(intentFields.siteSet).strict(),
   [einsatzCommandIds.setRoe]: z.object(intentFields.setRoe).strict(),
   [einsatzCommandIds.engage]: z.object(intentFields.engage).strict(),
+  [einsatzCommandIds.queue]: z.object(intentFields.queue).strict(),
+  [einsatzCommandIds.stepRemove]: z.object(intentFields.stepRemove).strict(),
+  [einsatzCommandIds.resume]: z.object(intentFields.resume).strict(),
+  [einsatzCommandIds.clear]: z.object(intentFields.clear).strict(),
 }
 export type EinsatzCommandId = keyof typeof commandInputSchemas
 export type CommandInput<K extends EinsatzCommandId> = z.output<typeof commandInputSchemas[K]>
@@ -76,21 +91,49 @@ export const einsatzCapabilities: ReadonlyArray<SimulationCapability> = [
   command({
     id: einsatzCommandIds.send,
     title: 'Send units',
-    description: 'Send one or more units, all or nothing, to a task (travel, work on task, deliver load, return), a receiving site or a point (a move). Units not named in divert must be free; a divert names the task each unit leaves, and to another task it is allowed only before arrival and only from work of strictly lower priority than what the target still needs. A divert to a site or point releases the unit and moves it. Sending a unit to the task it already serves succeeds and changes nothing. Refusals read <code>: <message>.',
+    description: 'Do it now: send one or more units, all or nothing, to a task (travel, work on task, deliver load, return), a receiving site (deliver while carrying load, else go there), a point (a move) or one of their own side\'s tracks (engage, armed units only). The target becomes each unit\'s active step; the steps it has queued stay behind it, except any for the task it now serves. Units not named in divert must be free; a divert names the task each unit leaves and removes only that step, and to another task it is allowed only before arrival and only from work of strictly lower priority than what the target still needs. A divert to a site, point or track releases the unit and moves it. Sending a unit to the task it already serves succeeds and changes nothing. A paused unit, or one waiting for a route, keeps its first step queued, so a send adds a step: one that would leave more than 20 is refused chain_full. Each unit\'s new step id is in its lastAction.stepId. Refusals read <code>: <message>.',
     idempotent: false,
     targets: input => objectIds(...input.units),
   }),
   command({
+    id: einsatzCommandIds.queue,
+    title: 'Queue a step',
+    description: 'Add to the end of a unit\'s job chain: a task (serve), a receiving site (deliver while it will carry load, else go there), a point (move) or one of its own side\'s tracks (engage, armed units only). A unit holding no step and not paused starts it at once, exactly as a send. A queued step counts towards no task until it is active. A task the chain already holds is taken again only as a further trip for load still waiting there (else requirement_covered). It is judged as the unit will stand when it comes up: a step a loaded unit cannot take before delivering is refused unit_loaded unless its deliver order delivers first; a chain holding 20 steps is refused chain_full (only a loaded unit\'s deliver order may put a 21st, its delivery, in front). The new step id is in the unit\'s lastAction.stepId.',
+    idempotent: false,
+    targets: input => objectIds(input.unitId),
+  }),
+  command({
+    id: einsatzCommandIds.stepRemove,
+    title: 'Remove a step',
+    description: 'Remove one step from a unit\'s job chain. A queued step leaves; the active step is released as a recall releases it (load not yet picked up returns to its task) and the unit stops where it is and starts its next step, or, with none left, its return order applies. A unit keeps a step that delivers the load it carries, or will carry by then unless its deliver order delivers it anyway (unit_loaded). An unknown step id is refused step_not_found. Undo a send or queue by removing the step it created.',
+    idempotent: false,
+    targets: input => objectIds(input.unitId),
+  }),
+  command({
     id: einsatzCommandIds.recall,
     title: 'Recall unit',
-    description: 'Release a unit from its task, if any, and return it to base. Load not yet picked up returns to the task with its original age. A unit carrying load must deliver first. fromTaskId, when given, must still be the unit\'s task.',
+    description: 'Clear a unit\'s job chain, releasing it from its task, if any, and return it to base. Load not yet picked up returns to the task with its original age. A unit carrying load must deliver first. fromTaskId, when given, must still be the unit\'s task.',
     idempotent: false,
     targets: input => objectIds(input.unitId),
   }),
   command({
     id: einsatzCommandIds.hold,
     title: 'Hold unit',
-    description: 'Halt a free unit where it is. A unit committed to a task is recalled or moved instead.',
+    description: 'Pause a unit\'s job chain where it is. A unit under way or turning out stops and holds: its active step goes back to the queue, releasing its task, so it counts towards nothing while paused. A unit returning home stops and stands available there. A standing unit keeps its phase; work on task, a handover or an engagement under way goes on in place. A unit that cannot move pauses the engage steps it holds. No further step starts and no deliver or return order runs until resume or a new send.',
+    idempotent: true,
+    targets: input => objectIds(input.unitId),
+  }),
+  command({
+    id: einsatzCommandIds.resume,
+    title: 'Resume unit',
+    description: 'Resume a paused unit\'s job chain from the phase it was paused in: its next step starts at once, or, holding none, its deliver and return orders apply as they would have, so a unit parked at a point stays there. A unit that is not paused is left as it is.',
+    idempotent: true,
+    targets: input => objectIds(input.unitId),
+  }),
+  command({
+    id: einsatzCommandIds.clear,
+    title: 'Clear a job chain',
+    description: 'Remove every step of a unit\'s job chain, releasing the active one as a recall does. The unit stops where it is and its return order applies. A paused unit holding no step is only resumed, in the phase it idles in. A unit carrying load must deliver first.',
     idempotent: true,
     targets: input => objectIds(input.unitId),
   }),
@@ -146,7 +189,7 @@ export const einsatzCapabilities: ReadonlyArray<SimulationCapability> = [
   defineSimulationQueryCapability({
     id: einsatzQueryIds.recommend,
     title: 'Recommend units for a task',
-    description: 'For a task: the smallest set of free units covering what it needs, by fit then ETA; when free units cannot cover it, completed with units still on their way to strictly lower-priority work (diverts), else the best partial set with the remainder named. Also single-unit alternatives (free first, then diverts), ineligible units with the reasons, and busy units. ETAs include turnout and say whether they are routed or straight-line. Where the router fails or finds no route, or a point lies more than 1 km from a road, the ETA is unavailable with the refusal a send would get (routing_unavailable, no_road_near_point) and the straight distance; the recommendation is still given.',
+    description: 'For a task: the smallest set of free units covering what it needs, by fit then ETA; when free units cannot cover it, completed with units still on their way to strictly lower-priority work (diverts), else the best partial set with the remainder named. Also single-unit alternatives (free first, then diverts), ineligible units with the reasons, busy units, and the units that hold the task queued in their job chain (next), which count towards nothing until it is active. A proposed or alternative unit that holds steps says how many (steps): a send replaces its active step, a queue adds behind them. ETAs include turnout and say whether they are routed or straight-line. Where the router fails or finds no route, or a point lies more than 1 km from a road, the ETA is unavailable with the refusal a send would get (routing_unavailable, no_road_near_point) and the straight distance; the recommendation is still given.',
     input: recommendInputSchema,
     output: recommendationSchema,
     inspectObjectIds: raw => objectIds(recommendInputSchema.parse(raw).taskId),

@@ -72,6 +72,8 @@ export const engineRefusalCodes = [
   'track_not_engageable',
   'track_not_deletable',
   'reserved_id',
+  'chain_full',
+  'step_not_found',
 ] as const
 
 export type EngineRefusalCode = typeof engineRefusalCodes[number]

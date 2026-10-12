@@ -8,7 +8,7 @@ import { byId, countOf } from './engine/values.ts'
 import { classCode, unitWord } from './engine/wording.ts'
 import { etaSeconds, etasTo, type TablePort } from './eta.ts'
 import { refusal } from './refusal.ts'
-import { commandsUnit, taskAuthority, type EinsatzViewer } from './viewer.ts'
+import { commandsUnit, inPicture, taskAuthority, type EinsatzViewer } from './viewer.ts'
 
 /**
  * Recommendations for a task. It reads one engine state, the snapshot it is
@@ -23,6 +23,10 @@ import { commandsUnit, taskAuthority, type EinsatzViewer } from './viewer.ts'
  * - Fit is how much of the task a unit fills. Units filling the same
  *   requirements and load classes with the same free capacity fill alike, so
  *   the search picks among them by ETA, nearest first.
+ * - Only a unit's active step counts: a unit holding the task queued behind
+ *   other work is named under `next`, never as covering it. A free unit may
+ *   hold steps (a move, an engagement, a paused chain); each candidate says
+ *   how many, so the caller can ask whether to do it now or add it to the end.
  */
 
 /** The most combinations a search may judge before it refuses as too large to answer. */
@@ -188,6 +192,15 @@ const survey = (state: EngineState, task: TaskRecord, commandable: (unit: UnitRe
 
 const rejected = (reason: { readonly reason: string }, code: 'capability_target_not_found' | 'capability_input_rejected') => capabilityRejection(code, reason.reason)
 
+/** Units in the viewer's picture with the task queued in their chain, by how many steps come first, then id. */
+const queuedFor = (state: EngineState, viewer: EinsatzViewer, task: TaskRecord): Recommendation['next'] => [...state.units.values()]
+  .filter(unit => inPicture(state.catalog, viewer, unit))
+  .flatMap(unit => {
+    const stepsAhead = unit.orders.findIndex(step => step.state === 'queued' && 'taskId' in step.target && step.target.taskId === task.id)
+    return stepsAhead < 0 ? [] : [{ unitId: unit.id, label: unit.label, stepId: unit.orders[stepsAhead]!.id, stepsAhead }]
+  })
+  .sort((a, b) => a.stepsAhead - b.stepsAhead || (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0))
+
 /**
  * The recommendation for a task as the viewer sees it: proposal,
  * alternatives, ineligible and busy units. A task outside the viewer's
@@ -236,6 +249,7 @@ export const recommend = async (input: {
       label: entry.unit.label,
       eta: entry.eta,
       ...(from === undefined ? {} : { divertFrom: { taskId: from.id, label: from.label, rank: { id: from.rank, code: classCode(state.catalog, from.rank) } } }),
+      ...(entry.unit.orders.length === 0 ? {} : { steps: entry.unit.orders.length }),
     }
   }
   const byFit = (entries: ReadonlyArray<Candidate>): Candidate[] => entries
@@ -260,5 +274,6 @@ export const recommend = async (input: {
       .filter(unit => !inProposal.has(unit.id) && !divertIds.has(unit.id))
       .map(unit => ({ unitId: unit.id, label: unit.label, reason: hasLoad(unit) ? loadedText(state, unit) : committedText(state, unit) })),
     servable: servableAfter(state, task, proposed),
+    next: queuedFor(state, viewer, task),
   }
 }

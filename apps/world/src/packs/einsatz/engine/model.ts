@@ -3,6 +3,7 @@ import { geoJsonLineStringSchema, geoJsonPointSchema, idSchema, type GeoJsonPoin
 import { configIdSchema, roeModes, type EinsatzConfig, type LoadClass, type TaskTemplate, type UnitType } from '../config-schema.ts'
 import { validateEinsatzConfig } from '../config-validation.ts'
 import { unitPhases } from '../lexicon.ts'
+import { orderByMaxLength, ordersSchema } from '../steps.ts'
 import { emptyCombatState, type CombatState, type Sighting, type TrackIndexRecord, type TrackRecord } from './combat-model.ts'
 
 const simulationMs = z.number().finite().nonnegative()
@@ -19,7 +20,7 @@ export type PropertyValue = z.output<typeof propertyValueSchema>
  * all held at once, would name more (`role_labels_too_long`). An actor id or
  * a standing order is far shorter.
  */
-export const lastActionByMaxLength = 1_000
+export const lastActionByMaxLength = orderByMaxLength
 
 /** A prepared route: geometry, travel time at this unit's own full speed, distance and the router that produced it. */
 export const legSchema = z.object({
@@ -30,8 +31,13 @@ export const legSchema = z.object({
 }).strict()
 export type Leg = z.output<typeof legSchema>
 
-export const actionVerbs = ['create', 'send', 'divert', 'move', 'deliver', 'recall', 'hold', 'release', 'adjust', 'set', 'close', 'engage'] as const
-/** The last order a record received: what, towards which object, by whom and why, at which Run time. */
+export const actionVerbs = ['create', 'send', 'divert', 'move', 'deliver', 'recall', 'hold', 'release', 'adjust', 'set', 'close', 'engage', 'queue', 'remove', 'resume', 'clear'] as const
+/**
+ * The last order a record received: what, towards which object, by whom and
+ * why, at which Run time. An order that adds or removes a step of the unit's
+ * chain names it in `stepId`: a send or queue names the step it created, so
+ * its caller can undo it with `unit.step.remove`.
+ */
 export const lastActionSchema = z.object({
   verb: z.enum(actionVerbs),
   target: idSchema.optional(),
@@ -39,6 +45,7 @@ export const lastActionSchema = z.object({
   by: z.string().trim().min(1).max(lastActionByMaxLength),
   cause: z.string().trim().min(1).max(500).optional(),
   atMs: simulationMs,
+  stepId: idSchema.optional(),
 }).strict()
 export type LastAction = z.output<typeof lastActionSchema>
 
@@ -75,9 +82,11 @@ export const integrities = ['healthy', 'damaged', 'destroyed'] as const
 /**
  * A unit's `packData`. It changes only on transitions (phase, task, load,
  * leg, integrity, properties, alerts, last order, rules of engagement,
- * targets, posture); its position, leg progress and fire received are
+ * targets, posture, chain); its position, leg progress and fire received are
  * per-cycle runtime state. A site is a unit whose type has
  * `receiving` and no `mobility`; it alone carries `accepting` and `received`.
+ * `orders` is the unit's job chain (`steps.ts`): `taskId`, `siteId` and the
+ * leg carry out its active step.
  */
 export const unitDataSchema = z.object({
   type: z.literal('unit'),
@@ -110,6 +119,12 @@ export const unitDataSchema = z.object({
   stillSinceMs: simulationMs.optional(),
   /** On a unit with a signature: it fired within the last 60 s, so it is seen further away. */
   revealed: z.literal(true).optional(),
+  /** The job chain: the active step first, then the queued ones. */
+  orders: ordersSchema,
+  /** The number of the last step the unit was given; absent before its first. Step ids never repeat on a unit. */
+  stepSerial: z.number().int().positive().optional(),
+  /** Paused by `unit.hold`: the unit starts no further step and runs no deliver or return order until `unit.resume` or a new order. It keeps the phase it stood in, or holds where the hold stopped it. */
+  paused: z.literal(true).optional(),
 }).strict()
 
 const tally = z.number().int().nonnegative()

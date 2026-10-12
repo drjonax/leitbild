@@ -121,7 +121,7 @@ const detectable = (draft: Draft, units: ReadonlyArray<UnitRecord>): UnitRecord[
 
 const trackKey = (side: string, subjectId: string): string => `${side}\u0000${subjectId}`
 
-/** Drops a track; orders naming it are cleared when the engagement step chooses targets. */
+/** Drops a track. The engagement step skips the steps naming it, and clears priority targets on it when it chooses targets. */
 const dropTrack = (draft: Draft, track: TrackRecord): void => {
   draft.combat.tracks.delete(track.id)
   draft.combat.sightings.delete(track.id)
@@ -130,10 +130,11 @@ const dropTrack = (draft: Draft, track: TrackRecord): void => {
 /**
  * Runs detection at the draft's time: opens and refreshes tracks, upgrades
  * tiers, refreshes fixes, then sets each track's fix flag and drops tracks
- * not detected for `trackTimeoutMs`. Transitions are recorded by the
- * engagement step once the whole step has run.
+ * not detected for `trackTimeoutMs`, returning the dropped records.
+ * Transitions are recorded by the engagement step once the whole step has
+ * run.
  */
-export const detect = (draft: Draft): void => {
+export const detect = (draft: Draft): ReadonlyArray<TrackRecord> => {
   const atMs = draft.timeMs
   const units = [...draft.units.values()].sort(byId)
   const sensors = sensorsOf(draft, units)
@@ -147,16 +148,19 @@ export const detect = (draft: Draft): void => {
       if (detection !== undefined) observe(draft, side, subject, detection, tracked.get(trackKey(side, subject.id)))
     }
   }
+  const dropped: TrackRecord[] = []
   for (const track of [...draft.combat.tracks.values()].sort(byId)) {
     const sighting = draft.combat.sightings.get(track.id)
     if (sighting === undefined) throw new Error(`${track.id}: no sighting`)
     if (atMs - sighting.observedAtMs >= trackTimeoutMs) {
       dropTrack(draft, track)
+      dropped.push(track)
       continue
     }
     const fix = track.tier !== 'destroyed' && sighting.fixAtMs !== undefined && atMs - sighting.fixAtMs < fixWindowMs
     if (fix !== track.fix) draft.combat.tracks.set(track.id, { ...track, fix })
   }
+  return dropped
 }
 
 /** A side's track on a unit, if it holds one. */

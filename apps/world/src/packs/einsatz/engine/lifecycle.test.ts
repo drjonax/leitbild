@@ -141,7 +141,7 @@ describe('Einsatz unit lifecycle', () => {
     expect(loaded.code).toBe('unit_loaded')
     expect(loaded.reason).toBe('unit_loaded: U1 has 1 person on board, deliver first')
     expect((await refusalOf(state, send(['u1'], { taskId: 't2' }))).code).toBe('unit_loaded')
-    expect((await refusalOf(state, { kind: 'hold', unitId: 'u1' })).code).toBe('unit_loaded')
+    expect(unitOf(await run(state, { kind: 'hold', unitId: 'u1' }), 'u1')).toMatchObject({ phase: 'holding', paused: true, load: { [top]: 1 } })
 
     state = await run(state, send(['u2'], { taskId: 't2' }))
     state = await advance(state, start + 10_000)

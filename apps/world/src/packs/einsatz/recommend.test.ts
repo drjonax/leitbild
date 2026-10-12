@@ -59,8 +59,8 @@ describe('Einsatz recommendations with diverts', () => {
       const distanceM = routeDistanceMeters(pointOf(state, unitId), at(0.003))
       return { kind: 'straight-line' as const, seconds: distanceM / 15, distanceM }
     }
-    expect(recommendation.proposal).toEqual({ units: [{ unitId: 'a6', label: 'A6', eta: straightTo('a6'), divertFrom: divertFrom('low6', 'LOW6', low, 'C3') }], covers: true, remainder: [] })
-    expect(recommendation.alternatives).toEqual([{ unitId: 'a2', label: 'A2', eta: straightTo('a2'), divertFrom: divertFrom('c9', 'C9', middle, 'C2') }])
+    expect(recommendation.proposal).toEqual({ units: [{ unitId: 'a6', label: 'A6', eta: straightTo('a6'), divertFrom: divertFrom('low6', 'LOW6', low, 'C3'), steps: 1 }], covers: true, remainder: [] })
+    expect(recommendation.alternatives).toEqual([{ unitId: 'a2', label: 'A2', eta: straightTo('a2'), divertFrom: divertFrom('c9', 'C9', middle, 'C2'), steps: 1 }])
     expect(unitIds(recommendation.committed)).toEqual(['a1', 'a3', 'a4'])
   })
 
@@ -94,6 +94,20 @@ describe('Einsatz smallest covering sets', () => {
     expect(recommendation.proposal).toMatchObject({ covers: true, remainder: [] })
     expect(unitIds(recommendation.proposal.units)).toEqual(['g1', 'g2'])
     expect(unitIds(recommendation.alternatives)).toEqual(['g3'])
+  })
+
+  test('a free unit that holds steps says how many, so a send can ask whether to do it now or add it to the end', async () => {
+    let state = await runAll(emptyState(), [
+      newUnit('c1', types.roadCarrier, at(0.001)),
+      newUnit('c2', types.roadCarrier, at(0.01)),
+      newTask('t1', templates.load, at(0), { [top]: 1 }),
+      send(['c1'], { point: at(0.002) }),
+      { kind: 'queue', unitId: 'c1', to: { point: at(0.003) } },
+    ])
+    state = await advance(state, start + 1_000)
+    const recommendation = await recommendFor(state, 't1')
+    expect(recommendation.proposal.units).toEqual([expect.objectContaining({ unitId: 'c1', steps: 2 })])
+    expect(recommendation.alternatives.map(entry => [entry.unitId, entry.steps])).toEqual([['c2', undefined]])
   })
 
   test('fewer units come first: one carrier taking both loads beats two nearer carriers taking one each', async () => {

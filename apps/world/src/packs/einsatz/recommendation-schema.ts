@@ -30,6 +30,13 @@ const candidateSchema = z.object({
   eta: etaSchema,
   /** Present on a divert: the task the unit leaves and that task's rank. */
   divertFrom: z.object({ taskId: idSchema, label: z.string().min(1), rank: classRefSchema }).strict().optional(),
+  /**
+   * Present when the unit holds steps in its job chain: how many. A unit on a
+   * move or an engagement, or one paused with steps, is free to send, but a
+   * send replaces its active step and keeps the rest (do now), while a queue
+   * adds the task behind them (add to end); the caller asks which.
+   */
+  steps: z.number().int().positive().optional(),
 }).strict()
 
 export const recommendationSchema = z.object({
@@ -50,6 +57,14 @@ export const recommendationSchema = z.object({
   ineligible: z.array(z.object({ unitId: idSchema, label: z.string().min(1), reasons: z.array(z.string().min(1)).min(1) }).strict()),
   /** Units that could serve but are busy and may not be diverted. */
   committed: z.array(z.object({ unitId: idSchema, label: z.string().min(1), reason: z.string().min(1) }).strict()),
+  /**
+   * Units in the caller's picture that hold this task as a queued step of
+   * their job chain, nearest first: it is their next job once the
+   * `stepsAhead` steps before it are done. A queued step counts towards
+   * nothing, so these units never cover the task until it is active; the
+   * Board shows them as "next".
+   */
+  next: z.array(z.object({ unitId: idSchema, label: z.string().min(1), stepId: idSchema, stepsAhead: z.number().int().nonnegative() }).strict()),
   /**
    * False when no unit of the task's side, commanded by the caller or not and
    * busy or not, could ever serve what the task still needs after the

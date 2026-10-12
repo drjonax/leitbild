@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { idSchema, type GeoJsonPoint } from '../../../core/model/index.ts'
 import { configIdSchema, roeModes } from '../config-schema.ts'
+import { stepTargetSchema } from '../steps.ts'
 import type { Draft } from './draft.ts'
 import { pointSchema, propertyValueSchema, type Leg, type UnitRecord } from './model.ts'
 
@@ -11,11 +12,8 @@ import { pointSchema, propertyValueSchema, type Leg, type UnitRecord } from './m
 
 const distinct = (ids: ReadonlyArray<string>): boolean => new Set(ids).size === ids.length
 
-export const sendTargetSchema = z.union([
-  z.object({ taskId: idSchema }).strict(),
-  z.object({ siteId: idSchema }).strict(),
-  z.object({ point: pointSchema }).strict(),
-])
+/** Where a send or a queued step leads: a task, a receiving site, a point, or one of the unit's own side's tracks. */
+export const sendTargetSchema = stepTargetSchema
 
 const propertiesSchema = z.record(configIdSchema, propertyValueSchema)
 const loadsSchema = z.record(configIdSchema, z.number().int().min(1).max(1_000))
@@ -34,6 +32,10 @@ export const intentFields = {
   },
   recall: { unitId: idSchema, fromTaskId: idSchema.optional() },
   hold: { unitId: idSchema },
+  queue: { unitId: idSchema, to: sendTargetSchema },
+  stepRemove: { unitId: idSchema, stepId: idSchema },
+  resume: { unitId: idSchema },
+  clear: { unitId: idSchema },
   taskCreate: { template: configIdSchema, side: configIdSchema.optional(), at: pointSchema, loads: loadsSchema.optional(), label: labelSchema },
   taskClose: { taskId: idSchema, reason: reasonSchema.optional() },
   siteSet: { siteId: idSchema, accepting: z.boolean() },
@@ -49,16 +51,33 @@ export const divertsNameSendUnits = (send: { readonly units: ReadonlyArray<strin
 export const divertsNameSendUnitsIssue = { message: 'Every divert names a unit of the send, once', path: ['divert'] }
 
 /**
- * Send units to a task, a site or a point, all or nothing. Units not named
- * in `divert` must be free; a divert names the task the unit is released
- * from. A divert to a site or point is a release and a move in one.
+ * Send units to a task, a site, a point or a track, all or nothing: do it
+ * now. The target becomes each unit's active step and the rest of its chain
+ * stays queued behind it. Units not named in `divert` must be free; a divert
+ * names the task the unit is released from, and removes only that step. A
+ * divert to a site, point or track is a release and a move in one.
  */
 export const sendIntentSchema = z.object({ kind: z.literal('send'), ...intentFields.send }).strict().refine(divertsNameSendUnits, divertsNameSendUnitsIssue)
 
-/** Release a unit from its task, if any, and bring it back to base. */
+/** Release a unit from its task, if any, clear its chain and bring it back to base. */
 export const recallIntentSchema = z.object({ kind: z.literal('recall'), ...intentFields.recall }).strict()
-/** Halt a free unit in place. */
+/** Pause a unit's chain: a moving unit stops where it is; work on task or at a site finishes, and no further step starts. */
 export const holdIntentSchema = z.object({ kind: z.literal('hold'), ...intentFields.hold }).strict()
+/** Add a step at the end of a unit's chain; a unit with no step, not paused, starts it at once, exactly as a send. */
+export const queueIntentSchema = z.object({ kind: z.literal('queue'), ...intentFields.queue }).strict()
+/** Remove one step; the active step is released as a recall releases it, and the next step starts. */
+export const stepRemoveIntentSchema = z.object({ kind: z.literal('step.remove'), ...intentFields.stepRemove }).strict()
+/** Resume a paused unit's chain. */
+export const resumeIntentSchema = z.object({ kind: z.literal('resume'), ...intentFields.resume }).strict()
+/** Remove every step, releasing the active one; the unit stops where it is and its return standing order applies. */
+export const clearIntentSchema = z.object({ kind: z.literal('clear'), ...intentFields.clear }).strict()
+/**
+ * Start the first queued step of an idle unit that is not paused. No command
+ * asks for it: the engine runs it like a standing order as soon as a unit's
+ * active step is done, so it passes the same validation. A step that can no
+ * longer be carried out is skipped.
+ */
+export const chainNextIntentSchema = z.object({ kind: z.literal('chain.next'), unitId: idSchema }).strict()
 
 export const taskCreateIntentSchema = z.object({ kind: z.literal('task.create'), id: idSchema, ...intentFields.taskCreate }).strict()
 export const taskCloseIntentSchema = z.object({ kind: z.literal('task.close'), ...intentFields.taskClose }).strict()
@@ -84,6 +103,11 @@ export const intentSchema = z.discriminatedUnion('kind', [
   unitAdjustIntentSchema,
   setRoeIntentSchema,
   engageIntentSchema,
+  queueIntentSchema,
+  stepRemoveIntentSchema,
+  resumeIntentSchema,
+  clearIntentSchema,
+  chainNextIntentSchema,
 ])
 
 export type Intent = z.output<typeof intentSchema>

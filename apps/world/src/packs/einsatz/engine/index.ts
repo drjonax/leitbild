@@ -2,6 +2,7 @@
  * The Einsatz engine: headless, deterministic and unregistered. It holds no
  * Capability, adapter or recommendation; those build on this API.
  */
+export { chainBy, nextStepCause, stepSkippedCode } from './chain-steps.ts'
 export * from './combat-model.ts'
 export { damagedCode, destroyedCode, stepTaskFailedCode, underFireCode } from './combat.ts'
 export * from './coverage.ts'

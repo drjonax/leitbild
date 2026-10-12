@@ -65,6 +65,26 @@ export const runtimeStateOf = (state: EngineState): EinsatzRuntimeState => ({
 
 const fail = (id: string, message: string): never => { throw new Error(`${id}: ${message}`) }
 
+/**
+ * A unit's chain agrees with what it does: its task and site are those of
+ * its active step, an active move travels, a destroyed unit holds no step,
+ * and every step id was numbered by the unit.
+ */
+const assertChain = (unit: UnitRecord): void => {
+  const head = unit.orders[0]?.state === 'active' ? unit.orders[0] : undefined
+  const headTask = head !== undefined && 'taskId' in head.target ? head.target.taskId : undefined
+  const headSite = head?.kind === 'deliver' && 'siteId' in head.target ? head.target.siteId : undefined
+  if (unit.taskId !== headTask) fail(unit.id, `its task ${unit.taskId ?? 'none'} is not its active step's ${headTask ?? 'none'}`)
+  if (unit.siteId !== headSite) fail(unit.id, `its site ${unit.siteId ?? 'none'} is not its active delivery's ${headSite ?? 'none'}`)
+  if (head?.kind === 'move' && (unit.phase !== 'en-route' || unit.taskId !== undefined)) fail(unit.id, `an active move needs the unit en route, not ${unit.phase}`)
+  if (unit.integrity === 'destroyed' && (unit.orders.length > 0 || unit.paused === true)) fail(unit.id, 'a destroyed unit holds no steps')
+  const serial = unit.stepSerial ?? 0
+  for (const step of unit.orders) {
+    const number = /^step-([1-9][0-9]*)$/.exec(step.id)?.[1]
+    if (number === undefined || Number(number) > serial) fail(unit.id, `step ${step.id} was not numbered by the unit`)
+  }
+}
+
 /** The invariants every engine call relies on; canonical objects that break one are refused as a whole. */
 const assertConsistent = (state: EngineState): void => {
   const sided = state.sides.length > 0
@@ -89,6 +109,7 @@ const assertConsistent = (state: EngineState): void => {
       const site = state.units.get(unit.siteId) ?? fail(unit.id, `delivering to missing site ${unit.siteId}`)
       if (!isSite(state.catalog, site) || !linksToSite(state.catalog, unit, site)) fail(unit.id, `cannot deliver to ${site.id}`)
     }
+    assertChain(unit)
     const durability = unitTypeOf(state.catalog, unit).components.durability
     if (unit.integrity === 'damaged' && durability !== undefined && (state.combat.units.get(unit.id)?.fireS ?? 0) < durability.stepFireS) {
       fail(unit.id, 'the unit is damaged, but the fire it received is missing from the runtime state')

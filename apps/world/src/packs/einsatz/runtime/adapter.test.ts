@@ -105,7 +105,6 @@ describe('Einsatz commands on a running clock', () => {
       expect((await run.refusal(ids.send, send(['c2'], { taskId: 'low2' }, [{ unitId: 'c2', fromTaskId: 'low1' }]))).reason)
         .toBe('unit_committed: C2 now mobilizing to MID1')
       expect((await run.refusal(ids.recall, { unitId: 'c2', fromTaskId: 'low1' })).code).toBe('unit_committed')
-      expect((await run.refusal(ids.hold, { unitId: 'c2' })).reason).toBe('unit_committed: C2 now mobilizing to MID1; recall first (R), or move it (M)')
 
       await accepted(run, ids.send, send(['c1'], { taskId: 'top1' }, [{ unitId: 'c1', fromTaskId: 'low1' }]))
       expect(run.unit('c1')).toMatchObject({ taskId: 'top1', lastAction: { verb: 'divert', target: 'top1', cause: 'from LOW1', by: 'actor:operator' } })

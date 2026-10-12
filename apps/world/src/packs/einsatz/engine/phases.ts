@@ -1,3 +1,4 @@
+import { afterActive, refreshChains, skipSteps } from './chain-steps.ts'
 import { engagementActive, engagementDue, runEngagement } from './combat.ts'
 import { assignedTo, coverageOf, isDone, loadAllocation, rankOf } from './coverage.ts'
 import { closeDraft, openDraft, putUnit, recordTask, setMotion, stageTask, taskIn, unitIn, type Draft } from './draft.ts'
@@ -9,7 +10,9 @@ import { addCounts, byId, countOf, countsOf, patch, total } from './values.ts'
 import { loadText } from './wording.ts'
 
 /**
- * The phase machine. Units move through the closed phases: `mobilizing`
+ * The phase machine. A unit carries out the active step of its chain: a
+ * finished task, handover or move ends that step, and the next one starts as
+ * a reflex. Units move through the closed phases: `mobilizing`
  * (turnout, from `mobility.mobilizeS`), `en-route`, `on-task` (from
  * `service.onSceneS`; a unit without a service spends no time on task),
  * `holding` (stopped by order, or waiting with load to deliver),
@@ -46,9 +49,11 @@ export const refreshTasks = (draft: Draft): void => {
       recordTask(draft, current)
       continue
     }
+    // Units still on their way were not needed: their step is skipped, and their chain goes on.
     for (const unit of assigned) {
       setMotion(draft, unit.id, { progressMs: 0 })
-      putUnit(draft, patch(unit, { taskId: undefined, leg: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
+      const freed = skipSteps(unit, draft.timeMs, step => 'taskId' in step.target && step.target.taskId === task.id ? { label: task.label, reason: 'closed' } : undefined)
+      putUnit(draft, patch(freed, { taskId: undefined, leg: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
     }
     recordTask(draft, patch(current, { closedAtMs: draft.timeMs, alerts: clearAlerts(current.alerts, [workReturnedCode]), coverage: coverageOf(draft.catalog, current, []) }))
   }
@@ -74,14 +79,14 @@ const finishTask = (draft: Draft, unit: UnitRecord): void => {
     pickedUp: addCounts(ids, task.pickedUp, pickedUp),
   }))
   const load = addCounts(ids, unit.load, pickedUp)
-  putUnit(draft, patch(unit, { taskId: undefined, load, phase: total(load) > 0 ? 'holding' : 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
+  putUnit(draft, patch(unit, { taskId: undefined, load, orders: afterActive(unit), phase: total(load) > 0 ? 'holding' : 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
 }
 
 /** A handover slot finished: the site counts the load received and the unit is free where it stands. */
 const finishHandover = (draft: Draft, unit: UnitRecord): void => {
   const site = unitIn(draft, unit.siteId!)
   putUnit(draft, patch(site, { received: addCounts(draft.catalog.classIds, site.received!, unit.load) }))
-  putUnit(draft, patch(unit, { load: {}, siteId: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
+  putUnit(draft, patch(unit, { load: {}, siteId: undefined, orders: afterActive(unit), phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined }))
 }
 
 const arrive = (draft: Draft, unit: UnitRecord): void => {
@@ -89,7 +94,8 @@ const arrive = (draft: Draft, unit: UnitRecord): void => {
   const arrived = { leg: undefined, phaseSinceMs: draft.timeMs, phaseDueMs: undefined }
   if (unit.phase === 'returning') putUnit(draft, patch(unit, { ...arrived, phase: 'available', atBase: true }))
   else if (unit.phase === 'transporting') putUnit(draft, patch(unit, { ...arrived, phase: 'at-site' }))
-  else if (unit.taskId === undefined) putUnit(draft, patch(unit, { ...arrived, phase: 'holding' }))
+  // A move is done on arrival; the unit holds there unless its chain goes on.
+  else if (unit.taskId === undefined) putUnit(draft, patch(unit, { ...arrived, phase: 'holding', orders: afterActive(unit) }))
   else {
     const onTaskMs = (unitTypeOf(draft.catalog, unit).components.service?.onSceneS ?? 0) * 1_000
     putUnit(draft, patch(unit, { ...arrived, phase: 'on-task', phaseDueMs: draft.timeMs + onTaskMs }))
@@ -143,6 +149,7 @@ export const settle = (draft: Draft): void => {
     }
     if (startQueues(draft)) changed = true
     refreshTasks(draft)
+    if (refreshChains(draft)) changed = true
     if (!changed) return
   }
 }

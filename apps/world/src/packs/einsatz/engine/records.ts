@@ -1,4 +1,5 @@
 import type { GeoJsonPoint } from '../../../core/model/index.ts'
+import { skipSteps } from './chain-steps.ts'
 import { engagementFieldsAtCreate, isTrackId } from './combat-model.ts'
 import { coverageOf, rankOf } from './coverage.ts'
 import { putUnit, setMotion, stageTask, unitIn, type Draft } from './draft.ts'
@@ -57,6 +58,7 @@ export const planUnitCreate = (state: EngineState, intent: IntentOf<'unit.create
       ...(receiving === undefined ? {} : { accepting: receiving.accepting, received: {} }),
       lastAction: actionBy(draft, actor, 'create'),
       alerts: [],
+      orders: [],
       ...engagementFieldsAtCreate(type, draft.timeMs, draft.sides.length > 0),
     })
   })
@@ -121,7 +123,11 @@ export const planTaskCreate = (state: EngineState, intent: IntentOf<'task.create
   })
 }
 
-/** Closes a task, dropping load not yet picked up; units still committed to it stop and are free. */
+/**
+ * Closes a task, dropping load not yet picked up; units still committed to
+ * it stop and are free. Its step is skipped on every chain, and each chain
+ * goes on.
+ */
 export const planTaskClose = (state: EngineState, intent: IntentOf<'task.close'>, actor: EngineActor): Plan => {
   const task = state.tasks.get(intent.taskId)
   if (task === undefined) return notInPicture()
@@ -129,7 +135,8 @@ export const planTaskClose = (state: EngineState, intent: IntentOf<'task.close'>
   return applied(draft => {
     for (const unit of [...draft.units.values()].filter(entry => entry.taskId === task.id).sort(byId)) {
       setMotion(draft, unit.id, { progressMs: 0 })
-      putUnit(draft, patch(unit, {
+      const freed = skipSteps(unit, draft.timeMs, step => 'taskId' in step.target && step.target.taskId === task.id ? { label: task.label, reason: 'closed' } : undefined)
+      putUnit(draft, patch(freed, {
         taskId: undefined, leg: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined,
         lastAction: actionBy(draft, actor, 'release', task.id, `${task.label} closed`),
       }))
@@ -143,8 +150,10 @@ export const planTaskClose = (state: EngineState, intent: IntentOf<'task.close'>
 
 /**
  * Opens or closes a site to arrivals. When it stops accepting, units under
- * a `deliver` order still heading there or queued there stop and deliver
- * elsewhere at once; others keep going and wait. Handovers under way finish.
+ * a `deliver` order still heading there or queued there stop, their delivery
+ * step skipped, and deliver elsewhere at once; others keep going and wait.
+ * Handovers under way finish. A queued delivery to a closed site is skipped
+ * when it would start.
  */
 export const planSiteSet = (state: EngineState, intent: IntentOf<'site.set'>, actor: EngineActor): Plan => {
   const site = state.units.get(intent.siteId)
@@ -159,7 +168,8 @@ export const planSiteSet = (state: EngineState, intent: IntentOf<'site.set'>, ac
       && unitTypeOf(draft.catalog, unit).standingOrders?.deliver === 'nearest-accepting').sort(byId)
     for (const unit of rerouted) {
       setMotion(draft, unit.id, { progressMs: 0 })
-      putUnit(draft, patch(unit, {
+      const delivering = skipSteps(unit, draft.timeMs, step => step.state === 'active' ? { label: site.label, reason: 'stopped accepting' } : undefined)
+      putUnit(draft, patch(delivering, {
         phase: 'holding', leg: undefined, siteId: undefined, phaseSinceMs: draft.timeMs,
         lastAction: actionBy(draft, actor, 'release', site.id, `${site.label} stopped accepting`),
       }))

@@ -210,7 +210,7 @@ describe('Einsatz coverage and eligibility', () => {
     expect(taskOf(state, 'pair').closedAtMs).toBeDefined()
   })
 
-  test('a point move and a hold never commit a unit; a committed unit is not free', async () => {
+  test('a point move and a hold never commit a unit; a committed unit is not free until a hold pauses its step', async () => {
     let state = await runAll(emptyState(), [
       newUnit('u1', types.roadCarrier, at(0)),
       newTask('t1', templates.load, at(0.01), { [low]: 1 }),
@@ -224,6 +224,10 @@ describe('Einsatz coverage and eligibility', () => {
     state = await run(state, send(['u1'], { taskId: 't1' }))
     expect(unitOf(state, 'u1').phase).toBe('mobilizing')
     expect(isFree(unitOf(state, 'u1'))).toBe(false)
-    expect((await refusalOf(state, { kind: 'hold', unitId: 'u1' })).reason).toBe('unit_committed: U1 now mobilizing to T1; recall first (R), or move it (M)')
+    state = await run(state, { kind: 'hold', unitId: 'u1' })
+    // The send went ahead of the move the first hold paused; the second hold pauses the send too.
+    expect(unitOf(state, 'u1')).toMatchObject({ phase: 'holding', paused: true, orders: [{ kind: 'serve', target: { taskId: 't1' }, state: 'queued' }, { kind: 'move', state: 'queued' }] })
+    expect(isFree(unitOf(state, 'u1'))).toBe(true)
+    expect(taskOf(state, 't1').coverage.loads).toEqual([{ classId: low, waiting: 1, covered: 0 }])
   })
 })

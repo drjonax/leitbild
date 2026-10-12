@@ -3,6 +3,7 @@ import type { UnitComponents } from '../config-schema.ts'
 import { standingOrderBy } from '../ids.ts'
 import { wordFor } from '../lexicon.ts'
 import { refusalCode } from '../refusal.ts'
+import { skipLostTracks } from './chain-steps.ts'
 import { trackIndexOf, trackingSides, type TrackRecord } from './combat-model.ts'
 import { combatOf, detect, firedRecently, firedWindowMs, pointIn, trackOn } from './detection.ts'
 import { closeDraft, putUnit, setMotion, stageTask, type Draft } from './draft.ts'
@@ -143,7 +144,7 @@ const fire = (draft: Draft, shots: ReadonlyArray<Shot>): { readonly received: Re
 
 interface StepLoss { readonly unit: UnitRecord; readonly steps: ReadonlyArray<number> }
 
-/** A destroyed unit stops where it is and takes no further part; work it was on returns to its task. */
+/** A destroyed unit stops where it is and takes no further part: its chain ends, and work it was on returns to its task. */
 const destroy = (draft: Draft, unit: UnitRecord, alerts: RecordAlert[]): UnitRecord => {
   const task = unit.taskId === undefined ? undefined : draft.tasks.get(unit.taskId)
   if (task !== undefined && task.closedAtMs === undefined) {
@@ -153,7 +154,7 @@ const destroy = (draft: Draft, unit: UnitRecord, alerts: RecordAlert[]): UnitRec
   setMotion(draft, unit.id, { progressMs: 0 })
   return patch(unit, {
     integrity: 'destroyed', phase: 'destroyed', phaseSinceMs: draft.timeMs, phaseDueMs: undefined, leg: undefined, taskId: undefined, siteId: undefined,
-    engage: undefined, target: undefined, revealed: undefined, stillSinceMs: undefined, alerts,
+    engage: undefined, target: undefined, revealed: undefined, stillSinceMs: undefined, alerts, orders: [], paused: undefined,
   })
 }
 
@@ -270,7 +271,7 @@ export const runEngagement = (draft: Draft): void => {
   const tracks = new Map(draft.combat.tracks)
   const serials = new Map(draft.combat.serials)
   posture(draft)
-  detect(draft)
+  skipLostTracks(draft, detect(draft))
   const shots = chooseTargets(draft)
   const { received, shooters } = fire(draft, shots)
   const { losses, destroyed } = applyFire(draft, received, shooters)

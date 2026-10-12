@@ -11,17 +11,25 @@ import { byId } from './values.ts'
  * run as intents through the same validation as commands. `roe` sets a
  * unit's initial rules of engagement and `onStepLost` runs in the
  * engagement step.
+ *
+ * A unit's chain comes first: `deliver` and `return` apply only where the
+ * chain says nothing. A loaded unit whose next step is no delivery delivers
+ * first; a unit with steps or paused never returns by itself. Starting the
+ * next step of a chain (`chain`) runs the same way, as soon as the active
+ * step is done.
  */
 export const standingOrders = ['deliver', 'return', 'withdraw'] as const
 export type StandingOrder = typeof standingOrders[number]
+/** What the engine runs by itself: a standing order, or the next step of a unit's chain. */
+export type Reflex = StandingOrder | 'chain'
 
-/** The unit alert a standing order raises when it cannot be carried out; any new order to the unit clears it. */
-export const orderFailedCode = (order: StandingOrder): string => `${order}_failed`
-export const orderAlertCodes: ReadonlyArray<string> = standingOrders.map(orderFailedCode)
+/** The unit alert a reflex raises when it cannot be carried out; any new order to the unit clears it. */
+export const orderFailedCode = (order: Reflex): string => `${order}_failed`
+export const orderAlertCodes: ReadonlyArray<string> = [...standingOrders, 'chain' as const].map(orderFailedCode)
 
 export interface DueReflex {
   readonly unitId: string
-  readonly order: StandingOrder
+  readonly order: Reflex
 }
 
 /**
@@ -32,8 +40,8 @@ export interface DueReflex {
 export const boundaryMs = 2_000
 export const nextBoundaryMs = (timeMs: number): number => (Math.floor(timeMs / boundaryMs) + 1) * boundaryMs
 
-/** Orders that move a unit; any of them given by an actor after a step loss stands in for withdrawing. */
-const movementVerbs: ReadonlyArray<NonNullable<UnitRecord['lastAction']>['verb']> = ['send', 'divert', 'move', 'deliver', 'recall', 'hold', 'release']
+/** Orders that move a unit or change its chain; any of them given by an actor after a step loss stands in for withdrawing. */
+const movementVerbs: ReadonlyArray<NonNullable<UnitRecord['lastAction']>['verb']> = ['send', 'divert', 'move', 'deliver', 'recall', 'hold', 'release', 'queue', 'remove', 'resume', 'clear']
 
 /** A damaged unit with a `withdraw` order heads home once, unloaded first, unless an actor has moved it since the step loss. */
 const withdrawPending = (catalog: Catalog, unit: UnitRecord): boolean => {
@@ -44,13 +52,29 @@ const withdrawPending = (catalog: Catalog, unit: UnitRecord): boolean => {
   return !movedSince
 }
 
-/** The standing order a unit waits on, and the Run time from which it may fire. */
-const pendingOrder = (catalog: Catalog, unit: UnitRecord): { readonly order: StandingOrder; readonly fromMs: number } | undefined => {
+/** Phases in which a unit carries out no step: it may start the next one. */
+const idlePhases: ReadonlyArray<UnitRecord['phase']> = ['available', 'holding', 'returning']
+
+/**
+ * The reflex a unit waits on, and the Run time from which it may fire. A
+ * loaded unit delivers first: by its chain when the next step leads to a
+ * site, else by its deliver order; a next step it cannot take loaded is
+ * started only to be skipped. A paused unit runs nothing but a withdrawal.
+ */
+const pendingOrder = (catalog: Catalog, unit: UnitRecord): { readonly order: Reflex; readonly fromMs: number } | undefined => {
   if (isDestroyed(unit)) return undefined
   const orders = unitTypeOf(catalog, unit).standingOrders
-  if (unit.phase === 'holding' && hasLoad(unit) && orders?.deliver === 'nearest-accepting') return { order: 'deliver', fromMs: unit.phaseSinceMs }
+  const head = unit.orders[0]
+  const running = unit.paused !== true
+  const next = running && head?.state === 'queued' ? head : undefined
+  if (running && unit.phase === 'holding' && hasLoad(unit)) {
+    if (next !== undefined && 'siteId' in next.target) return { order: 'chain', fromMs: unit.phaseSinceMs }
+    if (orders?.deliver === 'nearest-accepting') return { order: 'deliver', fromMs: unit.phaseSinceMs }
+    return next === undefined ? undefined : { order: 'chain', fromMs: unit.phaseSinceMs }
+  }
   if (withdrawPending(catalog, unit)) return { order: 'withdraw', fromMs: unit.integritySinceMs! }
-  if (unit.phase === 'available' && !unit.atBase && isFree(unit) && orders?.return !== undefined) {
+  if (next !== undefined && unit.taskId === undefined && unit.siteId === undefined && idlePhases.includes(unit.phase)) return { order: 'chain', fromMs: unit.phaseSinceMs }
+  if (running && unit.orders.length === 0 && unit.phase === 'available' && !unit.atBase && isFree(unit) && orders?.return !== undefined) {
     return { order: 'return', fromMs: unit.phaseSinceMs + orders.return.afterIdleS * 1_000 }
   }
   return undefined
