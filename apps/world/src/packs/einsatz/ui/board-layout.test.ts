@@ -127,6 +127,30 @@ describe('Board layout', () => {
     expect(panel).toContain('style:grid-template-rows={listRowsTemplate(sections)}')
   })
 
+  test('Close call is in view without scrolling the capped action bar: pinned to the right of the first row of buttons, under at most three lines of text, apart from the commit button', () => {
+    const bar = readFileSync(join(import.meta.dir, 'BoardActionBar.svelte'), 'utf8')
+    const markup = bar.slice(bar.indexOf('<div class="bar"'), bar.indexOf('<style>'))
+    const rowStart = markup.indexOf('<div class="buttons">')
+    // Above the row stand only the text line and a confirmation's detail, which never shows beside Close.
+    expect([...markup.slice(0, rowStart).matchAll(/class="([\w-]+)"/g)].map(match => match[1])).toEqual(['bar', 'text', 'detail'])
+    // In the row, the buttons that act wrap among themselves; Close follows them, outside their wrapping group.
+    const row = markup.slice(rowStart, markup.indexOf('{#if commit.hint'))
+    const main = row.slice(row.indexOf('<div class="main">'), row.indexOf('</div>'))
+    expect(main).toContain('class="primary"')
+    expect(main).not.toContain('class="close"')
+    expect(row.indexOf('class="close"')).toBeGreaterThan(row.indexOf('</div>'))
+    expect(markup.match(/class="close"/g)).toHaveLength(1)
+    // The row itself never wraps, and Close neither shrinks nor wraps; a wide gap keeps it apart.
+    const rule = (selector: string): string => new RegExp(`\\n {2}${selector.replace('.', '\\.')} \\{([^}]*)\\}`).exec(bar)?.[1] ?? ''
+    expect(rule('.buttons')).toContain('display: flex;')
+    expect(rule('.buttons')).not.toContain('wrap')
+    expect(Number(/gap: (\d+)px/.exec(rule('.buttons'))?.[1])).toBeGreaterThanOrEqual(3 * Number(/gap: (\d+)px/.exec(rule('.main, .alternatives'))?.[1]))
+    expect(rule('.close')).toContain('flex: none;')
+    // The cap holds three lines of text, the bar's gap and the row of buttons.
+    const barGap = Number(/gap: (\d+)px/.exec(rule('.bar'))?.[1])
+    expect(3 * rowBoxPx.line + barGap + tapPx).toBeLessThanOrEqual(boardChromePx.actionBar)
+  })
+
   test('the lists follow the arrangement: the work list leads for queues, Contacts for map-led roles, and a list left out is not shown', () => {
     expect(boardSections({ lead: 'work-list', workList: true, unitBoard: true, contacts: false })).toEqual(['work', 'units'])
     expect(boardSections({ lead: 'work-list', workList: true, unitBoard: true, contacts: true })).toEqual(['work', 'units', 'contacts'])

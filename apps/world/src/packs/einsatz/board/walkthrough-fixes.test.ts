@@ -38,7 +38,8 @@ describe('Fixes from the tap-only walkthrough', () => {
     await withScene(items, async run => {
       const screen = await openScreen(run, createWall())
       await screen.click({ kind: 'row', list: 'work', id: 'o1' })
-      expect([civilConfig.lexicon.close, screen.view().commit.close, screen.view().commit.verbs]).toEqual(['Close call', { label: 'Close call', id: 'o1' }, []])
+      // No detail line stands above the row Close is pinned to (`ui/board-layout.test.ts`).
+      expect([civilConfig.lexicon.close, screen.view().commit.close, screen.view().commit.verbs, screen.view().commit.detail]).toEqual(['Close call', { label: 'Close call', id: 'o1' }, [], null])
       await screen.click({ kind: 'verb', verb: 'close', id: 'o1' })
       expect(screen.view().commit).toMatchObject({ state: 'confirm', text: 'Close call O1', detail: `${boardWords.remainder} 2 more patrol cars` })
       expect(screen.calls).toHaveLength(0)

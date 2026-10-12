@@ -6,11 +6,13 @@
    * a selected call it holds the proposal as one big button and the
    * alternatives one tap each, then what is still needed and which units
    * cannot come. For a confirmation or a busy asset's choice it names what is
-   * dropped; for a highlighted asset it holds its verbs. An asset that was
-   * highlighted when the call was tapped in the list is offered as a button
-   * of its own beside the call's suggestion. Closing the call lies apart,
-   * at the bar's foot, away from the commit button. Every button is a tap
-   * target of at least 44 px, and no key is hinted.
+   * dropped; for a highlighted asset it holds its verbs. An asset that
+   * lingered highlighted when a call or a site was tapped in the lists is
+   * offered as a button of its own. Closing the call is pinned to the right
+   * of the first row of buttons, apart from the commit button and in its own
+   * colour: the bar scrolls inside past its cap, and only the text line can
+   * stand above that row, so Close is in view without scrolling. Every
+   * button is a tap target of at least 44 px, and no key is hinted.
    */
   interface Props {
     readonly commit: BoardView['commit']
@@ -25,22 +27,27 @@
 <div class="bar" data-state={commit.state}>
   {#if commit.button !== commit.text}<p class="text">{commit.text}</p>{/if}
   {#if commit.detail !== null}<p class="detail">{commit.detail}</p>{/if}
-  {#if commit.button !== null || commit.offer !== null || commit.options.length > 0 || commit.verbs.length > 0 || commit.cancel !== null}
+  {#if commit.button !== null || commit.offer !== null || commit.options.length > 0 || commit.verbs.length > 0 || commit.cancel !== null || commit.close !== null}
     <div class="buttons">
-      {#if commit.button !== null}
-        <button type="button" class="primary" disabled={!commit.enabled} onclick={() => click({ kind: 'commit' })}>{commit.button}</button>
-      {/if}
-      {#if commit.offer !== null}
-        <button type="button" class="offer" disabled={!commit.enabled} onclick={() => click({ kind: 'offer' })}>{commit.offer}</button>
-      {/if}
-      {#each commit.options as entry (entry.option)}
-        <button type="button" class="primary" disabled={!commit.enabled} onclick={() => click({ kind: 'option', option: entry.option })}>{entry.label}</button>
-      {/each}
-      {#each commit.verbs as entry (entry.verb)}
-        <button type="button" class="verb" onclick={() => click({ kind: 'verb', verb: entry.verb, id: entry.id })}>{entry.label}</button>
-      {/each}
-      {#if commit.cancel !== null}
-        <button type="button" class="cancel" onclick={() => click({ kind: 'cancel' })}>{commit.cancel}</button>
+      <div class="main">
+        {#if commit.button !== null}
+          <button type="button" class="primary" disabled={!commit.enabled} onclick={() => click({ kind: 'commit' })}>{commit.button}</button>
+        {/if}
+        {#if commit.offer !== null}
+          <button type="button" class="offer" disabled={!commit.enabled} onclick={() => click({ kind: 'offer' })}>{commit.offer}</button>
+        {/if}
+        {#each commit.options as entry (entry.option)}
+          <button type="button" class="primary" disabled={!commit.enabled} onclick={() => click({ kind: 'option', option: entry.option })}>{entry.label}</button>
+        {/each}
+        {#each commit.verbs as entry (entry.verb)}
+          <button type="button" class="verb" onclick={() => click({ kind: 'verb', verb: entry.verb, id: entry.id })}>{entry.label}</button>
+        {/each}
+        {#if commit.cancel !== null}
+          <button type="button" class="cancel" onclick={() => click({ kind: 'cancel' })}>{commit.cancel}</button>
+        {/if}
+      </div>
+      {#if commit.close !== null}
+        <button type="button" class="close" onclick={() => click({ kind: 'verb', verb: 'close', id: commit.close!.id })}>{commit.close.label}</button>
       {/if}
     </div>
   {/if}
@@ -60,11 +67,6 @@
     {#if task.remainderText !== null}<p class="remainder">{task.remainderText}</p>{/if}
     {#each task.ineligible as line, index (index)}<p class="ineligible">{line}</p>{/each}
   {/if}
-  {#if commit.close !== null}
-    <div class="foot">
-      <button type="button" class="close" onclick={() => click({ kind: 'verb', verb: 'close', id: commit.close!.id })}>{commit.close.label}</button>
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -72,7 +74,10 @@
   p { margin: 0; }
   .text { font-weight: 650; }
   .detail { color: var(--warning); font-size: 12px; }
-  .buttons, .alternatives { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* The first row: the buttons that act, wrapping among themselves, and Close pinned to its right, never wrapping below them. */
+  .buttons { display: flex; align-items: flex-start; gap: 18px; }
+  .main, .alternatives { display: flex; flex-wrap: wrap; gap: 6px; }
+  .main { flex: 1 1 auto; min-width: 0; }
   button { min-height: 44px; min-width: 44px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); color: inherit; font: inherit; cursor: pointer; touch-action: manipulation; }
   button:disabled { color: var(--muted); cursor: default; }
   .primary { flex: 1 1 auto; border-color: var(--accent); background: var(--accent); color: white; font-weight: 650; font-variant-numeric: tabular-nums; text-align: left; }
@@ -82,9 +87,8 @@
   .cancel { background: var(--panel); }
   .offer { flex: 1 1 auto; border-color: var(--accent); background: var(--panel); color: var(--accent); font-weight: 650; text-align: left; }
   .offer:disabled { border-color: var(--border); color: var(--muted); }
-  /* Closing a call ends it: it sits at the foot, away from the commit button, and reads as no commit. */
-  .foot { display: flex; justify-content: flex-end; }
-  .close { background: var(--panel); border-color: var(--critical); color: var(--critical); }
+  /* Closing a call ends it: it stands apart from the commit button and reads as no commit. */
+  .close { flex: none; background: var(--panel); border-color: var(--critical); color: var(--critical); }
   .alternatives button { display: inline-flex; gap: 6px; align-items: baseline; }
   .alternatives button.chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .divert { color: var(--warning); }
