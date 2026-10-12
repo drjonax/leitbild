@@ -87,7 +87,13 @@ export const recommendationSchema = z.object({
   ineligible: z.array(z.object({ unitId: idSchema, label: z.string().min(1), reasons: z.array(z.string().min(1)).min(1) }).strict()),
   /** Units that could serve but are busy and may not be diverted. */
   committed: z.array(z.object({ unitId: idSchema, label: z.string().min(1), reason: z.string().min(1) }).strict()),
-  /** False when no unit the caller commands could ever serve what the task still needs. */
+  /**
+   * False when no unit of the task's side, commanded by the caller or not and
+   * busy or not, could ever serve what the task still needs after the
+   * proposal: no unit provides a short requirement and meets its conditions,
+   * or none carries an uncovered load class. It judges the whole task, not
+   * only the caller's part of it, which `remainder` names.
+   */
   servable: z.boolean(),
 }).strict()
 export type Recommendation = z.output<typeof recommendationSchema>
