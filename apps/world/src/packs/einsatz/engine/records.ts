@@ -5,7 +5,7 @@ import { actionBy, notInPicture, refused, sideRefusal, type Refused } from './in
 import type { EngineActor, IntentOf, Plan } from './intents.ts'
 import { clearAlerts, templateOf, unitTypeOf, workReturnedCode, type EngineState, type PropertyValue, type TaskRecord, type UnitRecord } from './model.ts'
 import { conditionReasons, isSite, meetsRequirement, propertyRefusal } from './rules.ts'
-import { countsOf, patch } from './values.ts'
+import { byId, countsOf, patch } from './values.ts'
 import type { UnitType } from '../config-schema.ts'
 
 const applied = (apply: (draft: Draft) => void): Plan => ({ ok: true, routes: [], notes: [], apply: draft => apply(draft) })
@@ -123,7 +123,7 @@ export const planTaskClose = (state: EngineState, intent: IntentOf<'task.close'>
   if (task === undefined) return notInPicture()
   if (task.closedAtMs !== undefined) return refused('task_closed', `${task.label} is closed`)
   return applied(draft => {
-    for (const unit of [...draft.units.values()].filter(entry => entry.taskId === task.id)) {
+    for (const unit of [...draft.units.values()].filter(entry => entry.taskId === task.id).sort(byId)) {
       setMotion(draft, unit.id, { progressMs: 0 })
       putUnit(draft, patch(unit, {
         taskId: undefined, leg: undefined, phase: 'available', phaseSinceMs: draft.timeMs, phaseDueMs: undefined,
@@ -152,7 +152,7 @@ export const planSiteSet = (state: EngineState, intent: IntentOf<'site.set'>, ac
     if (intent.accepting) return
     const rerouted = [...draft.units.values()].filter((unit: UnitRecord) => unit.siteId === site.id
       && (unit.phase === 'transporting' || (unit.phase === 'at-site' && unit.phaseDueMs === undefined))
-      && unitTypeOf(draft.catalog, unit).standingOrders?.deliver === 'nearest-accepting')
+      && unitTypeOf(draft.catalog, unit).standingOrders?.deliver === 'nearest-accepting').sort(byId)
     for (const unit of rerouted) {
       setMotion(draft, unit.id, { progressMs: 0 })
       putUnit(draft, patch(unit, {
