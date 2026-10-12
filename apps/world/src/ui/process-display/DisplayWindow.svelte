@@ -604,7 +604,7 @@
     }
   }
 
-  // --- Plant actions --------------------------------------------------------
+  // --- Instructor actions ---------------------------------------------------
 
   const openPlantActions = (): void => {
     popover = null
@@ -621,7 +621,8 @@
     if (plantObject !== null) openProcedureSystemAt(plantObject, summary)
   }
 
-  // The display samples the Plant every second, so an action shows there without a reload.
+  // The display samples the Plant every second, so an action shows there without a reload; the window's notice
+  // says what became of it: sent, then accepted or refused with the Plant's reason, or why it could not be sent.
   const runPlantAction = async (
     plant: DeckPlant,
     action: ProcessPlantActionCatalogEntry,
@@ -630,16 +631,17 @@
     if (runningActionId !== null) return
     actionsPlant = null
     runningActionId = action.id
-    notice = null
+    const named = `Instructor action "${action.title}" on ${plant.label}`
+    notice = `${named}: sent…`
     try {
       const response = await invokeSimulationRunCapability(runId, {
         capabilityId: processPlantActionInvokeCommandKind,
         input: { plantId: plant.plantId, actionId: action.id, parameters },
       })
       if (response.kind !== 'command') throw new Error(`${processPlantActionInvokeCommandKind} is not a command`)
-      if (!response.result.ok) throw new Error(response.result.reason ?? `process plant rejected ${action.id}`)
+      if (!disposed) notice = response.result.ok ? `${named}: accepted.` : `${named}: refused. ${response.result.reason}`
     } catch (err) {
-      if (!disposed) notice = `${action.title} on ${plant.label} failed: ${errorText(err)}`
+      if (!disposed) notice = `${named} could not be sent: ${errorText(err)}`
     } finally {
       if (!disposed) runningActionId = null
     }
@@ -836,8 +838,8 @@
           <button
             type="button"
             class="display-window-button"
-            aria-label={plantTarget.ok ? `Plant actions on ${plantTarget.plant.label}` : `Plant actions unavailable: ${plantTarget.reason}`}
-            title={plantTarget.ok ? `Plant actions on ${plantTarget.plant.label}` : plantTarget.reason}
+            aria-label={plantTarget.ok ? `Instructor actions on ${plantTarget.plant.label}` : `Instructor actions unavailable: ${plantTarget.reason}`}
+            title={plantTarget.ok ? `Instructor actions on ${plantTarget.plant.label}: scenario events and faults` : plantTarget.reason}
             aria-disabled={!plantTarget.ok}
             onclick={openPlantActions}
           >
@@ -868,7 +870,7 @@
           bind:this={moreButton}
           type="button"
           class="display-window-button display-window-more"
-          aria-label="More: Plant actions, procedures, maximise"
+          aria-label="More: Instructor actions, procedures, maximise"
           title="More"
           aria-haspopup="true"
           aria-expanded={popover === 'more'}
@@ -1009,7 +1011,7 @@
           onclick={openPlantActions}
         >
           <Zap size={16} aria-hidden="true" />
-          <span>{plantTarget.ok ? `Plant actions on ${plantTarget.plant.label}` : `Plant actions: ${plantTarget.reason}`}</span>
+          <span>{plantTarget.ok ? `Instructor actions on ${plantTarget.plant.label}` : `Instructor actions: ${plantTarget.reason}`}</span>
         </button>
         <button
           type="button"

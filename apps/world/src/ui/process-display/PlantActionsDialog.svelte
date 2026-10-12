@@ -6,10 +6,12 @@
   import { readProcessPlantCatalog, type ProcessPlantActionCatalogEntry } from './process-display-client.ts'
   import type { DeckPlant } from './display-deck.ts'
 
-  // Validated, model-aware actions on one Plant. The dialog names the Plant it
-  // acts on, which is fixed when it opens: the window may step to a display of
-  // another Plant meanwhile, and an action must never land on a Plant the
-  // operator did not see named.
+  // The instructor's actions on one Plant: the Pack's scenario and fault
+  // catalogue (a turbine trip, a stuck valve, a tube leak), each applied
+  // through the validated write path. They are not operator controls, so the
+  // dialog says so. It names the Plant it acts on, which is fixed when it
+  // opens: the window may step to a display of another Plant meanwhile, and an
+  // action must never land on a Plant the instructor did not see named.
 
   interface Props {
     readonly simulationRunId: SimulationRunId
@@ -76,28 +78,28 @@
     class="process-transient-modal"
     role="dialog"
     aria-modal="true"
-    aria-label="Plant actions on {target.label}"
+    aria-label="Instructor actions on {target.label}"
     tabindex="-1"
     onmousedown={(event) => event.stopPropagation()}
     onkeydown={keydown}
   >
     <header class="process-transient-header">
       <div>
-        <strong>Plant actions · {target.label}</strong>
-        <span>Invoke validated, model-aware actions on {target.label}.</span>
+        <strong>Instructor actions · {target.label}</strong>
+        <span>Scenario events and faults for training, applied to {target.label} through the validated write path. Not operator controls.</span>
       </div>
-      <button type="button" aria-label="Close Plant actions" title="Close" onclick={close}>
+      <button type="button" aria-label="Close Instructor actions" title="Close" onclick={close}>
         <X size={18} aria-hidden="true" />
       </button>
     </header>
     <div class="process-transient-list">
       {#if loading}
-        <p role="status">Loading plant actions…</p>
+        <p role="status">Loading instructor actions…</p>
       {:else if loadError}
         <p role="alert">{loadError}</p>
         <button type="button" onclick={() => { void loadActions() }}>Retry</button>
       {:else if actions?.length === 0}
-        <p>No actions are available for {target.label}.</p>
+        <p>No instructor actions are available for {target.label}.</p>
       {/if}
       {#each actions ?? [] as action (action.id)}
         <article class="process-transient-row">

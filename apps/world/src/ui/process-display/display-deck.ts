@@ -307,7 +307,7 @@ export const mountedDeckEntries = (
   deck: ReadonlyArray<DeckEntry>,
 ): ReadonlyArray<DeckEntry> => frames.map(frame => deck.find(entry => entry.key === frame.key) ?? frame.entry)
 
-/** The Plant that Plant actions, procedures and the status dot act on for an entry, or why there is none. */
+/** The Plant that instructor actions, procedures and the status dot act on for an entry, or why there is none. */
 export type DeckPlantTarget =
   | { readonly ok: true; readonly plant: DeckPlant }
   | { readonly ok: false; readonly reason: string }
