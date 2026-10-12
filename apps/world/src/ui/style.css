@@ -4124,7 +4124,11 @@ body.rail-resizing {
 }
 
 .procedure-tag-display:focus { outline: none; }
-.procedure-tag-display:focus-visible { outline: 2px solid #1d4ed8; outline-offset: -2px; }
+
+.procedure-tag-display.compact {
+  width: min(760px, 92vw);
+  height: auto;
+}
 
 .procedure-tag-display-header {
   display: grid;
@@ -4204,6 +4208,8 @@ body.rail-resizing {
   overflow: hidden;
   background: #f8fafc;
 }
+
+.procedure-tag-display.compact .procedure-tag-display-body { overflow: auto; }
 
 .procedure-tag-display-frame {
   position: absolute;

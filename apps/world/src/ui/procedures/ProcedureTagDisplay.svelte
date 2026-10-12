@@ -122,6 +122,8 @@
   }
 
   const shown = $derived(drawn?.phase.kind === 'shown' ? drawn.phase : null)
+  // What says only why nothing is drawn takes the room of its words, not a display's.
+  const compact = $derived(plan.kind !== 'display' || drawn?.phase.kind === 'refused')
 </script>
 
 {#snippet readingText()}
@@ -140,6 +142,7 @@
   <div
     bind:this={dialog}
     class="procedure-tag-display"
+    class:compact
     role="dialog"
     aria-modal="true"
     aria-labelledby={titleId}
@@ -167,7 +170,12 @@
       </div>
     </header>
     <div class="procedure-tag-display-body">
-      {#if plan.kind === 'display'}
+      {#if plan.kind === 'display' && drawn?.phase.kind === 'refused'}
+        <div class="procedure-tag-display-message">
+          <strong>No process display: {drawn.phase.reason}</strong>
+          {@render readingText()}
+        </div>
+      {:else if plan.kind === 'display'}
         <div class="procedure-tag-display-frame" bind:this={frameBox}>
           {#if drawn?.phase.kind === 'shown'}
             <!-- Read-only: no display window presents it, so it neither operates the Plant nor opens displays elsewhere. -->
@@ -177,11 +185,6 @@
               allow="camera 'none'; microphone 'none'; geolocation 'none'; display-capture 'none'"
               referrerpolicy="same-origin"
             ></iframe>
-          {:else if drawn?.phase.kind === 'refused'}
-            <div class="procedure-tag-display-message">
-              <strong>No process display: {drawn.phase.reason}</strong>
-              {@render readingText()}
-            </div>
           {:else}
             <p class="procedure-tag-display-message" role="status">Drawing the process display…</p>
           {/if}
