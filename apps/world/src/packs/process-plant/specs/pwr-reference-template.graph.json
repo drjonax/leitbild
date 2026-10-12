@@ -2007,7 +2007,8 @@
       "kind": "steamValve",
       "label": "Main Steam Isolation Valve A",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "variables": [
         {
@@ -2037,7 +2038,8 @@
       "kind": "steamValve",
       "label": "Main Steam Isolation Valve B",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "variables": [
         {
@@ -2067,7 +2069,8 @@
       "kind": "steamValve",
       "label": "Main Steam Isolation Valve C",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "variables": [
         {
@@ -2097,7 +2100,8 @@
       "kind": "steamValve",
       "label": "Main Steam Isolation Valve D",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "variables": [
         {
@@ -2127,7 +2131,8 @@
       "kind": "steamValve",
       "label": "Main Steam Isolation Valve E",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "variables": [
         {
@@ -2157,7 +2162,8 @@
       "kind": "steamValve",
       "label": "Main Steam Isolation Valve F",
       "parameters": {
-        "initialPositionFraction": 1
+        "initialPositionFraction": 1,
+        "valveMode": "isolation"
       },
       "variables": [
         {
