@@ -165,7 +165,7 @@ describe('Einsatz commands on a running clock', () => {
       await accepted(run, ids.siteSet, { siteId: 's1', accepting: false })
       expect(run.unit('c1')).toMatchObject({ phase: 'holding', alerts: [{ code: 'deliver_failed', message: 'Deliver failed: No site accepts 1 person' }] })
       expect(await run.refusal(ids.send, send(['c1'], { siteId: 's1' }))).toEqual({ code: 'site_not_accepting', reason: 'site_not_accepting: S1 is not accepting' })
-      expect(await run.refusal(ids.send, send(['c1'], { siteId: 'c3' }))).toEqual({ code: 'not_a_site', reason: 'not_a_site: C3 does not receive load' })
+      expect(await run.refusal(ids.send, send(['c1'], { siteId: 'c3' }))).toEqual({ code: 'not_a_site', reason: 'not_a_site: C3 is no place to go to: it moves' })
       healthy(run)
     })
   })

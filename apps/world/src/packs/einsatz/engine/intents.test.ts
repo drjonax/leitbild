@@ -112,7 +112,7 @@ describe('Einsatz intent refusals', () => {
     const cases: ReadonlyArray<readonly [string, Parameters<typeof refusalOf>[1]]> = [
       ['not_in_picture: Not in your picture', send(['nobody'], { taskId: 't1' })],
       ['not_in_picture: Not in your picture', send(['u1'], { taskId: 'nothing' })],
-      ['not_a_site: STORE does not receive load', send(['u1'], { siteId: 'store' })],
+      ['not_a_site: H1 is no place to go to: it moves', send(['u1'], { siteId: 'h1' })],
       ['not_a_site: STORE does not receive load', { kind: 'site.set', siteId: 'store', accepting: false }],
       ['unit_unavailable: SITE cannot move', send(['site'], { point: at(0) })],
       ['duplicate_id: u1 already exists', newUnit('u1', types.roadCarrier, at(0))],

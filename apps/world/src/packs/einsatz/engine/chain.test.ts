@@ -423,6 +423,28 @@ describe('Einsatz job chains for any unit', () => {
     expect(unitOf(state, 'h1')).toMatchObject({ phase: 'available', atBase: true, orders: [] })
   })
 
+  test('a place that receives nothing is a site to go to: a unit goes there and serves its next step from there; one carrying load is refused delivering there, now or queued', async () => {
+    let state = await runAll(emptyState(), [
+      newUnit('h1', types.payloadServer, at(0), { properties: { payloadKg: 600 } }),
+      newUnit('c1', types.roadCarrier, at(0, 0.01)),
+      newUnit('store', types.inert, at(0.01)),
+      newTask('r1', templates.payload, at(0.02)),
+      newTask('t1', templates.load, at(0.03), { [low]: 1 }),
+      send(['h1'], { siteId: 'store' }),
+      queue('h1', { taskId: 'r1' }),
+      send(['c1'], { taskId: 't1' }),
+    ])
+    expect(stepsOf(unitOf(state, 'h1'))).toEqual([['step-1', 'move', 'active'], ['step-2', 'serve', 'queued']])
+    expect(unitOf(state, 'h1').orders[0]!.target).toEqual({ siteId: 'store' })
+    // The carrier will hold the call's load by then: a step to the place would have to deliver it there.
+    expect((await refusalOf(state, queue('c1', { siteId: 'store' }))).reason).toBe('not_a_site: STORE does not receive load')
+    state = await advance(state, arrivalAt(state, 'h1') + 5_000)
+    expect(unitOf(state, 'h1')).toMatchObject({ taskId: 'r1', stepSerial: 2, orders: [{ id: 'step-2', state: 'active' }] })
+    state = await advance(state, start + 1_800_000)
+    expect(unitOf(state, 'c1').load).toEqual({ [low]: 1 })
+    expect((await refusalOf(state, send(['c1'], { siteId: 'store' }))).reason).toBe('not_a_site: STORE does not receive load')
+  })
+
   test('Stop, then Resume or Clear, leaves a unit parked at a point there: only the pause held its orders back, and it never had a return to make', async () => {
     let state = await runAll(emptyState(), [newUnit('g1', types.pairServer, at(0)), send(['g1'], { point: at(0.02) })])
     state = await advance(state, arrivalAt(state, 'g1'))

@@ -42,7 +42,7 @@ export const orderByMaxLength = 1_000
 
 const pointSchema: z.ZodType<GeoJsonPoint> = geoJsonPointSchema
 
-/** Where a step leads: a task, a receiving site, a point on open ground or one of the unit's own side's tracks. */
+/** Where a step leads: a task, a site (a unit that does not move; a delivery needs one that receives load), a point on open ground or one of the unit's own side's tracks. */
 export const stepTargetSchema = z.union([
   z.object({ taskId: idSchema }).strict(),
   z.object({ siteId: idSchema }).strict(),

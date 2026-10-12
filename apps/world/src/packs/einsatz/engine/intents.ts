@@ -12,7 +12,7 @@ import { pointSchema, propertyValueSchema, type Leg, type UnitRecord } from './m
 
 const distinct = (ids: ReadonlyArray<string>): boolean => new Set(ids).size === ids.length
 
-/** Where a send or a queued step leads: a task, a receiving site, a point, or one of the unit's own side's tracks. */
+/** Where a send or a queued step leads: a task, a site (a unit that does not move), a point, or one of the unit's own side's tracks. */
 export const sendTargetSchema = stepTargetSchema
 
 const propertiesSchema = z.record(configIdSchema, propertyValueSchema)

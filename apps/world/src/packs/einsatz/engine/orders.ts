@@ -23,7 +23,12 @@ export type Target =
 export interface Mover { readonly unit: UnitRecord; readonly fromTaskId?: string }
 type Checked = Refused | { readonly ok: true; readonly already?: string }
 
-/** The record a target names: an open task, a receiving site, a point, or a track. An id the state does not hold is not echoed. */
+/**
+ * The record a target names: an open task, a site, a point, or a track. An
+ * id the state does not hold is not echoed. A site is any unit that cannot
+ * move, a place such as a depot or a post: a unit goes there, and delivers
+ * there only where it receives load (`siteRefusal`).
+ */
 export const resolveTarget = (state: EngineState, to: StepTarget): Target | Refused => {
   if ('taskId' in to) {
     const task = state.tasks.get(to.taskId)
@@ -33,7 +38,7 @@ export const resolveTarget = (state: EngineState, to: StepTarget): Target | Refu
   if ('siteId' in to) {
     const site = state.units.get(to.siteId)
     if (site === undefined) return notInPicture()
-    return isSite(state.catalog, site) ? { kind: 'site', site } : refused('not_a_site', `${site.label} does not receive load`)
+    return unitTypeOf(state.catalog, site).components.mobility === undefined ? { kind: 'site', site } : refused('not_a_site', `${site.label} is no place to go to: it moves`)
   }
   if ('trackId' in to) {
     const track = state.combat.tracks.get(to.trackId)
@@ -46,10 +51,15 @@ export const resolveTarget = (state: EngineState, to: StepTarget): Target | Refu
 export const targetPoint = (state: EngineState, target: Target): GeoJsonPoint | undefined =>
   target.kind === 'task' ? target.task.point : target.kind === 'site' ? motionOf(state, target.site.id).point : target.kind === 'point' ? target.point : undefined
 
-/** Whether a unit may deliver to or go to a site: its side's or public, and accepting every class it carries when it carries load. */
+/**
+ * Whether a unit may deliver to or go to a site: its side's or public, and,
+ * when it carries load, one that receives load and accepts every class it
+ * carries. A place that receives nothing is a site to go to only.
+ */
 export const siteRefusal = (state: EngineState, unit: UnitRecord, site: UnitRecord, load: UnitRecord['load'] = unit.load): Refused | undefined => {
   if (!linksToSite(state.catalog, unit, site)) return refused('cross_side_reference', `${unit.label} cannot use another side's ${site.label}`)
   if (Object.keys(load).length === 0) return undefined
+  if (!isSite(state.catalog, site)) return refused('not_a_site', `${site.label} does not receive load`)
   const accepts = unitTypeOf(state.catalog, site).components.receiving!.accepts
   if (site.accepting !== true) return refused('site_not_accepting', `${site.label} is not accepting`)
   const refusedClass = state.catalog.classes.find(loadClass => load[loadClass.id] !== undefined && !accepts.includes(loadClass.id))
