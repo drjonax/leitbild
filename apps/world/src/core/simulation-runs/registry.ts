@@ -134,6 +134,8 @@ export interface SimulationRunRegistry {
   readonly scenarioRevisionForRun: (id: SimulationRunId) => Promise<ScenarioRevision | undefined>
   readonly compileScenarioRevision: (revision: ScenarioRevision) => Promise<CompiledScenario>
   readonly compiledScenarioForRun: (id: SimulationRunId) => Promise<CompiledScenario>
+  /** The Compiled Scenario a loaded Run started from, read without I/O; throws for a Run that is not loaded. */
+  readonly loadedCompiledScenario: (id: SimulationRunId) => CompiledScenario
   readonly shutdown: () => Promise<void>
   readonly close: (id: SimulationRunId) => Promise<boolean>
   readonly isIdle: () => boolean
@@ -154,6 +156,7 @@ export const createSimulationRunRegistry = (config: {
   readonly procedureSourceService?: ProcedureSourceService
 }): SimulationRunRegistry => {
   const simulationRuns = new Map<SimulationRunId, SimulationRunRuntime>()
+  const loadedCompiledScenarios = new Map<SimulationRunId, CompiledScenario>()
   const lifecycle = createKeyedOperations<SimulationRunId>()
   let shuttingDown = false
   const definitionOperations = createOperationScope('World scenario library')
@@ -636,6 +639,7 @@ export const createSimulationRunRegistry = (config: {
       throw error
     }
     simulationRuns.set(id, runtime)
+    loadedCompiledScenarios.set(id, scenarioRuntime.scenario)
     const priorExecution = await executionStoreFor(id).load()
     if (priorExecution) executionStates.set(id, priorExecution)
     if (priorExecution?.acceleration?.status === 'failed') runtime.failStop(priorExecution.acceleration.error ?? 'maximum-pace execution failed')
@@ -966,6 +970,7 @@ export const createSimulationRunRegistry = (config: {
     leasesBySimulationRun.delete(id)
     await runtime.close()
     simulationRuns.delete(id)
+    loadedCompiledScenarios.delete(id)
     return true
   }
   const close = (id: SimulationRunId): Promise<boolean> => lifecycle.run(id, () => closeLoaded(id))
@@ -1223,6 +1228,11 @@ export const createSimulationRunRegistry = (config: {
       const manifest = await manifestStoreFor(id).load()
       if (!manifest || manifest.workspaceId !== config.workspaceId || stored.id !== manifest.scenario.id || compiledScenarioDigest(stored) !== manifest.scenario.compiledDigest) throw new Error(`Compiled Scenario integrity mismatch: ${id}`)
       return stored
+    },
+    loadedCompiledScenario: id => {
+      const scenario = loadedCompiledScenarios.get(id)
+      if (!scenario) throw new Error(`Simulation Run is not loaded: ${id}`)
+      return scenario
     },
     setBackgroundExecution: async (id, enabled) => {
       await load(id)

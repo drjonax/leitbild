@@ -164,7 +164,7 @@ describe('Role sets on the WebSocket', () => {
 
     const { socket, messages } = await openSocket(`${ws}?simulationRun=${run}&roles=dispatch`)
     const first = await nextOf(messages, 'realtime.ready', 0)
-    expect(first).toMatchObject({ epoch: 1, roleIds: ['dispatch'] })
+    expect(first).toMatchObject({ epoch: 1, roleIds: ['dispatch'], compiledScenario: { id: 'role-run', roles: [...declaredRoles] } })
     expect((first.snapshot as { objects: unknown[] }).objects).toHaveLength(4)
     const presence = async () => (await (await fetch(`${http}/simulation-runs/${run}/presence`)).json() as { roles: { holders: Record<string, number> } }).roles.holders
     expect(await presence()).toEqual({ dispatch: 1 })
@@ -186,8 +186,9 @@ describe('Role sets on the WebSocket', () => {
     socket.send(JSON.stringify({ type: 'role.set', roles: ['control', 'dispatch'] }))
     const second = await nextOf(messages, 'realtime.ready', mark)
     expect(performance.now() - switchedAt).toBeLessThan(500)
-    expect(second).toMatchObject({ epoch: 2, roleIds: ['dispatch', 'control'] })
+    expect(second).toMatchObject({ epoch: 2, roleIds: ['dispatch', 'control'], compiledScenario: { id: 'role-run', roles: [...declaredRoles] } })
     expect((second.snapshot as { objects: unknown[] }).objects).toHaveLength(4)
+    expect((second.compiledScenario as { initialObjects: unknown[] }).initialObjects).toHaveLength(4)
     expect(await presence()).toEqual({ dispatch: 1, control: 1 })
 
     mark = messages.length

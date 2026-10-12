@@ -1,9 +1,9 @@
-import type { CommandResult, SimulationRunId, IsoTimestamp, ObjectId, OperationalNotification, OperationalObject, ScenarioGuidance, ScenarioExecutionState, SimulationClockState } from '../core/model/index.ts'
+import type { CommandResult, CompiledScenario, SimulationRunId, IsoTimestamp, ObjectId, OperationalNotification, OperationalObject, ScenarioGuidance, ScenarioExecutionState, SimulationClockState } from '../core/model/index.ts'
 import type { PackRuntimeRealtimeMessage } from '../simulation/protocol.ts'
 import type { CapabilityInvocationResponse } from './types.ts'
 import { workspaceIdSchema, type WorkspaceId } from '@leitbild/contracts'
 import { simulationRunIdSchema } from '../core/model/index.ts'
-import type { PerspectiveSnapshot } from './roles/perspective.ts'
+import type { RealtimePerspective } from './roles/perspective.ts'
 
 export interface SimulationRunEventPayload {
   readonly type: string
@@ -31,13 +31,6 @@ export interface SimulationRunEventBatchMessage extends PerspectiveEpochTag {
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly events: ReadonlyArray<SimulationRunEventPayload>
-}
-
-/** A role Run's ready message: its epoch, the role set it began and a fresh snapshot. */
-export interface RealtimePerspective {
-  readonly epoch: number
-  readonly roleIds: ReadonlyArray<string>
-  readonly snapshot: PerspectiveSnapshot
 }
 
 export interface RealtimeReadyMessage {
@@ -189,6 +182,10 @@ const parsePerspective = (value: Record<string, unknown>): RealtimePerspective |
   if (!Array.isArray(value.roleIds) || !value.roleIds.every(roleId => typeof roleId === 'string')) throw new Error('invalid realtime ready message: perspective without a role set')
   const snapshot = value.snapshot
   if (!isRecord(snapshot) || !Array.isArray(snapshot.objects) || typeof snapshot.seq !== 'number') throw new Error('invalid realtime ready message: perspective without a snapshot')
+  const compiledScenario = value.compiledScenario
+  if (!isRecord(compiledScenario) || typeof compiledScenario.id !== 'string' || !Array.isArray(compiledScenario.roles)) {
+    throw new Error('invalid realtime ready message: perspective without a Compiled Scenario that declares roles')
+  }
   return {
     epoch,
     roleIds: value.roleIds as ReadonlyArray<string>,
@@ -198,6 +195,7 @@ const parsePerspective = (value: Record<string, unknown>): RealtimePerspective |
       ...(isRecord(snapshot.scenario) ? { scenario: snapshot.scenario as unknown as ScenarioExecutionState } : {}),
       ...(isRecord(snapshot.clock) ? { clock: snapshot.clock as unknown as SimulationClockState } : {}),
     },
+    compiledScenario: compiledScenario as unknown as CompiledScenario,
   }
 }
 

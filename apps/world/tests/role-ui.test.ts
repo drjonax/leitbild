@@ -2,9 +2,16 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { workspaceIdSchema } from '@leitbild/contracts'
-import { runRolesOf, type OperationalObject, type RunRoles, type SimulationRunId } from '../src/core/model/index.ts'
-import { createRealtimeConnectionController, type RealtimeConnectionCallbacks } from '../src/ui/app/realtime-connection.ts'
-import { createPerspectiveGate, perspectiveKey, storesForPerspective, type RunScopedStores } from '../src/ui/roles/perspective.ts'
+import { runRolesOf, type CompiledScenario, type OperationalObject, type RunRoles, type SimulationRunId } from '../src/core/model/index.ts'
+import {
+  createRealtimeConnectionController,
+  staleRefusalMessage,
+  staleResultMessage,
+  switchUnderWayMessage,
+  type RealtimeConnectionCallbacks,
+} from '../src/ui/app/realtime-connection.ts'
+import { beginAction, commandFeedbackText, emptyCommandFeedback } from '../src/ui/command-feedback.ts'
+import { createPerspectiveGate, perspectiveKey, storesForPerspective, type RealtimePerspective, type RunScopedStores } from '../src/ui/roles/perspective.ts'
 import {
   addEntry,
   dropRole,
@@ -55,18 +62,17 @@ const key = (value: string, now: number, extra: Partial<RoleKeyInput> = {}): Rol
   ({ key: value, repeat: false, modified: false, inert: false, now, ...extra })
 
 describe('role picker and role bar', () => {
-  test('offers one numbered card per role and preset with ticks, holders, a side slot and a commands hook', () => {
+  test('offers one numbered card per role and preset with ticks, holders and a side slot', () => {
     expect(roleEntries(declaration).map(entry => [entry.kind, entry.id, entry.key])).toEqual([
       ['role', 'dispatch', '1'], ['role', 'field', '2'], ['role', 'control', '3'], ['preset', 'solo', '4'],
     ])
-    const cards = pickerCards(declaration, { ticked: ['dispatch', 'field'], holders: { control: 2 }, describeCommands: roleId => roleId === 'field' ? 'commands 2 units' : null })
-    expect(cards.map(card => ({ id: card.id, ticked: card.ticked, holders: card.holders, commands: card.commands, side: card.sideColour }))).toEqual([
-      { id: 'dispatch', ticked: true, holders: 0, commands: null, side: null },
-      { id: 'field', ticked: true, holders: 0, commands: 'commands 2 units', side: null },
-      { id: 'control', ticked: false, holders: 2, commands: null, side: null },
-      { id: 'solo', ticked: true, holders: null, commands: null, side: null },
+    const cards = pickerCards(declaration, { ticked: ['dispatch', 'field'], holders: { control: 2 } })
+    expect(cards.map(card => ({ id: card.id, ticked: card.ticked, holders: card.holders, side: card.sideColour }))).toEqual([
+      { id: 'dispatch', ticked: true, holders: 0, side: null },
+      { id: 'field', ticked: true, holders: 0, side: null },
+      { id: 'control', ticked: false, holders: 2, side: null },
+      { id: 'solo', ticked: true, holders: null, side: null },
     ])
-    expect(pickerCards(declaration, { ticked: [], holders: {} }).every(card => card.commands === null)).toBe(true)
   })
 
   test('ticks roles and presets as a union in declaration order', () => {
@@ -165,18 +171,48 @@ describe('per-tab role set', () => {
 
 const object = (id: string, revision = 0): OperationalObject => ({ id, revision } as unknown as OperationalObject)
 
+const roleRunScenario = async (): Promise<CompiledScenario> => await compileWithRolePacks(roleRunDefinition)
+
+/** Everything a store holds, Maps included, as text to search for ids. */
+const storeText = (stores: RunScopedStores): string =>
+  JSON.stringify(stores, (_key, value: unknown) => value instanceof Map ? [...value.entries()] : value)
+
 describe('perspective epochs', () => {
-  test('a newer epoch replaces every Run store and older messages are never applied', () => {
+  test('a newer epoch replaces every Run store, the Compiled Scenario and the feedback line included', async () => {
+    const compiled = await roleRunScenario()
     const gate = createPerspectiveGate()
     expect(gate.admits(undefined)).toBe(true)
     expect(gate.adopt(1)).toBe(true)
-    let stores: RunScopedStores = storesForPerspective({ objects: [object('red-1', 3), object('blue-1')], seq: 9 }, candidate => candidate.id === 'red-1')
-    stores = { ...stores, selectedControllerId: 'red-1', packDataRevisions: { fixture: 4 }, packPanelSelections: { 'fixture.board': 'red-1' } }
+    // The Controller's perspective: its snapshot and Compiled Scenario name a Red unit.
+    const controller: RealtimePerspective = {
+      epoch: 1,
+      roleIds: ['control'],
+      snapshot: { objects: [object('red-1', 3), object('blue-1')], seq: 9 },
+      compiledScenario: { ...compiled, initialObjects: [object('red-1'), object('blue-1')] },
+    }
+    let stores = storesForPerspective(controller, { epoch: 0, roleIds: ['control'], feedback: emptyCommandFeedback }, candidate => candidate.id === 'red-1')
+    expect(commandFeedbackText(stores.commandFeedback.line)).toBe('Playing Controller')
+    // The screen then works in that perspective and names the Red unit.
+    stores = {
+      ...stores,
+      selectedControllerId: 'red-1',
+      packDataRevisions: { fixture: 4 },
+      packPanelSelections: { 'fixture.board': 'red-1' },
+      commandFeedback: beginAction(stores.commandFeedback, 'Deleting red-1').feedback,
+    }
+    expect(storeText(stores)).toContain('red-1')
     expect(gate.admits(1)).toBe(true)
-    // The switch: the Run answers with epoch 2 and a snapshot of the new role set.
+    // The switch: the Run answers with epoch 2 and the new role set's snapshot and Compiled Scenario.
     expect(gate.adopt(2)).toBe(true)
-    stores = storesForPerspective({ objects: [object('blue-1', 1)], seq: 12, clock: { currentTime: '2026-01-01T08:00:00.000Z' } as never }, () => false)
-    expect(stores).toEqual({
+    const dispatcher: RealtimePerspective = {
+      epoch: 2,
+      roleIds: ['dispatch'],
+      snapshot: { objects: [object('blue-1', 1)], seq: 12, clock: { currentTime: '2026-01-01T08:00:00.000Z' } as never },
+      compiledScenario: { ...compiled, initialObjects: [object('blue-1')] },
+    }
+    const switched = storesForPerspective(dispatcher, { epoch: 1, roleIds: ['control'], feedback: stores.commandFeedback }, () => false)
+    expect(switched).toEqual({
+      compiledScenario: dispatcher.compiledScenario,
       objects: [object('blue-1', 1)],
       scenarioState: undefined,
       clock: { currentTime: '2026-01-01T08:00:00.000Z' } as never,
@@ -184,28 +220,35 @@ describe('perspective epochs', () => {
       seenRevisions: new Map([['blue-1', 1]]),
       packDataRevisions: {},
       packPanelSelections: {},
+      commandFeedback: { nextActionId: 4, line: { actionId: 3, tone: 'notice', subject: 'Switched to Dispatcher' } },
     })
-    expect(JSON.stringify([...stores.objects, ...stores.seenRevisions.keys(), stores.selectedControllerId, stores.packPanelSelections])).not.toContain('red-1')
+    // No store of the new perspective holds an id only the old one could see.
+    expect(storeText(switched)).not.toContain('red-1')
     expect(gate.admits(1)).toBe(false)
     expect(gate.adopt(1)).toBe(false)
     expect(gate.admits(2)).toBe(true)
     expect(gate.epoch()).toBe(2)
-    // A reset re-sends the same epoch with a fresh snapshot; it replaces the stores too.
+    // A reset re-sends the same epoch with a fresh snapshot: the stores are replaced, this screen's line stays.
     expect(gate.adopt(2)).toBe(true)
+    const pending = beginAction(switched.commandFeedback, 'Resetting scenario').feedback
+    expect(storesForPerspective(dispatcher, { epoch: 2, roleIds: ['dispatch'], feedback: pending }, () => false).commandFeedback).toBe(pending)
+    expect(() => storesForPerspective({ ...dispatcher, compiledScenario: { ...compiled, roles: undefined } as never }, { epoch: 1, roleIds: null, feedback: emptyCommandFeedback }, () => false)).toThrow('declares no roles')
     expect(perspectiveKey(['control', 'dispatch'])).toBe(perspectiveKey(['dispatch', 'control']))
     expect(perspectiveKey(null)).toBe('')
   })
 
-  test('parses epochs, ready snapshots and role refusals, and leaves open-mode messages as they were', () => {
+  test('parses epochs, ready snapshots and role refusals, and leaves open-mode messages as they were', async () => {
+    const compiled = await roleRunScenario()
     const scope = { workspaceId, simulationRunId: runId }
-    const ready = parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'realtime.ready', ...scope, snapshotSeq: 4, epoch: 2, roleIds: ['control'], snapshot: { objects: [object('a')], seq: 4 } }))
-    expect(ready).toMatchObject({ type: 'realtime.ready', perspective: { epoch: 2, roleIds: ['control'], snapshot: { objects: [object('a')], seq: 4 } } })
+    const ready = parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'realtime.ready', ...scope, snapshotSeq: 4, epoch: 2, roleIds: ['control'], snapshot: { objects: [object('a')], seq: 4 }, compiledScenario: compiled }))
+    expect(ready).toMatchObject({ type: 'realtime.ready', perspective: { epoch: 2, roleIds: ['control'], snapshot: { objects: [object('a')], seq: 4 }, compiledScenario: { id: 'role-run', roles: [...declaredRoles] } } })
     expect(parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'realtime.ready', ...scope, snapshotSeq: 4 }))).toEqual({ type: 'realtime.ready', ...scope, snapshotSeq: 4 })
     expect(parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'events', ...scope, snapshotSeq: 4, events: [], epoch: 3 }))).toMatchObject({ epoch: 3 })
     expect(parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'events', ...scope, snapshotSeq: 4, events: [] }))).toEqual({ type: 'events', ...scope, snapshotSeq: 4, events: [] })
     expect(parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'role.refused', ...scope, code: 'unknown_role', message: 'nope', epoch: 1 }))).toEqual({ type: 'role.refused', ...scope, code: 'unknown_role', message: 'nope', epoch: 1 })
     expect(() => parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'events', ...scope, snapshotSeq: 4, events: [], epoch: 0 }))).toThrow('invalid perspective epoch')
-    expect(() => parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'realtime.ready', ...scope, snapshotSeq: 4, epoch: 2, roleIds: ['control'] }))).toThrow('without a snapshot')
+    expect(() => parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'realtime.ready', ...scope, snapshotSeq: 4, epoch: 2, roleIds: ['control'], compiledScenario: compiled }))).toThrow('without a snapshot')
+    expect(() => parseSimulationRunWebSocketMessage(JSON.stringify({ type: 'realtime.ready', ...scope, snapshotSeq: 4, epoch: 2, roleIds: ['control'], snapshot: { objects: [], seq: 4 } }))).toThrow('without a Compiled Scenario')
   })
 })
 
@@ -228,10 +271,11 @@ class FakeSocket {
 }
 
 describe('realtime connection in a role Run', () => {
-  test('switches in place: the new epoch replaces the stores and late messages of the old one are ignored', async () => {
+  const withFakeSocket = async (body: (connection: ReturnType<typeof createRealtimeConnectionController>, seen: string[]) => Promise<void>): Promise<void> => {
     const globals = globalThis as unknown as Record<string, unknown>
     const saved = { WebSocket: globals.WebSocket, location: globals.location, window: globals.window }
     Object.assign(globals, { WebSocket: FakeSocket, location: { protocol: 'http:', host: 'world.test' }, window: globalThis })
+    const connection = createRealtimeConnectionController()
     try {
       const seen: string[] = []
       const callbacks: RealtimeConnectionCallbacks = {
@@ -241,30 +285,88 @@ describe('realtime connection in a role Run', () => {
         onRuntimeRealtime: message => { seen.push(`realtime ${message.epoch}`) },
         onRoleRefused: message => { seen.push(`refused ${message.code}`) },
       }
-      const connection = createRealtimeConnectionController()
       connection.connect(runId, callbacks, ['dispatch'])
+      await body(connection, seen)
+    } finally {
+      connection.disconnect()
+      Object.assign(globals, saved)
+    }
+  }
+
+  const readyMessage = (compiledScenario: CompiledScenario, epoch: number, roleIds: ReadonlyArray<string>, objectIds: ReadonlyArray<string>) =>
+    ({ type: 'realtime.ready', snapshotSeq: epoch, epoch, roleIds, snapshot: { objects: objectIds.map(id => object(id)), seq: epoch }, compiledScenario })
+
+  const outcome = { kind: 'query', result: { units: 2 } }
+  const sentInvocations = (socket: FakeSocket) => socket.sent.filter(message => (message as { type: string }).type === 'capability.invoke') as Array<{ readonly requestId: string }>
+
+  test('switches in place: the new epoch replaces the stores and late messages of the old one are ignored', async () => {
+    const compiled = await roleRunScenario()
+    await withFakeSocket(async (connection, seen) => {
       const socket = FakeSocket.last!
       expect(socket.url).toBe(`ws://world.test/api/workspaces/${workspaceId}/world/ws?simulationRun=${runId}&roles=dispatch`)
       socket.open()
-      socket.receive({ type: 'realtime.ready', snapshotSeq: 1, epoch: 1, roleIds: ['dispatch'], snapshot: { objects: [object('a'), object('b')], seq: 1 } })
+      socket.receive(readyMessage(compiled, 1, ['dispatch'], ['a', 'b']))
       socket.receive({ type: 'events', snapshotSeq: 2, events: [], epoch: 1 })
-      const asked = connection.invokeCapability(runId, { capabilityId: 'world.fixture.state', input: {} })
       connection.setRoles(runId, ['control'])
       expect(socket.sent.at(-1)).toEqual({ type: 'role.set', roles: ['control'] })
+      expect(() => connection.setRoles(runId, ['field'])).toThrow('A role switch is already under way')
       // Until the new snapshot arrives the old epoch still applies; then it never does.
       socket.receive({ type: 'events', snapshotSeq: 3, events: [], epoch: 1 })
-      socket.receive({ type: 'realtime.ready', snapshotSeq: 3, epoch: 2, roleIds: ['control'], snapshot: { objects: [object('c')], seq: 3 } })
-      await expect(asked).rejects.toThrow('The role set changed before this answer arrived')
+      socket.receive(readyMessage(compiled, 2, ['control'], ['c']))
       socket.receive({ type: 'events', snapshotSeq: 4, events: [], epoch: 1 })
       socket.receive({ type: 'runtime.realtime', snapshotSeq: 4, messages: [], epoch: 1 })
-      socket.receive({ type: 'realtime.ready', snapshotSeq: 4, epoch: 1, roleIds: ['dispatch'], snapshot: { objects: [object('a')], seq: 4 } })
+      socket.receive(readyMessage(compiled, 1, ['dispatch'], ['a']))
       socket.receive({ type: 'events', snapshotSeq: 5, events: [], epoch: 2 })
+      // The switch is answered, so the next one may be asked; the Run refuses it and the screen keeps epoch 2.
+      connection.setRoles(runId, ['ghost'])
       socket.receive({ type: 'role.refused', code: 'unknown_role', message: 'nope', epoch: 2 })
+      connection.setRoles(runId, ['field'])
       expect(seen).toEqual(['ready 1 dispatch 2', 'events 1', 'events 1', 'ready 2 control 1', 'events 2', 'refused unknown_role'])
-      connection.disconnect()
-    } finally {
-      Object.assign(globals, saved)
-    }
+    })
+  })
+
+  test('settles each invocation by the epoch of its own answer', async () => {
+    const compiled = await roleRunScenario()
+    await withFakeSocket(async (connection, seen) => {
+      const socket = FakeSocket.last!
+      socket.open()
+      // Asked before the first ready: the Run answers it in epoch 1, which the screen has adopted by then.
+      const beforeReady = connection.invokeCapability(runId, { capabilityId: 'world.fixture.assign', input: {} })
+      socket.receive(readyMessage(compiled, 1, ['dispatch'], ['a']))
+      socket.receive({ type: 'capability.result', requestId: sentInvocations(socket)[0]!.requestId, outcome, epoch: 1 })
+      expect(await beforeReady).toEqual(outcome as never)
+
+      // Asked before a switch and answered after it: settled without its result, saying it may have applied.
+      const beforeSwitch = Promise.allSettled([
+        connection.invokeCapability(runId, { capabilityId: 'world.fixture.assign', input: {} }),
+        connection.invokeCapability(runId, { capabilityId: 'world.fixture.assign', input: {} }),
+      ])
+      connection.setRoles(runId, ['control'])
+      // While the switch is outstanding the Run would act under the new set, so nothing is sent.
+      const sentBefore = sentInvocations(socket).length
+      await expect(connection.invokeCapability(runId, { capabilityId: 'world.fixture.assign', input: {} })).rejects.toThrow(switchUnderWayMessage)
+      expect(sentInvocations(socket)).toHaveLength(sentBefore)
+      socket.receive(readyMessage(compiled, 2, ['control'], ['c']))
+      const [, oldResult, oldError] = sentInvocations(socket)
+      socket.receive({ type: 'capability.result', requestId: oldResult!.requestId, outcome, epoch: 1 })
+      socket.receive({ type: 'capability.error', requestId: oldError!.requestId, code: 'unit_not_authorized', message: 'Red Tank 2 is not yours', epoch: 1 })
+      expect((await beforeSwitch).map(settled => settled.status === 'rejected' ? (settled.reason as Error).message : settled.status)).toEqual([staleResultMessage, staleRefusalMessage])
+
+      // Asked after the switch is answered: the Run answers it in the new epoch and it resolves.
+      const afterSwitch = connection.invokeCapability(runId, { capabilityId: 'world.fixture.assign', input: {} })
+      socket.receive({ type: 'capability.result', requestId: sentInvocations(socket).at(-1)!.requestId, outcome, epoch: 2 })
+      expect(await afterSwitch).toEqual(outcome as never)
+      expect(seen).toEqual(['ready 1 dispatch 1', 'ready 2 control 1'])
+    })
+  })
+
+  test('sends no switch before the Run has answered the screen, and says it was not sent', async () => {
+    await withFakeSocket(async connection => {
+      expect(() => connection.setRoles(runId, ['control'])).toThrow('so the switch was not sent; this screen keeps its roles')
+      FakeSocket.last!.open()
+      expect(() => connection.setRoles(runId, ['control'])).toThrow('The Run has not answered this screen yet, so the switch was not sent')
+      expect(FakeSocket.last!.sent).toEqual([])
+    })
   })
 })
 
@@ -276,10 +378,14 @@ describe('inert in a Run without roles', () => {
     const markup = route.slice(route.indexOf('</script>'))
     expect(markup.match(/<RoleBar\b/g)).toHaveLength(1)
     expect(markup.match(/<RolePicker\b/g)).toHaveLength(1)
-    expect(markup).toContain('{#if runRoles && heldRoleIds}\n        <RoleBar ')
-    expect(markup).toContain('{#if rolePicker}\n  <RolePicker')
+    // Each mounts only under its role guard, however the markup is laid out.
+    expect(markup).toMatch(/\{#if\s+runRoles\s*&&\s*heldRoleIds\s*\}\s*<RoleBar\b/)
+    expect(markup).toMatch(/\{#if\s+rolePicker\s*\}\s*<RolePicker\b/)
     // The picker opens only on the Run's own refusal of a screen without (valid) roles.
-    expect(route.match(/rolePicker = \{/g)).toHaveLength(1)
-    expect(route).toContain("if (code !== 'role_required' && code !== 'unknown_role') throw err")
+    expect(route.match(/rolePicker\s*=\s*\{/g)).toHaveLength(1)
+    expect(route).toMatch(/if\s*\(\s*code\s*!==\s*'role_required'\s*&&\s*code\s*!==\s*'unknown_role'\s*\)\s*throw\s+err\b/)
+    // Reset is offered to everyone in open mode, where no role set exists.
+    expect(markup).toMatch(/resetScenario=\{\s*controllerControls\s*\?\s*resetScenario\s*:\s*null\s*\}/)
+    expect(route).toMatch(/const\s+controllerControls\s*=\s*\$derived\(\s*runRoles\s*===\s*null\s*\|\|/)
   })
 })

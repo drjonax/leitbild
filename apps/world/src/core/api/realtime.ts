@@ -1,11 +1,11 @@
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import type { SimulationRunEventNotification } from '../simulation-runs/runtime.ts'
 import type { SimulationRunStateSnapshot } from '../simulation-runs/state-store.ts'
-import type { SimulationRunId, SimulationClockState } from '../model/index.ts'
+import type { CompiledScenario, SimulationRunId, SimulationClockState } from '../model/index.ts'
 import type { PackRuntimeRealtimeMessage } from '../../simulation/protocol.ts'
 import type { WorkspaceId } from '@leitbild/contracts'
 
-type RealtimeMessageContext = Omit<RealtimeReadyMessage, 'type' | 'clock' | 'epoch' | 'roleIds' | 'snapshot'>
+type RealtimeMessageContext = Omit<RealtimeReadyMessage, 'type' | 'clock' | 'epoch' | 'roleIds' | 'snapshot' | 'compiledScenario'>
 
 /**
  * A role-Run connection's perspective: the role set it holds and the epoch
@@ -45,10 +45,14 @@ export interface RealtimeReadyMessage {
   readonly scenarioId?: string
   readonly snapshotSeq: number
   readonly clock?: SimulationClockState
-  /** Role Runs only: the perspective epoch, its role set and a fresh snapshot to replace every Run store. */
+  /**
+   * Role Runs only: the perspective epoch, its role set, and a fresh snapshot
+   * and Compiled Scenario that replace every Run store the screen keeps.
+   */
   readonly epoch?: number
   readonly roleIds?: ReadonlyArray<string>
   readonly snapshot?: SimulationRunStateSnapshot
+  readonly compiledScenario?: CompiledScenario
 }
 
 export interface RealtimeEventBatchMessage {
@@ -192,7 +196,12 @@ export const createSimulationRunRealtimeManager = <Client>(config: {
       type: 'realtime.ready',
       ...messageContextForRuntime(simulationRunId, runtime),
       ...(snapshot.clock === undefined ? {} : { clock: snapshot.clock }),
-      ...(perspective === null ? {} : { epoch: perspective.epoch, roleIds: perspective.roleIds, snapshot }),
+      ...(perspective === null ? {} : {
+        epoch: perspective.epoch,
+        roleIds: perspective.roleIds,
+        snapshot,
+        compiledScenario: config.registry.loadedCompiledScenario(simulationRunId),
+      }),
     }
   }
 

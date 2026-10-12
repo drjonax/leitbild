@@ -39,12 +39,11 @@
   } from '../simulation-run-route.ts'
   import {
     applySimulationRunEventBatchMessage,
-    type RealtimePerspective,
   } from '../simulation-run-events.ts'
   import RoleBar from '../roles/RoleBar.svelte'
   import RolePicker from '../roles/RolePicker.svelte'
   import { roleSetText, type RoleCommandsDescriber, type RoleSetChange } from '../roles/role-controller.ts'
-  import { perspectiveKey, storesForPerspective } from '../roles/perspective.ts'
+  import { perspectiveKey, storesForPerspective, type RealtimePerspective } from '../roles/perspective.ts'
   import { configureActiveRoleSet, currentActiveRoleSet, initialRoleSet, roleSetFromSearch, roleSetStorageKey, searchWithRoleSet, writeStoredRoleSet } from '../roles/role-session.ts'
   import { beginAction, completeAction, commandFeedbackText, emptyCommandFeedback, failAction, noteAction, settleCommand, type CommandFeedback } from '../command-feedback.ts'
   import { parseDroneMotionFramesRealtimeMessage, type DroneMotionFrame } from '../../packs/drone/realtime.ts'
@@ -173,9 +172,10 @@
   // Role Runs only: the role set this screen plays, a switch awaiting its fresh
   // snapshot, the connection's perspective epoch, and the picker shown to a
   // screen that holds no role. A Run without roles leaves all of them empty.
+  // Until the Run answers a switch the screen shows, and its requests carry,
+  // the held set; it issues no command of its own meanwhile.
   let heldRoleIds = $state<ReadonlyArray<string> | null>(null)
   let pendingRoleIds = $state<ReadonlyArray<string> | null>(null)
-  let roleSwitchActionId: number | null = null
   let perspectiveEpoch = $state(0)
   let rolePicker = $state<{ readonly runTitle: string; readonly declaration: RunRoles; readonly holders: Readonly<Record<string, number>> } | null>(null)
   let panelMapView = $state<MapView | null>(null)
@@ -1147,8 +1147,15 @@
     clock = body.snapshot.clock
   }
 
+  const switchUnderWay = (): boolean => {
+    if (pendingRoleIds === null) return false
+    commandFeedback = noteAction(commandFeedback, 'Switching roles; issue this again once the switch completes')
+    return true
+  }
+
   const sendCommand = async (capabilityId: string, input: unknown, subject: string): Promise<void> => {
     if (!simulationRunId) return
+    if (switchUnderWay()) return
     const issued = beginAction(commandFeedback, subject)
     commandFeedback = issued.feedback
     let body
@@ -1311,6 +1318,7 @@
       onClose: () => {
         realtimeAttached = false
         status = 'Disconnected'
+        if (pendingRoleIds !== null) failRoleSwitch(pendingRoleIds, 'The realtime channel closed before the Run answered; this screen keeps its roles')
       },
       onError: (message) => {
         status = message
@@ -1358,9 +1366,7 @@
         }
       },
       onRoleRefused: (parsed) => {
-        pendingRoleIds = null
-        if (roleSwitchActionId !== null) commandFeedback = failAction(commandFeedback, roleSwitchActionId, parsed.message)
-        roleSwitchActionId = null
+        if (pendingRoleIds !== null) failRoleSwitch(pendingRoleIds, parsed.message)
       },
       onRuntimeRealtime: (parsed) => {
         if (parsed.simulationRunId !== id) return
@@ -1385,7 +1391,15 @@
 
   /** A fresh snapshot of a new perspective replaces every Run-scoped store; the map view and panel sizes stay. */
   const adoptPerspective = (perspective: RealtimePerspective): void => {
-    const stores = storesForPerspective(perspective.snapshot, object => activePack?.targeting?.isController(object) === true)
+    const stores = storesForPerspective(
+      perspective,
+      { epoch: perspectiveEpoch, roleIds: heldRoleIds, feedback: commandFeedback },
+      object => activePack?.targeting?.isController(object) === true,
+    )
+    // A join or reset still installing the Run's scenario and Packs installs
+    // this same perspective's Compiled Scenario itself: no switch can be asked
+    // for (or under way) while it runs.
+    if (scenarioDefinition !== null) scenarioDefinition = stores.compiledScenario
     objects = [...stores.objects]
     scenarioState = stores.scenarioState
     clock = stores.clock
@@ -1393,18 +1407,25 @@
     seenRevisions = new Map(stores.seenRevisions)
     packDataRevisions = { ...stores.packDataRevisions }
     packPanelSelections = { ...stores.packPanelSelections }
+    commandFeedback = stores.commandFeedback
     cancelMapAssignment()
     placement.cancel()
     latestDroneMotionFrames = []
     routeRevision += 1
     procedureRevision += 1
+    // One switch is outstanding at a time, so a new epoch is its answer.
+    if (perspective.epoch !== perspectiveEpoch) pendingRoleIds = null
     perspectiveEpoch = perspective.epoch
     heldRoleIds = perspective.roleIds
-    pendingRoleIds = null
     configureActiveRoleSet(perspective.roleIds)
     keepRoleSet(perspective.roleIds)
-    if (roleSwitchActionId !== null) commandFeedback = completeAction(commandFeedback, roleSwitchActionId)
-    roleSwitchActionId = null
+  }
+
+  const failRoleSwitch = (roleIds: ReadonlyArray<string>, reason: string): void => {
+    pendingRoleIds = null
+    const subject = runRoles ? `Switching to ${roleSetText(runRoles, roleIds)}` : 'Switching roles'
+    const issued = beginAction(commandFeedback, subject)
+    commandFeedback = failAction(issued.feedback, issued.actionId, reason)
   }
 
   const roleSetKey = (): string => {
@@ -1424,17 +1445,19 @@
       commandFeedback = noteAction(commandFeedback, change.reason)
       return
     }
-    if (!simulationRunId || !runRoles) return
-    const issued = beginAction(commandFeedback, `Switching to ${roleSetText(runRoles, change.roleIds)}`)
-    commandFeedback = issued.feedback
+    if (!simulationRunId || !runRoles) throw new Error('A role change needs a joined Run that declares roles')
+    if (pendingRoleIds !== null) {
+      commandFeedback = noteAction(commandFeedback, 'A role switch is already under way')
+      return
+    }
     try {
       realtimeConnection.setRoles(simulationRunId, change.roleIds)
     } catch (err) {
-      commandFeedback = failAction(commandFeedback, issued.actionId, err instanceof Error ? err.message : String(err))
+      failRoleSwitch(change.roleIds, err instanceof Error ? err.message : String(err))
       return
     }
-    roleSwitchActionId = issued.actionId
     pendingRoleIds = change.roleIds
+    commandFeedback = beginAction(commandFeedback, `Switching to ${roleSetText(runRoles, change.roleIds)}`).feedback
   }
 
   /** A role Run refused this screen's role set: show the picker from the public presence. */
@@ -1582,6 +1605,7 @@
 
   const resetScenario = async (): Promise<void> => {
     if (!simulationRunId) return
+    if (switchUnderWay()) return
     realtimeAttached = false
     resetStartupForJoin()
     snapshotReady = false
@@ -1860,6 +1884,7 @@
           onMapDiagnostic={handleMapDiagnostic}
           {simulationRunId}
           packDataRevisionKey={mapFeatureRevisionKey}
+          {perspectiveEpoch}
           onPackFeatureSelected={selection => { if (surfacePanels.some(panel => panel.id === selection.panelId)) { packPanelSelections = { ...packPanelSelections, [selection.panelId]: selection.itemId }; setSurfacePanelOpen(selection.panelId, true) } }}
           mapLayerGroups={activeMapLayerGroups}
           {mapLayerGroupVisibility}
@@ -1912,7 +1937,7 @@
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if runRoles && heldRoleIds}
-        <RoleBar declaration={runRoles} held={pendingRoleIds ?? heldRoleIds} switching={pendingRoleIds !== null} describeCommands={describeRoleCommands} request={requestRoleChange} />
+        <RoleBar declaration={runRoles} held={heldRoleIds} switchingTo={pendingRoleIds} describeCommands={describeRoleCommands} request={requestRoleChange} />
       {/if}
       {#if richOperationalUiReady && simulationRunId}
         <!-- A panel's own Run stores belong to one perspective: a role switch remounts it. -->
@@ -2032,7 +2057,6 @@
     runTitle={rolePicker.runTitle}
     declaration={rolePicker.declaration}
     initialHolders={rolePicker.holders}
-    describeCommands={describeRoleCommands}
     loadHolders={loadRoleHolders}
     join={joinWithRoles}
   />

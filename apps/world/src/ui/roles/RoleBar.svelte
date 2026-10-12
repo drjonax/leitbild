@@ -7,6 +7,7 @@
     idleRoleKeys,
     roleBarModel,
     roleKeyStep,
+    roleSetText,
     switchToEntry,
     type RoleCommandsDescriber,
     type RoleKeyState,
@@ -20,17 +21,19 @@
    */
   interface Props {
     readonly declaration: RunRoles
+    /** The set this screen plays now; it stays until the Run answers a switch. */
     readonly held: ReadonlyArray<string>
-    /** A switch has been asked for and its fresh snapshot has not arrived yet. */
-    readonly switching: boolean
+    /** The set a switch asked for, while its fresh snapshot has not arrived. */
+    readonly switchingTo: ReadonlyArray<string> | null
     /** A role-aware Pack's line saying what a role commands, when one supplies it. */
     readonly describeCommands: RoleCommandsDescriber | undefined
     readonly request: (change: RoleSetChange) => void
   }
 
-  const { declaration, held, switching, describeCommands, request }: Props = $props()
+  const { declaration, held, switchingTo, describeCommands, request }: Props = $props()
 
   const model = $derived(roleBarModel(declaration, held))
+  const switching = $derived(switchingTo !== null)
   let menuOpen = $state(false)
   let keyState: RoleKeyState = idleRoleKeys
 
@@ -66,16 +69,16 @@
 <div class="role-bar" class:switching role="toolbar" aria-label="Roles held by this screen" title="P then 1–9 switches role">
   {#each model.chips as chip (chip.id)}
     <span class="role-chip" data-class={chip.roleClass}>
-      <button type="button" class="role-chip__label" title={`Play only ${chip.label}`} onclick={() => request(switchToEntry(declaration, held, chip.id))}>{chip.label}</button>
+      <button type="button" class="role-chip__label" title={`Play only ${chip.label}`} disabled={switching} onclick={() => request(switchToEntry(declaration, held, chip.id))}>{chip.label}</button>
       {#if chip.droppable}
-        <button type="button" class="role-chip__drop" aria-label={`Drop ${chip.label}`} title={`Drop ${chip.label}`} onclick={() => request(dropRole(declaration, held, chip.id))}>×</button>
+        <button type="button" class="role-chip__drop" aria-label={`Drop ${chip.label}`} title={`Drop ${chip.label}`} disabled={switching} onclick={() => request(dropRole(declaration, held, chip.id))}>×</button>
       {/if}
     </span>
   {/each}
   {#if model.addable.length > 0}
     <span class="role-add">
-      <button type="button" class="role-add__open" aria-label="Add a role" aria-expanded={menuOpen} title="Add a role or preset" onclick={() => { menuOpen = !menuOpen }}>+</button>
-      {#if menuOpen}
+      <button type="button" class="role-add__open" aria-label="Add a role" aria-expanded={menuOpen} title="Add a role or preset" disabled={switching} onclick={() => { menuOpen = !menuOpen }}>+</button>
+      {#if menuOpen && !switching}
         <ul class="role-add__menu">
           {#each model.addable as entry (entry.id)}
             <li>
@@ -90,7 +93,7 @@
       {/if}
     </span>
   {/if}
-  {#if switching}<span class="role-bar__switching">Switching…</span>{/if}
+  {#if switchingTo}<span class="role-bar__switching" role="status">Switching to {roleSetText(declaration, switchingTo)}…</span>{/if}
 </div>
 
 <style>
@@ -130,6 +133,11 @@
     color: inherit;
     font: inherit;
     cursor: pointer;
+  }
+
+  .role-chip button:disabled,
+  .role-add__open:disabled {
+    cursor: default;
   }
 
   .role-chip__label {

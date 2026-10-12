@@ -604,15 +604,16 @@ export interface PackProcedureAssessmentResult {
   }>
 }
 
-/** The browser-safe projection of a World Pack. It contains only contributions
- * used by the generic World UI and may be loaded without runtime, compilation,
- * persistence, or build-time dependencies. */
-/** Role picker wording a role-aware Pack may supply: one plain line saying
- * what a role commands in this Pack's configuration, e.g. "commands 4 units". */
+/** Role wording a role-aware Pack may supply: one plain line saying what a
+ * role commands in this Pack's configuration, e.g. "commands 4 units". The
+ * role bar's add menu shows it. */
 export interface PackRoleContribution {
   readonly commandsLine: (roleId: string, packConfig: unknown) => string | null
 }
 
+/** The browser-safe projection of a World Pack. It contains only contributions
+ * used by the generic World UI and may be loaded without runtime, compilation,
+ * persistence, or build-time dependencies. */
 export interface WorldPackView {
   readonly descriptor: WorldPackDescriptor
   readonly runtime?: PackRuntimeContribution

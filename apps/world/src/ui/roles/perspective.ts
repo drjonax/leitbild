@@ -1,4 +1,8 @@
-import type { OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
+import type { CompiledScenario, OperationalObject, ScenarioExecutionState, SimulationClockState } from '../../core/model/index.ts'
+import { runRolesOf } from '../../core/model/index.ts'
+import { noteAction, type CommandFeedback } from '../command-feedback.ts'
+import { roleSetText } from './role-controller.ts'
+import { sameRoleSet } from './role-session.ts'
 
 /**
  * A connection to a role Run tags every message with the epoch of the role
@@ -37,11 +41,21 @@ export interface PerspectiveSnapshot {
   readonly clock?: SimulationClockState
 }
 
+/** A role Run's ready message: its epoch, the role set it began, and everything the screen keeps of the Run. */
+export interface RealtimePerspective {
+  readonly epoch: number
+  readonly roleIds: ReadonlyArray<string>
+  readonly snapshot: PerspectiveSnapshot
+  /** The Compiled Scenario as this perspective may see it. */
+  readonly compiledScenario: CompiledScenario
+}
+
 /**
  * Every Run-scoped store a World screen keeps for one perspective. Map
  * viewport, panel sizes, theme and rail width are not Run-scoped and stay.
  */
 export interface RunScopedStores {
+  readonly compiledScenario: CompiledScenario
   readonly objects: ReadonlyArray<OperationalObject>
   readonly scenarioState: ScenarioExecutionState | undefined
   readonly clock: SimulationClockState | undefined
@@ -49,21 +63,45 @@ export interface RunScopedStores {
   readonly seenRevisions: ReadonlyMap<string, number>
   readonly packDataRevisions: Readonly<Record<string, number>>
   readonly packPanelSelections: Readonly<Record<string, string | null>>
+  readonly commandFeedback: CommandFeedback
 }
 
-/** The stores of a perspective, built only from its own snapshot; nothing carries over. */
+/** What the screen showed before a ready message arrived. */
+export interface ScreenPerspective {
+  readonly epoch: number
+  readonly roleIds: ReadonlyArray<string> | null
+  readonly feedback: CommandFeedback
+}
+
+/**
+ * The stores of a perspective, built only from its own ready message; nothing
+ * carries over. The feedback line belongs to a perspective too: a new epoch
+ * replaces it with the role set now played, so no line names an object of the
+ * old one. A ready re-sent in the same epoch (after a reset) keeps the line.
+ */
 export const storesForPerspective = (
-  snapshot: PerspectiveSnapshot,
+  perspective: RealtimePerspective,
+  screen: ScreenPerspective,
   isController: (object: OperationalObject) => boolean,
-): RunScopedStores => ({
-  objects: [...snapshot.objects],
-  scenarioState: snapshot.scenario,
-  clock: snapshot.clock,
-  selectedControllerId: snapshot.objects.find(isController)?.id ?? null,
-  seenRevisions: new Map(snapshot.objects.map(object => [object.id, object.revision])),
-  packDataRevisions: {},
-  packPanelSelections: {},
-})
+): RunScopedStores => {
+  const { snapshot, compiledScenario } = perspective
+  const declaration = runRolesOf(compiledScenario)
+  if (declaration === null) throw new Error(`A role perspective arrived for a Run whose Scenario declares no roles: ${compiledScenario.id}`)
+  const played = roleSetText(declaration, perspective.roleIds)
+  return {
+    compiledScenario,
+    objects: [...snapshot.objects],
+    scenarioState: snapshot.scenario,
+    clock: snapshot.clock,
+    selectedControllerId: snapshot.objects.find(isController)?.id ?? null,
+    seenRevisions: new Map(snapshot.objects.map(object => [object.id, object.revision])),
+    packDataRevisions: {},
+    packPanelSelections: {},
+    commandFeedback: perspective.epoch === screen.epoch
+      ? screen.feedback
+      : noteAction(screen.feedback, sameRoleSet(screen.roleIds, perspective.roleIds) ? `Playing ${played}` : `Switched to ${played}`),
+  }
+}
 
 /**
  * The perspective a screen's Run-scoped requests belong to. A request's

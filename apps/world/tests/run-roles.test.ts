@@ -197,6 +197,11 @@ describe('Role Run gates on World-direct REST', () => {
       expect(issuedCommands(registry, run.id).map(command => command.roleIds)).toEqual([['dispatch', 'field']])
       const journaled = (await registry.get(run.id)!.events()).find((event): event is Extract<SimulationRunEvent, { type: 'command.issued' }> => event.type === 'command.issued')
       expect(journaled?.command.roleIds).toEqual(['dispatch', 'field'])
+      // The journal keeps them: a closed and reloaded Run reads the same roles back.
+      expect(await registry.close(run.id)).toBe(true)
+      expect(registry.get(run.id)).toBeUndefined()
+      await registry.load(run.id)
+      expect(issuedCommands(registry, run.id).map(command => command.roleIds)).toEqual([['dispatch', 'field']])
     } finally { await registry.shutdown() }
   })
 

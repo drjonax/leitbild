@@ -2,29 +2,30 @@
   import type { RunRoles } from '../../core/model/index.ts'
   import ModalShell from '../components/ModalShell.svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
-  import { pickerCards, roleSetText, togglePickerEntry, type RoleCommandsDescriber } from './role-controller.ts'
+  import { pickerCards, roleSetText, togglePickerEntry } from './role-controller.ts'
 
   /**
    * Shown when a screen opens a Run that declares roles without holding one.
    * One card per role and preset; the ticked roles are joined as one set.
+   * The screen has not joined yet, so no Pack is loaded to say what a role
+   * commands; the role bar's add menu carries that line once one does.
    */
   interface Props {
     readonly runTitle: string
     readonly declaration: RunRoles
     readonly initialHolders: Readonly<Record<string, number>>
-    readonly describeCommands?: RoleCommandsDescriber
     /** Reads the public presence again, so the counts stay current while the picker is open. */
     readonly loadHolders: () => Promise<Readonly<Record<string, number>>>
     readonly join: (roleIds: ReadonlyArray<string>) => void
   }
 
-  const { runTitle, declaration, initialHolders, describeCommands, loadHolders, join }: Props = $props()
+  const { runTitle, declaration, initialHolders, loadHolders, join }: Props = $props()
 
   let ticked = $state<ReadonlyArray<string>>([])
   let polledHolders = $state<Readonly<Record<string, number>> | null>(null)
   let presenceError = $state<string | null>(null)
   const holders = $derived(polledHolders ?? initialHolders)
-  const cards = $derived(pickerCards(declaration, { ticked, holders, ...(describeCommands === undefined ? {} : { describeCommands }) }))
+  const cards = $derived(pickerCards(declaration, { ticked, holders }))
 
   runOnMount(() => {
     let active = true
@@ -58,7 +59,6 @@
         <span class="role-card__text">
           <strong>{card.label}</strong>
           <small>{card.kind === 'preset' ? `Preset · ${roleSetText(declaration, card.roleIds)}` : card.roleClass === 'controller' ? 'Controller · sees and commands everything' : 'Operator'}</small>
-          {#if card.commands}<small>{card.commands}</small>{/if}
         </span>
         {#if card.key}<kbd title={`P then ${card.key} switches to this later`}>{card.key}</kbd>{/if}
         {#if card.holders !== null}<span class="role-card__holders" title="Screens holding this role now">{card.holders} {card.holders === 1 ? 'screen' : 'screens'}</span>{/if}

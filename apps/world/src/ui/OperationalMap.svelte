@@ -85,6 +85,8 @@
     readonly packFeatureSourcePackIds?: ReadonlyArray<string>
     readonly focusRequest?: MapFocusRequest | null
     readonly packDataRevisionKey?: string
+    /** A role Run's perspective epoch: a hover card of an earlier one is never left showing. */
+    readonly perspectiveEpoch?: number
     readonly onPackFeatureSelected?: (selection: NonNullable<PackMapFeature['selection']>) => void
     readonly assignmentActive?: boolean
     readonly assignmentAnchor?: GeoJsonPoint | null
@@ -129,6 +131,7 @@
     packFeatureSourcePackIds = [],
     focusRequest = null,
     packDataRevisionKey = '',
+    perspectiveEpoch = 0,
     onPackFeatureSelected = () => {},
     assignmentActive = false,
     assignmentAnchor = null,
@@ -586,6 +589,7 @@
   })
 
   $effect(() => { packDataRevisionKey; untrack(() => { void packOverlayController.refresh() }) })
+  $effect(() => { perspectiveEpoch; untrack(() => { hoveredObject = null; popupController.hide() }) })
 
   $effect(() => {
     mapConfig.layers.join('|')

@@ -29,7 +29,7 @@ export const orderedRoleSet = (declaration: RunRoles, roleIds: ReadonlyArray<str
 export const roleLabels = (declaration: RunRoles, roleIds: ReadonlyArray<string>): ReadonlyArray<string> =>
   declaration.roles.filter(role => roleIds.includes(role.id)).map(role => role.label)
 
-/** A Pack may say what a role commands; with no such Pack the line is absent. */
+/** A role-aware Pack may say what a role commands; with no such Pack the line is absent. */
 export type RoleCommandsDescriber = (roleId: string) => string | null
 
 export interface RoleCard extends RoleEntry {
@@ -38,19 +38,16 @@ export interface RoleCard extends RoleEntry {
   readonly holders: number | null
   /** The role's side colour; sides arrive in R2, so it is null until then. */
   readonly sideColour: string | null
-  readonly commands: string | null
 }
 
 export const pickerCards = (declaration: RunRoles, config: {
   readonly ticked: ReadonlyArray<string>
   readonly holders: Readonly<Record<string, number>>
-  readonly describeCommands?: RoleCommandsDescriber
 }): ReadonlyArray<RoleCard> => roleEntries(declaration).map(entry => ({
   ...entry,
   ticked: entry.roleIds.every(roleId => config.ticked.includes(roleId)),
   holders: entry.kind === 'role' ? config.holders[entry.id] ?? 0 : null,
   sideColour: null,
-  commands: entry.kind === 'role' ? config.describeCommands?.(entry.id) ?? null : null,
 }))
 
 /** Ticking a preset ticks all its roles; unticking it unticks them. */
