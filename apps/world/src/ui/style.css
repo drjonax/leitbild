@@ -4893,6 +4893,12 @@ body.rail-resizing {
   overflow-wrap: anywhere;
 }
 
+.startup-step-diagnostics summary {
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .startup-step-details {
   display: flex;
   flex-wrap: wrap;

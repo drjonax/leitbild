@@ -115,11 +115,15 @@
             <span class="startup-step-error">{step.error}</span>
           {/if}
           {#if step.details?.length}
-            <span class="startup-step-details">
-              {#each step.details as detail}
-                <span><strong>{detail.label}</strong> {detail.value}</span>
-              {/each}
-            </span>
+            <!-- Measurements are for diagnosis, not for the player: folded away unless the step failed. -->
+            <details class="startup-step-diagnostics" open={step.status === 'failed'}>
+              <summary>Diagnostics</summary>
+              <span class="startup-step-details">
+                {#each step.details as detail}
+                  <span><strong>{detail.label}</strong> {detail.value}</span>
+                {/each}
+              </span>
+            </details>
           {/if}
         </span>
         <span class="startup-step-status">
