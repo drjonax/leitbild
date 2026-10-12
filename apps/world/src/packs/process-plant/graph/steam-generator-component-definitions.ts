@@ -16,6 +16,11 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       // valve: steam it vents leaves the Plant, so it is a circuit of its own.
       steamReliefOutlet: { kind: 'steam', direction: 'out', circuit: 'relief' },
       isolationSignal: { kind: 'logicSignal', direction: 'in' },
+      // The steam line's branch to a pump's drive turbine (the turbine-driven
+      // auxiliary feedwater pump's), ahead of the isolation valve, so it still
+      // has steam with the steam lines isolated. The turbine exhausts it to
+      // the atmosphere, so it too is a circuit of its own.
+      driveSteamOutlet: { kind: 'steam', direction: 'out', circuit: 'drive' },
     },
     parametersSchema: z.object({
       nominalPressureMPa: z.number().finite().positive(),

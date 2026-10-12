@@ -1,5 +1,6 @@
 import { primaryLoopPumpForLink } from '../../graph/index.ts'
 import type { CompiledComponent, CompiledProcessLink } from '../../graph/index.ts'
+import { pumpDriveSteamPorts } from '../../graph/pump-component-definitions.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { componentVariablePath } from '../behavior-contract.ts'
 import type { LinkBehaviorReadContext } from './link-flow-helpers.ts'
@@ -8,6 +9,7 @@ import {
   downstreamServiceDemandFraction,
   passiveFlowFromIncomingService,
   sourceLimitedPumpFlow,
+  sumIncomingLinkValue,
 } from './link-flow-helpers.ts'
 import { topologyAwareMainSteamDemandForSourceLink, topologyAwareMainSteamReleaseAvailabilityForSourceLink } from './main-steam-demand.ts'
 import { processPlantServices, serviceUsesDownstreamDemand } from '../service-profiles.ts'
@@ -19,6 +21,27 @@ const atmosphericPressureMPa = 0.101325
 
 const isReliefValve = (component: CompiledComponent | undefined): component is CompiledComponent =>
   component?.kind === 'steamValve' && (component.parameters as Readonly<Record<string, unknown>>).valveMode === 'relief'
+
+
+/** The pump whose drive turbine a steam valve supplies, or null for any other valve. */
+const drivenPumpOf = (system: CompiledProcessPlant, valve: CompiledComponent | undefined): CompiledComponent | null => {
+  if (valve?.kind !== 'steamValve') return null
+  for (const index of system.graph.outgoingLinksByComponent[valve.index] ?? []) {
+    const onward = system.graph.links[index]
+    if (onward?.kind === 'fluidFlow' && String(onward.toPortName) === pumpDriveSteamPorts.inlet) return system.graph.components[onward.toComponentIndex] ?? null
+  }
+  return null
+}
+
+/** Steam a generator's line passes through a valve's flow coefficient at its opening and the generator's pressure, as an atmospheric relief valve or a drive turbine's steam supply valve passes it. */
+const generatorSteamThroughValve = (fromComponent: CompiledComponent, valve: CompiledComponent, context: LinkBehaviorReadContext): number => {
+  const pressure = context.readNumber(componentVariablePath(fromComponent, 'pressureMPa'))
+  const opening = clamp(context.readNumber(componentVariablePath(valve, 'effectivePositionFraction')), 0, 1)
+  const valveFlow = parameterNumber(valve, 'cvKgPerSPerSqrtMPa') * opening * Math.sqrt(Math.max(0, pressure - atmosphericPressureMPa))
+  // While the generator's dome holds stored steam the valve can pass more than it boils; its stored steam spent, no more.
+  const stored = context.readNumber(componentVariablePath(fromComponent, 'steamMassKg')) > steamGeneratorMinimumSteamMassKg(fromComponent)
+  return stored ? valveFlow : Math.min(valveFlow, context.readNumber(componentVariablePath(fromComponent, 'steamFlowKgPerS')))
+}
 
 export interface ProcessLinkFlowSource {
   readonly flowKgPerS: number
@@ -55,6 +78,15 @@ export const processLinkFlowSourceFor = (config: {
       alreadyIncludesPathAvailability: false,
       alreadyIncludesTargetValveDemand: false,
       bypassTargetPumpLimit: true,
+    }
+  }
+  if (fromComponent.kind === 'centrifugalPump' && String(link.fromPortName) === pumpDriveSteamPorts.exhaust) {
+    // The drive turbine exhausts all the steam it takes.
+    return {
+      flowKgPerS: sumIncomingLinkValue(system, fromComponent.index, 'flowKgPerS', context, candidate => candidate.kind === 'fluidFlow' && String(candidate.toPortName) === pumpDriveSteamPorts.inlet),
+      alreadyIncludesPathAvailability: true,
+      alreadyIncludesTargetValveDemand: true,
+      bypassTargetPumpLimit: false,
     }
   }
   if (fromComponent.kind === 'centrifugalPump') {
@@ -145,15 +177,32 @@ export const processLinkFlowSourceFor = (config: {
     // stored steam it can pass more than the generator boils, so the pressure
     // falls until the valve's controller closes it down to the boil-off; its
     // stored steam spent, it passes no more than the generator boils.
-    const pressure = context.readNumber(componentVariablePath(fromComponent, 'pressureMPa'))
-    const opening = clamp(context.readNumber(componentVariablePath(toComponent, 'effectivePositionFraction')), 0, 1)
-    const valveFlow = parameterNumber(toComponent, 'cvKgPerSPerSqrtMPa') * opening * Math.sqrt(Math.max(0, pressure - atmosphericPressureMPa))
-    const stored = context.readNumber(componentVariablePath(fromComponent, 'steamMassKg')) > steamGeneratorMinimumSteamMassKg(fromComponent)
     return {
-      flowKgPerS: stored ? valveFlow : Math.min(valveFlow, context.readNumber(componentVariablePath(fromComponent, 'steamFlowKgPerS'))),
+      flowKgPerS: generatorSteamThroughValve(fromComponent, toComponent, context),
       alreadyIncludesPathAvailability: true,
       alreadyIncludesTargetValveDemand: true,
       bypassTargetPumpLimit: false,
+    }
+  }
+  const drivenPump = fromComponent.kind === 'steamGenerator' && link.service === processPlantServices.mainSteam ? drivenPumpOf(system, toComponent) : null
+  if (drivenPump !== null && toComponent !== undefined) {
+    // A steam supply valve to a pump's drive turbine passes what its opening
+    // and the generator's pressure drive through it, while the turbine's trip
+    // and throttle valve admits steam: while the pump is commanded to run.
+    return {
+      flowKgPerS: context.readBoolean(componentVariablePath(drivenPump, 'running')) ? generatorSteamThroughValve(fromComponent, toComponent, context) : 0,
+      alreadyIncludesPathAvailability: true,
+      alreadyIncludesTargetValveDemand: true,
+      bypassTargetPumpLimit: false,
+    }
+  }
+  if (toComponent?.kind === 'centrifugalPump' && String(link.toPortName) === pumpDriveSteamPorts.inlet) {
+    // The drive turbine takes what its supply valve passes, whatever water the pump moves.
+    return {
+      flowKgPerS: sumIncomingLinkValue(system, link.fromComponentIndex, 'flowKgPerS', context, candidate => candidate.kind === 'fluidFlow' && candidate.service === link.service),
+      alreadyIncludesPathAvailability: true,
+      alreadyIncludesTargetValveDemand: true,
+      bypassTargetPumpLimit: true,
     }
   }
   if (fromComponent.kind === 'steamGenerator' && link.service === processPlantServices.mainSteam) {

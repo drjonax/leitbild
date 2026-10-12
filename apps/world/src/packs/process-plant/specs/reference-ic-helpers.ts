@@ -133,6 +133,25 @@ export const feedwaterIsolationWrites = (idPrefix: string, loops: ReadonlyArray<
   ...feedRegulatingValveIsolationWrites(idPrefix, loops),
 ]
 
+/**
+ * The steam lines that supply the turbine-driven auxiliary feedwater pump's
+ * turbine, ahead of their isolation valves, as the reference design takes
+ * them and its graph spec draws them: those of loops B and C, of the loops
+ * the Plant has. Either alone drives the pump.
+ */
+export const turbineDrivenAfwSteamSupplyLoops = (loops: ReadonlyArray<string>): ReadonlyArray<string> =>
+  loops.filter(loop => loop === 'B' || loop === 'C')
+
+/**
+ * The turbine-driven auxiliary feedwater pump's start: its steam supply
+ * valves open and its trip and throttle valve admits the steam (its run
+ * command), so the turbine comes up and drives the pump.
+ */
+export const turbineDrivenAfwStartWrites = (loops: ReadonlyArray<string>): ReadonlyArray<ReferenceIcEffect> => [
+  write('start-turbine-afw', { tagId: 'AFW-PUMP-T' }, true),
+  ...turbineDrivenAfwSteamSupplyLoops(loops).map(loop => write(`open-turbine-afw-steam-supply-${loop.toLowerCase()}`, { tagId: `TDAFW-STM-${loop}` }, 1)),
+]
+
 export const rule = (config: {
   readonly id: string
   readonly label?: string

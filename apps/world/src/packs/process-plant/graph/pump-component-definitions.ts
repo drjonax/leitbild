@@ -3,6 +3,9 @@ import { type ComponentDefinition, type ComponentKind, variablePathSchema } from
 import { defineComponent, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
 
+/** The ports by which a pump its own steam turbine drives takes the turbine's steam and exhausts it. */
+export const pumpDriveSteamPorts = { inlet: 'driveSteamInlet', exhaust: 'driveSteamExhaust' } as const
+
 export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
   defineComponent({
     kind: 'centrifugalPump' as ComponentKind,
@@ -12,6 +15,10 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       outlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'flow' },
       speedDemand: { kind: 'controlSignal', direction: 'in' },
       power: { kind: 'electricalAc', direction: 'in', demand: 'demandMw' },
+      // A pump its own steam turbine drives takes the turbine's steam here and
+      // exhausts it by its exhaust, to the atmosphere.
+      [pumpDriveSteamPorts.inlet]: { kind: 'steam', direction: 'in', circuit: 'drive' },
+      [pumpDriveSteamPorts.exhaust]: { kind: 'steam', direction: 'out', circuit: 'drive' },
     },
     parametersSchema: z.object({
       nominalFlowKgPerS: z.number().finite().positive(),
@@ -36,6 +43,13 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
        * other pump is at its speed as it starts.
        */
       runUpTimeS: z.number().finite().positive().optional(),
+      /**
+       * For a pump its own turbine drives with steam brought to its drive
+       * steam inlet: the least steam flow on which the turbine holds the
+       * pump's speed. Below it the pump does not run, whatever its command:
+       * no steam, no pump.
+       */
+      minimumDriveSteamFlowKgPerS: z.number().finite().positive().optional(),
       loopResistanceCoefficient: z.number().finite().nonnegative().optional(),
       /**
        * The head it develops at rated speed with no flow. Its head falls along

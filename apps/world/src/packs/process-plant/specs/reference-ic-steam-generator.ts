@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineDrivenAfwStartWrites, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
@@ -316,10 +316,10 @@ export const turbineDrivenAuxiliaryFeedwaterReferenceIcRules = (loops: ReadonlyA
       trip({
         id: 'turbine-afw-start',
         title: 'Turbine-driven AFW start on low-low level',
-        message: `Narrow-range level is below ${levelLowLowPercent} % in two steam generators: the turbine-driven auxiliary feedwater pump starts.`,
+        message: `Narrow-range level is below ${levelLowLowPercent} % in two steam generators: the turbine-driven auxiliary feedwater pump's steam supply valves open and it starts.`,
         annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterPumpTurbine', group: 'auxiliary-feedwater', firstOutGroup: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction', expectedAfter: expectedAfterReactorTrip }),
       }),
-      write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
+      ...turbineDrivenAfwStartWrites(loops),
     ],
   }),
 ]

@@ -25,6 +25,8 @@ const graph = plant.graph
 const loops = ['A', 'B', 'C', 'D'] as const
 const ratedFlowKgPerS = { auxFeedwaterPumpMotor: 27.6, auxFeedwaterPumpMotorB: 27.6, auxFeedwaterPumpTurbine: 55.2 } as const
 const pumps = Object.keys(ratedFlowKgPerS) as ReadonlyArray<keyof typeof ratedFlowKgPerS>
+// The turbine-driven pump's steam supply valves, on the steam lines of steam generators B and C.
+const steamSupplyValves = ['auxFeedwaterTurbineSteamValveB', 'auxFeedwaterTurbineSteamValveC'] as const
 
 const started = (withIc = true, system = plant) => {
   const runtime = createProcessPlantRuntime({ system })
@@ -78,6 +80,7 @@ describe('auxiliary feedwater', () => {
     const plantRun = started(false)
     plantRun.run(5)
     for (const pump of pumps) plantRun.set(`${pump}.running`, true)
+    for (const supply of steamSupplyValves) plantRun.set(`${supply}.positionFraction`, 1)
     for (const loop of loops) plantRun.set(`auxFeedwaterValve${loop}.positionFraction`, loop === 'B' ? 1 : 0)
     // The turbine-driven pump takes its 30 s run-up to come to speed.
     plantRun.run(60)
@@ -100,6 +103,7 @@ describe('auxiliary feedwater', () => {
     const plantRun = started(false)
     plantRun.run(5)
     for (const pump of pumps) plantRun.set(`${pump}.running`, true)
+    for (const supply of steamSupplyValves) plantRun.set(`${supply}.positionFraction`, 1)
     for (const loop of loops) plantRun.set(`auxFeedwaterValve${loop}.positionFraction`, 1)
     plantRun.run(5)
     const header = graph.components[graph.componentIndexById.get('auxFeedwaterHeader' as never)!]!
@@ -203,8 +207,11 @@ describe('auxiliary feedwater', () => {
     }
     expect(startedAt).not.toBeNull()
     const at = (second: number) => trace.find(point => point.second === second)!
-    // Its speed rises evenly to its rated 3,600 rpm; until its head passes the generators' pressure it delivers nothing.
-    expect(at(15).rpm).toBeCloseTo(1_920, -1)
+    // Its speed rises evenly, 120 rpm a second, to its rated 3,600 rpm, from the moment within its first second that its
+    // steam supply valves pass the steam its turbine runs on; until its head passes the generators' pressure it delivers nothing.
+    expect(at(15).rpm - at(5).rpm).toBeCloseTo(1_200, 6)
+    expect(at(15).rpm).toBeGreaterThan(1_800)
+    expect(at(15).rpm).toBeLessThanOrEqual(1_920)
     expect(at(15).flow).toBe(0)
     expect(at(20).flow).toBe(0)
     expect(at(30).rpm).toBeCloseTo(3_600, 0)
@@ -231,6 +238,78 @@ describe('auxiliary feedwater', () => {
     expect(fed).toBeGreaterThan(4_000)
     expect(read('sgA.secondaryInventoryKg') - before).toBeGreaterThan(1_000)
     expect(Math.abs(read('sgA.secondaryInventoryKg') - before - (fed - boiled))).toBeLessThan(0.01 * fed)
+  })
+})
+
+describe('the turbine-driven pump\'s steam', () => {
+  const linkFrom = (system: typeof plant, component: string, port: string) => system.graph.links.filter(link =>
+    String(system.graph.components[link.fromComponentIndex]!.id) === component && String(link.fromPortName) === port)
+
+  test('comes from the steam lines of generators B and C, ahead of their isolation valves, through a supply valve each, and leaves by its exhaust to the atmosphere', () => {
+    for (const loop of ['B', 'C']) {
+      const [supply] = linkFrom(plant, `sg${loop}`, 'driveSteamOutlet')
+      expect(String(graph.components[supply!.toComponentIndex]!.id)).toBe(`auxFeedwaterTurbineSteamValve${loop}`)
+      const [drive] = linkFrom(plant, `auxFeedwaterTurbineSteamValve${loop}`, 'outlet')
+      expect(String(graph.components[drive!.toComponentIndex]!.id)).toBe('auxFeedwaterPumpTurbine')
+      expect(String(drive!.toPortName)).toBe('driveSteamInlet')
+      // Off the generator's own outlet, not the line past its isolation valve.
+      expect(String(supply!.fromPortName)).not.toBe('steamOutlet')
+      for (const tagId of [`TDAFW-STM-${loop}`, `TDAFW-STM-${loop}-POS`, `TDAFW-STM-${loop}-FLOW`]) {
+        expect(resolveProcessPlantSignalBinding(graph, { tagId: tagId as never }).published, tagId).toBe(true)
+      }
+    }
+    for (const loop of ['A', 'D']) expect(linkFrom(plant, `sg${loop}`, 'driveSteamOutlet'), loop).toEqual([])
+    const [exhaust] = linkFrom(plant, 'auxFeedwaterPumpTurbine', 'driveSteamExhaust')
+    expect(String(graph.components[exhaust!.toComponentIndex]!.kind)).toBe('atmosphereBoundary')
+    // A two-loop plant has generator B's supply alone, and its I&C opens only that one.
+    const twoLoop = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:afw-two-loop', loopCount: 2 }))
+    expect(twoLoop.graph.components.filter(component => String(component.id).startsWith('auxFeedwaterTurbineSteamValve')).map(component => String(component.id))).toEqual(['auxFeedwaterTurbineSteamValveB'])
+    const opened = (system: typeof plant) => system.automation.rules.find(rule => rule.id === 'sg-level-low-low-turbine-afw-start')!.effects
+      .flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
+    expect(opened(twoLoop)).toEqual(['AFW-PUMP-T=true', 'TDAFW-STM-B=1'])
+  })
+
+  test('each actuation that starts the pump opens both supply valves and admits the steam', () => {
+    for (const ruleId of ['sg-level-low-low-turbine-afw-start', 'loss-of-offsite-power-afw-actuation']) {
+      const writes = plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+        .flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
+      expect(writes, ruleId).toEqual(expect.arrayContaining(['AFW-PUMP-T=true', 'TDAFW-STM-B=1', 'TDAFW-STM-C=1']))
+    }
+  })
+
+  test('drives it on some 5 kg/s, still with the steam lines isolated, on either supply alone, and not at all without steam', () => {
+    const plantRun = started()
+    plantRun.run(5)
+    plantRun.act('loss-offsite-power')
+    plantRun.run(60)
+    const { tag, read, set } = plantRun
+    expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(1)
+    for (const loop of ['B', 'C']) expect(tag(`TDAFW-STM-${loop}-POS`), loop).toBeCloseTo(1, 3)
+    const steam = () => tag('TDAFW-STM-B-FLOW') + tag('TDAFW-STM-C-FLOW')
+    // A single-stage turbine's 0.75 MW for the pump's 880 gpm against the generators' pressure, from steam at no-load pressure.
+    expect(steam()).toBeGreaterThan(4)
+    expect(steam()).toBeLessThan(6)
+    // All of it leaves by the exhaust, to the atmosphere.
+    expect(read('turbine-afw-pump-turbine-exhaust-to-atmosphere.flowKgPerS')).toBeCloseTo(steam(), 1)
+    // Ahead of the isolation valves, it still has steam with every steam line isolated.
+    for (const loop of loops) set(`mainSteamIsolationValve${loop}.positionFraction`, 0)
+    plantRun.run(30)
+    expect(steam()).toBeGreaterThan(4)
+    expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(1)
+    // Either supply alone drives it; with both shut it stops, whatever its run command, and delivers nothing.
+    set('auxFeedwaterTurbineSteamValveB.positionFraction', 0)
+    plantRun.run(20)
+    expect(tag('TDAFW-STM-B-FLOW')).toBeLessThan(0.1)
+    expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(1)
+    expect(read('auxFeedwaterPumpTurbine.flowKgPerS')).toBeGreaterThan(0.9 * ratedFlowKgPerS.auxFeedwaterPumpTurbine * 0.5)
+    set('auxFeedwaterTurbineSteamValveC.positionFraction', 0)
+    plantRun.run(20)
+    expect(tag('AFW-PUMP-T')).toBe(1)
+    expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(0)
+    expect(tag('TDAFW-SPEED')).toBe(0)
+    // Its flow runs down with the pump.
+    expect(read('auxFeedwaterPumpTurbine.flowKgPerS')).toBeLessThan(1)
+    expect(read('turbine-afw-pump-turbine-exhaust-to-atmosphere.flowKgPerS')).toBeLessThan(0.1)
   })
 })
 

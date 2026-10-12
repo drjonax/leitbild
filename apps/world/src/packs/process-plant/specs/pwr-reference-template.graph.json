@@ -1897,6 +1897,7 @@
         "nominalHeadPa": 9000000,
         "shutoffHeadPa": 11000000,
         "runUpTimeS": 30,
+        "minimumDriveSteamFlowKgPerS": 1,
         "initialRunning": false,
         "flowTimeConstantS": 4,
         "maxFlowRampKgPerS2": 90
@@ -5493,6 +5494,70 @@
             "demanded": { "on": "Manual SI demanded", "off": "No manual SI demanded" }
           },
           "momentary": ["pushbutton"]
+        }
+      }
+    },
+    {
+      "id": "auxFeedwaterTurbineSteamValveB",
+      "kind": "steamValve",
+      "label": "TD AFW Pump Steam Supply Valve B",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "isolation",
+        "cvKgPerSPerSqrtMPa": 0.9,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 3,
+        "reverseFlowAllowed": false
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "TDAFW-STM-B",
+          "equipmentId": "auxFeedwaterTurbineSteamValveB",
+          "description": "Turbine-driven auxiliary feedwater pump steam supply valve B position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "TDAFW-STM-B-POS",
+          "equipmentId": "auxFeedwaterTurbineSteamValveB",
+          "description": "Turbine-driven auxiliary feedwater pump steam supply valve B position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "TD AFW steam B"
+        }
+      }
+    },
+    {
+      "id": "auxFeedwaterTurbineSteamValveC",
+      "kind": "steamValve",
+      "label": "TD AFW Pump Steam Supply Valve C",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "isolation",
+        "cvKgPerSPerSqrtMPa": 0.9,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 3,
+        "reverseFlowAllowed": false
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "TDAFW-STM-C",
+          "equipmentId": "auxFeedwaterTurbineSteamValveC",
+          "description": "Turbine-driven auxiliary feedwater pump steam supply valve C position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "TDAFW-STM-C-POS",
+          "equipmentId": "auxFeedwaterTurbineSteamValveC",
+          "description": "Turbine-driven auxiliary feedwater pump steam supply valve C position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "TD AFW steam C"
         }
       }
     }
@@ -12538,6 +12603,237 @@
       "from": "safetyBusB.outlet",
       "to": "containmentFanCoolersB.power",
       "connectionKind": "electricalPower"
+    },
+    {
+      "id": "sg-b-steam-to-turbine-afw-steam-valve-b",
+      "from": "sgB.driveSteamOutlet",
+      "to": "auxFeedwaterTurbineSteamValveB.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator B steam to the TD AFW pump turbine flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0,
+          "tagId": "TDAFW-STM-B-FLOW",
+          "equipmentId": "auxFeedwaterTurbineSteamValveB",
+          "description": "Steam flow from steam generator B to the turbine-driven auxiliary feedwater pump turbine"
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator B steam to the TD AFW pump turbine temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "TD AFW pump steam supply valve B inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "turbine-afw-steam-valve-b-to-pump-turbine",
+      "from": "auxFeedwaterTurbineSteamValveB.outlet",
+      "to": "auxFeedwaterPumpTurbine.driveSteamInlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "TD AFW pump steam supply valve B to pump turbine flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "TD AFW pump steam supply valve B to pump turbine temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "TD AFW pump turbine steam inlet pressure from valve B",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "sg-c-steam-to-turbine-afw-steam-valve-c",
+      "from": "sgC.driveSteamOutlet",
+      "to": "auxFeedwaterTurbineSteamValveC.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator C steam to the TD AFW pump turbine flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0,
+          "tagId": "TDAFW-STM-C-FLOW",
+          "equipmentId": "auxFeedwaterTurbineSteamValveC",
+          "description": "Steam flow from steam generator C to the turbine-driven auxiliary feedwater pump turbine"
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator C steam to the TD AFW pump turbine temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "TD AFW pump steam supply valve C inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "turbine-afw-steam-valve-c-to-pump-turbine",
+      "from": "auxFeedwaterTurbineSteamValveC.outlet",
+      "to": "auxFeedwaterPumpTurbine.driveSteamInlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "TD AFW pump steam supply valve C to pump turbine flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "TD AFW pump steam supply valve C to pump turbine temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "TD AFW pump turbine steam inlet pressure from valve C",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "turbine-afw-pump-turbine-exhaust-to-atmosphere",
+      "from": "auxFeedwaterPumpTurbine.driveSteamExhaust",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "exhaustSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "TD AFW pump turbine exhaust to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "TD AFW pump turbine exhaust temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 100
+        },
+        {
+          "path": "pressureMPa",
+          "label": "TD AFW pump turbine exhaust pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        }
+      ]
     }
   ],
   "publishedVariables": [
@@ -13413,6 +13709,12 @@
     "steamGeneratorReliefValveE.effectivePositionFraction",
     "steam-generator-relief-valve-e-to-atmosphere.flowKgPerS",
     "steamGeneratorReliefValveF.effectivePositionFraction",
-    "steam-generator-relief-valve-f-to-atmosphere.flowKgPerS"
+    "steam-generator-relief-valve-f-to-atmosphere.flowKgPerS",
+    "auxFeedwaterTurbineSteamValveB.positionFraction",
+    "auxFeedwaterTurbineSteamValveB.effectivePositionFraction",
+    "sg-b-steam-to-turbine-afw-steam-valve-b.flowKgPerS",
+    "auxFeedwaterTurbineSteamValveC.positionFraction",
+    "auxFeedwaterTurbineSteamValveC.effectivePositionFraction",
+    "sg-c-steam-to-turbine-afw-steam-valve-c.flowKgPerS"
   ]
 }
