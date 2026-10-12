@@ -403,10 +403,46 @@ export const electricalBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefin
   loadBehavior,
 ]
 
-export const electricalInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = electricalBehaviorDefinitions.map(behavior => ({
-  id: `${behavior.id}-initial-state`, componentKind: behavior.componentKind,
-  reads: behavior.reads, writes: behavior.writes, reconcile: behavior.update,
-}))
+/**
+ * A generator's speed. While its output breaker is closed it turns in step
+ * with the grid its parameters name, at 120·f / poles rpm (1,500 rpm for a
+ * four-pole machine on a 50 Hz grid). The model solves no rotor, so with the
+ * breaker open there is no speed to read (no coastdown, no overspeed): it
+ * reads a zero that measures nothing, as its kind declares.
+ */
+export const generatorSpeedRpm = (
+  system: CompiledProcessPlant,
+  generator: CompiledComponent,
+  breakerClosed: boolean,
+  context: ElectricalReadContext,
+): number => {
+  if (!breakerClosed) return 0
+  const gridId = (generator.parameters as { readonly gridSource: string }).gridSource
+  const gridIndex = system.graph.componentIndexById.get(gridId as never)
+  const grid = gridIndex === undefined ? undefined : system.graph.components[gridIndex]
+  if (grid?.kind !== 'electricalGridSource') throw new Error(`generator ${generator.id} turns with grid ${gridId}, which is not a grid source of the Plant`)
+  return 120 * context.readNumber(componentVariablePath(grid, 'frequencyHz')) / parameterNumber(generator, 'generatorPoleCount')
+}
+
+// A generator on line at the start turns with its grid from the first instant.
+const generatorSpeedInitialReconciliation: ComponentInitialReconciliationDefinition = {
+  id: 'generator-synchronous-speed-initial-state',
+  componentKind: 'turbineLoadSink',
+  reads: ['outputBreakerClosed', 'gridSource frequencyHz'],
+  writes: ['speedRpm'],
+  reconcile: ({ system, component, context }): void => {
+    const breakerClosed = context.readBoolean(componentVariablePath(component, 'outputBreakerClosed'))
+    context.write(componentVariablePath(component, 'speedRpm'), generatorSpeedRpm(system, component, breakerClosed, context))
+  },
+}
+
+export const electricalInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
+  ...electricalBehaviorDefinitions.map(behavior => ({
+    id: `${behavior.id}-initial-state`, componentKind: behavior.componentKind,
+    reads: behavior.reads, writes: behavior.writes, reconcile: behavior.update,
+  })),
+  generatorSpeedInitialReconciliation,
+]
 
 // Solved after the electrical phase and not at the initial reconciliation: a
 // sequencer read before its bus is solved would arm on a bus that is live.

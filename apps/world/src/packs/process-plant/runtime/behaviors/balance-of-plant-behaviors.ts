@@ -11,6 +11,7 @@ import {
 import { inventoryBalanceStep } from '../physics.ts'
 import { heatMwFromWaterFlowAndDeltaT, latentHeatSteamMjPerKg } from '../thermophysics.ts'
 import { condenserThermalBalance } from '../condenser-thermodynamics.ts'
+import { generatorSpeedRpm } from './electrical-behaviors.ts'
 
 const downstreamCondenserBackPressurePa = (
   system: CompiledProcessPlant,
@@ -51,8 +52,8 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     id: 'turbine-electrical-output',
     phase: 'solveElectrical',
     componentKind: 'turbineLoadSink',
-    reads: ['loadFraction', 'steamFlowKgPerS', 'incoming:flowKgPerS', 'incoming:pressureMPa'],
-    writes: ['electricMw', 'outputBreakerClosed', 'steamFlowKgPerS', 'steamDemandKgPerS', 'steamAvailabilityFraction', 'exhaustTemperatureC'],
+    reads: ['loadFraction', 'steamFlowKgPerS', 'incoming:flowKgPerS', 'incoming:pressureMPa', 'gridSource frequencyHz'],
+    writes: ['electricMw', 'outputBreakerClosed', 'steamFlowKgPerS', 'steamDemandKgPerS', 'steamAvailabilityFraction', 'exhaustTemperatureC', 'impulseLoadPercent', 'speedRpm'],
     update: ({ system, component, context }): void => {
       const inletSteamFlow = averageIncomingLinkValue(system, component, 'flowKgPerS', context) ?? 0
       const averageSteamPressure = averageIncomingLinkValue(system, component, 'pressureMPa', context)
@@ -74,11 +75,16 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'steamFlowKgPerS'), inletSteamFlow)
       context.write(componentVariablePath(component, 'exhaustTemperatureC'), relaxToward(context.readNumber(componentVariablePath(component, 'exhaustTemperatureC')), exhaustTarget, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)))
       // With its load rejected the generator's output breaker is open: it carries nothing at once.
-      context.write(componentVariablePath(component, 'outputBreakerClosed'), load > 0)
+      const breakerClosed = load > 0
+      context.write(componentVariablePath(component, 'outputBreakerClosed'), breakerClosed)
       context.write(
         componentVariablePath(component, 'electricMw'),
         load === 0 ? 0 : relaxToward(current, target, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)),
       )
+      // A turbine's first-stage (impulse) pressure, its load signal, stands in proportion to its steam flow.
+      // The model has no first stage: its load reads as the steam flow over the rated flow, as Tref reads it.
+      context.write(componentVariablePath(component, 'impulseLoadPercent'), inletSteamFlow / nominalSteamFlow * 100)
+      context.write(componentVariablePath(component, 'speedRpm'), generatorSpeedRpm(system, component, breakerClosed, context))
     },
   },
   {

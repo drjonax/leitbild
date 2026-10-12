@@ -37,6 +37,9 @@ export const balanceOfPlantInitialValueDefinitions: ReadonlyArray<ComponentIniti
         const fullLoad = optionalParameterNumber(component, 'exhaustTemperatureAtFullLoadC', 145)
         return noLoad + (fullLoad - noLoad) * initialLoadFraction
       }
+      if (localPath === 'impulseLoadPercent') return initialLoadFraction * 100
+      // Set from the grid it turns with by the initial reconciliation (generatorSpeedRpm), before anything reads it.
+      if (localPath === 'speedRpm') return 0
       return undefined
     },
   },
