@@ -147,7 +147,12 @@ describe('Simulation Run registry', () => {
       expect((await registry.summary(copy.id)).title).toBe('What-if')
       const manifest = JSON.parse(await readFile(join(simulationRunDir(dataDir, workspaceId, copy.id), 'manifest.json'), 'utf8')) as { origin?: unknown }
       expect(manifest.origin).toMatchObject({ kind: 'copy', familyId: source.id, copyNumber: 1, sourceRunId: source.id, sourceSequence: sourceBefore.seq })
-      await expect(access(join(simulationRunDir(dataDir, workspaceId, copy.id), 'events.jsonl'))).rejects.toThrow()
+      // The copy's journal starts empty; it holds only the clock its own fast-forward stopped at.
+      const journal = (await readFile(join(simulationRunDir(dataDir, workspaceId, copy.id), 'events.jsonl'), 'utf8'))
+        .trim().split('\n').map(line => JSON.parse(line) as SimulationRunEvent)
+      expect(journal.map(event => event.type === 'clock.updated' ? event.clock : event.type)).toEqual([
+        { currentTime: completed.acceleration!.targetSimulationTime!, paused: true, updatedAt: expect.any(String) },
+      ])
     } finally { await registry.shutdown() }
   })
   test('stops fast-forward without overshooting its current slice', async () => {

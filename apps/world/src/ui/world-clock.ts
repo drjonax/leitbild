@@ -1,6 +1,20 @@
-import type { SimulationClockState } from '../core/model/index.ts'
+import type { IsoTimestamp, SimulationClockState } from '../core/model/index.ts'
 import { simulationTimeAt } from './simulation-clock.ts'
 import type { RunExecutionState } from './types.ts'
+
+/**
+ * The clock an execution read gives the view. At maximum pace the Run clock
+ * moves in exact slices that publish no clock event each, so the view holds
+ * each read's time, paused, until the next read; when a maximum-pace execution
+ * stops, the Run publishes the clock it stopped at. At realtime pace the Run's
+ * clock events alone carry the view's clock.
+ */
+export const executionClockReading = (
+  execution: Pick<RunExecutionState, 'pace' | 'currentSimulationTime' | 'updatedAt'>,
+): SimulationClockState | undefined =>
+  execution.pace === 'maximum'
+    ? { currentTime: execution.currentSimulationTime as IsoTimestamp, paused: true, updatedAt: execution.updatedAt as IsoTimestamp }
+    : undefined
 
 /**
  * The World view's clock: the Run's simulated time of day, which is the

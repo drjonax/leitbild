@@ -66,6 +66,7 @@
   import { createPlacementState } from '../placement-state.svelte.ts'
   import { createRailLayoutState } from '../rail-layout-state.svelte.ts'
   import { simulationTimeAt } from '../simulation-clock.ts'
+  import { executionClockReading } from '../world-clock.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ControlRail from '../ControlRail.svelte'
   import ScenarioGuidance from '../ScenarioGuidance.svelte'
@@ -894,9 +895,8 @@
     if (!simulationRunId) return
     try {
       executionState = await fetchRunExecution(simulationRunId)
-      if (executionState.pace === 'maximum') {
-        clock = { currentTime: executionState.currentSimulationTime as IsoTimestamp, paused: true, updatedAt: executionState.updatedAt as IsoTimestamp }
-      }
+      const reading = executionClockReading(executionState)
+      if (reading) clock = reading
     } catch (err) {
       status = err instanceof Error ? err.message : String(err)
     }

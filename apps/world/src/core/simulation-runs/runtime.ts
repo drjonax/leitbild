@@ -1510,6 +1510,20 @@ export const createSimulationRunRuntime = async (config: {
         if (currentMs < targetMs) await new Promise<void>(resolve => setTimeout(resolve, 0))
       }
       await enqueueOperation(async () => {
+        // Slices move the Run clock without a clock event each. Commit the clock
+        // this execution stopped at, so the projection and every reader of the
+        // Run's events hold it, not the last time they happened to sample.
+        const stopped: SimulationClockState = { ...runClock.read(), paused: true, updatedAt: nowIso() }
+        runClock.set(stopped)
+        await publishOneGenerated(() => ({
+          id: eventId(),
+          simulationRunId: config.id,
+          seq: ++seq,
+          at: stopped.updatedAt,
+          provenance: { source: 'system' },
+          type: 'clock.updated',
+          clock: stopped,
+        }))
         await checkpoint()
         await saveSnapshotImmediately()
       })
