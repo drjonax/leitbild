@@ -14,6 +14,7 @@
   import AnnunciatorTiles from './AnnunciatorTiles.svelte'
   import ComparisonPanel from './ComparisonPanel.svelte'
   import EvidencePanel from './EvidencePanel.svelte'
+  import FaceplatePanel from './FaceplatePanel.svelte'
   import PenLegend from './PenLegend.svelte'
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import SafetyFunctionChips from './SafetyFunctionChips.svelte'
@@ -379,7 +380,7 @@
     <div class="panels beside" style={`gap:${layout.overviewColumnGap}px`}>
       <div class="drawing">
         {#each view.display.panels as panel, index (index)}
-          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />{/if}
+          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />{:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
         {/each}
       </div>
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
@@ -435,6 +436,8 @@
           <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
         {:else if panel.kind === 'mimic'}
           <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />
+        {:else if panel.kind === 'faceplate'}
+          <FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} />
         {:else}
           {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
           <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
