@@ -1,9 +1,32 @@
-import { type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl'
+import { type GeoJSONSource, type LineLayerSpecification, type Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl'
 import type { PackMapFeature } from '../../core/packs/protocol.ts'
 import { loadMapSymbols, rasterizeSymbol } from './map-symbols.ts'
 
 const sourceId = 'leitbild-pack-features'
-const layerIds = ['leitbild-pack-fills', 'leitbild-pack-lines', 'leitbild-pack-points', 'leitbild-pack-symbols']
+const layerIds = ['leitbild-pack-fills', 'leitbild-pack-lines', 'leitbild-pack-points', 'leitbild-pack-symbols', 'leitbild-pack-dashed-lines']
+
+/** The dash of a Pack line that asks for one (`lineDashed`), in line widths. */
+export const packLineDash: ReadonlyArray<number> = [2, 2]
+
+/** The source data for the visible Pack features, in draw order; a line that asks for a dash carries `dashed`. */
+export const packFeatureCollection = (visible: ReadonlyArray<PackMapFeature>): GeoJSON.FeatureCollection => ({
+  type: 'FeatureCollection',
+  features: visible.map(feature => ({
+    type: 'Feature',
+    geometry: feature.geometry as unknown as GeoJSON.Geometry,
+    properties: { id: feature.id, color: feature.color, opacity: feature.opacity ?? .1, lineColor: feature.lineColor ?? feature.color, lineOpacity: feature.lineOpacity ?? .5, lineWidth: feature.lineWidth ?? 1, dashed: feature.lineDashed === true, icon: feature.geometry.type === 'Point' && feature.symbol ? 'pack-icon:' + feature.symbol.icon : '', size: feature.symbol?.size ?? 1 },
+  })),
+})
+
+/**
+ * The two line layers: solid lines, and dashed ones in a layer of their own,
+ * since a dash is no per-feature paint here. Both lie beneath the base map's
+ * labels, and the deck overlay draws every operational icon above them.
+ */
+export const packLineLayers: ReadonlyArray<LineLayerSpecification> = [
+  { id: layerIds[1]!, type: 'line', source: sourceId, filter: ['all', ['!=', ['geometry-type'], 'Point'], ['!=', ['get', 'dashed'], true]], paint: { 'line-color': ['get','lineColor'], 'line-width': ['get','lineWidth'], 'line-opacity': ['get','lineOpacity'] } },
+  { id: layerIds[4]!, type: 'line', source: sourceId, filter: ['all', ['!=', ['geometry-type'], 'Point'], ['==', ['get', 'dashed'], true]], paint: { 'line-color': ['get','lineColor'], 'line-width': ['get','lineWidth'], 'line-opacity': ['get','lineOpacity'], 'line-dasharray': [...packLineDash] } },
+]
 
 /** One native map source for Pack geometry. Evidence remains a Pack record, not a fake operational object. */
 export const createPackFeatureLayer = (onSelect: (selection: NonNullable<PackMapFeature['selection']>) => void, onError: (message: string) => void) => {
@@ -67,7 +90,7 @@ export const createPackFeatureLayer = (onSelect: (selection: NonNullable<PackMap
       const visible = features.filter(feature => visibleLayers.has(feature.layerId ?? 'objects')).sort((a,b) => (a.sortKey ?? 0) - (b.sortKey ?? 0))
       byId = new Map(visible.map(feature => [feature.id, feature]))
       wantedIcons = new Set(visible.filter(feature => feature.geometry.type === 'Point' && feature.symbol).map(feature => feature.symbol!.icon))
-      const data: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: visible.map(feature => ({ type: 'Feature', geometry: feature.geometry as unknown as GeoJSON.Geometry, properties: { id: feature.id, color: feature.color, opacity: feature.opacity ?? .1, lineColor: feature.lineColor ?? feature.color, lineOpacity: feature.lineOpacity ?? .5, lineWidth: feature.lineWidth ?? 1, icon: feature.geometry.type === 'Point' && feature.symbol ? 'pack-icon:' + feature.symbol.icon : '', size: feature.symbol?.size ?? 1 } })) }
+      const data = packFeatureCollection(visible)
       const nextSignature = JSON.stringify(data)
       const source = next.getSource(sourceId) as GeoJSONSource | undefined
       if (source) {
@@ -82,7 +105,7 @@ export const createPackFeatureLayer = (onSelect: (selection: NonNullable<PackMap
       next.addSource(sourceId, { type: 'geojson', data })
       const beforeLabels = next.getStyle().layers.find(layer => layer.type === 'symbol')?.id
       next.addLayer({ id: layerIds[0]!, type: 'fill', source: sourceId, filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': ['get','color'], 'fill-opacity': ['get','opacity'] } }, beforeLabels)
-      next.addLayer({ id: layerIds[1]!, type: 'line', source: sourceId, filter: ['!=', ['geometry-type'], 'Point'], paint: { 'line-color': ['get','lineColor'], 'line-width': ['get','lineWidth'], 'line-opacity': ['get','lineOpacity'] } }, beforeLabels)
+      for (const layer of packLineLayers) next.addLayer(layer, beforeLabels)
       next.addLayer({ id: layerIds[2]!, type: 'circle', source: sourceId, filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': ['case', ['!=', ['get','icon'], ''], 13, 6], 'circle-color': ['get','color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1, 'circle-opacity': .9 } })
       // Admit a symbol only once its artwork exists. A missing-image expression can
       // cache an empty result and never rediscover artwork registered asynchronously.

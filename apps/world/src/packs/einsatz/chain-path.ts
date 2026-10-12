@@ -76,10 +76,16 @@ export const plannedPaths = (objects: ReadonlyArray<OperationalObject>): Planned
 
 const pathColor = '#2f6f9f'
 
-/** How a planned path is drawn: faint for every unit, strong for the one the map selects (the Board's highlighted asset). */
-const pathLine = {
-  plain: { lineOpacity: 0.5, lineWidth: 2, sortKey: 22 },
-  selected: { lineOpacity: 0.95, lineWidth: 4, sortKey: 23 },
+/**
+ * How a queued segment is drawn: dashed and thin, beneath every operational
+ * icon (the map draws its icons above Pack lines), so a straight segment that
+ * crosses other units stays readable as a plan; faint for every unit, a
+ * little stronger for the one the map selects (the Board's highlighted asset).
+ * The active leg is the unit's route, drawn solid by the map.
+ */
+export const pathLine = {
+  plain: { lineOpacity: 0.45, lineWidth: 1.5, lineDashed: true, sortKey: 22 },
+  selected: { lineOpacity: 0.9, lineWidth: 2.5, lineDashed: true, sortKey: 23 },
 } as const
 
 /**

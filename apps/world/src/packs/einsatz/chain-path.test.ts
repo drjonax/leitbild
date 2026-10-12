@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { packMapFeatureSchema } from '../../core/packs/protocol.ts'
 import type { IsoTimestamp } from '../../core/model/index.ts'
 import { plannedPathFeatures, plannedPaths } from './chain-path.ts'
 import type { Intent } from './engine/intents.ts'
@@ -63,11 +64,13 @@ describe('Einsatz job chain paths', () => {
     ])
     expect(features.map(feature => feature.summary)).toEqual(['C1 · next: FAR', 'C1 · next: a map point'])
     expect(plannedPathFeatures(objectsOf(state), 'units', () => true)).toHaveLength(2)
-    // The selected unit's path is drawn strongly, above every other path.
+    // Queued segments are dashed and thinner than a route; the selected unit's are a little stronger, above every other path.
     const line = (selectedObjectId?: string) => presentation.mapFeatures!({ objects, ...(selectedObjectId === undefined ? {} : { selectedObjectId }) })
-      .map(feature => [feature.lineWidth, feature.lineOpacity, feature.sortKey])
-    expect(line()).toEqual([[2, 0.5, 22], [2, 0.5, 22]])
-    expect(line('c1')).toEqual([[4, 0.95, 23], [4, 0.95, 23]])
+      .map(feature => [feature.lineWidth, feature.lineOpacity, feature.lineDashed, feature.sortKey])
+    expect(line()).toEqual([[1.5, 0.45, true, 22], [1.5, 0.45, true, 22]])
+    expect(line('c1')).toEqual([[2.5, 0.9, true, 23], [2.5, 0.9, true, 23]])
     expect(line('far')).toEqual(line())
+    // Every planned segment parses as a Pack map feature, the dash included.
+    for (const feature of presentation.mapFeatures!({ objects, selectedObjectId: 'c1' })) expect(packMapFeatureSchema.safeParse(feature).success).toBe(true)
   })
 })

@@ -192,6 +192,8 @@ export interface PackMapFeature {
   readonly lineColor?: string
   readonly lineOpacity?: number
   readonly lineWidth?: number
+  /** A line drawn dashed, for what is planned rather than under way; solid when absent. */
+  readonly lineDashed?: boolean
   readonly sortKey?: number
 }
 
@@ -222,6 +224,7 @@ export const packMapFeatureSchema = z
     lineColor: z.string().min(1).optional(),
     lineOpacity: z.number().finite().min(0).max(1).optional(),
     lineWidth: z.number().finite().nonnegative().optional(),
+    lineDashed: z.boolean().optional(),
     sortKey: z.number().finite().optional(),
   })
   .strict()
