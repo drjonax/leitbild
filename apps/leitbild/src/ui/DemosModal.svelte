@@ -352,11 +352,6 @@
 </Modal>
 
 <style>
-  /* Hug the content. A modal <dialog> is inset 0, so height: auto would stretch it to the
-     viewport; fit-content is the UA default this restores (noted for L2's Modal). */
-  @media (min-width: 640px) {
-    :global(dialog.lb-modal.hug.demos-modal) { height: fit-content; }
-  }
   .demos-body { position: relative; }
   .state { display: grid; gap: 12px; justify-items: start; margin: 0; padding: 32px 28px; color: var(--lb-ink-2); }
   .state p { margin: 0; }

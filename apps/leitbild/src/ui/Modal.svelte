@@ -115,7 +115,8 @@
   .lb-modal { width: min(var(--modal-w), calc(100vw - 32px)); height: min(var(--modal-h), calc(100dvh - 32px)); max-width: none; max-height: calc(100dvh - 32px);
     padding: 0; border: 1px solid var(--lb-line-strong); border-radius: var(--lb-r-xl); background: var(--lb-surface); color: var(--lb-ink);
     box-shadow: var(--lb-shadow-lg); overflow: hidden; }
-  .lb-modal.hug { height: auto; }
+  /* A modal <dialog> is inset 0, so height: auto would stretch it to the viewport; fit-content hugs the content. */
+  .lb-modal.hug { height: fit-content; }
   .lb-modal[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: modal-in var(--lb-t-base) var(--lb-ease); }
   .lb-modal::backdrop { background: rgba(10, 16, 12, .56); backdrop-filter: blur(3px); }
   @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985); } }
