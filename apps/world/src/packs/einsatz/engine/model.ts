@@ -4,9 +4,6 @@ import { configIdSchema, type EinsatzConfig, type LoadClass, type TaskTemplate, 
 import { validateEinsatzConfig } from '../config-validation.ts'
 import { unitPhases } from '../lexicon.ts'
 
-/** The Pack id every Einsatz object carries. */
-export const einsatzPackId = 'einsatz'
-
 const simulationMs = z.number().finite().nonnegative()
 /** A validated point typed as the core's read-only GeoJSON point. */
 export const pointSchema: z.ZodType<GeoJsonPoint> = geoJsonPointSchema

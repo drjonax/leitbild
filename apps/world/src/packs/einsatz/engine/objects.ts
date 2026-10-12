@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { idSchema, meters, type AlertState, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId, type Provenance } from '../../../core/model/index.ts'
 import type { EinsatzConfig } from '../config-schema.ts'
-import { einsatzDataSchema, einsatzPackId, emptyEngineState, motionOf, templateOf, unitTypeOf, type EngineState, type RecordAlert, type TaskRecord, type Transition, type UnitMotion, type UnitRecord } from './model.ts'
+import { einsatzPackId } from '../ids.ts'
+import { einsatzDataSchema, emptyEngineState, motionOf, templateOf, unitTypeOf, type EngineState, type RecordAlert, type TaskRecord, type Transition, type UnitMotion, type UnitRecord } from './model.ts'
 import { legPosition, speedFactor } from './movement.ts'
 import { committedPhases, isMoving, isSite, linksToSite, linksToTask, movingPhases } from './rules.ts'
 
