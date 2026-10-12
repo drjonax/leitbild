@@ -1,4 +1,5 @@
 import type { EmbeddedViewContent } from '@leitbild/contracts'
+import type { CompiledPlantGraph, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantIcComparisonOperator } from '../runtime/index.ts'
 import type { SafetyFunctionComparison, SafetyFunctionEvaluation, SafetyFunctionStatus, SafetyFunctionStep } from '../safety-functions.ts'
 import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } from './display-text.ts'
@@ -58,16 +59,45 @@ export interface SafetyFunctionChip {
   readonly status: SafetyFunctionStatus
   readonly procedure?: string
   readonly text: string
+  /**
+   * The equipment on the tree's deciding branch, by component id: what owns
+   * the readings that answered its last question as it was answered (the
+   * steam generators whose levels are below 10 %, the vessel whose subcooling
+   * margin holds). A click on the chip opens it. Absent where the tree read
+   * nothing (a function not judged).
+   */
+  readonly opens?: ReadonlyArray<string>
 }
 
-export const safetyFunctionChip = (evaluation: SafetyFunctionEvaluation): SafetyFunctionChip => ({
-  id: evaluation.id,
-  label: evaluation.label,
-  shortLabel: evaluation.shortLabel,
-  status: evaluation.status,
-  ...(evaluation.procedure === undefined ? {} : { procedure: evaluation.procedure }),
-  text: [`${evaluation.label}: ${statusText(evaluation)}`, ...pathText(evaluation), `${evaluation.basis}; not a qualified plant procedure.`].join('\n'),
-})
+/**
+ * The components that own the readings deciding the tree's last answer; a
+ * line's reading is the equipment's it flows into, as an evidence row counts
+ * it. At most as many as one detail opens.
+ */
+const decidingEquipment = (evaluation: SafetyFunctionEvaluation, graph: CompiledPlantGraph, most: number): ReadonlyArray<string> => {
+  const step = evaluation.path.at(-1)
+  if (step === undefined) return []
+  const deciding = step.comparisons.filter(comparison => comparison.answer === step.answer)
+  const owners = (deciding.length > 0 ? deciding : step.comparisons).flatMap(comparison => comparison.reads).flatMap(read => {
+    const owner = graph.signalBindingByPath.get(read.path as VariablePath)?.owner
+    if (owner === undefined) return []
+    return [String(graph.components[owner.type === 'component' ? owner.componentIndex : graph.links[owner.linkIndex]!.toComponentIndex]!.id)]
+  })
+  return [...new Set(owners)].slice(0, most)
+}
+
+export const safetyFunctionChip = (evaluation: SafetyFunctionEvaluation, graph: CompiledPlantGraph, most: number): SafetyFunctionChip => {
+  const opens = decidingEquipment(evaluation, graph, most)
+  return {
+    id: evaluation.id,
+    label: evaluation.label,
+    shortLabel: evaluation.shortLabel,
+    status: evaluation.status,
+    ...(evaluation.procedure === undefined ? {} : { procedure: evaluation.procedure }),
+    text: [`${evaluation.label}: ${statusText(evaluation)}`, ...pathText(evaluation), `${evaluation.basis}; not a qualified plant procedure.`].join('\n'),
+    ...(opens.length === 0 ? {} : { opens }),
+  }
+}
 
 /** One line naming every function's status, as what a display shows. */
 export const safetyFunctionShows = (evaluations: ReadonlyArray<SafetyFunctionEvaluation>): ReadonlyArray<string> =>

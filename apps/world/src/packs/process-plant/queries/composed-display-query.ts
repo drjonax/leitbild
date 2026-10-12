@@ -13,6 +13,7 @@ import {
   composedDisplayCompositionSchema,
   composedDisplayStateSchema,
   overviewDisplayStateSchema,
+  PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS,
   processDisplayStatePlantId,
   processDisplayStateSchema,
 } from '../displays/composition.ts'
@@ -325,7 +326,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     simulationTime,
     plantElapsedMs: system.runtime.elapsedMs(),
     ...(mode === undefined ? {} : { mode }),
-    ...(safetyFunctions.length === 0 ? {} : { safetyFunctions: safetyFunctions.map(safetyFunctionChip) }),
+    ...(safetyFunctions.length === 0 ? {} : { safetyFunctions: safetyFunctions.map(evaluation => safetyFunctionChip(evaluation, system.plant.graph, PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS)) }),
     ...(alarms === undefined ? {} : {
       alarms: alarms
         .map(lifecycle => ({

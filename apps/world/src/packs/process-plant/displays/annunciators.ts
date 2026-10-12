@@ -5,7 +5,9 @@ import { processPlantIcLifecycleIdFor } from '../runtime/index.ts'
 import { resolveProcessPlantSignalPath } from '../signals.ts'
 import { composedDisplayLayout } from './composition.ts'
 import { limitOrderName } from './display-text.ts'
-import { icRuleKind, icThresholdsForSignal, UNDECLARED_ACTION } from './ic-thresholds.ts'
+import { energyEnds } from '../graph/index.ts'
+import { automaticActions } from './actuations.ts'
+import { firstOutGroupOf, icRuleKind, icThresholdsForSignal, UNDECLARED_ACTION } from './ic-thresholds.ts'
 import { flapText } from './mimic/bindings.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
@@ -105,6 +107,13 @@ export interface DisplayAnnunciation {
    * how long after it they are expected (panel-presenters.ts expectedAfter).
    */
   readonly expected: Readonly<Record<string, { readonly after: string; readonly withinMs: number }>>
+  /**
+   * The energy ends (energyEnds) each group's own actuations command, by the
+   * group's name, so its banner label opens them: RX TRIP the core whose rods
+   * it inserts, TURB TRIP the turbine. A group that commands none opens
+   * nothing (AFW START starts pumps and opens valves).
+   */
+  readonly ends: Readonly<Record<string, ReadonlyArray<string>>>
 }
 
 /**
@@ -187,6 +196,11 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
     tags: Object.fromEntries(annunciated.map(entry => [entry.id, tagOf(entry)])),
     groups: Object.fromEntries(annunciated.flatMap(({ id, group }) => group === undefined ? [] : [[id, group.shortLabel]])),
     groupOrder: [...declared.filter(group => group.reactorTrip), ...declared.filter(group => !group.reactorTrip)].map(group => group.shortLabel),
+    ends: Object.fromEntries(declared.flatMap(group => {
+      const commanding = [...automaticActions(plant).values()].filter(action => firstOutGroupOf(plant, action.rule)?.id === group.id)
+      const commanded = energyEnds(plant.graph).filter(end => commanding.some(action => action.writes.some(write => write.component === end.component.index)))
+      return commanded.length === 0 ? [] : [[group.shortLabel, [...new Set(commanded.map(end => String(end.component.id)))]]]
+    })),
     expected: Object.fromEntries(annunciated.flatMap(({ id, effect }) => {
       const expected = effect.annunciator?.expectedAfter
       const after = expected === undefined ? undefined : declared.find(group => group.id === expected.firstOutGroup)

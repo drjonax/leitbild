@@ -16,6 +16,7 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { composeEvidenceRows, type CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
 import { chipName, positionWord } from '../src/packs/process-plant/displays/display-text.ts'
 import { activeThreshold } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
 import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -314,6 +315,26 @@ describe('what World adds to a composed display', () => {
     expect(positionWord(Number(turbineTrip.read('turbineStopValve.effectivePositionFraction')))).toBe('SHUT')
     expect(items.find(item => item.label === 'NIS-PR-AVG')!.pen.position).toBeUndefined()
     expect([positionWord(0.049), positionWord(0.05), positionWord(0.95), positionWord(0.951)]).toEqual(['SHUT', null, null, 'OPEN'])
+  }, PLANT_HANG_GUARD_MS)
+
+  test('each critical safety function chip opens the equipment on its tree\'s deciding branch, and each banner group the energy end it commands', () => {
+    // C1 plan E5 (HF review HF-21): from status to evidence in one click. After a turbine trip heat sink is yellow on
+    // every steam generator's narrow range below 10 %: the chip opens the four. Subcriticality was decided on the
+    // startup rate, read on the core.
+    const { system, ask } = situation({ actionId: 'turbine-trip' }, 1)
+    const sample = ask('world.process-plant.display.sample', { plantId: system.plant.id, paths: ['pressurizer.pressureMPa'], alarms: false }) as { safetyFunctions: ReadonlyArray<{ shortLabel: string; status: string; opens?: ReadonlyArray<string> }> }
+    expect(Object.fromEntries(sample.safetyFunctions.map(chip => [chip.shortLabel, chip.opens ?? null]))).toEqual({
+      SUBCRIT: ['core'],
+      'CORE COOL': ['vessel'],
+      'HEAT SINK': ['sgA', 'sgB', 'sgC', 'sgD'],
+      INTEGRITY: ['rcpA', 'rcpB', 'rcpC', 'rcpD'],
+      CTMT: ['containment'],
+      INVENTORY: ['vessel'],
+    })
+    expect(sample.safetyFunctions.find(chip => chip.shortLabel === 'HEAT SINK')!.status).toBe('yellow')
+    // A banner label opens the energy end its group's own actuations command; AFW START commands none.
+    const annunciation = displayAnnunciation(system.plant)
+    expect(annunciation.ends).toEqual({ 'RX TRIP': ['core'], SI: ['core'], FWI: ['turbine'], 'TURB TRIP': ['turbine'] })
   }, PLANT_HANG_GUARD_MS)
 
   test('a narrow range on its span whose fall reaches its end within the trend brings its wide range', () => {
