@@ -1,5 +1,13 @@
-leitbild.app {
+leitbild.app, leitbild.ai {
 	encode zstd gzip
+
+	# The Host's root redirect uses leitbild.app as its configured public origin.
+	# Keep visits to the new domain on leitbild.ai.
+	@aiRoot {
+		host leitbild.ai
+		path /
+	}
+	redir @aiRoot /workspaces 303
 
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
