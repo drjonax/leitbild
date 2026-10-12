@@ -73,6 +73,22 @@ const readHostError = async (response: Response): Promise<ToolResult> => {
   })
 }
 
+// A Module refuses input that does not match an operation's schema with
+// invalid_request (World: the schema's issues). The refusal then carries that
+// schema from the catalog this call already read, so the next call can be
+// corrected without a schema search. The bound keeps a refusal small: it holds
+// 72 of World's 75 schemas (display.compose's is 2.9 KB); scenario authoring
+// schemas (15 KB) are named for an explicit read instead.
+const MAX_REFUSAL_SCHEMA_BYTES = 4096
+
+const refusedInputSchema = (refusal: ToolResult, operation: ModuleCapabilityDescriptor): Record<string, unknown> => {
+  if ((refusal.data as { code?: unknown }).code !== 'invalid_request') return {}
+  const bytes = new TextEncoder().encode(JSON.stringify(operation.inputSchema)).byteLength
+  return bytes <= MAX_REFUSAL_SCHEMA_BYTES
+    ? { inputSchema: operation.inputSchema }
+    : { inputSchemaOmitted: `${bytes} bytes; read it with workspace_explore view=operations, operationIds ["${operation.id}"], includeInputSchema true` }
+}
+
 const optionalFilter = (value: unknown): unknown =>
   typeof value === 'string' && (value.trim().length === 0 || value.trim() === '*') ? undefined : value
 
@@ -545,7 +561,8 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
             })
             if (!response.ok) {
               const result = await readHostError(response)
-              return { key: entry.key, operationId: entry.operationId, success: false, error: result.error, details: result.data }
+              // The operation is advertised: applicabilityFailure refused an unadvertised one before invocation.
+              return { key: entry.key, operationId: entry.operationId, success: false, error: result.error, details: result.data, ...refusedInputSchema(result, entry.operation!) }
             }
             const body = await response.json() as { result?: unknown }
             if (!Object.hasOwn(body, 'result')) return { key: entry.key, operationId: entry.operationId, success: false, error: 'workspace_host_contract_invalid: Workspace Host response omitted result' }

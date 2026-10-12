@@ -386,6 +386,41 @@ describe('Workspace progressive-discovery tools', () => {
     expect(workspaceCallResultForModel(failed)).toBe(failed)
   })
 
+  test('a refusal of input that does not match the schema carries the schema, within a bound', async () => {
+    const largeSchema = { type: 'object', properties: Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`field${index}`, { type: 'string', description: 'x'.repeat(20) }])) }
+    const refusingFetch = (async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? new Request(input, init) : new Request(String(input), init)
+      const pathname = new URL(request.url).pathname
+      if (pathname.endsWith('/capabilities')) {
+        const catalog = await (await catalogFetch([])(input, init)).json() as { capabilities: Array<{ id: string; inputSchema: unknown }> }
+        return Response.json({ ...catalog, capabilities: catalog.capabilities.map(operation => operation.id === writeId
+          ? { ...operation, inputSchema: largeSchema }
+          : { ...operation, inputSchema: { type: 'object', required: ['plantId'], properties: { plantId: { type: 'string' } } } }) })
+      }
+      if (!pathname.endsWith('/invoke')) return catalogFetch([])(input, init)
+      const { input: asked } = await request.json() as { input: { refuse: string } }
+      return Response.json({ error: { code: asked.refuse, message: 'plantId: Required' } }, { status: 400 })
+    }) as typeof fetch
+    const [, call] = createWorkspaceCapabilityTools({ workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: () => ({ kind: 'resource', resource: run }), fetchImpl: refusingFetch })
+    const refusal = async (operationId: string, refuse: string) =>
+      ((await call!.execute({ calls: [{ key: 'k', operationId, target: runTarget, input: { refuse } }] }, context)).data as { results: ReadonlyArray<Record<string, unknown>> }).results[0]!
+
+    expect(await refusal(readId, 'invalid_request')).toMatchObject({
+      success: false,
+      error: 'invalid_request: plantId: Required',
+      inputSchema: { type: 'object', required: ['plantId'], properties: { plantId: { type: 'string' } } },
+    })
+    // A schema over the bound is named for an explicit read, not carried.
+    const large = await refusal(writeId, 'invalid_request')
+    expect(JSON.stringify(largeSchema).length).toBeGreaterThan(4096)
+    expect(large.inputSchema).toBeUndefined()
+    expect(large.inputSchemaOmitted).toMatch(new RegExp(`^\\d+ bytes; read it with workspace_explore view=operations, operationIds \\["${writeId.replaceAll('.', '\\.')}"\\], includeInputSchema true$`))
+    // A Module's own refusal of a valid-shaped input names its fixes; it carries no schema.
+    const rejected = await refusal(readId, 'capability_input_rejected')
+    expect(rejected).toMatchObject({ success: false, error: 'capability_input_rejected: plantId: Required' })
+    expect(Object.keys(rejected)).not.toContain('inputSchema')
+  })
+
   test('batches independent reads but rejects a batch containing a change', async () => {
     const requests: Request[] = []
     const [, call] = makeTools({ kind: 'resource', resource: run }, requests)
