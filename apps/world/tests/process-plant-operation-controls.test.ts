@@ -121,6 +121,78 @@ describe('controls an operator is offered', () => {
   })
 })
 
+// The position commands of modulating equipment, read from the graph: by
+// aspect and declared function, whether a controller drives them, never by
+// what the reference PWR calls them.
+const modulatingPositions = (system: CompiledProcessPlant): ReadonlyArray<{ readonly command: VariablePath; readonly state: VariablePath | undefined; readonly controlled: boolean }> =>
+  system.graph.components.flatMap(component => [
+    ...component.semantics.aspects.map(aspect => ({ aspect, equipmentFunction: component.semantics.function, controlled: declaredController(component) !== null })),
+    ...component.semantics.embedded.flatMap(device => device.aspects.map(aspect => ({ aspect, equipmentFunction: device.function, controlled: false }))),
+  ]).flatMap(({ aspect, equipmentFunction, controlled }) => equipmentFunction === 'modulating' && aspect.aspect === 'position' && aspect.command !== undefined
+    && system.graph.signalBindingByPath.get(aspect.command)?.actuation === 'command'
+    ? [{ command: aspect.command, state: aspect.state?.reading === 'value' ? aspect.state.path : undefined, controlled }]
+    : [])
+
+const demandControls = (result: ReturnType<typeof derivePlantControls>): ReadonlyArray<OfferedControl> =>
+  result.items.flatMap(entry => entry.offered.filter(control => control.form === 'demand'))
+
+describe('a modulating valve no controller drives is set to a %', () => {
+  test('every such valve, and only such a valve, offers a demand in its hard range; a controller\'s valve reads AUTO', () => {
+    const positions = modulatingPositions(plant)
+    const free = positions.filter(position => !position.controlled && position.state !== undefined).map(position => position.command)
+    expect(demandControls(controls).map(control => control.path).sort()).toEqual([...free].sort())
+    for (const position of positions.filter(candidate => candidate.controlled)) {
+      expect(withheldFor(plant.graph.signalBindingByPath.get(position.command)!).map(control => control.reason.kind)).toEqual(['automatic'])
+    }
+    // On the four-loop reference PWR: the four auxiliary feedwater control valves and the letdown valve.
+    expect(demandControls(controls).map(control => String(control.tagId))).toEqual(['AFW-A-CV', 'AFW-B-CV', 'AFW-C-CV', 'AFW-D-CV', 'LET-ISOL'])
+  })
+
+  test('its span, step and unit come from the command; OPEN and SHUT stay at its ends, each with its stroke time', () => {
+    const binding = tag('AFW-A-CV')
+    const [control] = offeredFor(binding)
+    expect(control!.form).toBe('demand')
+    expect(control!.demand).toEqual({ min: binding.limits!.hardRange!.min, max: binding.limits!.hardRange!.max, step: 0.01, unit: 'fraction', shownUnit: '%', word: 'OPEN' })
+    expect(control!.options.map(entry => [entry.word, entry.value, entry.state])).toEqual([['OPEN', 1, 'OPEN'], ['SHUT', 0, 'SHUT']])
+    const travel = plant.graph.components[ownerIndex(binding)]!.semantics.aspects[0]!.travel!
+    expect(control!.options.map(entry => entry.travelMs)).toEqual([1_000 * travel.onS, 1_000 * travel.offS])
+    // Its item shows where the valve stands: the position the model solves, not its demand.
+    expect(itemOf(controls, ownerIndex(binding)).position).toBe(control!.state)
+    expect(control!.state).not.toBe(binding.path)
+  })
+
+  test('a setting in its span and step reads "OPEN to n %"; anything else is refused with the span', () => {
+    const { path } = tag('AFW-A-CV')
+    const item = itemOf(controls, ownerIndex(tag('AFW-A-CV'))).id
+    expect(offeredOption(plant, controls, { path, value: 0.4 })).toEqual({ ok: true, item, word: 'OPEN to 40 %' })
+    expect(offeredOption(plant, controls, { path, value: 0.07 })).toEqual({ ok: true, item, word: 'OPEN to 7 %' })
+    expect(offeredOption(plant, controls, { path, value: 0 })).toEqual({ ok: true, item, word: 'SHUT' })
+    expect(offeredOption(plant, controls, { path, value: 1 })).toEqual({ ok: true, item, word: 'OPEN' })
+    for (const value of [0.405, 1.2, -0.1, true]) {
+      expect(offeredOption(plant, controls, { path, value })).toEqual({ ok: false, reason: 'AFW-A-CV AFW valve A is set from 0 % to 100 % in steps of 1 %' })
+    }
+  })
+
+  test('a controller\'s valve says what manual operation would take, and a proposal is refused with it', () => {
+    const [feedValve] = withheldFor(tag('MFW-A-CV'))
+    const reason = feedValve!.reason
+    if (reason.kind !== 'automatic') throw new Error('the feed regulating valve is not held by its controller')
+    expect(reason.manual).toBe('Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step')
+    expect(offeredOption(plant, controls, { path: tag('MFW-A-CV').path, value: 0.4 })).toEqual({ ok: false, reason: `${reason.text}. ${reason.manual}` })
+    expect(itemOf(controls, ownerIndex(tag('MFW-A-CV'))).position).toBeDefined()
+  })
+
+  test('an item shows a position where its aspect is a solved position, and only there', () => {
+    for (const entry of controls.items) {
+      const component = plant.graph.components[entry.item.component]!
+      const aspects = entry.item.kind === 'device' ? component.semantics.embedded.find(device => device.id === (entry.item as { readonly device: string }).device)!.aspects : component.semantics.aspects
+      const solved = aspects.find(aspect => aspect.aspect === 'position' && aspect.state?.reading === 'value')
+      expect(entry.position).toBe(solved?.state?.path)
+    }
+    expect(itemOf(controls, ownerIndex(tag('SI-PUMP-A'))).position).toBeUndefined()
+  })
+})
+
 describe('what is withheld, and why', () => {
   test('a fault the scenario injects and a condition outside the Plant are listed nowhere (I-1)', () => {
     const listed = [...controls.items.flatMap(entry => entry.offered), ...controls.items.flatMap(entry => entry.withheld)]
@@ -240,5 +312,12 @@ describe('controls depend on the Plant graph, not on equipment ids', () => {
     expect(unnamed.items.length).toBe(controls.items.length)
     expect(unnamed.items.flatMap(entry => entry.offered).length).toBeGreaterThan(30)
     expect(unnamed).toEqual(renamed(controls))
+  })
+
+  test('sets the same valves to a %, read from the graph alone', () => {
+    const unnamed = demandControls(derivePlantControls(anonymous))
+    expect(unnamed.length).toBe(5)
+    expect(unnamed.map(control => control.path).sort()).toEqual(modulatingPositions(anonymous).filter(position => !position.controlled && position.state !== undefined).map(position => position.command).sort())
+    expect(unnamed.map(control => [control.path, control.demand])).toEqual(renamed(demandControls(controls).map(control => [control.path, control.demand])))
   })
 })

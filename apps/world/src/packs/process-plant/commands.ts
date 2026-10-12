@@ -84,7 +84,7 @@ export const processPlantControlProposePayloadSchema = z.object({
   plantId: z.string().min(1),
   path: variablePathSchema.optional(),
   tagId: processSignalTagIdSchema.optional(),
-  value: processVariableValueSchema.describe('The value of one option the control offers (controls.list): true/false or 1/0 for a position.'),
+  value: processVariableValueSchema.describe('The value of one option the control offers (controls.list): true/false, 1/0 for a valve\'s OPEN/SHUT, or a demand control\'s setting in its span and step (0.4 for OPEN to 40 %).'),
   reason: z.string().trim().min(1).max(PROPOSAL_REASON_MAX_LENGTH).describe('Why, in plain words: what the evidence shows and what the operation does about it.'),
   procedureStep: z.string().trim().min(1).max(PROPOSAL_PROCEDURE_STEP_MAX_LENGTH).optional().describe('The procedure step it carries out, as the procedure names it.'),
   evidence: z.array(processSignalTagIdSchema).min(1).max(PROPOSAL_EVIDENCE_MAX).describe('Published tags it rests on; the person sees how each moved since.'),

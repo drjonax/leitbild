@@ -1,5 +1,5 @@
 import type { CommandOrigin } from '../../../simulation/protocol.ts'
-import type { ProcessSignalTagId } from '../graph/index.ts'
+import type { ProcessSignalTagId, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
 import { validateOperatorWrite } from './command-guard.ts'
@@ -43,11 +43,15 @@ export interface ListedControl {
   readonly standing: ReadonlyArray<OptionStanding>
   /** The longest declared travel of its options; null where none declares one (the state is then awaited, never judged not followed). */
   readonly travelMs: number | null
+  /** A demand control's setting now and where the equipment stands, in the command's unit. */
+  readonly now?: { readonly demand: number; readonly position: number }
 }
 
 export interface ListedItem {
   readonly id: string
   readonly label: string
+  /** Where a valve stands now: the value its popover shows (ItemControls.position). */
+  readonly position?: { readonly path: VariablePath; readonly value: number }
   readonly offered: ReadonlyArray<ListedControl>
   readonly withheld: ReadonlyArray<WithheldControl>
 }
@@ -55,6 +59,11 @@ export interface ListedItem {
 /** The Plant's drawn items with their controls where they stand now; only the named items where ids are given, in the derivation's order. */
 export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds?: ReadonlyArray<string>): ReadonlyArray<ListedItem> => {
   const controls = plantControlsFor(instance.plant)
+  const numberAt = (path: VariablePath): number => {
+    const value = instance.runtime.readVariable(path)
+    if (typeof value !== 'number') throw new Error(`${path} reads no number`)
+    return value
+  }
   const context: StandingContext = {
     read: path => instance.runtime.readVariable(path),
     mode: processPlantOperatingMode({ system: instance.plant, runtime: instance.runtime, modes: instance.plant.automation.operatingModes })?.id ?? null,
@@ -65,12 +74,14 @@ export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds
     .map(entry => ({
       id: entry.id,
       label: entry.label,
+      ...(entry.position === undefined ? {} : { position: { path: entry.position, value: numberAt(entry.position) } }),
       offered: entry.offered.map(control => {
         const travel = control.options.flatMap(option => option.travelMs === null ? [] : [option.travelMs])
         return {
           control,
           standing: control.options.map(option => optionStanding(instance.plant, control, option, context)),
           travelMs: travel.length === 0 ? null : Math.max(...travel),
+          ...(control.demand === undefined || control.state === undefined ? {} : { now: { demand: numberAt(control.path), position: numberAt(control.state) } }),
         }
       }),
       withheld: entry.withheld,

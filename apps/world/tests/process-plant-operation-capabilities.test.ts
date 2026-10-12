@@ -120,6 +120,38 @@ describe('an AI agent proposes, a person approves', () => {
   })
 })
 
+describe('a modulating valve set to a % (owner feedback, plan-final §12 item 3)', () => {
+  test('controls.list gives its span and where it stands; a proposal reads "OPEN to 40 %", and approved it opens the valve there', async () => {
+    await withRun(async (run, plantId) => {
+      const listed = await query<{ readonly items: ReadonlyArray<ListedItem> }>(run, agent, 'world.process-plant.controls.list', { plantId, items: ['auxFeedwaterValveA', 'feedwaterControlValveA'] })
+      const afw = listed.items.find(item => item.id === 'auxFeedwaterValveA')!
+      const [valve] = afw.offered
+      expect(valve).toMatchObject({ control: { tagId: 'AFW-A-CV', form: 'demand', demand: { min: 0, max: 1, step: 0.01, unit: 'fraction', shownUnit: '%' } }, now: { demand: 0, position: 0 } })
+      expect(afw.position).toEqual({ path: valve!.control.state!, value: 0 })
+      // A controller's valve is withheld as AUTO with what manual operation would take, and still shows its position.
+      const feed = listed.items.find(item => item.id === 'feedwaterControlValveA')!
+      expect(feed.offered).toEqual([])
+      expect(feed.withheld[0]!.reason).toMatchObject({ kind: 'automatic', manual: expect.stringContaining('AUTO/MAN') })
+      expect(feed.position!.value).toBeGreaterThan(0)
+      // World checks the exact % write as a person's.
+      expect(await query(run, operator, 'world.process-plant.control.validate', { plantId, tagId: 'AFW-A-CV', value: 0.4 })).toMatchObject({ accepted: true })
+      const throttle = { ...shutBlockValve(plantId), tagId: 'AFW-A-CV', value: 0.4, reason: 'Feed steam generator A at 40 % of its auxiliary feedwater valve', procedureStep: undefined, evidence: ['SG-A-LVL-NR'] }
+      expect(await command(run, agent, 'world.process-plant.control.propose', { ...throttle, value: 0.405 }))
+        .toMatchObject({ ok: false, reason: 'Not offered to operators: AFW-A-CV AFW valve A is set from 0 % to 100 % in steps of 1 %' })
+      const proposed = await command(run, agent, 'world.process-plant.control.propose', throttle)
+      expect(proposed.ok).toBe(true)
+      expect((await proposals(run, plantId))[0]!.proposal).toMatchObject({ word: 'OPEN to 40 %', item: 'auxFeedwaterValveA', write: { value: 0.4 } })
+      expect((await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: proposed.commandId, decision: 'approve' })).ok).toBe(true)
+      // Within a second: the fixture's own feedwater line-up trips the unit on steam generator A level a second later.
+      const startedAt = Date.parse(run.snapshot().clock!.currentTime)
+      await run.runMaximumPace(new Date(startedAt + 1_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+      const after = await query<{ readonly items: ReadonlyArray<ListedItem> }>(run, operator, 'world.process-plant.controls.list', { plantId, items: ['auxFeedwaterValveA'] })
+      expect(after.items[0]!.offered[0]!.now!.demand).toBe(0.4)
+      expect(after.items[0]!.position!.value).toBeCloseTo(0.4, 2)
+    })
+  })
+})
+
 describe('a pending proposal across a restore', () => {
   const builtIn = scenarios.find(scenario => scenario.id === 'test-plant')!
   const plant = builtIn.initialObjects.find(object => object.packId === 'process-plant')!

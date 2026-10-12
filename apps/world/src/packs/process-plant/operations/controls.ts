@@ -6,6 +6,7 @@ import type {
   EquipmentFunction,
   ProcessSignalBinding,
   ProcessSignalTagId,
+  ProcessUnit,
   ProcessVariableValue,
   StateAspect,
   VariablePath,
@@ -14,7 +15,7 @@ import { energyEnds, variablePathSchema } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
-import { displayValue, unitLabel } from '../displays/display-text.ts'
+import { displayValue, formatQuantity, unitLabel } from '../displays/display-text.ts'
 import { actionOf, icRuleKind } from '../displays/ic-thresholds.ts'
 import { deviceLabel, mimicItemId, type MimicItem } from '../displays/mimic/bindings.ts'
 import { presentationFor } from '../displays/mimic/presentation.ts'
@@ -23,17 +24,21 @@ import { instructorOnlyRefusal } from './command-guard.ts'
 // What a person may operate on each drawn item, read from what the model
 // declares: an aspect's writable command is a two-state control in the
 // aspect's words (a pump STARTs and STOPs, an isolating valve OPENs and
-// SHUTs, a breaker CLOSEs and OPENs); an on/off command the equipment's
-// presentation marks momentary is a pushbutton. Every other command of the
-// item is withheld, with why: a demand a controller holds reads AUTO; a demand
-// or set point is not operated from the display; a command the presentation
-// declares not offered says why (an RCP start). A fault the scenario injects
-// and a condition outside the Plant are never listed at all: an operator
-// display does not show where a malfunction can sit (plan-final I-1). What a
-// command sets going (a trip whose condition reads what it moves) and what
-// works against it (automation writing the same command) come from the I&C
-// config. Nothing here names a Plant, equipment, signal or component kind:
-// the mimic's kind table only says what is drawn.
+// SHUTs, a breaker CLOSEs and OPENs); a modulating valve's position command
+// that no controller drives is a demand a person sets anywhere in its hard
+// range ("OPEN to 40 %"), with OPEN and SHUT at its ends; an on/off command
+// the equipment's presentation marks momentary is a pushbutton. Every other
+// command of the item is withheld, with why: a demand a controller holds
+// reads AUTO (a manual demand needs an AUTO/MAN mode the model does not
+// have); any other demand or set point is not operated from the display; a
+// command the presentation declares not offered says why (an RCP start). A
+// fault the scenario injects and a condition outside the Plant are never
+// listed at all: an operator display does not show where a malfunction can
+// sit (plan-final I-1). What a command sets going (a trip whose condition
+// reads what it moves) and what works against it (automation writing the
+// same command) come from the I&C config. Nothing here names a Plant,
+// equipment, signal or component kind: the mimic's kind table only says
+// what is drawn.
 
 /** A rule an operation sets going or that works against it, as displays name what the I&C does there ("RX TRIP", "AFW", "CTL"). */
 export interface ControlRule {
@@ -69,13 +74,36 @@ export interface ControlOption {
   readonly opposing: ReadonlyArray<OpposingRule>
 }
 
+/**
+ * A position a person sets anywhere in its span, besides the OPEN and SHUT
+ * options at its ends: what the command's hard range declares, in the
+ * command's own unit (a fraction), and the step it is set in. The equipment
+ * follows a part move within the declared travel of its whole stroke the way
+ * it moves: the OPEN option's travel opening, the SHUT option's closing
+ * (plan-final I-2).
+ */
+export interface AnalogDemand {
+  readonly min: number
+  readonly max: number
+  /** The finest step it is set in: a hundredth of its span (whole percent of a valve's stroke). */
+  readonly step: number
+  readonly unit: ProcessUnit
+  /** The unit a display reads and a person sets it in ("%"). */
+  readonly shownUnit: string
+  /** The word a setting between the ends reads with: "OPEN" to 40 %. */
+  readonly word: string
+}
+
 export interface OfferedControl {
   /** The command variable written. */
   readonly path: VariablePath
   readonly tagId?: ProcessSignalTagId
   /** What a button names besides its word: tag and label ("MOV-8000A PZR block valve"). */
   readonly target: string
-  readonly form: 'twoState' | 'pushbutton'
+  /** Two options, one pushbutton, or a demand set in its span with its two ends as options. */
+  readonly form: 'twoState' | 'pushbutton' | 'demand'
+  /** The span a demand control is set in; on a demand control only. */
+  readonly demand?: AnalogDemand
   /** The aspect it commands, and the solved state that says whether the equipment followed. */
   readonly aspect?: StateAspect
   readonly state?: VariablePath
@@ -89,9 +117,13 @@ export interface OfferedControl {
 }
 
 export type WithheldReason =
-  /** A demand a controller writes every step: a manual demand would be overwritten. */
-  | { readonly kind: 'automatic'; readonly measured: VariablePath; readonly setpoint: number; readonly text: string }
-  /** A demand or set point (a rod insertion, a pump's speed, a modulating valve's position). */
+  /**
+   * A demand a controller writes every step: a manual demand would be
+   * overwritten. `text` is the AUTO line ("AUTO · SG-A-LVL-NR held to 55 %");
+   * `manual` says what operating it by hand would take.
+   */
+  | { readonly kind: 'automatic'; readonly measured: VariablePath; readonly setpoint: number; readonly text: string; readonly manual: string }
+  /** A demand or set point (a rod insertion, a pump's speed, a heater's power). */
   | { readonly kind: 'demand'; readonly text: string }
   | { readonly kind: 'isolationInput'; readonly text: string }
   /** A boolean input of the equipment's logic for which the model declares no operator words. */
@@ -109,6 +141,12 @@ export interface ItemControls {
   /** The id an agent names the item by (mimicItemId). */
   readonly id: string
   readonly label: string
+  /**
+   * The position the item shows as its value where it is a valve (its aspect
+   * a position the model solves): where it stands is what a person reads on
+   * it, not a trend.
+   */
+  readonly position?: VariablePath
   readonly offered: ReadonlyArray<OfferedControl>
   readonly withheld: ReadonlyArray<WithheldControl>
 }
@@ -122,6 +160,10 @@ export interface PlantControls {
 const demandText = 'A demand or set point: not operated from the display'
 const isolationText = 'Automatic isolation input: set by the I&C'
 const unwordedText = 'An input of the equipment logic: no operator words are declared for it'
+const manualText = 'Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step'
+
+/** A demand is set in hundredths of its span: a valve in whole percent of its stroke. */
+const DEMAND_STEP_SHARE = 0.01
 
 interface TwoStateWords {
   readonly on: { readonly word: string; readonly state: string }
@@ -130,12 +172,14 @@ interface TwoStateWords {
 
 // The aspect's words, as its state reads (state-words.ts): equipment that runs
 // starts and stops; a breaker's contacts close and open; an isolating or
-// relieving valve opens and shuts. A modulating valve's position is a demand.
+// relieving valve opens and shuts. A modulating valve's position is a demand
+// set in its span, with the valve's OPEN and SHUT at its ends (analogDemandOf).
+const valveWords: TwoStateWords = { on: { word: 'OPEN', state: 'OPEN' }, off: { word: 'SHUT', state: 'SHUT' } }
 const aspectWords = (aspect: CompiledStateAspect, equipmentFunction: EquipmentFunction | undefined): TwoStateWords | null =>
   aspect.aspect === 'running' ? { on: { word: 'START', state: 'RUN' }, off: { word: 'STOP', state: 'STOP' } }
     : aspect.aspect === 'energized' ? { on: { word: 'CONNECT', state: 'LIVE' }, off: { word: 'DISCONNECT', state: 'DEAD' } }
       : aspect.aspect === 'position' && aspect.state?.reading === 'closedWhileTrue' ? { on: { word: 'CLOSE', state: 'CLOSED' }, off: { word: 'OPEN', state: 'OPEN' } }
-        : aspect.aspect === 'position' && (equipmentFunction === 'isolating' || equipmentFunction === 'relieving') ? { on: { word: 'OPEN', state: 'OPEN' }, off: { word: 'SHUT', state: 'SHUT' } }
+        : aspect.aspect === 'position' && (equipmentFunction === 'isolating' || equipmentFunction === 'relieving') ? valveWords
           : null
 
 // The values a two-state command writes: true and false, or a position's full span.
@@ -169,7 +213,35 @@ const automaticReason = (graph: CompiledPlantGraph, controller: { readonly measu
   if (measured === undefined) throw new Error(`controller measures an unknown variable: ${controller.measured}`)
   const unit = unitLabel(measured.unit)
   const setpoint = `${Number(displayValue(controller.setpoint, measured.unit).toPrecision(12))}${unit === '' ? '' : ` ${unit}`}`
-  return { kind: 'automatic', measured: controller.measured, setpoint: controller.setpoint, text: `AUTO · ${measured.tagId ?? measured.label} held to ${setpoint}` }
+  return { kind: 'automatic', measured: controller.measured, setpoint: controller.setpoint, text: `AUTO · ${measured.tagId ?? measured.label} held to ${setpoint}`, manual: manualText }
+}
+
+/**
+ * The span a person sets a position command in: a modulating valve's, where
+ * the model solves where it stands (so a person sees it follow) and no
+ * controller drives it (the caller withholds those as AUTO); null for any
+ * other command.
+ */
+const analogDemandOf = (aspect: CompiledStateAspect, equipmentFunction: EquipmentFunction | undefined, binding: ProcessSignalBinding): AnalogDemand | null => {
+  if (aspect.aspect !== 'position' || equipmentFunction !== 'modulating' || aspect.state?.reading !== 'value' || binding.quantity !== 'ratio') return null
+  const range = binding.limits?.hardRange
+  if (range === undefined) throw new Error(`modulating position command declares no hard range: ${binding.path}`)
+  return { min: range.min, max: range.max, step: Number(((range.max - range.min) * DEMAND_STEP_SHARE).toPrecision(12)), unit: binding.unit, shownUnit: unitLabel(binding.unit), word: valveWords.on.word }
+}
+
+/**
+ * The word a demand control's setting reads with ("OPEN to 40 %"), or why
+ * the value is no setting of it: outside its span, or between its steps.
+ */
+export const demandSetting = (control: OfferedControl, value: ProcessVariableValue): { readonly ok: true; readonly word: string } | { readonly ok: false; readonly reason: string } => {
+  const demand = control.demand
+  if (demand === undefined) throw new Error(`${control.path} is no demand control`)
+  const shown = (setting: number): string => formatQuantity(setting, demand.unit, demand.step)
+  const span = `${control.target} is set from ${shown(demand.min)} to ${shown(demand.max)} in steps of ${shown(demand.step)}`
+  if (typeof value !== 'number' || value < demand.min || value > demand.max) return { ok: false, reason: span }
+  const steps = (value - demand.min) / demand.step
+  if (Math.abs(steps - Math.round(steps)) > 1e-6) return { ok: false, reason: span }
+  return { ok: true, word: `${demand.word} to ${shown(value)}` }
 }
 
 const labelOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
@@ -306,24 +378,31 @@ const classify = (
     ...(aspect?.isolation === undefined ? {} : { isolation: aspect.isolation }),
   }
   const optionContext = { command: binding.path, ...(aspect === undefined ? {} : { aspect }), memories: [] as ReadonlyArray<VariablePath> }
-  const offer = (form: OfferedControl['form'], choices: ReadonlyArray<{ readonly word: string; readonly value: ProcessVariableValue; readonly state?: string; readonly on: boolean }>, memories: ReadonlyArray<VariablePath> = []): Classified => {
+  const offer = (form: OfferedControl['form'], choices: ReadonlyArray<{ readonly word: string; readonly value: ProcessVariableValue; readonly state?: string; readonly on: boolean }>, memories: ReadonlyArray<VariablePath> = [], demand?: AnalogDemand): Classified => {
     const kept = choices.filter(choice => notOfferedAt(context.component, binding, choice.value) === undefined)
     const dropped = choices.flatMap(choice => {
       const reason = notOfferedAt(context.component, binding, choice.value)
       return reason === undefined ? [] : [{ word: choice.word, value: choice.value, reason }]
     })
     if (kept.length === 0) return withheld(binding, { kind: 'declared', text: [...new Set(dropped.map(option => option.reason))].join('; ') })
-    return { offered: { ...base, form, options: kept.map(choice => optionFor(plant, { ...optionContext, memories }, choice)), withheldOptions: dropped } }
+    return { offered: { ...base, form, ...(demand === undefined ? {} : { demand }), options: kept.map(choice => optionFor(plant, { ...optionContext, memories }, choice)), withheldOptions: dropped } }
   }
   // A pushbutton is never an aspect's input (the compiler holds it to that): it is worded as its presentation words it pressed.
   if (context.component.metadata?.presentation?.momentary?.includes(localPath(context.component, binding.path)) === true) {
     return offer('pushbutton', [{ word: declared?.on ?? binding.label, value: true, on: true }], memoriesOf(plant.graph, context.component))
   }
   if (aspect !== undefined) {
-    const values = twoStateValues(binding)
-    if (words === null || words === undefined || values === null) return withheld(binding, { kind: 'demand', text: demandText })
     // Words declared for the aspect's state replace its own (a generator on its breaker reads ON LINE).
     const stated = aspect.state === undefined ? undefined : stateWordsOf(plant.graph, aspect.state.path)
+    const demand = analogDemandOf(aspect, context.equipmentFunction, binding)
+    if (demand !== null) {
+      return offer('demand', [
+        { word: valveWords.on.word, value: demand.max, state: stated?.on ?? valveWords.on.state, on: true },
+        { word: valveWords.off.word, value: demand.min, state: stated?.off ?? valveWords.off.state, on: false },
+      ], [], demand)
+    }
+    const values = twoStateValues(binding)
+    if (words === null || words === undefined || values === null) return withheld(binding, { kind: 'demand', text: demandText })
     return offer('twoState', [
       { word: words.on.word, value: values.on, state: stated?.on ?? words.on.state, on: true },
       { word: words.off.word, value: values.off, state: stated?.off ?? words.off.state, on: false },
@@ -355,7 +434,7 @@ const itemWritables = (graph: CompiledPlantGraph, component: CompiledComponent, 
   })
 }
 
-const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem): { readonly label: string; readonly classified: ReadonlyArray<Classified> } => {
+const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem): { readonly label: string; readonly position: VariablePath | undefined; readonly classified: ReadonlyArray<Classified> } => {
   const graph = plant.graph
   const component = graph.components[item.component]!
   const device = item.kind === 'device' ? component.semantics.embedded.find(candidate => candidate.id === item.device) : undefined
@@ -377,16 +456,18 @@ const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem): { readonly
   // The aspects' commands first, in aspect order: the control an operator looks for.
   const commands = aspects.map(aspect => aspect.command).filter(defined)
   const ordered = [...writables.filter(binding => commands.includes(binding.path)).sort((left, right) => commands.indexOf(left.path) - commands.indexOf(right.path)), ...writables.filter(binding => !commands.includes(binding.path))]
-  return { label, classified: ordered.map(binding => classify(plant, context, binding)) }
+  const position = aspects.find(aspect => aspect.aspect === 'position' && aspect.state?.reading === 'value')?.state?.path
+  return { label, position, classified: ordered.map(binding => classify(plant, context, binding)) }
 }
 
 /** The controls one drawn item offers, and the writable variables it withholds with why. */
 export const deriveItemControls = (plant: CompiledProcessPlant, item: MimicItem): ItemControls => {
-  const { label, classified } = classifiedFor(plant, item)
+  const { label, position, classified } = classifiedFor(plant, item)
   return {
     item,
     id: mimicItemId(plant.graph, item),
     label,
+    ...(position === undefined ? {} : { position }),
     offered: classified.flatMap(entry => 'offered' in entry ? [entry.offered] : []),
     withheld: classified.flatMap(entry => 'withheld' in entry ? [entry.withheld] : []),
   }
@@ -488,10 +569,17 @@ export const offeredOption = (
       if (option !== undefined) return { ok: true, item: entry.id, word: option.word }
       const withheldOption = control.withheldOptions.find(candidate => candidate.value === write.value)
       if (withheldOption !== undefined) return { ok: false, reason: withheldOption.reason }
+      if (control.demand !== undefined) {
+        const setting = demandSetting(control, write.value)
+        return setting.ok ? { ok: true, item: entry.id, word: setting.word } : setting
+      }
       return { ok: false, reason: `${control.target} takes ${control.options.map(candidate => `${candidate.word} (${String(candidate.value)})`).join(' or ')}` }
     }
   }
   const withheldControl = controls.items.flatMap(entry => entry.withheld).find(control => control.path === write.path)
-  if (withheldControl !== undefined) return { ok: false, reason: withheldControl.reason.text }
+  if (withheldControl !== undefined) {
+    const reason = withheldControl.reason
+    return { ok: false, reason: reason.kind === 'automatic' ? `${reason.text}. ${reason.manual}` : reason.text }
+  }
   return { ok: false, reason: `${write.path} is no control of any drawn equipment` }
 }
