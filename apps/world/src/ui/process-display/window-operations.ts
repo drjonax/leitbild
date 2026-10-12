@@ -35,5 +35,5 @@ export const readOperationsLog = async (runId: SimulationRunId, plantId: string)
   const { sample, now } = await plantNow(runId, plantId, listed.items, [])
   const operations = sample.operations
   if (operations === undefined) throw new Error('display.sample served no operations')
-  return operationsLogRows(operations.log, operations.proposals, listed.items, now)
+  return operationsLogRows(operations.log, operations.proposals, listed.items, now, operations.resets)
 }

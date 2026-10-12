@@ -10,7 +10,6 @@ import { itemCarrier, offVerb, operationConsequence, type ConsequenceContext, ty
 import { optionStanding, ruleStatesFrom, type OptionStanding, type StandingContext } from './control-standing.ts'
 import { offeredOption, plantControlsFor, type ControlOption, type ControlRule, type ItemControls, type OfferedControl, type WithheldControl } from './controls.ts'
 import { pushbuttonProtection, type PushbuttonProtection } from './pushbutton-protection.ts'
-import { evaluateProcessPlantIcCondition } from '../runtime/ic/control-protection-conditions.ts'
 import type { ProposalPorts } from './proposals.ts'
 
 // The controls and proposals of one running Plant, read against its live

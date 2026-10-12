@@ -79,7 +79,7 @@
     {/each}
   </ul>
   {#each card.margins as margin (margin.tagId)}<p class="margin">{margin.tagId}: {margin.text}</p>{/each}
-  {#if card.consequence !== null}<p class="consequence-line">{card.consequence}</p>{/if}
+  {#if card.consequence !== null}<p class="consequence-line">{card.consequence.text}{#if card.consequence.mayActuate !== null}<strong class="may-actuate">{card.consequence.mayActuate}</strong>{/if}</p>{/if}
   <p class="expected">Expected: {card.expected}</p>
   {#each card.consequences as line (line)}<p class="consequence">{line}</p>{/each}
   {#each card.opposing as line (line)}<p class="opposing">{line}</p>{/each}
@@ -112,8 +112,10 @@
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <obc-button variant="flat" disabled={busy || stale} onclick={() => { void decide('Extension', extend) }}>Extend once</obc-button>
       {/if}
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <obc-button variant="flat" disabled={busy || stale} onclick={() => { if (!stale) useAsDraft() }}>Use as draft</obc-button>
+      {#if card.draftable}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <obc-button variant="flat" disabled={busy || stale} onclick={() => { if (!stale) useAsDraft() }}>Use as draft</obc-button>
+      {/if}
     </div>
   {/if}
   {#if card.closed !== null}<p class="closed-text">{card.closed}</p>{/if}
@@ -129,6 +131,8 @@
   .change, .margin, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }
   /* World's consequence line: what approving it stops or isolates now, read before Approve. */
   .consequence-line { color: var(--element-active-color); }
+  /* What it may set going stands out, on its own line (C2a). */
+  .may-actuate { display: block; font-weight: 700; }
   blockquote { margin: 0; padding-left: 6px; border-left: 2px solid var(--border-outline-color); }
   .label, .step { color: var(--element-neutral-color); }
   .step { display: block; }

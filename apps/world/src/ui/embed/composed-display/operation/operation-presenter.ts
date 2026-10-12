@@ -4,12 +4,13 @@ import { readingStateText, type TrendReading } from '../../../../packs/process-p
 import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
 import { demandSetting, followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
 import type { RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
-import type { ListedControl, ListedItem } from '../../../../packs/process-plant/operations/instance-ports.ts'
+import type { ListedControl, ListedItem, ListedReset } from '../../../../packs/process-plant/operations/instance-ports.ts'
+import type { OperationConsequence } from '../../../../packs/process-plant/operations/consequence.ts'
 import type { PushbuttonRole } from '../../../../packs/process-plant/operations/pushbutton-protection.ts'
-import type { OperationRecord } from '../../../../packs/process-plant/operations/plant-operations.ts'
+import type { OperationRecord, ResetRecord } from '../../../../packs/process-plant/operations/plant-operations.ts'
 import type { ProcessPlantProposal, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
 
-export type { ListedControl, ListedItem, OperationRecord }
+export type { ListedControl, ListedItem, ListedReset, OperationRecord }
 
 // What the operation parts of a display render, from what World derives
 // (operations/controls.ts, control-standing.ts, proposals.ts) and what the
@@ -93,7 +94,17 @@ export interface OptionView {
   /** The equipment's isolation input stands: it stays shut whatever this option demands. */
   readonly isolated: string | null
   /** World's consequence line for it, where World derives one: what it stops, shuts or isolates now, and what may actuate. */
-  readonly consequence: string | null
+  readonly consequence: ConsequenceView | null
+}
+
+/**
+ * World's consequence line as a person reads it (consequence.ts): what the
+ * operation takes away now, and apart from it, emphasised, the protection
+ * it may set going ("may actuate: Reactor trip on low steam generator level").
+ */
+export interface ConsequenceView {
+  readonly text: string
+  readonly mayActuate: string | null
 }
 
 /**
@@ -127,6 +138,15 @@ export interface ControlView {
   readonly options: ReadonlyArray<OptionView>
   /** A demand control's span and setting; absent on two-state controls and pushbuttons. */
   readonly demand?: DemandView
+  /** A demand control's: what a setting below where it stands throttles now. */
+  readonly throttleLine?: ConsequenceView
+  /**
+   * A demand control a standing actuation drove to an end: how far a person
+   * may throttle it under the actuation ("No lower than 20 %: <basis>"), in
+   * its shown unit; null where no floor is declared and only that end is
+   * accepted while the actuation stands.
+   */
+  readonly hold?: { readonly text: string; readonly floor: number | null; readonly floorShown: number | null }
   /** "Throttled under <label>": the standing actuations that drove its demand to an end while a person sets it between (World's labels as given). */
   readonly throttled: ReadonlyArray<string>
   readonly withheldOptions: ReadonlyArray<{ readonly word: string; readonly reason: string }>
@@ -152,7 +172,34 @@ export interface ItemControlView {
   readonly position: string | null
   /** What the item withholds besides, with why: demands, set points, isolation inputs (a fault or boundary input is never listed: controls.ts). */
   readonly withheld: ReadonlyArray<{ readonly name: string; readonly reason: string }>
+  /** The standing actuations that hold its controls, each with its RESET: offered, or why not yet. */
+  readonly resets: ReadonlyArray<ResetView>
 }
+
+/** A standing latched actuation's RESET as the popover of an item it holds offers it (actuation-reset.ts). */
+export interface ResetView {
+  readonly ruleId: string
+  /** "RESET <label>" */
+  readonly word: string
+  readonly label: string
+  readonly action: string
+  /** "acted at 10:12:48" */
+  readonly acted: string
+  readonly offered: boolean
+  /** Why it is not offered now: "condition still present: SG-A-LVL-NR < 20 %", "… n s to go". */
+  readonly reason: string | null
+}
+
+/** The RESETs of the standing actuations given, as an item's popover shows them. */
+export const resetViews = (resets: ReadonlyArray<ListedReset>, now: OperationNow): ReadonlyArray<ResetView> => resets.map(reset => ({
+  ruleId: reset.ruleId,
+  word: reset.word,
+  label: reset.label,
+  action: reset.action,
+  acted: `acted at ${now.clock(reset.actedAtElapsedMs)}`,
+  offered: reset.offered,
+  reason: reset.offered ? null : reset.reason ?? 'not offered now',
+}))
 
 const optionKey = (control: OfferedControl, option: ControlOption): string => `${control.path}=${String(option.value)}`
 
@@ -202,17 +249,22 @@ const wordFor = (control: OfferedControl, value: ProcessVariableValue): string =
 const opposingWords = (control: OfferedControl, rule: OpposingRule): string =>
   rule.via === 'isolation' ? 'isolates it' : `writes ${wordFor(control, rule.value)}`
 
-/**
- * World's consequence line for an option or a proposal (C2a, O-core): what
- * the operation stops, shuts or isolates now and where that flow goes, the
- * mode, and what may actuate. Shown where World gives one; none otherwise.
- */
-export const consequenceLine = (carrier: object): string | null => {
-  const line = (carrier as { readonly consequence?: unknown }).consequence
-  return typeof line === 'string' && line !== '' ? line : null
+/** World's consequence line in its parts: the may-actuate rules apart from what it takes away (consequence.ts). */
+export const consequenceView = (consequence: OperationConsequence | null | undefined): ConsequenceView | null => {
+  if (consequence === null || consequence === undefined) return null
+  const labels = consequence.mayActuate.map(rule => rule.label)
+  const suffix = `; may actuate: ${labels.join('; ')}`
+  if (labels.length === 0) return { text: consequence.text, mayActuate: null }
+  return { text: consequence.text.endsWith(suffix) ? consequence.text.slice(0, -suffix.length) : consequence.text, mayActuate: `may actuate: ${labels.join('; ')}` }
 }
 
-const optionView = (listed: ListedControl, option: ControlOption, index: number, current: ControlOption | undefined, now: OperationNow): OptionView => {
+/** What a hold adds about its actuation's reset: offered, or why not yet (actuation-reset.ts resetClause). */
+const resetClause = (ruleId: string, resets: ReadonlyArray<ListedReset>): string => {
+  const reset = resets.find(candidate => candidate.ruleId === ruleId)
+  return reset === undefined ? '' : reset.offered ? `; ${reset.word} is offered` : `; it cannot be reset yet: ${reset.reason ?? 'not offered'}`
+}
+
+const optionView = (listed: ListedControl, option: ControlOption, index: number, current: ControlOption | undefined, now: OperationNow, resets: ReadonlyArray<ListedReset>): OptionView => {
   const { control } = listed
   const standing = listed.standing[index]
   if (standing === undefined) throw new Error(`no standing for option ${option.word} of ${control.target}`)
@@ -235,10 +287,10 @@ const optionView = (listed: ListedControl, option: ControlOption, index: number,
     ],
     opposing: standing.opposing.map(rule => `${rule.action} · ${rule.label} ${opposingWords(control, rule)}: ${standingWords(rule, now)}`),
     heldBy: held === undefined ? null
-      : `${held.label} holds ${control.target} ${wordFor(control, held.value)} since ${now.clock(held.atElapsedMs)}: overriding it is not offered here`,
+      : `${held.label} holds ${control.target} ${wordFor(control, held.value)} since ${now.clock(held.atElapsedMs)}: overriding it is not offered here${resetClause(held.ruleId, resets)}`,
     isolated: standing.isolated ? `Its isolation input stands: ${control.target} stays shut whatever it is commanded` : null,
     travelMs: option.travelMs,
-    consequence: consequenceLine(option) ?? consequenceLine(standing),
+    consequence: consequenceView(listed.consequenceLines[index]),
   }
 }
 
@@ -289,8 +341,19 @@ const demandView = (listed: ListedControl, now: OperationNow): DemandView | unde
   }
 }
 
-/** The CONTROL section of one item, as it reads now. */
-export const itemControlView = (item: ListedItem, now: OperationNow): ItemControlView => ({
+/** How far a person may throttle a demand control under the actuation that drove it to an end, in words and in its shown unit. */
+const holdView = (listed: ListedControl, demand: DemandView | undefined): ControlView['hold'] => {
+  const hold = listed.actuationHold
+  if (hold === undefined || demand === undefined) return undefined
+  const labels = hold.rules.map(rule => rule.label).join('; ')
+  if (hold.floor === null) return { text: `${labels} holds it at its end: no throttle floor is declared, so no setting is offered while it stands`, floor: null, floorShown: null }
+  const floorShown = Number(displayValue(hold.floor.value, demand.control.demand!.unit).toPrecision(12))
+  // The hold sentence names the actuations; the floor says how far, and why.
+  return { text: `No lower than ${formatQuantity(hold.floor.value, demand.control.demand!.unit, demand.step)}: ${hold.floor.basis}`, floor: hold.floor.value, floorShown }
+}
+
+/** The CONTROL section of one item, as it reads now; `resets`, the standing actuations' RESETs, word what lifts a hold. */
+export const itemControlView = (item: ListedItem, now: OperationNow, resets: ReadonlyArray<ListedReset> = []): ItemControlView => ({
   id: item.id,
   label: item.label,
   controls: [...item.offered].sort((left, right) => protectionRank(left) - protectionRank(right)).map(listed => {
@@ -307,8 +370,10 @@ export const itemControlView = (item: ListedItem, now: OperationNow): ItemContro
       now: blocks === undefined ? nowWords(control, now) : blocks.blocked ? 'blocked' : 'not blocked',
       commanded: demand === undefined || Math.abs(demand.setting - demand.position) <= demand.step / 2 ? null : `CMD ${demand.settingText}`,
       throttled: (listed.throttledUnder ?? []).map(rule => `Throttled under ${rule.label}`),
-      options: control.options.map((option, index) => optionView(listed, option, index, current, now)),
+      options: control.options.map((option, index) => optionView(listed, option, index, current, now, resets)),
       ...(demand === undefined ? {} : { demand }),
+      ...(listed.throttleLine === undefined ? {} : { throttleLine: consequenceView(listed.throttleLine)! }),
+      ...(holdView(listed, demand) === undefined ? {} : { hold: holdView(listed, demand)! }),
       withheldOptions: control.withheldOptions.map(option => ({ word: option.word, reason: option.reason })),
       ...(control.state === undefined ? {} : { statePath: control.state }),
       travelMs: listed.travelMs,
@@ -319,6 +384,7 @@ export const itemControlView = (item: ListedItem, now: OperationNow): ItemContro
   auto: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [{ text: control.reason.text, manual: control.reason.manual }] : []),
   position: item.position === undefined ? null : now.format(item.position.path, now.read(item.position.path) ?? item.position.value),
   withheld: item.withheld.flatMap(control => control.reason.kind === 'automatic' ? [] : [{ name: control.tagId ?? String(control.path), reason: control.reason.text }]),
+  resets: resetViews(resets, now),
 })
 
 /**
@@ -337,6 +403,9 @@ export const demandOption = (control: ControlView, value: number): OptionView | 
   const end = control.options.find(option => option.value === (value >= demand.position ? demand.max : demand.min))
   const setting = demandSetting(demand.control, value, demand.position)
   if (!setting.ok) return null
+  // Under a standing actuation a setting below its floor, or any where none is declared, is not offered.
+  const hold = control.hold
+  const belowFloor = hold !== undefined && (hold.floor === null || value < hold.floor)
   return {
     key: `${control.path}=${String(value)}`,
     word: setting.word,
@@ -347,10 +416,10 @@ export const demandOption = (control: ControlView, value: number): OptionView | 
     slideOnly: false,
     consequences: [],
     opposing: [],
-    heldBy: null,
+    heldBy: belowFloor ? hold.text : null,
     travelMs: end?.travelMs ?? null,
     isolated: control.options.find(option => option.isolated !== null)?.isolated ?? null,
-    consequence: null,
+    consequence: value < demand.position ? control.throttleLine ?? null : null,
   }
 }
 
@@ -436,13 +505,15 @@ export interface ProposalCard {
   readonly margins: ReadonlyArray<EvidenceMargin>
   readonly expected: string
   /** World's consequence line, as the proposal stored it (or its option carries it now); null where World gives none. */
-  readonly consequence: string | null
+  readonly consequence: ConsequenceView | null
   readonly consequences: ReadonlyArray<string>
   readonly opposing: ReadonlyArray<string>
   readonly reversibility: string
   readonly expires: { readonly at: string; readonly inMs: number } | null
   readonly extendable: boolean
   readonly approve: { readonly label: string; readonly confirm: 'button' | 'slide'; readonly enabled: boolean } | null
+  /** Its command can be copied into CONTROL as the person's own selection: a write; never a reset, which has its own slide. */
+  readonly draftable: boolean
   /** How it closed: "Approved by op-1 at 10:02:58", "Expired 10:04:40, not executed". */
   readonly closed: string | null
 }
@@ -507,7 +578,6 @@ export const proposalCard = (
   margins: ReadonlyArray<EvidenceMargin>,
   now: OperationNow,
 ): ProposalCard => {
-  const { listed, control, option } = proposedOption(proposal, item, now)
   // A cited reading moved where it reads otherwise as the display writes it: a change below its resolution is none.
   const evidence = (review?.evidence ?? proposal.evidence.map(cited => ({ tagId: cited.tagId, then: cited.value, now: cited.value }))).map(entry => {
     const path = proposal.evidence.find(cited => cited.tagId === entry.tagId)!.path
@@ -518,42 +588,67 @@ export const proposalCard = (
   const changed = (review?.changed ?? false) && evidence.some(entry => entry.changed)
   const pending = proposal.status === 'pending'
   const permitted = review?.permitted ?? false
-  const other = control.options.find(candidate => candidate.key !== option.key)
-  const travel = option.travelMs === null ? 'no travel time is declared' : option.travelMs === 0 ? 'at once' : `within ${Math.round(option.travelMs / 1_000)} s`
-  const toState = listed.control.options.find(candidate => candidate.value === option.value)?.state ?? (control.demand === undefined ? null : option.word)
-  return {
+  const common = {
     id: proposal.id,
     item: proposal.item,
-    status: pending && review !== null && !review.permitted ? 'blocked' : proposal.status,
-    action: option.action,
-    from: control.now,
-    to: toState,
-    already: option.current ? `Already ${toState ?? option.word}: approving it changes nothing` : null,
+    status: pending && review !== null && !review.permitted ? 'blocked' as const : proposal.status,
     proposer: proposerText(proposal, now),
     proposerOrigin: proposal.proposer.origin,
     reason: proposal.reason,
     ...(proposal.procedureStep === undefined ? {} : { procedureStep: proposal.procedureStep }),
-    checked: review === null ? { permitted: false, text: 'Not checked yet' }
-      : review.permitted ? { permitted: true, text: 'I&C allows this command now' } : { permitted: false, text: review.refusal ?? 'The I&C refuses it now' },
     evidence,
     changed,
     margins: [...margins].sort((left, right) => (left.minutes ?? Infinity) - (right.minutes ?? Infinity)),
+    expires: pending ? { at: now.clock(proposal.expiresAtElapsedMs), inMs: Math.max(0, proposal.expiresAtElapsedMs - now.elapsedMs) } : null,
+    extendable: pending && !proposal.extended,
+    closed: closedText(proposal, now),
+  }
+  const approveLabel = (action: string): string => `${changed ? 'Approve anyway, plant changed: ' : 'Approve: '}${action}`
+  // A reset of a standing actuation (C2b R1): it clears the latch, and the hold on what the actuation wrote lifts.
+  if (proposal.reset !== undefined) {
+    return {
+      ...common,
+      action: proposal.word,
+      from: null,
+      to: null,
+      already: null,
+      checked: review === null ? { permitted: false, text: 'Not checked yet' }
+        : review.permitted ? { permitted: true, text: 'The I&C offers this reset now' } : { permitted: false, text: review.refusal ?? 'The I&C does not offer this reset now' },
+      expected: `${proposal.reset.label} resets: its latch clears and the hold on what it wrote lifts; the equipment stays as it stands`,
+      consequence: null,
+      consequences: [],
+      opposing: [],
+      reversibility: 'Not reversed here: the actuation acts again if its condition returns',
+      approve: !pending ? null : { label: approveLabel(proposal.word), confirm: 'slide', enabled: permitted },
+      draftable: false,
+    }
+  }
+  const { listed, control, option } = proposedOption(proposal, item, now)
+  const other = control.options.find(candidate => candidate.key !== option.key)
+  const travel = option.travelMs === null ? 'no travel time is declared' : option.travelMs === 0 ? 'at once' : `within ${Math.round(option.travelMs / 1_000)} s`
+  const toState = listed.control.options.find(candidate => candidate.value === option.value)?.state ?? (control.demand === undefined ? null : option.word)
+  return {
+    ...common,
+    action: option.action,
+    from: control.now,
+    to: toState,
+    already: option.current ? `Already ${toState ?? option.word}: approving it changes nothing` : null,
+    checked: review === null ? { permitted: false, text: 'Not checked yet' }
+      : review.permitted ? { permitted: true, text: 'I&C allows this command now' } : { permitted: false, text: review.refusal ?? 'The I&C refuses it now' },
     expected: control.form === 'pushbutton' ? `${listed.control.target} pressed: ${option.consequences.length === 0 ? 'no trip follows' : option.consequences.join('; ')}`
       : `${listed.control.target} reads ${toState ?? option.word} ${travel}`,
-    consequence: consequenceLine(proposal) ?? option.consequence,
+    consequence: consequenceView(proposal.consequence) ?? option.consequence,
     consequences: option.consequences,
     opposing: option.opposing,
     reversibility: control.protection?.role === 'block' ? 'Not reversed here: the block stands until its logic resets it'
       : control.form === 'pushbutton' ? 'Not reversed here: what it actuates latches until reset, which is not offered'
       : other === undefined ? 'No opposite command is offered' : `Reversible: ${other.action} is a new command`,
-    expires: pending ? { at: now.clock(proposal.expiresAtElapsedMs), inMs: Math.max(0, proposal.expiresAtElapsedMs - now.elapsedMs) } : null,
-    extendable: pending && !proposal.extended,
     approve: !pending ? null : {
-      label: `${changed ? 'Approve anyway, plant changed: ' : 'Approve: '}${option.action}`,
+      label: approveLabel(option.action),
       confirm: option.confirm,
       enabled: permitted && option.heldBy === null,
     },
-    closed: closedText(proposal, now),
+    draftable: true,
   }
 }
 
@@ -575,8 +670,7 @@ export const evidenceMargin = (tagId: string, reading: Pick<TrendReading, 'offSc
  * it; none otherwise.
  */
 export const shownProposal = (itemId: string, proposals: ReadonlyArray<ProcessPlantProposal>, now: OperationNow): ProcessPlantProposal | undefined => {
-  // A reset proposal has no control to show it as: its card is still to come (C2b R1).
-  const own = proposals.filter(proposal => proposal.item === itemId && proposal.write !== undefined)
+  const own = proposals.filter(proposal => proposal.item === itemId)
   const pending = own.filter(proposal => proposal.status === 'pending').sort((left, right) => left.expiresAtElapsedMs - right.expiresAtElapsedMs)[0]
   if (pending !== undefined) return pending
   return own
@@ -622,8 +716,7 @@ export const pendingProposals = (
   marginsOf: (proposal: ProcessPlantProposal) => ReadonlyArray<EvidenceMargin>,
   now: OperationNow,
 ): ReadonlyArray<ProposalListEntry> => proposals
-  // A reset proposal has no control to show it as: its card is still to come (C2b R1).
-  .filter(proposal => proposal.status === 'pending' && proposal.write !== undefined)
+  .filter(proposal => proposal.status === 'pending')
   .map(proposal => {
     const item = items.find(candidate => candidate.id === proposal.item)
     if (item === undefined) throw new Error(`proposal ${proposal.id} names item ${proposal.item}, which offers no controls`)
@@ -766,6 +859,7 @@ export const operationsLogRows = (
   proposals: ReadonlyArray<ProcessPlantProposal>,
   items: ReadonlyArray<ListedItem>,
   now: OperationNow,
+  resets: ReadonlyArray<ResetRecord> = [],
 ): ReadonlyArray<OperationsLogRow> => {
   const views = items.map(item => ({ item, view: itemControlView(item, now) }))
   const controlOf = (path: VariablePath) => {
@@ -815,8 +909,8 @@ export const operationsLogRows = (
       elapsedMs: proposal.proposedAtElapsedMs,
       time: now.clock(proposal.proposedAtElapsedMs),
       who: actorWords(proposal.proposer.origin, proposal.proposer.actorId),
-      equipment: found?.item.label ?? proposal.item,
-      action: option?.action ?? `${proposal.word} ${proposal.item}`,
+      equipment: found?.item.label ?? proposal.reset?.label ?? proposal.item,
+      action: option?.action ?? (proposal.reset !== undefined ? proposal.word : `${proposal.word} ${proposal.item}`),
       chain: 'proposed',
       result: `awaiting a person's decision, expires ${now.clock(proposal.expiresAtElapsedMs)}`,
     }
@@ -830,11 +924,26 @@ export const operationsLogRows = (
       elapsedMs: closed.atElapsedMs,
       time: now.clock(closed.atElapsedMs),
       who: actorWords(proposal.proposer.origin, proposal.proposer.actorId),
-      equipment: found?.item.label ?? proposal.item,
-      action: option?.action ?? `${proposal.word} ${proposal.item}`,
+      equipment: found?.item.label ?? proposal.reset?.label ?? proposal.item,
+      action: option?.action ?? (proposal.reset !== undefined ? proposal.word : `${proposal.word} ${proposal.item}`),
       chain: `proposed ${now.clock(proposal.proposedAtElapsedMs)}`,
       result: `${proposal.status}${closed.actorId === undefined ? '' : ` by ${anActor(closed.actorId)}`}${closed.reason === undefined ? '' : `: ${closed.reason}`}, not executed`,
     }
   })
-  return [...commands, ...waiting, ...unexecuted].sort((left, right) => right.elapsedMs - left.elapsedMs)
+  // A person's reset of a standing actuation, executed or approved from a proposal: the hold on what it wrote lifted.
+  const reset = resets.map((record): OperationsLogRow => {
+    const proposal = record.proposalId === undefined ? undefined : proposals.find(candidate => candidate.id === record.proposalId)
+    return {
+      key: record.commandId,
+      elapsedMs: record.elapsedMs,
+      time: now.clock(record.elapsedMs),
+      who: actorWords(record.origin, record.actorId),
+      equipment: record.label,
+      action: `RESET ${record.label}`,
+      chain: record.proposalId === undefined ? 'direct command'
+        : `approved${proposal === undefined ? ' proposal' : ` ${anActor(proposal.proposer.actorId, proposal.proposer.origin)}'s proposal of ${now.clock(proposal.proposedAtElapsedMs)}`}`,
+      result: `reset; the hold on ${record.holds.length} command${record.holds.length === 1 ? '' : 's'} it wrote lifted`,
+    }
+  })
+  return [...commands, ...waiting, ...unexecuted, ...reset].sort((left, right) => right.elapsedMs - left.elapsedMs)
 }

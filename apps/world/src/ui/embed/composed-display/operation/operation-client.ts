@@ -1,6 +1,6 @@
 import type { SimulationRunId } from '../../../../core/model/index.ts'
 import type { ProcessUnit, ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
-import type { ListedItem } from '../../../../packs/process-plant/operations/instance-ports.ts'
+import type { ListedItem, ListedReset } from '../../../../packs/process-plant/operations/instance-ports.ts'
 import type { ProposalListEntry } from './operation-presenter.ts'
 import type { ProcessPlantProposal, ProposalDecision, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
 import { invokeSimulationRunCapability, querySimulationRunCapability } from '../../../simulation-run-client.ts'
@@ -18,6 +18,8 @@ export type OperationOutcome = { readonly ok: true; readonly commandId: string }
 export interface ListedControls {
   readonly plantElapsedMs: number
   readonly items: ReadonlyArray<ListedItem>
+  /** Every standing latched actuation with its RESET, offered or why not, and the drawn items whose controls it holds. */
+  readonly resets: ReadonlyArray<ListedReset>
 }
 
 export interface HeldProposals {
@@ -32,6 +34,8 @@ export interface OperationClient {
   readonly validate: (runId: SimulationRunId, plantId: string, write: OperationWrite) => Promise<OperationCheck>
   /** The write, as a command of the screen's actor (control.write). */
   readonly write: (runId: SimulationRunId, plantId: string, write: OperationWrite) => Promise<OperationOutcome>
+  /** A person's reset of a standing actuation, as the screen's actor (actuation.reset). */
+  readonly reset: (runId: SimulationRunId, plantId: string, ruleId: string) => Promise<OperationOutcome>
   /** A person's decision on a proposal (control.decide). */
   readonly decide: (runId: SimulationRunId, plantId: string, proposalId: string, decision: ProposalDecision, reason: string | null) => Promise<OperationOutcome>
   /** The Plant's proposals, pending ones with World's review now (control.proposals). */
@@ -63,6 +67,7 @@ export const operationClient: OperationClient = {
     return { accepted: false, reason: result.reason }
   },
   write: (runId, plantId, write) => commandOutcome(runId, 'world.process-plant.control.write', { plantId, path: write.path, value: write.value }),
+  reset: (runId, plantId, ruleId) => commandOutcome(runId, 'world.process-plant.actuation.reset', { plantId, ruleId }),
   decide: (runId, plantId, proposalId, decision, reason) =>
     commandOutcome(runId, 'world.process-plant.control.decide', { plantId, proposalId, decision, ...(reason === null ? {} : { reason }) }),
   proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }, timed()),

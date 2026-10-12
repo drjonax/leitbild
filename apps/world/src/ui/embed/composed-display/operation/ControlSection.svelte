@@ -29,7 +29,7 @@
   type Check = { readonly accepted: true } | { readonly accepted: false; readonly reason: string }
   type Outcome = { readonly ok: true; readonly commandId?: string } | { readonly ok: false; readonly reason: string }
 
-  let { view, now, stale = false, validate, execute, draft = null, onSelected, acceptedAt }: {
+  let { view, now, stale = false, validate, execute, reset, draft = null, onSelected, acceptedAt }: {
     view: ItemControlView
     now: OperationNow
     /** The page's samples are stale: every control is disabled (STALE_CONTROLS). */
@@ -38,6 +38,8 @@
     validate: (write: Write) => Promise<Check>
     /** Issues the command through the one validated queued write path; resolves with the command result. */
     execute: (write: Write) => Promise<Outcome>
+    /** Resets a standing actuation that holds the item, as this screen's actor (actuation.reset). */
+    reset: (ruleId: string) => Promise<Outcome>
     /** A proposal used as a draft: preselected, as this person's own command. */
     draft?: Write | null
     /** What is selected, so the symbol shows it activated; null when nothing is. */
@@ -64,17 +66,23 @@
   }
   const shownAt = (demand: DemandView, value: number): number =>
     Number((demand.shown.min + ((value - demand.min) / (demand.max - demand.min)) * (demand.shown.max - demand.shown.min)).toPrecision(12))
+  /** A setting a person may move the slider to: never below the floor a standing actuation declares (the slider stops there). */
+  const allowedShown = (control: ControlView, shown: number): number => {
+    const floor = control.hold?.floorShown ?? null
+    return floor === null ? shown : Math.max(floor, shown)
+  }
   const selectSetting = (control: ControlView, demand: DemandView, shown: number): void => {
     clearTimeout(settling)
     moving = null
-    const option = optionOf(control, settingAt(demand, shown))
+    const option = optionOf(control, settingAt(demand, allowedShown(control, shown)))
     if (option !== undefined && option.key !== selection?.key) void select(control, option)
   }
   // A step, an arrow key or a drag moves the slider; once it rests a moment (or is let go) the setting it stands at is
   // selected, with its Execute: the slider never needs a release event to reach a command.
   const SETTLE_MS = 400
   let settling: ReturnType<typeof setTimeout> | undefined
-  const sliderMoved = (control: ControlView, demand: DemandView, shown: number): void => {
+  const sliderMoved = (control: ControlView, demand: DemandView, moved: number): void => {
+    const shown = allowedShown(control, moved)
     moving = { path: control.path, shown }
     clearTimeout(settling)
     settling = setTimeout(() => selectSetting(control, demand, shown), SETTLE_MS)
@@ -134,6 +142,18 @@
       if (sent === command) sent = { ...command, result: { ok: false, reason: error instanceof Error ? error.message : String(error) } }
     } finally {
       busy = false
+    }
+  }
+
+  // A RESET slid, by its actuation: sent, then the Run's answer; the reset itself shows as the hold lifting.
+  let resetting = $state.raw<Readonly<Record<string, 'sending' | Outcome>>>({})
+  const runReset = async (ruleId: string): Promise<void> => {
+    if (stale || resetting[ruleId] === 'sending') return
+    resetting = { ...resetting, [ruleId]: 'sending' }
+    try {
+      resetting = { ...resetting, [ruleId]: await reset(ruleId) }
+    } catch (error) {
+      resetting = { ...resetting, [ruleId]: { ok: false, reason: error instanceof Error ? error.message : String(error) } }
     }
   }
 
@@ -201,7 +221,7 @@
           step={demand.shown.step}
           stepClick={demand.shown.step}
           value={at}
-          disabled={stale}
+          disabled={stale || (control.hold !== undefined && control.hold.floorShown === null)}
           hasLeftIcon={true}
           hasRightIcon={true}
           decrementLabel={`${control.target}: ${demand.shown.step} ${demand.shown.unit} less`}
@@ -212,6 +232,8 @@
             change: event => selectSetting(control, demand, (event as CustomEvent<number>).detail),
           }}
         ><obi-chevron-left-google slot="icon-left"></obi-chevron-left-google><obi-chevron-right-google slot="icon-right"></obi-chevron-right-google></obc-slider>
+        <!-- Under a standing actuation: how far it may be throttled, and why no lower (its floor stops the slider). -->
+        {#if control.hold !== undefined}<p class="floor">{control.hold.text}</p>{/if}
       {:else if control.form === 'twoState'}
         <obc-toggle-button-group
           value={expanded ? selection!.key : ''}
@@ -244,7 +266,7 @@
             {:else if !ready.accepted && ready.reason !== gate?.message}<p class="refused">{ready.reason}</p>{/if}
             {#if option.heldBy !== null}<p class="refused">{option.heldBy}</p>{/if}
             {#each option.consequences as line (line)}<p class="consequence">{line}</p>{/each}
-            {#if option.consequence !== null}<p class="consequence-line">{option.consequence}</p>{/if}
+            {#if option.consequence !== null}<p class="consequence-line">{option.consequence.text}{#if option.consequence.mayActuate !== null}<strong class="may-actuate">{option.consequence.mayActuate}</strong>{/if}</p>{/if}
             {#if gate !== null}<p class="gate" class:refused={!gate.allows} title={gate.message ?? undefined}>{gate.text}</p>{/if}
           {:else}
             <!-- An obc-button is a button: the native button inside it takes Enter and Space. -->
@@ -266,7 +288,7 @@
           {:else if check !== null}<p class="refused">{check.reason}</p>{/if}
           {#if selectedOption.heldBy !== null}<p class="refused">{selectedOption.heldBy}</p>{/if}
           {#if selectedOption.isolated !== null}<p class="note">{selectedOption.isolated}</p>{/if}
-          {#if selectedOption.consequence !== null}<p class="consequence-line">{selectedOption.consequence}</p>{/if}
+          {#if selectedOption.consequence !== null}<p class="consequence-line">{selectedOption.consequence.text}{#if selectedOption.consequence.mayActuate !== null}<strong class="may-actuate">{selectedOption.consequence.mayActuate}</strong>{/if}</p>{/if}
           {#each selectedOption.consequences as line (line)}<p class="consequence">{line}</p>{/each}
           {#each selectedOption.opposing as line (line)}<p class="opposing">{line}</p>{/each}
           {#if selectedOption.confirm === 'slide'}
@@ -292,6 +314,28 @@
     </div>
   {/each}
   {#if view.controls.length === 0 && view.position !== null}<p class="now">Position {view.position}</p>{/if}
+  {#if view.resets.length > 0}
+    <!-- The standing actuations that hold this item: each one's RESET, a slide once offered, else why not yet (C2b R1). -->
+    <div class="resets">
+      {#each view.resets as latch (latch.ruleId)}
+        {@const state = resetting[latch.ruleId]}
+        {@const ok = !stale && state !== 'sending'}
+        <div class="reset">
+          <div class="head"><span class="target">{latch.word}</span><span class="now">{latch.acted}</span></div>
+          {#if latch.offered}
+            <obc-slide-button class:unready={!ok} aria-label={latch.word} disabled={!ok} onslide={() => { if (ok) void runReset(latch.ruleId) }}>
+              <span slot="label">RESET</span>
+            </obc-slide-button>
+          {:else}
+            <p class="held">Not offered: {latch.reason}</p>
+          {/if}
+          {#if state === 'sending'}<p class="checking">Sending…</p>
+          {:else if state !== undefined && !state.ok}<p class="refused">Refused: {state.reason}</p>{/if}
+        </div>
+      {/each}
+      {#if view.resets.some(latch => latch.offered)}<p class="note">A reset clears the actuation's latch: the equipment stays as it stands and is the operators' again.</p>{/if}
+    </div>
+  {/if}
   {#if view.auto.length > 0}
     <!-- What a controller holds, read-only, and what operating it by hand would take. -->
     <ul class="auto">{#each view.auto as line (line.text)}<li><span class="auto-line">{line.text}</span> <span class="manual">{line.manual}</span></li>{/each}</ul>
@@ -328,6 +372,12 @@
   .stale { font-weight: 600; color: var(--element-active-color); }
   /* World's consequence line: what the operation stops or isolates now, read before Execute. */
   .consequence-line { color: var(--element-active-color); }
+  /* What it may set going stands out, on its own line (C2a). */
+  .may-actuate { display: block; font-weight: 700; }
+  .floor { color: var(--element-neutral-color); }
+  .resets { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; border-top: 1px solid var(--border-divider-color); }
+  .reset { display: flex; flex-direction: column; gap: 2px; }
+  .reset .target { font-weight: 600; }
   .gate { color: var(--element-neutral-color); }
   .gate.refused { font-weight: 400; }
   /* Execute grows to the lines its words take (OpenBridge's button is one line tall). */

@@ -13,7 +13,7 @@
   import type { MimicQuickLookSource } from '../mimic/quick-look-source.ts'
   import ControlSection from './ControlSection.svelte'
   import type { DisplayOperation, OperationOutcome } from './operation-client.ts'
-  import { itemBadges, itemControlView, operationNow, pendingProposals, shownProposal, type ItemBadges, type ListedItem, type OperationNow, type ProposalListEntry } from './operation-presenter.ts'
+  import { itemBadges, itemControlView, operationNow, pendingProposals, shownProposal, type ItemBadges, type ListedItem, type ListedReset, type OperationNow, type ProposalListEntry } from './operation-presenter.ts'
   import ProposalReview from './ProposalReview.svelte'
 
   // A drawing operated in the process display window (plan §4.2-§4.4, §12):
@@ -45,6 +45,8 @@
   type Write = { readonly path: VariablePath; readonly value: ProcessVariableValue }
 
   let listed = $state.raw<ReadonlyMap<string, ListedItem> | null>(null)
+  // The standing latched actuations with their RESETs (controls.list), read with every sample.
+  let resets = $state.raw<ReadonlyArray<ListedReset>>([])
   let units = $state.raw<ReadonlyMap<string, string>>(new Map())
   let reviews = $state.raw<ReadonlyMap<string, Review>>(new Map())
   let failure = $state<string | null>(null)
@@ -124,6 +126,7 @@
       // World's review of each pending proposal: whether the I&C allows it now, how its readings moved.
       reviews = new Map(held.proposals.flatMap(entry => entry.review === undefined ? [] : [[entry.proposal.id, entry.review] as const]))
       plantPending = pendingNow
+      resets = result.resets
       listed = next
       failure = null
     } catch (error) {
@@ -152,6 +155,9 @@
   })
   $effect(() => { if (!operation.readOnly) operation.proposals(pendingEntries) })
 
+  /** The standing actuations holding a drawn item's controls: its popover offers their RESETs (C2b R1). */
+  const resetsFor = (item: MimicDrawnItem): ReadonlyArray<ListedReset> => owners === null ? [] : resets.filter(reset => reset.items.some(id => owners!.get(id) === item.id))
+  const resetActuation = (ruleId: string): Promise<OperationOutcome> => operation.client.reset(operation.runId, operation.plantId, ruleId)
   /** What a drawn item offers: its equipment's controls, a group's members' and its undrawn bundled devices' together. */
   const listedOf = (item: MimicDrawnItem): ListedItem | undefined => {
     if (listed === null || owners === null) return undefined
@@ -240,7 +246,7 @@
       modes: ['operate'],
       applies: item => {
         const entry = listedOf(item)
-        return now !== null && entry !== undefined && (entry.offered.length > 0 || entry.withheld.length > 0)
+        return now !== null && entry !== undefined && (entry.offered.length > 0 || entry.withheld.length > 0 || resetsFor(item).length > 0)
       },
       body: controlBody,
     },
@@ -250,19 +256,19 @@
 {#snippet controlBody(context: MimicPopoverContext)}
   {@const entry = listedOf(context.item)}
   {#if entry !== undefined && now !== null}
-    {@const view = itemControlView(entry, now)}
+    {@const view = itemControlView(entry, now, resetsFor(context.item))}
     {@const drafted = draft !== null && draft.item === entry.id ? draft : null}
     {#if context.pinned}
       <!-- A pinned overlay monitors: its controls fold away above its rows until a person opens them. -->
       <details class="folded" open={drafted !== null}>
         <summary>{view.controls.length === 0 ? 'Not operated here' : view.controls.map(control => control.target).join(' · ')}</summary>
         {#key `${entry.id}|${drafted?.at ?? ''}`}
-          <ControlSection {view} {now} {stale} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
+          <ControlSection {view} {now} {stale} {validate} {execute} reset={resetActuation} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
         {/key}
       </details>
     {:else}
       {#key `${entry.id}|${drafted?.at ?? ''}`}
-        <ControlSection {view} {now} {stale} {validate} {execute} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
+        <ControlSection {view} {now} {stale} {validate} {execute} reset={resetActuation} draft={drafted?.write ?? null} onSelected={path => { selected = path === null ? null : entry.id }} acceptedAt={commandId => latest?.operations?.log.find(record => record.commandId === commandId)?.elapsedMs} />
       {/key}
     {/if}
   {/if}
@@ -282,7 +288,7 @@
       approve={() => decide(proposal, 'approve')}
       reject={reason => decide(proposal, 'reject', reason)}
       extend={() => decide(proposal, 'extend')}
-      useAsDraft={() => { draft = { item: entry.id, write: proposal.write, at: Date.now() } }}
+      useAsDraft={() => { if (proposal.write !== undefined) draft = { item: entry.id, write: proposal.write, at: Date.now() } }}
     />
   {/if}
 {/snippet}
