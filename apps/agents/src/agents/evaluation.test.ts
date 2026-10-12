@@ -19,6 +19,7 @@ import type { AIAgentConfig } from '../core/types/agent.ts'
 import type { Message } from '../core/types/messaging.ts'
 import type { ContextResult } from './context-builder.ts'
 import { evaluate, callLLM, streamLLM, fitToolEvidence } from './evaluation.ts'
+import { getBundledRoomDefinition } from '../core/definitions/room-definition-catalog.ts'
 
 test('tool evidence budget includes system blocks and removes whole older turns', () => {
   const context: Array<ChatRequest['messages'][number]>=[
@@ -612,6 +613,26 @@ describe('evaluate (tool loop)', () => {
       expect(r.content).toContain('work in progress')
       expect(r.content).toContain('partial result')
     }
+  })
+
+  test("the Assistant's iteration threshold pauses its turn for the person, who may let it finish", async () => {
+    // A cost guard, not a quota: past it the Agent asks the person (Continue / Stop) and keeps its turn.
+    const threshold = getBundledRoomDefinition('leitbild-assistant')!.room.agents[0]!.maxToolIterations!
+    expect(threshold).toBe(20)
+    const { provider, calls } = makeScriptedProvider([
+      ...Array.from({ length: threshold + 2 }, () => ({ toolCalls: [{ function: { name: 'a', arguments: {} } }] })),
+      { content: 'held at step 4 for your judgement' },
+    ])
+    const exec: ToolExecutor = async toolCalls => toolCalls.map(() => ({ success: true, data: 'k' }))
+    const checkins: number[] = []
+    const result = await evaluate(baseContextResult(), baseConfig, provider, exec, threshold, 'room-1', {
+      toolDefinitions: [],
+      requestToolCheckin: async ({ iterations }) => { checkins.push(iterations); return true },
+    })
+    // Asked once, after the round that went past the threshold; the person continued and the turn answered.
+    expect(checkins).toEqual([threshold + 1])
+    expect(calls).toHaveLength(threshold + 3)
+    expect(result.decision.response).toEqual({ action: 'respond', content: 'held at step 4 for your judgement' })
   })
 
   test('checkin not wired → configured iteration cap remains authoritative', async () => {

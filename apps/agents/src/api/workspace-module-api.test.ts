@@ -195,7 +195,8 @@ describe('Agents Workspace Module API', () => {
     expect(messageFocus(posted!)).toEqual([focusedResource, focusedDefinition])
     expect(room.getRecent(10).some(message => message.content === 'What can I change?')).toBe(true)
     const assistant = asAIAgent(runtime.team.listByKind('ai')[0]!)!
-    expect(assistant.getConfig().maxToolIterations).toBeUndefined()
+    // A cost guard the definition declares: past it the Assistant asks the person whether to continue.
+    expect(assistant.getConfig().maxToolIterations).toBe(20)
     // The default model brings its own effort when the definition names neither.
     expect(assistant.getConfig()).toMatchObject({ model: DEFAULT_MODEL_ID, reasoningEffort: DEFAULT_REASONING_EFFORT })
     expect(assistant.getSkills()).toEqual(['leitbild-assistance', 'operator-displays', 'procedure-runner'])
