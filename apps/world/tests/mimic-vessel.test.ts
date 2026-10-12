@@ -59,13 +59,17 @@ describe('the reactor vessel on a drawing', () => {
     expect(kind('vessel')).toEqual({ element: 'tank', tank: 'pressurized', aspect: 'level' })
   })
 
-  test('the Full-HD overview keeps its drawing beside its column with the vessel two cells wide, its head above its nozzles and its bottom below', () => {
+  test('the Full-HD overview keeps its drawing beside its column with the vessel four cells wide and tall above its nozzles, its bottom below them', () => {
+    // Owner on v0.4.0: "still a narrow box". As wide as the rows over it (four cells), in the room an 11 px gutter leaves.
+    expect(room.maxWidth).toBe(1585)
     expect(overview.width).toBeLessThanOrEqual(room.maxWidth)
     expect(overview.height).toBeLessThanOrEqual(room.maxHeight)
     const core = coreOf(overview)
     expect(core.presentation.element).toBe('vessel')
-    expect(core.box.width).toBe(overviewMimicProfile.vessel.cells * 24)
-    expect(core.vessel?.span).toEqual({ x: 0, width: core.box.width })
+    expect(overviewMimicProfile.vessel.cells).toBe(4)
+    expect(core.box.width).toBe(96)
+    expect(core.box.height).toBeGreaterThanOrEqual(240)
+    expect(core.vessel?.span).toEqual({ x: 0, width: 96 })
     // Its core region overlaps its lowest nozzles: the overview has no height for it below them.
     expect(core.vessel?.core).toBe('overlap')
     // Every loop's hot and cold leg reaches it at a collar on its side; none at its head or bottom.

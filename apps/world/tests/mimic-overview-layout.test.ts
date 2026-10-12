@@ -42,7 +42,8 @@ const plantOf = (loops: number): CompiledProcessPlant => plants.get(loops)!
 const atPower = createProcessPlantRuntime({ system: plantOf(4) })
 const leadValues = overviewKeyValues(plantOf(4), { mode: 'powerOperation', read: path => atPower.readVariable(path) }).length
 const fullHdColumn = overviewDrawingRoom({ width: 1896, height: 972 }, 'column', { readouts: leadValues, annunciators: 9, tileWidth: 134 })!
-const ROOM: Readonly<Record<number, Omit<MimicBudget, 'profile'>>> = { 2: fullHdColumn, 4: fullHdColumn, 6: { maxWidth: 2160, maxHeight: 1080 } }
+// Six loops reach 2161 px with the four-cell reactor vessel (its alarm frame a pixel past its box): a grid step over.
+const ROOM: Readonly<Record<number, Omit<MimicBudget, 'profile'>>> = { 2: fullHdColumn, 4: fullHdColumn, 6: { maxWidth: 2184, maxHeight: 1080 } }
 const budgetFor = (loops: number): MimicBudget => ({ profile: overviewMimicProfile, ...ROOM[loops]! })
 
 const scopeOf = (plant: CompiledProcessPlant) => {

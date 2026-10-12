@@ -179,7 +179,10 @@ export const overviewMimicProfile: MimicProfile = {
   minScale: 1,
   badges: ['reserved'],
   quickLooks: true,
-  vessel: { cells: 2, core: 'overlap', head: openBridgeDevice.reactorVessel.head },
+  // The plant's most important component (owner, v0.4.0: "still a narrow box"): four cells wide, as wide as the
+  // rows over it, so it takes no more width than they do (three cells would center 92 px of rows on 72 px and need
+  // 1595 px of a 1585 px room), and four grid steps taller into the free height above its nozzles.
+  vessel: { cells: 4, core: 'overlap', head: openBridgeDevice.reactorVessel.head + 4 * 24 },
   trends: true,
 }
 

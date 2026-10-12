@@ -302,9 +302,13 @@ export const composedDisplayLayout = {
   overviewFrame: 40,
   /** The footer line and its gap, under an overview whose panels stack. */
   overviewFooter: 18,
-  /** On a window wide enough, the column of lead values and alarms beside the drawing, and the gap before it. */
+  /**
+   * On a window wide enough, the column of lead values and alarms beside the
+   * drawing, and the gap before it: 11 px, so the Full HD overview's drawing
+   * has the 1585 px its four-cell reactor vessel needs.
+   */
   overviewColumn: 280,
-  overviewColumnGap: 12,
+  overviewColumnGap: 11,
   /**
    * A lead value in that column, one per row: its name line, its readout with
    * its sparkline beside it, and its margin line (78 px), and the gap under it.
