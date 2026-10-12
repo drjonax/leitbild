@@ -1,19 +1,37 @@
 {
-  "lexicon": {"workList": "Supply requests", "unitBoard": "Vehicles", "noWork": "No requests waiting", "close": "Close request", "send": "Send", "hold": "Stop", "on-task": "Unloading"},
+  "lexicon": {
+    "workList": "Supply requests",
+    "unitBoard": "Vehicles",
+    "noWork": "No requests waiting",
+    "close": "Close request",
+    "on-task": "Unloading"
+  },
   "loadClasses": [
-    {"id": "P1", "label": "Urgent", "code": "P1", "noun": {"one": "pallet", "other": "pallets"}},
-    {"id": "P2", "label": "Routine", "code": "P2", "noun": {"one": "pallet", "other": "pallets"}}
+    { "id": "P1", "label": "Urgent", "code": "P1", "noun": { "one": "pallet", "other": "pallets" } },
+    { "id": "P2", "label": "Routine", "code": "P2", "noun": { "one": "pallet", "other": "pallets" } }
   ],
   "unitTypes": [
-    {"id": "depot", "label": "Depot", "icon": "warehouse", "tags": ["logistics"], "public": true, "components": {}},
+    {
+      "id": "depot",
+      "label": "Depot",
+      "icon": "warehouse",
+      "tags": ["logistics"],
+      "public": true,
+      "components": {}
+    },
     {
       "id": "supply-truck",
       "label": "Supply truck",
       "icon": "truck",
       "tags": ["logistics"],
-      "components": {"mobility": {"mode": "road"}, "service": {"provides": ["supply"], "onSceneS": 240}},
-      "properties": [{"id": "payloadKg", "label": "Payload", "kind": "number", "unit": "kg", "min": 0, "max": 20000, "default": 1000, "board": true}],
-      "standingOrders": {"return": {"afterIdleS": 60}}
+      "components": {
+        "mobility": { "mode": "road" },
+        "service": { "provides": ["supply"], "onSceneS": 300 }
+      },
+      "properties": [
+        { "id": "payloadKg", "label": "Payload", "kind": "number", "unit": "kg", "min": 0, "max": 20000, "default": 1000, "board": true }
+      ],
+      "standingOrders": { "return": { "afterIdleS": 60 } }
     }
   ],
   "taskTemplates": [
@@ -22,14 +40,14 @@
       "label": "Supply request",
       "icon": "package",
       "priorityClass": "P2",
-      "requires": [{"provides": "supply", "count": 1, "label": {"one": "supply truck", "other": "supply trucks"}, "where": [{"property": "payloadKg", "atLeast": 500}]}]
-    },
-    {
-      "id": "bulk",
-      "label": "Bulk request",
-      "icon": "container",
-      "priorityClass": "P1",
-      "requires": [{"provides": "supply", "count": 1, "label": {"one": "heavy truck", "other": "heavy trucks"}, "where": [{"property": "payloadKg", "atLeast": 1000}]}]
+      "requires": [
+        {
+          "provides": "supply",
+          "count": 1,
+          "label": { "one": "supply truck", "other": "supply trucks" },
+          "where": [{ "property": "payloadKg", "atLeast": 500 }]
+        }
+      ]
     }
   ]
 }

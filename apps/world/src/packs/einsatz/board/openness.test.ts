@@ -63,8 +63,19 @@ const core = {
 }
 
 describe('Board openness on supply-run', () => {
-  test('the Definition carries the T1 supply configuration unchanged', () => {
-    expect(supplyRun.packs[0]!.config).toEqual(supplyConfig)
+  test('the Definition extends the T1 supply configuration: every word, class, type and template it declared, with only the time on scene tuned', () => {
+    const t1 = einsatzConfigSchema.parse(supplyConfig)
+    expect(config.lexicon).toMatchObject(t1.lexicon)
+    expect(config.loadClasses).toEqual(t1.loadClasses)
+    for (const type of t1.unitTypes) {
+      const extended = config.unitTypes.find(entry => entry.id === type.id)
+      const tuned = type.components.service === undefined || extended?.components.service === undefined
+        ? type
+        : { ...type, components: { ...type.components, service: { ...type.components.service, onSceneS: extended.components.service.onSceneS } } }
+      expect(extended).toEqual(tuned)
+    }
+    for (const template of t1.taskTemplates) expect(config.taskTemplates.find(entry => entry.id === template.id)).toEqual(template)
+    expect(config.taskTemplates.length).toBeGreaterThan(t1.taskTemplates.length)
   })
 
   test('the cue-created unit is dispatched in 2 actions; the lighter one is free but not eligible, says why naming itself once, then becomes eligible once raised', async () => {
@@ -93,7 +104,8 @@ describe('Board openness on supply-run', () => {
       expect(screen.actions()).toBe(2)
       expect(screen.calls.at(-1)).toMatchObject({ input: { units: [newcomer.id] }, result: { ok: true } })
 
-      await runFor(run, (requested.at.seconds + 30) * 1_000 - (run.nowMs() - startMs), [screen])
+      // Between the request and the raise: the request waits for the lighter unit, which may not serve it yet.
+      await runFor(run, Math.floor((requested.at.seconds + raised.at.seconds) / 2) * 1_000 - (run.nowMs() - startMs), [screen])
       await screen.key('n')
       const waiting = screen.view()
       expect(waiting.selected).toMatchObject({ kind: 'task', ineligible: [lighterReason] })
