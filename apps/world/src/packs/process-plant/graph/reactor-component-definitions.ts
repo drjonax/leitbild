@@ -210,6 +210,15 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       // The core-exit thermocouples are the instrument an operator reads the core's outlet by; the mixed outlet
       // temperature beside them is the model's, at the same point (HMI review of run 23: a detail repeated both).
       keyValues: ['coreExitTemperatureC'],
+      // The core is drawn filled by the coolant over it: the collapsed liquid level the vessel it heats computes.
+      aspects: [aspect('level', { variable: 'collapsedLiquidLevelPercent', reading: 'value', via: 'vesselThermal' })],
+      // One neutron flux read by three instruments: the source range counts it until P-6, where its high voltage is
+      // cut and the intermediate range reads it as a current; above P-10 the power range reads it in percent of
+      // rated power.
+      widerRanges: [
+        { reading: 'sourceRangeCountRateCps', wider: 'intermediateRangeCurrentAmps', while: 'aboveP6' },
+        { reading: 'intermediateRangeCurrentAmps', wider: 'powerRangePercent', while: 'aboveP10' },
+      ],
       // Above P-6 the source range's high voltage is cut and it counts nothing; its startup rate measures once it
       // has counted through a whole step.
       meaningfulWhile: [
@@ -318,7 +327,9 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
     variables: [
       variable({ path: 'primaryCoolantInventoryKg', label: 'Primary coolant inventory', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg', simulatorOnly: true }),
       variable({ path: 'primaryCoolantInventoryDeviationKg', label: 'Primary coolant inventory deviation', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg', simulatorOnly: true }),
-      variable({ path: 'collapsedLiquidLevelPercent', label: 'Reactor vessel collapsed liquid level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
+      // The liquid share of the loops' volume, which a vessel level instrument (RVLIS) reads in its stead: the model
+      // has no vessel-head geometry, so no RVLIS ranges, and the share reads the same with pumps running or not.
+      variable({ path: 'collapsedLiquidLevelPercent', label: 'RCS collapsed liquid level (RVLIS-equivalent)', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
       variable({ path: 'meanPrimaryCoolantTemperatureC', label: 'Mean primary coolant temperature', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'subcoolingMarginC', label: 'RCS subcooling margin', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
       variable({ path: 'loopSteamMassKg', label: 'Reactor coolant loop steam', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg', simulatorOnly: true }),

@@ -66,7 +66,8 @@ export const balanceOfPlantComponentDefinitions: ReadonlyArray<ComponentDefiniti
       exhaustTemperatureAtFullLoadC: z.number().finite().optional(),
       exhaustTemperatureAtNoLoadC: z.number().finite().optional(),
     }),
-    semantics: fixedSemantics({ keyValues: ['electricMw'], aspects: [aspect('running', { variable: 'steamFlowKgPerS', reading: 'flow' })], ratedOutflow: [{ port: 'exhaustSteamOutlet', parameter: 'nominalSteamFlowKgPerS' }], energy: [{ role: 'sink', circuit: 'steam', rate: 'electricMw' }] }),
+    // A turbine-generator runs on line while its output breaker is closed onto the grid, carrying load.
+    semantics: fixedSemantics({ keyValues: ['electricMw'], aspects: [aspect('running', { variable: 'outputBreakerClosed', reading: 'true' })], ratedOutflow: [{ port: 'exhaustSteamOutlet', parameter: 'nominalSteamFlowKgPerS' }], energy: [{ role: 'sink', circuit: 'steam', rate: 'electricMw' }] }),
     variables: [
       variable({ path: 'electricMw', label: 'Electrical output', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       // The generator's output breaker: closed while the turbine carries a load demand, open as its load is rejected.

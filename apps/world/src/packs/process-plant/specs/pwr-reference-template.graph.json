@@ -295,7 +295,7 @@
           "path": "collapsedLiquidLevelPercent",
           "tagId": "RVLS-DYN",
           "equipmentId": "rcs",
-          "description": "Reactor vessel dynamic collapsed liquid level",
+          "description": "RCS collapsed liquid level, RVLIS-equivalent: the liquid share of the reactor coolant loops' volume, read the same with reactor coolant pumps running or stopped; no vessel-head geometry, so no RVLIS full or upper range",
           "externalRefs": [
             "rcs.rvls.dynamic.level"
           ]
@@ -2568,7 +2568,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "Turbine"
+          "shortLabel": "Turbine",
+          "states": {
+            "outputBreakerClosed": { "on": "ON LINE", "off": "OFF LINE" }
+          }
         }
       }
     },
@@ -5009,7 +5012,8 @@
             "blockPushbutton": { "on": "SI block pushed", "off": "SI block released" },
             "blocked": { "on": "Low-pressure SI blocked", "off": "Low-pressure SI unblocked" },
             "belowP11": { "on": "Below P-11", "off": "Above P-11" }
-          }
+          },
+          "momentary": ["blockPushbutton"]
         }
       }
     }
