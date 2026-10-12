@@ -117,16 +117,19 @@
     box-shadow: var(--lb-shadow-lg); overflow: hidden; }
   /* A modal <dialog> is inset 0, so height: auto would stretch it to the viewport; fit-content hugs the content. */
   .lb-modal.hug { height: fit-content; }
-  .lb-modal[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: modal-in var(--lb-t-base) var(--lb-ease); }
+  /* One column no wider than the dialog: wide nowrap content scrolls or ellipsises inside it, never widens it. */
+  .lb-modal[open] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; animation: modal-in var(--lb-t-base) var(--lb-ease); }
   .lb-modal::backdrop { background: rgba(10, 16, 12, .56); backdrop-filter: blur(3px); }
   @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.985); } }
 
   .head { display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 12px 16px 12px 24px; border-bottom: 1px solid var(--lb-line); background: var(--lb-surface); }
   .titles { flex: 1; min-width: 0; }
-  .titles .lb-eyebrow { display: block; margin-bottom: 2px; }
-  h2 { margin: 0; font-size: 1.125rem; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; }
+  .titles .lb-eyebrow { display: block; margin-bottom: 4px; }
+  /* 4 px of inline padding (cancelled by the margin) keep the focus ring off the first and last letter. */
+  h2 { margin: 0 -4px; padding: 0 4px; font-size: 1.125rem; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; }
   h2:focus { outline: none; }
-  h2:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; border-radius: 4px; }
+  /* A deep link focuses the title by script, so Chrome shows this ring: it stays clear of the eyebrow above. */
+  h2:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 0; border-radius: 4px; }
   .close { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; min-height: 44px; padding: 0;
     border: 1px solid transparent; border-radius: var(--lb-r-md); background: transparent; color: var(--lb-ink-2); cursor: pointer; }
   .close:hover { color: var(--lb-ink); background: rgba(23, 32, 25, .06); border-color: transparent; }
