@@ -3603,7 +3603,7 @@ body.rail-resizing {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 10px 16px 9px 22px;
+  padding: 5px 16px 5px 22px;
   border-bottom: 1px solid #d8e0ea;
   background: #f8fafc;
 }
