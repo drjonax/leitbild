@@ -1,7 +1,7 @@
 {
   "id": "nordland-corridor-security",
   "title": "Nordland corridor N-1 security",
-  "description": "A winter weekday peak: Nordland's 420 kV corridor (Salten – Svartisen – Rana – Nedre Røssåga) carries about 620 MW of northern hydropower south through Svartisen – Rana. A few 132 kV lines elsewhere in Norway already run above their ratings and hold overload alarms, but Helgeland's are lightly loaded. The grid is not N-1 secure there: an outage of Svartisen – Rana 420 kV would push its flow onto the parallel Helgeland 132 kV network, loading Smibelg – Sjona and its neighbours far beyond the 150 % at which their instantaneous protection trips them. Ten minutes in, Svartisen – Rana trips. Find the weakness with N-1 screening, test remedial actions on a private copy of the solved grid, apply the one that works and verify it before the trip. Without preparation, protection splits the Helgeland network and load is lost. There are no weather-driven faults.",
+  "description": "A winter weekday peak: Nordland's 420 kV corridor (Salten – Svartisen – Rana – Nedre Røssåga) carries about 560 MW of northern hydropower south through Svartisen – Rana. Statnett runs the 132 kV network under Svartisen as radials, with the tie into Sjona switching station open, so that a 420 kV outage pushes no transit through it; in this exercise that tie, Smibelg – Sjona 132 kV, has been left closed after switching, so the Helgeland 132 kV network runs in parallel with the corridor. A few 132 kV lines elsewhere in Norway already run above their ratings and hold overload alarms, but Helgeland's are lightly loaded. The grid is not N-1 secure there: an outage of Svartisen – Rana 420 kV would push its flow onto the parallel Helgeland 132 kV network, loading Smibelg – Sjona and its neighbours far beyond the 150 % at which their instantaneous protection trips them. Ten minutes in, Svartisen – Rana trips. Find the weakness with N-1 screening, test remedial actions on a private copy of the solved grid, apply the one that works and verify it before the trip. Without preparation, protection splits the Helgeland network and load is lost. There are no weather-driven faults.",
   "objectives": [
     "Screen every branch outage (contingency.screen, all-branches). The base case already holds a few overloaded 132 kV lines in other regions, so look for outages that push branches over their ratings; identify the one that hits the Helgeland 132 kV network hardest.",
     "Evaluate candidate remedial actions with remedial-actions.evaluate (redispatch, load shedding, opening or closing branches) and choose one after which that outage no longer pushes any Helgeland branch over its rating, without islanding load or adding base-case overloads.",
@@ -35,6 +35,18 @@
   },
   "timeline": {
     "cues": [
+      {
+        "id": "sjona-tie-left-closed",
+        "at": { "kind": "after_scenario_start", "seconds": 0 },
+        "title": "Sjona tie left closed after switching",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.close-branch",
+            "input": { "gridId": "grid:norway", "assetId": "branch:osm-0fb54dfbafcab6d8" }
+          }
+        ]
+      },
       {
         "id": "corridor-security-briefing",
         "at": { "kind": "after_scenario_start", "seconds": 0 },

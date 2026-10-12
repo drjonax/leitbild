@@ -1865,6 +1865,72 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "sjona-smibelg-132kv-radial-split",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          13.561963,
+          66.311173
+        ]
+      },
+      "properties": {
+        "kind": "normally-open",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model topology (lane TOP1)",
+        "reviewedAt": "2026-10-12",
+        "targetOsmIds": [
+          "way/588985223",
+          "way/588985247",
+          "way/588985251",
+          "way/588985257",
+          "way/588985263"
+        ],
+        "wayOsmIds": [
+          "way/588985223",
+          "way/588985247",
+          "way/588985251",
+          "way/588985257",
+          "way/588985263"
+        ],
+        "voltageKv": 132,
+        "reason": "Statnett runs the regional grid under Svartisen split into radial operations, so that it carries no transit when the 420 kV grid trips (verified: area plans 2023 and 2025). Sjona is where Linea's Helgeland 132 kV grid ends and Arva's Midtre Nordland grid begins, and Arva counts Smibelg and Storåvatn among its Salten plants, so the radial split is placed on Arva's Smibelg – Sjona line into Linea's Sjona switching station (inferred: the open breaker itself is not published). Closed, the 132 kV path Svartisen – Halsa – Reppa – Øresvik – Smibelg – Sjona – Langvatn – Svabo ran in parallel with the 420 kV, and the loss of Rana – Nedre Røssåga loaded Smibelg – Sjona to 356 % of its emergency rating in the winter N-1 screening. The 71 MW Statnett lists as connected at Sjona matches the Sjona (52 MW) and Fagervollan (21 MW) plants that NVE's registry places at Sjona, which stay on the Helgeland side.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/planer-og-analyser/omradeplaner/helgeland-og-salten/omradeplan-helgeland-og-salten-2025.pdf",
+            "ref": "Statnett, Områdeplan Helgeland og Salten 2025, p. 9 (Erfaringer og utfordringer fra driften i dag)",
+            "note": "Regionalnettet under Svartisen er normalt delt i radielle drifter for å unngå transitt ved utfall i 420 kV nettet og på grunn av spolejordingen"
+          },
+          {
+            "url": "https://www.statnett.no/contentassets/1e1d4dd47762403d93667a79132af0d3/omradeplan-helgeland-og-salten.pdf",
+            "ref": "Statnett, Områdeplan Helgeland og Salten (March 2023), p. 6 and p. 11",
+            "note": "p. 6: regionalnettet på Helgeland strekker seg fra Kolsvik i sør nordover til Sjona; Midtre Nordland (Salten) strekker seg videre fra Sjona i sør. p. 11: the same radial-split statement"
+          },
+          {
+            "url": "https://arva.no/sites/n/nordlandsnett.no/files/ksu_midtre_nordland_2022_hovedrapport.pdf",
+            "ref": "Arva, Kraftsystemutredning for midtre Nordland 2022, hovedrapport, pp. 7–8",
+            "note": "Salten's grid reaches south to Sjona; the largest recent developments include Storå og Smibelg kraftverk i Salten"
+          },
+          {
+            "url": "https://www.regjeringen.no/contentassets/355bf61f1184430499fdff63105fff32/statnett-konseptvalgutredning-helgeland.pdf",
+            "ref": "Statnett, Konseptvalgutredning Helgeland (October 2024), p. 13",
+            "note": "132 kV nett mellom Rana og Kolsvik ... kraftproduksjon med tilknytning i Sjona (71 MW)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/588985223",
+            "ref": "way/588985223 (Smibelg - Sjona) and ways 588985247, 588985251, 588985257, 588985263 (Øresvik - Sjona)",
+            "note": "operator=Arva, voltage=132000, ending at Sjona koblingsstasjon (way/588985297, operator=Linea)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-12"
+          }
+        ]
+      }
     }
   ]
 }

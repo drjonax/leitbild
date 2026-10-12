@@ -863,6 +863,7 @@
     {"assetId":"generator:osm-way-685025522","state":"online","availableMw":225,"targetMw":133.9}
   ],
   "branchStates": [
+    {"assetId":"branch:osm-0fb54dfbafcab6d8","state":"open"},
     {"assetId":"branch:osm-122cf84b421ee3ca","state":"open"},
     {"assetId":"branch:osm-64c4608e3fb764b2","state":"open"}
   ],

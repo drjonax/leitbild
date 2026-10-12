@@ -93,10 +93,10 @@
    "id": "off-terminal-ends",
    "title": "Mapped line ends outside their terminal station",
    "status": "pass",
-   "summary": "0 of 2262 measured line ends lie outside their terminal (max 0)",
+   "summary": "0 of 2260 measured line ends lie outside their terminal (max 0)",
    "metrics": {
     "offTerminalEnds": 0,
-    "measuredEnds": 2262,
+    "measuredEnds": 2260,
     "unmeasuredEnds": 0,
     "boundaryEnds": 8
    },
@@ -222,10 +222,10 @@
    "id": "curations",
    "title": "Curated corrections applied, unexpired, and within the curated-length budget",
    "status": "pass",
-   "summary": "36/36 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.17 % (max 2.00 %)",
+   "summary": "37/37 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.17 % (max 2.00 %)",
    "metrics": {
-    "total": 36,
-    "applied": 36,
+    "total": 37,
+    "applied": 37,
     "unused": 0,
     "expired": 0,
     "violated": 0,
@@ -449,6 +449,12 @@
   {
    "id": "alefjaer-tap-110kv",
    "kind": "exclude-feature",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "sjona-smibelg-132kv-radial-split",
+   "kind": "normally-open",
    "status": "applied",
    "reasons": []
   }
