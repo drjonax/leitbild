@@ -284,10 +284,14 @@ export const createTank = (type: 'generic' | 'atmospheric' | 'pressurized'): HTM
   return tank
 }
 
-export const updateTank = (tank: HTMLElement & Props, level: number | null): void => {
+/** A tank's fill, and its program's marker where its level stands off it (`program`; null hides it). */
+export const updateTank = (tank: HTMLElement & Props, level: number | null, program: number | null = null): void => {
   tank.static = level === null
   tank.toggleAttribute('static', level === null)
   tank.value = level === null ? 0 : Math.min(100, Math.max(0, level))
+  tank.autoAtSetpoint = false
+  tank.atSetpoint = false
+  tank.setpoint = level === null || program === null ? undefined : Math.min(100, Math.max(0, program))
 }
 
 export const createHeatExchanger = (): HTMLElement & Props => {

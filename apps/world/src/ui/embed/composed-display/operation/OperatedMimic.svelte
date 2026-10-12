@@ -2,6 +2,8 @@
   import { untrack } from 'svelte'
   import type { CompiledMimic, MimicDrawnItem } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import type { MimicQuickLooks } from '../../../../packs/process-plant/displays/mimic/quick-look.ts'
+  import type { ComposedMimicPanel } from '../../../../packs/process-plant/displays/compose.ts'
+  import type { TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import type { DisplayAnnunciation } from '../../../../packs/process-plant/displays/annunciators.ts'
   import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
   import type { ProcessPlantProposal, ProposalReview as Review } from '../../../../packs/process-plant/operations/proposals.ts'
@@ -24,7 +26,7 @@
   // World's one validated queued write path as this screen's actor
   // (control.write), a decision on a proposal through control.decide. Never
   // drawn in a chat: there the drawing has no controls.
-  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, operation }: {
+  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, operation, trends, history }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
     stale: boolean
@@ -33,6 +35,9 @@
     annunciation: DisplayAnnunciation
     quickLook: { readonly source: MimicQuickLookSource; readonly looks: MimicQuickLooks } | undefined
     operation: DisplayOperation
+    /** What its vessels trace, and the history its display keeps for them (MimicPanel). */
+    trends?: ComposedMimicPanel['trends']
+    history?: { readonly series: ReadonlyMap<string, ReadonlyArray<TrendPoint>> }
   } = $props()
 
   type Write = { readonly path: VariablePath; readonly value: ProcessVariableValue }
@@ -263,7 +268,7 @@
   {/if}
 {/snippet}
 
-<MimicPanel {mimic} {latest} {stale} {open} {highlight} {annunciation} {quickLook} {sections} {badges} {selected} {pin} />
+<MimicPanel {mimic} {latest} {stale} {open} {highlight} {annunciation} {quickLook} {sections} {badges} {selected} {pin} {trends} {history} />
 {#if failure !== null}<p class="failure" role="status">{failure}</p>{/if}
 
 <style>

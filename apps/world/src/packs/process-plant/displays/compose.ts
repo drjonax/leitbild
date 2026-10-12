@@ -201,6 +201,12 @@ export interface ComposedMimicPanel {
   readonly mimic: CompiledMimic
   /** A display World generates: each drawn item's quick look, chosen with the drawing (mimic/quick-look.ts); never part of what it shows. */
   readonly quickLooks?: MimicQuickLooks
+  /**
+   * A display World generates: the readings its vessels draw over time
+   * (CompiledMimic.trendPaths), each with its series, over this window; a
+   * trend draws only what the Run recorded.
+   */
+  readonly trends?: { readonly windowMs: number; readonly pens: ReadonlyArray<ComposedDisplayPen> }
 }
 
 /**
@@ -1292,10 +1298,10 @@ const generatedDisplay = (
   view: OverviewView | null,
   fitted: { readonly arrangement: OverviewArrangement; readonly panels: GeneratedPanels; readonly mimic: CompiledMimic },
   alarms: (panels: ReadonlyArray<CompiledComposedPanel>) => ComposedAlarmsPanel,
-  quickLooks: MimicQuickLooks | undefined,
+  extras: Pick<ComposedMimicPanel, 'quickLooks' | 'trends'>,
 ): CompiledComposedDisplay => {
   // Nothing generated is a trend, so every panel has its natural height. Lead values come before the drawing, a faceplate under it.
-  const mimic: ComposedMimicPanel = { kind: 'mimic', mimic: fitted.mimic, ...(quickLooks === undefined ? {} : { quickLooks }) }
+  const mimic: ComposedMimicPanel = { kind: 'mimic', mimic: fitted.mimic, ...extras }
   const shown: ReadonlyArray<CompiledComposedPanel> = readouts === undefined ? [mimic] : readouts.kind === 'faceplate' ? [mimic, readouts] : [readouts, mimic]
   const width = view === null ? fitted.mimic.width : view.width - 2 * composedDisplayLayout.overviewPadding
   return {
@@ -1337,6 +1343,18 @@ const quickLooksOf = (
   return panel === undefined ? undefined : { sparklineMs: LEAD_VALUE_SPARKLINE_MS, pens: panel.pens, items }
 }
 
+/** A generated display's quick looks and its vessels' trends, each compiled as lead values are (ComposedMimicPanel). */
+const drawingExtras = (
+  system: ProcessPlantRuntimeInstance,
+  mimic: CompiledMimic,
+  recordedSeriesIds: ReadonlySet<string>,
+  issues: ComposedDisplayIssue[],
+): Pick<ComposedMimicPanel, 'quickLooks' | 'trends'> => {
+  const quickLooks = quickLooksOf(system, mimic, recordedSeriesIds, issues)
+  const trends = leadValues(system, mimic.trendPaths, recordedSeriesIds, issues)
+  return { ...(quickLooks === undefined ? {} : { quickLooks }), ...(trends === undefined ? {} : { trends: { windowMs: LEAD_VALUE_SPARKLINE_MS, pens: trends.pens } }) }
+}
+
 /**
  * The unit overview World generates for a Plant: its lead values for the
  * mode it is in (protection, delivery and energy, overview-key-values.ts),
@@ -1363,9 +1381,9 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
   const fitted = fitGenerated(view, tiles.map(option => ({ readouts: values, annunciators: option.systems.length, tileWidth: option.width })), [room => compileMimicScope(system.plant, circuits.scope, { profile: overviewMimicProfile, ...room })])
   if (!fitted.ok) return { ok: false, issues: fitted.issues.map(message => ({ path: 'overview', message })) }
   const systems = tiles.find(option => option.width === fitted.panels.tileWidth)!.systems
-  const quickLooks = quickLooksOf(system, fitted.mimic, recordedSeriesIds, issues)
+  const extras = drawingExtras(system, fitted.mimic, recordedSeriesIds, issues)
   if (issues.length > 0) return { ok: false, issues }
-  return { ok: true, display: generatedDisplay(system, 'Unit overview', readouts, view, fitted, () => ({ kind: 'alarms', scope: 'plant', ruleIds: [], rows: composedDisplayLayout.alarmRows, systems, tileWidth: fitted.panels.tileWidth }), quickLooks) }
+  return { ok: true, display: generatedDisplay(system, 'Unit overview', readouts, view, fitted, () => ({ kind: 'alarms', scope: 'plant', ruleIds: [], rows: composedDisplayLayout.alarmRows, systems, tileWidth: fitted.panels.tileWidth }), extras) }
 }
 
 /**
@@ -1515,11 +1533,11 @@ export const compileDetailDisplay = (
     return shown === null ? [] : [{ panel: candidate, panels: shown }]
   })[0]
   const title = groupLabel(components.map(index => graph.components[index]!.label))
-  const quickLooks = quickLooksOf(system, fitted.mimic, recordedSeriesIds, issues)
+  const extras = drawingExtras(system, fitted.mimic, recordedSeriesIds, issues)
   if (issues.length > 0) return { ok: false, issues }
   return {
     ok: true,
-    display: generatedDisplay(system, title, placed === undefined ? readouts : placed.panel, view, placed === undefined ? fitted : { ...fitted, panels: placed.panels }, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows }), quickLooks),
+    display: generatedDisplay(system, title, placed === undefined ? readouts : placed.panel, view, placed === undefined ? fitted : { ...fitted, panels: placed.panels }, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows }), extras),
   }
 }
 

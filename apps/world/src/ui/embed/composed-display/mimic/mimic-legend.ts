@@ -13,4 +13,6 @@ export const mimicLegend = {
   simulator: 'simulator',
   /** Beside a faded alarm frame: what its alarms are expected after ("expected after RX TRIP"). */
   expected: 'expected after',
+  /** Where vessels trace their readings: what a trace is, before its window ("fill / trace: last 10 min"). */
+  trend: 'fill / trace: last',
 } as const

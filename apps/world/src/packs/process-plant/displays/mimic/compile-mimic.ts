@@ -4,12 +4,12 @@ import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { readingText, unitLabel } from '../display-text.ts'
 import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, stubWordBinding, type MimicItem, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
 import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
-import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
+import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, stubWordTexts, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
-import { openBridgeDevice, QUICK_LOOK_DOT, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
+import { openBridgeDevice, QUICK_LOOK_DOT, reactorVesselBottom, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
 // Intent (or a scope World resolved itself) → items with their bindings → a
 // diagram sized in OpenBridge px → the layout engine → a compiled mimic.
@@ -71,6 +71,10 @@ const valueRowSize = (row: Extract<MimicRow, { kind: 'value' }>, own: number, va
   (row.letters === undefined ? 0 : textWidth('unit', row.letters) + openBridgeDevice.valueRowGap)
   + (row.wider === undefined ? own : Math.max(own, textWidth('unit', WIDER_RANGE) + openBridgeDevice.valueRowGap + value(0)))
 
+/** A value row with its sparkline on a line under it (MimicRow `sparkline`): no narrower than the sparkline, a line taller. */
+const withSparkline = (row: Extract<MimicRow, { kind: 'value' }>, size: { readonly width: number; readonly height: number }): { readonly width: number; readonly height: number } =>
+  row.sparkline !== true ? size : { width: Math.max(size.width, openBridgeDevice.rowSparkline.width), height: size.height + openBridgeDevice.rowSparkline.line }
+
 const stateRowWidth = (texts: ReadonlyArray<string>): number =>
   Math.max(...texts.map(text => textWidth('stateRow', text))) + openBridgeDevice.stateRowPadding
 
@@ -97,7 +101,7 @@ const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['read
     const digits = device ? 0 : 1
     // A device writes a value as a whole number of its declared digits, or in words at an end of its span.
     if (row.kind === 'value' && row.digits !== undefined) return { width: Math.max(valueRowWidth(row.unit, 0, row.digits), stateRowWidth(deviceValueWords(row))), height: openBridgeDevice.row }
-    if (row.kind === 'value') return { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row }
+    if (row.kind === 'value') return withSparkline(row, { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row })
     if (row.kind === 'position') return { width: Math.max(valueRowWidth('fraction', digits), stateRowWidth(POSITION_WORDS)), height: openBridgeDevice.row }
     return { width: stateRowWidth(rowWords(row)), height: openBridgeDevice.row }
   }
@@ -114,13 +118,13 @@ const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeText
     : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
 const isDevice = (presentation: MimicPresentation): boolean => presentation.element === 'device'
-const isVessel = (presentation: MimicPresentation): boolean => presentation.element === 'tank' || presentation.element === 'heat-exchanger'
+const isVessel = (presentation: MimicPresentation): boolean => presentation.element === 'tank' || presentation.element === 'heat-exchanger' || presentation.element === 'vessel'
 const isValve = (presentation: MimicPresentation): boolean =>
   presentation.element === 'device' && (presentation.icon === 'valve-analog' || presentation.icon === 'valve-digital' || presentation.icon === 'valve-check')
 
 const aspectFor = (presentation: MimicPresentation) =>
   presentation.element === 'device' || presentation.element === 'bar' ? presentation.aspect
-    : presentation.element === 'tank' || presentation.element === 'heat-exchanger' ? presentation.aspect
+    : presentation.element === 'tank' || presentation.element === 'heat-exchanger' || presentation.element === 'vessel' ? presentation.aspect
       : null
 
 // A vessel loops return to (the reactor) is a hub: it takes links from two or
@@ -245,6 +249,22 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     return textWidth(style, text)
   }
 
+  // A reactor vessel is as wide as its profile draws it. As a hub it keeps room past its nozzles for its head above
+  // them and its bottom, and where it heats, its core region, below them (MimicVesselDrawing); one a pipe enters at
+  // an end is as tall as all of them.
+  const footprintOf = (planned: PlannedItem): Pick<DiagramNode, 'cells' | 'portInset' | 'ends'> => {
+    if (planned.presentation.element === 'vessel') {
+      const head = openBridgeDevice.reactorVessel.head
+      const bottom = reactorVesselBottom(coreOf(graph, planned, profile) ?? 'overlap')
+      return planned.role === 'hub'
+        ? { cells: { width: profile.vessel.cells, height: 4 }, portInset: 0, ends: { top: head, bottom } }
+        : { cells: { width: profile.vessel.cells, height: Math.ceil((head + bottom + OPENBRIDGE_GRID) / OPENBRIDGE_GRID) }, portInset: 0 }
+    }
+    return isVessel(planned.presentation) || planned.role === 'hub'
+      ? { cells: { width: 2, height: 4 }, portInset: openBridgeDevice.vessel.inset }
+      : { cells: { width: 2, height: 2 }, portInset: 0 }
+  }
+
   const addItem = (unflapped: Omit<PlannedItem, 'flapLines'>, ports: DiagramNode['ports']): void => {
     const presentation = unflapped.presentation
     const vessel = isVessel(presentation) || unflapped.role === 'hub'
@@ -261,8 +281,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       id: planned.id,
       rank: planned.rank,
       role: planned.role,
-      cells: vessel ? { width: 2, height: 4 } : { width: 2, height: 2 },
-      portInset: vessel ? openBridgeDevice.vessel.inset : 0,
+      ...footprintOf(planned),
       ports,
       ...(planned.lane === undefined ? {} : { lane: planned.lane }),
       text: {
@@ -375,8 +394,9 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const rank = [role, component.kind, component.metadata?.equipmentClass ?? '', component.metadata?.role ?? '', ports.join(','), binding.label].join('|')
     for (const member of group) componentRank.set(member, rank)
     const lane = laneOf(component, loopOrder)
+    const rows = itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan })
     addItem(
-      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan }), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
+      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: withSparklines(rows, presentation, profile), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
       ports.map(port => ({ id: port, direction: portDirection(component, port), rank: port })),
     )
   }
@@ -470,6 +490,36 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   return { graph: { nodes, edges }, items, edgeLinks, stubs, issues }
 }
 
+/** Where a reactor vessel's core region stands (MimicVesselDrawing): as its profile draws it where it is the energy's source; null for any other. */
+const coreOf = (graph: CompiledPlantGraph, item: Pick<PlannedItem, 'item' | 'presentation'>, profile: MimicProfile): 'band' | 'overlap' | null =>
+  item.presentation.element === 'vessel' && item.item.kind === 'component' && graph.components[item.item.component]!.semantics.energy.some(role => role.role === 'source')
+    ? profile.vessel.core
+    : null
+
+/** A reactor vessel's value rows each carry a sparkline where its profile shows trends (MimicRow `sparkline`). */
+const withSparklines = (rows: ReadonlyArray<MimicRow>, presentation: MimicPresentation, profile: MimicProfile): ReadonlyArray<MimicRow> =>
+  !profile.trends || presentation.element !== 'vessel' ? rows : rows.map(row => (row.kind === 'value' ? { ...row, sparkline: true as const } : row))
+
+/**
+ * What an item draws of its reading over time where its profile shows trends
+ * (MimicItemTrend): a tank its level as its fill's trace; a heat exchanger
+ * the level its row reads, where that row is drawn.
+ */
+const trendOf = (item: Pick<MimicDrawnItem, 'binding' | 'presentation' | 'rows'>, profile: MimicProfile): MimicItemTrend | null => {
+  const state = item.binding.state
+  if (!profile.trends || state?.aspect !== 'level' || state.state === undefined) return null
+  if (item.presentation.element === 'tank') return { kind: 'fill', path: state.state.path }
+  if (item.presentation.element !== 'heat-exchanger') return null
+  const row = item.rows.findIndex(candidate => candidate.kind === 'value' && candidate.path === state.state!.path)
+  return row < 0 ? null : { kind: 'strip', row }
+}
+
+/** The readings an item's trends draw over time: its trend's, and its sparkline rows' with their wider instruments. */
+const trendPathsOf = (item: Pick<MimicDrawnItem, 'rows' | 'trend'>): ReadonlyArray<VariablePath> => [
+  ...(item.trend?.kind === 'fill' ? [item.trend.path] : item.trend?.kind === 'strip' ? rowPaths(item.rows[item.trend.row]!) : []),
+  ...item.rows.flatMap(row => (row.kind === 'value' && row.sparkline === true ? rowPaths(row) : [])),
+]
+
 /** A power stub's word, about the far ends it names (stubWordBinding); null where its lines carry fluid. */
 const stubWordOf = (graph: CompiledPlantGraph, stub: MimicStub): MimicStubWord | null =>
   linkCarrier(graph.links[stub.links[0]!]!) !== 'electricalPower' ? null : stubWordBinding(graph, stub.others.map(other => other.component), stub.links)
@@ -505,6 +555,9 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
   const placed = new Map(layout.nodes.map(node => [node.id, node]))
   const items: MimicDrawnItem[] = [...planned.items.values()].map(item => {
     const node = placed.get(item.id)!
+    // A stack's first line is the tag; the rows that fit follow it.
+    const rows = item.rows.slice(0, Math.max(0, (node.text?.lines ?? 1) - 1))
+    const trend = trendOf({ ...item, rows }, profile)
     return {
       id: item.id,
       binding: item.binding,
@@ -513,11 +566,12 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       orientation: orientationOf(node),
       text: node.text,
       frame: node.frame,
-      // A stack's first line is the tag; the rows that fit follow it.
-      rows: item.rows.slice(0, Math.max(0, (node.text?.lines ?? 1) - 1)),
+      rows,
       flapLines: item.flapLines,
       marker: item.marker,
       components: item.components.map(component => String(graph.components[component]!.id)),
+      ...(item.presentation.element === 'vessel' ? { vessel: { core: coreOf(graph, item, profile), nozzles: Object.values(node.ports) } } : {}),
+      ...(trend === null ? {} : { trend }),
     }
   })
   const linkOf = (edgeId: string) => planned.edgeLinks.get(edgeId)!
@@ -556,6 +610,9 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
         ...(state?.command === undefined ? [] : [state.command]),
         ...(state?.throughput === undefined ? [] : [state.throughput.path]),
         ...item.rows.flatMap(rowPaths),
+        // A reactor vessel draws its insertion's parts in its core region; a tank marks its program where its level is off it.
+        ...(item.vessel === undefined ? [] : (item.binding.insertion?.groups ?? []).flat().map(part => part.path)),
+        ...(item.presentation.element === 'tank' && item.binding.program !== undefined ? [item.binding.program] : []),
       ]
     }),
     ...pipes.flatMap(pipe => statePaths(pipe.state)),
@@ -581,6 +638,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     stubs: stubs.map(({ edge: _edge, ...stub }) => stub),
     zones: layout.zones.map(zone => ({ ...zone, label: `Loop ${zone.lane}` })),
     paths,
+    trendPaths: [...new Set(items.flatMap(trendPathsOf))],
     summary: {
       equipment,
       stops: stubs.map(stub => `${graph.components[planned.stubs.get(stub.id)!.component]!.metadata?.presentation?.shortLabel ?? graph.components[planned.stubs.get(stub.id)!.component]!.id} ${stub.text}`),

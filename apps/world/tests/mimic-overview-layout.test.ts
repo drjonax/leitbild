@@ -172,9 +172,10 @@ describe('the unit overview of the principal circuits', () => {
       expect(mimic.minScale).toBe(1)
       const planned = planMimicDiagram(plantOf(loops), scopeOf(plantOf(loops)), overviewMimicProfile)
       if (!planned.ok) throw new Error('not planned')
-      // Tag lines are 16 px tall (12 px type); every row is a regular 20 px row (16 px type), never the small 16/18 px rows.
+      // Tag lines are 16 px tall (12 px type); every row is a regular 20 px row (16 px type), never the small 16/18 px rows;
+      // a reactor vessel's value row has its sparkline on a line of its own under it.
       for (const node of planned.graph.nodes) {
-        for (const line of node.text.lines) expect([openBridgeDevice.tagLine, openBridgeDevice.row] as ReadonlyArray<number>).toContain(line.height)
+        for (const line of node.text.lines) expect([openBridgeDevice.tagLine, openBridgeDevice.row, openBridgeDevice.row + openBridgeDevice.rowSparkline.line] as ReadonlyArray<number>).toContain(line.height)
       }
     }
   })

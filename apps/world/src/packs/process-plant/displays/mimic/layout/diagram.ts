@@ -11,7 +11,7 @@
 // keys (`rank`, lane `order`), never on ids, so renaming ids changes no
 // geometry. Input the engine cannot order that way is rejected (it throws).
 
-export const DIAGRAM_ENGINE_VERSION = 7
+export const DIAGRAM_ENGINE_VERSION = 8
 
 export type Face = 'top' | 'right' | 'bottom' | 'left'
 
@@ -56,6 +56,13 @@ export interface DiagramNode {
    * gets its own grid slot; the placed box reports the grown size.
    */
   readonly cells: { readonly width: number; readonly height: number }
+  /**
+   * A hub only: how far its box reaches past its outermost port tracks, in
+   * px, at its top and at its bottom on screen (a vessel's head above its
+   * nozzles, its core region and bottom below them), where its ports face
+   * sideways; at least a grid step either way.
+   */
+  readonly ends?: { readonly top: number; readonly bottom: number }
   /**
    * How far inside the footprint a pipe ends, in px: a symbol whose visible
    * body is inset from its box (a tank) takes its pipes to the body edge.

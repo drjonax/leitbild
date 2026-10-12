@@ -22,6 +22,12 @@
   import type { MimicQuickLookSource } from './quick-look-source.ts'
   import type { MimicQuickLooks } from '../../../../packs/process-plant/displays/mimic/quick-look.ts'
   import type { ItemBadges } from '../operation/operation-presenter.ts'
+  import type { ComposedMimicPanel } from '../../../../packs/process-plant/displays/compose.ts'
+  import type { TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
+  import MiniTrace from './MiniTrace.svelte'
+  import VesselSymbol from './VesselSymbol.svelte'
+  import { fillTracePath, programMark, stripReading } from './vessel-trends.ts'
+  import { sparklineWindowText } from '../sparkline.ts'
 
   // A generated equipment mimic drawn with OpenBridge: pipes on a canvas by
   // connector-diagram, equipment as positioned OpenBridge elements. The
@@ -35,7 +41,8 @@
   // and the sections the hosting display adds (`sections`, popover.ts).
   // An operated display (OperatedMimic) adds each item's operation badges, the item whose command is selected, and the
   // item whose popover opens pinned as the display opens on it (a pending proposal to review).
-  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, sections = [], badges, selected = null, pin = null }: {
+  // Where its display keeps their history (`trends`, `history`), its vessels trace their readings over the last minutes.
+  let { mimic, latest, stale, open, highlight = null, annunciation, quickLook, sections = [], badges, selected = null, pin = null, trends, history }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
     stale: boolean
@@ -49,6 +56,8 @@
     selected?: string | null
     /** Each new request opens its item's popover pinned, once the item's dot is drawn. */
     pin?: { readonly item: string } | null
+    trends?: ComposedMimicPanel['trends']
+    history?: { readonly series: ReadonlyMap<string, ReadonlyArray<TrendPoint>> }
   } = $props()
 
   let openBridge = $state<typeof OpenBridgeMimic | null>(null)
@@ -420,7 +429,7 @@
     element.style.height = '100%'
     host.append(element)
     const apply = (next: typeof params) => {
-      if (next.item.presentation.element === 'tank') next.ob.updateTank(element, next.look.state.kind === 'level' ? next.look.state.percent : null)
+      if (next.item.presentation.element === 'tank') next.ob.updateTank(element, next.look.state.kind === 'level' ? next.look.state.percent : null, offProgram(next.item, next.look))
     }
     apply(params)
     return { update: apply, destroy: () => element.remove() }
@@ -434,6 +443,36 @@
     apply(params)
     return { update: apply, destroy: () => { corners.who.remove(); corners.hold.remove() } }
   }
+
+  // A tank's program is marked on it only while its level stands off it (programMark).
+  const offProgram = (item: MimicDrawnItem, look: ItemLook): number | null => {
+    const entry = item.binding.program === undefined ? undefined : index.get(String(item.binding.program))
+    const program = entry !== undefined && typeof entry.value === 'number' && entry.quality !== 'outside-hard-range' ? entry.value : null
+    return programMark(look.state.kind === 'level' ? look.state.percent : null, program)
+  }
+
+  // What the drawing's vessels trace (MimicItemTrend): each reading's pen and kept history, over the trends' window to the latest sample.
+  const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.simulationTime))
+  const trendPen = (path: string) => trends?.pens.find(pen => String(pen.path) === path && pen.recorded)
+  const pointsOf = (path: string): ReadonlyArray<TrendPoint> => history?.series.get(path) ?? []
+  // A tank traces its level over its fill, on the fill's scale, where it draws one (OpenBridge's tank graph crops its chart in a compact tank).
+  const fillTrace = (item: MimicDrawnItem, look: ItemLook): string | null => {
+    if (item.trend?.kind !== 'fill' || stale || look.state.kind !== 'level' || trends === undefined || trendPen(String(item.trend.path)) === undefined || !Number.isFinite(now)) return null
+    const path = fillTracePath(pointsOf(String(item.trend.path)), now, trends.windowMs, openBridgeDevice.tankFill, 100)
+    return path === '' ? null : path
+  }
+  // A heat exchanger's strip traces the reading its level row reads now.
+  const stripPen = (item: MimicDrawnItem) => {
+    if (item.trend?.kind !== 'strip' || stale) return undefined
+    const row = item.rows[item.trend.row]
+    const reading = row?.kind === 'value' ? valueRowReading(row, index) : null
+    const path = stripReading(row, reading?.wider === true)
+    return path === null ? undefined : trendPen(path)
+  }
+  // Inside a heat exchanger's box, below its icon, clear of its body's edge.
+  const strip = (item: MimicDrawnItem) => ({ x: item.box.x + openBridgeDevice.vessel.inset, y: item.box.y + item.box.height * 2 / 3, width: item.box.width - 2 * openBridgeDevice.vessel.inset, height: item.box.height / 3 - openBridgeDevice.vessel.inset - 1 })
+  // The key says what a trace is once any vessel draws one.
+  const traces = $derived(mimic.items.some(item => item.trend !== undefined || item.rows.some(row => row.kind === 'value' && row.sparkline === true)) && (trends?.pens.some(pen => pen.recorded) ?? false))
 
   // A value row's readout block, before its unit (and after WR where the row reads its wider instrument); at an
   // end of the span it reads, "<0" in low-integrity style, as a readout shows a reading off its span.
@@ -534,7 +573,23 @@
             <div class="anchor" style={`left:${item.box.x + item.box.width / 2}px;top:${item.box.y + item.box.height / 2}px`} use:device={{ ob, item, look, rows: deviceRows(item, look), alert, activated: selected === item.id, badges: badges?.get(item.id) ?? null }}></div>
           {:else}
             {#if item.presentation.element === 'tank' || item.presentation.element === 'heat-exchanger'}
+              {@const stripped = stripPen(item)}
+              {@const traced = fillTrace(item, look)}
               <div class="box" style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vessel={{ ob, item, look }}></div>
+              {#if traced !== null}
+                <!-- Its level over the last minutes, on its fill's scale: the line's right end meets the fill. -->
+                <svg class="box fill-trace" style={`left:${item.box.x}px;top:${item.box.y}px`} width={item.box.width} height={item.box.height} aria-hidden="true"><path d={traced} /></svg>
+              {/if}
+              {#if stripped !== undefined && trends !== undefined}
+                {@const area = strip(item)}
+                <div class="box" style={`left:${area.x}px;top:${area.y}px`}><MiniTrace pen={stripped} points={pointsOf(String(stripped.path))} {now} windowMs={trends.windowMs} width={area.width} height={area.height} framed /></div>
+              {/if}
+              {#if badges?.has(item.id)}
+                <div class="box vessel-badges" class:activated={selected === item.id} style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vesselBadges={{ ob, badges: badges.get(item.id) ?? null }}></div>
+              {/if}
+            {:else if item.presentation.element === 'vessel' && item.vessel !== undefined}
+              <!-- A reactor vessel drawn from the model in OpenBridge's tokens: its fill the level it reads, its rod banks in its core region. -->
+              <div class="box" style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`}><VesselSymbol item={{ ...item, vessel: item.vessel }} level={look.state.kind === 'level' ? look.state.percent : null} {index} /></div>
               {#if badges?.has(item.id)}
                 <div class="box vessel-badges" class:activated={selected === item.id} style={`left:${item.box.x}px;top:${item.box.y}px;width:${item.box.width}px;height:${item.box.height}px`} use:vesselBadges={{ ob, badges: badges.get(item.id) ?? null }}></div>
               {/if}
@@ -550,7 +605,16 @@
                     <span class={`alarm-row ${alert?.status ?? ''}`}>{alert === null ? '' : flapOf(item, alert).parts[row.part]}</span>
                   {:else if row.kind === 'value'}
                     {@const reading = valueRowReading(row, index)}
-                    <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
+                    {#if row.sparkline === true}
+                      <!-- A reactor vessel's value, and on a line under it what it read over the last minutes. -->
+                      {@const traced = stale ? undefined : trendPen(reading?.wider === true && row.wider !== undefined ? row.wider.path : row.path)}
+                      <span class="traced">
+                        <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
+                        <span class="sparkline-row">{#if traced !== undefined && trends !== undefined}<MiniTrace pen={traced} points={pointsOf(String(traced.path))} {now} windowMs={trends.windowMs} width={openBridgeDevice.rowSparkline.width} height={openBridgeDevice.rowSparkline.height} />{/if}</span>
+                      </span>
+                    {:else}
+                      <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
+                    {/if}
                   {:else if row.kind === 'shutdown' || row.kind === 'range'}
                     <!-- Whether it has stopped, and a quantity on the instrument reading it now, written like its tag; a trip it does not follow in the command's colour. -->
                     <span class="tag-row" class:emphasis={row.kind === 'shutdown' && row.part === 'command'}>{rowText(row, look, index, format)}</span>
@@ -662,6 +726,7 @@
     <span class="key"><span class="abnormal-key">{mimicLegend.command}</span>{mimicLegend.commandMeaning}</span>
     {#if drawsRelief}<span>{mimicLegend.notComputed}</span>{/if}
     {#each expectedGroups as group (group)}<span class="key"><span class="expected-key"></span>{mimicLegend.expected} {group}</span>{/each}
+    {#if traces && trends !== undefined}<span>{mimicLegend.trend} {sparklineWindowText(trends.windowMs)}</span>{/if}
     <span>{mimicLegend.simulator}</span>
   </p>
 </div>
@@ -688,6 +753,9 @@
   .tag { font: 370 12px/16px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .stub { position: absolute; }
   .value-row { display: inline-flex; align-items: baseline; gap: 4px; height: 20px; }
+  .traced { display: flex; flex-direction: column; align-items: inherit; }
+  .fill-trace path { fill: none; stroke: var(--instrument-regular-primary-color); stroke-width: 1; stroke-linejoin: round; }
+  .sparkline-row { display: flex; align-items: center; height: 16px; }
   .unit { font: 370 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row { font: 400 16px/20px "Noto Sans", system-ui, sans-serif; color: var(--element-neutral-color); }
   .state-row.emphasis { color: var(--element-active-color); }

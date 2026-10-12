@@ -134,8 +134,16 @@ export const createComposedDisplaySession = (config: {
       horizonMs: panel.kind === 'trend' ? panel.horizonMs : COMPARISON_HISTORY_MS,
     })))
 
-  /** A generated display's lead values, and the values a faceplate's rows show, keep their sparklines' window: the recorded numeric ones. */
+  /**
+   * A generated display's lead values, the values a faceplate's rows show and
+   * the readings its drawing's vessels trace keep their sparklines' window:
+   * the recorded numeric ones.
+   */
   const sparklinePens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> => shown.flatMap(panel => {
+    if (panel.kind === 'mimic') {
+      const trends = panel.trends
+      return trends === undefined ? [] : trends.pens.filter(pen => pen.recorded && pen.valueKind === 'number').map(pen => ({ path: String(pen.path), seriesId: pen.seriesId, horizonMs: trends.windowMs }))
+    }
     if (panel.kind === 'faceplate') {
       const rows = new Set(panel.faceplate.columns.flatMap(column => column.rows.flatMap(row => row.kind === 'values' ? row.paths : [])))
       return panel.pens.filter(pen => rows.has(String(pen.path)) && pen.recorded && pen.valueKind === 'number').map(pen => ({ path: String(pen.path), seriesId: pen.seriesId, horizonMs: LEAD_VALUE_SPARKLINE_MS }))

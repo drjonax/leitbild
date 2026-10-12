@@ -27,6 +27,8 @@ export interface ModelNode {
   readonly lane: number | null
   readonly lines: ReadonlyArray<{ readonly width: number; readonly height: number; readonly required: boolean }>
   readonly portInset: number
+  /** A hub's reach past its port tracks at its screen top and bottom (DiagramNode.ends); a grid step where it declares none. */
+  readonly ends: { readonly top: number; readonly bottom: number } | null
   readonly frameable: boolean
   /** Widest flap label; 0 when the node has none. */
   readonly flapWidth: number
@@ -106,6 +108,7 @@ export const buildModel = (graph: DiagramGraph): Model => {
     }
     for (const line of node.text.lines) if (!isSize(line.width) || !(line.height > 0) || !Number.isFinite(line.height)) issues.push(`node ${node.id} has a text line of invalid size`)
     if (!isSize(node.portInset)) issues.push(`node ${node.id} has an invalid port inset`)
+    if (node.ends !== undefined && (node.role !== 'hub' || !isSize(node.ends.top) || !isSize(node.ends.bottom))) issues.push(`node ${node.id} has ends but is not a hub, or they are not sizes`)
     if (node.flapWidth !== undefined && (!node.frameable || !isSize(node.flapWidth))) issues.push(`node ${node.id} has a flap width but is not frameable, or the width is invalid`)
     if (node.flapLines !== undefined && (!node.frameable || !Number.isInteger(node.flapLines) || node.flapLines < 1)) issues.push(`node ${node.id} has flap lines but is not frameable, or the count is not a whole number of lines`)
     const portIds = new Set<string>()
@@ -187,6 +190,7 @@ export const buildModel = (graph: DiagramGraph): Model => {
     lane: laneOf(node),
     lines: node.text.lines,
     portInset: node.portInset,
+    ends: node.ends ?? null,
     frameable: node.frameable,
     flapWidth: node.flapWidth ?? 0,
     flapLines: node.flapLines ?? 1,

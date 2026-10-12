@@ -32,6 +32,8 @@ export type MimicRow =
      * 1300 MW), which a device's value row needs declared.
      */
     readonly digits?: number
+    /** On a line under it, a sparkline of what it read over the drawing's trend window (MimicItemTrend): a reactor vessel's value rows. */
+    readonly sparkline?: true
   }
   | { readonly kind: 'position'; readonly required: true }
   /**

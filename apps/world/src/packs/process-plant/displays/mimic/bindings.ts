@@ -3,6 +3,7 @@ import type {
   AspectTravel,
   CompiledComponent,
   CompiledEmbeddedDevice,
+  CompiledInsertion,
   CompiledPlantGraph,
   CompiledStateAspect,
   ProcessSignalBinding,
@@ -142,6 +143,14 @@ export interface MimicItemBinding {
    * them it frames nothing, as its limit is drawn not in force on a trend.
    */
   readonly frames: ReadonlyArray<MimicFrame>
+  /**
+   * What it inserts, part by part, as its kind declares it (a core's rod
+   * banks): each part's reading and the range it moves over, in its groups,
+   * fully in at that range's `insertedAt` end. Absent where it declares none.
+   */
+  readonly insertion?: CompiledInsertion
+  /** The value the Plant's control holds its drawn state to, where it declares one (a pressurizer's level program). */
+  readonly program?: VariablePath
 }
 
 /** A rule framing an item, and its flap text (MimicItemBinding.frames). */
@@ -459,7 +468,15 @@ export const itemBinding = (
     shutdown: device === undefined ? shutdownBindings(plant, component, drawnState) : [],
     limits: levelLimits(plant, state),
     frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),
+    ...(device !== undefined || component.semantics.insertion === undefined ? {} : { insertion: component.semantics.insertion }),
+    ...programOf(component, device === undefined ? drawnState : undefined),
   }
+}
+
+/** The program a component's control holds its drawn state to (MimicItemBinding.program). */
+const programOf = (component: CompiledComponent, drawn: VariablePath | undefined): { readonly program?: VariablePath } => {
+  const program = drawn === undefined ? undefined : component.semantics.programs.find(candidate => candidate.reading === drawn)
+  return program === undefined ? {} : { program: program.program }
 }
 
 /**

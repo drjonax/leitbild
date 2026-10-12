@@ -66,7 +66,24 @@ export const openBridgeDevice = {
   flapLabelInset: 28,
   /** Tanks and heat exchangers: the box, and how far the visible body sits inside it. */
   vessel: { width: 48, height: 96, inset: 5 },
+  /** Where OpenBridge's compact tank draws its fill in that box (measured): a fill trace lies on the same cell. */
+  tankFill: { x: 10, y: 19, width: 28, height: 54 },
+  /**
+   * A reactor vessel (vessel-symbol.ts), down its box: its head (dome and
+   * flange) and the clearance under it, above its first nozzle; below its
+   * last nozzle the gap to its core region, the core region, and its bottom
+   * dome. Where a drawing has no height for the core region below the
+   * nozzles, it overlaps the lowest of them (`overlap`) and the box keeps
+   * only its bottom dome there.
+   */
+  reactorVessel: { head: 46, dome: 30, flange: 6, coreGap: 12, coreBand: 72, bottomDome: 20 },
+  /** A sparkline on a line under a value row (MimicRow `sparkline`): its width and height, on a line this high. */
+  rowSparkline: { width: 40, height: 14, line: 16 },
 } as const
+
+/** What a reactor vessel's box keeps below its last nozzle: its core region there (`band`), or only its bottom dome (`overlap`). */
+export const reactorVesselBottom = (core: 'band' | 'overlap'): number =>
+  openBridgeDevice.reactorVessel.bottomDome + (core === 'band' ? openBridgeDevice.reactorVessel.coreGap + openBridgeDevice.reactorVessel.coreBand : 0)
 
 /** Width of a readout block holding up to `digits` digits (and a fraction), as OpenBridge reserves it. */
 export const readoutBlockWidth = (integerDigits: number, fractionDigits: number): number =>

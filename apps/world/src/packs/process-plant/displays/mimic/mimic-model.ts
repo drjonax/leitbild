@@ -13,7 +13,7 @@ import type { MimicIntent } from './scope.ts'
 // restyle it.
 
 /** Changes whenever the same intent on the same model could draw differently. */
-export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-7`
+export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-8`
 
 /**
  * A mimic may be up to 800 px wide (owner decision): OpenBridge's full-size
@@ -50,7 +50,37 @@ export interface MimicDrawnItem {
   readonly marker: boolean
   /** The Plant components it stands for, by id (a group's members, a bundled device's host): what opening it shows. */
   readonly components: ReadonlyArray<string>
+  /** A reactor vessel's drawing (MimicVesselDrawing); absent for any other symbol. */
+  readonly vessel?: MimicVesselDrawing
+  /** What it shows of its reading over the last minutes (MimicItemTrend); absent where it shows none. */
+  readonly trend?: MimicItemTrend
 }
+
+/**
+ * How a reactor vessel is drawn in its box (vessel-symbol.ts), from the
+ * model: its nozzles where the layout brought its pipes, and its core
+ * region where it is the energy's source, below its nozzles (`band`) or
+ * overlapping the lowest of them (`overlap`). What it inserts into the core
+ * (rod banks) is its binding's (MimicItemBinding.insertion).
+ */
+export interface MimicVesselDrawing {
+  readonly core: 'band' | 'overlap' | null
+  readonly nozzles: ReadonlyArray<{ readonly x: number; readonly y: number; readonly face: Face }>
+}
+
+/**
+ * What an item shows of its reading over the drawing's trend window, in a
+ * profile that shows trends (MimicProfile.trends):
+ * - `fill`: a tank's own level, as the trace its fill draws (OpenBridge's
+ *   tank graph), never another reading in a level-shaped body;
+ * - `strip`: a heat exchanger's level as its row reads it now (`row`: NR,
+ *   or WR while NR stands off its span), in a strip inside its box.
+ * A reactor vessel's value rows carry their sparklines on the row (MimicRow
+ * `sparkline`).
+ */
+export type MimicItemTrend =
+  | { readonly kind: 'fill'; readonly path: VariablePath }
+  | { readonly kind: 'strip'; readonly row: number }
 
 export type MimicPipeState =
   /**
@@ -106,6 +136,8 @@ export interface CompiledMimic {
   readonly zones: ReadonlyArray<DiagramZone & { readonly label: string }>
   /** Every variable the mimic reads, for sampling. */
   readonly paths: ReadonlyArray<VariablePath>
+  /** The readings its trends draw over time (MimicItemTrend, row sparklines), whose history a display keeps; empty where it shows none. */
+  readonly trendPaths: ReadonlyArray<VariablePath>
   /** What the mimic draws, for the compose result. */
   readonly summary: {
     readonly equipment: ReadonlyArray<{ readonly id: string; readonly label: string }>

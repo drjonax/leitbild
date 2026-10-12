@@ -27,6 +27,13 @@ export type MimicPresentation =
   | { readonly element: 'tank'; readonly tank: 'generic' | 'atmospheric' | 'pressurized'; readonly aspect: 'level' | null }
   /** An `obc-heat-exchanger`, with its level (if any) as a readout beside it. */
   | { readonly element: 'heat-exchanger'; readonly aspect: 'level' | null }
+  /**
+   * A reactor vessel drawn in OpenBridge's tokens (vessel-symbol.ts): head,
+   * flange, nozzles where its pipes reach it, its level as the fill, and,
+   * where it is the energy's source, its core region with what the equipment
+   * declares it inserts (rod banks) hanging into it.
+   */
+  | { readonly element: 'vessel'; readonly aspect: 'level' | null }
   /** A header or bus: a manifold the branches tee into. */
   | { readonly element: 'bar'; readonly aspect: 'throughput' | 'energized' }
   | { readonly element: 'not-drawn'; readonly reason: string }
@@ -53,8 +60,8 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   reliefTank: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   pressurizer: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   accumulator: { element: 'tank', tank: 'pressurized', aspect: null },
-  // A core's body is the level its kind declares it reads (through the vessel it heats); static where it declares none.
-  reactorCore: { element: 'tank', tank: 'pressurized', aspect: 'level' },
+  // A core is drawn as the vessel it heats, filled by the level its kind declares it reads there; static where it declares none.
+  reactorCore: { element: 'vessel', aspect: 'level' },
   reactorVessel: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   containmentVolume: { element: 'tank', tank: 'generic', aspect: 'level' },
   steamGenerator: { element: 'heat-exchanger', aspect: 'level' },

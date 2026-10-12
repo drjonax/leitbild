@@ -279,6 +279,37 @@ describe('composed display session', () => {
     controller.close()
   })
 
+  test('a generated display keeps the history of what its drawing\'s vessels trace, the recorded readings only', async () => {
+    const pen = (path: string, recorded: boolean) => ({
+      ref: path, role: 'primary', path, label: path, name: path, described: path, measurement: path, unit: 'percent', quantity: 'level',
+      valueKind: 'number', seriesId: `series:${path}`, recorded, command: false, thresholds: [], combinedRules: [],
+    })
+    const mimic = { kind: 'mimic', mimic: { paths: ['pressurizer.levelPercent', 'sgA.levelPercent'] }, trends: { windowMs: 600_000, pens: [pen('pressurizer.levelPercent', true), pen('sgA.levelPercent', false)] } }
+    const overview: ComposedDisplayViewResult = {
+      kind: 'overview', plantId: 'plant:1', plantLabel: 'Unit 1', simulationTime: at(0),
+      display: { plantId: 'plant:1', title: 'Unit overview', advice: null, modelDigest: 'a'.repeat(64), height: 900, panels: [mimic] } as unknown as ComposedDisplayViewResult['display'],
+    }
+    const reads: string[] = []
+    let samples = 0
+    const client: ComposedDisplayClient = {
+      presence: async () => ({ title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }),
+      loadRun: async () => {},
+      view: async () => overview,
+      history: async (_run, seriesId, window) => {
+        reads.push(`${seriesId} from ${(window.from - Date.parse(at(0))) / 1000} s`)
+        return [{ t: Date.parse(at(-650_000)), v: 55 }]
+      },
+      sample: async (_run, _plant, paths) => ({ simulationTime: at(1_000 * ++samples), plantElapsedMs: 0, values: paths.map(path => ({ path, value: 24.9, quality: 'good' as const })) }),
+    }
+    const { controller, last } = session(client, { now: 0 }, false, () => ({ width: 1896, height: 972 }))
+    await controller.start({ poll: false })
+    expect(reads).toEqual(['series:pressurizer.levelPercent from -690 s'])
+    await controller.poll()
+    expect(last().series.get('pressurizer.levelPercent')!.map(point => point.v)).toEqual([55, 24.9])
+    expect(last().series.has('sgA.levelPercent')).toBe(false)
+    controller.close()
+  })
+
   test('advice keeps the size it was composed with', async () => {
     const { client, calls } = fakeClient({ presence: { title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }, samples: [{ time: at(0), value: 15.4 }] })
     const { controller } = session(client)

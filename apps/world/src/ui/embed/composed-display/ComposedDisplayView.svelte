@@ -413,8 +413,8 @@
         {#each view.display.panels as panel, index (index)}
           {#if panel.kind === 'mimic'}
             {@const operation = operationOf(index)}
-            {#if operation !== undefined}<OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} />
-            {:else}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />{/if}
+            {#if operation !== undefined}<OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} trends={panel.trends} history={snapshot} />
+            {:else}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} trends={panel.trends} history={snapshot} />{/if}
           {:else if panel.kind === 'faceplate'}<FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} above={layout.panelGap} />{/if}
         {/each}
       </div>
@@ -472,9 +472,9 @@
         {:else if panel.kind === 'mimic'}
           {@const operation = operationOf(index)}
           {#if operation !== undefined}
-            <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} />
+            <OperatedMimic mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} {operation} trends={panel.trends} history={snapshot} />
           {:else}
-            <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} />
+            <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} quickLook={quickLookOf(panel)} trends={panel.trends} history={snapshot} />
           {/if}
         {:else if panel.kind === 'faceplate'}
           <FaceplatePanel {panel} latest={snapshot.latest} history={snapshot} />

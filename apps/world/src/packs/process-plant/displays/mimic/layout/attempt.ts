@@ -245,8 +245,10 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
       const low = Math.min(...tracks)
       const high = Math.max(...tracks)
       const size = alongCells(node) * profile.cell
-      const f0 = floorTo(Math.min(low - grid, (low + high) / 2 - size / 2), grid)
-      const f1 = Math.max(f0 + size, ceilTo(high + grid, grid))
+      // Flowing up the screen, its ports face sideways: its top on screen is its high end along the flow.
+      const ends = orientation === 'bottomToTop' ? node.ends : null
+      const f0 = floorTo(Math.min(low - Math.max(grid, ends?.bottom ?? 0), (low + high) / 2 - size / 2), grid)
+      const f1 = Math.max(f0 + size, ceilTo(high + Math.max(grid, ends?.top ?? 0), grid))
       return { f0, f1, c0: placed.c0, c1: placed.c1 }
     })
     hubPorts.forEach((ports, node) => ports.forEach((tracks, port) => {

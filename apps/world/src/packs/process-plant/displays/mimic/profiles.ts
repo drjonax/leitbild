@@ -74,6 +74,20 @@ export interface MimicProfile {
    * its quick look (QUICK_LOOK_DOT). A chat answer's drawing is a picture.
    */
   readonly quickLooks: boolean
+  /**
+   * How a reactor vessel is drawn (vessel-symbol.ts): this many grid cells
+   * wide, with its core region below its nozzles (`band`) or overlapping
+   * the lowest of them (`overlap`) where a drawing has no height to spare.
+   */
+  readonly vessel: { readonly cells: number; readonly core: 'band' | 'overlap' }
+  /**
+   * Whether vessels show what their reading did over the last minutes
+   * (MimicItemTrend): a tank's fill as its trace, a heat exchanger's level
+   * in a strip inside it, a reactor vessel's value rows each with a
+   * sparkline. A chat answer's drawing has no room for them, and its
+   * display has its own trend panel.
+   */
+  readonly trends: boolean
 }
 
 /** OpenBridge's drawing conventions: its 24 px grid, pipe outline and alarm frame. */
@@ -133,6 +147,8 @@ export const chatMimicProfile: MimicProfile = {
   minScale: MIMIC_MIN_SCALE,
   badges: ['reserved', 'fitted'],
   quickLooks: false,
+  vessel: { cells: 2, core: 'overlap' },
+  trends: false,
 }
 
 /**
@@ -160,6 +176,8 @@ export const overviewMimicProfile: MimicProfile = {
   minScale: 1,
   badges: ['reserved'],
   quickLooks: true,
+  vessel: { cells: 2, core: 'overlap' },
+  trends: true,
 }
 
 /**
@@ -174,4 +192,5 @@ export const detailMimicProfile: MimicProfile = {
   valves: 'symbols',
   parallel: 'each',
   stubLabels: 'names',
+  vessel: { cells: 4, core: 'overlap' },
 }
