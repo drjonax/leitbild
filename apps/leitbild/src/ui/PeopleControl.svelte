@@ -346,7 +346,9 @@
   $effect(() => () => {
     for (const timer of [copyTimer, savedTimer]) if (timer !== null) clearTimeout(timer)
     stopToastTimer()
-    // Leaving the Run view removes the control with its popover: toasts may show again.
+    // Leaving the Run view removes the control with its popover. It closes as
+    // it would otherwise, saving a name typed into it, and toasts may show again.
+    closePopover(false)
     session.setPopoverOpen(false)
   })
 </script>
