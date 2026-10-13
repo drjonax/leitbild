@@ -281,6 +281,15 @@ describe('sync', () => {
     expect(agents.to(PEOPLE_CAPABILITY.sync).at(-1)!.input).toMatchObject({ storeId: 'store-2', after: 0, view: 'fresh', waitMs: SYNC_HOLD_MS })
   })
 
+  test('answers are parsed strictly: an unknown field is a contract error that stops the loop', async () => {
+    const { session, agents, state } = setup()
+    agents.syncReplies.push(ok({ ...result(), extra: true }))
+    session.setViewing(RUN_A)
+    await settle()
+    expect(state()).toMatchObject({ status: 'failed', present: [] })
+    expect(agents.to(PEOPLE_CAPABILITY.sync)).toHaveLength(1)
+  })
+
   test('a 502 HTML page backs off 1, 2, 4, 8, 15 s and keeps the last list; "Reconnecting…" at 3 s, "can\'t reach" at 30 s', async () => {
     const { session, syncs, agents, clock, state } = setup()
     agents.syncReplies.push(ok(result({ present: [BEN], cursor: 1, view: 'v1' })))

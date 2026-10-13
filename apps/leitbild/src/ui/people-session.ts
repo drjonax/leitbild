@@ -494,12 +494,14 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       throw peopleRequestError('non-json', { status: response.status })
     }
     if (!response.ok) {
+      // A JSON body that is not the platform's error shape is judged by its status alone.
       const parsed = errorEnvelopeSchema.safeParse(body)
-      const error = parsed.success ? parsed.data.error : {}
+      if (!parsed.success) throw peopleRequestError('http', { status: response.status, message: `HTTP ${response.status} with an unrecognised error body` })
+      const error = parsed.data.error
       throw peopleRequestError('http', {
         status: response.status,
-        code: error.code ?? null,
-        message: error.message ?? `HTTP ${response.status}`,
+        code: error.code,
+        message: error.message,
         retryable: error.retryable === true,
         details: error.details ?? null,
       })
