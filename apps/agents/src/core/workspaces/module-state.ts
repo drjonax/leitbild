@@ -1,4 +1,4 @@
-import { mkdir, rename, rm } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import {
@@ -54,7 +54,15 @@ export const createAgentsModuleState = (): AgentsModuleState => {
       return { marker, created: true }
     }),
     remove: workspaceId => mutate(async () => {
-      await rm(workspaceModulePaths(workspaceId).agents.root, { recursive: true, force: true })
+      const paths = workspaceModulePaths(workspaceId)
+      await rm(paths.agents.root, { recursive: true, force: true })
+      // The Workspace directory holds only Agents state: drop it once empty, so
+      // deleted Workspaces leave nothing behind. Anything else in it is kept.
+      try {
+        if ((await readdir(paths.root)).length === 0) await rmdir(paths.root)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }),
     has: async workspaceId => (await readMarker(workspaceId)) !== null,
   }

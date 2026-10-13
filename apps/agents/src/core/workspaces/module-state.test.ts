@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newWorkspaceId } from '@leitbild/contracts'
@@ -43,6 +43,9 @@ describe('Agents Module state', () => {
     expect(await state.has(workspaceId)).toBe(false)
     expect(await Bun.file(paths.agents.snapshot).exists()).toBe(false)
     expect(await Bun.file(paths.rooms.snapshot).exists()).toBe(false)
+    expect(await readdir(join(home, 'workspaces'))).toEqual([])
+    // Removing again, as a Host retry does, finds nothing and succeeds.
+    await state.remove(workspaceId)
   })
 
   test('rejects corrupt markers instead of inventing Module state', async () => {
