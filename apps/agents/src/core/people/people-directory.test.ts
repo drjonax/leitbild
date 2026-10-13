@@ -146,7 +146,8 @@ describe('People directory', () => {
     const sent = await directory.send({ token: ben.token, to: ann.me.id, text: 'hello' }, 'key-1')
     const woken = await waiting
     expect(performance.now() - started).toBeLessThan(100)
-    expect(woken.messages).toEqual([sent.message])
+    const { key: _bensKey, ...received } = sent.message
+    expect(woken.messages).toEqual([received])
     expect(woken.cursor).toBe(sent.message.seq)
     expect(woken.conversations).toEqual([{ with: ben.me, here: false, lastSeq: sent.message.seq, lastSentAt: sent.message.sentAt, unread: 1 }])
     expect(metrics.snapshot()).toMatchObject({ syncsWoken: 1, messagesSent: 1 })
@@ -437,12 +438,33 @@ describe('People directory', () => {
     }
   })
 
+  test('a message carries its sender\'s retry key in every answer to the sender and in none to the other Person', async () => {
+    const { directory } = make()
+    const ann = await directory.join({})
+    const ben = await directory.join({})
+    const annSync = syncer(directory, ann.token)
+    const benSync = syncer(directory, ben.token)
+    await annSync.now()
+    await benSync.now()
+    const sent = await directory.send({ token: ann.token, to: ben.me.id, text: 'Pump 2 is yours' }, 'ann-key-1')
+    const reply = await directory.send({ token: ben.token, to: ann.me.id, text: 'Taking it' }, 'ben-key-1')
+    expect(sent.message.key).toBe('ann-key-1')
+    expect((await directory.send({ token: ann.token, to: ben.me.id, text: 'Pump 2 is yours' }, 'ann-key-1')).message.key).toBe('ann-key-1')
+    const keysIn = (messages: ReadonlyArray<{ readonly text: string; readonly key?: string }>) =>
+      messages.map(message => [message.text, 'key' in message ? message.key : 'no key'])
+    expect(keysIn((await annSync.now()).messages)).toEqual([['Pump 2 is yours', 'ann-key-1'], ['Taking it', 'no key']])
+    expect(keysIn((await benSync.now()).messages)).toEqual([['Pump 2 is yours', 'no key'], ['Taking it', 'ben-key-1']])
+    expect(keysIn(directory.readConversation({ token: ann.token, with: ben.me.id }).messages)).toEqual([['Pump 2 is yours', 'ann-key-1'], ['Taking it', 'no key']])
+    expect(keysIn(directory.readConversation({ token: ben.token, with: ann.me.id }).messages)).toEqual([['Pump 2 is yours', 'no key'], ['Taking it', 'ben-key-1']])
+    expect(reply.message.key).toBe('ben-key-1')
+  })
+
   test('conversations read oldest first, read markers move forward only, and unread counts follow them', async () => {
     const { directory } = make()
     const ann = await directory.join({})
     const ben = await directory.join({})
-    const one = (await directory.send({ token: ben.token, to: ann.me.id, text: 'one' }, 'a')).message
-    const two = (await directory.send({ token: ben.token, to: ann.me.id, text: 'two' }, 'b')).message
+    const { key: _a, ...one } = (await directory.send({ token: ben.token, to: ann.me.id, text: 'one' }, 'a')).message
+    const { key: _b, ...two } = (await directory.send({ token: ben.token, to: ann.me.id, text: 'two' }, 'b')).message
     const read = directory.readConversation({ token: ann.token, with: ben.me.id })
     expect(read).toEqual({ with: ben.me, messages: [one, two], readThrough: { me: 0, them: two.seq } })
     expect(directory.markRead({ token: ann.token, with: ben.me.id, through: one.seq })).toEqual({ unread: 1 })

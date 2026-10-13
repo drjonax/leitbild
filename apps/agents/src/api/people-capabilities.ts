@@ -44,6 +44,8 @@ const OPAQUE_MAX_LENGTH = 128
 const CONTROL_CHARACTER = /\p{Cc}/u
 /** A token is 43 base64url characters; anything longer cannot be one. */
 const TOKEN_INPUT_MAX_LENGTH = 256
+/** The platform's bound on an invocation's idempotencyKey, which a message carries back to its sender. */
+const IDEMPOTENCY_KEY_MAX_LENGTH = 256
 
 // --- Wire schemas ---
 
@@ -60,6 +62,8 @@ const messageSchema = z.object({
   to: personIdSchema,
   text: z.string().min(1),
   sentAt: isoTimestampSchema,
+  key: z.string().min(1).max(IDEMPOTENCY_KEY_MAX_LENGTH).optional()
+    .describe('The idempotencyKey it was sent with; present exactly on the messages the requesting Person sent.'),
 }).strict()
 
 const joinInputSchema = z.object({

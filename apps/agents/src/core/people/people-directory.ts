@@ -74,6 +74,11 @@ export interface Message {
   readonly to: string
   readonly text: string
   readonly sentAt: string
+  /**
+   * The idempotency key the sender sent it with, only in the sender's own
+   * answers: it tells the sender's client exactly which of its sends this is.
+   */
+  readonly key?: string
 }
 export interface ConversationEntry {
   readonly with: Person
@@ -237,8 +242,10 @@ const MESSAGE_TEXT_REJECTIONS: Readonly<Record<MessageTextRejection, string>> = 
 
 const iso = (ms: number): string => new Date(ms).toISOString()
 const toPerson = (person: StoredPerson): Person => ({ id: person.id, name: person.name })
-const toMessage = (message: StoredMessage): Message => ({
+/** A message as `viewer` sees it: a retry key is the sender's own and never shown to anyone else. */
+const messageFor = (viewer: string) => (message: StoredMessage): Message => ({
   seq: message.seq, id: message.id, from: message.from, to: message.to, text: message.text, sentAt: iso(message.sentAt),
+  ...(message.from === viewer ? { key: message.idempotencyKey } : {}),
 })
 const byName = (a: StoredPerson, b: StoredPerson): number =>
   a.nameKey < b.nameKey ? -1 : a.nameKey > b.nameKey ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
@@ -336,7 +343,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
     } else {
       const page = store.messagesAfter(me.id, cursor.after, SYNC_MESSAGE_PAGE + 1)
       more = page.length > SYNC_MESSAGE_PAGE
-      messages = page.slice(0, SYNC_MESSAGE_PAGE).map(toMessage)
+      messages = page.slice(0, SYNC_MESSAGE_PAGE).map(messageFor(me.id))
       next = messages.at(-1)?.seq ?? cursor.after
     }
     const view = new Bun.CryptoHasher('sha256')
@@ -518,7 +525,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
       const peer = requirePeer(me, input.with, 'conversation_with_self')
       return {
         with: toPerson(peer),
-        messages: store.conversation(me.id, peer.id, CONVERSATION_KEEP).map(toMessage),
+        messages: store.conversation(me.id, peer.id, CONVERSATION_KEEP).map(messageFor(me.id)),
         readThrough: { me: store.readThrough(me.id, peer.id), them: store.readThrough(peer.id, me.id) },
       }
     },
@@ -551,7 +558,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
           }
           metrics.inc('messagesReplayed')
           record('replayed')
-          return { message: toMessage(existing), replayed: true }
+          return { message: messageFor(me.id)(existing), replayed: true }
         }
         // Replays reach back only as far as retention: a key whose message
         // was pruned out of the newest CONVERSATION_KEEP is free again (accepted).
@@ -574,7 +581,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         metrics.inc('messagesPruned', appended.pruned)
         notifyChange()
         record('sent')
-        return { message: toMessage(appended.message), replayed: false }
+        return { message: messageFor(me.id)(appended.message), replayed: false }
       } catch (error) {
         const failure = peopleFailureOf(error)
         record(failure?.code ?? (error instanceof Error && 'code' in error ? String(error.code) : 'failed'))

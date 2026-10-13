@@ -65,7 +65,9 @@ describe('People store', () => {
     expect(reopened.messageBySenderKey(ann, 'key-1')).toEqual(original.message)
     const repeated = send(reopened, ann, ben, 'hello', 'key-1')
     expect(repeated).toEqual({ kind: 'existing', message: original.message })
-    expect(reopened.conversation(ann, ben, 200)).toHaveLength(1)
+    // Every read carries the sender's key, so the sender's client can tell its own sends apart.
+    expect(reopened.conversation(ann, ben, 200)).toEqual([original.message])
+    expect(reopened.messagesAfter(ben, 0, 100)).toEqual([original.message])
     // Keys belong to their sender: Ben may use the same key.
     expect(send(reopened, ben, ann, 'hi', 'key-1').kind).toBe('appended')
   })

@@ -156,16 +156,22 @@ describe('People Capabilities', () => {
     const renamed = await resultOf<Synced>(await waiting)
     expect(renamed.present).toEqual([{ id: ben.me.id, name: 'Ben' }])
 
-    const sent = await resultOf<{ message: { id: string; seq: number; from: string; to: string; text: string; sentAt: string }; replayed: boolean }>(
+    const sent = await resultOf<{ message: { id: string; seq: number; from: string; to: string; text: string; sentAt: string; key?: string }; replayed: boolean }>(
       await invoke(workspaceId, 'agents.people.message.send', { token: ben.token, to: ann.me.id, text: 'Hello Ann' }, { idempotencyKey: 'client-1' }), 201)
-    expect(sent).toMatchObject({ replayed: false, message: { from: ben.me.id, to: ann.me.id, text: 'Hello Ann' } })
+    // The sender's answers carry the key it was sent with; Ann's never do.
+    expect(sent).toMatchObject({ replayed: false, message: { from: ben.me.id, to: ann.me.id, text: 'Hello Ann', key: 'client-1' } })
+    const { key: _bensKey, ...received } = sent.message
     const delivered = await resultOf<Synced>(await sync(workspaceId, ann.token, annScreen, { after: renamed.cursor, storeId: renamed.storeId, view: renamed.view, waitMs: 5_000 }))
-    expect(delivered.messages).toEqual([sent.message])
+    expect(delivered.messages).toEqual([received])
     expect(delivered.conversations).toEqual([{ with: { id: ben.me.id, name: 'Ben' }, here: true, lastSeq: sent.message.seq, lastSentAt: sent.message.sentAt, unread: 1 }])
 
     expect(await resultOf(await invoke(workspaceId, 'agents.people.conversation.read', { token: ann.token, with: ben.me.id }))).toEqual({
-      with: { id: ben.me.id, name: 'Ben' }, messages: [sent.message], readThrough: { me: 0, them: sent.message.seq },
+      with: { id: ben.me.id, name: 'Ben' }, messages: [received], readThrough: { me: 0, them: sent.message.seq },
     })
+    expect(await resultOf(await invoke(workspaceId, 'agents.people.conversation.read', { token: ben.token, with: ann.me.id }))).toEqual({
+      with: ann.me, messages: [sent.message], readThrough: { me: sent.message.seq, them: 0 },
+    })
+    expect((await resultOf<Synced>(await sync(workspaceId, ben.token, benScreen, { after: 0, storeId: renamed.storeId }))).messages).toEqual([sent.message])
     expect(await resultOf(await invoke(workspaceId, 'agents.people.conversation.mark-read', { token: ann.token, with: ben.me.id, through: sent.message.seq }))).toEqual({ unread: 0 })
     expect(await resultOf(await invoke(workspaceId, 'agents.people.leave', { token: ben.token, screen: benScreen }))).toEqual({ left: true })
     expect((await resultOf<Synced>(await sync(workspaceId, ann.token, annScreen))).present).toEqual([])
