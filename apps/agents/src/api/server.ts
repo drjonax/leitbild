@@ -18,6 +18,7 @@ import { handleWSMessage } from './ws-handler.ts'
 import { createOpenAccessContext } from '../core/workspaces/request-context.ts'
 import { resolveApplicationApiPath } from './api-path.ts'
 import { handleAgentsModuleApi } from './workspace-module-api.ts'
+import { CAPABILITY_INVOKE_IDLE_SECONDS, isCapabilityInvokeRequest } from './capability-invoke-timeout.ts'
 import type { PackManager } from '../packs/manager.ts'
 import { serveAgentsUiAsset } from './ui-assets.ts'
 
@@ -75,6 +76,7 @@ export const createServer = (config: ServerConfig) => {
       const pathname = url.pathname
       const secure = applySecurityHeaders
 
+      if (isCapabilityInvokeRequest(request, url)) bunServer.timeout(request, CAPABILITY_INVOKE_IDLE_SECONDS)
       const moduleResponse = await handleAgentsModuleApi(request, url, {
         state: config.moduleState,
         registry,
