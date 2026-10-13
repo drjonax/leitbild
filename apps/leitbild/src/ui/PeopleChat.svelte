@@ -35,6 +35,12 @@
    * 2026-10-13). Covering part of the Agents message list is accepted.
    */
   const AGENTS_COMPOSER_CLEARANCE_PX = 160
+  /**
+   * The docked window never gets shorter than this (header, composer and a few
+   * messages) while the viewport holds it: on a short screen it covers the
+   * Agents composer rather than shrink to a useless strip.
+   */
+  const DOCKED_MIN_HEIGHT_PX = 240
   /** The composer grows from one line to five. */
   const COMPOSER_MIN_HEIGHT_PX = 38
   const COMPOSER_MAX_HEIGHT_PX = 120
@@ -82,9 +88,10 @@
       place = `left:${Math.round(rect.right - MAP_CONTROLS_INSET_PX - CHAT_WIDTH_PX)}px;top:${Math.round(rect.bottom - EDGE_PX - height)}px;height:${Math.round(height)}px`
       return
     }
-    // A narrow or collapsed World pane: dock top-left, above the Agents composer.
+    // A narrow or collapsed World pane: dock top-left, above the Agents composer where there is room.
     const paneTop = rect !== undefined && rect.height > 0 ? rect.top : BAR_HEIGHT_PX
-    const height = Math.max(0, Math.min(CHAT_MAX_HEIGHT_PX, innerHeight - paneTop - 2 * EDGE_PX - AGENTS_COMPOSER_CLEARANCE_PX))
+    const room = innerHeight - paneTop - 2 * EDGE_PX
+    const height = Math.max(0, Math.min(CHAT_MAX_HEIGHT_PX, room, Math.max(DOCKED_MIN_HEIGHT_PX, room - AGENTS_COMPOSER_CLEARANCE_PX)))
     place = `left:${EDGE_PX}px;top:${Math.round(paneTop + EDGE_PX)}px;height:${Math.round(height)}px`
   }
   $effect(() => {
