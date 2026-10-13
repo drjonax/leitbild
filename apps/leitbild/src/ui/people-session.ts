@@ -25,7 +25,7 @@ import {
   type ViewingReference,
 } from './people-wire.ts'
 import {
-  HISTORY_CAP, messageSendable, messageText, NAME_TEXT, nameProblem, normaliseName, PEOPLE_FAILED_TEXT, SEND_REASON,
+  HISTORY_CAP, UNKNOWN_PERSON_NAME, messageSendable, messageText, NAME_TEXT, nameProblem, normaliseName, PEOPLE_FAILED_TEXT, SEND_REASON,
   type ChatItem,
 } from './people-format.ts'
 
@@ -382,7 +382,16 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   const listeners = new Set<(state: PeopleState) => void>()
 
   // --- derived state --------------------------------------------------------
-  const nameOf = (id: string): PersonWire => names.get(id) ?? { id, name: id }
+  const unknownWarned = new Set<string>()
+  const nameOf = (id: string): PersonWire => {
+    const known = names.get(id)
+    if (known !== undefined) return known
+    if (!unknownWarned.has(id)) {
+      unknownWarned.add(id)
+      ports.warn(`People: no name is known for ${id}`)
+    }
+    return { id, name: UNKNOWN_PERSON_NAME }
+  }
   const summaryFor = (id: string): ConversationSummaryWire | undefined => conversations.find(summary => summary.with.id === id)
   const peerOf = (message: MessageWire): string => message.from === me?.id ? message.to : message.from
   const messageKey = (message: MessageWire): string => deliveredKeys.get(message.id) ?? message.id

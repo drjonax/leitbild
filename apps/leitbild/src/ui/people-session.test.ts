@@ -905,6 +905,17 @@ describe('messages', () => {
     expect(state().unreadTotal).toBe(8)
   })
 
+  test('a sender whose name never arrived shows as "Unknown person", warned once, never as a raw id', async () => {
+    const { session, state, answer, warnings } = setup()
+    session.setViewing(RUN_A)
+    await settle()
+    const stranger = { id: 'person-stranger', name: 'Stranger' }
+    await answer(ok(result({ messages: [message(1, stranger, ME, 'hi')], cursor: 1, view: '1' })))
+    await answer(ok(result({ messages: [message(2, stranger, ME, 'again')], cursor: 2, view: '2' })))
+    expect(state().toast).toMatchObject({ kind: 'message', from: { id: 'person-stranger', name: 'Unknown person' }, count: 2 })
+    expect(warnings.filter(text => text.includes('person-stranger'))).toHaveLength(1)
+  })
+
   test('a rename while the chat is open adds a line to it', async () => {
     const { session, agents, state, answer } = setup()
     agents.syncReplies.push(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], cursor: 1, view: '1' })))

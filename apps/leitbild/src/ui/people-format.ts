@@ -39,6 +39,8 @@ export const SEND_REASON = {
   failed: 'something went wrong.',
 } as const
 
+/** Shown for a person whose name this page never received: an explicit state, warned once in the console. */
+export const UNKNOWN_PERSON_NAME = 'Unknown person'
 export const STORAGE_BLOCKED_TEXT = 'This browser blocks site storage, so your name lasts only while this page is open.'
 export const PEOPLE_FAILED_TEXT = 'People aren’t available right now.'
 
