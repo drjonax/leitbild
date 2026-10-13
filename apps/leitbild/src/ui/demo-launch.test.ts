@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { ModuleFeaturedDefinition, ModuleListedDefinition, WorkspaceId } from '@leitbild/contracts'
 import {
   advanceLaunchSteps, createDemoLauncher, initialLaunchSteps, launchDemo, launchFailureView, launchStatusText, NOT_AVAILABLE_TEXT,
-  NOT_FEATURED_TEXT, SLOW_AFTER_MS, stoppedText, VERY_SLOW_AFTER_MS, watchSlowLaunch,
+  NOT_FEATURED_TEXT, NOT_LISTED_TEXT, SLOW_AFTER_MS, stoppedText, VERY_SLOW_AFTER_MS, watchSlowLaunch,
   type DemoLaunchError, type DemoLaunchPorts, type DemoLaunchStep,
 } from './demo-launch.ts'
 import { CAPACITY_TEXT, MODULE_UNAVAILABLE_TEXT, OUTCOME_UNKNOWN_TEXT } from './error-text.ts'
@@ -28,6 +28,16 @@ const featured = (id = 'halden-offsite-power-restoration'): ModuleFeaturedDefini
   tags: ['Nuclear plant + grid', 'Desktop'],
   previews: [{ alt: 'The Halden map after the fault.', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/offsite.webp', width: 1600 }] }],
 } as ModuleFeaturedDefinition)
+
+const SCENARIO_KEY = 'world:halden-normal-operation'
+const LISTED_REVISION = `revision-${'c'.repeat(32)}`
+const listedItem = (id = 'halden-normal-operation'): ModuleListedDefinition => ({
+  definition: { moduleId: 'world', type: 'world.scenario', id },
+  revisionId: LISTED_REVISION,
+  title: 'Halden: normal operation',
+  summary: 'Four simulated nuclear units run at full power; nothing is scripted.',
+  tags: ['Nuclear plant + grid', 'No scripted faults'],
+} as ModuleListedDefinition)
 
 const catalogue = (
   definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featured()], world: 'ready' | 'failed' = 'ready', listed: ReadonlyArray<ModuleListedDefinition> = [],
@@ -424,6 +434,136 @@ describe('Start demo: × and the in-flight flag', () => {
     release()
     expect((await first).kind).toBe('not-featured')
     expect(launcher.busy()).toBe(false)
+  })
+})
+
+describe('Start a listed scenario (More scenarios): the same flow', () => {
+  const scenarioDescriptor = (workspaceId: string, revision = LISTED_REVISION) => descriptor(workspaceId, revision, 'halden-normal-operation')
+  const withListed = () => catalogue([featured()], 'ready', [listedItem()])
+
+  test('starts in the remembered Workspace through its own Definition and primary Capability, at the listed revision', async () => {
+    const { host, memory, ports, steps, paths } = setup()
+    memory.remember(OLD, 'picked')
+    host.on('GET', '/api/featured-definitions', json(withListed()))
+    host.on('GET', `/api/workspaces/${OLD}`, json({ workspace: workspaceFixture(OLD) }))
+    workspaceRoutes(host, OLD, [descriptor(OLD), scenarioDescriptor(OLD)])
+    host.on('POST', invokePath(OLD), runOf(OLD, 'run-9'))
+
+    const result = await launchDemo({ demo: SCENARIO_KEY }, ports)
+
+    expect(result).toMatchObject({ created: false, runId: 'run-9', destination: `/workspaces/${OLD}?world=run-9`, original: false, notice: null })
+    expect(paths()).toEqual([
+      'GET /api/featured-definitions',
+      `GET /api/workspaces/${OLD}`,
+      `GET /api/workspaces/${OLD}/definitions?moduleId=world`,
+      `GET /api/workspaces/${OLD}/capabilities?moduleId=world`,
+      `POST ${invokePath(OLD)}`,
+    ])
+    expect(host.calls.at(-1)?.body).toEqual({
+      definition: { workspaceId: OLD, moduleId: 'world', type: 'world.scenario', id: 'halden-normal-operation', revisionId: LISTED_REVISION },
+      input: {}, actor: { kind: 'human' },
+    })
+    expect(steps.map(step => step.kind)).toEqual(['checking', 'using-workspace', 'starting', 'opening'])
+    expect(memory.remembered()).toBe(OLD)
+  })
+
+  test('creates a Workspace when none is remembered, or when asked for a new one', async () => {
+    const { host, memory, ports, paths } = setup()
+    memory.remember(OLD, 'picked')
+    host.on('GET', '/api/featured-definitions', json(withListed()))
+    host.on('POST', '/api/workspaces', json({ workspace: workspaceFixture(NEW) }, 201))
+    workspaceRoutes(host, NEW, [scenarioDescriptor(NEW)])
+    host.on('POST', invokePath(NEW), runOf(NEW))
+
+    const result = await launchDemo({ demo: SCENARIO_KEY, forceNewWorkspace: true }, ports)
+
+    expect(result).toMatchObject({ created: true, destination: `/workspaces/${NEW}?world=run-1` })
+    expect(paths()).not.toContain(`GET /api/workspaces/${OLD}`)
+    expect(memory.remembered()).toBe(NEW)
+  })
+
+  test('an edited scenario starts World\'s original revision; a deleted one starts in a new Workspace with "scenario" in its notice', async () => {
+    const edited = setup()
+    edited.memory.remember(OLD, 'picked')
+    edited.host.on('GET', '/api/featured-definitions', json(withListed()))
+    edited.host.on('GET', `/api/workspaces/${OLD}`, json({ workspace: workspaceFixture(OLD) }))
+    workspaceRoutes(edited.host, OLD, [scenarioDescriptor(OLD, EDITED_REVISION)])
+    edited.host.on('POST', invokePath(OLD), runOf(OLD))
+    expect((await launchDemo({ demo: SCENARIO_KEY }, edited.ports)).original).toBe(true)
+    expect((edited.host.calls.at(-1)?.body as { definition: { revisionId: string } }).definition.revisionId).toBe(LISTED_REVISION)
+
+    const deleted = setup()
+    deleted.memory.remember(OLD, 'picked')
+    deleted.host.on('GET', '/api/featured-definitions', json(withListed()))
+    deleted.host.on('GET', `/api/workspaces/${OLD}`, json({ workspace: workspaceFixture(OLD) }))
+    workspaceRoutes(deleted.host, OLD, [descriptor(OLD)])
+    deleted.host.on('POST', '/api/workspaces', json({ workspace: workspaceFixture(NEW) }, 201))
+    workspaceRoutes(deleted.host, NEW, [scenarioDescriptor(NEW)])
+    deleted.host.on('POST', invokePath(NEW), runOf(NEW))
+    const moved = await launchDemo({ demo: SCENARIO_KEY }, deleted.ports)
+    expect(moved).toMatchObject({ created: true, notice: 'Grid study no longer has this scenario, so it starts in a new Workspace.' })
+    expect(launchStatusText(deleted.steps[2]!, 'x', 'scenario')).toBe('Grid study no longer has this scenario, so it starts in a new Workspace.')
+  })
+
+  test('a scenario in neither list, or missing in a fresh Workspace, is said so with "scenario"', async () => {
+    const gone = setup()
+    gone.host.on('GET', '/api/featured-definitions', json(catalogue([featured()], 'ready', [listedItem('supply-run')])))
+    const notListed = await failure(launchDemo({ demo: SCENARIO_KEY }, gone.ports))
+    expect(notListed.kind).toBe('not-featured')
+    expect(launchFailureView(notListed, 'scenario')).toEqual({ text: NOT_LISTED_TEXT, actions: [] })
+    expect(gone.paths()).toEqual(['GET /api/featured-definitions'])
+
+    const fresh = setup()
+    fresh.host.on('GET', '/api/featured-definitions', json(withListed()))
+    fresh.host.on('POST', '/api/workspaces', json({ workspace: workspaceFixture(NEW) }, 201))
+    workspaceRoutes(fresh.host, NEW, [descriptor(NEW)])
+    const missing = await failure(launchDemo({ demo: SCENARIO_KEY }, fresh.ports))
+    expect(missing).toMatchObject({ kind: 'not-available', created: true, invoked: false })
+    expect(launchFailureView(missing, 'scenario')).toEqual({ text: 'This scenario is not available in this Workspace right now.', actions: ['open'] })
+  })
+
+  test('one launch at a time across demos and scenarios', async () => {
+    const { host, ports } = setup()
+    const launcher = createDemoLauncher()
+    let release: () => void = () => {}
+    host.on('GET', '/api/featured-definitions', () => new Promise<Response>(resolve => { release = () => resolve(json(catalogue([]))) }))
+
+    const first = failure(launcher.start({ demo: KEY }, ports))
+    const second = await failure(launcher.start({ demo: SCENARIO_KEY }, ports))
+    expect(second.kind).toBe('busy')
+    expect(launchFailureView(second, 'scenario').text).toBe('A scenario is already starting.')
+    release()
+    expect((await first).kind).toBe('not-featured')
+  })
+})
+
+describe('launch texts: "demo" or "scenario"', () => {
+  const ws = workspaceFixture(OLD) as never
+  const error = (kind: DemoLaunchError['kind'], context: Partial<Pick<DemoLaunchError, 'workspace' | 'created' | 'invoked'>> = {}): DemoLaunchError =>
+    Object.assign(new Error(kind), { kind, workspace: null, created: false, invoked: false, ...context }) as DemoLaunchError
+
+  test('a demo keeps its texts; a scenario says "scenario" in every one', () => {
+    const cases: Array<[DemoLaunchError, string, string]> = [
+      [error('not-featured'), NOT_FEATURED_TEXT, NOT_LISTED_TEXT],
+      [error('not-available'), NOT_AVAILABLE_TEXT, 'This scenario is not available in this Workspace right now.'],
+      [error('cannot-start', { workspace: ws }), 'This demo cannot be started in Grid study right now.', 'This scenario cannot be started in Grid study right now.'],
+      [error('cannot-start'), 'This demo cannot be started right now.', 'This scenario cannot be started right now.'],
+      [error('outcome-unknown', { workspace: ws }), 'The demo may have started. Open Grid study to check.', 'The scenario may have started. Open Grid study to check.'],
+      [error('busy'), 'A demo is already starting.', 'A scenario is already starting.'],
+      [error('aborted', { workspace: ws, created: true, invoked: true }), 'Stopped. Grid study was created; the demo may appear there.', 'Stopped. Grid study was created; the scenario may appear there.'],
+    ]
+    for (const [failed, demo, scenario] of cases) {
+      expect(launchFailureView(failed).text).toBe(demo)
+      expect(launchFailureView(failed, 'demo').text).toBe(demo)
+      expect(launchFailureView(failed, 'scenario').text).toBe(scenario)
+    }
+    expect(stoppedText(error('aborted', { workspace: ws, invoked: true }), 'scenario')).toBe('Stopped. The scenario may appear in Grid study.')
+    const starting: DemoLaunchStep = { kind: 'starting', workspace: ws, original: true }
+    expect(launchStatusText(starting, 'x', 'scenario')).toBe('Starting the original scenario…')
+    expect(launchStatusText(starting, 'x')).toBe('Starting the original demo…')
+    const initial = initialLaunchSteps(ws, 'Halden: normal operation')
+    expect(advanceLaunchSteps(initial, starting, 'scenario')[1]?.detail).toBe('Starts the original scenario')
+    expect(advanceLaunchSteps(initial, starting)[1]?.detail).toBe('Starts the original demo')
   })
 })
 

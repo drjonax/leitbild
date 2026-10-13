@@ -1,8 +1,8 @@
 <script lang="ts">
   // The landing page at /workspaces (plan v2 §2–§3): top bar, hero with the
   // owner's tagline and a 6-slide carousel, the map credit and the footer.
-  // It owns the modal deep links (?demos, ?guide) and loads both modals on
-  // demand. It selects no Workspace; the remembered one is only a hint.
+  // It owns the modal deep links (?demos, ?scenarios, ?guide) and loads both
+  // modals on demand. It selects no Workspace; the remembered one is only a hint.
   import { onMount, type Component } from 'svelte'
   import type { Workspace } from '@leitbild/contracts'
   import { version } from '../../package.json'
@@ -18,7 +18,7 @@
     CREDIT_LINK, CREDIT_TEXT, FACTS, FOOTER_NOTE, HERO_IMAGE_HEIGHT_960, HERO_IMAGE_SIZES, HERO_IMAGE_WIDTHS, HERO_SLIDES,
     LANDING_TITLE, LICENCE_HREF, PLAIN_LINE, TAGLINE, heroLinkRoute, heroSrcset, slidesToLoad, type HeroSlide,
   } from './landing-content.ts'
-  import { createModalUrl, modalRouteUrl, NO_MODAL, type ModalCloseReason, type ModalRoute } from './modal-url.ts'
+  import { createModalUrl, isDemosModalRoute, modalRouteUrl, NO_MODAL, type ModalCloseReason, type ModalRoute } from './modal-url.ts'
   import { browserWorkspaceMemory } from './workspace-memory.ts'
 
   const memory = browserWorkspaceMemory()
@@ -55,10 +55,10 @@
   const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData === true
   const loaded = $derived(slidesToLoad({ count: HERO_SLIDES.length, current, shown, idle, saveData }))
 
-  $effect(() => { demosOpen = route.kind === 'demos' })
+  $effect(() => { demosOpen = isDemosModalRoute(route) })
   $effect(() => { guideOpen = route.kind === 'guide' })
   $effect(() => {
-    if (route.kind === 'demos' && !DemosModal) void import('./DemosModal.svelte').then(module => { DemosModal = module.default })
+    if (isDemosModalRoute(route) && !DemosModal) void import('./DemosModal.svelte').then(module => { DemosModal = module.default })
     if (route.kind === 'guide' && !GuideModal) void import('./GuideModal.svelte').then(module => { GuideModal = module.default })
   })
 
@@ -221,9 +221,10 @@
 </Modal>
 
 {#if DemosModal}
-  <DemosModal bind:open={demosOpen} demo={route.kind === 'demos' ? route.demo : null} startStopped={openedBy !== 'pointer'}
-    {launcher} {remembered} {api} {memory} onclose={onDemosClosed} fallbackFocus={() => tryButton}
-    ondemochange={(key: string) => { if (route.kind === 'demos') modalUrl.replace({ kind: 'demos', demo: key }) }}
+  <DemosModal bind:open={demosOpen} demo={route.kind === 'demos' ? route.demo : null} view={route.kind === 'scenarios' ? 'scenarios' : 'demos'}
+    startStopped={openedBy !== 'pointer'} {launcher} {remembered} {api} {memory} onclose={onDemosClosed} fallbackFocus={() => tryButton}
+    ondemochange={(key: string) => { if (isDemosModalRoute(route)) modalUrl.replace({ kind: 'demos', demo: key }) }}
+    onviewchange={(next: ModalRoute) => { if (isDemosModalRoute(route)) modalUrl.replace(next) }}
     onstopped={(text: string | null) => { stopped = text ?? '' }} />
 {/if}
 {#if GuideModal}

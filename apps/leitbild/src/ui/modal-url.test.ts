@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createModalUrl, demoKey, demosHref, guideHref, modalRouteUrl, readModalRoute, type ModalUrlPort } from './modal-url.ts'
+import { createModalUrl, demoKey, demosHref, guideHref, isDemosModalRoute, modalRouteUrl, readModalRoute, type ModalUrlPort } from './modal-url.ts'
 
 /** A tiny in-memory history with popstate, like the browser's. */
 const fakeWindow = (href: string) => {
@@ -46,6 +46,24 @@ describe('modal deep links', () => {
     expect(readModalRoute('?world=run')).toEqual({ kind: 'none' })
   })
 
+  test('reads ?scenarios as the Demos modal\'s More scenarios list, after the guide and the demos', () => {
+    expect(readModalRoute('?scenarios')).toEqual({ kind: 'scenarios' })
+    expect(readModalRoute('?scenarios=anything&x=1')).toEqual({ kind: 'scenarios' })
+    expect(readModalRoute('?demos&scenarios')).toEqual({ kind: 'demos', demo: null })
+    expect(readModalRoute('?guide&scenarios')).toEqual({ kind: 'guide', page: 'start', card: null })
+    expect([readModalRoute('?scenarios'), readModalRoute('?demos'), readModalRoute('?guide'), readModalRoute('')].map(isDemosModalRoute))
+      .toEqual([true, true, false, false])
+  })
+
+  test('writes ?scenarios in place of ?demos, and removes it with the modal', () => {
+    const base = 'https://leitbild.app/workspaces?x=1&demos=world%3Ahalden-emergency#top'
+    expect(modalRouteUrl({ kind: 'scenarios' }, base)).toBe('/workspaces?x=1&scenarios#top')
+    expect(modalRouteUrl({ kind: 'demos', demo: 'world:halden-emergency' }, 'https://leitbild.app/workspaces?scenarios'))
+      .toBe('/workspaces?demos=world%3Ahalden-emergency')
+    expect(modalRouteUrl({ kind: 'none' }, 'https://leitbild.app/workspaces?scenarios&x=1')).toBe('/workspaces?x=1')
+    expect(modalRouteUrl({ kind: 'guide', page: 'start', card: null }, 'https://leitbild.app/workspaces?scenarios')).toBe('/workspaces?guide=start')
+  })
+
   test('writes one namespace per parameter and keeps other parameters', () => {
     const base = 'https://leitbild.app/workspaces?x=1&guide=start&card=what#top'
     expect(modalRouteUrl({ kind: 'demos', demo: null }, base)).toBe('/workspaces?x=1&demos#top')
@@ -77,6 +95,28 @@ describe('modal history', () => {
     modals.replace({ kind: 'demos', demo: 'world:nordland-corridor-security' })
     expect(port.entries).toHaveLength(2)
     modals.close()
+    expect(port.location.href).toBe('https://leitbild.app/workspaces')
+  })
+
+  test('switching between the demos and More scenarios replaces, so Back still closes the modal', () => {
+    const port = fakeWindow('https://leitbild.app/workspaces')
+    const modals = createModalUrl(port)
+    modals.open({ kind: 'demos', demo: null })
+    modals.replace({ kind: 'scenarios' })
+    expect(modals.route()).toEqual({ kind: 'scenarios' })
+    modals.replace({ kind: 'demos', demo: 'world:nordland-corridor-security' })
+    modals.replace({ kind: 'scenarios' })
+    expect(port.entries.map(entry => new URL(entry.href).search)).toEqual(['', '?scenarios'])
+    modals.close()
+    expect(port.location.href).toBe('https://leitbild.app/workspaces')
+  })
+
+  test('a deep-linked More scenarios list closes by replacing', () => {
+    const port = fakeWindow('https://leitbild.app/workspaces?scenarios')
+    const modals = createModalUrl(port)
+    expect(modals.route()).toEqual({ kind: 'scenarios' })
+    modals.close()
+    expect(port.entries).toHaveLength(1)
     expect(port.location.href).toBe('https://leitbild.app/workspaces')
   })
 

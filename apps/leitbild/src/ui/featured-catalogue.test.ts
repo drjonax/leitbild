@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import type { FeaturedDefinitionCatalog, ModuleFeaturedDefinition, ModuleListedDefinition } from '@leitbild/contracts'
 import {
-  catalogueView, deepLinkedDemo, DEEP_LINK_NOT_FEATURED_TEXT, demoTagIcon, DEMOS_UNAVAILABLE_TEXT, FEATURED_PATH, NO_DEMOS_TEXT,
-  readFeaturedCatalogue,
+  catalogueView, deepLinkedDemo, DEEP_LINK_NOT_FEATURED_TEXT, demoTagIcon, DEMOS_UNAVAILABLE_TEXT, FEATURED_PATH, listedView, NO_DEMOS_TEXT,
+  NO_SCENARIOS_TEXT, readFeaturedCatalogue, SCENARIOS_UNAVAILABLE_TEXT,
 } from './featured-catalogue.ts'
 import { fakeFetch, hostError, json } from './host-fetch-fake.test-support.ts'
 
@@ -17,6 +17,13 @@ const featured = (id = 'halden-offsite-power-restoration'): ModuleFeaturedDefini
   tags: ['Nuclear plant + grid', 'Desktop'],
   previews: [{ alt: 'The Halden map after the fault.', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/offsite.webp', width: 1600 }] }],
 } as ModuleFeaturedDefinition)
+const listedItem = (id = 'halden-normal-operation', moduleId = 'world'): ModuleListedDefinition => ({
+  definition: { moduleId, type: `${moduleId}.scenario`, id },
+  revisionId: `revision-${'c'.repeat(32)}`,
+  title: 'Halden: normal operation',
+  summary: 'Four simulated nuclear units run at full power; nothing is scripted.',
+  tags: ['Nuclear plant + grid', 'No scripted faults'],
+} as ModuleListedDefinition)
 const catalogue = (
   definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featured()], world: 'ready' | 'failed' = 'ready', listed: ReadonlyArray<ModuleListedDefinition> = [],
 ) => ({
@@ -58,6 +65,26 @@ describe('the featured catalogue on the Demos surfaces', () => {
     expect(catalogueView(catalogue([]) as FeaturedDefinitionCatalog)).toEqual({ demos: [], empty: NO_DEMOS_TEXT })
     expect(catalogueView(catalogue([], 'failed') as FeaturedDefinitionCatalog)).toEqual({ demos: [], empty: DEMOS_UNAVAILABLE_TEXT })
     expect(catalogueView(catalogue() as FeaturedDefinitionCatalog).demos).toHaveLength(1)
+  })
+
+  test('the More scenarios list shows the Module\'s listed scenarios in order, apart from its demos', async () => {
+    const listed = [listedItem(), listedItem('supply-run')]
+    const host = fakeFetch().on('GET', FEATURED_PATH, json(catalogue([featured()], 'ready', listed)))
+    const read = await readFeaturedCatalogue(host.fetch)
+    expect(listedView(read).scenarios.map(item => String(item.definition.id))).toEqual(['halden-normal-operation', 'supply-run'])
+    expect(listedView(read).empty).toBeNull()
+    expect(catalogueView(read)).toEqual({ demos: [featured()], empty: null } as never)
+    const agentsListed = catalogue([], 'ready', [listedItem('room', 'agents')]) as FeaturedDefinitionCatalog
+    expect(listedView(agentsListed).scenarios).toEqual([])
+    const unlisted = fakeFetch().on('GET', FEATURED_PATH, json({ modules: [{ moduleId: 'world', status: 'ready' }], definitions: [featured()] }))
+    await expect(readFeaturedCatalogue(unlisted.fetch)).rejects.toThrow()
+  })
+
+  test('no listed scenarios says so; a failed Module says scenarios are unavailable; demos alone are not an empty demos view', () => {
+    expect(listedView(catalogue() as FeaturedDefinitionCatalog)).toEqual({ scenarios: [], empty: NO_SCENARIOS_TEXT })
+    expect(listedView(catalogue([], 'failed') as FeaturedDefinitionCatalog)).toEqual({ scenarios: [], empty: SCENARIOS_UNAVAILABLE_TEXT })
+    expect(catalogueView(catalogue([], 'ready', [listedItem()]) as FeaturedDefinitionCatalog)).toEqual({ demos: [], empty: NO_DEMOS_TEXT })
+    expect(catalogueView(catalogue([featured()], 'ready', []) as FeaturedDefinitionCatalog).empty).toBeNull()
   })
 
   test('tag chips get a device, players, time or domain icon', () => {
