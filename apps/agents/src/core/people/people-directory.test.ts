@@ -7,6 +7,7 @@ import { newWorkspaceId } from '@leitbild/contracts'
 import {
   ACTIVITY_WRITE_INTERVAL_MS,
   INACTIVE_PERSON_PRUNE_MS,
+  MAX_WAITERS_PER_PERSON,
   SYNC_ABORTED,
   createPeopleDirectory,
   peopleFailureOf,
@@ -247,41 +248,79 @@ describe('People directory', () => {
     expect(benView.present).toEqual([ann.me])
   })
 
-  test('a fifth waiting sync of one Person supersedes the oldest; the process budget answers excess syncs at once', async () => {
-    const budget = createWaiterBudget(5)
+  test('one waiting sync beyond the per-Person limit supersedes the oldest; the process budget answers excess syncs at once', async () => {
+    const budget = createWaiterBudget(MAX_WAITERS_PER_PERSON + 1)
     const { directory, metrics } = make({ budget })
     const ann = await directory.join({})
     const ben = await directory.join({})
     const cid = await directory.join({})
-    const annTabs = await Promise.all([1, 2, 3, 4, 5].map(async () => {
+    const annTabs = await Promise.all(Array.from({ length: MAX_WAITERS_PER_PERSON + 1 }, async () => {
       const tab = syncer(directory, ann.token)
       await tab.now()
       return tab
     }))
     const first = annTabs[0]!.wait(15_000)
     await Bun.sleep(2)
-    const rest = annTabs.slice(1, 4).map(tab => tab.wait(15_000))
+    const rest = annTabs.slice(1, MAX_WAITERS_PER_PERSON).map(tab => tab.wait(15_000))
     await Bun.sleep(5)
-    expect(directory.stats().waiters).toBe(4)
-    const fifth = annTabs[4]!.wait(15_000)
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
+    const extra = annTabs[MAX_WAITERS_PER_PERSON]!.wait(15_000)
     const superseded = await first
     expect(superseded.me).toEqual(ann.me)
-    expect(directory.stats().waiters).toBe(4)
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
     expect(metrics.snapshot().syncsSuperseded).toBe(1)
     // Ben and Cid view other Runs, so their arrival changes nothing Ann sees.
     const benSync = syncer(directory, ben.token, screen(), RUN_2)
     await benSync.now()
     const benWaiting = benSync.wait(15_000)
     await Bun.sleep(5)
-    expect(budget.held()).toBe(5)
+    expect(budget.held()).toBe(MAX_WAITERS_PER_PERSON + 1)
     const cidSync = syncer(directory, cid.token, screen(), 'world|world.simulation-run|run-3')
     await cidSync.now()
     const overflow = await cidSync.wait(15_000)
     expect(overflow.me).toEqual(cid.me)
     expect(metrics.snapshot().syncWaiterOverflow).toBe(1)
     directory.close()
-    await Promise.all([...rest, fifth, benWaiting])
+    await Promise.all([...rest, extra, benWaiting])
     expect(budget.held()).toBe(0)
+  })
+
+  test('six tabs of one Person long-polling at once all keep waiting, round after round, with nothing superseded', async () => {
+    const { directory, metrics } = make()
+    const ann = await directory.join({})
+    const tabs = await Promise.all(Array.from({ length: 6 }, async () => {
+      const tab = syncer(directory, ann.token)
+      await tab.now()
+      return tab
+    }))
+    for (let round = 1; round <= 3; round++) {
+      const waiting = tabs.map(tab => tab.wait(80))
+      await Bun.sleep(20)
+      expect(directory.stats().waiters).toBe(6)
+      await Promise.all(waiting)
+      expect(metrics.snapshot()).toMatchObject({ syncsSuperseded: 0, syncsImmediate: 6, syncsHeldToExpiry: 6 * round })
+    }
+  })
+
+  test('a superseding sync over the rate limit is refused before any waiter is answered', async () => {
+    const { directory, metrics } = make()
+    const ann = await directory.join({})
+    const tabs = await Promise.all(Array.from({ length: MAX_WAITERS_PER_PERSON + 1 }, async () => {
+      const tab = syncer(directory, ann.token)
+      await tab.now()
+      return tab
+    }))
+    const waiting = tabs.slice(0, MAX_WAITERS_PER_PERSON).map(tab => tab.wait(15_000))
+    await Bun.sleep(10)
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
+    const spare = tabs[MAX_WAITERS_PER_PERSON]!
+    // Use up the remaining immediate syncs of the 10-second window.
+    for (let used = MAX_WAITERS_PER_PERSON + 1; used < 30; used++) await spare.now()
+    expect(await failureCode(() => spare.wait(15_000))).toBe('people_rate_limited')
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
+    expect(metrics.snapshot().syncsSuperseded).toBe(0)
+    directory.close()
+    await Promise.all(waiting)
   })
 
   test('heartbeat-only syncs, presence changes and leaves never write the database file', async () => {

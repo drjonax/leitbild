@@ -35,8 +35,12 @@ export const SYNC_MESSAGE_PAGE = 100
 export const CONVERSATION_KEEP = 200
 /** One message is at most this long; a chat line, not a document. */
 export const MESSAGE_MAX_CODE_POINTS = 2_000
-/** Several tabs of one browser may wait at once; more supersede the oldest. */
-export const MAX_WAITERS_PER_PERSON = 4
+/**
+ * All tabs of one browser are one Person, and each tab holds at most one
+ * waiting sync, so this is the number of open tabs that wait side by side;
+ * a further one supersedes the oldest.
+ */
+export const MAX_WAITERS_PER_PERSON = 16
 /** Identities per Workspace; anonymous joins must not grow without bound. */
 export const PEOPLE_PER_WORKSPACE = 500
 /** At the cap, People who never chatted and were away this long are forgotten. */
@@ -445,15 +449,18 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         return current
       }
       const mine = waiters.forPerson(me.id)
-      if (mine.length >= MAX_WAITERS_PER_PERSON) {
-        // Superseding counts against the sync rate, so five tabs of one
-        // browser settle into a bounded rotation instead of a tight loop.
-        take(limits.sync, me.id)
+      const supersedes = mine.length >= MAX_WAITERS_PER_PERSON
+      const overflows = !supersedes && !waiterBudget.available()
+      // A sync that displaces another or cannot wait answers without holding,
+      // so it costs one sync token, taken before anything is answered: a 429
+      // never follows an already superseded waiter, and runaway tabs settle
+      // into a bounded rotation instead of a tight loop.
+      if (supersedes || overflows) take(limits.sync, me.id)
+      if (supersedes) {
         const oldest = mine[0]!
         oldest.settle(settlementFor(oldest), 'superseded')
       }
       if (!waiterBudget.tryTake()) {
-        take(limits.sync, me.id)
         metrics.inc('syncWaiterOverflow')
         return current
       }

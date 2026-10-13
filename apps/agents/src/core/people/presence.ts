@@ -95,6 +95,7 @@ export const createWaiterBudget = (max: number = MAX_WAITERS_PER_PROCESS) => {
   if (!Number.isSafeInteger(max) || max < 0) throw new Error('Waiter budget must be a non-negative integer')
   let held = 0
   return {
+    available: (): boolean => held < max,
     tryTake: (): boolean => {
       if (held >= max) return false
       held += 1
