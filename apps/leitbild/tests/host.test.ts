@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import {
   accessContextSchema,
   capabilityIdSchema,
@@ -353,12 +353,17 @@ describe('Leitbild Workspace Host', () => {
       const total = { key: 'simulations', label: '5 simulations', count: 5, active: false }
       const answering = { key: 'assistant-answering', label: 'Assistant answering', count: 1, active: true }
       agents.state.activity = { workspaces: [{ workspaceId: first.id, items: [answering] }] }
+      const orphan = newWorkspaceId()
       world.state.activity = { workspaces: [
         { workspaceId: second.id, items: [running, total] },
-        { workspaceId: newWorkspaceId(), items: [running] },
+        { workspaceId: orphan, items: [running] },
         { workspaceId: first.id, items: [total] },
       ] }
+      const warn = spyOn(console, 'warn').mockImplementation(() => {})
       const catalog = await host.activity()
+      await host.activity()
+      expect(warn.mock.calls).toEqual([[`Module world reports activity for a Workspace the Host does not know: ${orphan}`]])
+      warn.mockRestore()
       expect(catalog).toEqual({
         modules: coreModuleIds.map(moduleId => ({ moduleId, status: 'ready' })),
         workspaces: [

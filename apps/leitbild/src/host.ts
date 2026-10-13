@@ -94,6 +94,16 @@ export const createWorkspaceHost = (config: {
     )!
   }
 
+  // A Module holding work for a Workspace the Host does not know is an orphan: it is
+  // left out of the answer, and said once per Module and Workspace so it can be found.
+  const reportedOrphans = new Set<string>()
+  const reportOrphan = (moduleId: ModuleId, workspaceId: WorkspaceId): void => {
+    const key = `${moduleId}:${workspaceId}`
+    if (reportedOrphans.has(key)) return
+    reportedOrphans.add(key)
+    console.warn(`Module ${moduleId} reports activity for a Workspace the Host does not know: ${workspaceId}`)
+  }
+
   const unavailableModuleFailure = (item: ModuleProvisioningState) => item.failure ?? {
     code: 'module_not_ready',
     message: `Module lifecycle is ${item.status}`,
@@ -320,7 +330,9 @@ export const createWorkspaceHost = (config: {
       for (const { moduleId, result } of results) {
         if (!result.ok) continue
         for (const workspace of result.value.workspaces) {
-          entries.get(workspace.workspaceId)?.push(...workspace.items.map(item => ({ moduleId, ...item })))
+          const known = entries.get(workspace.workspaceId)
+          if (known) known.push(...workspace.items.map(item => ({ moduleId, ...item })))
+          else reportOrphan(moduleId, workspace.workspaceId)
         }
       }
       return workspaceActivityCatalogSchema.parse({

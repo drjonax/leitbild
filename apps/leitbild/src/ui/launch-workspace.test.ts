@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { WorkspaceId } from '@leitbild/contracts'
 import { fakeFetch, hostError, json, workspaceFixture } from './host-fetch-fake.test-support.ts'
 import {
-  createWorkspaceApi, isWorkspaceNotReady, LAST_WORKSPACE_GONE_TEXT, moduleReadiness, newWorkspaceName, rememberedWorkspace,
+  createWorkspaceApi, isWorkspaceNotReady, LAST_WORKSPACE_GONE_TEXT, moduleReadiness, moduleTitle, newWorkspaceName, rememberedWorkspace,
   resolveLaunchWorkspace, shortDate, workspaceLabel, type LaunchWorkspaceStep,
 } from './launch-workspace.ts'
 import { createWorkspaceMemory, type WorkspaceMemoryStorage } from './workspace-memory.ts'
@@ -156,5 +156,28 @@ describe('Workspace API', () => {
     expect((await api.list()).map(item => item.name)).toEqual(['Grid study', null])
     expect((await api.retryModule(OLD, 'world')).id).toBe(OLD)
     expect(host.calls.map(call => call.method)).toEqual(['GET', 'POST'])
+  })
+
+  test('reads every Module\'s activity through the contract, passing the caller\'s signal, and reports a refusal', async () => {
+    const answer = {
+      modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } }],
+      workspaces: [{ workspaceId: OLD, items: [{ moduleId: 'world', key: 'simulations-running', label: '1 simulation running', count: 1, active: true }] }],
+    }
+    const host = fakeFetch().on('GET', '/api/workspace-activity', json(answer))
+    const signal = new AbortController().signal
+    expect(await createWorkspaceApi(host.fetch).activity(signal)).toEqual(answer as never)
+    expect(host.calls[0]!.signal).toBe(signal)
+    await expect(createWorkspaceApi(fakeFetch().on('GET', '/api/workspace-activity', hostError(500, 'internal_error', 'Internal Workspace Host error')).fetch).activity())
+      .rejects.toMatchObject({ status: 500, code: 'internal_error' })
+    // An item from a Module without a ready outcome is outside the contract.
+    await expect(createWorkspaceApi(fakeFetch().on('GET', '/api/workspace-activity', json({ ...answer, modules: [] })).fetch).activity()).rejects.toThrow()
+  })
+})
+
+describe('Module titles', () => {
+  test('a core Module is named by its title, any other by its id as it stands', () => {
+    expect([moduleTitle('world'), moduleTitle('agents')]).toEqual(['World', 'Agents'])
+    expect(moduleTitle('process-plant')).toBe('process-plant')
+    expect(moduleTitle('constructor')).toBe('constructor')
   })
 })

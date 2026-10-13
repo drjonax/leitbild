@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { workspaceActivityCatalogSchema, workspaceSchema, type WorkspaceActivityCatalog } from '@leitbild/contracts'
-import { fakeFetch, hostError, json, workspaceFixture } from './host-fetch-fake.test-support.ts'
+import { workspaceFixture } from './host-fetch-fake.test-support.ts'
 import { ageText } from './launch-workspace.ts'
 import {
-  ACTIVITY_PATH, activeRowIds, activityByWorkspace, activityFailureText, activitySummary, activityText, createActivityPoller,
-  manageRows, moduleStateText, notRecentText, readWorkspaceActivity, selectActiveLabel, withActivityNotes, type ActivityAnswer,
+  ACTIVITY_CHECKING_TEXT, ACTIVITY_UNAVAILABLE_TEXT, activityHead, activityText, createActivityPoller, manageRows, moduleStateText,
+  nextActivity, NOTHING_RUNNING_TEXT, notRecentText, selectActiveLabel, withActivityNotes, type ActivityAnswer,
 } from './workspace-manage.ts'
 
 const A = '0b4b9a52-2f7e-4c1a-9d3e-00000000000a'
@@ -72,13 +72,15 @@ describe('the bulk confirmation\'s note', () => {
 const running = { moduleId: 'world', key: 'simulations-running', label: '2 simulations running', count: 2, active: true }
 const total = { moduleId: 'world', key: 'simulations', label: '5 simulations', count: 5, active: false }
 const answering = { moduleId: 'agents', key: 'assistant-answering', label: 'Assistant answering', count: 1, active: true }
+const failure = { code: 'module_query_failed', message: 'Module activity query returned HTTP 404', status: 404, retryable: false }
 const catalog = (workspaces: ReadonlyArray<{ readonly workspaceId: string; readonly items: ReadonlyArray<object> }>, failed: ReadonlyArray<string> = []): WorkspaceActivityCatalog =>
   workspaceActivityCatalogSchema.parse({
-    modules: ['world', 'agents'].map(moduleId => failed.includes(moduleId)
-      ? { moduleId, status: 'failed', failure: { code: 'module_query_failed', message: 'Module activity query returned HTTP 404', status: 404, retryable: false } }
-      : { moduleId, status: 'ready' }),
+    modules: ['world', 'agents'].map(moduleId => failed.includes(moduleId) ? { moduleId, status: 'failed', failure } : { moduleId, status: 'ready' }),
     workspaces,
   })
+const ok = (value: WorkspaceActivityCatalog): ActivityAnswer => ({ ok: true, catalog: value })
+const at = (hours: number, minutes: number) => new Date(2026, 9, 13, hours, minutes)
+const labels = (shown: ReturnType<typeof nextActivity>, id: string) => (shown.byWorkspace.get(id) ?? []).map(item => `${item.label}${item.stale ? ' (stale)' : ''}`)
 
 describe('what runs in each Workspace', () => {
   const rows = manageRows([
@@ -86,35 +88,36 @@ describe('what runs in each Workspace', () => {
     workspace(B, '2026-10-13T11:58:30.000Z', { name: 'Plant drill', world: 'provision_failed' }),
     workspace(C, '2026-10-13T09:00:00.000Z', { name: 'Quiet one' }),
   ], { recent: [], now: NOW })
-  const byWorkspace = activityByWorkspace(catalog([
+  const busy = nextActivity(null, ok(catalog([
     { workspaceId: A, items: [running, total] },
     { workspaceId: C, items: [total] },
     { workspaceId: B, items: [answering] },
-  ]))
+  ])), at(23, 41))
 
-  test('the summary counts the listed Workspaces with work running now', () => {
-    expect(activeRowIds(rows, byWorkspace)).toEqual([B, A])
-    expect(activitySummary(2)).toBe('Work is running now in 2 Workspaces')
-    expect(activitySummary(1)).toBe('Work is running now in 1 Workspace')
-    expect(activitySummary(0)).toBeNull()
-    expect(activeRowIds(rows, activityByWorkspace(null))).toEqual([])
+  test('the summary counts the listed Workspaces with work running now, and "Select these" ticks exactly those', () => {
+    expect(activityHead(rows, busy)).toEqual({ activeIds: [B, A], summary: { text: 'Work is running now in 2 Workspaces', active: true, current: true }, problem: null })
     // A Workspace no longer listed is not counted, whatever its Modules still report.
-    expect(activeRowIds(rows.filter(row => row.id !== A), byWorkspace)).toEqual([B])
-  })
-
-  test('"Select these" names how many it ticks', () => {
+    expect(activityHead(rows.filter(row => row.id !== A), busy).summary?.text).toBe('Work is running now in 1 Workspace')
     expect(selectActiveLabel(2)).toBe('Select these 2')
     expect(selectActiveLabel(1)).toBe('Select this one')
   })
 
-  test('a row reads its Modules\' own labels in order, and nothing when they report nothing', () => {
-    expect(activityText(byWorkspace.get(A))).toBe('2 simulations running · 5 simulations')
-    expect(activityText(byWorkspace.get(C))).toBe('5 simulations')
-    expect(activityText(activityByWorkspace(catalog([])).get(A))).toBeNull()
+  test('the line above the list is always there: checking, nothing running, or running work', () => {
+    expect(activityHead(rows, null)).toEqual({ activeIds: [], summary: { text: ACTIVITY_CHECKING_TEXT, active: false, current: false }, problem: null })
+    const quiet = nextActivity(null, ok(catalog([{ workspaceId: C, items: [total] }])), at(23, 41))
+    expect(activityHead(rows, quiet)).toEqual({ activeIds: [], summary: { text: NOTHING_RUNNING_TEXT, active: false, current: true }, problem: null })
+  })
+
+  test('a row reads its Modules\' own labels in installed-Module order, and nothing when they report nothing', () => {
+    expect(activityText(busy.byWorkspace.get(A))).toBe('2 simulations running · 5 simulations')
+    expect(activityText(busy.byWorkspace.get(C))).toBe('5 simulations')
+    expect(activityText(busy.byWorkspace.get('elsewhere'))).toBeNull()
+    const both = nextActivity(null, ok(catalog([{ workspaceId: A, items: [running, answering] }])), at(23, 41))
+    expect(activityText(both.byWorkspace.get(A))).toBe('2 simulations running · Assistant answering')
   })
 
   test('the delete dialog notes each Workspace\'s state and activity', () => {
-    const noted = withActivityNotes(rows, byWorkspace)
+    const noted = withActivityNotes(rows, busy.byWorkspace)
     expect(noted.map(row => [row.label, row.note])).toEqual([
       ['Plant drill', 'Setup failed · Assistant answering'],
       ['Quiet one', '5 simulations'],
@@ -125,33 +128,48 @@ describe('what runs in each Workspace', () => {
     expect(untouched[1]).toBe(rows[1]!)
   })
 
-  test('a Module that could not answer is named in one quiet line', () => {
-    expect(activityFailureText(catalog([]).modules)).toBeNull()
-    expect(activityFailureText(catalog([], ['world']).modules)).toBe("Couldn't check what World is running.")
-    expect(activityFailureText(catalog([], ['world', 'agents']).modules)).toBe("Couldn't check what World and Agents are running.")
-    expect(activityFailureText([
-      { moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } },
-      { moduleId: 'agents', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } },
-      { moduleId: 'process-plant', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } },
-    ] as never)).toBe("Couldn't check what World, Agents and Process plant are running.")
+  test('a failed request keeps the last labels, marked as not current, until the next good answer', () => {
+    const failed = nextActivity(busy, { ok: false, error: new Error('Failed to fetch') }, at(23, 42))
+    expect(labels(failed, A)).toEqual(['2 simulations running (stale)', '5 simulations (stale)'])
+    expect(activityHead(rows, failed)).toEqual({
+      activeIds: [B, A],
+      summary: { text: 'Work was running in 2 Workspaces when last checked', active: true, current: false },
+      problem: "Couldn't check World and Agents since 23:41.",
+    })
+    const again = nextActivity(failed, { ok: false, error: new Error('Failed to fetch') }, at(23, 43))
+    expect(activityHead(rows, again).problem).toBe("Couldn't check World and Agents since 23:41.")
+    const back = nextActivity(again, ok(catalog([{ workspaceId: C, items: [total] }])), at(23, 44))
+    expect([labels(back, A), labels(back, C)]).toEqual([[], ['5 simulations']])
+    expect(activityHead(rows, back)).toEqual({ activeIds: [], summary: { text: NOTHING_RUNNING_TEXT, active: false, current: true }, problem: null })
   })
 
-  test('reads the Host\'s activity through the contract and reports a refusal', async () => {
-    const answer = catalog([{ workspaceId: A, items: [running] }], ['agents'])
-    expect(await readWorkspaceActivity(fakeFetch().on('GET', ACTIVITY_PATH, json(answer)).fetch)).toEqual(answer)
-    await expect(readWorkspaceActivity(fakeFetch().on('GET', ACTIVITY_PATH, hostError(500, 'internal_error', 'Internal Workspace Host error')).fetch))
-      .rejects.toMatchObject({ status: 500, code: 'internal_error' })
-    await expect(readWorkspaceActivity(fakeFetch().on('GET', ACTIVITY_PATH, json({ workspaces: [] })).fetch)).rejects.toThrow()
+  test('a Module that could not answer keeps its own last labels, and is named in one quiet line', () => {
+    const worldDown = nextActivity(busy, ok(catalog([{ workspaceId: B, items: [answering] }], ['world'])), at(23, 45))
+    expect(labels(worldDown, A)).toEqual(['2 simulations running (stale)', '5 simulations (stale)'])
+    expect(labels(worldDown, B)).toEqual(['Assistant answering'])
+    expect(activityHead(rows, worldDown).problem).toBe("Couldn't check World since 23:41.")
+    expect(activityHead(rows, worldDown).summary?.text).toBe('Work was running in 2 Workspaces when last checked')
+    // Agents' fresh item comes after World's stale ones: installed-Module order holds.
+    const mixed = nextActivity(busy, ok(catalog([{ workspaceId: A, items: [answering] }], ['world'])), at(23, 45))
+    expect(labels(mixed, A)).toEqual(['2 simulations running (stale)', '5 simulations (stale)', 'Assistant answering'])
+
+    const neverAnswered = nextActivity(null, ok(catalog([], ['world', 'agents'])), at(23, 45))
+    expect(activityHead(rows, neverAnswered)).toEqual({ activeIds: [], summary: null, problem: "Couldn't check what World and Agents are running." })
+    expect(activityHead(rows, nextActivity(null, { ok: false, error: new Error('Failed to fetch') }, at(23, 45))))
+      .toEqual({ activeIds: [], summary: null, problem: ACTIVITY_UNAVAILABLE_TEXT })
   })
 })
 
 describe('the activity poller', () => {
-  const setup = (options: { hidden?: boolean } = {}) => {
+  const setup = (options: { hidden?: boolean; timeoutMs?: number } = {}) => {
     const state = { hidden: options.hidden ?? false, tick: null as (() => void) | null, cancelled: false }
-    const pending: Array<{ resolve: (value: WorkspaceActivityCatalog) => void; reject: (error: unknown) => void }> = []
+    const pending: Array<{ signal: AbortSignal; resolve: (value: WorkspaceActivityCatalog) => void }> = []
     const answers: ActivityAnswer[] = []
     const poller = createActivityPoller({
-      read: () => new Promise((resolve, reject) => { pending.push({ resolve, reject }) }),
+      read: signal => new Promise((resolve, reject) => {
+        pending.push({ signal, resolve })
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      }),
       onanswer: answer => { answers.push(answer) },
       hidden: () => state.hidden,
       every: (ms, tick) => {
@@ -159,10 +177,11 @@ describe('the activity poller', () => {
         state.tick = tick
         return () => { state.cancelled = true }
       },
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     })
     return { state, pending, answers, poller }
   }
-  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+  const settle = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
 
   test('asks at once, then on every tick while the page is visible and nothing is out', async () => {
     const { state, pending, answers, poller } = setup()
@@ -172,7 +191,7 @@ describe('the activity poller', () => {
     expect(pending).toHaveLength(1)
     pending[0]!.resolve(catalog([]))
     await settle()
-    expect(answers).toEqual([{ ok: true, catalog: catalog([]) }])
+    expect(answers).toEqual([ok(catalog([]))])
     state.hidden = true
     state.tick!()
     expect(pending).toHaveLength(1)
@@ -181,38 +200,42 @@ describe('the activity poller', () => {
     expect(pending).toHaveLength(2)
   })
 
-  test('a page shown again asks at once; a hidden one does not', () => {
-    const { state, pending, poller } = setup({ hidden: true })
+  test('refresh and a page shown again replace a request still out instead of overlapping it', async () => {
+    const { state, pending, answers, poller } = setup({ hidden: true })
     poller.start()
-    pending[0]!.resolve(catalog([]))
     poller.visibilityChanged()
     expect(pending).toHaveLength(1)
     state.hidden = false
     poller.visibilityChanged()
     expect(pending).toHaveLength(2)
+    expect(pending[0]!.signal.aborted).toBe(true)
+    poller.refresh()
+    expect(pending[1]!.signal.aborted).toBe(true)
+    expect(pending.filter(item => !item.signal.aborted)).toHaveLength(1)
+    pending[2]!.resolve(catalog([{ workspaceId: A, items: [running] }]))
+    await settle()
+    expect(answers).toEqual([ok(catalog([{ workspaceId: A, items: [running] }]))])
   })
 
-  test('only the newest request\'s answer is shown, and none after stop', async () => {
+  test('a request that takes too long is aborted and counts as unanswered', async () => {
+    const { pending, answers, poller } = setup({ timeoutMs: 5 })
+    poller.start()
+    await settle(30)
+    expect(pending[0]!.signal.aborted).toBe(true)
+    expect(answers).toHaveLength(1)
+    expect(answers[0]).toMatchObject({ ok: false })
+    expect((answers[0] as { error: DOMException }).error.name).toBe('TimeoutError')
+  })
+
+  test('stop aborts the request still out and nothing is delivered after it', async () => {
     const { state, pending, answers, poller } = setup()
     poller.start()
-    poller.refresh()
-    pending[1]!.resolve(catalog([{ workspaceId: A, items: [running] }]))
-    pending[0]!.resolve(catalog([]))
-    await settle()
-    expect(answers).toEqual([{ ok: true, catalog: catalog([{ workspaceId: A, items: [running] }]) }])
-
-    poller.refresh()
-    pending[2]!.reject(new Error('Failed to fetch'))
-    await settle()
-    expect(answers[1]).toMatchObject({ ok: false })
-
-    poller.refresh()
     poller.stop()
     expect(state.cancelled).toBe(true)
-    pending[3]!.resolve(catalog([]))
+    expect(pending[0]!.signal.aborted).toBe(true)
     await settle()
-    expect(answers).toHaveLength(2)
+    expect(answers).toEqual([])
     poller.refresh()
-    expect(pending).toHaveLength(4)
+    expect(pending).toHaveLength(1)
   })
 })

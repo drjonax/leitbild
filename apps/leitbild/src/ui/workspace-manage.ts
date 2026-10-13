@@ -7,13 +7,12 @@
 // Beside each row goes what its Modules say is going on there
 // (GET /api/workspace-activity), polled while Manage is open, so the work
 // using the server can be found and cleared. The labels are the Modules' own
-// words: nothing here reads a Module's item keys.
+// words: nothing here reads a Module's item keys. A Module that cannot be
+// asked again keeps its last labels, marked as not current, until it answers.
 
-import type { ModuleQueryOutcome, Workspace, WorkspaceActivityCatalog, WorkspaceActivityEntry } from '@leitbild/contracts'
+import type { Workspace, WorkspaceActivityCatalog, WorkspaceActivityEntry } from '@leitbild/contracts'
 import type { DeleteItem } from './bulk-delete.ts'
-import { ageText, readHostJson, shortDateTime, workspaceLabel } from './launch-workspace.ts'
-
-type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+import { ageText, moduleTitle, shortDateTime, workspaceLabel } from './launch-workspace.ts'
 
 export const MANAGE_TITLE = 'Manage Workspaces'
 export const MANAGE_INTRO = 'Workspaces are public: anyone can see, open, change or delete them. Deleting a Workspace deletes its simulations and conversations for everyone.'
@@ -76,33 +75,108 @@ export const notRecentText = (chosen: ReadonlyArray<{ readonly id: string }>, re
 
 // ---------- What runs in each Workspace ----------
 
-export const ACTIVITY_PATH = '/api/workspace-activity'
 /** How often Manage asks again while it is open and the page is visible. */
 export const ACTIVITY_POLL_MS = 15_000
+/** How long one request may take before it counts as unanswered. */
+export const ACTIVITY_TIMEOUT_MS = 10_000
+export const ACTIVITY_CHECKING_TEXT = 'Checking what is running…'
+export const NOTHING_RUNNING_TEXT = 'Nothing is running now.'
 export const ACTIVITY_UNAVAILABLE_TEXT = "Couldn't check what is running in these Workspaces."
+/** After a row's activity for people using a screen reader, when some of it is not current. */
+export const STALE_ACTIVITY_SUFFIX = ' (as last checked)'
 
-/** What every Module says is going on per Workspace, validated by the contract (loaded lazily, like the Workspace list's). */
-export const readWorkspaceActivity = async (fetchImpl: FetchLike, signal?: AbortSignal): Promise<WorkspaceActivityCatalog> => {
-  const response = await fetchImpl(ACTIVITY_PATH, signal === undefined ? { method: 'GET' } : { method: 'GET', signal })
-  const body = await readHostJson(response)
-  const { workspaceActivityCatalogSchema } = await import('@leitbild/contracts')
-  return workspaceActivityCatalogSchema.parse(body)
+export type ActivityAnswer =
+  | { readonly ok: true; readonly catalog: WorkspaceActivityCatalog }
+  | { readonly ok: false; readonly error: unknown }
+
+export interface ShownActivityItem extends WorkspaceActivityEntry {
+  /** From an earlier answer: its Module could not be asked again since. */
+  readonly stale: boolean
 }
 
-/** Per Workspace id, its Modules' items in the order the Host gave them. */
-export const activityByWorkspace = (catalog: WorkspaceActivityCatalog | null): ReadonlyMap<string, ReadonlyArray<WorkspaceActivityEntry>> =>
-  new Map((catalog?.workspaces ?? []).map(workspace => [workspace.workspaceId, workspace.items]))
+/** What Manage shows: the newest answer, with the last labels of any Module the newest request did not reach. */
+export interface ShownActivity {
+  /** Per Workspace id, its Modules' items in installed-Module order. */
+  readonly byWorkspace: ReadonlyMap<string, ReadonlyArray<ShownActivityItem>>
+  /** The Modules in the Host's order, with when each last answered (null: never since Manage opened). */
+  readonly modules: ReadonlyArray<{ readonly moduleId: string; readonly answeredAt: Date | null; readonly current: boolean }>
+  /** The Host itself could not be asked and nothing was known before. */
+  readonly unreachable: boolean
+}
 
-const hasActive = (items: ReadonlyArray<WorkspaceActivityEntry> | undefined): boolean => items?.some(item => item.active) ?? false
+/**
+ * Folds one answer into what is shown. A ready Module's items replace its
+ * earlier ones; a Module that failed, or every Module when the request
+ * failed, keeps its earlier items, marked stale, until it answers again.
+ */
+export const nextActivity = (previous: ShownActivity | null, answer: ActivityAnswer, now: Date): ShownActivity => {
+  const earlier = new Map((previous?.modules ?? []).map(module => [module.moduleId, module]))
+  const order = answer.ok ? answer.catalog.modules.map(outcome => String(outcome.moduleId)) : (previous?.modules ?? []).map(module => module.moduleId)
+  const ready = new Set(answer.ok ? answer.catalog.modules.filter(outcome => outcome.status === 'ready').map(outcome => String(outcome.moduleId)) : [])
+  const byWorkspace = new Map<string, ShownActivityItem[]>()
+  const add = (workspaceId: string, item: ShownActivityItem): void => {
+    const items = byWorkspace.get(workspaceId)
+    if (items) items.push(item)
+    else byWorkspace.set(workspaceId, [item])
+  }
+  for (const moduleId of order) {
+    if (answer.ok && ready.has(moduleId)) {
+      for (const workspace of answer.catalog.workspaces) {
+        for (const item of workspace.items) if (item.moduleId === moduleId) add(workspace.workspaceId, { ...item, stale: false })
+      }
+    } else {
+      for (const [workspaceId, items] of previous?.byWorkspace ?? []) {
+        for (const item of items) if (item.moduleId === moduleId) add(workspaceId, { ...item, stale: true })
+      }
+    }
+  }
+  return {
+    byWorkspace,
+    modules: order.map(moduleId => ready.has(moduleId)
+      ? { moduleId, answeredAt: now, current: true }
+      : { moduleId, answeredAt: earlier.get(moduleId)?.answeredAt ?? null, current: false }),
+    unreachable: !answer.ok && order.length === 0,
+  }
+}
 
-/** The listed Workspaces with work running now, in list order: what "Select these" ticks. */
-export const activeRowIds = (
-  rows: ReadonlyArray<{ readonly id: string }>, byWorkspace: ReadonlyMap<string, ReadonlyArray<WorkspaceActivityEntry>>,
-): ReadonlyArray<string> => rows.filter(row => hasActive(byWorkspace.get(row.id))).map(row => row.id)
+const hasActive = (items: ReadonlyArray<ShownActivityItem> | undefined): boolean => items?.some(item => item.active) ?? false
 
-/** "Work is running now in 2 Workspaces"; null when nothing is. */
-export const activitySummary = (activeCount: number): string | null =>
-  activeCount === 0 ? null : `Work is running now in ${activeCount === 1 ? '1 Workspace' : `${activeCount} Workspaces`}`
+const listed = (names: ReadonlyArray<string>): string =>
+  names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names.at(-1)!}`
+
+const two = (value: number): string => String(value).padStart(2, '0')
+/** "23:41" in the browser's local time. */
+const clockTime = (at: Date): string => `${two(at.getHours())}:${two(at.getMinutes())}`
+
+export interface ActivityHead {
+  /** The listed Workspaces with work running (as last known), in list order: what "Select these" ticks. */
+  readonly activeIds: ReadonlyArray<string>
+  /** The line above the list, which is always there so the list does not move: running work, nothing, or still checking. */
+  readonly summary: { readonly text: string; readonly active: boolean; readonly current: boolean } | null
+  /** One quiet line for what could not be checked; it stands in for the summary when nothing is known to run. */
+  readonly problem: string | null
+}
+
+/** The summary, the "Select these" set and the problem line for the rows shown. */
+export const activityHead = (rows: ReadonlyArray<{ readonly id: string }>, shown: ShownActivity | null): ActivityHead => {
+  const activeIds = shown === null ? [] : rows.filter(row => hasActive(shown.byWorkspace.get(row.id))).map(row => row.id)
+  const unchecked = (shown?.modules ?? []).filter(module => !module.current)
+  const since = unchecked.flatMap(module => module.answeredAt === null ? [] : [module.answeredAt.getTime()])
+  // Short, so it stays one line on a phone: it is the only line that comes and goes above the list.
+  const names = listed(unchecked.map(module => moduleTitle(module.moduleId)))
+  const problem = shown === null ? null
+    : shown.unreachable ? ACTIVITY_UNAVAILABLE_TEXT
+      : unchecked.length === 0 ? null
+        : since.length === 0 ? `Couldn't check what ${names} ${unchecked.length === 1 ? 'is' : 'are'} running.`
+          : `Couldn't check ${names} since ${clockTime(new Date(Math.min(...since)))}.`
+  const count = activeIds.length === 1 ? '1 Workspace' : `${activeIds.length} Workspaces`
+  const staleActive = activeIds.some(id => shown?.byWorkspace.get(id)?.some(item => item.active && item.stale))
+  const summary = shown === null ? { text: ACTIVITY_CHECKING_TEXT, active: false, current: false }
+    : activeIds.length > 0
+      ? { text: staleActive ? `Work was running in ${count} when last checked` : `Work is running now in ${count}`, active: true, current: !staleActive }
+      : problem === null ? { text: NOTHING_RUNNING_TEXT, active: false, current: true } : null
+  return { activeIds, summary, problem }
+}
 
 /** The button beside Select all that ticks exactly those Workspaces. */
 export const selectActiveLabel = (activeCount: number): string => activeCount === 1 ? 'Select this one' : `Select these ${activeCount}`
@@ -123,81 +197,67 @@ export const withActivityNotes = <T extends ManageRow>(
   return note === '' ? row : { ...row, note }
 })
 
-/** A Module named by its id, as people read it: "world" → "World", "process-plant" → "Process plant". */
-const moduleName = (moduleId: string): string => {
-  const words = moduleId.replaceAll('-', ' ')
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
-const listed = (names: ReadonlyArray<string>): string =>
-  names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names.at(-1)!}`
-
-/** One quiet line for the Modules that could not say what they run: "Couldn't check what World is running."; null when all did. */
-export const activityFailureText = (modules: ReadonlyArray<ModuleQueryOutcome>): string | null => {
-  const failed = modules.filter(outcome => outcome.status === 'failed').map(outcome => moduleName(outcome.moduleId))
-  if (failed.length === 0) return null
-  return `Couldn't check what ${listed(failed)} ${failed.length === 1 ? 'is' : 'are'} running.`
-}
-
-export type ActivityAnswer =
-  | { readonly ok: true; readonly catalog: WorkspaceActivityCatalog }
-  | { readonly ok: false; readonly error: unknown }
-
 export interface ActivityPoller {
-  /** Asks now; whatever an older request answers later is dropped. */
+  /** Asks now, replacing a request still out. */
   refresh(): void
   /** Asks now, then every interval while the page is visible. */
   start(): void
-  /** For `visibilitychange`: a page shown again asks at once. */
+  /** For `visibilitychange`: a page shown again asks at once, replacing a request still out. */
   visibilityChanged(): void
-  /** Stops asking and drops any answer still on its way. */
+  /** Stops asking and aborts a request still out. */
   stop(): void
 }
 
 /**
  * Polls the activity while Manage is open: at once, then every interval,
- * skipping ticks while the page is hidden or the last request is still out.
- * Only the newest request's answer is delivered, and none after stop.
+ * skipping a tick while the page is hidden or a request is out. At most one
+ * request is out: each has its own AbortController and a timeout, and is
+ * aborted when a newer one replaces it or polling stops. Only the request
+ * still current when it settles is delivered.
  */
 export const createActivityPoller = (ports: {
-  readonly read: () => Promise<WorkspaceActivityCatalog>
+  readonly read: (signal: AbortSignal) => Promise<WorkspaceActivityCatalog>
   readonly onanswer: (answer: ActivityAnswer) => void
   readonly hidden: () => boolean
   readonly every?: (ms: number, tick: () => void) => () => void
   readonly intervalMs?: number
+  readonly timeoutMs?: number
 }): ActivityPoller => {
   const every = ports.every ?? ((ms, tick) => {
     const id = setInterval(tick, ms)
     return () => clearInterval(id)
   })
-  let latest = 0
   let running = false
-  let waiting = false
+  let current: AbortController | null = null
   let cancel: (() => void) | null = null
-  const refresh = (): void => {
-    const token = ++latest
-    waiting = true
+  const ask = (): void => {
+    current?.abort()
+    const controller = new AbortController()
+    current = controller
     const settle = (answer: ActivityAnswer): void => {
-      if (token !== latest) return
-      waiting = false
-      if (running) ports.onanswer(answer)
+      if (current !== controller) return
+      current = null
+      ports.onanswer(answer)
     }
-    ports.read().then(catalog => settle({ ok: true, catalog }), (error: unknown) => settle({ ok: false, error }))
+    let reading: Promise<WorkspaceActivityCatalog>
+    try { reading = ports.read(AbortSignal.any([controller.signal, AbortSignal.timeout(ports.timeoutMs ?? ACTIVITY_TIMEOUT_MS)])) }
+    catch (error) { reading = Promise.reject(error) }
+    reading.then(catalog => settle({ ok: true, catalog }), (error: unknown) => settle({ ok: false, error }))
   }
   return {
-    refresh: () => { if (running) refresh() },
+    refresh: () => { if (running) ask() },
     start: () => {
       if (running) return
       running = true
-      refresh()
-      // A tick while the last request is still out waits for it: an answer slower than the interval is still shown.
-      cancel = every(ports.intervalMs ?? ACTIVITY_POLL_MS, () => { if (!ports.hidden() && !waiting) refresh() })
+      ask()
+      cancel = every(ports.intervalMs ?? ACTIVITY_POLL_MS, () => { if (!ports.hidden() && current === null) ask() })
     },
-    visibilityChanged: () => { if (running && !ports.hidden()) refresh() },
+    visibilityChanged: () => { if (running && !ports.hidden()) ask() },
     stop: () => {
       running = false
-      waiting = false
-      latest += 1
+      const out = current
+      current = null
+      out?.abort()
       cancel?.()
       cancel = null
     },

@@ -6,7 +6,7 @@
   // not finish is deleted again from here. Each row says what its Modules
   // report running there, polled while Manage is open, and "Select these"
   // ticks the Workspaces with work running now. Rows and activity: workspace-manage.ts.
-  import type { Workspace, WorkspaceActivityCatalog } from '@leitbild/contracts'
+  import type { Workspace } from '@leitbild/contracts'
   import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
@@ -16,8 +16,8 @@
   import type { ModalCloseReason } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
   import {
-    ACTIVITY_UNAVAILABLE_TEXT, activeRowIds, activityByWorkspace, activityFailureText, activitySummary, createActivityPoller,
-    MANAGE_INTRO, MANAGE_TITLE, manageRows, notRecentText, readWorkspaceActivity, selectActiveLabel, withActivityNotes, type ManageRow,
+    activityHead, activityText, createActivityPoller, MANAGE_INTRO, MANAGE_TITLE, manageRows, nextActivity, notRecentText,
+    selectActiveLabel, STALE_ACTIVITY_SUFFIX, withActivityNotes, type ManageRow, type ShownActivity,
   } from './workspace-manage.ts'
   import type { WorkspaceMemory } from './workspace-memory.ts'
   import { filterRows, SEARCH_THRESHOLD } from './workspace-switcher.ts'
@@ -45,18 +45,24 @@
   let list = $state<HTMLElement | null>(null)
   let modal = $state<{ focusTitle(): void } | null>(null)
   let listRequest = 0
-  let activity = $state<WorkspaceActivityCatalog | null>(null)
-  let activityProblem = $state<string | null>(null)
+  let activity = $state.raw<ShownActivity | null>(null)
+  let selectActiveButton = $state<HTMLButtonElement | null>(null)
 
   const rows = $derived(workspaces === null ? [] : manageRows(workspaces, { recent: memory.recent(), now }))
   const shown = $derived(query.trim() ? filterRows(rows, query) : rows)
   const allState = $derived(selectAllState(shown, selected))
   const chosen = $derived(rows.filter(row => selected.has(row.id)))
-  const byWorkspace = $derived(activityByWorkspace(activity))
-  const activeIds = $derived(activeRowIds(rows, byWorkspace))
-  const summary = $derived(activitySummary(activeIds.length))
+  const byWorkspace = $derived(activity?.byWorkspace ?? new Map())
+  const head = $derived(activityHead(rows, activity))
+  const activeIds = $derived(head.activeIds)
 
   $effect(() => { if (selectAllBox) selectAllBox.indeterminate = allState === 'some' })
+
+  // "Select these" goes when nothing runs any more; if it had focus, focus moves to Select all
+  // before the button leaves the page, so a keyboard user is never dropped on the body.
+  $effect.pre(() => {
+    if (activeIds.length === 0 && selectActiveButton !== null && document.activeElement === selectActiveButton) selectAllBox?.focus()
+  })
 
   const load = async (): Promise<void> => {
     // A newer read owns the list: an older answer arriving late never overwrites it.
@@ -78,18 +84,16 @@
     }
   }
 
-  // A failed answer clears what was shown: no number stays on screen as if it were current.
+  // An answer that fails keeps the last labels, marked as not current, until the next good one.
   const poller = createActivityPoller({
-    read: () => readWorkspaceActivity((input, init) => fetch(input, init)),
+    read: signal => api.activity(signal),
     hidden: () => document.hidden,
     onanswer: answer => {
-      const problem = answer.ok ? activityFailureText(answer.catalog.modules) : ACTIVITY_UNAVAILABLE_TEXT
-      if (problem !== activityProblem) {
-        if (!answer.ok) console.error('Workspace activity failed', errorDiagnostic(answer.error))
-        else for (const outcome of answer.catalog.modules) if (outcome.status === 'failed') console.error(`Workspace activity of ${outcome.moduleId} failed`, errorDiagnostic(outcome.failure))
-      }
-      activity = answer.ok ? answer.catalog : null
-      activityProblem = problem
+      const before = head.problem
+      activity = nextActivity(activity, answer, new Date())
+      if (head.problem === before) return
+      if (!answer.ok) console.error('Workspace activity failed', errorDiagnostic(answer.error))
+      else for (const outcome of answer.catalog.modules) if (outcome.status === 'failed') console.error(`Workspace activity of ${outcome.moduleId} failed`, errorDiagnostic(outcome.failure))
     },
   })
 
@@ -101,7 +105,6 @@
       selected = new Set()
       status = ''
       activity = null
-      activityProblem = null
       void load()
     }
     wasOpen = open
@@ -152,12 +155,12 @@
     {:else if rows.length === 0}
       <p class="muted">There are no Workspaces.</p>
     {:else}
-      {#if summary || activityProblem}
-        <div class="activity-head">
-          {#if summary}<p class="activity-summary" id={`${uid}-summary`}><span class="summary-dot" aria-hidden="true"></span>{summary}</p>{/if}
-          {#if activityProblem}<p class="activity-problem">{activityProblem}</p>{/if}
-        </div>
-      {/if}
+      <!-- Always one line at least (checking, nothing, running work or what could not be checked), so the list never moves down when it arrives. -->
+      <div class="activity-head">
+        {#if head.summary}<p class="activity-summary" class:active={head.summary.active} id={`${uid}-summary`}
+          >{#if head.summary.active}<span class="summary-dot" class:stale={!head.summary.current} aria-hidden="true"></span>{/if}{head.summary.text}</p>{/if}
+        {#if head.problem}<p class="activity-problem">{head.problem}</p>{/if}
+      </div>
       <div class="tools">
         <div class="picks">
           <label class="select-all">
@@ -165,7 +168,7 @@
             <span>Select all{query.trim() ? ' shown' : ''} <span class="muted-count">({shown.length})</span></span>
           </label>
           {#if activeIds.length > 0}
-            <button class="select-active" type="button" aria-describedby={`${uid}-summary`} onclick={() => { selected = new Set(activeIds) }}
+            <button bind:this={selectActiveButton} class="select-active" type="button" aria-describedby={`${uid}-summary`} onclick={() => { selected = new Set(activeIds) }}
             >{selectActiveLabel(activeIds.length)}</button>
           {/if}
         </div>
@@ -186,10 +189,11 @@
               <span class="name" class:untitled={row.untitled}>{row.label}</span>
               <span class="meta"><span title={row.createdExact}>{row.created}</span>{#if row.recent}<span class="tag">Recent in this browser</span>{/if}{#if row.note}<span class="state">{row.note}</span>{/if}</span>
               {#if items}
-                <!-- Inline text, so a long line wraps between words; a dot stays with its label and a "·" ends a line rather than starting one. -->
-                <span class="activity">{#each items as item, index (`${item.moduleId}:${item.key}`)}<span class="item" class:active={item.active}
-                  >{#if item.active}<span class="dot" aria-hidden="true">●</span>{'\u00a0'}{/if}{item.label}</span
-                  >{#if index < items.length - 1}<span aria-hidden="true">{'\u00a0·'}</span><span class="visually-hidden">,</span>{' '}{/if}{/each}</span>
+                <!-- The words are activityText's; the line people see is the same labels with a dot for running work. It is inline
+                     text, so a long line wraps between words, a dot stays with its label and a "·" ends a line rather than starting one. -->
+                <span class="activity"><span class="visually-hidden">{activityText(items)}{items.some(item => item.stale) ? STALE_ACTIVITY_SUFFIX : ''}</span
+                  ><span aria-hidden="true">{#each items as item (`${item.moduleId}:${item.key}`)}<span class="item" class:active={item.active} class:stale={item.stale}
+                    >{#if item.active}<span class="dot">●</span>{'\u00a0'}{/if}{item.label}</span>{' '}{/each}</span></span>
               {/if}
             </label>
             <button class="lb-icon-btn row-delete" type="button" aria-label={`Delete ${row.label}`} title={`Delete ${row.label}`} onclick={() => ask([row])}><Icon name="trash" size={18} /></button>
@@ -220,9 +224,10 @@
   .muted { margin: 0; color: var(--lb-ink-3); font-size: var(--lb-fs-small); }
   .failed { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lb-s3); }
   .failed p { margin: 0; color: var(--lb-danger); font-size: var(--lb-fs-small); }
-  .activity-head { display: grid; gap: 2px; }
+  .activity-head { display: grid; gap: 2px; min-height: calc(var(--lb-fs-small) * 1.45); }
   .activity-head p { margin: 0; font-size: var(--lb-fs-small); line-height: 1.45; }
-  .activity-summary { display: flex; align-items: center; gap: 8px; color: var(--lb-ink-2); font-weight: 500; }
+  .activity-summary { display: flex; align-items: center; gap: 8px; color: var(--lb-ink-3); }
+  .activity-summary.active { color: var(--lb-ink-2); font-weight: 500; }
   .activity-problem { color: var(--lb-ink-3); }
   .tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--lb-s2) var(--lb-s4); }
   .picks { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--lb-s1); }
@@ -253,8 +258,12 @@
   .state { color: var(--lb-warn); font-weight: 650; }
   .activity { color: var(--lb-ink-3); font-size: var(--lb-fs-micro); line-height: 1.45; overflow-wrap: anywhere; }
   .activity .item.active { color: var(--lb-ink); font-weight: 600; }
+  .activity .item.stale { color: var(--lb-ink-3); font-weight: 500; }
+  .activity .item:not(:last-child)::after { content: '\00a0·'; color: var(--lb-ink-3); font-weight: 400; }
   .dot { color: var(--lb-ok); font-size: .85em; }
+  .item.stale .dot { color: var(--lb-control); }
   .summary-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--lb-ok); }
+  .summary-dot.stale { background: var(--lb-control); }
   .row-delete { color: var(--lb-ink-2); }
   .row-delete:hover { color: var(--lb-danger); background: rgba(138, 45, 45, .08); }
   .count { flex: 1; min-width: 0; color: var(--lb-ink-2); font-size: var(--lb-fs-small); }

@@ -33,7 +33,7 @@
   import { roomScopeIncludingRun, roomSelectsRun, roomServesRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
   import { keptSelection } from './open-selection.ts'
   import { withUnreadCount, workspacePageTitle } from './page-title.ts'
-  import { ageText, workspaceLabel } from './launch-workspace.ts'
+  import { ageText, moduleTitle, workspaceLabel } from './launch-workspace.ts'
   import { workspacePath, workspaceUrl } from './launch-destination.ts'
   import { createPeopleSession, type PeopleSession, type PeopleState } from './people-session.ts'
   import { browserPeoplePorts } from './people-browser.ts'
@@ -55,7 +55,6 @@
     | { readonly kind: 'definition'; readonly descriptor: ModuleDefinitionDescriptor }
     | { readonly kind: 'resource'; readonly descriptor: ModuleResourceDescriptor }
 
-  const moduleTitles: Readonly<Record<string, string>> = { world: 'World', agents: 'Agents' }
   // `/workspaces` itself is the landing page (Landing.svelte); this shell serves one Workspace.
   const page = (): Page => {
     const match = location.pathname.match(/^\/workspaces\/([^/]+)$/)
@@ -677,13 +676,13 @@
   {:else if workspace}
     {#each workspace.modules as moduleState (moduleState.moduleId)}
       {#if moduleState.status !== 'ready'}
-        <section class="notice error" role="alert"><p>{moduleTitles[moduleState.moduleId]}: {moduleState.failure?.message ?? moduleState.status}</p>
+        <section class="notice error" role="alert"><p>{moduleTitle(moduleState.moduleId)}: {moduleState.failure?.message ?? moduleState.status}</p>
           {#if moduleState.status === 'provision_failed'}<button disabled={busy} onclick={() => void retryModule(moduleState.moduleId)}>Retry setup</button>{/if}
           {#if moduleState.status === 'remove_failed' || moduleState.status === 'removing'}<span>Deleting this Workspace did not finish. Use ⋯ → Delete Workspace… to try again.</span>{/if}
         </section>
       {/if}
     {/each}
-    {#each catalogFailures as outcome (outcome.moduleId)}{#if outcome.status === 'failed'}<p class="notice error" role="alert">{moduleTitles[outcome.moduleId]}: {outcome.failure.message}</p>{/if}{/each}
+    {#each catalogFailures as outcome (outcome.moduleId)}{#if outcome.status === 'failed'}<p class="notice error" role="alert">{moduleTitle(outcome.moduleId)}: {outcome.failure.message}</p>{/if}{/each}
     {#if refreshError}<p class="notice error" role="alert">Catalog refresh failed: {refreshError}</p>{/if}
     {#if showingComposer}
     <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}

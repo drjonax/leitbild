@@ -3,10 +3,17 @@
 // "New Workspace · 12 Oct, 22:41". Only Host endpoints are read here, so no
 // Module runtime loads before the user acts.
 
-import type { Workspace } from '@leitbild/contracts'
+import type { Workspace, WorkspaceActivityCatalog } from '@leitbild/contracts'
 import type { WorkspaceMemory } from './workspace-memory.ts'
 
 export type RequiredModule = 'world' | 'agents'
+
+/** What people call each core Module: the one map every Host page names a Module by. */
+export const MODULE_TITLES: Readonly<Record<RequiredModule, string>> = { world: 'World', agents: 'Agents' }
+
+/** A Module's title; a Module without one is named by its id as it stands, never by a guess. */
+export const moduleTitle = (moduleId: string): string =>
+  Object.hasOwn(MODULE_TITLES, moduleId) ? MODULE_TITLES[moduleId as RequiredModule] : moduleId
 export type ModuleReadiness = 'ready' | 'provisioning' | 'failed' | 'missing'
 
 export const LAST_WORKSPACE_GONE_TEXT = 'Your last Workspace no longer exists.'
@@ -25,6 +32,8 @@ export interface WorkspaceApi {
   list(signal?: AbortSignal): Promise<ReadonlyArray<Workspace>>
   create(name: string | null, signal?: AbortSignal): Promise<Workspace>
   retryModule(workspaceId: string, moduleId: string, signal?: AbortSignal): Promise<Workspace>
+  /** What every Module says is going on in each Workspace (GET /api/workspace-activity). */
+  activity(signal?: AbortSignal): Promise<WorkspaceActivityCatalog>
 }
 
 const hostRequestError = (status: number, code: string | undefined, message: string): HostRequestError =>
@@ -76,6 +85,11 @@ export const createWorkspaceApi = (fetchImpl: FetchLike = (input, init) => fetch
       const body = await readHostJson(await send(path, { method: 'POST' }, signal))
       return parseWorkspace(field(body, 'workspace'))
     },
+    activity: async signal => {
+      const body = await readHostJson(await send('/api/workspace-activity', { method: 'GET' }, signal))
+      const { workspaceActivityCatalogSchema } = await import('@leitbild/contracts')
+      return workspaceActivityCatalogSchema.parse(body)
+    },
   }
 }
 
@@ -115,8 +129,6 @@ export const moduleReadiness = (workspace: Pick<Workspace, 'modules'>, moduleId:
   return 'failed'
 }
 
-const moduleNames: Readonly<Record<RequiredModule, string>> = { world: 'World', agents: 'Agents' }
-
 /** The Workspace exists but the Module the action needs is not ready. Offer Retry and Open. */
 export type WorkspaceNotReadyError = Error & {
   readonly code: 'workspace_module_not_ready'
@@ -127,8 +139,8 @@ export type WorkspaceNotReadyError = Error & {
 
 export const workspaceNotReady = (workspace: Workspace, moduleId: RequiredModule, created: boolean): WorkspaceNotReadyError =>
   Object.assign(new Error(created
-    ? `${moduleNames[moduleId]} could not be prepared in the new Workspace.`
-    : `${moduleNames[moduleId]} is not ready in ${workspaceLabel(workspace)}.`), {
+    ? `${MODULE_TITLES[moduleId]} could not be prepared in the new Workspace.`
+    : `${MODULE_TITLES[moduleId]} is not ready in ${workspaceLabel(workspace)}.`), {
     code: 'workspace_module_not_ready' as const, workspace, moduleId, created,
   })
 
