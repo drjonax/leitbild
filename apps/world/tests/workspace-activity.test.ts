@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { moduleActivitySchema, newWorkspaceId, type ModuleActivity, type WorkspaceId } from '@leitbild/contracts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from '../src/core/api/server.ts'
 import { handleWorldActivity, worldModuleManifest } from '../src/core/api/workspace-module-api.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import { createWorldModuleState } from '../src/core/workspaces/module-state.ts'
+import { worldWorkspacePaths } from '../src/core/workspaces/paths.ts'
 import { createWorldWorkspaceRuntimeRegistry, type WorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runtime-registry.ts'
 import { createManualIdleTimer, createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring, waitForCondition } from './helpers.ts'
 
@@ -130,4 +131,19 @@ describe('World Workspace activity', () => {
     expect(registry.activity()).toEqual({ loadedRunIds: [], advancingRunIds: [] })
     expect(registry.get(run.id)).toBeUndefined()
   })
+
+  test('answers every provisioned Workspace past the file fan-out limit, without loading any', async () => {
+    const { dataDir, workspaces } = await createWorkspaces()
+    const moduleState = createWorldModuleState({ dataDir })
+    const ids = Array.from({ length: 40 }, () => newWorkspaceId())
+    for (const workspaceId of ids) {
+      await moduleState.provision(workspaceId)
+      await mkdir(join(worldWorkspacePaths(dataDir, workspaceId).simulationRuns, `run-${crypto.randomUUID()}`), { recursive: true })
+    }
+    const activity = await readActivity(workspaces)
+    expect(activity.workspaces.map(workspace => workspace.workspaceId).sort()).toEqual([...ids].sort())
+    expect(activity.workspaces.every(workspace => Bun.deepEquals(workspace.items, [stored(1)]))).toBe(true)
+    expect(ids.filter(workspaceId => workspaces.getLoaded(workspaceId) !== undefined)).toEqual([])
+  })
+
 })

@@ -8,6 +8,7 @@ import type { ScenarioDefinition } from '../scenarios/definition.ts'
 import type { ScenarioRuntimeResolver } from '../scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry,type SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import { listStoredSimulationRunIds } from '../simulation-runs/stored-runs.ts'
+import { mapWithConcurrency, workspaceFanOutLimit } from '../storage/bounded-fan-out.ts'
 import { createKeyedOperations } from '../storage/keyed-operations.ts'
 import type { WorldModuleMarker,WorldModuleState } from './module-state.ts'
 import { worldWorkspacePaths } from './paths.ts'
@@ -155,7 +156,7 @@ export const createWorldWorkspaceRuntimeRegistry = (config: {
     getOrLoad,
     withRuntime,
     getLoaded: id => loaded.get(id),
-    activity: async () => await Promise.all((await config.moduleState.list()).map(marker => activityOf(marker.workspaceId))),
+    activity: async () => await mapWithConcurrency(await config.moduleState.list(), workspaceFanOutLimit, marker => activityOf(marker.workspaceId)),
     close,
     remove,
     shutdown: async () => {

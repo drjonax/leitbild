@@ -1,4 +1,5 @@
 import { writeAtomic } from '../storage/atomic-write.ts'
+import { mapWithConcurrency, workspaceFanOutLimit } from '../storage/bounded-fan-out.ts'
 import { mkdir, readdir, readFile, rm, rmdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
@@ -59,12 +60,10 @@ export const createWorldModuleState = (config: {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
         throw error
       }
-      const markers = await Promise.all(entries
-        .filter(entry => entry.isDirectory())
-        .map(async entry => {
-          const parsed = workspaceIdSchema.safeParse(entry.name)
-          return parsed.success ? await get(parsed.data) : null
-        }))
+      const markers = await mapWithConcurrency(entries.filter(entry => entry.isDirectory()), workspaceFanOutLimit, async entry => {
+        const parsed = workspaceIdSchema.safeParse(entry.name)
+        return parsed.success ? await get(parsed.data) : null
+      })
       return markers.filter((marker): marker is WorldModuleMarker => marker !== null)
     },
     provision: workspaceId => mutate(async () => {
