@@ -545,8 +545,11 @@
     border: 1px solid var(--lb-line); border-radius: var(--lb-r-md); background: var(--lb-surface-2); cursor: zoom-in; }
   .shot:hover { border-color: var(--lb-line-strong); }
   .shot:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }
-  /* A definite width, so a lazy image reserves its 16:10 box before it loads (deep links scroll to the right card). */
-  .shot img { display: block; width: min(100%, calc(36vh * 1.6)); height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: center top; }
+  /* A definite width, so a lazy image reserves its 16:10 box before it loads (deep links scroll to the right card).
+     Later cards use the full card width, so the screenshots' text stays legible; a page's first card keeps a 36 vh cap
+     so its first sentence is on screen when the page opens (C9). */
+  .shot img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: center top; }
+  .card:first-child .shot img { width: min(100%, calc(36vh * 1.6)); }
   .enlarge { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
     background: rgba(255, 255, 255, .92); color: var(--lb-ink-2); box-shadow: var(--lb-shadow-sm); }
   .diagram { display: grid; place-items: center; margin: 0; padding: 20px 16px; border-radius: var(--lb-r-md); background: var(--lb-brand-50); }
