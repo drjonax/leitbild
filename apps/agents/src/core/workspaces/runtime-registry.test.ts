@@ -255,7 +255,8 @@ describe('WorkspaceRuntimeRegistry', () => {
       const agent = asAIAgent(await system.spawnAIAgent({ name: 'Agent', model: 'mock-model', persona: '', tools: [] }))!
       room.addMember(agent.id)
       await agent.join(room)
-      agent.receive(room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' }))
+      // The Room delivers to its members; a second receive would queue a second turn.
+      room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' })
       const until = performance.now() + 10_000
       while (!room.getRetainedMessages().some(message => message.senderId === agent.id) && performance.now() < until) await Bun.sleep(5)
       await agent.whenIdle()
