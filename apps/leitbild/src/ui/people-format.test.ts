@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  avatarTone, badgeText, chatRows, initials, isDefaultName, messageCounterText, messageSendable, messageText, nameCounterText, nameProblem,
+  avatarTone, badgeText, chatRows, initials, isolate, isDefaultName, messageCounterText, messageSendable, messageText, nameCounterText, nameProblem,
   NAME_TEXT, normaliseName, pillText, previewText, rowLabel, triggerLabel, type ChatItem,
 } from './people-format.ts'
 
@@ -28,6 +28,11 @@ describe('names', () => {
     expect(isDefaultName('User3')).toBe(true)
     expect(isDefaultName('User0')).toBe(false)
     expect(isDefaultName('Anna')).toBe(false)
+  })
+
+  test('a name inside a sentence is isolated, so a right-to-left name cannot reorder it', () => {
+    expect(isolate('בן')).toBe('\u2068בן\u2069')
+    expect(NAME_TEXT.taken('בן')).toBe('“\u2068בן\u2069” is already taken in this Workspace. Try another name.')
   })
 
   test('the avatar tone is stable per id and within the six tones', () => {
