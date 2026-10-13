@@ -21,6 +21,7 @@ import {
   type WorkspaceRoomScope,
 } from '@leitbild/contracts'
 import type { Tool, ToolContext, ToolResult } from '../../core/types/tool.ts'
+import { isPeopleCapabilityId } from '../../core/people/people-capability-ids.ts'
 
 export interface WorkspaceCapabilityToolsDeps {
   readonly workspaceId: WorkspaceId
@@ -340,7 +341,10 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
       return cached.catalog
     }
     if (!response.ok) throw await readHostError(response)
-    const catalog = workspaceCapabilityCatalogSchema.parse(await response.json())
+    const published = workspaceCapabilityCatalogSchema.parse(await response.json())
+    // Agents' own People Capabilities serve the humans of a Workspace through
+    // the Host UI; its AI Agents never discover or invoke them.
+    const catalog = { ...published, capabilities: published.capabilities.filter(operation => !isPeopleCapabilityId(operation.id)) }
     const etag = response.headers.get('etag')
     operationCache = etag ? {etag,catalog} : undefined
     return catalog

@@ -455,6 +455,36 @@ describe('Workspace progressive-discovery tools', () => {
     expect(await invoked.json()).toMatchObject({ idempotencyKey: 'supported' })
   })
 
+  test('never discovers or invokes the Agents People Capabilities, which serve humans through the Host UI', async () => {
+    const agents = moduleIdSchema.parse('agents')
+    const peopleSend = capabilityIdSchema.parse('agents.people.message.send')
+    const packsList = capabilityIdSchema.parse('agents.packs.list')
+    const requests: Request[] = []
+    const base = catalogFetch(requests)
+    const [explore, call] = createWorkspaceCapabilityTools({
+      workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: () => ({ kind: 'workspace' }),
+      fetchImpl: (async (input, init) => {
+        const response = await base(input, init)
+        if (!new Request(String(input), init).url.endsWith('/capabilities')) return response
+        const body = await response.json() as { modules: unknown[]; capabilities: unknown[] }
+        body.modules.push({ moduleId: agents, status: 'ready' })
+        body.capabilities.push(
+          { id: peopleSend, moduleId: agents, kind: 'command', scope: { kind: 'workspace' }, title: 'Send a direct message', description: 'Sends a text message to another Person.', risk: 'write', idempotent: false, acceptsIdempotencyKey: true, inputSchema: { type: 'object' }, outputSchema: { type: 'object' } },
+          { id: packsList, moduleId: agents, kind: 'query', scope: { kind: 'workspace' }, title: 'List installed Agent Packs', description: 'Lists Packs.', risk: 'read', idempotent: true, inputSchema: { type: 'object' }, outputSchema: { type: 'object' } },
+        )
+        return Response.json(body)
+      }) as typeof fetch,
+    })
+    const browsed = await explore!.execute({ view: 'operations', moduleId: 'agents', limit: 100 }, context)
+    expect(browsed).toMatchObject({ success: true, data: { operations: [{ operationId: packsList }] } })
+    expect(JSON.stringify(browsed)).not.toContain('agents.people.')
+    expect(await explore!.execute({ view: 'operations', operationIds: [peopleSend], queries: ['send direct message person'] }, context))
+      .toMatchObject({ success: true, data: { operations: [] } })
+    expect(await call!.execute({ calls: [{ key: 'dm', operationId: peopleSend, input: { token: 't', to: 'p', text: 'hi' }, idempotencyKey: 'k' }] }, context))
+      .toMatchObject({ success: true, data: { results: [{ success: false, error: expect.stringContaining('operation_not_advertised') }] } })
+    expect(requests.filter(request => request.url.includes('/invoke'))).toHaveLength(0)
+  })
+
   test('requires a Room with an explicit Scope', async () => {
     const [, call] = makeTools({ kind: 'workspace' })
     expect(await call!.execute({ calls: [{ key: 'state', operationId: readId, target: runTarget, input: {} }] }, {
