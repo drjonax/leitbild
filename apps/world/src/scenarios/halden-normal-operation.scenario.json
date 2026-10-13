@@ -295,36 +295,5 @@
       ],
       "zoom": 9.5
     }
-  },
-  "timeline": {
-    "cues": [
-      {
-        "id": "normal-operation-briefing",
-        "at": {
-          "kind": "after_scenario_start",
-          "seconds": 0
-        },
-        "title": "Normal operation: nothing is scripted",
-        "actions": [
-          {
-            "type": "show_guidance",
-            "guidance": {
-              "id": "normal-operation-briefing",
-              "title": "Normal operation: nothing is scripted",
-              "message": "The four units run at full power and export about 4.4 GW. Nothing happens unless you make it happen: inject a fault with the lightning button, “Instructor actions”, in a unit's display window, or open a circuit from the grid panel. A rain shower passes over the units about 15 minutes in; weather does not affect the plants or the grid.",
-              "objectIds": [
-                "grid:halden-four-unit",
-                "plant:halden-1",
-                "plant:halden-2",
-                "plant:halden-3",
-                "plant:halden-4"
-              ],
-              "dismissible": true,
-              "tone": "default"
-            }
-          }
-        ]
-      }
-    ]
   }
 }

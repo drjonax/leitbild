@@ -20,10 +20,8 @@ describe('Halden: normal operation', () => {
     expect(quiet.view).toEqual(offsite.view)
   })
 
-  test('schedules nothing but a dismissible brief', () => {
-    const actions = quiet.timeline?.cues.flatMap(cue => cue.actions) ?? []
-    expect(actions.map(action => action.type)).toEqual(['show_guidance'])
-    expect(actions.every(action => action.type !== 'show_guidance' || action.guidance.dismissible)).toBe(true)
+  test('schedules nothing: no timeline, so no brief, fault or guidance', () => {
+    expect(quiet.timeline).toBeUndefined()
   })
 
   test('moves a rain shower over the four units and on past them', () => {
