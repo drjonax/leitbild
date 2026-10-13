@@ -74,6 +74,7 @@ import { dirname, join } from 'node:path'
 import { createComparisons } from './agents/comparisons.ts'
 import { requestDisplay } from './agents/display-requests.ts'
 import { createProposalCardReader, proposedOperationsOf, type ProposalCard } from './agents/proposal-cards.ts'
+import { createProposalResumes, type ProposalResumes } from './agents/proposal-resumes.ts'
 import type { DisplayRequestAccepted } from './core/display-request.ts'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
@@ -189,6 +190,9 @@ export interface AgentsWorkspaceRuntime {
   // The operations a turn proposed and where World says each stands now (agents/proposal-cards.ts).
   // Throws with a code where the Room, the turn or the Workspace Host is missing.
   readonly readProposalCards: (roomId: string, turnId: string) => Promise<ReadonlyArray<ProposalCard>>
+  // Watches the proposals of procedure turns and resumes their agent once one is approved
+  // (agents/proposal-resumes.ts). Absent without a Workspace Host; disposed with the runtime.
+  readonly proposalResumes?: ProposalResumes
   readonly setOnMessagePosted: (callback: OnMessagePosted) => void
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
@@ -819,6 +823,17 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       return { model: preferred, fallback: false, reason: 'preferred_available' }
     }
 
+    // Proposal cards read World's status through the same Host the agents' workspace calls go to.
+    const proposalCards = options.workspaceId !== undefined && options.workspaceHostUrl !== undefined
+      ? createProposalCardReader({ workspaceId: options.workspaceId, hostBaseUrl: options.workspaceHostUrl })
+      : undefined
+    // An approved proposal of a procedure turn resumes its agent (agents/proposal-resumes.ts).
+    // Without a Workspace Host there is no World to read: nothing is watched,
+    // and the person continues the procedure as before.
+    const proposalResumes = proposalCards === undefined
+      ? undefined
+      : createProposalResumes({ rooms, team, executions: executionStore, readStatus: proposalCards.read })
+
     const runToolOperation = options.runWorkspaceOperation
     const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
       spawnAIAgent(config, llmService, rooms, settings, team, routeMessage, toolRegistry, {
@@ -826,7 +841,11 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
         executionStore,
         executionGrowth,
         onTurnStart: comparisons.capture,
-        onTurnMessageLinked: comparisons.link,
+        onTurnMessageLinked: input => {
+          // Absent without a Workspace Host (see proposalResumes above).
+          proposalResumes?.answered(input)
+          comparisons.link(input)
+        },
         onTurnFinished: comparisons.discard,
         ...(runToolOperation ? { runToolOperation } : {}),
         getSkills: getSkillsForRoom,
@@ -969,11 +988,6 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       })
     }
 
-    // Proposal cards read World's status through the same Host the agents' workspace calls go to.
-    const proposalCards = options.workspaceId !== undefined && options.workspaceHostUrl !== undefined
-      ? createProposalCardReader({ workspaceId: options.workspaceId, hostBaseUrl: options.workspaceHostUrl })
-      : undefined
-
     const system: AgentsWorkspaceRuntime = {
       rooms, createRoom, settings, bookmarks, team, routeMessage, executionStore, comparisons,
       llm, llmService, ollama, providerConfig, providerKeys, gateways, monitors,
@@ -1022,6 +1036,7 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
         // An agent removed from the Workspace since is named by its id.
         return await proposalCards.read(operations, { id: turn.agentId, name: team.getAgent(turn.agentId)?.name ?? turn.agentId })
       },
+      ...(proposalResumes === undefined ? {} : { proposalResumes }),
       requestDisplay: (roomId, messageId, requesterId) => requestDisplay({
         rooms, team, isScriptRunning: roomId => scriptRunnerRef?.getRun(roomId) !== undefined,
       }, roomId, messageId, requesterId),

@@ -35,11 +35,11 @@ export type MessageErrorCode =
 // IMPORTANT: this is metadata, not LLM context. The agent's context-builder
 // strips `cause` so it doesn't bleed into the prompt as noise.
 
-export type MessageCauseKind = 'script' | 'trigger' | 'biometric' | 'resource-event' | 'display-request'
+export type MessageCauseKind = 'script' | 'trigger' | 'biometric' | 'resource-event' | 'display-request' | 'proposal-approved'
 
 export interface MessageCause {
   readonly kind: MessageCauseKind
-  readonly name: string                 // script/trigger name; for biometric, the captureId; for display-request, the requester's name
+  readonly name: string                 // script/trigger name; for biometric, the captureId; for display-request, the requester's name; for proposal-approved, who approved what
   readonly step?: number                // 0-based step index (scripts)
 }
 

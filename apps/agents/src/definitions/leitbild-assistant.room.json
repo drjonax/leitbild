@@ -28,7 +28,7 @@
     }, {
       "id": "continue-procedure",
       "label": "Continue procedure",
-      "description": "Resume the procedure the Assistant held for you, once you have approved its proposal or selected the branch in the procedure window.",
+      "description": "Resume the procedure the Assistant held for you once you have selected the branch in the procedure window. An approved proposal resumes it on its own.",
       "action": {
         "kind": "post-message",
         "content": "Continue the procedure you were running."
