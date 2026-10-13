@@ -26,6 +26,7 @@
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ProcedureRunBadges from './ProcedureRunBadges.svelte'
   import { procedureDialog } from './procedure-dialog.ts'
+  import { procedureFollowAction, procedureFollowMark, type ProcedureFollowMark } from './procedure-follow.ts'
   import ProcedureTagDisplay from './ProcedureTagDisplay.svelte'
   import type { EmbeddedViewListing } from '@leitbild/contracts'
   import {
@@ -215,6 +216,11 @@
   /** The unit the shown document was loaded for; its scroll position is remembered under that unit. */
   let documentScope: ProcedureRunScope | null = null
   const procedureScrollPositions = new Map<string, number>()
+  /** What this window last showed of its Run; an AI agent's move is the difference it follows. */
+  let followMark: ProcedureFollowMark | null = null
+  let followTimer: number | null = null
+  /** When the person last pointed, wheeled, touched or typed in this window. */
+  let lastInteractionAt: number | null = null
 
   const currentUnitContext = $derived(unitContexts.find(unit => unit.plantId === plantId) ?? {
     plantId: plantId,
@@ -630,6 +636,35 @@
         block: 'start',
         behavior,
       })
+    })
+  }
+
+  // An AI agent driving the shown Run moves this window on with it, once the
+  // person has left the window alone; it never takes focus.
+  const followAiDriver = (): void => {
+    if (disposed || !document) return
+    const shown = { documentKey: procedureViewKey(document, currentScope), run: selectedProcedureRun }
+    const action = procedureFollowAction({
+      runs,
+      shown,
+      mark: followMark,
+      request: null,
+      ownWrite: pendingControl !== null,
+      // An open confirmation is the person at work: nothing moves under it.
+      idleForMs: confirmation !== null ? 0 : lastInteractionAt === null ? Number.POSITIVE_INFINITY : Date.now() - lastInteractionAt,
+    })
+    if (action.kind === 'wait') {
+      if (followTimer !== null) window.clearTimeout(followTimer)
+      followTimer = window.setTimeout(() => { followTimer = null; followAiDriver() }, action.delayMs)
+      return
+    }
+    followMark = procedureFollowMark(shown.documentKey, shown.run)
+    if (action.kind === 'scroll') scrollToProcedureStep(action.stepId)
+    // The destination opens at its current step, as the person's own confirmed transfer does.
+    if (action.kind === 'show') void loadProcedure(action.run.procedureId, true, {
+      sourceId: action.run.sourceId,
+      sourceRevision: action.run.sourceRevision,
+      sourcePath: action.run.sourcePath,
     })
   }
 
@@ -1177,6 +1212,11 @@
   }
 
   runOnMount(() => {
+    // The person's own pointer, wheel, touch or key in the window holds an AI agent's moves off.
+    const windowElement = procedureWindowElement
+    if (!windowElement) throw new Error('procedure window element is not mounted')
+    const noteInteraction = (): void => { lastInteractionAt = Date.now() }
+    const interactionEvents = ['pointerdown', 'wheel', 'touchstart', 'keydown'] as const
     if (!boundsInitialized) {
       windowBounds = clampWindowBounds(defaultWindowBounds())
       boundsInitialized = true
@@ -1191,6 +1231,7 @@
       windowBounds = clampWindowBounds(windowBounds)
     }
     window.addEventListener('resize', handleResize)
+    for (const type of interactionEvents) windowElement.addEventListener(type, noteInteraction, { capture: true, passive: true })
     return () => {
       disposed = true
       latestProcedureLoadRequest++
@@ -1201,8 +1242,18 @@
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame)
       window.clearInterval(interval)
       window.removeEventListener('resize', handleResize)
+      for (const type of interactionEvents) windowElement.removeEventListener(type, noteInteraction, { capture: true })
       if (toastTimer !== null) window.clearTimeout(toastTimer)
+      if (followTimer !== null) window.clearTimeout(followTimer)
     }
+  })
+
+  // Each Run read, document load and unit change may show an AI agent's move.
+  $effect(() => {
+    runs
+    document
+    currentScope
+    untrack(followAiDriver)
   })
 
   // Opening this unit's procedures again focuses this window instead of a second one.
