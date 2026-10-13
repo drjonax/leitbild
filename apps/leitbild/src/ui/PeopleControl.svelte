@@ -97,6 +97,12 @@
 
   const closePopover = (returnFocus: boolean): void => {
     if (!open) return
+    // Closing ends a name edit as leaving the field does; removing the field
+    // fires no blur in Firefox or Safari, so a typed name is saved here.
+    if (editing && !saving) {
+      if (people.me !== null && normaliseName(draft) !== people.me.name) void save('blur')
+      else editing = false
+    }
     open = false
     session.setPopoverOpen(false)
     if (sheet?.open) sheet.close()
