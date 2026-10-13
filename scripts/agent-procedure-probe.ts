@@ -574,7 +574,10 @@ const openReference = run === undefined || unit === undefined || e0 === undefine
   const now = await breakers(unit!.id)
   if (!now.every(reading => reading.closed === false)) return { unavailable: `the breakers no longer read open: ${now.map(reading => `${reading.tagId} closed=${reading.closed}`).join(', ')}` }
   const view = stepSummary(await readStep(person, run.runId, e0!.steps[0]!.id))
-  return { readings: Object.fromEntries(view.tags.flatMap(tag => tag.reading === null ? [] : [[tag.id, tag.reading]])) as Record<string, string>, tags: view.tags }
+  // As World records evidence: a two-state reading names its model variable ("reactorTripBreakerA.closed = false").
+  const recorded = (tag: { readonly reading: string | null; readonly signal?: string }): string | null =>
+    tag.reading === null ? null : tag.signal === undefined ? tag.reading : `${tag.signal} = ${tag.reading.split(' ')[0]}`
+  return { readings: Object.fromEntries(view.tags.flatMap(tag => recorded(tag) === null ? [] : [[tag.id, recorded(tag)!]])) as Record<string, string>, tags: view.tags }
 })().catch(error => ({ unavailable: `reading step 1 failed: ${String(error)}` }))
 
 {
