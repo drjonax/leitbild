@@ -8,6 +8,7 @@
   import Icon from './Icon.svelte'
   import PersonAvatar from './PersonAvatar.svelte'
   import { switcherKeyTarget } from './workspace-switcher.ts'
+  import { composingKeystroke } from './ime.ts'
   import {
     badgeText, isDefaultName, isolate, NAME_TEXT, nameCounterText, nameProblem, normaliseName, pillText, previewText, rowLabel, STORAGE_BLOCKED_TEXT,
     triggerLabel, type TriggerMode,
@@ -145,7 +146,7 @@
 
   const onKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
-      if (event.isComposing) return
+      if (composingKeystroke(event)) return
       event.preventDefault()
       event.stopPropagation()
       closePopover(true)
@@ -287,7 +288,7 @@
   }
 
   const onNameKeydown = (event: KeyboardEvent): void => {
-    if (event.isComposing) return
+    if (composingKeystroke(event)) return
     if (event.key === 'Enter') {
       event.preventDefault()
       void save('enter')

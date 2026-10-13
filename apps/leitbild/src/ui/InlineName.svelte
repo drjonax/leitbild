@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte'
+  import { composingKeystroke } from './ime.ts'
   let { value, fallback, label, onsave, pencil = true, onclose }: {
     value: string
     fallback: string
@@ -44,7 +45,7 @@
   {#if editing}
     <input bind:this={input} bind:value={draft} aria-label={label} placeholder={fallback} maxlength="256" disabled={saving}
       onkeydown={event => {
-        if (event.isComposing) return
+        if (composingKeystroke(event)) return
         if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); void save() }
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); editing = false; onclose?.('cancelled') }
       }}

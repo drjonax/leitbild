@@ -12,6 +12,7 @@
   import { tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import PersonAvatar from './PersonAvatar.svelte'
+  import { composingKeystroke } from './ime.ts'
   import {
     chatRows, fullTimeLabel, messageCounterText, messageSendable, newMessagesPill, OUTBOX_UNSAVED_TEXT, timeLabel, type ChatBubble,
   } from './people-format.ts'
@@ -190,13 +191,13 @@
 
   const onComposerKeydown = (event: KeyboardEvent): void => {
     // Keystrokes that finish an IME composition never send.
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+    if (event.key !== 'Enter' || event.shiftKey || composingKeystroke(event)) return
     event.preventDefault()
     send()
   }
 
   const onWindowKeydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || event.isComposing) return
+    if (event.key !== 'Escape' || composingKeystroke(event)) return
     event.preventDefault()
     onClose()
   }
