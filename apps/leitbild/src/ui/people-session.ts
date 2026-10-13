@@ -241,6 +241,8 @@ interface OutboxEntry {
   readonly deadline: number
   readonly stage: 'quiet' | 'sending' | 'failed'
   readonly reason: string | null
+  /** Sent to Agents at least once, so it may be stored there although no answer came back. */
+  readonly attempted: boolean
 }
 
 /** What survives a reload in sessionStorage: the message, its key, and whether it already failed. */
@@ -540,6 +542,27 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     names.set(person.id, person)
   }
 
+  /**
+   * My own message can arrive (through sync or a conversation read) before its
+   * send is acknowledged, or after the send gave up waiting although Agents
+   * stored it. It is then the oldest outbox entry already sent to the same
+   * person with the same text: that entry is delivered, never shown twice.
+   * Only an entry that was sent can match, so a sibling tab's identical message
+   * never swallows one that was not sent yet.
+   */
+  const claimOutbox = (message: MessageWire): void => {
+    if (me === null || message.from !== me.id || deliveredKeys.has(message.id)) return
+    const entry = outbox.find(candidate => candidate.attempted && candidate.to === message.to && candidate.text === message.text)
+    if (entry === undefined) return
+    deliveredKeys.set(message.id, entry.key)
+    outbox = outbox.filter(candidate => candidate.key !== entry.key)
+    persistOutbox()
+    if (sendingKey === entry.key) {
+      sendController?.abort()
+      finishSend()
+    }
+  }
+
   /** Adds messages by seq, ignoring ones already known; returns the new ones. */
   const addMessages = (incoming: ReadonlyArray<MessageWire>, knownPeer?: string): ReadonlyArray<MessageWire> => {
     const fresh: MessageWire[] = []
@@ -547,6 +570,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       const peer = knownPeer ?? peerOf(message)
       const list = messagesByPeer.get(peer) ?? []
       if (list.some(known => known.id === message.id)) continue
+      claimOutbox(message)
       fresh.push(message)
       messagesByPeer.set(peer, [...list, message].sort((left, right) => left.seq - right.seq).slice(-HISTORY_CAP))
     }
@@ -752,6 +776,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         chatController = null
         chatLoading = false
         remember(result.with)
+        for (const message of result.messages) claimOutbox(message)
         const newer = (messagesByPeer.get(peer) ?? []).filter(message => message.seq > (result.messages.at(-1)?.seq ?? 0))
         messagesByPeer.set(peer, [...result.messages, ...newer].slice(-HISTORY_CAP))
         readThrough.set(peer, Math.max(readThrough.get(peer) ?? 0, result.readThrough.me))
@@ -759,6 +784,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         chatFirstUnread = firstUnread === undefined ? null : messageKey(firstUnread)
         chatCapped = result.messages.length >= HISTORY_CAP
         maybeMarkRead()
+        pump()
         emit()
       }, error => {
         if (chatController !== controller) return
@@ -796,6 +822,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     outbox = entries.data.map(entry => ({
       key: entry.key, to: entry.to, text: entry.text, createdAt: entry.createdAt, deadline: now + SEND_TIMEOUT_MS,
       stage: entry.failed ? 'failed' : 'sending', reason: entry.failed ? entry.reason ?? SEND_REASON.failed : null,
+      // It may have been sent before the reload.
+      attempted: true,
     }))
   }
 
@@ -826,6 +854,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     const controller = new AbortController()
     sendingKey = next.key
     sendController = controller
+    if (!next.attempted) outbox = outbox.map(entry => entry.key === next.key ? { ...entry, attempted: true } : entry)
     void invoke(PEOPLE_CAPABILITY.send, { token, to: next.to, text: next.text }, sendResultSchema, { signal: controller.signal, idempotencyKey: next.key })
       .then(result => {
         if (sendController !== controller) return
@@ -1002,7 +1031,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     send: raw => {
       if (chatPeer === null || !messageSendable(raw)) return false
       const now = ports.now()
-      outbox = [...outbox, { key: ports.randomId(), to: chatPeer, text: messageText(raw), createdAt: now, deadline: now + SEND_TIMEOUT_MS, stage: 'quiet', reason: null }]
+      outbox = [...outbox, { key: ports.randomId(), to: chatPeer, text: messageText(raw), createdAt: now, deadline: now + SEND_TIMEOUT_MS, stage: 'quiet', reason: null, attempted: false }]
       chatFirstUnread = null
       persistOutbox()
       scheduleOutboxTimer()
