@@ -1,12 +1,13 @@
 <script lang="ts">
   // The Workspace page header (plan v2 §6.1): the name, the public note, Copy
-  // link and a ⋯ disclosure with Rename and Delete Workspace…. Delete is only
-  // here, behind the typed name (rule 14), never on a first-run surface.
+  // link and a ⋯ disclosure with Rename and Delete Workspace…. Delete asks
+  // once, in a modal that names the Workspace; it is never on a first-run surface.
   import type { Workspace } from '@leitbild/contracts'
-  import DeleteWorkspaceDialog from './DeleteWorkspaceDialog.svelte'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
   import InlineName from './InlineName.svelte'
   import MoreMenu from './MoreMenu.svelte'
+  import { WORKSPACE_NOUN } from './bulk-delete.ts'
   import { plainErrorText } from './error-text.ts'
   import { shortDate, workspaceLabel } from './launch-workspace.ts'
   import type { WorkspaceAdmin } from './workspace-admin.ts'
@@ -62,7 +63,9 @@
   </div>
 </header>
 
-<DeleteWorkspaceDialog bind:open={deleting} {workspace} {admin} {ondeleted} returnFocus={() => menu?.focus()} />
+<ConfirmDialog bind:open={deleting} items={[{ key: workspace.id, label }]} noun={WORKSPACE_NOUN}
+  body="Its simulations and conversations are deleted for everyone. This cannot be undone."
+  remove={item => admin.remove(item.key)} onfinished={removed => { if (removed.length > 0) ondeleted() }} returnFocus={() => menu?.focus()} />
 
 <style>
   .ws-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--lb-s4) var(--lb-s5); flex-wrap: wrap; }

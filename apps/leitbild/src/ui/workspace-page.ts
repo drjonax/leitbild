@@ -1,8 +1,8 @@
 // What the Workspace page shows (plan v2 §6), as pure functions over the
 // Host's catalogue responses: the featured demos this Workspace holds, the
 // other Definitions under "More scenarios" (with the summary a Module lists
-// them by, as the Demos modal shows it), what to continue, and the typed name
-// that confirms a delete. The Svelte files only render these.
+// them by, as the Demos modal shows it) and what to continue. The Svelte
+// files only render these.
 
 import type {
   FeaturedDefinitionCatalog,
@@ -164,13 +164,3 @@ export const scenarioRowSummary = (
   if (entry !== undefined) return { lead: entry.summary, more: (definition.description?.trim() ?? '') !== '' }
   return { lead: summaryLead(definition.description), more: summaryHasMore(definition.description) }
 }
-
-// ---------- Delete ----------
-
-/** What the visitor types to delete: the name, or the short id of an unnamed Workspace. */
-export const deleteConfirmationText = (workspace: { readonly id: string; readonly name: string | null }): string =>
-  workspace.name ?? workspace.id.slice(0, 6)
-
-/** Exact after trimming the ends: the point is to make the visitor read the name. */
-export const confirmsDeletion = (typed: string, workspace: { readonly id: string; readonly name: string | null }): boolean =>
-  typed.trim() === deleteConfirmationText(workspace)

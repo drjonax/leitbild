@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { featuredDefinitionCatalogSchema, moduleResourceDescriptorSchema } from '@leitbild/contracts'
 import {
-  confirmsDeletion, CONTINUE_LIMIT, continueItems, deleteConfirmationText, featuredStartRevision,
+  CONTINUE_LIMIT, continueItems, featuredStartRevision,
   openedFromGuide, previewSrc, previewSrcset, PUBLIC_NOTE, sameDefinition, scenarioRowSummary, summaryHasMore, summaryLead, workspaceDemos,
 } from './workspace-page.ts'
 import { featured, listed, revision, room, run, scenario, WS } from './workspace-page.test-support.ts'
@@ -136,21 +136,7 @@ describe('scenario rows', () => {
   })
 })
 
-describe('delete confirmation', () => {
-  test('needs the exact name, or the short id of an unnamed Workspace', () => {
-    const named = { id: WS, name: 'Grid study' }
-    expect(deleteConfirmationText(named)).toBe('Grid study')
-    expect(confirmsDeletion('Grid study', named)).toBe(true)
-    expect(confirmsDeletion('  Grid study ', named)).toBe(true)
-    expect(confirmsDeletion('grid study', named)).toBe(false)
-    expect(confirmsDeletion('Grid', named)).toBe(false)
-    expect(confirmsDeletion('', named)).toBe(false)
-    const unnamed = { id: 'b56b1d2e-0000-4000-8000-000000000000', name: null }
-    expect(deleteConfirmationText(unnamed)).toBe('b56b1d')
-    expect(confirmsDeletion('b56b1d', unnamed)).toBe(true)
-    expect(confirmsDeletion('Untitled Workspace · b56b1d', unnamed)).toBe(false)
-  })
-
+describe('public note', () => {
   test('the public note says anyone can delete', () => {
     expect(PUBLIC_NOTE).toBe('Public: anyone can see, open, change or delete this Workspace.')
   })
