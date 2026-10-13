@@ -211,13 +211,17 @@ export const createSimulationRunRuntime = async (config: {
   let projectedSnapshotTimer: ReturnType<typeof setTimeout> | null = null
   let operationTail: Promise<void> = Promise.resolve()
   let closing = false
+  // Set once close has saved the final snapshot: nothing may commit or save after it.
+  let closed = false
   let maximumPaceActive = false
   let terminalExecutionFailure: string | null = null
   let commitFailure: Error | null = null
   let commitFailedAt: IsoTimestamp | null = null
   let lastCommitAt = nowIso()
   let quarantinePending: Promise<void> | null = null
-  let activeMutations = 0
+  // Commands admitted at an execution boundary and still preparing or committing;
+  // close waits for them so none commits into a closed or deleted Run.
+  const commandsInFlight = new Set<Promise<void>>()
   let scenarioRunner: ScenarioTimelineRunner | null = null
   let pendingRuntimeEmissions = 0
   let runtimeEmissionFailure: unknown = null
@@ -283,6 +287,7 @@ export const createSimulationRunRuntime = async (config: {
 
   const assertCommitAvailable = (): void => {
     if (commitFailure) throw commitFailure
+    if (closed) throw Object.assign(new Error('Simulation Run is closed; nothing more is committed to it'), { code: 'simulation_run_closed' })
   }
 
   const failCommit = async (error: unknown, committedObservationFailure = false): Promise<never> => {
@@ -1443,9 +1448,18 @@ export const createSimulationRunRuntime = async (config: {
     // Holding operationTail across preparation would deadlock valid reset and
     // deletion races while adding no consistency guarantee.
     const mutating = runtimeCapabilities.get(invocation.capabilityId)?.capability.kind === 'command'
-    await enqueueOperation(async () => { if (mutating) activeMutations++ })
+    let admitted: { readonly done: Promise<void>; readonly finish: () => void } | undefined
+    await enqueueOperation(async () => {
+      if (!mutating) return
+      let finish!: () => void
+      const done = new Promise<void>(resolve => { finish = resolve })
+      admitted = { done, finish }
+      commandsInFlight.add(done)
+    })
     try { return await invokeCapabilityThroughRuntime(actor, invocation, commandSourceOf(actor)) }
-    finally { if (mutating) activeMutations-- }
+    finally {
+      if (admitted) { commandsInFlight.delete(admitted.done); admitted.finish() }
+    }
   }
 
   // The scope's owning Pack answers through its declared read Capabilities,
@@ -1468,7 +1482,7 @@ export const createSimulationRunRuntime = async (config: {
   }
 
   const checkpointForCopy = async (): Promise<SimulationRunCopyCheckpoint> => await enqueueOperation(async () => {
-    if (activeMutations > 0 || pendingCues > 0) throw Object.assign(
+    if (commandsInFlight.size > 0 || pendingCues > 0) throw Object.assign(
       new Error('Simulation Run has commands preparing changes; retry copy when they finish'),
       { code: 'simulation_run_busy' },
     )
@@ -1710,6 +1724,9 @@ export const createSimulationRunRuntime = async (config: {
       pendingObservationAcquisitions.clear()
       scenarioRunner?.close()
       await operationTail
+      // Admitted commands finish inside the close: their results commit before
+      // the final snapshot, never after it into a closed or deleted Run.
+      await Promise.all([...commandsInFlight])
       await clockQueue
       await cueQueue
       scenarioRunner?.close()
@@ -1740,6 +1757,7 @@ export const createSimulationRunRuntime = async (config: {
         }
       } catch (error) { failures.push(error) }
       finally {
+        closed = true
         config.historian?.close()
         metrics.markClosed(nowIso())
         handlers.clear()

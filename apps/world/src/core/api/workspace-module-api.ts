@@ -1576,7 +1576,7 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       kind: 'query',
       scope: { kind: 'resource', resourceType: 'world.simulation-run' },
       title: 'Wait for a Run change',
-      description: `Waits in your turn, at most ${runWaitMaxMs / 1_000} s of wall time, for the plant to respond or a person to act. Input {afterSequence?, maxWaitMs? (1000-${runWaitMaxMs}), simulationSeconds? (1-600), events? [{type, procedureRunId?, signalType?}] (up to 8), procedureRunId?}; name simulationSeconds, events or both. With procedureRunId the result also carries next: that run's current step as world.procedure.run.step.read returns it, so decide from it without another read. Returns at the first of: a durable event after afterSequence (a step read's sequence; omitted: from now) matching events, e.g. {"type":"interaction.signal.received","signalType":"process-plant.proposal.approved"}; simulationSeconds of plant time from now; someone else taking over, releasing, closing or resetting a procedure Run you drive (reason driver-changed: stop and report); or maxWaitMs (timeout). Waiting for plant time on a paused clock returns clock-paused at once: it never plays or advances time. Returns reason, fromSequence, sequence, simulationTime, waitedMs, the matching events and driverChanged. Call it alone.`,
+      description: `Waits in your turn, at most ${runWaitMaxMs / 1_000} s of wall time, for the plant to respond or a person to act. Input {afterSequence?, maxWaitMs? (1000-${runWaitMaxMs}), simulationSeconds? (1-600), events? [{type, procedureRunId?, signalType?}] (up to 8), procedureRunId?}; name simulationSeconds, events or both. With procedureRunId the result also carries next: that run's current step as world.procedure.run.step.read returns it, so decide from it without another read. Returns at the first of: a durable event after afterSequence (a step read's sequence; omitted: from now) matching events, e.g. {"type":"interaction.signal.received","signalType":"process-plant.proposal.approved"}; simulationSeconds of plant time from now; someone else taking over, releasing, closing or resetting a procedure Run you drive (reason driver-changed: stop and report); or maxWaitMs (timeout). Waiting for plant time on a paused clock returns clock-paused at once: it never plays or advances time. If the Run is deleted, its Workspace removed or World stops, the wait fails at once with simulation_run_closed: stop. Returns reason, fromSequence, sequence, simulationTime, waitedMs, the matching events and driverChanged. Call it alone.`,
       searchTerms: ['wait for plant response', 'wait plant time', 'wait for approval', 'simulation seconds', 'procedure wait'],
       risk: 'read',
       idempotent: true,
@@ -1607,8 +1607,8 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
             const timer = setTimeout(callback, delayMs)
             return () => clearTimeout(timer)
           },
-          // Deleting the Run, removing its Workspace or stopping World unloads it.
-          closed: () => registry.get(simulationRunId) !== runtime,
+          // Deleting the Run unloads it; removing its Workspace or stopping World closes the registry.
+          closed: () => registry.get(simulationRunId) !== runtime || registry.closing(),
         },
       })
       return json({ result: input.procedureRunId === undefined ? result

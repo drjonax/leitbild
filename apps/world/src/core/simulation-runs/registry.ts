@@ -148,6 +148,10 @@ export interface SimulationRunRegistry {
   readonly shutdown: () => Promise<void>
   readonly close: (id: SimulationRunId) => Promise<boolean>
   readonly isIdle: () => boolean
+  /** The Workspace is closing: waits on its Runs end at once while its requests drain before shutdown. */
+  readonly beginClose: () => void
+  /** True from beginClose or shutdown on. */
+  readonly closing: () => boolean
 }
 
 export const createSimulationRunRegistry = (config: {
@@ -174,6 +178,7 @@ export const createSimulationRunRegistry = (config: {
   const loadedCompiledScenarios = new Map<SimulationRunId, CompiledScenario>()
   const lifecycle = createKeyedOperations<SimulationRunId>()
   let shuttingDown = false
+  let closeRequested = false
   const definitionOperations = createOperationScope('World scenario library')
   const procedureSourceService = config.procedureSourceService ?? createProcedureSourceService()
   const creatingSimulationRuns = new Map<SimulationRunId, Promise<SimulationRunRuntime>>()
@@ -518,6 +523,7 @@ export const createSimulationRunRegistry = (config: {
     readonly manifest: SimulationRunManifest
     readonly initialSeq?: number
   }): Promise<SimulationRunRuntime> => {
+    if (shuttingDown) throw new Error('Workspace runtime is closing')
     await ensureScenarioLibrary()
     const { scenarioRuntime } = await resolveManifest(createConfig.manifest)
     const interactionHandlers = scenarioRuntime.packs.flatMap(pack => pack.interactions?.handlers ?? [])
@@ -662,6 +668,12 @@ export const createSimulationRunRegistry = (config: {
       await runtimeConnection.close()
       historian?.close()
       throw error
+    }
+    // Shutdown began while this Run was built (a reset or copy in flight): close
+    // it rather than leave a live Run in a registry that has already closed its Runs.
+    if (shuttingDown) {
+      await runtime.close()
+      throw new Error('Workspace runtime is closing')
     }
     simulationRuns.set(id, runtime)
     loadedCompiledScenarios.set(id, scenarioRuntime.scenario)
@@ -1305,6 +1317,7 @@ export const createSimulationRunRegistry = (config: {
       for (const job of maximumPaceJobs.values()) job.stopRequested = true
       await Promise.allSettled([...maximumPaceJobs.values()].map(job => job.done))
       await executionOperations.drain()
+      await familyOperations.drain()
       await definitionOperations.close()
       await Promise.allSettled([...creatingSimulationRuns.values()])
       await lifecycle.drain()
@@ -1315,6 +1328,8 @@ export const createSimulationRunRegistry = (config: {
       if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Simulation Run shutdown failed')
     },
     leaseSummary,
+    beginClose: () => { closeRequested = true },
+    closing: () => closeRequested || shuttingDown,
     isIdle: () => simulationRuns.size === 0 && creatingSimulationRuns.size === 0 && definitionOperations.activeCount() === 0 && leasesBySimulationRun.size === 0,
     listScenarios: () => definitionOperations.run(async () => {
       await ensureScenarioLibrary()

@@ -213,6 +213,11 @@ describe('waiting through the World server', () => {
     const base = `http://127.0.0.1:${server.port}/internal/workspaces/${workspaceId}`
     expect((await fetch(base, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceId }) })).status).toBe(201)
     const run = await workspaces.getLoaded(workspaceId)!.simulationRuns.create({ scenarioId: 'test-response' })
+    // The wait is really waiting once it has subscribed to its Run's changes.
+    let markSubscribed!: () => void
+    const subscribed = new Promise<void>(resolve => { markSubscribed = resolve })
+    const subscribe = run.subscribe
+    ;(run as { subscribe: typeof subscribe }).subscribe = handler => { markSubscribed(); return subscribe(handler) }
     const resource = { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: run.id }
     const invoke = (capabilityId: string, input: unknown, kind: 'ai' | 'human') => fetch(`${base}/capabilities/${capabilityId}/invoke`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -222,8 +227,7 @@ describe('waiting through the World server', () => {
     })
     const started = performance.now()
     const waiting = invoke('world.simulation-run.wait', { events: [{ type: 'procedure.branch.selected' }], maxWaitMs: 20_000 }, 'ai')
-    // The wait holds its Run before anything is deleted.
-    while (workspaces.getLoaded(workspaceId)!.simulationRuns.leaseSummary(run.id).leasesByKind.api === 0) await Bun.sleep(10)
+    await subscribed
     return { dataDir, server, workspaces, workspaceId, base, run, invoke, started, waiting }
   }
 

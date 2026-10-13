@@ -443,7 +443,7 @@ export const handleSimulationRunApi = async (
     if (err instanceof Error && 'code' in err && err.code === 'simulation_run_busy') return apiError(409, 'simulation_run_busy', err.message)
     if (err instanceof Error && 'code' in err && err.code === 'simulation_run_failed') return apiError(409, 'simulation_run_failed', err.message)
     if (err instanceof Error && 'code' in err && typeof err.code === 'string'
-      && ['simulation_run_commit_uncertain', 'simulation_run_observer_failed', 'simulation_run_recovery_required'].includes(err.code)) return apiError(409, err.code, err.message)
+      && ['simulation_run_commit_uncertain', 'simulation_run_observer_failed', 'simulation_run_recovery_required', 'simulation_run_closed'].includes(err.code)) return apiError(409, err.code, err.message)
     if (err instanceof Error && 'code' in err && err.code === 'fast_forward_unsupported') return apiError(422, 'fast_forward_unsupported', err.message)
     if (err instanceof SyntaxError) return apiError(400, 'invalid_json', err.message)
     if (err instanceof z.ZodError) return apiError(400, 'invalid_request', err.message)
