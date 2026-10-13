@@ -13,7 +13,7 @@
   import Icon from './Icon.svelte'
   import PersonAvatar from './PersonAvatar.svelte'
   import {
-    chatRows, fullTimeLabel, messageCounterText, messageSendable, newMessagesPill, timeLabel, type ChatBubble,
+    chatRows, fullTimeLabel, messageCounterText, messageSendable, newMessagesPill, OUTBOX_UNSAVED_TEXT, timeLabel, type ChatBubble,
   } from './people-format.ts'
   import type { ChatView, ConnectionNotice, PeopleSession } from './people-session.ts'
 
@@ -32,10 +32,12 @@
   /** The divider sits a little below the top when the log scrolls to it. */
   const DIVIDER_MARGIN_PX = 8
 
-  let { session, chat, notice, anchor, focusRequest, onClose }: {
+  let { session, chat, notice, outboxSaved, anchor, focusRequest, onClose }: {
     session: PeopleSession
     chat: ChatView
     notice: ConnectionNotice
+    /** false: unsent messages would not survive a reload. */
+    outboxSaved: boolean
     /** The World pane; the window docks bottom-left when it is collapsed. */
     anchor: HTMLElement | null
     /** Increments when a row or the toast opens a chat: focus goes to the composer. */
@@ -263,6 +265,7 @@
   </div>
 
   <form class="composer" onsubmit={event => { event.preventDefault(); send() }}>
+    {#if !outboxSaved && chat.items.some(item => item.kind === 'outgoing')}<p class="note"><span>{OUTBOX_UNSAVED_TEXT}</span></p>{/if}
     {#if composerNote}<p class="note"><i class={composerNote.dot} aria-hidden="true"></i><span dir="auto">{composerNote.text}</span></p>{/if}
     <div class="compose-row">
       <label class="visually-hidden" for={`${titleId}-text`}>Message {name}</label>

@@ -42,6 +42,7 @@ export const SEND_REASON = {
 /** Shown for a person whose name this page never received: an explicit state, warned once in the console. */
 export const UNKNOWN_PERSON_NAME = 'Unknown person'
 export const STORAGE_BLOCKED_TEXT = 'This browser blocks site storage, so your name lasts only while this page is open.'
+export const OUTBOX_UNSAVED_TEXT = 'This browser can’t keep unsent messages, so they’re lost if the page reloads.'
 export const PEOPLE_FAILED_TEXT = 'People aren’t available right now.'
 
 const codePoints = (text: string): number => [...text].length

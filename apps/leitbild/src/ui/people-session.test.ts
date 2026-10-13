@@ -199,6 +199,9 @@ const names = (people: ReadonlyArray<{ readonly name: string }>): ReadonlyArray<
 
 // --- tests -----------------------------------------------------------------------
 
+const chatReady = (agents: FakeAgents, messages: ReadonlyArray<MessageWire> = [], readThrough = { me: 0, them: 0 }) =>
+  agents.on(PEOPLE_CAPABILITY.conversationRead, call => ok({ with: { id: call.input.with, name: call.input.with === BEN.id ? 'Ben' : 'Cara' }, messages, readThrough }))
+
 describe('failure classification', () => {
   const http = (status: number, code: string | null, extra: { retryable?: boolean; details?: Record<string, unknown> } = {}) =>
     classifyPeopleFailure(peopleRequestError('http', { status, code, ...extra }))
@@ -580,6 +583,23 @@ describe('identity', () => {
     expect(state()).toMatchObject({ status: 'ready', storage: 'page' })
   })
 
+  test('a full sessionStorage says unsent messages are not kept, and never claims the identity is page-only', async () => {
+    const sessionStore = memoryStorage()
+    sessionStore.setItem = () => { throw new DOMException('The quota has been exceeded.', 'QuotaExceededError') }
+    const { session, agents, state, warnings } = setup({ session: sessionStore })
+    chatReady(agents)
+    agents.on(PEOPLE_CAPABILITY.send, () => 'hold')
+    session.setViewing(RUN_A)
+    await settle()
+    expect(state()).toMatchObject({ storage: 'browser', outboxSaved: true })
+    session.openChat(BEN)
+    await settle()
+    session.send('kept in this page only')
+    await settle()
+    expect(state()).toMatchObject({ storage: 'browser', outboxSaved: false })
+    expect(warnings.filter(text => text.includes('unsent messages'))).toHaveLength(1)
+  })
+
   test('rename maps every server refusal to a sentence and remembers a saved name', async () => {
     const { session, agents, local, state } = setup()
     const replies = [
@@ -612,8 +632,6 @@ describe('identity', () => {
 })
 
 describe('messages', () => {
-  const chatReady = (agents: FakeAgents, messages: ReadonlyArray<MessageWire> = [], readThrough = { me: 0, them: 0 }) =>
-    agents.on(PEOPLE_CAPABILITY.conversationRead, call => ok({ with: { id: call.input.with, name: call.input.with === BEN.id ? 'Ben' : 'Cara' }, messages, readThrough }))
 
   test('a transient send failure retries with the same key, and a reload re-sends it with that key', async () => {
     const sessionStore = memoryStorage()

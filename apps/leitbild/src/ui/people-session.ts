@@ -198,6 +198,8 @@ export interface PeopleState {
   readonly notice: ConnectionNotice
   /** 'page': site storage is blocked, so this identity ends with the page. */
   readonly storage: 'browser' | 'page'
+  /** false: unsent messages would not survive a reload (sessionStorage unavailable or full). */
+  readonly outboxSaved: boolean
   readonly me: PersonWire | null
   /** The remembered name that was taken here when this browser joined. */
   readonly preferredNameTaken: string | null
@@ -282,37 +284,46 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   const screenId = ports.randomId()
 
   // --- storage --------------------------------------------------------------
-  let storageBlocked = false
-  const blockStorage = (cause: unknown): void => {
-    if (storageBlocked) return
-    storageBlocked = true
+  // Two separate facts. localStorage holds the identity: blocked, this page
+  // keeps its own identity and the popover says so. sessionStorage holds the
+  // unsent messages: unavailable or full, they would not survive a reload and
+  // the chat says so. Neither stops the page from working.
+  let local: PeopleStorage | null = null
+  let session: PeopleStorage | null = null
+  let identityBlocked = false
+  let outboxUnsaved = false
+  const blockIdentity = (cause: unknown): void => {
+    local = null
+    if (identityBlocked) return
+    identityBlocked = true
     ports.warn('People: site storage is blocked, so this page keeps its own identity', cause)
   }
-  const open = (factory: () => PeopleStorage): PeopleStorage | null => {
-    try { return factory() } catch (cause) { blockStorage(cause); return null }
+  const outboxNotSaved = (cause: unknown): void => {
+    if (!outboxUnsaved) ports.warn('People: unsent messages cannot be kept for a reload', cause)
+    outboxUnsaved = true
   }
-  let local = open(ports.localStorage)
-  let session = open(ports.sessionStorage)
+  try { local = ports.localStorage() } catch (cause) { blockIdentity(cause) }
+  try { session = ports.sessionStorage() } catch (cause) { outboxNotSaved(cause) }
   const read = (store: 'local' | 'session', key: string): string | null => {
     const target = store === 'local' ? local : session
     if (target === null) return null
     try { return target.getItem(key) } catch (cause) {
-      blockStorage(cause)
-      if (store === 'local') local = null
-      else session = null
+      if (store === 'local') blockIdentity(cause)
+      else outboxNotSaved(cause)
       return null
     }
   }
   const write = (store: 'local' | 'session', key: string, value: string | null): void => {
     const target = store === 'local' ? local : session
+    // Without the store the value lives in this page only, as stated above.
     if (target === null) return
     try {
       if (value === null) target.removeItem(key)
       else target.setItem(key, value)
+      if (store === 'session') outboxUnsaved = false
     } catch (cause) {
-      blockStorage(cause)
-      if (store === 'local') local = null
-      else session = null
+      if (store === 'local') blockIdentity(cause)
+      else outboxNotSaved(cause)
     }
   }
 
@@ -436,7 +447,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       status,
       failure,
       notice,
-      storage: storageBlocked ? 'page' : 'browser',
+      storage: identityBlocked ? 'page' : 'browser',
+      outboxSaved: !outboxUnsaved,
       me,
       preferredNameTaken,
       presentKnown,

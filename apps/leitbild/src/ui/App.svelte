@@ -733,7 +733,7 @@
     {#if showingComposer}
     <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}
       {runRefusal} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} bind:worldPane />
-    {#if peopleShown && people && peopleState?.chat}<PeopleChat session={people} chat={peopleState.chat} notice={peopleState.notice} anchor={worldPane}
+    {#if peopleShown && people && peopleState?.chat}<PeopleChat session={people} chat={peopleState.chat} notice={peopleState.notice} outboxSaved={peopleState.outboxSaved} anchor={worldPane}
       focusRequest={chatFocusRequest} onClose={closePeopleChat} />{/if}
     {:else}
       <div class="ws-home">
