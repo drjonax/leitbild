@@ -101,6 +101,8 @@
   let settledPeer: string | null = null
   const atBottom = (): boolean => log === null || log.scrollHeight - log.scrollTop - log.clientHeight < STICK_TO_BOTTOM_PX
   const toBottom = (): void => { if (log !== null) log.scrollTop = log.scrollHeight }
+  /** Messages are read only while the newest one is on screen (no "↓ new messages" pill). */
+  const reportPosition = (): void => session.setChatAtBottom(pill === 0 && atBottom())
 
   $effect.pre(() => {
     void chat.items
@@ -121,6 +123,7 @@
         const divider = log.querySelector<HTMLElement>('.new-divider')
         if (divider !== null && log.scrollHeight - divider.offsetTop > log.clientHeight) log.scrollTop = divider.offsetTop - DIVIDER_MARGIN_PX
         else toBottom()
+        reportPosition()
         return
       }
       const fresh = items.filter(item => !seen.has(item.key))
@@ -129,16 +132,19 @@
         sentJustNow = false
         pill = 0
         toBottom()
-        return
-      }
-      if (stick) { toBottom(); return }
-      pill += fresh.filter(item => item.kind === 'message' && !item.mine).length
+      } else if (stick) toBottom()
+      else pill += fresh.filter(item => item.kind === 'message' && !item.mine).length
+      reportPosition()
     })
   })
-  const onScroll = (): void => { if (pill > 0 && atBottom()) pill = 0 }
+  const onScroll = (): void => {
+    if (pill > 0 && atBottom()) pill = 0
+    reportPosition()
+  }
   const jumpToBottom = (): void => {
     pill = 0
     toBottom()
+    reportPosition()
     textarea?.focus()
   }
 
