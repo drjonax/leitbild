@@ -50,6 +50,12 @@ const gateway = (): ModuleGateway => ({
     about: 'A short test scenario that shows the featured catalogue.',
     tags: ['Test'],
     previews: [{ alt: 'Test map', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/test.webp', width: 1600 }] }],
+  }] : [], listed: moduleId === 'world' ? [{
+    definition: { moduleId, type: 'world.scenario', id: 'quiet-scenario' },
+    revisionId: 'revision-fedcba9876543210fedcba9876543210',
+    title: 'Quiet Scenario',
+    summary: 'A test scenario where nothing is scripted.',
+    tags: ['Test'],
   }] : [] }) }),
 })
 
@@ -77,13 +83,14 @@ describe('Leitbild server', () => {
     const stale=await fetch(url,{headers:{'If-None-Match':'"old-catalog"'}})
     expect(stale.status).toBe(200)
   })
-  test('serves the featured catalogue without a Workspace and revalidates it by ETag', async () => {
+  test('serves the featured and listed catalogue in one response without a Workspace and revalidates it by ETag', async () => {
     const { host, baseUrl } = startHost()
     const first = await fetch(`${baseUrl}/api/featured-definitions`)
     expect(first.status).toBe(200)
     const catalog = featuredDefinitionCatalogSchema.parse(await first.json())
     expect(catalog.modules.map(item => [String(item.moduleId), item.status])).toEqual([['world', 'ready'], ['agents', 'ready']])
     expect(catalog.definitions.map(item => String(item.definition.id))).toEqual(['test-scenario'])
+    expect(catalog.listed.map(item => String(item.definition.id))).toEqual(['quiet-scenario'])
     expect(host.list()).toHaveLength(0)
     const etag = first.headers.get('etag')
     expect(etag).toBeTruthy()

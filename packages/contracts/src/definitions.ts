@@ -155,28 +155,51 @@ export const moduleFeaturedDefinitionSchema = z.object({
 })
 export type ModuleFeaturedDefinition = z.infer<typeof moduleFeaturedDefinitionSchema>
 
-const requireUniqueFeaturedDefinitions = (
-  definitions: ReadonlyArray<ModuleFeaturedDefinition>,
+/**
+ * A Definition a Module lists beside its featured ones for quick access,
+ * independent of any Workspace: no previews, one short summary and one or two
+ * tags. `revisionId` is the exact revision every Workspace seeds for it.
+ */
+export const moduleListedDefinitionSchema = z.object({
+  definition: moduleDefinitionIdentitySchema,
+  revisionId: definitionRevisionIdSchema,
+  title: z.string().trim().min(1).max(256),
+  summary: z.string().trim().min(1).max(200),
+  tags: z.array(z.string().trim().min(1).max(32)).min(1).max(2),
+}).strict()
+export type ModuleListedDefinition = z.infer<typeof moduleListedDefinitionSchema>
+
+// A Definition is featured or listed, once.
+const requireUniqueDefinitions = (
+  collection: { readonly definitions: ReadonlyArray<ModuleFeaturedDefinition>; readonly listed: ReadonlyArray<ModuleListedDefinition> },
   ctx: z.RefinementCtx,
 ): void => {
   const seen = new Set<string>()
-  definitions.forEach((featured, index) => {
-    const key = definitionIdentityKey(featured.definition)
-    if (seen.has(key)) ctx.addIssue({ code: 'custom', path: ['definitions', index, 'definition'], message: `duplicate featured Definition: ${key}` })
-    seen.add(key)
-  })
+  const check = (list: 'definitions' | 'listed', items: ReadonlyArray<{ readonly definition: ModuleDefinitionIdentity }>): void => {
+    items.forEach((item, index) => {
+      const key = definitionIdentityKey(item.definition)
+      if (seen.has(key)) {
+        ctx.addIssue({ code: 'custom', path: [list, index, 'definition'], message: `duplicate ${list === 'definitions' ? 'featured' : 'listed'} Definition: ${key}` })
+      }
+      seen.add(key)
+    })
+  }
+  check('definitions', collection.definitions)
+  check('listed', collection.listed)
 }
 
-/** One Module's featured Definitions; array order is the Module's ranking. */
+/** One Module's featured Definitions and its listed ones; array order is the Module's ranking. */
 export const moduleFeaturedDefinitionCollectionSchema = z.object({
   definitions: z.array(moduleFeaturedDefinitionSchema).max(12),
-}).strict().superRefine((collection, ctx) => requireUniqueFeaturedDefinitions(collection.definitions, ctx))
+  listed: z.array(moduleListedDefinitionSchema).max(12),
+}).strict().superRefine(requireUniqueDefinitions)
 export type ModuleFeaturedDefinitionCollection = z.infer<typeof moduleFeaturedDefinitionCollectionSchema>
 
-/** Every installed Module's featured Definitions, with one outcome per Module. */
+/** Every installed Module's featured and listed Definitions, with one outcome per Module. */
 export const featuredDefinitionCatalogSchema = z.object({
   modules: z.array(moduleQueryOutcomeSchema),
   definitions: z.array(moduleFeaturedDefinitionSchema),
+  listed: z.array(moduleListedDefinitionSchema),
 }).strict().superRefine((catalog, ctx) => {
   const ready = new Set<string>()
   const seenModules = new Set<string>()
@@ -187,11 +210,15 @@ export const featuredDefinitionCatalogSchema = z.object({
     seenModules.add(outcome.moduleId)
     if (outcome.status === 'ready') ready.add(outcome.moduleId)
   })
-  catalog.definitions.forEach((featured, index) => {
-    if (!ready.has(featured.definition.moduleId)) {
-      ctx.addIssue({ code: 'custom', path: ['definitions', index, 'definition', 'moduleId'], message: 'featured Definition has no ready Module outcome' })
-    }
-  })
-  requireUniqueFeaturedDefinitions(catalog.definitions, ctx)
+  const requireReady = (list: 'definitions' | 'listed', items: ReadonlyArray<{ readonly definition: ModuleDefinitionIdentity }>): void => {
+    items.forEach((item, index) => {
+      if (!ready.has(item.definition.moduleId)) {
+        ctx.addIssue({ code: 'custom', path: [list, index, 'definition', 'moduleId'], message: `${list === 'definitions' ? 'featured' : 'listed'} Definition has no ready Module outcome` })
+      }
+    })
+  }
+  requireReady('definitions', catalog.definitions)
+  requireReady('listed', catalog.listed)
+  requireUniqueDefinitions(catalog, ctx)
 })
 export type FeaturedDefinitionCatalog = z.infer<typeof featuredDefinitionCatalogSchema>

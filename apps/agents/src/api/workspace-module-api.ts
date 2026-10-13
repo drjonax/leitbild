@@ -47,9 +47,9 @@ export const agentsModuleManifest = workspaceModuleManifestSchema.parse({
   ui: { workspace: '/workspaces/{workspaceId}/agents' },
 })
 
-// Agents features no Definition for newcomers; it still answers the endpoint
-// every Module publishes, with an empty list rather than an absent route.
-const agentsFeaturedDefinitions = moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [] })
+// Agents features and lists no Definition for newcomers; it still answers the
+// endpoint every Module publishes, with empty lists rather than an absent route.
+const agentsFeaturedDefinitions = moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [], listed: [] })
 
 const AGENTS_MODULE_ID = moduleIdSchema.parse('agents')
 

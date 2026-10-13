@@ -1,12 +1,15 @@
 // Deep links for the landing page's modals (plan v2 §2): one namespace per
-// parameter, `?guide=<page>&card=<card>` and `?demos` / `?demos=<moduleId>:<id>`.
-// Opening pushes, paging replaces, Back or × removes. Modals never stack: the
-// guide's "Try …" replaces `?guide` with `?demos=…`.
+// parameter, `?guide=<page>&card=<card>`, `?demos` / `?demos=<moduleId>:<id>`
+// and `?scenarios` (the Demos modal's More scenarios list). Opening pushes,
+// paging replaces, Back or × removes. Modals never stack: the guide's "Try …"
+// replaces `?guide` with `?demos=…`, and the Demos modal's switch between its
+// demos and More scenarios replaces `?demos=…` and `?scenarios`.
 
 export type ModalRoute =
   | { readonly kind: 'none' }
   | { readonly kind: 'guide'; readonly page: string; readonly card: string | null }
   | { readonly kind: 'demos'; readonly demo: string | null }
+  | { readonly kind: 'scenarios' }
 
 /** Why Modal.svelte closed; 'programmatic' is `open = false` from the caller (e.g. Back). */
 export type ModalCloseReason = 'escape' | 'close-button' | 'backdrop' | 'programmatic'
@@ -34,6 +37,7 @@ export const readModalRoute = (search: string | URLSearchParams): ModalRoute => 
     const demo = params.get('demos')
     return { kind: 'demos', demo: demo === null || demo === '' ? null : demo }
   }
+  if (params.has('scenarios')) return { kind: 'scenarios' }
   return NO_MODAL
 }
 
@@ -43,13 +47,15 @@ export const modalRouteUrl = (route: ModalRoute, current: string | URL): string 
   url.searchParams.delete('guide')
   url.searchParams.delete('card')
   url.searchParams.delete('demos')
+  url.searchParams.delete('scenarios')
   if (route.kind === 'guide') {
     url.searchParams.set('guide', route.page)
     if (route.card !== null) url.searchParams.set('card', route.card)
   }
   if (route.kind === 'demos') url.searchParams.set('demos', route.demo ?? '')
-  // `?demos=` reads better as `?demos`.
-  const search = url.searchParams.toString().replace(/(^|&)demos=(?=&|$)/, '$1demos')
+  if (route.kind === 'scenarios') url.searchParams.set('scenarios', '')
+  // `?demos=` and `?scenarios=` read better as `?demos` and `?scenarios`.
+  const search = url.searchParams.toString().replace(/(^|&)(demos|scenarios)=(?=&|$)/, '$1$2')
   return `${url.pathname}${search ? `?${search}` : ''}${url.hash}`
 }
 
@@ -59,6 +65,10 @@ export const guideHref = (page = 'start', card: string | null = null): string =>
 
 export const demosHref = (demo: string | null = null): string =>
   modalRouteUrl({ kind: 'demos', demo }, 'https://leitbild.invalid/workspaces')
+
+/** Both views of the Demos modal: its demos and its More scenarios list. */
+export const isDemosModalRoute = (route: ModalRoute): route is Extract<ModalRoute, { kind: 'demos' | 'scenarios' }> =>
+  route.kind === 'demos' || route.kind === 'scenarios'
 
 export interface ModalUrlPort {
   readonly location: { readonly href: string }
@@ -71,7 +81,7 @@ export interface ModalUrlController {
   route(): ModalRoute
   /** Opening a modal pushes its parameter. */
   open(route: ModalRoute): void
-  /** Changing page or slide, or switching guide → Demos, replaces it. */
+  /** Changing page or slide, switching guide → Demos, or Demos ↔ More scenarios replaces it. */
   replace(route: ModalRoute): void
   /** × or Esc: Back when this page pushed the entry, otherwise replace (deep link). */
   close(): void

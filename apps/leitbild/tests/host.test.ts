@@ -25,7 +25,7 @@ const createModule = (moduleId: ModuleId) => {
     invokeDelayMs?: number
     featured: unknown
     workspaces: Set<string>
-  } = { available: true, failLeave: false, manifestRequests: 0, featured: { definitions: [] }, workspaces: new Set<string>() }
+  } = { available: true, failLeave: false, manifestRequests: 0, featured: { definitions: [], listed: [] }, workspaces: new Set<string>() }
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -128,6 +128,15 @@ const featuredScenario = (overrides: Record<string, unknown> = {}) => ({
   about: 'A short test scenario that shows the featured catalogue.',
   tags: ['Test'],
   previews: [{ alt: 'Test map', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/test.webp', width: 1600 }] }],
+  ...overrides,
+})
+
+const listedScenario = (overrides: Record<string, unknown> = {}) => ({
+  definition: { moduleId: 'world', type: 'world.scenario', id: 'quiet-scenario' },
+  revisionId: 'revision-fedcba9876543210fedcba9876543210',
+  title: 'Quiet Scenario',
+  summary: 'A test scenario where nothing is scripted.',
+  tags: ['Test'],
   ...overrides,
 })
 
@@ -249,11 +258,13 @@ describe('Leitbild Workspace Host', () => {
   test('aggregates every Module\'s featured Definitions without any Workspace', async () => {
     const { modules, host, store } = createFixture()
     try {
-      modules.find(item => item.registration.moduleId === 'world')!.state.featured = { definitions: [featuredScenario()] }
+      modules.find(item => item.registration.moduleId === 'world')!.state.featured = { definitions: [featuredScenario()], listed: [listedScenario()] }
       const catalog = await host.featuredDefinitions()
       expect(catalog.modules).toEqual(coreModuleIds.map(moduleId => ({ moduleId, status: 'ready' })))
       expect(catalog.definitions.map(item => `${item.definition.moduleId}:${item.definition.id}@${item.revisionId}`))
         .toEqual(['world:test-scenario@revision-0123456789abcdef0123456789abcdef'])
+      expect(catalog.listed.map(item => `${item.definition.moduleId}:${item.definition.id}@${item.revisionId}`))
+        .toEqual(['world:quiet-scenario@revision-fedcba9876543210fedcba9876543210'])
       expect(host.list()).toEqual([])
       expect(modules.every(item => item.state.workspaces.size === 0)).toBe(true)
     } finally { store.close() }
@@ -264,23 +275,37 @@ describe('Leitbild Workspace Host', () => {
     try {
       const world = modules.find(item => item.registration.moduleId === 'world')!
       const agents = modules.find(item => item.registration.moduleId === 'agents')!
-      world.state.featured = { definitions: [featuredScenario()] }
+      world.state.featured = { definitions: [featuredScenario()], listed: [listedScenario()] }
       agents.state.available = false
       const offline = await host.featuredDefinitions()
       expect(offline.modules.find(item => item.moduleId === 'agents')).toMatchObject({ status: 'failed', failure: { code: 'module_discovery_failed' } })
       expect(offline.definitions).toHaveLength(1)
+      expect(offline.listed).toHaveLength(1)
 
       agents.state.available = true
-      agents.state.featured = { definitions: [featuredScenario()] }
+      agents.state.featured = { definitions: [featuredScenario()], listed: [] }
       const foreign = await host.featuredDefinitions()
       expect(foreign.modules.find(item => item.moduleId === 'agents')).toMatchObject({
         status: 'failed', failure: { code: 'module_contract_invalid', message: 'Module agents featured a Definition owned by world' },
       })
       expect(foreign.definitions.map(item => String(item.definition.moduleId))).toEqual(['world'])
 
+      agents.state.featured = { definitions: [], listed: [listedScenario({ definition: { moduleId: 'world', type: 'world.scenario', id: 'other' } })] }
+      const foreignListed = await host.featuredDefinitions()
+      expect(foreignListed.modules.find(item => item.moduleId === 'agents')).toMatchObject({
+        status: 'failed', failure: { code: 'module_contract_invalid', message: 'Module agents listed a Definition owned by world' },
+      })
+      expect(foreignListed.listed.map(item => String(item.definition.id))).toEqual(['quiet-scenario'])
+
+      agents.state.featured = { definitions: [], listed: [] }
+      world.state.featured = { definitions: [featuredScenario()] }
+      const unlisted = await host.featuredDefinitions()
+      expect(unlisted.modules.find(item => item.moduleId === 'world')).toMatchObject({ status: 'failed', failure: { code: 'module_contract_invalid' } })
+      expect([unlisted.definitions, unlisted.listed]).toEqual([[], []])
+
       world.state.featured = { definitions: [featuredScenario({
         previews: [{ alt: 'Test map', width: 1600, height: 1000, sources: [{ path: '/assets/host/test.webp', width: 1600 }] }],
-      })] }
+      })], listed: [] }
       const outside = await host.featuredDefinitions()
       expect(outside.modules.find(item => item.moduleId === 'world')).toMatchObject({ status: 'failed', failure: { code: 'module_contract_invalid' } })
       expect(outside.definitions).toEqual([])

@@ -40,7 +40,7 @@ export interface WorkspaceHost {
   readonly definitions: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceDefinitionCatalog>
   readonly resources: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceResourceCatalog>
   readonly capabilities: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceCapabilityCatalog>
-  /** Every installed Module's featured Definitions, with one outcome per Module; no Workspace involved. */
+  /** Every installed Module's featured and listed Definitions, with one outcome per Module; no Workspace involved. */
   readonly featuredDefinitions: () => Promise<FeaturedDefinitionCatalog>
   readonly invoke: (id: WorkspaceId, capabilityId: CapabilityId, input: InvokeCapabilityInput, access: AccessContext, signal?: AbortSignal) => Promise<import('@leitbild/contracts').ModuleCapabilityInvocationResult>
   readonly installedModuleIds: () => ReadonlyArray<ModuleId>
@@ -284,16 +284,16 @@ export const createWorkspaceHost = (config: {
     featuredDefinitions: async () => {
       const results = await Promise.all(installedModuleIds.map(async moduleId => {
         const result = await config.modules.featuredDefinitions(moduleId)
-        // A Module may feature only its own Definitions; the contract already
-        // keeps each preview inside its Definition Module's /assets/<moduleId>/.
-        const foreign = result.ok ? result.value.definitions.find(featured => featured.definition.moduleId !== moduleId) : undefined
+        // A Module may feature and list only its own Definitions; the contract
+        // already keeps each preview inside its Definition Module's /assets/<moduleId>/.
+        const foreignIn = (verb: string, list: ReadonlyArray<{ readonly definition: { readonly moduleId: string } }>) => {
+          const item = list.find(candidate => candidate.definition.moduleId !== moduleId)
+          return item === undefined ? undefined : `Module ${moduleId} ${verb} a Definition owned by ${item.definition.moduleId}`
+        }
+        const foreign = result.ok ? foreignIn('featured', result.value.definitions) ?? foreignIn('listed', result.value.listed) : undefined
         return foreign === undefined ? { moduleId, result } : {
           moduleId,
-          result: { ok: false as const, failure: {
-            code: 'module_contract_invalid',
-            message: `Module ${moduleId} featured a Definition owned by ${foreign.definition.moduleId}`,
-            retryable: false,
-          } },
+          result: { ok: false as const, failure: { code: 'module_contract_invalid', message: foreign, retryable: false } },
         }
       }))
       return featuredDefinitionCatalogSchema.parse({
@@ -301,6 +301,7 @@ export const createWorkspaceHost = (config: {
           ? { moduleId: item.moduleId, status: 'ready' as const }
           : { moduleId: item.moduleId, status: 'failed' as const, failure: item.result.failure }),
         definitions: results.flatMap(item => item.result.ok ? item.result.value.definitions : []),
+        listed: results.flatMap(item => item.result.ok ? item.result.value.listed : []),
       })
     },
     invoke: invokeCapability,

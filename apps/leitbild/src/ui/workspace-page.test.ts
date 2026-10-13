@@ -2,15 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { featuredDefinitionCatalogSchema, moduleResourceDescriptorSchema } from '@leitbild/contracts'
 import {
   confirmsDeletion, CONTINUE_LIMIT, continueItems, deleteConfirmationText, featuredStartRevision,
-  openedFromGuide, previewSrc, previewSrcset, PUBLIC_NOTE, sameDefinition, summaryHasMore, summaryLead, workspaceDemos,
+  openedFromGuide, previewSrc, previewSrcset, PUBLIC_NOTE, sameDefinition, scenarioRowSummary, summaryHasMore, summaryLead, workspaceDemos,
 } from './workspace-page.ts'
-import { featured, revision, room, run, scenario, WS } from './workspace-page.test-support.ts'
+import { featured, listed, revision, room, run, scenario, WS } from './workspace-page.test-support.ts'
 
 describe('featured demos on the Workspace page', () => {
   const definitions = [scenario('supply-run'), scenario('halden-emergency'), scenario('nordland-corridor-security'), scenario('halden-offsite-power-restoration')]
   const catalog = featuredDefinitionCatalogSchema.parse({
     modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }],
     definitions: [featured('halden-offsite-power-restoration'), featured('nordland-corridor-security'), featured('halden-emergency')],
+    listed: [],
   })
   const ids = (items: ReadonlyArray<{ readonly ref: { readonly id: string } }>): string[] => items.map(item => String(item.ref.id))
   const cardIds = (cards: ReadonlyArray<{ readonly definition: { readonly ref: { readonly id: string } } }>): string[] => ids(cards.map(card => card.definition))
@@ -43,7 +44,7 @@ describe('featured demos on the Workspace page', () => {
   })
 
   test('a failed featured outcome is reported per Module and leaves every Definition startable', () => {
-    const failedCatalog = featuredDefinitionCatalogSchema.parse({ modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } }], definitions: [] })
+    const failedCatalog = featuredDefinitionCatalogSchema.parse({ modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } }], definitions: [], listed: [] })
     const demos = workspaceDemos(definitions, failedCatalog)
     expect(demos.unavailable.map(String)).toEqual(['world'])
     expect(demos.cards).toEqual([])
@@ -110,6 +111,28 @@ describe('scenario rows', () => {
     const sentence = `${'word '.repeat(30).trim()}.`
     expect(summaryLead(sentence)).toBe(sentence)
     expect(summaryHasMore(sentence)).toBe(true)
+  })
+
+  test('a scenario a Module lists reads by its listed summary, as in the Demos modal, with More for its description', () => {
+    const quiet = listed('halden-normal-operation')
+    const entries = [quiet, listed('supply-run')]
+    expect(scenarioRowSummary(scenario('halden-normal-operation', { description: long }), entries)).toEqual({ lead: quiet.summary, more: true })
+    expect(scenarioRowSummary(scenario('halden-normal-operation'), entries)).toEqual({ lead: quiet.summary, more: false })
+    expect(scenarioRowSummary(scenario('rogaland-black-start', { description: long }), entries))
+      .toEqual({ lead: 'A summer weekday evening.', more: true })
+    expect(scenarioRowSummary(scenario('halden-normal-operation', { description: long }), []))
+      .toEqual({ lead: 'A summer weekday evening.', more: true })
+  })
+
+  test('a listed scenario stays in More scenarios and never becomes a demo card', () => {
+    const catalog = featuredDefinitionCatalogSchema.parse({
+      modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }],
+      definitions: [featured('halden-offsite-power-restoration')],
+      listed: [listed('halden-normal-operation')],
+    })
+    const demos = workspaceDemos([scenario('halden-offsite-power-restoration'), scenario('halden-normal-operation')], catalog)
+    expect(demos.cards.map(card => String(card.definition.ref.id))).toEqual(['halden-offsite-power-restoration'])
+    expect(demos.others.map(definition => String(definition.ref.id))).toEqual(['halden-normal-operation'])
   })
 })
 

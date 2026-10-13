@@ -67,7 +67,7 @@ describe('an approved proposal resumes the procedure with real Modules', () => {
       ...testScenarioAuthoring(),
       runtimeAdapters: createTestPackRuntimeAdapters(),
     })
-    const worldServer = createWorldServer({ workspaces: worldRegistry, featuredDefinitions: { definitions: [] }, bindHost: '127.0.0.1', port: 0, uiDistPath: uiDir, mapArtifacts: { rootDir: join(dataDir, 'maps') } })
+    const worldServer = createWorldServer({ workspaces: worldRegistry, featuredDefinitions: { definitions: [], listed: [] }, bindHost: '127.0.0.1', port: 0, uiDistPath: uiDir, mapArtifacts: { rootDir: join(dataDir, 'maps') } })
     cleanup.push(() => worldServer.stop())
     const agentsState = createAgentsModuleState()
     const agentsServer = Bun.serve({

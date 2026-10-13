@@ -41,7 +41,7 @@ const defaultRealtimeInputActorId = actorIdSchema.parse('actor:operator')
 
 interface ServerConfig {
   readonly workspaces: WorldWorkspaceRuntimeRegistry
-  /** The bundled featured Scenarios, served without any Workspace. */
+  /** The bundled featured and listed Scenarios, served without any Workspace. */
   readonly featuredDefinitions: ModuleFeaturedDefinitionCollection
   readonly port?: number
   readonly bindHost?: string

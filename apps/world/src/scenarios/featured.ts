@@ -33,37 +33,62 @@ const featuredScenarioSourceSchema = z.array(z.object({
   }).strict()),
 }).strict())
 
+// listed.json names other bundled Scenarios World lists for quick access
+// beside the demos, in its order, with a one-sentence summary and one or two
+// tags; the title and the revision come from the bundled Scenario, as above.
+const listedScenarioSourceSchema = z.array(z.object({
+  scenarioId: z.string().min(1).max(128),
+  summary: z.string(),
+  tags: z.array(z.string()),
+}).strict())
+
 /**
- * The featured Scenarios World publishes, in featured.json order. Every entry
- * must name a bundled Scenario; its revision id is the one every Workspace
- * seeds for that Scenario, computed here from the bundled document.
+ * The featured Scenarios World publishes, in featured.json order, and the
+ * Scenarios it lists beside them, in listed.json order. Every entry must name
+ * a bundled Scenario, and a listed one must not also be featured; its
+ * revision id is the one every Workspace seeds for that Scenario, computed
+ * here from the bundled document.
  */
 export const featuredScenarioDefinitionsFor = (config: {
   readonly source: unknown
+  readonly listedSource: unknown
   readonly scenarios: ReadonlyArray<ScenarioDefinition>
 }): ModuleFeaturedDefinitionCollection => {
   const scenarios = new Map(config.scenarios.map(scenario => [scenario.id, scenario]))
+  const bundled = (kind: 'Featured' | 'Listed', id: string) => {
+    const scenario = scenarios.get(id)
+    if (scenario === undefined) throw new Error(`${kind} Scenario is not bundled: ${id}`)
+    return {
+      definition: { moduleId: 'world', type: 'world.scenario', id: scenario.id },
+      revisionId: definitionRevisionIdFor(scenarioDefinitionSchema, scenario),
+      title: scenario.title,
+    }
+  }
+  const featured = featuredScenarioSourceSchema.parse(config.source)
+  const featuredIds = new Set(featured.map(entry => entry.scenarioId))
   return moduleFeaturedDefinitionCollectionSchema.parse({
-    definitions: featuredScenarioSourceSchema.parse(config.source).map(entry => {
-      const scenario = scenarios.get(entry.scenarioId)
-      if (scenario === undefined) throw new Error(`Featured Scenario is not bundled: ${entry.scenarioId}`)
-      return {
-        definition: { moduleId: 'world', type: 'world.scenario', id: scenario.id },
-        revisionId: definitionRevisionIdFor(scenarioDefinitionSchema, scenario),
-        title: scenario.title,
-        summary: entry.summary,
-        about: entry.about,
-        tags: entry.tags,
-        previews: entry.previews.map(preview => ({
-          ...preview,
-          sources: preview.sources.map(source => ({ path: `${scenarioPreviewPath}${source.file}`, width: source.width })),
-        })),
-      }
+    definitions: featured.map(entry => ({
+      ...bundled('Featured', entry.scenarioId),
+      summary: entry.summary,
+      about: entry.about,
+      tags: entry.tags,
+      previews: entry.previews.map(preview => ({
+        ...preview,
+        sources: preview.sources.map(source => ({ path: `${scenarioPreviewPath}${source.file}`, width: source.width })),
+      })),
+    })),
+    listed: listedScenarioSourceSchema.parse(config.listedSource).map(entry => {
+      if (featuredIds.has(entry.scenarioId)) throw new Error(`Listed Scenario is also featured: ${entry.scenarioId}`)
+      return { ...bundled('Listed', entry.scenarioId), summary: entry.summary, tags: entry.tags }
     }),
   })
 }
 
+const readBundledJson = (file: string): unknown =>
+  JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), file), 'utf8')) as unknown
+
 export const builtinFeaturedScenarioDefinitions = featuredScenarioDefinitionsFor({
-  source: JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'featured.json'), 'utf8')) as unknown,
+  source: readBundledJson('featured.json'),
+  listedSource: readBundledJson('listed.json'),
   scenarios: builtinScenarioDefinitions,
 })

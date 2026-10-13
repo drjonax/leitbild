@@ -1,10 +1,11 @@
-// The Modules' featured demos (plan v2 §5, §6), shared by the landing's Demos
-// modal, the Start demo flow and the Workspace page's demo row. The Host keeps
-// no demo list: it reads GET /api/featured-definitions, which each Module
+// The Modules' featured demos (plan v2 §5, §6) and the scenarios they list
+// beside them, shared by the landing's Demos modal and its More scenarios list,
+// the Start demo flow and the Workspace page. The Host keeps no demo or
+// scenario list: it reads GET /api/featured-definitions, which each Module
 // publishes for itself, and validates it with the contract (loaded lazily, so
 // the landing's first paint carries no zod).
 
-import type { FeaturedDefinitionCatalog, ModuleFeaturedDefinition } from '@leitbild/contracts'
+import type { FeaturedDefinitionCatalog, ModuleFeaturedDefinition, ModuleListedDefinition } from '@leitbild/contracts'
 import { readHostJson } from './launch-workspace.ts'
 import { demoKey } from './modal-url.ts'
 
@@ -15,6 +16,8 @@ export const FEATURED_PATH = '/api/featured-definitions'
 export const NO_DEMOS_TEXT = 'No demos are available right now.'
 export const DEMOS_UNAVAILABLE_TEXT = 'Demos are unavailable right now.'
 export const DEEP_LINK_NOT_FEATURED_TEXT = 'That demo is no longer featured.'
+export const NO_SCENARIOS_TEXT = 'No other scenarios are listed right now.'
+export const SCENARIOS_UNAVAILABLE_TEXT = 'Scenarios are unavailable right now.'
 
 /**
  * The Modules' featured Definitions. The Host answers with an ETag and
@@ -36,6 +39,17 @@ export const catalogueView = (catalogue: FeaturedDefinitionCatalog, moduleId = '
   if (demos.length > 0) return { demos, empty: null }
   const outcome = catalogue.modules.find(item => item.moduleId === moduleId)
   return { demos, empty: outcome?.status === 'failed' ? DEMOS_UNAVAILABLE_TEXT : NO_DEMOS_TEXT }
+}
+
+/** What the More scenarios list shows for a catalogue: the Module's listed scenarios, or why there are none. */
+export const listedView = (catalogue: FeaturedDefinitionCatalog, moduleId = 'world'): {
+  readonly scenarios: ReadonlyArray<ModuleListedDefinition>
+  readonly empty: string | null
+} => {
+  const scenarios = catalogue.listed.filter(listed => listed.definition.moduleId === moduleId)
+  if (scenarios.length > 0) return { scenarios, empty: null }
+  const outcome = catalogue.modules.find(item => item.moduleId === moduleId)
+  return { scenarios, empty: outcome?.status === 'failed' ? SCENARIOS_UNAVAILABLE_TEXT : NO_SCENARIOS_TEXT }
 }
 
 /** Where `?demos=<key>` opens: that demo's index, or the first with a notice for an unknown key. */

@@ -5,6 +5,7 @@ import {
   featuredDefinitionCatalogSchema,
   moduleFeaturedDefinitionCollectionSchema,
   moduleFeaturedDefinitionSchema,
+  moduleListedDefinitionSchema,
   moduleCapabilityDescriptorSchema,
   moduleCapabilityInvocationSchema,
   moduleDefinitionDescriptorSchema,
@@ -161,15 +162,53 @@ describe('featured Definitions', () => {
   })
 
   test('lists each featured Definition once, with a ready outcome for its Module', () => {
-    expect(() => moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [featured, featured] })).toThrow('duplicate featured Definition')
+    expect(() => moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [featured, featured], listed: [] })).toThrow('duplicate featured Definition')
     expect(featuredDefinitionCatalogSchema.parse({
       modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }],
       definitions: [featured],
+      listed: [],
     }).definitions).toHaveLength(1)
     expect(() => featuredDefinitionCatalogSchema.parse({
       modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'offline', retryable: true } }],
       definitions: [featured],
+      listed: [],
     })).toThrow('no ready Module outcome')
+  })
+
+  const listed = {
+    definition: { moduleId: 'world', type: 'world.scenario', id: 'halden-normal-operation' },
+    revisionId: 'revision-fedcba9876543210fedcba9876543210',
+    title: 'Halden: normal operation',
+    summary: 'Four simulated nuclear units run at full power; nothing is scripted.',
+    tags: ['Nuclear plant + grid', 'No scripted faults'],
+  }
+
+  test('lists a Definition beside the featured ones with a short summary, one or two tags and no previews', () => {
+    expect(moduleListedDefinitionSchema.parse(listed)).toEqual(listed as never)
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, previews: featured.previews })).toThrow()
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, about: featured.about })).toThrow()
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, summary: 'x'.repeat(201) })).toThrow()
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, summary: ' ' })).toThrow()
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, tags: [] })).toThrow()
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, tags: ['a', 'b', 'c'] })).toThrow()
+    expect(() => moduleListedDefinitionSchema.parse({ ...listed, definition: { ...listed.definition, workspaceId: newWorkspaceId() } })).toThrow()
+  })
+
+  test('requires the listed collection, and keeps a Definition in one list once', () => {
+    expect(moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [featured], listed: [listed] }).listed).toHaveLength(1)
+    expect(() => moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [featured] })).toThrow()
+    expect(() => moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [], listed: [listed, listed] })).toThrow('duplicate listed Definition')
+    const alsoFeatured = { ...listed, definition: featured.definition }
+    expect(() => moduleFeaturedDefinitionCollectionSchema.parse({ definitions: [featured], listed: [alsoFeatured] })).toThrow('duplicate listed Definition')
+    const ready = [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }]
+    expect(featuredDefinitionCatalogSchema.parse({ modules: ready, definitions: [featured], listed: [listed] }).listed).toHaveLength(1)
+    expect(() => featuredDefinitionCatalogSchema.parse({ modules: ready, definitions: [featured] })).toThrow()
+    expect(() => featuredDefinitionCatalogSchema.parse({ modules: ready, definitions: [featured], listed: [alsoFeatured] })).toThrow('duplicate listed Definition')
+    expect(() => featuredDefinitionCatalogSchema.parse({
+      modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'offline', retryable: true } }],
+      definitions: [],
+      listed: [listed],
+    })).toThrow('listed Definition has no ready Module outcome')
   })
 })
 

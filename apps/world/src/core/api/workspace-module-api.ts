@@ -106,7 +106,7 @@ export const worldModuleManifest = workspaceModuleManifestSchema.parse({
 })
 
 /**
- * Serves World's featured Scenarios from bundled memory. It takes no Workspace
+ * Serves World's featured and listed Scenarios from bundled memory. It takes no Workspace
  * registry, so a landing page reading it never loads a Workspace runtime.
  */
 export const handleWorldFeaturedDefinitions = (

@@ -10,10 +10,12 @@ import {
   newWorkspaceId,
   type ModuleFeaturedDefinitionCollection,
 } from '@leitbild/contracts'
+import { definitionRevisionIdFor } from '@leitbild/module-runtime'
 import { createServer } from '../src/core/api/server.ts'
 import { handleWorldFeaturedDefinitions, handleWorldModuleApi, worldModuleManifest } from '../src/core/api/workspace-module-api.ts'
 import { createWorldModuleState } from '../src/core/workspaces/module-state.ts'
 import { createWorldWorkspaceRuntimeRegistry, type WorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runtime-registry.ts'
+import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import { builtinScenarioDefinitions } from '../src/scenarios/definitions.ts'
 import { builtinFeaturedScenarioDefinitions, featuredScenarioDefinitionsFor, scenarioPreviewPath } from '../src/scenarios/featured.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
@@ -36,8 +38,13 @@ const entry = {
     sources: [{ file: 'offsite-800.0a1b2c3d.webp', width: 800 }, { file: 'offsite-1600.0a1b2c3d.webp', width: 1600 }],
   }],
 }
-const featuredFrom = (source: unknown): ModuleFeaturedDefinitionCollection =>
-  featuredScenarioDefinitionsFor({ source, scenarios: builtinScenarioDefinitions })
+const listedEntry = {
+  scenarioId: 'halden-normal-operation',
+  summary: 'Four simulated nuclear units run at full power; nothing is scripted.',
+  tags: ['Nuclear plant + grid', 'No scripted faults'],
+}
+const featuredFrom = (source: unknown, listedSource: unknown = []): ModuleFeaturedDefinitionCollection =>
+  featuredScenarioDefinitionsFor({ source, listedSource, scenarios: builtinScenarioDefinitions })
 
 // Vite copies src/ui/public into the build unchanged, so a published preview
 // path is a file under it.
@@ -167,6 +174,51 @@ describe('World featured Scenarios', () => {
     expect(() => featuredFrom([{ ...entry, title: 'Copied title' }])).toThrow()
   })
 
+  test('lists three other Scenarios beside the demos in order, each titled by its bundled Scenario', () => {
+    const featuredIds = new Set(builtinFeaturedScenarioDefinitions.definitions.map(featured => String(featured.definition.id)))
+    expect(builtinFeaturedScenarioDefinitions.listed.map(listed => listed.definition.id)).toEqual([
+      'halden-normal-operation',
+      'nordic-frequency-event',
+      'supply-run',
+    ] as never)
+    for (const listed of builtinFeaturedScenarioDefinitions.listed) {
+      const scenario = builtinScenarioDefinitions.find(candidate => candidate.id === listed.definition.id)!
+      expect(listed.definition).toEqual({ moduleId: 'world', type: 'world.scenario', id: scenario.id } as never)
+      expect(listed.title).toBe(scenario.title)
+      expect(featuredIds.has(String(listed.definition.id))).toBe(false)
+    }
+  })
+
+  test('keeps each listed summary short, plain and free of banned phrases', () => {
+    for (const listed of builtinFeaturedScenarioDefinitions.listed) {
+      const label = listed.definition.id
+      expect(listed.summary.length).toBeLessThanOrEqual(200)
+      expect(sentences(listed.summary).join(' ')).toBe(listed.summary)
+      for (const text of [listed.summary, ...listed.tags]) {
+        for (const pattern of [...bannedPhrases, ...jargon]) expect({ label, text, match: pattern.exec(text)?.[0] }).toEqual({ label, text, match: undefined })
+      }
+    }
+  })
+
+  test('takes a listed title and revision from the bundled Scenario and rejects one that is not bundled, featured, long or untagged', () => {
+    const quiet = builtinScenarioDefinitions.find(scenario => scenario.id === 'halden-normal-operation')!
+    const [listed] = featuredFrom([entry], [listedEntry]).listed
+    expect(listed).toEqual({
+      definition: { moduleId: 'world', type: 'world.scenario', id: quiet.id },
+      revisionId: definitionRevisionIdFor(scenarioDefinitionSchema, quiet),
+      title: quiet.title,
+      summary: listedEntry.summary,
+      tags: listedEntry.tags,
+    } as never)
+    expect(() => featuredFrom([entry], [{ ...listedEntry, title: 'Copied title' }])).toThrow()
+    expect(() => featuredFrom([entry], [{ ...listedEntry, scenarioId: 'retired-scenario' }])).toThrow('Listed Scenario is not bundled: retired-scenario')
+    expect(() => featuredFrom([entry], [{ ...listedEntry, scenarioId: entry.scenarioId }])).toThrow(`Listed Scenario is also featured: ${entry.scenarioId}`)
+    expect(() => featuredFrom([entry], [listedEntry, listedEntry])).toThrow('duplicate listed Definition')
+    expect(() => featuredFrom([entry], [{ ...listedEntry, summary: 'x'.repeat(201) }])).toThrow()
+    expect(() => featuredFrom([entry], [{ ...listedEntry, tags: [] }])).toThrow()
+    expect(() => featuredFrom([entry], [{ ...listedEntry, tags: ['a', 'b', 'c'] }])).toThrow()
+  })
+
   test('rejects an entry whose Scenario is not bundled, a duplicate, and a preview that is not a plain WebP name', () => {
     expect(() => featuredFrom([{ ...entry, scenarioId: 'retired-scenario' }])).toThrow('Featured Scenario is not bundled: retired-scenario')
     expect(() => featuredFrom([entry, entry])).toThrow('duplicate featured Definition')
@@ -176,7 +228,7 @@ describe('World featured Scenarios', () => {
     }
   })
 
-  test('names the exact revision a fresh Workspace lists for each featured Scenario', async () => {
+  test('names the exact revision a fresh Workspace lists for each featured and listed Scenario', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'world-featured-'))
     const registry = createWorldWorkspaceRuntimeRegistry({
       dataDir,
@@ -196,7 +248,8 @@ describe('World featured Scenarios', () => {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceId }),
     })).status).toBe(201)
     const listed = moduleDefinitionCollectionSchema.parse(await (await call(`/internal/workspaces/${workspaceId}/definitions`)).json()).definitions
-    for (const featured of builtinFeaturedScenarioDefinitions.definitions) {
+    const { definitions: featuredList, listed: listedList } = builtinFeaturedScenarioDefinitions
+    for (const featured of [...featuredList, ...listedList]) {
       const descriptor = listed.find(definition => definition.ref.id === featured.definition.id)!
       const { workspaceId: _workspaceId, ...identity } = descriptor.ref
       expect(featured.definition).toEqual(identity)
@@ -205,7 +258,8 @@ describe('World featured Scenarios', () => {
   })
 
   test('serves the list from bundled memory without touching a Workspace runtime', async () => {
-    const featured = featuredFrom([entry])
+    const featured = featuredFrom([entry], [listedEntry])
+    expect(featured.listed).toHaveLength(1)
     const route = handleWorldFeaturedDefinitions(
       new Request('http://world.test/internal/featured-definitions'),
       new URL('http://world.test/internal/featured-definitions'),
