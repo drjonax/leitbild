@@ -301,7 +301,9 @@
 
   // --- toast ----------------------------------------------------------------------
   let toastTimer: ReturnType<typeof setTimeout> | null = null
+  /** Hovered or focused: a removed toast fires no mouseleave or focusout, so a new or dismissed toast clears it. */
   let toastPaused = false
+  const toastId = $derived(people.toast?.id ?? null)
   const stopToastTimer = (): void => {
     if (toastTimer !== null) clearTimeout(toastTimer)
     toastTimer = null
@@ -311,8 +313,9 @@
     if (!toastPaused) toastTimer = setTimeout(() => { toastTimer = null; session.dismissToast() }, TOAST_VISIBLE_MS)
   }
   $effect(() => {
-    if (people.toast === null) return
-    void people.toast.id
+    const id = toastId
+    toastPaused = false
+    if (id === null) return
     untrack(armToast)
     return stopToastTimer
   })
