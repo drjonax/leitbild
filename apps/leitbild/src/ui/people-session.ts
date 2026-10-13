@@ -225,7 +225,11 @@ export interface PeopleSession {
   setViewing(viewing: ViewingReference | null): void
   openChat(person: PersonWire): void
   closeChat(): void
-  /** Whether the open chat shows its newest message (no "new messages" pill); only then is it read. */
+  /**
+   * Whether the open chat shows its newest message (no "new messages" pill);
+   * only then is it read. Unknown, so false, until the chat on screen reports
+   * it after its first scroll: opening a chat or changing the Run reads nothing.
+   */
   setChatAtBottom(atBottom: boolean): void
   retryChatLoad(): void
   /** Queues a message to the open chat; false when there is nothing sendable. */
@@ -362,7 +366,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   let chatController: AbortController | null = null
   let chatLoading = false
   let chatLoadFailed = false
-  let chatAtBottom = true
+  let chatAtBottom = false
   /** The open chat whose last mark-read failed: its count stays visible until one succeeds. */
   let markFailedPeer: string | null = null
   let chatFirstUnread: string | null = null
@@ -1104,6 +1108,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       currentViewingKey = key
       presentOrder = []
       presentKnown = false
+      // The chat on screen reports again; a chat that left with the Run view is not on screen.
+      chatAtBottom = false
       if (next === null) {
         stopLoop()
         clearNoticeTimers()
@@ -1123,7 +1129,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       chatController?.abort()
       chatController = null
       chatPeer = person.id
-      chatAtBottom = true
+      chatAtBottom = false
       markFailedPeer = null
       chatNotes = []
       chatFirstUnread = null

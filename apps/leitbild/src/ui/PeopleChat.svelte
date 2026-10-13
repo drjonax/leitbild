@@ -111,7 +111,11 @@
   let settledPeer: string | null = null
   const atBottom = (): boolean => log === null || log.scrollHeight - log.scrollTop - log.clientHeight < STICK_TO_BOTTOM_PX
   const toBottom = (): void => { if (log !== null) log.scrollTop = log.scrollHeight }
-  /** Messages are read only while the newest one is on screen (no "↓ new messages" pill). */
+  /**
+   * Messages are read only while the newest one is on screen (no "↓ new messages" pill).
+   * The session treats the chat as not at its newest until the first report, made
+   * after the opening scroll to the "New" divider or the bottom.
+   */
   const reportPosition = (): void => session.setChatAtBottom(pill === 0 && atBottom())
 
   $effect.pre(() => {
@@ -192,8 +196,12 @@
     })
   })
 
-  // A draft kept from before may span several lines.
-  onMount(() => { void tick().then(autosize) })
+  onMount(() => {
+    // A draft kept from before may span several lines.
+    void tick().then(autosize)
+    // Gone from the screen, nothing in it is being read until a chat on screen reports again.
+    return () => session.setChatAtBottom(false)
+  })
 
   const onInput = (): void => {
     drafts.set(chat.with.id, textarea?.value ?? draft)

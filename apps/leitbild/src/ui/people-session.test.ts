@@ -908,6 +908,7 @@ describe('messages', () => {
 
     session.openChat(BEN)
     await settle()
+    session.setChatAtBottom(true) // the chat on screen shows its newest message
     expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(0) // hidden tab
     expect(state().chat?.firstUnreadKey).toBe('msg-5')
     expect(state().unreadTotal).toBe(1)
@@ -929,6 +930,37 @@ describe('messages', () => {
     expect(state().unreadTotal).toBe(1)
   })
 
+  test('an opened chat is read only once the chat on screen reports its newest message shown, not on load; a Run change asks again (review F3)', async () => {
+    const { session, agents, state, answer } = setup()
+    agents.syncReplies.push(ok(result({ present: [BEN], conversations: [conversation(BEN, 3, 3)], cursor: 3, view: 'v1' })))
+    chatReady(agents, [message(1, BEN, ME), message(2, BEN, ME), message(3, BEN, ME)], { me: 0, them: 0 })
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(0)
+    expect(state().unreadTotal).toBe(3)
+    // The unread do not fit: the chat scrolled to the "New" divider, short of the newest.
+    session.setChatAtBottom(false)
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(0)
+    expect(state().unreadTotal).toBe(3)
+    session.setChatAtBottom(true)
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead).map(call => call.input.through)).toEqual([3])
+    expect(state().unreadTotal).toBe(0)
+
+    // Another Run: until the chat reports again, a new message stays unread.
+    session.setViewing(RUN_B)
+    await settle()
+    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 1, 4)], messages: [message(4, BEN, ME)], cursor: 4, view: 'v2' })))
+    expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(1)
+    expect(state().unreadTotal).toBe(1)
+    session.setChatAtBottom(true)
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead).map(call => call.input.through)).toEqual([3, 4])
+  })
+
   test('a mark-read answer never overwrites a newer unread count from sync (review P4)', async () => {
     const { session, agents, state, answer } = setup()
     agents.on(PEOPLE_CAPABILITY.conversationRead, () => ok({ with: BEN, messages: [message(1, BEN, ME)], readThrough: { me: 0, them: 0 } }))
@@ -938,6 +970,8 @@ describe('messages', () => {
     session.setViewing(RUN_A)
     await settle()
     session.openChat(BEN)
+    await settle()
+    session.setChatAtBottom(true)
     await settle()
     expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(1)
     session.closeChat()
@@ -978,6 +1012,8 @@ describe('messages', () => {
     await settle()
     expect(state().unreadTotal).toBe(2) // loading
     read.resolve(ok({ with: BEN, messages: [message(1, BEN, ME), message(2, BEN, ME)], readThrough: { me: 0, them: 0 } }))
+    await settle()
+    session.setChatAtBottom(true)
     await settle()
     expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(1)
     expect(state().unreadTotal).toBe(2) // the read was refused
