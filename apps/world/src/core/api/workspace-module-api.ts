@@ -145,8 +145,14 @@ export const handleWorldActivity = async (
   workspaces: WorldWorkspaceRuntimeRegistry,
 ): Promise<Response | null> => {
   if (url.pathname !== worldModuleManifest.endpoints.activity || request.method !== 'GET') return null
-  const activity = await workspaces.activity()
-  return json(moduleActivitySchema.parse({ workspaces: activity.flatMap(workspaceActivityOf) }))
+  try {
+    const activity = await workspaces.activity()
+    return json(moduleActivitySchema.parse({ workspaces: activity.flatMap(workspaceActivityOf) }))
+  } catch (error) {
+    // One unreadable Workspace fails the whole answer visibly, as World's own error, never as Bun's error page.
+    console.error('World activity could not be read', error)
+    return apiError(500, 'activity_unavailable', `World activity could not be read: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const lifecycleInputSchema = z.object({ workspaceId: workspaceIdSchema }).strict()

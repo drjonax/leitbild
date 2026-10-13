@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { moduleActivitySchema, newWorkspaceId, type ModuleActivity, type WorkspaceId } from '@leitbild/contracts'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from '../src/core/api/server.ts'
@@ -146,4 +146,23 @@ describe('World Workspace activity', () => {
     expect(ids.filter(workspaceId => workspaces.getLoaded(workspaceId) !== undefined)).toEqual([])
   })
 
+  test('answers World\'s own 500 naming the failure when a Workspace cannot be read', async () => {
+    const { dataDir, workspaces } = await createWorkspaces()
+    const server = createServer({ workspaces, featuredDefinitions: { definitions: [], listed: [] }, port: 0, bindHost: '127.0.0.1', mapArtifacts: { rootDir: join(dataDir, 'maps') } })
+    cleanups.push(() => server.stop())
+    const workspaceId = newWorkspaceId()
+    await createWorldModuleState({ dataDir }).provision(workspaceId)
+    await writeFile(worldWorkspacePaths(dataDir, workspaceId).marker, '{ not json')
+    const logged = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}${worldModuleManifest.endpoints.activity}`)
+      expect(response.status).toBe(500)
+      expect(response.headers.get('content-type')).toContain('application/json')
+      const body = await response.json() as { error: { code: string; message: string } }
+      expect(body.error.code).toBe('activity_unavailable')
+      expect(body.error.message).toStartWith('World activity could not be read: ')
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe('World activity could not be read')
+    } finally { logged.mockRestore() }
+  })
 })
