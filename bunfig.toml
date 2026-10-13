@@ -1,0 +1,8 @@
+# Tools that load `typescript` without declaring it, such as dependency-cruiser,
+# find it through Bun's shared hoist in node_modules/.bun/node_modules. Both the
+# TypeScript 6 compiler API (`typescript`) and the TypeScript 7 build
+# (`@typescript/native`, hoisted under its package name `typescript`) claim that
+# one slot, and Bun gives it to either from one install to the next. Keep both
+# out, so those tools resolve the TypeScript 6 the root package.json declares.
+[install]
+hoistPattern = ["*", "!typescript", "!@typescript/native"]
