@@ -67,7 +67,13 @@ export interface RunWaitPorts {
   readonly subscribe: (wake: () => void) => () => void
   readonly now: () => number
   readonly schedule: (callback: () => void, delayMs: number) => () => void
+  /** True once the Run is no longer loaded: deleted, its Workspace removed, or World stopping. */
+  readonly closed: () => boolean
 }
+
+/** The Run closed under a wait; the wait ends at once instead of holding its caller until maxWaitMs. */
+export const runClosedWhileWaiting = (): Error & { readonly code: 'simulation_run_closed' } =>
+  Object.assign(new Error('The Simulation Run closed while waiting: it was deleted, its Workspace removed, or World is stopping'), { code: 'simulation_run_closed' as const })
 
 /** The procedure Runs a caller drives or drove, to tell when someone else takes one over. */
 export interface RunWaitDrivenRun {
@@ -118,7 +124,7 @@ const takenOver = (caller: ActorId, driven: ReadonlyArray<RunWaitDrivenRun>, eve
 
 const tickMs = 250
 
-/** Resolves at the first of: a matching event, the plant time, a take-over, a paused clock while waiting for plant time, or maxWaitMs. */
+/** Resolves at the first of: a matching event, the plant time, a take-over, a paused clock while waiting for plant time, or maxWaitMs; rejects when the Run closes. */
 export const waitForRunChange = async (config: {
   readonly input: RunWaitInput
   readonly caller: ActorId
@@ -132,9 +138,15 @@ export const waitForRunChange = async (config: {
   const targetMs = input.simulationSeconds === undefined ? undefined : Date.parse(startClock.currentTime) + input.simulationSeconds * 1_000
   let cursor = fromSequence
   const matched: SimulationRunEvent[] = []
-  return await new Promise<RunWaitResult>(resolve => {
+  return await new Promise<RunWaitResult>((resolve, reject) => {
     let settled = false
     const cleanups: Array<() => void> = []
+    const abandon = (): void => {
+      if (settled) return
+      settled = true
+      for (const cleanup of cleanups.splice(0)) cleanup()
+      reject(runClosedWhileWaiting())
+    }
     const finish = (reason: RunWaitResult['reason'], extra: { readonly driverChanged?: RunWaitResult['driverChanged']; readonly events?: ReadonlyArray<SimulationRunEvent> } = {}): void => {
       if (settled) return
       settled = true
@@ -155,6 +167,7 @@ export const waitForRunChange = async (config: {
     }
     const check = (): void => {
       if (settled) return
+      if (ports.closed()) return abandon()
       const fresh = ports.events(cursor)
       if (fresh.length > 0) cursor = fresh.at(-1)!.seq
       for (const event of fresh) {
@@ -178,7 +191,7 @@ export const waitForRunChange = async (config: {
     }
     cleanups.push(() => cancelTick())
     cleanups.push(ports.subscribe(check))
-    cleanups.push(ports.schedule(() => finish('timeout'), input.maxWaitMs))
+    cleanups.push(ports.schedule(() => ports.closed() ? abandon() : finish('timeout'), input.maxWaitMs))
     tick()
   })
 }

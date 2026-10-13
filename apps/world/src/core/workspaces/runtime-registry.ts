@@ -103,8 +103,12 @@ export const createWorldWorkspaceRuntimeRegistry = (config: {
   const closeLoaded = async (id: WorkspaceId): Promise<boolean> => {
     const runtime = loaded.get(id)
     if (!runtime) return false
-    await operations.get(id)!.close()
+    // Admit no new work, then stop the Runs before draining requests in flight:
+    // a wait on a Run ends when its Run closes instead of holding the close for
+    // up to 20 s, and a command in flight finishes inside its Run's close.
+    const draining = operations.get(id)!.close()
     await runtime.simulationRuns.shutdown()
+    await draining
     loaded.delete(id)
     operations.delete(id)
     return true

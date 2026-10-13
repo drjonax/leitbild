@@ -22,6 +22,7 @@ const fakeRun = () => {
   let wall = 0
   let plantMs = startTime
   let paused = false
+  let closed = false
   const wakes = new Set<() => void>()
   const timers: Array<{ at: number; callback: () => void; cancelled: boolean }> = []
   const event = (body: Record<string, unknown>): SimulationRunEvent => ({
@@ -39,6 +40,7 @@ const fakeRun = () => {
       timers.push(timer)
       return () => { timer.cancelled = true }
     },
+    closed: () => closed,
   }
   return {
     ports,
@@ -63,6 +65,7 @@ const fakeRun = () => {
       wall = until
     },
     pause: () => { paused = true },
+    close: () => { closed = true },
     wakes,
     pendingTimers: () => timers.filter(timer => !timer.cancelled).length,
   }
@@ -144,6 +147,16 @@ describe('waiting for a Run change', () => {
     expect(runWaitInputSchema.safeParse({ simulationSeconds: 5, maxWaitMs: 25_000 }).success).toBe(false)
   })
 
+  test('a wait ends at its next tick when its Run closes, and cleans up its timers and subscription', async () => {
+    const run = fakeRun()
+    const waiting = waitForRunChange({ input: runWaitInputSchema.parse({ events: [{ type: 'procedure.branch.selected' }] }), caller: assistant, driven, ports: run.ports })
+    run.close()
+    run.advance(250)
+    await expect(waiting).rejects.toMatchObject({ code: 'simulation_run_closed' })
+    expect(run.wakes.size).toBe(0)
+    expect(run.pendingTimers()).toBe(0)
+  })
+
   test('the Runs a caller drives include those it drove before someone else took them', () => {
     const runs = [{ runId, procedureId: 'E-0', sourceId: 'leitbild', scope: { plantId: 'plant:unit-2' }, driver: { kind: 'person', actorId: operator } },
       { runId: 'procedure-run:other', procedureId: 'ES-0.1', sourceId: 'leitbild', scope: { plantId: 'plant:unit-2' } }] as never
@@ -186,4 +199,58 @@ describe('waiting through the World server', () => {
       expect(performance.now() - started).toBeGreaterThanOrEqual(12_000)
     } finally { await server.stop() }
   }, 60_000)
+
+  // The AI procedure runner waits on a Run most of the time; deleting the Run or
+  // its Workspace must stop it, not answer busy or hold the delete for 20 s.
+  const startWaiting = async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'world-run-wait-delete-'))
+    directories.push(dataDir)
+    const workspaces = createWorldWorkspaceRuntimeRegistry({ dataDir, moduleState: createWorldModuleState({ dataDir }),
+      scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), ...testScenarioAuthoring(), runtimeAdapters: createTestPackRuntimeAdapters() })
+    registries.push(workspaces)
+    const server = createServer({ workspaces, featuredDefinitions: { definitions: [], listed: [] }, port: 0, bindHost: '127.0.0.1', mapArtifacts: { rootDir: join(dataDir, 'maps') } })
+    const workspaceId = newWorkspaceId()
+    const base = `http://127.0.0.1:${server.port}/internal/workspaces/${workspaceId}`
+    expect((await fetch(base, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceId }) })).status).toBe(201)
+    const run = await workspaces.getLoaded(workspaceId)!.simulationRuns.create({ scenarioId: 'test-response' })
+    const resource = { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: run.id }
+    const invoke = (capabilityId: string, input: unknown, kind: 'ai' | 'human') => fetch(`${base}/capabilities/${capabilityId}/invoke`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        workspaceId, capabilityId, resource, input,
+        access: accessContextSchema.parse({ workspaceId, requestId: newRequestId(), actor: kind === 'ai' ? { kind, id: 'waiter' } : { kind } }),
+      }),
+    })
+    const started = performance.now()
+    const waiting = invoke('world.simulation-run.wait', { events: [{ type: 'procedure.branch.selected' }], maxWaitMs: 20_000 }, 'ai')
+    // The wait holds its Run before anything is deleted.
+    while (workspaces.getLoaded(workspaceId)!.simulationRuns.leaseSummary(run.id).leasesByKind.api === 0) await Bun.sleep(10)
+    return { dataDir, server, workspaces, workspaceId, base, run, invoke, started, waiting }
+  }
+
+  test('deleting a Run an AI is waiting on stops it: the delete succeeds and the wait ends at once', async () => {
+    const { server, invoke, run, started, waiting, workspaceId, dataDir } = await startWaiting()
+    try {
+      const deleted = await invoke('world.simulation-run.delete', {}, 'human')
+      expect(deleted.status).toBe(200)
+      expect(await deleted.json()).toEqual({ result: { deleted: true, simulationRunId: run.id } })
+      const waited = await waiting
+      expect(waited.status).toBe(409)
+      expect((await waited.json() as { error: { code: string } }).error.code).toBe('simulation_run_closed')
+      expect(performance.now() - started).toBeLessThan(5_000)
+      expect(await Bun.file(join(dataDir, 'workspaces', workspaceId, 'world', 'simulation-runs', run.id, 'manifest.json')).exists()).toBe(false)
+    } finally { await server.stop() }
+  }, 30_000)
+
+  test('removing a Workspace while an AI waits on its Run answers at once and leaves no World state', async () => {
+    const { server, workspaces, workspaceId, base, started, waiting, dataDir } = await startWaiting()
+    try {
+      const removed = await fetch(base, { method: 'DELETE' })
+      expect(removed.status).toBe(204)
+      expect(performance.now() - started).toBeLessThan(5_000)
+      expect((await waiting).status).toBe(409)
+      expect(workspaces.getLoaded(workspaceId)).toBeUndefined()
+      expect(await workspaces.list()).toEqual([])
+      expect(await Bun.file(join(dataDir, 'workspaces', workspaceId, 'world', 'workspace.json')).exists()).toBe(false)
+    } finally { await server.stop() }
+  }, 30_000)
 })

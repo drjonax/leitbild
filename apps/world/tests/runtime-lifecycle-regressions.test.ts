@@ -223,7 +223,6 @@ test('request and explicit background ownership protect a Run until released', a
   try {
     const run = await registry.create({ scenarioId: 'test-response' })
     const release = registry.acquireLease(run.id, 'api')
-    await expect(registry.delete(run.id)).rejects.toThrow('active requests')
     await expect(registry.reset(run.id)).rejects.toThrow('active requests')
     await idle.advance(80)
     expect(registry.get(run.id)).toBe(run)
@@ -237,5 +236,12 @@ test('request and explicit background ownership protect a Run until released', a
     expect(registry.get(run.id)).toBe(run)
     await idle.advance(1)
     expect(registry.get(run.id)).toBeUndefined()
+    // Deleting is explicit: it stops a Run under a request in flight instead of refusing.
+    const requested = await registry.create({ scenarioId: 'test-response' })
+    const releaseRequested = registry.acquireLease(requested.id, 'api')
+    expect(await registry.delete(requested.id)).toBe(true)
+    releaseRequested()
+    expect(registry.get(requested.id)).toBeUndefined()
+    expect((await registry.listKnown()).map(summary => summary.id)).toEqual([run.id])
   } finally { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) }
 })

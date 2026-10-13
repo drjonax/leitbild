@@ -1585,7 +1585,8 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
     },
     invoke: async (registry, invocation) => {
       const input = runWaitInputSchema.parse(invocation.input)
-      const runtime = await registry.load(requireSimulationRunResource(invocation))
+      const simulationRunId = requireSimulationRunResource(invocation)
+      const runtime = await registry.load(simulationRunId)
       const caller = buildSimulationRunActorForAccess(invocation.access).id
       const clock = () => {
         const current = runtime.snapshot().clock
@@ -1606,6 +1607,8 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
             const timer = setTimeout(callback, delayMs)
             return () => clearTimeout(timer)
           },
+          // Deleting the Run, removing its Workspace or stopping World unloads it.
+          closed: () => registry.get(simulationRunId) !== runtime,
         },
       })
       return json({ result: input.procedureRunId === undefined ? result
@@ -1887,7 +1890,7 @@ export const handleWorldModuleApi = async (
     if (error instanceof Error && 'code' in error && error.code === 'simulation_run_busy') return apiError(409, 'simulation_run_busy', error.message)
     if (error instanceof Error && 'code' in error && error.code === 'simulation_run_failed') return apiError(409, 'simulation_run_failed', error.message)
     if (error instanceof Error && 'code' in error && typeof error.code === 'string'
-      && ['simulation_run_commit_uncertain', 'simulation_run_observer_failed', 'simulation_run_recovery_required'].includes(error.code)) return apiError(409, error.code, error.message)
+      && ['simulation_run_commit_uncertain', 'simulation_run_observer_failed', 'simulation_run_recovery_required', 'simulation_run_closed'].includes(error.code)) return apiError(409, error.code, error.message)
     if (error instanceof Error && 'code' in error && error.code === 'fast_forward_unsupported') return apiError(422, 'fast_forward_unsupported', error.message)
     if (error instanceof Error && 'code' in error && error.code === 'workspace_capacity_exceeded') return apiError(503, 'workspace_capacity_exceeded', error.message)
     if (error instanceof Error && 'code' in error && error.code === 'simulation_run_name_changed') {

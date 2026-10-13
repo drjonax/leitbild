@@ -1005,14 +1005,15 @@ export const createSimulationRunRegistry = (config: {
     return await loading
   })
 
-  const closeLoaded = async (id: SimulationRunId): Promise<boolean> => {
+  /** `interruptRequests`: an explicit delete closes the Run under requests in flight; a wait on it ends at once. */
+  const closeLoaded = async (id: SimulationRunId, options: { readonly interruptRequests?: boolean } = {}): Promise<boolean> => {
     // A failed construction has already released its resources; close still succeeds as a no-op.
     await creatingSimulationRuns.get(id)?.catch(() => undefined)
     const runtime = simulationRuns.get(id)
     if (!runtime) return false
     await settleCompletingMaximumPace(id)
     const leases = leaseSummary(id).leasesByKind
-    if (!shuttingDown && leases.api > 0) throw Object.assign(new Error('Simulation Run has active requests; retry after they complete'), { code: 'simulation_run_busy' })
+    if (!shuttingDown && options.interruptRequests !== true && leases.api > 0) throw Object.assign(new Error('Simulation Run has active requests; retry after they complete'), { code: 'simulation_run_busy' })
     if (!shuttingDown && leases['maximum-pace'] > 0) throw Object.assign(new Error('Simulation Run is playing at maximum pace; pause it before closing'), { code: 'simulation_run_busy' })
     backgroundReleases.get(id)?.()
     backgroundReleases.delete(id)
@@ -1054,7 +1055,8 @@ export const createSimulationRunRegistry = (config: {
     })
   })
 
-  const deleteSimulationRun = (id: SimulationRunId): Promise<boolean> => lifecycle.run(id, async () => {
+  // Serialized with execution changes too, so none persists into a deleted Run's directory.
+  const deleteSimulationRun = (id: SimulationRunId): Promise<boolean> => executionOperations.run(id, () => lifecycle.run(id, async () => {
     awaitingFirstScreen.delete(id)
     const maximumPaceJob = maximumPaceJobs.get(id)
     if (maximumPaceJob) {
@@ -1063,7 +1065,9 @@ export const createSimulationRunRegistry = (config: {
       maximumPaceJob.stopRequested = true
       await maximumPaceJob.done
     }
-    const wasLoaded = await closeLoaded(id)
+    // Deleting is the owner's explicit decision: a Run an AI is waiting on or
+    // a viewer is querying is stopped with it, never refused as busy.
+    const wasLoaded = await closeLoaded(id, { interruptRequests: true })
     pinnedScenarioFacts.delete(id)
     executionStates.delete(id)
     const runDir = join(simulationRunRoot, id)
@@ -1076,7 +1080,7 @@ export const createSimulationRunRegistry = (config: {
     }
     if (existedOnDisk) await rm(runDir, { recursive: true, force: true })
     return wasLoaded || existedOnDisk
-  })
+  }))
 
   const listPersistedIds = async (): Promise<ReadonlyArray<SimulationRunId>> => {
     let entries: ReadonlyArray<{ readonly isDirectory: () => boolean; readonly name: string }>
