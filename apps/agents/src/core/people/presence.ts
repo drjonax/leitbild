@@ -22,6 +22,7 @@ export interface ScreenEntry {
   pending: number
 }
 
+/** `now` is a monotonic clock, so a wall-clock step never expires or revives a screen. */
 export const createPresence = (options: { readonly now: () => number; readonly timeoutMs?: number }) => {
   const timeoutMs = options.timeoutMs ?? PRESENCE_TIMEOUT_MS
   const screens = new Map<string, ScreenEntry>()
@@ -79,6 +80,13 @@ export const createPresence = (options: { readonly now: () => number; readonly t
       }
       return present
     },
+    /** People with any live screen, whichever Run it views. */
+    livePeople: (): Set<string> => {
+      const now = options.now()
+      const live = new Set<string>()
+      for (const entry of screens.values()) if (isLive(entry, now)) live.add(entry.personId)
+      return live
+    },
     liveScreenCount: (now: number = options.now()): number => {
       let live = 0
       for (const entry of screens.values()) if (isLive(entry, now)) live += 1
@@ -95,6 +103,7 @@ export const createWaiterBudget = (max: number = MAX_WAITERS_PER_PROCESS) => {
   if (!Number.isSafeInteger(max) || max < 0) throw new Error('Waiter budget must be a non-negative integer')
   let held = 0
   return {
+    available: (): boolean => held < max,
     tryTake: (): boolean => {
       if (held >= max) return false
       held += 1

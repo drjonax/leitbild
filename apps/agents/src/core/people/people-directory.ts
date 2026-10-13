@@ -35,12 +35,20 @@ export const SYNC_MESSAGE_PAGE = 100
 export const CONVERSATION_KEEP = 200
 /** One message is at most this long; a chat line, not a document. */
 export const MESSAGE_MAX_CODE_POINTS = 2_000
-/** Several tabs of one browser may wait at once; more supersede the oldest. */
-export const MAX_WAITERS_PER_PERSON = 4
+/**
+ * All tabs of one browser are one Person, and each tab holds at most one
+ * waiting sync, so this is the number of open tabs that wait side by side;
+ * a further one supersedes the oldest.
+ */
+export const MAX_WAITERS_PER_PERSON = 16
 /** Identities per Workspace; anonymous joins must not grow without bound. */
 export const PEOPLE_PER_WORKSPACE = 500
-/** At the cap, People who never chatted and were away this long are forgotten. */
-export const INACTIVE_PERSON_PRUNE_MS = 30 * 24 * 60 * 60_000
+/**
+ * At the cap, People who never chatted, have no screen open and were away
+ * this long are forgotten. One day, not weeks: anonymous joins can fill the
+ * cap within minutes, and that must not lock a Workspace's joins for longer.
+ */
+export const INACTIVE_PERSON_PRUNE_MS = 24 * 60 * 60_000
 /** last_active_at is written at most this often per Person, never per heartbeat. */
 export const ACTIVITY_WRITE_INTERVAL_MS = 60 * 60_000
 /** Storage admission estimate for one Person row and its indexes. */
@@ -118,6 +126,15 @@ export const peopleFailureOf = (error: unknown): PeopleFailure | undefined =>
 
 const closingError = (): Error => Object.assign(new Error('Agents Workspace is closing'), { code: 'workspace_closing' })
 
+const EVICTED = Symbol('people-directory-evicted')
+/**
+ * A directory closed because it was idle. Nothing was done before this was
+ * thrown, and the Workspace is still there: the caller may open the
+ * directory again and repeat the call once.
+ */
+const evictedError = (): Error => Object.assign(new Error('People directory was closed while idle'), { code: 'workspace_closing', [EVICTED]: true })
+export const isEvictedDirectoryError = (error: unknown): boolean => error instanceof Error && EVICTED in error
+
 const rateLimited = (retryAfterMs: number): Error => peopleError({
   status: 429, code: 'people_rate_limited', message: 'Too many requests; retry shortly', retryable: true,
   details: { retryAfterMs },
@@ -147,11 +164,18 @@ export interface PeopleDirectoryOptions {
   readonly waiterBudget: WaiterBudget
   /** Storage admission for growth (the Agents storage budget in production). */
   readonly admitGrowth: <T>(estimatedBytes: number, work: () => Promise<T>) => Promise<T>
+  /** Wall clock: stored timestamps and serverNow only. */
   readonly now?: () => number
+  /**
+   * Monotonic clock in ms since process start: rate-limit windows, presence
+   * expiry, warming and idleness, so a wall-clock step never expires or
+   * revives anyone.
+   */
+  readonly monotonicNow?: () => number
   readonly timers?: PeopleTimers
   readonly randomBytes?: (length: number) => Uint8Array
   readonly randomUUID?: () => string
-  /** When this process started; presence is incomplete for PRESENCE_TIMEOUT_MS after it. */
+  /** Process start on the monotonic clock; presence is incomplete for PRESENCE_TIMEOUT_MS after it. */
   readonly processStartedAt?: number
   readonly presenceTimeoutMs?: number
   readonly sweepMs?: number
@@ -190,12 +214,25 @@ const createWindowLimiter = (now: () => number, windows: ReadonlyArray<RateWindo
   }
 }
 
-/** NFC, trailing whitespace trimmed; leading whitespace and inner newlines are content. */
-export const normaliseMessageText = (raw: string): { readonly ok: true; readonly text: string } | { readonly ok: false; readonly code: 'message_empty' | 'message_too_long' } => {
+// Control characters other than tab and line feed have no place in a chat
+// line, and SQLite's length() stops at NUL, so the store could never accept one.
+const FORBIDDEN_MESSAGE_CHARACTERS = /(?![\t\n])\p{Cc}/u
+
+export type MessageTextRejection = 'message_empty' | 'message_invalid_characters' | 'message_too_long'
+
+/** NFC, trailing whitespace trimmed; leading whitespace, tabs and inner newlines are content. */
+export const normaliseMessageText = (raw: string): { readonly ok: true; readonly text: string } | { readonly ok: false; readonly code: MessageTextRejection } => {
   const text = raw.toWellFormed().normalize('NFC').replace(/\s+$/u, '')
   if (text.length === 0) return { ok: false, code: 'message_empty' }
+  if (FORBIDDEN_MESSAGE_CHARACTERS.test(text)) return { ok: false, code: 'message_invalid_characters' }
   if ([...text].length > MESSAGE_MAX_CODE_POINTS) return { ok: false, code: 'message_too_long' }
   return { ok: true, text }
+}
+
+const MESSAGE_TEXT_REJECTIONS: Readonly<Record<MessageTextRejection, string>> = {
+  message_empty: 'A message needs text',
+  message_invalid_characters: 'A message cannot contain control characters other than tabs and line breaks',
+  message_too_long: `A message is at most ${MESSAGE_MAX_CODE_POINTS} characters`,
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString()
@@ -223,30 +260,35 @@ export const SYNC_ABORTED = Symbol('sync-aborted')
 
 export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
   const now = options.now ?? Date.now
+  const monotonicNow = options.monotonicNow ?? (() => performance.now())
   const timers = options.timers ?? systemTimers
   const randomBytes = options.randomBytes ?? ((length: number) => crypto.getRandomValues(new Uint8Array(length)))
   const randomUUID = options.randomUUID ?? (() => crypto.randomUUID())
-  const processStartedAt = options.processStartedAt ?? Math.round(performance.timeOrigin)
+  // performance.now() counts from the process's time origin.
+  const processStartedAt = options.processStartedAt ?? 0
   const presenceTimeoutMs = options.presenceTimeoutMs ?? PRESENCE_TIMEOUT_MS
   const log = options.log ?? ((line: string) => console.log(line))
   const { metrics, waiterBudget } = options
   const peopleLimit = options.peopleLimit ?? PEOPLE_PER_WORKSPACE
 
   const store = createPeopleStore(options.path, { newStoreId: randomUUID })
-  const presence = createPresence({ now, timeoutMs: presenceTimeoutMs })
+  const presence = createPresence({ now: monotonicNow, timeoutMs: presenceTimeoutMs })
   const waiters = createWaiterSet<Waiter>()
   const limits = {
-    send: createWindowLimiter(now, SEND_LIMITS),
-    join: createWindowLimiter(now, JOIN_LIMITS),
-    rename: createWindowLimiter(now, RENAME_LIMITS),
-    sync: createWindowLimiter(now, SYNC_LIMITS),
+    send: createWindowLimiter(monotonicNow, SEND_LIMITS),
+    join: createWindowLimiter(monotonicNow, JOIN_LIMITS),
+    rename: createWindowLimiter(monotonicNow, RENAME_LIMITS),
+    sync: createWindowLimiter(monotonicNow, SYNC_LIMITS),
   }
-  let closed = false
-  let lastActivityAt = now()
-  const isWarming = (): boolean => now() - processStartedAt < presenceTimeoutMs
+  let closed: 'open' | 'closing' | 'evicted' = 'open'
+  let lastActivityAt = monotonicNow()
+  const isWarming = (): boolean => monotonicNow() - processStartedAt < presenceTimeoutMs
   let lastWarming = isWarming()
 
-  const ensureOpen = (): void => { if (closed) throw closingError() }
+  const ensureOpen = (): void => {
+    if (closed === 'evicted') throw evictedError()
+    if (closed === 'closing') throw closingError()
+  }
   const take = (limiter: ReturnType<typeof createWindowLimiter>, key: string): void => {
     const outcome = limiter.take(key)
     if (!outcome.ok) throw rateLimited(outcome.retryAfterMs)
@@ -255,7 +297,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
   const authenticate = (token: string): StoredPerson => {
     const person = store.personByTokenHash(sha256Hex(token))
     if (!person) throw peopleError({ status: 401, code: 'person_token_invalid', message: 'This identity is not known in this Workspace' })
-    lastActivityAt = now()
+    lastActivityAt = monotonicNow()
     if (now() - person.lastActiveAt >= ACTIVITY_WRITE_INTERVAL_MS) store.recordActivity(person.id, now())
     return person
   }
@@ -326,7 +368,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
   const flush = (): void => {
     flushScheduled = false
     // close() has already answered every waiter with the final state.
-    if (closed) return
+    if (closed !== 'open') return
     const computed = new Map<string, Settlement>()
     for (const waiter of waiters.all()) {
       const key = `${waiter.personId}|${waiter.viewingKey}|${waiter.after}`
@@ -346,7 +388,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
 
   const sweep = (): void => {
     // A tick that races close() has nothing left to sweep.
-    if (closed) return
+    if (closed !== 'open') return
     const expired = presence.sweep()
     const warming = isWarming()
     for (const limiter of Object.values(limits)) limiter.prune()
@@ -391,7 +433,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
 
     join: async (input: { readonly preferredName?: string }): Promise<{ readonly token: string; readonly me: Person; readonly preferredNameAccepted: boolean }> => {
       ensureOpen()
-      lastActivityAt = now()
+      lastActivityAt = monotonicNow()
       take(limits.join, 'workspace')
       const preferred = input.preferredName === undefined ? undefined : normalisePersonName(input.preferredName)
       const token = Buffer.from(randomBytes(TOKEN_BYTES)).toString('base64url')
@@ -401,7 +443,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         // Everything from the capacity check to the insert is synchronous, so
         // two joins can never both take the last slot or the same name.
         if (store.countPeople() >= peopleLimit) {
-          metrics.inc('peoplePruned', store.pruneInactivePeople(now() - INACTIVE_PERSON_PRUNE_MS))
+          metrics.inc('peoplePruned', store.pruneInactivePeople(now() - INACTIVE_PERSON_PRUNE_MS, [...presence.livePeople()]))
           if (store.countPeople() >= peopleLimit) {
             throw peopleError({ status: 409, code: 'people_limit_reached', message: 'This Workspace has reached its number of People' })
           }
@@ -432,15 +474,18 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         return current
       }
       const mine = waiters.forPerson(me.id)
-      if (mine.length >= MAX_WAITERS_PER_PERSON) {
-        // Superseding counts against the sync rate, so five tabs of one
-        // browser settle into a bounded rotation instead of a tight loop.
-        take(limits.sync, me.id)
+      const supersedes = mine.length >= MAX_WAITERS_PER_PERSON
+      const overflows = !supersedes && !waiterBudget.available()
+      // A sync that displaces another or cannot wait answers without holding,
+      // so it costs one sync token, taken before anything is answered: a 429
+      // never follows an already superseded waiter, and runaway tabs settle
+      // into a bounded rotation instead of a tight loop.
+      if (supersedes || overflows) take(limits.sync, me.id)
+      if (supersedes) {
         const oldest = mine[0]!
         oldest.settle(settlementFor(oldest), 'superseded')
       }
       if (!waiterBudget.tryTake()) {
-        take(limits.sync, me.id)
         metrics.inc('syncWaiterOverflow')
         return current
       }
@@ -495,7 +540,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         outcome.sender = me.id
         const normalised = normaliseMessageText(input.text)
         if (!normalised.ok) {
-          throw peopleError({ status: 400, code: normalised.code, message: normalised.code === 'message_empty' ? 'A message needs text' : `A message is at most ${MESSAGE_MAX_CODE_POINTS} characters` })
+          throw peopleError({ status: 400, code: normalised.code, message: MESSAGE_TEXT_REJECTIONS[normalised.code] })
         }
         const replay = (existing: StoredMessage): { readonly message: Message; readonly replayed: boolean } => {
           outcome.recipient = existing.to
@@ -508,6 +553,8 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
           record('replayed')
           return { message: toMessage(existing), replayed: true }
         }
+        // Replays reach back only as far as retention: a key whose message
+        // was pruned out of the newest CONVERSATION_KEEP is free again (accepted).
         const existing = store.messageBySenderKey(me.id, idempotencyKey)
         if (existing) return replay(existing)
         const peer = requirePeer(me, input.to, 'message_to_self')
@@ -543,17 +590,26 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
       return { left: true }
     },
 
-    /** Idle: no waiting sync, no live screen and no request for `idleMs`. */
-    canEvict: (at: number, idleMs: number): boolean =>
-      waiters.size() === 0 && presence.liveScreenCount(at) === 0 && at - lastActivityAt > idleMs,
+    /**
+     * Idle at wall-clock time `at` (the registry's sweep time, possibly ahead
+     * of now): no waiting sync, no live screen and no request for `idleMs`.
+     */
+    canEvict: (at: number, idleMs: number): boolean => {
+      const atMonotonic = monotonicNow() + (at - now())
+      return waiters.size() === 0 && presence.liveScreenCount(atMonotonic) === 0 && atMonotonic - lastActivityAt > idleMs
+    },
 
     stats: (): { readonly waiters: number; readonly liveScreens: number } =>
       ({ waiters: waiters.size(), liveScreens: presence.liveScreenCount() }),
 
-    /** Answers every waiting sync with the current state, then closes the store. Idempotent. */
-    close: (): void => {
-      if (closed) return
-      closed = true
+    /**
+     * Answers every waiting sync with the current state, then closes the
+     * store. Idempotent. `evicted` marks an idle close, after which callers
+     * may reopen the directory; removal and shutdown close as `closing`.
+     */
+    close: (reason: 'closing' | 'evicted' = 'closing'): void => {
+      if (closed !== 'open') return
+      closed = reason
       timers.clearInterval(sweepHandle)
       for (const waiter of waiters.all()) waiter.settle(settlementFor(waiter), 'closed')
       presence.clear()

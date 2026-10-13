@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { moduleCapabilityCollectionSchema, newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
@@ -236,16 +236,49 @@ describe('People Capabilities', () => {
       .toMatchObject({ status: 409, code: 'workspace_scope_mismatch' })
     expect(await errorOf(await invoke(workspaceId, 'agents.people.join', {}, { resource: run(workspaceId) })))
       .toMatchObject({ status: 409, code: 'capability_scope_invalid' })
-    expect(await errorOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann‮' })))
+    expect(await errorOf(await request('POST', `/internal/workspaces/${workspaceId}/capabilities/agents.people.rename/invoke`, {
+      ...invocationBody(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Revised' }), expectedRevision: 3,
+    }))).toMatchObject({ status: 400, code: 'invalid_request' })
+    expect(await errorOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann\u202e' })))
       .toMatchObject({ status: 400, code: 'person_name_invalid', details: { reason: 'invalid_characters' } })
     expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ann.me.id, text: 'me' }, { idempotencyKey: 'self' })))
       .toMatchObject({ status: 400, code: 'message_to_self' })
+    const ben = await join_(workspaceId)
+    // SQLite's length() stops at NUL: refused as client errors, never a retryable 500.
+    expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ben.me.id, text: '\u0000hello' }, { idempotencyKey: 'nul-text' })))
+      .toMatchObject({ status: 400, code: 'message_invalid_characters' })
+    expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ben.me.id, text: 'hello' }, { idempotencyKey: '\u0000k' })))
+      .toMatchObject({ status: 400, code: 'invalid_request' })
+    expect(registry.peopleStatus().storeFailures).toBe(0)
     for (let i = 0; i < 9; i++) await resultOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: `Ann ${i}` }))
     expect(await errorOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann again' })))
       .toMatchObject({ status: 429, code: 'people_rate_limited', retryable: true, details: { retryAfterMs: expect.any(Number) } })
     const unprovisioned = newWorkspaceId()
     expect(await errorOf(await invoke(unprovisioned, 'agents.people.join', {}))).toMatchObject({ status: 404, code: 'workspace_not_found' })
     expect(existsSync(workspaceModulePaths(unprovisioned).root)).toBe(false)
+  })
+
+  test('storage refusals and unexpected failures are answered as retryable', async () => {
+    const workspaceId = await provision()
+    const original = process.env.LEITBILD_WORKSPACE_MAX_BYTES
+    // The admission budget reads its policy when this home's budget is first created.
+    process.env.LEITBILD_WORKSPACE_MAX_BYTES = '1'
+    try {
+      expect(await errorOf(await invoke(workspaceId, 'agents.people.join', {})))
+        .toMatchObject({ status: 507, code: 'storage_budget_exceeded', retryable: true })
+    } finally {
+      if (original === undefined) delete process.env.LEITBILD_WORKSPACE_MAX_BYTES
+      else process.env.LEITBILD_WORKSPACE_MAX_BYTES = original
+    }
+    const broken = await provision()
+    // A directory where the database file belongs cannot be opened as a store.
+    await mkdir(workspaceModulePaths(broken).agents.people)
+    const failed = spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(await errorOf(await invoke(broken, 'agents.people.join', {})))
+        .toMatchObject({ status: 500, code: 'people_unavailable', retryable: true })
+    } finally { failed.mockRestore() }
+    expect(registry.peopleStatus().storeFailures).toBe(1)
   })
 
   test('an aborted pending sync drops its waiter', async () => {
@@ -304,6 +337,31 @@ describe('People Capabilities', () => {
     expect(registry.peopleStatus()).toMatchObject({ openDirectories: 0, directoriesEvicted: 1 })
     const again = await resultOf<Synced>(await sync(workspaceId, ann.token, crypto.randomUUID()))
     expect(again.storeId).toBe(first.storeId)
+  })
+
+  test('a call whose directory was evicted while idle is repeated once on a reopened directory; removal is never retried', async () => {
+    const workspaceId = await provision()
+    const ann = await join_(workspaceId)
+    let evictNext = true
+    // Idle eviction lands between opening the directory and using it.
+    const racing: WorkspaceRuntimeRegistry = {
+      ...registry,
+      peopleFor: async id => {
+        const directory = await registry.peopleFor(id)
+        if (evictNext) {
+          evictNext = false
+          await registry.evictIdle(Date.now() + IDLE_MS * 10)
+        }
+        return directory
+      },
+    }
+    const url = new URL(`/internal/workspaces/${workspaceId}/capabilities/agents.people.rename/invoke`, 'http://agents.test')
+    const renamed = await handleAgentsModuleApi(new Request(url.href, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(invocationBody(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann' })),
+    }), url, { state, registry: racing })
+    expect(await resultOf<unknown>(renamed!)).toEqual({ me: { id: ann.me.id, name: 'Ann' } })
+    expect(registry.peopleStatus()).toMatchObject({ directoriesEvicted: 1, openDirectories: 1 })
   })
 
   test('Bun aborts the Agents request when the Host-side fetch is aborted, and the waiter is dropped', async () => {

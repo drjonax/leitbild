@@ -26,6 +26,7 @@ import {
   MESSAGE_MAX_CODE_POINTS,
   SYNC_ABORTED,
   SYNC_MESSAGE_PAGE,
+  isEvictedDirectoryError,
   peopleError,
   peopleFailureOf,
   type PeopleDirectory,
@@ -40,6 +41,7 @@ const AGENTS_MODULE_ID = moduleIdSchema.parse('agents')
 const MESSAGE_INPUT_MAX_LENGTH = 16 * 1024
 /** Opaque strings the server hands out (view hash, store id); generous transport bound. */
 const OPAQUE_MAX_LENGTH = 128
+const CONTROL_CHARACTER = /\p{Cc}/u
 /** A token is 43 base64url characters; anything longer cannot be one. */
 const TOKEN_INPUT_MAX_LENGTH = 256
 
@@ -295,14 +297,31 @@ export const invokePeopleCapability = async (
   if (invocation.resource !== undefined || invocation.definition !== undefined) {
     return refuse(409, 'capability_scope_invalid', 'People Capabilities take no Resource or Definition')
   }
+  if (invocation.expectedRevision !== undefined) {
+    return refuse(400, 'invalid_request', 'People Capabilities take no expectedRevision')
+  }
   if (invocation.idempotencyKey !== undefined && capability.acceptsIdempotencyKey !== true) {
     return refuse(400, 'idempotency_not_supported', 'This Capability does not support keyed retries')
   }
+  // The store keeps the key as text; SQLite's length() stops at NUL, and no
+  // client-generated key needs a control character.
+  if (invocation.idempotencyKey !== undefined && CONTROL_CHARACTER.test(invocation.idempotencyKey)) {
+    return refuse(400, 'invalid_request', 'An idempotencyKey cannot contain control characters')
+  }
   try {
-    const directory = await registry.peopleFor(workspaceId)
-    const response = await peopleCapabilities.invoke(capabilityId, { directory, signal }, invocation)
-    if (!response) throw new Error(`People Capability has no handler: ${capabilityId}`)
-    return response
+    const attempt = async (): Promise<Response> => {
+      const response = await peopleCapabilities.invoke(capabilityId, { directory: await registry.peopleFor(workspaceId), signal }, invocation)
+      if (!response) throw new Error(`People Capability has no handler: ${capabilityId}`)
+      return response
+    }
+    try {
+      return await attempt()
+    } catch (error) {
+      // Idle eviction closed the directory between opening and use; nothing
+      // was done, so one retry reopens it. Removal and shutdown never retry.
+      if (!isEvictedDirectoryError(error)) throw error
+      return await attempt()
+    }
   } catch (error) {
     const failure = peopleFailureOf(error)
     if (failure) {

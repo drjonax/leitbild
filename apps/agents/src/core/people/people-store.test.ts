@@ -125,16 +125,20 @@ describe('People store', () => {
     expect(conversationPair(ann, ben)).toBe(conversationPair(ben, ann))
   })
 
-  test('prunes only People with no conversation who were inactive before the cutoff', () => {
+  test('prunes only People with no conversation and no open screen who were inactive before the cutoff', () => {
     const store = openStore()
     const old = person(store, 'Old', 100)
+    const watching = person(store, 'Watching', 100)
     const talking = person(store, 'Talking', 100)
     const recent = person(store, 'Recent', 5_000)
     send(store, talking, recent, 'hi')
-    expect(store.pruneInactivePeople(1_000)).toBe(1)
+    expect(store.pruneInactivePeople(1_000, [watching])).toBe(1)
     expect(store.personById(old)).toBeUndefined()
+    expect(store.personById(watching)).toBeDefined()
     expect(store.personById(talking)).toBeDefined()
-    expect(store.countPeople()).toBe(2)
+    expect(store.countPeople()).toBe(3)
+    expect(store.pruneInactivePeople(1_000, [])).toBe(1)
+    expect(store.personById(watching)).toBeUndefined()
   })
 
   test('enforces name and token uniqueness in the schema', () => {

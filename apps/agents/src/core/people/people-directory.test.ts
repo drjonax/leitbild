@@ -7,8 +7,10 @@ import { newWorkspaceId } from '@leitbild/contracts'
 import {
   ACTIVITY_WRITE_INTERVAL_MS,
   INACTIVE_PERSON_PRUNE_MS,
+  MAX_WAITERS_PER_PERSON,
   SYNC_ABORTED,
   createPeopleDirectory,
+  isEvictedDirectoryError,
   peopleFailureOf,
   type PeopleDirectory,
   type SyncInput,
@@ -33,9 +35,16 @@ afterEach(async () => {
 const RUN_1 = 'world|world.simulation-run|run-1'
 const RUN_2 = 'world|world.simulation-run|run-2'
 
+/** Wall and monotonic time advance together; the monotonic origin is long past process start. */
 const clock = () => {
   let at = Date.UTC(2026, 9, 13, 12)
-  return { now: () => at, advance: (ms: number) => { at += ms } }
+  let monotonic = 1_000_000
+  return {
+    now: () => at,
+    monotonic: () => monotonic,
+    advance: (ms: number) => { at += ms; monotonic += ms },
+    stepWallClock: (ms: number) => { at += ms },
+  }
 }
 
 const make = (options: { readonly budget?: WaiterBudget; readonly processStartedAt?: number; readonly peopleLimit?: number } = {}) => {
@@ -50,6 +59,7 @@ const make = (options: { readonly budget?: WaiterBudget; readonly processStarted
     waiterBudget: options.budget ?? createWaiterBudget(),
     admitGrowth: async (bytes, work) => { admissions.push(bytes); return await work() },
     now: time.now,
+    monotonicNow: time.monotonic,
     processStartedAt: options.processStartedAt ?? 0,
     sweepMs: 10,
     log: line => lines.push(line),
@@ -99,7 +109,7 @@ describe('People directory', () => {
     const ben = await directory.join({ preferredName: '  Ben ' })
     expect(ben).toMatchObject({ me: { name: 'Ben' }, preferredNameAccepted: true })
     expect(await directory.join({ preferredName: 'BEN' })).toMatchObject({ me: { name: 'User2' }, preferredNameAccepted: false })
-    expect(await directory.join({ preferredName: 'Ben‮' })).toMatchObject({ me: { name: 'User3' }, preferredNameAccepted: false })
+    expect(await directory.join({ preferredName: 'Ben\u202e' })).toMatchObject({ me: { name: 'User3' }, preferredNameAccepted: false })
     expect(admissions).toHaveLength(4)
     const file = Buffer.from(await Bun.file(path).bytes())
     expect(file.includes(first.token)).toBe(false)
@@ -116,7 +126,7 @@ describe('People directory', () => {
     try { directory.rename({ token: ann.token, name: 'a'.repeat(33) }) } catch (error) {
       expect(peopleFailureOf(error)).toMatchObject({ status: 400, code: 'person_name_invalid', details: { reason: 'too_long' } })
     }
-    expect(await failureCode(() => directory.rename({ token: ann.token, name: 'Ann​' }))).toBe('person_name_invalid')
+    expect(await failureCode(() => directory.rename({ token: ann.token, name: 'Ann\u200b' }))).toBe('person_name_invalid')
     expect(directory.rename({ token: ann.token, name: 'User1' }).me.name).toBe('User1')
     // The default allocation skips a name someone chose.
     expect((await directory.join({})).me.name).toBe('User2')
@@ -206,6 +216,22 @@ describe('People directory', () => {
     directory.close()
   })
 
+  test('an idle close is told apart from a closing Workspace, so only the former may be retried', async () => {
+    const evicted = make()
+    const ann = await evicted.directory.join({})
+    evicted.directory.close('evicted')
+    let error: unknown
+    try { evicted.directory.rename({ token: ann.token, name: 'Ann' }) } catch (caught) { error = caught }
+    expect(isEvictedDirectoryError(error)).toBe(true)
+    expect(error).toMatchObject({ code: 'workspace_closing' })
+    await rm(path, { force: true })
+    const closing = make()
+    closing.directory.close()
+    try { await closing.directory.join({}) } catch (caught) { error = caught }
+    expect(isEvictedDirectoryError(error)).toBe(false)
+    expect(error).toMatchObject({ code: 'workspace_closing' })
+  })
+
   test('presence is per Run: arrival, Run switch, a second screen elsewhere, leave and expiry after the timeout', async () => {
     const { directory, time } = make()
     const ann = await directory.join({ preferredName: 'Ann' })
@@ -247,41 +273,97 @@ describe('People directory', () => {
     expect(benView.present).toEqual([ann.me])
   })
 
-  test('a fifth waiting sync of one Person supersedes the oldest; the process budget answers excess syncs at once', async () => {
-    const budget = createWaiterBudget(5)
+  test('a wall-clock step neither expires presence nor resets rate limits; only monotonic time does', async () => {
+    const { directory, time } = make()
+    const ann = await directory.join({})
+    const ben = await directory.join({})
+    await syncer(directory, ben.token).now()
+    const annSync = syncer(directory, ann.token)
+    time.stepWallClock(PRESENCE_TIMEOUT_MS * 10)
+    expect((await annSync.now()).present).toEqual([ben.me])
+    for (let i = 0; i < 9; i++) directory.rename({ token: ann.token, name: `Ann ${i}` })
+    time.stepWallClock(-24 * 60 * 60_000)
+    directory.rename({ token: ann.token, name: 'Ann 9' })
+    time.stepWallClock(48 * 60 * 60_000)
+    expect(await failureCode(() => directory.rename({ token: ann.token, name: 'Ann 10' }))).toBe('people_rate_limited')
+    time.advance(60_000)
+    expect(directory.rename({ token: ann.token, name: 'Ann 10' }).me.name).toBe('Ann 10')
+    expect((await annSync.now()).present).toEqual([])
+  })
+
+  test('one waiting sync beyond the per-Person limit supersedes the oldest; the process budget answers excess syncs at once', async () => {
+    const budget = createWaiterBudget(MAX_WAITERS_PER_PERSON + 1)
     const { directory, metrics } = make({ budget })
     const ann = await directory.join({})
     const ben = await directory.join({})
     const cid = await directory.join({})
-    const annTabs = await Promise.all([1, 2, 3, 4, 5].map(async () => {
+    const annTabs = await Promise.all(Array.from({ length: MAX_WAITERS_PER_PERSON + 1 }, async () => {
       const tab = syncer(directory, ann.token)
       await tab.now()
       return tab
     }))
     const first = annTabs[0]!.wait(15_000)
     await Bun.sleep(2)
-    const rest = annTabs.slice(1, 4).map(tab => tab.wait(15_000))
+    const rest = annTabs.slice(1, MAX_WAITERS_PER_PERSON).map(tab => tab.wait(15_000))
     await Bun.sleep(5)
-    expect(directory.stats().waiters).toBe(4)
-    const fifth = annTabs[4]!.wait(15_000)
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
+    const extra = annTabs[MAX_WAITERS_PER_PERSON]!.wait(15_000)
     const superseded = await first
     expect(superseded.me).toEqual(ann.me)
-    expect(directory.stats().waiters).toBe(4)
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
     expect(metrics.snapshot().syncsSuperseded).toBe(1)
     // Ben and Cid view other Runs, so their arrival changes nothing Ann sees.
     const benSync = syncer(directory, ben.token, screen(), RUN_2)
     await benSync.now()
     const benWaiting = benSync.wait(15_000)
     await Bun.sleep(5)
-    expect(budget.held()).toBe(5)
+    expect(budget.held()).toBe(MAX_WAITERS_PER_PERSON + 1)
     const cidSync = syncer(directory, cid.token, screen(), 'world|world.simulation-run|run-3')
     await cidSync.now()
     const overflow = await cidSync.wait(15_000)
     expect(overflow.me).toEqual(cid.me)
     expect(metrics.snapshot().syncWaiterOverflow).toBe(1)
     directory.close()
-    await Promise.all([...rest, fifth, benWaiting])
+    await Promise.all([...rest, extra, benWaiting])
     expect(budget.held()).toBe(0)
+  })
+
+  test('six tabs of one Person long-polling at once all keep waiting, round after round, with nothing superseded', async () => {
+    const { directory, metrics } = make()
+    const ann = await directory.join({})
+    const tabs = await Promise.all(Array.from({ length: 6 }, async () => {
+      const tab = syncer(directory, ann.token)
+      await tab.now()
+      return tab
+    }))
+    for (let round = 1; round <= 3; round++) {
+      const waiting = tabs.map(tab => tab.wait(80))
+      await Bun.sleep(20)
+      expect(directory.stats().waiters).toBe(6)
+      await Promise.all(waiting)
+      expect(metrics.snapshot()).toMatchObject({ syncsSuperseded: 0, syncsImmediate: 6, syncsHeldToExpiry: 6 * round })
+    }
+  })
+
+  test('a superseding sync over the rate limit is refused before any waiter is answered', async () => {
+    const { directory, metrics } = make()
+    const ann = await directory.join({})
+    const tabs = await Promise.all(Array.from({ length: MAX_WAITERS_PER_PERSON + 1 }, async () => {
+      const tab = syncer(directory, ann.token)
+      await tab.now()
+      return tab
+    }))
+    const waiting = tabs.slice(0, MAX_WAITERS_PER_PERSON).map(tab => tab.wait(15_000))
+    await Bun.sleep(10)
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
+    const spare = tabs[MAX_WAITERS_PER_PERSON]!
+    // Use up the remaining immediate syncs of the 10-second window.
+    for (let used = MAX_WAITERS_PER_PERSON + 1; used < 30; used++) await spare.now()
+    expect(await failureCode(() => spare.wait(15_000))).toBe('people_rate_limited')
+    expect(directory.stats().waiters).toBe(MAX_WAITERS_PER_PERSON)
+    expect(metrics.snapshot().syncsSuperseded).toBe(0)
+    directory.close()
+    await Promise.all(waiting)
   })
 
   test('heartbeat-only syncs, presence changes and leaves never write the database file', async () => {
@@ -317,16 +399,21 @@ describe('People directory', () => {
     const ben = await directory.join({ preferredName: 'Ben' })
     expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text: ' \n\t ' }, 'k0'))).toBe('message_empty')
     expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text: '🙂'.repeat(2_001) }, 'k0'))).toBe('message_too_long')
+    for (const text of ['\u0000hello', 'bell\u0007', 'carriage\rreturn', 'del\u007f', 'c1\u0085']) {
+      expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text }, 'k0'))).toBe('message_invalid_characters')
+    }
+    const tabbed = await directory.send({ token: ann.token, to: ben.me.id, text: 'col\tcol\nnext line' }, 'k-tab')
+    expect(tabbed.message.text).toBe('col\tcol\nnext line')
     expect(await failureCode(() => directory.send({ token: ann.token, to: ann.me.id, text: 'me' }, 'k0'))).toBe('message_to_self')
     expect(await failureCode(() => directory.send({ token: ann.token, to: `person-${crypto.randomUUID()}`, text: 'x' }, 'k0'))).toBe('person_not_found')
-    const first = await directory.send({ token: ann.token, to: ben.me.id, text: '  Café \n\nline two  \n ' }, 'k1')
+    const first = await directory.send({ token: ann.token, to: ben.me.id, text: '  Cafe\u0301 \n\nline two  \n ' }, 'k1')
     expect(first.replayed).toBe(false)
     expect(first.message.text).toBe('  Café \n\nline two')
     expect(first.message).toMatchObject({ from: ann.me.id, to: ben.me.id, sentAt: new Date(time.now()).toISOString() })
     expect(await directory.send({ token: ann.token, to: ben.me.id, text: '  Café \n\nline two' }, 'k1')).toEqual({ message: first.message, replayed: true })
     expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text: 'other' }, 'k1'))).toBe('idempotency_conflict')
     expect((await directory.send({ token: ann.token, to: ben.me.id, text: 'x'.repeat(2_000) }, 'k-long')).message.text).toHaveLength(2_000)
-    for (let i = 2; i <= 9; i++) await directory.send({ token: ann.token, to: ben.me.id, text: `m${i}` }, `k${i}`)
+    for (let i = 2; i <= 8; i++) await directory.send({ token: ann.token, to: ben.me.id, text: `m${i}` }, `k${i}`)
     let limited: unknown
     try { await directory.send({ token: ann.token, to: ben.me.id, text: 'eleventh' }, 'k11') } catch (error) { limited = error }
     expect(peopleFailureOf(limited)).toMatchObject({ status: 429, code: 'people_rate_limited', retryable: true })
@@ -340,7 +427,7 @@ describe('People directory', () => {
     expect(metrics.snapshot()).toMatchObject({ messagesSent: 11, messagesReplayed: 2 })
     const sentLines = lines.filter(line => line.includes('"outcome":"sent"'))
     expect(sentLines).toHaveLength(11)
-    expect(JSON.parse(sentLines[0]!.slice('[people] send '.length))).toEqual({
+    expect(JSON.parse(sentLines[1]!.slice('[people] send '.length))).toEqual({
       workspaceId: directory.workspaceId, sender: ann.me.id, recipient: ben.me.id, messageId: first.message.id, seq: first.message.seq, outcome: 'sent',
     })
     expect(lines.some(line => line.includes('"outcome":"people_rate_limited"'))).toBe(true)
@@ -391,20 +478,30 @@ describe('People directory', () => {
     expect(replaced).toMatchObject({ storeId: start.storeId, messages: [], cursor: rest.cursor })
   })
 
-  test('at the People limit, People who never chatted and were away for 30 days are forgotten; otherwise joining is refused', async () => {
-    const { directory, time, metrics } = make({ peopleLimit: 2 })
+  test('at the People limit, People who never chatted, have no screen open and were away for a day are forgotten; otherwise joining is refused', async () => {
+    const { directory, time, metrics } = make({ peopleLimit: 3 })
     const idle = await directory.join({})
+    const watching = await directory.join({})
     await directory.join({})
     expect(await failureCode(() => directory.join({}))).toBe('people_limit_reached')
-    time.advance(INACTIVE_PERSON_PRUNE_MS + 1)
+    // A pending sync keeps a screen live however long it waits.
+    const watcher = syncer(directory, watching.token)
+    await watcher.now()
+    const stillWatching = watcher.wait(15_000)
+    await Bun.sleep(5)
+    time.advance(INACTIVE_PERSON_PRUNE_MS - 60_000)
+    expect(await failureCode(() => directory.join({}))).toBe('people_limit_reached')
+    time.advance(60_001)
     const fresh = await directory.join({})
     expect(fresh.me.name).toBe('User1')
     expect(metrics.snapshot().peoplePruned).toBe(2)
     expect(await failureCode(() => directory.sync({ token: idle.token, screen: screen(), viewingKey: RUN_1, waitMs: 0 }, live()))).toBe('person_token_invalid')
+    directory.close()
+    expect((await stillWatching).me).toEqual(watching.me)
   })
 
   test('reports presence as warming for one presence timeout after the process started, and its end wakes waiting syncs', async () => {
-    const { directory, time } = make({ processStartedAt: clock().now() })
+    const { directory, time } = make({ processStartedAt: clock().monotonic() })
     const ann = await directory.join({})
     const annSync = syncer(directory, ann.token)
     expect((await annSync.now()).presenceWarming).toBe(true)

@@ -15,7 +15,7 @@ const rejected = (raw: string) => {
 describe('Person names', () => {
   test('applies NFKC, trims and collapses runs of spaces to one', () => {
     expect(accepted('  Ｂｅｎ   Ｏｌｓｅｎ ').name).toBe('Ben Olsen')
-    expect(accepted('Ben 　 Olsen').name).toBe('Ben Olsen')
+    expect(accepted('Ben\u00a0\u3000 Olsen').name).toBe('Ben Olsen')
     // NFKC folds the ligature, so the stored name is plain text.
     expect(accepted('ﬁona').name).toBe('fiona')
     expect(accepted('Åse').name).toBe('Åse'.normalize('NFKC'))
@@ -30,7 +30,7 @@ describe('Person names', () => {
   test('rejects empty names, also after normalisation', () => {
     expect(rejected('')).toBe('empty')
     expect(rejected('   ')).toBe('empty')
-    expect(rejected('　')).toBe('empty')
+    expect(rejected('\u3000')).toBe('empty')
   })
 
   test('limits a name to 32 code points, counting astral characters once', () => {
@@ -43,21 +43,45 @@ describe('Person names', () => {
 
   test('rejects zero-width, bidi-override, control, separator, private-use and unassigned characters', () => {
     for (const raw of [
-      'Ben​', // zero-width space
-      'Be‍n', // zero-width joiner
-      'Be‌n', // zero-width non-joiner
-      '﻿Ben', // byte order mark
-      'Ben‮evil', // right-to-left override
-      'Ben⁦x⁩', // isolates
+      'Ben\u200b', // zero-width space
+      'Be\u200dn', // zero-width joiner
+      'Be\u200cn', // zero-width non-joiner
+      '\ufeffBen', // byte order mark
+      'Ben\u202eevil', // right-to-left override
+      'Ben\u2066x\u2069', // isolates
       'Ben\u0000',
       'Ben\nOlsen',
       'Ben\tOlsen',
-      'Ben Olsen', // line separator
-      'Ben Olsen', // paragraph separator
-      'Ben', // private use
+      'Ben\u2028Olsen', // line separator
+      'Ben\u2029Olsen', // paragraph separator
+      'Ben\ue000', // private use
       'Ben\ud800', // lone surrogate
-      'Ben͸', // unassigned
+      'Ben\u0378', // unassigned
+      'Ben\u034f', // combining grapheme joiner
+      'Ben\ufe00', // variation selector
+      'Ben\u{e0100}', // variation selector supplement
+      'Ben\u180b', // Mongolian free variation selector
+      'Ben\u115f', // Hangul choseong filler
+      'Ben\u1160', // Hangul jungseong filler
+      '\u2764\ufe0f', // red heart with VS16: refused with the variation selectors
     ]) expect(rejected(raw)).toBe('invalid_characters')
+  })
+
+  test('rejects a name that shows nothing, however it is made', () => {
+    expect(rejected('\u3164')).toBe('invalid_characters') // Hangul filler
+    expect(rejected('\u3164\u3164 \u3164')).toBe('invalid_characters')
+    expect(rejected('\u2800')).toBe('invalid_characters') // Braille blank
+    expect(rejected('\u2800 \u2800')).toBe('invalid_characters')
+    expect(rejected('\u0301')).toBe('invalid_characters') // a lone combining mark
+  })
+
+  test('accepts letters, numbers, punctuation and plain emoji', () => {
+    expect(accepted('Anna \u{1f680}').name).toBe('Anna \u{1f680}')
+    expect(accepted('\u{1f680}').name).toBe('\u{1f680}')
+    expect(accepted('Ben (turbine)').name).toBe('Ben (turbine)')
+    expect(accepted('\u00d8yvind-7').name).toBe('\u00d8yvind-7')
+    expect(accepted('\u674e\u96f7').name).toBe('\u674e\u96f7')
+    expect(accepted('\u2800x').name).toBe('\u2800x')
   })
 
   test('allocates the lowest free User<N>, skipping taken names case-insensitively', () => {

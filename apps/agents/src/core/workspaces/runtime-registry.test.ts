@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +44,23 @@ describe('WorkspaceRuntimeRegistry', () => {
     delete process.env.PROVIDER
     delete process.env.LEITBILD_SEED_WORKSPACE
     await rm(homeDir, { recursive: true, force: true })
+  })
+
+  // --- People directories ---
+
+  it('evicts idle People directories even when a runtime eviction in the same sweep fails', async () => {
+    const loaded = newWorkspaceId()
+    const people = newWorkspaceId()
+    await provision(loaded)
+    await provision(people)
+    await registry.peopleFor(people)
+    await registry.getOrLoad(loaded)
+    const flush = spyOn(registry.autoSaverFor(loaded)!, 'flush').mockImplementation(async () => { throw new Error('snapshot flush failed') })
+    try {
+      await expect(registry.evictIdle(Date.now() + 2_000_000)).rejects.toThrow('snapshot flush failed')
+    } finally { flush.mockRestore() }
+    expect(registry.peopleStatus()).toMatchObject({ openDirectories: 0, directoriesEvicted: 1 })
+    expect(registry.tryGetLive(people)).toBeUndefined()
   })
 
   // --- Validity ---
