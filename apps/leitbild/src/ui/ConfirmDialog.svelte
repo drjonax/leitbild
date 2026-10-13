@@ -1,106 +1,120 @@
 <script lang="ts" generics="T extends DeleteItem">
-  // Confirm a delete of one or many things (Workspaces, simulations): a
-  // native modal dialog that names what goes, starts on Cancel and needs one
-  // click on the count-specific danger button. While it works it says how far
-  // it got and Esc does nothing; afterwards it closes on success, or lists
-  // what failed and why, with "Try again" for just those. The runner and the
-  // words live in bulk-delete.ts.
+  // Confirm a delete of one or many things (Workspaces, simulations,
+  // scenarios): a native modal dialog that names what goes, starts on Cancel
+  // and needs one click on the count-specific danger button. While it works
+  // it says how far it got and cannot be closed; afterwards it closes on
+  // success, or lists what failed and why, with "Try again" for just those.
+  // The session, the runner and the words live in bulk-delete.ts.
   import { tick } from 'svelte'
   import {
-    deleteEach, deleteLabel, deleteTitle, failureTitle, progressText, type DeleteFailure, type DeleteItem, type Noun, type RemoveOutcome,
+    createDeleteSession, deleteLabel, deleteTitle, failureBody, failureTitle, progressText,
+    type DeleteItem, type DeleteSession, type DeleteSessionState, type Noun, type RemoveOutcome,
   } from './bulk-delete.ts'
 
-  let { open = $bindable(false), items, noun, body, remove, onfinished, returnFocus }: {
+  let { open = $bindable(false), items, noun, body, aside = null, remove, onfinished, returnFocus }: {
     open: boolean
     /** What the visitor chose to delete; read when the dialog opens. */
     items: ReadonlyArray<T>
     noun: Noun
     /** What deleting means, e.g. "Its simulations and conversations are deleted for everyone. This cannot be undone." */
     body: string
+    /** One more plain line under the body, or null. */
+    aside?: string | null
     remove: (item: T) => Promise<RemoveOutcome>
-    /** Once the dialog has closed: what was deleted (or already gone), possibly nothing. */
-    onfinished?: (removed: ReadonlyArray<T>) => void
-    /** Where focus goes when the control that opened the dialog is gone or hidden. */
+    /**
+     * Once the dialog has closed: what was deleted (or already gone), possibly
+     * nothing. A returned promise (the caller reloading its list) is waited
+     * for before focus moves.
+     */
+    onfinished?: (removed: ReadonlyArray<T>) => void | Promise<void>
+    /** Where focus goes after something was deleted, or when the control that opened the dialog is gone or hidden. */
     returnFocus?: () => void
   } = $props()
 
-  type Phase = 'confirm' | 'working' | 'failed'
   const uid = `confirm-${Math.random().toString(36).slice(2, 8)}`
   let dialog = $state<HTMLDialogElement | null>(null)
   let cancelButton = $state<HTMLButtonElement | null>(null)
-  let retryButton = $state<HTMLButtonElement | null>(null)
-  let phase = $state<Phase>('confirm')
-  /** The items this round deletes: all at first, then the failed ones. */
-  let pending = $state<ReadonlyArray<T>>([])
-  let removed = $state<ReadonlyArray<T>>([])
-  let failures = $state<ReadonlyArray<DeleteFailure<T>>>([])
-  let done = $state(0)
+  let closeButton = $state<HTMLButtonElement | null>(null)
+  let session: DeleteSession<T> | null = null
+  let view = $state<DeleteSessionState<T> | null>(null)
   let opener: HTMLElement | null = null
-  const title = $derived(phase === 'failed' ? failureTitle(noun, failures.length, pending.length) : deleteTitle(noun, pending))
+  const phase = $derived(view?.phase ?? 'confirm')
+  const pending = $derived(view?.pending ?? [])
+  const round = $derived(view?.phase === 'failed' ? view.round : null)
+  const title = $derived(round ? failureTitle(noun, round.failed.length, pending.length) : deleteTitle(noun, pending))
+  /** Rendered and focusable: a ⋯ menu item has closed with its menu, and a deleted row is gone. */
+  const showing = (element: HTMLElement | null): element is HTMLElement => element !== null && element.isConnected && element.getClientRects().length > 0
 
   $effect(() => {
     if (!dialog) return
     if (open && !dialog.open) {
       const active = document.activeElement
       opener = active instanceof HTMLElement && active !== document.body ? active : null
-      pending = [...items]
-      removed = []
-      failures = []
-      done = 0
-      phase = 'confirm'
+      session = createDeleteSession([...items], remove, state => { view = state })
+      view = session.state()
       dialog.showModal()
       // Cancel first: a destructive dialog never starts on the destructive control (a11y M7).
       void tick().then(() => cancelButton?.focus())
-    } else if (!open && dialog.open) dialog.close()
+    } else if (!open && dialog.open && session?.mayClose() !== false) dialog.close()
   })
 
+  // While deletes run, Esc does nothing: its keydown is cancelled, so no close request is made at all.
+  const onkeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && session && !session.mayClose()) event.preventDefault()
+  }
+
   const onclose = (): void => {
+    // A browser lets a page refuse a close request only once per user action, so a second phone Back
+    // closes the dialog while deletes run: it opens again, as their outcome must still be shown and reported.
+    if (session && !session.mayClose()) {
+      dialog?.showModal()
+      return
+    }
     open = false
-    // A ⋯ menu item has closed with its menu, and a deleted row is gone: then the caller says where.
-    const target = opener?.isConnected && opener.checkVisibility() ? opener : null
+    const removed = view?.removed ?? []
+    const target = showing(opener) ? opener : null
     opener = null
-    if (target) target.focus()
-    else returnFocus?.()
-    onfinished?.(removed)
+    session = null
+    if (removed.length === 0) {
+      if (target) target.focus()
+      else returnFocus?.()
+      void onfinished?.(removed)
+      return
+    }
+    // What held focus may be gone with what was deleted: the caller says where it goes once its list is read again.
+    void Promise.resolve(onfinished?.(removed)).finally(() => { void tick().then(() => returnFocus?.()) })
   }
 
   const confirm = async (): Promise<void> => {
-    if (phase === 'working' || pending.length === 0) return
-    phase = 'working'
-    done = 0
-    const result = await deleteEach(pending, remove, { onprogress: count => { done = count } })
-    removed = [...removed, ...result.removed]
-    if (result.failed.length === 0) {
+    if (!session?.mayClose()) return
+    const result = await session.start()
+    if (result.phase === 'done') {
       dialog?.close()
       return
     }
-    failures = result.failed
-    phase = 'failed'
+    // Close, not Try again: a destructive control never takes focus by itself.
     await tick()
-    retryButton?.focus()
-  }
-
-  const retry = (): void => {
-    pending = failures.map(failure => failure.item)
-    failures = []
-    void confirm()
+    closeButton?.focus()
   }
 </script>
 
-<dialog class="confirm-dialog" bind:this={dialog} aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-body`} {onclose}
-  oncancel={event => { if (phase === 'working') event.preventDefault() }}
+<dialog class="confirm-dialog" bind:this={dialog} aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-body`} {onclose} {onkeydown}
+  oncancel={event => { if (session && !session.mayClose()) event.preventDefault() }}
 >
   <div class="body">
     <h2 id={`${uid}-title`}>{title}</h2>
-    {#if phase === 'failed'}
-      <p id={`${uid}-body`}>{removed.length > 0 ? `${removed.length} deleted. ` : ''}{failures.length === 1 ? 'This one is still there:' : 'These are still there:'}</p>
-      <ul class="names failures" role="alert">
-        {#each failures as failure (failure.item.key)}
-          <li><b>{failure.item.label}</b><span class="why">{failure.text}</span></li>
-        {/each}
-      </ul>
+    {#if round}
+      <div class="failed" role="alert">
+        <p id={`${uid}-body`}>{failureBody(round)}</p>
+        <ul class="names failures">
+          {#each round.failed as failure (failure.item.key)}
+            <li><b>{failure.item.label}</b><span class="why">{failure.text}</span></li>
+          {/each}
+        </ul>
+      </div>
     {:else}
       <p id={`${uid}-body`}>{body}</p>
+      {#if aside}<p class="aside">{aside}</p>{/if}
       {#if pending.length > 1}
         <ul class="names" aria-label={`The ${pending.length} ${noun.many}`}>
           {#each pending as item (item.key)}
@@ -111,12 +125,12 @@
         <p class="single-note">{pending[0].note}</p>
       {/if}
     {/if}
-    <p class="progress" role="status">{phase === 'working' ? progressText(noun, done, pending.length) : ''}</p>
+    <p class="progress" role="status">{phase === 'working' ? progressText(noun, view?.done ?? 0, pending.length) : ''}</p>
   </div>
   <footer>
-    {#if phase === 'failed'}
-      <button class="lb-btn" type="button" onclick={() => dialog?.close()}>Close</button>
-      <button bind:this={retryButton} class="lb-btn lb-btn-danger" type="button" onclick={retry}>Try again</button>
+    {#if round}
+      <button bind:this={closeButton} class="lb-btn" type="button" onclick={() => dialog?.close()}>Close</button>
+      <button class="lb-btn lb-btn-danger" type="button" onclick={() => void confirm()}>Try again</button>
     {:else}
       <button bind:this={cancelButton} class="lb-btn" type="button" disabled={phase === 'working'} onclick={() => dialog?.close()}>Cancel</button>
       <button class="lb-btn lb-btn-danger" type="button" aria-disabled={phase === 'working' ? 'true' : undefined} onclick={() => void confirm()}
@@ -140,8 +154,11 @@
   .names b { min-width: 0; color: var(--lb-ink); font-weight: 600; overflow-wrap: anywhere; }
   .note, .single-note { color: var(--lb-warn); font-size: var(--lb-fs-micro); font-weight: 650; }
   .failures .why { flex-basis: 100%; color: var(--lb-danger); }
+  .aside { color: var(--lb-ink); font-weight: 600; }
+  .failed { display: grid; gap: var(--lb-s3); }
   .progress { color: var(--lb-ink-3); font-size: var(--lb-fs-small); }
-  .progress:empty { display: none; }
+  /* Empty, the live region stays in the page (so its next message is read) but takes no room. */
+  .progress:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--lb-s2); padding: var(--lb-s3) var(--lb-s5); border-top: 1px solid var(--lb-line);
     background: var(--lb-surface-2); border-radius: 0 0 var(--lb-r-xl) var(--lb-r-xl); }
   .lb-btn-danger:hover:not([disabled]):not([aria-disabled="true"]) { background: #6f2222; border-color: #6f2222; }

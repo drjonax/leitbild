@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { workspaceSchema } from '@leitbild/contracts'
 import { workspaceFixture } from './host-fetch-fake.test-support.ts'
 import { ageText } from './launch-workspace.ts'
-import { manageRows, moduleStateText } from './workspace-manage.ts'
+import { manageRows, moduleStateText, notRecentText } from './workspace-manage.ts'
 
 const A = '0b4b9a52-2f7e-4c1a-9d3e-00000000000a'
 const B = 'b56b1d2e-0000-4000-8000-00000000000b'
@@ -36,6 +36,7 @@ describe('manage rows', () => {
     })
     expect(moduleStateText(stuck)).toBe('Delete did not finish')
     expect(moduleStateText(workspaceSchema.parse(workspaceFixture(A, { world: 'provision_failed' })))).toBe('Setup failed')
+    expect(moduleStateText(workspaceSchema.parse(workspaceFixture(A, { agents: 'removing' })))).toBe('Deleting…')
     expect(moduleStateText(workspaceSchema.parse(workspaceFixture(A, { agents: 'provisioning' })))).toBe('Setting up')
     expect(moduleStateText(workspaceSchema.parse(workspaceFixture(A)))).toBeNull()
     expect(manageRows([stuck], { recent: [], now: NOW })[0]?.note).toBe('Delete did not finish')
@@ -47,5 +48,19 @@ describe('manage rows', () => {
     expect(ageText(new Date('2026-10-12T13:00:00.000Z'), NOW)).toBe('23 h ago')
     expect(ageText(new Date('2026-09-13T12:00:00.000Z'), NOW)).toBe('30 d ago')
     expect(ageText(new Date(2026, 7, 2, 12), NOW)).toBe('on 2 Aug')
+    expect(ageText(new Date('2026-10-13T12:05:00.000Z'), NOW)).toBe('in 5 min')
+    expect(ageText(new Date('2026-10-14T15:00:00.000Z'), NOW)).toBe('in 1 d')
+  })
+})
+
+describe('the bulk confirmation\'s note', () => {
+  test('says how many of the chosen this browser did not open recently', () => {
+    expect(notRecentText([{ id: A }, { id: B }, { id: C }], [A])).toBe('2 of these are not among the Workspaces this browser opened recently.')
+    expect(notRecentText([{ id: A }, { id: B }], [])).toBe('None of these 2 are among the Workspaces this browser opened recently.')
+  })
+
+  test('says nothing for one Workspace, or when all were opened here recently', () => {
+    expect(notRecentText([{ id: A }], [])).toBeNull()
+    expect(notRecentText([{ id: A }, { id: B }], [B, A])).toBeNull()
   })
 })

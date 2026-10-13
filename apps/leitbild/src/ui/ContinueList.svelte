@@ -13,7 +13,7 @@
   import MoreMenu, { type MoreMenuItem } from './MoreMenu.svelte'
   import { deletedText, deleteLabel, keepExisting, selectAllState, toggleAll, toggleOne } from './bulk-delete.ts'
   import { workspaceUrl } from './launch-destination.ts'
-  import { createResourceRemover, resourceDeleteBody, resourceDeleteItem, resourceNoun, type ResourceDeleteItem } from './resource-delete.ts'
+  import { catalogDeleteBody, catalogDeleteItem, catalogNoun, createCatalogRemover, type CatalogDeleteItem } from './catalog-delete.ts'
   import { CONTINUE_LIMIT, type ContinueItem } from './workspace-page.ts'
 
   let { items, workspaceId, capabilities, summaryValue, inspecting, oninspect, onrename, onremoved }: {
@@ -25,14 +25,17 @@
     oninspect: (resource: ModuleResourceDescriptor) => void
     onrename: (resource: ModuleResourceDescriptor, name: string, original: string) => Promise<void>
     /** Something was deleted: the page reads its Resources again. */
-    onremoved: () => void
+    onremoved: () => Promise<void>
   } = $props()
 
   const uid = `continue-${Math.random().toString(36).slice(2, 8)}`
   let all = $state(false)
   let selecting = $state(false)
   let selected = $state<ReadonlySet<string>>(new Set())
-  let targets = $state<ReadonlyArray<ResourceDeleteItem>>([])
+  let targets = $state<ReadonlyArray<CatalogDeleteItem>>([])
+  /** Where the first deleted card was, so focus can go to the card that takes its place. */
+  let deletedAt = 0
+  let list = $state<HTMLElement | null>(null)
   let confirming = $state(false)
   let status = $state('')
   let renaming = $state<string | null>(null)
@@ -44,13 +47,13 @@
   const shown = $derived(all || selecting ? items : items.slice(0, CONTINUE_LIMIT))
   /** The cards that can be deleted, by key: those whose descriptor names a usable delete Capability. */
   const deletable = $derived(new Map(items.flatMap(item => {
-    const entry = resourceDeleteItem(item.resource, capabilities)
+    const entry = catalogDeleteItem(item.resource, capabilities)
     return entry === null ? [] : [[entry.key, entry] as const]
   })))
   const deletableList = $derived([...deletable.values()])
   const chosen = $derived(deletableList.filter(entry => selected.has(entry.key)))
   const allState = $derived(selectAllState(deletableList, selected))
-  const remove = $derived(createResourceRemover(workspaceId))
+  const remove = $derived(createCatalogRemover(workspaceId))
   const hrefOf = (resource: ModuleResourceDescriptor): string => resource.ref.type === 'agents.room'
     ? workspaceUrl(workspaceId, { agents: resource.ref.id })
     : workspaceUrl(workspaceId, { world: resource.ref.id })
@@ -78,22 +81,29 @@
     selecting = false
     selected = new Set()
   }
-  const ask = (entries: ReadonlyArray<ResourceDeleteItem>): void => {
+  const ask = (entries: ReadonlyArray<CatalogDeleteItem>): void => {
     if (entries.length === 0) return
+    deletedAt = Math.max(0, shown.findIndex(item => entries.some(entry => entry.key === keyOf(item.resource))))
     targets = entries
     status = ''
     confirming = true
   }
-  const finished = (removed: ReadonlyArray<ResourceDeleteItem>): void => {
+  const finished = async (removed: ReadonlyArray<CatalogDeleteItem>): Promise<void> => {
     if (removed.length === 0) return
-    status = deletedText(resourceNoun(removed), removed)
+    status = deletedText(catalogNoun(removed), removed)
     const gone = new Set(removed.map(entry => entry.key))
     selected = keepExisting(selected, deletableList.filter(entry => !gone.has(entry.key)))
     if (deletableList.every(entry => gone.has(entry.key))) selecting = false
-    onremoved()
+    await onremoved()
   }
-  // A deleted card's Delete is gone: focus goes to the select bar, or the heading (its status line says what happened).
-  const focusAfterDelete = (): void => { void tick().then(() => (selecting ? selectAllBox : heading)?.focus()) }
+  // Called once the list was read again: a deleted card and its Delete are gone, so focus goes to the
+  // select bar, else to the card that took the first deleted one's place, else the heading or the page.
+  const focusAfterDelete = (): void => {
+    if (selecting && selectAllBox?.isConnected) return selectAllBox.focus()
+    const titles = [...(list?.querySelectorAll<HTMLElement>('a.title') ?? [])]
+    const target = titles[Math.min(deletedAt, titles.length - 1)] ?? (heading?.isConnected ? heading : document.querySelector<HTMLElement>('main'))
+    target?.focus()
+  }
 </script>
 
 {#if items.length > 0}
@@ -103,7 +113,7 @@
       <span class="count">{items.length > CONTINUE_LIMIT && !all && !selecting ? `${CONTINUE_LIMIT} of ${items.length}` : items.length}</span>
       <span class="head-actions">
         {#if deletable.size > 1 || selecting}
-          <button class="text-button" type="button" aria-pressed={selecting}
+          <button class="text-button" type="button"
             onclick={() => { if (selecting) stopSelecting(); else void startSelecting() }}>{selecting ? 'Done' : 'Select'}</button>
         {/if}
         {#if items.length > CONTINUE_LIMIT && !selecting}
@@ -117,13 +127,13 @@
           <input bind:this={selectAllBox} type="checkbox" checked={allState === 'all'} onchange={() => { selected = toggleAll(deletableList, selected) }} />
           <span>Select all <span class="muted">({deletable.size})</span></span>
         </label>
-        <span class="selected-count">{selected.size} selected</span>
+        <span class="selected-count">{chosen.length} selected</span>
         <button class="lb-btn lb-btn-sm lb-btn-danger" type="button" disabled={chosen.length === 0} onclick={() => ask(chosen)}
-        ><Icon name="trash" size={16} />{deleteLabel(resourceNoun(chosen.length === 0 ? deletableList : chosen), chosen.length)}</button>
+        ><Icon name="trash" size={16} />{deleteLabel(catalogNoun(chosen.length === 0 ? deletableList : chosen), chosen.length)}</button>
       </div>
     {/if}
     <p class="visually-hidden" role="status">{status}</p>
-    <ul id="continue-list" class="cards" class:selecting>
+    <ul id="continue-list" class="cards" class:selecting bind:this={list}>
       {#each shown as item (keyOf(item.resource))}
         {@const key = keyOf(item.resource)}
         {@const actions = menuItems(item.resource)}
@@ -171,7 +181,7 @@
   </section>
 {/if}
 
-<ConfirmDialog bind:open={confirming} items={targets} noun={resourceNoun(targets)} body={resourceDeleteBody(targets)}
+<ConfirmDialog bind:open={confirming} items={targets} noun={catalogNoun(targets)} body={catalogDeleteBody(targets)}
   {remove} onfinished={finished} returnFocus={focusAfterDelete} />
 
 <style>
@@ -210,7 +220,8 @@
   .title { min-width: 0; color: var(--lb-ink); font-size: .9375rem; font-weight: 700; line-height: 1.35; text-decoration: none; overflow-wrap: anywhere; }
   a.title::after, label.pick::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
   a.title:focus { outline: none; }
-  label.pick { cursor: pointer; }
+  /* Not the page-wide label grid: a title ellipsises on one line on phones. */
+  label.pick { display: block; cursor: pointer; }
   .title :global(.inline-name input) { width: 100%; min-height: 36px; padding: .2rem .45rem; border: 1px solid var(--lb-control); border-radius: var(--lb-r-sm); font: inherit; }
   .facts { display: flex; flex-wrap: wrap; gap: 6px; }
   .fact { display: grid; gap: 1px; min-width: 64px; padding: 4px 7px; border: 1px solid var(--lb-line); border-radius: var(--lb-r-xs); background: var(--lb-surface-2); }

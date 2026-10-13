@@ -26,16 +26,23 @@ describe('rename', () => {
 })
 
 describe('delete', () => {
-  test('204 is deleted, 404 is already gone', async () => {
+  test('204 is deleted, the Host\'s 404 workspace_not_found is already gone', async () => {
     const deleted = fakeFetch().on('DELETE', `/api/workspaces/${ID}`, new Response(null, { status: 204 }))
     expect(await createWorkspaceAdmin(deleted.fetch).remove(ID)).toEqual({ kind: 'deleted' })
     const gone = fakeFetch().on('DELETE', `/api/workspaces/${ID}`, hostError(404, 'workspace_not_found', 'Workspace not found'))
     expect(await createWorkspaceAdmin(gone.fetch).remove(ID)).toEqual({ kind: 'gone' })
   })
 
+  test('any other 404 (an unknown route, a stale page) is a failure, never "deleted"', async () => {
+    for (const code of ['route_not_found', 'capability_not_found']) {
+      const host = fakeFetch().on('DELETE', `/api/workspaces/${ID}`, hostError(404, code, 'Route not found'))
+      expect(await createWorkspaceAdmin(host.fetch).remove(ID)).toEqual({ kind: 'failed', text: 'Route not found' })
+    }
+  })
+
   test('a partial delete says so in plain words', async () => {
     const host = fakeFetch().on('DELETE', `/api/workspaces/${ID}`, hostError(502, 'workspace_delete_incomplete', 'One or more Modules could not remove their Workspace state'))
-    expect(await createWorkspaceAdmin(host.fetch).remove(ID)).toEqual({ kind: 'failed', text: DELETE_INCOMPLETE_TEXT, code: 'workspace_delete_incomplete' })
+    expect(await createWorkspaceAdmin(host.fetch).remove(ID)).toEqual({ kind: 'failed', text: DELETE_INCOMPLETE_TEXT })
   })
 
   test('capacity, lost connections and odd answers are plain text, never raw diagnostics', async () => {
@@ -46,7 +53,7 @@ describe('delete', () => {
     const odd = fakeFetch().on('DELETE', `/api/workspaces/${ID}`, json({ ok: true }))
     const error = console.error
     console.error = () => {}
-    try { expect(await createWorkspaceAdmin(odd.fetch).remove(ID)).toEqual({ kind: 'failed', text: GENERIC_ERROR_TEXT, code: null }) }
+    try { expect(await createWorkspaceAdmin(odd.fetch).remove(ID)).toEqual({ kind: 'failed', text: GENERIC_ERROR_TEXT }) }
     finally { console.error = error }
   })
 })

@@ -1,7 +1,8 @@
 <script lang="ts">
   // The Workspace page header (plan v2 §6.1): the name, the public note, Copy
   // link and a ⋯ disclosure with Rename and Delete Workspace…. Delete asks
-  // once, in a modal that names the Workspace; it is never on a first-run surface.
+  // once, in a modal that names the Workspace. Several are deleted at once in
+  // Manage Workspaces, linked from the Workspaces switcher and the landing footer.
   import type { Workspace } from '@leitbild/contracts'
   import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'

@@ -31,16 +31,17 @@
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
   import { roomScopeIncludingRun, roomSelectsRun, roomServesRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
+  import { keptSelection } from './open-selection.ts'
   import { withUnreadCount, workspacePageTitle } from './page-title.ts'
-  import { workspaceLabel } from './launch-workspace.ts'
-  import { launchDestination, workspacePath, workspaceUrl } from './launch-destination.ts'
+  import { ageText, workspaceLabel } from './launch-workspace.ts'
+  import { workspacePath, workspaceUrl } from './launch-destination.ts'
   import { createPeopleSession, type PeopleSession, type PeopleState } from './people-session.ts'
   import { browserPeoplePorts } from './people-browser.ts'
   import { PEOPLE_SYNC_CAPABILITY_ID, type PersonWire } from './people-wire.ts'
   import { browserWorkspaceMemory } from './workspace-memory.ts'
   import { demosHref, guideHref } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
-  import { errorDiagnostic, plainError } from './error-text.ts'
+  import { errorDiagnostic, plainError, plainErrorText } from './error-text.ts'
   import { createStartRunner, startAnnouncement, type StartState, type StartTarget } from './definition-start.ts'
   import { readFeaturedCatalogue } from './featured-catalogue.ts'
   import { continueItems, featuredStartRevision, openedFromGuide, workspaceDemos, type FeaturedCard } from './workspace-page.ts'
@@ -126,20 +127,14 @@
     room: selectedAgentsResource?.title,
   }))
 
-  const normalizeOpenSelection = (catalog: ReadonlyArray<ModuleResourceDescriptor>): void => {
-    const run = catalog.find(resource => resource.ref.type === 'world.simulation-run' && resource.ref.id === selectedWorldRunId)
-    const room = catalog.find(resource => resource.ref.type === 'agents.room' && resource.ref.id === selectedAgentsRoomId)
-    if (selectedWorldRunId && !run) selectedWorldRunId = null
-    if (selectedAgentsRoomId && !room) {
-      selectedAgentsRoomId = null
-      agentsVisible = false
-    }
-    if (run && room) {
-      if (!roomServesRun(room, run)) {
-        selectedAgentsRoomId = null
-        agentsVisible = false
-      }
-    }
+  /** The Modules' answers to the last Resource read, so Back and Forward can check a restored selection too. */
+  let resourceOutcomes: ReadonlyArray<ModuleQueryOutcome> = []
+  const normalizeOpenSelection = (catalog: ReadonlyArray<ModuleResourceDescriptor>, modules: ReadonlyArray<ModuleQueryOutcome>): void => {
+    resourceOutcomes = modules
+    const kept = keptSelection({ world: selectedWorldRunId, agents: selectedAgentsRoomId, agentsVisible }, catalog, modules)
+    selectedWorldRunId = kept.world
+    selectedAgentsRoomId = kept.agents
+    agentsVisible = kept.agentsVisible
     const url = new URL(location.href)
     if (selectedWorldRunId) url.searchParams.set('world', selectedWorldRunId)
     else url.searchParams.delete('world')
@@ -207,7 +202,7 @@
     definitions = definitionResponse.definitions
     if (resourceToken === resourceRequest) {
       resources = resourceResponse.resources
-      normalizeOpenSelection(resources)
+      normalizeOpenSelection(resources, resourceResponse.modules)
       refreshError = null
     }
     capabilities = capabilityResponse.capabilities
@@ -221,10 +216,9 @@
     if (token !== resourceRequest) return
     resources = response.resources
     refreshError = response.modules.filter(outcome => outcome.status === 'failed').map(outcome => outcome.failure.message).join('; ') || null
-    // A complete list closes an open Run or conversation that no longer exists (deleted here or elsewhere).
-    if (refreshError !== null) return
+    // An open Run or conversation that no longer exists (deleted here or elsewhere) closes.
     const openRun = selectedWorldRunId
-    normalizeOpenSelection(resources)
+    normalizeOpenSelection(resources, response.modules)
     if (openRun !== null && selectedWorldRunId === null) error = 'The simulation you had open was deleted.'
   }
 
@@ -280,11 +274,6 @@
     )).workspace
     await loadWorkspaceCatalog(workspace.id)
   })
-
-  const openResources = (created: ReadonlyArray<ModuleResourceDescriptor['ref']>): void => {
-    if (!workspace) return
-    location.href = launchDestination(workspace.id, created, { world: selectedWorldRunId, agents: selectedAgentsRoomId })
-  }
 
   // The featured list needs no Workspace runtime; it is read once, when the home first shows.
   let featuredRequested = false
@@ -354,22 +343,6 @@
     if (workspace) memory.forget(workspace.id)
     location.assign('/workspaces')
   }
-
-  const invokeDefinition = (definition: ModuleDefinitionDescriptor, capability: ModuleCapabilityDescriptor): Promise<void> => run(async () => {
-    if (!workspace) return
-    if (capability.risk === 'destructive' && !confirm(`${capability.title}: ${definition.title}? Existing live resources will remain.`)) return
-    const response = await request<InvocationResponse>(
-      `/api/workspaces/${workspace.id}/capabilities/${encodeURIComponent(capability.id)}/invoke`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          definition: { ...definition.ref, revisionId: definition.currentRevisionId },
-          input: {}, actor: { kind: 'human' },
-        }),
-      },
-    )
-    if (response.createdResources?.length) openResources(response.createdResources)
-    else await loadWorkspaceCatalog(workspace.id)
-  })
 
   const inspect = async (subject: InspectionSubject): Promise<void> => {
     if (!workspace) return
@@ -468,8 +441,9 @@
     return null
   }
 
+  // The open Run was deleted: its address is replaced, so Back does not return to it.
   const closeWorldRun = (): void => {
-    location.href = workspace ? `/workspaces/${encodeURIComponent(workspace.id)}` : '/workspaces'
+    location.replace(workspace ? `/workspaces/${encodeURIComponent(workspace.id)}` : '/workspaces')
   }
 
   const restoreUrlSelection = (): void => {
@@ -477,6 +451,8 @@
     selectedWorldRunId = selection.get('world')
     selectedAgentsRoomId = selection.get('agents')
     agentsVisible = selectedAgentsRoomId !== null
+    // Back to a Run or conversation deleted since is the Workspace page, not a dead view.
+    if (!loading) normalizeOpenSelection(resources, resourceOutcomes)
   }
 
   const capabilityFor = (id: string): ModuleCapabilityDescriptor | undefined => capabilities.find(item => item.id === id)
@@ -603,22 +579,8 @@
       jsonRequest('POST', { resource: resource.ref, input: { name: name || null, expectedTitle }, actor: { kind: 'human' } }))
     await refreshResources(workspace.id)
   }
-  const relativeTime = (timestamp: string): string => {
-    const deltaSeconds = Math.round((summaryClock - Date.parse(timestamp)) / 1000)
-    const future = deltaSeconds < 0
-    const seconds = Math.abs(deltaSeconds)
-    if (seconds < 10) return 'just now'
-    const [value, unit] = seconds < 60
-      ? [seconds, 's']
-      : seconds < 3_600
-        ? [Math.round(seconds / 60), 'm']
-        : seconds < 86_400
-          ? [Math.round(seconds / 3_600), 'h']
-          : [Math.round(seconds / 86_400), 'd']
-    return future ? `in ${value}${unit}` : `${value}${unit} ago`
-  }
   const summaryValue = (item: ResourceSummaryItem): string =>
-    item.kind === 'timestamp' ? relativeTime(item.value) : String(item.value)
+    item.kind === 'timestamp' ? ageText(new Date(item.value), new Date(summaryClock)) : String(item.value)
   const refreshInterval = setInterval(() => {
     summaryClock = Date.now()
     if (workspace && !showingComposer) {
@@ -736,14 +698,14 @@
         <ContinueList items={continuing} workspaceId={workspace.id} {capabilities} {summaryValue} inspecting={inspectionLoading}
           oninspect={resource => void inspect({ kind: 'resource', descriptor: resource })}
           onrename={(resource, name, original) => renameResource(resource, name, original)}
-          onremoved={() => { void refreshResources(workspace!.id).catch(cause => { refreshError = String(cause) }) }} />
+          onremoved={() => refreshResources(workspace!.id).catch(cause => { refreshError = String(cause) })} />
         <FeaturedRow cards={demos.cards} unavailable={featuredFailed || demos.unavailable.length > 0} start={startState} keyOf={featuredKey}
           onstart={startFeatured} onretry={() => void retryStart()} ondismiss={() => startRunner.dismiss()} oncancel={() => startRunner.cancel()} onreload={reloadAfterStart} />
-        <DefinitionCatalog definitions={demos.others} listed={featuredCatalog?.listed ?? []} {capabilities} start={startState} keyOf={definitionKey} {busy} inspecting={inspectionLoading}
+        <DefinitionCatalog definitions={demos.others} listed={featuredCatalog?.listed ?? []} {capabilities} workspaceId={workspace.id} start={startState} keyOf={definitionKey} inspecting={inspectionLoading}
           onstart={startDefinition} onretry={() => void retryStart()} ondismiss={() => startRunner.dismiss()} oncancel={() => startRunner.cancel()} onreload={reloadAfterStart}
           onedit={definition => { if (definition.uiPath) void openEditor(definition.uiPath, { ...definition.ref, revisionId: definition.currentRevisionId }) }}
           oninspect={definition => void inspect({ kind: 'definition', descriptor: definition })}
-          ondelete={(definition, capability) => void invokeDefinition(definition, capability)} />
+          onremoved={() => loadWorkspaceCatalog(workspace!.id).catch(cause => { error = plainErrorText(cause) })} />
         {#if scenarioEditorPath}
           <section class="scenario-builder-frame" aria-label="Scenario editor"><button class="builder-close" type="button" onclick={() => { if (!scenarioEditorDirty || confirm('Discard unsaved scenario changes?')) { scenarioEditorPath = null; scenarioEditorSubject = null; scenarioEditorDirty = false } }}>Close editor</button><iframe bind:this={scenarioEditorFrame} title="World Scenario Editor" src={`${scenarioEditorPath}${scenarioEditorPath.includes('?') ? '&' : '?'}embed=1`}></iframe></section>
         {:else}

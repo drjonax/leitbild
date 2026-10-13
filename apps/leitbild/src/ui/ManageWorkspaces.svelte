@@ -4,7 +4,6 @@
   // each row. Both ask once in ConfirmDialog, which deletes through the Host
   // (a few at a time) and lists any that failed. A Workspace whose delete did
   // not finish is deleted again from here. Rows: workspace-manage.ts.
-  import { tick } from 'svelte'
   import type { Workspace } from '@leitbild/contracts'
   import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
@@ -14,7 +13,7 @@
   import type { WorkspaceApi } from './launch-workspace.ts'
   import type { ModalCloseReason } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
-  import { MANAGE_INTRO, MANAGE_TITLE, manageRows, type ManageRow } from './workspace-manage.ts'
+  import { MANAGE_INTRO, MANAGE_TITLE, manageRows, notRecentText, type ManageRow } from './workspace-manage.ts'
   import type { WorkspaceMemory } from './workspace-memory.ts'
   import { filterRows, SEARCH_THRESHOLD } from './workspace-switcher.ts'
 
@@ -39,6 +38,8 @@
   let status = $state('')
   let selectAllBox = $state<HTMLInputElement | null>(null)
   let list = $state<HTMLElement | null>(null)
+  let modal = $state<{ focusTitle(): void } | null>(null)
+  let listRequest = 0
 
   const rows = $derived(workspaces === null ? [] : manageRows(workspaces, { recent: memory.recent(), now }))
   const shown = $derived(query.trim() ? filterRows(rows, query) : rows)
@@ -48,17 +49,22 @@
   $effect(() => { if (selectAllBox) selectAllBox.indeterminate = allState === 'some' })
 
   const load = async (): Promise<void> => {
+    // A newer read owns the list: an older answer arriving late never overwrites it.
+    const token = ++listRequest
     loading = true
     loadError = null
     try {
-      workspaces = await api.list()
+      const listed = await api.list()
+      if (token !== listRequest) return
+      workspaces = listed
       now = new Date()
-      selected = keepExisting(selected, workspaces.map(workspace => ({ key: workspace.id })))
+      selected = keepExisting(selected, listed.map(workspace => ({ key: workspace.id })))
     } catch (error) {
+      if (token !== listRequest) return
       console.error('Workspace list failed', errorDiagnostic(error))
       loadError = plainErrorText(error)
     } finally {
-      loading = false
+      if (token === listRequest) loading = false
     }
   }
 
@@ -80,18 +86,22 @@
     status = ''
     confirming = true
   }
-  const finished = (removed: ReadonlyArray<ManageRow>): void => {
+  const finished = async (removed: ReadonlyArray<ManageRow>): Promise<void> => {
     if (removed.length === 0) return
     // A deleted Workspace is no longer a launch default or a Recent entry.
     for (const row of removed) memory.forget(row.id)
     status = deletedText(WORKSPACE_NOUN, removed)
-    void load()
+    await load()
   }
-  // A deleted row's Delete button is gone: focus goes to the list, which says what is left.
-  const focusAfterDelete = (): void => { void tick().then(() => (list ?? selectAllBox)?.focus()) }
+  // Called once the list was read again: the deleted rows and their buttons are gone, so focus goes
+  // to what is left of the list, or to the dialog's title when nothing is.
+  const focusAfterDelete = (): void => {
+    if (list?.isConnected) list.focus()
+    else modal?.focusTitle()
+  }
 </script>
 
-<Modal bind:open title={MANAGE_TITLE} width="640px" {onclose} {fallbackFocus}>
+<Modal bind:this={modal} bind:open title={MANAGE_TITLE} width="640px" {onclose} {fallbackFocus}>
   <div class="manage">
     <p class="intro">{MANAGE_INTRO}</p>
     {#if workspaces === null && loading}
@@ -132,13 +142,13 @@
     <p class="visually-hidden" role="status">{status}</p>
   </div>
   {#snippet footer()}
-    <span class="count">{selected.size > 0 ? `${selected.size} selected` : status || 'Tick Workspaces to delete several at once.'}</span>
+    <span class="count">{chosen.length > 0 ? `${chosen.length} selected` : status || 'Tick Workspaces to delete several at once.'}</span>
     <button class="lb-btn lb-btn-danger" type="button" disabled={chosen.length === 0} onclick={() => ask(chosen)}
     ><Icon name="trash" size={16} />{deleteLabel(WORKSPACE_NOUN, chosen.length)}</button>
   {/snippet}
 </Modal>
 
-<ConfirmDialog bind:open={confirming} items={targets} noun={WORKSPACE_NOUN}
+<ConfirmDialog bind:open={confirming} items={targets} noun={WORKSPACE_NOUN} aside={notRecentText(targets, memory.recent())}
   body={targets.length === 1
     ? 'Its simulations and conversations are deleted for everyone. This cannot be undone.'
     : 'Their simulations and conversations are deleted for everyone. This cannot be undone.'}

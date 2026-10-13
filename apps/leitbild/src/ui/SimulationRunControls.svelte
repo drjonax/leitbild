@@ -4,7 +4,7 @@
   import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
   import { jsonRequest, request } from './api.ts'
-  import { createResourceRemover, resourceDeleteBody, resourceDeleteItem, resourceNoun, type ResourceDeleteItem } from './resource-delete.ts'
+  import { catalogDeleteBody, catalogDeleteItem, catalogNoun, createCatalogRemover, type CatalogDeleteItem } from './catalog-delete.ts'
   import { simulationTimeLabel } from './simulation-time.ts'
 
   interface AccelerationState {
@@ -47,7 +47,8 @@
     readonly resource: ModuleResourceDescriptor
     readonly resources: ReadonlyArray<ModuleResourceDescriptor>
     readonly capabilities: ReadonlyArray<ModuleCapabilityDescriptor>
-    readonly onSwitch: (runId: string) => void
+    /** `replace`: the open Run was deleted, so Back must not return to it. */
+    readonly onSwitch: (runId: string, replace?: boolean) => void
     readonly onClose: () => void
     readonly refreshResources: () => Promise<void>
     readonly reportError: (message: string) => void
@@ -80,7 +81,8 @@
   let notice = $state('')
   let noticeTimer: ReturnType<typeof setTimeout> | null = null
   let refreshToken = 0
-  let deleteTargets = $state<ReadonlyArray<ResourceDeleteItem>>([])
+  let deleteTargets = $state<ReadonlyArray<CatalogDeleteItem>>([])
+  let familyTrigger = $state<HTMLButtonElement | null>(null)
   let confirmingDelete = $state(false)
   let deleteButton = $state<HTMLButtonElement | null>(null)
   /** A 404 asked the Workspace's list once whether this Run still exists; a second one is reported. */
@@ -276,8 +278,8 @@
     }
   }
   // Each Run is deleted through the delete Capability its own descriptor names.
-  const removeRun = $derived(createResourceRemover(workspaceId))
-  const deletableRun = (member: ModuleResourceDescriptor): ResourceDeleteItem | null => resourceDeleteItem(member, capabilities)
+  const removeRun = $derived(createCatalogRemover(workspaceId))
+  const deletableRun = (member: ModuleResourceDescriptor): CatalogDeleteItem | null => catalogDeleteItem(member, capabilities)
   const askDelete = (member: ModuleResourceDescriptor): void => {
     const item = deletableRun(member)
     if (!item) return
@@ -286,19 +288,25 @@
     deleteTargets = [item]
     confirmingDelete = true
   }
-  /** Deleting the open Run moves to a remaining copy, or back to the Workspace page. */
-  const runsDeleted = (removed: ReadonlyArray<ResourceDeleteItem>): void => {
+  /**
+   * Deleting the open Run moves to a remaining copy, or back to the Workspace
+   * page, in place of the deleted Run's address so Back does not return to it.
+   */
+  const runsDeleted = async (removed: ReadonlyArray<CatalogDeleteItem>): Promise<void> => {
     if (removed.length === 0) return
-    const gone = new Set(removed.map(item => item.resource.ref.id))
-    if (!gone.has(resource.ref.id)) {
-      void refreshResources().catch(cause => reportError(cause instanceof Error ? cause.message : String(cause)))
-      return
+    const gone = new Set(removed.map(item => item.subject.ref.id))
+    if (gone.has(resource.ref.id)) {
+      const next = family.find(candidate => !gone.has(candidate.ref.id))
+      if (next === undefined) return onClose()
+      onSwitch(next.ref.id, true)
+      showNotice(`You are now in ${next.title}`)
     }
-    const next = family.find(candidate => !gone.has(candidate.ref.id))
-    if (next === undefined) return onClose()
-    onSwitch(next.ref.id)
-    showNotice(`You are now in ${next.title}`)
-    void refreshResources().catch(cause => reportError(cause instanceof Error ? cause.message : String(cause)))
+    await refreshResources().catch(cause => reportError(cause instanceof Error ? cause.message : String(cause)))
+  }
+  // The copies menu that held the deleted Run's Delete has closed: focus goes to its button, or to this Run's own Delete.
+  const focusAfterDelete = (): void => {
+    if (familyTrigger?.isConnected && familyTrigger.getClientRects().length > 0) familyTrigger.focus()
+    else deleteButton?.focus()
   }
   const displayTime = $derived(simulationTimeLabel(execution, wallNow))
 
@@ -329,7 +337,7 @@
 
 <div class="run-controls" aria-label="Simulation controls">
   {#if family.length > 1}<div class="family-control">
-    <button class="family-trigger" type="button" aria-haspopup="true" aria-expanded={familyOpen} onclick={toggleFamily} title={resource.title}>
+    <button bind:this={familyTrigger} class="family-trigger" type="button" aria-haspopup="true" aria-expanded={familyOpen} onclick={toggleFamily} title={resource.title}>
       <span class="family-label">{resource.title}</span><span aria-hidden="true">⌄</span>
     </button>
     {#if familyOpen}
@@ -348,17 +356,19 @@
       </div>
     {/if}
   </div>{:else}<span class="run-title" title={resource.title}>{resource.title}</span>{/if}
+  <!-- First in the strip, apart from the Assistant: visible without scrolling at any width. -->
+  <button bind:this={deleteButton} class="run-delete" type="button" disabled={deletableRun(resource) === null} onclick={() => askDelete(resource)} title="Delete this Run" aria-label="Delete this Run"><Icon name="trash" size={16} /></button>
+  <span class="divider" aria-hidden="true"></span>
   <button type="button" disabled={actionBusy || !capabilityAvailable('world.simulation-run.copy')} onclick={openCopyDialog} title="Copy this Run" aria-label="Copy this Run"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
   <button class:active={execution?.playback === 'playing'} type="button" disabled={!execution || actionBusy || !capabilityAvailable('world.simulation-run.execution.set')} onclick={togglePlayback} title={execution?.playback === 'playing' ? 'Playing — click to pause' : 'Paused — click to play'} aria-label={execution?.playback === 'playing' ? 'Pause simulation' : 'Play simulation'}>{#if execution?.playback === 'playing'}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>{:else}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 13 8-13 8z"/></svg>{/if}</button>
   <button class:active={execution?.pace === 'maximum'} type="button" aria-pressed={execution?.pace === 'maximum'} disabled={!execution || actionBusy || !capabilityAvailable('world.simulation-run.execution.set') || (!execution.maximumPace.available && execution.pace !== 'maximum')} onclick={togglePace} title={execution?.maximumPace.available ? execution?.pace === 'maximum' ? 'Maximum pace armed — click for realtime' : 'Realtime pace — click for maximum' : execution?.maximumPace.reason ?? 'Maximum pace unavailable'} aria-label={execution?.pace === 'maximum' ? 'Maximum pace armed; switch to realtime' : 'Realtime pace; switch to maximum'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 5 9 7-9 7zM12 5l9 7-9 7z"/></svg></button>
   <span class:fast={execution?.pace === 'maximum'} class="clock" title={execution?.playback === 'playing' && execution?.pace === 'maximum' ? `Playing at ${execution.acceleration?.measuredSpeed.toFixed(1) ?? '0.0'}× measured` : execution?.pace === 'maximum' ? 'Paused with maximum pace armed' : execution?.playback === 'paused' ? 'Simulation paused' : 'Simulation playing in realtime'}>{displayTime}{#if execution?.pace === 'maximum'}<small>{execution.playback === 'playing' ? `${execution.acceleration?.measuredSpeed.toFixed(1) ?? '0.0'}×` : 'MAX armed'}</small>{/if}</span>
   <button class:active={execution?.acceleration?.kind === 'timed' && ['running', 'paused'].includes(execution.acceleration.status)} type="button" disabled={actionBusy || !capabilityAvailable('world.simulation-run.execution.advance') || execution?.maximumPace.available === false} onclick={() => timerDialog?.showModal()} title="Run at maximum pace for a fixed duration" aria-label="Run at maximum pace for a fixed duration"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2h6M12 14l3-3M12 6a8 8 0 1 0 8 8 8 8 0 0 0-8-8z"/></svg></button>
   <button type="button" disabled={restrictionBusy || !capabilityAvailable('world.simulation-run.agent-restrictions.read') || !capabilityAvailable('world.simulation-run.agent-restrictions.set')} onclick={openRestrictions} title="AI restrictions for this Run" aria-label="AI restrictions for this Run"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></button>
-  <button bind:this={deleteButton} class="run-delete" type="button" disabled={deletableRun(resource) === null} onclick={() => askDelete(resource)} title="Delete this simulation" aria-label={`Delete this simulation: ${resource.title}`}><Icon name="trash" size={16} /></button>
 </div>
 {#if actionError}<div class="control-error" role="alert">{actionError}</div>{/if}
-<ConfirmDialog bind:open={confirmingDelete} items={deleteTargets} noun={resourceNoun(deleteTargets)} body={resourceDeleteBody(deleteTargets)}
-  remove={removeRun} onfinished={runsDeleted} returnFocus={() => deleteButton?.focus()} />
+<ConfirmDialog bind:open={confirmingDelete} items={deleteTargets} noun={catalogNoun(deleteTargets)} body={catalogDeleteBody(deleteTargets)}
+  remove={removeRun} onfinished={runsDeleted} returnFocus={focusAfterDelete} />
 {#if notice}<div class="switch-notice" role="status">{notice}</div>{/if}
 
 <dialog class="control-dialog" bind:this={copyDialog}>
@@ -419,8 +429,15 @@
   .family-menu > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; border-radius: 6px; } .family-menu > div.current { background: #2a3d30; }
   .family-member { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; text-align: left; }
   .family-delete { min-width: 30px; padding: 0 .4rem; border: 0; color: #f0b4ad; background: transparent; } .family-delete:hover:not(:disabled) { color: #ffd9d4; background: #5a2622; }
-  .run-delete { color: #f0b4ad; } .run-delete:hover:not(:disabled) { border-color: #b8645c; color: #ffe1dc; background: #5a2622; }
+  .run-delete { position: relative; color: #f0b4ad; } .run-delete:hover:not(:disabled) { border-color: #b8645c; color: #ffe1dc; background: #5a2622; }
   .family-delete :global(svg), .run-delete :global(svg) { display: block; }
+  .divider { flex: none; width: 1px; height: 20px; margin: 0 .2rem; background: #3d4c41; }
+  /* A 44 px target on touch: the button fills the strip's height and its hit area reaches the bar's edges. */
+  @media (pointer: coarse) {
+    .run-delete { min-width: 44px; min-height: 34px; }
+    .run-delete::before { content: ''; position: absolute; inset: -5px 0; }
+    .family-delete { min-width: 44px; min-height: 44px; }
+  }
   .family-rename { min-width: 28px; padding: 0 .35rem; border: 0; color: #b9c6bc; background: transparent; } .family-rename svg { width: 14px; height: 14px; }
   .family-name-input { min-width: 0; margin: .2rem .35rem; padding: .38rem .45rem; border: 1px solid #7f9d87; border-radius: 5px; color: #f4faf5; background: #111a14; font: inherit; outline: none; } .family-name-input:focus { border-color: #a6c5ad; box-shadow: 0 0 0 2px #5d8f6a55; }
   .control-error { position: fixed; z-index: 120; top: 3rem; right: 1rem; max-width: min(440px, calc(100vw - 2rem)); padding: .65rem .8rem; border-radius: 8px; color: #fff; background: #8e302b; box-shadow: 0 8px 24px #0005; font-size: .78rem; }

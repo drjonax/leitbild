@@ -89,15 +89,15 @@ export const shortDateTime = (at: Date): string =>
 /** "12 Oct" */
 export const shortDate = (at: Date): string => `${at.getDate()} ${months[at.getMonth()]}`
 
-/** "just now", "5 min ago", "3 h ago", "2 d ago"; older than a month, the date. */
+/** "just now", "5 min ago", "3 h ago", "2 d ago" (or "in 5 min" ahead); more than a month away, the date. */
 export const ageText = (at: Date, now: Date): string => {
-  const minutes = Math.floor((now.getTime() - at.getTime()) / 60_000)
+  const ahead = at.getTime() > now.getTime()
+  const minutes = Math.floor(Math.abs(now.getTime() - at.getTime()) / 60_000)
   if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} h ago`
-  const days = Math.floor(hours / 24)
-  return days <= 30 ? `${days} d ago` : `on ${shortDate(at)}`
+  const days = Math.floor(minutes / 1_440)
+  if (days > 30) return `on ${shortDate(at)}`
+  const span = minutes < 60 ? `${minutes} min` : days < 1 ? `${Math.floor(minutes / 60)} h` : `${days} d`
+  return ahead ? `in ${span}` : `${span} ago`
 }
 
 /** The name of a Workspace created for a launch or a question. */

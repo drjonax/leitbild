@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  countedNoun, deleteEach, deletedText, deleteLabel, deleteTitle, failureTitle, keepExisting, progressText, selectAllState, SIMULATION_NOUN,
-  toggleAll, toggleOne, WORKSPACE_NOUN, type RemoveOutcome,
+  countedNoun, createDeleteSession, deleteEach, deletedText, deleteLabel, deleteTitle, failureBody, failureTitle, isAlreadyGone, keepExisting,
+  progressText, selectAllState, SIMULATION_NOUN, toggleAll, toggleOne, WORKSPACE_NOUN, type DeleteSessionState, type RemoveOutcome,
 } from './bulk-delete.ts'
 import { GENERIC_ERROR_TEXT, HOST_UNREACHABLE_TEXT } from './error-text.ts'
 
@@ -70,6 +70,73 @@ describe('deleteEach', () => {
 
   test('nothing to delete is an empty result', async () => {
     expect(await deleteEach([], async () => ({ kind: 'deleted' }))).toEqual({ removed: [], failed: [] })
+  })
+})
+
+describe('already gone', () => {
+  const refusal = (status: number, code: string) => Object.assign(new Error('refused'), { status, code })
+
+  test('only the owner\'s own not-found code means someone deleted it first', () => {
+    expect(isAlreadyGone(refusal(404, 'simulation_run_not_found'), 'simulation_run_not_found')).toBe(true)
+    expect(isAlreadyGone(refusal(404, 'workspace_not_found'), 'workspace_not_found')).toBe(true)
+  })
+
+  test('a 404 for an unknown Capability, route or Module is a failure, as is any other refusal', () => {
+    for (const code of ['capability_not_found', 'route_not_found', 'module_not_installed', 'workspace_not_found']) {
+      expect(isAlreadyGone(refusal(404, code), 'simulation_run_not_found')).toBe(false)
+    }
+    expect(isAlreadyGone(refusal(409, 'simulation_run_not_found'), 'simulation_run_not_found')).toBe(false)
+    expect(isAlreadyGone(new Error('Failed to fetch'), 'simulation_run_not_found')).toBe(false)
+  })
+})
+
+describe('the dialog\'s session', () => {
+  test('a close is refused while deletes run, and their outcome is still there once they finish', async () => {
+    const gate = later()
+    const seen: DeleteSessionState<string>[] = []
+    const session = createDeleteSession(['a', 'b'], async item => {
+      await gate.promise
+      return item === 'a' ? { kind: 'deleted' } : { kind: 'gone' }
+    }, state => seen.push(state))
+    expect(session.mayClose()).toBe(true)
+    const running = session.start()
+    expect(session.state().phase).toBe('working')
+    expect(session.mayClose()).toBe(false)
+    expect(await session.start()).toBe(session.state())
+    gate.resolve()
+    const finished = await running
+    expect(finished).toMatchObject({ phase: 'done', removed: ['a', 'b'], done: 2 })
+    expect(session.mayClose()).toBe(true)
+    expect(seen.map(state => state.phase)).toEqual(['working', 'working', 'working', 'done'])
+  })
+
+  test('Try again runs only the failed ones; each round counts its own results, removed counts them all', async () => {
+    let attempt = 0
+    const session = createDeleteSession(['a', 'b', 'c'], async item => {
+      if (item === 'a') return { kind: 'deleted' }
+      attempt += 1
+      return item === 'b' && attempt > 2 ? { kind: 'deleted' } : { kind: 'failed', text: 'Try again.' }
+    }, undefined, { concurrency: 1 })
+    const first = await session.start()
+    expect(first.phase).toBe('failed')
+    expect(first.round?.removed).toEqual(['a'])
+    expect(first.round?.failed.map(failure => failure.item)).toEqual(['b', 'c'])
+    expect(failureTitle(WORKSPACE_NOUN, first.round!.failed.length, first.pending.length)).toBe('2 of 3 Workspaces were not deleted')
+    expect(failureBody(first.round!)).toBe('1 deleted. These are still there:')
+    const second = await session.start()
+    expect(second.pending).toEqual(['b', 'c'])
+    expect(second.round?.removed).toEqual(['b'])
+    expect(failureTitle(WORKSPACE_NOUN, second.round!.failed.length, second.pending.length)).toBe('1 of 2 Workspaces was not deleted')
+    expect(failureBody(second.round!)).toBe('1 deleted. This one is still there:')
+    expect(second.removed).toEqual(['a', 'b'])
+  })
+
+  test('done stays done', async () => {
+    let calls = 0
+    const session = createDeleteSession(['a'], async () => { calls += 1; return { kind: 'deleted' } })
+    await session.start()
+    await session.start()
+    expect(calls).toBe(1)
   })
 })
 

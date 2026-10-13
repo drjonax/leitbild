@@ -3,26 +3,27 @@
   // featured demo, collapsed by default, as compact rows: title, a one-line
   // summary with an inline "More" (a listed scenario's summary reads as in the
   // Demos modal), Start with staged progress, and a quiet ⋯ for Edit, Inspect
-  // and Delete. Row bodies never start anything.
+  // and Delete, which asks once in ConfirmDialog and deletes through the
+  // scenario's own delete Capability. Row bodies never start anything.
   import type { ModuleCapabilityDescriptor, ModuleDefinitionDescriptor, ModuleListedDefinition } from '@leitbild/contracts'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
   import MoreMenu, { type MoreMenuItem } from './MoreMenu.svelte'
   import StartProgress from './StartProgress.svelte'
-  import { cardCapability } from './card-actions.ts'
+  import { catalogDeleteBody, catalogDeleteItem, catalogNoun, createCatalogRemover, type CatalogDeleteItem } from './catalog-delete.ts'
   import type { StartState } from './definition-start.ts'
   import { scenarioRowSummary } from './workspace-page.ts'
 
   let {
-    definitions, listed, capabilities, start, keyOf, busy, inspecting, onstart, onretry, ondismiss, oncancel, onreload, onedit, oninspect, ondelete,
+    definitions, listed, capabilities, workspaceId, start, keyOf, inspecting, onstart, onretry, ondismiss, oncancel, onreload, onedit, oninspect, onremoved,
   }: {
     definitions: ReadonlyArray<ModuleDefinitionDescriptor>
     /** The Modules' listed scenarios (none while the featured catalogue is unknown). */
     listed: ReadonlyArray<ModuleListedDefinition>
     capabilities: ReadonlyArray<ModuleCapabilityDescriptor>
+    workspaceId: string
     start: StartState
     keyOf: (definition: ModuleDefinitionDescriptor) => string
-    /** Another page action (a delete) is running. */
-    busy: boolean
     inspecting: boolean
     onstart: (definition: ModuleDefinitionDescriptor) => void
     onretry: () => void
@@ -31,12 +32,17 @@
     onreload: () => void
     onedit: (definition: ModuleDefinitionDescriptor) => void
     oninspect: (definition: ModuleDefinitionDescriptor) => void
-    ondelete: (definition: ModuleDefinitionDescriptor, capability: ModuleCapabilityDescriptor) => void
+    /** A scenario was deleted: the page reads its catalogue again. */
+    onremoved: () => Promise<void>
   } = $props()
 
   const uid = `scen-${Math.random().toString(36).slice(2, 8)}`
   let open = $state(false)
   let expanded = $state<ReadonlySet<string>>(new Set())
+  let toggleButton = $state<HTMLButtonElement | null>(null)
+  let targets = $state<ReadonlyArray<CatalogDeleteItem>>([])
+  let confirming = $state(false)
+  const remove = $derived(createCatalogRemover(workspaceId))
   const starting = $derived(start.phase === 'busy')
   const toggleText = (key: string): void => {
     const next = new Set(expanded)
@@ -44,19 +50,22 @@
     expanded = next
   }
   const menuItems = (definition: ModuleDefinitionDescriptor): MoreMenuItem[] => {
-    const remove = cardCapability(definition, 'delete', capabilities)
+    const deletable = catalogDeleteItem(definition, capabilities)
     return [
       ...(definition.uiPath ? [{ label: 'Edit', icon: 'edit' as const, onselect: () => onedit(definition) }] : []),
       ...(definition.inspectionCapabilityId ? [{ label: 'Inspect', icon: 'info' as const, disabled: inspecting, onselect: () => oninspect(definition) }] : []),
-      ...(remove ? [{ label: 'Delete…', danger: true, disabled: busy, onselect: () => ondelete(definition, remove) }] : []),
+      ...(deletable ? [{ label: 'Delete…', danger: true, onselect: () => { targets = [deletable]; confirming = true } }] : []),
     ]
+  }
+  const finished = async (removed: ReadonlyArray<CatalogDeleteItem>): Promise<void> => {
+    if (removed.length > 0) await onremoved()
   }
 </script>
 
 {#if definitions.length > 0}
   <section class="more-scenarios" aria-labelledby={`${uid}-toggle`}>
     <h2 class="toggle-heading">
-      <button id={`${uid}-toggle`} class="toggle" type="button" aria-expanded={open} aria-controls={`${uid}-list`} onclick={() => { open = !open }}>
+      <button bind:this={toggleButton} id={`${uid}-toggle`} class="toggle" type="button" aria-expanded={open} aria-controls={`${uid}-list`} onclick={() => { open = !open }}>
         <Icon name={open ? 'down' : 'right'} size={18} />More scenarios <span class="count">({definitions.length})</span>
       </button>
     </h2>
@@ -98,6 +107,10 @@
     </ul>
   </section>
 {/if}
+
+<!-- The deleted row's ⋯ is gone: focus goes to the list's toggle. -->
+<ConfirmDialog bind:open={confirming} items={targets} noun={catalogNoun(targets)} body={catalogDeleteBody(targets)}
+  {remove} onfinished={finished} returnFocus={() => toggleButton?.focus()} />
 
 <style>
   .toggle-heading { margin: 0; font-size: var(--lb-fs-h3); }

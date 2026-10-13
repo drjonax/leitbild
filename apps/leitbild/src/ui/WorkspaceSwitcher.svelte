@@ -227,7 +227,7 @@
         {/if}
       {/if}
     </div>
-    <a class="manage" href={manageHref()} data-nav aria-haspopup="dialog" onclick={manage}><Icon name="list" size={16} />Manage Workspaces</a>
+    <a class="manage" href={manageHref()} data-nav aria-haspopup={onmanage ? 'dialog' : undefined} onclick={manage}><Icon name="list" size={16} />Manage Workspaces</a>
     <form class="new" onsubmit={create}>
       <label class="new-label" for={`${uid}-name`}><Icon name="plus" size={16} />New Workspace</label>
       <div class="new-row">

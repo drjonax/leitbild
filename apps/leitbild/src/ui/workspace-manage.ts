@@ -24,7 +24,8 @@ export interface ManageRow extends DeleteItem {
 /** A Workspace whose Modules are not all ready says why, in a few words; null when it is ready. */
 export const moduleStateText = (workspace: Pick<Workspace, 'modules'>): string | null => {
   const states = new Set(workspace.modules.map(state => state.status))
-  if (states.has('remove_failed') || states.has('removing')) return 'Delete did not finish'
+  if (states.has('remove_failed')) return 'Delete did not finish'
+  if (states.has('removing')) return 'Deleting…'
   if (states.has('provision_failed')) return 'Setup failed'
   if (states.has('provisioning')) return 'Setting up'
   return null
@@ -50,3 +51,18 @@ export const manageRows = (
         recent: options.recent.includes(workspace.id),
       }
     })
+
+/**
+ * For the bulk confirmation: how many of the chosen Workspaces this browser
+ * has not opened recently (it remembers its last few), so a visitor clearing
+ * "theirs" sees when the selection reaches beyond them. Null for one
+ * Workspace, or when every one was opened here recently.
+ */
+export const notRecentText = (chosen: ReadonlyArray<{ readonly id: string }>, recent: ReadonlyArray<string>): string | null => {
+  if (chosen.length < 2) return null
+  const count = chosen.filter(row => !recent.includes(row.id)).length
+  if (count === 0) return null
+  return count === chosen.length
+    ? `None of these ${count} are among the Workspaces this browser opened recently.`
+    : `${count} of these are not among the Workspaces this browser opened recently.`
+}
