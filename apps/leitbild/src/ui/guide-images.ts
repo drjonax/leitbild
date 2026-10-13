@@ -1,7 +1,7 @@
-// Vite-processed (hashed) URLs for the guide's images. The files are interim
-// prototype captures under their final names (plan v2 §9); a recapture replaces
-// the file and keeps the name. Imported only by GuideModal.svelte, so the images
-// load with the guide's chunk and never with the landing page.
+// Vite-processed (hashed) URLs for the guide's images. The files are production
+// captures under their plan v2 §9 names; a recapture replaces the file and keeps
+// the name. Imported only by GuideModal.svelte, so the images load with the
+// guide's chunk and never with the landing page.
 
 import type { GuideDiagramId, GuideShotId } from './guide-content.ts'
 import guideWhat720 from './assets/guide/guide-what-720.webp'
