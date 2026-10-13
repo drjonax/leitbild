@@ -47,6 +47,7 @@ describe('Leitbild path policy', () => {
     expect(paths.agents.snapshot).toBe(`/tmp/x/workspaces/${workspaceId}/agents/snapshot.json`)
     expect(paths.agents.memory).toBe(`/tmp/x/workspaces/${workspaceId}/agents/memory`)
     expect(paths.agents.vectors).toBe(`/tmp/x/workspaces/${workspaceId}/agents/vectors.jsonl`)
+    expect(paths.agents.people).toBe(`/tmp/x/workspaces/${workspaceId}/agents/people.sqlite`)
   })
 
   it('rejects non-UUID and traversal-shaped identifiers', () => {

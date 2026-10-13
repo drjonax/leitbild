@@ -21,6 +21,7 @@
 //           workspace.json                     ← Module marker
 //           snapshot.json                      ← Agent profiles and runtime state
 //           generation-inspections.json         ← opt-in prompt/tool inspection archive
+//           people.sqlite                      ← People, direct messages, read markers
 //           rooms/                             ← Rooms, messages, membership
 //
 // LEITBILD_HOME defaults to ~/.leitbild.
@@ -67,6 +68,7 @@ export interface AgentsWorkspacePaths {
   readonly snapshot: string
   readonly inspections: string
   readonly executions: string
+  readonly people: string
   readonly memory: string
   readonly vectors: string
 }
@@ -97,6 +99,7 @@ export const workspaceModulePaths = (id: WorkspaceId): WorkspaceModulePaths => {
       snapshot: join(agentsRoot, 'snapshot.json'),
       inspections: join(agentsRoot, 'generation-inspections.json'),
       executions: join(agentsRoot, 'executions.sqlite'),
+      people: join(agentsRoot, 'people.sqlite'),
       memory: join(agentsRoot, 'memory'),
       vectors: join(agentsRoot, 'vectors.jsonl'),
     },
