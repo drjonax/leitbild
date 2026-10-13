@@ -324,6 +324,7 @@
     <div class="phone-start">
       <button class="lb-btn lb-btn-primary lb-btn-lg" type="button" disabled={!webgl} onclick={() => startActive(featured, active)}
       ><Icon name="play" />Start demo</button>
+      {@render destinationLine()}
     </div>
   {/if}
 {/snippet}
@@ -404,8 +405,8 @@
   .alert { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--lb-danger); font-weight: 600; line-height: 1.45; }
   .alert :global(svg) { margin-top: 2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .phone-start { display: flex; width: 100%; }
-  .phone-start .lb-btn { flex: 1; }
+  .phone-start { display: grid; gap: 6px; width: 100%; }
+  .phone-start .lb-btn { width: 100%; }
 
   @media (max-width: 1080px) {
     .demo { grid-template-columns: minmax(0, 54%) minmax(0, 1fr); }
@@ -419,7 +420,7 @@
   }
   @media (max-width: 639px) {
     .info { padding: 16px; }
-    .start-row .start { display: none; }
+    .start-row { display: none; }
     .phone-note { display: block; }
   }
   @media (prefers-reduced-motion: reduce) {
