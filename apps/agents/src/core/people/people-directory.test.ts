@@ -35,9 +35,16 @@ afterEach(async () => {
 const RUN_1 = 'world|world.simulation-run|run-1'
 const RUN_2 = 'world|world.simulation-run|run-2'
 
+/** Wall and monotonic time advance together; the monotonic origin is long past process start. */
 const clock = () => {
   let at = Date.UTC(2026, 9, 13, 12)
-  return { now: () => at, advance: (ms: number) => { at += ms } }
+  let monotonic = 1_000_000
+  return {
+    now: () => at,
+    monotonic: () => monotonic,
+    advance: (ms: number) => { at += ms; monotonic += ms },
+    stepWallClock: (ms: number) => { at += ms },
+  }
 }
 
 const make = (options: { readonly budget?: WaiterBudget; readonly processStartedAt?: number; readonly peopleLimit?: number } = {}) => {
@@ -52,6 +59,7 @@ const make = (options: { readonly budget?: WaiterBudget; readonly processStarted
     waiterBudget: options.budget ?? createWaiterBudget(),
     admitGrowth: async (bytes, work) => { admissions.push(bytes); return await work() },
     now: time.now,
+    monotonicNow: time.monotonic,
     processStartedAt: options.processStartedAt ?? 0,
     sweepMs: 10,
     log: line => lines.push(line),
@@ -265,6 +273,24 @@ describe('People directory', () => {
     expect(benView.present).toEqual([ann.me])
   })
 
+  test('a wall-clock step neither expires presence nor resets rate limits; only monotonic time does', async () => {
+    const { directory, time } = make()
+    const ann = await directory.join({})
+    const ben = await directory.join({})
+    await syncer(directory, ben.token).now()
+    const annSync = syncer(directory, ann.token)
+    time.stepWallClock(PRESENCE_TIMEOUT_MS * 10)
+    expect((await annSync.now()).present).toEqual([ben.me])
+    for (let i = 0; i < 9; i++) directory.rename({ token: ann.token, name: `Ann ${i}` })
+    time.stepWallClock(-24 * 60 * 60_000)
+    directory.rename({ token: ann.token, name: 'Ann 9' })
+    time.stepWallClock(48 * 60 * 60_000)
+    expect(await failureCode(() => directory.rename({ token: ann.token, name: 'Ann 10' }))).toBe('people_rate_limited')
+    time.advance(60_000)
+    expect(directory.rename({ token: ann.token, name: 'Ann 10' }).me.name).toBe('Ann 10')
+    expect((await annSync.now()).present).toEqual([])
+  })
+
   test('one waiting sync beyond the per-Person limit supersedes the oldest; the process budget answers excess syncs at once', async () => {
     const budget = createWaiterBudget(MAX_WAITERS_PER_PERSON + 1)
     const { directory, metrics } = make({ budget })
@@ -475,7 +501,7 @@ describe('People directory', () => {
   })
 
   test('reports presence as warming for one presence timeout after the process started, and its end wakes waiting syncs', async () => {
-    const { directory, time } = make({ processStartedAt: clock().now() })
+    const { directory, time } = make({ processStartedAt: clock().monotonic() })
     const ann = await directory.join({})
     const annSync = syncer(directory, ann.token)
     expect((await annSync.now()).presenceWarming).toBe(true)

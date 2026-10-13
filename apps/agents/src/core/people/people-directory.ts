@@ -164,11 +164,18 @@ export interface PeopleDirectoryOptions {
   readonly waiterBudget: WaiterBudget
   /** Storage admission for growth (the Agents storage budget in production). */
   readonly admitGrowth: <T>(estimatedBytes: number, work: () => Promise<T>) => Promise<T>
+  /** Wall clock: stored timestamps and serverNow only. */
   readonly now?: () => number
+  /**
+   * Monotonic clock in ms since process start: rate-limit windows, presence
+   * expiry, warming and idleness, so a wall-clock step never expires or
+   * revives anyone.
+   */
+  readonly monotonicNow?: () => number
   readonly timers?: PeopleTimers
   readonly randomBytes?: (length: number) => Uint8Array
   readonly randomUUID?: () => string
-  /** When this process started; presence is incomplete for PRESENCE_TIMEOUT_MS after it. */
+  /** Process start on the monotonic clock; presence is incomplete for PRESENCE_TIMEOUT_MS after it. */
   readonly processStartedAt?: number
   readonly presenceTimeoutMs?: number
   readonly sweepMs?: number
@@ -253,27 +260,29 @@ export const SYNC_ABORTED = Symbol('sync-aborted')
 
 export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
   const now = options.now ?? Date.now
+  const monotonicNow = options.monotonicNow ?? (() => performance.now())
   const timers = options.timers ?? systemTimers
   const randomBytes = options.randomBytes ?? ((length: number) => crypto.getRandomValues(new Uint8Array(length)))
   const randomUUID = options.randomUUID ?? (() => crypto.randomUUID())
-  const processStartedAt = options.processStartedAt ?? Math.round(performance.timeOrigin)
+  // performance.now() counts from the process's time origin.
+  const processStartedAt = options.processStartedAt ?? 0
   const presenceTimeoutMs = options.presenceTimeoutMs ?? PRESENCE_TIMEOUT_MS
   const log = options.log ?? ((line: string) => console.log(line))
   const { metrics, waiterBudget } = options
   const peopleLimit = options.peopleLimit ?? PEOPLE_PER_WORKSPACE
 
   const store = createPeopleStore(options.path, { newStoreId: randomUUID })
-  const presence = createPresence({ now, timeoutMs: presenceTimeoutMs })
+  const presence = createPresence({ now: monotonicNow, timeoutMs: presenceTimeoutMs })
   const waiters = createWaiterSet<Waiter>()
   const limits = {
-    send: createWindowLimiter(now, SEND_LIMITS),
-    join: createWindowLimiter(now, JOIN_LIMITS),
-    rename: createWindowLimiter(now, RENAME_LIMITS),
-    sync: createWindowLimiter(now, SYNC_LIMITS),
+    send: createWindowLimiter(monotonicNow, SEND_LIMITS),
+    join: createWindowLimiter(monotonicNow, JOIN_LIMITS),
+    rename: createWindowLimiter(monotonicNow, RENAME_LIMITS),
+    sync: createWindowLimiter(monotonicNow, SYNC_LIMITS),
   }
   let closed: 'open' | 'closing' | 'evicted' = 'open'
-  let lastActivityAt = now()
-  const isWarming = (): boolean => now() - processStartedAt < presenceTimeoutMs
+  let lastActivityAt = monotonicNow()
+  const isWarming = (): boolean => monotonicNow() - processStartedAt < presenceTimeoutMs
   let lastWarming = isWarming()
 
   const ensureOpen = (): void => {
@@ -288,7 +297,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
   const authenticate = (token: string): StoredPerson => {
     const person = store.personByTokenHash(sha256Hex(token))
     if (!person) throw peopleError({ status: 401, code: 'person_token_invalid', message: 'This identity is not known in this Workspace' })
-    lastActivityAt = now()
+    lastActivityAt = monotonicNow()
     if (now() - person.lastActiveAt >= ACTIVITY_WRITE_INTERVAL_MS) store.recordActivity(person.id, now())
     return person
   }
@@ -424,7 +433,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
 
     join: async (input: { readonly preferredName?: string }): Promise<{ readonly token: string; readonly me: Person; readonly preferredNameAccepted: boolean }> => {
       ensureOpen()
-      lastActivityAt = now()
+      lastActivityAt = monotonicNow()
       take(limits.join, 'workspace')
       const preferred = input.preferredName === undefined ? undefined : normalisePersonName(input.preferredName)
       const token = Buffer.from(randomBytes(TOKEN_BYTES)).toString('base64url')
@@ -579,9 +588,14 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
       return { left: true }
     },
 
-    /** Idle: no waiting sync, no live screen and no request for `idleMs`. */
-    canEvict: (at: number, idleMs: number): boolean =>
-      waiters.size() === 0 && presence.liveScreenCount(at) === 0 && at - lastActivityAt > idleMs,
+    /**
+     * Idle at wall-clock time `at` (the registry's sweep time, possibly ahead
+     * of now): no waiting sync, no live screen and no request for `idleMs`.
+     */
+    canEvict: (at: number, idleMs: number): boolean => {
+      const atMonotonic = monotonicNow() + (at - now())
+      return waiters.size() === 0 && presence.liveScreenCount(atMonotonic) === 0 && atMonotonic - lastActivityAt > idleMs
+    },
 
     stats: (): { readonly waiters: number; readonly liveScreens: number } =>
       ({ waiters: waiters.size(), liveScreens: presence.liveScreenCount() }),

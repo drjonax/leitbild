@@ -22,6 +22,7 @@ export interface ScreenEntry {
   pending: number
 }
 
+/** `now` is a monotonic clock, so a wall-clock step never expires or revives a screen. */
 export const createPresence = (options: { readonly now: () => number; readonly timeoutMs?: number }) => {
   const timeoutMs = options.timeoutMs ?? PRESENCE_TIMEOUT_MS
   const screens = new Map<string, ScreenEntry>()
