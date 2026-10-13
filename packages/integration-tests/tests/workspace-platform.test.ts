@@ -7,6 +7,7 @@ import {
   moduleRegistrationSchema,
   workspaceCapabilityCatalogSchema,
   workspaceDefinitionCatalogSchema,
+  workspaceActivityCatalogSchema,
   workspaceIdSchema,
   workspaceResourceCatalogSchema,
   workspaceSchema,
@@ -600,4 +601,118 @@ describe('Workspace Host with real Modules', () => {
       expect(resources.resources.some(resource => resource.ref.type === 'world.simulation-run' && resource.ref.id === runId)).toBe(true)
     }
   }, 300_000)
+
+  test('says which Workspaces have simulations running, from the real Modules through the Host, until they are paused or deleted', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'workspace-activity-world-'))
+    const agentsHome = await mkdtemp(join(tmpdir(), 'workspace-activity-agents-'))
+    const originalLeitbildHome = process.env.LEITBILD_HOME
+    const originalProvider = process.env.PROVIDER
+    process.env.LEITBILD_HOME = agentsHome
+    process.env.PROVIDER = 'ollama'
+    cleanup.push(async () => {
+      if (originalLeitbildHome === undefined) delete process.env.LEITBILD_HOME
+      else process.env.LEITBILD_HOME = originalLeitbildHome
+      if (originalProvider === undefined) delete process.env.PROVIDER
+      else process.env.PROVIDER = originalProvider
+      await rm(agentsHome, { recursive: true, force: true })
+      await rm(dataDir, { recursive: true, force: true })
+    })
+
+    const routing = createDirectRoutingAdapter()
+    const worldAssembly = createWorldApplicationAssembly({ routing })
+    const worldRegistry = createWorldWorkspaceRuntimeRegistry({
+      dataDir,
+      moduleState: createWorldModuleState({ dataDir }),
+      scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: worldAssembly.packs }),
+      scenarioDefinitions: builtinScenarioDefinitions,
+      compileScenarioDefinition: source => compileScenarioDefinition(source, worldAssembly.packs, { routing }),
+      scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(worldAssembly.packs),
+      runtimeAdapters: worldAssembly.runtimeAdapters,
+    })
+    cleanup.push(() => worldRegistry.shutdown())
+    const worldServer = createWorldServer({
+      workspaces: worldRegistry,
+      featuredDefinitions: builtinFeaturedScenarioDefinitions,
+      bindHost: '127.0.0.1',
+      port: 0,
+      uiDistPath: dataDir,
+      mapArtifacts: { rootDir: join(dataDir, 'maps') },
+    })
+    cleanup.push(() => worldServer.stop())
+    const agentsState = createAgentsModuleState()
+    const agentsRegistry = createAgentsWorkspaceRuntimeRegistry({ deployment: createDeploymentRuntime(), moduleState: agentsState, idleMs: 1_000_000 })
+    cleanup.push(() => agentsRegistry.shutdown())
+    const agentsServer = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        return await handleAgentsModuleApi(request, new URL(request.url), { state: agentsState, registry: agentsRegistry })
+          ?? new Response('Not found', { status: 404 })
+      },
+    })
+    cleanup.push(() => agentsServer.stop(true))
+    const store = createWorkspaceStore(':memory:')
+    cleanup.push(() => store.close())
+    const host = createWorkspaceHost({
+      store,
+      modules: createModuleGateway({
+        registrations: [
+          moduleRegistrationSchema.parse({ moduleId: 'world', internalBaseUrl: `http://127.0.0.1:${worldServer.port}`, manifestPath: '/.well-known/workspace-module' }),
+          moduleRegistrationSchema.parse({ moduleId: 'agents', internalBaseUrl: `http://127.0.0.1:${agentsServer.port}`, manifestPath: '/.well-known/workspace-module' }),
+        ],
+      }),
+    })
+    const hostServer = createWorkspaceHostServer({ host, bindHost: '127.0.0.1', port: 0 })
+    cleanup.push(() => hostServer.stop(true))
+    const baseUrl = `http://127.0.0.1:${hostServer.port}`
+    const activityOf = async (workspaceId: string) => {
+      const response = await fetch(`${baseUrl}/api/workspace-activity`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      const catalog = workspaceActivityCatalogSchema.parse(await response.json())
+      expect(catalog.modules).toEqual([{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }] as never)
+      return catalog.workspaces.find(workspace => workspace.workspaceId === workspaceId)?.items.map(item => ({ ...item, moduleId: String(item.moduleId) }))
+    }
+
+    const created = await fetch(`${baseUrl}/api/workspaces`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Activity' }),
+    })
+    expect(created.status).toBe(201)
+    const workspace = workspaceSchema.parse((await created.json() as { workspace: unknown }).workspace)
+    expect(await activityOf(workspace.id)).toBeUndefined()
+
+    // A Run starts through the scenario's own published primary Capability.
+    const definitions = workspaceDefinitionCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/definitions?moduleId=world`)).json())
+    const capabilities = workspaceCapabilityCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities?moduleId=world`)).json())
+    const scenario = definitions.definitions.find(definition => definition.ref.type === 'world.scenario' && definition.ref.id === 'halden-weather-response')!
+    const start = cardCapability(scenario, 'primary', capabilities.capabilities)!
+    const started = await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities/${start.id}/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ definition: { ...scenario.ref, revisionId: scenario.currentRevisionId }, input: {}, actor: { kind: 'human' } }),
+    })
+    expect(started.status).toBe(200)
+    const runId = (await started.json() as { result: { id: string } }).result.id
+    expect(await activityOf(workspace.id)).toEqual([
+      { moduleId: 'world', key: 'simulations-running', label: '1 simulation running', count: 1, active: true },
+      { moduleId: 'world', key: 'simulations', label: '1 simulation', count: 1, active: false },
+    ])
+
+    // Paused through the Run's own published Capability, it is stored but no longer running.
+    const resources = workspaceResourceCatalogSchema.parse(await (await fetch(`${baseUrl}/api/workspaces/${workspace.id}/resources?moduleId=world`)).json())
+    const run = resources.resources.find(resource => resource.ref.type === 'world.simulation-run' && resource.ref.id === runId)!
+    expect(run.capabilityIds.map(String)).toContain('world.simulation-run.execution.set')
+    const paused = await fetch(`${baseUrl}/api/workspaces/${workspace.id}/capabilities/world.simulation-run.execution.set/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resource: run.ref, input: { playback: 'paused' }, actor: { kind: 'human' } }),
+    })
+    expect(paused.status).toBe(200)
+    expect(await activityOf(workspace.id)).toEqual([{ moduleId: 'world', key: 'simulations', label: '1 simulation', count: 1, active: false }])
+
+    // Deleted, the Workspace and what it held are gone from the answer.
+    expect((await fetch(`${baseUrl}/api/workspaces/${workspace.id}`, { method: 'DELETE' })).status).toBe(204)
+    expect(await activityOf(workspace.id)).toBeUndefined()
+    expect(await worldRegistry.list()).toEqual([])
+  }, 60_000)
 })
