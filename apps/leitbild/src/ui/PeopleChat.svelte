@@ -9,12 +9,12 @@
   // One floating chat window (UX SPEC §6–§7), anchored to the bottom-right of
   // the World pane and not closed by clicks elsewhere, so the simulation stays
   // usable beside it. Text only: names and messages are never markup.
-  import { tick, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import PersonAvatar from './PersonAvatar.svelte'
   import { composingKeystroke } from './ime.ts'
   import {
-    chatRows, fullTimeLabel, messageCounterText, messageSendable, newMessagesPill, OUTBOX_UNSAVED_TEXT, timeLabel, type ChatItem,
+    chatRows, fullTimeLabel, isolate, messageCounterText, messageSendable, newMessagesPill, OUTBOX_UNSAVED_TEXT, timeLabel, type ChatItem,
   } from './people-format.ts'
   import type { ChatView, ConnectionNotice, PeopleSession } from './people-session.ts'
 
@@ -47,7 +47,7 @@
     onClose: () => void
   } = $props()
 
-  const titleId = `chat-${Math.random().toString(36).slice(2, 8)}`
+  const uid = `chat-${Math.random().toString(36).slice(2, 8)}`
   let log = $state<HTMLElement | null>(null)
   let textarea = $state<HTMLTextAreaElement | null>(null)
 
@@ -57,9 +57,8 @@
     ? { text: 'Reconnecting…', dot: 'wait' }
     : !chat.hereKnown ? null
     : chat.with.here ? { text: 'In this simulation', dot: 'here' } : { text: 'Not in this simulation', dot: 'away' })
-  const composerNote = $derived(notice !== 'none'
-    ? { text: 'Reconnecting… Messages will send when the connection is back.', dot: 'wait' }
-    : chat.hereKnown && !chat.with.here ? { text: `Not in this simulation — ${name} will see it next time.`, dot: 'away' } : null)
+  const composerNote = $derived<'reconnecting' | 'away' | null>(notice !== 'none' ? 'reconnecting'
+    : chat.hereKnown && !chat.with.here ? 'away' : null)
 
   // --- placement --------------------------------------------------------------------
   const narrowQuery = typeof matchMedia === 'function' ? matchMedia('(max-width: 759px)') : null
@@ -182,6 +181,9 @@
     })
   })
 
+  // A draft kept from before may span several lines.
+  onMount(() => { void tick().then(autosize) })
+
   const onInput = (): void => {
     drafts.set(chat.with.id, textarea?.value ?? draft)
     autosize()
@@ -232,11 +234,13 @@
   {/if}
 {/snippet}
 
-<div class="chat" role="dialog" tabindex="-1" aria-modal="false" aria-labelledby={titleId} style={place} onkeydown={onWindowKeydown}>
+{#snippet awayNote()}Not in this simulation — <bdi>{name}</bdi> will see it next time.{/snippet}
+
+<div class="chat" role="dialog" tabindex="-1" aria-modal="false" aria-label={`Chat with ${name}`} style={place} onkeydown={onWindowKeydown}>
   <header class="chat-head">
     <PersonAvatar person={chat.with} size={24} />
     <div class="chat-title">
-      <h2 id={titleId} dir="auto">{name}</h2>
+      <h2 dir="auto">{name}</h2>
       <span class="chat-status">{#if status}<i class={status.dot} aria-hidden="true"></i>{status.text}{/if}</span>
     </div>
     <button class="chat-close" type="button" aria-label={`Close chat with ${name}`} title="Close chat" onclick={onClose}><Icon name="close" size={18} /></button>
@@ -253,7 +257,7 @@
         <div class="chat-empty">
           <PersonAvatar person={chat.with} size={40} />
           <strong>No messages yet</strong>
-          <span dir="auto">{composerNote?.dot === 'away' ? composerNote.text : `Say hello to ${name}.`}</span>
+          <span>{#if composerNote === 'away'}{@render awayNote()}{:else}Say hello to <bdi>{name}</bdi>.{/if}</span>
         </div>
       {:else}
         <!-- Read out per bubble as "Ben: …" or "You: …"; separators and times are for the eye only. -->
@@ -282,16 +286,17 @@
 
   <form class="composer" onsubmit={event => { event.preventDefault(); send() }}>
     {#if !outboxSaved && chat.items.some(item => item.kind === 'outgoing')}<p class="note"><span>{OUTBOX_UNSAVED_TEXT}</span></p>{/if}
-    {#if composerNote}<p class="note"><i class={composerNote.dot} aria-hidden="true"></i><span dir="auto">{composerNote.text}</span></p>{/if}
+    {#if composerNote === 'reconnecting'}<p class="note"><i class="wait" aria-hidden="true"></i><span>Reconnecting… Messages will send when the connection is back.</span></p>
+    {:else if composerNote === 'away'}<p class="note"><i class="away" aria-hidden="true"></i><span>{@render awayNote()}</span></p>{/if}
     <div class="compose-row">
-      <label class="visually-hidden" for={`${titleId}-text`}>Message {name}</label>
-      <textarea bind:this={textarea} id={`${titleId}-text`} rows="1" enterkeyhint="send" dir="auto" placeholder={`Message ${name}`}
-        aria-describedby={`${titleId}-hint${counter ? ` ${titleId}-counter` : ''}`}
+      <label class="visually-hidden" for={`${uid}-text`}>Message {name}</label>
+      <textarea bind:this={textarea} id={`${uid}-text`} rows="1" enterkeyhint="send" dir="auto" placeholder={`Message ${isolate(name)}`}
+        aria-describedby={`${uid}-hint${counter ? ` ${uid}-counter` : ''}`}
         bind:value={draft} oninput={onInput} onkeydown={onComposerKeydown}></textarea>
       <button class="send" type="submit" aria-label="Send message" aria-disabled={sendable ? 'false' : 'true'}><Icon name="send" size={18} /></button>
     </div>
-    <span class="visually-hidden" id={`${titleId}-hint`}>Enter to send, Shift+Enter for a new line.</span>
-    {#if counter}<p class="counter" class:over={counter.over} id={`${titleId}-counter`}>{counter.text}</p>{/if}
+    <span class="visually-hidden" id={`${uid}-hint`}>Enter to send, Shift+Enter for a new line.</span>
+    {#if counter}<p class="counter" class:over={counter.over} id={`${uid}-counter`}>{counter.text}</p>{/if}
   </form>
 </div>
 
@@ -299,7 +304,7 @@
   .chat:focus { outline: none; }
   .chat { position: fixed; z-index: 25; width: 340px; display: flex; flex-direction: column; border: 1px solid var(--lb-line); border-radius: var(--lb-r-lg);
     color: var(--lb-ink); background: var(--lb-surface); box-shadow: var(--lb-shadow-lg); overflow: hidden; font-size: .875rem; }
-  .chat-head { flex: none; height: 48px; padding: 0 6px 0 12px; display: flex; align-items: center; gap: 10px; color: var(--lb-on-dark); background: var(--lb-brand-800); }
+  .chat-head { flex: none; height: 44px; padding: 0 6px 0 12px; display: flex; align-items: center; gap: 10px; color: var(--lb-on-dark); background: var(--lb-brand-800); }
   .chat-title { min-width: 0; flex: 1; display: grid; }
   .chat-title h2 { margin: 0; overflow: hidden; font-size: .875rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
   .chat-status { min-height: 1em; display: flex; align-items: center; gap: 5px; color: var(--lb-on-dark-2); font-size: .6875rem; }
