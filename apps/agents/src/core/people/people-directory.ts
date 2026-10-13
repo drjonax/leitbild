@@ -1,0 +1,565 @@
+// ============================================================================
+// PeopleDirectory — the People of one Workspace: identity, presence per Run,
+// direct messages and long-polling syncs.
+//
+// Independent of the Agents Workspace runtime: it never loads Rooms or Agents
+// and holds no operation lease while a sync waits. Every mutation validates
+// and commits synchronously, then wakes waiting syncs through the directory's
+// own waiter set. Presence is in memory only (see presence.ts); People,
+// messages and read markers are in the Workspace's people.sqlite.
+//
+// Errors carry a structured PeopleFailure (status, code, retryable, details)
+// so the capability layer maps every refusal to one distinct error code.
+// ============================================================================
+
+import type { WorkspaceId } from '@leitbild/contracts'
+import {
+  DEFAULT_PERSON_NAME_PREFIX,
+  allocateDefaultPersonName,
+  normalisePersonName,
+  personNameKey,
+} from './people-names.ts'
+import { createPeopleStore, type StoredMessage, type StoredPerson } from './people-store.ts'
+import { PRESENCE_TIMEOUT_MS, createPresence, createWaiterSet, type ScreenEntry, type WaiterBudget } from './presence.ts'
+import type { PeopleMetrics } from './people-metrics.ts'
+
+// --- Named limits (each sized for one Workspace of people watching a Run) ---
+
+/** Presence expiry is checked this often; an expiry wakes waiting syncs. */
+export const PRESENCE_SWEEP_MS = 5_000
+/** A sync never holds longer than this; the Host gateway gives a Module 30 s. */
+export const MAX_SYNC_WAIT_MS = 20_000
+/** Messages one sync returns at most; `more` tells the client to continue at once. */
+export const SYNC_MESSAGE_PAGE = 100
+/** Owner decision: the last 200 messages of a conversation are kept. */
+export const CONVERSATION_KEEP = 200
+/** One message is at most this long; a chat line, not a document. */
+export const MESSAGE_MAX_CODE_POINTS = 2_000
+/** Several tabs of one browser may wait at once; more supersede the oldest. */
+export const MAX_WAITERS_PER_PERSON = 4
+/** Identities per Workspace; anonymous joins must not grow without bound. */
+export const PEOPLE_PER_WORKSPACE = 500
+/** At the cap, People who never chatted and were away this long are forgotten. */
+export const INACTIVE_PERSON_PRUNE_MS = 30 * 24 * 60 * 60_000
+/** last_active_at is written at most this often per Person, never per heartbeat. */
+export const ACTIVITY_WRITE_INTERVAL_MS = 60 * 60_000
+/** Storage admission estimate for one Person row and its indexes. */
+const PERSON_GROWTH_BYTES = 4 * 1024
+/** Storage admission estimate for a new conversation at its retention bound. */
+const CONVERSATION_GROWTH_BYTES = CONVERSATION_KEEP * (MESSAGE_MAX_CODE_POINTS * 4 + 512)
+/** 256-bit identity token: unguessable, and only its hash is stored. */
+const TOKEN_BYTES = 32
+
+interface RateWindow { readonly max: number; readonly windowMs: number }
+const SEND_LIMITS: ReadonlyArray<RateWindow> = [{ max: 10, windowMs: 10_000 }, { max: 60, windowMs: 60_000 }]
+const JOIN_LIMITS: ReadonlyArray<RateWindow> = [{ max: 60, windowMs: 60_000 }]
+const RENAME_LIMITS: ReadonlyArray<RateWindow> = [{ max: 10, windowMs: 60_000 }]
+const SYNC_LIMITS: ReadonlyArray<RateWindow> = [{ max: 30, windowMs: 10_000 }]
+
+// --- Wire shapes (validated again by the capability layer's output schemas) ---
+
+export interface Person { readonly id: string; readonly name: string }
+export interface Message {
+  readonly seq: number
+  readonly id: string
+  readonly from: string
+  readonly to: string
+  readonly text: string
+  readonly sentAt: string
+}
+export interface ConversationEntry {
+  readonly with: Person
+  readonly here: boolean
+  readonly lastSeq: number
+  readonly lastSentAt: string
+  readonly unread: number
+}
+export interface SyncResult {
+  readonly storeId: string
+  readonly serverNow: string
+  readonly presenceWarming: boolean
+  readonly me: Person
+  readonly present: ReadonlyArray<Person>
+  readonly conversations: ReadonlyArray<ConversationEntry>
+  readonly messages: ReadonlyArray<Message>
+  readonly cursor: number
+  readonly more: boolean
+  readonly view: string
+}
+
+export interface SyncInput {
+  readonly token: string
+  readonly screen: string
+  /** Opaque key of the Run being viewed; the directory never interprets it. */
+  readonly viewingKey: string
+  readonly after?: number
+  readonly view?: string
+  readonly storeId?: string
+  readonly waitMs: number
+}
+
+// --- Structured failures ---
+
+export interface PeopleFailure {
+  readonly status: number
+  readonly code: string
+  readonly message: string
+  readonly retryable?: boolean
+  readonly details?: Readonly<Record<string, unknown>>
+}
+
+const PEOPLE_FAILURE = Symbol('people-failure')
+
+export const peopleError = (failure: PeopleFailure): Error =>
+  Object.assign(new Error(failure.message), { [PEOPLE_FAILURE]: failure })
+
+export const peopleFailureOf = (error: unknown): PeopleFailure | undefined =>
+  error instanceof Error && PEOPLE_FAILURE in error ? (error as Error & { [PEOPLE_FAILURE]: PeopleFailure })[PEOPLE_FAILURE] : undefined
+
+const closingError = (): Error => Object.assign(new Error('Agents Workspace is closing'), { code: 'workspace_closing' })
+
+const rateLimited = (retryAfterMs: number): Error => peopleError({
+  status: 429, code: 'people_rate_limited', message: 'Too many requests; retry shortly', retryable: true,
+  details: { retryAfterMs },
+})
+
+// --- Ports ---
+
+export interface PeopleTimers {
+  readonly setTimeout: (callback: () => void, ms: number) => unknown
+  readonly clearTimeout: (handle: unknown) => void
+  readonly setInterval: (callback: () => void, ms: number) => unknown
+  readonly clearInterval: (handle: unknown) => void
+}
+
+const systemTimers: PeopleTimers = {
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  setInterval: (callback, ms) => setInterval(callback, ms),
+  clearInterval: handle => clearInterval(handle as ReturnType<typeof setInterval>),
+}
+
+export interface PeopleDirectoryOptions {
+  readonly workspaceId: WorkspaceId
+  /** workspaces/{id}/agents/people.sqlite; its directory must already exist. */
+  readonly path: string
+  readonly metrics: PeopleMetrics
+  readonly waiterBudget: WaiterBudget
+  /** Storage admission for growth (the Agents storage budget in production). */
+  readonly admitGrowth: <T>(estimatedBytes: number, work: () => Promise<T>) => Promise<T>
+  readonly now?: () => number
+  readonly timers?: PeopleTimers
+  readonly randomBytes?: (length: number) => Uint8Array
+  readonly randomUUID?: () => string
+  /** When this process started; presence is incomplete for PRESENCE_TIMEOUT_MS after it. */
+  readonly processStartedAt?: number
+  readonly presenceTimeoutMs?: number
+  readonly sweepMs?: number
+  /** Defaults to PEOPLE_PER_WORKSPACE. */
+  readonly peopleLimit?: number
+  /** One line per send outcome; ids and outcome only. */
+  readonly log?: (line: string) => void
+}
+
+// --- Helpers ---
+
+const sha256Hex = (value: string): string => new Bun.CryptoHasher('sha256').update(value).digest('hex')
+
+const createWindowLimiter = (now: () => number, windows: ReadonlyArray<RateWindow>) => {
+  const longest = Math.max(...windows.map(window => window.windowMs))
+  const stamps = new Map<string, number[]>()
+  return {
+    /** Records one use when every window has room; nothing is recorded on refusal. */
+    take: (key: string): { readonly ok: true } | { readonly ok: false; readonly retryAfterMs: number } => {
+      const at = now()
+      const recent = (stamps.get(key) ?? []).filter(stamp => stamp > at - longest)
+      for (const window of windows) {
+        const inWindow = recent.filter(stamp => stamp > at - window.windowMs)
+        if (inWindow.length >= window.max) {
+          return { ok: false, retryAfterMs: Math.max(1, inWindow[inWindow.length - window.max]! + window.windowMs - at) }
+        }
+      }
+      recent.push(at)
+      stamps.set(key, recent)
+      return { ok: true }
+    },
+    prune: (): void => {
+      const at = now()
+      for (const [key, list] of stamps) if (list.every(stamp => stamp <= at - longest)) stamps.delete(key)
+    },
+  }
+}
+
+/** NFC, trailing whitespace trimmed; leading whitespace and inner newlines are content. */
+export const normaliseMessageText = (raw: string): { readonly ok: true; readonly text: string } | { readonly ok: false; readonly code: 'message_empty' | 'message_too_long' } => {
+  const text = raw.toWellFormed().normalize('NFC').replace(/\s+$/u, '')
+  if (text.length === 0) return { ok: false, code: 'message_empty' }
+  if ([...text].length > MESSAGE_MAX_CODE_POINTS) return { ok: false, code: 'message_too_long' }
+  return { ok: true, text }
+}
+
+const iso = (ms: number): string => new Date(ms).toISOString()
+const toPerson = (person: StoredPerson): Person => ({ id: person.id, name: person.name })
+const toMessage = (message: StoredMessage): Message => ({
+  seq: message.seq, id: message.id, from: message.from, to: message.to, text: message.text, sentAt: iso(message.sentAt),
+})
+const byName = (a: StoredPerson, b: StoredPerson): number =>
+  a.nameKey < b.nameKey ? -1 : a.nameKey > b.nameKey ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+
+type SettleReason = 'woken' | 'expired' | 'aborted' | 'closed' | 'superseded'
+type Settlement = { readonly result: SyncResult } | { readonly error: unknown } | { readonly aborted: true }
+
+interface Waiter {
+  readonly personId: string
+  readonly viewingKey: string
+  readonly after: number
+  readonly view: string | undefined
+  readonly entry: ScreenEntry
+  readonly settle: (settlement: Settlement, reason: SettleReason) => void
+}
+
+/** Result of a sync whose caller went away; it is never delivered. */
+export const SYNC_ABORTED = Symbol('sync-aborted')
+
+export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
+  const now = options.now ?? Date.now
+  const timers = options.timers ?? systemTimers
+  const randomBytes = options.randomBytes ?? ((length: number) => crypto.getRandomValues(new Uint8Array(length)))
+  const randomUUID = options.randomUUID ?? (() => crypto.randomUUID())
+  const processStartedAt = options.processStartedAt ?? Math.round(performance.timeOrigin)
+  const presenceTimeoutMs = options.presenceTimeoutMs ?? PRESENCE_TIMEOUT_MS
+  const log = options.log ?? ((line: string) => console.log(line))
+  const { metrics, waiterBudget } = options
+  const peopleLimit = options.peopleLimit ?? PEOPLE_PER_WORKSPACE
+
+  const store = createPeopleStore(options.path, { newStoreId: randomUUID })
+  const presence = createPresence({ now, timeoutMs: presenceTimeoutMs })
+  const waiters = createWaiterSet<Waiter>()
+  const limits = {
+    send: createWindowLimiter(now, SEND_LIMITS),
+    join: createWindowLimiter(now, JOIN_LIMITS),
+    rename: createWindowLimiter(now, RENAME_LIMITS),
+    sync: createWindowLimiter(now, SYNC_LIMITS),
+  }
+  let closed = false
+  let lastActivityAt = now()
+  const isWarming = (): boolean => now() - processStartedAt < presenceTimeoutMs
+  let lastWarming = isWarming()
+
+  const ensureOpen = (): void => { if (closed) throw closingError() }
+  const take = (limiter: ReturnType<typeof createWindowLimiter>, key: string): void => {
+    const outcome = limiter.take(key)
+    if (!outcome.ok) throw rateLimited(outcome.retryAfterMs)
+  }
+
+  const authenticate = (token: string): StoredPerson => {
+    const person = store.personByTokenHash(sha256Hex(token))
+    if (!person) throw peopleError({ status: 401, code: 'person_token_invalid', message: 'This identity is not known in this Workspace' })
+    lastActivityAt = now()
+    if (now() - person.lastActiveAt >= ACTIVITY_WRITE_INTERVAL_MS) store.recordActivity(person.id, now())
+    return person
+  }
+  const requirePeer = (me: StoredPerson, peerId: string, selfCode: string): StoredPerson => {
+    if (peerId === me.id) throw peopleError({ status: 400, code: selfCode, message: 'A conversation needs another Person' })
+    const peer = store.personById(peerId)
+    if (!peer) throw peopleError({ status: 404, code: 'person_not_found', message: 'Person not found in this Workspace' })
+    return peer
+  }
+  const personOf = (id: string): StoredPerson => {
+    const person = store.personById(id)
+    // People with a conversation or a live screen are never pruned.
+    if (!person) throw new Error(`People invariant broken: referenced Person is missing (${id})`)
+    return person
+  }
+
+  const computeSync = (personId: string, viewingKey: string, cursor: { readonly after: number } | 'reset'): SyncResult => {
+    const me = personOf(personId)
+    const presentIds = presence.presentIn(viewingKey)
+    presentIds.delete(me.id)
+    const present = [...presentIds].map(personOf).sort(byName).map(toPerson)
+    const conversations = store.conversations(me.id).map(summary => ({
+      with: toPerson(personOf(summary.peer)),
+      here: presentIds.has(summary.peer),
+      lastSeq: summary.lastSeq,
+      lastSentAt: iso(summary.lastSentAt),
+      unread: summary.unread,
+    }))
+    const presenceWarming = isWarming()
+    let messages: Message[] = []
+    let more = false
+    let next: number
+    if (cursor === 'reset') {
+      // A new or replaced cursor starts at the present; history is read per conversation.
+      next = store.maxSeqFor(me.id)
+    } else {
+      const page = store.messagesAfter(me.id, cursor.after, SYNC_MESSAGE_PAGE + 1)
+      more = page.length > SYNC_MESSAGE_PAGE
+      messages = page.slice(0, SYNC_MESSAGE_PAGE).map(toMessage)
+      next = messages.at(-1)?.seq ?? cursor.after
+    }
+    const view = new Bun.CryptoHasher('sha256')
+      .update(JSON.stringify({ me: toPerson(me), present, conversations, presenceWarming }))
+      .digest('base64url')
+    return {
+      storeId: store.storeId,
+      serverNow: iso(now()),
+      presenceWarming,
+      me: toPerson(me),
+      present,
+      conversations,
+      messages,
+      cursor: next,
+      more,
+      view,
+    }
+  }
+  const settlementFor = (waiter: Waiter): Settlement => {
+    try {
+      return { result: computeSync(waiter.personId, waiter.viewingKey, { after: waiter.after }) }
+    } catch (error) {
+      return { error }
+    }
+  }
+
+  // Changes coalesce: many mutations in one tick recompute each waiter once.
+  let flushScheduled = false
+  const flush = (): void => {
+    flushScheduled = false
+    // close() has already answered every waiter with the final state.
+    if (closed) return
+    const computed = new Map<string, Settlement>()
+    for (const waiter of waiters.all()) {
+      const key = `${waiter.personId}|${waiter.viewingKey}|${waiter.after}`
+      const settlement = computed.get(key) ?? settlementFor(waiter)
+      computed.set(key, settlement)
+      if ('error' in settlement) { waiter.settle(settlement, 'woken'); continue }
+      if ('result' in settlement && (settlement.result.messages.length > 0 || settlement.result.view !== waiter.view)) {
+        waiter.settle(settlement, 'woken')
+      }
+    }
+  }
+  const notifyChange = (): void => {
+    if (flushScheduled) return
+    flushScheduled = true
+    queueMicrotask(flush)
+  }
+
+  const sweep = (): void => {
+    // A tick that races close() has nothing left to sweep.
+    if (closed) return
+    const expired = presence.sweep()
+    const warming = isWarming()
+    for (const limiter of Object.values(limits)) limiter.prune()
+    if (expired > 0 || warming !== lastWarming) {
+      lastWarming = warming
+      notifyChange()
+    }
+  }
+  const sweepHandle = timers.setInterval(sweep, options.sweepMs ?? PRESENCE_SWEEP_MS)
+
+  const wait = (input: SyncInput, me: StoredPerson, entry: ScreenEntry, signal: AbortSignal): Promise<SyncResult | typeof SYNC_ABORTED> =>
+    new Promise((resolve, reject) => {
+      let holdTimer: unknown
+      const onAbort = (): void => waiter.settle({ aborted: true }, 'aborted')
+      const waiter: Waiter = {
+        personId: me.id,
+        viewingKey: input.viewingKey,
+        after: input.after!,
+        view: input.view,
+        entry,
+        settle: (settlement, reason) => {
+          if (!waiters.delete(waiter)) return
+          timers.clearTimeout(holdTimer)
+          signal.removeEventListener('abort', onAbort)
+          waiterBudget.release()
+          presence.release(entry, !('aborted' in settlement))
+          if ('aborted' in settlement) { metrics.inc('syncsAborted'); resolve(SYNC_ABORTED); return }
+          if ('error' in settlement) { reject(settlement.error); return }
+          metrics.inc(reason === 'woken' ? 'syncsWoken' : reason === 'expired' ? 'syncsHeldToExpiry' : reason === 'closed' ? 'syncsClosed' : 'syncsSuperseded')
+          resolve(settlement.result)
+        },
+      }
+      waiters.add(waiter)
+      presence.hold(entry)
+      holdTimer = timers.setTimeout(() => waiter.settle(settlementFor(waiter), 'expired'), input.waitMs)
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+
+  return {
+    workspaceId: options.workspaceId,
+    storeId: store.storeId,
+
+    join: async (input: { readonly preferredName?: string }): Promise<{ readonly token: string; readonly me: Person; readonly preferredNameAccepted: boolean }> => {
+      ensureOpen()
+      lastActivityAt = now()
+      take(limits.join, 'workspace')
+      const preferred = input.preferredName === undefined ? undefined : normalisePersonName(input.preferredName)
+      const token = Buffer.from(randomBytes(TOKEN_BYTES)).toString('base64url')
+      const id = `person-${randomUUID()}`
+      const created = await options.admitGrowth(PERSON_GROWTH_BYTES, async () => {
+        ensureOpen()
+        // Everything from the capacity check to the insert is synchronous, so
+        // two joins can never both take the last slot or the same name.
+        if (store.countPeople() >= peopleLimit) {
+          metrics.inc('peoplePruned', store.pruneInactivePeople(now() - INACTIVE_PERSON_PRUNE_MS))
+          if (store.countPeople() >= peopleLimit) {
+            throw peopleError({ status: 409, code: 'people_limit_reached', message: 'This Workspace has reached its number of People' })
+          }
+        }
+        const accepted = preferred?.ok === true && store.personIdByNameKey(preferred.key) === undefined
+        const name = accepted && preferred?.ok === true
+          ? preferred.name
+          : allocateDefaultPersonName(store.nameKeysStartingWith(personNameKey(DEFAULT_PERSON_NAME_PREFIX)))
+        store.insertPerson({ id, name, nameKey: personNameKey(name), tokenHash: sha256Hex(token), now: now() })
+        return { name, accepted }
+      })
+      metrics.inc('joins')
+      return { token, me: { id, name: created.name }, preferredNameAccepted: created.accepted }
+    },
+
+    sync: async (input: SyncInput, signal: AbortSignal): Promise<SyncResult | typeof SYNC_ABORTED> => {
+      ensureOpen()
+      const me = authenticate(input.token)
+      const { entry, changed } = presence.touch(me.id, input.screen, input.viewingKey)
+      if (changed) notifyChange()
+      const reset = input.after === undefined || input.storeId !== store.storeId
+      const current = computeSync(me.id, input.viewingKey, reset ? 'reset' : { after: input.after! })
+      const immediate = input.waitMs === 0 || reset || signal.aborted
+        || current.messages.length > 0 || current.view !== input.view
+      if (immediate) {
+        take(limits.sync, me.id)
+        metrics.inc('syncsImmediate')
+        return current
+      }
+      const mine = waiters.forPerson(me.id)
+      if (mine.length >= MAX_WAITERS_PER_PERSON) {
+        // Superseding counts against the sync rate, so five tabs of one
+        // browser settle into a bounded rotation instead of a tight loop.
+        take(limits.sync, me.id)
+        const oldest = mine[0]!
+        oldest.settle(settlementFor(oldest), 'superseded')
+      }
+      if (!waiterBudget.tryTake()) {
+        take(limits.sync, me.id)
+        metrics.inc('syncWaiterOverflow')
+        return current
+      }
+      return await wait(input, me, entry, signal)
+    },
+
+    rename: (input: { readonly token: string; readonly name: string }): { readonly me: Person } => {
+      ensureOpen()
+      const me = authenticate(input.token)
+      take(limits.rename, me.id)
+      const normalised = normalisePersonName(input.name)
+      if (!normalised.ok) {
+        throw peopleError({ status: 400, code: 'person_name_invalid', message: 'This name cannot be used', details: { reason: normalised.reason } })
+      }
+      const owner = store.personIdByNameKey(normalised.key)
+      if (owner !== undefined && owner !== me.id) {
+        throw peopleError({ status: 409, code: 'person_name_taken', message: 'Someone in this Workspace already uses this name' })
+      }
+      if (normalised.name !== me.name) {
+        store.renamePerson(me.id, normalised.name, normalised.key)
+        metrics.inc('renames')
+        notifyChange()
+      }
+      return { me: { id: me.id, name: normalised.name } }
+    },
+
+    readConversation: (input: { readonly token: string; readonly with: string }) => {
+      ensureOpen()
+      const me = authenticate(input.token)
+      const peer = requirePeer(me, input.with, 'conversation_with_self')
+      return {
+        with: toPerson(peer),
+        messages: store.conversation(me.id, peer.id, CONVERSATION_KEEP).map(toMessage),
+        readThrough: { me: store.readThrough(me.id, peer.id), them: store.readThrough(peer.id, me.id) },
+      }
+    },
+
+    markRead: (input: { readonly token: string; readonly with: string; readonly through: number }): { readonly unread: number } => {
+      ensureOpen()
+      const me = authenticate(input.token)
+      const peer = requirePeer(me, input.with, 'conversation_with_self')
+      if (store.markRead(me.id, peer.id, input.through)) notifyChange()
+      return { unread: store.unreadFrom(me.id, peer.id) }
+    },
+
+    send: async (input: { readonly token: string; readonly to: string; readonly text: string }, idempotencyKey: string): Promise<{ readonly message: Message; readonly replayed: boolean }> => {
+      ensureOpen()
+      const outcome: { sender?: string; recipient?: string; messageId?: string; seq?: number } = {}
+      const record = (result: string): void => log(`[people] send ${JSON.stringify({ workspaceId: options.workspaceId, ...outcome, outcome: result })}`)
+      try {
+        const me = authenticate(input.token)
+        outcome.sender = me.id
+        const normalised = normaliseMessageText(input.text)
+        if (!normalised.ok) {
+          throw peopleError({ status: 400, code: normalised.code, message: normalised.code === 'message_empty' ? 'A message needs text' : `A message is at most ${MESSAGE_MAX_CODE_POINTS} characters` })
+        }
+        const replay = (existing: StoredMessage): { readonly message: Message; readonly replayed: boolean } => {
+          outcome.recipient = existing.to
+          outcome.messageId = existing.id
+          outcome.seq = existing.seq
+          if (existing.to !== input.to || existing.text !== normalised.text) {
+            throw peopleError({ status: 409, code: 'idempotency_conflict', message: 'This retry key was already used for a different message' })
+          }
+          metrics.inc('messagesReplayed')
+          record('replayed')
+          return { message: toMessage(existing), replayed: true }
+        }
+        const existing = store.messageBySenderKey(me.id, idempotencyKey)
+        if (existing) return replay(existing)
+        const peer = requirePeer(me, input.to, 'message_to_self')
+        outcome.recipient = peer.id
+        take(limits.send, me.id)
+        const message = { id: `msg-${randomUUID()}`, from: me.id, to: peer.id, text: normalised.text, sentAt: now(), idempotencyKey }
+        const commit = () => { ensureOpen(); return store.appendMessage(message, CONVERSATION_KEEP) }
+        // Admission rescans the data directory, so only a new conversation pays for it;
+        // an existing one is bounded by its retention.
+        const appended = store.pairHasMessages(me.id, peer.id)
+          ? commit()
+          : await options.admitGrowth(CONVERSATION_GROWTH_BYTES, async () => commit())
+        if (appended.kind === 'existing') return replay(appended.message)
+        outcome.messageId = appended.message.id
+        outcome.seq = appended.message.seq
+        metrics.inc('messagesSent')
+        metrics.inc('messagesPruned', appended.pruned)
+        notifyChange()
+        record('sent')
+        return { message: toMessage(appended.message), replayed: false }
+      } catch (error) {
+        const failure = peopleFailureOf(error)
+        record(failure?.code ?? (error instanceof Error && 'code' in error ? String(error.code) : 'failed'))
+        throw error
+      }
+    },
+
+    leave: (input: { readonly token: string; readonly screen: string }): { readonly left: true } => {
+      ensureOpen()
+      const me = authenticate(input.token)
+      if (presence.remove(me.id, input.screen)) notifyChange()
+      metrics.inc('leaves')
+      return { left: true }
+    },
+
+    /** Idle: no waiting sync, no live screen and no request for `idleMs`. */
+    canEvict: (at: number, idleMs: number): boolean =>
+      waiters.size() === 0 && presence.liveScreenCount(at) === 0 && at - lastActivityAt > idleMs,
+
+    stats: (): { readonly waiters: number; readonly liveScreens: number } =>
+      ({ waiters: waiters.size(), liveScreens: presence.liveScreenCount() }),
+
+    /** Answers every waiting sync with the current state, then closes the store. Idempotent. */
+    close: (): void => {
+      if (closed) return
+      closed = true
+      timers.clearInterval(sweepHandle)
+      for (const waiter of waiters.all()) waiter.settle(settlementFor(waiter), 'closed')
+      presence.clear()
+      store.close()
+    },
+  }
+}
+
+export type PeopleDirectory = ReturnType<typeof createPeopleDirectory>

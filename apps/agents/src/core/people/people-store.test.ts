@@ -30,7 +30,7 @@ const person = (store: PeopleStore, name: string, now = 1_000) => {
   store.insertPerson({ id, name, nameKey: name.toLowerCase(), tokenHash: new Bun.CryptoHasher('sha256').update(id).digest('hex'), now })
   return id
 }
-const send = (store: PeopleStore, from: string, to: string, text: string, key = crypto.randomUUID(), sentAt = 2_000) =>
+const send = (store: PeopleStore, from: string, to: string, text: string, key: string = crypto.randomUUID(), sentAt = 2_000) =>
   store.appendMessage({ id: `msg-${crypto.randomUUID()}`, from, to, text, sentAt, idempotencyKey: key }, 200)
 
 describe('People store', () => {
