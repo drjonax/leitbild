@@ -11,8 +11,9 @@
  * 3. Turn 1 asks to trip the unit and start E-0.
  * 4. The probe, as a person, approves the AI's pending trip proposal
  *    (control.decide) and waits up to 60 s for both trip breakers to read open.
- * 5. Turn 2 says "continue": the AI should start E-0, decide step 1 from
- *    evidence and hold at step 2, which a person decides.
+ * 5. Turn 2 is the AI's own, resumed by the approval (nothing is posted): it
+ *    should start E-0, decide step 1 from evidence and hold at step 2, which a
+ *    person decides.
  * 6. The probe, as a person, selects the first normal branch of the run's
  *    current step if (and only if) it is person-only.
  * 7. Turn 3 says "continue": the AI should decide step 3 and hold at step 4.
@@ -285,16 +286,29 @@ const usageOf = (answer: any): Usage | null => typeof answer.promptTokens !== 'n
   modelCalls: answer.modelCalls ?? null,
 }
 
-const ask = async (turn: number, prompt: string) => {
-  const estimate = estimateUsd(pricing!.price, turn)
+/** Before a turn starts: the budget guard, and the Room's messages so far, so the turn's answer is told apart. */
+const beforeTurn = async (turn: number) => {
   if (spentUsd + pricing!.worstTurnUsd > budgetUsd) {
     stop(`Budget guard before turn ${turn + 1}: $${usd(spentUsd)} spent + $${pricing!.worstTurnUsd} worst-case turn > $${budgetUsd}`)
   }
   const prior = new Set<string>((await request(roomPath + '?limit=200')).messages.map((message: { id: string }) => message.id))
-  const startedAt = Date.now()
+  return { prior, startedAt: Date.now() }
+}
+
+/** The cause an approved proposal stamps on the reply of the turn it resumed (apps/agents/src/core/proposal-resume.ts). */
+const PROPOSAL_RESUME_CAUSE = 'proposal-approved'
+const RESUMED = '(resumed by the approval; nothing posted)'
+
+const ask = async (turn: number, prompt: string) => {
+  const before = await beforeTurn(turn)
   await request(`/api/workspaces/${workspaceId}/agents/messages`, { senderId: human!.id, senderName: human!.name, content: prompt, target: { rooms: [room!.id] } })
-  const answer = await nextReply(prior, `turn ${turn + 1}`)
-  const wallMs = Date.now() - startedAt
+  return await answered(turn, prompt, before)
+}
+
+const answered = async (turn: number, prompt: string, before: Awaited<ReturnType<typeof beforeTurn>>) => {
+  const estimate = estimateUsd(pricing!.price, turn)
+  const answer = await nextReply(before.prior, `turn ${turn + 1}`)
+  const wallMs = Date.now() - before.startedAt
   const spent = usageOf(answer)
   const answeredBy = typeof answer.model === 'string' ? answer.model : null
   const turnPricing = answeredBy === null ? pricing! : (() => {
@@ -310,7 +324,7 @@ const ask = async (turn: number, prompt: string) => {
     turn: turn + 1,
     prompt,
     wallMs,
-    answer: { id: answer.id, type: answer.type, text: answer.content, generationTraceId: answer.generationTraceId ?? null, ...(answer.errorCode === undefined ? {} : { errorCode: answer.errorCode }) },
+    answer: { id: answer.id, type: answer.type, text: answer.content, generationTraceId: answer.generationTraceId ?? null, cause: answer.cause ?? null, ...(answer.errorCode === undefined ? {} : { errorCode: answer.errorCode }) },
     model: answeredBy,
     usage: spent,
     costUsd: cost === null ? null : usd(cost),
@@ -324,6 +338,7 @@ const ask = async (turn: number, prompt: string) => {
   await save(`turn-${turn + 1}`, record)
   console.log(JSON.stringify({ turn: turn + 1, type: answer.type, model: answeredBy, costUsd: record.costUsd, spentUsd: usd(spentUsd), modelCalls: spent?.modelCalls ?? null, wallMs, currentStepId: run?.currentStepId ?? null }))
   if (answer.type !== 'chat') stop(`Turn ${turn + 1} answered with a ${answer.type} message: ${String(answer.content).slice(0, 200)}`)
+  if (prompt === RESUMED && answer.cause?.kind !== PROPOSAL_RESUME_CAUSE) stop(`Turn ${turn + 1} was not resumed by the approval: its reply's cause is ${JSON.stringify(answer.cause ?? null)}`)
   if (spent === null) stop(`Turn ${turn + 1} reported no token usage; its cost cannot be guarded`)
   if (turnPricing === null) stop(`Turn ${turn + 1} was answered by ${answeredBy}, which has no price; pass --price to run it`)
   const expected = requestedModel ?? String(room!.model)
@@ -519,10 +534,12 @@ const probe = async () => {
   } else await ask(0, `Trip reactor ${unitPhrase(unit.label)} and start E-0`)
   afterTurn1 = turns[0]!.state
 
-  // 4. The person approves the trip; the breakers must read open.
+  // 4. The person approves the trip; the breakers must read open. The
+  // approval resumes the Assistant, so turn 2's guard and baseline come first.
+  const beforeResume = dry ? undefined : await beforeTurn(1)
   await approveTrip()
 
-  // 5. Turn 2: continue (start E-0, step 1, hold at step 2).
+  // 5. Turn 2: resumed by the approval (start E-0, step 1, hold at step 2).
   if (dry) {
     await standInTurn(1, async () => {
       // An AI's start, by procedure and scope alone, makes it the run's driver.
@@ -540,7 +557,7 @@ const probe = async () => {
         ...await standInDecide(run.runId),
       ]
     })
-  } else await ask(1, 'continue')
+  } else await answered(1, RESUMED, beforeResume!)
 
   // 6. The person decides the person-only step.
   await personDecidesStep()
