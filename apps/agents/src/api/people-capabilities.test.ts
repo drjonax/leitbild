@@ -336,6 +336,31 @@ describe('People Capabilities', () => {
     expect(again.storeId).toBe(first.storeId)
   })
 
+  test('a call whose directory was evicted while idle is repeated once on a reopened directory; removal is never retried', async () => {
+    const workspaceId = await provision()
+    const ann = await join_(workspaceId)
+    let evictNext = true
+    // Idle eviction lands between opening the directory and using it.
+    const racing: WorkspaceRuntimeRegistry = {
+      ...registry,
+      peopleFor: async id => {
+        const directory = await registry.peopleFor(id)
+        if (evictNext) {
+          evictNext = false
+          await registry.evictIdle(Date.now() + IDLE_MS * 10)
+        }
+        return directory
+      },
+    }
+    const url = new URL(`/internal/workspaces/${workspaceId}/capabilities/agents.people.rename/invoke`, 'http://agents.test')
+    const renamed = await handleAgentsModuleApi(new Request(url.href, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(invocationBody(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann' })),
+    }), url, { state, registry: racing })
+    expect(await resultOf<unknown>(renamed!)).toEqual({ me: { id: ann.me.id, name: 'Ann' } })
+    expect(registry.peopleStatus()).toMatchObject({ directoriesEvicted: 1, openDirectories: 1 })
+  })
+
   test('Bun aborts the Agents request when the Host-side fetch is aborted, and the waiter is dropped', async () => {
     const workspaceId = await provision()
     const ann = await join_(workspaceId)

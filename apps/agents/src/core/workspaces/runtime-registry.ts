@@ -569,7 +569,7 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
     for (const [id, directory] of peopleDirectories) {
       if (directory.canEvict(now, idleMs)) {
         peopleDirectories.delete(id)
-        directory.close()
+        directory.close('evicted')
         peopleMetrics.inc('directoriesEvicted')
       }
     }

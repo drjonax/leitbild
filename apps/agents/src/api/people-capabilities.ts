@@ -26,6 +26,7 @@ import {
   MESSAGE_MAX_CODE_POINTS,
   SYNC_ABORTED,
   SYNC_MESSAGE_PAGE,
+  isEvictedDirectoryError,
   peopleError,
   peopleFailureOf,
   type PeopleDirectory,
@@ -305,10 +306,19 @@ export const invokePeopleCapability = async (
     return refuse(400, 'invalid_request', 'An idempotencyKey cannot contain control characters')
   }
   try {
-    const directory = await registry.peopleFor(workspaceId)
-    const response = await peopleCapabilities.invoke(capabilityId, { directory, signal }, invocation)
-    if (!response) throw new Error(`People Capability has no handler: ${capabilityId}`)
-    return response
+    const attempt = async (): Promise<Response> => {
+      const response = await peopleCapabilities.invoke(capabilityId, { directory: await registry.peopleFor(workspaceId), signal }, invocation)
+      if (!response) throw new Error(`People Capability has no handler: ${capabilityId}`)
+      return response
+    }
+    try {
+      return await attempt()
+    } catch (error) {
+      // Idle eviction closed the directory between opening and use; nothing
+      // was done, so one retry reopens it. Removal and shutdown never retry.
+      if (!isEvictedDirectoryError(error)) throw error
+      return await attempt()
+    }
   } catch (error) {
     const failure = peopleFailureOf(error)
     if (failure) {

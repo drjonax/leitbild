@@ -10,6 +10,7 @@ import {
   MAX_WAITERS_PER_PERSON,
   SYNC_ABORTED,
   createPeopleDirectory,
+  isEvictedDirectoryError,
   peopleFailureOf,
   type PeopleDirectory,
   type SyncInput,
@@ -205,6 +206,22 @@ describe('People directory', () => {
     expect(await failureCode(() => annSync.now())).toBe('workspace_closing')
     expect(await failureCode(() => directory.join({}))).toBe('workspace_closing')
     directory.close()
+  })
+
+  test('an idle close is told apart from a closing Workspace, so only the former may be retried', async () => {
+    const evicted = make()
+    const ann = await evicted.directory.join({})
+    evicted.directory.close('evicted')
+    let error: unknown
+    try { evicted.directory.rename({ token: ann.token, name: 'Ann' }) } catch (caught) { error = caught }
+    expect(isEvictedDirectoryError(error)).toBe(true)
+    expect(error).toMatchObject({ code: 'workspace_closing' })
+    await rm(path, { force: true })
+    const closing = make()
+    closing.directory.close()
+    try { await closing.directory.join({}) } catch (caught) { error = caught }
+    expect(isEvictedDirectoryError(error)).toBe(false)
+    expect(error).toMatchObject({ code: 'workspace_closing' })
   })
 
   test('presence is per Run: arrival, Run switch, a second screen elsewhere, leave and expiry after the timeout', async () => {

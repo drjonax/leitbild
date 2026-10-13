@@ -126,6 +126,15 @@ export const peopleFailureOf = (error: unknown): PeopleFailure | undefined =>
 
 const closingError = (): Error => Object.assign(new Error('Agents Workspace is closing'), { code: 'workspace_closing' })
 
+const EVICTED = Symbol('people-directory-evicted')
+/**
+ * A directory closed because it was idle. Nothing was done before this was
+ * thrown, and the Workspace is still there: the caller may open the
+ * directory again and repeat the call once.
+ */
+const evictedError = (): Error => Object.assign(new Error('People directory was closed while idle'), { code: 'workspace_closing', [EVICTED]: true })
+export const isEvictedDirectoryError = (error: unknown): boolean => error instanceof Error && EVICTED in error
+
 const rateLimited = (retryAfterMs: number): Error => peopleError({
   status: 429, code: 'people_rate_limited', message: 'Too many requests; retry shortly', retryable: true,
   details: { retryAfterMs },
@@ -262,12 +271,15 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
     rename: createWindowLimiter(now, RENAME_LIMITS),
     sync: createWindowLimiter(now, SYNC_LIMITS),
   }
-  let closed = false
+  let closed: 'open' | 'closing' | 'evicted' = 'open'
   let lastActivityAt = now()
   const isWarming = (): boolean => now() - processStartedAt < presenceTimeoutMs
   let lastWarming = isWarming()
 
-  const ensureOpen = (): void => { if (closed) throw closingError() }
+  const ensureOpen = (): void => {
+    if (closed === 'evicted') throw evictedError()
+    if (closed === 'closing') throw closingError()
+  }
   const take = (limiter: ReturnType<typeof createWindowLimiter>, key: string): void => {
     const outcome = limiter.take(key)
     if (!outcome.ok) throw rateLimited(outcome.retryAfterMs)
@@ -347,7 +359,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
   const flush = (): void => {
     flushScheduled = false
     // close() has already answered every waiter with the final state.
-    if (closed) return
+    if (closed !== 'open') return
     const computed = new Map<string, Settlement>()
     for (const waiter of waiters.all()) {
       const key = `${waiter.personId}|${waiter.viewingKey}|${waiter.after}`
@@ -367,7 +379,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
 
   const sweep = (): void => {
     // A tick that races close() has nothing left to sweep.
-    if (closed) return
+    if (closed !== 'open') return
     const expired = presence.sweep()
     const warming = isWarming()
     for (const limiter of Object.values(limits)) limiter.prune()
@@ -574,10 +586,14 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
     stats: (): { readonly waiters: number; readonly liveScreens: number } =>
       ({ waiters: waiters.size(), liveScreens: presence.liveScreenCount() }),
 
-    /** Answers every waiting sync with the current state, then closes the store. Idempotent. */
-    close: (): void => {
-      if (closed) return
-      closed = true
+    /**
+     * Answers every waiting sync with the current state, then closes the
+     * store. Idempotent. `evicted` marks an idle close, after which callers
+     * may reopen the directory; removal and shutdown close as `closing`.
+     */
+    close: (reason: 'closing' | 'evicted' = 'closing'): void => {
+      if (closed !== 'open') return
+      closed = reason
       timers.clearInterval(sweepHandle)
       for (const waiter of waiters.all()) waiter.settle(settlementFor(waiter), 'closed')
       presence.clear()
