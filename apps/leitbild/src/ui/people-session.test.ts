@@ -499,6 +499,34 @@ describe('identity', () => {
     expect(syncs()[count]!.input.after).toBeUndefined()
   })
 
+  test('a refusal of the old token after adopting a sibling\'s keeps the sibling\'s token and joins no one (review P3)', async () => {
+    const { session, agents, local, emit, state } = setup()
+    agents.on(PEOPLE_CAPABILITY.conversationRead, () => ok({ with: BEN, messages: [], readThrough: { me: 0, them: 0 } }))
+    const refusal = deferred<Response>()
+    agents.on(PEOPLE_CAPABILITY.send, call => call.input.token === 'token-1' ? { late: refusal.promise } : ok({ message: message(5, ME, BEN, 'x'), replayed: false }))
+    let joins = 0
+    agents.on(PEOPLE_CAPABILITY.join, () => { joins += 1; return ok({ token: `joined-${joins}`, me: { id: 'person-new', name: 'User9' }, preferredNameAccepted: true }) })
+    agents.setSyncResult(result({ present: [BEN], cursor: 0, view: 'v0' }))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    session.send('x')
+    await settle()
+    if (local === 'blocked') throw new Error('storage expected')
+    local.map.set(TOKEN_KEY, 'token-2')
+    emit({ type: 'storage', key: TOKEN_KEY, newValue: 'token-2' })
+    await settle()
+    refusal.resolve(refuse(401, 'person_token_invalid'))
+    await settle()
+    expect(local.map.get(TOKEN_KEY)).toBe('token-2')
+    expect(joins).toBe(0)
+    expect(new Set(agents.to(PEOPLE_CAPABILITY.sync).slice(-2).map(call => call.input.token))).toEqual(new Set(['token-2']))
+    // The message is sent again with the adopted token.
+    expect(agents.to(PEOPLE_CAPABILITY.send).map(call => call.input.token)).toEqual(['token-1', 'token-2'])
+    expect(state().chat?.items).toEqual([expect.objectContaining({ kind: 'message', seq: 5 })])
+  })
+
   test('blocked site storage gives a page-only identity and says so', async () => {
     let locked = 0
     const lock: PeopleLock = async (_name, task) => { locked += 1; return await task() }

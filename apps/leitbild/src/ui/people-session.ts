@@ -522,14 +522,23 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     return joining
   }
 
-  /** The stored token was refused: adopt a sibling's newer one, or join again. */
-  const dropToken = (): void => {
-    const refused = token
-    token = null
+  /**
+   * Agents refused `refused`, the token a request was sent with. When this page
+   * has moved on since (to a sibling tab's token, adopted from the storage
+   * event) nothing changes. Otherwise a newer stored token is adopted, or the
+   * token is forgotten so the next call joins again. Returns whether the
+   * identity changed, so the caller restarts.
+   */
+  const dropToken = (refused: string): boolean => {
+    if (token !== null && token !== refused) return false
     const stored = read('local', tokenKey)
     if (stored && stored !== refused) token = stored
-    else if (stored) write('local', tokenKey, null)
+    else {
+      token = null
+      if (stored) write('local', tokenKey, null)
+    }
     forgetIdentityData()
+    return true
   }
 
   // --- presence and messages ------------------------------------------------
@@ -643,13 +652,14 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     if (!((summary?.unread ?? 0) > 0 || lastIncoming > marked) || through === 0) return
     if (markingRead) { markAgain = true; return }
     markingRead = true
-    void invoke(PEOPLE_CAPABILITY.markRead, { token, with: peer, through }, markReadResultSchema).then(result => {
+    const usedToken = token
+    void invoke(PEOPLE_CAPABILITY.markRead, { token: usedToken, with: peer, through }, markReadResultSchema).then(result => {
       readThrough.set(peer, Math.max(readThrough.get(peer) ?? 0, through))
       conversations = conversations.map(entry => entry.with.id === peer ? { ...entry, unread: result.unread } : entry)
       emit()
     }, error => {
       const failed = classifyPeopleFailure(error)
-      if (failed.kind === 'token-invalid') { dropToken(); restart(); return }
+      if (failed.kind === 'token-invalid') { if (dropToken(usedToken)) restart(); return }
       // The next sync answer tries again; the count stays visible meanwhile.
       if (failed.kind !== 'aborted') ports.warn('People: marking the chat read failed', error)
     }).finally(() => {
@@ -714,8 +724,10 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   const cycle = async (cycleGeneration: number, hold: boolean): Promise<void> => {
     const controller = new AbortController()
     syncController = controller
+    let usedToken: string | null = null
     try {
       const currentToken = await ensureToken()
+      usedToken = currentToken
       if (cycleGeneration !== generation || viewing === null) return
       const sentStoreId = storeId
       const input: SyncInput = {
@@ -744,9 +756,11 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       const failed = classifyPeopleFailure(error)
       if (failed.kind === 'aborted') return
       if (failed.kind === 'token-invalid') {
+        // Already on a newer token: just ask again with it.
+        if (usedToken === null || (token !== null && token !== usedToken)) { void cycle(cycleGeneration, false); return }
         tokenRefusals += 1
         if (tokenRefusals >= TOKEN_REFUSALS_BEFORE_FAILING) fail(PEOPLE_ERROR.tokenInvalid, error)
-        else { dropToken(); void cycle(cycleGeneration, false) }
+        else { dropToken(usedToken); void cycle(cycleGeneration, false) }
         emit()
         return
       }
@@ -769,8 +783,12 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     chatController = controller
     chatLoading = true
     chatLoadFailed = false
+    let usedToken: string | null = null
     void ensureToken()
-      .then(currentToken => invoke(PEOPLE_CAPABILITY.conversationRead, { token: currentToken, with: peer }, conversationReadResultSchema, { signal: controller.signal }))
+      .then(currentToken => {
+        usedToken = currentToken
+        return invoke(PEOPLE_CAPABILITY.conversationRead, { token: currentToken, with: peer }, conversationReadResultSchema, { signal: controller.signal })
+      })
       .then(result => {
         if (chatController !== controller) return
         chatController = null
@@ -792,7 +810,11 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         chatLoading = false
         const failed = classifyPeopleFailure(error)
         if (failed.kind === 'aborted') return
-        if (failed.kind === 'token-invalid') { dropToken(); restart() }
+        if (failed.kind === 'token-invalid') {
+          // Already on a newer token: read again with it.
+          if (usedToken !== null && !dropToken(usedToken)) { loadChat(); return }
+          restart()
+        }
         chatLoadFailed = true
         ports.warn('People: the conversation did not load', error)
         emit()
@@ -855,7 +877,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     sendingKey = next.key
     sendController = controller
     if (!next.attempted) outbox = outbox.map(entry => entry.key === next.key ? { ...entry, attempted: true } : entry)
-    void invoke(PEOPLE_CAPABILITY.send, { token, to: next.to, text: next.text }, sendResultSchema, { signal: controller.signal, idempotencyKey: next.key })
+    const usedToken = token
+    void invoke(PEOPLE_CAPABILITY.send, { token: usedToken, to: next.to, text: next.text }, sendResultSchema, { signal: controller.signal, idempotencyKey: next.key })
       .then(result => {
         if (sendController !== controller) return
         finishSend()
@@ -874,7 +897,13 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         finishSend()
         const failed = classifyPeopleFailure(error)
         if (failed.kind === 'aborted') return
-        if (failed.kind === 'token-invalid') { dropToken(); restart(); emit(); return }
+        if (failed.kind === 'token-invalid') {
+          // Already on a newer token, the message is sent again with it; else join first.
+          if (dropToken(usedToken)) restart()
+          else pump()
+          emit()
+          return
+        }
         if (failed.kind === 'transient') {
           sendRetryTimer = ports.timers.set(() => { sendRetryTimer = null; pump() }, backoffDelay(sendAttempt++, ports.random(), failed.retryAfterMs))
           emit()
@@ -1058,8 +1087,9 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       const problem = nameProblem(name)
       if (problem !== null) return { ok: false, error: problem }
       if (token === null || notice !== 'none') return { ok: false, error: NAME_TEXT.reconnecting }
+      const usedToken = token
       try {
-        const result = await invoke(PEOPLE_CAPABILITY.rename, { token, name }, renameResultSchema)
+        const result = await invoke(PEOPLE_CAPABILITY.rename, { token: usedToken, name }, renameResultSchema)
         me = result.me
         preferredNameTaken = null
         // The browser proposes this name when it next joins another Workspace.
@@ -1069,7 +1099,10 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         return { ok: true, name: result.me.name }
       } catch (error) {
         const failed = classifyPeopleFailure(error)
-        if (failed.kind === 'token-invalid') { dropToken(); restart(); return { ok: false, error: NAME_TEXT.failed } }
+        if (failed.kind === 'token-invalid') {
+          if (dropToken(usedToken)) restart()
+          return { ok: false, error: NAME_TEXT.failed }
+        }
         if (failed.kind === 'transient') {
           if (failed.code === PEOPLE_ERROR.rateLimited) return { ok: false, error: NAME_TEXT.rateLimited }
           return { ok: false, error: troubleSince !== null ? NAME_TEXT.reconnecting : NAME_TEXT.failed }
