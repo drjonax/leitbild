@@ -68,7 +68,7 @@ describe('server health', () => {
   test('routes both regional and overview tiles through the artifact handler', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-map-routes-'))
     const workspaces = createWorldWorkspaceRuntimeRegistry({ dataDir, moduleState: createWorldModuleState({ dataDir }), scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), ...testScenarioAuthoring(), runtimeAdapters: [] })
-    const server = createServer({ workspaces, featuredDefinitions: { definitions: [] }, port: 0, bindHost: '127.0.0.1', mapArtifacts: { rootDir: dataDir } })
+    const server = createServer({ workspaces, featuredDefinitions: { definitions: [], listed: [] }, port: 0, bindHost: '127.0.0.1', mapArtifacts: { rootDir: dataDir } })
     try {
       for (const source of ['current', 'overview']) {
         const response = await fetch(`http://127.0.0.1:${server.port}/map/tiles/${source}/0/0/0.mvt`)
@@ -114,7 +114,7 @@ describe('server health', () => {
     await Bun.write(join(uiDistPath, 'index.html'), 'app page')
     await Bun.write(join(uiDistPath, 'embed.html'), 'embed page')
     const workspaces = createWorldWorkspaceRuntimeRegistry({ dataDir, moduleState: createWorldModuleState({ dataDir }), scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), ...testScenarioAuthoring(), runtimeAdapters: [] })
-    const server = createServer({ workspaces, featuredDefinitions: { definitions: [] }, port: 0, bindHost: '127.0.0.1', uiDistPath, mapArtifacts: { rootDir: dataDir } })
+    const server = createServer({ workspaces, featuredDefinitions: { definitions: [], listed: [] }, port: 0, bindHost: '127.0.0.1', uiDistPath, mapArtifacts: { rootDir: dataDir } })
     try {
       const workspaceId = newWorkspaceId()
       const embed = await fetch(`http://127.0.0.1:${server.port}/workspaces/${workspaceId}/world/embed/process-plant.display`)

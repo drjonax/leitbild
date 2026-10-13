@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { FeaturedDefinitionCatalog, ModuleFeaturedDefinition } from '@leitbild/contracts'
+import type { FeaturedDefinitionCatalog, ModuleFeaturedDefinition, ModuleListedDefinition } from '@leitbild/contracts'
 import {
   catalogueView, deepLinkedDemo, DEEP_LINK_NOT_FEATURED_TEXT, demoTagIcon, DEMOS_UNAVAILABLE_TEXT, FEATURED_PATH, NO_DEMOS_TEXT,
   readFeaturedCatalogue,
@@ -17,7 +17,9 @@ const featured = (id = 'halden-offsite-power-restoration'): ModuleFeaturedDefini
   tags: ['Nuclear plant + grid', 'Desktop'],
   previews: [{ alt: 'The Halden map after the fault.', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/offsite.webp', width: 1600 }] }],
 } as ModuleFeaturedDefinition)
-const catalogue = (definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featured()], world: 'ready' | 'failed' = 'ready') => ({
+const catalogue = (
+  definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featured()], world: 'ready' | 'failed' = 'ready', listed: ReadonlyArray<ModuleListedDefinition> = [],
+) => ({
   modules: [
     world === 'ready'
       ? { moduleId: 'world', status: 'ready' }
@@ -25,6 +27,7 @@ const catalogue = (definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featu
     { moduleId: 'agents', status: 'ready' },
   ],
   definitions: world === 'ready' ? definitions : [],
+  listed: world === 'ready' ? listed : [],
 })
 
 describe('the featured catalogue on the Demos surfaces', () => {
@@ -33,14 +36,14 @@ describe('the featured catalogue on the Demos surfaces', () => {
     const read = await readFeaturedCatalogue(host.fetch)
     expect(read.definitions[0]?.title).toBe('Halden: loss of offsite power')
     expect(host.calls.map(call => `${call.method} ${call.path}`)).toEqual(['GET /api/featured-definitions'])
-    const broken = fakeFetch().on('GET', FEATURED_PATH, json({ modules: [], definitions: [{ title: 'x' }] }))
+    const broken = fakeFetch().on('GET', FEATURED_PATH, json({ modules: [], definitions: [{ title: 'x' }], listed: [] }))
     await expect(readFeaturedCatalogue(broken.fetch)).rejects.toThrow()
     const down = fakeFetch().on('GET', FEATURED_PATH, hostError(503, 'workspace_capacity_exceeded', 'full'))
     await expect(readFeaturedCatalogue(down.fetch)).rejects.toMatchObject({ status: 503 })
   })
 
   test('a featured demo from a Module the catalogue does not report is rejected, never shown', async () => {
-    const orphan = fakeFetch().on('GET', FEATURED_PATH, json({ modules: [], definitions: [featured()] }))
+    const orphan = fakeFetch().on('GET', FEATURED_PATH, json({ modules: [], definitions: [featured()], listed: [] }))
     await expect(readFeaturedCatalogue(orphan.fetch)).rejects.toThrow()
   })
 

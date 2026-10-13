@@ -1,0 +1,17 @@
+[
+  {
+    "scenarioId": "halden-normal-operation",
+    "summary": "Four simulated nuclear units run at full power on Norway's grid as slow rain drifts over Halden; the weather does not affect them. Nothing else is scripted: add faults with Instructor actions.",
+    "tags": ["Nuclear plant + grid", "No scripted faults"]
+  },
+  {
+    "scenarioId": "nordic-frequency-event",
+    "summary": "Norway's largest hydropower station trips on a winter morning; watch inertia and the reserves stop the frequency fall and bring it back to 50 Hz.",
+    "tags": ["Power grid", "Event at 2 min"]
+  },
+  {
+    "scenarioId": "supply-run",
+    "summary": "Keep kitchens, shelters, a clinic and a pumping station in fictional Halden supplied with trucks of different sizes from two depots.",
+    "tags": ["Logistics", "30 min"]
+  }
+]

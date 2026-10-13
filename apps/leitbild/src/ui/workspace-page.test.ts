@@ -11,6 +11,7 @@ describe('featured demos on the Workspace page', () => {
   const catalog = featuredDefinitionCatalogSchema.parse({
     modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }],
     definitions: [featured('halden-offsite-power-restoration'), featured('nordland-corridor-security'), featured('halden-emergency')],
+    listed: [],
   })
   const ids = (items: ReadonlyArray<{ readonly ref: { readonly id: string } }>): string[] => items.map(item => String(item.ref.id))
   const cardIds = (cards: ReadonlyArray<{ readonly definition: { readonly ref: { readonly id: string } } }>): string[] => ids(cards.map(card => card.definition))
@@ -43,7 +44,7 @@ describe('featured demos on the Workspace page', () => {
   })
 
   test('a failed featured outcome is reported per Module and leaves every Definition startable', () => {
-    const failedCatalog = featuredDefinitionCatalogSchema.parse({ modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } }], definitions: [] })
+    const failedCatalog = featuredDefinitionCatalogSchema.parse({ modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } }], definitions: [], listed: [] })
     const demos = workspaceDemos(definitions, failedCatalog)
     expect(demos.unavailable.map(String)).toEqual(['world'])
     expect(demos.cards).toEqual([])

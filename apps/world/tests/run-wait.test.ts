@@ -166,7 +166,7 @@ describe('waiting through the World server', () => {
     const workspaces = createWorldWorkspaceRuntimeRegistry({ dataDir, moduleState: createWorldModuleState({ dataDir }),
       scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), ...testScenarioAuthoring(), runtimeAdapters: createTestPackRuntimeAdapters() })
     registries.push(workspaces)
-    const server = createServer({ workspaces, featuredDefinitions: { definitions: [] }, port: 0, bindHost: '127.0.0.1', mapArtifacts: { rootDir: dataDir } })
+    const server = createServer({ workspaces, featuredDefinitions: { definitions: [], listed: [] }, port: 0, bindHost: '127.0.0.1', mapArtifacts: { rootDir: dataDir } })
     try {
       const workspaceId = newWorkspaceId()
       const base = `http://127.0.0.1:${server.port}/internal/workspaces/${workspaceId}`

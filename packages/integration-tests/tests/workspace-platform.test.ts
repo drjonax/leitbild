@@ -486,7 +486,7 @@ describe('Workspace Host with real Modules', () => {
     expect(await leitbildState.has(workspaceIdSchema.parse(workspace.id))).toBe(false)
   })
 
-  test('starts a featured demo in a new Workspace through that Workspace\'s own Definition and primary Capability', async () => {
+  test('starts every featured demo and listed scenario in a new Workspace through that Workspace\'s own Definition and primary Capability', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'workspace-featured-world-'))
     const agentsHome = await mkdtemp(join(tmpdir(), 'workspace-featured-agents-'))
     const originalLeitbildHome = process.env.LEITBILD_HOME
@@ -502,9 +502,10 @@ describe('Workspace Host with real Modules', () => {
       await rm(dataDir, { recursive: true, force: true })
     })
 
-    // Every demo World features must start this way.
+    // Every demo World features, and every scenario it lists beside them, must start this way.
     const featuredDefinitions = builtinFeaturedScenarioDefinitions
     expect(featuredDefinitions.definitions.length).toBeGreaterThan(0)
+    expect(featuredDefinitions.listed.length).toBeGreaterThan(0)
 
     const routing = createDirectRoutingAdapter()
     const worldAssembly = createWorldApplicationAssembly({ routing })
@@ -562,10 +563,11 @@ describe('Workspace Host with real Modules', () => {
     const catalog = featuredDefinitionCatalogSchema.parse(await (await fetch(`${baseUrl}/api/featured-definitions`)).json())
     expect(catalog.modules.map(outcome => [String(outcome.moduleId), outcome.status])).toEqual([['world', 'ready'], ['agents', 'ready']])
     expect(catalog.definitions).toEqual(featuredDefinitions.definitions)
+    expect(catalog.listed).toEqual(featuredDefinitions.listed)
     expect(host.list()).toEqual([])
     expect(await worldRegistry.list()).toEqual([])
 
-    for (const featured of catalog.definitions) {
+    for (const featured of [...catalog.definitions, ...catalog.listed]) {
       // 2. A new Workspace, with every core Module ready.
       const created = await fetch(`${baseUrl}/api/workspaces`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Workspace' }),

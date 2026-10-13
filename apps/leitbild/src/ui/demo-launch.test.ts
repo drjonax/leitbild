@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { ModuleFeaturedDefinition, WorkspaceId } from '@leitbild/contracts'
+import type { ModuleFeaturedDefinition, ModuleListedDefinition, WorkspaceId } from '@leitbild/contracts'
 import {
   advanceLaunchSteps, createDemoLauncher, initialLaunchSteps, launchDemo, launchFailureView, launchStatusText, NOT_AVAILABLE_TEXT,
   NOT_FEATURED_TEXT, SLOW_AFTER_MS, stoppedText, VERY_SLOW_AFTER_MS, watchSlowLaunch,
@@ -29,7 +29,9 @@ const featured = (id = 'halden-offsite-power-restoration'): ModuleFeaturedDefini
   previews: [{ alt: 'The Halden map after the fault.', width: 1600, height: 1000, sources: [{ path: '/assets/world/scenario-previews/offsite.webp', width: 1600 }] }],
 } as ModuleFeaturedDefinition)
 
-const catalogue = (definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featured()], world: 'ready' | 'failed' = 'ready') => ({
+const catalogue = (
+  definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featured()], world: 'ready' | 'failed' = 'ready', listed: ReadonlyArray<ModuleListedDefinition> = [],
+) => ({
   modules: [
     world === 'ready'
       ? { moduleId: 'world', status: 'ready' }
@@ -37,6 +39,7 @@ const catalogue = (definitions: ReadonlyArray<ModuleFeaturedDefinition> = [featu
     { moduleId: 'agents', status: 'ready' },
   ],
   definitions: world === 'ready' ? definitions : [],
+  listed: world === 'ready' ? listed : [],
 })
 
 const start = {

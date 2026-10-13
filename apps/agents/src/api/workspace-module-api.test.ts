@@ -428,10 +428,10 @@ describe('Agents Workspace Module API', () => {
     expect(workspaceModuleManifestSchema.parse(body)).toEqual(agentsModuleManifest)
   })
 
-  test('features no Definitions, without any Workspace', async () => {
+  test('features and lists no Definitions, without any Workspace', async () => {
     const response = await request('GET', agentsModuleManifest.endpoints.featuredDefinitions)
     expect(response.status).toBe(200)
-    expect(moduleFeaturedDefinitionCollectionSchema.parse(await response.json())).toEqual({ definitions: [] })
+    expect(moduleFeaturedDefinitionCollectionSchema.parse(await response.json())).toEqual({ definitions: [], listed: [] })
     expect(registry.list()).toEqual([])
   })
 
