@@ -43,8 +43,12 @@ export const MESSAGE_MAX_CODE_POINTS = 2_000
 export const MAX_WAITERS_PER_PERSON = 16
 /** Identities per Workspace; anonymous joins must not grow without bound. */
 export const PEOPLE_PER_WORKSPACE = 500
-/** At the cap, People who never chatted and were away this long are forgotten. */
-export const INACTIVE_PERSON_PRUNE_MS = 30 * 24 * 60 * 60_000
+/**
+ * At the cap, People who never chatted, have no screen open and were away
+ * this long are forgotten. One day, not weeks: anonymous joins can fill the
+ * cap within minutes, and that must not lock a Workspace's joins for longer.
+ */
+export const INACTIVE_PERSON_PRUNE_MS = 24 * 60 * 60_000
 /** last_active_at is written at most this often per Person, never per heartbeat. */
 export const ACTIVITY_WRITE_INTERVAL_MS = 60 * 60_000
 /** Storage admission estimate for one Person row and its indexes. */
@@ -418,7 +422,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         // Everything from the capacity check to the insert is synchronous, so
         // two joins can never both take the last slot or the same name.
         if (store.countPeople() >= peopleLimit) {
-          metrics.inc('peoplePruned', store.pruneInactivePeople(now() - INACTIVE_PERSON_PRUNE_MS))
+          metrics.inc('peoplePruned', store.pruneInactivePeople(now() - INACTIVE_PERSON_PRUNE_MS, [...presence.livePeople()]))
           if (store.countPeople() >= peopleLimit) {
             throw peopleError({ status: 409, code: 'people_limit_reached', message: 'This Workspace has reached its number of People' })
           }

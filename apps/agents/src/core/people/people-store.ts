@@ -185,10 +185,14 @@ export const createPeopleStore = (path: string, options: { readonly newStoreId: 
       db.query('UPDATE people SET last_active_at = ? WHERE id = ?').run(now, id)
     },
     countPeople: (): number => db.query<{ count: number }, []>('SELECT count(*) AS count FROM people').get()!.count,
-    /** Removes People who never had a conversation and were last active before the cutoff. */
-    pruneInactivePeople: (activeBefore: number): number => db.query(`DELETE FROM people WHERE last_active_at < ?1
+    /**
+     * Removes People who never had a conversation and were last active before
+     * the cutoff, except those listed in `keep` (People with a screen open).
+     */
+    pruneInactivePeople: (activeBefore: number, keep: ReadonlyArray<string>): number => db.query(`DELETE FROM people WHERE last_active_at < ?1
+      AND id NOT IN (SELECT value FROM json_each(?2))
       AND NOT EXISTS (SELECT 1 FROM messages WHERE sender = people.id)
-      AND NOT EXISTS (SELECT 1 FROM messages WHERE recipient = people.id)`).run(activeBefore).changes,
+      AND NOT EXISTS (SELECT 1 FROM messages WHERE recipient = people.id)`).run(activeBefore, JSON.stringify(keep)).changes,
     messageBySenderKey,
     pairHasMessages: (a: string, b: string): boolean => maxSeqInPair(conversationPair(a, b)) > 0,
     appendMessage: (message: Omit<StoredMessage, 'seq'>, keep: number): AppendOutcome => {

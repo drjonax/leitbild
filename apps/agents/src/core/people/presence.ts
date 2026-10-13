@@ -79,6 +79,13 @@ export const createPresence = (options: { readonly now: () => number; readonly t
       }
       return present
     },
+    /** People with any live screen, whichever Run it views. */
+    livePeople: (): Set<string> => {
+      const now = options.now()
+      const live = new Set<string>()
+      for (const entry of screens.values()) if (isLive(entry, now)) live.add(entry.personId)
+      return live
+    },
     liveScreenCount: (now: number = options.now()): number => {
       let live = 0
       for (const entry of screens.values()) if (isLive(entry, now)) live += 1

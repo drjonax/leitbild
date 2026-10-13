@@ -435,16 +435,26 @@ describe('People directory', () => {
     expect(replaced).toMatchObject({ storeId: start.storeId, messages: [], cursor: rest.cursor })
   })
 
-  test('at the People limit, People who never chatted and were away for 30 days are forgotten; otherwise joining is refused', async () => {
-    const { directory, time, metrics } = make({ peopleLimit: 2 })
+  test('at the People limit, People who never chatted, have no screen open and were away for a day are forgotten; otherwise joining is refused', async () => {
+    const { directory, time, metrics } = make({ peopleLimit: 3 })
     const idle = await directory.join({})
+    const watching = await directory.join({})
     await directory.join({})
     expect(await failureCode(() => directory.join({}))).toBe('people_limit_reached')
-    time.advance(INACTIVE_PERSON_PRUNE_MS + 1)
+    // A pending sync keeps a screen live however long it waits.
+    const watcher = syncer(directory, watching.token)
+    await watcher.now()
+    const stillWatching = watcher.wait(15_000)
+    await Bun.sleep(5)
+    time.advance(INACTIVE_PERSON_PRUNE_MS - 60_000)
+    expect(await failureCode(() => directory.join({}))).toBe('people_limit_reached')
+    time.advance(60_001)
     const fresh = await directory.join({})
     expect(fresh.me.name).toBe('User1')
     expect(metrics.snapshot().peoplePruned).toBe(2)
     expect(await failureCode(() => directory.sync({ token: idle.token, screen: screen(), viewingKey: RUN_1, waitMs: 0 }, live()))).toBe('person_token_invalid')
+    directory.close()
+    expect((await stillWatching).me).toEqual(watching.me)
   })
 
   test('reports presence as warming for one presence timeout after the process started, and its end wakes waiting syncs', async () => {
