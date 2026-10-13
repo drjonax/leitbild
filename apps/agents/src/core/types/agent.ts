@@ -87,6 +87,14 @@ export interface AIAgent extends Agent {
   readonly updateModel: (model: string) => void
   readonly getModel: () => string
   readonly cancelGeneration: () => void
+  // A turn waits to start: a Room queued behind the running turn, or the
+  // cooldown after a reply before the next one. state.get() reads 'idle'
+  // during that cooldown; the queued turn is still the Agent's work.
+  readonly hasQueuedTurn: () => boolean
+  // For a closing Workspace runtime: drops queued and requested turns and
+  // starts no more. A running turn ends on its own or by cancelGeneration;
+  // whenIdle waits for it.
+  readonly close: () => void
   readonly getTemperature: () => number | undefined
   readonly updateTemperature?: (t: number | undefined) => void
   readonly getHistoryLimit: () => number | undefined

@@ -295,7 +295,18 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
 
   // --- Internals ---
 
-  // A5: two-phase drain.
+  // Closing Agents is part of quiescing producers, before scripts stop (a
+  // script stop waits for its cast to be idle): a turn still queued (a Room
+  // behind the running turn, or the cooldown after a reply) is dropped and
+  // none can start, so no turn begins on a runtime whose stores close.
+  const closeAgents = (system: AgentsWorkspaceRuntime): void => {
+    for (const agent of system.team.listAgents()) {
+      const ai = asAIAgent(agent)
+      if (ai) ai.close() // Human Agents take no turns.
+    }
+  }
+
+  // A5: two-phase drain of the turns still running after closeAgents.
   //   Phase 1 — race natural idle vs drainMs timeout. Most evals finish well
   //   under the limit; this is the happy path.
   //   Phase 2 — anything still generating (slow LLM, network hang) gets
@@ -394,6 +405,7 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
       system.summaryScheduler.dispose()
       // Absent in a runtime without a Workspace Host.
       system.proposalResumes?.dispose()
+      closeAgents(system)
       await Promise.all(system.scriptRunner.listRuns().map(run => system.scriptRunner.stop(run.roomId)))
       await drainAgents(system)
       await autoSaver?.dispose()
@@ -409,7 +421,7 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
 
   const ownsAutonomousWork = (system: AgentsWorkspaceRuntime): boolean =>
     system.scriptRunner.listRuns().some(run => !run.ended)
-    || system.team.listAgents().some(agent => agent.state.get() === 'generating' || agent.getTriggers?.().some(trigger => trigger.enabled))
+    || system.team.listAgents().some(agent => agent.state.get() === 'generating' || asAIAgent(agent)?.hasQueuedTurn() || agent.getTriggers?.().some(trigger => trigger.enabled))
     || system.rooms.listAllRooms().some(profile => {
       const room = system.rooms.getRoom(profile.id)
       if (!room) throw new Error(`Listed Room is missing: ${profile.id}`)
@@ -539,6 +551,7 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
         entry.system.summaryScheduler.dispose()
         // Absent in a runtime without a Workspace Host.
         entry.system.proposalResumes?.dispose()
+        closeAgents(entry.system)
         await Promise.all(entry.system.scriptRunner.listRuns().map(run => entry.system.scriptRunner.stop(run.roomId)))
         await drainAgents(entry.system)
         await entry.autoSaver.flush()

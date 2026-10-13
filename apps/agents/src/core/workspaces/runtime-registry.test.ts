@@ -9,6 +9,7 @@ import { newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
 import { createAgentsModuleState, type AgentsModuleState } from './module-state.ts'
 import { makeStubGateway, makeStubSetup, stubProviderConfig } from '../../api/__fixtures__/stub-gateway.ts'
 import { asAIAgent } from '../../agents/shared.ts'
+import { agentsActivity } from './workspace-activity.ts'
 
 // Phase D registry tests use the LEITBILD_HOME env var to redirect all paths
 // into a per-test tmpdir. The shared runtime is built with no providers
@@ -293,6 +294,93 @@ describe('WorkspaceRuntimeRegistry', () => {
       expect(busy.tryGetLive(b)).toBeUndefined()
     } finally { await busy.shutdown() }
   })
+
+  // --- A turn queued behind the reply cooldown ---
+  // After a reply, an Agent with another question queued waits 500 ms before
+  // its next turn and reads 'idle' meanwhile. That queued turn is work: it
+  // keeps the Workspace loaded, and a closing runtime never starts it.
+
+  const holdFirstTurn = async (registryFor: (provider: ReturnType<typeof makeStubGateway>) => WorkspaceRuntimeRegistry, id: WorkspaceId) => {
+    let streams = 0
+    let firstEntered!: () => void
+    let releaseFirst!: () => void
+    const firstStarted = new Promise<void>(resolve => { firstEntered = resolve })
+    const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve })
+    const provider = { ...makeStubGateway(), stream: async function* () {
+      if (++streams === 1) { firstEntered(); await firstReleased }
+      yield { delta: `Answer ${streams}.`, done: true, tokensUsed: { prompt: 1, completion: 1 } }
+    } }
+    const actual = registryFor(provider)
+    const system = await actual.getOrLoad(id)
+    // Retaining an answer's starting input briefly holds a Workspace operation,
+    // which defers eviction by itself; this test is about the Agent alone.
+    spyOn(system.comparisons, 'link').mockImplementation(() => {})
+    const room = system.rooms.createRoom({ name: 'Cooldown', createdBy: 'test' })
+    const agent = asAIAgent(await system.spawnAIAgent({ name: 'Agent', model: 'mock-model', persona: '', tools: [] }))!
+    room.addMember(agent.id)
+    await agent.join(room)
+    // The Room delivers each post to its members once.
+    room.post({ senderId: 'human', type: 'chat', content: 'First question.' })
+    await firstStarted
+    // Asked while the first turn runs, so it queues behind it.
+    room.post({ senderId: 'human', type: 'chat', content: 'Second question.' })
+    releaseFirst()
+    const until = performance.now() + 5_000
+    while (!(room.getRetainedMessages().some(message => message.senderId === agent.id) && agent.state.get() === 'idle')) {
+      if (performance.now() > until) throw new Error('The first answer never arrived')
+      await Bun.sleep(1)
+    }
+    return { actual, room, agent, streams: () => streams }
+  }
+
+  it('keeps a Workspace whose Agent has a turn queued behind its reply cooldown', async () => {
+    const id = newWorkspaceId(), other = newWorkspaceId()
+    await provision(id); await provision(other)
+    const { actual, agent, streams } = await holdFirstTurn(provider => createWorkspaceRuntimeRegistry({ moduleState, idleMs: 1, maxLoadedWorkspaces: 1,
+      deployment: createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(provider) }),
+    }), id)
+    try {
+      expect(agent.state.get()).toBe('idle')
+      expect(agent.hasQueuedTurn()).toBe(true)
+      expect(agentsActivity(actual).workspaces).toEqual([{ workspaceId: id,
+        items: [{ key: 'agents-answering', label: '1 AI agent answering', count: 1, active: true }] }])
+      expect(await actual.evictIdle(Date.now() + 1_000_000)).toBe(0)
+      await expect(actual.getOrLoad(other)).rejects.toThrow('occupied by active work')
+      // whenIdle waits for the queued turn, not just the cooldown.
+      await agent.whenIdle()
+      expect(streams()).toBe(2)
+      expect(agent.hasQueuedTurn()).toBe(false)
+      expect(await actual.evictIdle(Date.now() + 1_000_000)).toBe(1)
+    } finally { await actual.shutdown() }
+  })
+
+  for (const ending of ['evict', 'remove', 'shutdown'] as const) {
+    it(`never starts a turn queued behind the reply cooldown once the runtime closes (${ending})`, async () => {
+      const id = newWorkspaceId()
+      await provision(id)
+      const errors: unknown[][] = []
+      const consoleError = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+      const { actual, room, agent, streams } = await holdFirstTurn(provider => createWorkspaceRuntimeRegistry({ moduleState, idleMs: 1_000_000,
+        deployment: createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(provider) }),
+      }), id)
+      try {
+        const states: string[] = []
+        agent.state.subscribe(value => { states.push(value) })
+        if (ending === 'evict') await actual.evictOne(id)
+        else if (ending === 'remove') await actual.remove(id)
+        else await actual.shutdown()
+        expect(agent.hasQueuedTurn()).toBe(false)
+        // Longer than the 500 ms cooldown that held the queued turn.
+        await Bun.sleep(700)
+        expect(states).not.toContain('generating')
+        expect(streams()).toBe(1)
+        expect(errors).toEqual([])
+        // Nor does anything asked of it afterwards.
+        agent.forceEvaluate!(room.profile.id)
+        expect(agent.state.get()).toBe('idle')
+      } finally { consoleError.mockRestore(); await actual.shutdown() }
+    })
+  }
 
   it('rejects invalid Workspace ids at runtime', async () => {
     await expect(registry.getOrLoad('bad' as WorkspaceId)).rejects.toThrow(/invalid Workspace id/)

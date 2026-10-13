@@ -56,3 +56,56 @@ describe('ConcurrencyManager — getStartedAt', () => {
     expect(calls[1]?.ts).toBeUndefined()
   })
 })
+
+describe('ConcurrencyManager — a delayed turn', () => {
+  test('is queued work that whenIdle waits for', async () => {
+    const cm = createConcurrencyManager('agent-1')
+    const started: string[] = []
+    cm.scheduleNext('room-a', 5, roomId => { started.push(roomId); cm.startGeneration(roomId) })
+    expect(cm.state.get()).toBe('idle')
+    expect(cm.hasQueuedWork()).toBe(true)
+    let idle = false
+    const waiting = cm.whenIdle().then(() => { idle = true })
+    await Bun.sleep(20)
+    expect(started).toEqual(['room-a'])
+    expect(idle).toBe(false)
+    cm.endGeneration('room-a')
+    await waiting
+    expect(cm.hasQueuedWork()).toBe(false)
+  })
+
+  test('is dropped by cancelAll', async () => {
+    const cm = createConcurrencyManager('agent-1')
+    const started: string[] = []
+    cm.scheduleNext('room-a', 5, roomId => { started.push(roomId) })
+    cm.cancelAll()
+    expect(cm.hasQueuedWork()).toBe(false)
+    await cm.whenIdle()
+    await Bun.sleep(20)
+    expect(started).toEqual([])
+  })
+})
+
+describe('ConcurrencyManager — close', () => {
+  test('drops queued work, lets the running turn end, and starts nothing after', async () => {
+    const cm = createConcurrencyManager('agent-1')
+    const started: string[] = []
+    cm.startGeneration('room-a')
+    cm.addPending('room-b')
+    cm.scheduleNext('room-c', 5, roomId => { started.push(roomId) })
+    cm.close()
+    expect(cm.isClosed()).toBe(true)
+    expect(cm.hasQueuedWork()).toBe(false)
+    expect(cm.state.get()).toBe('generating')
+    let idle = false
+    const waiting = cm.whenIdle().then(() => { idle = true })
+    await Bun.sleep(20)
+    expect(started).toEqual([])
+    expect(idle).toBe(false)
+    cm.endGeneration('room-a')
+    await waiting
+    expect(() => cm.startGeneration('room-a')).toThrow('closed')
+    expect(() => cm.addPending('room-a')).toThrow('closed')
+    expect(() => cm.scheduleNext('room-a', 5, () => {})).toThrow('closed')
+  })
+})
