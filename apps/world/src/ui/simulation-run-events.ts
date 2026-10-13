@@ -1,8 +1,15 @@
+import type { z } from 'zod'
 import type { CommandResult, CompiledScenario, SimulationRunId, IsoTimestamp, ObjectId, OperationalNotification, OperationalObject, ScenarioGuidance, ScenarioExecutionState, SimulationClockState } from '../core/model/index.ts'
 import type { PackRuntimeRealtimeMessage } from '../simulation/protocol.ts'
 import type { CapabilityInvocationResponse } from './types.ts'
 import { workspaceIdSchema, type WorkspaceId } from '@leitbild/contracts'
-import { simulationRunIdSchema } from '../core/model/index.ts'
+import {
+  procedureRunClosedEventSchema,
+  procedureRunDriverChangedEventSchema,
+  procedureRunResumedEventSchema,
+  procedureRunStartedEventSchema,
+  simulationRunIdSchema,
+} from '../core/model/index.ts'
 import type { RealtimePerspective } from './roles/perspective.ts'
 
 export interface SimulationRunEventPayload {
@@ -17,7 +24,20 @@ export interface SimulationRunEventPayload {
   readonly objectIds?: ReadonlyArray<ObjectId>
   readonly result?: CommandResult
   readonly clock?: SimulationClockState
+  /** A procedure Run's start, resume, close or driver change, read whole: the screen follows the Runs an AI agent works by them. */
+  readonly procedureRun?: ProcedureRunLifecycleEvent
 }
+
+const procedureRunLifecycleSchemas = {
+  'procedure.run.started': procedureRunStartedEventSchema,
+  'procedure.run.resumed': procedureRunResumedEventSchema,
+  'procedure.run.closed': procedureRunClosedEventSchema,
+  'procedure.run.driver.changed': procedureRunDriverChangedEventSchema,
+} as const
+
+type ProcedureRunLifecycleType = keyof typeof procedureRunLifecycleSchemas
+
+export type ProcedureRunLifecycleEvent = z.infer<(typeof procedureRunLifecycleSchemas)[ProcedureRunLifecycleType]>
 
 /** In a Run that declares roles every message carries its perspective epoch. */
 interface PerspectiveEpochTag {
@@ -138,10 +158,21 @@ const isCapabilityInvocationResponse = (value: unknown): value is CapabilityInvo
     && typeof value.replayed === 'boolean'
 }
 
+const isProcedureRunLifecycleType = (type: string): type is ProcedureRunLifecycleType =>
+  Object.hasOwn(procedureRunLifecycleSchemas, type)
+
+const parseProcedureRunLifecycle = (value: Record<string, unknown>, type: string): ProcedureRunLifecycleEvent | undefined => {
+  if (!isProcedureRunLifecycleType(type)) return undefined
+  const parsed = procedureRunLifecycleSchemas[type].safeParse(value)
+  if (!parsed.success) throw new Error(`invalid WebSocket event: ${type} ${parsed.error.issues[0]?.message ?? 'does not match its schema'}`)
+  return parsed.data
+}
+
 const parseEventPayload = (value: unknown): SimulationRunEventPayload => {
   if (!isRecord(value)) throw new Error('invalid WebSocket event: expected object')
   if (typeof value.type !== 'string') throw new Error('invalid WebSocket event: missing event type')
   if (value.type === 'command.result' && !isRealtimeCommandResult(value.result)) throw new Error('invalid WebSocket event: command result without a valid result')
+  const procedureRun = parseProcedureRunLifecycle(value, value.type)
   return {
     type: value.type,
     ...(typeof value.at === 'string' ? { at: value.at as IsoTimestamp } : {}),
@@ -154,6 +185,7 @@ const parseEventPayload = (value: unknown): SimulationRunEventPayload => {
     ...(Array.isArray(value.objectIds) ? { objectIds: value.objectIds.filter((objectId): objectId is ObjectId => typeof objectId === 'string') } : {}),
     ...(isRealtimeCommandResult(value.result) ? { result: value.result } : {}),
     ...(isRecord(value.clock) ? { clock: value.clock as unknown as SimulationClockState } : {}),
+    ...(procedureRun === undefined ? {} : { procedureRun }),
   }
 }
 
