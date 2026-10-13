@@ -17,7 +17,7 @@ const modules: ModuleGateway = {
   has: moduleId => coreModuleIds.includes(moduleId),
   provision: async () => ({ ok: true, value: undefined }),
   remove: async () => { await Bun.sleep(16_000); return { ok: true, value: undefined } },
-  definitions: unused, resources: unused, capabilities: unused, featuredDefinitions: unused, invoke: unused,
+  definitions: unused, resources: unused, capabilities: unused, featuredDefinitions: unused, activity: unused, invoke: unused,
 }
 const host = createWorkspaceHost({ store: createWorkspaceStore(':memory:'), modules })
 const workspace = await host.create({ name: null })

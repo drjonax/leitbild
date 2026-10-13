@@ -24,8 +24,10 @@ const createModule = (moduleId: ModuleId) => {
     invokeFailure?: { readonly status: number; readonly code: string; readonly message: string }
     invokeDelayMs?: number
     featured: unknown
+    activity: unknown
+    activityStatus: number | undefined
     workspaces: Set<string>
-  } = { available: true, failLeave: false, manifestRequests: 0, featured: { definitions: [], listed: [] }, workspaces: new Set<string>() }
+  } = { available: true, failLeave: false, manifestRequests: 0, featured: { definitions: [], listed: [] }, activity: { workspaces: [] }, activityStatus: undefined, workspaces: new Set<string>() }
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -49,6 +51,9 @@ const createModule = (moduleId: ModuleId) => {
         })
       }
       if (url.pathname === `/internal/${moduleId}/featured-definitions`) return Response.json(state.featured)
+      if (url.pathname === `/internal/${moduleId}/activity`) {
+        return state.activityStatus === undefined ? Response.json(state.activity) : new Response('unavailable', { status: state.activityStatus })
+      }
       if (url.pathname.endsWith('/invoke') && state.invokeDelayMs) await Bun.sleep(state.invokeDelayMs)
       const root = url.pathname.match(new RegExp(`^/internal/${moduleId}/workspaces/([^/]+)$`))
       if (root && request.method === 'PUT') {
@@ -310,6 +315,75 @@ describe('Leitbild Workspace Host', () => {
       const outside = await host.featuredDefinitions()
       expect(outside.modules.find(item => item.moduleId === 'world')).toMatchObject({ status: 'failed', failure: { code: 'module_contract_invalid' } })
       expect(outside.definitions).toEqual([])
+    } finally { store.close() }
+  })
+
+  test('reads a Module\'s activity through its manifest and refuses an answer outside the contract', async () => {
+    const world = createModule(moduleIdSchema.parse('world'))
+    const gateway = createModuleGateway({ registrations: [world.registration] })
+    const workspaceId = newWorkspaceId()
+    world.state.activity = { workspaces: [{ workspaceId, items: [
+      { key: 'simulations-running', label: '2 simulations running', count: 2, active: true },
+      { key: 'simulations', label: '5 simulations', count: 5, active: false },
+    ] }] }
+    const read = await gateway.activity(world.registration.moduleId)
+    expect(read).toEqual({ ok: true, value: world.state.activity as never })
+
+    world.state.activity = { workspaces: [{ workspaceId, items: [
+      { key: 'simulations', label: '5 simulations', count: 5, active: false },
+      { key: 'simulations', label: '5 simulations', count: 5, active: false },
+    ] }] }
+    expect(await gateway.activity(world.registration.moduleId)).toMatchObject({ ok: false, failure: { code: 'module_contract_invalid', retryable: false } })
+
+    world.state.activityStatus = 500
+    expect(await gateway.activity(world.registration.moduleId)).toMatchObject({
+      ok: false, failure: { code: 'module_query_failed', message: 'Module activity query returned HTTP 500', status: 500, retryable: true },
+    })
+    expect(await gateway.activity(moduleIdSchema.parse('elsewhere'))).toMatchObject({ ok: false, failure: { code: 'module_not_installed' } })
+  })
+
+  test('merges every Module\'s activity per known Workspace, in installed-Module order, with one outcome per Module', async () => {
+    const { modules, host, store } = createFixture()
+    try {
+      const first = await host.create({ name: 'First' })
+      const second = await host.create({ name: 'Second' })
+      const world = modules.find(item => item.registration.moduleId === 'world')!
+      const agents = modules.find(item => item.registration.moduleId === 'agents')!
+      const running = { key: 'simulations-running', label: '2 simulations running', count: 2, active: true }
+      const total = { key: 'simulations', label: '5 simulations', count: 5, active: false }
+      const answering = { key: 'assistant-answering', label: 'Assistant answering', count: 1, active: true }
+      agents.state.activity = { workspaces: [{ workspaceId: first.id, items: [answering] }] }
+      world.state.activity = { workspaces: [
+        { workspaceId: second.id, items: [running, total] },
+        { workspaceId: newWorkspaceId(), items: [running] },
+        { workspaceId: first.id, items: [total] },
+      ] }
+      const catalog = await host.activity()
+      expect(catalog).toEqual({
+        modules: coreModuleIds.map(moduleId => ({ moduleId, status: 'ready' })),
+        workspaces: [
+          { workspaceId: first.id, items: [{ moduleId: 'world', ...total }, { moduleId: 'agents', ...answering }] },
+          { workspaceId: second.id, items: [{ moduleId: 'world', ...running }, { moduleId: 'world', ...total }] },
+        ],
+      } as never)
+
+      agents.state.activityStatus = 503
+      const partial = await host.activity()
+      expect(partial.modules).toEqual([
+        { moduleId: 'world', status: 'ready' },
+        { moduleId: 'agents', status: 'failed', failure: { code: 'module_query_failed', message: 'Module activity query returned HTTP 503', status: 503, retryable: true } },
+      ] as never)
+      expect(partial.workspaces.map(workspace => [workspace.workspaceId, workspace.items.map(item => `${item.moduleId}:${item.key}`)])).toEqual([
+        [first.id, ['world:simulations']],
+        [second.id, ['world:simulations-running', 'world:simulations']],
+      ])
+
+      await host.delete(second.id)
+      world.state.activity = { workspaces: [] }
+      agents.state.activityStatus = undefined
+      expect(await host.activity()).toEqual({ modules: coreModuleIds.map(moduleId => ({ moduleId, status: 'ready' })), workspaces: [
+        { workspaceId: first.id, items: [{ moduleId: 'agents', ...answering }] },
+      ] } as never)
     } finally { store.close() }
   })
 

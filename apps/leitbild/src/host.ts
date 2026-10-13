@@ -9,6 +9,7 @@ import {
   workspaceCapabilityCatalogSchema,
   workspaceDefinitionCatalogSchema,
   workspaceDefinitionRevisionReferenceSchema,
+  workspaceActivityCatalogSchema,
   workspaceIdSchema,
   workspaceResourceCatalogSchema,
   workspaceResourceReferenceSchema,
@@ -21,6 +22,8 @@ import {
   type ModuleProvisioningState,
   type RenameWorkspaceInput,
   type Workspace,
+  type WorkspaceActivityCatalog,
+  type WorkspaceActivityEntry,
   type WorkspaceCapabilityCatalog,
   type WorkspaceDefinitionCatalog,
   type WorkspaceId,
@@ -42,6 +45,11 @@ export interface WorkspaceHost {
   readonly capabilities: (id: WorkspaceId, moduleId?: ModuleId) => Promise<WorkspaceCapabilityCatalog>
   /** Every installed Module's featured and listed Definitions, with one outcome per Module; no Workspace involved. */
   readonly featuredDefinitions: () => Promise<FeaturedDefinitionCatalog>
+  /**
+   * What every installed Module states is going on in each Workspace the Host
+   * knows, with one outcome per Module; the Host shows it without reading it.
+   */
+  readonly activity: () => Promise<WorkspaceActivityCatalog>
   readonly invoke: (id: WorkspaceId, capabilityId: CapabilityId, input: InvokeCapabilityInput, access: AccessContext, signal?: AbortSignal) => Promise<import('@leitbild/contracts').ModuleCapabilityInvocationResult>
   readonly installedModuleIds: () => ReadonlyArray<ModuleId>
 }
@@ -302,6 +310,24 @@ export const createWorkspaceHost = (config: {
           : { moduleId: item.moduleId, status: 'failed' as const, failure: item.result.failure }),
         definitions: results.flatMap(item => item.result.ok ? item.result.value.definitions : []),
         listed: results.flatMap(item => item.result.ok ? item.result.value.listed : []),
+      })
+    },
+    activity: async () => {
+      const results = await Promise.all(installedModuleIds.map(async moduleId => ({ moduleId, result: await config.modules.activity(moduleId) })))
+      // Read after the Modules answered: a Workspace deleted meanwhile is gone,
+      // and an id the Host does not know is not a Workspace, whatever a Module holds.
+      const entries = new Map(config.store.list().map(workspace => [workspace.id, [] as WorkspaceActivityEntry[]]))
+      for (const { moduleId, result } of results) {
+        if (!result.ok) continue
+        for (const workspace of result.value.workspaces) {
+          entries.get(workspace.workspaceId)?.push(...workspace.items.map(item => ({ moduleId, ...item })))
+        }
+      }
+      return workspaceActivityCatalogSchema.parse({
+        modules: results.map(item => item.result.ok
+          ? { moduleId: item.moduleId, status: 'ready' as const }
+          : { moduleId: item.moduleId, status: 'failed' as const, failure: item.result.failure }),
+        workspaces: [...entries].filter(([, items]) => items.length > 0).map(([workspaceId, items]) => ({ workspaceId, items })),
       })
     },
     invoke: invokeCapability,

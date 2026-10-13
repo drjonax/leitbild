@@ -113,6 +113,10 @@ export const createWorkspaceHostServer = (config: {
         if (url.pathname === '/api/featured-definitions' && request.method === 'GET') {
           return revalidatedJson(request, JSON.stringify(await config.host.featuredDefinitions()), 'public, no-cache')
         }
+        // What runs now changes from one moment to the next: never served from a cache.
+        if (url.pathname === '/api/workspace-activity' && request.method === 'GET') {
+          return Response.json(await config.host.activity(), { headers: { 'Cache-Control': 'no-store' } })
+        }
         if (url.pathname === '/api/modules' && request.method === 'GET') {
           return Response.json({ modules: config.host.installedModuleIds().map(moduleId => ({ id: moduleId })) })
         }

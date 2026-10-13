@@ -1,4 +1,5 @@
 import {
+  moduleActivitySchema,
   moduleCapabilityCollectionSchema,
   moduleCapabilityInvocationResultSchema,
   moduleCapabilityInvocationSchema,
@@ -10,6 +11,7 @@ import {
   moduleResourceCollectionSchema,
   platformErrorSchema,
   workspaceModuleManifestSchema,
+  type ModuleActivity,
   type ModuleCapabilityCollection,
   type ModuleCapabilityInvocation,
   type ModuleCapabilityInvocationResult,
@@ -39,6 +41,8 @@ export interface ModuleGateway {
   readonly capabilities: (moduleId: ModuleId, workspaceId: WorkspaceId) => Promise<ModuleCallResult<ModuleCapabilityCollection>>
   /** The Definitions a Module features for newcomers; Workspace-independent. */
   readonly featuredDefinitions: (moduleId: ModuleId) => Promise<ModuleCallResult<ModuleFeaturedDefinitionCollection>>
+  /** What a Module states is going on in each Workspace; Workspace-independent. */
+  readonly activity: (moduleId: ModuleId) => Promise<ModuleCallResult<ModuleActivity>>
   readonly invoke: (moduleId: ModuleId, invocation: ModuleCapabilityInvocation, signal?: AbortSignal) => Promise<ModuleCallResult<ModuleCapabilityInvocationResult>>
 }
 
@@ -199,7 +203,7 @@ export const createModuleGateway = (config: {
 
   const readCollection = async <T>(config: {
     readonly moduleId: ModuleId
-    readonly endpoint: 'definitions' | 'resources' | 'capabilities' | 'featuredDefinitions'
+    readonly endpoint: 'definitions' | 'resources' | 'capabilities' | 'featuredDefinitions' | 'activity'
     readonly path: (manifest: WorkspaceModuleManifest) => string
     readonly parse: (value: unknown) => T
   }): Promise<ModuleCallResult<T>> => {
@@ -291,6 +295,12 @@ export const createModuleGateway = (config: {
       endpoint: 'featuredDefinitions',
       path: manifest => manifest.endpoints.featuredDefinitions,
       parse: value => moduleFeaturedDefinitionCollectionSchema.parse(value),
+    }),
+    activity: moduleId => readCollection({
+      moduleId,
+      endpoint: 'activity',
+      path: manifest => manifest.endpoints.activity,
+      parse: value => moduleActivitySchema.parse(value),
     }),
     invoke,
   }

@@ -6,8 +6,10 @@ import {
   coreModuleIds,
   featuredDefinitionCatalogSchema,
   moduleDefinitionCollectionSchema,
+  moduleActivitySchema,
   moduleFeaturedDefinitionCollectionSchema,
   moduleRegistrationSchema,
+  workspaceActivityCatalogSchema,
 } from '@leitbild/contracts'
 import { createWorkspaceHost } from '../src/host.ts'
 import type { ModuleGateway } from '../src/module-gateway.ts'
@@ -42,6 +44,7 @@ const gateway = (): ModuleGateway => ({
   resources: async () => ({ ok: true, value: { resources: [] } }),
   capabilities: async () => ({ ok: true, value: { capabilities: [] } }),
   invoke: async () => ({ ok: true, value: { result: null } }),
+  activity: async () => ({ ok: true, value: { workspaces: [] } }),
   featuredDefinitions: async moduleId => ({ ok: true, value: moduleFeaturedDefinitionCollectionSchema.parse({ definitions: moduleId === 'world' ? [{
     definition: { moduleId, type: 'world.scenario', id: 'test-scenario' },
     revisionId: 'revision-0123456789abcdef0123456789abcdef',
@@ -97,6 +100,30 @@ describe('Leitbild server', () => {
     const repeated = await fetch(`${baseUrl}/api/featured-definitions`, { headers: { 'If-None-Match': etag! } })
     expect(repeated.status).toBe(304)
     expect(await repeated.text()).toBe('')
+  })
+
+  test('serves every Module\'s activity per Workspace, never from a cache', async () => {
+    const modules = gateway()
+    const { host, baseUrl } = startHost(undefined, {
+      ...modules,
+      activity: async moduleId => moduleId === 'world'
+        ? { ok: true, value: moduleActivitySchema.parse({ workspaces: host.list().map(workspace => ({ workspaceId: workspace.id, items: [
+          { key: 'simulations-running', label: '1 simulation running', count: 1, active: true },
+        ] })) }) }
+        : { ok: false, failure: { code: 'module_unavailable', message: 'Lost the connection to the AI agents. Reload to reconnect.', retryable: true } },
+    })
+    const workspace = await host.create({ name: null })
+    const response = await fetch(`${baseUrl}/api/workspace-activity`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(workspaceActivityCatalogSchema.parse(await response.json())).toEqual({
+      modules: [
+        { moduleId: 'world', status: 'ready' },
+        { moduleId: 'agents', status: 'failed', failure: { code: 'module_unavailable', message: 'Lost the connection to the AI agents. Reload to reconnect.', retryable: true } },
+      ],
+      workspaces: [{ workspaceId: workspace.id, items: [{ moduleId: 'world', key: 'simulations-running', label: '1 simulation running', count: 1, active: true }] }],
+    } as never)
+    expect((await fetch(`${baseUrl}/api/workspace-activity`, { method: 'POST' })).status).toBe(404)
   })
 
   test('shows onboarding for zero Workspaces without implicit creation', async () => {
