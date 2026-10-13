@@ -228,7 +228,7 @@ export const GUIDE_PAGES: ReadonlyArray<GuidePage> = [
       },
       {
         id: 'proposals', title: 'AI proposes, a person approves',
-        body: 'On the plant, an AI agent does not operate equipment itself. It proposes an operation; the proposal appears on the equipment and in the chat, and nothing happens until a person approves or rejects it. Elsewhere, such as on the grid, you can block what an agent may do in each simulation.',
+        body: 'By default, an AI agent does not operate plant equipment itself. It proposes an operation; the proposal appears on the equipment and in the chat, and nothing happens until a person approves or rejects it. Elsewhere, such as on the grid, you can block what an agent may do in each simulation.',
         why: 'A person stays accountable for every plant operation, which research on human–AI teamwork needs.',
         media: { kind: 'shot', shot: 'guide-proposals', alt: 'A proposal from an AI agent to shut a steam valve, waiting for a person to approve or reject it.' },
         wiki: [wiki('world/packs/process-plant/displays/operating-equipment.md', 'Operating plant equipment')],

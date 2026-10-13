@@ -97,7 +97,7 @@ export const HERO_SLIDES: ReadonlyArray<HeroSlide> = [
     id: 'proposes',
     eyebrow: 'Nuclear plant · Human control',
     title: 'AI proposes, a person approves',
-    blurb: 'On the plant, an AI agent can only propose an operation; nothing happens until a person approves it.',
+    blurb: 'By default, an AI agent only proposes plant operations; nothing happens until a person approves it.',
     alt: 'A valve on a live plant display with an AI proposal to shut it, waiting beside Approve and Reject buttons.',
     image: 'hero-proposes',
     link: { kind: 'guide', page: 'ai', card: 'proposals', label: 'How it works' },
