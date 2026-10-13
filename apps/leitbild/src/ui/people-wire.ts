@@ -110,6 +110,8 @@ export const PEOPLE_ERROR = {
   personNotFound: 'person_not_found',
   messageEmpty: 'message_empty',
   messageTooLong: 'message_too_long',
+  /** A NUL or another forbidden control character. */
+  messageInvalidCharacters: 'message_invalid_characters',
   messageToSelf: 'message_to_self',
   idempotencyConflict: 'idempotency_conflict',
   workspaceClosing: 'workspace_closing',

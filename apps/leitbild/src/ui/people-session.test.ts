@@ -210,6 +210,7 @@ describe('failure classification', () => {
     for (const code of ['module_unavailable', 'module_outcome_unknown', 'module_not_ready', 'workspace_closing']) expect(http(500, code).kind).toBe('transient')
     expect(http(500, 'something_new', { retryable: true }).kind).toBe('transient')
     expect(http(500, 'people_unavailable').kind).toBe('transient')
+    expect(http(507, 'storage_budget_exceeded', { retryable: true }).kind).toBe('transient')
     expect(http(409, 'workspace_closing', { retryable: true }).kind).toBe('transient')
   })
 
@@ -609,19 +610,25 @@ describe('messages', () => {
     expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'message', key: failed!.key, seq: 9, mine: true })
   })
 
-  test('a rejected message fails at once with its reason; Remove drops it locally', async () => {
-    const { session, agents, state } = setup()
+  test('a rejected message fails at once with its reason, without retries; Remove drops it locally', async () => {
+    const { session, agents, clock, state } = setup()
     chatReady(agents)
-    agents.on(PEOPLE_CAPABILITY.send, () => refuse(400, 'message_too_long'))
+    const refusals = [refuse(400, 'message_invalid_characters'), refuse(400, 'message_too_long')]
+    agents.on(PEOPLE_CAPABILITY.send, () => refusals.shift()!)
     session.setViewing(RUN_A)
     await settle()
     session.openChat(BEN)
     await settle()
+    session.send('a NUL the server refuses')
     session.send('too long for the server')
     await settle()
-    const failed = state().chat?.items.at(-1)
-    expect(failed).toMatchObject({ stage: 'failed', reason: SEND_REASON.tooLong })
-    session.removeSend(failed!.key)
+    await clock.advance(60_000)
+    expect(agents.to(PEOPLE_CAPABILITY.send)).toHaveLength(2)
+    const [first, second] = state().chat!.items
+    expect(first).toMatchObject({ stage: 'failed', reason: SEND_REASON.invalidCharacters })
+    expect(second).toMatchObject({ stage: 'failed', reason: SEND_REASON.tooLong })
+    session.removeSend(first!.key)
+    session.removeSend(second!.key)
     expect(state().chat?.items).toEqual([])
   })
 

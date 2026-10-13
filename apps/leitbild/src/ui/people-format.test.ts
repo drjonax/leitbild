@@ -43,6 +43,7 @@ describe('labels', () => {
     expect(triggerLabel('live', 1, 1)).toBe('People in this simulation: you and 1 other, 1 unread message')
     expect(triggerLabel('live', 3, 12)).toBe('People in this simulation: you and 3 others, 12 unread messages')
     expect(triggerLabel('reconnecting', 3, 0)).toBe('People in this simulation, reconnecting')
+    expect(triggerLabel('unavailable', 0, 2)).toBe('People in this simulation, unavailable, 2 unread messages')
     expect(badgeText(9)).toBe('9')
     expect(badgeText(10)).toBe('9+')
     expect(pillText(120)).toBe('99+')

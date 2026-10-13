@@ -124,7 +124,7 @@ export type PeopleFailure =
   | { readonly kind: 'token-invalid' }
   | { readonly kind: 'permanent'; readonly code: string | null; readonly status: number | null; readonly details: Readonly<Record<string, unknown>> | null }
 
-/** Gateway answers while a Module restarts (Caddy or the Host). */
+/** Gateway answers while a Module restarts (Caddy or the Host). Any error marked `retryable` is transient too (e.g. 507 storage_budget_exceeded). */
 const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([502, 503, 504])
 const TRANSIENT_CODES: ReadonlySet<string> = new Set([
   PEOPLE_ERROR.moduleUnavailable, PEOPLE_ERROR.moduleOutcomeUnknown, PEOPLE_ERROR.moduleNotReady, PEOPLE_ERROR.workspaceClosing, PEOPLE_ERROR.rateLimited,
@@ -812,6 +812,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   const sendReason = (failed: PeopleFailure): string => {
     if (failed.kind !== 'permanent') return SEND_REASON.unreachable
     if (failed.code === PEOPLE_ERROR.messageTooLong) return SEND_REASON.tooLong
+    if (failed.code === PEOPLE_ERROR.messageInvalidCharacters) return SEND_REASON.invalidCharacters
     if (failed.code === PEOPLE_ERROR.messageEmpty) return SEND_REASON.empty
     if (failed.code === PEOPLE_ERROR.personNotFound) return SEND_REASON.personGone
     return SEND_REASON.failed

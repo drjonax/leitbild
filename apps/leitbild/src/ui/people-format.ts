@@ -33,6 +33,7 @@ export const NAME_TEXT = {
 export const SEND_REASON = {
   unreachable: 'couldn’t reach Leitbild.',
   tooLong: 'message is too long.',
+  invalidCharacters: 'message has characters that can’t be sent.',
   empty: 'message is empty.',
   personGone: 'this person is no longer in this Workspace.',
   failed: 'something went wrong.',
@@ -108,7 +109,7 @@ const plural = (count: number, one: string, many: string): string => `${count} $
 
 export const unreadPhrase = (count: number): string => plural(count, 'unread message', 'unread messages')
 
-export type TriggerMode = 'loading' | 'reconnecting' | 'live'
+export type TriggerMode = 'loading' | 'reconnecting' | 'unavailable' | 'live'
 
 /** The header control's accessible name, mirrored in its title (SPEC §3). */
 export const triggerLabel = (mode: TriggerMode, others: number, unread: number): string => {
@@ -116,7 +117,9 @@ export const triggerLabel = (mode: TriggerMode, others: number, unread: number):
     ? 'People in this simulation, loading'
     : mode === 'reconnecting'
       ? 'People in this simulation, reconnecting'
-      : others === 0 ? 'People in this simulation: just you' : `People in this simulation: you and ${plural(others, 'other', 'others')}`
+      : mode === 'unavailable'
+        ? 'People in this simulation, unavailable'
+        : others === 0 ? 'People in this simulation: just you' : `People in this simulation: you and ${plural(others, 'other', 'others')}`
   return unread > 0 ? `${base}, ${unreadPhrase(unread)}` : base
 }
 
