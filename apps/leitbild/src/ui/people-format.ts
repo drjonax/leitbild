@@ -24,7 +24,7 @@ export const NAME_TEXT = {
   empty: 'Enter a name.',
   tooLong: `Use ${NAME_MAX} characters or fewer.`,
   invalidCharacters: 'This name has characters that can’t be used. Try another name.',
-  taken: (name: string): string => `“${name}” is already taken in this Workspace. Try another name.`,
+  taken: (name: string): string => `“${isolate(name)}” is already taken in this Workspace. Try another name.`,
   rateLimited: 'Too many name changes. Try again in a minute.',
   reconnecting: 'Can’t save while reconnecting. Try again in a moment.',
   failed: 'Couldn’t save your name. Try again.',
@@ -51,6 +51,13 @@ export const OUTBOX_UNSAVED_TEXT = 'This browser can’t keep unsent messages, s
 export const PEOPLE_FAILED_TEXT = 'People aren’t available right now.'
 
 const codePoints = (text: string): number => [...text].length
+
+/**
+ * A name inside a sentence, isolated from the text around it (FSI … PDI, the
+ * plain-text <bdi>), so a right-to-left name cannot reorder the sentence. For
+ * text that is not markup: attributes, errors and toasts.
+ */
+export const isolate = (text: string): string => `\u2068${text}\u2069`
 
 /** As SPEC §5 "Enter": NFC, line breaks and runs of whitespace become one space, trimmed. */
 export const normaliseName = (raw: string): string => raw.normalize('NFC').replace(/\s+/gu, ' ').trim()

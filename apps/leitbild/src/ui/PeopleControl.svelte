@@ -9,7 +9,7 @@
   import PersonAvatar from './PersonAvatar.svelte'
   import { switcherKeyTarget } from './workspace-switcher.ts'
   import {
-    badgeText, isDefaultName, NAME_TEXT, nameCounterText, nameProblem, normaliseName, pillText, previewText, rowLabel, STORAGE_BLOCKED_TEXT,
+    badgeText, isDefaultName, isolate, NAME_TEXT, nameCounterText, nameProblem, normaliseName, pillText, previewText, rowLabel, STORAGE_BLOCKED_TEXT,
     triggerLabel, type TriggerMode,
   } from './people-format.ts'
   import type { PeopleSession, PeopleState, PersonView } from './people-session.ts'
@@ -91,8 +91,9 @@
       pop?.showPopover()
     }
     await tick()
-    // The first person, or Edit name when nobody is listed (as WorkspaceSwitcher.focusFirst).
-    ;(body?.querySelector<HTMLElement>('.row') ?? editButton)?.focus()
+    // The first person, or Edit name when nobody is listed (as WorkspaceSwitcher.focusFirst);
+    // while joining, before either exists, the popover itself.
+    ;(body?.querySelector<HTMLElement>('.row') ?? editButton ?? body)?.focus()
   }
 
   const closePopover = (returnFocus: boolean): void => {
@@ -176,7 +177,7 @@
       const active = document.activeElement
       if (active !== null && active !== document.body) return
       const items = navItems()
-      ;(items[Math.min(lastNavIndex, items.length - 1)] ?? editButton)?.focus()
+      ;(items[Math.min(lastNavIndex, items.length - 1)] ?? editButton ?? body)?.focus()
     })
   })
 
@@ -215,7 +216,6 @@
     if (savedFlash) return 'Saved.'
     const me = people.me
     if (me === null) return ''
-    if (people.preferredNameTaken !== null) return `“${people.preferredNameTaken}” is taken in this Workspace, so you’re ${me.name} here.`
     return isDefaultName(me.name) ? 'Choose a name so others know who you are.' : 'This is how others see you.'
   })
 
@@ -245,7 +245,7 @@
   }
 
   const blurFailureText = (name: string, error: string): string =>
-    error === NAME_TEXT.taken(name) ? `Your name wasn’t saved: “${name}” is already taken.` : `Your name wasn’t saved. ${error}`
+    error === NAME_TEXT.taken(name) ? `Your name wasn’t saved: “${isolate(name)}” is already taken.` : `Your name wasn’t saved. ${error}`
 
   const save = async (how: 'enter' | 'blur'): Promise<void> => {
     if (!editing || saving) return
@@ -354,7 +354,7 @@
 
 {#snippet content()}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="body" bind:this={body} onkeydown={onKeydown} onfocusout={onFocusOut} onfocusin={onFocusIn}>
+  <div class="body" bind:this={body} tabindex="-1" onkeydown={onKeydown} onfocusout={onFocusOut} onfocusin={onFocusIn}>
     <section class="you" aria-labelledby={`${uid}-you`}>
       <p class="group-label" id={`${uid}-you`}>You</p>
       {#if people.me === null}
@@ -381,7 +381,7 @@
           <span class="you-name" dir="auto" title={people.me.name}>{people.me.name}</span>
           <button bind:this={editButton} class="icon-btn" type="button" data-nav aria-label="Edit your name" title="Edit your name" onclick={() => void startEdit()}><Icon name="edit" size={18} /></button>
         </div>
-        <p class="you-meta" class:ok={savedFlash}>{metaText}</p>
+        <p class="you-meta" class:ok={savedFlash}>{#if !savedFlash && people.preferredNameTaken !== null}“<bdi>{people.preferredNameTaken}</bdi>” is taken in this Workspace, so you’re <bdi>{people.me.name}</bdi> here.{:else}{metaText}{/if}</p>
       {/if}
       {#if people.storage === 'page'}<p class="you-meta storage-note">{STORAGE_BLOCKED_TEXT}</p>{/if}
     </section>
@@ -494,6 +494,7 @@
   .pop { position: fixed; inset: auto; margin: 0; padding: 0; max-width: calc(100vw - 24px); border: 1px solid var(--lb-line);
     border-radius: var(--lb-r-lg); color: var(--lb-ink); background: var(--lb-surface); box-shadow: var(--lb-shadow-pop); overflow: hidden; }
   .body { display: flex; flex-direction: column; max-height: min(480px, calc(100dvh - 80px)); font-size: .875rem; }
+  .body:focus { outline: none; }
   .group-label { margin: 0; padding: 8px 8px 4px; color: var(--lb-ink-3); font-size: var(--lb-fs-eyebrow); font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
   .you { padding: 6px 6px 10px; }
   .you-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 40px; padding: 2px 4px 2px 8px; }
@@ -537,7 +538,8 @@
   .copy-status { margin: -2px 8px 6px; color: var(--lb-ok); font-size: var(--lb-fs-micro); font-weight: 600; }
   .copy-status:empty { display: none; }
 
-  .toast { position: absolute; z-index: 90; top: calc(100% + 8px); left: 0; width: min(320px, calc(100vw - 24px)); padding: 10px 6px 10px 12px;
+  /* 8 px under the 42 px bar: the 28 px trigger sits 7 px above the bar's edge. */
+  .toast { position: absolute; z-index: 90; top: calc(100% + 7px + 8px); left: 0; width: min(320px, calc(100vw - 24px)); padding: 10px 6px 10px 12px;
     display: flex; align-items: flex-start; gap: 4px; border: 1px solid var(--lb-line); border-left: 3px solid var(--lb-accent); border-radius: var(--lb-r-lg);
     color: var(--lb-ink); background: var(--lb-surface); box-shadow: var(--lb-shadow-pop); }
   .toast-open { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 2px; border: 0;
@@ -575,6 +577,7 @@
   }
   @media (pointer: coarse) {
     .row { min-height: 44px; }
+    .icon-btn { width: 44px; height: 44px; min-height: 44px; }
     .edit-keys { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { .presence :global(.assistant-spinner) { animation: none; } }
