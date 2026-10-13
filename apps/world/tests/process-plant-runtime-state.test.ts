@@ -198,8 +198,10 @@ describe('process plant Pack runtime lifecycle', () => {
       const overview = await connection.invokeQuery(query('world.process-plant.display.overview', { plantId: basePlant.id }))
       expect(JSON.parse((overview as { view: { state: string } }).view.state)).toEqual({ overview: { plantId: basePlant.id } })
 
-      const automation = await connection.invokeQuery(query('world.process-plant.ic.catalog', { plantId: basePlant.id }))
-      expect((automation as { ic: { rules: ReadonlyArray<unknown> } }).ic.rules.length).toBeGreaterThan(0)
+      const automation = await connection.invokeQuery(query('world.process-plant.ic.catalog', { plantId: basePlant.id })) as { ruleCount: number; returned: number; rules: ReadonlyArray<unknown> }
+      expect(automation.rules.length).toBeGreaterThan(0)
+      expect(automation.returned).toBe(automation.rules.length)
+      expect(automation.ruleCount).toBeGreaterThanOrEqual(automation.returned)
 
       const catalog = await connection.invokeQuery(query('world.process-plant.catalog.list'))
       expect(catalog).toMatchObject({ models: [{ id: processPlantPwrReferenceModelRef }] })
