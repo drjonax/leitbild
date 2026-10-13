@@ -7,7 +7,7 @@ Rules for working in this repo. Architecture overview is in [README.md](README.m
 - **Version**: the root `package.json` is the platform version. Module descriptor versions describe their own runtime contracts; do not present them as separate product releases.
 - **Workflow**: commit each logical change as its own commit. Production deploys from a clean checkout of `main` through the platform deployer (see "Concurrent agents" in the root `AGENTS.md`).
 - **Commands**:
-  - `bun run check` — typecheck (always run after non-trivial edits)
+  - `bun run check` — typecheck and dependency boundaries (`.dependency-cruiser.cjs`; errors fail, warnings don't) (always run after non-trivial edits)
   - `bun test` / `bun run test:unit` — full deterministic suite, including Ollama adapter/fallback fixtures; external Ollama integration and soaks are explicitly skipped unless enabled
   - `bun run test:ollama` — opts into real Ollama integration (`OLLAMA_INTEGRATION=1`); requires the configured endpoint and `llama3.2:latest`
   - `bun test path/to/file.test.ts` — one file; `bun test -t "pattern"` filters by name

@@ -2,8 +2,11 @@
  * E-0 steps with a person in command. Creates only its own Workspace, Run and
  * Room; never reads credentials. Evidence for review, not a benchmark.
  *
- *   bun scripts/agent-procedure-probe.ts <origin> <evidenceDir> [--model <openrouter model id>]
+ *   bun scripts/agent-procedure-probe.ts <origin> <evidenceDir> [--model <openrouter model id>] [--reasoning-effort <effort>]
  *     [--budget-usd 1.5] [--unit "Halden Unit 2"] [--price <in>,<cached>,<write>,<out> --worst-turn-usd <usd>] [--dry]
+ *
+ * --reasoning-effort sets the Assistant's effort for the run (the Room's definition otherwise decides), as a
+ * model under test may need another effort than the default model.
  *
  * 1. A fresh Workspace plays the Halden four-unit scenario in realtime.
  * 2. A new Assistant Room from the leitbild-assistant definition (with the
@@ -39,10 +42,10 @@ import { join, resolve } from 'node:path'
 
 // A turn costing less than this never counts as a runaway, however far over its estimate: cheap models' estimates are cents.
 const runawayFloorUsd = 0.05
-const usage = 'Usage: bun scripts/agent-procedure-probe.ts <origin> <evidenceDir> [--model <openrouter model id>] [--budget-usd 1.5] [--unit "Halden Unit 2"] [--price <in>,<cached>,<write>,<out> --worst-turn-usd <usd>] [--dry]'
+const usage = 'Usage: bun scripts/agent-procedure-probe.ts <origin> <evidenceDir> [--model <openrouter model id>] [--reasoning-effort <effort>] [--budget-usd 1.5] [--unit "Halden Unit 2"] [--price <in>,<cached>,<write>,<out> --worst-turn-usd <usd>] [--dry]'
 
 // ---- Arguments ----
-const valued = new Set(['--model', '--budget-usd', '--unit', '--price', '--worst-turn-usd'])
+const valued = new Set(['--model', '--reasoning-effort', '--budget-usd', '--unit', '--price', '--worst-turn-usd'])
 const positional: string[] = []
 const flags = new Map<string, string>()
 let dry = false
@@ -67,6 +70,7 @@ const budgetUsd = Number(flags.get('--budget-usd') ?? '1.5')
 if (!(budgetUsd > 0)) throw new Error('--budget-usd must be a positive number')
 const unitLabel = flags.get('--unit') ?? 'Halden Unit 2'
 const requestedModel = flags.get('--model')
+const requestedEffort = flags.get('--reasoning-effort')
 
 interface Price { readonly input: number; readonly cached: number; readonly write: number; readonly output: number }
 /** USD per million tokens, and the most one probe turn may cost (budget guard). */
@@ -503,12 +507,16 @@ const probe = async () => {
   agent = members.find((member: { kind: string }) => member.kind === 'ai')
   if (!human || !agent) stop('The Assistant Room lacks its person or its Assistant')
   const agentPath = `/api/workspaces/${workspaceId}/agents/agents/${encodeURIComponent(agent!.id)}`
-  const patched = requestedModel === undefined ? null : await request(agentPath, { model: requestedModel }, 'PATCH')
+  const patched = requestedModel === undefined && requestedEffort === undefined ? null : await request(agentPath, {
+    ...(requestedModel === undefined ? {} : { model: requestedModel }),
+    ...(requestedEffort === undefined ? {} : { reasoningEffort: requestedEffort }),
+  }, 'PATCH')
   const profile = await request(agentPath)
   room = { id: roomId, name: roomProfile.name, sourceDefinition: roomProfile.sourceDefinition ?? null, agentId: agent!.id, model: profile.model, reasoningEffort: profile.reasoningEffort ?? null, skills: profile.skills, modelStatus: patched?.modelStatus ?? null, modelInfo: profile.modelInfo ?? null }
   if (roomProfile.sourceDefinition?.id !== 'leitbild-assistant') stop(`The Room was created from ${roomProfile.sourceDefinition?.id ?? 'no definition'}, not leitbild-assistant`)
   if (!(profile.skills as ReadonlyArray<string>).includes('procedure-runner')) stop('The Assistant lacks the procedure-runner skill on this build')
   if (requestedModel !== undefined && profile.model !== requestedModel) stop(`The Agent's model reads ${profile.model} after setting ${requestedModel}`)
+  if (requestedEffort !== undefined && profile.reasoningEffort !== requestedEffort) stop(`The Agent's reasoning effort reads ${profile.reasoningEffort ?? 'unset'} after setting ${requestedEffort}`)
   if (patched?.modelStatus === 'unavailable') stop(`The provider reports ${requestedModel} unavailable; the Agent would answer with a fallback model`)
   // No provider of this deployment may serve the model: the Agent would answer with another one, or not at all.
   if (profile.modelInfo?.source === 'no_eligible_route') {
