@@ -77,6 +77,9 @@ export const createServer = (config: ServerConfig) => {
       const secure = applySecurityHeaders
 
       if (isCapabilityInvokeRequest(request, url)) bunServer.timeout(request, CAPABILITY_INVOKE_IDLE_SECONDS)
+      // The Host's gateway waits as long for a Workspace lifecycle answer: a removal
+      // still draining agents must not be cut off at Bun's 10 s as a lost connection.
+      if ((request.method === 'PUT' || request.method === 'DELETE') && /^\/internal\/workspaces\/[^/]+$/.test(pathname)) bunServer.timeout(request, CAPABILITY_INVOKE_IDLE_SECONDS)
       const moduleResponse = await handleAgentsModuleApi(request, url, {
         state: config.moduleState,
         registry,
