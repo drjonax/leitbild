@@ -152,6 +152,9 @@ export const createPeopleStore = (path: string, options: { readonly newStoreId: 
   const append = db.transaction((message: Omit<StoredMessage, 'seq'>, keep: number): AppendOutcome => {
     // Re-checked inside the transaction: a concurrent send with the same key
     // may have committed while this one awaited storage admission.
+    // A key lives only as long as its message: once pruned out of the newest
+    // CONVERSATION_KEEP of its conversation, the key may be reused and a very
+    // late retry is stored again. Accepted: retries come within seconds.
     const existing = messageBySenderKey(message.from, message.idempotencyKey)
     if (existing) return { kind: 'existing', message: existing }
     const pair = conversationPair(message.from, message.to)

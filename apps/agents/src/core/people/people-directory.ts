@@ -553,6 +553,8 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
           record('replayed')
           return { message: toMessage(existing), replayed: true }
         }
+        // Replays reach back only as far as retention: a key whose message
+        // was pruned out of the newest CONVERSATION_KEEP is free again (accepted).
         const existing = store.messageBySenderKey(me.id, idempotencyKey)
         if (existing) return replay(existing)
         const peer = requirePeer(me, input.to, 'message_to_self')
