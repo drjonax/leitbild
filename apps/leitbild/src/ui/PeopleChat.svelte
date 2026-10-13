@@ -27,6 +27,14 @@
   const EDGE_PX = 16
   /** The Run bar's height (styles.css `.workspace-bar`), the top of the panes. */
   const BAR_HEIGHT_PX = 42
+  /** The narrowest World pane that holds the window at its bottom-right, clear of the map controls. */
+  const WORLD_PANE_FITS_PX = CHAT_WIDTH_PX + MAP_CONTROLS_INSET_PX + EDGE_PX
+  /**
+   * Kept free at the bottom when the window docks over the Agents pane: its
+   * composer is 47 px and grows to about 150 px with a long draft (measured
+   * 2026-10-13). Covering part of the Agents message list is accepted.
+   */
+  const AGENTS_COMPOSER_CLEARANCE_PX = 160
   /** The composer grows from one line to five. */
   const COMPOSER_MIN_HEIGHT_PX = 38
   const COMPOSER_MAX_HEIGHT_PX = 120
@@ -39,7 +47,7 @@
     notice: ConnectionNotice
     /** false: unsent messages would not survive a reload. */
     outboxSaved: boolean
-    /** The World pane; the window docks bottom-left when it is collapsed. */
+    /** The World pane; the window docks top-left when the pane is too narrow or collapsed. */
     anchor: HTMLElement | null
     /** Increments when a row or the toast opens a chat: focus goes to the composer. */
     focusRequest: number
@@ -68,13 +76,16 @@
     // Below 760 px the stylesheet makes it a bottom sheet.
     if (narrow) { place = ''; return }
     const rect = anchor?.getBoundingClientRect()
-    const shown = rect !== undefined && rect.width > 0 && rect.height > 0
-    const paneTop = shown ? rect.top : BAR_HEIGHT_PX
-    const paneBottom = shown ? rect.bottom : innerHeight
-    const rightEdge = shown ? rect.right - MAP_CONTROLS_INSET_PX : EDGE_PX + CHAT_WIDTH_PX
-    const left = Math.max(EDGE_PX, rightEdge - CHAT_WIDTH_PX)
-    const height = Math.max(0, Math.min(CHAT_MAX_HEIGHT_PX, paneBottom - paneTop - 2 * EDGE_PX))
-    place = `left:${Math.round(left)}px;top:${Math.round(paneBottom - EDGE_PX - height)}px;height:${Math.round(height)}px`
+    if (rect !== undefined && rect.width >= WORLD_PANE_FITS_PX && rect.height > 0) {
+      // Bottom-right of the World pane, left of the map controls.
+      const height = Math.max(0, Math.min(CHAT_MAX_HEIGHT_PX, rect.height - 2 * EDGE_PX))
+      place = `left:${Math.round(rect.right - MAP_CONTROLS_INSET_PX - CHAT_WIDTH_PX)}px;top:${Math.round(rect.bottom - EDGE_PX - height)}px;height:${Math.round(height)}px`
+      return
+    }
+    // A narrow or collapsed World pane: dock top-left, above the Agents composer.
+    const paneTop = rect !== undefined && rect.height > 0 ? rect.top : BAR_HEIGHT_PX
+    const height = Math.max(0, Math.min(CHAT_MAX_HEIGHT_PX, innerHeight - paneTop - 2 * EDGE_PX - AGENTS_COMPOSER_CLEARANCE_PX))
+    place = `left:${EDGE_PX}px;top:${Math.round(paneTop + EDGE_PX)}px;height:${Math.round(height)}px`
   }
   $effect(() => {
     const target = anchor
