@@ -25,7 +25,7 @@ import {
   type ViewingReference,
 } from './people-wire.ts'
 import {
-  HISTORY_CAP, UNKNOWN_PERSON_NAME, messageSendable, messageText, NAME_TEXT, nameProblem, normaliseName, PEOPLE_FAILED_TEXT, SEND_REASON,
+  HISTORY_CAP, SEND_NOTE, UNKNOWN_PERSON_NAME, messageSendable, messageText, NAME_TEXT, nameProblem, normaliseName, PEOPLE_FAILED_TEXT, SEND_REASON,
   type ChatItem,
 } from './people-format.ts'
 
@@ -251,6 +251,8 @@ interface OutboxEntry {
   readonly reason: string | null
   /** Sent to Agents at least once, so it may be stored there although no answer came back. */
   readonly attempted: boolean
+  /** Why it is still waiting (a rate limit), shown instead of "Sending…". */
+  readonly note: string | null
 }
 
 /** What survives a reload in sessionStorage: the message, its key, and whether it already failed. */
@@ -420,7 +422,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     }
     for (const note of notes.slice(next)) items.push({ kind: 'note', key: note.key, text: note.text, at: note.at })
     for (const entry of outbox) {
-      if (entry.to === peer) items.push({ kind: 'outgoing', key: entry.key, text: entry.text, at: entry.createdAt, stage: entry.stage, reason: entry.reason })
+      if (entry.to === peer) items.push({ kind: 'outgoing', key: entry.key, text: entry.text, at: entry.createdAt, stage: entry.stage, reason: entry.reason, note: entry.note })
     }
     return items
   }
@@ -910,7 +912,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     const now = ports.now()
     outbox = entries.data.map(entry => ({
       key: entry.key, to: entry.to, text: entry.text, createdAt: entry.createdAt, deadline: now + SEND_TIMEOUT_MS,
-      stage: entry.failed ? 'failed' : 'sending', reason: entry.failed ? entry.reason ?? SEND_REASON.failed : null,
+      stage: entry.failed ? 'failed' : 'sending', reason: entry.failed ? entry.reason ?? SEND_REASON.failed : null, note: null,
       // It may have been sent before the reload.
       attempted: true,
     }))
@@ -922,7 +924,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   }
 
   const markFailed = (key: string, reason: string): void => {
-    outbox = outbox.map(entry => entry.key === key ? { ...entry, stage: 'failed', reason } : entry)
+    outbox = outbox.map(entry => entry.key === key ? { ...entry, stage: 'failed', reason, note: null } : entry)
     if (sendingKey === key) { sendController?.abort(); finishSend() }
   }
 
@@ -972,7 +974,16 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
           return
         }
         if (failed.kind === 'transient') {
-          sendRetryTimer = ports.timers.set(() => { sendRetryTimer = null; pump() }, backoffDelay(sendAttempt++, ports.random(), failed.retryAfterMs))
+          const wait = backoffDelay(sendAttempt++, ports.random(), failed.retryAfterMs)
+          // A rate limit is not a lost connection: say so, and give the message its full send window after the wait.
+          const limited = failed.code === PEOPLE_ERROR.rateLimited
+          outbox = outbox.map(entry => entry.key !== next.key ? entry : {
+            ...entry,
+            note: limited ? SEND_NOTE.rateLimited : null,
+            deadline: limited ? Math.max(entry.deadline, ports.now() + wait + SEND_TIMEOUT_MS) : entry.deadline,
+          })
+          sendRetryTimer = ports.timers.set(() => { sendRetryTimer = null; pump() }, wait)
+          scheduleOutboxTimer()
           emit()
           return
         }
@@ -1004,7 +1015,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         outbox = outbox.map(item => item.key === entry.key ? { ...item, stage: 'sending' } : item)
       }
       if (entry.stage !== 'failed' && troubleSince === null && now >= entry.deadline) {
-        markFailed(entry.key, SEND_REASON.unreachable)
+        markFailed(entry.key, entry.note === SEND_NOTE.rateLimited ? SEND_REASON.rateLimited : SEND_REASON.unreachable)
         failedAny = true
       }
     }
@@ -1135,7 +1146,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     send: raw => {
       if (chatPeer === null || !messageSendable(raw)) return false
       const now = ports.now()
-      outbox = [...outbox, { key: ports.randomId(), to: chatPeer, text: messageText(raw), createdAt: now, deadline: now + SEND_TIMEOUT_MS, stage: 'quiet', reason: null, attempted: false }]
+      outbox = [...outbox, { key: ports.randomId(), to: chatPeer, text: messageText(raw), createdAt: now, deadline: now + SEND_TIMEOUT_MS, stage: 'quiet', reason: null, attempted: false, note: null }]
       chatFirstUnread = null
       persistOutbox()
       scheduleOutboxTimer()
@@ -1145,7 +1156,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     },
     retrySend: key => {
       const now = ports.now()
-      outbox = outbox.map(entry => entry.key === key && entry.stage === 'failed' ? { ...entry, stage: 'sending', reason: null, deadline: now + SEND_TIMEOUT_MS } : entry)
+      outbox = outbox.map(entry => entry.key === key && entry.stage === 'failed' ? { ...entry, stage: 'sending', reason: null, note: null, deadline: now + SEND_TIMEOUT_MS } : entry)
       persistOutbox()
       scheduleOutboxTimer()
       emit()

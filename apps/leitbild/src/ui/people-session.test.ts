@@ -3,7 +3,7 @@ import {
   backoffDelay, classifyPeopleFailure, createPeopleSession, OUTBOX_KEY_PREFIX, peopleRequestError, PREFERRED_NAME_KEY, REQUEST_TIMEOUT_MS,
   SEND_TIMEOUT_MS, SYNC_HOLD_MS, SYNC_HOLD_TIMEOUT_MS, TOKEN_KEY_PREFIX, type PeopleEnvironmentEvent, type PeopleLock, type PeoplePorts, type PeopleState,
 } from './people-session.ts'
-import { NAME_TEXT, SEND_REASON } from './people-format.ts'
+import { NAME_TEXT, SEND_NOTE, SEND_REASON } from './people-format.ts'
 import { PEOPLE_CAPABILITY, type ConversationSummaryWire, type MessageWire, type PersonWire, type SyncResultWire } from './people-wire.ts'
 
 const WS = '6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7'
@@ -748,6 +748,25 @@ describe('messages', () => {
     // The first was tried once (and is waiting to retry); the second was never sent.
     await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], messages: [message(1, ME, BEN, 'ok')], cursor: 1, view: 'v1' })))
     expect(state().chat?.items.map(item => item.kind)).toEqual(['message', 'outgoing'])
+  })
+
+  test('a rate-limited message says it is sending too fast and waits for the limit, not "couldn\'t reach Leitbild"', async () => {
+    const { session, agents, clock, state } = setup()
+    chatReady(agents)
+    const replies = [refuse(429, 'people_rate_limited', { retryAfterMs: 20_000 })]
+    agents.on(PEOPLE_CAPABILITY.send, call => replies.shift() ?? ok({ message: message(3, ME, BEN, call.input.text), replayed: false }))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    session.send('one more')
+    await settle()
+    expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'outgoing', note: SEND_NOTE.rateLimited })
+    await clock.advance(19_999)
+    expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'outgoing', stage: 'sending', note: SEND_NOTE.rateLimited })
+    expect(agents.to(PEOPLE_CAPABILITY.send)).toHaveLength(1)
+    await clock.advance(1)
+    expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'message', seq: 3 })
   })
 
   test('a rejected message fails at once with its reason, without retries; Remove drops it locally', async () => {

@@ -36,11 +36,16 @@ export const SEND_REASON = {
   invalidCharacters: 'message has characters that can’t be sent.',
   empty: 'message is empty.',
   personGone: 'this person is no longer in this Workspace.',
+  rateLimited: 'sending too fast.',
   failed: 'something went wrong.',
 } as const
 
 /** Shown for a person whose name this page never received: an explicit state, warned once in the console. */
 export const UNKNOWN_PERSON_NAME = 'Unknown person'
+export const SEND_NOTE = {
+  rateLimited: 'Sending too fast — trying again in a moment',
+} as const
+
 export const STORAGE_BLOCKED_TEXT = 'This browser blocks site storage, so your name lasts only while this page is open.'
 export const OUTBOX_UNSAVED_TEXT = 'This browser can’t keep unsent messages, so they’re lost if the page reloads.'
 export const PEOPLE_FAILED_TEXT = 'People aren’t available right now.'
@@ -162,7 +167,12 @@ export const fullTimeLabel = (time: number): string => new Date(time).toLocaleSt
 /** What the chat log shows, oldest first; the session builds it, the layout groups it. */
 export type ChatItem =
   | { readonly kind: 'message'; readonly key: string; readonly seq: number; readonly mine: boolean; readonly text: string; readonly at: number }
-  | { readonly kind: 'outgoing'; readonly key: string; readonly text: string; readonly at: number; readonly stage: 'quiet' | 'sending' | 'failed'; readonly reason: string | null }
+  | {
+    readonly kind: 'outgoing'; readonly key: string; readonly text: string; readonly at: number; readonly stage: 'quiet' | 'sending' | 'failed'
+    readonly reason: string | null
+    /** Why a message still on its way is waiting, e.g. a rate limit; shown instead of "Sending…". */
+    readonly note: string | null
+  }
   | { readonly kind: 'note'; readonly key: string; readonly text: string; readonly at: number }
 
 export type ChatBubble = Extract<ChatItem, { kind: 'message' | 'outgoing' }>

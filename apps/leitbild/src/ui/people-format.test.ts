@@ -84,8 +84,8 @@ describe('chat rows', () => {
       theirs('e', NOW - 5 * MINUTE),
       theirs('f', NOW - 4 * MINUTE),
       { kind: 'note', key: 'n', text: 'Ben is now called Benjamin', at: NOW - 3 * MINUTE },
-      { kind: 'outgoing', key: 'g', text: 'g', at: NOW, stage: 'sending', reason: null },
-      { kind: 'outgoing', key: 'h', text: 'h', at: NOW, stage: 'failed', reason: 'couldn’t reach Leitbild.' },
+      { kind: 'outgoing', key: 'g', text: 'g', at: NOW, stage: 'sending', reason: null, note: null },
+      { kind: 'outgoing', key: 'h', text: 'h', at: NOW, stage: 'failed', reason: 'couldn’t reach Leitbild.', note: null },
     ], 'e', NOW)
     expect(rows.map(row => row.kind === 'group' ? `${row.mine ? 'mine' : 'theirs'}:${row.bubbles.map(bubble => bubble.key).join('')}` : row.kind === 'day' ? row.label : row.kind))
       .toEqual(['Yesterday', 'theirs:a', 'Today', 'mine:bc', 'theirs:d', 'new', 'theirs:ef', 'note', 'mine:g', 'mine:h'])

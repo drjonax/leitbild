@@ -209,6 +209,7 @@
 
 {#snippet meta(bubble: ChatBubble)}
   {#if bubble.kind === 'message'}<span class="meta">{timeLabel(bubble.at)}</span>
+  {:else if bubble.stage !== 'failed' && bubble.note !== null}<span class="meta">{bubble.note}</span>
   {:else if bubble.stage === 'sending'}<span class="meta">Sending…</span>
   {:else if bubble.stage === 'failed'}
     <span class="failrow"><span>Not sent: {bubble.reason}</span>
