@@ -34,7 +34,7 @@ describe('World consumes the canonical format without semantic projection', () =
     const run = procedureRunStateSchema.parse(JSON.parse(persisted))
     const store = createSimulationRunStateStore()
     store.hydrate({ objects: [], seq: 0, procedures: { runs: [run] } })
-    const requests: Array<{ sourceId: string; sourceRevision: string; sourcePath?: string; procedureId: string }> = []
+    const requests: Array<{ sourceId: string; sourceRevision?: string; sourcePath?: string; procedureId: string }> = []
     const before = baseline.find(item => item.procedureId === 'E-0')!.steps[0]!
     const branchIndex = before.branches.findIndex(branch => branch.targetKind === 'procedure')
     expect(branchIndex).toBe(1)
@@ -47,7 +47,7 @@ describe('World consumes the canonical format without semantic projection', () =
       readDocument: async input => { requests.push(input); return document(input.procedureId) } })
     expect(commit).not.toBeNull()
     let seq = 0
-    const events = commit!({ simulationRunId, at, procedures: store.snapshot().procedures,
+    const events = commit!({ simulationRunId, at, procedures: store.snapshot().procedures, actorKind: 'person',
       objectIds: new Set(['plant:test']), factory: { eventId: () => `event:${++seq}` as EventId, nextSeq: () => seq } })
     for (const event of events) store.apply(event)
     expect(requests[0]).toMatchObject({ sourceId: 'pwr-ops', sourceRevision: revision, sourcePath: 'wiki/procedures/E-0.md' })

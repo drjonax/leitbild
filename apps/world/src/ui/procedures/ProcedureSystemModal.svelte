@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, HelpCircle, MessageSquare, Play, RefreshCw, Star, X } from 'lucide-svelte'
+  import { BookOpen, Bug, Check, ChevronLeft, ChevronRight, ExternalLink, GripVertical, Info, MessageSquare, MoreHorizontal, Play, RefreshCw, Star, X } from 'lucide-svelte'
   import { tick, untrack } from 'svelte'
   import type { ProcedureSession } from './procedure-session.ts'
-  import { procedureViewKey, procedureCategories, procedureStepItems, procedureTextSegments, procedureBlockLabel, procedureObservationEvidence, procedureObservationBasis, procedureObservationLabel, procedureSourceEvidenceRequest } from './procedure-view.ts'
+  import { procedureBindingStatusWord, procedureComparisonText, procedureCsfChip, procedureDescriptionText, procedureDisplayReading, procedureElapsedText, procedureStepBindingSummary } from './procedure-view.ts'
+  import { readProcedureTagValue } from './procedure-client.ts'
+  import { procedureViewKey, procedureCategories, procedureStepItems, procedureStepTagBindings, procedureTextSegments, procedureBlockLabel, procedureObservationEvidence, procedureObservationBasis, procedureObservationLabel, procedureSourceEvidenceRequest, procedureUnitJump } from './procedure-view.ts'
   import type {
     SimulationRunId,
     ObjectId,
@@ -23,11 +25,14 @@
   import StatusIndicator from '../components/StatusIndicator.svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ProcedureRunBadges from './ProcedureRunBadges.svelte'
+  import { procedureDialog } from './procedure-dialog.ts'
+  import ProcedureTagDisplay from './ProcedureTagDisplay.svelte'
+  import type { EmbeddedViewListing } from '@leitbild/contracts'
   import {
     closeProcedureRun,
+    driveProcedureRun,
     transitionProcedureRun,
     evaluateProcedureCsfs,
-    readProcedureTagValue,
     readProcedureSourceEvidence,
     resetProcedureRun,
     startProcedureRun,
@@ -35,7 +40,6 @@
     validateProcedureTags,
     type ProcedureCsfEvaluation,
     type ProcedureTagValidation,
-    type ProcedureTagValue,
     type ProcedureSourceEvidence,
     type ProcedureSourceEvidenceRequest,
   } from './procedure-client.ts'
@@ -43,7 +47,17 @@
     furthestTouchedStep,
     procedureCurrentStep,
     procedureBranchActionText,
+    procedureActorIsAi,
+    procedureActorLabel,
+    procedureCompletionWarning,
+    procedureDecisionTargetText,
+    procedureDecisionTone,
+    procedureDriverView,
     procedureFirstStep,
+    procedureOffPathConfirmation,
+    procedurePlantTime,
+    procedureStepRangeText,
+    procedureStepRows,
     procedureRunFor,
     procedureRunSummariesForScope,
     procedureRunVisualStateFor as selectedProcedureRunVisualStateFor,
@@ -70,7 +84,11 @@
     readonly session: ProcedureSession
     readonly initialProcedureId?: ProcedureId
     readonly windowOffsetIndex?: number
+    /** Raised by the route when this unit's procedures are opened again: focus this window (and its requested procedure). */
+    readonly focusRequest?: number
     readonly selectUnit: (objectId: ObjectId) => void
+    /** Opens a display in the Workspace's process display window, where it can be operated. */
+    readonly openDisplay?: (listing: EmbeddedViewListing) => void
     readonly close: () => void
   }
 
@@ -85,7 +103,7 @@
   type LoadStageId = 'source' | 'runs' | 'document' | 'tags' | 'csfs'
   type LoadStageStatus = 'pending' | 'running' | 'done' | 'failed'
   type ProcedureTocMode = 'detail' | 'compact' | 'collapsed'
-  type ProcedureConfirmation = 'run' | 'completed' | 'reset' | 'transition'
+  type ProcedureConfirmation = 'run' | 'completed' | 'reset' | 'transition' | 'off-path'
 
   interface ProcedureWindowDragState {
     readonly pointerId: number
@@ -128,7 +146,9 @@
     session,
     initialProcedureId = undefined,
     windowOffsetIndex = 0,
+    focusRequest = 0,
     selectUnit,
+    openDisplay = undefined,
     close,
   }: Props = $props()
 
@@ -160,19 +180,27 @@
   let basisError = $state<string | null>(null)
   let basisLoading = $state(false)
   let basisReadGeneration = 0
-  let hoveredTagId = $state<ProcedureTagId | null>(null)
-  let hoveredTagValue = $state<ProcedureTagValue | null>(null)
-  let hoveredTagError = $state<string | null>(null)
+  let openTagId = $state<ProcedureTagId | null>(null)
   let commentOpen = $state<Record<string, boolean>>({})
+  let summaryOpen = $state(false)
+  let openStepMenuId = $state<string | null>(null)
+  let openStepInfoId = $state<string | null>(null)
+  /** Live values of the open step ⓘ's tags, read when it opened. */
+  let stepInfoReadings = $state<Record<string, { readonly formatted?: string; readonly error?: string }>>({})
+  let stepInfoGeneration = 0
+  /** Decided steps and bypassed groups the person opened, by view key; the rest stay folded. */
+  let expandedSteps = $state<Record<string, boolean>>({})
   let commentDrafts = $state<Record<string, string>>({})
   let pendingTransition = $state<ProcedureTransition | null>(null)
+  let pendingOffPath = $state<{ readonly from: ProcedureStep; readonly branch: ProcedureBranch } | null>(null)
   let procedureToast = $state<ProcedureToast | null>(null)
   let loadStages = $state<Record<LoadStageId, LoadStage>>(createLoadStages())
   let procedureTocMode = $state<ProcedureTocMode>('detail')
   let procedureFontScale = $state(1)
   let windowBounds = $state<FloatingWindowBounds>({ x: 48, y: 48, width: 1500, height: 940 })
   let windowDragState = $state<ProcedureWindowDragState | null>(null)
-  let transitionInProgress = $state(false)
+  /** The control whose write is on its way; it shows Recording… and every other write waits. */
+  let pendingControl = $state<string | null>(null)
   let boundsInitialized = false
   let csfRefreshInFlight = false
   let toastTimer: number | null = null
@@ -181,9 +209,11 @@
   let disposed = false
   let releasePrefetch: (() => void) | null = null
   let scrollFrame: number | null = null
-  let tagRequest = 0
   let catalogRequest = 0
   let procedureDocumentBodyElement = $state<HTMLDivElement | null>(null)
+  let procedureWindowElement = $state<HTMLDivElement | null>(null)
+  /** The unit the shown document was loaded for; its scroll position is remembered under that unit. */
+  let documentScope: ProcedureRunScope | null = null
   const procedureScrollPositions = new Map<string, number>()
 
   const currentUnitContext = $derived(unitContexts.find(unit => unit.plantId === plantId) ?? {
@@ -207,6 +237,9 @@
   const currentProcedureStep = $derived(document && selectedProcedureRun
     ? procedureCurrentStep(selectedProcedureRun, document)
     : null)
+  const driverView = $derived(procedureDriverView(selectedProcedureRun))
+  const busy = $derived(pendingControl !== null)
+  const procedureRows = $derived(document ? procedureStepRows(document, selectedProcedureRun) : [])
   const catalogCategories = $derived(procedureCategories(catalog?.procedures ?? []))
   const sourceLabel = $derived(catalog
     ? `${catalog.source.repository}@${catalog.source.revision.slice(0, 8)}`
@@ -217,7 +250,6 @@
     label: 'Unit status unavailable',
     indicator: { shape: 'dot' },
   } satisfies PackObjectStatusPresentation)
-  const currentUnitProcedureSummaries = $derived(procedureRunSummariesForScope(runs, currentScope, runDocuments))
   const csfIds = $derived([...new Set(catalog?.procedures.flatMap(item => item.csfsMonitored) ?? [])])
 
   const procedureRunVisualStateFor = (procedureId: string): ProcedureRunVisualState => {
@@ -384,6 +416,17 @@
   const errorMessage = (err: unknown): string =>
     err instanceof Error ? err.message : String(err)
 
+  const branchControlKey = (step: ProcedureStep, branch: ProcedureBranch): string =>
+    `branch:${step.id}:${step.branches.indexOf(branch)}`
+
+  // One write at a time: its control says Recording… until World answers.
+  const recording = async (control: string, write: () => Promise<void>): Promise<void> => {
+    if (pendingControl !== null) return
+    pendingControl = control
+    try { await write() }
+    finally { if (!disposed) pendingControl = null }
+  }
+
   const procedureLoadRows = $derived<ReadonlyArray<LoadStage>>([
     loadStages.source,
     loadStages.runs,
@@ -450,7 +493,8 @@
       error = null
       confirmation = null
       pendingTransition = null
-      hideTag()
+      pendingOffPath = null
+      closeTag()
       tagValidation = new Map()
       csfEvaluations = new Map()
       csfReadAt = null
@@ -475,12 +519,14 @@
       }
       const nextDocument = await readDocumentFor(procedureId as ProcedureId, resolvedSourceConfig)
       if (disposed || requestId !== latestProcedureLoadRequest) return
+      const unitChanged = documentScope !== null && documentScope.plantId !== targetScope.plantId
       document = nextDocument
+      documentScope = targetScope
       loading = false
       if (catalog && !releasePrefetch) releasePrefetch = session.retainPrefetch(catalog)
       loadingProcedureId = null
       setLoadStage('document', 'done', `${nextDocument.steps.length} steps`)
-      await restoreProcedurePosition(nextDocument, targetScope, requestId)
+      await restoreProcedurePosition(nextDocument, targetScope, requestId, unitChanged)
       if (disposed || requestId !== latestProcedureLoadRequest) return
       const loadTagValidation = async (): Promise<ReadonlyMap<string, ProcedureTagValidation>> => {
         try {
@@ -530,7 +576,7 @@
     const current = document
     const request = latestProcedureLoadRequest
     if (!current) return
-    try {
+    await recording('run', async () => { try {
       await startProcedureRun(simulationRunId, {
         sourceId: current.source.sourceId,
         sourceRevision: current.source.revision,
@@ -540,7 +586,7 @@
       await refreshRuns()
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
-    }
+    } })
   }
 
   const closeActiveRun = async (status: 'completed' | 'abandoned'): Promise<boolean> => {
@@ -558,10 +604,14 @@
 
   const draftKey = (stepId: string): string => `${document ? procedureViewKey(document, currentScope) : ''}:${stepId}`
 
+  const setStepExpanded = (stepId: string, expanded: boolean): void => {
+    expandedSteps = { ...expandedSteps, [draftKey(stepId)]: expanded }
+  }
+
   const rememberCurrentProcedureScroll = (): void => {
-    if (!document || !procedureDocumentBodyElement) return
+    if (!document || !documentScope || !procedureDocumentBodyElement) return
     procedureScrollPositions.set(
-      procedureViewKey(document, currentScope),
+      procedureViewKey(document, documentScope),
       procedureDocumentBodyElement.scrollTop,
     )
   }
@@ -587,6 +637,7 @@
     nextDocument: ProcedureDocument,
     scope: ProcedureRunScope,
     requestId = latestProcedureLoadRequest,
+    unitChanged = false,
   ): Promise<void> => {
     await tick()
     if (disposed || requestId !== latestProcedureLoadRequest || !procedureDocumentBodyElement) return
@@ -600,7 +651,8 @@
       scrollToProcedureStep(sharedStep.step.id, 'auto')
       return
     }
-    procedureDocumentBodyElement.scrollTop = procedureScrollPositions.get(
+    // A unit hop opens where that unit stands, else at the top: never at another unit's place.
+    procedureDocumentBodyElement.scrollTop = unitChanged ? 0 : procedureScrollPositions.get(
       procedureViewKey(nextDocument, scope),
     ) ?? 0
   }
@@ -609,6 +661,7 @@
     const request = ++latestProcedureLoadRequest
     confirmation = null
     pendingTransition = null
+    pendingOffPath = null
     try {
       rememberCurrentProcedureScroll()
       if (unit.targetObjectId === undefined) throw new Error('procedure unit requires a target object')
@@ -624,6 +677,28 @@
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
     }
+  }
+
+  // A unit in the strip opens where that unit stands: the same procedure where it runs it,
+  // else its first active procedure, else the same procedure there, not yet run.
+  const jumpToUnit = async (unit: ProcedureUnitContext): Promise<void> => {
+    const jump = procedureUnitJump(unitProcedureSummariesFor(unit).active, document?.procedureId ?? null)
+    if (unit.plantId === plantId) {
+      if (jump.kind === 'run' && jump.summary.procedureId !== document?.procedureId) await openProcedureRunSummary(jump.summary, unit)
+      else if (currentProcedureStep) scrollToProcedureStep(currentProcedureStep.step.id)
+      return
+    }
+    if (jump.kind === 'run') {
+      await openProcedureRunSummary(jump.summary, unit)
+      return
+    }
+    if (unit.targetObjectId === undefined) {
+      error = 'procedure unit requires a target object'
+      return
+    }
+    // The scope effect reloads the selected procedure for the new unit.
+    rememberCurrentProcedureScroll()
+    selectUnit(unit.targetObjectId)
   }
 
   const targetDocumentForBranch = (branch: ProcedureBranch): ProcedureDocument | undefined =>
@@ -673,6 +748,7 @@
   const cancelConfirmation = (): void => {
     confirmation = null
     pendingTransition = null
+    pendingOffPath = null
   }
 
   const completeStepAndJump = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
@@ -685,6 +761,21 @@
     await transitionProcedureRun(simulationRunId, { runId: selectedRun.runId, stepId: fromStep.id, branchIndex: fromStep.branches.indexOf(branch) })
     await refreshRuns()
     scrollToProcedureStep(targetStep.id)
+    // Keyboard focus follows the Run to its new current step.
+    await tick()
+    procedureDocumentBodyElement?.querySelector<HTMLElement>(`[data-procedure-step-id="${CSS.escape(targetStep.id)}"] h3`)?.focus({ preventScroll: true })
+  }
+
+  // The procedure list is one Tab stop: arrows, Home and End move between its entries.
+  const moveInProcedureList = (event: KeyboardEvent): void => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    const current = event.currentTarget as HTMLButtonElement
+    const items = [...(current.closest('.procedure-list')?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+    const index = items.indexOf(current)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : Math.min(items.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)))
+    event.preventDefault()
+    items[next]?.focus()
   }
 
   const openProcedureTransition = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
@@ -721,10 +812,25 @@
     }
   }
 
+  // Only the current step's branches act at once; another step's branch first says
+  // where the Run stands and where the branch takes it.
+  const branchIsOffPath = (step: ProcedureStep): boolean =>
+    currentProcedureStep !== null && currentProcedureStep.step.id !== step.id
+
+  const requestBranch = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
+    if (!selectedRun || busy) return
+    if (branch.targetKind !== 'procedure' && branchIsOffPath(fromStep)) {
+      pendingOffPath = { from: fromStep, branch }
+      confirmation = 'off-path'
+      return
+    }
+    await activateBranch(fromStep, branch)
+  }
+
   const activateBranch = async (fromStep: ProcedureStep, branch: ProcedureBranch): Promise<void> => {
-    if (!selectedRun || transitionInProgress) return
+    if (!selectedRun || busy) return
     try {
-      transitionInProgress = true
+      pendingControl = branchControlKey(fromStep, branch)
       if (branch.targetKind === 'step') await completeStepAndJump(fromStep, branch)
       else if (branch.targetKind === 'procedure') await openProcedureTransition(fromStep, branch)
       else if (branch.targetKind !== 'unknown') {
@@ -734,8 +840,24 @@
     } catch (err) {
       error = errorMessage(err)
     } finally {
-      transitionInProgress = false
+      if (!disposed) pendingControl = null
     }
+  }
+
+  const offPathConfirmation = $derived(pendingOffPath && document && currentProcedureStep
+    ? procedureOffPathConfirmation({ document, current: currentProcedureStep.step, from: pendingOffPath.from, branch: pendingOffPath.branch })
+    : null)
+
+  // Leaving by a transfer holds this procedure at the step the branch was selected on.
+  const transitionReturnText = (transition: ProcedureTransition): string => {
+    const proc = transition.fromProcedure.procedureId
+    const held = transition.branch.execution === 'parallel'
+      ? `${proc} stays active at step ${transition.fromStep.label}.`
+      : `${proc} holds at step ${transition.fromStep.label} as its return point.`
+    const current = currentProcedureStep?.step
+    return current && current.id !== transition.fromStep.id
+      ? `${proc} is at step ${current.label} now. ${held}`
+      : held
   }
 
   const transitionFromLabel = (transition: ProcedureTransition): string =>
@@ -747,9 +869,9 @@
   const confirmProcedureTransition = async (): Promise<void> => {
     const transition = pendingTransition
     const request = latestProcedureLoadRequest
-    if (!transition || transitionInProgress) return
+    if (!transition || busy) return
     try {
-      transitionInProgress = true
+      pendingControl = branchControlKey(transition.fromStep, transition.branch)
       await transitionProcedureRun(simulationRunId, {
         runId: transition.sourceRunId,
         stepId: transition.fromStep.id,
@@ -765,7 +887,7 @@
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
     } finally {
-      if (!disposed) transitionInProgress = false
+      if (!disposed) pendingControl = null
       if (request === latestProcedureLoadRequest) pendingTransition = null
     }
   }
@@ -774,19 +896,34 @@
     const current = document
     if (!activeRun || !current) return
     const unitLabel = displayUnitName
-    if (!await closeActiveRun('completed')) return
-    showProcedureToast(`${current.procedureId} completed for ${unitLabel}. Reset the procedure to run it again.`, {
-      placement: 'center',
-      tone: 'success',
-      durationMs: 4_000,
+    await recording('complete', async () => {
+      if (!await closeActiveRun('completed')) return
+      showProcedureToast(`${current.procedureId} completed for ${unitLabel}. Reset the procedure to run it again.`, {
+        placement: 'center',
+        tone: 'success',
+        durationMs: 4_000,
+      })
     })
+  }
+
+  // Take over (claim as a person) also pauses an AI driver; hand back (release) shares the Run again.
+  const driveSelectedRun = async (action: 'claim' | 'release'): Promise<void> => {
+    const run = activeRun
+    const request = latestProcedureLoadRequest
+    if (!run) return
+    await recording('drive', async () => { try {
+      await driveProcedureRun(simulationRunId, { runId: run.runId, action })
+      await refreshRuns()
+    } catch (err) {
+      if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
+    } })
   }
 
   const resetSelectedProcedure = async (): Promise<void> => {
     const current = document
     const request = latestProcedureLoadRequest
     if (!current) return
-    try {
+    await recording('reset', async () => { try {
       await resetProcedureRun(simulationRunId, {
         sourceId: current.source.sourceId,
         procedureId: current.procedureId,
@@ -795,7 +932,7 @@
       await refreshRuns()
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest) error = errorMessage(err)
-    }
+    } })
   }
 
   const confirmProcedureAction = async (): Promise<void> => {
@@ -815,20 +952,43 @@
     }
     if (action === 'transition') {
       await confirmProcedureTransition()
+      return
+    }
+    if (action === 'off-path') {
+      const offPath = pendingOffPath
+      pendingOffPath = null
+      if (offPath) await activateBranch(offPath.from, offPath.branch)
     }
   }
 
   const confirmationTitle = (): string => {
     if (!document || !confirmation) return ''
-    if (confirmation === 'transition') return 'Confirm procedure transition'
-    if (confirmation === 'run') return `Run ${document.procedureId} on ${displayUnitName}?`
+    if (confirmation === 'transition') return pendingTransition ? `${transitionAction(pendingTransition)} on ${displayUnitName}?` : ''
+    if (confirmation === 'off-path') return offPathConfirmation?.title ?? ''
+    if (confirmation === 'run') return `${selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'} ${document.procedureId} on ${displayUnitName}?`
     if (confirmation === 'completed') return `Complete ${document.procedureId} on ${displayUnitName}?`
     return `Reset ${document.procedureId} on ${displayUnitName}?`
+  }
+
+  // Every confirmation's primary button says what it does.
+  const transitionAction = (transition: ProcedureTransition): string => {
+    const target = procedureRunFor(runs, { sourceId: transition.targetProcedure.source.sourceId, procedureId: transition.targetProcedure.procedureId, scope: currentScope })
+    return `${target?.status === 'transferred' ? 'Resume' : 'Go to'} ${transition.targetProcedure.procedureId}`
+  }
+
+  const confirmationAction = (): string => {
+    if (!document || !confirmation) return ''
+    if (confirmation === 'transition') return pendingTransition ? transitionAction(pendingTransition) : ''
+    if (confirmation === 'off-path') return offPathConfirmation?.action ?? ''
+    if (confirmation === 'run') return selectedProcedureRun?.status === 'transferred' ? `Resume ${document.procedureId}` : `Run ${document.procedureId} on ${displayUnitName}`
+    if (confirmation === 'completed') return `Complete ${document.procedureId}`
+    return `Reset ${document.procedureId}`
   }
 
   const confirmationBody = (): string => {
     if (!document || !confirmation) return ''
     if (confirmation === 'transition') return ''
+    if (confirmation === 'off-path') return offPathConfirmation?.body ?? ''
     const currentStep = selectedProcedureRun
       ? procedureCurrentStep(selectedProcedureRun, document)?.progress ?? furthestTouchedStep(selectedProcedureRun, document)
       : null
@@ -836,9 +996,17 @@
       return `Confirm that you want to run ${document.procedureId} - ${document.title} on ${displayUnitName}.`
     }
     if (confirmation === 'completed') {
-      return `Confirm that ${document.procedureId} on ${displayUnitName} should be marked completed on step ${currentStep?.label ?? '-'}.`
+      const warning = selectedProcedureRun ? procedureCompletionWarning(document, selectedProcedureRun) : null
+      return warning ?? `${document.procedureId} on ${displayUnitName} is marked completed at step ${currentStep?.label ?? '-'}.`
     }
     return `Reset clears the current run state, step assessments, comments, and favorites for ${document.procedureId} on ${displayUnitName}.`
+  }
+
+  const procedureRunStatusLabel = (run: ProcedureRunState | null): string => {
+    if (run?.status === 'active') return 'Active'
+    if (run?.status === 'completed') return 'Completed'
+    if (run?.status === 'transferred') return 'Held'
+    return 'Not started'
   }
 
   const assessmentAfter = (assessment: ProcedureAssessment | undefined): ProcedureAssessment => {
@@ -875,16 +1043,17 @@
 
   const cycleStepAssessment = async (step: ProcedureStep): Promise<void> => {
     const current = stepStates.get(step.id)
-    await updateStep(step, { assessment: assessmentAfter(current?.assessment), currentStepId: step.id })
+    // A checkmark records a judgement on its step; only a branch moves the Run.
+    await recording(`assess:${step.id}`, async () => { await updateStep(step, { assessment: assessmentAfter(current?.assessment) }) })
   }
 
   const toggleFavorite = async (step: ProcedureStep): Promise<void> => {
     const current = stepStates.get(step.id)
-    await updateStep(step, { favorite: !(current?.favorite ?? false) })
+    await recording(`favorite:${step.id}`, async () => { await updateStep(step, { favorite: !(current?.favorite ?? false) }) })
   }
 
   const saveComment = async (step: ProcedureStep): Promise<void> => {
-    await updateStep(step, { comment: commentDrafts[draftKey(step.id)] ?? '' })
+    await recording(`comment:${step.id}`, async () => { await updateStep(step, { comment: commentDrafts[draftKey(step.id)] ?? '' }) })
   }
 
   const tagFor = (tagId: ProcedureTagId): ProcedureTag | undefined =>
@@ -893,8 +1062,13 @@
   const validationFor = (tagId: ProcedureTagId): ProcedureTagValidation | undefined =>
     tagValidation.get(tagId)
 
-  const csfEvaluationFor = (csf: string): ProcedureCsfEvaluation | undefined =>
-    csfReadAt !== null && csfPresentationTime - Date.parse(csfReadAt) <= 6_000 ? csfEvaluations.get(csf) : undefined
+  // A status tree read older than 6 s keeps its colour, marked stale: lost data is never shown as blank.
+  const csfStale = $derived(csfReadAt !== null && csfPresentationTime - Date.parse(csfReadAt) > 6_000)
+  const csfAgeText = (): string => {
+    if (csfReadAt === null) return '—'
+    const seconds = Math.max(0, Math.round((csfPresentationTime - Date.parse(csfReadAt)) / 1000))
+    return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`
+  }
 
   const csfSignalTone = (signal: ProcedureCsfEvaluation['signals'][number]): 'satisfied' | 'challenged' | 'unknown' => {
     if (signal.matches === true) return 'satisfied'
@@ -902,10 +1076,6 @@
     return 'unknown'
   }
 
-  const csfSignalValueText = (signal: ProcedureCsfEvaluation['signals'][number]): string =>
-    signal.operator === undefined
-      ? signal.formatted
-      : `${signal.formatted} ${signal.operator} ${String(signal.expected)}`
 
   const refreshCsfStatus = async (csfs = csfIds): Promise<void> => {
     if (csfs.length === 0 || csfRefreshInFlight || disposed) return
@@ -913,16 +1083,14 @@
     const unit = currentUnitContext.plantId
     try {
       csfRefreshInFlight = true
-      csfError = null
       const result = await evaluateProcedureCsfs(simulationRunId, unit, csfs, currentProvider)
       if (!disposed && request === latestProcedureLoadRequest && unit === currentUnitContext.plantId) {
         csfEvaluations = result
         csfReadAt = new Date().toISOString()
+        csfError = null
       }
     } catch (err) {
       if (!disposed && request === latestProcedureLoadRequest && unit === currentUnitContext.plantId) {
-        csfEvaluations = new Map()
-        csfReadAt = null
         csfError = errorMessage(err)
       }
     } finally {
@@ -930,32 +1098,39 @@
     }
   }
 
-  const showTag = async (tagId: ProcedureTagId): Promise<void> => {
-    const request = ++tagRequest
-    const view = latestProcedureLoadRequest
-    hoveredTagId = tagId
-    hoveredTagValue = null
-    hoveredTagError = null
-    if (validationFor(tagId)?.status === 'missing') return
-    const tag = tagFor(tagId)
-    if (!tag) {
-      hoveredTagError = 'Procedure tag metadata not found.'
+  const toggleStepInfo = (step: ProcedureStep): void => {
+    const generation = ++stepInfoGeneration
+    stepInfoReadings = {}
+    if (openStepInfoId === step.id) {
+      openStepInfoId = null
       return
     }
-    try {
-      const value = await readProcedureTagValue(simulationRunId, currentUnitContext.plantId, tag, currentProvider)
-      if (!disposed && request === tagRequest && view === latestProcedureLoadRequest) hoveredTagValue = value
-    } catch (err) {
-      if (!disposed && request === tagRequest && view === latestProcedureLoadRequest) hoveredTagError = errorMessage(err)
+    openStepInfoId = step.id
+    const unit = currentUnitContext
+    for (const tagId of step.tagIds) {
+      const tag = tagFor(tagId)
+      if (!tag || validationFor(tagId)?.status === 'missing') continue
+      void (async () => {
+        try {
+          const value = await readProcedureTagValue(simulationRunId, unit.plantId, tag, unit.provider ?? provider)
+          if (!disposed && generation === stepInfoGeneration) stepInfoReadings = { ...stepInfoReadings, [tagId]: { formatted: value.formatted } }
+        } catch (err) {
+          if (!disposed && generation === stepInfoGeneration) stepInfoReadings = { ...stepInfoReadings, [tagId]: { error: errorMessage(err) } }
+        }
+      })()
     }
   }
 
-  const hideTag = (): void => {
-    tagRequest++
-    hoveredTagId = null
-    hoveredTagValue = null
-    hoveredTagError = null
+  const closeTag = (): void => {
+    openTagId = null
   }
+
+  // The display window's listing for a tag's display: one key per unit and tag.
+  const tagDisplayListing = (tagId: ProcedureTagId, envelope: EmbeddedViewListing['envelope']): EmbeddedViewListing => ({
+    key: `procedure-tag:${currentUnitContext.plantId}:${tagId}`,
+    caption: `From ${document?.procedureId ?? 'procedure'} ${tagId}`.slice(0, 120),
+    envelope,
+  })
 
   const closeBasis = (): void => {
     basisReadGeneration++
@@ -1020,7 +1195,6 @@
       disposed = true
       latestProcedureLoadRequest++
       catalogRequest++
-      tagRequest++
       basisReadGeneration++
       releasePrefetch?.()
       unsubscribe()
@@ -1029,6 +1203,15 @@
       window.removeEventListener('resize', handleResize)
       if (toastTimer !== null) window.clearTimeout(toastTimer)
     }
+  })
+
+  // Opening this unit's procedures again focuses this window instead of a second one.
+  $effect(() => {
+    if (focusRequest === 0) return
+    untrack(() => {
+      procedureWindowElement?.focus()
+      if (initialProcedureId !== undefined && initialProcedureId !== document?.procedureId) void loadProcedure(initialProcedureId)
+    })
   })
 
   // Another operator may start this procedure at a different pinned revision.
@@ -1051,8 +1234,9 @@
       csfEvaluations = new Map()
       csfReadAt = null
       tagValidation = new Map()
-      hideTag()
+      closeTag()
       closeBasis()
+      openStepInfoId = null
       if (selectedProcedureId) void loadProcedure(selectedProcedureId)
     })
   })
@@ -1062,7 +1246,7 @@
 {#snippet procedureText(text: string, tagIds: readonly string[])}
   {#each procedureTextSegments(text, tagIds, document?.sourceUrl) as segment}
     {#if segment.kind === 'tag'}
-      <button type="button" class="procedure-tag" onmouseenter={() => void showTag(segment.text as ProcedureTagId)} onmouseleave={hideTag}>«{segment.text}»</button>
+      <button type="button" class="procedure-tag" title="Show {segment.text} on a process display" onclick={() => { openTagId = segment.text as ProcedureTagId }}>{segment.text}</button>
     {:else if segment.kind === 'link'}
       {@const sourceRequest = document ? procedureSourceEvidenceRequest(segment.href, document) : undefined}
       {#if sourceRequest}
@@ -1074,9 +1258,235 @@
   {/each}
 {/snippet}
 
+{#snippet stepInfoButton(step: ProcedureStep)}
+  {@const summary = procedureStepBindingSummary(document ? procedureStepTagBindings(step, document.tags, tagValidation) : [])}
+  <button
+    type="button"
+    class="procedure-info-button small binding-{summary.worst}"
+    aria-label="Plant tags in step {step.label}: {summary.text}"
+    title={summary.worst === 'none' ? 'No plant tags in this step' : summary.text}
+    aria-expanded={openStepInfoId === step.id}
+    onclick={() => toggleStepInfo(step)}
+  >
+    <Info size={16} aria-hidden="true" />
+  </button>
+{/snippet}
+
+{#snippet stepInfoPanel(step: ProcedureStep)}
+  {@const bindings = document ? procedureStepTagBindings(step, document.tags, tagValidation) : []}
+  <div class="procedure-step-info" role="dialog" tabindex="-1" aria-label="Plant tags in step {step.label}" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); openStepInfoId = null } }}>
+    <div class="procedure-popover-head">
+      <b>{bindings.length === 0 ? 'No plant tags in this step' : procedureStepBindingSummary(bindings).text}</b>
+      <button type="button" aria-label="Close plant tags" onclick={() => { openStepInfoId = null }}><X size={14} aria-hidden="true" /></button>
+    </div>
+    {#if bindings.length === 0}
+      <p>Its indications are read and judged by the operator.</p>
+    {:else}
+      {#each bindings as binding (binding.tagId)}
+        {@const reading = stepInfoReadings[binding.tagId]}
+        <div class="procedure-step-info-tag {binding.status}">
+          <b class="procedure-step-info-id">{binding.tagId}</b>
+          <span class="procedure-step-info-value">{binding.status === 'missing' ? '—' : reading === undefined ? '…' : reading.formatted !== undefined ? procedureDisplayReading(reading.formatted) : 'unavailable'}</span>
+          <span class="procedure-step-info-status">{procedureBindingStatusWord(binding.status)}</span>
+          {#if binding.description}<span class="procedure-step-info-detail">{binding.description}</span>{/if}
+          {#if binding.status === 'missing'}
+            <em class="procedure-step-info-detail">Not in this unit's plant model.</em>
+          {:else if binding.reads}
+            <span class="procedure-step-info-detail">Reads {binding.reads}</span>
+          {/if}
+          {#if reading?.error}<em class="procedure-step-info-detail">{reading.error}</em>{/if}
+          {#each binding.warnings as warning}<em class="procedure-step-info-detail">{warning}</em>{/each}
+          {#each binding.notes as note}<span class="procedure-step-info-detail procedure-step-info-note"><b>{note.label}</b> {note.text}</span>{/each}
+        </div>
+      {/each}
+    {/if}
+    <small>Values read when this opened. World does not evaluate this step's checks; a selected branch records a judgement.</small>
+  </div>
+{/snippet}
+
+{#snippet stepArticle(step: ProcedureStep, role: 'current' | 'decided' | 'open')}
+  {@const state = stepStates.get(step.id)}
+  {@const observation = selectedProcedureRun?.observations?.find(item => item.stepId === step.id)}
+  <article data-procedure-step-id={step.id} class="procedure-step {role}" class:complete={state?.assessment === 'complete'} class:failed={state?.assessment === 'failed'} class:unknown={state?.assessment === 'unknown'}>
+    <div class="procedure-step-main">
+      <button
+        type="button"
+        class="procedure-assessment {assessmentClass(state)}"
+        class:busy={busy}
+        disabled={!selectedRun || busy}
+        aria-busy={pendingControl === `assess:${step.id}`}
+        title="Human placekeeping assessment; not an automatic equipment check"
+        aria-label="Cycle human assessment"
+        onclick={() => void cycleStepAssessment(step)}
+      >
+        {#if pendingControl === `assess:${step.id}`}
+          <span class="procedure-spinner" aria-label="Recording…"></span>
+        {:else if state?.assessment === 'complete'}
+          <Check size={17} aria-hidden="true" />
+        {:else if state?.assessment === 'failed'}
+          <X size={17} aria-hidden="true" />
+        {:else if state?.assessment === 'unknown'}
+          <span aria-hidden="true">?</span>
+        {/if}
+        {#if state?.decision && procedureActorIsAi(state.decision.selectedBy)}<span class="procedure-ai-mark" title="This step's branch was selected by an AI">AI</span>{/if}
+      </button>
+      <div class="procedure-step-content">
+        <h3 tabindex="-1">
+          {#if role === 'current'}<span class="procedure-current-chip">Current</span>{/if}
+          Step {step.label}<span class="procedure-step-name">{procedureStepDisplayName(step)}</span>{@render stepInfoButton(step)}
+          {#if pendingControl === `favorite:${step.id}`}<span class="procedure-spinner" aria-label="Recording…"></span>{:else if state?.favorite}<span class="procedure-step-mark" title="Marked">★</span>{/if}
+          <span class="procedure-step-tools">
+            {#if role === 'decided'}<button type="button" class="procedure-step-collapse" onclick={() => setStepExpanded(step.id, false)}>Collapse</button>{/if}
+            {@render stepMenu(step, state)}
+          </span>
+        </h3>
+        {#if openStepInfoId === step.id}{@render stepInfoPanel(step)}{/if}
+        <div class="procedure-two-column">
+          {#each procedureStepItems(step) as item}
+            <div class="procedure-column" class:response={!item.primary}>
+              {#if item.kind === 'block'}
+                <p class="block-{item.block.kind}">{#if item.block.kind !== 'text'}<b>{procedureBlockLabel(item.block.kind)}</b>{/if} {@render procedureText(item.block.text, item.block.tagIds)}</p>
+                {#if item.block.paths?.length}<ol>{#each item.block.paths as path}<li>{@render procedureText(path, item.block.tagIds)}</li>{/each}</ol>{/if}
+              {:else}
+                {@const taken = state?.decision !== undefined && state.decision.branchIndex === step.branches.indexOf(item.branch) ? state.decision : undefined}
+                <button
+                  type="button"
+                  class="procedure-branch {taken ? `taken tone-${procedureDecisionTone(taken)}` : ''}"
+                  class:untaken={state?.decision !== undefined && taken === undefined}
+                  class:off-path={activeRun !== null && branchIsOffPath(step)}
+                  class:busy={busy}
+                  disabled={!activeRun || busy || item.branch.targetKind === 'unknown'}
+                  title={!selectedRun ? 'Start the procedure to use branch actions' : branchIsOffPath(step) ? `Step ${step.label} is not the current step: asks before moving ${document?.procedureId ?? 'the Run'}` : branchActionTextFor(item.branch)}
+                  onclick={() => void requestBranch(step, item.branch)}
+                >
+                  <strong>{#if taken}<span class="procedure-taken-mark" aria-hidden="true">✓</span>{/if}{item.branch.label}</strong>
+                  <span>{branchActionTextFor(item.branch)}</span>
+                  {#if pendingControl === branchControlKey(step, item.branch)}{@render recordingNote()}{/if}
+                  {#if taken}
+                    {@const who = procedureActorLabel(taken.selectedBy, taken.selectedByLabel)}
+                    {#if procedureActorIsAi(taken.selectedBy)}
+                      <small class="procedure-decision-line ai">Taken by AI{who === 'AI' ? '' : ` · ${who}`} · {procedurePlantTime(taken.simulationTime)}</small>
+                    {:else}
+                      <small class="procedure-decision-line">Taken {procedurePlantTime(taken.simulationTime)} · {who}</small>
+                    {/if}
+                  {/if}
+                </button>
+                {#if taken && (taken.basis !== undefined || (taken.evidence?.length ?? 0) > 0)}
+                  <div class="procedure-decision-basis" class:ai={procedureActorIsAi(taken.selectedBy)}>
+                    {#if taken.basis}<p>{taken.basis}</p>{/if}
+                    {#each taken.evidence ?? [] as evidence (evidence.tagId)}
+                      <div class="procedure-evidence-row"><b>{evidence.tagId}</b><span>{evidence.reading}</span></div>
+                    {/each}
+                  </div>
+                {/if}
+                {#if item.branch.because}<p class="procedure-branch-rationale"><b>Because</b> {@render procedureText(item.branch.because, item.branch.tagIds)}</p>{/if}
+                {#if item.branch.against}<p class="procedure-branch-rationale"><b>Against</b> {@render procedureText(item.branch.against, item.branch.tagIds)}</p>{/if}
+              {/if}
+            </div>
+          {/each}
+        </div>
+        {#if step.assessment}
+          <details class="procedure-observation">
+            <summary>Evaluation criteria — authored specification</summary>
+            <p>Declared evidence and decision rules, not a live assessment or automatic command.</p>
+            <pre>{JSON.stringify(step.assessment, null, 2)}</pre>
+          </details>
+        {/if}
+        {#if step.observation}
+          <details class="procedure-observation">
+            <summary>Read-only observation specification</summary>
+            <p>The configured query is separate from its latest result and human placekeeping.</p>
+            <pre>{JSON.stringify(step.observation, null, 2)}</pre>
+          </details>
+        {/if}
+        {#if observation}
+          <details class="procedure-observation">
+            <summary>{procedureObservationLabel(observation.result)}: {observation.result.status} · acquired at simulation time {observation.simulationTime}</summary>
+            {#if observation.result.reason}<p>{observation.result.reason}</p>{/if}
+            <p>{@render procedureText(procedureObservationBasis(observation.result), [])}</p>
+            {#each procedureObservationEvidence(observation.result) as evidence}
+              <p><b>{evidence.label}</b>: {evidence.value} · criterion {evidence.criterion} · {evidence.status}{evidence.reason ? ` · ${evidence.reason}` : ''}</p>
+            {/each}
+            <small>{procedureObservationLabel(observation.result) === 'Model comparison' ? 'Comparison of runtime model values; instrumentation validity is not established. ' : ''}Last acquisition shown in simulation time, not proof that evidence remains current. Human placekeeping remains separately recorded.</small>
+          </details>
+        {/if}
+        {#if commentOpen[draftKey(step.id)]}
+          <div class="procedure-comment-editor">
+            <textarea
+              value={commentDrafts[draftKey(step.id)] ?? state?.comment ?? ''}
+              oninput={(event) => { commentDrafts = { ...commentDrafts, [draftKey(step.id)]: event.currentTarget.value } }}
+              placeholder="Add handling annotation..."
+            ></textarea>
+            <button type="button" disabled={busy} aria-busy={pendingControl === `comment:${step.id}`} onclick={() => void saveComment(step)}>{#if pendingControl === `comment:${step.id}`}{@render recordingNote()}{:else}Save comment{/if}</button>
+          </div>
+        {/if}
+        {#if state?.comment}
+          <div class="procedure-comment">{state.comment}</div>
+        {/if}
+      </div>
+    </div>
+  </article>
+{/snippet}
+
+{#snippet stepMenu(step: ProcedureStep, state: ProcedureStepRunState | undefined)}
+  <span class="procedure-step-menu">
+    <button type="button" class="procedure-step-menu-button" aria-label="More for step {step.label}" aria-haspopup="menu" aria-expanded={openStepMenuId === step.id} onclick={() => { openStepMenuId = openStepMenuId === step.id ? null : step.id }}>
+      <MoreHorizontal size={16} aria-hidden="true" />
+    </button>
+    {#if openStepMenuId === step.id}
+      <span class="procedure-step-menu-list" role="menu" tabindex="-1" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); openStepMenuId = null } }}>
+        <button type="button" role="menuitem" disabled={!selectedRun} onclick={() => { openStepMenuId = null; commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
+          <MessageSquare size={14} aria-hidden="true" /> {state?.comment ? 'Edit comment' : 'Comment'}
+        </button>
+        <button type="button" role="menuitem" disabled={!selectedRun || busy} onclick={() => { openStepMenuId = null; void toggleFavorite(step) }}>
+          <Star size={14} aria-hidden="true" /> {state?.favorite ? 'Unmark' : 'Mark'}
+        </button>
+        <button type="button" role="menuitem" onclick={() => { openStepMenuId = null; openIssue(step) }}>
+          <Bug size={14} aria-hidden="true" /> Report procedure issue
+        </button>
+      </span>
+    {/if}
+  </span>
+{/snippet}
+
+{#snippet recordingNote()}
+  <span class="procedure-recording" role="status"><span class="procedure-spinner" aria-hidden="true"></span>Recording…</span>
+{/snippet}
+
+{#snippet errorStrips()}
+  {#if error}
+    <div class="procedure-error-strip" role="alert">
+      <span title={error}>{error}</span>
+      <button type="button" aria-label="Dismiss message" onclick={() => { error = null }}><X size={14} aria-hidden="true" /></button>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet stepSummary(step: ProcedureStep)}
+  {@const state = stepStates.get(step.id)}
+  {@const decision = state?.decision}
+  <button
+    type="button"
+    class="procedure-step-summary {decision ? `tone-${procedureDecisionTone(decision)}` : ''}"
+    data-procedure-step-id={step.id}
+    aria-expanded="false"
+    title="Show step {step.label}"
+    onclick={() => setStepExpanded(step.id, true)}
+  >
+    <span class="procedure-summary-box {assessmentClass(state)}" aria-hidden="true">{state?.assessment === 'complete' ? '✓' : state?.assessment === 'failed' ? '✗' : state?.assessment === 'unknown' ? '?' : ''}</span>
+    <strong>Step {step.label}</strong>
+    <span class="procedure-summary-name">{procedureStepDisplayName(step)}</span>
+    {#if decision && document}
+      <span class="procedure-summary-decision">— {decision.label ?? step.branches[decision.branchIndex]?.label ?? `branch ${decision.branchIndex + 1}`} → {procedureDecisionTargetText(document, decision)}</span>
+      <small>{#if procedureActorIsAi(decision.selectedBy)}<span class="procedure-ai-tag" title="Selected by {procedureActorLabel(decision.selectedBy, decision.selectedByLabel)}">AI</span> {/if}{procedurePlantTime(decision.simulationTime, 'minutes')}</small>
+    {/if}
+  </button>
+{/snippet}
+
 <div class="procedure-window-layer">
   <div
     class="procedure-modal procedure-window"
+    bind:this={procedureWindowElement}
     role="dialog"
     aria-modal="true"
     aria-label="Computer-based procedure system"
@@ -1086,23 +1496,38 @@
   >
     <header class="procedure-header">
       <div
-        class="procedure-header-top"
+        class="procedure-header-bar"
         role="toolbar"
         tabindex="0"
-        aria-label="Procedure system window controls"
+        aria-label="Units and procedure window controls"
         onpointerdown={(event) => startWindowDrag(event, 'move')}
         onpointermove={updateWindowDrag}
         onpointerup={finishWindowDrag}
         onpointercancel={finishWindowDrag}
       >
-        <div class="procedure-current-unit-line">
-          <StatusIndicator tone={displayUnitStatus.tone} label={displayUnitStatus.label} indicator={displayUnitStatus.indicator} />
-          <strong>{displayUnitName}</strong>
-          <ProcedureRunBadges
-            summaries={currentUnitProcedureSummaries}
-            openProcedureId={document?.procedureId ?? null}
-            onOpen={(summary) => openProcedureRunSummary(summary, currentUnitContext)}
-          />
+        <span class="procedure-grip" aria-hidden="true" title="Drag to move"><GripVertical size={16} /></span>
+        <div class="procedure-cross-unit-strip" aria-label="Units and their procedures">
+          {#each procedureUnits as unit (unit.plantId)}
+            {@const unitStatusPresentation = statusForUnit(unit)}
+            {@const unitSummaries = unitProcedureSummariesFor(unit)}
+            <div class="procedure-cross-unit" class:current={unit.plantId === plantId}>
+              <button
+                type="button"
+                class="procedure-unit-jump"
+                aria-current={unit.plantId === plantId ? 'true' : undefined}
+                title={unit.plantId === plantId ? `${unit.label}: shown` : `Show ${unit.label}`}
+                onclick={() => void jumpToUnit(unit)}
+              >
+                <StatusIndicator tone={unitStatusPresentation.tone} label={unitStatusPresentation.label} indicator={unitStatusPresentation.indicator} />
+                <span class="procedure-cross-unit-name">{unit.label}</span>
+              </button>
+              <ProcedureRunBadges
+                summaries={unitSummaries}
+                openProcedureId={unit.plantId === plantId ? document?.procedureId ?? null : null}
+                onOpen={(summary) => openProcedureRunSummary(summary, unit)}
+              />
+            </div>
+          {/each}
         </div>
         <div class="procedure-header-actions">
           <button class="procedure-font-button large" type="button" title="Increase procedure font size" aria-label="Increase procedure font size" onclick={increaseProcedureFontSize}>
@@ -1112,36 +1537,23 @@
             A
           </button>
           <button type="button" title="Refresh procedure source" aria-label="Refresh procedure source" onclick={() => void loadCatalogAndRuns(true)}>
-            <RefreshCw size={18} aria-hidden="true" />
+            <RefreshCw size={16} aria-hidden="true" />
           </button>
           <button type="button" title="Close procedures" aria-label="Close procedures" onclick={close}>
-            <X size={20} aria-hidden="true" />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      <div class="procedure-cross-unit-strip" aria-label="Cross-unit procedure status">
-        {#each procedureUnits as unit (unit.plantId)}
-          {@const unitStatusPresentation = statusForUnit(unit)}
-          {@const unitSummaries = unitProcedureSummariesFor(unit)}
-          <div class="procedure-cross-unit" class:current={unit.plantId === plantId}>
-            <StatusIndicator tone={unitStatusPresentation.tone} label={unitStatusPresentation.label} indicator={unitStatusPresentation.indicator} />
-            <span class="procedure-cross-unit-name">{unit.label}</span>
-            <ProcedureRunBadges
-              summaries={unitSummaries}
-              openProcedureId={unit.plantId === plantId ? document?.procedureId ?? null : null}
-              onOpen={(summary) => openProcedureRunSummary(summary, unit)}
-            />
-          </div>
-        {/each}
-      </div>
-
       <div class="procedure-csf-strip" aria-label="Critical safety functions">
         {#each csfIds as csf}
-          {@const evaluation = csfEvaluationFor(csf)}
+          {@const evaluation = csfEvaluations.get(csf)}
+          {@const chip = procedureCsfChip(csf, evaluation, csfStale)}
           <div class="procedure-csf-shell">
-            <button type="button" class="procedure-csf {evaluation?.status ?? 'unknown'}">
-              <span>{evaluation?.label ?? csf.replaceAll('-', ' ')}</span>
+            <button type="button" class="procedure-csf {chip.tone}" class:stale={chip.stale} aria-label="{chip.label}: {evaluation ? evaluation.status.replace('-', ' ') : 'not read yet'}{chip.stale ? ', stale' : ''}">
+              <span class="procedure-csf-glyph" aria-hidden="true">{chip.glyph}</span>
+              <span>{chip.label}</span>
+              {#if chip.stale}<span class="procedure-csf-stale">Stale</span>{/if}
             </button>
             <div class="procedure-csf-popover" role="tooltip">
               {#if evaluation}
@@ -1149,39 +1561,33 @@
                   {evaluation.label}:
                   <span class="procedure-csf-status-text {evaluation.status}">{evaluation.status.replace('-', ' ')}{evaluation.procedure === undefined ? '' : ` · ${evaluation.procedure}`}</span>
                 </strong>
+                {#if chip.stale}<p class="procedure-csf-stale-note">Last read {csfAgeText()} ago; this colour may no longer hold.</p>{/if}
                 {#if evaluation.reason}
                   <p>{evaluation.reason}</p>
                 {/if}
                 <small>Status tree path: {evaluation.signalCount} comparison{evaluation.signalCount === 1 ? '' : 's'}. Criterion: {evaluation.qualification.replaceAll('-', ' ')}, not a qualified plant procedure.</small>
-                {#if evaluation.simTimeMs !== undefined}<small>Simulation time: {(evaluation.simTimeMs / 1000).toFixed(1)} s.</small>{/if}
-                {#if csfReadAt}<small>Snapshot received: {csfReadAt}. Refreshes while this window is open.</small>{/if}
-                {#if evaluation.modelRef}<small>Model: {evaluation.modelRef}{evaluation.modelDigest ? ` (${evaluation.modelDigest})` : ''}.</small>{/if}
+                <small>{evaluation.simTimeMs === undefined ? '' : `Plant time ${procedureElapsedText(evaluation.simTimeMs)} · `}read {csfAgeText()} ago; refreshes while this window is open.</small>
+                {#if evaluation.modelRef}<small>Model: {evaluation.modelRef}{evaluation.modelDigest ? ` (${evaluation.modelDigest.slice(0, 12)})` : ''}.</small>{/if}
                 <div class="procedure-csf-signals">
                   {#each evaluation.signals as signal (signal.id)}
                     <div class="procedure-csf-signal {csfSignalTone(signal)}">
                       <span>{signal.label}</span>
-                      <b>{csfSignalValueText(signal)}</b>
-                      {#if signal.path}<code>{signal.path}</code>{/if}
+                      <b>{procedureComparisonText(signal.formatted, signal.operator, signal.expected)}</b>
                     </div>
                   {/each}
                 </div>
               {:else}
-                <strong>{csf.replaceAll('-', ' ')}: <span class="procedure-csf-status-text unknown">unknown</span></strong>
-                <small>{csfReadAt ? 'Observation snapshot expired. A new acquisition is required.' : 'CSF observation is unavailable.'}</small>
+                <strong>{csf}: <span class="procedure-csf-status-text unknown">not read yet</span></strong>
+                <small>{csfError ? `The status tree could not be read: ${csfError}` : 'Reading the status tree…'}</small>
               {/if}
             </div>
           </div>
         {/each}
+        {#if csfError}<span class="procedure-csf-error" role="status" title={csfError}>Status trees not read: {csfError}</span>{/if}
       </div>
     </header>
 
-    {#if csfError}
-      <div class="procedure-error">{csfError}</div>
-    {/if}
-
-    {#if error}
-      <div class="procedure-error">{error}</div>
-    {/if}
+    {#if !document}{@render errorStrips()}{/if}
 
     {#if procedureLoadPanelVisible}
       <section class="procedure-loading-panel" aria-live="polite" aria-label="Procedure system loading status">
@@ -1213,6 +1619,9 @@
                     class:active={selectedProcedureId === item.procedureId}
                     class:run-active={runState === 'active'}
                     class:run-completed={runState === 'completed'}
+                    tabindex={item.procedureId === (selectedProcedureId ?? catalog?.procedures[0]?.procedureId) ? 0 : -1}
+                    aria-current={selectedProcedureId === item.procedureId ? 'true' : undefined}
+                    onkeydown={moveInProcedureList}
                     aria-busy={loadingProcedureId === item.procedureId}
                     onclick={() => void loadProcedure(item.procedureId)}
                   >
@@ -1248,159 +1657,102 @@
           aria-busy={loadingProcedureId !== null}
         >
           {#if document}
-          {#if document.appliesTo}
-            <p class="procedure-applicability">Applicability: {document.appliesTo}</p>
-          {/if}
           <div class="procedure-document-toolbar">
             <div class="procedure-document-title">
+              <span class="procedure-unit-chip" title="Procedures in this window are for {displayUnitName}">{displayUnitName}</span>
               <h2>{document.procedureId} — {document.title}</h2>
-              {#if document.description}
-                <button type="button" class="procedure-summary-help" aria-label="Procedure summary">
-                  <HelpCircle size={17} aria-hidden="true" />
-                  <span class="procedure-summary-popover">{document.description}</span>
+              <span class="procedure-info-shell">
+                <button type="button" class="procedure-info-button" aria-label="About {document.procedureId}" aria-expanded={summaryOpen} onclick={() => { summaryOpen = !summaryOpen }}>
+                  <Info size={17} aria-hidden="true" />
                 </button>
-              {/if}
+                {#if summaryOpen}
+                <div class="procedure-info-popover procedure-summary-popover" role="dialog" aria-label="About {document.procedureId}" tabindex="-1" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); summaryOpen = false } }}>
+                  <div class="procedure-popover-head">
+                    <b>About {document.procedureId}</b>
+                    <button type="button" aria-label="Close" onclick={() => { summaryOpen = false }}><X size={14} aria-hidden="true" /></button>
+                  </div>
+                  {#if document.description}<p class="procedure-summary-text">{@render procedureText(procedureDescriptionText(document.description), [])}</p>{/if}
+                  {#if document.appliesTo}<p><b>Applies to</b> {document.appliesTo}</p>{/if}
+                  {#if document.referencePlant}<p><b>Reference plant</b> {document.referencePlant}</p>{/if}
+                  {#each Object.entries(document.annotations ?? {}) as [key, value]}<p><b>{key}</b> {value}</p>{/each}
+                  {#if document.diagnostics?.length}
+                    <p><b>Format notes</b></p>
+                    <ul>{#each document.diagnostics as diagnostic}<li>{diagnostic}</li>{/each}</ul>
+                  {/if}
+                </div>
+                {/if}
+              </span>
               <button type="button" class="procedure-source-icon" onclick={() => document && void loadBasis({ sourceId: document.source.sourceId, sourceRevision: document.source.revision, sourcePath: document.sourcePath, lineCount: 100 })} title="Read retained procedure source" aria-label="Read retained procedure source">
                 <ExternalLink size={15} aria-hidden="true" />
               </button>
-              <button
-                type="button"
-                class="procedure-step-counter"
-                disabled={currentProcedureStep === null}
-                title={currentProcedureStep ? `Scroll to ${procedureStepHoverLabel(currentProcedureStep.step)}` : 'No active procedure step'}
-                onclick={() => currentProcedureStep && scrollToProcedureStep(currentProcedureStep.step.id)}
-              >Step {currentProcedureStep?.step.label ?? '-'}/{document.steps.length}</button>
             </div>
             <div class="procedure-mode-actions">
+              <span class="procedure-status-pill {selectedProcedureRun?.status ?? 'idle'}">
+                <span class="procedure-status-dot" aria-hidden="true"></span>
+                {procedureRunStatusLabel(selectedProcedureRun)}
+                {#if currentProcedureStep}
+                  ·
+                  <button
+                    type="button"
+                    class="procedure-step-counter"
+                    title={`Scroll to ${procedureStepHoverLabel(currentProcedureStep.step)}`}
+                    onclick={() => currentProcedureStep && scrollToProcedureStep(currentProcedureStep.step.id)}
+                  >step {currentProcedureStep.step.label}/{document.steps.length}</button>
+                {/if}
+              </span>
               {#if completedRun}
-                <button type="button" class="completed" disabled>Completed</button>
-                <button type="button" class="reset" onclick={() => { confirmation = 'reset' }}>Reset</button>
+                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset…{/if}</button>
               {:else if activeRun}
-                <button type="button" class="run running" onclick={() => { confirmation = 'completed' }}>
-                  <Play size={13} aria-hidden="true" /> Active
+                <button type="button" class="complete" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'completed' }}>
+                  {#if pendingControl === 'complete'}{@render recordingNote()}{:else}Complete…{/if}
                 </button>
-                <button type="button" class="reset" onclick={() => { confirmation = 'reset' }}>Reset</button>
+                <button type="button" class="reset" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'reset' }}>{#if pendingControl === 'reset'}{@render recordingNote()}{:else}Reset…{/if}</button>
               {:else}
-                <button type="button" class="run" onclick={() => { confirmation = 'run' }}>
-                  <Play size={13} aria-hidden="true" /> {selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'}
+                <button type="button" class="run" class:busy={busy} disabled={busy} onclick={() => { confirmation = 'run' }}>
+                  {#if pendingControl === 'run'}{@render recordingNote()}{:else}<Play size={13} aria-hidden="true" /> {selectedProcedureRun?.status === 'transferred' ? 'Resume' : 'Run'}{/if}
                 </button>
               {/if}
             </div>
           </div>
+          {@render errorStrips()}
+          {#if driverView}
+            <div class="procedure-driver-band {driverView.kind}" role="status">
+              {#if driverView.kind === 'ai'}
+                <span class="procedure-ai-tag">AI</span>
+                <span class="procedure-driver-text"><b>{driverView.label} driving {document.procedureId}</b> on {displayUnitName} · since {driverView.since} · {driverView.aiSteps} {driverView.aiSteps === 1 ? 'step' : 'steps'}</span>
+                <button type="button" title="Drive {document.procedureId} yourself; the AI only reads it until you hand it back. Ticking a step or selecting a branch also takes over." class:busy={busy} disabled={busy} onclick={() => void driveSelectedRun('claim')}>{#if pendingControl === 'drive'}{@render recordingNote()}{:else}Take over{/if}</button>
+              {:else}
+                <span class="procedure-driver-text"><b>You are driving {document.procedureId}</b>{driverView.handBackTo ? '' : ' · AI agents only read it'}</span>
+                <button type="button" title={driverView.handBackTo ? `Let ${driverView.handBackTo} continue ${document.procedureId}` : `Share ${document.procedureId} again`} class:busy={busy} disabled={busy} onclick={() => void driveSelectedRun('release')}>{#if pendingControl === 'drive'}{@render recordingNote()}{:else}{driverView.handBackTo ? `Hand back to ${driverView.handBackTo}` : 'Release'}{/if}</button>
+              {/if}
+            </div>
+          {/if}
 
           <div
             class="procedure-document-body"
             bind:this={procedureDocumentBodyElement}
             onscroll={rememberCurrentProcedureScroll}
           >
-            {#if document.appliesTo || document.referencePlant || document.diagnostics?.length || Object.keys(document.annotations ?? {}).length}
-              <details class="procedure-format-notes">
-                <summary>Applicability and format notes{document.diagnostics?.length ? ` (${document.diagnostics.length})` : ''}</summary>
-                {#if document.appliesTo}<p><b>Applies to:</b> {document.appliesTo}</p>{/if}
-                {#if document.referencePlant}<p><b>Reference plant:</b> {document.referencePlant}</p>{/if}
-                {#each Object.entries(document.annotations ?? {}) as [key, value]}<p><b>{key}:</b> {value}</p>{/each}
-                {#if document.diagnostics?.length}<ul>{#each document.diagnostics as diagnostic}<li>{diagnostic}</li>{/each}</ul>{/if}
-              </details>
-            {/if}
             <div class="procedure-steps">
-              {#each document.steps as step (step.id)}
-                {@const state = stepStates.get(step.id)}
-                {@const observation = selectedProcedureRun?.observations?.find(item => item.stepId === step.id)}
-                <article data-procedure-step-id={step.id} class="procedure-step" class:complete={state?.assessment === 'complete'} class:failed={state?.assessment === 'failed'}>
-                  <div class="procedure-step-main">
-                    <button
-                      type="button"
-                      class="procedure-assessment {assessmentClass(state)}"
-                      disabled={!selectedRun}
-                      title="Human placekeeping assessment; not an automatic equipment check"
-                      aria-label="Cycle human assessment"
-                      onclick={() => void cycleStepAssessment(step)}
-                    >
-                      {#if state?.assessment === 'complete'}
-                        <Check size={17} aria-hidden="true" />
-                      {:else if state?.assessment === 'failed'}
-                        <X size={17} aria-hidden="true" />
-                      {:else if state?.assessment === 'unknown'}
-                        <HelpCircle size={17} aria-hidden="true" />
-                      {/if}
-                    </button>
-                    <div class="procedure-step-content">
-                      <h3>Step {step.label}<span>{procedureStepDisplayName(step)}</span></h3>
-                      <div class="procedure-two-column">
-                        {#each procedureStepItems(step) as item}
-                          <div class="procedure-column" class:response={!item.primary}>
-                            {#if item.kind === 'block'}
-                              <p class="block-{item.block.kind}">{#if item.block.kind !== 'text'}<b>{procedureBlockLabel(item.block.kind)}</b>{/if} {@render procedureText(item.block.text, item.block.tagIds)}</p>
-                              {#if item.block.paths?.length}<ol>{#each item.block.paths as path}<li>{@render procedureText(path, item.block.tagIds)}</li>{/each}</ol>{/if}
-                            {:else}
-                              <button
-                                type="button"
-                                class="procedure-branch"
-                                disabled={!activeRun || transitionInProgress || item.branch.targetKind === 'unknown'}
-                                title={selectedRun ? branchActionTextFor(item.branch) : 'Start the procedure to use branch actions'}
-                                onclick={() => void activateBranch(step, item.branch)}
-                              >
-                                <strong>{item.branch.label}</strong>
-                                <span>{branchActionTextFor(item.branch)}</span>
-                              </button>
-                              {#if item.branch.because}<p class="procedure-branch-rationale"><b>Because</b> {@render procedureText(item.branch.because, item.branch.tagIds)}</p>{/if}
-                              {#if item.branch.against}<p class="procedure-branch-rationale"><b>Against</b> {@render procedureText(item.branch.against, item.branch.tagIds)}</p>{/if}
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                      {#if step.assessment}
-                        <details class="procedure-observation">
-                          <summary>Evaluation criteria — authored specification</summary>
-                          <p>Declared evidence and decision rules, not a live assessment or automatic command.</p>
-                          <pre>{JSON.stringify(step.assessment, null, 2)}</pre>
-                        </details>
-                      {/if}
-                      {#if step.observation}
-                        <details class="procedure-observation">
-                          <summary>Read-only observation specification</summary>
-                          <p>The configured query is separate from its latest result and human placekeeping.</p>
-                          <pre>{JSON.stringify(step.observation, null, 2)}</pre>
-                        </details>
-                      {/if}
-                      {#if observation}
-                        <details class="procedure-observation">
-                          <summary>{procedureObservationLabel(observation.result)}: {observation.result.status} · acquired at simulation time {observation.simulationTime}</summary>
-                          {#if observation.result.reason}<p>{observation.result.reason}</p>{/if}
-                          <p>{@render procedureText(procedureObservationBasis(observation.result), [])}</p>
-                          {#each procedureObservationEvidence(observation.result) as evidence}
-                            <p><b>{evidence.label}</b>: {evidence.value} · criterion {evidence.criterion} · {evidence.status}{evidence.reason ? ` · ${evidence.reason}` : ''}</p>
-                          {/each}
-                          <small>{procedureObservationLabel(observation.result) === 'Model comparison' ? 'Comparison of runtime model values; instrumentation validity is not established. ' : ''}Last acquisition shown in simulation time, not proof that evidence remains current. Human placekeeping remains separately recorded.</small>
-                        </details>
-                      {/if}
-                      {#if commentOpen[draftKey(step.id)]}
-                        <div class="procedure-comment-editor">
-                          <textarea
-                            value={commentDrafts[draftKey(step.id)] ?? state?.comment ?? ''}
-                            oninput={(event) => { commentDrafts = { ...commentDrafts, [draftKey(step.id)]: event.currentTarget.value } }}
-                            placeholder="Add handling annotation..."
-                          ></textarea>
-                          <button type="button" onclick={() => void saveComment(step)}>Save comment</button>
-                        </div>
-                      {/if}
-                      {#if state?.comment}
-                        <div class="procedure-comment">{state.comment}</div>
-                      {/if}
-                    </div>
-                  </div>
-                  <div class="procedure-step-actions">
-                    <button type="button" class:active={commentOpen[draftKey(step.id)] === true} disabled={!selectedRun} title="Comment" aria-label="Comment" onclick={() => { commentOpen = { ...commentOpen, [draftKey(step.id)]: !commentOpen[draftKey(step.id)] }; commentDrafts = { ...commentDrafts, [draftKey(step.id)]: state?.comment ?? '' } }}>
-                      <MessageSquare size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" class:active={state?.favorite === true} disabled={!selectedRun} title="Favorite" aria-label="Favorite" onclick={() => void toggleFavorite(step)}>
-                      <Star size={16} aria-hidden="true" />
-                    </button>
-                    <button type="button" title="Report procedure issue" aria-label="Report procedure issue" onclick={() => openIssue(step)}>
-                      <Bug size={16} aria-hidden="true" />
-                    </button>
-                  </div>
-                </article>
+              {#each procedureRows as row (row.kind === 'step' ? row.step.id : `bypassed:${row.steps[0]!.id}`)}
+                {#if row.kind === 'bypassed'}
+                  {@const bypassKey = draftKey(`bypassed:${row.steps[0]!.id}`)}
+                  <button
+                    type="button"
+                    class="procedure-bypassed"
+                    aria-expanded={expandedSteps[bypassKey] === true}
+                    onclick={() => { expandedSteps = { ...expandedSteps, [bypassKey]: !expandedSteps[bypassKey] } }}
+                  >
+                    {row.steps.length === 1 ? `Step ${row.steps[0]!.label}` : `Steps ${procedureStepRangeText(row.steps, document)}`} bypassed (step {row.from.label} → {row.to.label})
+                  </button>
+                  {#if expandedSteps[bypassKey]}
+                    {#each row.steps as step (step.id)}{@render stepArticle(step, 'open')}{/each}
+                  {/if}
+                {:else if row.role === 'decided' && !expandedSteps[draftKey(row.step.id)]}
+                  {@render stepSummary(row.step)}
+                {:else}
+                  {@render stepArticle(row.step, row.role)}
+                {/if}
               {/each}
             </div>
           </div>
@@ -1417,27 +1769,22 @@
       </div>
     {/if}
 
-    {#if hoveredTagId}
-      <div class="procedure-tag-popover">
-        <strong>{hoveredTagId}</strong>
-        {#if tagFor(hoveredTagId)?.description}<span>{tagFor(hoveredTagId)?.description}</span>{/if}
-        {#if hoveredTagValue}
-          <b>{hoveredTagValue.formatted}</b>
-          {#if hoveredTagValue.path}<small>{hoveredTagValue.path}</small>{/if}
-          {#if hoveredTagValue.warning && !validationFor(hoveredTagId)?.warnings.includes(hoveredTagValue.warning)}
-            <em>{hoveredTagValue.warning}</em>
-          {/if}
-        {:else if validationFor(hoveredTagId)?.status === 'missing'}
-          <em>Not resolved to a Leitbild signal.</em>
-        {:else if hoveredTagError}
-          <em>{hoveredTagError}</em>
-        {:else}
-          <small>Reading live value...</small>
-        {/if}
-        {#if validationFor(hoveredTagId)?.status !== 'missing' && validationFor(hoveredTagId)?.warnings.length}
-          <em>{validationFor(hoveredTagId)?.warnings.join('; ')}</em>
-        {/if}
-      </div>
+    {#if openTagId}
+      {@const openTag = tagFor(openTagId)}
+      {#if openTag}
+        {#key `${currentUnitContext.plantId}:${openTagId}`}
+          <ProcedureTagDisplay
+            {simulationRunId}
+            plantId={currentUnitContext.plantId}
+            unitLabel={displayUnitName}
+            tag={openTag}
+            validation={validationFor(openTagId)}
+            provider={currentProvider}
+            close={closeTag}
+            openInDisplayWindow={openDisplay === undefined ? undefined : (envelope) => { if (openTagId) openDisplay(tagDisplayListing(openTagId, envelope)) }}
+          />
+        {/key}
+      {/if}
     {/if}
 
     {#if refreshing}
@@ -1446,28 +1793,34 @@
 
     {#if basisRequest}
       <div class="procedure-confirm-backdrop" role="presentation" onmousedown={closeBasis}>
-        <div class="procedure-confirm procedure-basis-dialog" role="dialog" aria-modal="true" aria-label="Retained technical basis" tabindex="-1" onmousedown={(event) => event.stopPropagation()}>
-          <h2>{basisEvidence?.title ?? 'Retained technical basis'}</h2>
-          <p>{basisRequest.sourcePath}{basisRequest.section ? ` · ${basisRequest.section}` : ''}</p>
-          <small>Exact source revision: {basisRequest.sourceRevision}</small>
-          {#if basisLoading}<p role="status">Reading retained source…</p>{/if}
-          {#if basisError}<p class="procedure-error">{basisError}</p>{/if}
-          {#if basisEvidence}
-            <p>Lines {basisEvidence.startLine}–{basisEvidence.endLine} of {basisEvidence.totalLines}</p>
-            <pre class="procedure-basis-content">{basisEvidence.content}</pre>
-          {/if}
-          <div class="procedure-confirm-actions">
-            {#if basisEvidence?.nextLine}<button type="button" onclick={() => basisRequest && basisEvidence?.nextLine && void loadBasis({ ...basisRequest, startLine: basisEvidence.nextLine })}>Read next lines</button>{/if}
-            {#if basisError}<button type="button" onclick={() => basisRequest && void loadBasis(basisRequest)}>Retry</button>{/if}
-            <button type="button" onclick={closeBasis}>Close</button>
+        <div class="procedure-confirm procedure-basis-dialog" role="dialog" aria-modal="true" aria-label="Retained technical basis" tabindex="-1" onmousedown={(event) => event.stopPropagation()} {@attach procedureDialog(closeBasis)}>
+          <header class="procedure-basis-header">
+            <h2>{basisEvidence?.title ?? 'Retained technical basis'}</h2>
+            <button type="button" class="procedure-dialog-close" aria-label="Close retained source" data-dialog-primary onclick={closeBasis}><X size={16} aria-hidden="true" /></button>
+          </header>
+          <div class="procedure-basis-body">
+            <p>{basisRequest.sourcePath}{basisRequest.section ? ` · ${basisRequest.section}` : ''}</p>
+            <small>Exact source revision: {basisRequest.sourceRevision}</small>
+            {#if basisLoading}<p role="status">Reading retained source…</p>{/if}
+            {#if basisError}<p class="procedure-error">{basisError}</p>{/if}
+            {#if basisEvidence}
+              <p>Lines {basisEvidence.startLine}–{basisEvidence.endLine} of {basisEvidence.totalLines}</p>
+              <pre class="procedure-basis-content">{basisEvidence.content}</pre>
+            {/if}
           </div>
+          {#if basisEvidence?.nextLine || basisError}
+            <div class="procedure-confirm-actions">
+              {#if basisEvidence?.nextLine}<button type="button" onclick={() => basisRequest && basisEvidence?.nextLine && void loadBasis({ ...basisRequest, startLine: basisEvidence.nextLine })}>Read next lines</button>{/if}
+              {#if basisError}<button type="button" onclick={() => basisRequest && void loadBasis(basisRequest)}>Retry</button>{/if}
+            </div>
+          {/if}
         </div>
       </div>
     {/if}
 
     {#if confirmation}
       <div class="procedure-confirm-backdrop" role="presentation" onmousedown={cancelConfirmation}>
-        <div class="procedure-confirm" role="dialog" aria-modal="true" aria-label={confirmationTitle()} tabindex="-1" onmousedown={(event) => event.stopPropagation()}>
+        <div class="procedure-confirm" role="dialog" aria-modal="true" aria-label={confirmationTitle()} tabindex="-1" onmousedown={(event) => event.stopPropagation()} {@attach procedureDialog(cancelConfirmation)}>
           <h2>{confirmationTitle()}</h2>
           {#if confirmation === 'transition' && pendingTransition}
             <p>
@@ -1475,12 +1828,13 @@
               <br />
               <strong>{transitionToLabel(pendingTransition)}</strong>
             </p>
+            <p>{transitionReturnText(pendingTransition)}</p>
           {:else}
             <p>{confirmationBody()}</p>
           {/if}
           <div class="procedure-confirm-actions">
             <button type="button" onclick={cancelConfirmation}>Cancel</button>
-            <button type="button" class="primary" disabled={transitionInProgress} onclick={() => void confirmProcedureAction()}>Confirm</button>
+            <button type="button" class="primary" class:critical={confirmation === 'reset'} data-dialog-primary disabled={busy} onclick={() => void confirmProcedureAction()}>{confirmationAction()}</button>
           </div>
         </div>
       </div>

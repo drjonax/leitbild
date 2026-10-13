@@ -35,6 +35,8 @@ import type { WorldWorkspaceRuntime, WorldWorkspaceRuntimeRegistry } from '../wo
 import { handleWorldFeaturedDefinitions, handleWorldModuleApi } from './workspace-module-api.ts'
 
 const frameAncestorsHeader = "frame-ancestors 'self'"
+const capabilityInvokePath = /\/capabilities\/[^/]+\/invoke$/
+const capabilityInvokeIdleSeconds = 35
 const defaultRealtimeInputActorId = actorIdSchema.parse('actor:operator')
 
 interface ServerConfig {
@@ -398,6 +400,10 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
           })),
         }))
       }
+      // Bun drops a request idle for 10 s. A Capability may answer later than
+      // that (world.simulation-run.wait holds up to 20 s); the Host's gateway
+      // waits 30 s, so an invocation may stay open a little longer.
+      if (req.method === 'POST' && capabilityInvokePath.test(url.pathname)) serverApi.timeout(req, capabilityInvokeIdleSeconds)
       const featuredResponse = handleWorldFeaturedDefinitions(req, url, config.featuredDefinitions)
       if (featuredResponse) return secure(featuredResponse)
       const workspaceModuleResponse = await handleWorldModuleApi(req, url, config.workspaces)

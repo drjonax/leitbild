@@ -25,6 +25,8 @@ describe('bundled Room Definitions', () => {
     const assistant = definition.room.agents[0]!
     expect(assistant.includeContext).toEqual({ participants: true, activity: false, knownAgents: false })
     expect(assistant.tools).toEqual(['product_search', 'product_read', 'place_resolve', 'wiki_lookup'])
+    // A cost guard: past 20 tool rounds in one turn the Assistant asks the person whether to continue.
+    expect(assistant.maxToolIterations).toBe(20)
     expect(assistant).not.toHaveProperty('toolGrants')
     expect(definition.room).not.toHaveProperty('scope')
   })

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type {
+  CompiledComponent,
   CompiledPlantGraph,
   ProcessSignalBinding,
   ProcessSignalTagId,
@@ -60,6 +61,17 @@ export const findProcessPlantSignalBinding = (
   }
   return undefined
 }
+
+/**
+ * The component a signal is measured on: the component that owns it, or for a
+ * line's signal the equipment the line flows into. Its declared equipmentId is
+ * metadata and may name no component.
+ */
+export const signalMeasuredOn = (
+  graph: CompiledPlantGraph,
+  owner: ProcessSignalBinding['owner'],
+): CompiledComponent =>
+  graph.components[owner.type === 'component' ? owner.componentIndex : graph.links[owner.linkIndex]!.toComponentIndex]!
 
 export const resolveProcessPlantSignalPath = (
   graph: CompiledPlantGraph,

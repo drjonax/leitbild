@@ -7,6 +7,8 @@ export type ActorRole = z.infer<typeof actorRoleSchema>
 export interface Actor {
   readonly id: ActorId
   readonly label: string
+  /** The name the request gave its actor (the Host's access context), where it named one. */
+  readonly displayName?: string
   /** In a role Run, controller when any held role is controller-class, else operator. */
   readonly role: ActorRole
   /** The Scenario roles this actor holds; present only in a Run that declares roles. */

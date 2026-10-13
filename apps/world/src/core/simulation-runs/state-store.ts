@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { sameProcedureScope, operationalObjectSchema, procedureControlStateSchema, scenarioExecutionStateSchema, simulationClockStateSchema, type SimulationRunEvent, type ObjectId, type OperationalObject, type ProcedureControlState, type ProcedureId, type ProcedureRunScope, type ProcedureRunState, type ProcedureSourceId, type ProcedureStepRunState, type ScenarioExecutionState, type SimulationClockState } from '../model/index.ts'
+import { sameProcedureScope, operationalObjectSchema, procedureControlStateSchema, scenarioExecutionStateSchema, simulationClockStateSchema, type SimulationRunEvent, type ObjectId, type OperationalObject, type ProcedureControlState, type ProcedureId, type ProcedureRunScope, type ProcedureRunState, type ProcedureSourceId, type ProcedureStepDecision, type ProcedureStepRunState, type ScenarioExecutionState, type SimulationClockState } from '../model/index.ts'
 
 export interface SimulationRunStateSnapshot {
   readonly objects: ReadonlyArray<OperationalObject>
@@ -174,8 +174,21 @@ export const createSimulationRunStateStore = (): SimulationRunStateStore => {
       }) }
       return
     }
-    // The decision event is journal evidence, not a second placekeeping state.
-    if (event.type === 'procedure.branch.selected') return
+    // The step keeps its latest decision; the journal keeps every one.
+    if (event.type === 'procedure.branch.selected') {
+      const current = procedures ?? { runs: [] }
+      procedures = { runs: current.runs.map(run => run.runId !== event.runId ? run : recordProcedureDecision(run, event)) }
+      return
+    }
+    if (event.type === 'procedure.run.driver.changed') {
+      const current = procedures ?? { runs: [] }
+      procedures = { runs: current.runs.map(run => {
+        if (run.runId !== event.runId) return run
+        const { driver: _previous, ...rest } = run
+        return event.driver === undefined ? rest : { ...rest, driver: event.driver }
+      }) }
+      return
+    }
     if (event.type === 'procedure.observation.updated') {
       const current = procedures ?? { runs: [] }
       procedures = { runs: current.runs.map(run => run.runId !== event.runId ? run : {
@@ -230,6 +243,34 @@ const procedureRunMatchesScope = (
     && run.procedureId === config.procedureId
     && sameProcedureScope(run.scope, config.scope)
 
+const recordProcedureDecision = (
+  run: ProcedureRunState,
+  event: Extract<SimulationRunEvent, { readonly type: 'procedure.branch.selected' }>,
+): ProcedureRunState => {
+  const existing = run.stepStates.find(step => step.stepId === event.stepId)
+  const decision: ProcedureStepDecision = {
+    branchIndex: event.branchIndex,
+    ...(event.label === undefined ? {} : { label: event.label }),
+    ...(event.outcome === undefined ? {} : { outcome: event.outcome }),
+    targetKind: event.targetKind,
+    target: event.target,
+    ...(event.basis === undefined ? {} : { basis: event.basis }),
+    ...(event.evidence === undefined ? {} : { evidence: event.evidence }),
+    selectedBy: event.selectedBy,
+    ...(event.selectedByLabel === undefined ? {} : { selectedByLabel: event.selectedByLabel }),
+    simulationTime: event.simulationTime,
+  }
+  const nextStep: ProcedureStepRunState = existing === undefined
+    ? { stepId: event.stepId, assessment: 'blank', favorite: false, decision, updatedAt: event.at, updatedBy: event.selectedBy }
+    : { ...existing, decision }
+  return {
+    ...run,
+    stepStates: existing === undefined
+      ? [...run.stepStates, nextStep]
+      : run.stepStates.map(step => step.stepId === event.stepId ? nextStep : step),
+  }
+}
+
 const updateProcedureRunStep = (
   run: ProcedureRunState,
   config: {
@@ -252,6 +293,7 @@ const updateProcedureRunStep = (
       ? existing?.comment === undefined ? {} : { comment: existing.comment }
       : config.update.comment.trim().length === 0 ? {} : { comment: config.update.comment }),
     favorite: config.update.favorite ?? existing?.favorite ?? false,
+    ...(existing?.decision === undefined ? {} : { decision: existing.decision }),
     updatedAt: config.updatedAt,
     updatedBy: config.updatedBy,
   }
