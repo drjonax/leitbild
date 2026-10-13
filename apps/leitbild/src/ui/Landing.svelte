@@ -297,7 +297,7 @@
   .caption .lb-text-link { justify-self: start; margin-top: 4px; }
 
   /* Footer: outside <main>, one quiet line. */
-  .foot { display: flex; flex-wrap: wrap; gap: 8px 20px; max-width: var(--lb-max); margin: 0 auto; padding: 12px var(--lb-gutter) 28px;
+  .foot { display: flex; flex-wrap: wrap; gap: 8px 20px; max-width: calc(var(--lb-max) + 2 * var(--lb-gutter)); margin: 0 auto; padding: 12px var(--lb-gutter) 28px;
     color: var(--lb-ink-3); font-size: var(--lb-fs-micro); }
   .foot a { color: inherit; }
   .foot a:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }

@@ -101,7 +101,7 @@
     background: transparent; color: var(--lb-ink); font: inherit; font-weight: 700; cursor: pointer; }
   .toggle:hover { background: rgba(23, 32, 25, .06); }
   .toggle:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }
-  .count { color: var(--lb-ink-2); font-weight: 500; }
+  .count { color: var(--lb-ink-3); font-size: var(--lb-fs-small); font-weight: 400; }
   .list { margin: var(--lb-s2) 0 0; padding: 0; list-style: none; border: 1px solid var(--lb-line); border-radius: var(--lb-r-lg); background: var(--lb-surface); }
   .list[hidden] { display: none; }
   .scen { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px var(--lb-s4); min-height: 60px; padding: 10px 12px 10px 18px; }
