@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { moduleCapabilityCollectionSchema, newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
@@ -253,6 +253,29 @@ describe('People Capabilities', () => {
     const unprovisioned = newWorkspaceId()
     expect(await errorOf(await invoke(unprovisioned, 'agents.people.join', {}))).toMatchObject({ status: 404, code: 'workspace_not_found' })
     expect(existsSync(workspaceModulePaths(unprovisioned).root)).toBe(false)
+  })
+
+  test('storage refusals and unexpected failures are answered as retryable', async () => {
+    const workspaceId = await provision()
+    const original = process.env.LEITBILD_WORKSPACE_MAX_BYTES
+    // The admission budget reads its policy when this home's budget is first created.
+    process.env.LEITBILD_WORKSPACE_MAX_BYTES = '1'
+    try {
+      expect(await errorOf(await invoke(workspaceId, 'agents.people.join', {})))
+        .toMatchObject({ status: 507, code: 'storage_budget_exceeded', retryable: true })
+    } finally {
+      if (original === undefined) delete process.env.LEITBILD_WORKSPACE_MAX_BYTES
+      else process.env.LEITBILD_WORKSPACE_MAX_BYTES = original
+    }
+    const broken = await provision()
+    // A directory where the database file belongs cannot be opened as a store.
+    await mkdir(workspaceModulePaths(broken).agents.people)
+    const failed = spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(await errorOf(await invoke(broken, 'agents.people.join', {})))
+        .toMatchObject({ status: 500, code: 'people_unavailable', retryable: true })
+    } finally { failed.mockRestore() }
+    expect(registry.peopleStatus().storeFailures).toBe(1)
   })
 
   test('an aborted pending sync drops its waiter', async () => {
