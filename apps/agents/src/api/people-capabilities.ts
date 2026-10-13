@@ -297,6 +297,9 @@ export const invokePeopleCapability = async (
   if (invocation.resource !== undefined || invocation.definition !== undefined) {
     return refuse(409, 'capability_scope_invalid', 'People Capabilities take no Resource or Definition')
   }
+  if (invocation.expectedRevision !== undefined) {
+    return refuse(400, 'invalid_request', 'People Capabilities take no expectedRevision')
+  }
   if (invocation.idempotencyKey !== undefined && capability.acceptsIdempotencyKey !== true) {
     return refuse(400, 'idempotency_not_supported', 'This Capability does not support keyed retries')
   }
