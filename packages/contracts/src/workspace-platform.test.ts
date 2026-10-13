@@ -80,6 +80,7 @@ describe('Module contracts', () => {
         capabilities: '/internal/workspaces/{workspaceId}/capabilities',
         invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
         featuredDefinitions: '/internal/featured-definitions',
+        activity: '/internal/activity',
       },
     })
     expect(String(manifest.module.id)).toBe('world')
@@ -97,6 +98,7 @@ describe('Module contracts', () => {
       resources: '/internal/workspaces/{workspaceId}/resources',
       capabilities: '/internal/workspaces/{workspaceId}/capabilities',
       invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
+      activity: '/internal/activity',
     }
     const manifest = (featuredDefinitions?: string) => ({
       module: { id: 'agents', title: 'Agents' },

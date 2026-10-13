@@ -43,6 +43,7 @@ export const agentsModuleManifest = workspaceModuleManifestSchema.parse({
     capabilities: '/internal/workspaces/{workspaceId}/capabilities',
     invoke: '/internal/workspaces/{workspaceId}/capabilities/{capabilityId}/invoke',
     featuredDefinitions: '/internal/featured-definitions',
+    activity: '/internal/activity',
   },
   ui: { workspace: '/workspaces/{workspaceId}/agents' },
 })

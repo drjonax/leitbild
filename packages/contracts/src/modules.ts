@@ -40,6 +40,7 @@ export const workspaceModuleManifestSchema = z.object({
     capabilities: relativePathTemplateSchema,
     invoke: invocationPathTemplateSchema,
     featuredDefinitions: modulePathSchema,
+    activity: modulePathSchema,
   }).strict(),
   ui: z.object({
     workspace: relativePathTemplateSchema,
