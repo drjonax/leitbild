@@ -3,6 +3,19 @@
 
 import type { PeopleEnvironmentEvent, PeopleLock, PeoplePorts } from './people-session.ts'
 
+/**
+ * A version 4 UUID (the screen id Agents validates). `crypto.randomUUID` exists
+ * only in secure contexts, and a plain-http LAN origin is not one;
+ * `getRandomValues` is available everywhere.
+ */
+export const uuidV4 = (fill: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>): string => {
+  const bytes = fill(new Uint8Array(16))
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40 // version 4
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80 // RFC 4122 variant
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 const webLock = (): PeopleLock | null => {
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
   if (locks === undefined) return null
@@ -52,7 +65,7 @@ export const browserPeoplePorts = (): PeoplePorts => ({
   lock: webLock(),
   visible: () => document.visibilityState === 'visible',
   listen,
-  randomId: () => crypto.randomUUID(),
+  randomId: () => uuidV4(bytes => crypto.getRandomValues(bytes)),
   random: () => Math.random(),
   now: () => Date.now(),
   warn: (message, cause) => { if (cause === undefined) console.warn(message); else console.warn(message, cause) },
