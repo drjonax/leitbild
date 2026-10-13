@@ -290,13 +290,14 @@ export const readProcedureTags = async (config: {
 
 const evidenceReadingLength = 160
 
-/** A read as a decision records it: the value as formatted with its quality and conversion note, or why there was none. */
-export const procedureTagReadingText = (read: ProcedureTagRead): string => {
+/** A read as a decision records it: a two-state value names its model variable ("reactorTripBreakerA.closed = false"),
+ * any other its formatted value, with quality when not good; or why there was none. The binding's
+ * conversion note stays with the step's binding, not in every recorded reading. */
+export const procedureEvidenceReadingText = (read: ProcedureTagRead): string => {
   const text = read.value !== undefined
     ? [
-        read.value.formatted,
+        typeof read.value.value === 'boolean' && read.value.path !== undefined ? `${read.value.path} = ${String(read.value.value)}` : read.value.formatted,
         ...(read.value.quality === undefined || read.value.quality === 'good' ? [] : [`quality ${read.value.quality}`]),
-        ...(read.value.warning === undefined ? [] : [read.value.warning]),
       ].join('; ')
     : `${read.binding === 'missing' ? 'missing' : 'unavailable'}: ${read.unavailable ?? 'no value'}`
   return text.length <= evidenceReadingLength ? text : `${text.slice(0, evidenceReadingLength - 1)}…`

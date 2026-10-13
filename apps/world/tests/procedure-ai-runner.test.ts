@@ -150,7 +150,11 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(decision.evidence!.map(item => item.tagId)).toEqual(['TRIP-BKR-A', 'NIS-PR-AVG'])
     // The decision records what World read, as the step read showed it (the plant is paused).
     const shown = readTags.filter(tag => tag.id !== 'TRIP-BKR-B')
-    decision.evidence!.forEach((item, index) => expect(item.reading.startsWith(shown[index]!.reading.formatted)).toBe(true))
+    // A two-state reading names its model variable; any other starts with the value the step view showed.
+    decision.evidence!.forEach((item, index) => {
+      const reading = shown[index]!.reading
+      expect(reading.signal === undefined ? item.reading.startsWith(reading.formatted) : item.reading === `${reading.signal} = ${reading.formatted.split(' ')[0]}`).toBe(true)
+    })
 
     // A person's tick takes the run over; from then on the AI agent only reads it.
     const personTick = await invoke('world.procedure.step.update', { runId, stepId: 'verify-turbine-trip', assessment: 'complete' }, human)

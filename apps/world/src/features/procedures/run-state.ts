@@ -12,7 +12,7 @@ import {
   aiResetRefusal, assertAiDecisionEvidence, assertAiDrives, assertAiMayDrive, assertAiStepUpdate,
   procedureBranchVerdict, procedureDriver, sameProcedureDriver, type ProcedureActorKind,
 } from './driver-rules.ts'
-import { procedureTagReadingText, readProcedureTags, type ProcedureObservationPort, type ProcedureTagRead } from './pack-observations.ts'
+import { procedureEvidenceReadingText, readProcedureTags, type ProcedureObservationPort, type ProcedureTagRead } from './pack-observations.ts'
 
 export interface ProcedureCommitContext {
   readonly simulationRunId: SimulationRunId
@@ -215,7 +215,7 @@ export const prepareProcedureCommand = async (config: {
       declared: document.tags,
       tagIds: evidenceTagIds,
     })
-    const evidence = evidenceReads.map(read => ({ tagId: read.tagId, reading: procedureTagReadingText(read) }))
+    const evidence = evidenceReads.map(read => ({ tagId: read.tagId, reading: procedureEvidenceReadingText(read) }))
     return context => {
       const run = activeRunFor(context.procedures, payload.runId)
       assertDocumentScope(context, document, run.scope)
