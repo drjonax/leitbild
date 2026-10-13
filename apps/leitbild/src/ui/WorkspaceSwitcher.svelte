@@ -1,14 +1,16 @@
 <script lang="ts">
   // The top bar's "Workspaces ▾" (plan v2 §3, VISUAL-SPEC §3.3). A popover at
   // ≥ 640 px and a modal sheet below. Recent in this browser first, every
-  // public Workspace behind a collapsed disclosure, and an inline "New
-  // Workspace". No rename or delete here. Row logic lives in workspace-switcher.ts.
+  // public Workspace behind a collapsed disclosure, a quiet "Manage
+  // Workspaces" link (where they are deleted) and an inline "New Workspace".
+  // Row logic lives in workspace-switcher.ts.
   import { tick } from 'svelte'
   import type { Workspace } from '@leitbild/contracts'
   import Icon from './Icon.svelte'
   import { plainErrorText } from './error-text.ts'
   import { workspacePath } from './launch-destination.ts'
   import { createWorkspaceApi, newWorkspaceName, workspaceLabel, type WorkspaceApi } from './launch-workspace.ts'
+  import { manageHref } from './modal-url.ts'
   import { browserWorkspaceMemory, type WorkspaceMemory } from './workspace-memory.ts'
   import {
     filterRows, matchCountText, SEARCH_THRESHOLD, SWITCHER_FOOTNOTE, SWITCHER_INTRO, switcherGroups, switcherKeyTarget,
@@ -21,6 +23,7 @@
     api = createWorkspaceApi(),
     memory = browserWorkspaceMemory(),
     now = () => new Date(),
+    onmanage,
   }: {
     /** The Workspace the button names: the page's own (Workspace page) or the remembered one (landing). */
     current?: Pick<Workspace, 'id' | 'name'> | null
@@ -29,6 +32,8 @@
     api?: WorkspaceApi
     memory?: WorkspaceMemory
     now?: () => Date
+    /** The landing page opens Manage Workspaces in place; elsewhere the link goes to /workspaces?manage. */
+    onmanage?: (event: MouseEvent) => void
   } = $props()
 
   const uid = `ws-${Math.random().toString(36).slice(2, 8)}`
@@ -144,6 +149,12 @@
   }
 
   const pick = (row: SwitcherRow): void => { memory.remember(row.id, 'picked') }
+  const manage = (event: MouseEvent): void => {
+    if (!onmanage || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    close()
+    onmanage(event)
+  }
 
   const create = async (event: SubmitEvent): Promise<void> => {
     event.preventDefault()
@@ -216,6 +227,7 @@
         {/if}
       {/if}
     </div>
+    <a class="manage" href={manageHref()} data-nav aria-haspopup="dialog" onclick={manage}><Icon name="list" size={16} />Manage Workspaces</a>
     <form class="new" onsubmit={create}>
       <label class="new-label" for={`${uid}-name`}><Icon name="plus" size={16} />New Workspace</label>
       <div class="new-row">
@@ -302,6 +314,11 @@
   .disclosure :global(.chevron) { color: var(--lb-ink-3); transition: transform var(--lb-t-fast) var(--lb-ease); }
   .disclosure[aria-expanded="true"] :global(.chevron) { transform: rotate(180deg); }
   .muted { margin: 0; padding: 10px 8px; color: var(--lb-ink-3); font-size: var(--lb-fs-small); }
+  .manage { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-top: 1px solid var(--lb-line);
+    color: var(--lb-ink-2); font-size: .8125rem; font-weight: 600; text-decoration: none; }
+  .manage:hover { color: var(--lb-ink); background: var(--lb-surface-2); }
+  .manage:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: -2px; }
+  .manage :global(svg) { color: var(--lb-ink-3); }
   .error { margin: 6px 8px; color: var(--lb-danger); font-size: var(--lb-fs-small); }
 
   .new { display: grid; gap: 8px; margin: 0; padding: 10px; border-top: 1px solid var(--lb-line); background: var(--lb-surface-2); }
@@ -329,5 +346,6 @@
   }
   @media (pointer: coarse) {
     .ws-button { min-height: 44px; }
+    .manage { min-height: 44px; }
   }
 </style>

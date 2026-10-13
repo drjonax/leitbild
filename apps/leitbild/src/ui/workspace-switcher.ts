@@ -1,6 +1,7 @@
 // The Workspaces switcher's rows (plan v2 §3): recent in this browser first,
 // then every public Workspace behind a collapsed disclosure. Never a raw id as
-// a label; no rename or delete here.
+// a label; no rename or delete here: its "Manage Workspaces" link opens the
+// list where Workspaces are deleted.
 
 import { shortDate, workspaceLabel } from './launch-workspace.ts'
 
@@ -56,7 +57,7 @@ export const switcherGroups = (
 }
 
 /** Rows whose label (or short id) contains the query, case-insensitive. */
-export const filterRows = (rows: ReadonlyArray<SwitcherRow>, query: string): ReadonlyArray<SwitcherRow> => {
+export const filterRows = <Row extends Pick<SwitcherRow, 'id' | 'label'>>(rows: ReadonlyArray<Row>, query: string): ReadonlyArray<Row> => {
   const needle = query.trim().toLocaleLowerCase()
   if (!needle) return rows
   return rows.filter(row => row.label.toLocaleLowerCase().includes(needle) || row.id.startsWith(needle))

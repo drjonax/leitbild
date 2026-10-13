@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createModalUrl, demoKey, demosHref, guideHref, isDemosModalRoute, modalRouteUrl, readModalRoute, type ModalUrlPort } from './modal-url.ts'
+import { createModalUrl, demoKey, demosHref, guideHref, isDemosModalRoute, manageHref, modalRouteUrl, readModalRoute, type ModalUrlPort } from './modal-url.ts'
 
 /** A tiny in-memory history with popstate, like the browser's. */
 const fakeWindow = (href: string) => {
@@ -62,6 +62,16 @@ describe('modal deep links', () => {
       .toBe('/workspaces?demos=world%3Ahalden-emergency')
     expect(modalRouteUrl({ kind: 'none' }, 'https://leitbild.app/workspaces?scenarios&x=1')).toBe('/workspaces?x=1')
     expect(modalRouteUrl({ kind: 'guide', page: 'start', card: null }, 'https://leitbild.app/workspaces?scenarios')).toBe('/workspaces?guide=start')
+  })
+
+  test('reads and writes ?manage for Manage Workspaces, after the other modals', () => {
+    expect(readModalRoute('?manage')).toEqual({ kind: 'manage' })
+    expect(readModalRoute('?manage=x&world=run')).toEqual({ kind: 'manage' })
+    expect(readModalRoute('?demos&manage')).toEqual({ kind: 'demos', demo: null })
+    expect(isDemosModalRoute({ kind: 'manage' })).toBe(false)
+    expect(modalRouteUrl({ kind: 'manage' }, 'https://leitbild.app/workspaces?x=1&guide=start#top')).toBe('/workspaces?x=1&manage#top')
+    expect(modalRouteUrl({ kind: 'none' }, 'https://leitbild.app/workspaces?manage&x=1')).toBe('/workspaces?x=1')
+    expect(manageHref()).toBe('/workspaces?manage')
   })
 
   test('writes one namespace per parameter and keeps other parameters', () => {

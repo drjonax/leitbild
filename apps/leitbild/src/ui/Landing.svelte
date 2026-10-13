@@ -1,8 +1,9 @@
 <script lang="ts">
   // The landing page at /workspaces (plan v2 §2–§3): top bar, hero with the
   // owner's tagline and a 6-slide carousel, the map credit and the footer.
-  // It owns the modal deep links (?demos, ?scenarios, ?guide) and loads both
-  // modals on demand. It selects no Workspace; the remembered one is only a hint.
+  // It owns the modal deep links (?demos, ?scenarios, ?guide, ?manage) and
+  // loads each modal on demand. It selects no Workspace; the remembered one is
+  // only a hint.
   import { onMount, type Component } from 'svelte'
   import type { Workspace } from '@leitbild/contracts'
   import { version } from '../../package.json'
@@ -43,11 +44,14 @@
   let openedBy = $state<'keyboard' | 'pointer' | 'link'>('link')
   let demosOpen = $state(false)
   let guideOpen = $state(false)
+  let manageOpen = $state(false)
   let menuOpen = $state(false)
   let DemosModal = $state<Component<any> | null>(null)
   let GuideModal = $state<Component<any> | null>(null)
+  let ManageWorkspaces = $state<Component<any> | null>(null)
   let tryButton = $state<HTMLElement | null>(null)
   let guideButton = $state<HTMLElement | null>(null)
+  let manageLink = $state<HTMLElement | null>(null)
 
   let current = $state(0)
   let shown = $state(new Set<number>([0]))
@@ -57,9 +61,11 @@
 
   $effect(() => { demosOpen = isDemosModalRoute(route) })
   $effect(() => { guideOpen = route.kind === 'guide' })
+  $effect(() => { manageOpen = route.kind === 'manage' })
   $effect(() => {
     if (isDemosModalRoute(route) && !DemosModal) void import('./DemosModal.svelte').then(module => { DemosModal = module.default })
     if (route.kind === 'guide' && !GuideModal) void import('./GuideModal.svelte').then(module => { GuideModal = module.default })
+    if (route.kind === 'manage' && !ManageWorkspaces) void import('./ManageWorkspaces.svelte').then(module => { ManageWorkspaces = module.default })
   })
 
   const refreshRemembered = (): void => {
@@ -96,6 +102,16 @@
     if (reason === 'programmatic') return
     modalUrl.close()
     route = NO_MODAL
+  }
+  // Manage Workspaces may have deleted the remembered one: "Continue in …" follows.
+  const onManageClosed = (reason: ModalCloseReason): void => {
+    onModalClose(reason)
+    hinted = memory.remembered() !== null
+    if (hinted && memory.remembered() !== remembered?.id) refreshRemembered()
+    if (!hinted) {
+      remembered = null
+      rememberedNotice = null
+    }
   }
   const fromMenu = (next: ModalRoute) => (event: MouseEvent): void => {
     menuOpen = false
@@ -150,7 +166,7 @@
 <header class="bar">
   <Wordmark tone="dark" mark href="/workspaces" label="Leitbild.ai home" />
   <span class="sep" aria-hidden="true"></span>
-  <WorkspaceSwitcher current={remembered} {api} {memory} />
+  <WorkspaceSwitcher current={remembered} {api} {memory} onmanage={event => openRoute({ kind: 'manage' }, event)} />
   <nav class="nav" aria-label="Main">
     <div class="wide">
       <a class="nav-link" href={routeHref({ kind: 'guide', page: 'start', card: null })} aria-haspopup="dialog"
@@ -208,6 +224,7 @@
   <a href={LICENCE_HREF}>MIT licence</a>
   <a href={CREDIT_LINK.href}>Data credits</a>
   <a href="/wiki">Wiki</a>
+  <a bind:this={manageLink} href={routeHref({ kind: 'manage' })} aria-haspopup="dialog" onclick={onRouteClick({ kind: 'manage' })}>Manage Workspaces</a>
   <span class="foot-note">{FOOTER_NOTE}</span>
 </footer>
 
@@ -226,6 +243,9 @@
     ondemochange={(key: string) => { if (isDemosModalRoute(route)) modalUrl.replace({ kind: 'demos', demo: key }) }}
     onviewchange={(next: ModalRoute) => { if (isDemosModalRoute(route)) modalUrl.replace(next) }}
     onstopped={(text: string | null) => { stopped = text ?? '' }} />
+{/if}
+{#if ManageWorkspaces}
+  <ManageWorkspaces bind:open={manageOpen} {api} {memory} onclose={onManageClosed} fallbackFocus={() => manageLink} />
 {/if}
 {#if GuideModal}
   <GuideModal bind:open={guideOpen} page={route.kind === 'guide' ? route.page : 'start'} card={route.kind === 'guide' ? route.card : null}
