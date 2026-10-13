@@ -647,7 +647,7 @@
   <header class="workspace-bar"><div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" label="Leitbild.ai home" /></div></header>
 {:else if showingComposer && workspace}
   <header class="workspace-bar">
-    <div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" compact label="Leitbild.ai home" /><a class="workspace-name" href={workspacePath(workspace.id)} title={workspaceTitle}>{workspaceTitle}</a>
+    <div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" compact label="Leitbild.ai home" /><a class="workspace-name" href={workspacePath(workspace.id)} title={workspaceTitle}><span>{workspaceTitle}</span></a>
       {#if peopleShown && people && peopleState && selectedWorldResource}<PeopleControl bind:this={peopleControl} session={people} people={peopleState}
         runUrl={peopleRunUrl} runId={selectedWorldResource.ref.id} onOpenChat={openPeopleChat} />{/if}
       {#if fromGuide}<a class="guide-back" href={guideHref('ask')}>← Getting started</a>{/if}</div>
@@ -814,17 +814,17 @@
   }
   @media (pointer: coarse) { .ws-topbar :global(.nav-link) { min-height: 44px; } }
 
-  /* The Workspace name ellipsises before the people control beside it shrinks, and the
-     Run's controls never shrink below their buttons (they would overlap their neighbours):
-     the name gives way first, and below 560 px goes, as the wordmark becomes its mark. */
-  .workspace-name { min-width: 0; }
-  .workspace-actions { flex-shrink: 0; }
-  @media (max-width: 559px) { .workspace-name { display: none; } }
-  /* Below 470 px the identity keeps its mark and people control, and the Run's controls scroll in their strip. */
-  @media (max-width: 469px) {
-    .workspace-identity { flex-shrink: 0; }
-    .workspace-actions { flex-shrink: 1; }
-  }
+  /* A crowded Run bar gives way in order, so nothing overlaps: first the Workspace name
+     ellipsises down to four letters, never further, as it is the way back to the Workspace
+     page; then the Run's title; then, at 760 px and below, the Run's controls scroll
+     sideways in their own strip (SimulationRunControls.svelte). The identity never gets
+     narrower than its mark, those letters and the people control (the name's grid column
+     has no minimum, so the name adds only its four letters to that), its shrink weight
+     makes it give way before the Run's controls, and no other control in the bar shrinks. */
+  .workspace-identity { min-width: auto; flex-shrink: 100; }
+  .workspace-name { display: grid; grid-template-columns: minmax(0, auto); min-width: 4ch; }
+  .workspace-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-actions > :global(:not(.run-controls)) { flex-shrink: 0; }
   .guide-back { flex: none; color: #aebbb0; font-size: .78rem; text-decoration: none; white-space: nowrap; }
   .guide-back:hover { color: white; }
   .guide-back:focus-visible { outline: 2px solid var(--lb-focus-on-dark); outline-offset: 2px; border-radius: 4px; }
