@@ -58,9 +58,20 @@ export interface AgentTurnStart {
   readonly requireView?: boolean
 }
 
+/** A line a turn posts while it runs (ToolResult.progress), in the Room it answers. */
+export interface AgentProgress {
+  readonly roomId: string
+  readonly content: string
+  readonly inReplyTo?: ReadonlyArray<string>
+}
+
 export interface AIAgentOptions {
   readonly onTurnStart?: (input: AgentTurnStart) => Promise<void>
   readonly onTurnFinished?: (executionTurnId: string) => void
+  // Posts a turn's progress line to its Room at once, as this Agent's own
+  // message (Message.progress). Standalone/test agents without a Room runtime
+  // omit it and post none.
+  readonly onProgress?: (progress: AgentProgress) => void
   readonly executionStore?: ExecutionStore
   readonly executionGrowth?: <T>(bytes: number, work: () => Promise<T>) => Promise<T>
   readonly toolExecutor?: ToolExecutor
@@ -108,8 +119,10 @@ export interface AIAgentOptions {
 }
 
 // Messages that ask the agent for an answer; the others only join its view.
+// A progress line reports a turn that is still running; its answer follows.
 const triggersEvaluation = (message: Message): boolean =>
   message.type !== 'system' && message.type !== 'join' && message.type !== 'leave' && message.type !== 'pass' && message.type !== 'error'
+  && message.progress !== true
 
 // === Factory ===
 
@@ -364,12 +377,25 @@ export const createAIAgent = (
         pendingCheckins.set(triggerRoomId, finish)
       })
     }
+    // A line that cannot be posted is reported, never a failed turn: the
+    // change it reports has happened and its answer still follows.
+    const onProgress = options?.onProgress
+    const postProgress = onProgress && ((line: string): void => {
+      try {
+        onProgress({ roomId: triggerRoomId, content: line, ...(inReplyTo ? { inReplyTo } : {}) })
+      } catch (error) {
+        const message = `Could not post a progress line: ${error instanceof Error ? error.message : String(error)}`
+        console.error(`[${config.name}] ${message}`)
+        emit({ kind: 'warning', message })
+      }
+    })
     const evalOpts = {
       executionTurnId: traceId,
       ...(evalToolDefs ? { toolDefinitions: evalToolDefs } : {}),
       ...(inReplyTo ? { inReplyTo } : {}),
       ...(requireView ? { requireView } : {}),
       onEvent: emit,
+      ...(postProgress ? { onProgress: postProgress } : {}),
       signal,
       ...(checkinEnabled && maxToolIterationsCfg !== undefined ? { requestToolCheckin } : {}),
     }
@@ -612,7 +638,9 @@ export const createAIAgent = (
 
   // --- Receive ---
   // All messages have a roomId. Own messages go straight to room history for
-  // re-evaluation continuity without triggering a new eval.
+  // re-evaluation continuity without triggering a new eval. That includes the
+  // progress lines of a running turn; flushIncoming keeps them after the
+  // messages the turn answers.
 
   const receive = (message: Message): void => {
     extractProfile(message, agentId, agentHistory.agentProfiles)
