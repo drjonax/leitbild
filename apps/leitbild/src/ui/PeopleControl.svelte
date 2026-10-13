@@ -308,7 +308,12 @@
 
   // --- toast ----------------------------------------------------------------------
   let toastTimer: ReturnType<typeof setTimeout> | null = null
-  /** Hovered or focused: a removed toast fires no mouseleave or focusout, so a new or dismissed toast clears it. */
+  let toastElement = $state<HTMLElement | null>(null)
+  /**
+   * Hovered or focused. A toast replaced in place keeps its element, and the
+   * pointer or focus that is on it, so a new toast reads that from the element;
+   * a removed toast fires no mouseleave or focusout, so none clears it.
+   */
   let toastPaused = false
   const toastId = $derived(people.toast?.id ?? null)
   const stopToastTimer = (): void => {
@@ -321,7 +326,10 @@
   }
   $effect(() => {
     const id = toastId
-    toastPaused = false
+    untrack(() => {
+      const element = toastElement
+      toastPaused = id !== null && element !== null && (element.matches(':hover') || element.matches(':focus-within'))
+    })
     if (id === null) return
     untrack(armToast)
     return stopToastTimer
@@ -454,7 +462,7 @@
 
   {#if people.toast !== null}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="toast" onmouseenter={pauseToast} onmouseleave={resumeToast} onfocusin={pauseToast} onfocusout={resumeToast}>
+    <div bind:this={toastElement} class="toast" onmouseenter={pauseToast} onmouseleave={resumeToast} onfocusin={pauseToast} onfocusout={resumeToast}>
       {#if people.toast.kind === 'message'}
         <button class="toast-open" type="button" aria-label={`Open chat with ${people.toast.from.name}`} onclick={openFromToast}>
           <PersonAvatar person={people.toast.from} size={28} />
