@@ -20,7 +20,7 @@ import {
   processPlantIcLifecycleCommandKind,
   processPlantIcLifecyclePayloadSchema,
 } from './commands.ts'
-import { processPlantIcQueryKinds } from './ic-query.ts'
+import { processPlantIcCatalogQuerySchema, processPlantIcQueryKinds } from './ic-query.ts'
 import { operationRecordSchema, resetRecordSchema } from './operations/plant-operations.ts'
 import { processPlantProposalSchema } from './operations/proposals.ts'
 import { operationConsequenceSchema } from './operations/consequence.ts'
@@ -194,7 +194,15 @@ const queryOutputById: Readonly<Record<string, z.ZodType>> = {
   }).strict(),
   'world.process-plant.transient.diagnostics': z.object({ plantId: plantIdSchema, diagnostics: recordSchema, ic: recordSchema }).strict(),
   'world.process-plant.ic.status': z.object({ plantId: plantIdSchema, ic: recordSchema }).strict(),
-  'world.process-plant.ic.catalog': z.object({ plantId: plantIdSchema, ic: recordSchema }).strict(),
+  'world.process-plant.ic.catalog': z.object({
+    plantId: plantIdSchema,
+    ruleCount: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    returned: z.number().int().nonnegative(),
+    hasMore: z.boolean(),
+    rules: recordArraySchema,
+  }).strict(),
   'world.process-plant.alarms.status': z.object({ plantId: plantIdSchema, alarms: recordArraySchema, trips: recordArraySchema, summary: recordSchema }).strict(),
   'world.process-plant.alarms.summary': z.object({ plantId: plantIdSchema, summary: recordSchema }).strict(),
   'world.process-plant.alarms.history': z.object({ plantId: plantIdSchema, history: recordArraySchema }).strict(),
@@ -305,7 +313,7 @@ const queryInputById: Readonly<Record<string, z.ZodType>> = {
   'world.process-plant.controls.list': controlsListQuerySchema,
   'world.process-plant.runtime.status': processPlantCatalogInputSchema,
   'world.process-plant.transient.diagnostics': plantQuerySchema,
-  ...Object.fromEntries(processPlantIcQueryKinds.map(id => [id, plantQuerySchema])),
+  ...Object.fromEntries(processPlantIcQueryKinds.map(id => [id, id === 'world.process-plant.ic.catalog' ? processPlantIcCatalogQuerySchema : plantQuerySchema])),
   'world.process-plant.display.compose': displayComposeQuerySchema,
   'world.process-plant.display.overview': displayOverviewQuerySchema,
   'world.process-plant.display.view': displayViewQuerySchema,
@@ -342,7 +350,7 @@ const queryDescriptionById: Readonly<Record<string, string>> = {
   'world.process-plant.runtime.status': 'Summarize active Process Plant runtime health, elapsed time, and variable publication counts.',
   'world.process-plant.transient.diagnostics': 'Read detailed transient, performance, and instrumentation diagnostics for one Plant.',
   'world.process-plant.ic.status': 'Read the complete current I&C snapshot for one Plant, including inactive alarm and trip lifecycle state.',
-  'world.process-plant.ic.catalog': 'Discover configured alarm and trip definitions for one Plant.',
+  'world.process-plant.ic.catalog': 'Discover one Plant\'s configured I&C rules (alarms, trips, protection and control): each rule\'s class, the modes it acts in, its effects and command gates, and the signals it watches by tagId, label and unit; signals.read gives their readings. Filter by text (words in the rule, its effects or its signals, e.g. "safety injection"), ruleClass or ruleIds. Returns a page of 25 rules by default (limit up to 100; continue from offset + returned while hasMore), with ruleCount, the Plant\'s total.',
   'world.process-plant.alarms.status': 'Read active alarms and trips plus a compact current lifecycle summary for one Plant. Use ic.status only when inactive lifecycle records are needed.',
   'world.process-plant.alarms.summary': 'Read a compact current alarm and trip summary for one Plant.',
   'world.process-plant.alarms.history': 'Read alarm and trip lifecycle transitions recorded for one Plant.',

@@ -269,10 +269,11 @@ const turnOperations = async (turnId: string) => {
   return operations
 }
 
-/** One row per operation a tool call ran (a workspace_call batches several; resultBytes is the whole call's). */
+/** One row per operation a tool call ran (a workspace_call batches several; resultBytes is the whole call's). The argument
+ * keys tell a discovery call's kind: an operation search (queries), by id (operationIds), with schemas (includeInputSchema). */
 const toolTraceOf = (answer: any) => (answer.toolTrace as ReadonlyArray<any> | undefined ?? []).flatMap((entry, call) => {
   const outcomes = entry.operationOutcomes as ReadonlyArray<{ operationId: string; success: boolean }> | undefined
-  const base = { call, tool: entry.tool as string, resultBytes: (entry.resultBytes ?? null) as number | null }
+  const base = { call, tool: entry.tool as string, argumentKeys: (entry.argumentKeys ?? []) as ReadonlyArray<string>, resultBytes: (entry.resultBytes ?? null) as number | null }
   if (outcomes !== undefined && outcomes.length > 0) return outcomes.map(outcome => ({ ...base, operationId: outcome.operationId, success: outcome.success }))
   const ids = (entry.operationIds ?? []) as ReadonlyArray<string>
   return [{ ...base, operationId: ids.length === 0 ? null : ids.join(','), success: entry.success as boolean }]

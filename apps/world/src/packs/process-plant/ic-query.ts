@@ -1,7 +1,8 @@
+import { z } from 'zod'
 import type { PackRuntimeQuery } from '../../simulation/protocol.ts'
-import type { ProcessPlantIcLifecycleState, ProcessPlantIcSnapshot } from './runtime/index.ts'
+import { processPlantIcRuleClassSchema, type ProcessPlantIcLifecycleState, type ProcessPlantIcRuleCatalogEntry, type ProcessPlantIcSnapshot } from './runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from './runtime-instance.ts'
-import { failure, plantQuerySchema, requirePlant } from './queries/common.ts'
+import { failure, paginateProcessPlantSearch, plantQuerySchema, requirePlant } from './queries/common.ts'
 
 export const processPlantIcQueryKinds = [
   'world.process-plant.ic.status',
@@ -10,6 +11,31 @@ export const processPlantIcQueryKinds = [
   'world.process-plant.alarms.summary',
   'world.process-plant.alarms.history',
 ] as const
+
+// The reference PWR's catalog holds 154 rules of up to 7.6 KB each with the
+// signals they watch, 170 KB in all (a default page: 29 KB). A page bounds
+// what one read puts in a caller's context; ruleCount says how many rules the
+// Plant has.
+export const PROCESS_PLANT_IC_CATALOG_DEFAULT_LIMIT = 25
+export const PROCESS_PLANT_IC_CATALOG_MAX_LIMIT = 100
+
+export const processPlantIcCatalogQuerySchema = plantQuerySchema.extend({
+  text: z.string().trim().min(1).max(200).optional()
+    .describe('Words every listed rule contains in its id, label, class, modes, effects or watched signals (tagId, label or path), e.g. "safety injection".'),
+  ruleClass: processPlantIcRuleClassSchema.optional(),
+  ruleIds: z.array(z.string().min(1).max(128)).min(1).max(64).optional().describe('Exact rule ids, as a page or an actuation reset names them.'),
+  offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().min(1).max(PROCESS_PLANT_IC_CATALOG_MAX_LIMIT).default(PROCESS_PLANT_IC_CATALOG_DEFAULT_LIMIT),
+}).strict()
+
+const catalogTerms = (text: string): ReadonlyArray<string> =>
+  [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])]
+
+const catalogRuleText = (rule: ProcessPlantIcRuleCatalogEntry): string => [
+  rule.id, rule.label ?? '', rule.ruleClass, ...(rule.modes ?? []),
+  ...rule.effects.flatMap(effect => [effect.id, effect.title ?? '', effect.signal?.tagId ?? '', effect.signal?.label ?? '', effect.signal?.path ?? '']),
+  ...[...rule.watchedSignals, ...rule.commandGates.map(gate => gate.signal)].flatMap(signal => [signal.tagId ?? '', signal.label, signal.path]),
+].join(' ').toLowerCase()
 
 const alarmLifecycleStates = (
   snapshot: ProcessPlantIcSnapshot,
@@ -69,7 +95,10 @@ export const answerProcessPlantIcQuery = (config: {
   if (!supportedKinds.has(config.request.capabilityId)) {
     return undefined
   }
-  const payload = plantQuerySchema.parse(config.request.input)
+  const catalogQuery = config.request.capabilityId === 'world.process-plant.ic.catalog'
+    ? processPlantIcCatalogQuerySchema.parse(config.request.input)
+    : undefined
+  const payload = catalogQuery ?? plantQuerySchema.parse(config.request.input)
   const system = requirePlant(config.plants, payload.plantId)
   if (!system.protection) return failure(`process plant I&C is not configured for plant: ${payload.plantId}`)
   const snapshot = system.protection.snapshot()
@@ -99,8 +128,23 @@ export const answerProcessPlantIcQuery = (config: {
         history: snapshot.history,
       }
   }
+  if (catalogQuery === undefined) throw new Error(`I&C query ${config.request.capabilityId} has no answer`)
+  const query = catalogQuery
+  const catalog = system.protection.catalog()
+  const terms = query.text === undefined ? [] : catalogTerms(query.text)
+  const ruleIds = query.ruleIds === undefined ? undefined : new Set(query.ruleIds)
+  const rules = catalog.rules.filter(rule =>
+    (query.ruleClass === undefined || rule.ruleClass === query.ruleClass)
+    && (ruleIds === undefined || ruleIds.has(rule.id))
+    && (terms.length === 0 || terms.every(term => catalogRuleText(rule).includes(term))))
+  const page = paginateProcessPlantSearch(rules, query.offset, query.limit)
   return {
     plantId: payload.plantId,
-    ic: system.protection.catalog(),
+    ruleCount: catalog.ruleCount,
+    total: page.total,
+    offset: page.offset,
+    returned: page.returned,
+    hasMore: page.hasMore,
+    rules: page.items,
   }
 }

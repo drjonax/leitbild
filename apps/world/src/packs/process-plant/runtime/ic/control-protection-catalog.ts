@@ -3,18 +3,31 @@ import { processPlantSignalView, resolveProcessPlantSignalBinding } from '../../
 import type { ProcessPlantSignalReference, ProcessPlantSignalView } from '../../signals.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcEffect, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from './control-protection-model.ts'
 
+/**
+ * A signal as the I&C catalog names it. Its full view (span, limits,
+ * capabilities, owner) is the signal's own and comes from signals.resolve or
+ * signals.read: repeated in every rule that watches it, it was 58 % of the
+ * reference PWR's 494 KB catalog.
+ */
+export interface ProcessPlantIcCatalogSignal {
+  readonly path: ProcessPlantSignalView['path']
+  readonly tagId?: ProcessPlantSignalView['tagId']
+  readonly label: string
+  readonly unit: ProcessPlantSignalView['unit']
+}
+
 export interface ProcessPlantIcEffectCatalogEntry {
   readonly id: string
   readonly type: ProcessPlantIcEffect['type']
   readonly title?: string
   readonly severity?: string
-  readonly signal?: ProcessPlantSignalView
+  readonly signal?: ProcessPlantIcCatalogSignal
   readonly value?: number | boolean
   readonly annunciator?: unknown
 }
 
 export interface ProcessPlantIcCommandGateCatalogEntry {
-  readonly signal: ProcessPlantSignalView
+  readonly signal: ProcessPlantIcCatalogSignal
   readonly message?: string
 }
 
@@ -25,7 +38,7 @@ export interface ProcessPlantIcRuleCatalogEntry {
   readonly ruleClass: ProcessPlantIcRule['ruleClass']
   /** The operating modes it acts in, as declared ("Power operation"); absent, it acts in every mode. */
   readonly modes?: ReadonlyArray<string>
-  readonly watchedSignals: ReadonlyArray<ProcessPlantSignalView>
+  readonly watchedSignals: ReadonlyArray<ProcessPlantIcCatalogSignal>
   readonly effects: ReadonlyArray<ProcessPlantIcEffectCatalogEntry>
   readonly commandGates: ReadonlyArray<ProcessPlantIcCommandGateCatalogEntry>
 }
@@ -51,14 +64,19 @@ const collectConditionSignals = (
   for (const child of condition.conditions) collectConditionSignals(child, into)
 }
 
-const uniqueSignalViews = (
+const catalogSignal = (system: CompiledProcessPlant, reference: ProcessPlantSignalReference): ProcessPlantIcCatalogSignal => {
+  const { path, tagId, label, unit } = processPlantSignalView(resolveProcessPlantSignalBinding(system.graph, reference))
+  return { path, ...(tagId === undefined ? {} : { tagId }), label, unit }
+}
+
+const uniqueSignals = (
   system: CompiledProcessPlant,
   references: ReadonlyArray<ProcessPlantSignalReference>,
-): ReadonlyArray<ProcessPlantSignalView> => {
-  const byPath = new Map<string, ProcessPlantSignalView>()
+): ReadonlyArray<ProcessPlantIcCatalogSignal> => {
+  const byPath = new Map<string, ProcessPlantIcCatalogSignal>()
   for (const reference of references) {
-    const view = processPlantSignalView(resolveProcessPlantSignalBinding(system.graph, reference))
-    byPath.set(String(view.path), view)
+    const signal = catalogSignal(system, reference)
+    byPath.set(String(signal.path), signal)
   }
   return [...byPath.values()]
 }
@@ -71,7 +89,7 @@ const effectCatalogEntry = (
     return {
       id: effect.id,
       type: effect.type,
-      signal: processPlantSignalView(resolveProcessPlantSignalBinding(system.graph, effect.signal)),
+      signal: catalogSignal(system, effect.signal),
       value: effect.value,
     }
   }
@@ -109,10 +127,10 @@ export const catalogForProcessPlantIcRules = (
       enabled: rule.enabled,
       ruleClass: rule.ruleClass,
       ...(modes.length === 0 ? {} : { modes: modes.map(mode => mode.label) }),
-      watchedSignals: uniqueSignalViews(system, watchedSignals),
+      watchedSignals: uniqueSignals(system, watchedSignals),
       effects: rule.effects.map(effect => effectCatalogEntry(system, effect)),
       commandGates: rule.commandGates.map(gate => ({
-        signal: processPlantSignalView(resolveProcessPlantSignalBinding(system.graph, gate.signal)),
+        signal: catalogSignal(system, gate.signal),
         ...(gate.message === undefined ? {} : { message: gate.message }),
       })),
     }
