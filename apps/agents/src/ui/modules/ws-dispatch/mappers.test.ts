@@ -67,6 +67,11 @@ describe('toUIMessage', () => {
     expect('inReplyTo' in toUIMessage(base)).toBe(false)
   })
 
+  test('forwards the mark of a progress line, and only on one', () => {
+    expect(toUIMessage({ ...base, progress: true }).progress).toBe(true)
+    expect('progress' in toUIMessage(base)).toBe(false)
+  })
+
   test('forwards provider + model strings when present', () => {
     const ui = toUIMessage({
       ...base,

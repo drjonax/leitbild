@@ -123,6 +123,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   const isError = msg.type === 'error'
   const isMute = msg.type === 'mute'
   const isRoomSummary = msg.type === 'room_summary'
+  const isProgress = msg.progress === true
 
   if (isError) {
     const senderInfo = getAgent(msg.senderId)
@@ -157,6 +158,23 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   } else if (isMute) {
     div.className = 'msg-system text-xs py-1 px-2 text-text-muted'
     div.textContent = msg.content
+  } else if (isProgress) {
+    // A line an Agent posted while its turn runs, saying what it just did:
+    // one small row in the Agent's tint, plain text, with none of an answer's
+    // header actions or generation footer. Its answer follows as a message.
+    const senderInfo = getAgent(msg.senderId)
+    div.className = 'msg-progress msg-agent rounded-md px-2 py-1 text-xs border border-border flex items-baseline gap-2'
+    const nameEl = document.createElement('span')
+    nameEl.className = 'font-semibold text-text-strong shrink-0'
+    nameEl.textContent = senderInfo?.name ?? msg.senderName ?? msg.senderId
+    const timeEl = document.createElement('span')
+    timeEl.className = 'text-text-muted shrink-0'
+    timeEl.dataset.mhPiece = 'time'
+    timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString('en-GB', { hour12: false })
+    const textEl = document.createElement('span')
+    textEl.className = 'text-text min-w-0 break-words'
+    textEl.textContent = msg.content
+    div.append(nameEl, timeEl, textEl)
   } else if (isSystem || isRoomSummary) {
     // System messages are normally plain text (compact, muted). Biometric-
     // caused system messages carry a ```biometric fenced block that must
