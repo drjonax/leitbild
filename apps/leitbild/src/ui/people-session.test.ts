@@ -774,6 +774,60 @@ describe('messages', () => {
     expect(state().unreadTotal).toBe(1)
   })
 
+  test('a mark-read answer never overwrites a newer unread count from sync (review P4)', async () => {
+    const { session, agents, state, answer } = setup()
+    agents.on(PEOPLE_CAPABILITY.conversationRead, () => ok({ with: BEN, messages: [message(1, BEN, ME)], readThrough: { me: 0, them: 0 } }))
+    const mark = deferred<Response>()
+    agents.on(PEOPLE_CAPABILITY.markRead, () => ({ late: mark.promise }))
+    agents.syncReplies.push(ok(result({ present: [BEN], conversations: [conversation(BEN, 1, 1)], cursor: 1, view: 'v1' })))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(1)
+    session.closeChat()
+    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 1, 2)], messages: [message(2, BEN, ME)], cursor: 2, view: 'v2' })))
+    expect(state().unreadTotal).toBe(1)
+    mark.resolve(ok({ unread: 0 })) // computed before message 2 was stored
+    await settle()
+    expect(state().unreadTotal).toBe(1)
+  })
+
+  test('marks read only while the newest message is on screen; scrolled up, the real count shows', async () => {
+    const { session, agents, state, answer } = setup()
+    agents.syncReplies.push(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], cursor: 1, view: '1' })))
+    chatReady(agents, [message(1, BEN, ME)], { me: 1, them: 1 })
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    session.setChatAtBottom(false)
+    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 1, 2)], messages: [message(2, BEN, ME)], cursor: 2, view: '2' })))
+    expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(0)
+    expect(state().unreadTotal).toBe(1)
+    session.setChatAtBottom(true)
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead).map(call => call.input.through)).toEqual([2])
+    expect(state().unreadTotal).toBe(0)
+  })
+
+  test('the open chat\'s count shows while it loads and after a failed mark-read', async () => {
+    const { session, agents, state } = setup()
+    agents.syncReplies.push(ok(result({ present: [BEN], conversations: [conversation(BEN, 2, 2)], cursor: 2, view: '1' })))
+    const read = deferred<Response>()
+    agents.on(PEOPLE_CAPABILITY.conversationRead, () => ({ late: read.promise }))
+    agents.on(PEOPLE_CAPABILITY.markRead, () => refuse(500, 'internal_error'))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    expect(state().unreadTotal).toBe(2) // loading
+    read.resolve(ok({ with: BEN, messages: [message(1, BEN, ME), message(2, BEN, ME)], readThrough: { me: 0, them: 0 } }))
+    await settle()
+    expect(agents.to(PEOPLE_CAPABILITY.markRead)).toHaveLength(1)
+    expect(state().unreadTotal).toBe(2) // the read was refused
+  })
+
   test('unread totals add up; new messages raise one toast per sender, never for history, a hidden tab or an open popover', async () => {
     const { session, agents, state, setVisible, answer } = setup()
     agents.syncReplies.push(ok(result({

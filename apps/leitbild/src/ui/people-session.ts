@@ -218,6 +218,8 @@ export interface PeopleSession {
   setViewing(viewing: ViewingReference | null): void
   openChat(person: PersonWire): void
   closeChat(): void
+  /** Whether the open chat shows its newest message (no "new messages" pill); only then is it read. */
+  setChatAtBottom(atBottom: boolean): void
   retryChatLoad(): void
   /** Queues a message to the open chat; false when there is nothing sendable. */
   send(raw: string): boolean
@@ -346,6 +348,9 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   let chatController: AbortController | null = null
   let chatLoading = false
   let chatLoadFailed = false
+  let chatAtBottom = true
+  /** The open chat whose last mark-read failed: its count stays visible until one succeeds. */
+  let markFailedPeer: string | null = null
   let chatFirstUnread: string | null = null
   let chatCapped = false
   let chatNotes: ReadonlyArray<ChatNote> = []
@@ -398,8 +403,10 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
 
   const snapshot = (): PeopleState => {
     const visible = ports.visible()
-    // The open, visible chat is being read: its count is about to be cleared.
-    const unreadFor = (id: string): number => chatPeer === id && visible ? 0 : summaryFor(id)?.unread ?? 0
+    // The open chat being read (visible, loaded, at its newest message) is
+    // about to be cleared; any other count is the server's.
+    const reading = chatPeer !== null && visible && !chatLoading && !chatLoadFailed && chatAtBottom && markFailedPeer !== chatPeer
+    const unreadFor = (id: string): number => reading && chatPeer === id ? 0 : summaryFor(id)?.unread ?? 0
     const presentIds = new Set(presentOrder.map(person => person.id))
     const person = (id: string, here: boolean): PersonView => ({ ...nameOf(id), here, unread: unreadFor(id) })
     const chat: ChatView | null = chatPeer === null ? null : {
@@ -643,25 +650,31 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
 
   const maybeMarkRead = (): void => {
     const peer = chatPeer
-    if (peer === null || token === null || chatLoading || !ports.visible()) return
+    // Read means seen: the chat is open and loaded, the page visible, and its newest message on screen.
+    if (peer === null || token === null || chatLoading || !chatAtBottom || !ports.visible()) return
     const summary = summaryFor(peer)
     const messages = messagesByPeer.get(peer) ?? []
     const marked = readThrough.get(peer) ?? 0
     const lastIncoming = messages.filter(message => message.from === peer).at(-1)?.seq ?? 0
     const through = Math.max(summary?.lastSeq ?? 0, messages.at(-1)?.seq ?? 0)
-    if (!((summary?.unread ?? 0) > 0 || lastIncoming > marked) || through === 0) return
+    if (!(lastIncoming > marked || ((summary?.unread ?? 0) > 0 && through > marked))) return
     if (markingRead) { markAgain = true; return }
     markingRead = true
     const usedToken = token
-    void invoke(PEOPLE_CAPABILITY.markRead, { token: usedToken, with: peer, through }, markReadResultSchema).then(result => {
+    // The answer's count is not used: it may predate a newer message the sync
+    // already reported, and the sync that follows a read carries the new count.
+    void invoke(PEOPLE_CAPABILITY.markRead, { token: usedToken, with: peer, through }, markReadResultSchema).then(() => {
       readThrough.set(peer, Math.max(readThrough.get(peer) ?? 0, through))
-      conversations = conversations.map(entry => entry.with.id === peer ? { ...entry, unread: result.unread } : entry)
+      if (markFailedPeer === peer) markFailedPeer = null
       emit()
     }, error => {
       const failed = classifyPeopleFailure(error)
       if (failed.kind === 'token-invalid') { if (dropToken(usedToken)) restart(); return }
+      if (failed.kind === 'aborted') return
       // The next sync answer tries again; the count stays visible meanwhile.
-      if (failed.kind !== 'aborted') ports.warn('People: marking the chat read failed', error)
+      markFailedPeer = peer
+      ports.warn('People: marking the chat read failed', error)
+      emit()
     }).finally(() => {
       markingRead = false
       if (markAgain) { markAgain = false; maybeMarkRead() }
@@ -1039,6 +1052,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       chatController?.abort()
       chatController = null
       chatPeer = person.id
+      chatAtBottom = true
+      markFailedPeer = null
       chatNotes = []
       chatFirstUnread = null
       chatCapped = false
@@ -1054,6 +1069,12 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       chatLoadFailed = false
       chatNotes = []
       chatFirstUnread = null
+      emit()
+    },
+    setChatAtBottom: atBottom => {
+      if (chatAtBottom === atBottom) return
+      chatAtBottom = atBottom
+      maybeMarkRead()
       emit()
     },
     retryChatLoad: () => loadChat(),
