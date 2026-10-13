@@ -16,6 +16,8 @@
     /** Opens a Run in a World pane beside the chat, as switching Runs does. */
     readonly onOpenRun: (runId: string) => void
     readonly onError: (message: string) => void
+    /** The World pane, for overlays anchored to it (the people chat); null without a Run. */
+    worldPane?: HTMLElement | null
   }
 
   type CollapsedPane = 'world' | 'agents' | null
@@ -24,7 +26,7 @@
   const collapseThreshold = 12
   const minimumOpenShare = 20
 
-  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, runRefusal, onOpenRun, onError }: Props = $props()
+  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, runRefusal, onOpenRun, onError, worldPane = $bindable(null) }: Props = $props()
   let splitPercent = $state(initialSplit)
   let lastOpenSplit = $state(initialSplit)
   let collapsedPane = $state<CollapsedPane>(null)
@@ -206,7 +208,7 @@
   class:window-maximised={windowMaximised}
   style={`grid-template-columns: ${gridColumns}`}
 >
-  {#if worldRunId !== null}<section class="module-pane world-pane" class:collapsed={collapsedPane === 'world'} aria-label="World simulations">
+  {#if worldRunId !== null}<section bind:this={worldPane} class="module-pane world-pane" class:collapsed={collapsedPane === 'world'} aria-label="World simulations">
     <iframe
       bind:this={worldFrame}
       class="module-frame active"

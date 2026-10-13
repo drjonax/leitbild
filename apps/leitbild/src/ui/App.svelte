@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte'
+  import { onDestroy, onMount, tick, untrack } from 'svelte'
   import {
     type FeaturedDefinitionCatalog,
     type InspectionView,
@@ -26,12 +26,17 @@
   import FeaturedRow from './FeaturedRow.svelte'
   import DefinitionCatalog from './DefinitionCatalog.svelte'
   import WorkspaceSwitcher from './WorkspaceSwitcher.svelte'
+  import PeopleControl from './PeopleControl.svelte'
+  import PeopleChat from './PeopleChat.svelte'
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
   import { roomScopeIncludingRun, roomSelectsRun, roomServesRun, roomUsesFamily, runDeclaresRoles, runFamilyFor, sameResource } from './run-room-scope.ts'
-  import { workspacePageTitle } from './page-title.ts'
+  import { withUnreadCount, workspacePageTitle } from './page-title.ts'
   import { workspaceLabel } from './launch-workspace.ts'
-  import { launchDestination, workspacePath } from './launch-destination.ts'
+  import { launchDestination, workspacePath, workspaceUrl } from './launch-destination.ts'
+  import { createPeopleSession, type PeopleSession, type PeopleState } from './people-session.ts'
+  import { browserPeoplePorts } from './people-browser.ts'
+  import { PEOPLE_SYNC_CAPABILITY_ID, type PersonWire } from './people-wire.ts'
   import { browserWorkspaceMemory } from './workspace-memory.ts'
   import { demosHref, guideHref } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
@@ -143,8 +148,46 @@
     history.replaceState(null, '', url)
   }
 
+  // People and direct chat (Agents' people Capabilities). One session per page,
+  // made the first time a Run is open and Agents publishes people; it lives
+  // across Run switches, so an open chat stays open. Its failures stay inside
+  // the control: they never reach this page's error banner.
+  const peopleAvailable = $derived(capabilities.some(capability => capability.id === PEOPLE_SYNC_CAPABILITY_ID))
+  let people = $state.raw<PeopleSession | null>(null)
+  let peopleState = $state.raw<PeopleState | null>(null)
+  let peopleControl = $state<ReturnType<typeof PeopleControl> | null>(null)
+  let worldPane = $state<HTMLElement | null>(null)
+  let chatFocusRequest = $state(0)
+  const peopleShown = $derived(people !== null && peopleState !== null && peopleAvailable && selectedWorldResource !== undefined)
+  const peopleRunUrl = $derived(workspace && selectedWorldRunId ? `${location.origin}${workspaceUrl(workspace.id, { world: selectedWorldRunId })}` : '')
   $effect(() => {
-    document.title = pageTitle
+    if (people !== null || !workspace || !peopleAvailable || !selectedWorldResource) return
+    const workspaceId = workspace.id
+    untrack(() => {
+      const session = createPeopleSession({ workspaceId, ports: browserPeoplePorts() })
+      peopleState = session.state()
+      session.subscribe(state => { peopleState = state })
+      people = session
+    })
+  })
+  $effect(() => {
+    const viewing = peopleAvailable ? selectedWorldResource?.ref ?? null : null
+    const session = people
+    untrack(() => session?.setViewing(viewing))
+  })
+  onDestroy(() => people?.dispose())
+  const openPeopleChat = (person: PersonWire): void => {
+    people?.openChat(person)
+    chatFocusRequest += 1
+  }
+  const closePeopleChat = (): void => {
+    people?.closeChat()
+    peopleControl?.focusTrigger()
+  }
+
+  $effect(() => {
+    // "(3) PWR 4-loop · Leitbild.ai": unread direct messages lead the title while a Run is open.
+    document.title = withUnreadCount(pageTitle, peopleState?.active ? peopleState.unreadTotal : 0)
   })
 
   let catalogRequest = 0
@@ -605,6 +648,8 @@
 {:else if showingComposer && workspace}
   <header class="workspace-bar">
     <div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" label="Leitbild.ai home" /><a class="workspace-name" href={workspacePath(workspace.id)} title={workspaceTitle}>{workspaceTitle}</a>
+      {#if peopleShown && people && peopleState && selectedWorldResource}<PeopleControl bind:this={peopleControl} session={people} people={peopleState}
+        runUrl={peopleRunUrl} runId={selectedWorldResource.ref.id} onOpenChat={openPeopleChat} />{/if}
       {#if fromGuide}<a class="guide-back" href={guideHref('ask')}>← Getting started</a>{/if}</div>
     <div class="workspace-actions">
       {#if selectedWorldResource}
@@ -687,7 +732,9 @@
     {#if refreshError}<p class="notice error" role="alert">Catalog refresh failed: {refreshError}</p>{/if}
     {#if showingComposer}
     <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}
-      {runRefusal} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} />
+      {runRefusal} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} bind:worldPane />
+    {#if peopleShown && people && peopleState?.chat}<PeopleChat session={people} chat={peopleState.chat} notice={peopleState.notice} anchor={worldPane}
+      focusRequest={chatFocusRequest} onClose={closePeopleChat} />{/if}
     {:else}
       <div class="ws-home">
         <WorkspaceHeader {workspace} {admin} onrenamed={updated => { workspace = updated }} ondeleted={workspaceDeleted} />
@@ -767,6 +814,8 @@
   }
   @media (pointer: coarse) { .ws-topbar :global(.nav-link) { min-height: 44px; } }
 
+  /* The Workspace name ellipsises before the people control beside it shrinks. */
+  .workspace-name { min-width: 0; }
   .guide-back { flex: none; color: #aebbb0; font-size: .78rem; text-decoration: none; white-space: nowrap; }
   .guide-back:hover { color: white; }
   .guide-back:focus-visible { outline: 2px solid var(--lb-focus-on-dark); outline-offset: 2px; border-radius: 4px; }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { BRAND_TITLE, pageTitle, workspacePageTitle } from './page-title.ts'
+import { BRAND_TITLE, pageTitle, withUnreadCount, workspacePageTitle } from './page-title.ts'
 
 describe('tab titles', () => {
   test('end in " · Leitbild.ai"', () => {
@@ -23,5 +23,10 @@ describe('tab titles', () => {
 
   test('never use the old " · Leitbild" suffix', () => {
     for (const title of [pageTitle('Run'), workspacePageTitle({ workspace: 'W' })]) expect(title).not.toMatch(/· Leitbild$/)
+  })
+
+  test('lead with the unread direct-message count, and only when there is one', () => {
+    expect(withUnreadCount('PWR 4-loop · Leitbild.ai', 3)).toBe('(3) PWR 4-loop · Leitbild.ai')
+    expect(withUnreadCount('PWR 4-loop · Leitbild.ai', 0)).toBe('PWR 4-loop · Leitbild.ai')
   })
 })

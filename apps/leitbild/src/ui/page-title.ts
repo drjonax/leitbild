@@ -21,3 +21,6 @@ export interface WorkspaceTitleParts {
 /** The open Run, else the open conversation, else the Workspace names the tab. */
 export const workspacePageTitle = (parts: WorkspaceTitleParts): string =>
   pageTitle(parts.run || parts.room || parts.workspace)
+
+/** "(3) PWR 4-loop · Leitbild.ai": unread direct messages lead the tab title, so a hidden tab shows them. */
+export const withUnreadCount = (title: string, unread: number): string => unread > 0 ? `(${unread}) ${title}` : title
