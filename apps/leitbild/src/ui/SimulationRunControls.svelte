@@ -400,10 +400,12 @@
   /* In a crowded Run bar only the title gives way; the buttons and the clock keep their size. */
   .run-controls > :not(.run-title, .family-control) { flex-shrink: 0; }
   /* At 760 px and below, without a title to give way, the controls the Run bar cannot hold
-     scroll sideways in their own strip instead of overlapping the buttons beside them.
-     The padding keeps focus rings unclipped. */
+     scroll sideways in their own strip instead of overlapping the buttons beside them. Its
+     edges fade, so a control cut off there reads as "more this way"; the padding the fades
+     lie on keeps the first and last controls clear of them, and focus rings unclipped. */
   @media (max-width: 760px) {
-    .run-controls { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 4px 4px; }
+    .run-controls { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 4px 10px; scroll-padding-inline: 10px;
+      mask-image: linear-gradient(to right, transparent, #000 min(10px, 20%), #000 max(calc(100% - 10px), 80%), transparent); }
     .run-controls::-webkit-scrollbar { display: none; }
     .run-controls > * { flex: none; }
   }
