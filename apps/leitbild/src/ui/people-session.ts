@@ -43,6 +43,10 @@ export const SENDING_LABEL_DELAY_MS = 1_000
 export const SEND_TIMEOUT_MS = 15_000
 /** A held sync waits as long as Agents allows, well inside the Host gateway's 30 s. */
 export const SYNC_HOLD_MS = SYNC_WAIT_MAX_MS
+/** A held sync with no answer by then is lost; the Host gateway itself gives up at 30 s. */
+export const SYNC_HOLD_TIMEOUT_MS = SYNC_HOLD_MS + 10_000
+/** Any other call with no answer by then is lost: it is retried or reported like a dropped connection. */
+export const REQUEST_TIMEOUT_MS = 15_000
 /** Two token refusals in a row without a success is a server fault, not a lost token: stop rather than create people in a loop. */
 export const TOKEN_REFUSALS_BEFORE_FAILING = 2
 
@@ -444,23 +448,48 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   const announce = (text: string): void => { announcement = { id: ++announcementSerial, text } }
 
   // --- requests -------------------------------------------------------------
+  /**
+   * One Capability call. `timeoutMs` ends a call that never answers (a
+   * half-open connection after sleep or a network change) as a transient
+   * failure; the caller's `signal` ends it as aborted.
+   */
   const invoke = async <T>(
     capabilityId: string, input: unknown, schema: z.ZodType<T>,
-    options: { readonly signal?: AbortSignal; readonly idempotencyKey?: string } = {},
+    options: { readonly signal?: AbortSignal; readonly idempotencyKey?: string; readonly timeoutMs: number },
+  ): Promise<T> => {
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = ports.timers.set(() => { timedOut = true; controller.abort() }, options.timeoutMs)
+    const forward = (): void => controller.abort()
+    if (options.signal?.aborted) controller.abort()
+    else options.signal?.addEventListener('abort', forward, { once: true })
+    const ended = (): PeopleRequestError => timedOut
+      ? peopleRequestError('network', { message: `${capabilityId} did not answer within ${options.timeoutMs} ms` })
+      : peopleRequestError('aborted')
+    try {
+      return await invokeOnce(capabilityId, input, schema, options.idempotencyKey, controller.signal, ended)
+    } finally {
+      ports.timers.clear(timer)
+      options.signal?.removeEventListener('abort', forward)
+    }
+  }
+
+  const invokeOnce = async <T>(
+    capabilityId: string, input: unknown, schema: z.ZodType<T>, idempotencyKey: string | undefined, signal: AbortSignal,
+    ended: () => PeopleRequestError,
   ): Promise<T> => {
     let response: Response
     try {
       response = await ports.fetch(invokePath(workspaceId, capabilityId), {
-        method: 'POST', headers: JSON_HEADERS, body: invokeBody(input, options.idempotencyKey),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        method: 'POST', headers: JSON_HEADERS, body: invokeBody(input, idempotencyKey), signal,
       })
     } catch (cause) {
-      if (options.signal?.aborted) throw peopleRequestError('aborted')
+      if (signal.aborted) throw ended()
       throw peopleRequestError('network', { message: cause instanceof Error ? cause.message : String(cause) })
     }
     let body: unknown
     try { body = await response.json() } catch {
-      if (options.signal?.aborted) throw peopleRequestError('aborted')
+      if (signal.aborted) throw ended()
       // An HTML error page from the proxy while a service restarts.
       throw peopleRequestError('non-json', { status: response.status })
     }
@@ -513,7 +542,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       if (stored) return stored
       const remembered = read('local', PREFERRED_NAME_KEY)
       const preferredName = remembered !== null && nameProblem(normaliseName(remembered)) === null ? normaliseName(remembered) : null
-      const result = await invoke(PEOPLE_CAPABILITY.join, preferredName === null ? {} : { preferredName }, joinResultSchema)
+      const result = await invoke(PEOPLE_CAPABILITY.join, preferredName === null ? {} : { preferredName }, joinResultSchema, { timeoutMs: REQUEST_TIMEOUT_MS })
       write('local', tokenKey, result.token)
       me = result.me
       preferredNameTaken = preferredName !== null && !result.preferredNameAccepted ? preferredName : null
@@ -663,7 +692,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     const usedToken = token
     // The answer's count is not used: it may predate a newer message the sync
     // already reported, and the sync that follows a read carries the new count.
-    void invoke(PEOPLE_CAPABILITY.markRead, { token: usedToken, with: peer, through }, markReadResultSchema).then(() => {
+    void invoke(PEOPLE_CAPABILITY.markRead, { token: usedToken, with: peer, through }, markReadResultSchema, { timeoutMs: REQUEST_TIMEOUT_MS }).then(() => {
       readThrough.set(peer, Math.max(readThrough.get(peer) ?? 0, through))
       if (markFailedPeer === peer) markFailedPeer = null
       emit()
@@ -752,7 +781,9 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         ...(storeId === null ? {} : { storeId }),
         waitMs: hold ? SYNC_HOLD_MS : 0,
       }
-      const result = await invoke(PEOPLE_CAPABILITY.sync, input, syncResultSchema, { signal: controller.signal })
+      const result = await invoke(PEOPLE_CAPABILITY.sync, input, syncResultSchema, {
+        signal: controller.signal, timeoutMs: hold ? SYNC_HOLD_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+      })
       if (cycleGeneration !== generation) return // A newer sync owns the state.
       syncController = null
       const again = applySync(result, sentStoreId)
@@ -800,7 +831,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     void ensureToken()
       .then(currentToken => {
         usedToken = currentToken
-        return invoke(PEOPLE_CAPABILITY.conversationRead, { token: currentToken, with: peer }, conversationReadResultSchema, { signal: controller.signal })
+        return invoke(PEOPLE_CAPABILITY.conversationRead, { token: currentToken, with: peer }, conversationReadResultSchema, { signal: controller.signal, timeoutMs: REQUEST_TIMEOUT_MS })
       })
       .then(result => {
         if (chatController !== controller) return
@@ -891,7 +922,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     sendController = controller
     if (!next.attempted) outbox = outbox.map(entry => entry.key === next.key ? { ...entry, attempted: true } : entry)
     const usedToken = token
-    void invoke(PEOPLE_CAPABILITY.send, { token: usedToken, to: next.to, text: next.text }, sendResultSchema, { signal: controller.signal, idempotencyKey: next.key })
+    void invoke(PEOPLE_CAPABILITY.send, { token: usedToken, to: next.to, text: next.text }, sendResultSchema, { signal: controller.signal, idempotencyKey: next.key, timeoutMs: REQUEST_TIMEOUT_MS })
       .then(result => {
         if (sendController !== controller) return
         finishSend()
@@ -1110,7 +1141,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       if (token === null || notice !== 'none') return { ok: false, error: NAME_TEXT.reconnecting }
       const usedToken = token
       try {
-        const result = await invoke(PEOPLE_CAPABILITY.rename, { token: usedToken, name }, renameResultSchema)
+        const result = await invoke(PEOPLE_CAPABILITY.rename, { token: usedToken, name }, renameResultSchema, { timeoutMs: REQUEST_TIMEOUT_MS })
         me = result.me
         preferredNameTaken = null
         // The browser proposes this name when it next joins another Workspace.

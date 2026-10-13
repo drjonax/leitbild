@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  backoffDelay, classifyPeopleFailure, createPeopleSession, OUTBOX_KEY_PREFIX, peopleRequestError, PREFERRED_NAME_KEY, SEND_TIMEOUT_MS,
-  SYNC_HOLD_MS, TOKEN_KEY_PREFIX, type PeopleEnvironmentEvent, type PeopleLock, type PeoplePorts, type PeopleState,
+  backoffDelay, classifyPeopleFailure, createPeopleSession, OUTBOX_KEY_PREFIX, peopleRequestError, PREFERRED_NAME_KEY, REQUEST_TIMEOUT_MS,
+  SEND_TIMEOUT_MS, SYNC_HOLD_MS, SYNC_HOLD_TIMEOUT_MS, TOKEN_KEY_PREFIX, type PeopleEnvironmentEvent, type PeopleLock, type PeoplePorts, type PeopleState,
 } from './people-session.ts'
 import { NAME_TEXT, SEND_REASON } from './people-format.ts'
 import { PEOPLE_CAPABILITY, type ConversationSummaryWire, type MessageWire, type PersonWire, type SyncResultWire } from './people-wire.ts'
@@ -335,6 +335,36 @@ describe('sync', () => {
     setVisible(true)
     await settle()
     expect(syncs().length).toBe(before + 3)
+  })
+
+  test('a held sync that never answers is given up after its hold plus 10 s and asked again after the first backoff step', async () => {
+    const { session, syncs, clock, state } = setup()
+    session.setViewing(RUN_A)
+    await settle()
+    const held = syncs()[1]!
+    expect(held.input.waitMs).toBe(SYNC_HOLD_MS)
+    await clock.advance(SYNC_HOLD_TIMEOUT_MS - 1)
+    expect(held.signal?.aborted).toBe(false)
+    await clock.advance(1)
+    expect(held.signal?.aborted).toBe(true)
+    expect(syncs()).toHaveLength(2)
+    await clock.advance(999)
+    expect(syncs()).toHaveLength(2)
+    await clock.advance(1)
+    // The retry answers at once, and a new hold follows.
+    expect(syncs().slice(2).map(call => call.input.waitMs)).toEqual([0, SYNC_HOLD_MS])
+    expect(state()).toMatchObject({ status: 'ready', notice: 'none' })
+  })
+
+  test('a rename with no answer gives up after the request timeout', async () => {
+    const { session, agents, clock } = setup()
+    agents.on(PEOPLE_CAPABILITY.rename, () => 'hold')
+    session.setViewing(RUN_A)
+    await settle()
+    const outcome = session.rename('Ben')
+    await clock.advance(REQUEST_TIMEOUT_MS)
+    expect(await outcome).toEqual({ ok: false, error: NAME_TEXT.failed })
+    expect(agents.to(PEOPLE_CAPABILITY.rename)[0]!.signal?.aborted).toBe(true)
   })
 
   test('a Run switch aborts the held sync, asks again at once and ignores the old answer', async () => {
