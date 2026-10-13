@@ -178,13 +178,19 @@ describe('Leitbild server', () => {
     expect(await response.json()).toEqual({ result: { reason: 'timeout' } })
   }, 60_000)
 
-  // Bun drops a request idle for 10 s only while its process is otherwise busy,
-  // as a live Host is; so this Host runs in its own process.
+  // Bun's 10 s idle timeout does not cut off a server running inside bun test,
+  // but does one in a process of its own, as the Host runs: so a child process.
   test('answers a Workspace delete whose Module removal takes longer than Bun\'s 10 s idle limit', async () => {
-    const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'slow-workspace-delete.ts')], { stdout: 'pipe', stderr: 'inherit' })
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'slow-workspace-delete.ts')], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' })
     try {
-      const { value } = await child.stdout.getReader().read()
-      const { port, workspaceId } = JSON.parse(new TextDecoder().decode(value)) as { port: number; workspaceId: string }
+      const reader = child.stdout.getReader()
+      let output = ''
+      while (!/ready (\{.*\})/.test(output)) {
+        const { value, done } = await reader.read()
+        if (done) throw new Error(`Fixture exited before listening: ${output}`)
+        output += new TextDecoder().decode(value)
+      }
+      const { port, workspaceId } = JSON.parse(/ready (\{.*\})/.exec(output)![1]!) as { port: number; workspaceId: string }
       const response = await fetch(`http://127.0.0.1:${port}/api/workspaces/${workspaceId}`, { method: 'DELETE' })
       expect(response.status).toBe(204)
       expect((await fetch(`http://127.0.0.1:${port}/api/workspaces/${workspaceId}`)).status).toBe(404)

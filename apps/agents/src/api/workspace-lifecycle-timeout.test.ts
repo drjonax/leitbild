@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newWorkspaceId } from '@leitbild/contracts'
 
-// Bun drops a request idle for 10 s only while its process is otherwise busy,
-// as a live Agents Module is; so the server runs in its own process.
+// Bun's 10 s idle timeout does not cut off a server running inside bun test,
+// but does one in a process of its own, as Agents runs: so a child process.
 test('a Workspace removal that takes longer than Bun\'s 10 s idle limit still answers the Host', async () => {
   const uiPath = await mkdtemp(join(tmpdir(), 'agents-slow-remove-'))
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, '__fixtures__', 'slow-workspace-removal.ts'), uiPath], { stdout: 'pipe', stderr: 'inherit' })
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, '__fixtures__', 'slow-workspace-removal.ts'), uiPath], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' })
   try {
     const reader = child.stdout.getReader()
     let output = ''
