@@ -128,6 +128,7 @@ export type PeopleFailure =
 const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([502, 503, 504])
 const TRANSIENT_CODES: ReadonlySet<string> = new Set([
   PEOPLE_ERROR.moduleUnavailable, PEOPLE_ERROR.moduleOutcomeUnknown, PEOPLE_ERROR.moduleNotReady, PEOPLE_ERROR.workspaceClosing, PEOPLE_ERROR.rateLimited,
+  PEOPLE_ERROR.peopleUnavailable,
 ])
 const HTTP_TOO_MANY_REQUESTS = 429
 
@@ -577,14 +578,18 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     announce(`New message from ${nameOf(last.from).name}`)
   }
 
-  /** Applies one answer; true when the next sync should ask at once rather than hold. */
+  /**
+   * Applies one answer; true when the next sync should ask at once rather than
+   * hold. A first answer (no `after`) carries no messages, only the newest
+   * cursor: history is read per conversation when a chat opens.
+   */
   const applySync = (result: SyncResultWire, sentStoreId: string | null): boolean => {
     if (sentStoreId !== null && result.storeId !== sentStoreId) {
-      // Agents' people store was replaced: what this page knew no longer applies.
+      // Agents' people store was replaced: what this page knew no longer
+      // applies. The answer itself is a fresh start (no messages, the newest
+      // cursor), so it is applied as the first answer would be.
       forgetIdentityData()
-      storeId = result.storeId
       if (chatPeer !== null) loadChat()
-      return true
     }
     storeId = result.storeId
     me = result.me
@@ -951,7 +956,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       const key = next === null ? null : viewingKey(next)
       if (key === currentViewingKey) return
       const hadViewing = viewing !== null
-      viewing = next
+      // Exactly the four reference fields: Agents validates `viewing` strictly.
+      viewing = next === null ? null : { workspaceId: next.workspaceId, moduleId: next.moduleId, type: next.type, id: next.id }
       currentViewingKey = key
       presentOrder = []
       presentKnown = false

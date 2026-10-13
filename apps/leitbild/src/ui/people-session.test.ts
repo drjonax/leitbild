@@ -209,6 +209,8 @@ describe('failure classification', () => {
     for (const status of [502, 503, 504]) expect(http(status, null).kind).toBe('transient')
     for (const code of ['module_unavailable', 'module_outcome_unknown', 'module_not_ready', 'workspace_closing']) expect(http(500, code).kind).toBe('transient')
     expect(http(500, 'something_new', { retryable: true }).kind).toBe('transient')
+    expect(http(500, 'people_unavailable').kind).toBe('transient')
+    expect(http(409, 'workspace_closing', { retryable: true }).kind).toBe('transient')
   })
 
   test('a rate limit is transient and carries its wait', () => {
@@ -217,7 +219,7 @@ describe('failure classification', () => {
 
   test('a refused token asks for a rejoin; refusals and contract errors are permanent; aborts are neither', () => {
     expect(http(401, 'person_token_invalid').kind).toBe('token-invalid')
-    for (const [status, code] of [[400, 'person_name_invalid'], [403, 'people_human_required'], [404, 'workspace_not_found'], [500, 'internal_error']] as const) {
+    for (const [status, code] of [[400, 'person_name_invalid'], [400, 'conversation_with_self'], [403, 'people_human_required'], [404, 'workspace_not_found'], [409, 'people_limit_reached'], [500, 'internal_error']] as const) {
       expect(http(status, code).kind).toBe('permanent')
     }
     expect(classifyPeopleFailure(peopleRequestError('contract', { status: 200 }))).toMatchObject({ kind: 'permanent', code: 'people_contract_invalid' })
@@ -250,6 +252,32 @@ describe('sync', () => {
       expect(call.path).toBe(`/api/workspaces/${WS}/capabilities/${call.capability}/invoke`)
       expect(call.path).not.toContain('token-1')
     }
+  })
+
+  test('the Run is passed as exactly its four reference fields', async () => {
+    const { session, syncs } = setup()
+    session.setViewing({ ...RUN_A, title: 'PWR 4-loop' } as typeof RUN_A)
+    await settle()
+    expect(syncs()[0]!.input.viewing).toEqual(RUN_A)
+  })
+
+  test('a replaced people store drops cached messages, re-reads the open chat and raises no toast', async () => {
+    const { session, agents, state, answer } = setup()
+    agents.syncReplies.push(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 2)], cursor: 2, view: '1' })))
+    let reads = 0
+    agents.on(PEOPLE_CAPABILITY.conversationRead, () => ++reads === 1
+      ? ok({ with: BEN, messages: [message(1, BEN, ME), message(2, ME, BEN)], readThrough: { me: 2, them: 2 } })
+      : ok({ with: BEN, messages: [], readThrough: { me: 0, them: 0 } }))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    expect(state().chat?.items).toHaveLength(2)
+    await answer(ok(result({ storeId: 'store-2', present: [BEN], conversations: [], cursor: 0, view: 'fresh' })))
+    expect(reads).toBe(2)
+    expect(state().chat?.items).toEqual([])
+    expect(state().toast).toBeNull()
+    expect(agents.to(PEOPLE_CAPABILITY.sync).at(-1)!.input).toMatchObject({ storeId: 'store-2', after: 0, view: 'fresh', waitMs: SYNC_HOLD_MS })
   })
 
   test('a 502 HTML page backs off 1, 2, 4, 8, 15 s and keeps the last list; "Reconnecting…" at 3 s, "can\'t reach" at 30 s', async () => {

@@ -113,6 +113,9 @@ export const PEOPLE_ERROR = {
   messageToSelf: 'message_to_self',
   idempotencyConflict: 'idempotency_conflict',
   workspaceClosing: 'workspace_closing',
+  /** Agents' people store failed; retryable. */
+  peopleUnavailable: 'people_unavailable',
+  conversationWithSelf: 'conversation_with_self',
   moduleUnavailable: 'module_unavailable',
   moduleOutcomeUnknown: 'module_outcome_unknown',
   moduleNotReady: 'module_not_ready',
