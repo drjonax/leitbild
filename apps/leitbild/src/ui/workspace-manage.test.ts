@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { workspaceSchema } from '@leitbild/contracts'
-import { workspaceFixture } from './host-fetch-fake.test-support.ts'
+import { workspaceActivityCatalogSchema, workspaceSchema, type WorkspaceActivityCatalog } from '@leitbild/contracts'
+import { fakeFetch, hostError, json, workspaceFixture } from './host-fetch-fake.test-support.ts'
 import { ageText } from './launch-workspace.ts'
-import { manageRows, moduleStateText, notRecentText } from './workspace-manage.ts'
+import {
+  ACTIVITY_PATH, activeRowIds, activityByWorkspace, activityFailureText, activitySummary, activityText, createActivityPoller,
+  manageRows, moduleStateText, notRecentText, readWorkspaceActivity, selectActiveLabel, withActivityNotes, type ActivityAnswer,
+} from './workspace-manage.ts'
 
 const A = '0b4b9a52-2f7e-4c1a-9d3e-00000000000a'
 const B = 'b56b1d2e-0000-4000-8000-00000000000b'
@@ -62,5 +65,154 @@ describe('the bulk confirmation\'s note', () => {
   test('says nothing for one Workspace, or when all were opened here recently', () => {
     expect(notRecentText([{ id: A }], [])).toBeNull()
     expect(notRecentText([{ id: A }, { id: B }], [B, A])).toBeNull()
+  })
+})
+
+// Test fixtures only: the labels are whatever a Module says; nothing here knows their keys.
+const running = { moduleId: 'world', key: 'simulations-running', label: '2 simulations running', count: 2, active: true }
+const total = { moduleId: 'world', key: 'simulations', label: '5 simulations', count: 5, active: false }
+const answering = { moduleId: 'agents', key: 'assistant-answering', label: 'Assistant answering', count: 1, active: true }
+const catalog = (workspaces: ReadonlyArray<{ readonly workspaceId: string; readonly items: ReadonlyArray<object> }>, failed: ReadonlyArray<string> = []): WorkspaceActivityCatalog =>
+  workspaceActivityCatalogSchema.parse({
+    modules: ['world', 'agents'].map(moduleId => failed.includes(moduleId)
+      ? { moduleId, status: 'failed', failure: { code: 'module_query_failed', message: 'Module activity query returned HTTP 404', status: 404, retryable: false } }
+      : { moduleId, status: 'ready' }),
+    workspaces,
+  })
+
+describe('what runs in each Workspace', () => {
+  const rows = manageRows([
+    workspace(A, '2026-10-01T09:00:00.000Z', { name: 'Grid study' }),
+    workspace(B, '2026-10-13T11:58:30.000Z', { name: 'Plant drill', world: 'provision_failed' }),
+    workspace(C, '2026-10-13T09:00:00.000Z', { name: 'Quiet one' }),
+  ], { recent: [], now: NOW })
+  const byWorkspace = activityByWorkspace(catalog([
+    { workspaceId: A, items: [running, total] },
+    { workspaceId: C, items: [total] },
+    { workspaceId: B, items: [answering] },
+  ]))
+
+  test('the summary counts the listed Workspaces with work running now', () => {
+    expect(activeRowIds(rows, byWorkspace)).toEqual([B, A])
+    expect(activitySummary(2)).toBe('Work is running now in 2 Workspaces')
+    expect(activitySummary(1)).toBe('Work is running now in 1 Workspace')
+    expect(activitySummary(0)).toBeNull()
+    expect(activeRowIds(rows, activityByWorkspace(null))).toEqual([])
+    // A Workspace no longer listed is not counted, whatever its Modules still report.
+    expect(activeRowIds(rows.filter(row => row.id !== A), byWorkspace)).toEqual([B])
+  })
+
+  test('"Select these" names how many it ticks', () => {
+    expect(selectActiveLabel(2)).toBe('Select these 2')
+    expect(selectActiveLabel(1)).toBe('Select this one')
+  })
+
+  test('a row reads its Modules\' own labels in order, and nothing when they report nothing', () => {
+    expect(activityText(byWorkspace.get(A))).toBe('2 simulations running · 5 simulations')
+    expect(activityText(byWorkspace.get(C))).toBe('5 simulations')
+    expect(activityText(activityByWorkspace(catalog([])).get(A))).toBeNull()
+  })
+
+  test('the delete dialog notes each Workspace\'s state and activity', () => {
+    const noted = withActivityNotes(rows, byWorkspace)
+    expect(noted.map(row => [row.label, row.note])).toEqual([
+      ['Plant drill', 'Setup failed · Assistant answering'],
+      ['Quiet one', '5 simulations'],
+      ['Grid study', '2 simulations running · 5 simulations'],
+    ])
+    const untouched = withActivityNotes(rows, new Map())
+    expect(untouched.map(row => row.note)).toEqual(['Setup failed', undefined, undefined])
+    expect(untouched[1]).toBe(rows[1]!)
+  })
+
+  test('a Module that could not answer is named in one quiet line', () => {
+    expect(activityFailureText(catalog([]).modules)).toBeNull()
+    expect(activityFailureText(catalog([], ['world']).modules)).toBe("Couldn't check what World is running.")
+    expect(activityFailureText(catalog([], ['world', 'agents']).modules)).toBe("Couldn't check what World and Agents are running.")
+    expect(activityFailureText([
+      { moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } },
+      { moduleId: 'agents', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } },
+      { moduleId: 'process-plant', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } },
+    ] as never)).toBe("Couldn't check what World, Agents and Process plant are running.")
+  })
+
+  test('reads the Host\'s activity through the contract and reports a refusal', async () => {
+    const answer = catalog([{ workspaceId: A, items: [running] }], ['agents'])
+    expect(await readWorkspaceActivity(fakeFetch().on('GET', ACTIVITY_PATH, json(answer)).fetch)).toEqual(answer)
+    await expect(readWorkspaceActivity(fakeFetch().on('GET', ACTIVITY_PATH, hostError(500, 'internal_error', 'Internal Workspace Host error')).fetch))
+      .rejects.toMatchObject({ status: 500, code: 'internal_error' })
+    await expect(readWorkspaceActivity(fakeFetch().on('GET', ACTIVITY_PATH, json({ workspaces: [] })).fetch)).rejects.toThrow()
+  })
+})
+
+describe('the activity poller', () => {
+  const setup = (options: { hidden?: boolean } = {}) => {
+    const state = { hidden: options.hidden ?? false, tick: null as (() => void) | null, cancelled: false }
+    const pending: Array<{ resolve: (value: WorkspaceActivityCatalog) => void; reject: (error: unknown) => void }> = []
+    const answers: ActivityAnswer[] = []
+    const poller = createActivityPoller({
+      read: () => new Promise((resolve, reject) => { pending.push({ resolve, reject }) }),
+      onanswer: answer => { answers.push(answer) },
+      hidden: () => state.hidden,
+      every: (ms, tick) => {
+        expect(ms).toBe(15_000)
+        state.tick = tick
+        return () => { state.cancelled = true }
+      },
+    })
+    return { state, pending, answers, poller }
+  }
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  test('asks at once, then on every tick while the page is visible and nothing is out', async () => {
+    const { state, pending, answers, poller } = setup()
+    poller.start()
+    expect(pending).toHaveLength(1)
+    state.tick!()
+    expect(pending).toHaveLength(1)
+    pending[0]!.resolve(catalog([]))
+    await settle()
+    expect(answers).toEqual([{ ok: true, catalog: catalog([]) }])
+    state.hidden = true
+    state.tick!()
+    expect(pending).toHaveLength(1)
+    state.hidden = false
+    state.tick!()
+    expect(pending).toHaveLength(2)
+  })
+
+  test('a page shown again asks at once; a hidden one does not', () => {
+    const { state, pending, poller } = setup({ hidden: true })
+    poller.start()
+    pending[0]!.resolve(catalog([]))
+    poller.visibilityChanged()
+    expect(pending).toHaveLength(1)
+    state.hidden = false
+    poller.visibilityChanged()
+    expect(pending).toHaveLength(2)
+  })
+
+  test('only the newest request\'s answer is shown, and none after stop', async () => {
+    const { state, pending, answers, poller } = setup()
+    poller.start()
+    poller.refresh()
+    pending[1]!.resolve(catalog([{ workspaceId: A, items: [running] }]))
+    pending[0]!.resolve(catalog([]))
+    await settle()
+    expect(answers).toEqual([{ ok: true, catalog: catalog([{ workspaceId: A, items: [running] }]) }])
+
+    poller.refresh()
+    pending[2]!.reject(new Error('Failed to fetch'))
+    await settle()
+    expect(answers[1]).toMatchObject({ ok: false })
+
+    poller.refresh()
+    poller.stop()
+    expect(state.cancelled).toBe(true)
+    pending[3]!.resolve(catalog([]))
+    await settle()
+    expect(answers).toHaveLength(2)
+    poller.refresh()
+    expect(pending).toHaveLength(4)
   })
 })

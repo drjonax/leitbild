@@ -3,8 +3,10 @@
   // tick, "Select all", and one Delete for the ticked ones, plus a Delete on
   // each row. Both ask once in ConfirmDialog, which deletes through the Host
   // (a few at a time) and lists any that failed. A Workspace whose delete did
-  // not finish is deleted again from here. Rows: workspace-manage.ts.
-  import type { Workspace } from '@leitbild/contracts'
+  // not finish is deleted again from here. Each row says what its Modules
+  // report running there, polled while Manage is open, and "Select these"
+  // ticks the Workspaces with work running now. Rows and activity: workspace-manage.ts.
+  import type { Workspace, WorkspaceActivityCatalog } from '@leitbild/contracts'
   import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
@@ -13,7 +15,10 @@
   import type { WorkspaceApi } from './launch-workspace.ts'
   import type { ModalCloseReason } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
-  import { MANAGE_INTRO, MANAGE_TITLE, manageRows, notRecentText, type ManageRow } from './workspace-manage.ts'
+  import {
+    ACTIVITY_UNAVAILABLE_TEXT, activeRowIds, activityByWorkspace, activityFailureText, activitySummary, createActivityPoller,
+    MANAGE_INTRO, MANAGE_TITLE, manageRows, notRecentText, readWorkspaceActivity, selectActiveLabel, withActivityNotes, type ManageRow,
+  } from './workspace-manage.ts'
   import type { WorkspaceMemory } from './workspace-memory.ts'
   import { filterRows, SEARCH_THRESHOLD } from './workspace-switcher.ts'
 
@@ -40,11 +45,16 @@
   let list = $state<HTMLElement | null>(null)
   let modal = $state<{ focusTitle(): void } | null>(null)
   let listRequest = 0
+  let activity = $state<WorkspaceActivityCatalog | null>(null)
+  let activityProblem = $state<string | null>(null)
 
   const rows = $derived(workspaces === null ? [] : manageRows(workspaces, { recent: memory.recent(), now }))
   const shown = $derived(query.trim() ? filterRows(rows, query) : rows)
   const allState = $derived(selectAllState(shown, selected))
   const chosen = $derived(rows.filter(row => selected.has(row.id)))
+  const byWorkspace = $derived(activityByWorkspace(activity))
+  const activeIds = $derived(activeRowIds(rows, byWorkspace))
+  const summary = $derived(activitySummary(activeIds.length))
 
   $effect(() => { if (selectAllBox) selectAllBox.indeterminate = allState === 'some' })
 
@@ -68,6 +78,21 @@
     }
   }
 
+  // A failed answer clears what was shown: no number stays on screen as if it were current.
+  const poller = createActivityPoller({
+    read: () => readWorkspaceActivity((input, init) => fetch(input, init)),
+    hidden: () => document.hidden,
+    onanswer: answer => {
+      const problem = answer.ok ? activityFailureText(answer.catalog.modules) : ACTIVITY_UNAVAILABLE_TEXT
+      if (problem !== activityProblem) {
+        if (!answer.ok) console.error('Workspace activity failed', errorDiagnostic(answer.error))
+        else for (const outcome of answer.catalog.modules) if (outcome.status === 'failed') console.error(`Workspace activity of ${outcome.moduleId} failed`, errorDiagnostic(outcome.failure))
+      }
+      activity = answer.ok ? answer.catalog : null
+      activityProblem = problem
+    },
+  })
+
   let wasOpen = false
   $effect(() => {
     if (open && !wasOpen) {
@@ -75,18 +100,34 @@
       query = ''
       selected = new Set()
       status = ''
+      activity = null
+      activityProblem = null
       void load()
     }
     wasOpen = open
   })
 
+  // While Manage is open: now, every 15 s while the page is visible, and at once when it is shown again.
+  $effect(() => {
+    if (!open) return
+    const onvisibility = (): void => poller.visibilityChanged()
+    poller.start()
+    document.addEventListener('visibilitychange', onvisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onvisibility)
+      poller.stop()
+    }
+  })
+
   const ask = (items: ReadonlyArray<ManageRow>): void => {
     if (items.length === 0) return
-    targets = items
+    targets = withActivityNotes(items, byWorkspace)
     status = ''
     confirming = true
   }
   const finished = async (removed: ReadonlyArray<ManageRow>): Promise<void> => {
+    // Even a delete that failed may have stopped some of a Workspace's work.
+    poller.refresh()
     if (removed.length === 0) return
     // A deleted Workspace is no longer a launch default or a Recent entry.
     for (const row of removed) memory.forget(row.id)
@@ -111,11 +152,23 @@
     {:else if rows.length === 0}
       <p class="muted">There are no Workspaces.</p>
     {:else}
+      {#if summary || activityProblem}
+        <div class="activity-head">
+          {#if summary}<p class="activity-summary" id={`${uid}-summary`}><span class="summary-dot" aria-hidden="true"></span>{summary}</p>{/if}
+          {#if activityProblem}<p class="activity-problem">{activityProblem}</p>{/if}
+        </div>
+      {/if}
       <div class="tools">
-        <label class="select-all">
-          <input bind:this={selectAllBox} type="checkbox" checked={allState === 'all'} onchange={() => { selected = toggleAll(shown, selected) }} />
-          <span>Select all{query.trim() ? ' shown' : ''} <span class="muted-count">({shown.length})</span></span>
-        </label>
+        <div class="picks">
+          <label class="select-all">
+            <input bind:this={selectAllBox} type="checkbox" checked={allState === 'all'} onchange={() => { selected = toggleAll(shown, selected) }} />
+            <span>Select all{query.trim() ? ' shown' : ''} <span class="muted-count">({shown.length})</span></span>
+          </label>
+          {#if activeIds.length > 0}
+            <button class="select-active" type="button" aria-describedby={`${uid}-summary`} onclick={() => { selected = new Set(activeIds) }}
+            >{selectActiveLabel(activeIds.length)}</button>
+          {/if}
+        </div>
         {#if rows.length > SEARCH_THRESHOLD}
           <label class="search">
             <span class="visually-hidden">Find a Workspace</span>
@@ -126,11 +179,18 @@
       </div>
       <ul class="rows" bind:this={list} tabindex="-1" aria-label={`Workspaces (${rows.length})`}>
         {#each shown as row (row.id)}
+          {@const items = byWorkspace.get(row.id)}
           <li class:checked={selected.has(row.id)}>
             <input id={`${uid}-${row.id}`} type="checkbox" checked={selected.has(row.id)} onchange={() => { selected = toggleOne(selected, row.id) }} />
             <label for={`${uid}-${row.id}`}>
               <span class="name" class:untitled={row.untitled}>{row.label}</span>
               <span class="meta"><span title={row.createdExact}>{row.created}</span>{#if row.recent}<span class="tag">Recent in this browser</span>{/if}{#if row.note}<span class="state">{row.note}</span>{/if}</span>
+              {#if items}
+                <!-- Inline text, so a long line wraps between words; a dot stays with its label and a "·" ends a line rather than starting one. -->
+                <span class="activity">{#each items as item, index (`${item.moduleId}:${item.key}`)}<span class="item" class:active={item.active}
+                  >{#if item.active}<span class="dot" aria-hidden="true">●</span>{'\u00a0'}{/if}{item.label}</span
+                  >{#if index < items.length - 1}<span aria-hidden="true">{'\u00a0·'}</span><span class="visually-hidden">,</span>{' '}{/if}{/each}</span>
+              {/if}
             </label>
             <button class="lb-icon-btn row-delete" type="button" aria-label={`Delete ${row.label}`} title={`Delete ${row.label}`} onclick={() => ask([row])}><Icon name="trash" size={18} /></button>
           </li>
@@ -160,7 +220,17 @@
   .muted { margin: 0; color: var(--lb-ink-3); font-size: var(--lb-fs-small); }
   .failed { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lb-s3); }
   .failed p { margin: 0; color: var(--lb-danger); font-size: var(--lb-fs-small); }
+  .activity-head { display: grid; gap: 2px; }
+  .activity-head p { margin: 0; font-size: var(--lb-fs-small); line-height: 1.45; }
+  .activity-summary { display: flex; align-items: center; gap: 8px; color: var(--lb-ink-2); font-weight: 500; }
+  .activity-problem { color: var(--lb-ink-3); }
   .tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--lb-s2) var(--lb-s4); }
+  .picks { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--lb-s1); }
+  .select-active { min-height: 40px; padding: 0 10px; border: 0; border-radius: var(--lb-r-sm); background: none; color: var(--lb-accent); font: inherit;
+    font-size: .875rem; font-weight: 600; cursor: pointer; }
+  .select-active:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .select-active:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }
+  @media (pointer: coarse) { .select-active { min-height: 44px; } }
   .select-all { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; color: var(--lb-ink); font-size: .875rem; font-weight: 600; cursor: pointer; }
   .muted-count { color: var(--lb-ink-3); font-weight: 500; }
   input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--lb-brand-700); cursor: pointer; }
@@ -181,6 +251,10 @@
   .meta { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--lb-ink-3); font-size: var(--lb-fs-micro); }
   .tag { color: var(--lb-accent); font-weight: 600; }
   .state { color: var(--lb-warn); font-weight: 650; }
+  .activity { color: var(--lb-ink-3); font-size: var(--lb-fs-micro); line-height: 1.45; overflow-wrap: anywhere; }
+  .activity .item.active { color: var(--lb-ink); font-weight: 600; }
+  .dot { color: var(--lb-ok); font-size: .85em; }
+  .summary-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--lb-ok); }
   .row-delete { color: var(--lb-ink-2); }
   .row-delete:hover { color: var(--lb-danger); background: rgba(138, 45, 45, .08); }
   .count { flex: 1; min-width: 0; color: var(--lb-ink-2); font-size: var(--lb-fs-small); }
@@ -188,5 +262,8 @@
     .manage { padding: var(--lb-s3) var(--lb-s4) var(--lb-s4); }
     .search { max-width: none; }
   }
-  @media (forced-colors: active) { .rows li.checked { outline: 2px solid Highlight; outline-offset: -2px; } }
+  @media (forced-colors: active) {
+    .rows li.checked { outline: 2px solid Highlight; outline-offset: -2px; }
+    .summary-dot { background: CanvasText; }
+  }
 </style>
