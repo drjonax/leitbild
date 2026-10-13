@@ -11,7 +11,7 @@
     SimulationRunId,
     ObjectId,
     ProcedureDocument,
-    ProcedureId,
+    ProcedureRunId,
     ProcedureRunScope,
     ProcedureRunState,
     CompiledScenario,
@@ -78,6 +78,12 @@
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
   import { createProcedureSession, type ProcedureSession } from '../procedures/procedure-session.ts'
   import {
+    procedureAiStartedRunIds,
+    procedureAiStartsRead,
+    procedureWindowsShowingAiStart,
+    type ProcedureSystemWindowEntry,
+  } from '../procedures/procedure-follow.ts'
+  import {
     procedureRunSummariesForScope,
     type ProcedureRunSummary,
     type ProcedureRunSummaryGroup,
@@ -132,14 +138,6 @@
   }
 
   type DroneMotionFrameConsumer = (frames: ReadonlyArray<DroneMotionFrame>) => void
-
-  interface ProcedureSystemWindowEntry {
-    readonly id: string
-    readonly objectId: ObjectId
-    readonly initialProcedureId?: ProcedureId
-    /** Counts how often the unit's procedures were opened again; each raises and focuses the open window. */
-    readonly focusRequest?: number
-  }
 
   interface DroneWindowModel extends DroneWindowEntry {
     readonly object: OperationalObject
@@ -233,6 +231,8 @@
   let procedureSession = $state<ProcedureSession | null>(null)
   let procedureRuns = $state<ReadonlyArray<ProcedureRunState>>([])
   let procedureRunDocuments = $state<ReadonlyMap<string, ProcedureDocument>>(new Map())
+  /** Runs AI agents started or resumed live, awaiting the Run read that holds them. */
+  const aiStartedProcedureRunIds = new Set<ProcedureRunId>()
   let processPlantArtifactModal = $state<{
     readonly object: OperationalObject
     readonly artifact: ProcessPlantArtifactKind
@@ -1159,6 +1159,18 @@
     procedureSystemWindows = procedureSystemWindows.filter(entry => entry.id !== windowId)
   }
 
+  // An AI agent's Run shows in its unit's procedure window, opened if need be, never focused.
+  const showAiProcedureRun = (run: ProcedureRunState): void => {
+    const object = objects.find(candidate => procedureScopeForObject(candidate)?.plantId === run.scope.plantId)
+    if (object === undefined) return
+    procedureSystemWindows = procedureWindowsShowingAiStart(procedureSystemWindows, {
+      objectId: object.id,
+      run,
+      newWindowId: () => nextFloatingWindowId('procedure-system', object.id),
+    })
+    void loadProcedureSystemModal()
+  }
+
   const retargetProcedureSystem = (windowId: string, objectId: ObjectId): void => {
     procedureSystemWindows = procedureSystemWindows.map(entry => entry.id === windowId
       ? { ...entry, objectId }
@@ -1486,6 +1498,8 @@
           routeRevision += 1
         }
         if (parsed.events.some(event => event.type.startsWith('procedure.') || event.type === 'object.deleted')) {
+          // Only a live batch opens a window: the snapshot and Run reads never do.
+          for (const runId of procedureAiStartedRunIds(parsed.events)) aiStartedProcedureRunIds.add(runId)
           procedureRevision += 1
         }
       },
@@ -1938,10 +1952,23 @@
       onError: error => { console.warn('Background procedure document load failed; selecting it will retry.', error) },
     })
     untrack(() => {
+      aiStartedProcedureRunIds.clear()
       procedureSession = next
       next.subscribe(state => { procedureRuns = state.runs; procedureRunDocuments = state.documents })
     })
     return () => { next.dispose() }
+  })
+
+  // An AI agent's live start shows once its Run is read: once per start, so a
+  // window the person closes stays closed until an AI agent starts again.
+  $effect(() => {
+    const runs = procedureRuns
+    untrack(() => {
+      if (aiStartedProcedureRunIds.size === 0) return
+      const read = procedureAiStartsRead(runs, aiStartedProcedureRunIds)
+      for (const runId of read.settled) aiStartedProcedureRunIds.delete(runId)
+      for (const run of read.show) showAiProcedureRun(run)
+    })
   })
 
   $effect(() => {
@@ -2194,6 +2221,7 @@
       initialProcedureId={windowEntry.initialProcedureId}
       windowOffsetIndex={windowEntry.index}
       focusRequest={windowEntry.focusRequest ?? 0}
+      aiStart={windowEntry.aiStart}
       selectUnit={(objectId: ObjectId) => retargetProcedureSystem(windowEntry.id, objectId)}
       openDisplay={(listing) => requestDisplayWindow({ kind: 'listing', listing }, true)}
       close={() => closeProcedureSystem(windowEntry.id)}

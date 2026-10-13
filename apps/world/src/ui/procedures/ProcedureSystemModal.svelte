@@ -13,6 +13,7 @@
     ProcedureBranch,
     ProcedureDocument,
     ProcedureId,
+    ProcedureRunId,
     ProcedureRunScope,
     ProcedureRunState,
     ProcedureStep,
@@ -21,6 +22,7 @@
     ProcedureTag,
     ProcedureTagId,
   } from '../../core/model/index.ts'
+  import { sameProcedureScope } from '../../core/model/index.ts'
   import type { PackObjectStatusPresentation, PackProcedureContribution } from '../../core/packs/protocol.ts'
   import StatusIndicator from '../components/StatusIndicator.svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
@@ -87,6 +89,8 @@
     readonly windowOffsetIndex?: number
     /** Raised by the route when this unit's procedures are opened again: focus this window (and its requested procedure). */
     readonly focusRequest?: number
+    /** The Run an AI agent last started on this unit, a new object per start: shown without raising or focusing this window. */
+    readonly aiStart?: { readonly runId: ProcedureRunId }
     readonly selectUnit: (objectId: ObjectId) => void
     /** Opens a display in the Workspace's process display window, where it can be operated. */
     readonly openDisplay?: (listing: EmbeddedViewListing) => void
@@ -148,6 +152,7 @@
     initialProcedureId = undefined,
     windowOffsetIndex = 0,
     focusRequest = 0,
+    aiStart = undefined,
     selectUnit,
     openDisplay = undefined,
     close,
@@ -219,6 +224,9 @@
   /** What this window last showed of its Run; an AI agent's move is the difference it follows. */
   let followMark: ProcedureFollowMark | null = null
   let followTimer: number | null = null
+  /** The AI start this window was asked to show, until it does; and the last start taken. */
+  let aiStartRunId: ProcedureRunId | null = null
+  let takenAiStart: { readonly runId: ProcedureRunId } | undefined
   /** When the person last pointed, wheeled, touched or typed in this window. */
   let lastInteractionAt: number | null = null
 
@@ -644,11 +652,12 @@
   const followAiDriver = (): void => {
     if (disposed || !document) return
     const shown = { documentKey: procedureViewKey(document, currentScope), run: selectedProcedureRun }
+    const requested = aiStartRunId === null ? undefined : runs.find(run => run.runId === aiStartRunId)
     const action = procedureFollowAction({
       runs,
       shown,
       mark: followMark,
-      request: null,
+      request: requested !== undefined && sameProcedureScope(requested.scope, currentScope) ? requested : null,
       ownWrite: pendingControl !== null,
       // An open confirmation is the person at work: nothing moves under it.
       idleForMs: confirmation !== null ? 0 : lastInteractionAt === null ? Number.POSITIVE_INFINITY : Date.now() - lastInteractionAt,
@@ -658,9 +667,10 @@
       followTimer = window.setTimeout(() => { followTimer = null; followAiDriver() }, action.delayMs)
       return
     }
+    aiStartRunId = null
     followMark = procedureFollowMark(shown.documentKey, shown.run)
     if (action.kind === 'scroll') scrollToProcedureStep(action.stepId)
-    // The destination opens at its current step, as the person's own confirmed transfer does.
+    // A Run shown opens at its current step, as the person's own confirmed transfer opens its destination.
     if (action.kind === 'show') void loadProcedure(action.run.procedureId, true, {
       sourceId: action.run.sourceId,
       sourceRevision: action.run.sourceRevision,
@@ -1254,6 +1264,17 @@
     document
     currentScope
     untrack(followAiDriver)
+  })
+
+  // Every re-render passes the same start object back; only a new one is a new AI start.
+  $effect(() => {
+    const start = aiStart
+    if (start === undefined || start === takenAiStart) return
+    untrack(() => {
+      takenAiStart = start
+      aiStartRunId = start.runId
+      followAiDriver()
+    })
   })
 
   // Opening this unit's procedures again focuses this window instead of a second one.

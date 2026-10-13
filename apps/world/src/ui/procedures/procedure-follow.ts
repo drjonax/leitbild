@@ -1,11 +1,13 @@
-import type { ProcedureRunId, ProcedureRunState, ProcedureStepId } from '../../core/model/index.ts'
-import { procedureRunFor } from './procedure-run-selectors.ts'
+import type { ObjectId, ProcedureId, ProcedureRunId, ProcedureRunState, ProcedureStepId } from '../../core/model/index.ts'
+import type { SimulationRunEventPayload } from '../simulation-run-events.ts'
+import { procedureActorIsAi, procedureRunFor } from './procedure-run-selectors.ts'
 
 // A procedure window follows a Run an AI agent drives: it scrolls to the Run's
 // new current step and goes on to the procedure a transfer hands the Run to,
 // as the person's own confirmed transfer would. It moves only once the person
 // has left the window alone for a few seconds, and never takes focus. A Run a
-// person drives, or nobody does, moves only when someone moves it.
+// person drives, or nobody does, moves only when someone moves it. A Run an AI
+// agent starts live opens its unit's procedure window on it, once per start.
 
 /** How long a window waits after the person's last pointer, wheel, touch or key in it before it moves by itself. */
 export const procedureFollowIdleMs = 4_000
@@ -97,4 +99,62 @@ const procedureFollowMove = (config: Parameters<typeof procedureFollowAction>[0]
   }
   if (!aiDrives(run) || run.currentStepId === undefined) return stay
   return mark.runId === run.runId && mark.stepId === run.currentStepId ? stay : { kind: 'scroll', stepId: run.currentStepId }
+}
+
+/** A procedure window the route keeps open for a unit. */
+export interface ProcedureSystemWindowEntry {
+  readonly id: string
+  readonly objectId: ObjectId
+  readonly initialProcedureId?: ProcedureId
+  /** Counts how often the unit's procedures were opened again; each raises and focuses the open window. */
+  readonly focusRequest?: number
+  /** The Run an AI agent last started on the unit: the open window shows it, neither raised nor focused. A new object per start. */
+  readonly aiStart?: { readonly runId: ProcedureRunId }
+}
+
+/**
+ * The procedure Runs an AI agent started or resumed in one committed batch:
+ * one whose start or resume made an AI agent its driver, or that an AI agent
+ * resumed while still driving it. Each is shown once in its unit's procedure
+ * window. A batch that closes a Run as transferred hands that Run's driver on
+ * to its destination; the window showing the source follows it there
+ * (`procedureFollowAction`), so a transfer opens no window.
+ */
+export const procedureAiStartedRunIds = (events: ReadonlyArray<SimulationRunEventPayload>): ReadonlyArray<ProcedureRunId> => {
+  const lifecycle = events.flatMap(event => event.procedureRun === undefined ? [] : [event.procedureRun])
+  if (lifecycle.some(event => event.type === 'procedure.run.closed' && event.status === 'transferred')) return []
+  const aiDriven = new Set(lifecycle.flatMap(event => event.type === 'procedure.run.driver.changed'
+    && event.reason === 'started' && event.driver?.kind === 'ai' ? [event.runId] : []))
+  return lifecycle.flatMap(event => {
+    if (event.type === 'procedure.run.started') return aiDriven.has(event.run.runId) ? [event.run.runId] : []
+    if (event.type === 'procedure.run.resumed') return aiDriven.has(event.runId) || procedureActorIsAi(event.resumedBy) ? [event.runId] : []
+    return []
+  })
+}
+
+/**
+ * What a Run read settles of the AI starts awaiting it: each Run it holds is
+ * settled, and shown while it is active and an AI agent drives it. A start
+ * whose Run the read lacks waits for the next read.
+ */
+export const procedureAiStartsRead = (
+  runs: ReadonlyArray<ProcedureRunState>,
+  awaited: ReadonlySet<ProcedureRunId>,
+): { readonly settled: ReadonlyArray<ProcedureRunId>; readonly show: ReadonlyArray<ProcedureRunState> } => {
+  const read = runs.filter(run => awaited.has(run.runId))
+  return { settled: read.map(run => run.runId), show: read.filter(aiDrives) }
+}
+
+/**
+ * The procedure windows once an AI agent's Run on a unit is shown: the unit's
+ * open window shows it in place, neither raised nor focused, else a new window
+ * opens on it. A window the person closed opens again only for a later start.
+ */
+export const procedureWindowsShowingAiStart = (
+  windows: ReadonlyArray<ProcedureSystemWindowEntry>,
+  config: { readonly objectId: ObjectId; readonly run: ProcedureRunState; readonly newWindowId: () => string },
+): ReadonlyArray<ProcedureSystemWindowEntry> => {
+  const open = windows.find(entry => entry.objectId === config.objectId)
+  if (open) return windows.map(entry => entry === open ? { ...entry, aiStart: { runId: config.run.runId } } : entry)
+  return [...windows, { id: config.newWindowId(), objectId: config.objectId, initialProcedureId: config.run.procedureId }]
 }
