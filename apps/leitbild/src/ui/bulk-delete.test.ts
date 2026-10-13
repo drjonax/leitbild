@@ -92,6 +92,7 @@ describe('words', () => {
     expect(progressText(WORKSPACE_NOUN, 2, 5)).toBe('Deleting 5 Workspaces… 2 of 5 done')
     expect(failureTitle(SIMULATION_NOUN, 1, 1)).toBe('The simulation was not deleted')
     expect(failureTitle(WORKSPACE_NOUN, 2, 5)).toBe('2 of 5 Workspaces were not deleted')
+    expect(failureTitle(WORKSPACE_NOUN, 1, 5)).toBe('1 of 5 Workspaces was not deleted')
     expect(failureTitle(WORKSPACE_NOUN, 3, 3)).toBe('None of the 3 Workspaces were deleted')
   })
 })

@@ -98,7 +98,7 @@ export const progressText = (noun: Noun, done: number, total: number): string =>
 export const failureTitle = (noun: Noun, failed: number, total: number): string =>
   total === 1 ? `The ${noun.one} was not deleted`
     : failed === total ? `None of the ${total} ${noun.many} were deleted`
-      : `${failed} of ${total} ${noun.many} were not deleted`
+      : `${failed} of ${total} ${noun.many} ${failed === 1 ? 'was' : 'were'} not deleted`
 
 /** The live region's line once the dialog has closed. */
 export const deletedText = (noun: Noun, removed: ReadonlyArray<DeleteItem>): string =>
