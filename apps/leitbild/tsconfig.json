@@ -4,7 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2024", "DOM"],
     "types": ["bun-types"],
     "strict": true,
     "noUncheckedIndexedAccess": true,

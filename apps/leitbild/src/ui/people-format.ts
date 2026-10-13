@@ -72,8 +72,11 @@ export const nameProblem = (name: string): string | null => {
 /** The default names Agents hands out ("User1"); anything else was chosen. */
 export const isDefaultName = (name: string): boolean => /^User[1-9]\d*$/.test(name)
 
-/** What is sent: NFC with trailing whitespace trimmed (CONTRACT "Send"). */
-export const messageText = (raw: string): string => raw.normalize('NFC').replace(/\s+$/u, '')
+/**
+ * What is sent: NFC with trailing whitespace trimmed (CONTRACT "Send"), a lone
+ * surrogate made U+FFFD first, exactly as Agents normalises it.
+ */
+export const messageText = (raw: string): string => raw.toWellFormed().normalize('NFC').replace(/\s+$/u, '')
 
 export const messageLength = (raw: string): number => codePoints(messageText(raw))
 

@@ -65,6 +65,9 @@ describe('labels', () => {
 
   test('messages: trailing whitespace trimmed, the limit counted in characters, a counter near it', () => {
     expect(messageText('Hello  \n ')).toBe('Hello')
+    // A lone surrogate (half an emoji, cut by a paste) is counted and stored as U+FFFD, as Agents does.
+    expect(messageText('cut \uD83D')).toBe('cut \uFFFD')
+    expect(messageText('Cafe\u0301 \uDE42x')).toBe('Café \uFFFDx')
     expect(messageSendable('  \n ')).toBe(false)
     expect(messageSendable('🙂'.repeat(2_000))).toBe(true)
     expect(messageSendable('🙂'.repeat(2_001))).toBe(false)
