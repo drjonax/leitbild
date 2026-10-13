@@ -820,6 +820,11 @@
   .workspace-name { min-width: 0; }
   .workspace-actions { flex-shrink: 0; }
   @media (max-width: 559px) { .workspace-name { display: none; } }
+  /* Below 470 px the identity keeps its mark and people control, and the Run's controls scroll in their strip. */
+  @media (max-width: 469px) {
+    .workspace-identity { flex-shrink: 0; }
+    .workspace-actions { flex-shrink: 1; }
+  }
   .guide-back { flex: none; color: #aebbb0; font-size: .78rem; text-decoration: none; white-space: nowrap; }
   .guide-back:hover { color: white; }
   .guide-back:focus-visible { outline: 2px solid var(--lb-focus-on-dark); outline-offset: 2px; border-radius: 4px; }

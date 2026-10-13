@@ -397,6 +397,13 @@
   .actions { margin-top: .85rem; display: flex; justify-content: flex-end; gap: .5rem; } .control-dialog .actions button { min-height: 38px; padding: .5rem .8rem; border-color: #aeb9ad; color: #213026; background: #fff; } .control-dialog .actions button.primary { border-color: #263c2b; color: #f5fff2; background: #263c2b; }
   .quick { margin-top: 1rem; display: flex; gap: .5rem; } .control-dialog .quick button { flex: 1; min-height: 44px; border-color: #263c2b; color: #213026; background: #fff; font-weight: 700; }
   .hint { font-size: .72rem; line-height: 1.4; } @media (max-width: 760px) { .family-control, .run-title { display: none; } .clock { min-width: 96px; } }
+  /* Below 470 px the Run bar cannot hold every control: they scroll sideways in their own strip
+     instead of overlapping the buttons beside them. The padding keeps focus rings unclipped. */
+  @media (max-width: 469px) {
+    .run-controls { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 4px 4px; }
+    .run-controls::-webkit-scrollbar { display: none; }
+    .run-controls > * { flex: none; }
+  }
   .restrictions-dialog { width: min(680px, calc(100vw - 2rem)); } .object-restrictions { max-height: min(42vh, 420px); overflow: auto; display: grid; gap: .25rem; }
   .object-restrictions > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .8rem; padding: .4rem 0; border-bottom: 1px solid #e1e7df; }
   .object-restrictions > div > span { min-width: 0; display: grid; } .object-restrictions strong, .object-restrictions small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .object-restrictions small { color: #6b746c; }
