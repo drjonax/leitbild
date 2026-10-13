@@ -32,7 +32,7 @@ import { apiError, json } from './responses.ts'
 import { workspaceIdSchema, type ModuleFeaturedDefinitionCollection, type WorkspaceId } from '@leitbild/contracts'
 import { createOpenAccessContext } from '../workspaces/request-context.ts'
 import type { WorldWorkspaceRuntime, WorldWorkspaceRuntimeRegistry } from '../workspaces/runtime-registry.ts'
-import { handleWorldFeaturedDefinitions, handleWorldModuleApi } from './workspace-module-api.ts'
+import { handleWorldActivity, handleWorldFeaturedDefinitions, handleWorldModuleApi } from './workspace-module-api.ts'
 
 const frameAncestorsHeader = "frame-ancestors 'self'"
 const capabilityInvokePath = /\/capabilities\/[^/]+\/invoke$/
@@ -410,6 +410,8 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
       if ((req.method === 'PUT' || req.method === 'DELETE') && workspaceLifecyclePath.test(url.pathname)) serverApi.timeout(req, capabilityInvokeIdleSeconds)
       const featuredResponse = handleWorldFeaturedDefinitions(req, url, config.featuredDefinitions)
       if (featuredResponse) return secure(featuredResponse)
+      const activityResponse = await handleWorldActivity(req, url, config.workspaces)
+      if (activityResponse) return secure(activityResponse)
       const workspaceModuleResponse = await handleWorldModuleApi(req, url, config.workspaces)
       if (workspaceModuleResponse) return secure(workspaceModuleResponse)
       if ((url.pathname === '/' || url.pathname === '/index.html') && req.method === 'GET') {

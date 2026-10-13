@@ -14,7 +14,6 @@ import type { CompiledScenario,IsoTimestamp,RunRoles,SimulationClockState,Simula
 import {
   newSimulationRunId,
   runRolesOf,
-  simulationRunIdSchema,
 } from '../model/index.ts'
 import { createSimulationClock,nowIso } from '../model/time.ts'
 import { scenarioPreviewFor,type ScenarioPreview } from '../scenarios/authoring-preview.ts'
@@ -35,6 +34,7 @@ import {
 import type { SimulationRunRuntimeMetricsSnapshot } from './runtime-metrics.ts'
 import { defaultSimulationRunRuntimePolicy } from './runtime-persistence-policy.ts'
 import { createJsonRuntimeStateStore } from './runtime-state-store.ts'
+import { listStoredSimulationRunIds } from './stored-runs.ts'
 import { createExecutionStore } from './execution-store.ts'
 import { accelerationStateSchema,executionAdvanceInputSchema,executionCheckpointWallIntervalMs,executionSetInputSchema,runCopyInputSchema,runExecutionStateSchema,type AccelerationState,type AdvanceCompletion,type ExecutionSetInput,type RunCopyOrigin,type RunExecutionState,type RunPace,type RunPlayback } from './execution.ts'
 import type { SimulationRunCapabilities } from './runtime.ts'
@@ -84,6 +84,13 @@ export interface SimulationRunRegistryStatus {
   readonly leases: ReadonlyArray<SimulationRunLeaseSummary>
 }
 
+/** The Runs a Workspace holds in memory now, and which of them advance. */
+export interface SimulationRunRegistryActivity {
+  readonly loadedRunIds: ReadonlyArray<SimulationRunId>
+  /** Loaded Runs whose clock plays, or that a maximum-pace job is still advancing. */
+  readonly advancingRunIds: ReadonlyArray<SimulationRunId>
+}
+
 /** Arms one idle-close countdown and returns its disarm; the countdown's close settles when the Run is closed or kept. */
 export type IdleRuntimeCloseTimer = (closeIfIdle: () => Promise<void>, delayMs: number) => () => void
 
@@ -131,6 +138,11 @@ export interface SimulationRunRegistry {
   /** The roles a Run declares, read from its pinned Compiled Scenario without loading it. */
   readonly runRoles: (id: SimulationRunId) => Promise<RunRoles | null>
   readonly status: () => Promise<SimulationRunRegistryStatus>
+  /**
+   * The loaded Runs and those advancing, read from memory alone: it loads no
+   * Run, does no I/O and touches no lease or idle-close countdown.
+   */
+  readonly activity: () => SimulationRunRegistryActivity
   readonly acquireLease: (id: SimulationRunId, kind: SimulationRunLeaseKind) => () => void
   readonly setBackgroundExecution: (id: SimulationRunId, enabled: boolean) => Promise<SimulationRunLeaseSummary>
   readonly leaseSummary: (id: SimulationRunId) => SimulationRunLeaseSummary
@@ -1094,21 +1106,7 @@ export const createSimulationRunRegistry = (config: {
     return wasLoaded || existedOnDisk
   }))
 
-  const listPersistedIds = async (): Promise<ReadonlyArray<SimulationRunId>> => {
-    let entries: ReadonlyArray<{ readonly isDirectory: () => boolean; readonly name: string }>
-    try {
-      entries = await readdir(simulationRunRoot, { withFileTypes: true })
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw err
-    }
-    return entries
-      .filter(entry => entry.isDirectory())
-      .map(entry => simulationRunIdSchema.safeParse(entry.name))
-      .filter((result): result is { readonly success: true; readonly data: SimulationRunId } => result.success)
-      .map(result => result.data)
-      .sort()
-  }
+  const listPersistedIds = (): Promise<ReadonlyArray<SimulationRunId>> => listStoredSimulationRunIds(simulationRunRoot)
 
   const unavailableSummary = (id: SimulationRunId, loadError: string): SimulationRunSummary => ({
     id, name: null, title: id, scenarioId: null, scenarioTitle: null,
@@ -1255,6 +1253,23 @@ export const createSimulationRunRegistry = (config: {
     return { totalBytes, fileCount, directoryCount }
   }
 
+  // Maximum pace advances a Run with its clock paused; as in executionStatus,
+  // the job counts while its acceleration runs, not while it settles its end.
+  const advances = (id: SimulationRunId, runtime: SimulationRunRuntime): boolean => {
+    if (maximumPaceJobs.has(id) && executionStates.get(id)?.acceleration?.status === 'running') return true
+    const clock = runtime.snapshot().clock
+    if (!clock) throw new Error(`Simulation Run clock is not initialized: ${id}`)
+    return !clock.paused
+  }
+
+  const activity = (): SimulationRunRegistryActivity => {
+    const loadedRuns = [...simulationRuns]
+    return {
+      loadedRunIds: loadedRuns.map(([id]) => id),
+      advancingRunIds: loadedRuns.filter(([id, runtime]) => advances(id, runtime)).map(([id]) => id),
+    }
+  }
+
   const status = async (): Promise<SimulationRunRegistryStatus> => ({
     dataDir: workspaceRoot,
     storage: await measureDirectory(workspaceRoot),
@@ -1291,6 +1306,7 @@ export const createSimulationRunRegistry = (config: {
     summary: summaryFor,
     runRoles,
     status,
+    activity,
     acquireLease,
     compiledScenarioForRun: async id => {
       const stored = await createCompiledScenarioStore(join(simulationRunRoot, id, 'compiled-scenario.json')).load()

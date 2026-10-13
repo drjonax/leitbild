@@ -1,6 +1,7 @@
 import { runHistorianStatusSchema } from '../../features/historian/policy.ts'
 import {
   inspectionViewSchema,
+  moduleActivitySchema,
   moduleCapabilityCollectionSchema,
   moduleCapabilityInvocationSchema,
   moduleDefinitionCollectionSchema,
@@ -14,6 +15,7 @@ import {
   workspaceDefinitionRevisionReferenceSchema,
   type ModuleCapabilityDescriptor,
   type ModuleFeaturedDefinitionCollection,
+  type ModuleWorkspaceActivity,
   type ModuleResourceDescriptor
 } from '@leitbild/contracts'
 import { createModuleCapabilityRegistry } from '@leitbild/module-runtime'
@@ -61,7 +63,7 @@ const runWaitAnswerSchema = runWaitResultSchema.extend({
 import { executionAdvanceInputSchema,executionSetInputSchema,runCopyInputSchema,runCopyOriginSchema,runExecutionStateSchema } from '../simulation-runs/execution.ts'
 import type { SimulationRunRegistry } from '../simulation-runs/registry.ts'
 import { aiRoleRunRefusal, hiddenInRoleRun, isRoleGateRefusal, roleRequiredRefusal, roleRunOpenCapabilityIds } from '../simulation-runs/role-gates.ts'
-import type { WorldWorkspaceRuntimeRegistry } from '../workspaces/runtime-registry.ts'
+import type { WorldWorkspaceActivity, WorldWorkspaceRuntimeRegistry } from '../workspaces/runtime-registry.ts'
 import { apiError,json,readJson } from './responses.ts'
 import {
   buildSimulationRunActorForAccess,
@@ -116,6 +118,36 @@ export const handleWorldFeaturedDefinitions = (
   featured: ModuleFeaturedDefinitionCollection,
 ): Response | null =>
   url.pathname === worldModuleManifest.endpoints.featuredDefinitions && request.method === 'GET' ? json(featured) : null
+
+const simulationsLabel = (count: number): string => `${count} ${count === 1 ? 'simulation' : 'simulations'}`
+
+/** A Workspace's Simulation Run facts for people; a Workspace with none is left out. */
+const workspaceActivityOf = (activity: WorldWorkspaceActivity): ReadonlyArray<ModuleWorkspaceActivity> => {
+  const items = [
+    ...(activity.advancingRuns === 0 ? [] : [{
+      key: 'simulations-running', label: `${simulationsLabel(activity.advancingRuns)} running`, count: activity.advancingRuns, active: true,
+    }]),
+    ...(activity.storedRuns === 0 ? [] : [{
+      key: 'simulations', label: simulationsLabel(activity.storedRuns), count: activity.storedRuns, active: false,
+    }]),
+  ]
+  return items.length === 0 ? [] : [{ workspaceId: activity.workspaceId, items }]
+}
+
+/**
+ * Serves, per provisioned Workspace, how many Simulation Runs advance now and
+ * how many are stored. It reads memory and one Run directory listing per
+ * Workspace, so polling it never loads a Workspace runtime or a Run.
+ */
+export const handleWorldActivity = async (
+  request: Request,
+  url: URL,
+  workspaces: WorldWorkspaceRuntimeRegistry,
+): Promise<Response | null> => {
+  if (url.pathname !== worldModuleManifest.endpoints.activity || request.method !== 'GET') return null
+  const activity = await workspaces.activity()
+  return json(moduleActivitySchema.parse({ workspaces: activity.flatMap(workspaceActivityOf) }))
+}
 
 const lifecycleInputSchema = z.object({ workspaceId: workspaceIdSchema }).strict()
 const emptyInputSchema = z.object({}).strict()
