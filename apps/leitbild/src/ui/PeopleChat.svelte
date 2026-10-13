@@ -206,13 +206,19 @@
     session.removeSend(key)
     textarea?.focus()
   }
+
+  // The Retry button goes away with the failure, so focus moves to the composer.
+  const retry = (key: string): void => {
+    session.retrySend(key)
+    textarea?.focus()
+  }
 </script>
 
 <!-- Under a message still on its way. "Not sent" and a rate-limit wait are read out; "Sending…" is not, as it comes and goes. -->
 {#snippet outgoingMeta(bubble: Extract<ChatItem, { kind: 'outgoing' }>)}
   {#if bubble.stage === 'failed'}
     <span class="failrow"><span>Not sent: {bubble.reason}</span>
-      <button type="button" onclick={() => session.retrySend(bubble.key)}>Retry</button>
+      <button type="button" onclick={() => retry(bubble.key)}>Retry</button>
       <button type="button" class="quiet" onclick={() => remove(bubble.key)}>Remove</button>
     </span>
   {:else if bubble.note !== null}<span class="meta">{bubble.note}</span>
