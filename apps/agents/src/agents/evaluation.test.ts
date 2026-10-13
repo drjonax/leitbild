@@ -618,7 +618,7 @@ describe('evaluate (tool loop)', () => {
   test("the Assistant's iteration threshold pauses its turn for the person, who may let it finish", async () => {
     // A cost guard, not a quota: past it the Agent asks the person (Continue / Stop) and keeps its turn.
     const threshold = getBundledRoomDefinition('leitbild-assistant')!.room.agents[0]!.maxToolIterations!
-    expect(threshold).toBe(20)
+    expect(threshold).toBe(40)
     const { provider, calls } = makeScriptedProvider([
       ...Array.from({ length: threshold + 2 }, () => ({ toolCalls: [{ function: { name: 'a', arguments: {} } }] })),
       { content: 'held at step 4 for your judgement' },
