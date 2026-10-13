@@ -126,6 +126,8 @@ describe('resuming a procedure once its proposal is approved', () => {
       roomId: s.room.profile.id,
       turn: {
         instruction: '[Proposal approved] hilde approved your proposal TRIP RX-TRIP on Plant plant:unit-2 for E-0 entry (your answer, messageId "answer-of-turn-1") in the display window, and World executed it. '
+          + 'The plant may not show its effect yet: where a reading you judge by has not responded, wait in plant seconds '
+          + '(world.simulation-run.wait with procedureRunId) before you judge a step or hold on it. '
           + 'Continue the procedure as you would on "continue": read where it stands, say what changed that you did not do, and carry on.',
         inReplyTo: ['answer-of-turn-1'],
         cause: { kind: PROPOSAL_RESUME_CAUSE, name: 'hilde approved TRIP RX-TRIP' },

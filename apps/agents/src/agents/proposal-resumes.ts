@@ -99,6 +99,11 @@ const proposalResumeInstruction = (approved: ReadonlyArray<Approved>, answerId: 
   })
   return `[Proposal approved] ${approverOf(approved)} approved your ${items.length === 1 ? 'proposal' : 'proposals'} `
     + `${items.join('; ')} (your answer, messageId "${answerId}") in the display window, and World executed it. `
+    // This turn starts seconds after the decision, before the plant has
+    // responded (probe 2026-10-13: power still 5 % and subcriticality red
+    // 10 plant seconds after a trip, so the runner held at E-0 step 1).
+    + 'The plant may not show its effect yet: where a reading you judge by has not responded, wait in plant seconds '
+    + '(world.simulation-run.wait with procedureRunId) before you judge a step or hold on it. '
     + 'Continue the procedure as you would on "continue": read where it stands, say what changed that you did not do, and carry on.'
 }
 
