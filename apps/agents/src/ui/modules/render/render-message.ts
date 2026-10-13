@@ -23,6 +23,7 @@ import { decorateProductSourceReferences } from '../modals/source-modal.ts'
 import { mountMessageComparisons } from '../message-comparisons.ts'
 import { mountProposalCards } from '../proposal-card/index.ts'
 import { applyDisplayReply, displayReplyCaptionElement, displayRequestRow, isDisplayReply, offersDisplayRequest } from '../display-request.ts'
+import { PROPOSAL_RESUME_CAUSE, proposalResumeCaption } from '../../../core/proposal-resume.ts'
 
 // Clipboard writes use the current Async Clipboard API. Returns false when
 // the browser or document context does not permit clipboard access.
@@ -400,14 +401,17 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   // when an automation subsystem produced this message.
   // Subtle (text-text-subtle, small) so it doesn't compete with the message
   // body. Tooltip carries the full attribution. See Message.cause docs.
-  // A display-request reply names its requester and links to its answer.
+  // A display-request reply names its requester and links to its answer; a
+  // turn an approved proposal resumed names who approved what.
   if (isDisplayReply(msg)) {
     div.appendChild(displayReplyCaptionElement(container, msg))
   } else if (msg.cause) {
     const cap = document.createElement('div')
     cap.className = 'text-[10px] text-text-subtle mt-0.5'
     const stepFragment = msg.cause.step !== undefined ? ` step ${msg.cause.step + 1}` : ''
-    const label = `via ${msg.cause.kind}: ${msg.cause.name}${stepFragment}`
+    const label = msg.cause.kind === PROPOSAL_RESUME_CAUSE
+      ? proposalResumeCaption(msg.cause.name)
+      : `via ${msg.cause.kind}: ${msg.cause.name}${stepFragment}`
     cap.textContent = label
     cap.title = label
     div.appendChild(cap)
