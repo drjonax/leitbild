@@ -36,6 +36,7 @@ import { handleWorldFeaturedDefinitions, handleWorldModuleApi } from './workspac
 
 const frameAncestorsHeader = "frame-ancestors 'self'"
 const capabilityInvokePath = /\/capabilities\/[^/]+\/invoke$/
+const workspaceLifecyclePath = /^\/internal\/workspaces\/[^/]+$/
 const capabilityInvokeIdleSeconds = 35
 const defaultRealtimeInputActorId = actorIdSchema.parse('actor:operator')
 
@@ -404,6 +405,9 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
       // that (world.simulation-run.wait holds up to 20 s); the Host's gateway
       // waits 30 s, so an invocation may stay open a little longer.
       if (req.method === 'POST' && capabilityInvokePath.test(url.pathname)) serverApi.timeout(req, capabilityInvokeIdleSeconds)
+      // The gateway waits as long for a Workspace lifecycle answer: a removal
+      // still stopping Runs must not be cut off and read as a lost connection.
+      if ((req.method === 'PUT' || req.method === 'DELETE') && workspaceLifecyclePath.test(url.pathname)) serverApi.timeout(req, capabilityInvokeIdleSeconds)
       const featuredResponse = handleWorldFeaturedDefinitions(req, url, config.featuredDefinitions)
       if (featuredResponse) return secure(featuredResponse)
       const workspaceModuleResponse = await handleWorldModuleApi(req, url, config.workspaces)

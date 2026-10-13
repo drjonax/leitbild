@@ -56,3 +56,16 @@ test('capacity reclamation preserves requests and stays bounded across concurren
     expect(await state.list()).toHaveLength(3)
   } finally { gate.resolve(); await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) }
 })
+
+// Bun drops a request idle for 10 s only while its process is otherwise busy,
+// as a World with running Runs always is; so the server runs in its own process.
+test('a Workspace removal that takes longer than Bun\'s 10 s idle limit still answers the Host', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'world-slow-remove-'))
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'slow-workspace-removal.ts'), join(dataDir, 'maps')], { stdout: 'pipe', stderr: 'inherit' })
+  try {
+    const { value } = await child.stdout.getReader().read()
+    const port = Number(new TextDecoder().decode(value).trim())
+    const response = await fetch(`http://127.0.0.1:${port}/internal/workspaces/${newWorkspaceId()}`, { method: 'DELETE' })
+    expect(response.status).toBe(204)
+  } finally { child.kill(); await child.exited; await rm(dataDir, { recursive: true, force: true }) }
+}, 60_000)
