@@ -79,6 +79,7 @@ const parseJson = async (request: Request): Promise<unknown> => {
 
 // Bun drops a request idle for 10 s. A Module Capability may answer later than
 // that (World's run wait holds up to 20 s); the gateway gives a Module 30 s.
+// Deleting a Workspace waits on every Module's removal under the same budget.
 const capabilityInvokeIdleSeconds = 35
 
 export const createWorkspaceHostServer = (config: {
@@ -184,6 +185,7 @@ export const createWorkspaceHostServer = (config: {
             return Response.json({ workspace: config.host.rename(workspaceId, input) })
           }
           if (request.method === 'DELETE') {
+            server.timeout(request, capabilityInvokeIdleSeconds)
             await config.host.delete(workspaceId)
             return new Response(null, { status: 204 })
           }
