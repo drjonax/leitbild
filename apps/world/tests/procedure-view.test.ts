@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
 import { parseProcedureMarkdown } from '../src/features/procedures/procmd.ts'
-import { procedureBlockLabel, procedureObservationBasis, procedureObservationEvidence, procedureObservationLabel, procedureSourceEvidenceRequest, procedureStepItems, procedureTextSegments } from '../src/ui/procedures/procedure-view.ts'
+import { procedureBlockLabel, procedureObservationBasis, procedureObservationEvidence, procedureObservationLabel, procedureSourceEvidenceRequest, procedureStepItems, procedureStepTagBindings, procedureTextSegments, procedureUnitJump } from '../src/ui/procedures/procedure-view.ts'
 import { procedureTestSource } from './procedure-fixtures.ts'
+import { procedureBindingStatusWord, procedureComparisonText, procedureCsfChip, procedureDescriptionText, procedureDisplayReading, procedureElapsedText, procedureStepBindingSummary } from '../src/ui/procedures/procedure-view.ts'
 
 test('technical basis links keep the selected knowledge revision and executable URLs stay inert', () => {
   const source = '/wiki?path=world%2Fprocedures%2FE-0.md&revision=abc123'
@@ -124,4 +125,72 @@ Unknown: Retain uncertain evidence.
     .toEqual(['caution', 'check', 'check', 'action', 'note', 'expected'])
   expect(items.filter(item => !item.primary).map(item => item.kind === 'block' && item.block.kind))
     .toEqual(['rno', 'unknown'])
+})
+
+test("a step's ⓘ reads each tag's live binding and its authored notes, never authored binding prose", () => {
+  const document = parseProcedureMarkdown({ source: procedureTestSource, sourcePath: 'world/procedures/E-0.md', sourceUrl: `/wiki?path=world%2Fprocedures%2FE-0.md&revision=${procedureTestSource.revision}`,
+    rawMarkdown: [
+      '---', 'type: procedure', 'procedure-md: 0.7', 'procedure-id: E-0', 'title: Test', '---',
+      '## Step 1 [id: first]', 'Check: breakers «TRIP-BKR-A» open and margin «SUB-MARGIN» and «SI-SIG»', '- Verified [outcome: normal] → #second',
+      '## Step 2 [id: second]', 'Check: all turbine stop valves CLOSED', '- Done [outcome: normal] → END',
+      '## Tags', '', '- id: TRIP-BKR-A', '  description: reactor trip breaker A position', '  units: enum[OPEN,CLOSED]',
+      '- id: SUB-MARGIN', '  description: subcooling margin', '  model-note: the model measures a different quantity',
+      '- id: SI-SIG', '  description: SI actuation signal',
+    ].join('\n') })
+  const [first, second] = document.steps
+  const validations = new Map([
+    ['TRIP-BKR-A', { status: 'resolved-with-warnings' as const, signal: { label: 'Reactor trip breaker A closed', path: 'reactorTripBreakerA.closed', unit: 'bool' }, warnings: ['requested enum[OPEN,CLOSED] unavailable'] }],
+    ['SUB-MARGIN', { status: 'resolved' as const, signal: { path: 'core.subcoolingMarginC', unit: 'C' }, warnings: [] }],
+    ['SI-SIG', { status: 'missing' as const, warnings: [] }],
+  ])
+  expect(procedureStepTagBindings(first!, document.tags, validations)).toEqual([
+    { tagId: 'TRIP-BKR-A', description: 'reactor trip breaker A position', status: 'resolved-with-warnings', reads: 'Reactor trip breaker A closed (reactorTripBreakerA.closed, bool)', warnings: ['requested enum[OPEN,CLOSED] unavailable'], notes: [] },
+    { tagId: 'SUB-MARGIN', description: 'subcooling margin', status: 'resolved', reads: 'core.subcoolingMarginC (C)', warnings: [], notes: [{ label: 'model note', text: 'the model measures a different quantity' }] },
+    { tagId: 'SI-SIG', description: 'SI actuation signal', status: 'missing', warnings: [], notes: [] },
+  ])
+  expect(procedureStepTagBindings(first!, document.tags, new Map()).map(binding => binding.status)).toEqual(['unchecked', 'unchecked', 'unchecked'])
+  expect(procedureStepTagBindings(second!, document.tags, validations)).toEqual([])
+})
+
+test('a unit in the strip opens the same procedure where that unit runs it, else its first active one, else the same procedure unstarted', () => {
+  const es01 = { procedureId: 'ES-0.1', id: 'es01' }
+  const e0 = { procedureId: 'E-0', id: 'e0' }
+  expect(procedureUnitJump([es01, e0], 'E-0')).toEqual({ kind: 'run', summary: e0 })
+  expect(procedureUnitJump([es01, e0], 'FR-S.1')).toEqual({ kind: 'run', summary: es01 })
+  expect(procedureUnitJump([], 'FR-S.1')).toEqual({ kind: 'procedure', procedureId: 'FR-S.1' })
+  expect(procedureUnitJump([], null)).toEqual({ kind: 'unit' })
+})
+
+test('readings show at an operator\'s precision: one decimal and °C for temperatures, words unchanged', () => {
+  expect(procedureDisplayReading('287.871 degC')).toBe('287.9 °C')
+  expect(procedureDisplayReading('15.1734 MPa')).toBe('15.17 MPa')
+  expect(procedureDisplayReading('3.481e-5 percent')).toBe('3.48e-5 %')
+  expect(procedureDisplayReading('42 %')).toBe('42 %')
+  expect(procedureDisplayReading('OPEN')).toBe('OPEN')
+  expect(procedureDisplayReading('true bool')).toBe('true bool')
+  expect(procedureComparisonText('287.871 degC', '>', 280)).toBe('287.9 °C > 280 °C')
+  expect(procedureComparisonText('OPEN', '==', 'OPEN')).toBe('OPEN == OPEN')
+  expect(procedureElapsedText(3_723_400)).toBe('+01:02:03')
+})
+
+test("a procedure's ⓘ drops the Markdown title line the window already shows", () => {
+  expect(procedureDescriptionText('# E-0 — Reactor Trip\n\nUse this document to study [it](basis.md).')).toBe('Use this document to study [it](basis.md).')
+  expect(procedureDescriptionText('No heading here.')).toBe('No heading here.')
+})
+
+test('a CSF chip keeps its last colour when stale and is never blank before a read', () => {
+  expect(procedureCsfChip('core-cooling', { label: 'Core Cooling', status: 'orange' }, true)).toEqual({ tone: 'orange', glyph: '◆', label: 'Core Cooling', stale: true })
+  expect(procedureCsfChip('core-cooling', { label: 'Core Cooling', status: 'green' }, false)).toEqual({ tone: 'green', glyph: '●', label: 'Core Cooling', stale: false })
+  expect(procedureCsfChip('core-cooling', undefined, true)).toEqual({ tone: 'pending', glyph: '…', label: 'core-cooling', stale: false })
+  expect(procedureCsfChip('heat-sink', { label: 'Heat Sink', status: 'not-monitored' }, false).glyph).toBe('—')
+  expect(procedureCsfChip('heat-sink', { label: 'Heat Sink', status: 'unknown' }, false).glyph).toBe('?')
+})
+
+test("a step's ⓘ heads its tags with counts and takes the colour of its worst binding", () => {
+  const binding = (status: 'resolved' | 'resolved-with-warnings' | 'missing' | 'unchecked') => ({ tagId: status, status, warnings: [], notes: [] })
+  expect(procedureStepBindingSummary([binding('resolved'), binding('resolved-with-warnings'), binding('resolved-with-warnings')])).toEqual({ text: '3 tags · 2 with warnings · 0 missing', worst: 'resolved-with-warnings' })
+  expect(procedureStepBindingSummary([binding('resolved'), binding('missing')]).worst).toBe('missing')
+  expect(procedureStepBindingSummary([binding('resolved')])).toEqual({ text: '1 tag · 0 with warnings · 0 missing', worst: 'resolved' })
+  expect(procedureStepBindingSummary([]).worst).toBe('none')
+  expect(procedureBindingStatusWord('resolved-with-warnings')).toBe('Warnings')
 })

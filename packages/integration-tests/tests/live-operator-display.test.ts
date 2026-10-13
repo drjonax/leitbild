@@ -90,7 +90,7 @@ describe('live operator display chain with real Modules', () => {
     const worldUrl = `http://127.0.0.1:${worldServer.port}`
 
     const deployment = createDeploymentRuntime()
-    for (const name of ['leitbild-assistance', 'operator-displays']) {
+    for (const name of ['leitbild-assistance', 'operator-displays', 'procedure-runner']) {
       deployment.sharedSkillStore.register({ name, description: `Test ${name}`, body: 'Test skill.', tools: [], allowedToolNames: [], dirPath: leitbildHome })
     }
     deployment.sharedToolRegistry.registerAll(createProductKnowledgeTools())

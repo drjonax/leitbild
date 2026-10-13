@@ -137,6 +137,8 @@
     readonly id: string
     readonly objectId: ObjectId
     readonly initialProcedureId?: ProcedureId
+    /** Counts how often the unit's procedures were opened again; each raises and focuses the open window. */
+    readonly focusRequest?: number
   }
 
   interface DroneWindowModel extends DroneWindowEntry {
@@ -1128,6 +1130,16 @@
 
   const openProcedureSystemAt = (object: OperationalObject, summary?: ProcedureRunSummary): void => {
     if (procedureScopeForObject(object) === null) return
+    // One procedure window per unit: opening it again raises and focuses the open one.
+    const open = procedureSystemWindows.find(entry => entry.objectId === object.id)
+    if (open) {
+      procedureSystemWindows = [...procedureSystemWindows.filter(entry => entry.id !== open.id), {
+        ...open,
+        ...(summary?.procedureId === undefined ? {} : { initialProcedureId: summary.procedureId }),
+        focusRequest: (open.focusRequest ?? 0) + 1,
+      }]
+      return
+    }
     procedureSystemWindows = [
       ...procedureSystemWindows,
       {
@@ -2181,7 +2193,9 @@
       session={procedureSession}
       initialProcedureId={windowEntry.initialProcedureId}
       windowOffsetIndex={windowEntry.index}
+      focusRequest={windowEntry.focusRequest ?? 0}
       selectUnit={(objectId: ObjectId) => retargetProcedureSystem(windowEntry.id, objectId)}
+      openDisplay={(listing) => requestDisplayWindow({ kind: 'listing', listing }, true)}
       close={() => closeProcedureSystem(windowEntry.id)}
     />
   {/each}

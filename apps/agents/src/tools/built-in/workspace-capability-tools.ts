@@ -14,6 +14,7 @@ import {
   type ModuleCapabilityDescriptor,
   type ModuleDefinitionDescriptor,
   type ModuleResourceDescriptor,
+  type EmbeddedViewPublication,
   type WorkspaceDefinitionRevisionReference,
   type WorkspaceId,
   type WorkspaceResourceReference,
@@ -70,6 +71,22 @@ const readHostError = async (response: Response): Promise<ToolResult> => {
     retryable: body?.error?.retryable === true,
     ...(body?.error?.details && typeof body.error.details === 'object' ? { hostDetails: body.error.details as Record<string, unknown> } : {}),
   })
+}
+
+// A Module refuses input that does not match an operation's schema with
+// invalid_request (World: the schema's issues). The refusal then carries that
+// schema from the catalog this call already read, so the next call can be
+// corrected without a schema search. The bound keeps a refusal small: it holds
+// 72 of World's 75 schemas (display.compose's is 2.9 KB); scenario authoring
+// schemas (15 KB) are named for an explicit read instead.
+const MAX_REFUSAL_SCHEMA_BYTES = 4096
+
+const refusedInputSchema = (refusal: ToolResult, operation: ModuleCapabilityDescriptor): Record<string, unknown> => {
+  if ((refusal.data as { code?: unknown }).code !== 'invalid_request') return {}
+  const bytes = new TextEncoder().encode(JSON.stringify(operation.inputSchema)).byteLength
+  return bytes <= MAX_REFUSAL_SCHEMA_BYTES
+    ? { inputSchema: operation.inputSchema }
+    : { inputSchemaOmitted: `${bytes} bytes; read it with workspace_explore view=operations, operationIds ["${operation.id}"], includeInputSchema true` }
 }
 
 const optionalFilter = (value: unknown): unknown =>
@@ -284,6 +301,30 @@ const callInputSchema = z.object({
 }).strict()
 
 const catalogPath = (workspacePath: string, kind: 'capabilities' | 'definitions' | 'resources'): string => `${workspacePath}/${kind}`
+
+/**
+ * What the model reads of a workspace_call result. A published view's `state`
+ * is opaque to every embedder (contracts embedded-views.ts), and its completed
+ * envelope is execution evidence the display window resolves by viewRef: the
+ * model presents a view by reference only, so neither is repeated in its
+ * context (a composed display carried its state twice, about 8 KB). The rest
+ * of the result (title, what it shows, viewContent) stays. Every check reads
+ * the raw result or the execution store, never this text: the view fence and
+ * answer-consistency checks (evaluation.ts), what a turn did
+ * (operation-claims.ts), proposal cards and the display window.
+ */
+export const workspaceCallResultForModel = (result: ToolResult): ToolResult => {
+  if (!result.success) return result
+  const { results } = result.data as { readonly results: ReadonlyArray<Readonly<Record<string, unknown>>> }
+  return { ...result, data: { results: results.map(entry => {
+    if (!Object.hasOwn(entry, 'embeddedView')) return entry
+    const { embeddedView: _evidence, data, ...rest } = entry
+    // An envelope is completed only from a valid publication in data.view (embeddedViewFor).
+    const { view, ...fields } = data as { readonly view: EmbeddedViewPublication } & Readonly<Record<string, unknown>>
+    const { state: _opaque, ...shown } = view
+    return { ...rest, data: { ...fields, view: shown } }
+  }) } }
+}
 
 export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDeps): ReadonlyArray<Tool> => {
   const fetchImpl = deps.fetchImpl ?? fetch
@@ -520,7 +561,8 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
             })
             if (!response.ok) {
               const result = await readHostError(response)
-              return { key: entry.key, operationId: entry.operationId, success: false, error: result.error, details: result.data }
+              // The operation is advertised: applicabilityFailure refused an unadvertised one before invocation.
+              return { key: entry.key, operationId: entry.operationId, success: false, error: result.error, details: result.data, ...refusedInputSchema(result, entry.operation!) }
             }
             const body = await response.json() as { result?: unknown }
             if (!Object.hasOwn(body, 'result')) return { key: entry.key, operationId: entry.operationId, success: false, error: 'workspace_host_contract_invalid: Workspace Host response omitted result' }

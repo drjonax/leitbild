@@ -19,6 +19,7 @@ import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/ren
 import { embeddedViewContentSchema, type EmbeddedViewContent } from '@leitbild/contracts'
 import { answerViewIssues } from './answer-consistency.ts'
 import { collectTurnOperations, operationClaimIssues, type TurnOperation } from './operation-claims.ts'
+import { workspaceCallResultForModel } from '../tools/built-in/workspace-capability-tools.ts'
 
 // Max times the eval loop will ask the LLM to fix an invalid map/geojson
 // fence before giving up and posting the broken response (the UI banner
@@ -100,9 +101,14 @@ export const formatToolDataForLLM = (data: unknown): string => {
   }
 }
 
-const formatToolResult = (result: ToolResult): string => result.success
-  ? formatToolDataForLLM(result.data)
-  : JSON.stringify({ success: false, error: result.error ?? 'Tool failed', ...(result.data === undefined ? {} : { details: result.data }) })
+// What the model reads of a tool result. Checks of the answer read the raw
+// result, never this text (workspaceCallResultForModel says what it leaves out).
+const formatToolResult = (tool: string, raw: ToolResult): string => {
+  const result = tool === 'workspace_call' ? workspaceCallResultForModel(raw) : raw
+  return result.success
+    ? formatToolDataForLLM(result.data)
+    : JSON.stringify({ success: false, error: result.error ?? 'Tool failed', ...(result.data === undefined ? {} : { details: result.data }) })
+}
 
 const messageTokens = (message: ChatRequest['messages'][number]): number =>
   Math.ceil((message.content.length + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0)) / 4)
@@ -634,7 +640,7 @@ export const evaluate = async (
           const operationOutcomes = operationOutcomesFor(call.tool, result)
           const traceSuccess = result.success && (operationOutcomes?.every(outcome => outcome.success) ?? true)
           onEvent?.({ kind: 'tool_result', tool: call.tool, callId: call.callId ?? String(i), success: traceSuccess, preview: traceSuccess ? undefined : result.error ?? 'One or more requested operations failed' })
-          const serializedResult = formatToolResult(result)
+          const serializedResult = formatToolResult(call.tool, result)
           toolTrace.push({
             tool: call.tool,
             ...traceArguments(call.tool, call.arguments),
@@ -653,7 +659,7 @@ export const evaluate = async (
           const call = calls[i]
           const result = results[i]
           if (!call || !result) continue
-          toolMessages.push({ role: 'tool', toolCallId: wireCalls[i]!.id, name: call.tool, content: formatToolResult(result) })
+          toolMessages.push({ role: 'tool', toolCallId: wireCalls[i]!.id, name: call.tool, content: formatToolResult(call.tool, result) })
         }
         const systemTokens = Math.ceil((contextResult.systemBlocks?.map(block=>block.text).join('\n\n').length ?? 0)/4)
         const fit = fitToolEvidence(context, assistantToolMessage, toolMessages, contextResult.tokenBudget, systemTokens, turnStart)

@@ -41,7 +41,7 @@
         onpointerdown={(event) => event.stopPropagation()}
         onclick={(event) => handleOpen(event, summary)}
       >
-        {procedureRunSummaryText(summary)}
+        {procedureRunSummaryText(summary)}{#if summary.run.driver?.kind === 'ai'}<span class="procedure-run-ai" title="Driven by AI">AI</span>{/if}
       </button>
       {#if index < summaries.active.length - 1}<span class="procedure-run-comma">,</span>{/if}
     {/each}

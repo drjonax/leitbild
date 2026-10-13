@@ -662,6 +662,17 @@ export interface PackProcedureContribution {
   readonly tagValidationQuery: (scopeId: string, tags: ReadonlyArray<ProcedureTag>) => PackProcedureQuery
   /** The declared Capability must return PackProcedureAssessmentResult. */
   readonly assessmentsQuery: (scopeId: string, assessmentIds: ReadonlyArray<string>) => PackProcedureQuery
+  /** The live process display a clicked tag opens around the equipment it is measured on; null where the Pack can name none. */
+  readonly tagDisplay?: (scopeId: string, validation: PackProcedureTagValidation) => PackProcedureTagDisplay | null
+}
+
+/** An embedded view of the Pack's owning Module, opened over the procedure as it would be in a chat answer. */
+export interface PackProcedureTagDisplay {
+  readonly viewType: string
+  readonly title: string
+  readonly state: string
+  /** The read-only query that draws the view for its inner size first: what cannot be drawn is refused with the Pack's reason, not opened empty. */
+  readonly drawQuery: (size: { readonly width: number; readonly height: number }) => PackProcedureQuery
 }
 
 export interface PackProcedureQuery {
@@ -689,13 +700,17 @@ export interface PackProcedureSignalReadResult {
   readonly signals: ReadonlyArray<PackProcedureSignalObservation>
 }
 
+export interface PackProcedureTagValidation {
+  readonly id: string
+  readonly status: 'resolved' | 'resolved-with-warnings' | 'missing'
+  readonly signal?: Record<string, unknown>
+  /** The Pack's id for the equipment a resolved tag is measured on, where it names one. */
+  readonly measuredOn?: string
+  readonly warnings: ReadonlyArray<string>
+}
+
 export interface PackProcedureTagValidationResult {
-  readonly tags: ReadonlyArray<{
-    readonly id: string
-    readonly status: 'resolved' | 'resolved-with-warnings' | 'missing'
-    readonly signal?: Record<string, unknown>
-    readonly warnings: ReadonlyArray<string>
-  }>
+  readonly tags: ReadonlyArray<PackProcedureTagValidation>
 }
 
 export interface PackProcedureAssessmentResult {

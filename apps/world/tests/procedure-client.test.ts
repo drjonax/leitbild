@@ -3,6 +3,7 @@ import { workspaceIdSchema } from '@leitbild/contracts'
 import { readFileSync } from 'node:fs'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import { evaluateProcedureCsfs, readProcedureCatalog, readProcedureDocument, readProcedureRuns, readProcedureTagValue, readProcedureSourceEvidence, validateProcedureTags } from '../src/ui/procedures/procedure-client.ts'
+import { driveProcedureRun } from '../src/ui/procedures/procedure-client.ts'
 import { processPlantPackView } from '../src/packs/process-plant/ui-pack.ts'
 import type { PackProcedureContribution } from '../src/core/packs/protocol.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
@@ -108,7 +109,7 @@ describe('procedure client', () => {
         result: {
           plantId: 'plant:test',
           tags: [
-            { id: 'PT-455', status: 'resolved', signal: { path: 'pressurizer.pressureMPa' }, warnings: [] },
+            { id: 'PT-455', status: 'resolved', signal: { path: 'pressurizer.pressureMPa' }, measuredOn: 'pressurizer', warnings: [] },
             { id: 'SI-SIG', status: 'missing', warnings: [] },
           ],
         },
@@ -134,8 +135,19 @@ describe('procedure client', () => {
         ],
       },
     }])
-    expect(validation.get('PT-455')).toMatchObject({ id: 'PT-455', status: 'resolved' })
+    expect(validation.get('PT-455')).toMatchObject({ id: 'PT-455', status: 'resolved', measuredOn: 'pressurizer' })
     expect(validation.get('SI-SIG')).toEqual({ id: 'SI-SIG', status: 'missing', warnings: [] })
+  })
+
+  test('rejects tag validation naming equipment malformed or for a tag the model lacks', async () => {
+    for (const row of [
+      { id: 'PT-455', status: 'resolved', measuredOn: '', warnings: [] },
+      { id: 'PT-455', status: 'resolved', measuredOn: 7, warnings: [] },
+      { id: 'SI-SIG', status: 'missing', measuredOn: 'pressurizer', warnings: [] },
+    ]) {
+      globalThis.fetch = (async (_input: string | URL | Request): Promise<Response> => Response.json({ kind: 'query', result: { plantId: 'plant:test', tags: [row] } })) as typeof fetch
+      await expect(validateProcedureTags('run-test' as SimulationRunId, 'plant:test', [{ id: row.id }], provider)).rejects.toThrow()
+    }
   })
 
   test('real parsed E-0 document tags cross the client and strict Pack boundary without document metadata', async () => {
@@ -248,5 +260,19 @@ describe('procedure client', () => {
       })) as typeof fetch
       await expect(readProcedureTagValue('run-test' as SimulationRunId, 'plant:test', { id: 'NIS-PR-AVG', units: 'percent' }, provider)).rejects.toThrow()
     }
+  })
+
+  test('claims and releases a procedure Run through the drive command and surfaces its refusal', async () => {
+    const calls: Array<{ readonly url: string; readonly body: unknown }> = []
+    let refusal: string | undefined
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+      return Response.json({ kind: 'command', result: refusal === undefined ? { ok: true } : { ok: false, reason: refusal } })
+    }) as typeof fetch
+    await driveProcedureRun('run-a' as SimulationRunId, { runId: 'procedure-run:a', action: 'claim' })
+    expect(calls[0]!.url).toContain('/capabilities/world.procedure.run.drive/invoke')
+    expect(calls[0]!.body).toEqual({ input: { runId: 'procedure-run:a', action: 'claim' } })
+    refusal = 'Only the driver or a person may release this Run.'
+    await expect(driveProcedureRun('run-a' as SimulationRunId, { runId: 'procedure-run:a', action: 'release' })).rejects.toThrow(refusal)
   })
 })

@@ -5,9 +5,10 @@ import { createSimulationRunStateStore } from '../src/core/simulation-runs/state
 import { parseProcedureMarkdown } from '../src/features/procedures/procmd.ts'
 import { prepareProcedureCommand, type ProcedureCommitContext } from '../src/features/procedures/run-state.ts'
 
-const procedureCommandEvents = async (config: Parameters<typeof prepareProcedureCommand>[0] & Omit<ProcedureCommitContext, 'objectIds'>) => {
+// Commands come from a person unless a test names another actor kind.
+const procedureCommandEvents = async (config: Parameters<typeof prepareProcedureCommand>[0] & Omit<ProcedureCommitContext, 'objectIds' | 'actorKind'> & { readonly actorKind?: ProcedureCommitContext['actorKind'] }) => {
   const commit = await prepareProcedureCommand(config)
-  return commit?.({ ...config, objectIds: new Set(['halden-unit-a', 'halden-unit-b']) }) ?? null
+  return commit?.({ ...config, actorKind: config.actorKind ?? 'person', objectIds: new Set(['halden-unit-a', 'halden-unit-b']) }) ?? null
 }
 
 const source = {
@@ -87,7 +88,7 @@ describe('procedure system', () => {
         if ((object.packData as { model: string }).model !== 'expected') throw new Error('owner rejected changed model')
       } })
     let seq = 0
-    const context = { simulationRunId: command.simulationRunId, at: command.issuedAt, procedures: undefined,
+    const context = { simulationRunId: command.simulationRunId, at: command.issuedAt, procedures: undefined, actorKind: 'person' as const,
       objectIds: new Set([target.id]), factory: { eventId: () => `event:${++seq}` as EventId, nextSeq: () => seq } }
     expect(() => commit!({ ...context, objects: new Map([[target.id, { ...target, packData: { model: 'changed' } }]]) })).toThrow('changed model')
     expect(seq).toBe(0)
@@ -104,7 +105,7 @@ describe('procedure system', () => {
       e0Fixture.replace('[[FR-S.1]]', '[[N4#abnormal-coast]]') })
     const target = parseProcedureMarkdown({ source, sourcePath: 'N4.md', sourceUrl: '/wiki?path=N4.md', rawMarkdown:
       e0Fixture.replace('procedure-id: E-0', 'procedure-id: N4').replace('[id: verify-turbine-trip]', '[id: abnormal-coast]').replace('- Verified → END', '- Return → [[E-0]]') })
-    const readDocument = async (input: { procedureId: string; sourceRevision: string }) => {
+    const readDocument = async (input: { procedureId: string; sourceRevision?: string }) => {
       expect(input.sourceRevision).toBe(source.revision)
       return input.procedureId === 'E-0' ? origin : target
     }
@@ -134,7 +135,7 @@ describe('procedure system', () => {
     // Independent copy/restore retains the selected branch and destination.
     const copied = createSimulationRunStateStore(); copied.hydrate(store.snapshot())
     expect(copied.snapshot().procedures).toEqual(store.snapshot().procedures)
-    const context = { simulationRunId, at, factory, procedures: store.snapshot().procedures, objectIds: new Set(['halden-unit-a']) }
+    const context = { simulationRunId, at, factory, procedures: store.snapshot().procedures, actorKind: 'person' as const, objectIds: new Set(['halden-unit-a']) }
     expect(() => prepare!(context)).toThrow() // Source/destination changed after asynchronous preparation.
     const fresh = { ...store.snapshot().procedures!, runs: store.snapshot().procedures!.runs.map(run => run.procedureId === 'E-0' ? { ...run, status: 'active' as const } : run) }
     const before = store.snapshot().procedures
@@ -290,6 +291,42 @@ describe('procedure system', () => {
       updatedAt: at,
       updatedBy: 'actor:operator' as ActorId,
     }])
+  })
+
+  test('a selected branch is kept on its step with its basis through the step update that follows, and a driver change projects onto the run', async () => {
+    let seq = 0
+    const simulationRunId = 'procedure-decision-test' as SimulationRunId
+    const at = nowIso()
+    const factory = { eventId: () => `event:${++seq}` as EventId, nextSeq: () => seq }
+    const base: CommandEnvelope = {
+      id: 'command:decision-start' as CommandEnvelope['id'], simulationRunId, actorId: 'actor:operator' as ActorId,
+      kind: 'world.procedure.run.start', targetObjectIds: [], issuedAt: at,
+      payload: { sourceId: 'pwr-ops', sourceRevision: source.revision, procedureId: 'E-0', scope: unitAScope },
+    }
+    const store = createSimulationRunStateStore()
+    store.hydrate({ objects: [], seq: 0 })
+    const started = await procedureCommandEvents({ simulationRunId, at, command: base, procedures: undefined, factory, readDocument: async () => parseFixture() })
+    for (const event of started ?? []) store.apply(event as SimulationRunEvent)
+    const runId = store.snapshot().procedures?.runs[0]?.runId
+    if (!runId) throw new Error('procedure run was not projected')
+    const transition = await procedureCommandEvents({
+      simulationRunId, at, factory, readDocument: async () => parseFixture(), procedures: store.snapshot().procedures,
+      command: { ...base, id: 'command:decision-branch' as CommandEnvelope['id'], kind: 'world.procedure.run.transition',
+        payload: { runId, stepId: 'verify-reactor-trip', branchIndex: 0, basis: 'Both trip breakers read open; power falling.' } },
+    })
+    for (const event of transition ?? []) store.apply(event as SimulationRunEvent)
+    const step = store.snapshot().procedures?.runs[0]?.stepStates.find(state => state.stepId === 'verify-reactor-trip')
+    const branch = parseFixture().steps[0]!.branches[0]!
+    expect(step?.decision).toMatchObject({ branchIndex: 0, label: branch.label, targetKind: branch.targetKind, target: branch.target, selectedBy: 'actor:operator' })
+    expect(store.snapshot().procedures?.runs[0]?.currentStepId).toBe(branch.target)
+
+    const driver = { kind: 'ai' as const, actorId: 'actor:ai:assistant' as ActorId, label: 'Assistant', since: at }
+    store.apply({ id: `event:${++seq}` as EventId, simulationRunId, seq, at, provenance: { source: 'ai' },
+      type: 'procedure.run.driver.changed', runId, driver, reason: 'claimed', changedAt: at, changedBy: driver.actorId } as SimulationRunEvent)
+    expect(store.snapshot().procedures?.runs[0]?.driver).toEqual(driver)
+    store.apply({ id: `event:${++seq}` as EventId, simulationRunId, seq, at, provenance: { source: 'operator' },
+      type: 'procedure.run.driver.changed', runId, reason: 'person-acted', changedAt: at, changedBy: 'actor:operator' } as SimulationRunEvent)
+    expect(store.snapshot().procedures?.runs[0]?.driver).toBeUndefined()
   })
 
   test('procedure runs are scoped per unit and reset clears only the selected unit procedure', async () => {
