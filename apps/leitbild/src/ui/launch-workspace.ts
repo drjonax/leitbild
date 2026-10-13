@@ -89,6 +89,17 @@ export const shortDateTime = (at: Date): string =>
 /** "12 Oct" */
 export const shortDate = (at: Date): string => `${at.getDate()} ${months[at.getMonth()]}`
 
+/** "just now", "5 min ago", "3 h ago", "2 d ago"; older than a month, the date. */
+export const ageText = (at: Date, now: Date): string => {
+  const minutes = Math.floor((now.getTime() - at.getTime()) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  const days = Math.floor(hours / 24)
+  return days <= 30 ? `${days} d ago` : `on ${shortDate(at)}`
+}
+
 /** The name of a Workspace created for a launch or a question. */
 export const newWorkspaceName = (at: Date): string => `New Workspace · ${shortDateTime(at)}`
 

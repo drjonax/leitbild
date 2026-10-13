@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { workspaceSchema } from '@leitbild/contracts'
 import { workspaceFixture } from './host-fetch-fake.test-support.ts'
-import { ageText, manageRows, moduleStateText } from './workspace-manage.ts'
+import { ageText } from './launch-workspace.ts'
+import { manageRows, moduleStateText } from './workspace-manage.ts'
 
 const A = '0b4b9a52-2f7e-4c1a-9d3e-00000000000a'
 const B = 'b56b1d2e-0000-4000-8000-00000000000b'

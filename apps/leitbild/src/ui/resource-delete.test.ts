@@ -24,9 +24,9 @@ const capabilities = [runDelete, roomDelete]
 const invokePath = (capabilityId: string): string => `/api/workspaces/${WS}/capabilities/${encodeURIComponent(capabilityId)}/invoke`
 
 describe('what can be deleted', () => {
-  test('a Resource is deletable through the delete Capability its descriptor names; a Run shows its status', () => {
-    expect(resourceDeleteItem(running, capabilities)).toMatchObject({
-      key: 'world.simulation-run:a', label: 'Run a', note: 'Running', capability: { id: 'world.simulation-run.delete' },
+  test('a Resource is deletable through the delete Capability its descriptor names; a Run shows its status and age', () => {
+    expect(resourceDeleteItem(running, capabilities, new Date('2026-10-12T21:05:00.000Z'))).toMatchObject({
+      key: 'world.simulation-run:a', label: 'Run a', note: 'Running · started 5 min ago', capability: { id: 'world.simulation-run.delete' },
     })
     expect(resourceDeleteItem(chat, capabilities)).toMatchObject({ key: 'agents.room:c', label: 'Room c', capability: { id: 'agents.room.delete' } })
     expect(resourceDeleteItem(chat, capabilities)?.note).toBeUndefined()

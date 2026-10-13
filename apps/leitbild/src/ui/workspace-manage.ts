@@ -6,7 +6,7 @@
 
 import type { Workspace } from '@leitbild/contracts'
 import type { DeleteItem } from './bulk-delete.ts'
-import { shortDate, shortDateTime, workspaceLabel } from './launch-workspace.ts'
+import { ageText, shortDateTime, workspaceLabel } from './launch-workspace.ts'
 
 export const MANAGE_TITLE = 'Manage Workspaces'
 export const MANAGE_INTRO = 'Workspaces are public: anyone can see, open, change or delete them. Deleting a Workspace deletes its simulations and conversations for everyone.'
@@ -19,17 +19,6 @@ export interface ManageRow extends DeleteItem {
   /** "12 Oct, 22:41", for the title attribute. */
   readonly createdExact: string
   readonly recent: boolean
-}
-
-/** "just now", "5 min ago", "3 h ago", "2 d ago"; older than a month, the date. */
-export const ageText = (at: Date, now: Date): string => {
-  const minutes = Math.floor((now.getTime() - at.getTime()) / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} h ago`
-  const days = Math.floor(hours / 24)
-  return days <= 30 ? `${days} d ago` : `on ${shortDate(at)}`
 }
 
 /** A Workspace whose Modules are not all ready says why, in a few words; null when it is ready. */

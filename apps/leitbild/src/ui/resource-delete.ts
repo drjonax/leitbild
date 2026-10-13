@@ -7,7 +7,7 @@
 import type { ModuleCapabilityDescriptor, ModuleResourceDescriptor } from '@leitbild/contracts'
 import { CONVERSATION_NOUN, ITEM_NOUN, SIMULATION_NOUN, type DeleteItem, type Noun, type RemoveOutcome } from './bulk-delete.ts'
 import { cardCapability } from './card-actions.ts'
-import { readHostJson } from './launch-workspace.ts'
+import { ageText, readHostJson } from './launch-workspace.ts'
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -19,17 +19,26 @@ export interface ResourceDeleteItem extends DeleteItem {
   readonly capability: ModuleCapabilityDescriptor
 }
 
-/** A Resource with a usable delete Capability, or null when it offers none. A Run's status ("Running") goes beside its name. */
+/**
+ * A Resource with a usable delete Capability, or null when it offers none.
+ * Beside a Run's name go its status and when it started ("Running · started
+ * 5 min ago"), so Runs of one scenario, which share a name, can be told apart.
+ */
 export const resourceDeleteItem = (
-  resource: ModuleResourceDescriptor, capabilities: ReadonlyArray<ModuleCapabilityDescriptor>,
+  resource: ModuleResourceDescriptor, capabilities: ReadonlyArray<ModuleCapabilityDescriptor>, now: Date = new Date(),
 ): ResourceDeleteItem | null => {
   const capability = cardCapability(resource, 'delete', capabilities)
   if (!capability) return null
-  const status = resource.ref.type === RUN ? resource.summary.find(item => item.key === 'status')?.value : undefined
+  const summary = (key: string) => resource.summary.find(item => item.key === key)
+  const started = summary('started-at')
+  const note = resource.ref.type !== RUN ? [] : [
+    ...(summary('status') === undefined ? [] : [String(summary('status')!.value)]),
+    ...(started?.kind === 'timestamp' ? [`started ${ageText(new Date(started.value), now)}`] : []),
+  ]
   return {
     key: `${resource.ref.type}:${resource.ref.id}`,
     label: resource.title,
-    ...(status === undefined ? {} : { note: String(status) }),
+    ...(note.length === 0 ? {} : { note: note.join(' · ') }),
     resource,
     capability,
   }
