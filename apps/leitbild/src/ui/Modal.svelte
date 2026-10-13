@@ -126,7 +126,7 @@
   .titles { flex: 1; min-width: 0; }
   .titles .lb-eyebrow { display: block; margin-bottom: 4px; }
   /* 4 px of inline padding (cancelled by the margin) keep the focus ring off the first and last letter. */
-  h2 { margin: 0 -4px; padding: 0 4px; font-size: 1.125rem; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; }
+  h2 { width: fit-content; margin: 0 -4px; padding: 0 4px; font-size: 1.125rem; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; }
   h2:focus { outline: none; }
   /* A deep link focuses the title by script, so Chrome shows this ring: it stays clear of the eyebrow above. */
   h2:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 0; border-radius: 4px; }
