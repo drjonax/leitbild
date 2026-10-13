@@ -180,22 +180,25 @@ export type ChatItem =
     /** Why a message still on its way is waiting, e.g. a rate limit; shown instead of "Sending…". */
     readonly note: string | null
   }
-  | { readonly kind: 'note'; readonly key: string; readonly text: string; readonly at: number }
+  /** "Ben is now called Benjamin", added while the chat is open. */
+  | { readonly kind: 'note'; readonly key: string; readonly oldName: string; readonly newName: string; readonly at: number }
 
 export type ChatBubble = Extract<ChatItem, { kind: 'message' | 'outgoing' }>
 
 export type ChatRow =
   | { readonly kind: 'day'; readonly key: string; readonly label: string }
   | { readonly kind: 'new'; readonly key: string }
-  | { readonly kind: 'note'; readonly key: string; readonly text: string }
+  | { readonly kind: 'note'; readonly key: string; readonly oldName: string; readonly newName: string }
   | { readonly kind: 'group'; readonly key: string; readonly mine: boolean; readonly bubbles: ReadonlyArray<ChatBubble> }
 
 const mineOf = (item: ChatBubble): boolean => item.kind === 'outgoing' || item.mine
 
 /**
- * Day separators, the "New" divider and groups (SPEC §6 "Log"). A message not
- * yet delivered stands alone, so its "Sending…" or "Not sent" line sits under it.
- * Row keys come from the first item they hold, so appending keeps earlier rows.
+ * Day separators, the "New" divider and groups (SPEC §6 "Log"). A message on
+ * its way groups like a delivered one, and keeps its key when delivered, so
+ * delivery never moves its bubble to another group: no node is rebuilt and
+ * read out twice. Row keys come from the first item they hold, so appending
+ * keeps earlier rows.
  */
 export const chatRows = (items: ReadonlyArray<ChatItem>, firstUnreadKey: string | null, now: number): ReadonlyArray<ChatRow> => {
   const rows: ChatRow[] = []
@@ -218,13 +221,12 @@ export const chatRows = (items: ReadonlyArray<ChatItem>, firstUnreadKey: string 
     }
     if (item.kind === 'note') {
       close()
-      rows.push({ kind: 'note', key: item.key, text: item.text })
+      rows.push({ kind: 'note', key: item.key, oldName: item.oldName, newName: item.newName })
       continue
     }
     const current = group as { key: string; mine: boolean; bubbles: ChatBubble[] } | null
     const last = current?.bubbles[current.bubbles.length - 1]
-    const joins = current !== null && last !== undefined && current.mine === mineOf(item) && item.kind === 'message' && last.kind === 'message'
-      && item.at - last.at <= MESSAGE_GROUP_GAP_MS
+    const joins = current !== null && last !== undefined && current.mine === mineOf(item) && item.at - last.at <= MESSAGE_GROUP_GAP_MS
     if (!joins) {
       close()
       group = { key: `group:${item.key}`, mine: mineOf(item), bubbles: [] }

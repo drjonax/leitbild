@@ -964,7 +964,7 @@ describe('messages', () => {
     const renamed = { ...BEN, name: 'Ben (turbine)' }
     await answer(ok(result({ present: [renamed], conversations: [conversation(renamed, 0, 1)], cursor: 1, view: '2' })))
     expect(state().chat?.with.name).toBe('Ben (turbine)')
-    expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'note', text: 'Ben is now called Ben (turbine)' })
+    expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'note', oldName: 'Ben', newName: 'Ben (turbine)' })
     expect(names(state().present)).toEqual(['Ben (turbine)'])
   })
 })

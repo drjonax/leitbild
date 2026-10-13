@@ -269,7 +269,7 @@ type InternalToast =
   | { readonly kind: 'message'; readonly id: number; readonly fromId: string; readonly text: string; readonly count: number }
   | { readonly kind: 'notice'; readonly id: number; readonly text: string }
 
-interface ChatNote { readonly key: string; readonly text: string; readonly at: number; readonly afterSeq: number }
+interface ChatNote { readonly key: string; readonly oldName: string; readonly newName: string; readonly at: number; readonly afterSeq: number }
 
 export const viewingKey = (viewing: ViewingReference): string =>
   `${viewing.workspaceId}/${viewing.moduleId}/${viewing.type}/${viewing.id}`
@@ -416,11 +416,11 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     for (const message of messagesByPeer.get(peer) ?? []) {
       while (next < notes.length && notes[next]!.afterSeq < message.seq) {
         const note = notes[next++]!
-        items.push({ kind: 'note', key: note.key, text: note.text, at: note.at })
+        items.push({ kind: 'note', key: note.key, oldName: note.oldName, newName: note.newName, at: note.at })
       }
       items.push({ kind: 'message', key: messageKey(message), seq: message.seq, mine: message.from === me?.id, text: message.text, at: Date.parse(message.sentAt) })
     }
-    for (const note of notes.slice(next)) items.push({ kind: 'note', key: note.key, text: note.text, at: note.at })
+    for (const note of notes.slice(next)) items.push({ kind: 'note', key: note.key, oldName: note.oldName, newName: note.newName, at: note.at })
     for (const entry of outbox) {
       if (entry.to === peer) items.push({ kind: 'outgoing', key: entry.key, text: entry.text, at: entry.createdAt, stage: entry.stage, reason: entry.reason, note: entry.note })
     }
@@ -607,7 +607,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     const previous = names.get(person.id)
     if (previous !== undefined && previous.name !== person.name && person.id === chatPeer) {
       const afterSeq = (messagesByPeer.get(person.id) ?? []).at(-1)?.seq ?? 0
-      chatNotes = [...chatNotes, { key: `note:${ports.randomId()}`, text: `${previous.name} is now called ${person.name}`, at: ports.now(), afterSeq }]
+      chatNotes = [...chatNotes, { key: `note:${ports.randomId()}`, oldName: previous.name, newName: person.name, at: ports.now(), afterSeq }]
     }
     names.set(person.id, person)
   }

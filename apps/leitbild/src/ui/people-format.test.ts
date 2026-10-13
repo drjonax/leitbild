@@ -83,12 +83,20 @@ describe('chat rows', () => {
       theirs('d', NOW - 12 * MINUTE),
       theirs('e', NOW - 5 * MINUTE),
       theirs('f', NOW - 4 * MINUTE),
-      { kind: 'note', key: 'n', text: 'Ben is now called Benjamin', at: NOW - 3 * MINUTE },
+      { kind: 'note', key: 'n', oldName: 'Ben', newName: 'Benjamin', at: NOW - 3 * MINUTE },
       { kind: 'outgoing', key: 'g', text: 'g', at: NOW, stage: 'sending', reason: null, note: null },
       { kind: 'outgoing', key: 'h', text: 'h', at: NOW, stage: 'failed', reason: 'couldn’t reach Leitbild.', note: null },
     ], 'e', NOW)
     expect(rows.map(row => row.kind === 'group' ? `${row.mine ? 'mine' : 'theirs'}:${row.bubbles.map(bubble => bubble.key).join('')}` : row.kind === 'day' ? row.label : row.kind))
-      .toEqual(['Yesterday', 'theirs:a', 'Today', 'mine:bc', 'theirs:d', 'new', 'theirs:ef', 'note', 'mine:g', 'mine:h'])
+      .toEqual(['Yesterday', 'theirs:a', 'Today', 'mine:bc', 'theirs:d', 'new', 'theirs:ef', 'note', 'mine:gh'])
+  })
+
+  test('a message keeps its group and key when it is delivered, so its node is not rebuilt', () => {
+    const before = chatRows([mine('a', NOW - MINUTE), { kind: 'outgoing', key: 'b', text: 'b', at: NOW, stage: 'sending', reason: null, note: null }], null, NOW)
+    const after = chatRows([mine('a', NOW - MINUTE), { kind: 'message', key: 'b', seq: 2, mine: true, text: 'b', at: NOW + 400 }], null, NOW)
+    const shape = (rows: ReturnType<typeof chatRows>) => rows.map(row => row.kind === 'group' ? `${row.key}:${row.bubbles.map(bubble => bubble.key).join(',')}` : row.key)
+    expect(shape(after)).toEqual(shape(before))
+    expect(shape(after)).toEqual(['day:a', 'group:a:a,b'])
   })
 
   test('row keys come from their first item, so appending keeps earlier rows', () => {

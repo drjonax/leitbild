@@ -14,7 +14,7 @@
   import PersonAvatar from './PersonAvatar.svelte'
   import { composingKeystroke } from './ime.ts'
   import {
-    chatRows, fullTimeLabel, messageCounterText, messageSendable, newMessagesPill, OUTBOX_UNSAVED_TEXT, timeLabel, type ChatBubble,
+    chatRows, fullTimeLabel, messageCounterText, messageSendable, newMessagesPill, OUTBOX_UNSAVED_TEXT, timeLabel, type ChatItem,
   } from './people-format.ts'
   import type { ChatView, ConnectionNotice, PeopleSession } from './people-session.ts'
 
@@ -208,15 +208,15 @@
   }
 </script>
 
-{#snippet meta(bubble: ChatBubble)}
-  {#if bubble.kind === 'message'}<span class="meta">{timeLabel(bubble.at)}</span>
-  {:else if bubble.stage !== 'failed' && bubble.note !== null}<span class="meta">{bubble.note}</span>
-  {:else if bubble.stage === 'sending'}<span class="meta">Sending…</span>
-  {:else if bubble.stage === 'failed'}
+<!-- Under a message still on its way. "Not sent" and a rate-limit wait are read out; "Sending…" is not, as it comes and goes. -->
+{#snippet outgoingMeta(bubble: Extract<ChatItem, { kind: 'outgoing' }>)}
+  {#if bubble.stage === 'failed'}
     <span class="failrow"><span>Not sent: {bubble.reason}</span>
       <button type="button" onclick={() => session.retrySend(bubble.key)}>Retry</button>
       <button type="button" class="quiet" onclick={() => remove(bubble.key)}>Remove</button>
     </span>
+  {:else if bubble.note !== null}<span class="meta">{bubble.note}</span>
+  {:else if bubble.stage === 'sending'}<span class="meta" aria-hidden="true">Sending…</span>
   {/if}
 {/snippet}
 
@@ -244,20 +244,22 @@
           <span dir="auto">{composerNote?.dot === 'away' ? composerNote.text : `Say hello to ${name}.`}</span>
         </div>
       {:else}
+        <!-- Read out per bubble as "Ben: …" or "You: …"; separators and times are for the eye only. -->
         {#each rows as row (row.key)}
-          {#if row.kind === 'day'}<p class="day">{row.label}</p>
-          {:else if row.kind === 'new'}<p class="new-divider">New</p>
-          {:else if row.kind === 'note'}<p class="sys" dir="auto">{row.text}</p>
+          {#if row.kind === 'day'}<p class="day" aria-hidden="true">{row.label}</p>
+          {:else if row.kind === 'new'}<p class="new-divider" aria-hidden="true">New</p>
+          {:else if row.kind === 'note'}<p class="sys"><bdi>{row.oldName}</bdi> is now called <bdi>{row.newName}</bdi></p>
           {:else}
+            {@const last = row.bubbles[row.bubbles.length - 1]!}
             <div class="group" class:mine={row.mine} class:theirs={!row.mine}>
-              {#if !row.mine}<span class="visually-hidden">{name}:</span>{/if}
               {#each row.bubbles as bubble, index (bubble.key)}
                 <div class="bubble" class:last={index === row.bubbles.length - 1}
                   class:pending={bubble.kind === 'outgoing' && bubble.stage === 'sending'}
                   class:failed={bubble.kind === 'outgoing' && bubble.stage === 'failed'}
-                  dir="auto" title={fullTimeLabel(bubble.at)}>{bubble.text}</div>
+                  title={fullTimeLabel(bubble.at)}><span class="visually-hidden">{`${row.mine ? 'You' : name}: `}</span><span class="bubble-text" dir="auto">{bubble.text}</span></div>
+                {#if bubble.kind === 'outgoing'}{@render outgoingMeta(bubble)}{/if}
               {/each}
-              {@render meta(row.bubbles[row.bubbles.length - 1]!)}
+              {#if last.kind === 'message'}<span class="meta" aria-hidden="true">{timeLabel(last.at)}</span>{/if}
             </div>
           {/if}
         {/each}
@@ -308,7 +310,8 @@
   .group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
   .group.mine { align-items: flex-end; }
   .group.theirs { align-items: flex-start; }
-  .bubble { max-width: 82%; padding: 7px 10px; border-radius: 14px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+  .bubble { max-width: 82%; padding: 7px 10px; border-radius: 14px; line-height: 1.4; }
+  .bubble-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
   .mine .bubble { color: #f5fbf2; background: var(--lb-brand-700); }
   .mine .bubble.last { border-bottom-right-radius: 4px; }
   .theirs .bubble { color: var(--lb-ink); background: var(--lb-surface); border: 1px solid var(--lb-line); }
