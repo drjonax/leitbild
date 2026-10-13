@@ -27,6 +27,8 @@ import type { WorkspaceRuntimeRegistry } from '../core/workspaces/runtime-regist
 import { workspaceModulePaths } from '../core/paths.ts'
 import { loadWorkspaceModuleSnapshots } from '../core/storage/module-snapshots.ts'
 import { roomPacksInputSchema } from '../packs/activation.ts'
+import { isPeopleCapabilityId } from '../core/people/people-capability-ids.ts'
+import { invokePeopleCapability, peopleCapabilityDescriptors } from './people-capabilities.ts'
 
 export const agentsModuleManifest = workspaceModuleManifestSchema.parse({
   module: {
@@ -107,7 +109,8 @@ const assistantOpenResultSchema = z.object({
 const ROOM_DEFINITION_TYPE = 'agents.room-definition'
 
 const json = (body: unknown, status = 200): Response => Response.json(body, { status })
-const apiError = (status: number, code: string, message: string): Response => json({ error: { code, message } }, status)
+const apiError = (status: number, code: string, message: string, retryable?: boolean): Response =>
+  json({ error: { code, message, ...(retryable === undefined ? {} : { retryable }) } }, status)
 const assistantError = (error: unknown): Response | undefined => error instanceof AssistanceRoomError
   ? apiError(error.status, error.code, error.message)
   : undefined
@@ -892,6 +895,17 @@ const agentsCapabilities = createModuleCapabilityRegistry<{ runtime: AgentsWorks
   },
 ])
 
+// People Capabilities are dispatched outside the runtime lease (see
+// people-capabilities.ts); the published catalog lists both registries.
+const allCapabilityDescriptors = (() => {
+  const runtimeIds = agentsCapabilities.descriptors.map(descriptor => descriptor.id)
+  const misplaced = runtimeIds.filter(isPeopleCapabilityId)
+  if (misplaced.length > 0) throw new Error(`People Capability ids belong to the People registry: ${misplaced.join(', ')}`)
+  const strays = peopleCapabilityDescriptors.filter(descriptor => !isPeopleCapabilityId(descriptor.id))
+  if (strays.length > 0) throw new Error(`People registry holds a non-People Capability: ${strays.map(descriptor => descriptor.id).join(', ')}`)
+  return Object.freeze([...agentsCapabilities.descriptors, ...peopleCapabilityDescriptors])
+})()
+
 const invoke = async (
   capabilityId: string,
   workspaceId: WorkspaceId,
@@ -942,6 +956,12 @@ export const handleAgentsModuleApi = async (
       }
     }
 
+    // Before the Workspace lease: People never load the Agents runtime, and a
+    // waiting sync must not hold an operation that removal or eviction awaits.
+    if (capabilityId !== undefined && isPeopleCapabilityId(capabilityId) && request.method === 'POST') {
+      return await invokePeopleCapability(capabilityId, workspaceId, await readJson(request), config.registry, request.signal)
+    }
+
     return await config.registry.withWorkspace(workspaceId, async () => {
     await requireModule(config.state, workspaceId)
     if (collection === 'definitions' && request.method === 'GET') {
@@ -951,7 +971,7 @@ export const handleAgentsModuleApi = async (
       return json(moduleResourceCollectionSchema.parse({ resources: await resourcesFor(workspaceId, config.registry) }))
     }
     if (collection === 'capabilities' && request.method === 'GET') {
-      return json(moduleCapabilityCollectionSchema.parse({ capabilities: agentsCapabilities.descriptors }))
+      return json(moduleCapabilityCollectionSchema.parse({ capabilities: allCapabilityDescriptors }))
     }
     if (capabilityId !== undefined && request.method === 'POST') {
       return await invoke(capabilityId, workspaceId, await readJson(request), config.registry)
@@ -959,7 +979,7 @@ export const handleAgentsModuleApi = async (
     return null
     })
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'workspace_closing') return apiError(409, 'workspace_closing', error.message)
+    if (error instanceof Error && 'code' in error && error.code === 'workspace_closing') return apiError(409, 'workspace_closing', error.message, true)
     if (error instanceof Error && 'code' in error && error.code === 'storage_budget_exceeded') return apiError(507, 'storage_budget_exceeded', error.message)
     if (error instanceof Error && 'code' in error && error.code === 'workspace_capacity_exceeded') return apiError(503, 'workspace_capacity_exceeded', error.message)
     if (error instanceof SyntaxError) return apiError(400, 'invalid_json', error.message)

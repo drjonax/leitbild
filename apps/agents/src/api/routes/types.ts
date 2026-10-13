@@ -4,6 +4,7 @@ import type { WSOutbound } from '../../core/types/ws-protocol.ts'
 import type { AccessContext, WorkspaceId } from '@leitbild/contracts'
 import type { PackManager } from '../../packs/manager.ts'
 import type { RoomDefinitionLibrary } from '../../core/definitions/room-definition-library.ts'
+import type { PeopleStatus } from '../../core/workspaces/runtime-registry.ts'
 
 // Read-only health snapshot used by /system/diagnostics. Walks the
 // registry + wsManager to surface per-Workspace broadcast wiring state.
@@ -21,6 +22,8 @@ export interface DiagnosticsCapability {
     readonly wsSessions: number
     readonly configuredIdleMs?: number
     readonly maxLoadedWorkspaces?: number
+    // Aggregate People counters and gauges; never names, text or tokens.
+    readonly people?: PeopleStatus
   }
 }
 

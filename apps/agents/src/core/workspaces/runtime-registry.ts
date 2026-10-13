@@ -20,6 +20,7 @@ import { createOperationScope } from '@leitbild/module-runtime'
 //
 // Public surface:
 //   getOrLoad(id)           — single source of truth; touches lastTouchedAt
+//   peopleFor(id)           — the Workspace's People directory; never loads the runtime
 //   evictOne(id)            — graceful: drain → flush → drop. Idempotent.
 //   evictIdle(now, idleMs)  — periodic sweep
 //   exists(id)              — disk OR memory
@@ -65,6 +66,10 @@ import { asAIAgent } from '../../agents/shared.ts'
 import { seedWorkspaceIdentity } from './seed-workspace.ts'
 import type { WorkspaceId } from '@leitbild/contracts'
 import type { AgentsModuleState } from './module-state.ts'
+import { createPeopleDirectory, type PeopleDirectory } from '../people/people-directory.ts'
+import { createPeopleMetrics, type PeopleMetrics, type PeopleMetricsSnapshot } from '../people/people-metrics.ts'
+import { createWaiterBudget } from '../people/presence.ts'
+import { agentsStorageBudget } from '../storage/admission.ts'
 
 // --- Defaults & env ---
 
@@ -96,6 +101,13 @@ export interface WorkspaceRuntimeMeta {
   readonly id: WorkspaceId
   readonly lastTouchedAt: number
   readonly state: 'active' | 'evicting' | 'save-failed'
+}
+
+/** Aggregate People counters plus live gauges, for operator diagnostics. */
+export interface PeopleStatus extends PeopleMetricsSnapshot {
+  readonly openDirectories: number
+  readonly waiters: number
+  readonly liveScreens: number
 }
 
 export interface WorkspaceModuleOnDisk {
@@ -147,6 +159,11 @@ export interface WorkspaceRuntimeRegistryOptions {
 export interface WorkspaceRuntimeRegistry {
   readonly withWorkspace: <T>(id: WorkspaceId, work: () => Promise<T>) => Promise<T>
   readonly definitionsFor: (id: WorkspaceId) => RoomDefinitionLibrary
+  // The People of a Workspace, independent of its Agents runtime: opening it
+  // checks the Module marker once and never calls getOrLoad.
+  readonly peopleFor: (id: WorkspaceId) => Promise<PeopleDirectory>
+  readonly peopleMetrics: PeopleMetrics
+  readonly peopleStatus: () => PeopleStatus
   readonly getOrLoad: (id: WorkspaceId) => Promise<AgentsWorkspaceRuntime>
   readonly evictOne: (id: WorkspaceId) => Promise<void>
   readonly remove: (id: WorkspaceId) => Promise<void>
@@ -207,6 +224,60 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
       definitionLibraries.set(id, library)
     }
     return library
+  }
+  // People directories open per Workspace on first use and share one waiter
+  // budget and one set of aggregate counters across the process.
+  const peopleDirectories = new Map<WorkspaceId, PeopleDirectory>()
+  const pendingPeople = new Map<WorkspaceId, Promise<PeopleDirectory>>()
+  const peopleMetrics = createPeopleMetrics()
+  const peopleWaiterBudget = createWaiterBudget()
+  const workspaceClosing = (): Error => Object.assign(new Error('Agents Workspace is closing'), { code: 'workspace_closing' })
+  const peopleFor = async (id: WorkspaceId): Promise<PeopleDirectory> => {
+    if (shuttingDown || removing.has(id)) throw workspaceClosing()
+    const open = peopleDirectories.get(id)
+    if (open) return open
+    const pending = pendingPeople.get(id)
+    if (pending) return await pending
+    const opening = (async (): Promise<PeopleDirectory> => {
+      if (!await opts.moduleState.has(id)) throw new Error(`Workspace not found: ${id}`)
+      // Removal or shutdown may have begun while the marker was read. From
+      // here to the map insert nothing yields, so a removed Workspace's
+      // directory is never recreated by opening its store.
+      if (shuttingDown || removing.has(id)) throw workspaceClosing()
+      const paths = workspaceModulePaths(id)
+      const directory = createPeopleDirectory({
+        workspaceId: id,
+        path: paths.agents.people,
+        metrics: peopleMetrics,
+        waiterBudget: peopleWaiterBudget,
+        admitGrowth: (bytes, work) => agentsStorageBudget().withGrowth(paths.agents.root, bytes, work),
+      })
+      peopleDirectories.set(id, directory)
+      return directory
+    })().finally(() => pendingPeople.delete(id))
+    pendingPeople.set(id, opening)
+    return await opening
+  }
+  // Answers every waiting sync and closes the store before its files go.
+  const closePeople = async (id: WorkspaceId): Promise<void> => {
+    const pending = pendingPeople.get(id)
+    // An opening that fails reports to its own caller; closing only needs it settled.
+    if (pending) await pending.then(() => undefined, () => undefined)
+    const directory = peopleDirectories.get(id)
+    // No directory: nobody used People in this Workspace since it was last closed.
+    if (directory === undefined) return
+    peopleDirectories.delete(id)
+    directory.close()
+  }
+  const peopleStatus = (): PeopleStatus => {
+    let waiters = 0
+    let liveScreens = 0
+    for (const directory of peopleDirectories.values()) {
+      const stats = directory.stats()
+      waiters += stats.waiters
+      liveScreens += stats.liveScreens
+    }
+    return { ...peopleMetrics.snapshot(), openDirectories: peopleDirectories.size, waiters, liveScreens }
   }
   const idleMs = opts.idleMs ?? idleMsFromEnv()
   const drainMs = opts.drainMs ?? DEFAULT_DRAIN_MS
@@ -500,6 +571,13 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
       }
     }
     await Promise.all(targets.map(evictOne))
+    for (const [id, directory] of peopleDirectories) {
+      if (directory.canEvict(now, idleMs)) {
+        peopleDirectories.delete(id)
+        directory.close()
+        peopleMetrics.inc('directoriesEvicted')
+      }
+    }
     return targets.length
   }
 
@@ -550,6 +628,8 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
   // handler in bootstrap.ts (replaces the single-system flush).
   const shutdown = async (): Promise<void> => {
     shuttingDown = true
+    // People first: waiting syncs answer at once instead of holding shutdown.
+    await Promise.all([...new Set([...pendingPeople.keys(), ...peopleDirectories.keys()])].map(closePeople))
     // Comparisons own admitted work too. Cancel before waiting for operation
     // leases, otherwise shutdown waits for whole model tasks to finish.
     await Promise.all([...map.values()].map(entry => entry.system.comparisons.close()))
@@ -584,11 +664,15 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
     withWorkspace,
     getOrLoad,
     definitionsFor,
+    peopleFor,
+    peopleMetrics,
+    peopleStatus,
     evictOne,
     remove: id => {
       const existing = removing.get(id)
       if (existing) return existing
       const removingWorkspace = (async () => {
+        await closePeople(id)
         await workspaceOperations.get(id)?.close()
         await definitionLibraries.get(id)?.close()
         await evictOne(id)

@@ -597,6 +597,7 @@ export const bootstrap = async (): Promise<void> => {
       wsSessions: wsManager.sessionCount(),
       configuredIdleMs: registry.idleMs(),
       maxLoadedWorkspaces: registry.maxLoadedWorkspaces(),
+      people: registry.peopleStatus(),
     }),
   }
 
