@@ -52,8 +52,11 @@ describe('guide structure (plan v2 §4.1)', () => {
     expect(guideCard(askPage, 'what')).toBeNull()
   })
 
-  test('only the chapter with map screenshots carries the map credit', () => {
-    expect(chapters.filter(page => page.mapCredit).map(page => page.id)).toEqual(['world'])
+  test('every chapter with a map screenshot, and only those, carries the map credit', () => {
+    const mapShots = new Set(['guide-what', 'guide-maps', 'guide-grid', 'guide-einsatz', 'guide-packs'])
+    const withMaps = chapters.filter(page => page.cards.some(card => card.media?.kind === 'shot' && mapShots.has(card.media.shot)))
+    expect(withMaps.map(page => page.id)).toEqual(['start', 'world', 'more'])
+    expect(chapters.filter(page => page.mapCredit).map(page => page.id)).toEqual(withMaps.map(page => page.id))
     expect(GUIDE_MAP_CREDIT.text).toContain('© OpenStreetMap contributors (ODbL)')
     expect(guideWikiHref(GUIDE_MAP_CREDIT.link.path)).toBe('/wiki?path=data-credits.md')
   })

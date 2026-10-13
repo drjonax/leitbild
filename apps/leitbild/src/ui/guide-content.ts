@@ -62,7 +62,7 @@ export interface GuideChapter {
   readonly subtitle: string
   readonly intro: string
   readonly cards: ReadonlyArray<GuideCard>
-  /** The map credit line closes the chapter that holds map screenshots. */
+  /** The map credit line closes every chapter that holds a map screenshot. */
   readonly mapCredit: boolean
 }
 
@@ -94,7 +94,7 @@ export const GUIDE_PAGES: ReadonlyArray<GuidePage> = [
   {
     kind: 'chapter', id: 'start', title: 'Start here', subtitle: 'What it is, who it is for',
     intro: 'What Leitbild is, who it is for, and where your work lives.',
-    mapCredit: false,
+    mapCredit: true,
     cards: [
       {
         id: 'what', title: 'What Leitbild is',
@@ -238,7 +238,7 @@ export const GUIDE_PAGES: ReadonlyArray<GuidePage> = [
   {
     kind: 'chapter', id: 'more', title: 'Trust and going further', subtitle: 'Inspection, limits, building, wiki',
     intro: 'See how answers were made, know the limits, build your own, and read further.',
-    mapCredit: false,
+    mapCredit: true,
     cards: [
       {
         id: 'inspect', title: 'Inspect every AI answer',
