@@ -26,7 +26,7 @@
   const launcher = createDemoLauncher()
   const modalUrl = createModalUrl(window)
 
-  // Hero images, by file stem and width (interim captures until the screenshot lane replaces the files).
+  // Hero images, by file stem and width.
   const imageUrls = import.meta.glob('./assets/landing/*.webp', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
   const imagesOf = (slide: HeroSlide): { src: string; srcset: string } => {
     const urls = new Map(HERO_IMAGE_WIDTHS.map(width => [width, imageUrls[`./assets/landing/${slide.image}-${width}.webp`] ?? '']))
