@@ -15,7 +15,8 @@
 //   then "Can't reach Leitbild". They never reach the page's error banner.
 // - Messages: an outbox with one idempotency key per message, kept in
 //   sessionStorage so a reload re-sends the same message rather than a copy,
-//   delivered one at a time in order.
+//   delivered one at a time in order. Agents hands each of my messages back
+//   with its key, and that key alone settles its outbox entry.
 
 import { z } from 'zod'
 import {
@@ -249,8 +250,6 @@ interface OutboxEntry {
   readonly deadline: number
   readonly stage: 'quiet' | 'sending' | 'failed'
   readonly reason: string | null
-  /** Sent to Agents at least once, so it may be stored there although no answer came back. */
-  readonly attempted: boolean
   /** Why it is still waiting (a rate limit), shown instead of "Sending…". */
   readonly note: string | null
 }
@@ -352,8 +351,6 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   const messagesByPeer = new Map<string, ReadonlyArray<MessageWire>>()
   /** My read marker per peer, as last confirmed. */
   const readThrough = new Map<string, number>()
-  /** Server message id → the client key it was sent with, so a delivered bubble keeps its node. */
-  const deliveredKeys = new Map<string, string>()
   let popoverOpen = false
   let toast: InternalToast | null = null
   let toastSerial = 0
@@ -389,6 +386,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   let sendingKey: string | null = null
   let sendController: AbortController | null = null
   let sendRetryTimer: PeopleTimerHandle | null = null
+  /** The entry the pending retry is for. */
+  let sendRetryKey: string | null = null
   let sendAttempt = 0
   let outboxTimer: PeopleTimerHandle | null = null
 
@@ -407,7 +406,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   }
   const summaryFor = (id: string): ConversationSummaryWire | undefined => conversations.find(summary => summary.with.id === id)
   const peerOf = (message: MessageWire): string => message.from === me?.id ? message.to : message.from
-  const messageKey = (message: MessageWire): string => deliveredKeys.get(message.id) ?? message.id
+  /** My message keeps the key it was sent with, so a delivered bubble keeps the node it had while on its way. */
+  const messageKey = (message: MessageWire): string => message.key ?? message.id
 
   const chatItems = (peer: string): ReadonlyArray<ChatItem> => {
     const items: ChatItem[] = []
@@ -554,7 +554,6 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     conversations = []
     messagesByPeer.clear()
     readThrough.clear()
-    deliveredKeys.clear()
     chatFirstUnread = null
   }
 
@@ -613,34 +612,38 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
   }
 
   /**
-   * My own message can arrive (through sync or a conversation read) before its
-   * send is acknowledged, or after the send gave up waiting although Agents
-   * stored it. It is then the oldest outbox entry already sent to the same
-   * person with the same text: that entry is delivered, never shown twice.
-   * Only an entry that was sent can match, so a sibling tab's identical message
-   * never swallows one that was not sent yet.
+   * Agents hands my own messages back with the key each was sent with (through
+   * sync, a conversation read or the send's answer). The outbox entry with that
+   * key is delivered, whatever it was showing: on its way, waiting out a rate
+   * limit, or "Not sent" after its answer was lost. It goes, and the message
+   * shows once. A message of mine whose key no entry has (sent from another
+   * tab, or long ago) is history and settles nothing; text is never compared.
+   * The caller pumps the outbox afterwards.
    */
-  const claimOutbox = (message: MessageWire): void => {
-    if (me === null || message.from !== me.id || deliveredKeys.has(message.id)) return
-    const entry = outbox.find(candidate => candidate.attempted && candidate.to === message.to && candidate.text === message.text)
-    if (entry === undefined) return
-    deliveredKeys.set(message.id, entry.key)
-    outbox = outbox.filter(candidate => candidate.key !== entry.key)
+  const settleOutbox = (message: MessageWire): void => {
+    const key = message.key
+    if (me === null || message.from !== me.id || key === undefined || !outbox.some(entry => entry.key === key)) return
+    outbox = outbox.filter(entry => entry.key !== key)
     persistOutbox()
-    if (sendingKey === entry.key) {
+    if (sendingKey === key) {
       sendController?.abort()
       finishSend()
     }
+    if (sendRetryKey === key) {
+      clearSendRetry()
+      sendAttempt = 0
+    }
+    scheduleOutboxTimer()
   }
 
   /** Adds messages by seq, ignoring ones already known; returns the new ones. */
   const addMessages = (incoming: ReadonlyArray<MessageWire>, knownPeer?: string): ReadonlyArray<MessageWire> => {
     const fresh: MessageWire[] = []
     for (const message of incoming) {
+      settleOutbox(message)
       const peer = knownPeer ?? peerOf(message)
       const list = messagesByPeer.get(peer) ?? []
       if (list.some(known => known.id === message.id)) continue
-      claimOutbox(message)
       fresh.push(message)
       messagesByPeer.set(peer, [...list, message].sort((left, right) => left.seq - right.seq).slice(-HISTORY_CAP))
     }
@@ -762,7 +765,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     // Queued messages get a full send window now that the connection is back.
     const now = ports.now()
     outbox = outbox.map(entry => entry.stage === 'failed' ? entry : { ...entry, deadline: now + SEND_TIMEOUT_MS })
-    if (sendRetryTimer !== null) { ports.timers.clear(sendRetryTimer); sendRetryTimer = null }
+    clearSendRetry()
     sendAttempt = 0
   }
 
@@ -863,7 +866,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         chatController = null
         chatLoading = false
         remember(result.with)
-        for (const message of result.messages) claimOutbox(message)
+        for (const message of result.messages) settleOutbox(message)
         const newer = (messagesByPeer.get(peer) ?? []).filter(message => message.seq > (result.messages.at(-1)?.seq ?? 0))
         messagesByPeer.set(peer, [...result.messages, ...newer].slice(-HISTORY_CAP))
         readThrough.set(peer, Math.max(readThrough.get(peer) ?? 0, result.readThrough.me))
@@ -913,14 +916,18 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     outbox = entries.data.map(entry => ({
       key: entry.key, to: entry.to, text: entry.text, createdAt: entry.createdAt, deadline: now + SEND_TIMEOUT_MS,
       stage: entry.failed ? 'failed' : 'sending', reason: entry.failed ? entry.reason ?? SEND_REASON.failed : null, note: null,
-      // It may have been sent before the reload.
-      attempted: true,
     }))
   }
 
   const finishSend = (): void => {
     sendingKey = null
     sendController = null
+  }
+
+  const clearSendRetry = (): void => {
+    if (sendRetryTimer !== null) ports.timers.clear(sendRetryTimer)
+    sendRetryTimer = null
+    sendRetryKey = null
   }
 
   const markFailed = (key: string, reason: string): void => {
@@ -945,7 +952,6 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     const controller = new AbortController()
     sendingKey = next.key
     sendController = controller
-    if (!next.attempted) outbox = outbox.map(entry => entry.key === next.key ? { ...entry, attempted: true } : entry)
     const usedToken = token
     void invoke(PEOPLE_CAPABILITY.send, { token: usedToken, to: next.to, text: next.text }, sendResultSchema, { signal: controller.signal, idempotencyKey: next.key, timeoutMs: REQUEST_TIMEOUT_MS })
       .then(result => {
@@ -954,7 +960,6 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         sendAttempt = 0
         outbox = outbox.filter(entry => entry.key !== next.key)
         persistOutbox()
-        deliveredKeys.set(result.message.id, next.key)
         addMessages([result.message], next.to)
         // Sending counts as reading the conversation up to the message.
         readThrough.set(next.to, Math.max(readThrough.get(next.to) ?? 0, result.message.seq))
@@ -982,7 +987,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
             note: limited ? SEND_NOTE.rateLimited : null,
             deadline: limited ? Math.max(entry.deadline, ports.now() + wait + SEND_TIMEOUT_MS) : entry.deadline,
           })
-          sendRetryTimer = ports.timers.set(() => { sendRetryTimer = null; pump() }, wait)
+          sendRetryKey = next.key
+          sendRetryTimer = ports.timers.set(() => { sendRetryTimer = null; sendRetryKey = null; pump() }, wait)
           scheduleOutboxTimer()
           emit()
           return
@@ -1021,7 +1027,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     }
     if (failedAny) {
       persistOutbox()
-      if (sendRetryTimer !== null) { ports.timers.clear(sendRetryTimer); sendRetryTimer = null }
+      clearSendRetry()
     }
     scheduleOutboxTimer()
     emit()
@@ -1043,7 +1049,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
         backoffAttempt = 0
         sendAttempt = 0
         restart()
-        if (sendRetryTimer !== null) { ports.timers.clear(sendRetryTimer); sendRetryTimer = null }
+        clearSendRetry()
         pump()
         return
       case 'pagehide':
@@ -1146,7 +1152,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
     send: raw => {
       if (chatPeer === null || !messageSendable(raw)) return false
       const now = ports.now()
-      outbox = [...outbox, { key: ports.randomId(), to: chatPeer, text: messageText(raw), createdAt: now, deadline: now + SEND_TIMEOUT_MS, stage: 'quiet', reason: null, attempted: false, note: null }]
+      outbox = [...outbox, { key: ports.randomId(), to: chatPeer, text: messageText(raw), createdAt: now, deadline: now + SEND_TIMEOUT_MS, stage: 'quiet', reason: null, note: null }]
       chatFirstUnread = null
       persistOutbox()
       scheduleOutboxTimer()
@@ -1227,7 +1233,7 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       backoffAttempt = 0
       sendAttempt = 0
       restart()
-      if (sendRetryTimer !== null) { ports.timers.clear(sendRetryTimer); sendRetryTimer = null }
+      clearSendRetry()
       pump()
       emit()
     },
@@ -1240,7 +1246,8 @@ export const createPeopleSession = (options: { readonly workspaceId: string; rea
       clearNoticeTimers()
       chatController?.abort()
       sendController?.abort()
-      for (const handle of [sendRetryTimer, outboxTimer]) if (handle !== null) ports.timers.clear(handle)
+      clearSendRetry()
+      if (outboxTimer !== null) ports.timers.clear(outboxTimer)
       listeners.clear()
     },
   }

@@ -146,6 +146,11 @@ function result(overrides: Partial<SyncResultWire> = {}): SyncResultWire {
 }
 const message = (seq: number, from: PersonWire, to: PersonWire, text = `message ${seq}`): MessageWire =>
   ({ seq, id: `msg-${seq}`, from: from.id, to: to.id, text, sentAt: new Date(T0 + seq * 1_000).toISOString() })
+/** My message as Agents hands it back to me: with the key it was sent with. */
+const mine = (seq: number, to: PersonWire, text: string, key: string): MessageWire => ({ ...message(seq, ME, to, text), key })
+/** Agents' answer to a send it stored: my message, carrying the call's key. */
+const stored = (call: { readonly input: any; readonly idempotencyKey: string | undefined }, seq: number, replayed = false): Response =>
+  ok({ message: { ...message(seq, ME, BEN, call.input.text), key: call.idempotencyKey }, replayed })
 const conversation = (person: PersonWire, unread: number, lastSeq: number, here = true): ConversationSummaryWire =>
   ({ with: person, here, lastSeq, lastSentAt: new Date(T0 + lastSeq * 1_000).toISOString(), unread })
 
@@ -545,7 +550,7 @@ describe('identity', () => {
     const { session, agents, local, emit, state } = setup()
     agents.on(PEOPLE_CAPABILITY.conversationRead, () => ok({ with: BEN, messages: [], readThrough: { me: 0, them: 0 } }))
     const refusal = deferred<Response>()
-    agents.on(PEOPLE_CAPABILITY.send, call => call.input.token === 'token-1' ? { late: refusal.promise } : ok({ message: message(5, ME, BEN, 'x'), replayed: false }))
+    agents.on(PEOPLE_CAPABILITY.send, call => call.input.token === 'token-1' ? { late: refusal.promise } : stored(call, 5))
     let joins = 0
     agents.on(PEOPLE_CAPABILITY.join, () => { joins += 1; return ok({ token: `joined-${joins}`, me: { id: 'person-new', name: 'User9' }, preferredNameAccepted: true }) })
     agents.setSyncResult(result({ present: [BEN], cursor: 0, view: 'v0' }))
@@ -657,7 +662,7 @@ describe('messages', () => {
     first.session.dispose()
     const second = setup({ session: sessionStore })
     chatReady(second.agents)
-    second.agents.on(PEOPLE_CAPABILITY.send, call => ok({ message: { ...message(7, ME, BEN, call.input.text), id: 'msg-7' }, replayed: true }))
+    second.agents.on(PEOPLE_CAPABILITY.send, call => stored(call, 7, true))
     second.session.setViewing(RUN_A)
     await settle()
     expect(second.agents.to(PEOPLE_CAPABILITY.send).map(call => [call.idempotencyKey, call.input.text])).toEqual([[key, 'Hello Ben']])
@@ -686,7 +691,7 @@ describe('messages', () => {
     await clock.advance(60_000)
     expect(agents.to(PEOPLE_CAPABILITY.send).length).toBe(attempts) // no retries once it has failed
 
-    agents.on(PEOPLE_CAPABILITY.send, call => ok({ message: message(9, ME, BEN, call.input.text), replayed: false }))
+    agents.on(PEOPLE_CAPABILITY.send, call => stored(call, 9))
     session.retrySend(failed!.key)
     await settle()
     const keys = new Set(agents.to(PEOPLE_CAPABILITY.send).map(call => call.idempotencyKey))
@@ -708,7 +713,7 @@ describe('messages', () => {
     session.send('hello')
     await settle()
     const key = agents.to(PEOPLE_CAPABILITY.send)[0]!.idempotencyKey!
-    const sent = message(1, ME, BEN, 'hello')
+    const sent = mine(1, BEN, 'hello', key)
     await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], messages: [sent], cursor: 1, view: 'v1' })))
     expect(state().chat?.items).toEqual([expect.objectContaining({ kind: 'message', key, seq: 1, mine: true, text: 'hello' })])
     ack.resolve(ok({ message: sent, replayed: false }))
@@ -717,7 +722,7 @@ describe('messages', () => {
   })
 
   test('a send that gave up waiting but was stored shows as delivered when sync brings it, not "Not sent" beside it (review P2)', async () => {
-    const { session, agents, state, answer, clock } = setup()
+    const { session, agents, state, answer, clock, sessionStore } = setup()
     chatReady(agents)
     agents.on(PEOPLE_CAPABILITY.send, () => 'hold')
     agents.setSyncResult(result({ present: [BEN], cursor: 0, view: 'v0' }))
@@ -727,13 +732,15 @@ describe('messages', () => {
     await settle()
     session.send('slow one')
     await settle()
+    const key = agents.to(PEOPLE_CAPABILITY.send)[0]!.idempotencyKey!
     await clock.advance(SEND_TIMEOUT_MS + 1)
     expect(state().chat?.items).toEqual([expect.objectContaining({ kind: 'outgoing', stage: 'failed' })])
-    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], messages: [message(1, ME, BEN, 'slow one')], cursor: 1, view: 'v1' })))
-    expect(state().chat?.items).toEqual([expect.objectContaining({ kind: 'message', seq: 1, text: 'slow one' })])
+    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], messages: [mine(1, BEN, 'slow one', key)], cursor: 1, view: 'v1' })))
+    expect(state().chat?.items).toEqual([expect.objectContaining({ kind: 'message', key, seq: 1, text: 'slow one' })])
+    expect(sessionStore.map.has(OUTBOX_KEY)).toBe(false)
   })
 
-  test('an identical message from a sibling tab never swallows one that was not sent yet', async () => {
+  test('only my message carrying an entry\'s key settles it: identical text from another tab or from history settles nothing', async () => {
     const { session, agents, state, answer } = setup()
     chatReady(agents)
     agents.on(PEOPLE_CAPABILITY.send, () => refuse(503, 'module_unavailable'))
@@ -745,16 +752,88 @@ describe('messages', () => {
     session.send('ok')
     session.send('ok')
     await settle()
-    // The first was tried once (and is waiting to retry); the second was never sent.
-    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 1)], messages: [message(1, ME, BEN, 'ok')], cursor: 1, view: 'v1' })))
-    expect(state().chat?.items.map(item => item.kind)).toEqual(['message', 'outgoing'])
+    const [first, second] = state().chat!.items.map(item => item.key) as [string, string]
+    // Another tab of mine sent "ok" too (its own key), and an old "ok" of mine has no entry here.
+    await answer(ok(result({
+      present: [BEN], conversations: [conversation(BEN, 0, 2)], messages: [mine(1, BEN, 'ok', 'old-key'), mine(2, BEN, 'ok', 'sibling-key')], cursor: 2, view: 'v1',
+    })))
+    expect(state().chat?.items.map(item => [item.kind, item.key])).toEqual([['message', 'old-key'], ['message', 'sibling-key'], ['outgoing', first], ['outgoing', second]])
+    // The first was stored after all: exactly that entry is delivered.
+    await answer(ok(result({ present: [BEN], conversations: [conversation(BEN, 0, 3)], messages: [mine(3, BEN, 'ok', first)], cursor: 3, view: 'v2' })))
+    expect(state().chat?.items.map(item => [item.kind, item.key])).toEqual([['message', 'old-key'], ['message', 'sibling-key'], ['message', first], ['outgoing', second]])
+  })
+
+  test('a rate-limited message survives the chat being reopened over an identical older message, and is sent when the limit ends (review F1)', async () => {
+    const { session, agents, clock, state } = setup()
+    agents.setSyncResult(result({ present: [BEN], conversations: [conversation(BEN, 0, 5)], cursor: 5, view: 'v0' }))
+    chatReady(agents, [mine(5, BEN, 'ok', 'old-key')], { me: 5, them: 5 })
+    const replies = [refuse(429, 'people_rate_limited', { retryAfterMs: 20_000 })]
+    agents.on(PEOPLE_CAPABILITY.send, call => replies.shift() ?? stored(call, 6))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    session.send('ok')
+    await settle()
+    const key = agents.to(PEOPLE_CAPABILITY.send)[0]!.idempotencyKey!
+    session.closeChat()
+    session.openChat(BEN)
+    await settle()
+    expect(state().chat?.items.map(item => [item.kind, item.key])).toEqual([['message', 'old-key'], ['outgoing', key]])
+    await clock.advance(20_000)
+    expect(agents.to(PEOPLE_CAPABILITY.send).map(call => call.idempotencyKey)).toEqual([key, key])
+    expect(state().chat?.items.map(item => [item.kind, item.key])).toEqual([['message', 'old-key'], ['message', key]])
+  })
+
+  test('a "Not sent" message stays when the chat is reopened over an identical older message (review F2)', async () => {
+    const { session, agents, state, sessionStore } = setup()
+    agents.setSyncResult(result({ present: [BEN], conversations: [conversation(BEN, 0, 5)], cursor: 5, view: 'v0' }))
+    chatReady(agents, [mine(5, BEN, 'thanks', 'old-key')], { me: 5, them: 5 })
+    agents.on(PEOPLE_CAPABILITY.send, () => refuse(500, 'internal_error'))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    session.send('thanks')
+    await settle()
+    session.closeChat()
+    session.openChat(BEN)
+    await settle()
+    expect(state().chat?.items.at(-1)).toMatchObject({ kind: 'outgoing', text: 'thanks', stage: 'failed', reason: SEND_REASON.failed })
+    expect(JSON.parse(sessionStore.map.get(OUTBOX_KEY)!)).toEqual([expect.objectContaining({ text: 'thanks', failed: true })])
+  })
+
+  test('a message waiting to be retried that turns out to be stored is delivered, and its retry is dropped so the next one goes at once', async () => {
+    const { session, agents, clock, state } = setup()
+    agents.setSyncResult(result({ present: [BEN], cursor: 0, view: 'v0' }))
+    let readMessages: MessageWire[] = []
+    agents.on(PEOPLE_CAPABILITY.conversationRead, () => ok({ with: BEN, messages: readMessages, readThrough: { me: 0, them: 0 } }))
+    // The gateway lost the answer to the first send, which Agents had stored.
+    agents.on(PEOPLE_CAPABILITY.send, call => call.input.text === 'first' ? refuse(502, 'module_outcome_unknown') : stored(call, 2))
+    session.setViewing(RUN_A)
+    await settle()
+    session.openChat(BEN)
+    await settle()
+    session.send('first')
+    session.send('second')
+    await settle()
+    const firstKey = agents.to(PEOPLE_CAPABILITY.send)[0]!.idempotencyKey!
+    readMessages = [mine(1, BEN, 'first', firstKey)]
+    session.closeChat()
+    session.openChat(BEN)
+    await settle()
+    // No time has passed: the first one's retry would only now be due.
+    expect(agents.to(PEOPLE_CAPABILITY.send).map(call => call.input.text)).toEqual(['first', 'second'])
+    expect(state().chat?.items.map(item => item.kind === 'note' ? item.kind : [item.kind, item.text])).toEqual([['message', 'first'], ['message', 'second']])
+    await clock.advance(60_000)
+    expect(agents.to(PEOPLE_CAPABILITY.send)).toHaveLength(2)
   })
 
   test('a rate-limited message says it is sending too fast and waits for the limit, not "couldn\'t reach Leitbild"', async () => {
     const { session, agents, clock, state } = setup()
     chatReady(agents)
     const replies = [refuse(429, 'people_rate_limited', { retryAfterMs: 20_000 })]
-    agents.on(PEOPLE_CAPABILITY.send, call => replies.shift() ?? ok({ message: message(3, ME, BEN, call.input.text), replayed: false }))
+    agents.on(PEOPLE_CAPABILITY.send, call => replies.shift() ?? stored(call, 3))
     session.setViewing(RUN_A)
     await settle()
     session.openChat(BEN)
@@ -797,7 +876,7 @@ describe('messages', () => {
     let down = true
     agents.on(PEOPLE_CAPABILITY.sync, call => agents.syncReplies.shift() ?? (down ? htmlBadGateway() : call.input.waitMs > 0 ? 'hold' : ok(result({ cursor: 0 }))))
     agents.syncReplies.push(ok(result()))
-    agents.on(PEOPLE_CAPABILITY.send, call => down ? htmlBadGateway() : ok({ message: message(call.input.text === 'one' ? 1 : 2, ME, BEN, call.input.text), replayed: false }))
+    agents.on(PEOPLE_CAPABILITY.send, call => down ? htmlBadGateway() : stored(call, call.input.text === 'one' ? 1 : 2))
     session.setViewing(RUN_A)
     await settle()
     session.openChat(BEN)

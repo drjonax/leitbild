@@ -28,6 +28,9 @@ export const SYNC_WAIT_MAX_MS = 20_000
 export const personSchema = z.object({ id: z.string().min(1), name: z.string().min(1) }).strict()
 export type PersonWire = z.infer<typeof personSchema>
 
+/** The platform's bound on an invocation's idempotencyKey, which Agents hands back to its sender. */
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 256
+
 export const messageSchema = z.object({
   seq: z.number().int().positive(),
   id: z.string().min(1),
@@ -35,6 +38,8 @@ export const messageSchema = z.object({
   to: z.string().min(1),
   text: z.string().min(1),
   sentAt: z.string().min(1),
+  /** The idempotency key it was sent with; Agents adds it exactly to the messages the requesting Person sent. */
+  key: z.string().min(1).max(IDEMPOTENCY_KEY_MAX_LENGTH).optional(),
 }).strict()
 export type MessageWire = z.infer<typeof messageSchema>
 
@@ -77,7 +82,8 @@ export type ConversationReadWire = z.infer<typeof conversationReadResultSchema>
 export const markReadResultSchema = z.object({ unread: z.number().int().nonnegative() }).strict()
 export type MarkReadResultWire = z.infer<typeof markReadResultSchema>
 
-export const sendResultSchema = z.object({ message: messageSchema, replayed: z.boolean() }).strict()
+/** The sender's own message, so it always carries the key it was sent with. */
+export const sendResultSchema = z.object({ message: messageSchema.required({ key: true }), replayed: z.boolean() }).strict()
 export type SendResultWire = z.infer<typeof sendResultSchema>
 
 export const leaveResultSchema = z.object({ left: z.literal(true) }).strict()
