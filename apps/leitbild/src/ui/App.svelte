@@ -647,7 +647,7 @@
   <header class="workspace-bar"><div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" label="Leitbild.ai home" /></div></header>
 {:else if showingComposer && workspace}
   <header class="workspace-bar">
-    <div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" label="Leitbild.ai home" /><a class="workspace-name" href={workspacePath(workspace.id)} title={workspaceTitle}>{workspaceTitle}</a>
+    <div class="workspace-identity"><Wordmark href="/workspaces" tone="dark" compact label="Leitbild.ai home" /><a class="workspace-name" href={workspacePath(workspace.id)} title={workspaceTitle}>{workspaceTitle}</a>
       {#if peopleShown && people && peopleState && selectedWorldResource}<PeopleControl bind:this={peopleControl} session={people} people={peopleState}
         runUrl={peopleRunUrl} runId={selectedWorldResource.ref.id} onOpenChat={openPeopleChat} />{/if}
       {#if fromGuide}<a class="guide-back" href={guideHref('ask')}>← Getting started</a>{/if}</div>
@@ -814,8 +814,12 @@
   }
   @media (pointer: coarse) { .ws-topbar :global(.nav-link) { min-height: 44px; } }
 
-  /* The Workspace name ellipsises before the people control beside it shrinks. */
+  /* The Workspace name ellipsises before the people control beside it shrinks, and the
+     Run's controls never shrink below their buttons (they would overlap their neighbours):
+     the name gives way first, and below 560 px goes, as the wordmark becomes its mark. */
   .workspace-name { min-width: 0; }
+  .workspace-actions { flex-shrink: 0; }
+  @media (max-width: 559px) { .workspace-name { display: none; } }
   .guide-back { flex: none; color: #aebbb0; font-size: .78rem; text-decoration: none; white-space: nowrap; }
   .guide-back:hover { color: white; }
   .guide-back:focus-visible { outline: 2px solid var(--lb-focus-on-dark); outline-offset: 2px; border-radius: 4px; }
