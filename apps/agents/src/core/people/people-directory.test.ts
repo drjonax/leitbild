@@ -99,7 +99,7 @@ describe('People directory', () => {
     const ben = await directory.join({ preferredName: '  Ben ' })
     expect(ben).toMatchObject({ me: { name: 'Ben' }, preferredNameAccepted: true })
     expect(await directory.join({ preferredName: 'BEN' })).toMatchObject({ me: { name: 'User2' }, preferredNameAccepted: false })
-    expect(await directory.join({ preferredName: 'Ben‮' })).toMatchObject({ me: { name: 'User3' }, preferredNameAccepted: false })
+    expect(await directory.join({ preferredName: 'Ben\u202e' })).toMatchObject({ me: { name: 'User3' }, preferredNameAccepted: false })
     expect(admissions).toHaveLength(4)
     const file = Buffer.from(await Bun.file(path).bytes())
     expect(file.includes(first.token)).toBe(false)
@@ -116,7 +116,7 @@ describe('People directory', () => {
     try { directory.rename({ token: ann.token, name: 'a'.repeat(33) }) } catch (error) {
       expect(peopleFailureOf(error)).toMatchObject({ status: 400, code: 'person_name_invalid', details: { reason: 'too_long' } })
     }
-    expect(await failureCode(() => directory.rename({ token: ann.token, name: 'Ann​' }))).toBe('person_name_invalid')
+    expect(await failureCode(() => directory.rename({ token: ann.token, name: 'Ann\u200b' }))).toBe('person_name_invalid')
     expect(directory.rename({ token: ann.token, name: 'User1' }).me.name).toBe('User1')
     // The default allocation skips a name someone chose.
     expect((await directory.join({})).me.name).toBe('User2')
@@ -324,7 +324,7 @@ describe('People directory', () => {
     expect(tabbed.message.text).toBe('col\tcol\nnext line')
     expect(await failureCode(() => directory.send({ token: ann.token, to: ann.me.id, text: 'me' }, 'k0'))).toBe('message_to_self')
     expect(await failureCode(() => directory.send({ token: ann.token, to: `person-${crypto.randomUUID()}`, text: 'x' }, 'k0'))).toBe('person_not_found')
-    const first = await directory.send({ token: ann.token, to: ben.me.id, text: '  Café \n\nline two  \n ' }, 'k1')
+    const first = await directory.send({ token: ann.token, to: ben.me.id, text: '  Cafe\u0301 \n\nline two  \n ' }, 'k1')
     expect(first.replayed).toBe(false)
     expect(first.message.text).toBe('  Café \n\nline two')
     expect(first.message).toMatchObject({ from: ann.me.id, to: ben.me.id, sentAt: new Date(time.now()).toISOString() })

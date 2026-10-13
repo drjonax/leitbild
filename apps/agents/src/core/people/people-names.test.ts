@@ -15,7 +15,7 @@ const rejected = (raw: string) => {
 describe('Person names', () => {
   test('applies NFKC, trims and collapses runs of spaces to one', () => {
     expect(accepted('  Ｂｅｎ   Ｏｌｓｅｎ ').name).toBe('Ben Olsen')
-    expect(accepted('Ben 　 Olsen').name).toBe('Ben Olsen')
+    expect(accepted('Ben\u00a0\u3000 Olsen').name).toBe('Ben Olsen')
     // NFKC folds the ligature, so the stored name is plain text.
     expect(accepted('ﬁona').name).toBe('fiona')
     expect(accepted('Åse').name).toBe('Åse'.normalize('NFKC'))
@@ -30,7 +30,7 @@ describe('Person names', () => {
   test('rejects empty names, also after normalisation', () => {
     expect(rejected('')).toBe('empty')
     expect(rejected('   ')).toBe('empty')
-    expect(rejected('　')).toBe('empty')
+    expect(rejected('\u3000')).toBe('empty')
   })
 
   test('limits a name to 32 code points, counting astral characters once', () => {
@@ -43,20 +43,20 @@ describe('Person names', () => {
 
   test('rejects zero-width, bidi-override, control, separator, private-use and unassigned characters', () => {
     for (const raw of [
-      'Ben​', // zero-width space
-      'Be‍n', // zero-width joiner
-      'Be‌n', // zero-width non-joiner
-      '﻿Ben', // byte order mark
-      'Ben‮evil', // right-to-left override
-      'Ben⁦x⁩', // isolates
+      'Ben\u200b', // zero-width space
+      'Be\u200dn', // zero-width joiner
+      'Be\u200cn', // zero-width non-joiner
+      '\ufeffBen', // byte order mark
+      'Ben\u202eevil', // right-to-left override
+      'Ben\u2066x\u2069', // isolates
       'Ben\u0000',
       'Ben\nOlsen',
       'Ben\tOlsen',
-      'Ben Olsen', // line separator
-      'Ben Olsen', // paragraph separator
-      'Ben', // private use
+      'Ben\u2028Olsen', // line separator
+      'Ben\u2029Olsen', // paragraph separator
+      'Ben\ue000', // private use
       'Ben\ud800', // lone surrogate
-      'Ben͸', // unassigned
+      'Ben\u0378', // unassigned
     ]) expect(rejected(raw)).toBe('invalid_characters')
   })
 

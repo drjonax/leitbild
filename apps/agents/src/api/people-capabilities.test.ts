@@ -236,7 +236,7 @@ describe('People Capabilities', () => {
       .toMatchObject({ status: 409, code: 'workspace_scope_mismatch' })
     expect(await errorOf(await invoke(workspaceId, 'agents.people.join', {}, { resource: run(workspaceId) })))
       .toMatchObject({ status: 409, code: 'capability_scope_invalid' })
-    expect(await errorOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann‮' })))
+    expect(await errorOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann\u202e' })))
       .toMatchObject({ status: 400, code: 'person_name_invalid', details: { reason: 'invalid_characters' } })
     expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ann.me.id, text: 'me' }, { idempotencyKey: 'self' })))
       .toMatchObject({ status: 400, code: 'message_to_self' })
