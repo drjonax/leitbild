@@ -564,13 +564,8 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
   }
 
   const evictIdle = async (now: number = Date.now()): Promise<number> => {
-    const targets: WorkspaceId[] = []
-    for (const [id, entry] of map) {
-      if (entry.state === 'active' && !workspaceOperations.get(id)?.activeCount() && !ownsAutonomousWork(entry.system) && now - entry.lastTouchedAt > idleMs) {
-        targets.push(id)
-      }
-    }
-    await Promise.all(targets.map(evictOne))
+    // People first and synchronously: a failing runtime eviction below must
+    // not leave idle People directories open.
     for (const [id, directory] of peopleDirectories) {
       if (directory.canEvict(now, idleMs)) {
         peopleDirectories.delete(id)
@@ -578,6 +573,13 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
         peopleMetrics.inc('directoriesEvicted')
       }
     }
+    const targets: WorkspaceId[] = []
+    for (const [id, entry] of map) {
+      if (entry.state === 'active' && !workspaceOperations.get(id)?.activeCount() && !ownsAutonomousWork(entry.system) && now - entry.lastTouchedAt > idleMs) {
+        targets.push(id)
+      }
+    }
+    await Promise.all(targets.map(evictOne))
     return targets.length
   }
 
