@@ -301,6 +301,8 @@ export const createComparisons = (deps: Dependencies) => {
     if(storage) writes=writes.then(()=>storage.remove(roomId,messageId)).catch(error=>console.error('[comparisons] Removal failed',error))
   }
   return {capture,link,list,start,cancel,remove,removeMessages,discard:(executionTurnId:string)=>{pending.delete(executionTurnId)},
+    // Comparisons whose model work is under way: a job lives from start until its outcome is saved.
+    running:()=>jobs.size,
     detail:async(roomId:string,messageId:string,id:string)=>{const {record,alternative}=await find(roomId,messageId,id);try{return {...alternative,startingInput:record.source,notice:guidance}}finally{release(recordKey(roomId,messageId),record)}},
     close:async()=>{closed=true;for(const job of jobs.values())job.controller.abort(new Error('Workspace closed'));await Promise.all([...jobs.values()].map(j=>j.done));await writes;pending.clear();records.clear()},
   }

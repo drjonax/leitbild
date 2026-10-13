@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   inspectionViewSchema,
+  moduleActivitySchema,
   moduleCapabilityCollectionSchema,
   moduleCapabilityInvocationSchema,
   moduleDefinitionCollectionSchema,
@@ -24,6 +25,7 @@ import type { RoomDefinitionLibrary } from '../core/definitions/room-definition-
 import { roomDefinitionSchema, type RoomDefinition } from '../core/definitions/room-definition-catalog.ts'
 import type { AgentsModuleState } from '../core/workspaces/module-state.ts'
 import type { WorkspaceRuntimeRegistry } from '../core/workspaces/runtime-registry.ts'
+import { agentsActivity } from '../core/workspaces/workspace-activity.ts'
 import { workspaceModulePaths } from '../core/paths.ts'
 import { loadWorkspaceModuleSnapshots } from '../core/storage/module-snapshots.ts'
 import { roomPacksInputSchema } from '../packs/activation.ts'
@@ -937,6 +939,8 @@ export const handleAgentsModuleApi = async (
   try {
     if (url.pathname === '/.well-known/workspace-module' && request.method === 'GET') return json(agentsModuleManifest)
     if (url.pathname === agentsModuleManifest.endpoints.featuredDefinitions && request.method === 'GET') return json(agentsFeaturedDefinitions)
+    // Every Workspace at once from loaded runtimes only; it loads none and touches no idle clock.
+    if (url.pathname === agentsModuleManifest.endpoints.activity && request.method === 'GET') return json(moduleActivitySchema.parse(agentsActivity(config.registry)))
 
     const match = url.pathname.match(/^\/internal\/workspaces\/([^/]+)(?:\/(definitions|resources|capabilities)|\/capabilities\/([^/]+)\/invoke)?$/)
     if (!match) return null
