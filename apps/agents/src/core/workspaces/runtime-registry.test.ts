@@ -224,6 +224,59 @@ describe('WorkspaceRuntimeRegistry', () => {
     } finally { release(); await actual.shutdown() }
   })
 
+  it('removing a Workspace cancels a running model comparison instead of waiting for the model', async () => {
+    const id = newWorkspaceId()
+    await provision(id)
+    let streams = 0
+    let comparisonEntered!: () => void
+    const comparisonStarted = new Promise<void>(resolve => { comparisonEntered = resolve })
+    let comparisonCancelled = false
+    // Test-only model: the Agent's own turn answers; the comparison's model call
+    // answers only by failing when its signal aborts, as a slow real model would.
+    const provider = { ...makeStubGateway(),
+      modelInfo: async (model: string) => ({ id: model, provider: 'stub', contextMax: 100_000, source: 'fixture' }),
+      stream: async function* (_request: unknown, signal?: AbortSignal) {
+        if (++streams === 1) {
+          yield { delta: 'Original answer.', done: true, tokensUsed: { prompt: 1, completion: 1 } }
+          return
+        }
+        comparisonEntered()
+        await new Promise<never>((_, reject) => {
+          if (!signal) return reject(new Error('Comparison model call carries no abort signal'))
+          signal.addEventListener('abort', () => { comparisonCancelled = true; reject(signal.reason) }, { once: true })
+        })
+      } }
+    const actual = createWorkspaceRuntimeRegistry({ moduleState, idleMs: 1_000_000,
+      deployment: createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(provider) }),
+    })
+    try {
+      const system = await actual.getOrLoad(id)
+      const room = system.rooms.createRoom({ name: 'Comparison lifetime', createdBy: 'test' })
+      const agent = asAIAgent(await system.spawnAIAgent({ name: 'Agent', model: 'mock-model', persona: '', tools: [] }))!
+      room.addMember(agent.id)
+      await agent.join(room)
+      agent.receive(room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' }))
+      const until = performance.now() + 10_000
+      while (!room.getRetainedMessages().some(message => message.senderId === agent.id) && performance.now() < until) await Bun.sleep(5)
+      await agent.whenIdle()
+      const original = room.getRetainedMessages().find(message => message.senderId === agent.id)!
+      const started = await system.comparisons.start(room.profile.id, original.id, 'stub:mock-model')
+      expect(started.status).toBe('running')
+      await comparisonStarted
+      let deadline: Timer | undefined
+      const outcome = await Promise.race([
+        actual.remove(id).then(() => 'removed' as const),
+        new Promise<'still waiting'>(resolve => { deadline = setTimeout(() => resolve('still waiting'), 10_000) }),
+      ])
+      clearTimeout(deadline)
+      expect(outcome).toBe('removed')
+      // The job was cancelled, and removal waited for it to end.
+      expect(comparisonCancelled).toBe(true)
+      expect(await moduleState.has(id)).toBe(false)
+      await expect(stat(workspaceModulePaths(id).agents.root)).rejects.toThrow()
+    } finally { await actual.shutdown() }
+  }, 30_000)
+
   it('does not evict autonomous summary work for idle or capacity', async () => {
     const busy = createWorkspaceRuntimeRegistry({ deployment: createDeploymentRuntime(), moduleState, maxLoadedWorkspaces: 1, idleMs: 1 })
     const a = newWorkspaceId(), b = newWorkspaceId()

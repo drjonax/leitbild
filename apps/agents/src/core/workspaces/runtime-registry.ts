@@ -675,6 +675,9 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
       if (existing) return existing
       const removingWorkspace = (async () => {
         await closePeople(id)
+        // Comparisons own admitted model work: cancel it before draining
+        // operations, as shutdown does, or removal waits for whole model tasks.
+        await map.get(id)?.system.comparisons.close()
         await workspaceOperations.get(id)?.close()
         await definitionLibraries.get(id)?.close()
         await evictOne(id)
