@@ -240,6 +240,13 @@ describe('People Capabilities', () => {
       .toMatchObject({ status: 400, code: 'person_name_invalid', details: { reason: 'invalid_characters' } })
     expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ann.me.id, text: 'me' }, { idempotencyKey: 'self' })))
       .toMatchObject({ status: 400, code: 'message_to_self' })
+    const ben = await join_(workspaceId)
+    // SQLite's length() stops at NUL: refused as client errors, never a retryable 500.
+    expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ben.me.id, text: '\u0000hello' }, { idempotencyKey: 'nul-text' })))
+      .toMatchObject({ status: 400, code: 'message_invalid_characters' })
+    expect(await errorOf(await invoke(workspaceId, 'agents.people.message.send', { token: ann.token, to: ben.me.id, text: 'hello' }, { idempotencyKey: '\u0000k' })))
+      .toMatchObject({ status: 400, code: 'invalid_request' })
+    expect(registry.peopleStatus().storeFailures).toBe(0)
     for (let i = 0; i < 9; i++) await resultOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: `Ann ${i}` }))
     expect(await errorOf(await invoke(workspaceId, 'agents.people.rename', { token: ann.token, name: 'Ann again' })))
       .toMatchObject({ status: 429, code: 'people_rate_limited', retryable: true, details: { retryAfterMs: expect.any(Number) } })

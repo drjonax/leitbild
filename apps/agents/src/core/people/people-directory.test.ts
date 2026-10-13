@@ -317,6 +317,11 @@ describe('People directory', () => {
     const ben = await directory.join({ preferredName: 'Ben' })
     expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text: ' \n\t ' }, 'k0'))).toBe('message_empty')
     expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text: '🙂'.repeat(2_001) }, 'k0'))).toBe('message_too_long')
+    for (const text of ['\u0000hello', 'bell\u0007', 'carriage\rreturn', 'del\u007f', 'c1\u0085']) {
+      expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text }, 'k0'))).toBe('message_invalid_characters')
+    }
+    const tabbed = await directory.send({ token: ann.token, to: ben.me.id, text: 'col\tcol\nnext line' }, 'k-tab')
+    expect(tabbed.message.text).toBe('col\tcol\nnext line')
     expect(await failureCode(() => directory.send({ token: ann.token, to: ann.me.id, text: 'me' }, 'k0'))).toBe('message_to_self')
     expect(await failureCode(() => directory.send({ token: ann.token, to: `person-${crypto.randomUUID()}`, text: 'x' }, 'k0'))).toBe('person_not_found')
     const first = await directory.send({ token: ann.token, to: ben.me.id, text: '  Café \n\nline two  \n ' }, 'k1')
@@ -326,7 +331,7 @@ describe('People directory', () => {
     expect(await directory.send({ token: ann.token, to: ben.me.id, text: '  Café \n\nline two' }, 'k1')).toEqual({ message: first.message, replayed: true })
     expect(await failureCode(() => directory.send({ token: ann.token, to: ben.me.id, text: 'other' }, 'k1'))).toBe('idempotency_conflict')
     expect((await directory.send({ token: ann.token, to: ben.me.id, text: 'x'.repeat(2_000) }, 'k-long')).message.text).toHaveLength(2_000)
-    for (let i = 2; i <= 9; i++) await directory.send({ token: ann.token, to: ben.me.id, text: `m${i}` }, `k${i}`)
+    for (let i = 2; i <= 8; i++) await directory.send({ token: ann.token, to: ben.me.id, text: `m${i}` }, `k${i}`)
     let limited: unknown
     try { await directory.send({ token: ann.token, to: ben.me.id, text: 'eleventh' }, 'k11') } catch (error) { limited = error }
     expect(peopleFailureOf(limited)).toMatchObject({ status: 429, code: 'people_rate_limited', retryable: true })
@@ -340,7 +345,7 @@ describe('People directory', () => {
     expect(metrics.snapshot()).toMatchObject({ messagesSent: 11, messagesReplayed: 2 })
     const sentLines = lines.filter(line => line.includes('"outcome":"sent"'))
     expect(sentLines).toHaveLength(11)
-    expect(JSON.parse(sentLines[0]!.slice('[people] send '.length))).toEqual({
+    expect(JSON.parse(sentLines[1]!.slice('[people] send '.length))).toEqual({
       workspaceId: directory.workspaceId, sender: ann.me.id, recipient: ben.me.id, messageId: first.message.id, seq: first.message.seq, outcome: 'sent',
     })
     expect(lines.some(line => line.includes('"outcome":"people_rate_limited"'))).toBe(true)

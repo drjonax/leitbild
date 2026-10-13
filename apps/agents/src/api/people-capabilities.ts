@@ -40,6 +40,7 @@ const AGENTS_MODULE_ID = moduleIdSchema.parse('agents')
 const MESSAGE_INPUT_MAX_LENGTH = 16 * 1024
 /** Opaque strings the server hands out (view hash, store id); generous transport bound. */
 const OPAQUE_MAX_LENGTH = 128
+const CONTROL_CHARACTER = /\p{Cc}/u
 /** A token is 43 base64url characters; anything longer cannot be one. */
 const TOKEN_INPUT_MAX_LENGTH = 256
 
@@ -297,6 +298,11 @@ export const invokePeopleCapability = async (
   }
   if (invocation.idempotencyKey !== undefined && capability.acceptsIdempotencyKey !== true) {
     return refuse(400, 'idempotency_not_supported', 'This Capability does not support keyed retries')
+  }
+  // The store keeps the key as text; SQLite's length() stops at NUL, and no
+  // client-generated key needs a control character.
+  if (invocation.idempotencyKey !== undefined && CONTROL_CHARACTER.test(invocation.idempotencyKey)) {
+    return refuse(400, 'invalid_request', 'An idempotencyKey cannot contain control characters')
   }
   try {
     const directory = await registry.peopleFor(workspaceId)

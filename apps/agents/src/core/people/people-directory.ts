@@ -190,12 +190,25 @@ const createWindowLimiter = (now: () => number, windows: ReadonlyArray<RateWindo
   }
 }
 
-/** NFC, trailing whitespace trimmed; leading whitespace and inner newlines are content. */
-export const normaliseMessageText = (raw: string): { readonly ok: true; readonly text: string } | { readonly ok: false; readonly code: 'message_empty' | 'message_too_long' } => {
+// Control characters other than tab and line feed have no place in a chat
+// line, and SQLite's length() stops at NUL, so the store could never accept one.
+const FORBIDDEN_MESSAGE_CHARACTERS = /(?![\t\n])\p{Cc}/u
+
+export type MessageTextRejection = 'message_empty' | 'message_invalid_characters' | 'message_too_long'
+
+/** NFC, trailing whitespace trimmed; leading whitespace, tabs and inner newlines are content. */
+export const normaliseMessageText = (raw: string): { readonly ok: true; readonly text: string } | { readonly ok: false; readonly code: MessageTextRejection } => {
   const text = raw.toWellFormed().normalize('NFC').replace(/\s+$/u, '')
   if (text.length === 0) return { ok: false, code: 'message_empty' }
+  if (FORBIDDEN_MESSAGE_CHARACTERS.test(text)) return { ok: false, code: 'message_invalid_characters' }
   if ([...text].length > MESSAGE_MAX_CODE_POINTS) return { ok: false, code: 'message_too_long' }
   return { ok: true, text }
+}
+
+const MESSAGE_TEXT_REJECTIONS: Readonly<Record<MessageTextRejection, string>> = {
+  message_empty: 'A message needs text',
+  message_invalid_characters: 'A message cannot contain control characters other than tabs and line breaks',
+  message_too_long: `A message is at most ${MESSAGE_MAX_CODE_POINTS} characters`,
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString()
@@ -495,7 +508,7 @@ export const createPeopleDirectory = (options: PeopleDirectoryOptions) => {
         outcome.sender = me.id
         const normalised = normaliseMessageText(input.text)
         if (!normalised.ok) {
-          throw peopleError({ status: 400, code: normalised.code, message: normalised.code === 'message_empty' ? 'A message needs text' : `A message is at most ${MESSAGE_MAX_CODE_POINTS} characters` })
+          throw peopleError({ status: 400, code: normalised.code, message: MESSAGE_TEXT_REJECTIONS[normalised.code] })
         }
         const replay = (existing: StoredMessage): { readonly message: Message; readonly replayed: boolean } => {
           outcome.recipient = existing.to
