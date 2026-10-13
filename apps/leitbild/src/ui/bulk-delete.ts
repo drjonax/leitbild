@@ -99,3 +99,37 @@ export const failureTitle = (noun: Noun, failed: number, total: number): string 
   total === 1 ? `The ${noun.one} was not deleted`
     : failed === total ? `None of the ${total} ${noun.many} were deleted`
       : `${failed} of ${total} ${noun.many} were not deleted`
+
+/** The live region's line once the dialog has closed. */
+export const deletedText = (noun: Noun, removed: ReadonlyArray<DeleteItem>): string =>
+  removed.length === 0 ? '' : removed.length === 1 ? `Deleted ${removed[0]!.label}.` : `Deleted ${removed.length} ${noun.many}.`
+
+// ---------- Selection ----------
+
+export type SelectAllState = 'none' | 'some' | 'all'
+
+/** The "Select all" box for the items shown (a search may hide some). */
+export const selectAllState = (shown: ReadonlyArray<{ readonly key: string }>, selected: ReadonlySet<string>): SelectAllState => {
+  const count = shown.filter(item => selected.has(item.key)).length
+  return count === 0 ? 'none' : count === shown.length ? 'all' : 'some'
+}
+
+/** Ticking "Select all" adds every shown item; unticking it removes them. Items a search hides keep their state. */
+export const toggleAll = (shown: ReadonlyArray<{ readonly key: string }>, selected: ReadonlySet<string>): ReadonlySet<string> => {
+  const next = new Set(selected)
+  if (selectAllState(shown, selected) === 'all') for (const item of shown) next.delete(item.key)
+  else for (const item of shown) next.add(item.key)
+  return next
+}
+
+/** Ticks or unticks one item. */
+export const toggleOne = (selected: ReadonlySet<string>, key: string): ReadonlySet<string> => {
+  const next = new Set(selected)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  return next
+}
+
+/** The selection that still exists after a reload. */
+export const keepExisting = (selected: ReadonlySet<string>, items: ReadonlyArray<{ readonly key: string }>): ReadonlySet<string> =>
+  new Set(items.filter(item => selected.has(item.key)).map(item => item.key))

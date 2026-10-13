@@ -61,27 +61,3 @@ export const manageRows = (
         recent: options.recent.includes(workspace.id),
       }
     })
-
-export type SelectAllState = 'none' | 'some' | 'all'
-
-/** The "Select all" box for the rows shown (a search may hide some). */
-export const selectAllState = (shown: ReadonlyArray<{ readonly id: string }>, selected: ReadonlySet<string>): SelectAllState => {
-  const count = shown.filter(row => selected.has(row.id)).length
-  return count === 0 ? 'none' : count === shown.length ? 'all' : 'some'
-}
-
-/** Ticking "Select all" adds every shown row; unticking it removes them. Rows a search hides keep their state. */
-export const toggleAll = (shown: ReadonlyArray<{ readonly id: string }>, selected: ReadonlySet<string>): ReadonlySet<string> => {
-  const next = new Set(selected)
-  if (selectAllState(shown, selected) === 'all') for (const row of shown) next.delete(row.id)
-  else for (const row of shown) next.add(row.id)
-  return next
-}
-
-/** The selection that still exists after a reload. */
-export const keepExisting = (selected: ReadonlySet<string>, rows: ReadonlyArray<{ readonly id: string }>): ReadonlySet<string> =>
-  new Set(rows.filter(row => selected.has(row.id)).map(row => row.id))
-
-/** The live region's line after deletes. */
-export const deletedText = (removed: ReadonlyArray<DeleteItem>): string =>
-  removed.length === 0 ? '' : removed.length === 1 ? `Deleted ${removed[0]!.label}.` : `Deleted ${removed.length} Workspaces.`

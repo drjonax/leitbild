@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  countedNoun, deleteEach, deleteLabel, deleteTitle, failureTitle, progressText, SIMULATION_NOUN, WORKSPACE_NOUN, type RemoveOutcome,
+  countedNoun, deleteEach, deletedText, deleteLabel, deleteTitle, failureTitle, keepExisting, progressText, selectAllState, SIMULATION_NOUN,
+  toggleAll, toggleOne, WORKSPACE_NOUN, type RemoveOutcome,
 } from './bulk-delete.ts'
 import { GENERIC_ERROR_TEXT, HOST_UNREACHABLE_TEXT } from './error-text.ts'
 
@@ -92,5 +93,35 @@ describe('words', () => {
     expect(failureTitle(SIMULATION_NOUN, 1, 1)).toBe('The simulation was not deleted')
     expect(failureTitle(WORKSPACE_NOUN, 2, 5)).toBe('2 of 5 Workspaces were not deleted')
     expect(failureTitle(WORKSPACE_NOUN, 3, 3)).toBe('None of the 3 Workspaces were deleted')
+  })
+})
+
+describe('selection', () => {
+  const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }]
+
+  test('select all ticks every shown item, and unticks them when all are ticked', () => {
+    expect(selectAllState(items, new Set())).toBe('none')
+    expect(selectAllState(items, new Set(['a']))).toBe('some')
+    const all = toggleAll(items, new Set(['a']))
+    expect([...all].sort()).toEqual(['a', 'b', 'c'])
+    expect(selectAllState(items, all)).toBe('all')
+    expect(toggleAll(items, all).size).toBe(0)
+    expect([...toggleOne(toggleOne(new Set(['a']), 'b'), 'a')]).toEqual(['b'])
+  })
+
+  test('items a search hides keep their state', () => {
+    const shown = [{ key: 'b' }]
+    expect([...toggleAll(shown, new Set(['a']))].sort()).toEqual(['a', 'b'])
+    expect([...toggleAll(shown, new Set(['a', 'b']))]).toEqual(['a'])
+  })
+
+  test('after a reload only items that still exist stay selected', () => {
+    expect([...keepExisting(new Set(['a', 'b']), [{ key: 'b' }, { key: 'c' }])]).toEqual(['b'])
+  })
+
+  test('the live region says what was deleted', () => {
+    expect(deletedText(WORKSPACE_NOUN, [])).toBe('')
+    expect(deletedText(WORKSPACE_NOUN, [{ key: 'a', label: 'Grid study' }])).toBe('Deleted Grid study.')
+    expect(deletedText(SIMULATION_NOUN, [{ key: 'a', label: 'a' }, { key: 'b', label: 'b' }])).toBe('Deleted 2 simulations.')
   })
 })

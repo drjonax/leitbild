@@ -221,6 +221,11 @@
     if (token !== resourceRequest) return
     resources = response.resources
     refreshError = response.modules.filter(outcome => outcome.status === 'failed').map(outcome => outcome.failure.message).join('; ') || null
+    // A complete list closes an open Run or conversation that no longer exists (deleted here or elsewhere).
+    if (refreshError !== null) return
+    const openRun = selectedWorldRunId
+    normalizeOpenSelection(resources)
+    if (openRun !== null && selectedWorldRunId === null) error = 'The simulation you had open was deleted.'
   }
 
   const handleWindowMessage = (event: MessageEvent): void => {
@@ -364,18 +369,6 @@
     )
     if (response.createdResources?.length) openResources(response.createdResources)
     else await loadWorkspaceCatalog(workspace.id)
-  })
-
-  const invokeResource = (resource: ModuleResourceDescriptor, capability: ModuleCapabilityDescriptor): Promise<void> => run(async () => {
-    if (!workspace) return
-    if (capability.risk === 'destructive' && !confirm(`${capability.title}: ${resource.title}? This cannot be undone.`)) return
-    await request<InvocationResponse>(
-      `/api/workspaces/${workspace.id}/capabilities/${encodeURIComponent(capability.id)}/invoke`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resource: resource.ref, input: {}, actor: { kind: 'human' } }),
-      },
-    )
-    await loadWorkspaceCatalog(workspace.id)
   })
 
   const inspect = async (subject: InspectionSubject): Promise<void> => {
@@ -740,10 +733,10 @@
         <WorkspaceHeader {workspace} {admin} onrenamed={updated => { workspace = updated }} ondeleted={workspaceDeleted} />
         {#if error}<p class="notice error" role="alert">{error}</p>{/if}
         <p class="visually-hidden" role="status">{startAnnouncement(startState)}</p>
-        <ContinueList items={continuing} workspaceId={workspace.id} {capabilities} {summaryValue} {busy} inspecting={inspectionLoading}
+        <ContinueList items={continuing} workspaceId={workspace.id} {capabilities} {summaryValue} inspecting={inspectionLoading}
           oninspect={resource => void inspect({ kind: 'resource', descriptor: resource })}
-          ondelete={(resource, capability) => void invokeResource(resource, capability)}
-          onrename={(resource, name, original) => renameResource(resource, name, original)} />
+          onrename={(resource, name, original) => renameResource(resource, name, original)}
+          onremoved={() => { void refreshResources(workspace!.id).catch(cause => { refreshError = String(cause) }) }} />
         <FeaturedRow cards={demos.cards} unavailable={featuredFailed || demos.unavailable.length > 0} start={startState} keyOf={featuredKey}
           onstart={startFeatured} onretry={() => void retryStart()} ondismiss={() => startRunner.dismiss()} oncancel={() => startRunner.cancel()} onreload={reloadAfterStart} />
         <DefinitionCatalog definitions={demos.others} listed={featuredCatalog?.listed ?? []} {capabilities} start={startState} keyOf={definitionKey} {busy} inspecting={inspectionLoading}

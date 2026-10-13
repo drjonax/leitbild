@@ -9,14 +9,12 @@
   import ConfirmDialog from './ConfirmDialog.svelte'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
-  import { deleteLabel, WORKSPACE_NOUN } from './bulk-delete.ts'
+  import { deletedText, deleteLabel, keepExisting, selectAllState, toggleAll, toggleOne, WORKSPACE_NOUN } from './bulk-delete.ts'
   import { errorDiagnostic, plainErrorText } from './error-text.ts'
   import type { WorkspaceApi } from './launch-workspace.ts'
   import type { ModalCloseReason } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
-  import {
-    deletedText, keepExisting, MANAGE_INTRO, MANAGE_TITLE, manageRows, selectAllState, toggleAll, type ManageRow,
-  } from './workspace-manage.ts'
+  import { MANAGE_INTRO, MANAGE_TITLE, manageRows, type ManageRow } from './workspace-manage.ts'
   import type { WorkspaceMemory } from './workspace-memory.ts'
   import { filterRows, SEARCH_THRESHOLD } from './workspace-switcher.ts'
 
@@ -55,7 +53,7 @@
     try {
       workspaces = await api.list()
       now = new Date()
-      selected = keepExisting(selected, workspaces)
+      selected = keepExisting(selected, workspaces.map(workspace => ({ key: workspace.id })))
     } catch (error) {
       console.error('Workspace list failed', errorDiagnostic(error))
       loadError = plainErrorText(error)
@@ -76,12 +74,6 @@
     wasOpen = open
   })
 
-  const toggle = (id: string): void => {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    selected = next
-  }
   const ask = (items: ReadonlyArray<ManageRow>): void => {
     if (items.length === 0) return
     targets = items
@@ -92,7 +84,7 @@
     if (removed.length === 0) return
     // A deleted Workspace is no longer a launch default or a Recent entry.
     for (const row of removed) memory.forget(row.id)
-    status = deletedText(removed)
+    status = deletedText(WORKSPACE_NOUN, removed)
     void load()
   }
   // A deleted row's Delete button is gone: focus goes to the list, which says what is left.
@@ -125,7 +117,7 @@
       <ul class="rows" bind:this={list} tabindex="-1" aria-label={`Workspaces (${rows.length})`}>
         {#each shown as row (row.id)}
           <li class:checked={selected.has(row.id)}>
-            <input id={`${uid}-${row.id}`} type="checkbox" checked={selected.has(row.id)} onchange={() => toggle(row.id)} />
+            <input id={`${uid}-${row.id}`} type="checkbox" checked={selected.has(row.id)} onchange={() => { selected = toggleOne(selected, row.id) }} />
             <label for={`${uid}-${row.id}`}>
               <span class="name" class:untitled={row.untitled}>{row.label}</span>
               <span class="meta"><span title={row.createdExact}>{row.created}</span>{#if row.recent}<span class="tag">Recent in this browser</span>{/if}{#if row.note}<span class="state">{row.note}</span>{/if}</span>
@@ -161,7 +153,7 @@
   .tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--lb-s2) var(--lb-s4); }
   .select-all { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; color: var(--lb-ink); font-size: .875rem; font-weight: 600; cursor: pointer; }
   .muted-count { color: var(--lb-ink-3); font-weight: 500; }
-  input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--lb-brand-700); cursor: pointer; }
+  input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--lb-brand-700); cursor: pointer; }
   input[type="checkbox"]:focus-visible { outline: 2px solid var(--lb-focus); outline-offset: 2px; }
   .search { position: relative; flex: 1 1 220px; max-width: 320px; }
   .search :global(.search-icon) { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--lb-ink-3); pointer-events: none; }

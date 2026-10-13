@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import type { ModuleCapabilityDescriptor, ModuleResourceDescriptor } from '@leitbild/contracts'
+  import ConfirmDialog from './ConfirmDialog.svelte'
+  import Icon from './Icon.svelte'
   import { jsonRequest, request } from './api.ts'
+  import { createResourceRemover, resourceDeleteBody, resourceDeleteItem, resourceNoun, type ResourceDeleteItem } from './resource-delete.ts'
   import { simulationTimeLabel } from './simulation-time.ts'
 
   interface AccelerationState {
@@ -77,6 +80,11 @@
   let notice = $state('')
   let noticeTimer: ReturnType<typeof setTimeout> | null = null
   let refreshToken = 0
+  let deleteTargets = $state<ReadonlyArray<ResourceDeleteItem>>([])
+  let confirmingDelete = $state(false)
+  let deleteButton = $state<HTMLButtonElement | null>(null)
+  /** A 404 asked the Workspace's list once whether this Run still exists; a second one is reported. */
+  let goneChecked = false
 
   const capabilityAvailableFor = (candidate: ModuleResourceDescriptor, id: string): boolean =>
     candidate.capabilityIds.includes(id) && capabilities.some(capability => capability.id === id)
@@ -108,7 +116,18 @@
       const nextExecution = await invoke<ExecutionState>(resource.ref, 'world.simulation-run.execution.read', {})
       if (token !== refreshToken) return
       execution = nextExecution.result
-    } catch (cause) { if (token === refreshToken) reportError(cause instanceof Error ? cause.message : String(cause)) }
+      goneChecked = false
+    } catch (cause) {
+      // While a delete runs, its dialog reports the outcome.
+      if (token !== refreshToken || confirmingDelete) return
+      // A Run deleted elsewhere answers 404: reading the Workspace's Resources again closes it on this page.
+      if ((cause as { status?: unknown }).status === 404 && !goneChecked) {
+        goneChecked = true
+        void refreshResources().catch(refreshCause => reportError(refreshCause instanceof Error ? refreshCause.message : String(refreshCause)))
+        return
+      }
+      reportError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
   const runAction = async (action: () => Promise<void>): Promise<void> => {
     if (actionBusy) return
@@ -256,16 +275,30 @@
       cancelRename()
     }
   }
-  const deleteRun = (member: ModuleResourceDescriptor): void => {
-    if (!confirm(`Delete ${member.title}? This cannot be undone.`)) return
-    const deletingCurrent = member.ref.id === resource.ref.id
-    void runAction(async () => {
-      await invoke(member.ref, 'world.simulation-run.delete', {})
-      const remaining = family.filter(candidate => candidate.ref.id !== member.ref.id)
-      await refreshResources()
-      familyOpen = false
-      if (deletingCurrent) remaining.length > 0 ? onSwitch(remaining[0]!.ref.id) : onClose()
-    })
+  // Each Run is deleted through the delete Capability its own descriptor names.
+  const removeRun = $derived(createResourceRemover(workspaceId))
+  const deletableRun = (member: ModuleResourceDescriptor): ResourceDeleteItem | null => resourceDeleteItem(member, capabilities)
+  const askDelete = (member: ModuleResourceDescriptor): void => {
+    const item = deletableRun(member)
+    if (!item) return
+    familyOpen = false
+    cancelRename()
+    deleteTargets = [item]
+    confirmingDelete = true
+  }
+  /** Deleting the open Run moves to a remaining copy, or back to the Workspace page. */
+  const runsDeleted = (removed: ReadonlyArray<ResourceDeleteItem>): void => {
+    if (removed.length === 0) return
+    const gone = new Set(removed.map(item => item.resource.ref.id))
+    if (!gone.has(resource.ref.id)) {
+      void refreshResources().catch(cause => reportError(cause instanceof Error ? cause.message : String(cause)))
+      return
+    }
+    const next = family.find(candidate => !gone.has(candidate.ref.id))
+    if (next === undefined) return onClose()
+    onSwitch(next.ref.id)
+    showNotice(`You are now in ${next.title}`)
+    void refreshResources().catch(cause => reportError(cause instanceof Error ? cause.message : String(cause)))
   }
   const displayTime = $derived(simulationTimeLabel(execution, wallNow))
 
@@ -309,7 +342,7 @@
               <button class="family-member" type="button" aria-current={member.ref.id === resource.ref.id ? 'true' : undefined} title={member.title} onclick={() => switchRun(member.ref.id)}>{member.title}</button>
             {/if}
             <button class="family-rename" type="button" disabled={actionBusy || !capabilityAvailableFor(member, 'world.simulation-run.rename')} aria-label={`Rename ${member.title}`} title={`Rename ${member.title}`} onclick={() => void startRename(member)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>
-            <button class="family-delete" type="button" aria-label={`Delete ${member.title}`} title={`Delete ${member.title}`} onclick={() => deleteRun(member)}>×</button>
+            <button class="family-delete" type="button" disabled={deletableRun(member) === null} aria-label={`Delete ${member.title}`} title={`Delete ${member.title}`} onclick={() => askDelete(member)}><Icon name="trash" size={15} /></button>
           </div>
         {/each}
       </div>
@@ -321,8 +354,11 @@
   <span class:fast={execution?.pace === 'maximum'} class="clock" title={execution?.playback === 'playing' && execution?.pace === 'maximum' ? `Playing at ${execution.acceleration?.measuredSpeed.toFixed(1) ?? '0.0'}× measured` : execution?.pace === 'maximum' ? 'Paused with maximum pace armed' : execution?.playback === 'paused' ? 'Simulation paused' : 'Simulation playing in realtime'}>{displayTime}{#if execution?.pace === 'maximum'}<small>{execution.playback === 'playing' ? `${execution.acceleration?.measuredSpeed.toFixed(1) ?? '0.0'}×` : 'MAX armed'}</small>{/if}</span>
   <button class:active={execution?.acceleration?.kind === 'timed' && ['running', 'paused'].includes(execution.acceleration.status)} type="button" disabled={actionBusy || !capabilityAvailable('world.simulation-run.execution.advance') || execution?.maximumPace.available === false} onclick={() => timerDialog?.showModal()} title="Run at maximum pace for a fixed duration" aria-label="Run at maximum pace for a fixed duration"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2h6M12 14l3-3M12 6a8 8 0 1 0 8 8 8 8 0 0 0-8-8z"/></svg></button>
   <button type="button" disabled={restrictionBusy || !capabilityAvailable('world.simulation-run.agent-restrictions.read') || !capabilityAvailable('world.simulation-run.agent-restrictions.set')} onclick={openRestrictions} title="AI restrictions for this Run" aria-label="AI restrictions for this Run"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></button>
+  <button bind:this={deleteButton} class="run-delete" type="button" disabled={deletableRun(resource) === null} onclick={() => askDelete(resource)} title="Delete this simulation" aria-label={`Delete this simulation: ${resource.title}`}><Icon name="trash" size={16} /></button>
 </div>
 {#if actionError}<div class="control-error" role="alert">{actionError}</div>{/if}
+<ConfirmDialog bind:open={confirmingDelete} items={deleteTargets} noun={resourceNoun(deleteTargets)} body={resourceDeleteBody(deleteTargets)}
+  remove={removeRun} onfinished={runsDeleted} returnFocus={() => deleteButton?.focus()} />
 {#if notice}<div class="switch-notice" role="status">{notice}</div>{/if}
 
 <dialog class="control-dialog" bind:this={copyDialog}>
@@ -381,7 +417,10 @@
   .run-title { max-width: min(250px, 24vw); overflow: hidden; color: #dfe8dc; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
   .family-menu { position: absolute; z-index: 80; top: calc(100% + .4rem); right: 0; width: min(360px, calc(100vw - 2rem)); padding: .35rem; border: 1px solid #647168; border-radius: 9px; background: #18231c; box-shadow: 0 14px 38px #0008; }
   .family-menu > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; border-radius: 6px; } .family-menu > div.current { background: #2a3d30; }
-  .family-member { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; text-align: left; } .family-delete { border: 0; color: #d8a7a3; background: transparent; font-size: 1rem; }
+  .family-member { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; text-align: left; }
+  .family-delete { min-width: 30px; padding: 0 .4rem; border: 0; color: #f0b4ad; background: transparent; } .family-delete:hover:not(:disabled) { color: #ffd9d4; background: #5a2622; }
+  .run-delete { color: #f0b4ad; } .run-delete:hover:not(:disabled) { border-color: #b8645c; color: #ffe1dc; background: #5a2622; }
+  .family-delete :global(svg), .run-delete :global(svg) { display: block; }
   .family-rename { min-width: 28px; padding: 0 .35rem; border: 0; color: #b9c6bc; background: transparent; } .family-rename svg { width: 14px; height: 14px; }
   .family-name-input { min-width: 0; margin: .2rem .35rem; padding: .38rem .45rem; border: 1px solid #7f9d87; border-radius: 5px; color: #f4faf5; background: #111a14; font: inherit; outline: none; } .family-name-input:focus { border-color: #a6c5ad; box-shadow: 0 0 0 2px #5d8f6a55; }
   .control-error { position: fixed; z-index: 120; top: 3rem; right: 1rem; max-width: min(440px, calc(100vw - 2rem)); padding: .65rem .8rem; border-radius: 8px; color: #fff; background: #8e302b; box-shadow: 0 8px 24px #0005; font-size: .78rem; }

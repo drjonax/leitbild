@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { workspaceSchema } from '@leitbild/contracts'
 import { workspaceFixture } from './host-fetch-fake.test-support.ts'
-import {
-  ageText, deletedText, keepExisting, manageRows, moduleStateText, selectAllState, toggleAll,
-} from './workspace-manage.ts'
+import { ageText, manageRows, moduleStateText } from './workspace-manage.ts'
 
 const A = '0b4b9a52-2f7e-4c1a-9d3e-00000000000a'
 const B = 'b56b1d2e-0000-4000-8000-00000000000b'
@@ -48,34 +46,5 @@ describe('manage rows', () => {
     expect(ageText(new Date('2026-10-12T13:00:00.000Z'), NOW)).toBe('23 h ago')
     expect(ageText(new Date('2026-09-13T12:00:00.000Z'), NOW)).toBe('30 d ago')
     expect(ageText(new Date(2026, 7, 2, 12), NOW)).toBe('on 2 Aug')
-  })
-})
-
-describe('selection', () => {
-  const rows = [{ id: A }, { id: B }, { id: C }]
-
-  test('select all ticks every shown row, and unticks them when all are ticked', () => {
-    expect(selectAllState(rows, new Set())).toBe('none')
-    expect(selectAllState(rows, new Set([A]))).toBe('some')
-    const all = toggleAll(rows, new Set([A]))
-    expect([...all].sort()).toEqual([A, B, C].sort())
-    expect(selectAllState(rows, all)).toBe('all')
-    expect(toggleAll(rows, all).size).toBe(0)
-  })
-
-  test('rows a search hides keep their state', () => {
-    const shown = [{ id: B }]
-    expect([...toggleAll(shown, new Set([A]))].sort()).toEqual([A, B].sort())
-    expect([...toggleAll(shown, new Set([A, B]))]).toEqual([A])
-  })
-
-  test('after a reload only Workspaces that still exist stay selected', () => {
-    expect([...keepExisting(new Set([A, B]), [{ id: B }, { id: C }])]).toEqual([B])
-  })
-
-  test('the live region says what was deleted', () => {
-    expect(deletedText([])).toBe('')
-    expect(deletedText([{ key: A, label: 'Grid study' }])).toBe('Deleted Grid study.')
-    expect(deletedText([{ key: A, label: 'a' }, { key: B, label: 'b' }])).toBe('Deleted 2 Workspaces.')
   })
 })
