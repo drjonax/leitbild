@@ -17,7 +17,7 @@ export const pwrReferenceParametersSchema = z.object({
   title: z.string().min(1).optional(),
 }).strict()
 
-const loopComponentIdPattern = /^(?:sg|rcp|feedwaterControlValve|auxFeedwaterValve|mainSteamIsolationValve|steamGeneratorReliefValve|safetyAccumulator|deltaTChannel)([A-F])$/u
+const loopComponentIdPattern = /^(?:sg|rcp|feedwaterControlValve|auxFeedwaterValve|mainSteamIsolationValve|steamGeneratorReliefValve|mainSteamSafetyValve|auxFeedwaterTurbineSteamValve|safetyAccumulator|deltaTChannel)([A-F])$/u
 
 const loopIdForComponent = (component: Pick<ComponentInstanceSpec, 'id'>): LoopId | null => {
   const match = loopComponentIdPattern.exec(String(component.id))
@@ -74,6 +74,16 @@ const componentMetadata = (
   component: ComponentInstanceSpec,
   loopId: LoopId,
 ): ProcessGraphMetadata => {
+  // A loop's steam line supplies the turbine-driven auxiliary feedwater pump's turbine through it: it goes with
+  // its loop, but it is the pump's, shared by the loops that supply it, not equipment of the loop's train.
+  if (component.kind === 'steamValve' && String(component.id).startsWith('auxFeedwaterTurbineSteamValve')) {
+    return { ...component.metadata, role: 'turbine-afw-steam-supply', equipmentClass: 'turbine-afw-steam-supply-valve' }
+  }
+  // A loop's steam line's bank of safety valves goes with its loop; it vents out of the Plant beside the line's
+  // relief valve and is drawn apart from the loop's train, whose lane already holds the relief valve.
+  if (component.kind === 'steamValve' && String(component.id).startsWith('mainSteamSafetyValve')) {
+    return { ...component.metadata, role: 'steam-safety', equipmentClass: 'main-steam-safety-valve' }
+  }
   const base = loopMetadata(loopIds, loopId, component.metadata)
   if (component.kind === 'steamGenerator') return { ...base, role: 'heat-sink', equipmentClass: 'steam-generator' }
   if (component.kind === 'centrifugalPump') return { ...base, role: 'primary-pump', equipmentClass: 'reactor-coolant-pump' }

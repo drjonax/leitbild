@@ -309,7 +309,7 @@ describe('a pressurizer filling toward solid', () => {
     let previousPressure = read('pressurizer.pressureMPa')
     let largestStepChange = 0
     let highestLevel = 0
-    for (let second = 0; second < 170; second++) {
+    for (let second = 0; second < 190; second++) {
       for (let step = 0; step < 10; step++) {
         plantRun.runtime.tick(100)
         const pressure = read('pressurizer.pressureMPa')

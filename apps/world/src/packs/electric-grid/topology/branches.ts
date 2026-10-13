@@ -5,7 +5,7 @@ import type { TopologyKeyMode } from './input.ts'
 import type { PreparedInterconnectors } from './interconnectors.ts'
 import type { TopologyLedger } from './ledger.ts'
 import type { LevelLink } from './levels.ts'
-import type { TopologyBranch, TopologyProvenance } from './result.ts'
+import type { TopologyBranch, TopologyForeignEnd, TopologyProvenance } from './result.ts'
 
 export type BranchContext = {
   readonly keyMode: TopologyKeyMode
@@ -26,7 +26,7 @@ const roundKm = (km: number): number => Math.round(km * 10_000) / 10_000
 
 export const corridorBranch = (
   link: LevelLink,
-  interconnectorId: string | null,
+  interconnector: { readonly id: string; readonly foreignEnd: TopologyForeignEnd } | null,
   context: BranchContext,
   ledger: TopologyLedger,
 ): TopologyBranch => {
@@ -85,7 +85,8 @@ export const corridorBranch = (
     osmTransformerIds: [],
     names,
     parallelSpanGroups: chainParallelGroups(link.chain),
-    interconnectorId,
+    interconnectorId: interconnector?.id ?? null,
+    foreignEnd: interconnector?.foreignEnd ?? null,
     provenance,
   }
 }

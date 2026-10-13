@@ -86,9 +86,10 @@ describe('mimic scope from the agent\'s intent', () => {
     expect(scope.labels).toEqual(['AFW header', 'Bus A', 'CST', 'MD AFW A'])
     expect(scope.carriers).toEqual(['auxFeedwater', 'electricalPower'])
     expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CCW A, CFC A, CHG A and 7 more')
-    // Narrowed to its loop, a steam generator draws both sides and stops at the shared headers.
-    expect(drawn(graph, { around: ['SG B'], loops: ['B'], reach: 1 }).labels).toEqual(['AFW valve B', 'ARV B', 'ATM', 'Core', 'FCV B', 'MSIV B', 'RCP B', 'SG B'])
-    expect(drawn(graph, { around: ['steam generators'], services: ['mainSteam'], reach: 1 }).labels).toEqual(['ARV A', 'ARV B', 'ARV C', 'ARV D', 'ATM', 'MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'SG A', 'SG B', 'SG C', 'SG D'])
+    // Narrowed to its loop, a steam generator draws both sides, its steam line's safety valves and supply to the
+    // turbine-driven AFW pump among them, and stops at the shared headers.
+    expect(drawn(graph, { around: ['SG B'], loops: ['B'], reach: 1 }).labels).toEqual(['AFW valve B', 'ARV B', 'ATM', 'Core', 'FCV B', 'MSIV B', 'MSSV B', 'RCP B', 'SG B', 'TD AFW steam B'])
+    expect(drawn(graph, { around: ['steam generators'], services: ['mainSteam'], reach: 1 }).labels).toEqual(['ARV A', 'ARV B', 'ARV C', 'ARV D', 'ATM', 'MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'MSSV A', 'MSSV B', 'MSSV C', 'MSSV D', 'SG A', 'SG B', 'SG C', 'SG D', 'TD AFW', 'TD AFW steam B', 'TD AFW steam C'])
     expect(rejection(graph, { around: ['sgB'], from: ['core'] })).toEqual([{ field: 'around', message: 'around draws what feeds items and where their outflow goes; give it without from or to' }])
     expect(rejection(graph, { from: ['feedwaterTank'], to: ['sgB'], reach: 1 })).toEqual([{ field: 'reach', message: 'a route draws every link between its ends; reach applies to one end (from or to alone) or around' }])
   })
@@ -194,7 +195,7 @@ describe('the mimic draws any Plant, not only the reference PWR', () => {
       components: [
         component('feedNorth', 'processTank', 'Feed North', tank, [], { presentation: { shortLabel: 'FT-N' } }),
         component('feedSouth', 'processTank', 'Feed South', tank, [], { presentation: { shortLabel: 'FT-S' } }),
-        component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 }, [], { presentation: { shortLabel: 'DR' } }),
+        component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, designFeedwaterTemperatureC: 220, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 }, [], { presentation: { shortLabel: 'DR' } }),
         component('engine', 'turbineLoadSink', 'Engine', { nominalElectricMw: 10, initialLoadFraction: 1, nominalSteamFlowKgPerS: 10, electricalTimeConstantS: 5, gridSource: 'grid', generatorPoleCount: 4 }, [], { presentation: { shortLabel: 'ENG' } }),
       ],
       connections: [

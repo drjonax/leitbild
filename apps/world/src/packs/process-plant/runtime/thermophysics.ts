@@ -1,6 +1,7 @@
 const clampValue = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
 
 export const specificHeatWaterKjPerKgK = 4.18
+/** Water's latent heat at atmospheric pressure: the simplified condenser relation's energy per kilogram condensed. */
 export const latentHeatSteamMjPerKg = 2.26
 
 export const heatMwFromWaterFlowAndDeltaT = (
@@ -12,9 +13,6 @@ export const waterDeltaTFromHeatMw = (
   heatMw: number,
   flowKgPerS: number,
 ): number => heatMw * 1_000 / (Math.max(1, flowKgPerS) * specificHeatWaterKjPerKgK)
-
-export const steamFlowKgPerSFromHeatMw = (heatMw: number): number =>
-  Math.max(0, heatMw / latentHeatSteamMjPerKg)
 
 export const saturationTemperatureCFromPressureMPa = (pressureMPa: number): number => {
   // IAPWS-IF97, region 4, equation 31 / table 34 (R7-97, 2012).

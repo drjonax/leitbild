@@ -1,3 +1,5 @@
+import { liquidEnthalpyKjPerKg, saturatedWaterSteam } from './runtime/water-properties.ts'
+
 /** The mixture levels, as fractions of the full-scale inventory, that a level instrument reads 0 % and 100 % at. */
 export interface SteamGeneratorLevelSpan {
   readonly lower: number
@@ -33,6 +35,25 @@ export const steamGeneratorLevelOnSpanPercent = (
   range: SteamGeneratorLevelSpan,
   mixtureLevelPercent: number,
 ): number => Math.min(100, Math.max(0, (mixtureLevelPercent / 100 - range.lower) / (range.upper - range.lower) * 100))
+
+/**
+ * The energy, in MJ, each kilogram of feedwater takes up in a steam generator
+ * to leave as its steam: saturated steam at the generator's nominal pressure
+ * less feedwater at its design temperature, both from the IF97 tables. The
+ * feedwater heaters the model leaves out set that temperature, so it is
+ * declared, never read from the feed train. Initialization, the operating
+ * point's sizing and the boiling all use this one relation.
+ */
+export const steamGeneratorFeedToSteamEnthalpyMjPerKg = (parameters: Readonly<Record<string, unknown>>): number => {
+  const pressure = Number(parameters.nominalPressureMPa)
+  const feedwaterTemperature = Number(parameters.designFeedwaterTemperatureC)
+  if (!Number.isFinite(pressure) || !Number.isFinite(feedwaterTemperature)) {
+    throw new Error('Steam generator needs its nominal pressure and design feedwater temperature to make steam')
+  }
+  const steam = saturatedWaterSteam(pressure)
+  if (!(feedwaterTemperature < steam.temperatureC)) throw new Error('Steam-generator design feedwater temperature must lie below its saturation temperature')
+  return (steam.vapourEnthalpyKjPerKg - liquidEnthalpyKjPerKg(feedwaterTemperature, pressure)) / 1_000
+}
 
 /** Nominal level is the indicated narrow-range level, including the steady boiling swell.
  * Share this relation between initialization and the inventory pressure datum. */

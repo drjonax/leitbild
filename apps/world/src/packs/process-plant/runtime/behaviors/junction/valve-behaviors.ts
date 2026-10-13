@@ -180,6 +180,14 @@ const updateValvePositionController = (
   )
 }
 
+/** How far a bank of spring safety valves (fullLiftMPa) stands lifted at a pressure; null for any other valve. */
+const bankLift = (component: CompiledComponent, mode: ValveMode, setpoint: number, pressure: number): number | null => {
+  const fullLift = (component.parameters as Readonly<Record<string, unknown>>).fullLiftMPa
+  if (fullLift === undefined) return null
+  if (mode !== 'safety' || typeof fullLift !== 'number' || !(fullLift > setpoint)) throw new Error(`component ${component.id} declares a full lift pressure, which only a bank of safety valves with a lower set pressure has`)
+  return clamp((pressure - setpoint) / (fullLift - setpoint), 0, 1)
+}
+
 const valveControlBehavior = (componentKind: 'processValve' | 'steamValve'): ComponentBehaviorDefinition => ({
   id: `${componentKind}-effective-position`,
   phase: 'solveFluidFlowComponents',
@@ -207,8 +215,11 @@ const valveControlBehavior = (componentKind: 'processValve' | 'steamValve'): Com
     const reseat = optionalParameterNumber(component, 'reseatMPa', setpoint * 0.98)
     const wasAutoOpen = context.readBoolean(componentVariablePath(component, 'autoOpenActive'))
     const automaticPressure = upstreamPressure ?? pressureDrop
-    const autoOpen = (mode === 'relief' || mode === 'safety') && (automaticPressure >= setpoint || (wasAutoOpen && automaticPressure > reseat))
-    const target = failureActive ? failedPosition : autoOpen ? 1 : manualTarget
+    // A bank of spring safety valves lifts in proportion from its first valve's set pressure to its last's
+    // (fullLiftMPa); a single relief or safety valve pops fully open at its set pressure and reseats below it.
+    const lift = bankLift(component, mode, setpoint, automaticPressure)
+    const autoOpen = lift !== null ? lift > 0 : (mode === 'relief' || mode === 'safety') && (automaticPressure >= setpoint || (wasAutoOpen && automaticPressure > reseat))
+    const target = failureActive ? failedPosition : autoOpen ? lift ?? 1 : manualTarget
     const current = context.readNumber(componentVariablePath(component, 'effectivePositionFraction'))
     const timeConstant = target >= current
       ? optionalParameterNumber(component, 'strokeOpenTimeS', optionalParameterNumber(component, 'strokeTimeConstantS', 0.1))

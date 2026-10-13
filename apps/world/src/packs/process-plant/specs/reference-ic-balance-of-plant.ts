@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedRegulatingValveIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { levelHighHighPercent, levelLowLowPercent } from './reference-ic-steam-generator.ts'
@@ -22,16 +22,20 @@ const feedwaterAction = annunciator({
 })
 
 // P-4 (the reactor trip breakers open) with average coolant temperature below
-// 564 °F isolates main feedwater, so the steam generators are not overfed as
-// their steaming falls to decay heat and the coolant cools to no-load.
+// 564 °F shuts the main feedwater regulating valves, so the steam generators
+// are not overfed as their steaming falls to decay heat and the coolant cools
+// to no-load. As in the Westinghouse logic it shuts those valves only: the
+// main feedwater pumps keep running, and only safety injection and P-14
+// high-high level trip them (feedwaterIsolationWrites).
 const lowTavgFeedwaterIsolationC = 295.6
 
 // Feedwater isolation shuts the feed regulating valves and holds them shut
-// against their level controllers (feedwaterIsolationWrites). As in the
-// reference logic, P-4 seals the isolation in: it is released only once both
-// reactor trip breakers are closed again and no steam generator stands at
-// P-14 high-high level, the other isolation the model has. The annunciated
-// trip itself latches until an operator resets it, as every trip does.
+// against their level controllers (feedRegulatingValveIsolationWrites). As in
+// the reference logic, P-4 seals the isolation in: it is released only once
+// both reactor trip breakers are closed again and no steam generator stands at
+// P-14 high-high level. A main feedwater pump that safety injection or P-14
+// tripped stays stopped until operators restart it. The annunciated trip
+// itself latches until an operator resets it, as every trip does.
 const feedwaterIsolationRelease = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
   id: 'feedwater-isolation-release',
   label: 'Feedwater isolation release with the reactor trip breakers closed',
@@ -177,16 +181,16 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
     // After a trip from operation: in shutdown the feedwater is not in service.
     modes: ['hotStandby'],
     condition: all([reactorTripBreakerOpen(), comparison({ tagId: 'TAVG' }, '<', lowTavgFeedwaterIsolationC)]),
-    // It trips both main feedwater pumps and shuts every feed regulating
-    // valve until the isolation is released (feedwaterIsolationRelease).
+    // It shuts every feed regulating valve until the isolation is released
+    // (feedwaterIsolationRelease); the main feedwater pumps keep running.
     effects: [
       trip({
         id: 'feedwater-isolation',
         title: 'Feedwater isolation on reactor trip, low Tavg',
-        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): the main feedwater pumps trip and the feed regulating valves shut until the trip breakers are closed again.`,
+        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): the feed regulating valves shut until the trip breakers are closed again; the main feedwater pumps keep running.`,
         annunciator: annunciator({ ...feedwaterAction, firstOutGroup: 'feedwater-isolation', expectedAfter: expectedAfterReactorTrip }),
       }),
-      ...feedwaterIsolationWrites('feedwater-isolation', loops),
+      ...feedRegulatingValveIsolationWrites('feedwater-isolation', loops),
     ],
   }),
   feedwaterIsolationRelease(loops),
@@ -410,23 +414,5 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       }),
       ...turbineTripWrites('manual-turbine-trip'),
     ],
-  }),
-  rule({
-    id: 'main-steam-safety-valve-open',
-    label: 'Main steam safety valve open',
-    ruleClass: 'alarm',
-    condition: comparison({ path: 'mainSteamSafetyValve.effectivePositionFraction' }, '>', 0.1),
-    clearCondition: comparison({ path: 'mainSteamSafetyValve.effectivePositionFraction' }, '<', 0.05),
-    clearDelayMs: 1_000,
-    delayMs: 1_000,
-    latch: false,
-    resetWhenClear: true,
-    effects: [alarm({
-      id: 'safety-valve-open',
-      title: 'Main steam safety valve open',
-      message: 'Main steam safety valve effective position is above the reference open threshold.',
-      severity: 'warning',
-      annunciator: annunciator({ system: 'mainSteam', equipmentId: 'mainSteamSafetyValve', group: 'main-steam', priority: 'high', role: 'status' }),
-    })],
   }),
 ]

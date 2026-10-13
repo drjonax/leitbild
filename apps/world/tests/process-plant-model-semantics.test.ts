@@ -112,7 +112,7 @@ describe('model semantics declared per component kind', () => {
     // The behaviour treats a valve without a mode (a feed regulating valve) as a control valve, and so do its semantics.
     expect(functionOf('feedwaterControlValveB')).toBe('modulating')
     expect(functionOf('rhrIsolationValve')).toBe('isolating')
-    expect(functionOf('mainSteamSafetyValve')).toBe('relieving')
+    expect(functionOf('mainSteamSafetyValveA')).toBe('relieving')
     // The main steam isolation valves are trip valves, read open or shut.
     expect(functionOf('mainSteamIsolationValveA')).toBe('isolating')
   })
@@ -203,7 +203,7 @@ describe('model semantics declared per component kind', () => {
         id: 'semantics.port-flow',
         title: 'Port flow',
         fixedStepMs: 100,
-        components: [component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 })],
+        components: [component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, designFeedwaterTemperatureC: 220, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 })],
         connections: [],
       }), registry)
     }
@@ -325,9 +325,12 @@ describe('link flow', () => {
 
   test('a link is rated by its own nominal flow or by the equipment that drives it', () => {
     expect(ratedFlowForLink(graph, linkById('rcs-hot-leg-a'))).toBe(4250)
-    // Through the MFW header and FCV B, back to one MFW pump: half the steam
-    // the core's 3,400 MW and the reactor coolant pumps' 18 MW raise.
-    expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(756, 0)
+    // Through the MFW header and FCV B, back to one MFW pump: half the feed
+    // the pumps pass with the regulating valves wide open, the full-power
+    // feed (the steam the core's 3,400 MW and the reactor coolant pumps'
+    // 18 MW raise from 227 °C feedwater at 6.9 MPa, 1.80 MJ/kg) over the
+    // valves' 75 % full-power opening.
+    expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(1268, 0)
     expect(ratedFlowForLink(graph, linkById('pressurizer-relief-to-tank'))).toBe(componentById(graph, 'pressurizer').semantics.ratedOutflow[0]!.flowKgPerS)
     // The letdown line carries the vessel's rated letdown, about 75 gpm.
     expect(ratedFlowForLink(graph, linkById('letdown-to-vct'))).toBe(5)

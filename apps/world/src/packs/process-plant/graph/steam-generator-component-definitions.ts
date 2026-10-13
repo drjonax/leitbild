@@ -16,9 +16,16 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       // valve: steam it vents leaves the Plant, so it is a circuit of its own.
       steamReliefOutlet: { kind: 'steam', direction: 'out', circuit: 'relief' },
       isolationSignal: { kind: 'logicSignal', direction: 'in' },
+      // The steam line's branch to a pump's drive turbine (the turbine-driven
+      // auxiliary feedwater pump's), ahead of the isolation valve, so it still
+      // has steam with the steam lines isolated. The turbine exhausts it to
+      // the atmosphere, so it too is a circuit of its own.
+      driveSteamOutlet: { kind: 'steam', direction: 'out', circuit: 'drive' },
     },
     parametersSchema: z.object({
       nominalPressureMPa: z.number().finite().positive(),
+      /** The feedwater temperature the plant's feedwater heaters deliver at full power: with the nominal pressure it sets the energy each kilogram of steam takes. */
+      designFeedwaterTemperatureC: z.number().finite(),
       nominalLevelPercent: normalized,
       heatTransferCoefficientMwPerK: z.number().finite().positive(),
       initialPrimaryInletTemperatureC: z.number().finite().optional(),
@@ -37,6 +44,11 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       nominalSteamMassKg: z.number().finite().positive().optional(),
       voidFractionAtNominalBoiling: normalized.optional(),
       voidFractionTimeConstantS: z.number().finite().positive().optional(),
+      /**
+       * The mixture level the boiling voids add, in percent of the full-scale inventory per unit void fraction:
+       * the swell a trip's void collapse takes away. Calibrate it against the narrow range's span, not the
+       * generator's height: the reference's full-power swell is about a fifth of its narrow range.
+       */
       swellLevelGainPercent: z.number().finite().nonnegative().optional(),
       narrowRangeLowerFraction: normalized.optional(),
       narrowRangeUpperFraction: normalized.optional(),

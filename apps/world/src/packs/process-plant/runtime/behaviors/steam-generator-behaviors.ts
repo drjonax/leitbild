@@ -16,13 +16,11 @@ import {
 import { primaryLoopLegReversed } from '../primary-loop-hydraulics.ts'
 import { inventoryBalanceStep } from '../physics.ts'
 import { primarySystemReactorCore } from '../system-topology.ts'
-import { steamGeneratorLevelOnSpanPercent, steamGeneratorNarrowRange, steamGeneratorOperatingLevel, steamGeneratorWideRange } from '../../steam-generator-operating-level.ts'
+import { steamGeneratorFeedToSteamEnthalpyMjPerKg, steamGeneratorLevelOnSpanPercent, steamGeneratorNarrowRange, steamGeneratorOperatingLevel, steamGeneratorWideRange } from '../../steam-generator-operating-level.ts'
 import {
   energyBalanceTemperatureStep,
   heatMwFromWaterFlowAndDeltaT,
-  latentHeatSteamMjPerKg,
   saturationTemperatureCFromPressureMPa,
-  steamFlowKgPerSFromHeatMw,
 } from '../thermophysics.ts'
 import { liquidEnthalpyKjPerKg, liquidTemperatureCFromEnthalpy } from '../water-properties.ts'
 
@@ -98,7 +96,8 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
         ? coldWaterFlowCapacity
         : primaryCoolantHeatMw(primaryWaterFlow, primaryWaterTemperature, secondaryTemperature, primaryCoolantPressureMPa(input))
       const heatTransfer = Math.max(0, Math.min(transferCapacity, flowCapacity) * availableHeatTransferFraction)
-      const boilingRate = steamFlowKgPerSFromHeatMw(heatTransfer)
+      // Each kilogram boiled off takes its feedwater-to-steam enthalpy rise.
+      const boilingRate = heatTransfer / steamGeneratorFeedToSteamEnthalpyMjPerKg(component.parameters as Record<string, unknown>)
       context.write(componentVariablePath(component, 'heatTransferMw'), heatTransfer)
       context.write(componentVariablePath(component, 'boilingRateKgPerS'), boilingRate)
       context.write(componentVariablePath(component, 'steamFlowKgPerS'), Math.min(boilingRate, optionalParameterNumber(component, 'nominalSteamFlowKgPerS', 760) * 1.25))
@@ -242,7 +241,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'secondaryTemperatureC'), relaxToward(context.readNumber(componentVariablePath(component, 'secondaryTemperatureC')), secondaryTemperatureTarget, context.dtSeconds, optionalParameterNumber(component, 'secondaryThermalTimeConstantS', 25)))
       const currentPressure = context.readNumber(pressurePath)
       const boilingRate = context.readNumber(componentVariablePath(component, 'boilingRateKgPerS'))
-      context.write(componentVariablePath(component, 'boilingEnergyResidualMw'), boilingRate * latentHeatSteamMjPerKg - heatTransfer)
+      context.write(componentVariablePath(component, 'boilingEnergyResidualMw'), boilingRate * steamGeneratorFeedToSteamEnthalpyMjPerKg(component.parameters as Record<string, unknown>) - heatTransfer)
       const secondaryTemperature = context.readNumber(componentVariablePath(component, 'secondaryTemperatureC'))
       const rawTemperaturePressureBias = (secondaryTemperature - saturationTemperatureCFromPressureMPa(nominalPressure)) / 100 * nominalPressure
       const temperaturePressureBias = rawTemperaturePressureBias * optionalParameterNumber(component, 'temperaturePressureGainFraction', 0)

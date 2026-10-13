@@ -29,6 +29,9 @@ export type TopologyBus = {
   readonly provenance: TopologyProvenance
 }
 
+/** The free way end where an interconnector's mapped route leaves the source extract: its vertex key and location. */
+export type TopologyForeignEnd = { readonly key: string; readonly location: LonLat }
+
 export type TopologyCircuitsSource = 'route-relation' | 'circuits-tag' | 'voltage-list' | 'cables-tag' | 'inferred' | 'transformer-count'
 
 export type TopologyBranch = {
@@ -51,6 +54,7 @@ export type TopologyBranch = {
   readonly names: ReadonlyArray<string>
   readonly parallelSpanGroups: number               // phase-split/parallel span groups merged into the corridor
   readonly interconnectorId: string | null
+  readonly foreignEnd: TopologyForeignEnd | null    // an interconnector tie: where its mapped route leaves the source extract abroad
   readonly provenance: TopologyProvenance
 }
 
@@ -64,6 +68,7 @@ export type TopologyHvdcLink = {
   readonly lengthKm: number
   readonly osmWayIds: ReadonlyArray<string>
   readonly sourceFeatureIds: ReadonlyArray<string>
+  readonly foreignEnd: TopologyForeignEnd           // where its mapped route leaves the source extract abroad
   readonly provenance: TopologyProvenance
 }
 

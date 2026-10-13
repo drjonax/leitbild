@@ -20,8 +20,12 @@ export const gridMapGeometryResultSchema = z.object({
     id: z.string(),
     label: z.string(),
     kv: finite,
-    location: lonLat,
-    external: z.object({ label: z.string(), synchronous: z.boolean() }).strict().optional()
+    location: lonLat.describe('Where the map draws the bus: a boundary bus at the station abroad its first interconnector reaches.'),
+    external: z.object({
+      label: z.string(),
+      synchronous: z.boolean(),
+      station: z.string().optional().describe('The station abroad where the map draws this boundary bus: the one its first interconnector\'s mapped route reaches. The model places the bus where that interconnector leaves the Norway extract.'),
+    }).strict().optional()
       .describe('Only on a boundary bus of an external system: synchronous, the Nordic equivalent behind AC ties; asynchronous, a system reached only by HVDC links, outside the modelled AC network.'),
   }).strict()),
   branches: z.array(z.object({
@@ -32,8 +36,8 @@ export const gridMapGeometryResultSchema = z.object({
     fromBus: index.describe('Index into buses.'),
     toBus: index.describe('Index into buses.'),
     ratingMw: finite,
-    pathSource: z.enum(['mapped-route', 'transformer', 'network-equivalent', 'bus-to-bus']).describe('mapped-route: a line or cable along its mapped route from the geometry artifact; transformer: a substation transformer, drawn between its buses; network-equivalent: a curated equivalent of sub-transmission below the model\'s voltage floor, not a mapped line, drawn between its buses; bus-to-bus: a straight segment between the bus locations, because no mapped route exists for the line (a model without an artifact, or a branch a Model Addition adds).'),
-    path: z.array(lonLat).min(2).describe('[lon, lat] from fromBus to toBus.'),
+    pathSource: z.enum(['mapped-route', 'designed-route', 'transformer', 'network-equivalent', 'bus-to-bus']).describe('mapped-route: a line or cable along its mapped route from the geometry artifact; designed-route: a fictional line a Model Addition adds, drawn on a route the model build designed along existing corridors, not a mapped line; transformer: a substation transformer, drawn between its buses; network-equivalent: a curated equivalent of sub-transmission below the model\'s voltage floor, not a physical line: its path joins its buses, and the map does not draw it as a line; bus-to-bus: a straight segment between the bus locations, because the model has no geometry artifact.'),
+    path: z.array(lonLat).min(2).describe('[lon, lat] from fromBus to toBus. An interconnector tie\'s mapped route ends abroad where it leaves the source data, at its boundary bus or, when the bus stands at another tie\'s end, apart from it.'),
   }).strict()),
   hvdcLinks: z.array(z.object({
     id: z.string(),
@@ -42,7 +46,7 @@ export const gridMapGeometryResultSchema = z.object({
     toBus: index.describe('Index into buses: the far converter, usually an external system\'s boundary bus.'),
     ratingMw: finite,
     pathSource: z.enum(['mapped-route', 'bus-to-bus']).describe('mapped-route: the cable route from the geometry artifact; bus-to-bus: a straight segment, because the model has no artifact.'),
-    path: z.array(lonLat).min(2).describe('[lon, lat] from fromBus to toBus.'),
+    path: z.array(lonLat).min(2).describe('[lon, lat] from fromBus towards toBus: a mapped route ends abroad where its cable leaves the source data, at its boundary bus or, when the bus stands at another link\'s end, apart from it.'),
   }).strict()).describe('HVDC links in model order; map.state reports their state in the same order.'),
   generators: z.array(z.object({
     id: z.string(),

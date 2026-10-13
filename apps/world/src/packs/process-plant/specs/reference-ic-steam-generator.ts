@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineDrivenAfwStartWrites, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
@@ -47,8 +47,15 @@ export const levelLowLowPercent = 20
 // relief valve opens above 7.86 MPa (1,125 psig) when the condenser is not
 // there to take the steam; the high-pressure alarm comes in above them and
 // below the lowest safety valve set pressure, 8.27 MPa (the 1,185 psig design
-// pressure).
+// pressure). Each steam line's five spring safety valves, ahead of its
+// isolation valve, lift in turn from there to 8.62 MPa (1,235 psig); the
+// model stands one valve for the bank, lifting in proportion over that range.
 const pressureHighMPa = 8.1
+
+// A generator's feedwater flow is low below 40 % of the 476 kg/s it takes at
+// full power, and clears above 47 % of it.
+const feedwaterFlowLowKgPerS = 190
+const feedwaterFlowLowClearKgPerS = 225
 
 export const steamGeneratorReferenceIcRules = (
   loop: ProcessPlantReferenceLoop,
@@ -250,12 +257,32 @@ export const steamGeneratorReferenceIcRules = (
       delayMs: 1_000,
       latch: false,
       resetWhenClear: true,
+      // After a trip from power the relief valves lift as the steam piles up ahead of the dumps, which take
+      // some 10 s to open, and shut again within a minute: expected then, as the levels' shrink is.
       effects: [alarm({
         id: 'atmospheric-relief-valve-open',
         title: `Steam generator ${loop} atmospheric relief valve open`,
         message: `Steam generator ${loop} atmospheric relief valve reads open: it is venting steam to the atmosphere.`,
         severity: 'warning',
-        annunciator: annunciator({ system: 'mainSteam', equipmentId: `steamGeneratorReliefValve${loop}`, group: 'main-steam', priority: 'high', role: 'status' }),
+        annunciator: annunciator({ system: 'mainSteam', equipmentId: `steamGeneratorReliefValve${loop}`, group: 'main-steam', priority: 'high', role: 'status', expectedAfter: expectedAfterReactorTrip }),
+      })],
+    }),
+    rule({
+      id: `sg-${lower}-main-steam-safety-valves-open`,
+      label: `Steam line ${loop} main steam safety valves open`,
+      ruleClass: 'alarm',
+      condition: comparison({ tagId: `MSSV-${loop}-POS` }, '>', 0.05),
+      clearCondition: comparison({ tagId: `MSSV-${loop}-POS` }, '<', 0.02),
+      clearDelayMs: 1_000,
+      delayMs: 1_000,
+      latch: false,
+      resetWhenClear: true,
+      effects: [alarm({
+        id: 'safety-valves-open',
+        title: `Steam line ${loop} main steam safety valves open`,
+        message: `Steam generator ${loop} is at its safety valves' set pressure: its steam line's safety valves are lifting and venting steam to the atmosphere.`,
+        severity: 'warning',
+        annunciator: annunciator({ system: 'mainSteam', equipmentId: `mainSteamSafetyValve${loop}`, group: 'main-steam', priority: 'high', role: 'status' }),
       })],
     }),
     rule({
@@ -264,11 +291,11 @@ export const steamGeneratorReferenceIcRules = (
       ruleClass: 'alarm',
       condition: all([
         comparison({ path: `${sg}.levelPercent` }, '<', 40),
-        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', 150),
+        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', feedwaterFlowLowKgPerS),
       ]),
       clearCondition: any([
         comparison({ path: `${sg}.levelPercent` }, '>', 45),
-        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', 180),
+        comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', feedwaterFlowLowClearKgPerS),
       ]),
       clearDelayMs: 2_000,
       delayMs: 3_000,
@@ -287,8 +314,8 @@ export const steamGeneratorReferenceIcRules = (
       label: `Steam generator ${loop} feedwater flow low`,
       ruleClass: 'alarm',
       modes: ['powerOperation'],
-      condition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', 150),
-      clearCondition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', 180),
+      condition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', feedwaterFlowLowKgPerS),
+      clearCondition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', feedwaterFlowLowClearKgPerS),
       clearDelayMs: 2_000,
       delayMs: 3_000,
       latch: false,
@@ -316,10 +343,10 @@ export const turbineDrivenAuxiliaryFeedwaterReferenceIcRules = (loops: ReadonlyA
       trip({
         id: 'turbine-afw-start',
         title: 'Turbine-driven AFW start on low-low level',
-        message: `Narrow-range level is below ${levelLowLowPercent} % in two steam generators: the turbine-driven auxiliary feedwater pump starts.`,
+        message: `Narrow-range level is below ${levelLowLowPercent} % in two steam generators: the turbine-driven auxiliary feedwater pump's steam supply valves open and it starts.`,
         annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterPumpTurbine', group: 'auxiliary-feedwater', firstOutGroup: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction', expectedAfter: expectedAfterReactorTrip }),
       }),
-      write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
+      ...turbineDrivenAfwStartWrites(loops),
     ],
   }),
 ]

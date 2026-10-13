@@ -35,7 +35,7 @@ import { componentBehaviorDefinitions, initialComponentValueFor } from '../src/p
 import { componentInitialValueDefinitions } from '../src/packs/process-plant/runtime/component-initial-values.ts'
 import { componentInitialReconciliationDefinitions } from '../src/packs/process-plant/runtime/component-behaviors.ts'
 import { processLinkBehaviorDefinitions } from '../src/packs/process-plant/runtime/links/process-link-behaviors.ts'
-import { latentHeatSteamMjPerKg } from '../src/packs/process-plant/runtime/thermophysics.ts'
+import { steamGeneratorFeedToSteamEnthalpyMjPerKg } from '../src/packs/process-plant/steam-generator-operating-level.ts'
 import { createProcessPlantVariableTable } from '../src/packs/process-plant/runtime/variable-table.ts'
 import { componentFlowBalanceForService } from '../src/packs/process-plant/runtime/links/link-flow-helpers.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
@@ -293,8 +293,8 @@ describe('process plant runtime', () => {
     })
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeGreaterThan(50)
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeLessThan(60)
-    // At full power the operating point opens the feedwater control valves wide.
-    expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeGreaterThan(0.9)
+    // At full power the feed regulating valves stand at their declared 75 % opening, with margin to pick up load.
+    expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeCloseTo(0.75, 1)
   }, PLANT_HANG_GUARD_MS) // A watchdog for hangs: this 600 s trajectory ran 69 s at load 100 to 130.
 
   test('reference protection trips reactor on pressurizer pressure and containment pressure extremes', () => {
@@ -969,13 +969,16 @@ describe('process plant runtime', () => {
   })
 
   test('steam generator boiling rate remains energy-consistent with heat transfer', () => {
-    const runtime = createProcessPlantRuntime({ system: compiledSystem() })
+    const system = compiledSystem()
+    const runtime = createProcessPlantRuntime({ system })
 
     for (let index = 0; index < 50; index += 1) runtime.tick(100)
 
     const heatTransferMw = Number(runtime.readVariable(valueOf('sgA.heatTransferMw')))
     const boilingRateKgPerS = Number(runtime.readVariable(valueOf('sgA.boilingRateKgPerS')))
-    expect(boilingRateKgPerS * latentHeatSteamMjPerKg).toBeCloseTo(heatTransferMw, 6)
+    // Each kilogram boiled takes the generator's feedwater-to-steam enthalpy rise.
+    const enthalpyRise = steamGeneratorFeedToSteamEnthalpyMjPerKg(system.graph.components.find(component => component.id === 'sgA')!.parameters as Record<string, unknown>)
+    expect(boilingRateKgPerS * enthalpyRise).toBeCloseTo(heatTransferMw, 6)
     expect(Number(runtime.readVariable(valueOf('sgA.boilingEnergyResidualMw')))).toBeCloseTo(0, 6)
   })
 
@@ -1209,13 +1212,14 @@ describe('process plant runtime', () => {
     }
 
     const active = activeLifecycleIds(protection.snapshot())
-    // The stopped pumps trip the reactor at once; the coolant then cools below no-load and P-4 isolates feedwater.
+    // The stopped pumps trip the reactor at once; the coolant then cools below no-load and P-4 shuts the feed
+    // regulating valves, the main feedwater pumps running on.
     expect(active.trips).toEqual(expect.arrayContaining([
       'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip',
       'trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation',
     ]))
+    expect(active.alarms).not.toContain('alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable')
     expect(active.alarms).toEqual(expect.arrayContaining([
-      'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       'alarm:rcp-a-trip:not-running',
       'alarm:rcp-b-trip:not-running',
       'alarm:rcp-c-trip:not-running',
@@ -1231,14 +1235,16 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('turbineStopValve.positionFraction')))).toBeCloseTo(0, 6)
     expect(Number(runtime.readVariable(valueOf('turbineStopValve.effectivePositionFraction')))).toBeCloseTo(0, 6)
     expect(Number(runtime.readVariable(valueOf('turbine.loadFraction')))).toBeCloseTo(0, 6)
-    expect(runtime.readVariable(valueOf('mainFeedwaterPumpA.running'))).toBe(false)
-    expect(runtime.readVariable(valueOf('mainFeedwaterPumpB.running'))).toBe(false)
+    expect(runtime.readVariable(valueOf('mainFeedwaterPumpA.running'))).toBe(true)
+    expect(runtime.readVariable(valueOf('mainFeedwaterPumpB.running'))).toBe(true)
+    expect(runtime.readVariable(valueOf('feedwaterControlValveA.isolationSignal'))).toBe(true)
+    expect(Number(runtime.readVariable(valueOf('mainFeedwaterPumpA.flowKgPerS')))).toBeLessThan(1)
     expect(Number(runtime.readVariable(valueOf('core.powerMw')))).toBeLessThan(100)
     expect(Number(runtime.readVariable(valueOf('core.decayHeatMw')))).toBeGreaterThan(Number(runtime.readVariable(valueOf('core.powerMw'))))
 
     // The steam dumps hold the pressure below the safety valves.
     expect(Number(runtime.readVariable(valueOf('main-steam-header-to-turbine-bypass-valve.pressureMPa')))).toBeLessThan(8.27)
-    expect(Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction')))).toBe(0)
+    for (const loop of ['A', 'B', 'C', 'D']) expect(Number(runtime.readVariable(valueOf(`mainSteamSafetyValve${loop}.effectivePositionFraction`))), loop).toBe(0)
 
     // Isolated on P-4 with low Tavg, feedwater stops; the voids collapse and the level shrinks, never swells.
     expect(maxLevel).toBeLessThan(initialLevel + 1)
@@ -1267,7 +1273,7 @@ describe('process plant runtime', () => {
     let maxSafetyValveOpening = 0
     for (let index = 0; index < 100; index += 1) {
       runtime.tick(100)
-      maxSafetyValveOpening = Math.max(maxSafetyValveOpening, Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction'))))
+      for (const loop of ['A', 'B', 'C', 'D']) maxSafetyValveOpening = Math.max(maxSafetyValveOpening, Number(runtime.readVariable(valueOf(`mainSteamSafetyValve${loop}.effectivePositionFraction`))))
     }
     // The steam dumps open above no-load pressure (7.6 MPa) and hold the rise
     // below the safety valves' 8.27 MPa set pressure, which stay shut.
@@ -1997,9 +2003,10 @@ describe('process plant runtime', () => {
     let maxContainmentIncomingMass = 0
     for (let index = 0; index < 900; index += 1) {
       runtime.tick(100)
-      maxSafetyPosition = Math.max(maxSafetyPosition, Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction'))))
-      maxHeaderFlow = Math.max(maxHeaderFlow, Number(runtime.readVariable(valueOf('main-steam-header-to-safety-valve.flowKgPerS'))))
-      const releaseFlow = Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.flowKgPerS')))
+      // Each steam line's bank of safety valves, ahead of its isolation valve.
+      maxSafetyPosition = Math.max(maxSafetyPosition, Number(runtime.readVariable(valueOf('mainSteamSafetyValveA.effectivePositionFraction'))))
+      maxHeaderFlow = Math.max(maxHeaderFlow, Number(runtime.readVariable(valueOf('sg-a-steam-to-safety-valves-a.flowKgPerS'))))
+      const releaseFlow = ['a', 'b', 'c', 'd'].reduce((sum, loop) => sum + Number(runtime.readVariable(valueOf(`main-steam-safety-valves-${loop}-to-atmosphere.flowKgPerS`))), 0)
       maxReleaseFlow = Math.max(maxReleaseFlow, releaseFlow)
       // The generators' atmospheric relief valves open too, above 7.86 MPa.
       releasedToAtmosphere += (releaseFlow + ['a', 'b', 'c', 'd'].reduce((sum, loop) => sum + Number(runtime.readVariable(valueOf(`steam-generator-relief-valve-${loop}-to-atmosphere.flowKgPerS`))), 0)) * 0.1
@@ -2009,7 +2016,7 @@ describe('process plant runtime', () => {
     expect(maxSafetyPosition).toBeGreaterThan(0.9)
     expect(maxHeaderFlow).toBeGreaterThan(100)
     expect(maxReleaseFlow).toBeGreaterThan(100)
-    expect(Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.pressureMPa')))).toBeCloseTo(0.101325, 6)
+    expect(Number(runtime.readVariable(valueOf('main-steam-safety-valves-a-to-atmosphere.pressureMPa')))).toBeCloseTo(0.101325, 6)
     // The atmosphere totals what the valves relieved.
     expect(Number(runtime.readVariable(valueOf('atmosphere.releasedMassKg'))) - releasedBefore).toBeCloseTo(releasedToAtmosphere, 3)
     // Containment sees none of it.

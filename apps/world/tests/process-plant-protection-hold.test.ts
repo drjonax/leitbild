@@ -119,11 +119,12 @@ describe('a throttle under an actuation that drove a demand to an end of its spa
     const floored = plant.automation.rules.filter(rule => rule.throttleFloor !== undefined)
     expect(floored.map(rule => rule.id).sort()).toEqual([
       'loss-of-offsite-power-afw-actuation', 'main-feedwater-pumps-tripped-afw-start',
+      'safety-injection-containment-pressure-high-1', 'safety-injection-low-pzr-pressure', 'safety-injection-manual',
       'sg-a-level-low-low-afw-actuation', 'sg-b-level-low-low-afw-actuation', 'sg-c-level-low-low-afw-actuation', 'sg-d-level-low-low-afw-actuation',
     ])
     for (const rule of floored) expect(rule.throttleFloor!.basis).toContain('FR-H.1')
-    expect(plant.modelDigest).toBe('16523e5a06e67b517862fd96650bfef2cdd5e4ad05a1dd70c8f27eb2dff9bdff')
-    expect(plant.graph.variables.length).toBe(1592)
+    expect(plant.modelDigest).toBe('47b82339adddd913ef20d24294ae9c595b104d1c10148bcfb5943bc30aeaf3ea')
+    expect(plant.graph.variables.length).toBe(1691)
     // The same graph under the I&C config without any floor: the same digest and variables.
     const withoutFloors = compileResolvedProcessPlant({
       id: plant.id, modelRef: plant.modelRef, operatingPointRef: plant.operatingPointRef, automationRef: plant.automationRef,

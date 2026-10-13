@@ -4,6 +4,7 @@ import { createPwrReferencePlantDefinition, processPlantDefinitionCatalog } from
 import { createProcessPlantRuntime } from '../src/packs/process-plant/runtime/runtime.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
+import { steamGeneratorFeedToSteamEnthalpyMjPerKg } from '../src/packs/process-plant/steam-generator-operating-level.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -33,9 +34,18 @@ describe('authoritative PWR full-power operating point', () => {
       // The loops start full at the operating point's temperatures, so they hold their nominal inventory.
       const initialInventory = read('vessel.primaryCoolantInventoryKg')
       expect(initialInventory / Number((system.sourceGraph.components.find(component => component.id === 'vessel')!.parameters as Record<string, unknown>).nominalPrimaryCoolantInventoryKg)).toBeCloseTo(1, 6)
+      // Each generator boils its share at its feedwater-to-steam enthalpy rise: saturated steam at 6.9 MPa
+      // (2,774 kJ/kg) less 227 °C feedwater (977 kJ/kg), 1.80 MJ/kg, so the plant makes about 1,900 kg/s
+      // of steam whatever its loop count, as a 3,411 MWt four-loop plant does.
+      let steamFlow = 0
       for (const component of system.sourceGraph.components.filter(component => component.kind === 'steamGenerator')) {
-        expect(read(`${component.id}.steamFlowKgPerS`)).toBeCloseTo(steamGeneratorHeat / 2.26 / loopCount, 8)
+        const enthalpyRise = steamGeneratorFeedToSteamEnthalpyMjPerKg(component.parameters as Record<string, unknown>)
+        expect(enthalpyRise).toBeCloseTo(1.797, 3)
+        expect(read(`${component.id}.steamFlowKgPerS`)).toBeCloseTo(steamGeneratorHeat / enthalpyRise / loopCount, 8)
+        steamFlow += read(`${component.id}.steamFlowKgPerS`)
       }
+      expect(steamFlow).toBeGreaterThan(1_890)
+      expect(steamFlow).toBeLessThan(1_910)
       runtime.tick(100)
       expect(read('core.temperatureFeedbackPcm')).toBeCloseTo(0, 6)
       expect(read('core.powerMw')).toBeCloseTo(3400, 6)

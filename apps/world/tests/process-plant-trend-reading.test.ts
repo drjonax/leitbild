@@ -309,6 +309,7 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     for (const horizonMs of [120_000, 600_000]) {
       const subcooling = read('SUB-MARGIN', 60, horizonMs, hotStandby)
       expect(subcooling.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 16.7 } }, eta: 'reversing', minutes: null })
+      // 21.6 °C since the turbine-driven AFW pump draws its steam from SG B and C (C2b), 0.1 °C more cooling.
       expect(subcooling.text).toBe('21.5 °C above LO 16.7 °C · ALM · reversing')
       // The pressurizer level, rising toward its HI 75 % alarm some 48 pp away, reads by its LO 17 % alarm 9.5 pp behind (HMI review of run 23).
       const level = read('PZR-LVL', 60, horizonMs, hotStandby)
@@ -319,16 +320,17 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     expect(Math.min(...read('SUB-MARGIN', 300, 120_000, hotStandby).trace.filter(point => point.t >= 60_000).map(point => point.v))).toBeGreaterThan(32)
   })
 
-  test('forty seconds after a feed regulating valve failed part-open, the steam generator level is projected to its low-low limit, which it reaches', () => {
+  test('half a minute after a feed regulating valve failed part-open, the steam generator level is projected to its low-low limit, which it reaches', () => {
     // A loss of all main feedwater takes the narrow range, a quarter of the wide range, to its low-low limit within
-    // about 24 s, before half a minute of trend can found a time to it. Feed regulating valve B failed at 70 % lets
-    // generator B boil down more slowly: the trend is established before the level gets there.
-    const read = qaCase('steam-generator-b-feedwater-runback', 90, ['SG-B-LVL-NR'], { positionPercent: 70 })
+    // about 20 s, before half a minute of trend can found a time to it. Feed regulating valve B failed at 50 %, two
+    // thirds of its 75 % full-power opening, lets generator B boil down more slowly: the trend is established before
+    // the level gets there.
+    const read = qaCase('steam-generator-b-feedwater-runback', 90, ['SG-B-LVL-NR'], { positionPercent: 50 })
     // The two-minute trend projects it; the ten-minute trend's longer window has not yet the history to.
-    expect(read('SG-B-LVL-NR', 40, 120_000, powerOperation).text).toBe('9.9 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈16 s')
-    expect(read('SG-B-LVL-NR', 40, 600_000, powerOperation).reading.limit).toMatchObject({ minutes: null })
-    // It does, 16 s later.
+    expect(read('SG-B-LVL-NR', 30, 120_000, powerOperation).text).toBe('8.5 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈10 s')
+    expect(read('SG-B-LVL-NR', 30, 600_000, powerOperation).reading.limit).toMatchObject({ minutes: null })
+    // It does, 10 s later.
     const crossed = read('SG-B-LVL-NR', 90, 120_000, powerOperation).trace.find(point => point.v < 20)!
-    expect(crossed.t / 1000).toBe(56)
+    expect(crossed.t / 1000).toBe(40)
   })
 })

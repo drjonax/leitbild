@@ -93,27 +93,31 @@ describe('the reactor vessel on a drawing', () => {
   })
 
   test('in a box wider than a vessel stands (a detail whose pipes reach the core from below), it stands taller than wide beside its rows, and a pipe reaching the box beside it continues to its side', () => {
-    // HMI verify 44 (SG A detail): the core drawn as a 264 x 96 saucer.
-    const detail = compileDetailDisplay(system, new Set(), ['sgA'], fullHd)
-    if (!detail.ok) throw new Error(JSON.stringify(detail.issues))
-    const mimic = detail.display.panels.find((panel): panel is ComposedMimicPanel => panel.kind === 'mimic')!.mimic
-    const core = coreOf(mimic)
-    expect(core.box.width).toBeGreaterThan(core.box.height)
-    const span = core.vessel!.span
-    expect(span.width).toBeLessThan(core.box.height)
-    // Beside its rows, which stand right of its box.
-    expect(core.text?.side).toBe('right')
-    expect(span.x + span.width).toBe(core.box.width)
-    // Every pipe that reaches its box ends at one of its nozzles, each on the vessel itself.
-    const left = core.box.x + span.x
-    const right = left + span.width
-    for (const nozzle of core.vessel!.nozzles) expect(nozzle.x >= left - 1e-9 && nozzle.x <= right + 1e-9).toBe(true)
-    const touching = mimic.pipes.flatMap(pipe => [pipe.points[0]!, pipe.points.at(-1)!])
-      .filter(([x, y]) => x >= core.box.x && x <= core.box.x + core.box.width && y >= core.box.y && y <= core.box.y + core.box.height)
-    expect(touching.length).toBeGreaterThan(0)
-    for (const [x, y] of touching) expect(core.vessel!.nozzles.some(nozzle => nozzle.x === x && nozzle.y === y)).toBe(true)
-    // The hot legs reach the box left of it and continue to its left side.
-    expect(core.vessel!.nozzles.filter(nozzle => nozzle.face === 'left' && nozzle.x === left).length).toBeGreaterThan(0)
+    // HMI verify 44 (SG A detail): the core drawn as a 264 x 96 saucer. Since C2b the steam generator and coolant pump
+    // details draw their loop at two links' reach, where the core's box is a vessel's own; the rule is held on each
+    // of them, and wherever its box is wider than a vessel stands.
+    for (const id of ['sgA', 'sgB', 'sgC', 'sgD', 'rcpA']) {
+      const detail = compileDetailDisplay(system, new Set(), [id], fullHd)
+      if (!detail.ok) throw new Error(JSON.stringify(detail.issues))
+      const mimic = detail.display.panels.find((panel): panel is ComposedMimicPanel => panel.kind === 'mimic')!.mimic
+      const core = coreOf(mimic)
+      const span = core.vessel!.span
+      // Never a saucer: the vessel stands taller than wide.
+      expect(span.width, id).toBeLessThan(core.box.height)
+      if (core.box.width > core.box.height) {
+        // Beside its rows, which stand right of its box.
+        expect(core.text?.side, id).toBe('right')
+        expect(span.x + span.width, id).toBe(core.box.width)
+      }
+      // Every pipe that reaches its box ends at one of its nozzles, each on the vessel itself.
+      const left = core.box.x + span.x
+      const right = left + span.width
+      for (const nozzle of core.vessel!.nozzles) expect(nozzle.x >= left - 1e-9 && nozzle.x <= right + 1e-9, id).toBe(true)
+      const touching = mimic.pipes.flatMap(pipe => [pipe.points[0]!, pipe.points.at(-1)!])
+        .filter(([x, y]) => x >= core.box.x && x <= core.box.x + core.box.width && y >= core.box.y && y <= core.box.y + core.box.height)
+      expect(touching.length, id).toBeGreaterThan(0)
+      for (const [x, y] of touching) expect(core.vessel!.nozzles.some(nozzle => nozzle.x === x && nozzle.y === y), id).toBe(true)
+    }
   })
 
   test('a chat answer\'s drawing keeps the vessel narrow and shows no trends', () => {
