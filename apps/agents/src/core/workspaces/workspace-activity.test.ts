@@ -7,6 +7,8 @@ import { asAIAgent } from '../../agents/shared.ts'
 import { makeStubGateway, makeStubSetup, stubProviderConfig } from '../../api/__fixtures__/stub-gateway.ts'
 import { handleAgentsModuleApi } from '../../api/workspace-module-api.ts'
 import type { ProviderGateway } from '../../llm/provider-gateway.ts'
+import type { Script } from '../types/script.ts'
+import type { Trigger } from '../triggers/types.ts'
 import { createDeploymentRuntime } from '../deployment-runtime.ts'
 import { createAgentsModuleState, type AgentsModuleState } from './module-state.ts'
 import { createWorkspaceRuntimeRegistry, type WorkspaceRuntimeRegistry } from './runtime-registry.ts'
@@ -104,7 +106,8 @@ describe('Agents Workspace activity', () => {
         const agent = asAIAgent(await system.spawnAIAgent({ name, model: 'mock-model', persona: '', tools: [] }))!
         room.addMember(agent.id)
         await agent.join(room)
-        agent.receive(room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' }))
+        // The Room delivers to its members; a second receive would queue a second turn.
+        room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' })
         return agent
       }))
       await until(() => agents.every(agent => agent.state.get() === 'generating'), 'both agents to generate')
@@ -144,7 +147,7 @@ describe('Agents Workspace activity', () => {
     const agent = asAIAgent(await system.spawnAIAgent({ name: 'Agent', model: 'mock-model', persona: '', tools: [] }))!
     room.addMember(agent.id)
     await agent.join(room)
-    agent.receive(room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' }))
+    room.post({ senderId: 'human', type: 'chat', content: 'Assess the plant.' })
     await until(() => room.getRetainedMessages().some(message => message.senderId === agent.id), 'the original answer')
     await agent.whenIdle()
     const original = room.getRetainedMessages().find(message => message.senderId === agent.id)!
@@ -158,6 +161,93 @@ describe('Agents Workspace activity', () => {
     await until(() => system.comparisons.running() === 0, 'the comparison to end')
     expect(await activity(registry)).toEqual({ workspaces: [] })
   }, 30_000)
+
+  test('script runs and room summaries being written are background work; a paused script waits', async () => {
+    let release!: () => void
+    const released = new Promise<void>(resolve => { release = resolve })
+    // Every model call, Agent turn or summary, waits for the test.
+    const registry = registryWith(async function* () {
+      await released
+      yield { delta: 'Done.', done: true, tokensUsed: { prompt: 1, completion: 1 } }
+    })
+    const id = await provisioned()
+    const system = await registry.getOrLoad(id)
+    const script: Script = {
+      id: 'script-1', name: 'demo', title: 'Demo Script', source: '',
+      cast: [
+        { name: 'Alex', model: 'mock-model', persona: 'You are Alex.', starts: true },
+        { name: 'Sam', model: 'mock-model', persona: 'You are Sam.' },
+      ],
+      steps: [{ index: 0, title: 'Opening', roles: { Alex: 'start', Sam: 'respond' } }],
+    }
+    const scripted = system.rooms.createRoom({ name: 'Scripted', createdBy: 'test' })
+    const summarised = system.rooms.createRoom({ name: 'Summarised', createdBy: 'test' })
+    const answering = { key: 'agents-answering', label: '1 AI agent answering', count: 1, active: true }
+    try {
+      expect(await system.scriptRunner.startWith(scripted.profile.id, script)).toEqual({ ok: true })
+      await until(() => system.team.getAgent('Alex')?.state.get() === 'generating', 'the first cast member to speak')
+      expect(await activity(registry)).toEqual({ workspaces: [{ workspaceId: id, items: [
+        answering,
+        { key: 'background-running', label: '1 script running', count: 1, active: true },
+      ] }] })
+
+      summarised.post({ senderId: 'human', type: 'chat', content: 'The pumps are running.' })
+      summarised.setSummaryConfig({ ...summarised.summaryConfig, model: 'mock-model' })
+      const summary = system.summaryScheduler.triggerNow(summarised.profile.id, 'summary')
+      await until(() => system.summaryScheduler.isRunning(summarised.profile.id, 'summary'), 'the summary to start')
+      expect(await activity(registry)).toEqual({ workspaces: [{ workspaceId: id, items: [
+        answering,
+        { key: 'background-running', label: '2 background jobs running', count: 2, active: true },
+      ] }] })
+
+      scripted.setPaused(true)
+      expect(await activity(registry)).toEqual({ workspaces: [{ workspaceId: id, items: [
+        answering,
+        { key: 'background-running', label: '1 room summary being written', count: 1, active: true },
+        { key: 'jobs-waiting', label: '1 paused script', count: 1, active: false },
+      ] }] })
+
+      release()
+      await summary
+      await until(() => system.team.getAgent('Alex')?.state.get() === 'idle', 'the cast member to finish')
+      expect(await system.scriptRunner.stop(scripted.profile.id)).toMatchObject({ ok: true })
+      expect(await activity(registry)).toEqual({ workspaces: [] })
+    } finally { release() }
+  }, 30_000)
+
+  test('enabled triggers and timed summaries are recurring work that waits between runs', async () => {
+    const registry = registryWith()
+    const id = await provisioned()
+    const system = await registry.getOrLoad(id)
+    const room = system.rooms.createRoom({ name: 'Watch', createdBy: 'test' })
+    const agent = asAIAgent(await system.spawnAIAgent({ name: 'Watcher', model: 'mock-model', persona: '', tools: [] }))!
+    const trigger = (name: string, enabled: boolean): Trigger =>
+      ({ id: crypto.randomUUID(), name, prompt: 'Report the plant state.', mode: 'execute', intervalSec: 3_600, enabled, roomId: room.profile.id })
+    const hourly = trigger('Hourly', true)
+    agent.addTrigger!(hourly)
+    agent.addTrigger!(trigger('Off', false))
+    expect(await activity(registry)).toEqual({ workspaces: [{ workspaceId: id, items: [
+      { key: 'jobs-waiting', label: '1 recurring trigger', count: 1, active: false },
+    ] }] })
+
+    // A summary counted by messages is not timed; only the timed compression counts.
+    room.setSummaryConfig({
+      ...room.summaryConfig,
+      summary: { enabled: true, schedule: { kind: 'messages', everyMessages: 25 } },
+      compression: { ...room.summaryConfig.compression, enabled: true, schedule: { kind: 'time', everySeconds: 3_600 } },
+    })
+    expect(await activity(registry)).toEqual({ workspaces: [{ workspaceId: id, items: [
+      { key: 'jobs-waiting', label: '2 jobs waiting to run', count: 2, active: false },
+    ] }] })
+
+    agent.updateTrigger!(hourly.id, { enabled: false })
+    expect(await activity(registry)).toEqual({ workspaces: [{ workspaceId: id, items: [
+      { key: 'jobs-waiting', label: '1 timed room summary', count: 1, active: false },
+    ] }] })
+
+    room.setSummaryConfig({ ...room.summaryConfig, compression: { ...room.summaryConfig.compression, enabled: false } })
+    expect(await activity(registry)).toEqual({ workspaces: [] })
+  })
 
   test('an evicted or never loaded Workspace reports nothing and is not loaded', async () => {
     const registry = registryWith()
