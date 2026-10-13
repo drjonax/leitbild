@@ -6,12 +6,12 @@
     "tags": ["Nuclear plant + grid", "Event at 2 min", "Desktop"],
     "previews": [
       {
-        "alt": "Grid map around Halden after the fault, beside the Grid panel showing the grid frequency in red, below 49 Hz.",
+        "alt": "The grid around Halden after the fault, beside the grid panel showing the grid frequency in red below 49 Hz.",
         "width": 1600,
         "height": 1000,
         "sources": [
-          { "file": "halden-offsite-power-restoration-960.f8df729a.webp", "width": 960 },
-          { "file": "halden-offsite-power-restoration-1600.8e5cb331.webp", "width": 1600 }
+          { "file": "halden-offsite-power-restoration-960.04aeacb1.webp", "width": 960 },
+          { "file": "halden-offsite-power-restoration-1600.d946a96a.webp", "width": 1600 }
         ]
       }
     ]
@@ -23,12 +23,12 @@
     "tags": ["Power grid", "What-if copies", "Event at 10 min", "Desktop"],
     "previews": [
       {
-        "alt": "Map of the Helgeland coast after the major line trip, with the smaller lines that tripped after it drawn as red dashes.",
+        "alt": "Map of the Helgeland coast after a major line trip, with the smaller lines that tripped after it drawn as red dashes.",
         "width": 1600,
         "height": 1000,
         "sources": [
-          { "file": "nordland-corridor-security-960.eba0efd4.webp", "width": 960 },
-          { "file": "nordland-corridor-security-1600.72cf8593.webp", "width": 1600 }
+          { "file": "nordland-corridor-security-960.05e4a4fb.webp", "width": 960 },
+          { "file": "nordland-corridor-security-1600.e5fba192.webp", "width": 1600 }
         ]
       }
     ]
@@ -40,12 +40,12 @@
     "tags": ["Emergency dispatch", "30 min", "1–2 players", "iPad or desktop"],
     "previews": [
       {
-        "alt": "Map of Halden with ambulances, patrol cars and fire engines on their way to calls, beside the list of open calls and units.",
+        "alt": "Map of Halden with ambulances, patrol cars and fire engines on their way to numbered calls.",
         "width": 1600,
         "height": 1000,
         "sources": [
-          { "file": "halden-emergency-960.bf08bfbf.webp", "width": 960 },
-          { "file": "halden-emergency-1600.31107f76.webp", "width": 1600 }
+          { "file": "halden-emergency-960.4cd659b3.webp", "width": 960 },
+          { "file": "halden-emergency-1600.3948c36c.webp", "width": 1600 }
         ]
       }
     ]
