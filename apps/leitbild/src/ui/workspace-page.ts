@@ -1,12 +1,14 @@
 // What the Workspace page shows (plan v2 §6), as pure functions over the
 // Host's catalogue responses: the featured demos this Workspace holds, the
-// other Definitions under "More scenarios", what to continue, and the typed
-// name that confirms a delete. The Svelte files only render these.
+// other Definitions under "More scenarios" (with the summary a Module lists
+// them by, as the Demos modal shows it), what to continue, and the typed name
+// that confirms a delete. The Svelte files only render these.
 
 import type {
   FeaturedDefinitionCatalog,
   ModuleDefinitionDescriptor,
   ModuleFeaturedDefinition,
+  ModuleListedDefinition,
   ModuleResourceDescriptor,
   ResourceSummaryItem,
 } from '@leitbild/contracts'
@@ -146,6 +148,21 @@ export const summaryLead = (description: string | undefined): string => {
 export const summaryHasMore = (description: string | undefined): boolean => {
   const text = description?.replace(/\s+/g, ' ').trim() ?? ''
   return text.length > summaryLead(text).length || text.length > 90
+}
+
+/**
+ * A "More scenarios" row's one-line summary. A Definition a Module lists
+ * beside its demos reads as in the Demos modal's More scenarios, with "More"
+ * for its whole description; any other reads by its description's first
+ * sentence. Matched by identity, as the demo cards are.
+ */
+export const scenarioRowSummary = (
+  definition: ModuleDefinitionDescriptor,
+  listed: ReadonlyArray<ModuleListedDefinition>,
+): { readonly lead: string; readonly more: boolean } => {
+  const entry = listed.find(item => sameDefinition(definition.ref, item.definition))
+  if (entry !== undefined) return { lead: entry.summary, more: (definition.description?.trim() ?? '') !== '' }
+  return { lead: summaryLead(definition.description), more: summaryHasMore(definition.description) }
 }
 
 // ---------- Delete ----------

@@ -4,10 +4,12 @@ import {
   moduleCapabilityDescriptorSchema,
   moduleDefinitionDescriptorSchema,
   moduleFeaturedDefinitionSchema,
+  moduleListedDefinitionSchema,
   moduleResourceDescriptorSchema,
   type ModuleCapabilityDescriptor,
   type ModuleDefinitionDescriptor,
   type ModuleFeaturedDefinition,
+  type ModuleListedDefinition,
   type ModuleResourceDescriptor,
 } from '@leitbild/contracts'
 
@@ -41,6 +43,14 @@ export const featured = (id: string, revisionId = revision('a')): ModuleFeatured
     alt: 'A map of the grid.', width: 1600, height: 1000,
     sources: [{ path: `/assets/world/scenario-previews/${id}-1600.webp`, width: 1600 }, { path: `/assets/world/scenario-previews/${id}-960.webp`, width: 960 }],
   }],
+})
+
+export const listed = (id: string, revisionId = revision('a')): ModuleListedDefinition => moduleListedDefinitionSchema.parse({
+  definition: { moduleId: 'world', type: 'world.scenario', id },
+  revisionId,
+  title: `Listed ${id}`,
+  summary: `The one-line summary World lists ${id} by.`,
+  tags: ['Power grid'],
 })
 
 export const run = (id: string, status: string, startedAt: string, extra: Partial<{ uiPath: string | null }> = {}): ModuleResourceDescriptor =>

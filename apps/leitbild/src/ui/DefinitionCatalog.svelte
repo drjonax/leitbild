@@ -1,20 +1,23 @@
 <script lang="ts">
   // "More scenarios (N)" (plan v2 §6.5): every Definition that is not a
   // featured demo, collapsed by default, as compact rows: title, a one-line
-  // summary with an inline "More", Start with staged progress, and a quiet ⋯
-  // for Edit, Inspect and Delete. Row bodies never start anything.
-  import type { ModuleCapabilityDescriptor, ModuleDefinitionDescriptor } from '@leitbild/contracts'
+  // summary with an inline "More" (a listed scenario's summary reads as in the
+  // Demos modal), Start with staged progress, and a quiet ⋯ for Edit, Inspect
+  // and Delete. Row bodies never start anything.
+  import type { ModuleCapabilityDescriptor, ModuleDefinitionDescriptor, ModuleListedDefinition } from '@leitbild/contracts'
   import Icon from './Icon.svelte'
   import MoreMenu, { type MoreMenuItem } from './MoreMenu.svelte'
   import StartProgress from './StartProgress.svelte'
   import { cardCapability } from './card-actions.ts'
   import type { StartState } from './definition-start.ts'
-  import { summaryHasMore, summaryLead } from './workspace-page.ts'
+  import { scenarioRowSummary } from './workspace-page.ts'
 
   let {
-    definitions, capabilities, start, keyOf, busy, inspecting, onstart, onretry, ondismiss, oncancel, onreload, onedit, oninspect, ondelete,
+    definitions, listed, capabilities, start, keyOf, busy, inspecting, onstart, onretry, ondismiss, oncancel, onreload, onedit, oninspect, ondelete,
   }: {
     definitions: ReadonlyArray<ModuleDefinitionDescriptor>
+    /** The Modules' listed scenarios (none while the featured catalogue is unknown). */
+    listed: ReadonlyArray<ModuleListedDefinition>
     capabilities: ReadonlyArray<ModuleCapabilityDescriptor>
     start: StartState
     keyOf: (definition: ModuleDefinitionDescriptor) => string
@@ -63,13 +66,14 @@
         {@const progress = start.phase !== 'idle' && start.key === key ? start : null}
         {@const items = menuItems(definition)}
         {@const textOpen = expanded.has(key)}
+        {@const summary = scenarioRowSummary(definition, listed)}
         <li class="scen">
           <div class="main">
             <h3 id={`${uid}-t${index}`}>{definition.title}</h3>
-            {#if definition.description}
+            {#if summary.lead}
               <div class="desc" class:open={textOpen}>
-                <span id={`${uid}-d${index}`} class="desc-text">{textOpen ? definition.description : summaryLead(definition.description)}</span>
-                {#if summaryHasMore(definition.description)}
+                <span id={`${uid}-d${index}`} class="desc-text">{textOpen ? definition.description : summary.lead}</span>
+                {#if summary.more}
                   <button class="more-link" type="button" aria-expanded={textOpen} aria-controls={`${uid}-d${index}`} aria-describedby={`${uid}-t${index}`}
                     onclick={() => toggleText(key)}>{textOpen ? 'Less' : 'More'}</button>
                 {/if}

@@ -699,7 +699,7 @@
           onrename={(resource, name, original) => renameResource(resource, name, original)} />
         <FeaturedRow cards={demos.cards} unavailable={featuredFailed || demos.unavailable.length > 0} start={startState} keyOf={featuredKey}
           onstart={startFeatured} onretry={() => void retryStart()} ondismiss={() => startRunner.dismiss()} oncancel={() => startRunner.cancel()} onreload={reloadAfterStart} />
-        <DefinitionCatalog definitions={demos.others} {capabilities} start={startState} keyOf={definitionKey} {busy} inspecting={inspectionLoading}
+        <DefinitionCatalog definitions={demos.others} listed={featuredCatalog?.listed ?? []} {capabilities} start={startState} keyOf={definitionKey} {busy} inspecting={inspectionLoading}
           onstart={startDefinition} onretry={() => void retryStart()} ondismiss={() => startRunner.dismiss()} oncancel={() => startRunner.cancel()} onreload={reloadAfterStart}
           onedit={definition => { if (definition.uiPath) void openEditor(definition.uiPath, { ...definition.ref, revisionId: definition.currentRevisionId }) }}
           oninspect={definition => void inspect({ kind: 'definition', descriptor: definition })}
