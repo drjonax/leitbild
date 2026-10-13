@@ -51,7 +51,12 @@ export type ModuleActivity = z.infer<typeof moduleActivitySchema>
 export const workspaceActivityEntrySchema = workspaceActivityItemSchema.extend({ moduleId: moduleIdSchema }).strict()
 export type WorkspaceActivityEntry = z.infer<typeof workspaceActivityEntrySchema>
 
-/** Every installed Module's activity per Workspace, with one outcome per Module. */
+/**
+ * Every installed Module's activity per Workspace, with one outcome per
+ * Module. Like the featured catalogue, an item comes only from a Module whose
+ * outcome is ready, and names its Module, so one Workspace never repeats a
+ * Module's key.
+ */
 export const workspaceActivityCatalogSchema = z.object({
   modules: z.array(moduleQueryOutcomeSchema),
   workspaces: z.array(z.object({
@@ -59,12 +64,32 @@ export const workspaceActivityCatalogSchema = z.object({
     items: z.array(workspaceActivityEntrySchema).min(1),
   }).strict()),
 }).strict().superRefine((catalog, ctx) => {
-  const seen = new Set<string>()
+  const ready = new Set<string>()
+  const seenModules = new Set<string>()
+  catalog.modules.forEach((outcome, index) => {
+    if (seenModules.has(outcome.moduleId)) {
+      ctx.addIssue({ code: 'custom', path: ['modules', index, 'moduleId'], message: `duplicate Module outcome: ${outcome.moduleId}` })
+    }
+    seenModules.add(outcome.moduleId)
+    if (outcome.status === 'ready') ready.add(outcome.moduleId)
+  })
+  const seenWorkspaces = new Set<string>()
   catalog.workspaces.forEach((workspace, index) => {
-    if (seen.has(workspace.workspaceId)) {
+    if (seenWorkspaces.has(workspace.workspaceId)) {
       ctx.addIssue({ code: 'custom', path: ['workspaces', index, 'workspaceId'], message: `duplicate Workspace: ${workspace.workspaceId}` })
     }
-    seen.add(workspace.workspaceId)
+    seenWorkspaces.add(workspace.workspaceId)
+    const seenItems = new Set<string>()
+    workspace.items.forEach((item, itemIndex) => {
+      if (!ready.has(item.moduleId)) {
+        ctx.addIssue({ code: 'custom', path: ['workspaces', index, 'items', itemIndex, 'moduleId'], message: `activity item has no ready Module outcome: ${item.moduleId}` })
+      }
+      const itemKey = `${item.moduleId}:${item.key}`
+      if (seenItems.has(itemKey)) {
+        ctx.addIssue({ code: 'custom', path: ['workspaces', index, 'items', itemIndex, 'key'], message: `duplicate activity item: ${itemKey}` })
+      }
+      seenItems.add(itemKey)
+    })
   })
 })
 export type WorkspaceActivityCatalog = z.infer<typeof workspaceActivityCatalogSchema>

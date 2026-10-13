@@ -27,7 +27,28 @@ describe('Workspace activity', () => {
       workspaces: [{ workspaceId: W2, items: [{ ...running, moduleId: 'world' }] }],
     })
     expect(String(catalog.workspaces[0]!.items[0]!.moduleId)).toBe('world')
-    expect(() => workspaceActivityCatalogSchema.parse({ modules: [], workspaces: [{ workspaceId: W2, items: [running] }] })).toThrow()
+    // The same item from another Module is another fact, not a repeat.
+    expect(workspaceActivityCatalogSchema.parse({
+      modules: [{ moduleId: 'world', status: 'ready' }, { moduleId: 'agents', status: 'ready' }],
+      workspaces: [{ workspaceId: W2, items: [{ ...running, moduleId: 'world' }, { ...running, moduleId: 'agents' }] }],
+    }).workspaces[0]!.items).toHaveLength(2)
+  })
+
+  test('the Host catalogue refuses what the featured catalogue refuses', () => {
+    const ready = { moduleId: 'world', status: 'ready' }
+    const item = { ...running, moduleId: 'world' }
+    expect(() => workspaceActivityCatalogSchema.parse({ modules: [ready], workspaces: [{ workspaceId: W2, items: [running] }] })).toThrow('moduleId')
+    expect(() => workspaceActivityCatalogSchema.parse({ modules: [ready, ready], workspaces: [] })).toThrow('duplicate Module outcome: world')
+    expect(() => workspaceActivityCatalogSchema.parse({ modules: [], workspaces: [{ workspaceId: W2, items: [item] }] }))
+      .toThrow('activity item has no ready Module outcome: world')
+    expect(() => workspaceActivityCatalogSchema.parse({
+      modules: [{ moduleId: 'world', status: 'failed', failure: { code: 'module_unavailable', message: 'down', retryable: true } }],
+      workspaces: [{ workspaceId: W2, items: [item] }],
+    })).toThrow('activity item has no ready Module outcome: world')
+    expect(() => workspaceActivityCatalogSchema.parse({ modules: [ready], workspaces: [{ workspaceId: W2, items: [item, item] }] }))
+      .toThrow('duplicate activity item: world:simulations-running')
+    expect(() => workspaceActivityCatalogSchema.parse({ modules: [ready], workspaces: [{ workspaceId: W2, items: [item] }, { workspaceId: W2, items: [item] }] }))
+      .toThrow('duplicate Workspace')
   })
 
   test('every Module declares a Workspace-independent activity path', () => {
