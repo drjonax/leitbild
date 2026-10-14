@@ -148,7 +148,9 @@ export const stateHandlers: StateHandlers = {
     // to render the persisted reasoning. Warnings/contexts don't need
     // this because they're rendered through separate stores consulted
     // after-the-fact via the context modal, not in the initial render.
-    if (m.type === 'chat') {
+    // A progress line arrives while its turn still runs: the reasoning so far
+    // stays for the answer, and so does the thinking indicator (below).
+    if (m.type === 'chat' && !m.progress) {
       const liveThink = $liveThinking.get()[m.senderId]
       if (liveThink && liveThink.length > 0) {
         $messageThinking.setKey(m.id, liveThink)
@@ -166,7 +168,7 @@ export const stateHandlers: StateHandlers = {
       $unreadCounts.setKey(roomId, (counts[roomId] ?? 0) + 1)
     }
 
-    if (m.type === 'chat' || m.type === 'pass' || m.type === 'error') {
+    if ((m.type === 'chat' && !m.progress) || m.type === 'pass' || m.type === 'error') {
       const agents = $agents.get()
       const sender = agents[m.senderId]
       if (sender && sender.state === 'generating') {

@@ -1240,6 +1240,20 @@ impl<P> Rods<P> for RodBlock {
             let r = self.cluster_rows(c, &x, fluid, receipts)?;
             rows[3 * c..3 * c + 3].copy_from_slice(&r);
         }
+        // A value evaluation replaces the record: the captured ledger is
+        // always the last value evaluation's, or none.
+        if !x.seeded() {
+            self.captured = None;
+            if self.capture {
+                let mut ledger = [0.; 3];
+                for c in 0..self.clusters.len() {
+                    for (sum, part) in ledger.iter_mut().zip(self.power(c, &x, fluid)?) {
+                        *sum += part;
+                    }
+                }
+                self.captured = Some(ledger);
+            }
+        }
         Ok(())
     }
     fn rows_local(
@@ -1306,20 +1320,6 @@ impl<P> Rods<P> for RodBlock {
                 out.push(c);
             }
         }
-        // A value evaluation replaces the record: the captured ledger is
-        // always the last value evaluation's, or none.
-        if !x.seeded() {
-            self.captured = None;
-            if self.capture {
-                let mut ledger = [0.; 3];
-                for c in 0..self.clusters.len() {
-                    for (sum, part) in ledger.iter_mut().zip(self.power(c, &x, fluid)?) {
-                        *sum += part;
-                    }
-                }
-                self.captured = Some(ledger);
-            }
-        }
         Ok(())
     }
     fn coordinate_readers(&self, i: usize, out: &mut Vec<usize>) -> Result<(), Failure> {
@@ -1376,6 +1376,11 @@ impl<P> Rods<P> for RodBlock {
     }
     fn root_count(&self) -> usize {
         self.clusters.len()
+    }
+    /// Only a seated body's lift-off root reads the fluid (its forces);
+    /// release and seat roots read time and travel.
+    fn roots_read_fluid(&self) -> bool {
+        self.modes.contains(&Mode::Seated)
     }
     fn roots(
         &mut self,

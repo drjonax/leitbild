@@ -81,6 +81,9 @@ pub enum Class {
     RodPosition,
     RodVelocity,
     GuideCurrent,
+    // PZR metal and relief owner (G6).
+    PzrMetal,
+    PzrReliefLift,
 }
 
 /// One block's coordinate declaration, built once at composition.
@@ -450,6 +453,11 @@ pub trait Rods<P> {
         fluid: &Fluid<'_>,
         out: &mut [f64],
     ) -> Result<(), Failure>;
+    /// Whether [`Rods::roots`] reads `fluid` in the owner's present modes;
+    /// an owner that cannot tell answers `true`.
+    fn roots_read_fluid(&self) -> bool {
+        true
+    }
     fn transact(
         &mut self,
         properties: &P,

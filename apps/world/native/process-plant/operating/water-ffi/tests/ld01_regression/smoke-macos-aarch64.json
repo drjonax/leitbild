@@ -58,12 +58,12 @@
       "residuals": 2198,
       "steps": 1403,
       "system_jacobians": 508,
-      "system_residuals": 4210
+      "system_residuals": 2707
     },
     "z1": {
       "constraint_rate_within_bound": true,
       "projection_passes": 1,
-      "rate_passes": 2,
+      "rate_passes": 1,
       "residual_within_bound": true
     }
   },

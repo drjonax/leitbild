@@ -177,7 +177,8 @@ fn joined_jacobian_directional_check() {
         ("nuclear", o.nuclear..o.solids),
         ("solids", o.solids..o.secondary),
         ("secondary", o.secondary..o.rods),
-        ("rods", o.rods..o.end),
+        ("rods", o.rods..o.pzr),
+        ("pzr", o.pzr..o.end),
     ];
     let started = cpu();
     let mut analytic = vec![0.; n];

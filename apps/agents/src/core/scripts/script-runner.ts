@@ -408,6 +408,8 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     if (!run || run.ended) return
     if (message.type !== 'chat' && message.type !== 'pass') return
     if (message.senderId === SYSTEM_SENDER_ID) return
+    // A progress line is no line of the script: the cast member's turn still runs.
+    if (message.progress === true) return
 
     enqueue(roomId, async () => {
       const liveRun = runs.get(roomId)

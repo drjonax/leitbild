@@ -25,10 +25,11 @@
 #[path = "joined_spine.rs"]
 mod spine;
 
-use leitbild_operating_plant::joined::block::Command;
+use leitbild_operating_plant::joined::{block::Command, post_trip_domain};
 use leitbild_operating_water::{
-    ida::{Advance, Ida, Initial, KluOrdering, Stats, System},
-    joined::{Discrete, Integrated, Restart, Restarted, discrete_restart},
+    If97,
+    ida::{Advance, Failure, Ida, Initial, KluOrdering, Stats, System},
+    joined::{Discrete, Integrated, JoinedSystem, Restart, Restarted, discrete_restart},
 };
 use serde_json::{Value, json};
 use spine::{
@@ -79,6 +80,105 @@ fn named(c: &[i64; 8]) -> Value {
             .map(|(k, v)| (k.to_string(), json!(v)))
             .collect::<serde_json::Map<_, _>>()
     )
+}
+
+/// The integrated operator with a ledger of its root-function calls: an
+/// FNV-1a digest of every call's time and root values, in order, and their
+/// process CPU. Every other call is forwarded unchanged (the KLU ordering
+/// included); the probe reaches the operator through it as before.
+struct RootLedger {
+    inner: Integrated<If97>,
+    digest: u64,
+    calls: usize,
+    cpu_s: f64,
+}
+impl RootLedger {
+    fn new(inner: Integrated<If97>) -> Self {
+        Self {
+            inner,
+            digest: 0xcbf2_9ce4_8422_2325,
+            calls: 0,
+            cpu_s: 0.,
+        }
+    }
+    fn json(&self) -> Value {
+        json!({"calls": self.calls, "cpu_s": self.cpu_s,
+            "digest": format!("{:016x}", self.digest),
+            "digest_of": "FNV-1a over each root call's time bits then its root values' bits, in call order"})
+    }
+}
+impl std::ops::Deref for RootLedger {
+    type Target = Integrated<If97>;
+    fn deref(&self) -> &Integrated<If97> {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for RootLedger {
+    fn deref_mut(&mut self) -> &mut Integrated<If97> {
+        &mut self.inner
+    }
+}
+impl System for RootLedger {
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+    fn nonzeros(&self) -> usize {
+        self.inner.nonzeros()
+    }
+    fn root_count(&self) -> usize {
+        self.inner.root_count()
+    }
+    fn residual(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        self.inner.residual(t, y, yp, out)
+    }
+    fn jacobian(
+        &mut self,
+        t: f64,
+        cj: f64,
+        y: &[f64],
+        yp: &[f64],
+        data: &mut [f64],
+        rows: &mut [i64],
+        pointers: &mut [i64],
+    ) -> Result<(), Failure> {
+        self.inner.jacobian(t, cj, y, yp, data, rows, pointers)
+    }
+    fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let started = z1::cpu_s();
+        let result = self.inner.roots(t, y, yp, out);
+        self.cpu_s += z1::cpu_s() - started;
+        self.calls += 1;
+        for word in std::iter::once(t.to_bits()).chain(out.iter().map(|v| v.to_bits())) {
+            for byte in word.to_le_bytes() {
+                self.digest = (self.digest ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        result
+    }
+    fn klu_ordering(&self) -> KluOrdering {
+        self.inner.klu_ordering()
+    }
+    fn quadrature_count(&self) -> usize {
+        self.inner.quadrature_count()
+    }
+    fn quadrature(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
+        self.inner.quadrature(t, y, yp, out)
+    }
+}
+impl JoinedSystem for RootLedger {
+    type Properties = If97;
+    fn integrated(&self) -> &Integrated<If97> {
+        &self.inner
+    }
+    fn integrated_mut(&mut self) -> &mut Integrated<If97> {
+        &mut self.inner
+    }
 }
 
 /// One integration segment between two restarts.
@@ -387,6 +487,10 @@ fn trip(duration_s: f64) -> Value {
         })
         .collect();
     let nonnegative = joined.network.nonnegative_stocks();
+    // D3 (a) along the trajectory (lead decision S2-D23): the packet's
+    // `post_trip_domain` record, or for a pre-D3 packet the compiled section
+    // in LD01_POST_TRIP_DOMAIN; without either the samples carry no D3 entry.
+    let d3 = post_trip_record();
     let restart = Restart {
         newton_coefficient: NEWTON_COEFFICIENT,
         delta_cj_lsetup: DELTA_CJ_LSETUP,
@@ -400,7 +504,7 @@ fn trip(duration_s: f64) -> Value {
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
-        Integrated::from_blocks(joined, structure, analyses).expect("integrable"),
+        RootLedger::new(Integrated::from_blocks(joined, structure, analyses).expect("integrable")),
         Initial {
             time: t0,
             y: &y,
@@ -439,7 +543,7 @@ fn trip(duration_s: f64) -> Value {
     let end = t0 + duration_s;
     let window_end = t0 + WINDOW_S;
     // One restart: the transactions and the exact start by discrete_restart.
-    let do_restart = |ida: &mut Ida<Integrated<leitbild_operating_water::If97>>,
+    let do_restart = |ida: &mut Ida<RootLedger>,
                       t: f64,
                       discrete: Discrete<'_>,
                       name: &str,
@@ -595,7 +699,7 @@ fn trip(duration_s: f64) -> Value {
         ..Segment::default()
     };
     let mut next_sample = t0;
-    let close = |ida: &Ida<Integrated<leitbild_operating_water::If97>>, mut s: Segment, to: f64| {
+    let close = |ida: &Ida<RootLedger>, mut s: Segment, to: f64| {
         let st = ida.stats().unwrap();
         s.counts = counts(&st);
         s.to_s = to;
@@ -679,7 +783,8 @@ fn trip(duration_s: f64) -> Value {
                             - v.iter().cloned().fold(f64::INFINITY, f64::min)
                     };
                     let value = |(l, i): &(String, usize)| json!([l, y[*i] * scales[*i]]);
-                    samples.push(json!({"t_s": t - t0, "released_w": j.heats().nuclear.released_w.value,
+                    let d3_sample = d3.as_ref().map(|(e, reference)| d3_at(j, e, reference, t));
+                    samples.push(json!({"t_s": t - t0, "released_w": j.heats().nuclear.released_w.value, "d3": d3_sample,
                         "sg_pressure_pa": pressures.iter().map(value).collect::<Vec<_>>(),
                         "sg_liquid_m3": liquid.iter().map(value).collect::<Vec<_>>(),
                         "relief_lift": lifts.iter().map(value).collect::<Vec<_>>(),
@@ -838,6 +943,7 @@ fn trip(duration_s: f64) -> Value {
             "after_window": {"solver_s": solver_cpu_s[1], "restarts_s": restart_cpu_s[1]},
             "trip_per_simulated_s": (window_cpu + solver_cpu_s[1] + restart_cpu_s[1]) / (t - t0).max(1e-9),
             "observation_s": observation_cpu_s,
+            "roots": ida.system().json(),
             "joined_counters": c,
             "residual_wall_s_per_call": c.residual_wall_s / c.residuals.max(1) as f64,
             "jacobian_wall_s_per_call": c.jacobian_wall_s / c.jacobians.max(1) as f64,
@@ -846,6 +952,110 @@ fn trip(duration_s: f64) -> Value {
         "samples": samples,
     });
     receipt
+}
+
+/// D3 (a)'s record and the regions' reference water densities, if the run
+/// names one (see `trip`).
+fn post_trip_record() -> Option<(post_trip_domain::Extension, Vec<f64>)> {
+    let (_, bytes) = spine::packet_bytes();
+    let raw: Value = serde_json::from_slice(&bytes).expect("packet json");
+    let record = match raw.get("post_trip_domain") {
+        Some(v) => v.clone(),
+        None => serde_json::from_slice(
+            &std::fs::read(std::env::var_os("LD01_POST_TRIP_DOMAIN")?)
+                .expect("post-trip domain file"),
+        )
+        .expect("post-trip domain json"),
+    };
+    let reference = raw["feedback_metadata"]["regions"]
+        .as_array()
+        .expect("feedback regions")
+        .iter()
+        .map(|r| r["reference_density_kg_m3"].as_f64().unwrap())
+        .collect();
+    Some((
+        serde_json::from_value(record).expect("post-trip domain record"),
+        reference,
+    ))
+}
+
+/// D3 (a) at one accepted output (after the joined evaluation there): the
+/// compiled-domain admission that decides under S2-D23 (no extension), and
+/// the margin of the source-free operator with the water term doubled and
+/// nominal (`delta*` from the 24 x 24 pencil by dggev).
+fn d3_at(
+    j: &leitbild_operating_plant::joined::operator::Joined<leitbild_operating_water::If97>,
+    extension: &post_trip_domain::Extension,
+    reference: &[f64],
+    t: f64,
+) -> Value {
+    use leitbild_operating_plant::source_feedback as sf;
+    let n = j.nuclear();
+    let at = post_trip_domain::AcceptedConditions::of(n, j.travel(), t);
+    let feedback = n.feedback();
+    let mut out = sf::Output::new(
+        feedback.region_count(),
+        feedback.material_count(),
+        feedback.support_count(),
+    );
+    let original = match feedback.validate_accepted(&at.neutrons, at.conditions(), t, &mut out) {
+        Ok(()) => json!("inside"),
+        Err(e) => json!(format!("{e:?}")),
+    };
+    let margin = |e: &post_trip_domain::Extension| -> Value {
+        match post_trip_domain::margin_at(
+            feedback,
+            n.kinetics(),
+            post_trip_domain::fixed(n),
+            &at.neutrons,
+            at.conditions(),
+            e,
+        ) {
+            Ok(m) => {
+                let r = m.reactivity_gain.len();
+                let mut g = vec![0.; r * r];
+                for i in 0..r {
+                    g[i * r + i] = m.reactivity_gain[i];
+                }
+                let delta = leitbild_operating_water::spectrum::decompose(r, &m.operator, &g)
+                    .map(|s| {
+                        s.modes
+                            .iter()
+                            .map(|x| x.lambda.re)
+                            .fold(f64::INFINITY, f64::min)
+                    })
+                    .ok();
+                json!({"holds": m.holds, "margin_dk_k": delta})
+            }
+            Err(e) => json!({"error": format!("{e:?}")}),
+        }
+    };
+    let mut nominal = *extension;
+    nominal.margin_water_term_factor = 1.;
+    let water = j.region_water();
+    let ratio: Vec<f64> = water
+        .iter()
+        .zip(reference)
+        .map(|(w, r)| w.density_kg_m3.value / r)
+        .collect();
+    let fold = |v: &mut dyn Iterator<Item = f64>, max: bool| {
+        v.fold(
+            if max {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            },
+            |a, b| {
+                if max { a.max(b) } else { a.min(b) }
+            },
+        )
+    };
+    json!({"original_domain": original,
+        "density_ratio_max": fold(&mut ratio.iter().copied(), true),
+        "pressure_min_pa": fold(&mut water.iter().map(|w| w.pressure_pa.value), false),
+        "moderator_k_min": fold(&mut water.iter().map(|w| w.temperature_k.value), false),
+        "fuel_feedback_k_max": fold(&mut j.fuel_feedback_temperatures().iter().map(|x| x.value), true),
+        "margin_water_doubled": margin(extension), "margin_water_nominal": margin(&nominal)})
 }
 
 /// S3-D1 measurement (NOT-EVIDENCE): two C0 held-input changes, the SG

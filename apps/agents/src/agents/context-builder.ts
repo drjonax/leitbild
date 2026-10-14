@@ -115,7 +115,13 @@ export const flushIncoming = (
   if (flushed.length > 0) {
     const ctx = history.rooms.get(info.triggerRoomId)
     if (ctx) {
-      const next = [...ctx.history, ...flushed]
+      // The progress lines a turn posts reach history while it runs (an
+      // Agent's own messages skip incoming), before the messages it answered
+      // are flushed here: keep those lines after them, as the Room has them.
+      const newest = Math.max(...flushed.map(m => m.timestamp))
+      let at = ctx.history.length
+      while (at > 0 && ctx.history[at - 1]!.progress === true && ctx.history[at - 1]!.timestamp >= newest) at--
+      const next = [...ctx.history.slice(0, at), ...flushed, ...ctx.history.slice(at)]
       ctx.history = retainedMessages === undefined ? next : next.slice(-retainedMessages)
       ctx.lastActiveAt = Date.now()
     }

@@ -9,7 +9,7 @@
 //! gives the port view the port face reads, and its rows take the port
 //! receipts.
 use super::{
-    CellVolume, Failure, Network, PZR_COORDINATES, Properties,
+    CellVolume, Failure, Fluid, Network, PZR_COORDINATES, Properties,
     properties::{self as props, Reuse, Water},
     rec, s, selected_phase, stratified,
 };
@@ -124,7 +124,7 @@ impl<P: Properties> Network<P> {
         seed: Option<&[f64]>,
         cj: f64,
         mut reuse: Option<&mut Reuse<P::Caloric>>,
-        coupling: Option<&mut dyn super::Coupling>,
+        mut coupling: Option<&mut dyn super::Coupling>,
         volumes: &[CellVolume],
     ) -> Result<(), Failure> {
         if let Some((started, seconds)) = self.wall_budget
@@ -144,110 +144,18 @@ impl<P: Properties> Network<P> {
             )));
         }
         for node in 0..n {
-            self.cell_volume[node] = s(self.volumes[node]);
-            self.cell_volume_rate[node] = None;
-            let Some(c) = volumes.get(node) else {
-                continue;
-            };
-            let (v, r) = (c.volume_m3, c.rate_m3_s);
-            if ![v.value, v.direction, r.value, r.direction]
-                .iter()
-                .all(|x| x.is_finite())
-                || v.value <= 0.
-            {
-                return Err(Failure::Recoverable(format!(
-                    "cell {node}: moving volume {v:?} and rate {r:?} are not a finite positive volume"
-                )));
-            }
-            let fixed = v.value == self.volumes[node]
-                && v.direction == 0.
-                && r.value == 0.
-                && r.direction == 0.;
-            if !fixed {
-                self.cell_volume[node] = v;
-                self.cell_volume_rate[node] = Some(r);
-            }
+            (self.cell_volume[node], self.cell_volume_rate[node]) =
+                self.evaluated_volume(node, volumes)?;
         }
         self.receipts.fill([[s(0.); 3]; 2]);
         self.shaft_power = s(0.);
         let mut points: Vec<[Point; 2]> = vec![[None; 2]; n];
         for (node, current_point) in points.iter_mut().enumerate() {
-            let l = self.cell_layout[node];
-            let p = self.get(y, seed, l.base);
-            self.cells[node] = Cell {
-                pressure: p,
-                phase: [None; 2],
-            };
-            let mut volume = [s(0.); 2];
-            for k in 0..2 {
-                let mass = self.get(y, seed, l.mass[k]);
-                let energy = self.get(y, seed, l.energy[k]);
-                let q = if mass.value != 0. {
-                    Some(props::inverse_for(
-                        &self.properties,
-                        p,
-                        energy / mass,
-                        k,
-                        false,
-                        self.cell_need[node],
-                        reuse.as_deref_mut().map(|r| (r, node)),
-                    )?)
-                } else if let Some(h) = self.leading_enthalpy[node][k] {
-                    Some(props::inverse_for(
-                        &self.properties,
-                        p,
-                        s(h),
-                        k,
-                        true,
-                        self.cell_need[node],
-                        reuse.as_deref_mut().map(|r| (r, node)),
-                    )?)
-                } else {
-                    None
-                };
-                current_point[k] = q;
-                if let Some((q, dq)) = q {
-                    volume[k] = mass / rec(q.density_kg_m3, dq.density_kg_m3);
-                }
-            }
-            // The row keeps the compiled volume as its scale; a fixed cell's
-            // current volume is that same value, so its row is unchanged.
-            let cell_volume = self.cell_volume[node];
-            self.rows[l.base] = (volume[0] + volume[1] - cell_volume) / s(self.volumes[node]);
-            for k in 0..2 {
-                let mass = self.get(y, seed, l.mass[k]);
-                if !selected_phase(mass) {
-                    continue;
-                }
-                let Some((q, dq)) = current_point[k] else {
-                    continue;
-                };
-                let fraction = if k == l.phase {
-                    s(1.) - volume[1 - k] / cell_volume
-                } else {
-                    volume[k] / cell_volume
-                };
-                let boron_concentration = if k == 0 {
-                    if mass.value != 0. {
-                        self.get(y, seed, l.boron) / mass
-                    } else {
-                        s(self.leading_liquid_concentration[node].ok_or_else(|| {
-                            Failure::Recoverable(
-                                "zero-stock liquid direction requires its responsible tracer receipt"
-                                    .into(),
-                            )
-                        })?)
-                    }
-                } else {
-                    s(0.)
-                };
-                self.cells[node].phase[k] = Some(Phase {
-                    fraction,
-                    density: rec(q.density_kg_m3, dq.density_kg_m3),
-                    enthalpy: rec(q.enthalpy_j_kg, dq.enthalpy_j_kg),
-                    boron_concentration,
-                });
-            }
+            let (cell, point, row) =
+                self.regular_cell(node, y, seed, self.cell_volume[node], reuse.as_deref_mut())?;
+            self.cells[node] = cell;
+            *current_point = point;
+            self.rows[self.cell_layout[node].base] = row;
         }
         // The stratified cell's column and the port view its port face reads.
         let column = self.stratified_column(y, seed, reuse.as_deref_mut())?;
@@ -321,15 +229,198 @@ impl<P: Properties> Network<P> {
                 self.receipts[f.to][l.phase][k] = self.receipts[f.to][l.phase][k] + q;
             }
         }
-        if let Some(coupling) = coupling {
+        if let Some(coupling) = coupling.as_deref_mut() {
             self.couple(coupling, y, seed, &points, &phase_mass)?;
         }
         self.compose_sections(y, yp, seed, cj, &points)?;
         self.compose_momentum(t, y, yp, seed, cj, &phase_mass)?;
         self.compose_stocks(y, yp, seed, cj, &points, reuse)?;
-        self.compose_stratified(column, y, yp, seed, cj)?;
+        self.compose_stratified(column, y, yp, seed, cj, coupling)?;
         self.counters.evaluation_wall_s += started.elapsed().as_secs_f64();
         Ok(())
+    }
+
+    /// A regular cell's volume in this evaluation and, for a moving cell,
+    /// its rate: the compiled volume unless `volumes` lists the cell off it
+    /// or moving.
+    fn evaluated_volume(
+        &self,
+        node: usize,
+        volumes: &[CellVolume],
+    ) -> Result<(thermal::Scalar, Option<thermal::Scalar>), Failure> {
+        let compiled = (s(self.volumes[node]), None);
+        let Some(c) = volumes.get(node) else {
+            return Ok(compiled);
+        };
+        let (v, r) = (c.volume_m3, c.rate_m3_s);
+        if ![v.value, v.direction, r.value, r.direction]
+            .iter()
+            .all(|x| x.is_finite())
+            || v.value <= 0.
+        {
+            return Err(Failure::Recoverable(format!(
+                "cell {node}: moving volume {v:?} and rate {r:?} are not a finite positive volume"
+            )));
+        }
+        let fixed = v.value == self.volumes[node]
+            && v.direction == 0.
+            && r.value == 0.
+            && r.direction == 0.;
+        Ok(if fixed { compiled } else { (v, Some(r)) })
+    }
+
+    /// One regular cell at `(y, seed)` with its current volume: its state
+    /// (pressure and present phases), each phase's caloric point and its
+    /// EOS row, as every evaluation computes them.
+    fn regular_cell(
+        &self,
+        node: usize,
+        y: &[f64],
+        seed: Option<&[f64]>,
+        cell_volume: thermal::Scalar,
+        mut reuse: Option<&mut Reuse<P::Caloric>>,
+    ) -> Result<(Cell, [Point; 2], thermal::Scalar), Failure> {
+        let l = self.cell_layout[node];
+        let p = self.get(y, seed, l.base);
+        let mut cell = Cell {
+            pressure: p,
+            phase: [None; 2],
+        };
+        let mut current_point: [Point; 2] = [None; 2];
+        let mut volume = [s(0.); 2];
+        for k in 0..2 {
+            let mass = self.get(y, seed, l.mass[k]);
+            let energy = self.get(y, seed, l.energy[k]);
+            let q = if mass.value != 0. {
+                Some(props::inverse_for(
+                    &self.properties,
+                    p,
+                    energy / mass,
+                    k,
+                    false,
+                    self.cell_need[node],
+                    reuse.as_deref_mut().map(|r| (r, node)),
+                )?)
+            } else if let Some(h) = self.leading_enthalpy[node][k] {
+                Some(props::inverse_for(
+                    &self.properties,
+                    p,
+                    s(h),
+                    k,
+                    true,
+                    self.cell_need[node],
+                    reuse.as_deref_mut().map(|r| (r, node)),
+                )?)
+            } else {
+                None
+            };
+            current_point[k] = q;
+            if let Some((q, dq)) = q {
+                volume[k] = mass / rec(q.density_kg_m3, dq.density_kg_m3);
+            }
+        }
+        // The row keeps the compiled volume as its scale; a fixed cell's
+        // current volume is that same value, so its row is unchanged.
+        let row = (volume[0] + volume[1] - cell_volume) / s(self.volumes[node]);
+        for k in 0..2 {
+            let mass = self.get(y, seed, l.mass[k]);
+            if !selected_phase(mass) {
+                continue;
+            }
+            let Some((q, dq)) = current_point[k] else {
+                continue;
+            };
+            let fraction = if k == l.phase {
+                s(1.) - volume[1 - k] / cell_volume
+            } else {
+                volume[k] / cell_volume
+            };
+            let boron_concentration = if k == 0 {
+                if mass.value != 0. {
+                    self.get(y, seed, l.boron) / mass
+                } else {
+                    s(self.leading_liquid_concentration[node].ok_or_else(|| {
+                        Failure::Recoverable(
+                            "zero-stock liquid direction requires its responsible tracer receipt"
+                                .into(),
+                        )
+                    })?)
+                }
+            } else {
+                s(0.)
+            };
+            cell.phase[k] = Some(Phase {
+                fraction,
+                density: rec(q.density_kg_m3, dq.density_kg_m3),
+                enthalpy: rec(q.enthalpy_j_kg, dq.enthalpy_j_kg),
+                boron_concentration,
+            });
+        }
+        Ok((cell, current_point, row))
+    }
+
+    /// The fluid view of the regular cells `cells` at `y` (values only, as
+    /// an unseeded evaluation with the moving bodies' `volumes` computes
+    /// them), handed to `read`: what a root function reads, without the
+    /// rest of an evaluation. The network's own state is untouched. Every
+    /// other cell holds a NaN pressure and no phase or point, and no face a
+    /// chart, so a read beyond `cells` is refused or non-finite, never a
+    /// stale value.
+    pub fn cells_fluid<R>(
+        &self,
+        y: &[f64],
+        volumes: &[CellVolume],
+        cells: &[usize],
+        read: impl FnOnce(&Fluid<'_>) -> R,
+    ) -> Result<R, Failure> {
+        let n = self.pzr.cell;
+        if !volumes.is_empty() && volumes.len() != n {
+            return Err(Failure::Fatal(format!(
+                "{} cell volumes for {n} regular cells",
+                volumes.len()
+            )));
+        }
+        let none = s(f64::NAN);
+        let mut states = vec![
+            Cell {
+                pressure: none,
+                phase: [None; 2],
+            };
+            self.cells.len()
+        ];
+        let mut points: Vec<[Point; 2]> = vec![[None; 2]; n];
+        let mut current = vec![none; n];
+        let mut mass = [vec![none; n], vec![none; n]];
+        let mut tracer = vec![none; n];
+        for &node in cells {
+            if node >= n {
+                return Err(Failure::Fatal(format!(
+                    "cell {node} is not one of the {n} regular cells"
+                )));
+            }
+            let (volume, _) = self.evaluated_volume(node, volumes)?;
+            let (cell, point, _) = self.regular_cell(node, y, None, volume, None)?;
+            states[node] = cell;
+            points[node] = point;
+            current[node] = volume;
+            for (k, m) in mass.iter_mut().enumerate() {
+                m[node] = self.get(y, None, self.stock_indices(node, k).0);
+            }
+            tracer[node] = self.get(y, None, self.cell_layout[node].boron);
+        }
+        let charts = vec![[None; 2]; self.charts.len()];
+        Ok(read(&Fluid {
+            cells: &states,
+            points: &points,
+            liquid_mass: &mass[0],
+            vapor_mass: &mass[1],
+            tracer: &tracer,
+            charts: &charts,
+            endpoints: &self.endpoints,
+            elevations: &self.elevations,
+            volumes: &self.volumes,
+            current_volumes: &current,
+        }))
     }
 
     fn compose_sections(
@@ -612,12 +703,37 @@ impl<P: Properties> Network<P> {
             .ok_or_else(|| Failure::Fatal("the port face has no PZR port".into()))
     }
 
-    /// The stratified cell's 17 rows on this evaluation's column from its
-    /// coordinates, rates and the liquid port receipt `self.receipts[pzr]`
-    /// (`stratified::residual_on`, no property call with a closed boundary).
-    /// S1's boundary is closed: no heater, zone heat or relief; a vapor
-    /// arrival through the surge port is outside the composed cell and
-    /// refuses.
+    /// The stratified cell's port receipts in its port order: the surge
+    /// port's is the liquid receipt `self.receipts[pzr]` of its face, and a
+    /// spray or relief port, which no face carries, receives none (the
+    /// relief's flow is the cell's own restriction). A vapor arrival through
+    /// the surge port is outside the composed cell and refuses.
+    pub(super) fn pzr_receipts(
+        &self,
+        surge: [[thermal::Scalar; 3]; 2],
+    ) -> Result<Vec<stratified::Receipt>, Failure> {
+        let [liquid, vapor] = surge;
+        if vapor.iter().any(|q| q.value != 0. || q.direction != 0.) {
+            return Err(Failure::Fatal(
+                "a vapor receipt through the surge port is outside the composed stratified cell"
+                    .into(),
+            ));
+        }
+        let mut receipts =
+            vec![stratified::Receipt::zero(); self.stratified.parameters().ports.len()];
+        receipts[self.pzr_port()?] = stratified::Receipt {
+            mass: liquid[0],
+            enthalpy: liquid[1],
+            boron: liquid[2],
+        };
+        Ok(receipts)
+    }
+
+    /// The stratified cell's 19 rows on this evaluation's column from its
+    /// coordinates, rates, its port receipts and its boundary
+    /// (`stratified::residual_on`): the coupled owner's
+    /// ([`super::Coupling::pzr_boundary`]) on this column, or without a
+    /// coupling the network's own closed one (S1).
     fn compose_stratified(
         &mut self,
         column: stratified::Column,
@@ -625,31 +741,26 @@ impl<P: Properties> Network<P> {
         yp: &[f64],
         seed: Option<&[f64]>,
         cj: f64,
+        coupling: Option<&mut dyn super::Coupling>,
     ) -> Result<(), Failure> {
         let x = self.pzr_coordinates(|i| self.get(y, seed, i))?;
         let rate = self.pzr_coordinates(|i| self.rate(yp, seed, cj, i))?;
-        let [liquid, vapor] = self.receipts[self.pzr.cell];
-        if vapor.iter().any(|q| q.value != 0. || q.direction != 0.) {
-            return Err(Failure::Fatal(
-                "a vapor receipt through the surge port is outside the composed stratified cell"
-                    .into(),
-            ));
-        }
-        let receipts = [stratified::Receipt {
-            mass: liquid[0],
-            enthalpy: liquid[1],
-            boron: liquid[2],
-        }];
+        let receipts = self.pzr_receipts(self.receipts[self.pzr.cell])?;
         let scales: [f64; PZR_COORDINATES] = self.scales[self.pzr.coordinates()]
             .try_into()
             .map_err(|_| Failure::Fatal("PZR scale layout".into()))?;
+        let coupled = coupling.is_some();
+        let boundary = match coupling {
+            Some(coupling) => coupling.pzr_boundary(&self.stratified, &column)?,
+            None => self.uncoupled_pzr_boundary(),
+        };
         let evaluation = self.stratified.residual_on(
             &self.properties,
             column,
             &x,
             &rate,
             &receipts,
-            &stratified::Boundary::closed(),
+            &boundary,
             &scales,
         )?;
         for (index, row) in self.pzr.coordinates().zip(evaluation.rows) {
@@ -657,6 +768,7 @@ impl<P: Properties> Network<P> {
         }
         if seed.is_none() {
             self.pzr_evaluation = Some(evaluation);
+            self.pzr_boundary = Some((boundary, coupled));
         }
         Ok(())
     }

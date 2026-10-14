@@ -23,8 +23,9 @@ pub struct MemoRow {
     pub rows: &'static str,
 }
 
-/// Table 1.1 of the memo, in its order.
-pub const TABLE_1_1: [MemoRow; 16] = [
+/// Table 1.1 of the memo, in its order, then the two rows of G6 (S2 design
+/// choices, 11 October), which the memo predates: its counts are zero.
+pub const TABLE_1_1: [MemoRow; 18] = [
     MemoRow {
         row: "Regional N, 24 regions",
         owner: "nuclear",
@@ -151,6 +152,20 @@ pub const TABLE_1_1: [MemoRow; 16] = [
         memo: [0, 52],
         rows: "steady series balance of the guide passage",
     },
+    MemoRow {
+        row: "PZR heater rod segments, shell bands and heads (G6)",
+        owner: "pzr",
+        classes: &[Class::PzrMetal],
+        memo: [0, 0],
+        rows: "U' = Joule - fluid receipts - enclosure exchange - exterior loss; T by the exact 304 inverse",
+    },
+    MemoRow {
+        row: "PZR relief lift (G6)",
+        owner: "pzr",
+        classes: &[Class::PzrReliefLift],
+        memo: [0, 0],
+        rows: "lift' = full strokes per second of the motion; stops by transaction",
+    },
 ];
 /// The memo's totals: differential, algebraic, all.
 pub const MEMO_TOTAL: [usize; 3] = [17418, 3962, 21380];
@@ -214,6 +229,9 @@ fn difference(row: &str) -> Option<&'static str> {
         }
         "Rods 52 x (y, v) of the spider and bodies" => {
             "a held or seated body's v row is algebraic (memo §4): 52 move to algebraic at the hold"
+        }
+        "PZR heater rod segments, shell bands and heads (G6)" | "PZR relief lift (G6)" => {
+            "G6 (S2 design choices, 11 October): the PZR shell, heads, heater metal and relief join S2 after the memo's allocation"
         }
         _ => return None,
     })
