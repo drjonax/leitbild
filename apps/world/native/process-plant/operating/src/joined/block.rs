@@ -371,6 +371,34 @@ pub trait Rods<P> {
         receipts: &mut Receipts<'_>,
         rows: &mut [Scalar],
     ) -> Result<(), Failure>;
+    /// [`Rods::rows`] of the listed clusters only, as `(own row, value)`,
+    /// each bitwise the full evaluation's, with only their receipts.
+    #[allow(clippy::too_many_arguments)] // As rows, with the clusters.
+    fn rows_local(
+        &mut self,
+        properties: &P,
+        t: f64,
+        x: Coordinates<'_>,
+        fluid: &Fluid<'_>,
+        clusters: &[usize],
+        receipts: &mut Receipts<'_>,
+        out: &mut Vec<(usize, Scalar)>,
+    ) -> Result<(), Failure>;
+    /// The clusters whose rows or receipts read, at these coordinates, a
+    /// listed cell whose fluid state carries a direction in `fluid`, or a
+    /// listed face's chart. Every other cluster's rows and receipts take no
+    /// direction from them.
+    fn readers(
+        &self,
+        x: Coordinates<'_>,
+        fluid: &Fluid<'_>,
+        cells: &[usize],
+        faces: &[usize],
+        out: &mut Vec<usize>,
+    ) -> Result<(), Failure>;
+    /// The clusters whose rows, receipts, travel or volumes read own
+    /// coordinate `i`.
+    fn coordinate_readers(&self, i: usize, out: &mut Vec<usize>) -> Result<(), Failure>;
     fn structure(&self) -> Structure;
     /// Root functions on accepted states (seats, kinks if declared).
     fn root_count(&self) -> usize;
