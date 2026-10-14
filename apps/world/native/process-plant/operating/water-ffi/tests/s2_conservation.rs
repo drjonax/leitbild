@@ -121,6 +121,26 @@ fn s2_identities_close_and_a_dropped_term_is_caught() {
         starved.sg_mass[0].json()
     );
     assert!(starved.sg_mass[1].closes(bound));
+    // G6: a dropped PZR exterior loss, the top head's steel row without it
+    // (the row is U' - (Joule - fluid - exchange - exterior)/scale): the unit
+    // identity misses by that loss.
+    let pzr_exterior = c.joined.pzr().map(|b| {
+        let o = c.joined.offsets();
+        let head = o.end - 1;
+        let loss = b.walls().exterior(
+            b.walls().elements().len() - 1,
+            Scalar::constant(b.saturation_temperature_k()),
+        );
+        let mut no_loss = rows.clone();
+        no_loss[head] = Scalar::constant(rows[head].value - loss.value / scales[head]);
+        let mutated = plan.read_rows(&c.joined, &c.y, &c.yp, &no_loss).unwrap();
+        assert!(
+            !mutated.unit_energy.closes(bound),
+            "{}",
+            mutated.unit_energy.json()
+        );
+        json!({"exterior_loss_w": loss.value, "unit_energy": mutated.unit_energy.json()})
+    });
     let receipt = json!({
         "kind": "s2-conservation-identities-NOT-EVIDENCE",
         "provenance": provenance::git_provenance(),
@@ -130,6 +150,7 @@ fn s2_identities_close_and_a_dropped_term_is_caught() {
         "mutations": {
             "dropped_sg_a_metal_heat": {"heat_w": heat, "unit_energy": mutated.unit_energy.json(), "sg_a_energy": mutated.sg_energy[0].json()},
             "dropped_sg_a_feed": {"feed_kg_s": feed, "sg_a_mass": starved.sg_mass[0].json()},
+            "dropped_pzr_top_head_exterior_loss": pzr_exterior,
         },
         "composition": c.receipt,
     });
@@ -180,6 +201,8 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
         first_step_s: g.number("/restartInitialStep_s"),
         start_bound: compose::START_BOUND,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: compose::START_BOUND,
     };
     let max_order = g.count("/maxOrder") as usize;
