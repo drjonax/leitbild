@@ -1366,7 +1366,7 @@ impl<'a, P: Properties> Replay<'a, P> {
                 }
                 (Some(b), false) => b,
                 (None, true) => {
-                    let hook = hook.as_deref_mut().ok_or_else(|| {
+                    let hook = hook.ok_or_else(|| {
                         fatal("a PZR column with a coupled boundary needs the owner's response")
                     })?;
                     moved_boundary = hook.pzr_boundary(&net.stratified, &pass.column)?;
