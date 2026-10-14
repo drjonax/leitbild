@@ -14,8 +14,21 @@
 //!   a mismatch prints the differing paths and fails. Changing an
 //!   expectation needs the lead's written reason.
 //!
-//! Single-threaded; nothing is written unless `LD01_SMOKE_RECORD` names a
-//! new file for the actual counts.
+//! - `settled_state` (tier b): the pinned settled consistent pair
+//!   (`tests/ld01_regression/settled-state.json` names its gzip file beside
+//!   it by sha256 and its packet by hash; `y` and `y'` are stored as exact
+//!   f64 bits). The residual is evaluated there:
+//!   every scaled row must be at most 1e-10, and on the pinned platform the
+//!   rows' exact bits must give the pinned digest. Every credited rate of the
+//!   S2 settling block (revision 7, per 20 s) is checked against its
+//!   threshold; a pin marked provisional names the thresholds it misses and
+//!   the test requires exactly those, so a change either way is reported.
+//!   `settled_state_pin` makes a pin from a settled state: the exact
+//!   consistent start at the settled `y` (stock KLU projection and rate
+//!   solve), written compressed with its packet hash to a new file.
+//!
+//! Single-threaded; nothing is written unless `LD01_SMOKE_RECORD` or
+//! `LD01_SETTLED_STATE_OUT` names a new file.
 #![cfg(feature = "ida")]
 #[path = "common/cpu.rs"]
 mod cpu;
@@ -754,4 +767,376 @@ fn a_count_mismatch_prints_each_differing_path() {
         ]
     );
     assert!(diff(&expected, &expected).is_empty());
+}
+
+// ------------------------------------------------------- the settled state
+
+/// The S2 settling block's credited outputs (revision 7, (E)) and their
+/// thresholds per 20 s: (name, threshold, relative to the value).
+const SETTLING: [(&str, f64, bool); 8] = [
+    ("core_power", 6.9e-5, true),
+    ("average_coolant_k", 3.4e-3, false),
+    ("core_cell_liquid_k", 0.01, false),
+    ("pt1_pa", 345., false),
+    ("sg_pressure_pa", 345., false),
+    ("pzr_level_m", 7e-4, false),
+    ("sg_liquid_m3", 3.4e-3, false),
+    ("loop_flow", 5e-4, true),
+];
+const SETTLING_WINDOW_S: f64 = 20.;
+const ROW_BOUND: f64 = 1e-10;
+
+/// The credited outputs at `(t, y)`: each name of [`SETTLING`] with one
+/// value per instance (cells, SGs, loops).
+fn credited(
+    joined: &mut Joined<If97>,
+    network_packet: &NetworkPacket,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+) -> Vec<(&'static str, Vec<f64>)> {
+    use leitbild_operating_plant::network::Properties;
+    joined
+        .evaluate(t, y, yp, None, 0., None)
+        .expect("credited state");
+    let released = joined.heats().nuclear.released_w.value;
+    let net = &joined.network;
+    let regions = &network_packet.mechanics.regions;
+    let (mut mass, mut weighted, mut core) = (0., 0., Vec::new());
+    for (c, l) in net.cell_layout.iter().enumerate() {
+        let id = regions[c].id.as_str();
+        let p = y[l.base] * net.scales()[l.base];
+        let m = y[l.mass[0]] * net.scales()[l.mass[0]];
+        let u = y[l.energy[0]] * net.scales()[l.energy[0]];
+        let q = net
+            .properties()
+            .caloric(false, p, u / m, false)
+            .expect("cell caloric");
+        let temperature = net.properties().values(&q).temperature_k;
+        // The 27 primary cells: every regular cell but SURGE.
+        if id != "SURGE" {
+            mass += m;
+            weighted += m * temperature;
+        }
+        if id.starts_with("CORE.") {
+            core.push(temperature);
+        }
+    }
+    let taps = net.pzr_taps().expect("PZR taps");
+    let face = |id: &str| {
+        network_packet
+            .mechanics
+            .faces
+            .iter()
+            .position(|f| f.id == id)
+            .unwrap_or_else(|| panic!("face {id}"))
+    };
+    let loops: Vec<f64> = ["RETURN.A->DOWN", "RETURN.B->DOWN"]
+        .iter()
+        .map(|f| {
+            net.chart(face(f), 0)
+                .expect("loop chart")
+                .mass_flow_kg_s
+                .value
+        })
+        .collect();
+    let (mut sg_p, mut sg_v) = (Vec::new(), Vec::new());
+    let mut k = 0;
+    for (owner, layout) in joined.layouts() {
+        for (i, label) in layout.labels.iter().enumerate() {
+            if owner == "secondary" && label.ends_with(".p_s") {
+                sg_p.push(y[k] * layout.scales[i]);
+            }
+            if owner == "secondary" && label.ends_with(".V_l") {
+                sg_v.push(y[k] * layout.scales[i]);
+            }
+            k += 1;
+        }
+    }
+    vec![
+        ("core_power", vec![released]),
+        ("average_coolant_k", vec![weighted / mass]),
+        ("core_cell_liquid_k", core),
+        ("pt1_pa", vec![taps.pt1_pa.value]),
+        ("sg_pressure_pa", sg_p),
+        ("pzr_level_m", vec![taps.collapsed_level_m.value]),
+        ("sg_liquid_m3", sg_v),
+        ("loop_flow", loops),
+    ]
+}
+
+/// Each credited output's change over the settling window at the pair's
+/// exact rates (`y'`), by a central difference along `y'` of half-width
+/// `h`, against its threshold: (name, worst change, threshold, holds).
+fn settling_rates(
+    joined: &mut Joined<If97>,
+    network_packet: &NetworkPacket,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+) -> Vec<(&'static str, f64, f64, bool)> {
+    let h = 0.01;
+    let shifted =
+        |sign: f64| -> Vec<f64> { y.iter().zip(yp).map(|(v, r)| v + sign * h * r).collect() };
+    let at = credited(joined, network_packet, t, y, yp);
+    let ahead = credited(joined, network_packet, t + h, &shifted(1.), yp);
+    let behind = credited(joined, network_packet, t - h, &shifted(-1.), yp);
+    // Leave the operator evaluated at the pair itself.
+    credited(joined, network_packet, t, y, yp);
+    SETTLING
+        .iter()
+        .map(|(name, threshold, relative)| {
+            let find =
+                |v: &[(&str, Vec<f64>)]| v.iter().find(|(n, _)| n == name).unwrap().1.clone();
+            let (a, b, c) = (find(&at), find(&ahead), find(&behind));
+            assert_eq!(a.len(), b.len());
+            let worst = a
+                .iter()
+                .zip(b.iter().zip(&c))
+                .map(|(v, (p, m))| {
+                    let change = (p - m) / (2. * h) * SETTLING_WINDOW_S;
+                    if *relative {
+                        (change / v).abs()
+                    } else {
+                        change.abs()
+                    }
+                })
+                .fold(0., f64::max);
+            (*name, worst, *threshold, worst <= *threshold)
+        })
+        .collect()
+}
+
+/// Exact f64 bits as hex: serde_json's default float parsing is best
+/// effort (it may land one ULP off), so a pinned state is stored by bits.
+fn bits(v: &[f64]) -> Vec<String> {
+    v.iter().map(|x| format!("{:016x}", x.to_bits())).collect()
+}
+fn from_bits(v: &Value) -> Vec<f64> {
+    v.as_array()
+        .expect("bits array")
+        .iter()
+        .map(|x| {
+            f64::from_bits(
+                u64::from_str_radix(x.as_str().expect("hex bits"), 16).expect("hex bits"),
+            )
+        })
+        .collect()
+}
+
+/// FNV-1a over the exact bits of every row value.
+fn digest(rows: &[f64]) -> String {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for v in rows {
+        for b in v.to_bits().to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{h:#018x}")
+}
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    use std::process::{Command as Process, Stdio};
+    let mut child = Process::new("gzip")
+        .args(["-9", "-n", "-c"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("gzip");
+    let mut input = child.stdin.take().unwrap();
+    let data = bytes.to_vec();
+    let writer = std::thread::spawn(move || input.write_all(&data));
+    let out = child.wait_with_output().expect("gzip");
+    writer.join().unwrap().expect("gzip input");
+    assert!(out.status.success(), "gzip");
+    out.stdout
+}
+fn gunzip(path: &Path) -> Vec<u8> {
+    let out = std::process::Command::new("gzip")
+        .args(["-dc"])
+        .arg(path)
+        .output()
+        .expect("gzip");
+    assert!(out.status.success(), "gzip -dc {}", path.display());
+    out.stdout
+}
+
+/// The composed operator at the packet and the S1 gates, for evaluating a
+/// stored state (its own composed coordinates are discarded).
+fn operator(bytes: &[u8], gates: &Value) -> (Composed, NetworkPacket) {
+    let network_packet: NetworkPacket = serde_json::from_slice(bytes).expect("network packet");
+    (composed(bytes, gates), network_packet)
+}
+
+/// Make a settled-state pin (tier b) from a settled `{packet, t_s, y, yp}`
+/// state (`LD01_SETTLED_STATE_SOURCE`, e.g. a settling probe's
+/// `LD01_SETTLED_STATE_OUT`): the exact consistent start at its `y`, written
+/// gzip-compressed (`-n`, reproducible) to the new file
+/// `LD01_SETTLED_STATE_OUT`. Prints the pin's summary for
+/// `tests/ld01_regression/settled-state.json`.
+#[test]
+#[ignore = "makes a settled-state pin: requires the joined packet, the wiki, IF97, stock IDA/KLU and a settled state"]
+fn settled_state_pin() {
+    let source_path =
+        std::env::var("LD01_SETTLED_STATE_SOURCE").expect("LD01_SETTLED_STATE_SOURCE");
+    let out =
+        PathBuf::from(std::env::var("LD01_SETTLED_STATE_OUT").expect("LD01_SETTLED_STATE_OUT"));
+    assert!(!out.exists(), "never overwritten: {}", out.display());
+    let source_bytes = std::fs::read(&source_path).expect("settled state");
+    let source: Value = serde_json::from_slice(&source_bytes).expect("settled state shape");
+    let (_, bytes) = packet_bytes();
+    let packet_sha256 = sha256(&bytes);
+    let named = source["packet"].as_str().unwrap_or("");
+    assert!(
+        named.contains(&packet_sha256[..8]),
+        "the state names packet {named}, not this packet ({packet_sha256})"
+    );
+    let gates = s1_gates();
+    let (
+        Composed {
+            mut joined,
+            ids,
+            atol,
+            rtol,
+            ..
+        },
+        network_packet,
+    ) = operator(&bytes, &gates);
+    let t = source["t_s"].as_f64().expect("t_s");
+    let vector = |k: &str| -> Vec<f64> {
+        source[k]
+            .as_array()
+            .unwrap_or_else(|| panic!("{k}"))
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    let (mut y, yp_settled) = (vector("y"), vector("yp"));
+    assert_eq!(y.len(), joined.dimension());
+    joined
+        .evaluate(t, &y, &yp_settled, None, 0., None)
+        .expect("settled residual");
+    let settled_rows = joined
+        .rows()
+        .iter()
+        .fold(0_f64, |m, r| m.max(r.value.abs()));
+    let start_weights = weights(&y, &atol, rtol);
+    let (yp, report) =
+        consistent_start(&mut joined, t, &mut y, &ids, &start_weights, START_BOUND, 3)
+            .expect("exact consistent start at the settled state");
+    joined.evaluate(t, &y, &yp, None, 0., None).unwrap();
+    let rows: Vec<f64> = joined.rows().iter().map(|r| r.value).collect();
+    let rates = settling_rates(&mut joined, &network_packet, t, &y, &yp);
+    let pin = json!({
+        "kind": "ld01-settled-state-pin",
+        "status": "NOT-EVIDENCE regression pin; S2 is not declared",
+        "packet_sha256": packet_sha256,
+        "source": {"file": source_path, "sha256": sha256(&source_bytes), "max_abs_scaled_row_as_settled": settled_rows},
+        "start": {"projection_passes": report.projection_passes, "rate_passes": report.rate_passes,
+            "correction_wrms": report.correction_wrms, "residual": report.residual.value, "constraint_rate": report.constraint_rate.value},
+        "t_s": t, "y_bits": bits(&y), "yp_bits": bits(&yp),
+    });
+    let compressed = gzip(&serde_json::to_vec(&pin).unwrap());
+    std::fs::write(&out, &compressed).unwrap();
+    let misses: Vec<&str> = rates.iter().filter(|r| !r.3).map(|r| r.0).collect();
+    println!(
+        "{}",
+        json!({
+            "file": out.file_name().unwrap().to_string_lossy(), "sha256": sha256(&compressed), "bytes": compressed.len(),
+            "packet_sha256": packet_sha256, "t_s": t,
+            "provisional": !misses.is_empty(), "known_misses": misses,
+            "digest": {platform(): digest(&rows)},
+            "max_abs_scaled_row": rows.iter().fold(0_f64, |m, r| m.max(r.abs())),
+            "rates_per_20_s": rates.iter().map(|r| (r.0.to_string(), json!({"change": r.1, "threshold": r.2, "holds": r.3}))).collect::<Map<String, Value>>(),
+            "source": pin["source"], "start": pin["start"],
+        })
+    );
+}
+
+#[test]
+#[ignore = "settled-state regression: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn settled_state() {
+    let pin_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ld01_regression/settled-state.json");
+    let pin: Value = serde_json::from_slice(&std::fs::read(&pin_path).expect("settled-state pin"))
+        .expect("pin shape");
+    let file = pin_path.with_file_name(pin["file"].as_str().expect("the pinned state's file"));
+    let compressed = std::fs::read(&file).expect("pinned state file");
+    assert_eq!(
+        sha256(&compressed),
+        pin["sha256"].as_str().unwrap(),
+        "{} is not the pinned state",
+        file.display()
+    );
+    let state: Value = serde_json::from_slice(&gunzip(&file)).expect("pinned state shape");
+    let (_, bytes) = packet_bytes();
+    let packet_sha256 = sha256(&bytes);
+    assert_eq!(
+        packet_sha256,
+        pin["packet_sha256"].as_str().unwrap(),
+        "the pin's packet"
+    );
+    assert_eq!(state["packet_sha256"], pin["packet_sha256"]);
+    let gates = s1_gates();
+    let (Composed { mut joined, .. }, network_packet) = operator(&bytes, &gates);
+    let t = state["t_s"].as_f64().unwrap();
+    let (y, yp) = (from_bits(&state["y_bits"]), from_bits(&state["yp_bits"]));
+    joined
+        .evaluate(t, &y, &yp, None, 0., None)
+        .expect("residual at the pinned state");
+    let rows: Vec<f64> = joined.rows().iter().map(|r| r.value).collect();
+    let (worst_row, worst) = rows.iter().enumerate().fold((0, 0_f64), |(i, m), (k, r)| {
+        if r.abs() > m || r.is_nan() {
+            (k, r.abs())
+        } else {
+            (i, m)
+        }
+    });
+    let label = joined
+        .layouts()
+        .iter()
+        .flat_map(|(o, l)| l.labels.iter().map(move |x| format!("{o}/{x}")))
+        .nth(worst_row)
+        .unwrap_or_default();
+    let rates = settling_rates(&mut joined, &network_packet, t, &y, &yp);
+    let misses: Vec<&str> = rates.iter().filter(|r| !r.3).map(|r| r.0).collect();
+    let found_digest = digest(&rows);
+    let pinned_digest = pin["digest"][platform()].as_str();
+    println!(
+        "{}",
+        json!({"max_abs_scaled_row": worst, "at": label, "digest": found_digest, "pinned_digest": pinned_digest,
+            "rates_per_20_s": rates.iter().map(|r| (r.0.to_string(), json!({"change": r.1, "threshold": r.2, "holds": r.3}))).collect::<Map<String, Value>>(),
+            "misses": misses, "provisional": pin["provisional"]})
+    );
+    let mut problems = Vec::new();
+    if worst.is_nan() || worst > ROW_BOUND {
+        problems.push(format!(
+            "the scaled residual is {worst:e} at {label} (bound {ROW_BOUND:e})"
+        ));
+    }
+    if let Some(d) = pinned_digest
+        && d != found_digest
+    {
+        problems.push(format!(
+            "the rows' bits changed on {} ({found_digest}, pinned {d}): a non-bitwise change at the pinned state needs the lead's reason and a re-pin",
+            platform()
+        ));
+    }
+    let known: Vec<&str> = pin["known_misses"]
+        .as_array()
+        .map(|v| v.iter().filter_map(|x| x.as_str()).collect())
+        .unwrap_or_default();
+    if misses != known {
+        problems.push(format!(
+            "settling thresholds missed: {misses:?}; the pin (provisional: {}) records {known:?}",
+            pin["provisional"]
+        ));
+    }
+    assert!(
+        problems.is_empty(),
+        "settled-state regression:\n{}",
+        problems.join("\n")
+    );
 }
