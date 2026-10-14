@@ -345,6 +345,16 @@ fn joined_blocks_against_colored() {
         }
         best = best.min(cpu() - s);
     }
+    // The block values' bits, for a bitwise comparison of two builds.
+    if let Ok(path) = std::env::var("LD01_JAC_VALUES_OUT") {
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, &bytes))
+            .unwrap_or_else(|e| panic!("values {path} must be new: {e}"));
+    }
     let mut worst = 0_f64;
     let mut worst_at = json!(null);
     let mut differing = Vec::new();
