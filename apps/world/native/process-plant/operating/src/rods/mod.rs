@@ -28,8 +28,8 @@ pub mod guide;
 
 use crate::{
     joined::block::{
-        CellVolume, Class, Command, Coordinates, Fluid, Layout, Receipts, Rods, Structure,
-        Transaction,
+        CellVolume, Class, Command, Coordinates, Fluid, Layout, OwnerAccount, Receipts, Rods,
+        Structure, Transaction,
     },
     local_flow::Phase,
     network::{Failure, packet::Packet},
@@ -1017,6 +1017,31 @@ impl RodBlock {
 impl<P> Rods<P> for RodBlock {
     fn layout(&self) -> &Layout {
         &self.layout
+    }
+    fn account(&self, x: Coordinates<'_>, rows: &[Scalar]) -> Result<OwnerAccount, Failure> {
+        if rows.len() != self.layout.len() || x.len() != self.layout.len() {
+            return Err(fatal("rods: account layout"));
+        }
+        let (mut energy, mut rate) = (0., 0.);
+        for c in 0..self.clusters.len() {
+            let (y, v) = (x.value(3 * c).value, x.value(3 * c + 1).value);
+            energy += 0.5 * self.mass * v * v + self.mass * self.gravity * y;
+            // The rows' own rates: y' = v always; v' = F_net / M for a free
+            // body, whose row is v' - F_net/M. A held or seated body's row
+            // is the constraint v = 0 and pays no kinetic rate.
+            let travel = x.rate(3 * c).value - rows[3 * c].value;
+            let acceleration = match self.modes[c] {
+                Mode::Free => x.rate(3 * c + 1).value - rows[3 * c + 1].value,
+                Mode::Held | Mode::Seated => 0.,
+            };
+            rate += self.mass * v * acceleration + self.mass * self.gravity * travel;
+        }
+        Ok(OwnerAccount {
+            mechanical_j: energy,
+            mechanical_rate_w: rate,
+            crossings: Vec::new(),
+            received_heat_w: Vec::new(),
+        })
     }
     fn prepared(&self) -> Vec<f64> {
         self.prepared.clone()

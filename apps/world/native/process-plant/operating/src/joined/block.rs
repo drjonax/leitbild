@@ -273,6 +273,35 @@ pub struct Transaction {
     pub receipt: serde_json::Value,
 }
 
+/// One owner's part of the unit's conservation account
+/// ([`account`](super::account)), values only, at the owner's last `rows`
+/// evaluation or at the coordinates it is handed.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct OwnerAccount {
+    /// Energy the owner stores outside its energy-class coordinates (J):
+    /// the rod bodies' kinetic and potential energy.
+    pub mechanical_j: f64,
+    /// That energy's rate as the owner's own rows imply it (W).
+    pub mechanical_rate_w: f64,
+    /// What crosses the unit's envelope at the owner's ports, each positive
+    /// entering the unit.
+    pub crossings: Vec<Crossing>,
+    /// Heat each of the owner's volumes received from another block as its
+    /// rows used it (W): the SG secondary's metal heat, per SG.
+    pub received_heat_w: Vec<f64>,
+}
+
+/// One port's crossing of the unit's envelope, positive entering.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Crossing {
+    pub port: String,
+    /// The owner volume the port belongs to (an SG index for the secondary).
+    pub volume: usize,
+    pub mass_kg_s: f64,
+    pub energy_w: f64,
+    pub tracer_kg_s: f64,
+}
+
 /// The SG secondary owner: one equilibrium volume per SG with its steam,
 /// relief and feed ports (memo §2). Heat enters only through the SG metal,
 /// whose contacts the joined operator evaluates against [`SecondaryView`].
@@ -340,6 +369,10 @@ pub trait Secondary<P> {
         t: f64,
         y: &mut [f64],
     ) -> Result<Option<Transaction>, Failure>;
+    /// The conservation account of the last `rows` evaluation: per SG, the
+    /// feed entering and the steam and relief leaving (mass and energy at
+    /// the enthalpies the rows used), and the metal heat the rows received.
+    fn account(&self) -> OwnerAccount;
 }
 
 /// The rod bodies (spider and bodies, H7), their guide passages (F1 (a),
@@ -406,4 +439,9 @@ pub trait Rods<P> {
     /// fluid state (the guide passages' steady currents), after which
     /// `prepared()` holds them. No differential coordinate changes.
     fn prepare(&mut self, properties: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure>;
+    /// The conservation account at these coordinates and the owner's own
+    /// physical rows of the same evaluation: the bodies' kinetic and
+    /// potential energy and its rate as the rows imply it. The guide
+    /// passages carry water between network cells only, so no crossing.
+    fn account(&self, x: Coordinates<'_>, rows: &[Scalar]) -> Result<OwnerAccount, Failure>;
 }

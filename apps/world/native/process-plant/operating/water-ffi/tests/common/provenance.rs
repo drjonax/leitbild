@@ -107,3 +107,31 @@ pub fn water_build(
     }
     serde_json::from_str(receipt).map_err(|e| format!("{file}: {e}"))
 }
+
+/// App and wiki provenance of a receipt: the app commit and whether its
+/// worktree was dirty, the wiki directory and its commit. A `git archive`
+/// directory has no commit of its own: `LD01_WIKI_COMMIT` names it, and the
+/// receipt says which of the two it carries.
+pub fn git_provenance() -> Value {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let wiki = std::env::var("LD01_WIKI_ROOT").ok();
+    let wiki_commit = wiki
+        .as_ref()
+        .map(|w| git(&["-C", w, "rev-parse", "HEAD"]))
+        .filter(|c| !c.is_empty());
+    serde_json::json!({
+        "app_commit": git(&["rev-parse", "HEAD"]),
+        "app_worktree_dirty": !git(&["status", "--porcelain"]).is_empty(),
+        "wiki": wiki,
+        "wiki_commit": wiki_commit,
+        "wiki_commit_named": std::env::var("LD01_WIKI_COMMIT").ok(),
+        "sundials_prefix": std::env::var("LD01_OPERATING_SUNDIALS_PREFIX").ok(),
+        "water_build_dir": WATER_LIB_DIR,
+    })
+}
