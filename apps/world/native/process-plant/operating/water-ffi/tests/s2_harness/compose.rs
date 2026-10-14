@@ -13,7 +13,7 @@ use crate::{cpu::process_cpu_s, gates::Block, provenance::sha256_file};
 use leitbild_operating_plant::{
     initialization::SurfacePolicy,
     joined::{
-        blocks::JoinedJacobian,
+        blocks::{Classes, JoinedJacobian, jacobian_blocks},
         operator::{Joined, RodPort, SecondaryPort},
         packet,
     },
@@ -250,13 +250,16 @@ pub struct Composed {
 /// so a harness composing several runs computes it once.
 pub type Settled = (Vec<f64>, Vec<f64>, Value);
 
-/// Steps (A)-(D) on the packet named by `LD01_OPERATING_HOT_SPINE_PACKET`.
+/// Steps (A)-(D) on the packet named by `LD01_OPERATING_HOT_SPINE_PACKET`,
+/// on G12's tolerance classes only.
 pub fn compose(shared: &Block) -> Composed {
-    compose_from(shared, None)
+    compose_from(shared, None, None)
 }
 
-/// Steps (A)-(D), with step (A)'s export given (`Some`) or computed.
-pub fn compose_from(shared: &Block, settled: Option<&Settled>) -> Composed {
+/// Steps (A)-(D), with step (A)'s export given (`Some`) or computed, and
+/// with `ld01-s2-gates`' derived tolerance classes (S2-D24,
+/// [`derive_tolerances`]) applied when `gates` is given and declares them.
+pub fn compose_from(shared: &Block, gates: Option<&Block>, settled: Option<&Settled>) -> Composed {
     let started = process_cpu_s();
     let packet = packet_file();
     let network_packet: NetworkPacket =
@@ -337,7 +340,25 @@ pub fn compose_from(shared: &Block, settled: Option<&Settled>) -> Composed {
     )
     .expect("exact consistent start");
     let start_cpu_s = process_cpu_s() - start_cpu;
+    let mut atol = atol;
+    let derived = match gates {
+        Some(g) => derive_tolerances(
+            &mut joined,
+            &structure,
+            g,
+            classes.relative,
+            0.,
+            &y,
+            &yp,
+            &mut atol,
+        )
+        .expect("S2-D24 derived tolerance classes"),
+        None => {
+            json!({"declared": false, "reason": "composed on G12's classes only (no ld01-s2-gates given)"})
+        }
+    };
     let receipt = json!({
+        "derived_tolerances": derived,
         "s1_settling": s1, "flowing_preparation_max_cycle_drive_pa": flowing["max_cycle_drive_pa"],
         "owners_prepared": owners.iter().map(|t| t.receipt.clone()).collect::<Vec<_>>(),
         "surfaces_worst_residual_w": surfaces.iter().map(|s| s.residual_w.iter().fold(0., |a: f64, r| a.max(r.abs()))).fold(0., f64::max),
@@ -363,7 +384,10 @@ pub fn compose_from(shared: &Block, settled: Option<&Settled>) -> Composed {
 }
 
 /// The joined absolute tolerances: the network's classes on its own
-/// coordinates and the scaled stock floor on every other (G12).
+/// coordinates and the scaled stock floor on every other (G12). The
+/// pressure-driven algebraic currents' derived classes (S2-D24) replace
+/// their entries after the composed state's exact start, from the joined
+/// Jacobian there ([`derive_tolerances`]).
 pub fn joined_tolerances(joined: &Joined<If97>, y: &[f64], classes: ToleranceClasses) -> Vec<f64> {
     let n_net = joined.offsets().nuclear;
     let mut atol = joined
@@ -372,6 +396,163 @@ pub fn joined_tolerances(joined: &Joined<If97>, y: &[f64], classes: ToleranceCla
         .unwrap();
     atol.resize(y.len(), classes.stock_scaled);
     atol
+}
+
+/// S2-D24 on a Jacobian in CSC (`pointers`, `rows`, `values`, the
+/// stored order of the joined pattern, `∂F/∂y` in solver scaling): each
+/// row `r` of `derived` is an algebraic current set by pressures; its
+/// sensitivity to pressure column `j` is `∂m/∂p_j = −J[r,j] / J[r,r]`, and
+/// its derived absolute tolerance is `max_j atol_j |∂m/∂p_j|` over the
+/// pressure columns it reads (for a law of `Δp` alone, `atol_p |∂m/∂Δp|`).
+/// Returns per row `(tolerance, |∂m/∂p| at the maximum, its column)`.
+/// A row without a diagonal or without a pressure column refuses.
+pub fn derived_tolerances(
+    pointers: &[usize],
+    rows: &[usize],
+    values: &[f64],
+    derived: &[usize],
+    pressure: &[bool],
+    atol: &[f64],
+) -> Result<Vec<(f64, f64, usize)>, String> {
+    let index: std::collections::BTreeMap<usize, usize> =
+        derived.iter().enumerate().map(|(k, r)| (*r, k)).collect();
+    let mut diagonal = vec![None; derived.len()];
+    let mut entries: Vec<Vec<(usize, f64)>> = vec![Vec::new(); derived.len()];
+    for j in 0..pointers.len() - 1 {
+        for position in pointers[j]..pointers[j + 1] {
+            if let Some(k) = index.get(&rows[position]) {
+                if rows[position] == j {
+                    diagonal[*k] = Some(values[position]);
+                } else if pressure[j] {
+                    entries[*k].push((j, values[position]));
+                }
+            }
+        }
+    }
+    derived
+        .iter()
+        .enumerate()
+        .map(|(k, r)| {
+            let d = diagonal[k]
+                .filter(|d| *d != 0. && d.is_finite())
+                .ok_or_else(|| format!("row {r} has no finite nonzero diagonal"))?;
+            entries[k]
+                .iter()
+                .map(|(j, v)| (atol[*j] * (v / d).abs(), (v / d).abs(), *j))
+                .max_by(|a, b| a.0.total_cmp(&b.0))
+                .ok_or_else(|| format!("row {r} reads no pressure column"))
+        })
+        .collect()
+}
+
+/// The pressure class whose columns set an S2-D24 current: the network's
+/// cell pressures (decision 0013's pressure rows).
+pub const PRESSURE_CLASS: &str = "network/CellPressure";
+
+/// S2-D24 applied to `atol` as `ld01-s2-gates` declares it
+/// (`derivedTolerance`: the covered class as `owner/Class` of the joined
+/// layouts, the rule, the declared value in kg/s, TBD(lead) until filled,
+/// and G12's value it replaces).
+///
+/// The rule `atol_m = atol_p × |∂m/∂Δp|` is evaluated from the block
+/// Jacobian `∂F/∂y` at `(t, y, y')` ([`derived_tolerances`]). `atol_p` is the
+/// pressure class as revision 7 and RODCOST's V1 state it, the contract's
+/// `rtol |p|` (≈155 Pa); the pressure coordinates' own absolute tolerance
+/// (rtol over the isentropic compressibility, kPa) gives a much looser
+/// class and is reported beside it, never applied. When `value_kg_s` is
+/// declared, that value is applied to every covered coordinate (in its
+/// solver scaling) and the derived one is reported against it; while it is
+/// open, the derived value is applied, labelled a preview. Absent from the
+/// block, nothing changes and the receipt says so. Returns the receipt: each
+/// covered coordinate's applied and derived tolerance and sensitivity.
+#[allow(clippy::too_many_arguments)] // The operator, its structure, the rule, the contract's rtol and the state.
+pub fn derive_tolerances(
+    joined: &mut Joined<If97>,
+    structure: &JoinedJacobian,
+    gates: &Block,
+    rtol: f64,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+    atol: &mut [f64],
+) -> Result<Value, String> {
+    if gates.value.get("derivedTolerance").is_none() {
+        return Ok(
+            json!({"declared": false, "reason": "ld01-s2-gates declares no derivedTolerance: G12's classes stand"}),
+        );
+    }
+    let class = gates.text("/derivedTolerance/class");
+    let rule = gates.text("/derivedTolerance/rule");
+    let decision = gates.text("/derivedTolerance/decision");
+    let g12_kg_s = gates.number("/derivedTolerance/g12Value_kg_s");
+    let declared_kg_s = gates.open_number("/derivedTolerance/value_kg_s");
+    let class_of: Vec<String> = joined
+        .layouts()
+        .iter()
+        .flat_map(|(owner, l)| l.classes.iter().map(move |c| format!("{owner}/{c:?}")))
+        .collect();
+    let labels: Vec<String> = joined
+        .layouts()
+        .iter()
+        .flat_map(|(owner, l)| l.labels.iter().map(move |x| format!("{owner}/{x}")))
+        .collect();
+    if class_of.len() != y.len() {
+        return Err("the layouts do not cover the joined coordinates".into());
+    }
+    let pressure: Vec<bool> = class_of.iter().map(|c| c == PRESSURE_CLASS).collect();
+    if !pressure.iter().any(|p| *p) {
+        return Err(format!(
+            "no coordinate of the pressure class {PRESSURE_CLASS}"
+        ));
+    }
+    let rows: Vec<usize> = (0..y.len()).filter(|i| class_of[*i] == class).collect();
+    if rows.is_empty() {
+        return Err(format!("no coordinate of the derived class {class}"));
+    }
+    let scales = joined.scales();
+    let mut values = vec![0.; structure.pattern.indices().len()];
+    jacobian_blocks(joined, structure, t, 0., y, yp, &mut values, Classes::ALL)
+        .map_err(|e| format!("block Jacobian at the composed state: {e:?}"))?;
+    let relative: Vec<f64> = y.iter().map(|v| rtol * v.abs()).collect();
+    let (pointers, indices) = (structure.pattern.pointers(), structure.pattern.indices());
+    let derived = derived_tolerances(pointers, indices, &values, &rows, &pressure, &relative)?;
+    let absolute = derived_tolerances(pointers, indices, &values, &rows, &pressure, atol)?;
+    let mut per = Vec::new();
+    let mut applied_kg_s: Vec<f64> = Vec::new();
+    for ((r, d), a) in rows.iter().zip(&derived).zip(&absolute) {
+        let scale = scales[*r];
+        let applied = declared_kg_s.map_or(d.0, |v| v / scale);
+        per.push(
+            json!({"coordinate": labels[*r], "g12_atol_kg_s": atol[*r] * scale,
+            "applied_atol_kg_s": applied * scale, "derived_atol_kg_s": d.0 * scale,
+            "dm_ddp_kg_s_per_pa": d.1 * scale / scales[d.2], "pressure_column": labels[d.2],
+            "atol_p_pa": relative[d.2] * scales[d.2],
+            "with_the_pressure_coordinates_absolute_tolerance_kg_s": a.0 * scale,
+            "pressure_absolute_tolerance_pa": atol[d.2] * scales[d.2]}),
+        );
+        applied_kg_s.push(applied * scale);
+        atol[*r] = applied;
+    }
+    let range = |v: Vec<f64>| {
+        [
+            v.iter().copied().fold(f64::INFINITY, f64::min),
+            v.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        ]
+    };
+    let derived_kg_s: Vec<f64> = rows
+        .iter()
+        .zip(&derived)
+        .map(|(r, d)| d.0 * scales[*r])
+        .collect();
+    Ok(
+        json!({"declared": true, "decision": decision, "class": class, "rule": rule,
+        "atol_p": "the contract's rtol |p| at the evaluated state (revision 7, RODCOST V1); the pressure coordinates' own absolute tolerance is reported beside it",
+        "pressure_class": PRESSURE_CLASS, "relative_tolerance": rtol, "t_s": t,
+        "g12_value_kg_s": g12_kg_s, "declared_value_kg_s": declared_kg_s,
+        "applied": if declared_kg_s.is_some() { "the declared value" } else { "PREVIEW: the derived value (value_kg_s is TBD(lead))" },
+        "applied_kg_s_range": range(applied_kg_s), "derived_kg_s_range": range(derived_kg_s),
+        "coordinates": per.len(), "per_coordinate": per}),
+    )
 }
 
 /// The integrator's error weights at a state, `1 / (rtol |y| + atol)`.

@@ -177,6 +177,7 @@ fn complete_receipt() -> Value {
             report_only_step_cap: None,
             caps_report_only: true,
             rods_observed: false,
+            domain_exit_stops: true,
         }),
         process_cpu_s: 1.,
         ..run::RunRecord::default()
@@ -319,10 +320,12 @@ fn a_gate_run_refuses_while_a_tbd_is_open_unlogged_or_undeclared() {
     let pin = guards::pin(&gates, Some(&pin_row)).unwrap();
     // Revision 7 as drafted: every listed TBD is open.
     let tbd = guards::tbd_state(&gates, Some(&pin_row)).unwrap();
+    let listed = gates.value["tbd"].as_object().unwrap().len();
+    assert!(listed >= 17, "{tbd}");
     let open = tbd["open"].as_array().unwrap().len();
-    assert_eq!(open, 17, "{tbd}");
+    assert_eq!(open, listed, "{tbd}");
     let refusals = guards::gate_run_refusals(&pin, &tbd);
-    assert_eq!(refusals.len(), 17, "{refusals:?}");
+    assert_eq!(refusals.len(), listed, "{refusals:?}");
     assert!(
         refusals
             .iter()
@@ -338,8 +341,8 @@ fn a_gate_run_refuses_while_a_tbd_is_open_unlogged_or_undeclared() {
     let all = Block::from_json("ld01-s2-gates", &v.to_string()).unwrap();
     assert_eq!(guards::declared_sha256(&all).unwrap(), declared);
     let tbd = guards::tbd_state(&all, Some(&pin_row)).unwrap();
-    assert_eq!(tbd["unlogged_fills"], json!(17));
-    assert_eq!(guards::gate_run_refusals(&pin, &tbd).len(), 17);
+    assert_eq!(tbd["unlogged_fills"], json!(listed));
+    assert_eq!(guards::gate_run_refusals(&pin, &tbd).len(), listed);
     let mut log = pin_row.clone();
     for (i, k) in keys.iter().enumerate() {
         log.push_str(&format!(
@@ -421,6 +424,64 @@ fn declared_caps_are_read_as_data_and_refused_below_the_cap_rule() {
         json!(0.0013),
     );
     assert!((guards::total_guard(&observed, 60., 150_000.).unwrap() - 450.).abs() < 1e-9);
+}
+
+#[test]
+fn a_pressure_driven_current_takes_the_pressure_class_through_its_own_sensitivity() {
+    // Three coordinates: pressures p0, p1 (atol 2 and 4) and an algebraic
+    // current m (row 2): g = 3 m - 0.5 p0 + 0.5 p1 (m = (p0 - p1)/6), plus
+    // a non-pressure coordinate 3 the row also reads.
+    // CSC by column: col 0 rows {2}, col 1 rows {2}, col 2 rows {2},
+    // col 3 rows {2, 3}.
+    let pointers = [0, 1, 2, 3, 5];
+    let rows = [2, 2, 2, 2, 3];
+    let values = [-0.5, 0.5, 3., 100., 1.];
+    let pressure = [true, true, false, false];
+    let atol = [2., 4., 1e-8, 1e-8];
+    let d = compose::derived_tolerances(&pointers, &rows, &values, &[2], &pressure, &atol).unwrap();
+    // |dm/dp0| = |dm/dp1| = 1/6; the larger product is p1's: 4/6.
+    assert!((d[0].0 - 4. / 6.).abs() < 1e-15, "{d:?}");
+    assert!((d[0].1 - 1. / 6.).abs() < 1e-15);
+    assert_eq!(d[0].2, 1);
+    // A row without its diagonal, or reading no pressure, refuses.
+    let no_diagonal = [-0.5, 0.5, 0., 100., 1.];
+    assert!(
+        compose::derived_tolerances(&pointers, &rows, &no_diagonal, &[2], &pressure, &atol)
+            .is_err()
+    );
+    assert!(
+        compose::derived_tolerances(&pointers, &rows, &values, &[2], &[false; 4], &atol).is_err()
+    );
+}
+
+#[test]
+fn d3_a_ends_a_run_only_where_the_predicate_does_not_admit_the_state() {
+    use runner::{D3, d3_exit};
+    // Inside the compiled domain, and in the extension while the margin
+    // holds (S2-D23 as revised): the run continues.
+    for admitted in [
+        D3::Admitted {
+            extended: false,
+            margin_holds: false,
+        },
+        D3::Admitted {
+            extended: true,
+            margin_holds: true,
+        },
+    ] {
+        assert_eq!(d3_exit(&admitted), None);
+    }
+    // Outside with the 1 % margin failed: the labelled margin exit.
+    let failed = D3::Unsupported {
+        margin_holds: false,
+        exit: "density".into(),
+    };
+    assert_eq!(d3_exit(&failed), Some("D3 (a) margin exit"));
+    let outside = D3::Unsupported {
+        margin_holds: true,
+        exit: "pressure".into(),
+    };
+    assert_eq!(d3_exit(&outside), Some("D3 (a) source-domain exit"));
 }
 
 // ------------------------------------------------- comparisons (synthetic)
@@ -700,9 +761,8 @@ fn the_holds_drift_is_each_filtered_outputs_departure_from_its_start_value() {
 
 /// M4: a smoke run, NOT evidence. From the saved settled state
 /// (`LD01_S2_SETTLED_STATE`): a hold of `LD01_S2_SMOKE_HOLD_S` (10 s) with
-/// its rtol/10 reference, and the trip for `LD01_S2_SMOKE_TRIP_S` (2 s,
-/// before the first rod seat at about 2.53 s: RESTART's seat fix, S2-D21, has
-/// not landed) with R1, R0 and R2 over the same span
+/// its rtol/10 reference, and the trip for `LD01_S2_SMOKE_TRIP_S` (2 s; the
+/// rod seat is at about 2.53 s) with R1, R0 and R2 over the same span
 /// (`LD01_S2_SMOKE_RUNS`, default all six). The full receipt schema is
 /// written to `$LD01_RECEIPTS/harness-b/` (`LD01_S2_SMOKE_RECEIPT` names
 /// the file). Caps are reported only; `LD01_S2_RUN_CPU_GUARD_S` bounds each
@@ -739,6 +799,7 @@ fn s2_smoke() {
     // The composed state's zero-time entry, then the saved settled state.
     let composed = h.compose("composed-state receipt");
     let composed_entry = json!({"from": "the composed state", "z1": composed.receipt["start"],
+        "derived_tolerances": composed.receipt["derived_tolerances"],
         "dimension": composed.receipt["dimension"], "algebraic": composed.receipt["algebraic"],
         "cpu_s": composed.cpu_s});
     let dimension = composed.y.len();
@@ -816,7 +877,9 @@ fn s2_smoke() {
         gates_out,
     );
     r["smoke"] = json!({"hold_s": hold_s, "trip_s": trip_s, "runs": runs,
-        "trip_before_first_seat": "the trip stops at 2 s, before the first rod seat (about 2.53 s): RESTART's seat transaction fix (S2-D21) has not landed",
+        "trip_note": "the trip runs LD01_S2_SMOKE_TRIP_S from the settled state; this build carries S2-D21's seat restarts (rod seat at about 2.53 s); D3 (a) ends a run at the first state it does not admit (S2-D23 revised)",
+        "declaration_page": h.d.receipt()["page"],
+        "domain_exit_stops": std::env::var("LD01_S2_SMOKE_DOMAIN_EXIT").as_deref() != Ok("report"),
         "gate_run_refusals_now": refusals,
         "per_sample_observation_s_preview": per_sample,
         "attributed_fraction": {"worst": worst_fraction, "declared_min": min_fraction, "met": worst_fraction >= min_fraction}});

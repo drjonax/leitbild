@@ -99,7 +99,8 @@ impl Reader {
             ));
         }
         let o = joined.offsets();
-        let clusters = (o.end - o.rods) / 3;
+        // The rods' block ends where the PZR block (G6) begins.
+        let clusters = (o.pzr - o.rods) / 3;
         let scales = joined.scales();
         let travel_scales = (0..clusters).map(|c| scales[o.rods + 3 * c]).collect();
         let nuclear = joined.nuclear();

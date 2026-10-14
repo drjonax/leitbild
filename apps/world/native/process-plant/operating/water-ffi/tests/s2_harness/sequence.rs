@@ -117,7 +117,11 @@ impl Harness {
                 cpu::process_cpu_s() - started,
             );
         }
-        let c = compose::compose_from(&self.d.shared, self.settled_flows.as_ref());
+        let c = compose::compose_from(
+            &self.d.shared,
+            Some(&self.d.gates),
+            self.settled_flows.as_ref(),
+        );
         if self.reader.is_none() {
             self.reader = Some(
                 Reader::new(&c.joined, &self.network_packet, self.reference_travel_m)
@@ -160,6 +164,8 @@ impl Harness {
             report_only_step_cap: None,
             caps_report_only: smoke,
             rods_observed: false,
+            domain_exit_stops: !(smoke
+                && std::env::var("LD01_S2_SMOKE_DOMAIN_EXIT").as_deref() == Ok("report")),
         };
         let window = g.number("/trip/window_s").min(duration_s);
         let trip = |spec: &mut RunSpec| {
@@ -183,10 +189,13 @@ impl Harness {
                 spec.max_step_s = Some(s.number("/eventReference/maxStep_s"));
             }
             "R2" => {
+                // BDF2 at rtol/100; every absolute tolerance, S2-D24's
+                // derived class included, scaled by referenceToleranceFactor
+                // so R2 checks the derived class (PLAN §9).
                 trip(&mut spec);
                 let f = s.number("/eventReference/secondRefinementToleranceFactor");
                 spec.rtol = contract_rtol * f;
-                spec.atol_factor = f;
+                spec.atol_factor = factor;
             }
             "R0" => {
                 trip(&mut spec);

@@ -52,6 +52,10 @@ pub struct RunSpec {
     pub caps_report_only: bool,
     /// Observe the rods' travel (trip runs: insertion times).
     pub rods_observed: bool,
+    /// A state outside the original kinetics domain ends the run there
+    /// (S2-D23). Only a smoke may report it and continue, labelled
+    /// diagnostic (`LD01_S2_SMOKE_DOMAIN_EXIT=report`).
+    pub domain_exit_stops: bool,
 }
 
 impl RunSpec {
@@ -65,7 +69,7 @@ impl RunSpec {
             "continuation": (self.window_s < self.duration_s).then(|| json!({"from_s": self.window_s, "max_step_s": null, "restart": "exact consistent start"})),
             "commands": self.commands.iter().map(|(t, c)| json!({"t_s": t, "command": c})).collect::<Vec<_>>(),
             "solver_cap_s": self.solver_cap_s, "total_guard_s": self.total_guard_s,
-            "report_only_step_cap": self.report_only_step_cap, "caps_report_only": self.caps_report_only,
+            "report_only_step_cap": self.report_only_step_cap, "caps_report_only": self.caps_report_only, "domain_exit_stops": self.domain_exit_stops,
             "rods_observed": self.rods_observed})
     }
 }

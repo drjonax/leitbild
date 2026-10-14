@@ -18,8 +18,10 @@
 //! - **Samples.** At every output and observation: the account (one joined
 //!   evaluation; the identities judged), the credited outputs read from that
 //!   evaluation, and D3 (a) at the state; at every output, the ledger
-//!   closures. Under S2-D23 a state outside the original kinetics domain
-//!   ends the run there: "domain exit at t = …", a declared exit.
+//!   closures. Under S2-D23 (revised) the first state D3 (a) does not admit
+//!   (outside the compiled domain with the 1 % margin failed, or outside the
+//!   extension) ends the run there, labelled ("D3 (a) margin exit at t = …"),
+//!   a declared exit.
 //! - **Caps.** Solver CPU against `solver_cap_s` and the run's process CPU
 //!   against `total_guard_s` after every `IDASolve` call; reaching either
 //!   fails the run, unless the spec reports caps only (R0, smoke runs), which
@@ -209,6 +211,34 @@ fn worked(stats: &leitbild_operating_water::ida::Stats) -> Counts {
     }
 }
 
+/// D3 (a) at one accepted state, as the predicate decides it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum D3 {
+    /// Inside the compiled kinetics domain, or (`extended`) outside it but
+    /// inside the post-trip extension while the doubled-water-term margin
+    /// holds.
+    Admitted { extended: bool, margin_holds: bool },
+    /// Outside every admitted domain: unsupported.
+    Unsupported { margin_holds: bool, exit: String },
+}
+
+/// S2-D23 as revised (PLAN §9): D3 (a) applies exactly as approved; a run
+/// ends, labelled, at the first state the predicate does not admit: "D3 (a)
+/// margin exit" when the 1 % margin no longer holds, otherwise a
+/// source-domain exit. An admitted state, extended or not, continues.
+pub fn d3_exit(verdict: &D3) -> Option<&'static str> {
+    match verdict {
+        D3::Admitted { .. } => None,
+        D3::Unsupported {
+            margin_holds: false,
+            ..
+        } => Some("D3 (a) margin exit"),
+        D3::Unsupported {
+            margin_holds: true, ..
+        } => Some("D3 (a) source-domain exit"),
+    }
+}
+
 /// The run's D3 (a) record (S2-D23).
 #[derive(Default)]
 struct DomainRecord {
@@ -216,6 +246,7 @@ struct DomainRecord {
     worst_pivot: Option<f64>,
     margin_failures: u64,
     first_margin_hold: Option<f64>,
+    first_extended: Option<f64>,
     exit: Option<Value>,
 }
 
@@ -405,7 +436,7 @@ pub fn advance(
             credited.push(t, &values)?;
         }
         domain.samples += 1;
-        match admit(joined, extension, t) {
+        let verdict = match admit(joined, extension, t) {
             Ok(a) => {
                 let pivot = a
                     .margin
@@ -418,25 +449,31 @@ pub fn advance(
                 if a.margin.holds && domain.first_margin_hold.is_none() {
                     domain.first_margin_hold = Some(t);
                 }
-                if a.domain != Domain::Original && domain.exit.is_none() {
-                    domain.exit = Some(
-                        json!({"t_s": t, "domain": a.domain, "margin_holds": a.margin.holds,
-                        "reason": "outside the original kinetics domain (S2-D23: no post-trip extension)"}),
-                    );
+                D3::Admitted {
+                    extended: a.domain != Domain::Original,
+                    margin_holds: a.margin.holds,
                 }
             }
             Err(DomainError::Unsupported {
-                domain: dm,
+                domain: _,
                 margin_holds,
                 exit,
-            }) => {
-                if domain.exit.is_none() {
-                    domain.exit =
-                        Some(json!({"t_s": t, "domain": dm, "margin_holds": margin_holds,
-                        "reason": format!("source-domain exit: {exit:?}")}));
-                }
-            }
+            }) => D3::Unsupported {
+                margin_holds,
+                exit: format!("{exit:?}"),
+            },
             Err(e) => return Err(format!("D3 (a) at {t} s: {e}")),
+        };
+        if let D3::Admitted { extended: true, .. } = verdict
+            && domain.first_extended.is_none()
+        {
+            domain.first_extended = Some(t);
+        }
+        if domain.exit.is_none()
+            && let Some(label) = d3_exit(&verdict)
+        {
+            domain.exit =
+                Some(json!({"t_s": t, "label": label, "verdict": format!("{verdict:?}")}));
         }
         attribution.observation_handler_s += thread_cpu_s() - started;
         if output {
@@ -721,9 +758,11 @@ pub fn advance(
         }
         if let Some(x) = &domain.exit
             && exit.is_none()
+            && spec.domain_exit_stops
         {
             exit = Some(format!(
-                "domain exit at t = {} s",
+                "{} at t = {} s",
+                x["label"].as_str().unwrap_or("D3 (a) exit"),
                 x["t_s"].as_f64().unwrap_or(t) - t0
             ));
         }
@@ -834,10 +873,11 @@ pub fn advance(
             "after_window": attribution.solver_by_part[1] + attribution.restarts_by_part[1]},
         "solver_calls": attribution.solver_calls.0, "observation_returns": attribution.observation_returns.0,
         "rule": "solver CPU (G11) = IDASolve calls that advanced the step count or returned at an owner root, less the ledger quadrature, plus discrete restarts; checked against the cap after every call; the total guard against the run's process CPU"});
-    record.domain = json!({"predicate": "joined::post_trip_domain::admit_accepted at every accepted sample (S2-D23: no post-trip extension; leaving the original domain ends the run)",
+    record.domain = json!({"predicate": "joined::post_trip_domain::admit_accepted at every accepted sample (S2-D23 revised: D3 (a) as approved, the post-trip extension holding while the doubled-water-term margin is at least 1 %; the first state it does not admit ends the run, labelled)",
         "samples": domain.samples, "worst_pivot": domain.worst_pivot,
         "samples_margin_not_holding": domain.margin_failures,
         "first_margin_holds_at_s": domain.first_margin_hold.map(|x| x - t0),
+        "first_extended_at_s": domain.first_extended.map(|x| x - t0),
         "margin_note": "the 1 % shutdown-margin test of the source-free operator; at power (critical) it does not hold, and it is reported, not a stop",
         "exit": domain.exit});
     let conservation_pass = conservation.identities_pass() && conservation.ledger_pass();
