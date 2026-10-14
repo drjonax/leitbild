@@ -8,6 +8,10 @@
 //! differences, in the cell and in the network's colored Jacobian. The cell
 //! section mirrors the contract's `pzr.cell` with the committed strict
 //! blocks; the roof pressure is the S1 packet's declared operating point.
+use leitbild_operating_plant::network::{
+    BandReport, MetastableBand, Water,
+    properties::{Need, Partials, ThermodynamicPartials},
+};
 use leitbild_operating_plant::{
     network::{
         CscOut, Failure, Network, Properties, PzrPreparation, RotorState,
@@ -21,8 +25,9 @@ use leitbild_operating_plant::{
     sparse::compare_with_dense,
     thermal::{Saturation, Scalar, WaterPoint},
 };
-use leitbild_operating_water::If97;
+use leitbild_operating_water::{CaloricLinearization, If97};
 use serde_json::json;
+use std::cell::{Cell as Count, RefCell};
 
 const ROOF_PA: f64 = 14_864_186.805_5;
 const LEVEL_M: f64 = 6.0;
@@ -946,7 +951,7 @@ fn seeded_directions_match_central_differences_with_both_exchanges_active() {
         resident: s(4.0e4),
     };
     let cj = 37.;
-    let run = |y: &[f64], yp: &[f64], seed: Option<&[f64]>| {
+    let run_with = |properties: &Offset, y: &[f64], yp: &[f64], seed: Option<&[f64]>| {
         let x: Vec<Scalar> = (0..st::COORDINATES)
             .map(|i| Scalar::new(y[i] * p.scales[i], seed.map_or(0., |d| d[i]) * p.scales[i]))
             .collect();
@@ -960,7 +965,7 @@ fn seeded_directions_match_central_differences_with_both_exchanges_active() {
             .collect();
         p.cell
             .residual(
-                &If97,
+                properties,
                 &Coordinates::from_slice(&x).unwrap(),
                 &Coordinates::from_slice(&r).unwrap(),
                 &[receipt],
@@ -973,6 +978,7 @@ fn seeded_directions_match_central_differences_with_both_exchanges_active() {
             )
             .unwrap()
     };
+    let run = |y: &[f64], yp: &[f64], seed: Option<&[f64]>| run_with(&Offset::none(), y, yp, seed);
     let base = run(&y, &yp, None);
     assert!(base.flows.bubble_exchange.condensation.value > 1.);
     assert!(base.flows.admitted_bubble_exchange.condensation.value > 0.1);
@@ -983,10 +989,38 @@ fn seeded_directions_match_central_differences_with_both_exchanges_active() {
             e.flows.bubble_crossing,
         ]
     };
+    let entries = |e: &st::Evaluation| -> Vec<f64> {
+        e.rows
+            .iter()
+            .map(|r| r.value)
+            .chain(flows(e).iter().map(|q| q.value))
+            .collect()
+    };
+    // The caloric inverse returns the exact state of a target within its
+    // declared tolerance tau_k of the requested one (water-ffi `converged`),
+    // so each evaluated entry carries at most nu_i = sum_k |dF_i/du_k| tau_k
+    // over the evaluation's inverses k, to first order. dF_i/du_k is the
+    // entry's response to offsetting inverse k's target alone, by a central
+    // difference of 1e4 tau_k (its own inversion noise is 1e-4 of it).
+    let probe = Offset::none();
+    run_with(&probe, &y, &yp, None);
+    let tolerances = probe.tolerances.borrow().clone();
+    assert!(!tolerances.is_empty(), "the cell inverts its zones");
+    let mut noise = [0.; st::COORDINATES + 3];
+    for (k, tau) in tolerances.iter().enumerate() {
+        let delta = 1e4 * tau;
+        let plus = entries(&run_with(&Offset::at(k, delta), &y, &yp, None));
+        let minus = entries(&run_with(&Offset::at(k, -delta), &y, &yp, None));
+        for (n, (a, b)) in noise.iter_mut().zip(plus.iter().zip(&minus)) {
+            *n += (a - b).abs() / (2. * delta) * tau;
+        }
+    }
     // Every unit column of the dense stage Jacobian dF/dy + cj dF/dy', and
     // the two exchanges and the crossing alone, against two central
     // differences.
     let mut worst: f64 = 0.;
+    let mut tightest = (0., 0, 0, 0., 0., 0., 0.);
+    let mut beyond_floor = 0;
     for j in 0..st::COORDINATES {
         let mut d = vec![0.; st::COORDINATES];
         d[j] = 1e-3;
@@ -1013,18 +1047,20 @@ fn seeded_directions_match_central_differences_with_both_exchanges_active() {
             );
             out
         };
-        let (coarse, fine) = (difference(0.1), difference(0.05));
+        let (coarse_step, fine_step) = (0.1, 0.05);
+        let (coarse, fine) = (difference(coarse_step), difference(fine_step));
         let analytic: Vec<f64> = seeded
             .rows
             .iter()
             .map(|r| r.direction)
             .chain(flows(&seeded).iter().map(|q| q.direction))
             .collect();
-        // The rows' floor, 1e-12, is 1e-9 of the 1e-3 seed: the scale at
-        // which the caloric inverse's converged state is only accurate to its
-        // bound. A flow's floor is the same 1e-9 resolution of its own size:
-        // along M_b, for instance, A's pressure moves only millipascals per
-        // difference step, and A's converged temperature resolves no finer.
+        // The bound: the difference's truncation (three spreads), a 2e-6
+        // relative allowance, the floating-point floor of the evaluation
+        // (1e-12 of a row: 1e-9 of the 1e-3 seed; a flow's 1e-9 of its own
+        // size) and the fine difference's inversion noise: each of its two
+        // evaluations is within nu_i of the exact entry, so their central
+        // difference is within nu_i / step of the exact difference.
         let flow_sizes: Vec<f64> = flows(&base).iter().map(|q| q.value.abs()).collect();
         for (i, an) in analytic.iter().enumerate() {
             let fd = fine[i];
@@ -1036,16 +1072,139 @@ fn seeded_directions_match_central_differences_with_both_exchanges_active() {
             } else {
                 1e-9 * flow_sizes[i - st::COORDINATES]
             };
+            let inversion = noise[i] / fine_step;
             if size > 1e-9 {
                 worst = worst.max(error / size);
             }
+            let bound = 3. * spread + 2e-6 * size + floor + inversion;
+            if error / bound > tightest.0 {
+                tightest = (error / bound, j, i, error, spread, floor, inversion);
+            }
+            if error > 3. * spread + 2e-6 * size + floor {
+                beyond_floor += 1;
+                println!(
+                    "column {j} entry {i} within the inversion noise only: error {error:e}, spread {spread:e}, inversion noise {inversion:e}"
+                );
+            }
             assert!(
-                error <= 3. * spread + 2e-6 * size + floor,
-                "column {j} entry {i}: analytic {an:e}, difference {fd:e}, spread {spread:e}"
+                error <= bound,
+                "column {j} entry {i}: analytic {an:e}, difference {fd:e}, spread {spread:e}, inversion noise {inversion:e}"
             );
         }
     }
     println!("worst relative direction error of entries above 1e-9: {worst:e}");
+    println!(
+        "inverses per evaluation {}, tolerances {tolerances:?}; tightest error/bound {:e} at column {} entry {} (error {:e}, spread {:e}, floor {:e}, inversion noise {:e}); entries beyond the bound without inversion noise: {beyond_floor}",
+        tolerances.len(),
+        tightest.0,
+        tightest.1,
+        tightest.2,
+        tightest.3,
+        tightest.4,
+        tightest.5,
+        tightest.6
+    );
+}
+
+/// If97 with the target of its `k`-th caloric inverse (in call order)
+/// offset by `offset`, recording every inverse's declared tolerance
+/// `2e-12 max(|u|, u_T T, 1)` at the returned state (water-ffi
+/// `converged`). Every other query, and every default of the boundary, is
+/// If97's own.
+struct Offset {
+    k: Option<usize>,
+    offset: f64,
+    calls: Count<usize>,
+    tolerances: RefCell<Vec<f64>>,
+}
+impl Offset {
+    fn none() -> Self {
+        Self {
+            k: None,
+            offset: 0.,
+            calls: Count::new(0),
+            tolerances: RefCell::new(Vec::new()),
+        }
+    }
+    fn at(k: usize, offset: f64) -> Self {
+        Self {
+            k: Some(k),
+            offset,
+            ..Self::none()
+        }
+    }
+}
+impl Properties for Offset {
+    type Caloric = CaloricLinearization;
+    fn forward(&self, vapor: bool, p: f64, t: f64) -> Result<Water, String> {
+        If97.forward(vapor, p, t)
+    }
+    fn caloric(
+        &self,
+        vapor: bool,
+        p: f64,
+        target: f64,
+        enthalpy: bool,
+    ) -> Result<CaloricLinearization, String> {
+        self.caloric_for(vapor, p, target, enthalpy, Need::Complete)
+    }
+    fn caloric_for(
+        &self,
+        vapor: bool,
+        p: f64,
+        target: f64,
+        enthalpy: bool,
+        need: Need,
+    ) -> Result<CaloricLinearization, String> {
+        let call = self.calls.get();
+        self.calls.set(call + 1);
+        let shifted = if self.k == Some(call) {
+            target + self.offset
+        } else {
+            target
+        };
+        let point = If97.caloric_for(vapor, p, shifted, enthalpy, need)?;
+        let w = If97.values(&point);
+        let ut = if enthalpy {
+            w.cp_j_kg_k
+        } else {
+            w.cp_j_kg_k - w.pressure_pa * w.expansion_per_k / w.density_kg_m3
+        };
+        self.tolerances
+            .borrow_mut()
+            .push(2e-12 * target.abs().max(ut * w.temperature_k).max(1.));
+        Ok(point)
+    }
+    fn complete(&self, point: &CaloricLinearization) -> Result<CaloricLinearization, String> {
+        If97.complete(point)
+    }
+    fn values(&self, point: &CaloricLinearization) -> Water {
+        If97.values(point)
+    }
+    fn partials(&self, point: &CaloricLinearization) -> Result<Partials, String> {
+        If97.partials(point)
+    }
+    fn thermodynamic_partials(
+        &self,
+        point: &CaloricLinearization,
+    ) -> Result<ThermodynamicPartials, String> {
+        If97.thermodynamic_partials(point)
+    }
+    fn direction(&self, point: &CaloricLinearization, dp: f64, de: f64) -> Result<Water, String> {
+        If97.direction(point, dp, de)
+    }
+    fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
+        Properties::saturation(&If97, pressure)
+    }
+    fn saturation_caloric(&self, pressure: Scalar) -> Result<Saturation, String> {
+        If97.saturation_caloric(pressure)
+    }
+    fn metastable_band(&self) -> Result<MetastableBand, String> {
+        If97.metastable_band()
+    }
+    fn band(&self, point: &CaloricLinearization) -> BandReport {
+        If97.band(point)
+    }
 }
 
 /// The fixture's stratified block against a wiki checkout's strict block,
