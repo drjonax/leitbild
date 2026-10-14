@@ -1,6 +1,7 @@
 import {expect,test} from 'bun:test'
 import {compileOperatingPzr,type PzrSources} from './reference-design-operating-pzr'
 import {caseSetSections,parsePzrHeaterBanks,parsePzrRelief,parsePzrSpray} from './reference-design-operating-pzr-cases'
+import {joinedPzrSections} from './reference-design-operating-joined'
 
 // Test-only owner texts in the shapes the compilers read; not plant evidence.
 const selected={commonPressure_Pa:15e6,liquidTemperature_K:600,vaporTemperature_K:630,phaseBoundaryHeight_m:6,
@@ -57,5 +58,17 @@ test('heater banks and the relief device parse from their owners and agree with 
   expect({...added.cell,ports:added.cell.ports.slice(0,1)}).toEqual(cell)
   expect(()=>caseSetSections(cell,parsePzrHeaterBanks(equipment),parsePzrRelief(inventory),{relief:{elevation_m:19},spray:{elevation_m:18,bore_m:.1}})).toThrow('outside')
   expect(()=>parsePzrRelief(inventory.replace('### Independent relief candidate','### Elsewhere'))).toThrow()
+  // G6's joined sections: the spine cell keeps its index and surge face, the
+  // spray and relief take none; the metal owner's blocks pass unchanged and
+  // the receiver is the relief calibration's backpressure.
+  const pages={equipment:equipment+'\n## Abnormal wall contact and finite heat receivers\n\n'+fence('ld01-pzr-heater-contact',{wet:1})
+      +'\n\n### Fixed metal and complementary contact\n\n'+fence('reference-304-caloric',{datum_K:300})+'\n',
+    inventory,thermal:'### Shell and head metal\n\n'+fence('ld01-pzr-shell',{grossArea_m2:5})+'\n'},
+    g6=joinedPzrSections({...cell,index:28,ports:cell.ports.map(p=>({...p,face:34}))},pages)
+  expect(g6.cell.index).toBe(28)
+  expect((g6.cell.ports as {kind:string,face:number|null}[]).map(p=>[p.kind,p.face])).toEqual([['surge',34],['spray',null],['relief',null]])
+  expect(g6.pzrMetal).toEqual({heaterBanks:{banks:parsePzrHeaterBanks(equipment)},heaterContact:{wet:1},caloric304:{datum_K:300},
+    shell:{grossArea_m2:5},reliefBackPressure_Pa:101325})
+  expect(()=>joinedPzrSections(cell,{...pages,thermal:'### Elsewhere\n'})).toThrow('Shell and head metal')
 })
 
