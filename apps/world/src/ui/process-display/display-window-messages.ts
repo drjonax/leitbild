@@ -44,7 +44,7 @@ const listingProblem = (listing: EmbeddedViewListing, workspaceId: string): stri
   return null
 }
 
-const issueText = (issues: ReadonlyArray<{ readonly path: ReadonlyArray<PropertyKey>; readonly message: string }>): string => {
+export const issueText = (issues: ReadonlyArray<{ readonly path: ReadonlyArray<PropertyKey>; readonly message: string }>): string => {
   const issue = issues[0]
   if (!issue) return 'invalid message'
   return issue.path.length === 0 ? issue.message : `${issue.path.map(String).join('.')}: ${issue.message}`

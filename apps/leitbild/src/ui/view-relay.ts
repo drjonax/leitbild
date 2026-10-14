@@ -38,7 +38,7 @@ const viewMessageType = (data: unknown): string | null => {
 }
 
 /** The first schema issue and where it is, short enough for the error banner. */
-const firstIssue = (error: ZodError): string => {
+export const firstIssue = (error: ZodError): string => {
   const issue = error.issues[0]
   if (issue === undefined) return error.message
   return issue.path.length === 0 ? issue.message : `${issue.path.map(String).join('.')}: ${issue.message}`
