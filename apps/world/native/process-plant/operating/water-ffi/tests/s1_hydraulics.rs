@@ -38,36 +38,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{cell::Cell as Slot, f64::consts::PI, rc::Rc, time::Instant};
 
-#[repr(C)]
-struct Timespec {
-    seconds: i64,
-    nanoseconds: i64,
-}
-unsafe extern "C" {
-    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
-}
-/// CLOCK_PROCESS_CPUTIME_ID on macOS.
-const PROCESS_CPU_CLOCK: i32 = 12;
-fn cpu_s() -> f64 {
-    let mut t = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: one live stack Timespec matching the C layout; the C library
-    // writes it and keeps no pointer.
-    let status = unsafe { clock_gettime(PROCESS_CPU_CLOCK, &mut t) };
-    assert_eq!(status, 0, "process CPU clock unavailable");
-    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
-}
-/// The 1-, 5- and 15-minute load averages (`vm.loadavg`), recorded at the
-/// receipt's start and end for the declared CPU measurement hygiene.
-fn load_average() -> String {
-    std::process::Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .expect("load average")
-}
+// Process CPU (CLOCK_PROCESS_CPUTIME_ID) and the 1-, 5- and 15-minute load
+// averages, recorded at the receipt's start and end for the declared CPU
+// measurement hygiene.
+#[path = "common/cpu.rs"]
+mod cpu;
+use cpu::{load_average, process_cpu_s as cpu_s};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

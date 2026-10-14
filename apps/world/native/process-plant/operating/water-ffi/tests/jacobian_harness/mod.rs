@@ -26,42 +26,12 @@ use std::{
     rc::Rc,
 };
 
-#[repr(C)]
-pub struct Timespec {
-    seconds: i64,
-    nanoseconds: i64,
-}
-unsafe extern "C" {
-    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
-    fn pthread_set_qos_class_self_np(class: u32, priority: i32) -> i32;
-}
-/// QOS_CLASS_USER_INTERACTIVE: asks for a performance core; changes no
-/// computation.
-pub fn prefer_performance_core() {
-    // SAFETY: plain scalar arguments; affects only this thread's scheduling.
-    let status = unsafe { pthread_set_qos_class_self_np(0x21, 0) };
-    assert_eq!(status, 0, "thread QoS unavailable");
-}
-/// CLOCK_THREAD_CPUTIME_ID on macOS.
-pub const THREAD_CPU_CLOCK: i32 = 16;
-pub fn cpu() -> f64 {
-    let mut t = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: one live stack Timespec matching the C layout; the C library
-    // writes it and keeps no pointer.
-    let status = unsafe { clock_gettime(THREAD_CPU_CLOCK, &mut t) };
-    assert_eq!(status, 0, "thread CPU clock unavailable");
-    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
-}
-pub fn load_average() -> String {
-    std::process::Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .expect("load average")
-}
+// Thread CPU (CLOCK_THREAD_CPUTIME_ID), the performance-core request (macOS
+// QOS_CLASS_USER_INTERACTIVE; changes no computation) and the load average.
+#[path = "../common/cpu.rs"]
+pub mod clock;
+#[allow(unused_imports)] // Each test crate uses its own subset.
+pub use clock::{load_average, prefer_performance_core, thread_cpu_s as cpu};
 pub fn command(program: &str, args: &[&str]) -> String {
     std::process::Command::new(program)
         .args(args)
