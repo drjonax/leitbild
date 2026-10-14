@@ -193,6 +193,21 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(transfer.body.result.next).toMatchObject({ run: { runId: destination.runId, procedureId: 'ES-0.1', currentStepId: 'monitor', stepNumber: 1 }, step: { id: 'monitor' } })
   })
 
+  test('an AI agent operates the Plant whose procedure Run it drives, until a person takes the Run over', async () => {
+    const { registry, workspaceId, run, plantId } = await setup()
+    const invoke = invoker(registry, workspaceId, run.id)
+    const ai = access(workspaceId, { kind: 'ai', id: 'assistant', displayName: 'Assistant' })
+    const human = access(workspaceId, { kind: 'human' })
+    const write = { plantId, tagId: 'CHG-PUMP-B', value: true }
+    expect((await invoke('world.process-plant.control.write', write, ai)).body.error.message).toContain('it operates it directly only while it drives an active procedure Run on it')
+    const started = await invoke('world.procedure.run.start', { procedureId: 'E-0', scope: { plantId, label: 'Unit A1' } }, ai)
+    expect((await invoke('world.process-plant.control.write', write, ai)).status).toBe(200)
+    await invoke('world.procedure.run.drive', { runId: started.body.result.pinned.runId, action: 'claim' }, human)
+    const refused = await invoke('world.process-plant.control.write', { ...write, value: false }, ai)
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.message).toContain('it operates it directly only while it drives an active procedure Run on it')
+  })
+
   test('a step read without runId names the runs when the caller drives none or several; a start without sourceId needs a sole source', async () => {
     const { registry, workspaceId, run, plantId } = await setup()
     const invoke = invoker(registry, workspaceId, run.id)

@@ -237,9 +237,9 @@ describe('an actuation reset', () => {
       const lowLow = (await resets()).find(reset => reset.ruleId === 'sg-a-level-low-low-afw-actuation')!
       expect(await command(run, operator, 'world.process-plant.actuation.reset', { plantId, ruleId: lowLow.ruleId }))
         .toMatchObject({ ok: false, reason: `RESET Steam generator A low-low level auxiliary feedwater actuation is not offered: ${lowLow.reason}` })
-      // An AI agent never resets; it proposes.
+      // An AI agent driving no procedure Run on the Plant never resets; it proposes.
       expect(await command(run, agent, 'world.process-plant.actuation.reset', { plantId, ruleId: 'reactor-manual-trip' }))
-        .toMatchObject({ ok: false, reason: 'An AI agent proposes an actuation reset for a person to approve (world.process-plant.control.propose with reset); it does not reset one itself' })
+        .toMatchObject({ ok: false, reason: 'An AI agent proposes an actuation reset for a person to approve (world.process-plant.control.propose with reset); it resets one itself only while it drives an active procedure Run on this Plant' })
       const proposed = await command(run, agent, 'world.process-plant.control.propose', { plantId, reset: 'reactor-manual-trip', reason: 'The manual trip has acted and its demand has cleared', evidence: ['PT-455'] }) as ProposeAccepted
       expect(proposed).toMatchObject({ ok: true, word: 'RESET Manual reactor trip' })
       expect((await proposals(run, plantId))[0]!.proposal).toMatchObject({ reset: { ruleId: 'reactor-manual-trip', label: 'Manual reactor trip' }, item: manual.items[0], status: 'pending' })

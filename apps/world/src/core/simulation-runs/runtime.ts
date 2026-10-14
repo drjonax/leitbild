@@ -1118,6 +1118,9 @@ export const createSimulationRunRuntime = async (config: {
 
   // A Pack tells a person's command from an AI agent's and the Run's own by this, never by parsing actor ids.
   const commandOriginOf = (actor: Actor): CommandOrigin => actor.role === 'ai_agent' ? 'ai' : actor.role === 'system' ? 'system' : 'person'
+  // The objects whose active procedure Run the command's issuer drives, read as the command reaches its Pack.
+  const procedureDrivenBy = (command: CommandEnvelope): ReadonlySet<string> => new Set((state.snapshot().procedures?.runs ?? [])
+    .filter(run => run.status === 'active' && run.driver?.actorId === command.actorId).map(run => run.scope.plantId))
 
   const issueCommandThroughRuntime = async (
     actor: Actor,
@@ -1143,7 +1146,9 @@ export const createSimulationRunRuntime = async (config: {
     }), { history: commandEventDisposition })
     const viewer = viewerForActor(runRoles, actor)
     const result = await handleCoreCommand(command, commandSource, actor)
-      ?? await config.runtimeConnection.sendCommand(command, { ...(viewer === undefined ? {} : { viewer }), origin: commandOriginOf(actor) })
+      ?? await config.runtimeConnection.sendCommand(command, {
+        ...(viewer === undefined ? {} : { viewer }), origin: commandOriginOf(actor), procedureDriven: procedureDrivenBy(command),
+      })
     await drainRuntimeEmissions()
     await publishOneGenerated(() => ({
       id: eventId(),
