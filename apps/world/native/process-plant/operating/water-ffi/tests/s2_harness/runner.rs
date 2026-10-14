@@ -215,6 +215,7 @@ struct DomainRecord {
     samples: u64,
     worst_pivot: Option<f64>,
     margin_failures: u64,
+    first_margin_hold: Option<f64>,
     exit: Option<Value>,
 }
 
@@ -414,6 +415,9 @@ pub fn advance(
                     .fold(f64::INFINITY, f64::min);
                 domain.worst_pivot = Some(domain.worst_pivot.map_or(pivot, |p| p.min(pivot)));
                 domain.margin_failures += u64::from(!a.margin.holds);
+                if a.margin.holds && domain.first_margin_hold.is_none() {
+                    domain.first_margin_hold = Some(t);
+                }
                 if a.domain != Domain::Original && domain.exit.is_none() {
                     domain.exit = Some(
                         json!({"t_s": t, "domain": a.domain, "margin_holds": a.margin.holds,
@@ -491,7 +495,10 @@ pub fn advance(
     outputs += 1;
     marks.push(Mark {
         t: t0,
-        ..Mark::default()
+        counts: Counts::default(),
+        solver_s: attribution.solver_s(),
+        process_s: process_cpu_s() - process0,
+        observation_s: attribution.observation(),
     });
     let mut commands: Vec<(f64, leitbild_operating_plant::joined::block::Command)> =
         spec.commands.iter().map(|(s, c)| (t0 + s, *c)).collect();
@@ -556,6 +563,7 @@ pub fn advance(
         restart_at!(Discrete::Command(command), "command");
     }
     let mut boundary_set: Option<f64> = None;
+    let trace = std::env::var_os("LD01_S2_TRACE").is_some();
     while failure.is_none() && exit.is_none() && t < end {
         // The next forced stop: time event, command, window end, run end.
         let event = ida.system().integrated().joined.next_time_event(t);
@@ -578,6 +586,18 @@ pub fn advance(
         let tally0: Tally = ida.system().tally;
         let c0 = thread_cpu_s();
         let outcome = ida.advance(target, &mut y, &mut yp);
+        if trace {
+            eprintln!(
+                "trace t={t:.17} k={k} target={target:.17} boundary={boundary:.17} event={event:?} outcome={:?}",
+                outcome.as_ref().map(|o| match o {
+                    Advance::Reached(x) => format!("reached {x:.17}"),
+                    Advance::Root { time, directions } => format!(
+                        "root {time:.17} {}",
+                        directions.iter().filter(|d| **d != 0).count()
+                    ),
+                })
+            );
+        }
         let call = thread_cpu_s() - c0;
         let tally = ida.system().tally.since(tally0);
         let stats = ida.stats().expect("stats");
@@ -587,7 +607,7 @@ pub fn advance(
                 attribution.call(call, tally, false, part);
                 let refusal = ida.system().inner.inner.refusal.clone();
                 failure = Some(format!(
-                    "stock IDA at {} s: {e}; ledger refusal {refusal:?}",
+                    "stock IDA at {} s (target {target}, boundary {boundary}, time event {event:?}): {e}; ledger refusal {refusal:?}",
                     t - t0
                 ));
             }
@@ -654,14 +674,16 @@ pub fn advance(
                 let own_rooted = own.iter().any(|d| *d != 0);
                 let own: Vec<i32> = own.to_vec();
                 attribution.call(call, tally, observation && !own_rooted && !stepped, part);
-                if observation {
+                // An owner root located on an output time is that output.
+                let on_output = (t - (t0 + k as f64 * spec.output_s)).abs() <= 1e-9;
+                if observation || on_output {
                     if let Err(e) = sample(
                         &mut ida,
                         &segment,
                         t,
                         &y,
                         &yp,
-                        false,
+                        on_output,
                         true,
                         reader,
                         extension,
@@ -674,8 +696,20 @@ pub fn advance(
                     ) {
                         failure = Some(e);
                     }
-                    observations += 1;
-                    if let Some(c) = clock.as_mut() {
+                    if on_output {
+                        outputs += 1;
+                        k += 1;
+                        marks.push(Mark {
+                            t,
+                            counts: totals.plus(worked(&stats)),
+                            solver_s: attribution.solver_s(),
+                            process_s: process_cpu_s() - process0,
+                            observation_s: attribution.observation(),
+                        });
+                    } else {
+                        observations += 1;
+                    }
+                    if observation && let Some(c) = clock.as_mut() {
                         c.arm();
                     }
                 }
@@ -801,7 +835,10 @@ pub fn advance(
         "solver_calls": attribution.solver_calls.0, "observation_returns": attribution.observation_returns.0,
         "rule": "solver CPU (G11) = IDASolve calls that advanced the step count or returned at an owner root, less the ledger quadrature, plus discrete restarts; checked against the cap after every call; the total guard against the run's process CPU"});
     record.domain = json!({"predicate": "joined::post_trip_domain::admit_accepted at every accepted sample (S2-D23: no post-trip extension; leaving the original domain ends the run)",
-        "samples": domain.samples, "worst_pivot": domain.worst_pivot, "margin_failures": domain.margin_failures,
+        "samples": domain.samples, "worst_pivot": domain.worst_pivot,
+        "samples_margin_not_holding": domain.margin_failures,
+        "first_margin_holds_at_s": domain.first_margin_hold.map(|x| x - t0),
+        "margin_note": "the 1 % shutdown-margin test of the source-free operator; at power (critical) it does not hold, and it is reported, not a stop",
         "exit": domain.exit});
     let conservation_pass = conservation.identities_pass() && conservation.ledger_pass();
     let series_dt = spec.observation_s.unwrap_or(spec.output_s);

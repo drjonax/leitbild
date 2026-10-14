@@ -660,7 +660,7 @@ pub fn judge_trip(
         );
         let within = m["within"] == json!(true);
         comparisons.insert(
-            format!("trip_vs_{name}_{from}_{to}"),
+            format!("trip_vs_{name}_{from:.1}-{to:.1}s"),
             comparison("trip", name, (from, to), m),
         );
         within
