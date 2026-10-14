@@ -259,6 +259,15 @@ impl Model {
     pub fn transfer_count(&self) -> usize {
         self.transfers.len()
     }
+    /// Each region's parameters, region order (read by the joined
+    /// conservation account's source balance).
+    pub fn region_parameters(&self) -> &[RegionParameters] {
+        &self.regions
+    }
+    /// Each material carrier's delayed yields and decay constants.
+    pub fn material_parameters(&self) -> &[MaterialParameters] {
+        &self.materials
+    }
     /// Fixed-input block only: R+6A+E+12L, not the coupled plant census.
     pub fn structural_state_jacobian_nonzeros(&self) -> usize {
         self.structural_nonzeros

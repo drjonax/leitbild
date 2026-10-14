@@ -35,6 +35,7 @@ use super::{
     operator::Joined,
 };
 use crate::{
+    kinetics::DELAYED_GROUPS as DELAYED,
     network::{Failure, Properties, Tolerances},
     thermal::{Scalar, WaterProperties},
 };
@@ -97,6 +98,10 @@ pub struct Account {
     pub unit_energy: Identity,
     pub primary_mass: Identity,
     pub primary_boron: Identity,
+    /// The kinetics source balance (kinetics.md, exact source balance):
+    /// populations' and precursors' rates against the net generation
+    /// `rho N / Lambda`, the external sources and the outside-field export.
+    pub kinetics: Identity,
     /// Per SG.
     pub sg_mass: Vec<Identity>,
     pub sg_energy: Vec<Identity>,
@@ -111,11 +116,16 @@ pub struct Account {
 impl Account {
     /// Every identity, the unit's first.
     pub fn identities(&self) -> impl Iterator<Item = &Identity> {
-        [&self.unit_energy, &self.primary_mass, &self.primary_boron]
-            .into_iter()
-            .chain(&self.sg_mass)
-            .chain(&self.sg_energy)
-            .chain(&self.handovers)
+        [
+            &self.unit_energy,
+            &self.primary_mass,
+            &self.primary_boron,
+            &self.kinetics,
+        ]
+        .into_iter()
+        .chain(&self.sg_mass)
+        .chain(&self.sg_energy)
+        .chain(&self.handovers)
     }
     /// The identity with the largest relative defect.
     pub fn worst(&self) -> &Identity {
@@ -171,6 +181,10 @@ pub struct Plan {
     net_energy: Vec<usize>,
     net_boron: Vec<usize>,
     rotors: Vec<usize>,
+    /// Regional populations and material precursors (global), in the
+    /// kinetics state's order.
+    populations: Vec<usize>,
+    precursors: Vec<usize>,
     /// Differential solid energies and history reservoirs (global).
     solid_energy: Vec<usize>,
     histories: Vec<usize>,
@@ -196,6 +210,8 @@ impl Plan {
             net_energy: Vec::new(),
             net_boron: Vec::new(),
             rotors: joined.network.rotor_index.clone(),
+            populations: Vec::new(),
+            precursors: Vec::new(),
             solid_energy: Vec::new(),
             histories: Vec::new(),
             sg_mass: Vec::new(),
@@ -226,6 +242,8 @@ impl Plan {
                     ("nuclear", Class::FissionHistory | Class::CaptureHistory) => {
                         plan.histories.push(global)
                     }
+                    ("nuclear", Class::RegionalPopulation) => plan.populations.push(global),
+                    ("nuclear", Class::Precursor) => plan.precursors.push(global),
                     ("secondary", Class::SecondaryStock) => {
                         let label = &layout.labels[i];
                         if let Some(id) = label
@@ -278,6 +296,20 @@ impl Plan {
         }
         if plan.scales.len() != o.end {
             return Err(fatal("layout length"));
+        }
+        let kinetics = joined.nuclear().kinetics();
+        if plan.populations.len() != kinetics.region_count()
+            || plan.precursors.len() != DELAYED * kinetics.material_count()
+            || plan
+                .populations
+                .iter()
+                .chain(&plan.precursors)
+                .enumerate()
+                .any(|(k, &i)| i != o.nuclear + k)
+        {
+            return Err(fatal(
+                "the nuclear block's populations and precursors are not the kinetics state's leading coordinates",
+            ));
         }
         Ok(plan)
     }
@@ -476,6 +508,7 @@ impl Plan {
             );
             account.handovers.push(h);
         }
+        account.kinetics = self.source_balance(joined, y, yp, rows)?;
         let mut nh = Identity::new("nuclear_event_split");
         let event = heats.nuclear.event_w.value;
         nh.store("event energy", event, event.abs());
@@ -511,6 +544,50 @@ impl Plan {
         q.extend([event, b("motor_work_w")?, -b("bearing_loss_w")?]);
         account.boundary = q;
         Ok(account)
+    }
+
+    /// The exact source balance for complete emission coverage: internal
+    /// transfers, delayed withholding and emission cancel once, leaving
+    /// `sum N' + sum C' = sum rho N / Lambda + sum S - export`, with the
+    /// reactivities and sources the last evaluation's feedback produced.
+    fn source_balance<P: Properties + WaterProperties>(
+        &self,
+        joined: &Joined<P>,
+        y: &[f64],
+        yp: &[f64],
+        rows: &[Scalar],
+    ) -> Result<Identity, Failure> {
+        let nuclear = joined.nuclear();
+        let feedback = nuclear
+            .feedback_output()
+            .ok_or_else(|| fatal("no feedback output of the last evaluation"))?;
+        let regions = nuclear.kinetics().region_parameters();
+        let materials = nuclear.kinetics().material_parameters();
+        let outside = nuclear.outside_fractions();
+        if feedback.regions.len() != regions.len() || outside.len() != materials.len() {
+            return Err(fatal("kinetics account layout"));
+        }
+        let mut k = Identity::new("kinetics_source_balance");
+        let (n, n_abs) = self.rates(rows, yp, &self.populations);
+        k.store("regional populations", n, n_abs);
+        let (c, c_abs) = self.rates(rows, yp, &self.precursors);
+        k.store("material precursors", c, c_abs);
+        let (mut generation, mut source) = (0., 0.);
+        for ((&i, f), p) in self.populations.iter().zip(&feedback.regions).zip(regions) {
+            generation += f.reactivity.value / p.generation_time_s * y[i] * self.scales[i];
+            source += f.external_source_per_s.value;
+        }
+        let mut export = 0.;
+        for (a, (m, fraction)) in materials.iter().zip(outside).enumerate() {
+            for g in 0..DELAYED {
+                let i = self.precursors[a * DELAYED + g];
+                export += fraction * m.decay_constants_per_s[g] * y[i] * self.scales[i];
+            }
+        }
+        k.boundary("net generation rho N / Lambda", generation);
+        k.boundary("external sources", source);
+        k.boundary("outside-field delayed export", -export);
+        Ok(k)
     }
 
     /// The inventories the ledgers close on at `y`, each with its local

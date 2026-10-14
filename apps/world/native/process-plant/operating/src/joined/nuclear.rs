@@ -528,6 +528,10 @@ impl Nuclear {
     pub fn kinetics(&self) -> &kinetics::Model {
         &self.kinetics
     }
+    /// Each carrier's declared outside-field emission fraction.
+    pub fn outside_fractions(&self) -> &[f64] {
+        &self.outside
+    }
     /// The water cells receiving each carrier's direct coolant heat.
     pub fn deposition(&self) -> &[Vec<(usize, f64)>] {
         &self.deposition
