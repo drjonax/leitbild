@@ -482,7 +482,7 @@ impl CellSystem {
                 s(0.),
                 Some(ReliefState {
                     lift: s(0.),
-                    back_pressure_pa: s(r.back_pressure_pa),
+                    back_pressure_pa: Some(s(r.back_pressure_pa)),
                 }),
             ),
             Some(r) => {
@@ -494,7 +494,7 @@ impl CellSystem {
                     row,
                     Some(ReliefState {
                         lift,
-                        back_pressure_pa: s(r.back_pressure_pa),
+                        back_pressure_pa: Some(s(r.back_pressure_pa)),
                     }),
                 )
             }

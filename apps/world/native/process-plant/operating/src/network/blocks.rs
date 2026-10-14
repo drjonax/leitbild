@@ -27,7 +27,11 @@
 //! the face charts' as there. After each column's charts a
 //! [`LocalCoupling`] gives the coupled owners' receipt directions for that
 //! column, and a non-network column enters through its receipt and volume
-//! directions ([`NetworkSeed`]).
+//! directions ([`NetworkSeed`]). The stratified cell's boundary is the base
+//! evaluation's own; a column that moves the cell's column takes the coupled
+//! owner's boundary on it ([`LocalCoupling::pzr_boundary`]), and a column of
+//! that owner enters through its boundary's directions
+//! ([`NetworkSeed::pzr_boundary`]).
 //!
 //! The base pass recomputes every row value and refuses (Fatal) unless each
 //! is bitwise the residual's, so this assembly cannot differentiate another
@@ -668,26 +672,18 @@ impl<P: Properties> Blocks<'_, P> {
         }
     }
 
-    /// The stratified cell's 17 rows on the pass's column and port receipt.
+    /// The stratified cell's 19 rows on the pass's column, port receipts
+    /// and the given boundary.
     fn pzr_rows(
         &self,
         pass: &Pass,
         seed: Option<Seed>,
+        boundary: &stratified::Boundary,
     ) -> Result<[Scalar; PZR_COORDINATES], Failure> {
         let net = self.net;
         let x = self.pzr_coordinates(|i| self.get(seed, i))?;
         let rate = self.pzr_coordinates(|i| self.rate(seed, i))?;
-        let [liquid, vapor] = pass.receipts[net.pzr.cell];
-        if vapor.iter().any(|q| q.value != 0. || q.direction != 0.) {
-            return Err(fatal(
-                "a vapor receipt through the surge port is outside the composed stratified cell",
-            ));
-        }
-        let receipts = [stratified::Receipt {
-            mass: liquid[0],
-            enthalpy: liquid[1],
-            boron: liquid[2],
-        }];
+        let receipts = net.pzr_receipts(pass.receipts[net.pzr.cell])?;
         let scales: [f64; PZR_COORDINATES] = net.scales[net.pzr.coordinates()]
             .try_into()
             .map_err(|_| fatal("PZR scale layout"))?;
@@ -699,7 +695,7 @@ impl<P: Properties> Blocks<'_, P> {
                 &x,
                 &rate,
                 &receipts,
-                &stratified::Boundary::closed(),
+                boundary,
                 &scales,
             )?
             .rows)
@@ -924,6 +920,15 @@ pub trait LocalCoupling {
         fluid: &Fluid<'_>,
         receipts: &mut Receipts<'_>,
     ) -> Result<(), Failure>;
+    /// Called once for a column that moves the stratified cell's column
+    /// (a PZR coordinate's), with that column (base values with this
+    /// column's directions): the coupled owner's boundary on it, the
+    /// owner's coordinates unseeded ([`super::Coupling::pzr_boundary`]).
+    fn pzr_boundary(
+        &mut self,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure>;
 }
 
 /// The directions one non-network column of a joined operator gives the
@@ -934,6 +939,10 @@ pub struct NetworkSeed {
     pub receipts: Vec<(usize, [[f64; 3]; 2])>,
     /// `(regular cell, d volume, d volume rate)`.
     pub volumes: Vec<(usize, f64, f64)>,
+    /// The stratified cell's boundary with this column's directions, for a
+    /// column of the coupled owner of the PZR metal and relief; the cell's
+    /// column itself does not move.
+    pub pzr_boundary: Option<stratified::Boundary>,
 }
 
 /// The network's element replay at one base evaluation, for the network's
@@ -946,6 +955,9 @@ pub struct Replay<'a, P: Properties> {
     pass: Pass,
     signs: Vec<f64>,
     work: Work,
+    /// The base evaluation's stratified boundary, and whether a coupled
+    /// owner gave it (its PZR columns then need that owner's response).
+    boundary: (stratified::Boundary, bool),
 }
 
 /// Per-column scratch lists.
@@ -994,7 +1006,16 @@ impl<'a, P: Properties> Replay<'a, P> {
             zero_rate: vec![s(0.); net.pzr.cell],
         };
         let projection = net.projection();
-        let base = blocks.base(structure, &projection, coupled)?;
+        let (boundary, from_owner) = net
+            .pzr_boundary()
+            .ok_or_else(|| fatal("the block replay needs an evaluated stratified boundary"))?;
+        let boundary = (boundary.clone(), from_owner);
+        if from_owner && !coupled {
+            return Err(fatal(
+                "the base evaluation's stratified boundary is a coupled owner's; replay it coupled",
+            ));
+        }
+        let base = blocks.base(structure, &projection, coupled, &boundary.0)?;
         if let Some(row) =
             (0..n).find(|i| base.rows[*i].value.to_bits() != net.rows[*i].value.to_bits())
         {
@@ -1014,6 +1035,7 @@ impl<'a, P: Properties> Replay<'a, P> {
                 coupled: vec![[[s(0.); 3]; 2]; net.pzr.cell],
                 ..Work::default()
             },
+            boundary,
         })
     }
 
@@ -1082,8 +1104,10 @@ impl<'a, P: Properties> Replay<'a, P> {
             base,
             pass,
             work,
+            boundary,
             ..
         } = self;
+        let mut hook = hook;
         let net = blocks.net;
         let regular = net.pzr.cell;
         let pzr = net.pzr.cell;
@@ -1228,7 +1252,7 @@ impl<'a, P: Properties> Replay<'a, P> {
             }
         }
         // The coupled owners' receipts for this column, after the charts'.
-        if let Some(hook) = hook {
+        if let Some(hook) = hook.as_deref_mut() {
             w.cells.sort_unstable();
             w.cells.dedup();
             w.faces.sort_unstable();
@@ -1322,8 +1346,31 @@ impl<'a, P: Properties> Replay<'a, P> {
                 w.responded.push((i, row.direction));
             }
         }
-        if pzr_seeded || w.receipts.binary_search(&pzr).is_ok() {
-            let rows = blocks.pzr_rows(pass, seed)?;
+        let external_boundary = external.and_then(|e| e.pzr_boundary.as_ref());
+        if pzr_seeded || w.receipts.binary_search(&pzr).is_ok() || external_boundary.is_some() {
+            // The boundary reads the cell's column and the owner's own
+            // coordinates only: a moved column takes the coupled owner's
+            // boundary on it, an owner column brings its own, and anything
+            // else keeps the base boundary.
+            let (base_boundary, from_owner) = (&boundary.0, boundary.1);
+            let moved_boundary;
+            let used = match (external_boundary, pzr_seeded && from_owner) {
+                (Some(_), true) => {
+                    return Err(fatal(
+                        "a column both seeds the stratified cell and brings a boundary",
+                    ));
+                }
+                (Some(b), false) => b,
+                (None, true) => {
+                    let hook = hook.as_deref_mut().ok_or_else(|| {
+                        fatal("a PZR column with a coupled boundary needs the owner's response")
+                    })?;
+                    moved_boundary = hook.pzr_boundary(&net.stratified, &pass.column)?;
+                    &moved_boundary
+                }
+                (None, false) => base_boundary,
+            };
+            let rows = blocks.pzr_rows(pass, seed, used)?;
             for (i, row) in net.pzr.coordinates().zip(rows) {
                 w.responded.push((i, row.direction));
             }
@@ -1378,6 +1425,7 @@ impl<P: Properties> Blocks<'_, P> {
         structure: &BlockJacobian,
         projection: &Projection,
         coupled: bool,
+        boundary: &stratified::Boundary,
     ) -> Result<Pass, Failure> {
         let net = self.net;
         let n = net.pzr.cell;
@@ -1492,7 +1540,7 @@ impl<P: Properties> Blocks<'_, P> {
                 pass.rows[i] = row;
             }
         }
-        let rows = self.pzr_rows(&pass, None)?;
+        let rows = self.pzr_rows(&pass, None, boundary)?;
         for (i, row) in net.pzr.coordinates().zip(rows) {
             pass.rows[i] = row;
         }

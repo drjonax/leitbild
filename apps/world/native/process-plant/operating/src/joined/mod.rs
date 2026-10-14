@@ -18,6 +18,7 @@ pub mod census;
 pub mod nuclear;
 pub mod operator;
 pub mod packet;
+pub mod pzr;
 pub mod solids;
 
 use crate::network::{Network, PZR_COORDINATES, Properties, stratified};

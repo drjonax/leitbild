@@ -81,6 +81,9 @@ pub enum Class {
     RodPosition,
     RodVelocity,
     GuideCurrent,
+    // PZR metal and relief owner (G6).
+    PzrMetal,
+    PzrReliefLift,
 }
 
 /// One block's coordinate declaration, built once at composition.

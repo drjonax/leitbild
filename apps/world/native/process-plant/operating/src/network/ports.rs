@@ -9,14 +9,19 @@
 //! owners deliver non-advective heat there, so phase-volume work is paid
 //! once by the network's own rate closure. Receipts enter the network's
 //! stock rows exactly as its face receipts do, value and direction alike.
-//! The stratified PZR cell takes only its port receipt; its boundary stays
-//! the network's own (closed in S1 and S2).
+//! The stratified PZR cell takes its surge-port receipt from the face and
+//! everything else that enters it (heater and wall receipts, zone heat and
+//! the relief lift with its receiver) from the owner of the PZR metal and
+//! relief through [`Coupling::pzr_boundary`], on the cell's column of the
+//! same evaluation (G6). A network evaluated without a coupling has no such
+//! owner: its boundary is closed, with a declared relief held on its seat
+//! ([`Network::uncoupled_pzr_boundary`], S1 and the preparations).
 //!
 //! Moving cell volumes ([`CellVolume`]) are the rod owner's port, consumed
 //! by [`Network::evaluate_joined`]: the EOS row, the phase rate closure and
 //! the face inertance take the current volume (memo Table 1.2, "Rod
 //! displacement and work"); [`Fluid::current_volumes`] reports it.
-use super::{Failure, Network, Properties, Water, rec, s};
+use super::{Failure, Network, Properties, Water, rec, s, stratified};
 use crate::{
     local_flow::{Cell, Chart},
     thermal::Scalar,
@@ -135,12 +140,43 @@ pub trait Coupling {
     /// Called once per evaluation after every regular cell's state and every
     /// face chart is current, before any section, momentum or stock row.
     fn couple(&mut self, fluid: &Fluid<'_>, receipts: &mut Receipts<'_>) -> Result<(), Failure>;
+    /// The stratified cell's boundary of this evaluation: heater and wall
+    /// receipts, zone heat and the relief state, evaluated by the owner of
+    /// the PZR metal and relief on `column`, the cell's column of the same
+    /// evaluation (with its directions), and on the owner's own coordinates.
+    /// Called once per evaluation, after [`Coupling::couple`] and every
+    /// regular row, immediately before the cell's own rows.
+    fn pzr_boundary(
+        &mut self,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure>;
 }
 
 impl<P: Properties> Network<P> {
     /// Region pressure-reference elevations, packet order.
     pub fn elevations(&self) -> &[f64] {
         &self.elevations
+    }
+    /// The stratified cell's boundary with no coupled owner of the PZR metal
+    /// and relief (S1, the network alone, and the preparations): no heater,
+    /// wall or zone heat, and a declared relief held on its seat with no
+    /// receiver composed, so it carries nothing and a lift refuses.
+    pub fn uncoupled_pzr_boundary(&self) -> stratified::Boundary {
+        let seated = self
+            .stratified
+            .parameters()
+            .ports
+            .iter()
+            .any(|p| p.kind == stratified::PortKind::Relief)
+            .then_some(stratified::ReliefState {
+                lift: s(0.),
+                back_pressure_pa: None,
+            });
+        stratified::Boundary {
+            relief: seated,
+            ..stratified::Boundary::closed()
+        }
     }
     /// The coupling step of [`Network::evaluate_coupled`]: build the fluid
     /// view of this evaluation, let the coupling add its receipts, and add

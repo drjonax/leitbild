@@ -19,7 +19,7 @@ use crate::{
     kinetics,
     network::{
         BlockJacobian, Failure, Fluid, Held, LocalCoupling, NetworkSeed, Properties, Receipts,
-        Replay,
+        Replay, stratified,
     },
     poisons, source_feedback as sf,
     sparse::Pattern,
@@ -677,6 +677,8 @@ pub struct Classes {
     pub solids: bool,
     pub secondary: bool,
     pub rods: bool,
+    /// The PZR metal and relief block (G6).
+    pub pzr: bool,
 }
 impl Classes {
     pub const ALL: Self = Self {
@@ -685,6 +687,7 @@ impl Classes {
         solids: true,
         secondary: true,
         rods: true,
+        pzr: true,
     };
     pub const NONE: Self = Self {
         network: false,
@@ -692,6 +695,7 @@ impl Classes {
         solids: false,
         secondary: false,
         rods: false,
+        pzr: false,
     };
 }
 
@@ -823,11 +827,13 @@ impl Sink<'_> {
 }
 
 /// The operator's coupler as the network replay's hook, noting whether
-/// this column called it (its `last()` is stale otherwise) and, when
+/// this column called it (its `last()` is stale otherwise), whether it
+/// asked for the stratified boundary (`last_pzr()` likewise) and, when
 /// profiled, the time spent in it.
 struct Hook<'a, 'b, P> {
     coupler: &'a mut LocalCoupler<'b, P>,
     called: bool,
+    pzr_called: bool,
     clock: Option<fn() -> f64>,
     spent: f64,
 }
@@ -836,6 +842,7 @@ impl<'a, 'b, P> Hook<'a, 'b, P> {
         Self {
             coupler,
             called: false,
+            pzr_called: false,
             clock,
             spent: 0.,
         }
@@ -852,6 +859,19 @@ impl<P: Properties + WaterProperties> LocalCoupling for Hook<'_, '_, P> {
         self.called = true;
         let started = self.clock.map_or(0., |c| c());
         let result = self.coupler.local(cells, faces, fluid, receipts);
+        if let Some(c) = self.clock {
+            self.spent += c() - started;
+        }
+        result
+    }
+    fn pzr_boundary(
+        &mut self,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        self.pzr_called = true;
+        let started = self.clock.map_or(0., |c| c());
+        let result = self.coupler.pzr_boundary(cell, column);
         if let Some(c) = self.clock {
             self.spent += c() - started;
         }
@@ -1114,6 +1134,12 @@ fn assemble<P: Properties + WaterProperties>(
                 locals += 1;
                 ports.local(&mut sink, j, hook.coupler.last(), sign)?;
             }
+            // A PZR column's PZR block rows, through the boundary's laws.
+            if hook.pzr_called {
+                for (row, v) in hook.coupler.last_pzr() {
+                    sink.add(*row, j, v.direction / sign)?;
+                }
+            }
             let spent = hook.spent;
             clock.book("network columns: replay and chains", started, spent);
         }
@@ -1297,6 +1323,31 @@ fn assemble<P: Properties + WaterProperties>(
         if clock.0.is_some() {
             clock.book_spent(chain_piece, 1, total - own.1 - replays.1 - local.1);
         }
+    }
+    // The PZR block's columns (G6): its own rows at the base column, and the
+    // stratified rows through the boundary's directions.
+    if classes.pzr && o.end > o.pzr {
+        let started = clock.now();
+        let cell = network.stratified();
+        let column = *network
+            .pzr_column()
+            .ok_or_else(|| fatal("the PZR columns need the base evaluation's column"))?;
+        seed.receipts.clear();
+        seed.volumes.clear();
+        for j in o.pzr..o.end {
+            let boundary = coupler.pzr_column(j, cell, &column)?;
+            for (row, v) in coupler.last_pzr() {
+                sink.add(*row, j, v.direction)?;
+            }
+            seed.pzr_boundary = Some(boundary);
+            response.clear();
+            replay.external(&seed, None, &mut response)?;
+            for &(row, d) in &response {
+                sink.add(row, j, d)?;
+            }
+        }
+        seed.pzr_boundary = None;
+        clock.book("pzr columns: block rows and stratified replay", started, 0.);
     }
     Ok(())
 }

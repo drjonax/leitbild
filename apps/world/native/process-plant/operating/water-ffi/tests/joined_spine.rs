@@ -7,7 +7,7 @@
 //! The harness needs stock IDA/KLU (`--features ida`).
 #![cfg(feature = "ida")]
 use leitbild_operating_plant::{
-    joined::{self, census, nuclear::Nuclear, packet, solids::Solids},
+    joined::{self, census, nuclear::Nuclear, packet, pzr::Pzr, solids::Solids},
     network::{Network, PzrPreparation, packet::Packet as NetworkPacket},
 };
 use leitbild_operating_water::If97;
@@ -78,24 +78,43 @@ fn joined_census_against_table_1_1() {
         ids(solids.layout()),
     );
     assert_eq!(n_ids, ids(&network_layout), "network identity");
+    // G6: the PZR owner from the packet's pzrMetal section, at the prepared
+    // cell's Tsat(p_s); a packet compiled before G6 has none.
+    let pzr = joined_packet.pzr_metal.as_ref().map(|section| {
+        Pzr::new(
+            network.stratified(),
+            section,
+            network.pzr_saturation_temperature_k(),
+        )
+        .expect("PZR owner")
+    });
+    let p_ids = pzr.as_ref().map(|b| b.differential());
+    let mut composed = vec![
+        census::Composed {
+            owner: "network",
+            layout: &network_layout,
+            differential: &n_ids,
+        },
+        census::Composed {
+            owner: "nuclear",
+            layout: nuclear.layout(),
+            differential: &k_ids,
+        },
+        census::Composed {
+            owner: "solids",
+            layout: solids.layout(),
+            differential: &s_ids,
+        },
+    ];
+    if let (Some(b), Some(ids)) = (&pzr, &p_ids) {
+        composed.push(census::Composed {
+            owner: "pzr",
+            layout: b.layout(),
+            differential: ids,
+        });
+    }
     let c = census::census(
-        &[
-            census::Composed {
-                owner: "network",
-                layout: &network_layout,
-                differential: &n_ids,
-            },
-            census::Composed {
-                owner: "nuclear",
-                layout: nuclear.layout(),
-                differential: &k_ids,
-            },
-            census::Composed {
-                owner: "solids",
-                layout: solids.layout(),
-                differential: &s_ids,
-            },
-        ],
+        &composed,
         &[joined::pending_secondary(), joined::pending_rods()],
     );
     let row = |name: &str| {
@@ -118,8 +137,19 @@ fn joined_census_against_table_1_1() {
     assert_eq!(row("Network cells").composed, Some([152, 35]));
     assert_eq!(row("Network faces").composed, Some([70, 0]));
     assert_eq!(row("RCP rotors").composed, Some([4, 0]));
-    assert_eq!(c.composed, [17242, 1193, 18435]);
-    assert_eq!(c.with_pending, [17302, 1301, 18603]);
+    // G6: 3 heater rod segments, 5 shell bands and 2 heads, and the lift.
+    let g6 = match &pzr {
+        Some(b) => {
+            let relief = usize::from(b.relief().is_some());
+            let metal = b.layout().len() - relief;
+            assert_eq!(row("PZR heater rod").composed, Some([metal, 0]));
+            assert_eq!(row("PZR relief lift").composed, Some([relief, 0]));
+            metal + relief
+        }
+        None => 0,
+    };
+    assert_eq!(c.composed, [17242 + g6, 1193, 18435 + g6]);
+    assert_eq!(c.with_pending, [17302 + g6, 1301, 18603 + g6]);
     let histories = nuclear.histories();
     assert_eq!(histories.len(), 9650);
     let receipt = json!({
@@ -139,6 +169,10 @@ fn joined_census_against_table_1_1() {
             ]
         },
         "network": {"dimension": network.dimension(), "regular_cells": cells, "faces": network.face_count(), "rotors": network.rotor_count()},
+        "pzr": pzr.as_ref().map(|b| json!({"coordinates": b.layout().labels, "steel_temperature_k": b.saturation_temperature_k(),
+            "heater_demand_w": b.request_w(), "bank_power_w": b.bank_power_w(),
+            "relief": b.relief().map(|r| json!({"port": r.port, "opening_pa": r.device.opening_pa, "reseat_pa": r.device.reseat_pa,
+                "full_strokes_per_s": r.device.full_strokes_per_s, "back_pressure_pa": r.back_pressure_pa}))})),
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
     write_receipt(&receipt);
@@ -717,7 +751,11 @@ fn z1_probe(full: bool) {
         json!({"history_prepared_release_w": released, "rcp_once_paid_shaft_power_w": shaft,
             "feed_enthalpy_j_kg": h_feed, "steam_demand_kg_s": demand,
             "at_prepared_sg_pressure": at(prepared_p), "at_z2_emergent_sg_pressure": at(6.3631e6),
-            "other_heat": "PZR boundary closed (no heater, wall loss or relief composed); no other sink or source in the composition",
+            "other_heat": if joined.pzr().is_some() {
+                "the PZR metal's heater demand (P4) equals its exterior loss at the composed Tsat(p_s); relief closed; no other sink or source in the composition"
+            } else {
+                "PZR boundary closed (no heater, wall loss or relief composed); no other sink or source in the composition"
+            },
             "confirmed_above": 2e-3})
     } else {
         Value::Null
@@ -726,14 +764,15 @@ fn z1_probe(full: bool) {
         "kind": if full { "s2-z1-full-composition" } else { "s2-z1-part1-composed-residual" },
         "owners_prepared": owners_prepared,
         "g17_power_basis": g17,
+        "pzr": pzr_receipt(&joined),
         "pattern": {"nonzeros": pattern_nnz, "colors": colors},
         "consistent_start": start_receipt,
         "consistent_start_cpu_s": start_cpu_s,
         "colored_jacobian_random_directions": direction_checks,
         "status": if full {
-            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Z1 on the full composition: network, nuclear, solids, the SG secondary owner and the rod owner with its guide currents prepared at the composed state. The PZR boundary is closed: shell metal and relief pending (G6), heaters at zero by G6"
+            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Z1 on the full composition: network, nuclear, solids, the SG secondary owner and the rod owner with its guide currents prepared at the composed state, and the PZR owner as `pzr` states (G6)"
         } else {
-            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR boundary is closed (shell metal and relief pending, heaters at zero by G6)"
+            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR owner as `pzr` states (G6)"
         },
         "packet": path,
         "packet_sha256": sha256(&bytes),
@@ -753,6 +792,25 @@ fn z1_probe(full: bool) {
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
     write_receipt(&receipt);
+}
+
+/// The PZR owner of a composition (G6), for receipts.
+fn pzr_receipt(joined: &leitbild_operating_plant::joined::operator::Joined<If97>) -> Value {
+    match joined.pzr() {
+        Some(b) => json!({
+            "composed": true,
+            "coordinates": b.layout().labels,
+            "steel_temperature_k": b.saturation_temperature_k(),
+            "heater_demand_w": b.request_w(),
+            "bank_power_w": b.bank_power_w(),
+            "heater_demand_basis": "P4 (S2 design choices, 11 October): the metal's exterior loss at the composed Tsat(p_s), computed once and held constant; it stands in for the pressure controller's steady output (S3)",
+            "relief": b.relief().map(|r| json!({"opening_pa": r.device.opening_pa, "reseat_pa": r.device.reseat_pa,
+                "full_strokes_per_s": r.device.full_strokes_per_s, "receiver_back_pressure_pa": r.back_pressure_pa,
+                "motion": format!("{:?}", r.motion), "demand_open": r.demand_open})),
+        }),
+        None => json!({"composed": false,
+            "boundary": "closed: a packet compiled before G6 (no pzrMetal section): no heater, shell metal or relief"}),
+    }
 }
 
 /// The full composition at the hot reference, consistently started.
@@ -828,6 +886,12 @@ fn started_full_composition() -> Started {
         .absolute_tolerances(&y[..n_net], classes)
         .unwrap();
     atol.resize(y.len(), classes.stock_scaled);
+    // G12: the lift's absolute tolerance (the scaled floor at its unit
+    // scale) bounds its distance from a stop at a travel root.
+    if let Some(b) = joined.pzr_mut() {
+        b.declare_lift_root_bound(classes.stock_scaled)
+            .expect("lift root bound");
+    }
     let weights: Vec<f64> = y
         .iter()
         .zip(&atol)
@@ -951,8 +1015,8 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
     let trip = joined.command(0., &mut y, Command::TurbineTrip).unwrap();
     assert_eq!(
         trip.len(),
-        2,
-        "both owners take the command; nothing is due at once"
+        2 + usize::from(joined.pzr().is_some()),
+        "every composed owner takes the command; nothing is due at once"
     );
     let open = joined.next_time_event(0.).expect("the holding opening");
     let rods = joined.rods().unwrap();
@@ -1499,7 +1563,8 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
         "predecessors": ["settling-probe-1-log.jsonl (ac0f7106) was stopped before its first 1 s output: its 0.01 Newton coefficient was superseded the same day",
             "settling-probe-2-log.jsonl (1590dae0, colored Jacobian) was stopped before its first 1 s output when the block Jacobian landed; its packet lacked R3's passageBlendSpeed",
             "settling-probe-3-log.jsonl (c0db454d, block Jacobian) was stopped before its first 1 s output to add the coupler's scope-proportional calls and the per-block Jacobian attribution; values are unchanged (JAC's oracle, b1b9bfd3)"],
-        "status": "NOT-EVIDENCE probe; S2 is not declared. PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
+        "status": "NOT-EVIDENCE probe; S2 is not declared. The PZR owner as `pzr` states (G6)",
+        "pzr": pzr_receipt(&ida.system().joined),
         "preparation": preparation,
         "configuration": {"maxOrder": 2, "relativeTolerance": rtol, "absoluteTolerance": "the S1 classes' scaled floor for every new class (G12)",
             "newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "newtonSource": "claude/ld01-wiki c968921 (supersedes a66ee83's 0.01): stock coefficient 0.33 with IDASetDeltaCjLSetup 0.1 at every IDA start and restart",

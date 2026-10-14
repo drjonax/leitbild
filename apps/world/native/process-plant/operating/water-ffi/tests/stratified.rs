@@ -754,7 +754,7 @@ fn shut() -> Boundary {
     Boundary {
         relief: Some(st::ReliefState {
             lift: s(0.),
-            back_pressure_pa: s(101_325.),
+            back_pressure_pa: Some(s(101_325.)),
         }),
         ..Boundary::closed()
     }
@@ -955,7 +955,7 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
     let rate = active_rates();
     let relief = st::ReliefState {
         lift: s(0.6),
-        back_pressure_pa: s(3.0e5),
+        back_pressure_pa: Some(s(3.0e5)),
     };
     let boundary = Boundary {
         heat: Heat {
@@ -1054,7 +1054,7 @@ fn relief_outlet_is_dry_without_drops_and_its_roots_follow_raw_pt1() {
     let boundary = Boundary {
         relief: Some(st::ReliefState {
             lift: s(1.),
-            back_pressure_pa: s(101_325.),
+            back_pressure_pa: Some(s(101_325.)),
         }),
         ..Boundary::closed()
     };
@@ -1067,7 +1067,7 @@ fn relief_outlet_is_dry_without_drops_and_its_roots_follow_raw_pt1() {
     let shut = Boundary {
         relief: Some(st::ReliefState {
             lift: s(0.),
-            back_pressure_pa: s(101_325.),
+            back_pressure_pa: Some(s(101_325.)),
         }),
         ..Boundary::closed()
     };
@@ -1351,7 +1351,7 @@ fn walls_with_every_port_kind_are_conserved_exactly() {
         walls: walls.clone(),
         relief: Some(st::ReliefState {
             lift: s(0.4),
-            back_pressure_pa: s(2.5e5),
+            back_pressure_pa: Some(s(2.5e5)),
         }),
         ..Boundary::closed()
     };
@@ -1455,7 +1455,7 @@ fn relief_open_jacobian_cost_report() {
             let boundary = Boundary {
                 relief: Some(st::ReliefState {
                     lift: Scalar::new(0.6, lift),
-                    back_pressure_pa: s(3.0e5),
+                    back_pressure_pa: Some(s(3.0e5)),
                 }),
                 ..Boundary::closed()
             };
@@ -1548,7 +1548,7 @@ fn held_relief_partials_reproduce_the_per_column_dual_directions() {
         let boundary = Boundary {
             relief: Some(st::ReliefState {
                 lift: Scalar::new(0.6, lift),
-                back_pressure_pa: Scalar::new(3.0e5, 0.),
+                back_pressure_pa: Some(Scalar::new(3.0e5, 0.)),
             }),
             ..Boundary::closed()
         };

@@ -187,6 +187,11 @@ pub struct Network<P: Properties> {
     pzr_column: Option<stratified::Column>,
     /// Internal transfers and balance of the last value evaluation.
     pzr_evaluation: Option<stratified::Evaluation>,
+    /// The cell's boundary in the last value evaluation, and whether a
+    /// coupled owner gave it ([`Coupling::pzr_boundary`]).
+    pzr_boundary: Option<(stratified::Boundary, bool)>,
+    /// `Tsat(p_s)` of the cell's preparation at the packet's operating point.
+    pzr_saturation_temperature_k: f64,
     pub face_layout: Vec<FaceLayout>,
     volumes: Vec<f64>,
     /// Regular cells' free volume and its rate in the last evaluation: the
@@ -286,18 +291,33 @@ impl<P: Properties> Network<P> {
                 "no network region owns a nonpressure force; a force projection refuses",
             ));
         }
-        // One surge port, whose face ends at the cell. The network composes
-        // no spray or relief owner, so those ports refuse here. The PZR side
-        // contributes its port view only: no support, segment or other face
-        // touches the cell.
-        let [port] = &cell.ports[..] else {
-            return Err(bad("the stratified PZR cell needs exactly one port"));
+        // One surge port, whose face ends at the cell. A spray inlet and a
+        // relief outlet may be declared without a face: the spray's receipt
+        // is the network's zero (closed), and the relief is the cell's own
+        // restriction, whose lift and receiver a coupled PZR owner supplies
+        // through its boundary (`Coupling::pzr_boundary`); without one the
+        // relief stays on its seat. The PZR side contributes its port view
+        // only: no support, segment or other face touches the cell.
+        let surge_ports: Vec<&stratified::Port> = cell
+            .ports
+            .iter()
+            .filter(|p| p.kind == stratified::PortKind::Surge)
+            .collect();
+        let [port] = &surge_ports[..] else {
+            return Err(bad("the stratified PZR cell needs exactly one surge port"));
         };
-        let (stratified::PortKind::Surge, Some(port_face)) = (port.kind, port.face) else {
+        let Some(port_face) = port.face else {
+            return Err(bad("the surge port needs its face"));
+        };
+        if cell
+            .ports
+            .iter()
+            .any(|p| p.kind != stratified::PortKind::Surge && p.face.is_some())
+        {
             return Err(bad(
-                "the network composes only the surge port, with its face",
+                "the network composes only the surge port's face; spray and relief ports take none",
             ));
-        };
+        }
         let touching: Vec<usize> = (0..faces.len())
             .filter(|j| faces[*j].from == pzr || faces[*j].to == pzr)
             .collect();
@@ -367,7 +387,9 @@ impl<P: Properties> Network<P> {
             port_face,
         };
         let stratified = stratified::Cell::new(cell.clone(), stratified::Case::nominal(cell))?;
-        let values = stratified_preparation(packet, &stratified, &properties, pzr_preparation)?;
+        let preparation =
+            stratified_preparation(packet, &stratified, &properties, pzr_preparation)?;
+        let values = preparation.values;
         scales.extend(pzr_scales(
             &values,
             cell.fluid_volume_m3,
@@ -471,6 +493,8 @@ impl<P: Properties> Network<P> {
                 stratified,
                 pzr_column: None,
                 pzr_evaluation: None,
+                pzr_boundary: None,
+                pzr_saturation_temperature_k: preparation.saturation_temperature_k,
                 face_layout,
                 cell_volume: volumes[..pzr].iter().map(|v| s(*v)).collect(),
                 cell_volume_rate: vec![None; pzr],
@@ -627,6 +651,16 @@ impl<P: Properties> Network<P> {
     pub fn pzr_evaluation(&self) -> Option<&stratified::Evaluation> {
         self.pzr_evaluation.as_ref()
     }
+    /// The cell's boundary in the last value evaluation, and whether a
+    /// coupled owner gave it.
+    pub fn pzr_boundary(&self) -> Option<(&stratified::Boundary, bool)> {
+        self.pzr_boundary.as_ref().map(|(b, coupled)| (b, *coupled))
+    }
+    /// `Tsat(p_s)` of the stratified cell's preparation at the packet's
+    /// operating point, the state every prepared zone is at.
+    pub fn pzr_saturation_temperature_k(&self) -> f64 {
+        self.pzr_saturation_temperature_k
+    }
     pub fn drive(&self) -> &rotor::Parameters {
         &self.drive
     }
@@ -723,15 +757,15 @@ impl<P: Properties> Network<P> {
     }
 }
 
-/// Prepared physical PZR coordinates at the packet's operating point
-/// (`stratified::prepare`), in the contract order. The roof pressure is the
-/// declared one at the cell top.
+/// The stratified cell's preparation at the packet's operating point
+/// (`stratified::prepare`): its physical coordinates in the contract order,
+/// with the declared roof pressure at the cell top, and `Tsat(p_s)`.
 fn stratified_preparation<P: Properties>(
     packet: &packet::Packet,
     cell: &stratified::Cell,
     properties: &P,
     controls: &PzrPreparation,
-) -> Result<[f64; PZR_COORDINATES], Failure> {
+) -> Result<stratified::Preparation, Failure> {
     let point = &packet.preparation.operating_point;
     let parameters = cell.parameters();
     if point.pzr_roof_elevation_m != parameters.top_m
@@ -745,15 +779,13 @@ fn stratified_preparation<P: Properties>(
             parameters.top_m
         )));
     }
-    Ok(cell
-        .prepare(
-            properties,
-            point.pzr_roof_pressure_pa,
-            point.pzr_level_m,
-            controls.pressure_tolerance_pa,
-            controls.max_passes,
-        )?
-        .values)
+    cell.prepare(
+        properties,
+        point.pzr_roof_pressure_pa,
+        point.pzr_level_m,
+        controls.pressure_tolerance_pa,
+        controls.max_passes,
+    )
 }
 
 /// Solver scales of the PZR block per class (contract amendment 4): the

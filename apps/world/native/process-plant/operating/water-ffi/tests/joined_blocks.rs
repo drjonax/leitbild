@@ -818,7 +818,8 @@ fn joined_dense_lines() {
         i if i < o.solids => "nuclear",
         i if i < o.secondary => "solids",
         i if i < o.rods => "secondary",
-        _ => "rods",
+        i if i < o.pzr => "rods",
+        _ => "pzr",
     };
     let mut lines: Vec<(usize, usize)> = (0..n).map(|i| (row_count[i] + col_count[i], i)).collect();
     lines.sort_unstable_by(|a, b| b.cmp(a));

@@ -896,7 +896,9 @@ pub struct HeaterReceipt {
 #[derive(Clone, Copy, Debug)]
 pub struct ReliefState {
     pub lift: Scalar,
-    pub back_pressure_pa: Scalar,
+    /// `None` only for a relief held on its seat with no receiver composed
+    /// (the network alone, S1): a lift, or a lift direction, refuses then.
+    pub back_pressure_pa: Option<Scalar>,
 }
 
 /// Everything entering the cell that is not a face receipt.
@@ -2327,7 +2329,12 @@ impl Cell {
                         )));
                     }
                     let alpha = x.drop_volume / (x.vapor_volume + x.drop_volume);
-                    let back = state.back_pressure_pa;
+                    let back = state.back_pressure_pa.ok_or_else(|| {
+                        fatal(format!(
+                            "relief port {}: a lift needs its receiver's backpressure",
+                            port.id
+                        ))
+                    })?;
                     let vapor = relief_flux(
                         properties,
                         true,
