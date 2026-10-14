@@ -382,6 +382,38 @@ describe('WorkspaceRuntimeRegistry', () => {
     })
   }
 
+  // Removal and shutdown close comparisons and wait for admitted Workspace
+  // operations (another Agent's tool call, say) before they evict. An
+  // operation held past the cooldown must not let the queued turn start in
+  // that wait.
+  for (const ending of ['remove', 'shutdown'] as const) {
+    it(`never starts a turn queued behind the reply cooldown while ${ending} waits for a held Workspace operation`, async () => {
+      const id = newWorkspaceId()
+      await provision(id)
+      const errors: unknown[][] = []
+      const consoleError = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+      const { actual, agent, streams } = await holdFirstTurn(provider => createWorkspaceRuntimeRegistry({ moduleState, idleMs: 1_000_000,
+        deployment: createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(provider) }),
+      }), id)
+      try {
+        const states: string[] = []
+        agent.state.subscribe(value => { states.push(value) })
+        let entered!: () => void
+        const operationStarted = new Promise<void>(resolve => { entered = resolve })
+        // Longer than the 500 ms cooldown that holds the queued turn.
+        const held = actual.withWorkspace(id, async () => { entered(); await Bun.sleep(900) })
+        await operationStarted
+        if (ending === 'remove') await actual.remove(id)
+        else await actual.shutdown()
+        await held
+        expect(errors).toEqual([])
+        expect(streams()).toBe(1)
+        expect(states).not.toContain('generating')
+        expect(agent.hasQueuedTurn()).toBe(false)
+      } finally { consoleError.mockRestore(); await actual.shutdown() }
+    })
+  }
+
   // A removed Agent leaves the team, so a later drain cannot see it: removal
   // itself must stop its turns.
   it('removing an Agent drops its queued turn, so none starts after the runtime closes', async () => {

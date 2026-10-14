@@ -94,6 +94,8 @@ describe('ConcurrencyManager — close', () => {
     cm.addPending('room-b')
     cm.scheduleNext('room-c', 5, roomId => { started.push(roomId) })
     cm.close()
+    // Removal and shutdown close before eviction does; the second close changes nothing.
+    cm.close()
     expect(cm.isClosed()).toBe(true)
     expect(cm.hasQueuedWork()).toBe(false)
     expect(cm.state.get()).toBe('generating')

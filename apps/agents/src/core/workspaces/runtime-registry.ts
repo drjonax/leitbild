@@ -643,7 +643,11 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
   // handler in bootstrap.ts (replaces the single-system flush).
   const shutdown = async (): Promise<void> => {
     shuttingDown = true
-    // People first: waiting syncs answer at once instead of holding shutdown.
+    // Agents first: waiting for operation leases below can outlast a reply's
+    // cooldown, and the turn queued behind it must not start on a runtime
+    // whose comparisons already closed. evictOne closes them again, a no-op.
+    for (const entry of map.values()) closeAgents(entry.system)
+    // People next: waiting syncs answer at once instead of holding shutdown.
     await Promise.all([...new Set([...pendingPeople.keys(), ...peopleDirectories.keys()])].map(closePeople))
     // Comparisons own admitted work too. Cancel before waiting for operation
     // leases, otherwise shutdown waits for whole model tasks to finish.
@@ -687,6 +691,10 @@ export const createWorkspaceRuntimeRegistry = (opts: WorkspaceRuntimeRegistryOpt
       const existing = removing.get(id)
       if (existing) return existing
       const removingWorkspace = (async () => {
+        // As in shutdown: no queued turn starts while removal waits for
+        // operations below. evictOne closes the Agents again, a no-op.
+        const entry = map.get(id)
+        if (entry) closeAgents(entry.system) // A runtime still loading is closed by evictOne once it loads.
         await closePeople(id)
         // Comparisons own admitted model work: cancel it before draining
         // operations, as shutdown does, or removal waits for whole model tasks.
