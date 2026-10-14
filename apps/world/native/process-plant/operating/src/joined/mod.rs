@@ -12,6 +12,7 @@
 //! SG secondary and rod owners implement [`block::Secondary`] and
 //! [`block::Rods`]; until an owner composes its block, the census lists it
 //! as pending and no composed evaluation includes it.
+pub mod account;
 pub mod block;
 pub mod blocks;
 pub mod census;

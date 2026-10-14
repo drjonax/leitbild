@@ -454,7 +454,9 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     Ok((yp, report))
 }
 
-pub use integrated::{Assembly, Discrete, Integrated, Restart, Restarted, discrete_restart};
+pub use integrated::{
+    Assembly, Discrete, Integrated, JoinedSystem, Restart, Restarted, discrete_restart,
+};
 
 mod integrated {
     use super::{Analyses, Matrices, Report};
@@ -504,10 +506,7 @@ mod integrated {
     }
     impl Restart {
         /// Configure a segment start (after construction or a restart).
-        pub fn configure<P: Properties + WaterProperties>(
-            &self,
-            ida: &mut Ida<Integrated<P>>,
-        ) -> Result<(), String> {
+        pub fn configure<S: System>(&self, ida: &mut Ida<S>) -> Result<(), String> {
             ida.set_nonlinear_convergence_coefficient(self.newton_coefficient)?;
             ida.set_delta_cj_lsetup(self.delta_cj_lsetup)?;
             ida.set_init_step(self.first_step_s)
@@ -540,8 +539,8 @@ mod integrated {
     ///    on colored (the reference) afresh;
     /// 5. IDAReInit with the consistent rates and the segment configuration.
     #[allow(clippy::too_many_arguments)] // One restart: event, state, identity and tolerances.
-    pub fn discrete_restart<P: Properties + WaterProperties>(
-        ida: &mut Ida<Integrated<P>>,
+    pub fn discrete_restart<S: JoinedSystem>(
+        ida: &mut Ida<S>,
         t: f64,
         discrete: Discrete<'_>,
         y: &mut [f64],
@@ -555,7 +554,7 @@ mod integrated {
             assembly,
             analyses,
             ..
-        } = ida.system_mut();
+        } = ida.system_mut().integrated_mut();
         if absolute.len() != y.len() {
             return Err("restart tolerances layout".into());
         }
@@ -604,6 +603,25 @@ mod integrated {
             yp,
             report,
         })
+    }
+
+    /// A stock-IDA system whose residual is one [`Integrated`] joined
+    /// operator, possibly wrapped (the IDAS ledger, an observation root):
+    /// [`discrete_restart`] reaches the operator, its assembly and its cached
+    /// analyses through it.
+    pub trait JoinedSystem: System {
+        type Properties: Properties + WaterProperties;
+        fn integrated(&self) -> &Integrated<Self::Properties>;
+        fn integrated_mut(&mut self) -> &mut Integrated<Self::Properties>;
+    }
+    impl<P: Properties + WaterProperties> JoinedSystem for Integrated<P> {
+        type Properties = P;
+        fn integrated(&self) -> &Integrated<P> {
+            self
+        }
+        fn integrated_mut(&mut self) -> &mut Integrated<P> {
+            self
+        }
     }
 
     /// How the stage Jacobian is assembled.
