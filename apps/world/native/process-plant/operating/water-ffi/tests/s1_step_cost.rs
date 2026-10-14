@@ -20,42 +20,17 @@ use leitbild_operating_plant::{
 };
 use leitbild_operating_water::{
     CaloricLinearization, If97,
-    ida::{Failure, Ida, Initial, System},
+    ida::{Failure, Ida, Initial, KluOrdering, System},
     network::Integrated,
 };
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 
-#[repr(C)]
-struct Timespec {
-    seconds: i64,
-    nanoseconds: i64,
-}
-unsafe extern "C" {
-    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
-    fn pthread_set_qos_class_self_np(class: u32, priority: i32) -> i32;
-}
-/// QOS_CLASS_USER_INTERACTIVE: asks the scheduler for a performance core so
-/// that efficiency-core placement on a shared machine does not enter the
-/// comparison. It changes no computation.
-fn prefer_performance_core() {
-    // SAFETY: plain scalar arguments; affects only this thread's scheduling.
-    let status = unsafe { pthread_set_qos_class_self_np(0x21, 0) };
-    assert_eq!(status, 0, "thread QoS unavailable");
-}
-/// CLOCK_THREAD_CPUTIME_ID on macOS.
-const THREAD_CPU_CLOCK: i32 = 16;
-fn cpu() -> f64 {
-    let mut t = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: one live stack Timespec matching the C layout; the C library
-    // writes it and keeps no pointer.
-    let status = unsafe { clock_gettime(THREAD_CPU_CLOCK, &mut t) };
-    assert_eq!(status, 0, "thread CPU clock unavailable");
-    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
-}
+// Thread CPU (CLOCK_THREAD_CPUTIME_ID) and the performance-core request
+// (macOS QOS_CLASS_USER_INTERACTIVE), which change no computation.
+#[path = "common/cpu.rs"]
+mod clock;
+use clock::{prefer_performance_core, thread_cpu_s as cpu};
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Tally {
@@ -156,6 +131,10 @@ struct TimedSystem {
 impl System for TimedSystem {
     fn dimension(&self) -> usize {
         self.inner.dimension()
+    }
+    /// The wrapped system's own KLU ordering (AMD on every joined system).
+    fn klu_ordering(&self) -> KluOrdering {
+        self.inner.klu_ordering()
     }
     fn nonzeros(&self) -> usize {
         self.inner.nonzeros()

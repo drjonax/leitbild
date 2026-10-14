@@ -163,11 +163,14 @@ pub fn nuclear_partials(
         })
         .map_err(trial)?;
     // d N_i' / d rho_i = N_i / Lambda_i: the model's own reactivity action.
-    let state: Vec<f64> = x[..m0].to_vec();
+    // Region i's reactivity acts on population i alone, so one direction
+    // with every region's unit reactivity gives each region's, entry for
+    // entry the single-region direction's.
+    let state = &x[..m0];
     let zero_state = vec![0.; m0];
-    let zero_regions = vec![
+    let unit_reactivity = vec![
         kinetics::RegionInput {
-            reactivity: 0.,
+            reactivity: 1.,
             external_source_per_s: 0.
         };
         r
@@ -178,28 +181,23 @@ pub fn nuclear_partials(
     let zero_outside = vec![0.; k.outside_fractions.len()];
     let mut rates = vec![0.; m0];
     let mut fissions = vec![0.; a];
-    let mut per_reactivity = vec![0.; r];
-    for i in 0..r {
-        let mut d = zero_regions.clone();
-        d[i].reactivity = 1.;
-        kinetics
-            .directional_derivative(
-                &state,
-                inputs,
-                &zero_state,
-                kinetics::Inputs {
-                    regions: &d,
-                    transfer_rates_per_s: &zero_transfer,
-                    fissions_per_population_s: &zero_production,
-                    emission_fractions: &zero_emission,
-                    outside_fractions: &zero_outside,
-                },
-                &mut rates,
-                &mut fissions,
-            )
-            .map_err(trial)?;
-        per_reactivity[i] = rates[i];
-    }
+    kinetics
+        .directional_derivative(
+            state,
+            inputs,
+            &zero_state,
+            kinetics::Inputs {
+                regions: &unit_reactivity,
+                transfer_rates_per_s: &zero_transfer,
+                fissions_per_population_s: &zero_production,
+                emission_fractions: &zero_emission,
+                outside_fractions: &zero_outside,
+            },
+            &mut rates,
+            &mut fissions,
+        )
+        .map_err(trial)?;
+    let per_reactivity = &rates[..r];
     let beta: Vec<f64> = k
         .delayed_yields_per_fission
         .iter()
@@ -664,6 +662,10 @@ pub struct JoinedJacobian {
     template: LinearTemplate,
     /// Global row scale of every joined row (a network row is its own).
     row_scales: Vec<f64>,
+    /// Global coordinate scale of every joined coordinate.
+    scales: Vec<f64>,
+    /// The nuclear partials' entry counts, which no state changes.
+    partials_len: [usize; 6],
 }
 
 /// Which column classes an assembly covers. The production assembly
@@ -739,14 +741,16 @@ impl Clock<'_> {
     }
 }
 
-/// The nuclear block's partials at the operator's last evaluation.
+/// The nuclear block's partials at the operator's last evaluation, with
+/// the joined coordinate scales and the entry counts to reserve.
 fn partials_at<P: Properties + WaterProperties>(
     joined: &Joined<P>,
     t: f64,
     y: &[f64],
+    scales: &[f64],
+    len: [usize; 6],
 ) -> Result<NuclearPartials, Failure> {
     let o = joined.offsets();
-    let scales = joined.scales();
     let x: Vec<f64> = (o.nuclear..o.solids).map(|i| y[i] * scales[i]).collect();
     let fuel_t: Vec<f64> = joined
         .fuel_feedback_temperatures()
@@ -754,7 +758,15 @@ fn partials_at<P: Properties + WaterProperties>(
         .map(|v| v.value)
         .collect();
     let travel: Vec<f64> = joined.travel().iter().map(|v| v.value).collect();
-    let mut partials = NuclearPartials::default();
+    let mut partials = NuclearPartials {
+        feeds: Vec::new(),
+        own: Vec::with_capacity(len[0]),
+        fuel_t: Vec::with_capacity(len[1]),
+        water: Vec::with_capacity(len[2]),
+        travel: Vec::with_capacity(len[3]),
+        fuel_w: Vec::with_capacity(len[4]),
+        coolant_w: Vec::with_capacity(len[5]),
+    };
     nuclear_partials(
         joined.nuclear(),
         o.nuclear,
@@ -782,7 +794,16 @@ impl JoinedJacobian {
         let zero = vec![0.; y.len()];
         joined.evaluate(t, y, &zero, None, 0., None)?;
         let template = joined.nuclear().linear_template(o.nuclear);
-        let partials = partials_at(joined, t, y)?;
+        let scales = joined.scales();
+        let partials = partials_at(joined, t, y, &scales, [0; 6])?;
+        let partials_len = [
+            partials.own.len(),
+            partials.fuel_t.len(),
+            partials.water.len(),
+            partials.travel.len(),
+            partials.fuel_w.len(),
+            partials.coolant_w.len(),
+        ];
         let columns = joined_pattern(joined, &template, &partials)?;
         let pattern = Pattern::from_columns(o.end, &columns).map_err(fatal)?;
         let network = joined.network.block_jacobian()?;
@@ -796,6 +817,8 @@ impl JoinedJacobian {
             network,
             template,
             row_scales,
+            scales,
+            partials_len,
         })
     }
 }
@@ -1040,10 +1063,10 @@ fn assemble<P: Properties + WaterProperties>(
     joined.evaluate(t, y, yp, None, 0., Some(&mut reuse))?;
     clock.book("base: joined evaluation", started, 0.);
     let started = clock.now();
-    let partials = partials_at(joined, t, y)?;
+    let scales = &structure.scales;
+    let partials = partials_at(joined, t, y, scales, structure.partials_len)?;
     clock.book("base: nuclear partials", started, 0.);
     let started = clock.now();
-    let scales = joined.scales();
     let deposition: Vec<Vec<(usize, f64)>> = joined.nuclear().deposition().to_vec();
     values.fill(0.);
     let mut sink = Sink {

@@ -28,8 +28,8 @@ pub mod guide;
 
 use crate::{
     joined::block::{
-        CellVolume, Class, Command, Coordinates, Fluid, Layout, Receipts, Rods, Structure,
-        Transaction,
+        CellVolume, Class, Command, Coordinates, Fluid, Layout, OwnerAccount, Receipts, Rods,
+        Structure, Transaction,
     },
     local_flow::Phase,
     network::{Failure, packet::Packet},
@@ -258,6 +258,14 @@ pub struct RodBlock {
     modes: Vec<Mode>,
     failed_release: Vec<bool>,
     holding_open_at: Option<f64>,
+    /// Set only for a conservation-account evaluation
+    /// ([`Rods::capture_account`]): the next value evaluation also records
+    /// the bodies' power ledger, which no residual or Jacobian pays for.
+    capture: bool,
+    /// The recorded power ledger summed over the clusters: the bodies'
+    /// fluid-force power, the heat paid to the swept water and the boundary
+    /// work the network pays through `-p V'` (W).
+    captured: Option<[f64; 3]>,
 }
 
 impl RodBlock {
@@ -501,6 +509,8 @@ impl RodBlock {
             modes: vec![Mode::Held; n],
             failed_release: vec![false; n],
             holding_open_at: None,
+            capture: false,
+            captured: None,
         };
         if block.z_interface >= block.z_main {
             return Err(fatal(
@@ -1101,6 +1111,35 @@ impl<P> Rods<P> for RodBlock {
     fn layout(&self) -> &Layout {
         &self.layout
     }
+    fn capture_account(&mut self, on: bool) {
+        self.capture = on;
+    }
+    fn account(&self, x: Coordinates<'_>, rows: &[Scalar]) -> Result<OwnerAccount, Failure> {
+        if rows.len() != self.layout.len() || x.len() != self.layout.len() {
+            return Err(fatal("rods: account layout"));
+        }
+        let (mut energy, mut rate) = (0., 0.);
+        for c in 0..self.clusters.len() {
+            let (y, v) = (x.value(3 * c).value, x.value(3 * c + 1).value);
+            energy += 0.5 * self.mass * v * v + self.mass * self.gravity * y;
+            // The rows' own rates: y' = v always; v' = F_net / M for a free
+            // body, whose row is v' - F_net/M. A held or seated body's row
+            // is the constraint v = 0 and pays no kinetic rate.
+            let travel = x.rate(3 * c).value - rows[3 * c].value;
+            let acceleration = match self.modes[c] {
+                Mode::Free => x.rate(3 * c + 1).value - rows[3 * c + 1].value,
+                Mode::Held | Mode::Seated => 0.,
+            };
+            rate += self.mass * v * acceleration + self.mass * self.gravity * travel;
+        }
+        Ok(OwnerAccount {
+            mechanical_j: energy,
+            mechanical_rate_w: rate,
+            crossings: Vec::new(),
+            received_heat_w: Vec::new(),
+            power: self.captured,
+        })
+    }
     fn prepared(&self) -> Vec<f64> {
         self.prepared.clone()
     }
@@ -1200,6 +1239,20 @@ impl<P> Rods<P> for RodBlock {
         for c in 0..self.clusters.len() {
             let r = self.cluster_rows(c, &x, fluid, receipts)?;
             rows[3 * c..3 * c + 3].copy_from_slice(&r);
+        }
+        // A value evaluation replaces the record: the captured ledger is
+        // always the last value evaluation's, or none.
+        if !x.seeded() {
+            self.captured = None;
+            if self.capture {
+                let mut ledger = [0.; 3];
+                for c in 0..self.clusters.len() {
+                    for (sum, part) in ledger.iter_mut().zip(self.power(c, &x, fluid)?) {
+                        *sum += part;
+                    }
+                }
+                self.captured = Some(ledger);
+            }
         }
         Ok(())
     }

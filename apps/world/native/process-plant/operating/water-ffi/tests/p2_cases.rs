@@ -102,16 +102,7 @@ fn sh(args: &[&str], dir: &str) -> String {
 /// The 1-, 5- and 15-minute load averages, recorded beside every CPU
 /// measurement on the shared machine.
 fn load_average() -> Value {
-    let out = Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
-    let v: Vec<f64> = out
-        .split_whitespace()
-        .filter_map(|w| w.parse().ok())
-        .collect();
-    json!(v)
+    json!(p2_harness::clock::load_averages())
 }
 fn sha256(bytes: &[u8]) -> String {
     let mut child = Command::new("shasum")

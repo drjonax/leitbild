@@ -47,33 +47,12 @@ use leitbild_operating_water::{
 use serde_json::{Value, json};
 use std::time::Instant;
 
-#[repr(C)]
-struct Timespec {
-    seconds: i64,
-    nanoseconds: i64,
-}
-unsafe extern "C" {
-    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
-}
-fn clock(id: i32) -> f64 {
-    let mut t = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: one live stack Timespec matching the C layout; the C library
-    // writes it and keeps no pointer.
-    let status = unsafe { clock_gettime(id, &mut t) };
-    assert_eq!(status, 0, "CPU clock {id} unavailable");
-    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
-}
-/// CLOCK_PROCESS_CPUTIME_ID on macOS, as the S1 harness measures.
-pub fn cpu_s() -> f64 {
-    clock(12)
-}
-/// CLOCK_THREAD_CPUTIME_ID on macOS, reported beside it.
-pub fn thread_cpu_s() -> f64 {
-    clock(16)
-}
+// CLOCK_PROCESS_CPUTIME_ID as the S1 harness measures (`cpu_s`), and
+// CLOCK_THREAD_CPUTIME_ID reported beside it.
+#[path = "../common/cpu.rs"]
+pub mod clock;
+#[allow(unused_imports)] // Each test crate uses its own subset.
+pub use clock::{process_cpu_s as cpu_s, thread_cpu_s};
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)

@@ -880,6 +880,35 @@ impl Solids {
         Ok(())
     }
 
+    /// Set `cell`'s wall water directly: a preparation's own coolant state
+    /// (the steady solids preparation), not a network evaluation's.
+    pub fn set_wall_water(&mut self, cell: usize, water: WallWater) -> Result<(), Failure> {
+        let k = self
+            .wall_slot
+            .get(cell)
+            .copied()
+            .flatten()
+            .ok_or_else(|| fatal(format!("cell {cell} has no wall slot")))?;
+        self.wall[k] = Some(water);
+        Ok(())
+    }
+
+    /// The own coordinates a closed scope's rows complete, ascending: each
+    /// half's energies and surfaces, the helium stores, the passive stores
+    /// and the SG segments' metal.
+    pub fn scope_coordinates(&self, closed: &Closed) -> Vec<usize> {
+        let mut out: Vec<usize> = closed
+            .bands
+            .iter()
+            .flat_map(|b| (0..3).flat_map(move |k| [self.energy(*b, k), self.surface(*b, k)]))
+            .chain(closed.helium.iter().map(|h| self.helium(*h)))
+            .chain(closed.stores.iter().map(|p| self.passive(*p)))
+            .chain(closed.segments.iter().map(|g| self.metal(*g)))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// The wall water of the last [`Solids::wall_water`] call at `cell`.
     pub fn wall_water_at(&self, cell: usize) -> Option<WallWater> {
         self.wall_slot
@@ -1196,6 +1225,11 @@ impl Solids {
         {
             return Err(fatal("stage length"));
         }
+        // One property boundary for this scope's evaluation: each query and
+        // wet/film turnover at bit-identical inputs is answered once, with
+        // the answer a fresh query returns; nothing outlives the call.
+        let shared = thermal::Shared::new(properties);
+        let properties = &shared;
         heat.secondary_w.clear();
         heat.secondary_w.resize(self.secondaries, s(0.));
         heat.primary_to_metal_w.clear();

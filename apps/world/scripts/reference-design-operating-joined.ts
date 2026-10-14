@@ -6,9 +6,10 @@
  * joined blocks read the same bytes.
  *
  * Sections: `secondary` (the SG secondary owner, prepareOperatingSecondary),
- * `rods` (the rod owner, compileOperatingRods) and `pzrMetal` (the PZR metal
- * and relief owner, G6, joinedPzrSections), whose cell gains the spray and
- * relief ports.
+ * `rods` (the rod owner, compileOperatingRods), `post_trip_domain` (D3 (a),
+ * compileOperatingPostTripDomain) and `pzrMetal` (the PZR metal and relief
+ * owner, G6, joinedPzrSections), whose cell gains the spray and relief
+ * ports.
  *
  * The spine is compiled in two passes around the stock-IDA steady solids
  * settle (G18); `settle` produces that steady state.
@@ -20,6 +21,7 @@ import { ownedBlock } from './reference-design-operating-pzr'
 import { caseSetSections, equipmentOwners, parsePzrHeaterBanks, parsePzrRelief, parsePzrSpray } from './reference-design-operating-pzr-cases'
 import { compileOperatingRods } from './reference-design-operating-rods'
 import { prepareOperatingSecondary } from './reference-design-operating-sg'
+import { compileOperatingPostTripDomain } from './reference-design-operating-source'
 import { nativeSteadySolids, prepareOperatingSpine, type SteadySolidsSettle } from './reference-design-operating-spine'
 
 /** The owners' pages G6 reads, under the LD-01 design root. */
@@ -64,11 +66,11 @@ export async function prepareOperatingJoined(wiki: string, if97: string, settle:
   const pages = Object.fromEntries(await Promise.all(names.map(async ([k, p]) => [k, await Bun.file(join(base, p)).text()]))) as Record<keyof typeof pzrMetalPages, string>
   const consumed = names.map(([k, name]) => ({ name, sha256: hash(pages[k as keyof typeof pzrMetalPages]) }))
   const g6 = joinedPzrSections(spine.pzr.cell, pages)
-  return { ...spine, identity: 'LD01-JOINED-SPINE-1', secondary, rods,
+  return { ...spine, identity: 'LD01-JOINED-SPINE-1', secondary, rods, post_trip_domain: await compileOperatingPostTripDomain(wiki),
     pzr: { ...spine.pzr, cell: g6.cell, provenance: { ...spine.pzr.provenance, consumed: [...spine.pzr.provenance.consumed, ...consumed] } },
     pzrMetal: { ...g6.pzrMetal, provenance: { consumed } },
     provenance: { ...spine.provenance, joinedSourceSha256: hash(await Bun.file(import.meta.path).text()) },
-    scope: 'Joined S2 inputs: the compact spine packet, its PZR cell with the spray and relief ports (G6), with the SG secondary, rod and PZR metal and relief owners\' strict sections. No trajectory admission.' }
+    scope: 'Joined S2 inputs: the compact spine packet, its PZR cell with the spray and relief ports (G6), with the SG secondary, rod, D3 (a) post-trip domain and PZR metal and relief owners\' strict sections. No trajectory admission.' }
 }
 
 if (import.meta.main) {
