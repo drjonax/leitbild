@@ -17,7 +17,7 @@ import type { MessageTarget } from '../core/types/messaging.ts'
 import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult } from '../core/types/tool.ts'
 import { owningPackFor } from '../core/types/tool-pack.ts'
 import { createAIAgent } from './ai-agent.ts'
-import type { AgentTurnStart, Decision } from './ai-agent.ts'
+import type { AgentProgress, AgentTurnStart, Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
 import { createToolSurface } from '../tool-surface/index.ts'
@@ -497,6 +497,22 @@ export const spawnAIAgent = async (
     }
   }
 
+  // A progress line goes to the turn's Room at once, as the Agent's own chat
+  // message, while its turn continues. It carries no generation evidence or
+  // telemetry and is linked to no turn: it is no answer, so display requests,
+  // proposal watches and model comparisons attach only to the answer that
+  // follows, and no Agent answers it (ai-agent.ts triggersEvaluation).
+  const onProgress = (progress: AgentProgress): void => {
+    routeMessage({ rooms: [progress.roomId] }, {
+      senderId: agent.id,
+      senderName: agent.name,
+      content: progress.content,
+      type: 'chat',
+      progress: true,
+      ...(progress.inReplyTo ? { inReplyTo: progress.inReplyTo } : {}),
+    })
+  }
+
   // Resolve tool support — agentRef filled after agent creation (lazy context)
   const agentRef: AgentToolContextRef = { id: '', name: '' }
   const toolSupport = await resolveAgentTools(
@@ -512,6 +528,7 @@ export const spawnAIAgent = async (
 
   const agent = createAIAgent(config, llmProvider, onDecision, {
     ...toolSupport,
+    onProgress,
     ...(spawnOptions?.onTurnStart ? { onTurnStart: spawnOptions.onTurnStart } : {}),
     ...(spawnOptions?.onTurnFinished ? { onTurnFinished: spawnOptions.onTurnFinished } : {}),
     ...(spawnOptions?.executionStore ? { executionStore: spawnOptions.executionStore } : {}),

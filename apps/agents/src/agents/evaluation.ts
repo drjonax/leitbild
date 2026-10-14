@@ -461,6 +461,10 @@ export interface EvalOptions {
   // The turn must present a live view; see REQUIRED_VIEW_CORRECTION.
   readonly requireView?: boolean
   readonly onEvent?: (event: EvalEventCore) => void
+  // Posts a tool result's progress line (ToolResult.progress) to the person at
+  // once, while the turn continues. A standalone evaluation (a model
+  // comparison replay) has no conversation to post to and omits it.
+  readonly onProgress?: (line: string) => void
   readonly signal?: AbortSignal
   // Optional operator-configured tool-iteration check-in. Returns true to
   // continue this turn without another quota, or false to stop (user clicked
@@ -485,7 +489,7 @@ export const evaluate = async (
   const context: Array<ChatRequest['messages'][number]> = [...contextResult.messages]
   let totalGenerationMs = 0
   let metrics: LLMCallMetrics = { modelCalls: 0 }
-  const { toolDefinitions, inReplyTo, requireView, onEvent, signal, requestToolCheckin } = options ?? {}
+  const { toolDefinitions, inReplyTo, requireView, onEvent, onProgress, signal, requestToolCheckin } = options ?? {}
   // Optional mutable operator threshold. Undefined means there is no hidden
   // engine quota; the Agent decides when it has enough evidence.
   let effectiveMaxIterations = maxToolIterations
@@ -629,6 +633,9 @@ export const evaluate = async (
           onEvent?.({ kind: 'tool_start', tool: call.tool, callId: call.callId ?? String(i) })
         }
         const results = await toolExecutor(calls, triggerRoomId, signal, options?.executionTurnId)
+        // A line says what has already happened, so it is posted even when
+        // the turn is cancelled now; posted lines stay.
+        for (const result of results) for (const line of result.progress ?? []) onProgress?.(line)
         signal?.throwIfAborted()
         for (let i = 0; i < results.length; i++) {
           const call = calls[i]

@@ -1024,3 +1024,104 @@ describe('Requested turns', () => {
     if (result.kind === 'refused') expect(result.reason).toBe('script')
   })
 })
+
+describe('Progress lines', () => {
+  const line = 'E-0 step 1 · Verified: RTB-A open, RTB-B open at 10:01:02 → step 2'
+  // A Room delivering as the runtime does: the agent's own lines and answer
+  // come back to it, and its progress lines are posted while its turn runs.
+  const conversation = async (options: { readonly failPost?: boolean } = {}) => {
+    const requests: Array<ReadonlyArray<{ role: string; content: string }>> = []
+    const answers = ['Unit 1 · E-0 step 2 · holding for your judgement', 'Unit 1 · E-0 step 2 · still holding']
+    const warnings: string[] = []
+    let agent: ReturnType<typeof createAIAgent> | undefined
+    const room = createRoom(
+      { id: 'room-1', name: 'Assistant', createdBy: 'system', createdAt: Date.now(), scope: { kind: 'workspace' }, scopeRevision: 0 },
+      { deliver: (id, message) => { if (id === agent?.id) agent.receive(message) } },
+    )
+    const provider: LLMProvider = {
+      models: async () => ['test-model'],
+      chat: async request => {
+        requests.push(structuredClone(request.messages) as Array<{ role: string; content: string }>)
+        // The first pass of the first turn steps the procedure; every other pass answers.
+        return requests.length === 1
+          ? { content: '', generationMs: 1, tokensUsed: { prompt: 1, completion: 1 }, toolCalls: [{ function: { name: 'workspace_call', arguments: {} } }] }
+          : { content: answers[Math.min(requests.length - 2, answers.length - 1)]!, generationMs: 1, tokensUsed: { prompt: 1, completion: 1 } }
+      },
+    }
+    const decisions: Decision[] = []
+    agent = createAIAgent(makeConfig(), provider, decision => {
+      decisions.push(decision)
+      if (decision.response.action === 'respond') room.post({ senderId: agent!.id, senderName: 'TestBot', content: decision.response.content, type: 'chat', ...(decision.inReplyTo ? { inReplyTo: decision.inReplyTo } : {}) })
+    }, {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'Call operations', parameters: {} } }],
+      toolExecutor: async calls => calls.map(() => ({ success: true, data: { results: [] }, progress: [line] })),
+      onProgress: progress => {
+        if (options.failPost) throw new Error('room is gone')
+        room.post({ senderId: agent!.id, senderName: 'TestBot', content: progress.content, type: 'chat', progress: true, ...(progress.inReplyTo ? { inReplyTo: progress.inReplyTo } : {}) })
+      },
+      onEvalEvent: (_scope, event) => { if (event.kind === 'warning') warnings.push(event.message) },
+    })
+    room.addMember(agent.id)
+    await agent.join(room)
+    return { agent, room, requests, decisions, warnings }
+  }
+
+  test('the agent never answers its own progress line, and its history keeps the line between the question and the answer', async () => {
+    const { agent, room, requests, decisions } = await conversation()
+    const question = room.post({ senderId: 'alice', senderName: 'Alice', content: 'Run E-0 unit 1', type: 'chat' })
+    await agent.whenIdle()
+    // One turn: two model passes; neither the line nor the answer started another.
+    expect(requests).toHaveLength(2)
+    expect(decisions).toHaveLength(1)
+    const posted = room.getRecent(10)
+    expect(posted.map(message => [message.content, message.progress])).toEqual([
+      ['Run E-0 unit 1', undefined],
+      [line, true],
+      ['Unit 1 · E-0 step 2 · holding for your judgement', undefined],
+    ])
+    expect(posted[1]!.inReplyTo).toEqual([question.id])
+    expect(agent.getHistory!('room-1').map(message => message.content)).toEqual(posted.map(message => message.content))
+
+    // A later turn ("continue") sees the line as the agent's own earlier message.
+    room.post({ senderId: 'alice', senderName: 'Alice', content: 'continue', type: 'chat' })
+    await agent.whenIdle()
+    expect(requests).toHaveLength(3)
+    const replay = requests[2]!.filter(message => message.role !== 'system')
+    expect(replay.map(message => [message.role, message.content])).toEqual([
+      ['user', '[alice]: Run E-0 unit 1'],
+      ['assistant', line],
+      ['assistant', 'Unit 1 · E-0 step 2 · holding for your judgement'],
+      ['user', '[NEW] [alice]: continue'],
+    ])
+  })
+
+  test('another agent\'s progress line joins the view without asking for an answer or holding a requested turn back', async () => {
+    const decisions: Decision[] = []
+    let calls = 0
+    const provider: LLMProvider = {
+      models: async () => ['test-model'],
+      chat: async () => { calls += 1; return { content: 'Done.', generationMs: 1, tokensUsed: { prompt: 1, completion: 1 } } },
+    }
+    const agent = createAIAgent(makeConfig(), provider, decision => { decisions.push(decision) })
+    await agent.join(makeRoom())
+    agent.receive(makeMessage({ senderId: 'bob', senderName: 'Bob', content: line, progress: true }))
+    await agent.whenIdle()
+    expect(calls).toBe(0)
+    expect(decisions).toHaveLength(0)
+    // An unanswered line is no unanswered question: a requested turn runs at once.
+    const turn = { instruction: 'Continue the procedure.', inReplyTo: ['answer-1'], cause: { kind: 'proposal-approved' as const, name: 'Alice approved the trip' }, requireView: false }
+    expect(agent.requestTurn!('room-1', turn)).toEqual({ kind: 'accepted', queued: false })
+    await agent.whenIdle()
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.cause).toEqual(turn.cause)
+  })
+
+  test('a line that cannot be posted is reported, and the turn still answers', async () => {
+    const { agent, room, decisions, warnings } = await conversation({ failPost: true })
+    room.post({ senderId: 'alice', senderName: 'Alice', content: 'Run E-0 unit 1', type: 'chat' })
+    await agent.whenIdle()
+    expect(decisions.map(decision => decision.response.action)).toEqual(['respond'])
+    expect(warnings).toContain('Could not post a progress line: room is gone')
+    expect(room.getRecent(10).some(message => message.progress)).toBe(false)
+  })
+})

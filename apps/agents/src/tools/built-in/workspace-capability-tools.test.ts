@@ -455,6 +455,62 @@ describe('Workspace progressive-discovery tools', () => {
     expect(await invoked.json()).toMatchObject({ idempotencyKey: 'supported' })
   })
 
+  test('a change that succeeds returns its say line for the person; a refused change returns none', async () => {
+    const requests: Request[] = []
+    const base = catalogFetch(requests)
+    const refusingFetch = (async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? new Request(input, init) : new Request(String(input), init)
+      if (!new URL(request.url).pathname.endsWith('/invoke')) return base(request)
+      const { input: asked } = await request.clone().json() as { input: { refuse?: true } }
+      if (asked.refuse) return Response.json({ error: { code: 'simulation_command_rejected', message: 'a person drives this Run' } }, { status: 409 })
+      return base(request)
+    }) as typeof fetch
+    const [, call] = createWorkspaceCapabilityTools({ workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: () => ({ kind: 'resource', resource: run }), fetchImpl: refusingFetch })
+    const line = 'E-0 step 3 · Verified: BUS-A-EMERG 4.16 kV, BUS-B-EMERG 4.16 kV at 10:02:14 → step 4'
+
+    // No execution evidence is needed: a scripted or standalone executor gets the line too.
+    const done = await call!.execute({ calls: [{ key: 'step', operationId: writeId, input: {}, say: `  ${line} ` }] }, context)
+    expect(done).toMatchObject({ success: true, data: { results: [{ key: 'step', success: true }] }, progress: [line] })
+    // The line is for the person: the Module never receives it, and the model's reading of the result does not repeat it.
+    const invoked = requests.filter(request => request.url.includes('/invoke'))
+    expect(invoked).toHaveLength(1)
+    expect(await invoked[0]!.json()).not.toHaveProperty('say')
+    expect(JSON.stringify(workspaceCallResultForModel(done).data)).not.toContain('BUS-A-EMERG')
+
+    const refused = await call!.execute({ calls: [{ key: 'step', operationId: writeId, input: { refuse: true }, say: line }] }, context)
+    expect(refused).toMatchObject({ success: true, data: { results: [{ success: false, error: expect.stringContaining('simulation_command_rejected') }] } })
+    expect(refused).not.toHaveProperty('progress')
+    // A line is one short chat line.
+    expect(await call!.execute({ calls: [{ key: 'long', operationId: writeId, input: {}, say: 'x'.repeat(301) }] }, context))
+      .toMatchObject({ success: false, error: expect.stringContaining('invalid_tool_input') })
+    expect(await call!.execute({ calls: [{ key: 'blank', operationId: writeId, input: {}, say: '   ' }] }, context))
+      .toMatchObject({ success: false, error: expect.stringContaining('invalid_tool_input') })
+  })
+
+  test('a read carrying say is refused before invocation while the other reads of its batch run', async () => {
+    const requests: Request[] = []
+    const [, call] = makeTools({ kind: 'resource', resource: run }, requests)
+    const result = await call!.execute({ calls: [
+      { key: 'said', operationId: readId, target: runTarget, input: {}, say: 'Read the run' },
+      { key: 'plain', operationId: readId, target: runTarget, input: {} },
+    ] }, context)
+    expect(result).toMatchObject({ success: true, data: { results: [
+      { key: 'said', success: false, error: expect.stringContaining('say_not_for_reads') },
+      { key: 'plain', success: true, data: { state: 'running' } },
+    ] } })
+    expect(result).not.toHaveProperty('progress')
+    expect(requests.filter(request => request.url.includes('/invoke'))).toHaveLength(1)
+  })
+
+  test('the model learns say from the native schema: a change\'s short line, never a read\'s', () => {
+    const [, call] = toolsToDefinitions(makeTools({ kind: 'workspace' }))
+    const calls = (call!.function.parameters.properties as Record<string, { items: { properties: Record<string, { description?: string; maxLength?: number }> } }>).calls!
+    const say = calls.items.properties.say!
+    expect(say.description).toContain('posted to this conversation as your own message once this call succeeds')
+    expect(say.description).toContain('Never for reads')
+    expect(say.maxLength).toBe(300)
+  })
+
   test('never discovers or invokes the Agents People Capabilities, which serve humans through the Host UI', async () => {
     const agents = moduleIdSchema.parse('agents')
     const peopleSend = capabilityIdSchema.parse('agents.people.message.send')
