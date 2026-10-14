@@ -1,4 +1,4 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#s2-design-choices--11-october-delegated
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#pzr-shell-heads-heaters-and-relief-g6
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#shell-and-head-metal
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressure-and-inventory.md#independent-relief-candidate
 //! The joined PZR block (G6): the stratified cell's heater rods, shell bands
