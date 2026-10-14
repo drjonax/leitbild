@@ -20,7 +20,7 @@ use leitbild_operating_plant::{
 };
 use leitbild_operating_water::{
     CaloricLinearization, If97,
-    ida::{Failure, Ida, Initial, System},
+    ida::{Failure, Ida, Initial, KluOrdering, System},
     network::Integrated,
 };
 use serde_json::{Value, json};
@@ -156,6 +156,10 @@ struct TimedSystem {
 impl System for TimedSystem {
     fn dimension(&self) -> usize {
         self.inner.dimension()
+    }
+    /// The wrapped system's own KLU ordering (AMD on every joined system).
+    fn klu_ordering(&self) -> KluOrdering {
+        self.inner.klu_ordering()
     }
     fn nonzeros(&self) -> usize {
         self.inner.nonzeros()
