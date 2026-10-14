@@ -43,6 +43,7 @@ import {
   recordingSampleSchema,
   recordingSeriesDescriptorSchema,
   recordingSeriesQuerySchema,
+  sameProcedureScope,
   scenarioGuidanceSchema,
   simulationClockStateSchema,
   simulationRunEventSchema,
@@ -784,12 +785,26 @@ const procedureStepViewFor = async (
   }
 }
 
+// A transfer hands the work on with its driver: the destination Run its
+// caller now drives, where the transferred step's branch led; else the Run.
+const procedureRunWorkedAfter = (runtime: ApiRunRuntime, invocation: ApiInvocation, runId: string): string => {
+  const runs = visibleProcedureState(runtime, invocation).runs
+  const run = runs.find(candidate => candidate.runId === runId)
+  if (run?.status !== 'transferred') return runId
+  const decision = run.stepStates.find(state => state.stepId === run.currentStepId)?.decision
+  if (decision?.targetKind !== 'procedure') return runId
+  const caller = buildSimulationRunActorForAccess(invocation.access).id
+  const destination = runs.find(candidate => candidate.status === 'active' && candidate.sourceId === run.sourceId
+    && candidate.procedureId === decision.target && sameProcedureScope(candidate.scope, run.scope) && candidate.driver?.actorId === caller)
+  return destination?.runId ?? runId
+}
+
 // An AI agent's accepted transition answers with the step it leads to, so the
-// agent decides that step without another read. The command stands whatever
-// this read finds.
+// agent decides that step without another read; after a transfer, the
+// destination's current step. The command stands whatever this read finds.
 const nextProcedureStep = async (runtime: ApiRunRuntime, invocation: ApiInvocation, runId: string, after: string): Promise<{ readonly next: ProcedureStepView } | { readonly nextUnavailable: string }> => {
   try {
-    return { next: await procedureStepViewFor(runtime, invocation, { runId }, 'next') }
+    return { next: await procedureStepViewFor(runtime, invocation, { runId: procedureRunWorkedAfter(runtime, invocation, runId) }, 'next') }
   } catch (error) {
     return { nextUnavailable: `${after}; reading the run's current step failed: ${error instanceof Error ? error.message : String(error)}. Read it with world.procedure.run.step.read.` }
   }
@@ -1589,7 +1604,7 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       kind: 'query',
       scope: { kind: 'resource', resourceType: 'world.simulation-run' },
       title: 'Read procedure run step',
-      description: 'Run, continue or step through a live procedure: reads one step of a procedure Run to work through it. Input {runId?, stepId?}: omit runId for the one active Run you drive (refused, with the active runs named, unless there is exactly one), and stepId for its current step. Returns the run (driver, current step, step n of total); the step\'s checks, actions and cautions; its branches with index, outcome, target and whether an AI agent may select each (aiMaySelect, else personOnlyReason); each tag the step cites with its binding and its reading (formatted, quality) at the view\'s simulationTime, or why it is unavailable; World\'s observation and the step\'s decision so far; the CSF colours the procedure monitors; and sequence, to pass to world.simulation-run.wait. Select with world.procedure.run.transition; an AI agent\'s accepted transition returns this view of the next step. Readings are model values, not instrument validation.',
+      description: 'Run, continue or step through a live procedure: reads one step of a procedure Run to work through it. Input {runId?, stepId?}: omit runId for the one active Run you drive (refused, with the active runs named, unless there is exactly one), and stepId for its current step. Returns the run (driver, current step, step n of total); the step\'s checks, actions and cautions; its branches with index, outcome and target; each tag the step cites with its binding and its reading (formatted, quality) at the view\'s simulationTime, or why it is unavailable; World\'s observation and the step\'s decision so far; the CSF colours the procedure monitors; and sequence, to pass to world.simulation-run.wait. Select with world.procedure.run.transition; an AI agent\'s accepted transition returns this view of the next step. Readings are model values, not instrument validation.',
       searchTerms: ['continue procedure', 'run procedure', 'step through procedure', 'work through procedure', 'next procedure step', 'procedure placekeeping'],
       risk: 'read',
       idempotent: true,
