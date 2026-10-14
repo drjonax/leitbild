@@ -404,6 +404,70 @@ pub fn admit(
     }
 }
 
+/// The source-feedback conditions of one accepted state of the joined
+/// operator, owned: the nuclear block's feedback inputs of its last
+/// evaluation (call it after the joined evaluation AT that state), the rods'
+/// achieved travel of the same evaluation and the capsule age `age0 + t`.
+pub struct AcceptedConditions {
+    pub neutrons: Vec<Scalar>,
+    fuel: Vec<Scalar>,
+    density: Vec<Scalar>,
+    boron: Vec<Scalar>,
+    pressure: Vec<Scalar>,
+    moderator: Vec<Scalar>,
+    fissile: Vec<Scalar>,
+    xenon: Vec<Scalar>,
+    samarium: Vec<Scalar>,
+    opacity: Vec<Scalar>,
+    travel: Vec<Scalar>,
+    capsule_age_s: f64,
+}
+impl AcceptedConditions {
+    pub fn of(nuclear: &Nuclear, travel: &[Scalar], t: f64) -> Self {
+        let f = nuclear.feedback_inputs();
+        let k = |v: &[f64]| v.iter().map(|x| Scalar::constant(*x)).collect::<Vec<_>>();
+        Self {
+            neutrons: k(&f.neutrons),
+            fuel: k(&f.fuel_temperature_k),
+            density: k(&f.water_density_kg_m3),
+            boron: k(&f.boron_ppm_eq),
+            pressure: k(&f.pressure_pa),
+            moderator: k(&f.moderator_temperature_k),
+            fissile: k(&f.fissile_atoms),
+            xenon: k(&f.xenon_atoms),
+            samarium: k(&f.samarium_atoms),
+            opacity: k(&f.capture_loss_change_m2),
+            travel: travel.iter().map(|x| Scalar::constant(x.value)).collect(),
+            capsule_age_s: nuclear.coefficients().capsule_age0_s + t,
+        }
+    }
+    pub fn conditions(&self) -> sf::Conditions<'_> {
+        sf::Conditions {
+            fuel_temperature_k: &self.fuel,
+            water_density_kg_m3: &self.density,
+            boron_ppm_eq: &self.boron,
+            pressure_pa: &self.pressure,
+            moderator_temperature_k: &self.moderator,
+            fissile_atoms: &self.fissile,
+            xenon_atoms: &self.xenon,
+            samarium_atoms: &self.samarium,
+            capture_loss_change_m2: &self.opacity,
+            achieved_rod_travel_m: &self.travel,
+            capsule_age_s: Scalar::constant(self.capsule_age_s),
+        }
+    }
+}
+
+/// The kinetics block's fixed transport and emission inputs.
+pub fn fixed(nuclear: &Nuclear) -> Fixed<'_> {
+    let c = nuclear.coefficients();
+    Fixed {
+        transfer_rates_per_s: c.transfer_rates_per_s,
+        emission_fractions: c.emission_fractions,
+        outside_fractions: c.outside_fractions,
+    }
+}
+
 /// D3 (a) at one accepted state of the joined operator. Call it after the
 /// joined evaluation AT that accepted state: it reads the nuclear block's
 /// feedback inputs of the last evaluation. `travel` is the rods' achieved
@@ -416,46 +480,13 @@ pub fn admit_accepted(
     t: f64,
     additional_reference_exposure_s: f64,
 ) -> Result<Admission, Error> {
-    let f = nuclear.feedback_inputs();
-    let k = |v: &[f64]| v.iter().map(|x| Scalar::constant(*x)).collect::<Vec<_>>();
-    let (neutrons, fuel, density, boron, pressure, moderator) = (
-        k(&f.neutrons),
-        k(&f.fuel_temperature_k),
-        k(&f.water_density_kg_m3),
-        k(&f.boron_ppm_eq),
-        k(&f.pressure_pa),
-        k(&f.moderator_temperature_k),
-    );
-    let (fissile, xenon, samarium, opacity) = (
-        k(&f.fissile_atoms),
-        k(&f.xenon_atoms),
-        k(&f.samarium_atoms),
-        k(&f.capture_loss_change_m2),
-    );
-    let travel: Vec<Scalar> = travel.iter().map(|x| Scalar::constant(x.value)).collect();
-    let coefficients = nuclear.coefficients();
+    let at = AcceptedConditions::of(nuclear, travel, t);
     admit(
         nuclear.feedback(),
         nuclear.kinetics(),
-        Fixed {
-            transfer_rates_per_s: coefficients.transfer_rates_per_s,
-            emission_fractions: coefficients.emission_fractions,
-            outside_fractions: coefficients.outside_fractions,
-        },
-        &neutrons,
-        sf::Conditions {
-            fuel_temperature_k: &fuel,
-            water_density_kg_m3: &density,
-            boron_ppm_eq: &boron,
-            pressure_pa: &pressure,
-            moderator_temperature_k: &moderator,
-            fissile_atoms: &fissile,
-            xenon_atoms: &xenon,
-            samarium_atoms: &samarium,
-            capture_loss_change_m2: &opacity,
-            achieved_rod_travel_m: &travel,
-            capsule_age_s: Scalar::constant(coefficients.capsule_age0_s + t),
-        },
+        fixed(nuclear),
+        &at.neutrons,
+        at.conditions(),
         additional_reference_exposure_s,
         extension,
     )

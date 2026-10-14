@@ -25,7 +25,7 @@
 #[path = "joined_spine.rs"]
 mod spine;
 
-use leitbild_operating_plant::joined::block::Command;
+use leitbild_operating_plant::joined::{block::Command, post_trip_domain};
 use leitbild_operating_water::{
     ida::{Advance, Ida, Initial, KluOrdering, Stats, System},
     joined::{Discrete, Integrated, Restart, Restarted, discrete_restart},
@@ -387,6 +387,10 @@ fn trip(duration_s: f64) -> Value {
         })
         .collect();
     let nonnegative = joined.network.nonnegative_stocks();
+    // D3 (a) along the trajectory (lead decision S2-D23): the packet's
+    // `post_trip_domain` record, or for a pre-D3 packet the compiled section
+    // in LD01_POST_TRIP_DOMAIN; without either the samples carry no D3 entry.
+    let d3 = post_trip_record();
     let restart = Restart {
         newton_coefficient: NEWTON_COEFFICIENT,
         delta_cj_lsetup: DELTA_CJ_LSETUP,
@@ -679,7 +683,8 @@ fn trip(duration_s: f64) -> Value {
                             - v.iter().cloned().fold(f64::INFINITY, f64::min)
                     };
                     let value = |(l, i): &(String, usize)| json!([l, y[*i] * scales[*i]]);
-                    samples.push(json!({"t_s": t - t0, "released_w": j.heats().nuclear.released_w.value,
+                    let d3_sample = d3.as_ref().map(|(e, reference)| d3_at(j, e, reference, t));
+                    samples.push(json!({"t_s": t - t0, "released_w": j.heats().nuclear.released_w.value, "d3": d3_sample,
                         "sg_pressure_pa": pressures.iter().map(value).collect::<Vec<_>>(),
                         "sg_liquid_m3": liquid.iter().map(value).collect::<Vec<_>>(),
                         "relief_lift": lifts.iter().map(value).collect::<Vec<_>>(),
@@ -846,4 +851,108 @@ fn trip(duration_s: f64) -> Value {
         "samples": samples,
     });
     receipt
+}
+
+/// D3 (a)'s record and the regions' reference water densities, if the run
+/// names one (see `trip`).
+fn post_trip_record() -> Option<(post_trip_domain::Extension, Vec<f64>)> {
+    let (_, bytes) = spine::packet_bytes();
+    let raw: Value = serde_json::from_slice(&bytes).expect("packet json");
+    let record = match raw.get("post_trip_domain") {
+        Some(v) => v.clone(),
+        None => serde_json::from_slice(
+            &std::fs::read(std::env::var_os("LD01_POST_TRIP_DOMAIN")?)
+                .expect("post-trip domain file"),
+        )
+        .expect("post-trip domain json"),
+    };
+    let reference = raw["feedback_metadata"]["regions"]
+        .as_array()
+        .expect("feedback regions")
+        .iter()
+        .map(|r| r["reference_density_kg_m3"].as_f64().unwrap())
+        .collect();
+    Some((
+        serde_json::from_value(record).expect("post-trip domain record"),
+        reference,
+    ))
+}
+
+/// D3 (a) at one accepted output (after the joined evaluation there): the
+/// compiled-domain admission that decides under S2-D23 (no extension), and
+/// the margin of the source-free operator with the water term doubled and
+/// nominal (`delta*` from the 24 x 24 pencil by dggev).
+fn d3_at(
+    j: &leitbild_operating_plant::joined::operator::Joined<leitbild_operating_water::If97>,
+    extension: &post_trip_domain::Extension,
+    reference: &[f64],
+    t: f64,
+) -> Value {
+    use leitbild_operating_plant::source_feedback as sf;
+    let n = j.nuclear();
+    let at = post_trip_domain::AcceptedConditions::of(n, j.travel(), t);
+    let feedback = n.feedback();
+    let mut out = sf::Output::new(
+        feedback.region_count(),
+        feedback.material_count(),
+        feedback.support_count(),
+    );
+    let original = match feedback.validate_accepted(&at.neutrons, at.conditions(), t, &mut out) {
+        Ok(()) => json!("inside"),
+        Err(e) => json!(format!("{e:?}")),
+    };
+    let margin = |e: &post_trip_domain::Extension| -> Value {
+        match post_trip_domain::margin_at(
+            feedback,
+            n.kinetics(),
+            post_trip_domain::fixed(n),
+            &at.neutrons,
+            at.conditions(),
+            e,
+        ) {
+            Ok(m) => {
+                let r = m.reactivity_gain.len();
+                let mut g = vec![0.; r * r];
+                for i in 0..r {
+                    g[i * r + i] = m.reactivity_gain[i];
+                }
+                let delta = leitbild_operating_water::spectrum::decompose(r, &m.operator, &g)
+                    .map(|s| {
+                        s.modes
+                            .iter()
+                            .map(|x| x.lambda.re)
+                            .fold(f64::INFINITY, f64::min)
+                    })
+                    .ok();
+                json!({"holds": m.holds, "margin_dk_k": delta})
+            }
+            Err(e) => json!({"error": format!("{e:?}")}),
+        }
+    };
+    let mut nominal = *extension;
+    nominal.margin_water_term_factor = 1.;
+    let water = j.region_water();
+    let ratio: Vec<f64> = water
+        .iter()
+        .zip(reference)
+        .map(|(w, r)| w.density_kg_m3.value / r)
+        .collect();
+    let fold = |v: &mut dyn Iterator<Item = f64>, max: bool| {
+        v.fold(
+            if max {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            },
+            |a, b| {
+                if max { a.max(b) } else { a.min(b) }
+            },
+        )
+    };
+    json!({"original_domain": original,
+        "density_ratio_max": fold(&mut ratio.iter().copied(), true),
+        "pressure_min_pa": fold(&mut water.iter().map(|w| w.pressure_pa.value), false),
+        "moderator_k_min": fold(&mut water.iter().map(|w| w.temperature_k.value), false),
+        "fuel_feedback_k_max": fold(&mut j.fuel_feedback_temperatures().iter().map(|x| x.value), true),
+        "margin_water_doubled": margin(extension), "margin_water_nominal": margin(&nominal)})
 }
