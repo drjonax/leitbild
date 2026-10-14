@@ -316,19 +316,16 @@ pub struct Fixed<'a> {
     pub outside_fractions: &'a [f64],
 }
 
-/// D3 (a) at one accepted state from its source-feedback conditions: the
-/// margin check, then the source domains it selects.
-pub fn admit(
+/// The margin check at one state from its source-feedback conditions: the
+/// current `rho`, `G` and water terms the feedback evaluates there.
+pub fn margin_at(
     feedback: &sf::Model,
     kinetics: &kinetics::Model,
     fixed: Fixed<'_>,
     neutrons: &[Scalar],
     conditions: sf::Conditions<'_>,
-    additional_reference_exposure_s: f64,
     extension: &Extension,
-) -> Result<Admission, Error> {
-    let original = feedback.domains();
-    extension.validate(&original)?;
+) -> Result<Margin, Error> {
     let r = feedback.region_count();
     let mut terms = vec![sf::ReactivityTerms::default(); r];
     feedback
@@ -352,7 +349,7 @@ pub fn admit(
         .map(|g| g.value)
         .collect();
     let water: Vec<f64> = terms.iter().map(|t| t.water_density).collect();
-    let margin = shutdown_margin(
+    shutdown_margin(
         kinetics,
         kinetics::Inputs {
             regions: &regions,
@@ -363,7 +360,28 @@ pub fn admit(
         },
         &water,
         extension,
-    )?;
+    )
+}
+
+/// D3 (a) at one accepted state from its source-feedback conditions: the
+/// margin check, then the source domains it selects.
+pub fn admit(
+    feedback: &sf::Model,
+    kinetics: &kinetics::Model,
+    fixed: Fixed<'_>,
+    neutrons: &[Scalar],
+    conditions: sf::Conditions<'_>,
+    additional_reference_exposure_s: f64,
+    extension: &Extension,
+) -> Result<Admission, Error> {
+    let original = feedback.domains();
+    extension.validate(&original)?;
+    let margin = margin_at(feedback, kinetics, fixed, neutrons, conditions, extension)?;
+    let mut out = sf::Output::new(
+        feedback.region_count(),
+        feedback.material_count(),
+        feedback.support_count(),
+    );
     let (domain, domains) = if margin.holds {
         (Domain::Extended, extension.domains(original))
     } else {
