@@ -121,6 +121,39 @@ int operating_ida_advance(OperatingIDA *o,double target,double *time,double *y,d
     }
     return code;
 }
+/* Stock IDASolve in IDA_ONE_STEP mode: one accepted internal step (or a
+   located root, or the armed stop time), the state at the returned time
+   copied out. The S2 harness reads the step's stock interpolant between
+   steps by operating_ida_dense (lead decision S3-D1 #6), never by stopping
+   IDASolve at observation times. */
+int operating_ida_step(OperatingIDA *o,double target,double *time,double *y,double *yp) {
+    int code=IDASolve(o->ida,target,&o->time,o->y,o->yp,IDA_ONE_STEP);
+    *time=o->time;
+    if (code>=0) {
+        memcpy(y,N_VGetArrayPointer(o->y),N_VGetLength(o->y)*sizeof(double));
+        memcpy(yp,N_VGetArrayPointer(o->yp),N_VGetLength(o->yp)*sizeof(double));
+    }
+    return code;
+}
+/* Stock IDAGetDky (k = 0 and 1): the solution and its rate at t within the
+   last step [tn - hu, tn], into independent scratch; no history changes. */
+int operating_ida_dense(OperatingIDA *o,double t,double *y,double *yp) {
+    N_Vector state=N_VClone(o->y), rate=N_VClone(o->yp);
+    if (!state || !rate) {
+        if (state) N_VDestroy(state);
+        if (rate) N_VDestroy(rate);
+        return IDA_MEM_FAIL;
+    }
+    int code=IDAGetDky(o->ida,t,0,state);
+    if (code>=0) code=IDAGetDky(o->ida,t,1,rate);
+    if (code>=0) {
+        memcpy(y,N_VGetArrayPointer(state),N_VGetLength(state)*sizeof(double));
+        memcpy(yp,N_VGetArrayPointer(rate),N_VGetLength(rate)*sizeof(double));
+    }
+    N_VDestroy(rate);
+    N_VDestroy(state);
+    return code;
+}
 int operating_ida_stop_at(OperatingIDA *o,double target) { return IDASetStopTime(o->ida,target); }
 int operating_ida_nonnegative(OperatingIDA *o,const double *flags) {
     if (!flags) return IDASetConstraints(o->ida,NULL);

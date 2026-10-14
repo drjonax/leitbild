@@ -205,6 +205,14 @@ unsafe extern "C" {
     fn operating_ida_root_directions(ida: *mut c_void, directions: *mut c_int) -> c_int;
     fn operating_ida_differential(ida: *mut c_void, ids: *const f64) -> c_int;
     fn operating_ida_stop_at(ida: *mut c_void, target: f64) -> c_int;
+    fn operating_ida_step(
+        ida: *mut c_void,
+        target: f64,
+        time: *mut f64,
+        y: *mut f64,
+        yp: *mut f64,
+    ) -> c_int;
+    fn operating_ida_dense(ida: *mut c_void, t: f64, y: *mut f64, yp: *mut f64) -> c_int;
     fn operating_ida_nonnegative(ida: *mut c_void, flags: *const f64) -> c_int;
     fn operating_ida_current_time(ida: *mut c_void, time: *mut f64) -> c_int;
     fn operating_ida_current_state(
@@ -536,6 +544,45 @@ impl<S: System> Ida<S> {
         let result = self.check(status).and_then(|()| self.outcome(status));
         self.failed = result.is_err();
         result
+    }
+    /// One stock IDA_ONE_STEP call: a single accepted internal step toward
+    /// `target`, or a located root, or the armed stop time; the outcome is
+    /// as [`Ida::advance`]'s, at the returned time. Read the step's
+    /// interpolant by [`Ida::dense`] (lead decision S3-D1 #6).
+    pub fn step(&mut self, target: f64, y: &mut [f64], yp: &mut [f64]) -> Result<Advance> {
+        if self.failed {
+            return Err("IDA handle is fail-stopped".into());
+        }
+        self.buffers(y, yp)?;
+        if !target.is_finite() || target <= self.time {
+            return Err("IDA target must be in the future".into());
+        }
+        self.started = true;
+        let status = unsafe {
+            operating_ida_step(
+                self.handle.as_ptr(),
+                target,
+                &mut self.time,
+                y.as_mut_ptr(),
+                yp.as_mut_ptr(),
+            )
+        };
+        let result = self.check(status).and_then(|()| self.outcome(status));
+        self.failed = result.is_err();
+        result
+    }
+    /// Stock IDAGetDky: the solution and its rate at `t` within the last
+    /// accepted step `[tn - hu, tn]`, from stock's interpolant into the
+    /// caller's buffers. No step, history or status changes.
+    pub fn dense(&self, t: f64, y: &mut [f64], yp: &mut [f64]) -> Result<()> {
+        self.buffers(y, yp)?;
+        let status = unsafe {
+            operating_ida_dense(self.handle.as_ptr(), t, y.as_mut_ptr(), yp.as_mut_ptr())
+        };
+        if status < 0 {
+            return Err(format!("stock IDAGetDky status {status} at {t} s"));
+        }
+        Ok(())
     }
     fn outcome(&self, status: c_int) -> Result<Advance> {
         match status {

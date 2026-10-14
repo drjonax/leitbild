@@ -284,6 +284,7 @@ const SOLVER_API: &[&str] = &[
     "IDA_ILL_INPUT",
     "IDA_MEM_FAIL",
     "IDA_NORMAL",
+    "IDA_ONE_STEP",
     "IDA_YA_YDP_INIT",
     // Stock N_Vector, SUNContext, SUNMatrix and SUNLinSol_KLU (ida.c).
     "N_VClone",
@@ -331,6 +332,7 @@ const SOLVER_API: &[&str] = &[
     "operating_ida_current_state",
     "operating_ida_current_time",
     "operating_ida_delta_cj",
+    "operating_ida_dense",
     "operating_ida_differential",
     "operating_ida_error_diagnostics",
     "operating_ida_free",
@@ -350,6 +352,7 @@ const SOLVER_API: &[&str] = &[
     "operating_ida_root_directions",
     "operating_ida_solution_scaling",
     "operating_ida_stats",
+    "operating_ida_step",
     "operating_ida_stop_at",
     "operating_klu_analyze",
     "operating_klu_factor",
