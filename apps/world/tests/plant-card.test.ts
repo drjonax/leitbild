@@ -6,6 +6,8 @@ import {
   dockObjectCard,
   objectCardAnchor,
   placeObjectCard,
+  sameCardFrame,
+  type MapCardFrame,
   type MapObjectAnchor,
 } from '../src/ui/map/object-card-anchor.ts'
 import { plantCardView } from '../src/ui/process-display/plant-card.ts'
@@ -118,6 +120,21 @@ describe('a card stands beside its icon, clear of the other icons and the panels
   test('docked in the clear top-left corner, below what already stands there', () => {
     expect(dockObjectCard({ left: 0, top: 0, right: 1000, bottom: 700 }, [], size)).toEqual({ side: 'docked', left: 12, top: 12 })
     expect(dockObjectCard({ left: 0, top: 0, right: 1000, bottom: 700 }, [{ left: 18, top: 18, right: 478, bottom: 140 }], size).top).toBe(152)
+  })
+
+  test('docked over what stands in the corner rather than off the bottom of a short map', () => {
+    const short = { left: 0, top: 0, right: 1000, bottom: 300 }
+    expect(dockObjectCard(short, [{ left: 18, top: 18, right: 478, bottom: 140 }], size).top).toBe(62)
+  })
+
+  test('a frame that says nothing new is not placed again', () => {
+    const frame: MapCardFrame = { origin: { x: 360, y: 0 }, clear, anchor: { disk: disk(400, 300), others: [disk(520, 300)], clear } }
+    expect(sameCardFrame(null, frame)).toBe(false)
+    expect(sameCardFrame(frame, { ...frame, anchor: { ...frame.anchor!, others: [disk(520, 300)] } })).toBe(true)
+    expect(sameCardFrame(frame, { ...frame, anchor: { ...frame.anchor!, disk: disk(401, 300) } })).toBe(false)
+    expect(sameCardFrame(frame, { ...frame, anchor: null })).toBe(false)
+    expect(sameCardFrame({ ...frame, anchor: null }, { ...frame, anchor: null })).toBe(true)
+    expect(sameCardFrame(frame, { ...frame, origin: { x: 0, y: 0 } })).toBe(false)
   })
 
   test('the anchor is the icon as drawn, and there is none when the icon is outside the clear area or not drawn', () => {

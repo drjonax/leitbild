@@ -133,6 +133,21 @@ export const placeObjectCard = (
   }
 }
 
+const sameRect = (left: ScreenRect, right: ScreenRect): boolean =>
+  left.left === right.left && left.top === right.top && left.right === right.right && left.bottom === right.bottom
+
+const sameDisk = (left: ScreenDisk, right: ScreenDisk): boolean =>
+  left.x === right.x && left.y === right.y && left.radius === right.radius
+
+/** Whether a frame says nothing new, so a still map does not place the card again every frame. */
+export const sameCardFrame = (left: MapCardFrame | null, right: MapCardFrame): boolean => {
+  if (left === null || left.origin.x !== right.origin.x || left.origin.y !== right.origin.y || !sameRect(left.clear, right.clear)) return false
+  if (left.anchor === null || right.anchor === null) return left.anchor === right.anchor
+  return sameDisk(left.anchor.disk, right.anchor.disk)
+    && left.anchor.others.length === right.anchor.others.length
+    && left.anchor.others.every((other, index) => sameDisk(other, right.anchor!.others[index]!))
+}
+
 /**
  * The card of an object whose icon is not in view, opened from the rail:
  * docked in the clear part of the map's top-left corner, below anything
@@ -146,6 +161,8 @@ export const dockObjectCard = (
   const left = clear.left + objectCardGapPx
   const corner = clear.top + objectCardGapPx
   const below = occupied.filter(rect => rect.left < left + size.width && rect.right > left && rect.top < corner + size.height)
-  const top = Math.max(corner, ...below.map(rect => rect.bottom + objectCardGapPx))
+  const under = Math.max(corner, ...below.map(rect => rect.bottom + objectCardGapPx))
+  // Below what stands there while the card still fits; over it rather than off screen.
+  const top = Math.max(corner, Math.min(under, clear.bottom - edgeMarginPx - size.height))
   return { side: 'docked', left, top }
 }

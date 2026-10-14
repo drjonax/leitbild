@@ -43,7 +43,7 @@
   import { createMapStackChooser } from './map/map-stack-chooser.ts'
   import { objectsUnder, stackPick } from './map/map-stack.ts'
   import { disksPickFor, hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
-  import { objectCardAnchor, type MapCardFrame } from './map/object-card-anchor.ts'
+  import { objectCardAnchor, sameCardFrame, type MapCardFrame } from './map/object-card-anchor.ts'
   import { operationalIconPx } from './map-runtime/symbol-kit.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
@@ -218,7 +218,7 @@
   let mapInputDebugEntries = $state<ReadonlyArray<string>>([])
   let mapInputDebugSummary = $state('Waiting for map input')
   let cachedPackMapFeatures = $state<ReadonlyArray<PackMapFeature>>([])
-  const packFeatureLayer = createPackFeatureLayer(selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) }, message => onMapError(message))
+  const packFeatureLayer = createPackFeatureLayer(selection => { clickHandled = true; featureSelection = selection }, message => onMapError(message))
   const syncPackFeatures = () => { if (runtime) packFeatureLayer.update(runtime.map, cachedPackMapFeatures, visibleFamilies()) }
   let appliedTheme: ThemeMode | null = null
   let appliedCameraKey: string | null = null
@@ -238,6 +238,9 @@
   let longPressConsumedUntil = 0
   // Set while one map click is handled by an object, a Pack feature or a handle, so it is not also a ground click.
   let clickHandled = false
+  // One click selects one thing: a Pack feature beneath an object's icon (a grid line under a Plant) is selected only when no object took the click.
+  let objectTookClick = false
+  let featureSelection: NonNullable<PackMapFeature['selection']> | null = null
 
   const assignmentInteraction = (): MapAssignmentInteraction => ({
     revision: interactionRevision,
@@ -310,6 +313,7 @@
 
   // The open card's frame, measured once per animation frame while the map draws.
   let cardFrameRequest: number | null = null
+  let lastCardFrame: MapCardFrame | null = null
   const reportCardFrame = (): void => {
     cardFrameRequest = null
     const current = runtime
@@ -322,7 +326,7 @@
       right: canvas.clientWidth - cameraPadding.right,
       bottom: canvas.clientHeight - cameraPadding.bottom,
     }
-    onCardFrame({
+    const frame: MapCardFrame = {
       origin: { x: bounds.left, y: bounds.top },
       clear,
       anchor: objectCardAnchor({
@@ -331,7 +335,10 @@
         screenOf: position => current.map.project([position[0], position[1]]),
         clear,
       }),
-    })
+    }
+    if (sameCardFrame(lastCardFrame, frame)) return
+    lastCardFrame = frame
+    onCardFrame(frame)
   }
   const scheduleCardFrame = (): void => {
     if (cardObjectId === null || cardFrameRequest !== null) return
@@ -379,6 +386,7 @@
     presentationFor: object => presentationFor(object),
     onObjectSelected: object => {
       clickHandled = true
+      objectTookClick = true
       if (performance.now() < longPressConsumedUntil) return
       const stack = stackUnderPointer()
       if (stack.length > 1) {
@@ -422,7 +430,7 @@
     query: (request, signal) => queryLiveMapLayer(request, signal),
     rasterize: rasterizeSymbol,
     documentHidden: () => document.hidden,
-    onSelect: selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) },
+    onSelect: selection => { clickHandled = true; featureSelection = selection },
     onHover: hover => { if (hover && hoverCardsFor(lastPointerType)) popupController.showCard(hover); else popupController.hide() },
     onError: message => onMapError(`Live map layer: ${message}`),
   })
@@ -607,11 +615,17 @@
           // synchronously, because the deck overlay picks with pickAsync 'sync' (map-runtime.ts).
           // A double-click's extra object click leaves no mark on the next click.
           clickHandled = false
+          objectTookClick = false
+          featureSelection = null
           // Any click lets a stack's chooser go; an object click on a stack shows a new one.
           stackChooser.hide()
           queueMicrotask(() => {
             const outcome = mapClickOutcome({ suppressed: suppressBackgroundClick, assignmentActive, handled: clickHandled })
+            const feature = objectTookClick ? null : featureSelection
             clickHandled = false
+            objectTookClick = false
+            featureSelection = null
+            if (feature !== null && !placementMode) onPackFeatureSelected(feature)
             if (outcome === 'suppressed') suppressBackgroundClick = false
             else if (outcome === 'assignment-cancel') onAssignmentCancelled()
             else if (outcome === 'ground') onGroundSelected?.(point)
@@ -820,6 +834,7 @@
     cameraPadding
     untrack(() => {
       if (cardObjectId !== null && hoveredObject?.id === cardObjectId) popupController.hide()
+      lastCardFrame = null
       scheduleCardFrame()
     })
   })

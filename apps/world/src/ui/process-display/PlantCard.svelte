@@ -48,6 +48,7 @@
 
   const cardWidth = 300
   let section = $state<HTMLElement | null>(null)
+  let moreButton = $state<HTMLButtonElement | null>(null)
   let cardHeight = $state(230)
   let moreOpen = $state(false)
   let focusedFor: string | null = null
@@ -84,7 +85,9 @@
     event.preventDefault()
     event.stopPropagation()
     if (moreOpen) {
+      // The focused item goes with the menu: focus stays in the card, so the next Esc closes it.
       moreOpen = false
+      moreButton?.focus()
       return
     }
     onClose()
@@ -100,6 +103,7 @@
   style:left={placement === null || frame === null ? null : `${frame.origin.x + placement.left}px`}
   style:top={placement === null || frame === null ? null : `${frame.origin.y + placement.top}px`}
   style:width={`${cardWidth}px`}
+  style:max-height={frame === null ? null : `${Math.max(0, frame.clear.bottom - frame.clear.top - 16)}px`}
   role="dialog"
   aria-modal="false"
   aria-labelledby="plant-card-name"
@@ -166,6 +170,7 @@
     {/if}
     <div class="plant-card-more">
       <button
+        bind:this={moreButton}
         type="button"
         class="plant-card-tool"
         aria-haspopup="menu"
@@ -204,6 +209,7 @@
     border-radius: 10px;
     box-shadow: 0 12px 32px rgba(8, 14, 24, 0.32);
     font-size: 13px;
+    overflow-y: auto;
     visibility: hidden;
   }
   .plant-card.placed { visibility: visible; }

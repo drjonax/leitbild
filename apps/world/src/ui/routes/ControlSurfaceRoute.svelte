@@ -315,7 +315,7 @@
       })
   const mapVisible = $derived(mapConfig !== null)
   /** A Plant has a card, which a click on its icon or rail row opens where the click orders nothing (`map-target-routing.ts`). */
-  const opensPlantCard = (object: OperationalObject): boolean => mapVisible && object.packId === processPlantPackId
+  const opensPlantCard = (object: OperationalObject): boolean => mapReady && object.packId === processPlantPackId
   const railVisible = $derived(railConfig !== null)
   const footerVisible = true
   const guidanceOverlayVisible = true
@@ -1403,6 +1403,8 @@
   const openPlantCard = (objectId: ObjectId): void => {
     const active = document.activeElement
     const fromRail = active instanceof HTMLElement && active.closest('.control-rail') !== null
+    // Another unit's card waits for the map to say where its icon is, never standing a frame at the last one's.
+    if (plantCard?.objectId !== objectId) plantCardFrame = null
     plantCard = { objectId, opener: fromRail ? active : plantCard?.opener ?? null }
   }
 
@@ -1418,12 +1420,15 @@
     if (opener?.isConnected) opener.focus()
   }
 
-  // Every action opens something on top or beside; the card has done its job and goes.
+  // Every action opens something on top or beside; the card has done its job and goes. What it
+  // opens gives focus back to where the card came from: the rail row, else the map.
   const followPlantCardAction = (action: PlantCardAction): void => {
     const object = plantCardObject
     if (object === null) return
     const procedure = plantCardView(object, procedureSummariesForObject(object))?.procedure.summary ?? undefined
+    const returnTo = plantCard?.opener?.isConnected ? plantCard.opener : document.querySelector<HTMLElement>('.surface-main .maplibregl-canvas')
     closePlantCard()
+    returnTo?.focus({ preventScroll: true })
     switch (action) {
       case 'overview': return openProcessDisplay(object)
       case 'procedures': return openProcedureSystemAt(object, procedure)
@@ -1442,7 +1447,7 @@
   // An order context takes the map over (a unit chosen, a placement, a map-target panel, an assignment), and a removed Plant has no card.
   $effect(() => {
     if (plantCard === null) return
-    if (selectedControllerId !== null || placementMode !== null || mapTargetPanel !== null || mapAssignment !== null || plantCardObject === null) untrack(closePlantCard)
+    if (selectedControllerObject !== null || placementMode !== null || mapTargetPanel !== null || mapAssignment !== null || plantCardObject === null) untrack(closePlantCard)
   })
 
   const selectObject = (object: OperationalObject): void => {

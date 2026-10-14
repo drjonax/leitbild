@@ -488,7 +488,14 @@
   // Run, else one that does, else a family room whose scope is widened to the
   // Run, else a new one. It never hides the room, so the World page may ask
   // for it as often as it likes.
-  const openRunAssistant = async (): Promise<void> => {
+  // One open at a time, whoever asks (the toolbar launcher or a World page): a second click
+  // while the first is still finding or creating the room waits for it, so no second room is made.
+  let runAssistantOpening: Promise<void> | null = null
+  const openRunAssistant = (): Promise<void> => {
+    runAssistantOpening ??= openRunAssistantRoom().finally(() => { runAssistantOpening = null })
+    return runAssistantOpening
+  }
+  const openRunAssistantRoom = async (): Promise<void> => {
     if (!runAssistantAvailable || !workspace || !selectedWorldResource || !selectedRunFamily || !assistantCapability) {
       throw new Error('Run Assistant is unavailable for this Run')
     }
