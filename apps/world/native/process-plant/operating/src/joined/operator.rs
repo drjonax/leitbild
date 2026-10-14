@@ -2,13 +2,16 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#joined-block-interface
 //! The composed joined residual and its colored stage Jacobian.
 //!
-//! `y` is `[network | nuclear | solids | secondary | rods]`. One evaluation
+//! `y` is `[network | nuclear | solids | secondary | rods | pzr]`. One evaluation
 //! takes the rods' travel and cell volumes, then evaluates the network with
 //! this operator as its coupling: inside the coupling the SG views, the
 //! solids' temperatures, the nuclear rows, the solids' rows and heats, the
 //! rod rows and receipts and the secondary rows are evaluated on the
-//! network's fluid state of the same call. Rows are the network's own scaled
-//! rows, then every block's physical rows divided by their row scales.
+//! network's fluid state of the same call; the PZR block (G6) is evaluated
+//! inside the network's stratified rows, on the cell's column of the same
+//! call, as the cell's boundary (`Coupling::pzr_boundary`). Rows are the
+//! network's own scaled rows, then every block's physical rows divided by
+//! their row scales.
 //!
 //! The joined structural pattern is the network's own pattern plus every
 //! port dependency, conservatively: each column lists every row any state
@@ -24,12 +27,13 @@ use super::{
     block::{CellVolume, Coordinates, Layout, Rods, Secondary, SecondaryView},
     nuclear::{self, Nuclear, RegionWater},
     packet::Packet,
+    pzr::Pzr,
     solids::{self, Solids},
 };
 use crate::{
     network::{
-        Coupling, Failure, Fluid, Network, Properties, Receipts, Reuse,
-        packet::Packet as NetworkPacket,
+        Coupling, Failure, Fluid, Network, PZR_PRESSURE, Properties, Receipts, Reuse,
+        packet::Packet as NetworkPacket, stratified,
     },
     sparse::{self, Coloring, Pattern},
     thermal::{self, Scalar, WaterProperties},
@@ -69,6 +73,9 @@ pub struct Offsets {
     pub solids: usize,
     pub secondary: usize,
     pub rods: usize,
+    /// The PZR metal and relief block (G6); empty while its owner is not
+    /// composed.
+    pub pzr: usize,
     pub end: usize,
 }
 
@@ -105,6 +112,10 @@ struct Blocks<P> {
     solids: Solids,
     secondary: SecondaryPort<P>,
     rods: RodPort<P>,
+    /// The PZR metal and relief owner (G6), from the packet's `pzrMetal`
+    /// section; `None` for a packet compiled before G6, whose cell then
+    /// declares no relief and keeps a closed boundary.
+    pzr: Option<Pzr>,
     offsets: Offsets,
     source_water: Vec<usize>,
     compiled_volumes: Vec<f64>,
@@ -112,6 +123,7 @@ struct Blocks<P> {
     solid_rows: Vec<Scalar>,
     secondary_rows: Vec<Scalar>,
     rod_rows: Vec<Scalar>,
+    pzr_rows: Vec<Scalar>,
     temperatures: solids::Temperatures,
     fuel_t: Vec<Scalar>,
     water: Vec<RegionWater>,
@@ -120,8 +132,8 @@ struct Blocks<P> {
     cell_volumes: Vec<CellVolume>,
     heats: Heats,
     coupled_wall_s: f64,
-    /// Nuclear, solids, secondary and rods, in that order.
-    scales: [Scales; 4],
+    /// Nuclear, solids, secondary, rods and the PZR block, in that order.
+    scales: [Scales; 5],
     /// One startup evaluation lets the rod owner prepare its algebraic
     /// coordinates on that evaluation's fluid state ([`Joined::prepare_owners`]).
     prepare: Option<Vec<super::block::Transaction>>,
@@ -153,6 +165,9 @@ pub struct CouplerCounters {
     /// the rod clusters' evaluation when reached.
     pub local_solids: Tally,
     pub local_rods: Tally,
+    /// The PZR block's terms: network PZR columns' boundaries and its own
+    /// columns (G6).
+    pub pzr: Tally,
     pub solid_columns: Tally,
     pub secondary_columns: Tally,
     pub rod_columns: Tally,
@@ -270,13 +285,40 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 0
             }
         };
+        // G6: the PZR owner composes from its section, its steel at the
+        // prepared cell's Tsat(p_s); a relief port needs it.
+        let pzr = match &packet.pzr_metal {
+            Some(section) => Some(Pzr::new(
+                network.stratified(),
+                section,
+                network.pzr_saturation_temperature_k(),
+            )?),
+            None => {
+                if let Some(port) = network
+                    .stratified()
+                    .parameters()
+                    .ports
+                    .iter()
+                    .find(|p| p.kind == stratified::PortKind::Relief)
+                {
+                    return Err(fatal(format!(
+                        "relief port {} needs the PZR owner's packet section (pzrMetal)",
+                        port.id
+                    )));
+                }
+                None
+            }
+        };
+        let pzr_len = pzr.as_ref().map_or(0, |b| b.layout().len());
         let n = network.dimension();
+        let rods_at = n + nuclear.layout().len() + solids.layout().len() + secondary_len;
         let offsets = Offsets {
             nuclear: n,
             solids: n + nuclear.layout().len(),
             secondary: n + nuclear.layout().len() + solids.layout().len(),
-            rods: n + nuclear.layout().len() + solids.layout().len() + secondary_len,
-            end: n + nuclear.layout().len() + solids.layout().len() + secondary_len + rods_len,
+            rods: rods_at,
+            pzr: rods_at + rods_len,
+            end: rods_at + rods_len + pzr_len,
         };
         let faces: Vec<Face> = network_packet
             .mechanics
@@ -303,6 +345,8 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 RodPort::Owner(b) => Scales::of(b.layout()),
                 RodPort::Prepared(_) => Scales::default(),
             },
+            pzr.as_ref()
+                .map_or_else(Scales::default, |b| Scales::of(b.layout())),
         ];
         let rod_reads = match &rods {
             RodPort::Owner(b) => {
@@ -352,6 +396,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             solid_rows: vec![s(0.); solids.layout().len()],
             secondary_rows: vec![s(0.); secondary_len],
             rod_rows: vec![s(0.); rods_len],
+            pzr_rows: vec![s(0.); pzr_len],
             temperatures: solids::Temperatures::default(),
             fuel_t: vec![s(0.); nuclear.carriers()],
             water: vec![
@@ -387,6 +432,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             solids,
             secondary,
             rods,
+            pzr,
             offsets,
             source_water: packet.source_water.clone(),
             compiled_volumes,
@@ -476,6 +522,13 @@ impl<P: Properties + WaterProperties> Joined<P> {
             RodPort::Prepared(_) => None,
         }
     }
+    /// The PZR metal and relief owner (G6), when composed.
+    pub fn pzr(&self) -> Option<&Pzr> {
+        self.blocks.pzr.as_ref()
+    }
+    pub fn pzr_mut(&mut self) -> Option<&mut Pzr> {
+        self.blocks.pzr.as_mut()
+    }
     /// The joined rows of the last evaluation (solver scaling).
     pub fn rows(&self) -> &[Scalar] {
         &self.rows
@@ -500,6 +553,9 @@ impl<P: Properties + WaterProperties> Joined<P> {
         }
         if let RodPort::Owner(b) = &self.blocks.rods {
             out.push(("rods", b.layout().clone()));
+        }
+        if let Some(b) = &self.blocks.pzr {
+            out.push(("pzr", b.layout().clone()));
         }
         out
     }
@@ -530,6 +586,9 @@ impl<P: Properties + WaterProperties> Joined<P> {
         if let RodPort::Owner(b) = &self.blocks.rods {
             push(&b.prepared(), b.layout());
         }
+        if let Some(b) = &self.blocks.pzr {
+            push(b.prepared(), b.layout());
+        }
         Ok(y)
     }
 
@@ -542,6 +601,9 @@ impl<P: Properties + WaterProperties> Joined<P> {
             ids.extend(b.differential());
         }
         if let RodPort::Owner(b) = &self.blocks.rods {
+            ids.extend(b.differential());
+        }
+        if let Some(b) = &self.blocks.pzr {
             ids.extend(b.differential());
         }
         ids
@@ -601,18 +663,38 @@ impl<P: Properties + WaterProperties> Joined<P> {
         Ok(())
     }
 
-    /// Root functions: the secondary owner's, then the rod owner's (on one
-    /// value evaluation's fluid state). Stock IDA cannot retry a root, so
-    /// every failure is fatal.
+    /// Root functions: the secondary owner's, the rod owner's (on one
+    /// value evaluation's fluid state), then the PZR relief's (on the roof
+    /// pressure and the lift). Stock IDA cannot retry a root, so every
+    /// failure is fatal.
     pub fn root_count(&self) -> usize {
-        self.secondary().map_or(0, |b| b.root_count()) + self.rods().map_or(0, |b| b.root_count())
+        self.secondary().map_or(0, |b| b.root_count())
+            + self.rods().map_or(0, |b| b.root_count())
+            + self.pzr().map_or(0, |b| b.root_count())
+    }
+    /// The PZR block's physical coordinates and the roof pressure of `y`.
+    fn pzr_state(&self, y: &[f64]) -> (Vec<f64>, f64) {
+        let o = self.blocks.offsets;
+        let roof = self.network.pzr.base + PZR_PRESSURE;
+        (
+            (o.pzr..o.end)
+                .zip(&self.blocks.scales[4].coordinates)
+                .map(|(i, s)| y[i] * s)
+                .collect(),
+            y[roof] * self.network.scales()[roof],
+        )
     }
     pub fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
         let o = self.blocks.offsets;
         let ns = self.secondary().map_or(0, |b| b.root_count());
         let nr = self.rods().map_or(0, |b| b.root_count());
-        if out.len() != ns + nr {
+        let np = self.pzr().map_or(0, |b| b.root_count());
+        if out.len() != ns + nr + np {
             return Err(fatal("root layout"));
+        }
+        if let Some(b) = self.pzr() {
+            let (x, roof) = self.pzr_state(y);
+            b.roots(roof, &x, &mut out[ns + nr..])?;
         }
         if let SecondaryPort::Owner(b) = &mut self.blocks.secondary {
             let x = view(
@@ -634,7 +716,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
                     fatal(format!("root evaluation: {r}"))
                 }
             })?;
-            out[ns..].copy_from_slice(&roots);
+            out[ns..ns + nr].copy_from_slice(&roots);
         }
         Ok(())
     }
@@ -651,6 +733,11 @@ impl<P: Properties + WaterProperties> Joined<P> {
     ) -> Result<Vec<super::block::Transaction>, Failure> {
         let o = self.blocks.offsets;
         let ns = self.secondary().map_or(0, |b| b.root_count());
+        let nr = self.rods().map_or(0, |b| b.root_count());
+        if directions.len() != self.root_count() {
+            return Err(fatal("transaction root layout"));
+        }
+        let (mut pzr_x, roof) = self.pzr_state(y);
         let mut done = Vec::new();
         let b = &mut self.blocks;
         if let SecondaryPort::Owner(owner) = &mut b.secondary
@@ -667,12 +754,20 @@ impl<P: Properties + WaterProperties> Joined<P> {
             }
         }
         if let RodPort::Owner(owner) = &mut b.rods
-            && directions[ns..].iter().any(|d| *d != 0)
+            && directions[ns..ns + nr].iter().any(|d| *d != 0)
         {
             let scales = &b.scales[3].coordinates;
-            let mut x: Vec<f64> = (o.rods..o.end).zip(scales).map(|(i, s)| y[i] * s).collect();
-            done.push(owner.transact(&b.properties, t, &directions[ns..], &mut x)?);
-            for ((i, v), s) in (o.rods..o.end).zip(&x).zip(scales) {
+            let mut x: Vec<f64> = (o.rods..o.pzr).zip(scales).map(|(i, s)| y[i] * s).collect();
+            done.push(owner.transact(&b.properties, t, &directions[ns..ns + nr], &mut x)?);
+            for ((i, v), s) in (o.rods..o.pzr).zip(&x).zip(scales) {
+                y[i] = v / s;
+            }
+        }
+        if let Some(owner) = &mut b.pzr
+            && directions[ns + nr..].iter().any(|d| *d != 0)
+        {
+            done.push(owner.transact(t, &directions[ns + nr..], roof, &mut pzr_x)?);
+            for ((i, v), s) in (o.pzr..o.end).zip(&pzr_x).zip(&b.scales[4].coordinates) {
                 y[i] = v / s;
             }
         }
@@ -693,6 +788,9 @@ impl<P: Properties + WaterProperties> Joined<P> {
         }
         if let Some(b) = self.rods_mut() {
             done.push(b.command(t, command)?);
+        }
+        if let Some(b) = self.pzr() {
+            done.push(b.command(t, command));
         }
         self.deposit(&done, y)?;
         done.extend(self.time_events(t, y)?);
@@ -727,10 +825,10 @@ impl<P: Properties + WaterProperties> Joined<P> {
         }
         if let RodPort::Owner(owner) = &mut b.rods {
             let scales = &b.scales[3].coordinates;
-            let mut x: Vec<f64> = (o.rods..o.end).zip(scales).map(|(i, s)| y[i] * s).collect();
+            let mut x: Vec<f64> = (o.rods..o.pzr).zip(scales).map(|(i, s)| y[i] * s).collect();
             if let Some(d) = owner.time_event(&b.properties, t, &mut x)? {
                 done.push(d);
-                for ((i, v), s) in (o.rods..o.end).zip(&x).zip(scales) {
+                for ((i, v), s) in (o.rods..o.pzr).zip(&x).zip(scales) {
                     y[i] = v / s;
                 }
             }
@@ -865,6 +963,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 last: LocalRows::default(),
                 solid_rows: Vec::new(),
                 heat: solids::Heat::default(),
+                last_pzr: Vec::new(),
             },
         )
     }
@@ -1199,6 +1298,19 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 add(&mut columns, &rows, &cols);
             }
         }
+        // 5. The PZR block (G6): each steel row reads the cell's column (the
+        // cell's coordinates) and the steels its enclosure couples; the lift
+        // row its own lift. The cell's rows read every block coordinate
+        // through the boundary: heater and wall receipts and the relief.
+        if let Some(b) = &self.blocks.pzr {
+            let cell: BTreeSet<usize> = self.network.pzr.coordinates().collect();
+            let metal: BTreeSet<usize> = (o.pzr + b.metal_base()..o.end).collect();
+            let mut cols = cell.clone();
+            cols.extend(metal.iter().copied());
+            add(&mut columns, &metal, &cols);
+            let own: BTreeSet<usize> = (o.pzr..o.end).collect();
+            add(&mut columns, &cell, &own);
+        }
         for (c, rows) in columns.iter_mut().enumerate() {
             rows.insert(c);
         }
@@ -1221,7 +1333,7 @@ impl<P: Properties + WaterProperties> Blocks<P> {
         let o = self.offsets;
         match &self.rods {
             RodPort::Owner(b) => {
-                let x = view(y, yp, seed, cj, o.rods..o.end, &self.scales[3].coordinates)?;
+                let x = view(y, yp, seed, cj, o.rods..o.pzr, &self.scales[3].coordinates)?;
                 b.travel(x, &mut self.travel)?;
                 b.volumes(x, &self.compiled_volumes, &mut self.cell_volumes)?;
             }
@@ -1329,10 +1441,10 @@ impl<P: Properties + WaterProperties> Blocks<P> {
                 done.push(b.prepare(properties, fluid)?);
             }
             if let Some(out) = self.rod_roots.as_mut() {
-                let x = view(y, yp, seed, cj, o.rods..o.end, &scales[3].coordinates)?;
+                let x = view(y, yp, seed, cj, o.rods..o.pzr, &scales[3].coordinates)?;
                 b.roots(properties, t, x, fluid, out)?;
             }
-            let x = view(y, yp, seed, cj, o.rods..o.end, &scales[3].coordinates)?;
+            let x = view(y, yp, seed, cj, o.rods..o.pzr, &scales[3].coordinates)?;
             b.rows(properties, t, x, fluid, receipts, rod_rows)?;
         }
         if let SecondaryPort::Owner(b) = secondary {
@@ -1358,6 +1470,45 @@ impl<P: Properties + WaterProperties> Blocks<P> {
         }
         self.coupled_wall_s += started.elapsed().as_secs_f64();
         Ok(())
+    }
+
+    /// The PZR block's rows (into the joined `rows`, block scaling) and the
+    /// stratified cell's boundary on `column`, at the block's coordinates
+    /// with `seed`. With no PZR owner (a packet compiled before G6, whose
+    /// cell declares no relief) the boundary is closed.
+    #[allow(clippy::too_many_arguments)] // The coupling's stage inputs and the cell's column.
+    fn pzr_boundary(
+        &mut self,
+        y: &[f64],
+        yp: &[f64],
+        seed: Option<&[f64]>,
+        cj: f64,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+        rows: &mut [Scalar],
+    ) -> Result<stratified::Boundary, Failure> {
+        let o = self.offsets;
+        let Some(b) = self.pzr.as_mut() else {
+            return Ok(stratified::Boundary::closed());
+        };
+        let x = view(y, yp, seed, cj, o.pzr..o.end, &self.scales[4].coordinates)?;
+        let boundary = b.boundary(
+            &self.properties,
+            cell,
+            column,
+            x,
+            &mut self.pzr_rows,
+            seed.is_none(),
+        )?;
+        let first = o.pzr - o.nuclear;
+        for (k, (r, row_scale)) in self.pzr_rows.iter().zip(&self.scales[4].rows).enumerate() {
+            let v = *r / s(*row_scale);
+            if !(v.value.is_finite() && v.direction.is_finite()) {
+                return Err(trial("nonfinite PZR block row"));
+            }
+            rows[first + k] = v;
+        }
+        Ok(boundary)
     }
 }
 
@@ -1446,6 +1597,9 @@ pub struct LocalCoupler<'a, P> {
     last: LocalRows,
     solid_rows: Vec<(usize, Scalar)>,
     heat: solids::Heat,
+    /// The PZR block's rows of the last PZR call, global joined rows in
+    /// solver scaling.
+    last_pzr: Vec<(usize, Scalar)>,
 }
 
 impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
@@ -1595,7 +1749,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 self.yp,
                 None,
                 self.cj,
-                o.rods..o.end,
+                o.rods..o.pzr,
                 &scales[3].coordinates,
             )?;
             // Only the clusters reading a moved cell take a direction.
@@ -1625,6 +1779,82 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     pub fn last(&self) -> &LocalRows {
         &self.last
     }
+    /// The PZR block's rows of the last [`LocalCoupler::pzr_boundary`] or
+    /// [`LocalCoupler::pzr_column`] call.
+    pub fn last_pzr(&self) -> &[(usize, Scalar)] {
+        &self.last_pzr
+    }
+    /// The stratified cell's boundary on `column`, a network PZR column's
+    /// (base values with its directions), with the block's own coordinates
+    /// unseeded; its rows are [`LocalCoupler::last_pzr`]. Closed with no
+    /// PZR owner.
+    pub fn pzr_boundary(
+        &mut self,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        let started = Instant::now();
+        let result = self.pzr_terms(None, cell, column);
+        self.blocks.coupler.pzr.add(started);
+        result
+    }
+    /// One PZR block column (global index): the block's rows with a unit
+    /// seed on it at the base column `column`, and the boundary with that
+    /// seed's directions, which the network's stratified rows read
+    /// (`NetworkSeed::pzr_boundary`).
+    pub fn pzr_column(
+        &mut self,
+        global: usize,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        let o = self.blocks.offsets;
+        if !(o.pzr..o.end).contains(&global) {
+            return Err(fatal(format!("PZR column {global} outside the PZR block")));
+        }
+        let started = Instant::now();
+        self.scratch.seed[global] = 1.;
+        let result = self.pzr_terms(Some(global), cell, column);
+        self.scratch.seed[global] = 0.;
+        self.blocks.coupler.pzr.add(started);
+        result
+    }
+    fn pzr_terms(
+        &mut self,
+        seeded: Option<usize>,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        let o = self.blocks.offsets;
+        self.last_pzr.clear();
+        let Blocks {
+            properties,
+            pzr,
+            pzr_rows,
+            scales,
+            ..
+        } = &mut *self.blocks;
+        let Some(b) = pzr.as_mut() else {
+            return Ok(stratified::Boundary::closed());
+        };
+        let x = view(
+            self.y,
+            self.yp,
+            seeded.map(|_| &self.scratch.seed[..]),
+            self.cj,
+            o.pzr..o.end,
+            &scales[4].coordinates,
+        )?;
+        let boundary = b.boundary(properties, cell, column, x, pzr_rows, false)?;
+        self.last_pzr.extend(
+            pzr_rows
+                .iter()
+                .zip(&scales[4].rows)
+                .enumerate()
+                .map(|(k, (r, row_scale))| (o.pzr + k, *r / s(*row_scale))),
+        );
+        Ok(boundary)
+    }
     /// What [`LocalCoupler::local`] would reach, without evaluating: the
     /// network cells its receipts enter and the global joined rows it
     /// writes (region water and SG heat are its separate ports).
@@ -1651,7 +1881,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             .collect();
         receipt_cells.sort_unstable();
         receipt_cells.dedup();
-        let rod_rows = if rods { o.rods..o.end } else { 0..0 };
+        let rod_rows = if rods { o.rods..o.pzr } else { 0..0 };
         let mut rows: Vec<usize> = scope
             .bands
             .iter()
@@ -1688,7 +1918,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     ) -> Result<(), Failure> {
         let o = self.blocks.offsets;
         out.clear();
-        if !(o.solids..o.end).contains(&column) {
+        if !(o.solids..o.pzr).contains(&column) {
             return Err(fatal(format!(
                 "owner column {column} outside the solid, secondary and rod coordinates"
             )));
@@ -1914,7 +2144,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             self.yp,
             Some(&self.scratch.seed),
             self.cj,
-            o.rods..o.end,
+            o.rods..o.pzr,
             &scales[3].coordinates,
         )?;
         let travel = &mut self.scratch.travel;
@@ -2092,5 +2322,13 @@ impl<P: Properties + WaterProperties> Coupling for Coupler<'_, P> {
         self.blocks.couple(
             self.t, self.y, self.yp, self.seed, self.cj, fluid, receipts, self.rows,
         )
+    }
+    fn pzr_boundary(
+        &mut self,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        self.blocks
+            .pzr_boundary(self.y, self.yp, self.seed, self.cj, cell, column, self.rows)
     }
 }

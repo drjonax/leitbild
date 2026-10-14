@@ -12,6 +12,7 @@ use leitbild_operating_plant::{
         Coupling, Failure, RotorState, Water,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
+        stratified,
     },
     rods::{RodBlock, RodPacket, Section, SpiderDrag},
     rotor::{Shaft, SpeedRequest, Support},
@@ -217,6 +218,14 @@ struct Gap<'a> {
     out: Option<Value>,
 }
 impl Coupling for Gap<'_> {
+    /// No PZR owner: the packet's cell declares no relief, closed.
+    fn pzr_boundary(
+        &mut self,
+        _: &stratified::Cell,
+        _: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        Ok(stratified::Boundary::closed())
+    }
     fn couple(&mut self, fluid: &Fluid<'_>, _: &mut Receipts<'_>) -> Result<(), Failure> {
         let n = Rods::<()>::clusters(self.block);
         let scales = &Rods::<()>::layout(self.block).scales;

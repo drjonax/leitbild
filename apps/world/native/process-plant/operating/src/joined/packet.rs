@@ -24,6 +24,11 @@ pub struct Packet {
     pub water_flow_area_m2: Vec<f64>,
     pub water_boron_amount_kg_eq: Vec<f64>,
     pub secondary: SecondarySection,
+    /// The PZR metal and relief owner's section (G6). A packet compiled
+    /// before G6 has none: the PZR owner is then not composed, the cell's
+    /// boundary stays closed and a declared relief port refuses.
+    #[serde(rename = "pzrMetal")]
+    pub pzr_metal: Option<super::pzr::Section>,
 }
 
 /// The SG owner's section, read here only for its contact record

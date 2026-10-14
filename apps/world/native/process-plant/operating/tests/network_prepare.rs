@@ -554,7 +554,19 @@ fn compile_refuses_a_misplaced_pzr_cell_port_or_force() {
     assert!(compile(&band).contains("compiled band"));
     let mut ports = packet();
     ports.pzr.cell.ports.push(surge_port());
-    assert!(compile(&ports).contains("exactly one port"));
+    assert!(compile(&ports).contains("exactly one surge port"));
+    // G6: a spray inlet takes no face (its receipt is the network's zero),
+    // and the surge port keeps its own.
+    let mut sprayed = packet();
+    sprayed.pzr.cell.ports.push(PzrPort {
+        id: "PZR.SPRAY".into(),
+        kind: PortKind::Spray,
+        ..surge_port()
+    });
+    assert!(compile(&sprayed).contains("spray and relief ports take none"));
+    let mut faceless = packet();
+    faceless.pzr.cell.ports[0].face = None;
+    assert!(compile(&faceless).contains("surge port needs its face"));
     let mut reverse = packet();
     let f = &mut reverse.mechanics.faces[5];
     (f.from, f.to) = (PZR, SURGE);

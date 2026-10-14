@@ -124,7 +124,7 @@ impl<P: Properties> Network<P> {
         seed: Option<&[f64]>,
         cj: f64,
         mut reuse: Option<&mut Reuse<P::Caloric>>,
-        coupling: Option<&mut dyn super::Coupling>,
+        mut coupling: Option<&mut dyn super::Coupling>,
         volumes: &[CellVolume],
     ) -> Result<(), Failure> {
         if let Some((started, seconds)) = self.wall_budget
@@ -321,13 +321,13 @@ impl<P: Properties> Network<P> {
                 self.receipts[f.to][l.phase][k] = self.receipts[f.to][l.phase][k] + q;
             }
         }
-        if let Some(coupling) = coupling {
+        if let Some(coupling) = coupling.as_deref_mut() {
             self.couple(coupling, y, seed, &points, &phase_mass)?;
         }
         self.compose_sections(y, yp, seed, cj, &points)?;
         self.compose_momentum(t, y, yp, seed, cj, &phase_mass)?;
         self.compose_stocks(y, yp, seed, cj, &points, reuse)?;
-        self.compose_stratified(column, y, yp, seed, cj)?;
+        self.compose_stratified(column, y, yp, seed, cj, coupling)?;
         self.counters.evaluation_wall_s += started.elapsed().as_secs_f64();
         Ok(())
     }
@@ -612,12 +612,37 @@ impl<P: Properties> Network<P> {
             .ok_or_else(|| Failure::Fatal("the port face has no PZR port".into()))
     }
 
-    /// The stratified cell's 17 rows on this evaluation's column from its
-    /// coordinates, rates and the liquid port receipt `self.receipts[pzr]`
-    /// (`stratified::residual_on`, no property call with a closed boundary).
-    /// S1's boundary is closed: no heater, zone heat or relief; a vapor
-    /// arrival through the surge port is outside the composed cell and
-    /// refuses.
+    /// The stratified cell's port receipts in its port order: the surge
+    /// port's is the liquid receipt `self.receipts[pzr]` of its face, and a
+    /// spray or relief port, which no face carries, receives none (the
+    /// relief's flow is the cell's own restriction). A vapor arrival through
+    /// the surge port is outside the composed cell and refuses.
+    pub(super) fn pzr_receipts(
+        &self,
+        surge: [[thermal::Scalar; 3]; 2],
+    ) -> Result<Vec<stratified::Receipt>, Failure> {
+        let [liquid, vapor] = surge;
+        if vapor.iter().any(|q| q.value != 0. || q.direction != 0.) {
+            return Err(Failure::Fatal(
+                "a vapor receipt through the surge port is outside the composed stratified cell"
+                    .into(),
+            ));
+        }
+        let mut receipts =
+            vec![stratified::Receipt::zero(); self.stratified.parameters().ports.len()];
+        receipts[self.pzr_port()?] = stratified::Receipt {
+            mass: liquid[0],
+            enthalpy: liquid[1],
+            boron: liquid[2],
+        };
+        Ok(receipts)
+    }
+
+    /// The stratified cell's 19 rows on this evaluation's column from its
+    /// coordinates, rates, its port receipts and its boundary
+    /// (`stratified::residual_on`): the coupled owner's
+    /// ([`super::Coupling::pzr_boundary`]) on this column, or without a
+    /// coupling the network's own closed one (S1).
     fn compose_stratified(
         &mut self,
         column: stratified::Column,
@@ -625,31 +650,26 @@ impl<P: Properties> Network<P> {
         yp: &[f64],
         seed: Option<&[f64]>,
         cj: f64,
+        coupling: Option<&mut dyn super::Coupling>,
     ) -> Result<(), Failure> {
         let x = self.pzr_coordinates(|i| self.get(y, seed, i))?;
         let rate = self.pzr_coordinates(|i| self.rate(yp, seed, cj, i))?;
-        let [liquid, vapor] = self.receipts[self.pzr.cell];
-        if vapor.iter().any(|q| q.value != 0. || q.direction != 0.) {
-            return Err(Failure::Fatal(
-                "a vapor receipt through the surge port is outside the composed stratified cell"
-                    .into(),
-            ));
-        }
-        let receipts = [stratified::Receipt {
-            mass: liquid[0],
-            enthalpy: liquid[1],
-            boron: liquid[2],
-        }];
+        let receipts = self.pzr_receipts(self.receipts[self.pzr.cell])?;
         let scales: [f64; PZR_COORDINATES] = self.scales[self.pzr.coordinates()]
             .try_into()
             .map_err(|_| Failure::Fatal("PZR scale layout".into()))?;
+        let coupled = coupling.is_some();
+        let boundary = match coupling {
+            Some(coupling) => coupling.pzr_boundary(&self.stratified, &column)?,
+            None => self.uncoupled_pzr_boundary(),
+        };
         let evaluation = self.stratified.residual_on(
             &self.properties,
             column,
             &x,
             &rate,
             &receipts,
-            &stratified::Boundary::closed(),
+            &boundary,
             &scales,
         )?;
         for (index, row) in self.pzr.coordinates().zip(evaluation.rows) {
@@ -657,6 +677,7 @@ impl<P: Properties> Network<P> {
         }
         if seed.is_none() {
             self.pzr_evaluation = Some(evaluation);
+            self.pzr_boundary = Some((boundary, coupled));
         }
         Ok(())
     }
