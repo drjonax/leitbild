@@ -574,6 +574,7 @@ fn joined_blocks_profile() {
         let mut this = Vec::new();
         for (k, (label, classes)) in configurations.iter().enumerate() {
             let before = ledger.borrow().snapshot();
+            let coupler_before = serde_json::to_value(joined.coupler_counters()).unwrap();
             let s = cpu();
             jacobian_blocks(
                 &mut joined,
@@ -591,8 +592,13 @@ fn joined_blocks_profile() {
             this.push(spent);
             if round == 0 {
                 let after = ledger.borrow().snapshot();
+                let coupler = tally_between(
+                    &coupler_before,
+                    &serde_json::to_value(joined.coupler_counters()).unwrap(),
+                );
                 calls.push(
-                    json!({"classes": label, "property_calls": Ledger::between(&before, &after)}),
+                    json!({"classes": label, "property_calls": Ledger::between(&before, &after),
+                        "local_coupler_wall": coupler}),
                 );
             }
         }
@@ -663,6 +669,8 @@ fn joined_blocks_profile() {
         "clock": "CLOCK_THREAD_CPUTIME_ID, QOS_CLASS_USER_INTERACTIVE",
         "app_commit": commit, "app_dirty": dirty,
         "packet": declared.packet_path, "packet_sha256": sha256_file(&declared.packet_path),
+        "wiki_root": std::env::var("LD01_WIKI_ROOT").ok(),
+        "water_lib_dir": std::env::var("LD01_OPERATING_WATER_LIB_DIR").ok(),
         "load_average_start": load_start,
         "composition": {"dimension": n, "offsets": o},
         "cj_per_s": cj, "rounds": rounds,
@@ -680,6 +688,19 @@ fn joined_blocks_profile() {
     if let Ok(path) = std::env::var("LD01_JAC_RECEIPT") {
         write_receipt(&path, &receipt);
     }
+}
+
+/// The local coupler's calls and wall time between two snapshots of
+/// `Joined::coupler_counters`, per kind.
+fn tally_between(before: &Value, after: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for (kind, a) in after.as_object().unwrap() {
+        let b = &before[kind];
+        let calls = a["calls"].as_u64().unwrap() - b["calls"].as_u64().unwrap();
+        let ms = 1e3 * (a["wall_s"].as_f64().unwrap() - b["wall_s"].as_f64().unwrap());
+        out.insert(kind.clone(), json!({"calls": calls, "wall_ms": ms}));
+    }
+    Value::Object(out)
 }
 
 /// Diagnostic: sizes of the solids' incidence and of the closed scopes the
