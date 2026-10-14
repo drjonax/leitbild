@@ -792,14 +792,18 @@ fn a_count_mismatch_prints_each_differing_path() {
 // ------------------------------------------------------- the settled state
 
 /// The S2 settling block's credited outputs (revision 7, (E)) and their
-/// thresholds per 20 s: (name, threshold, relative to the value).
+/// thresholds per 20 s, as the revision-7 gates block declares them
+/// (`settling`: corePowerRelative 6.8e-5, averageCoolant_K 3.4e-3,
+/// cellTemperature_K 0.01, pzrRoofPressure_Pa and sgPressure_Pa 344,
+/// pzrLevel_m 6.8e-4, sgLiquidVolume_m3 3.4e-3, loopFlowRelativeChange
+/// 5e-4): (name, threshold, relative to the value).
 const SETTLING: [(&str, f64, bool); 8] = [
-    ("core_power", 6.9e-5, true),
+    ("core_power", 6.8e-5, true),
     ("average_coolant_k", 3.4e-3, false),
     ("core_cell_liquid_k", 0.01, false),
-    ("pt1_pa", 345., false),
-    ("sg_pressure_pa", 345., false),
-    ("pzr_level_m", 7e-4, false),
+    ("pt1_pa", 344., false),
+    ("sg_pressure_pa", 344., false),
+    ("pzr_level_m", 6.8e-4, false),
     ("sg_liquid_m3", 3.4e-3, false),
     ("loop_flow", 5e-4, true),
 ];

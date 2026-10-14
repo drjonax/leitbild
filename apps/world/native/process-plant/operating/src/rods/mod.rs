@@ -1377,6 +1377,11 @@ impl<P> Rods<P> for RodBlock {
     fn root_count(&self) -> usize {
         self.clusters.len()
     }
+    /// Only a seated body's lift-off root reads the fluid (its forces);
+    /// release and seat roots read time and travel.
+    fn roots_read_fluid(&self) -> bool {
+        self.modes.contains(&Mode::Seated)
+    }
     fn roots(
         &mut self,
         _: &P,

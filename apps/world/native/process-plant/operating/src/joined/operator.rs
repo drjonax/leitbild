@@ -87,6 +87,9 @@ pub struct Counters {
     pub coupled_wall_s: f64,
     pub jacobians: usize,
     pub jacobian_wall_s: f64,
+    /// Root-function calls and their wall time.
+    pub roots: usize,
+    pub root_wall_s: f64,
 }
 
 /// The last evaluation's heats, for receipts and conservation.
@@ -137,9 +140,6 @@ struct Blocks<P> {
     /// One startup evaluation lets the rod owner prepare its algebraic
     /// coordinates on that evaluation's fluid state ([`Joined::prepare_owners`]).
     prepare: Option<Vec<super::block::Transaction>>,
-    /// A root evaluation collects the rod owner's roots on the same fluid
-    /// state ([`Joined::roots`]).
-    rod_roots: Option<Vec<f64>>,
     /// The rod owner's network reads and receipt cells, for local coupling.
     rod_reads: Option<RodReads>,
     /// Per SG: the secondary owner's own coordinates its view reads.
@@ -191,6 +191,8 @@ impl Tally {
 #[derive(Clone, Debug)]
 struct RodReads {
     cells: Vec<bool>,
+    /// The cells read, ascending: what the rods' root functions may read.
+    read_cells: Vec<usize>,
     faces: Vec<bool>,
     receipt_cells: Vec<usize>,
     /// Cells whose volume the rods move.
@@ -353,6 +355,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 let st = b.structure();
                 let mut reads = RodReads {
                     cells: vec![false; cells],
+                    read_cells: Vec::new(),
                     faces: vec![false; faces.len()],
                     receipt_cells: st.receipts.iter().map(|r| r.0).collect(),
                     volume_cells: st.volumes.iter().map(|v| v.0).collect(),
@@ -375,6 +378,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 }
                 reads.receipt_cells.sort_unstable();
                 reads.receipt_cells.dedup();
+                reads.read_cells = (0..cells).filter(|c| reads.cells[*c]).collect();
                 Some(reads)
             }
             RodPort::Prepared(_) => None,
@@ -386,7 +390,6 @@ impl<P: Properties + WaterProperties> Joined<P> {
         let blocks = Blocks {
             scales,
             prepare: None,
-            rod_roots: None,
             rod_reads,
             secondary_outputs,
             column_scopes: vec![None; solids.layout().len()],
@@ -685,6 +688,19 @@ impl<P: Properties + WaterProperties> Joined<P> {
         )
     }
     pub fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let started = Instant::now();
+        let result = self.root_values(t, y, yp, out);
+        self.counters.roots += 1;
+        self.counters.root_wall_s += started.elapsed().as_secs_f64();
+        result
+    }
+    fn root_values(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
         let o = self.blocks.offsets;
         let ns = self.secondary().map_or(0, |b| b.root_count());
         let nr = self.rods().map_or(0, |b| b.root_count());
@@ -708,15 +724,42 @@ impl<P: Properties + WaterProperties> Joined<P> {
             b.roots(&self.blocks.properties, t, x, &mut out[..ns])?;
         }
         if nr > 0 {
-            self.blocks.rod_roots = Some(vec![0.; nr]);
-            let evaluated = self.evaluate(t, y, yp, None, 0., None);
-            let roots = self.blocks.rod_roots.take().unwrap_or_default();
-            evaluated.map_err(|e| match e {
-                Failure::Recoverable(r) | Failure::Fatal(r) => {
-                    fatal(format!("root evaluation: {r}"))
-                }
-            })?;
-            out[ns..ns + nr].copy_from_slice(&roots);
+            // The rods' roots read their own coordinates and, for a seated
+            // body, the water of the cells the rod owner declares it reads:
+            // only those cells are evaluated, at the rods' moving volumes,
+            // exactly as a full evaluation computes them, and none while no
+            // body is seated.
+            let read_fluid = self.rods().is_some_and(|b| b.roots_read_fluid());
+            if read_fluid {
+                self.blocks.pre_network(y, yp, None, 0.)?;
+            }
+            let Blocks {
+                properties,
+                rods,
+                rod_reads,
+                cell_volumes,
+                scales,
+                ..
+            } = &mut self.blocks;
+            let (RodPort::Owner(b), Some(reads)) = (rods, rod_reads.as_ref()) else {
+                return Err(fatal("rod roots without the rod owner"));
+            };
+            let x = view(y, yp, None, 0., o.rods..o.pzr, &scales[3].coordinates)?;
+            let out = &mut out[ns..ns + nr];
+            let cells: &[usize] = if read_fluid { &reads.read_cells } else { &[] };
+            self.network
+                .cells_fluid(&y[..o.nuclear], cell_volumes, cells, |fluid| {
+                    b.roots(properties, t, x, fluid, out)
+                })
+                .and_then(|r| r)
+                .map_err(|e| match e {
+                    Failure::Recoverable(r) | Failure::Fatal(r) => {
+                        fatal(format!("root evaluation: {r}"))
+                    }
+                })?;
+            if out.iter().any(|v| !v.is_finite()) {
+                return Err(fatal("nonfinite rod root"));
+            }
         }
         Ok(())
     }
@@ -1439,10 +1482,6 @@ impl<P: Properties + WaterProperties> Blocks<P> {
         if let RodPort::Owner(b) = rods {
             if let Some(done) = self.prepare.as_mut() {
                 done.push(b.prepare(properties, fluid)?);
-            }
-            if let Some(out) = self.rod_roots.as_mut() {
-                let x = view(y, yp, seed, cj, o.rods..o.pzr, &scales[3].coordinates)?;
-                b.roots(properties, t, x, fluid, out)?;
             }
             let x = view(y, yp, seed, cj, o.rods..o.pzr, &scales[3].coordinates)?;
             b.rows(properties, t, x, fluid, receipts, rod_rows)?;

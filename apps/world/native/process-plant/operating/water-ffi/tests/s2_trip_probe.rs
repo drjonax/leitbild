@@ -27,8 +27,9 @@ mod spine;
 
 use leitbild_operating_plant::joined::{block::Command, post_trip_domain};
 use leitbild_operating_water::{
-    ida::{Advance, Ida, Initial, KluOrdering, Stats, System},
-    joined::{Discrete, Integrated, Restart, Restarted, discrete_restart},
+    If97,
+    ida::{Advance, Failure, Ida, Initial, KluOrdering, Stats, System},
+    joined::{Discrete, Integrated, JoinedSystem, Restart, Restarted, discrete_restart},
 };
 use serde_json::{Value, json};
 use spine::{
@@ -81,6 +82,105 @@ fn named(c: &[i64; 8]) -> Value {
     )
 }
 
+/// The integrated operator with a ledger of its root-function calls: an
+/// FNV-1a digest of every call's time and root values, in order, and their
+/// process CPU. Every other call is forwarded unchanged (the KLU ordering
+/// included); the probe reaches the operator through it as before.
+struct RootLedger {
+    inner: Integrated<If97>,
+    digest: u64,
+    calls: usize,
+    cpu_s: f64,
+}
+impl RootLedger {
+    fn new(inner: Integrated<If97>) -> Self {
+        Self {
+            inner,
+            digest: 0xcbf2_9ce4_8422_2325,
+            calls: 0,
+            cpu_s: 0.,
+        }
+    }
+    fn json(&self) -> Value {
+        json!({"calls": self.calls, "cpu_s": self.cpu_s,
+            "digest": format!("{:016x}", self.digest),
+            "digest_of": "FNV-1a over each root call's time bits then its root values' bits, in call order"})
+    }
+}
+impl std::ops::Deref for RootLedger {
+    type Target = Integrated<If97>;
+    fn deref(&self) -> &Integrated<If97> {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for RootLedger {
+    fn deref_mut(&mut self) -> &mut Integrated<If97> {
+        &mut self.inner
+    }
+}
+impl System for RootLedger {
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+    fn nonzeros(&self) -> usize {
+        self.inner.nonzeros()
+    }
+    fn root_count(&self) -> usize {
+        self.inner.root_count()
+    }
+    fn residual(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        self.inner.residual(t, y, yp, out)
+    }
+    fn jacobian(
+        &mut self,
+        t: f64,
+        cj: f64,
+        y: &[f64],
+        yp: &[f64],
+        data: &mut [f64],
+        rows: &mut [i64],
+        pointers: &mut [i64],
+    ) -> Result<(), Failure> {
+        self.inner.jacobian(t, cj, y, yp, data, rows, pointers)
+    }
+    fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let started = z1::cpu_s();
+        let result = self.inner.roots(t, y, yp, out);
+        self.cpu_s += z1::cpu_s() - started;
+        self.calls += 1;
+        for word in std::iter::once(t.to_bits()).chain(out.iter().map(|v| v.to_bits())) {
+            for byte in word.to_le_bytes() {
+                self.digest = (self.digest ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        result
+    }
+    fn klu_ordering(&self) -> KluOrdering {
+        self.inner.klu_ordering()
+    }
+    fn quadrature_count(&self) -> usize {
+        self.inner.quadrature_count()
+    }
+    fn quadrature(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
+        self.inner.quadrature(t, y, yp, out)
+    }
+}
+impl JoinedSystem for RootLedger {
+    type Properties = If97;
+    fn integrated(&self) -> &Integrated<If97> {
+        &self.inner
+    }
+    fn integrated_mut(&mut self) -> &mut Integrated<If97> {
+        &mut self.inner
+    }
+}
+
 /// One integration segment between two restarts.
 #[derive(Default)]
 struct Segment {
@@ -90,7 +190,7 @@ struct Segment {
     solver_cpu_s: f64,
     /// Steps and Jacobians at the first output where the last step reached
     /// the window cap (chunk resolution), and that output's time.
-    at_cap: Option<(i64, i64, f64)>,
+    at_cap: Option<(i64, i64, f64, f64)>,
     max_step_s: f64,
 }
 
@@ -123,9 +223,18 @@ fn kinds_of(
                 relief.push(json!({"valve": e["valve"], "threshold": e["threshold"], "direction": e["direction"],
                     "before": e["before"], "after": e["after"], "superseded": e["superseded"]}));
             }
+        } else if r["owner"] == "pzr" && r["command"].is_null() {
+            if !kinds.contains(&"PZR relief".to_string()) {
+                kinds.push("PZR relief".to_string());
+            }
+            relief.push(json!({"valve": "PZR relief", "demand_root": r["demand_root"], "travel_root": r["travel_root"],
+                "before": r["before"], "after": r["after"], "stop": r["stop"]}));
         } else if r["event"] == "STOP ramp end" {
             kinds.push("ramp end".to_string());
-        } else if r["command"] == "TurbineTrip" || r["turbine_trip_s"].is_number() {
+        } else if r["command"] == "TurbineTrip"
+            || r["turbine_trip_s"].is_number()
+            || (r["owner"] == "pzr" && !r["command"].is_null())
+        {
             if !kinds.contains(&"command".to_string()) {
                 kinds.push("command".to_string());
             }
@@ -227,6 +336,10 @@ fn root_labels(
             }
         }
     }
+    // The PZR block's relief (G6): its demand and travel roots.
+    if joined.root_count() == labels.len() + 2 {
+        labels.extend(["PZR relief:demand".into(), "PZR relief:travel".into()]);
+    }
     labels
 }
 
@@ -323,26 +436,76 @@ fn trip(duration_s: f64) -> Value {
         "the settled state belongs to another packet"
     );
     let Started {
-        joined,
+        mut joined,
+        y: y_composed,
+        yp: yp_composed,
         ids,
         network_ids,
-        atol,
+        mut atol,
         rtol,
         structure,
         analyses,
         receipt: preparation,
         ..
     } = started_full_composition();
-    let preparation_cpu_s = z1::cpu_s() - started;
+    // The state's exact bits where the file carries them (S2-07's pin),
+    // otherwise its floats.
     let vector = |k: &str| -> Vec<f64> {
-        state[k]
-            .as_array()
-            .unwrap_or_else(|| panic!("settled {k}"))
-            .iter()
-            .map(|v| v.as_f64().unwrap())
-            .collect()
+        match state[format!("{k}_bits")].as_array() {
+            Some(bits) => bits
+                .iter()
+                .map(|b| f64::from_bits(u64::from_str_radix(b.as_str().unwrap(), 16).unwrap()))
+                .collect(),
+            None => state[k]
+                .as_array()
+                .unwrap_or_else(|| panic!("settled {k}"))
+                .iter()
+                .map(|v| v.as_f64().unwrap())
+                .collect(),
+        }
     };
     let (mut y, mut yp) = (vector("y"), vector("yp"));
+    // `LD01_S2_TRIP_ATOL_P_BASIS=relative` takes atol_p as rtol x |p| at the
+    // plena (RODCOST's V1 basis, 155 Pa) instead of the pressure
+    // coordinates' own absolute tolerance (decision 0013's class, rtol /
+    // kappa_s); the receipt names the basis.
+    let relative_basis = match std::env::var("LD01_S2_TRIP_ATOL_P_BASIS").as_deref() {
+        Ok("relative") => Some(rtol),
+        Ok("absolute") | Err(_) => None,
+        Ok(other) => panic!("LD01_S2_TRIP_ATOL_P_BASIS {other}: absolute or relative"),
+    };
+    // S2-D24: the guide currents' derived tolerance class, from the model's
+    // Jacobian at the composed state (declared), and the same at the
+    // settled state (reported only).
+    let derived_at = |joined: &mut leitbild_operating_plant::joined::operator::Joined<
+        leitbild_operating_water::If97,
+    >,
+                      t: f64,
+                      y: &[f64],
+                      yp: &[f64]| {
+        derived_guide_current_tolerance(joined, &structure, t, y, yp, &atol, relative_basis)
+    };
+    let derived = if std::env::var("LD01_S2_TRIP_G12_GUIDE_CURRENTS").is_ok() {
+        None
+    } else {
+        Some(derived_at(&mut joined, 0., &y_composed, &yp_composed))
+    };
+    let derived_settled = derived_at(&mut joined, state["t_s"].as_f64().unwrap(), &y, &yp);
+    let g12_guide_atol: Vec<f64> = derived_settled.indices.iter().map(|i| atol[*i]).collect();
+    if let Some(d) = &derived {
+        for i in &d.indices {
+            atol[*i] = d.scaled;
+        }
+    }
+    let derived_receipt = json!({
+        "decision": "S2-D24: atol_m = atol_p x |dm/d(dp)| from the model Jacobian at the composed state (rods/GuideCurrent only)",
+        "atol_p_basis": if relative_basis.is_some() { "rtol x |p| at the plena (RODCOST V1's 155 Pa basis)" } else { "the pressure coordinates' own absolute tolerance (decision 0013: rtol / isentropic compressibility)" },
+        "g12_class_kept": derived.is_none(),
+        "applied": derived.as_ref().map(DerivedTolerance::receipt),
+        "at_settled_state_reported_only": derived_settled.receipt(),
+        "g12_scaled_before": g12_guide_atol.first(),
+    });
+    let preparation_cpu_s = z1::cpu_s() - started;
     let t0 = state["t_s"].as_f64().expect("settled t_s");
     assert_eq!(y.len(), joined.dimension(), "settled state layout");
     let o = joined.offsets();
@@ -404,7 +567,7 @@ fn trip(duration_s: f64) -> Value {
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
-        Integrated::from_blocks(joined, structure, analyses).expect("integrable"),
+        RootLedger::new(Integrated::from_blocks(joined, structure, analyses).expect("integrable")),
         Initial {
             time: t0,
             y: &y,
@@ -432,6 +595,13 @@ fn trip(duration_s: f64) -> Value {
         by.into_values().collect()
     };
     let mut most_groups = (0usize, t0);
+    // D3 (a) along the run (S2-D23 as approved): the first accepted output
+    // where the doubled-water-term margin fails, and the first where the
+    // state is admitted by neither the compiled domains nor the extension
+    // (the labelled D3 exit; the run continues for information).
+    let mut d3_first_margin_fail: Option<f64> = None;
+    let mut d3_exit: Option<(f64, String)> = None;
+    let mut d3_samples = 0usize;
     let mut first_split: Option<f64> = None;
     let mut restarts: Vec<Value> = Vec::new();
     let mut samples: Vec<Value> = Vec::new();
@@ -443,7 +613,7 @@ fn trip(duration_s: f64) -> Value {
     let end = t0 + duration_s;
     let window_end = t0 + WINDOW_S;
     // One restart: the transactions and the exact start by discrete_restart.
-    let do_restart = |ida: &mut Ida<Integrated<leitbild_operating_water::If97>>,
+    let do_restart = |ida: &mut Ida<RootLedger>,
                       t: f64,
                       discrete: Discrete<'_>,
                       name: &str,
@@ -510,6 +680,8 @@ fn trip(duration_s: f64) -> Value {
                         let l = &labels[*i];
                         if l.starts_with("rod ") {
                             if *d < 0 { "rod seat group" } else { "rod root" }.to_string()
+                        } else if l.starts_with("PZR") {
+                            "PZR relief".to_string()
                         } else {
                             format!("SG relief SG.{}", l.split('.').nth(1).unwrap_or("?"))
                         }
@@ -555,7 +727,7 @@ fn trip(duration_s: f64) -> Value {
         let segment = before.map(|s| {
             json!({"from_s": s.from_s - t0, "to_s": s.to_s - t0, "counts": named(&s.counts),
                 "solver_cpu_s": s.solver_cpu_s, "max_step_s": s.max_step_s,
-                "at_cap": s.at_cap.map(|(st, j, at)| json!({"steps": st, "jacobians": j, "t_s": at - t0}))})
+                "at_cap": s.at_cap.map(|(st, j, at, cpu)| json!({"steps": st, "jacobians": j, "t_s": at - t0, "solver_cpu_s": cpu}))})
         });
         restarts.push(json!({
             "index": restarts.len(), "t_s": t - t0, "discrete": name, "kinds": kinds, "detail": detail,
@@ -599,7 +771,7 @@ fn trip(duration_s: f64) -> Value {
         ..Segment::default()
     };
     let mut next_sample = t0;
-    let close = |ida: &Ida<Integrated<leitbild_operating_water::If97>>, mut s: Segment, to: f64| {
+    let close = |ida: &Ida<RootLedger>, mut s: Segment, to: f64| {
         let st = ida.stats().unwrap();
         s.counts = counts(&st);
         s.to_s = to;
@@ -639,7 +811,7 @@ fn trip(duration_s: f64) -> Value {
                 let st = ida.stats().unwrap();
                 segment.max_step_s = segment.max_step_s.max(st.last_step);
                 if segment.at_cap.is_none() && st.last_step >= WINDOW_MAX_STEP_S * (1. - 1e-9) {
-                    segment.at_cap = Some((st.steps, st.jacobians, t));
+                    segment.at_cap = Some((st.steps, st.jacobians, t, segment.solver_cpu_s));
                 }
                 let g = groups(&y);
                 if g.len() > most_groups.0 {
@@ -683,7 +855,27 @@ fn trip(duration_s: f64) -> Value {
                             - v.iter().cloned().fold(f64::INFINITY, f64::min)
                     };
                     let value = |(l, i): &(String, usize)| json!([l, y[*i] * scales[*i]]);
-                    let d3_sample = d3.as_ref().map(|(e, reference)| d3_at(j, e, reference, t));
+                    let d3_sample = d3.as_ref().map(|(e, reference)| {
+                        let mut v = d3_at(j, e, reference, t);
+                        let admission =
+                            post_trip_domain::admit_accepted(j.nuclear(), e, j.travel(), t, 0.);
+                        v["admission"] = match &admission {
+                            Ok(a) => json!({"domain": a.domain, "margin_holds": a.margin.holds}),
+                            Err(err) => json!({"unsupported": format!("{err:?}")}),
+                        };
+                        d3_samples += 1;
+                        if d3_first_margin_fail.is_none()
+                            && v["margin_water_doubled"]["holds"] == json!(false)
+                        {
+                            d3_first_margin_fail = Some(t - t0);
+                        }
+                        if d3_exit.is_none()
+                            && let Err(err) = &admission
+                        {
+                            d3_exit = Some((t - t0, format!("{err:?}")));
+                        }
+                        v
+                    });
                     samples.push(json!({"t_s": t - t0, "released_w": j.heats().nuclear.released_w.value, "d3": d3_sample,
                         "sg_pressure_pa": pressures.iter().map(value).collect::<Vec<_>>(),
                         "sg_liquid_m3": liquid.iter().map(value).collect::<Vec<_>>(),
@@ -814,12 +1006,18 @@ fn trip(duration_s: f64) -> Value {
         .map(|g| g.into_iter().map(|c| cluster_ids[c].clone()).collect())
         .collect();
     let window_cpu = solver_cpu_s[0] + restart_cpu_s[0];
+    let d3_summary = json!({"record": d3.as_ref().map(|(e, _)| json!(e)), "samples": d3_samples,
+        "first_doubled_margin_failure_s": d3_first_margin_fail,
+        "d3_exit": d3_exit.as_ref().map(|(t, e)| json!({"t_s": t, "label": "D3 (a) EXIT: the run ends here under S2-D23; continued to the end for information only", "verdict": e})),
+        "rule": "S2-D23 as approved: the extension holds per accepted state while the doubled-water-term margin >= the record's shutdown_margin_minimum; a state admitted by neither the compiled domains nor the extension is the labelled exit"});
     let receipt = json!({
         "kind": "s2-10-trip-probe",
-        "status": "NOT-EVIDENCE probe; S2 is not declared and no gate is judged. PROVISIONAL: from the pre-G18 settled state, whose p_s starts about 0.7 MPa below the 6.36 MPa design value, so SG relief cycles are undercounted; the PZR boundary is closed (G6 pending), so no PZR relief can root",
+        "status": "NOT-EVIDENCE probe; S2 is not declared and no gate is judged; PREVIEW (critic H4): recorded before any TBD fill. The start is the state named in settled_state; its composition (G6 PZR block, packet) is the packet's",
         "provenance": spine::provenance(),
         "preparation": preparation,
         "settled_state": {"path": state_path, "sha256": spine::sha256(&state_bytes), "t_s": t0},
+        "derived_tolerance": derived_receipt,
+        "d3": d3_summary,
         "configuration": {"source": "S2 declaration draft revision 6, Trip, and its block (maxOrder 2, newtonCoefficient 0.33, deltaCjLSetup 0.1, restartInitialStep_s 1e-4)",
             "duration_s": duration_s, "window_s": WINDOW_S, "window_max_step_s": WINDOW_MAX_STEP_S, "max_order": MAX_ORDER,
             "newton_coefficient": NEWTON_COEFFICIENT, "delta_cj_lsetup": DELTA_CJ_LSETUP, "first_step_s": FIRST_STEP_S,
@@ -843,6 +1041,7 @@ fn trip(duration_s: f64) -> Value {
             "after_window": {"solver_s": solver_cpu_s[1], "restarts_s": restart_cpu_s[1]},
             "trip_per_simulated_s": (window_cpu + solver_cpu_s[1] + restart_cpu_s[1]) / (t - t0).max(1e-9),
             "observation_s": observation_cpu_s,
+            "roots": ida.system().json(),
             "joined_counters": c,
             "residual_wall_s_per_call": c.residual_wall_s / c.residuals.max(1) as f64,
             "jacobian_wall_s_per_call": c.jacobian_wall_s / c.jacobians.max(1) as f64,
@@ -955,4 +1154,374 @@ fn d3_at(
         "moderator_k_min": fold(&mut water.iter().map(|w| w.temperature_k.value), false),
         "fuel_feedback_k_max": fold(&mut j.fuel_feedback_temperatures().iter().map(|x| x.value), true),
         "margin_water_doubled": margin(extension), "margin_water_nominal": margin(&nominal)})
+}
+
+/// S3-D1 measurement (NOT-EVIDENCE): two C0 held-input changes, the SG
+/// owner's STOP ramp start (the TG TRIP command to the secondary owner
+/// only, so no rod root is armed) and the ramp's end 0.3 s later, applied
+/// after 1 s of quiet history from the settled state by the two policies an
+/// event policy can choose:
+/// (a) `discrete_restart` at each (exact start, IDAReInit, 1e-4 s first
+///     step), and
+/// (b) stop exactly at each (`stop_at`), let the owner take the change and
+///     continue the retained BDF history (no reinitialization; the steam
+///     demand is continuous in value, only its slope changes),
+/// plus (c) the same stops with no change. Each runs 0.5 s past the first
+/// change; the receipt compares counts, solver CPU and the end states in the
+/// integrator's error weights. `LD01_S3D1_RECEIPT` names a new receipt. A
+/// change that arms a root function (the full TG TRIP arms the rods'
+/// release roots) cannot be continued this way: stock IDA reports the
+/// root function's jump as a root at the first step.
+#[test]
+#[ignore = "NOT-EVIDENCE S3-D1 measurement: requires the joined packet, a settled state, the wiki, IF97 and stock IDA/KLU"]
+fn s3_d1_restart_against_stop_and_continue_at_a_c0_kink() {
+    let state_path = std::env::var("LD01_S2_TRIP_STATE").expect("LD01_S2_TRIP_STATE");
+    let receipt_path = std::env::var_os("LD01_S3D1_RECEIPT");
+    if let Some(p) = &receipt_path {
+        assert!(
+            !std::path::Path::new(p).exists(),
+            "receipts are never overwritten"
+        );
+    }
+    let state: Value =
+        serde_json::from_slice(&std::fs::read(&state_path).expect("state")).expect("state json");
+    let vector = |k: &str| -> Vec<f64> {
+        state[k]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    let t0 = state["t_s"].as_f64().unwrap();
+    let quiet_s = 1.;
+    let after_s = 0.5;
+    let restart = Restart {
+        newton_coefficient: NEWTON_COEFFICIENT,
+        delta_cj_lsetup: DELTA_CJ_LSETUP,
+        first_step_s: FIRST_STEP_S,
+        start_bound: 1e-12,
+        start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
+        bound_placement: 1e-12,
+    };
+    // `refine` divides both tolerances (the reference: the restart policy
+    // at rtol/10, as S2's hold reference).
+    let run = |policy: &str, refine: f64| -> Value {
+        let Started {
+            joined,
+            ids,
+            network_ids,
+            atol,
+            rtol,
+            structure,
+            analyses,
+            ..
+        } = started_full_composition();
+        let (atol, rtol): (Vec<f64>, f64) =
+            (atol.iter().map(|a| a / refine).collect(), rtol / refine);
+        let labels: Vec<String> = joined
+            .layouts()
+            .iter()
+            .flat_map(|(_, l)| l.labels.clone())
+            .collect();
+        let (mut y, mut yp) = (vector("y"), vector("yp"));
+        let nonnegative = joined.network.nonnegative_stocks();
+        let mut ida = Ida::new(
+            Integrated::from_blocks(joined, structure, analyses).unwrap(),
+            Initial {
+                time: t0,
+                y: &y,
+                yp: &yp,
+                differential: &ids,
+                absolute_tolerance: &atol,
+                relative_tolerance: rtol,
+            },
+        )
+        .unwrap();
+        ida.set_max_order(MAX_ORDER).unwrap();
+        ida.constrain_nonnegative(&nonnegative).unwrap();
+        restart.configure(&mut ida).unwrap();
+        let t1 = t0 + quiet_s;
+        ida.stop_at(t1).unwrap();
+        let mut t = t0;
+        while t < t1 {
+            t = ida
+                .advance((t + 0.1).min(t1), &mut y, &mut yp)
+                .unwrap()
+                .reached()
+                .unwrap();
+        }
+        let before = ida.stats().unwrap();
+        let h_before = before.current_step;
+        let started = z1::cpu_s();
+        let mut restart_cpu = 0.;
+        // Counts accumulate over IDAReInit segments (a restart zeroes them).
+        let mut total = [0i64; 8];
+        let base = counts(&before);
+        let mut segment_base = base;
+        let mut add = |ida: &Ida<Integrated<leitbild_operating_water::If97>>, from: [i64; 8]| {
+            let c = counts(&ida.stats().unwrap());
+            for k in 0..8 {
+                total[k] += c[k] - from[k];
+            }
+        };
+        let change = |ida: &mut Ida<Integrated<leitbild_operating_water::If97>>,
+                      t: f64,
+                      y: &mut Vec<f64>,
+                      first: bool|
+         -> f64 {
+            match policy {
+                "stop only" => 0.,
+                _ => {
+                    let joined = &mut ida.system_mut().joined;
+                    if first {
+                        joined
+                            .secondary_mut()
+                            .unwrap()
+                            .command(t, Command::TurbineTrip)
+                            .unwrap();
+                    } else {
+                        let done = joined.time_events(t, y).unwrap();
+                        assert_eq!(done.len(), 1, "the ramp end");
+                    }
+                    if policy == "restart" {
+                        let timer = z1::cpu_s();
+                        discrete_restart(
+                            ida,
+                            t,
+                            Discrete::TimeEvent,
+                            y,
+                            &network_ids,
+                            &atol,
+                            rtol,
+                            &restart,
+                        )
+                        .unwrap();
+                        z1::cpu_s() - timer
+                    } else {
+                        0.
+                    }
+                }
+            }
+        };
+        add(&ida, segment_base);
+        restart_cpu += change(&mut ida, t1, &mut y, true);
+        segment_base = if policy == "restart" { [0; 8] } else { base };
+        let end = t1 + after_s;
+        let ramp_end = t1 + 0.3;
+        let mut ramp_done = false;
+        while t < end {
+            let stop = if ramp_done { end } else { ramp_end };
+            ida.stop_at(stop).unwrap();
+            t = ida
+                .advance((t + 0.01).min(stop), &mut y, &mut yp)
+                .unwrap()
+                .reached()
+                .unwrap();
+            if !ramp_done && t == ramp_end {
+                ramp_done = true;
+                if policy == "restart" {
+                    add(&ida, segment_base);
+                    segment_base = [0; 8];
+                }
+                restart_cpu += change(&mut ida, t, &mut y, false);
+            }
+        }
+        add(&ida, segment_base);
+        let after = ida.stats().unwrap();
+        json!({"policy": policy, "tolerance_divisor": refine, "h_before_s": h_before, "restart_cpu_s": restart_cpu,
+            "cpu_s_to_end": z1::cpu_s() - started,
+            "counts_after_change": named(&total),
+            "last_step_s": after.last_step, "y": y, "atol": atol, "rtol": rtol, "labels": labels})
+    };
+    let runs: Vec<Value> = [
+        ("restart", 1.),
+        ("stop and continue", 1.),
+        ("stop only", 1.),
+        ("restart", 10.),
+    ]
+    .into_iter()
+    .map(|(p, f)| run(p, f))
+    .collect();
+    let y_of = |r: &Value| -> Vec<f64> {
+        r["y"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    let rtol = runs[0]["rtol"].as_f64().unwrap();
+    let atol: Vec<f64> = runs[0]["atol"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    let labels: Vec<String> = runs[0]["labels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    // Each policy's end state against the refined reference, in the
+    // contract's error weights.
+    let against = |y: &[f64], reference: &[f64]| -> Value {
+        let (mut sum, mut max, mut at) = (0., 0_f64, 0usize);
+        for i in 0..y.len() {
+            let w = 1. / (rtol * reference[i].abs() + atol[i]);
+            let d = (y[i] - reference[i]) * w;
+            sum += d * d;
+            if d.abs() > max {
+                (max, at) = (d.abs(), i);
+            }
+        }
+        json!({"wrms_in_error_weights": (sum / y.len() as f64).sqrt(), "max_weighted": max, "max_at": labels[at]})
+    };
+    let reference = y_of(&runs[3]);
+    let receipt = json!({
+        "kind": "s3-d1-c0-kink-policy-measurement",
+        "status": "NOT-EVIDENCE measurement for the S3-D1 event-policy draft; provisional settled state (pre-G18)",
+        "provenance": spine::provenance(),
+        "settled_state": state_path, "quiet_history_s": quiet_s, "after_change_s": after_s,
+        "change": "the SG owner's STOP ramp (TG TRIP to the secondary owner only): steam demand ramps linearly to zero over 0.3 s; two C0 kinks (start, end), no rod involvement",
+        "runs": runs.iter().map(|r| json!({"policy": r["policy"], "tolerance_divisor": r["tolerance_divisor"], "h_before_s": r["h_before_s"], "restart_cpu_s": r["restart_cpu_s"],
+            "cpu_s_to_end": r["cpu_s_to_end"], "counts_after_change": r["counts_after_change"], "last_step_s": r["last_step_s"]})).collect::<Vec<_>>(),
+        "against_the_rtol_over_10_restart_reference_at_end": {
+            "restart": against(&y_of(&runs[0]), &reference),
+            "stop_and_continue": against(&y_of(&runs[1]), &reference),
+            "stop_only_no_change": against(&y_of(&runs[2]), &reference)},
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    if let Some(p) = &receipt_path {
+        std::fs::write(p, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    }
+}
+
+/// S2-D24's derived class for the rods' guide currents at one state.
+struct DerivedTolerance {
+    t_s: f64,
+    /// The guide-current coordinates (= their passage rows).
+    indices: Vec<usize>,
+    scaled: f64,
+    atol_m_kg_s: f64,
+    atol_p_pa: f64,
+    /// |dm/d(dp)| per cluster (kg/s per Pa), and the class value (the
+    /// smallest: the tightest tolerance).
+    sensitivity: Vec<f64>,
+    class_sensitivity: f64,
+    pressures: [String; 2],
+    same_sign_rows: usize,
+}
+impl DerivedTolerance {
+    fn receipt(&self) -> Value {
+        let mut s = self.sensitivity.clone();
+        s.sort_by(f64::total_cmp);
+        json!({"state_t_s": self.t_s, "coordinates": self.indices.len(),
+            "atol_p_pa": self.atol_p_pa, "pressures": self.pressures,
+            "sensitivity_kg_s_per_pa": {"class_value_min": self.class_sensitivity, "median": s[s.len() / 2], "max": s[s.len() - 1]},
+            "atol_m_kg_s": self.atol_m_kg_s, "scaled": self.scaled,
+            "rows_with_same_sign_pressure_partials": self.same_sign_rows,
+            "rodcost_fit_kg_s_per_pa": 4.8e-6})
+    }
+}
+
+/// atol_m = atol_p x |dm/d(dp)| (S2-D24) from the block Jacobian A = dF/dy at
+/// (t, y, yp): per guide-current row, the implicit sensitivity of the
+/// current to its two plena, dm/dp_j = -(dR/dp_j)/(dR/dm), and the
+/// difference sensitivity (dm/dp_a - dm/dp_b)/2; atol_p is the pressure
+/// class's own absolute tolerance at those plena. The class value takes the
+/// smallest sensitivity over the clusters.
+fn derived_guide_current_tolerance(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<leitbild_operating_water::If97>,
+    structure: &leitbild_operating_plant::joined::blocks::JoinedJacobian,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+    atol: &[f64],
+    relative_basis: Option<f64>,
+) -> DerivedTolerance {
+    use leitbild_operating_plant::joined::blocks::{Classes, jacobian_blocks};
+    let mut values = vec![0.; structure.pattern.nonzeros()];
+    jacobian_blocks(joined, structure, t, 0., y, yp, &mut values, Classes::ALL)
+        .expect("block Jacobian");
+    let scales = joined.scales();
+    let classes: Vec<(String, String)> = joined
+        .layouts()
+        .iter()
+        .flat_map(|(owner, l)| {
+            l.labels
+                .iter()
+                .zip(&l.classes)
+                .map(move |(label, class)| (format!("{owner}/{class:?}"), label.clone()))
+        })
+        .collect();
+    let guide: Vec<usize> = (0..classes.len())
+        .filter(|i| classes[*i].0 == "rods/GuideCurrent")
+        .collect();
+    let is_guide: std::collections::BTreeSet<usize> = guide.iter().copied().collect();
+    let pressure = |j: usize| classes[j].0 == "network/CellPressure";
+    // Per guide row: its own diagonal and its pressure partials.
+    let mut rows: BTreeMap<usize, (f64, Vec<(usize, f64)>)> = BTreeMap::new();
+    let (pointers, indices) = (structure.pattern.pointers(), structure.pattern.indices());
+    for j in 0..classes.len() {
+        for q in pointers[j]..pointers[j + 1] {
+            let r = indices[q];
+            if !is_guide.contains(&r) {
+                continue;
+            }
+            let e = rows.entry(r).or_default();
+            if r == j {
+                e.0 = values[q];
+            } else if pressure(j) && values[q] != 0. {
+                e.1.push((j, values[q]));
+            }
+        }
+    }
+    let mut sensitivity = Vec::new();
+    let mut same_sign = 0;
+    let mut plena: Option<[usize; 2]> = None;
+    for r in &guide {
+        let (diagonal, partials) = &rows[r];
+        assert!(*diagonal != 0., "guide row {r} has no own partial");
+        let mut d: Vec<(usize, f64)> = partials
+            .iter()
+            .map(|(j, a)| (*j, -(a / scales[*j]) / (diagonal / scales[*r])))
+            .collect();
+        d.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
+        assert!(d.len() >= 2, "guide row {r} reads fewer than two plena");
+        let (a, b) = (d[0], d[1]);
+        if a.1.signum() == b.1.signum() {
+            same_sign += 1;
+        }
+        let (high, low) = if a.1 >= b.1 { (a, b) } else { (b, a) };
+        plena.get_or_insert([high.0, low.0]);
+        sensitivity.push(((high.1 - low.1) / 2.).abs());
+    }
+    let [pa, pb] = plena.expect("guide currents");
+    let atol_p_pa = match relative_basis {
+        Some(rtol) => rtol * (y[pa] * scales[pa]).abs().min((y[pb] * scales[pb]).abs()),
+        None => (atol[pa] * scales[pa]).min(atol[pb] * scales[pb]),
+    };
+    let class_sensitivity = sensitivity.iter().copied().fold(f64::INFINITY, f64::min);
+    let atol_m_kg_s = atol_p_pa * class_sensitivity;
+    let scaled_by_index: Vec<f64> = guide.iter().map(|i| atol_m_kg_s / scales[*i]).collect();
+    let scaled = scaled_by_index[0];
+    assert!(
+        scaled_by_index.iter().all(|s| *s == scaled),
+        "the guide currents share one scale"
+    );
+    DerivedTolerance {
+        t_s: t,
+        indices: guide,
+        scaled,
+        atol_m_kg_s,
+        atol_p_pa,
+        sensitivity,
+        class_sensitivity,
+        pressures: [classes[pa].1.clone(), classes[pb].1.clone()],
+        same_sign_rows: same_sign,
+    }
 }

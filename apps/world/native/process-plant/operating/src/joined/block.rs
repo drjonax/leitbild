@@ -453,6 +453,11 @@ pub trait Rods<P> {
         fluid: &Fluid<'_>,
         out: &mut [f64],
     ) -> Result<(), Failure>;
+    /// Whether [`Rods::roots`] reads `fluid` in the owner's present modes;
+    /// an owner that cannot tell answers `true`.
+    fn roots_read_fluid(&self) -> bool {
+        true
+    }
     fn transact(
         &mut self,
         properties: &P,
