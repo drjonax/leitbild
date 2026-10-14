@@ -1562,12 +1562,7 @@ fn the_pzr_relief_roots_and_stops_transact_on_the_joined_state() {
 #[test]
 #[ignore = "NOT-EVIDENCE probe: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
 fn reactivity_decomposition_at_the_prepared_and_settled_states() {
-    use leitbild_operating_plant::{
-        joined::nuclear::FeedbackInputs,
-        network::Properties,
-        source_feedback::{Conditions, ReactivityTerms},
-        thermal::Scalar,
-    };
+    use leitbild_operating_plant::thermal::Scalar;
     use leitbild_operating_water::{
         ida::{Ida, Initial},
         joined::{Integrated, Restart},
@@ -1587,6 +1582,43 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
     joined.evaluate(0., &y, &yp, None, 0., None).unwrap();
     let inputs0 = joined.nuclear().feedback_inputs();
     let travel0: Vec<Scalar> = joined.travel().to_vec();
+    // A settled state of this packet named by `LD01_SETTLED_STATE_IN` (the
+    // S2-07 re-settle's), instead of settling here.
+    let settled_in = std::env::var_os("LD01_SETTLED_STATE_IN").map(|path| {
+        let bytes = std::fs::read(&path).expect("settled state");
+        let state: Value = serde_json::from_slice(&bytes).expect("settled state json");
+        assert_eq!(
+            state["packet"].as_str(),
+            preparation["packet"].as_str(),
+            "the settled state belongs to another packet"
+        );
+        let vector = |k: &str| -> Vec<f64> {
+            state[k]
+                .as_array()
+                .unwrap_or_else(|| panic!("settled {k}"))
+                .iter()
+                .map(|v| f64::from_bits(u64::from_str_radix(v.as_str().unwrap(), 16).unwrap()))
+                .collect()
+        };
+        (
+            state["t_s"].as_f64().expect("settled t_s"),
+            vector("y_bits"),
+            vector("yp_bits"),
+            json!({"file": path.to_string_lossy(), "sha256": sha256(&bytes)}),
+        )
+    });
+    if let Some((t, ys, yps, source)) = settled_in {
+        joined.evaluate(t, &ys, &yps, None, 0., None).unwrap();
+        decomposition(
+            &mut joined,
+            started,
+            preparation,
+            (inputs0, travel0),
+            (t, ys, yps),
+            source,
+        );
+        return;
+    }
     // The same settling as probe 4: BDF order 2 on the block Jacobian, the
     // stock coefficient with dcj 0.1 and G13's first step.
     let nonnegative = joined.network.nonnegative_stocks();
@@ -1628,6 +1660,35 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
     }
     let joined = &mut ida.system_mut().joined;
     joined.evaluate(t, &ys, &yps, None, 0., None).unwrap();
+    decomposition(
+        joined,
+        started,
+        preparation,
+        (inputs0, travel0),
+        (t, ys, yps),
+        json!("settled here"),
+    );
+}
+
+/// The prepared-to-settled reactivity decomposition at an evaluated settled
+/// state (G18's condition): writes the receipt and, if named, the state.
+fn decomposition(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
+    started: f64,
+    preparation: Value,
+    (inputs0, travel0): (
+        leitbild_operating_plant::joined::nuclear::FeedbackInputs,
+        Vec<leitbild_operating_plant::thermal::Scalar>,
+    ),
+    (t, ys, yps): (f64, Vec<f64>, Vec<f64>),
+    settled_source: Value,
+) {
+    use leitbild_operating_plant::{
+        joined::nuclear::FeedbackInputs,
+        network::Properties,
+        source_feedback::{Conditions, ReactivityTerms},
+        thermal::Scalar,
+    };
     let inputs1 = joined.nuclear().feedback_inputs();
     let travel1: Vec<Scalar> = joined.travel().to_vec();
     let model = joined.nuclear().feedback();
@@ -1752,6 +1813,7 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
         "status": "NOT-EVIDENCE probe for G18's condition; terms are source_feedback::Model::reactivity_terms, the same formulas as evaluate",
         "preparation": preparation,
         "settled_s": t,
+        "settled_source": settled_source,
         "configuration": {"maxOrder": 2, "newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "firstStep_s": FIRST_STEP_S, "jacobian": "block"},
         "states": {
             "prepared": {"fuel_feedback_k_mean": mean(&inputs0.fuel_temperature_k), "moderator_k_mean": mean(&inputs0.moderator_temperature_k), "pressure_pa_mean": mean(&inputs0.pressure_pa), "density_mean": mean(&inputs0.water_density_kg_m3), "reactivity_total_pcm_population_weighted": summary("t", &|i| t0[i].total(), n0)["pcm_population_weighted"]},
