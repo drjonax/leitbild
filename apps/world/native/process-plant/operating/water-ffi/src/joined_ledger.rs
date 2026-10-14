@@ -1,4 +1,3 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#s2-declaration-joined-hot-spine-at-power
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#joined-spine-at-power
 //! The joined operator with its conservation ledgers as stock IDAS
 //! quadratures (G8, P5, K2).
