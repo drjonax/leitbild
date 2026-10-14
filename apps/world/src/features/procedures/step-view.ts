@@ -53,6 +53,8 @@ const stepBranchSchema = z.object({
   outcome: procedureBranchSchema.shape.outcome,
   targetKind: procedureBranchSchema.shape.targetKind,
   target: z.string(),
+  /** The label of the step it leads to, where that is a step of this procedure ("11" for step 11). */
+  targetLabel: z.string().optional(),
   targetStepId: z.string().optional(),
   execution: procedureBranchSchema.shape.execution,
   because: z.string().optional(),
@@ -196,6 +198,7 @@ export const composeProcedureStepView = async (config: {
     csfRows(document, ports),
   ])
   const observation = run.observations?.find(item => item.stepId === step.id)
+  const labels = new Map(document.steps.map(candidate => [candidate.id, candidate.label]))
   const state = run.stepStates.find(item => item.stepId === step.id)
   // Read the clock after the reads, so the view's plant time is not older than its readings.
   const clock = ports.clock()
@@ -215,6 +218,7 @@ export const composeProcedureStepView = async (config: {
         ...(branch.outcome === undefined ? {} : { outcome: branch.outcome }),
         targetKind: branch.targetKind,
         target: branch.target,
+        ...(branch.targetKind === 'step' && labels.has(branch.target) ? { targetLabel: labels.get(branch.target)! } : {}),
         ...(branch.targetStepId === undefined ? {} : { targetStepId: branch.targetStepId }),
         ...(branch.execution === undefined ? {} : { execution: branch.execution }),
         ...(branch.because === undefined ? {} : { because: withoutLinkTargets(branch.because) }),

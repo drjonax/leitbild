@@ -134,7 +134,7 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(view.sequence).toBe(run.snapshot().seq)
     expect(view.paused).toBe(true)
     expect(view.run).toMatchObject({ runId, procedureId: 'E-0', plantId, unit: 'Unit A1', currentStepId: 'verify-reactor-trip', stepNumber: 1, totalSteps: 2, driver: { kind: 'ai' } })
-    expect(view.step.branches.map((branch: { outcome: string; target: string }) => `${branch.outcome} ${branch.target}`)).toEqual(['normal verify-turbine-trip', 'rno FR-S.1'])
+    expect(view.step.branches.map((branch: { outcome: string; target: string; targetLabel?: string }) => `${branch.outcome} ${branch.target} ${branch.targetLabel ?? '-'}`)).toEqual(['normal verify-turbine-trip 2', 'rno FR-S.1 -'])
     expect(view.tags.map((tag: { id: string }) => tag.id)).toEqual(['TRIP-BKR-A', 'TRIP-BKR-B', 'NIS-PR-AVG'])
     for (const tag of structuredClone(view.tags)) expect(tag.reading).toMatchObject({ formatted: expect.any(String), quality: expect.any(String) })
     expect(view.csfs.map((csf: { id: string }) => csf.id)).toEqual(['subcriticality', 'core-cooling', 'heat-sink', 'rcs-integrity', 'containment', 'rcs-inventory'])
