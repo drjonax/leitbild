@@ -110,7 +110,7 @@ describe('procedure step view', () => {
     expect(JSON.stringify(view)).not.toContain('preamble')
     expect(JSON.stringify(view)).not.toContain('basis.md')
     expect(view.step!.branches).toEqual([
-      { index: 0, label: 'Verified', outcome: 'normal', targetKind: 'step', target: 'verify-turbine-trip', because: 'rapid neutron flux decrease confirms core shutdown' },
+      { index: 0, label: 'Verified', outcome: 'normal', targetKind: 'step', target: 'verify-turbine-trip', targetLabel: '2', because: 'rapid neutron flux decrease confirms core shutdown' },
       { index: 1, label: 'Not verified', outcome: 'rno', targetKind: 'procedure', target: 'FR-S.1' },
     ])
     expect(view.tags).toEqual([
