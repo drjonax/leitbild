@@ -963,8 +963,6 @@ pub fn external_receipts(
     app_commit: &str,
     required: &[&str],
 ) -> Result<Value, Vec<String>> {
-    let mut refusals = Vec::new();
-    let mut out = serde_json::Map::new();
     let manifest: BTreeMap<String, Value> = match std::env::var("LD01_S2_EXTERNAL_MANIFEST") {
         Ok(path) => match std::fs::read(&path)
             .map_err(|e| e.to_string())
@@ -975,6 +973,43 @@ pub fn external_receipts(
         },
         Err(_) => return Err(vec!["LD01_S2_EXTERNAL_MANIFEST names no manifest".into()]),
     };
+    let (mut out, charges, refusals) = check_external(&manifest, required, app_commit);
+    for (name, cpu) in charges {
+        h.work.charge(&name, cpu);
+    }
+    // The values those receipts judge are delegated to them.
+    out.insert(
+        "delegated".into(),
+        json!({"zeroTime": h.d.gates.whole("/zeroTime"), "spectral": h.d.gates.whole("/spectral"),
+            "directionalCheck": h.d.gates.whole("/directionalCheck"), "preparation": h.d.gates.whole("/preparation"),
+            "powerBasis": h.d.gates.whole("/powerBasis"), "projection": h.d.gates.whole("/projection")}),
+    );
+    if refusals.is_empty() {
+        Ok(Value::Object(out))
+    } else {
+        Err(refusals)
+    }
+}
+
+/// What [`check_external`] found: the receipts' entries, the charges and
+/// the refusals.
+pub type Checked = (
+    serde_json::Map<String, Value>,
+    Vec<(String, f64)>,
+    Vec<String>,
+);
+
+/// [`external_receipts`]' checks on a manifest: each required entry's
+/// receipt read, hashed and judged by its kind's pass rule; the charges
+/// (name, CPU) of those run in the window; the refusals.
+pub fn check_external(
+    manifest: &BTreeMap<String, Value>,
+    required: &[&str],
+    app_commit: &str,
+) -> Checked {
+    let mut refusals = Vec::new();
+    let mut charges = Vec::new();
+    let mut out = serde_json::Map::new();
     for name in required {
         let Some(entry) = manifest.get(*name) else {
             refusals.push(format!("the manifest names no {name} receipt"));
@@ -1002,18 +1037,11 @@ pub fn external_receipts(
             ));
         }
         let pass = match *name {
-            "S1run6" => {
-                let ok = r["kind"] == "s1-hydraulics-admission"
+            "S1run6" => json!(
+                r["kind"] == "s1-hydraulics-admission"
                     && r["verdict"].as_str().is_some_and(|v| v.starts_with("PASS"))
-                    && r["app_commit"].as_str() == Some(app_commit);
-                if !ok {
-                    refusals.push(format!(
-                        "S1 run 6 must PASS at this app commit {app_commit}: {} at {}",
-                        r["verdict"], r["app_commit"]
-                    ));
-                }
-                json!(ok)
-            }
+                    && r["app_commit"].as_str() == Some(app_commit)
+            ),
             "Z6composed" | "Z6settled" => {
                 json!(r["verdict"].as_str().is_some_and(|v| v.starts_with("GO")))
             }
@@ -1021,8 +1049,14 @@ pub fn external_receipts(
             "Z5" => json!(r["kind"] == "s2-z5-unit-costs"),
             _ => Value::Null,
         };
+        if pass == json!(false) {
+            refusals.push(format!(
+                "{name} ({path}) does not pass: kind {}, verdict {}, app commit {} (this binary {app_commit})",
+                r["kind"], r["verdict"], r["app_commit"]
+            ));
+        }
         if let Some(c) = cpu.filter(|_| !reused) {
-            h.work.charge(name, c);
+            charges.push((name.to_string(), c));
         }
         out.insert(
             name.to_string(),
@@ -1031,18 +1065,7 @@ pub fn external_receipts(
                 "process_cpu_s": cpu, "reused": reused, "pass": pass}),
         );
     }
-    // The values those receipts judge are delegated to them.
-    out.insert(
-        "delegated".into(),
-        json!({"zeroTime": h.d.gates.whole("/zeroTime"), "spectral": h.d.gates.whole("/spectral"),
-            "directionalCheck": h.d.gates.whole("/directionalCheck"), "preparation": h.d.gates.whole("/preparation"),
-            "powerBasis": h.d.gates.whole("/powerBasis"), "projection": h.d.gates.whole("/projection")}),
-    );
-    if refusals.is_empty() {
-        Ok(Value::Object(out))
-    } else {
-        Err(refusals)
-    }
+    (out, charges, refusals)
 }
 
 /// The phase-1 hand-over: the gate run's settled state (the S2-07 format,

@@ -484,6 +484,99 @@ fn d3_a_ends_a_run_only_where_the_predicate_does_not_admit_the_state() {
     assert_eq!(d3_exit(&outside), Some("D3 (a) source-domain exit"));
 }
 
+#[test]
+fn the_windows_external_receipts_are_checked_by_kind_and_charged() {
+    let dir = std::env::temp_dir().join(format!("s2-external-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str, v: Value| {
+        let p = dir.join(name);
+        std::fs::write(&p, v.to_string()).unwrap();
+        p.to_str().unwrap().to_string()
+    };
+    let s1 = file(
+        "s1.json",
+        json!({"kind": "s1-hydraulics-admission", "verdict": "PASS: all S1 gates met", "app_commit": "abc"}),
+    );
+    let z6 = file(
+        "z6.json",
+        json!({"verdict": "GO: every gated Z6 predicate holds at this state"}),
+    );
+    let z7 = file("z7.json", json!({"failures": 0, "kind": "s2-z7"}));
+    let z2 = file("z2.json", json!({"kind": "z2"}));
+    let manifest: BTreeMap<String, Value> = [
+        (
+            "S1run6".to_string(),
+            json!({"receipt": s1, "process_cpu_s": 19.0}),
+        ),
+        (
+            "Z6composed".to_string(),
+            json!({"receipt": z6, "process_cpu_s": 36.0}),
+        ),
+        (
+            "Z7".to_string(),
+            json!({"receipt": z7, "process_cpu_s": 65.0}),
+        ),
+        ("Z2".to_string(), json!({"receipt": z2, "reused": true})),
+    ]
+    .into();
+    let (out, charges, refusals) =
+        sequence::check_external(&manifest, &["S1run6", "Z6composed", "Z7", "Z2"], "abc");
+    assert!(refusals.is_empty(), "{refusals:?}");
+    assert_eq!(charges.iter().map(|c| c.1).sum::<f64>(), 120.);
+    assert_eq!(out["Z2"]["reused"], json!(true));
+    assert_eq!(out["S1run6"]["sha256"].as_str().unwrap().len(), 64);
+    // Another app commit, a missing entry and an unmeasured run refuse.
+    let (_, _, refusals) = sequence::check_external(&manifest, &["S1run6", "Z5"], "def");
+    assert_eq!(refusals.len(), 2, "{refusals:?}");
+    let mut unmeasured = manifest.clone();
+    unmeasured.insert("Z7".into(), json!({"receipt": z7}));
+    let (_, _, refusals) = sequence::check_external(&unmeasured, &["Z7"], "abc");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    let failing = file(
+        "z6-no.json",
+        json!({"verdict": "NO-GO: a resolved positive real part"}),
+    );
+    let mut nogo = manifest.clone();
+    nogo.insert(
+        "Z6composed".into(),
+        json!({"receipt": failing, "process_cpu_s": 1.0}),
+    );
+    let (_, _, refusals) = sequence::check_external(&nogo, &["Z6composed"], "abc");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_handed_over_state_is_read_back_bit_for_bit() {
+    let dir = std::env::temp_dir().join(format!("s2-state-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let packet = compose::PacketFile {
+        path: "/packet.json".into(),
+        bytes: Vec::new(),
+        sha256: "0".repeat(64),
+    };
+    // Values whose shortest decimal is long, and one subnormal.
+    let y: Vec<f64> = (1..200)
+        .map(|k| (k as f64).sqrt() * 1e-3 + 1. / 3.)
+        .chain([f64::MIN_POSITIVE / 7., -0.1 - 0.2])
+        .collect();
+    let yp: Vec<f64> = y.iter().map(|v| v.sin() * 1e-9).collect();
+    let start = runner::Start {
+        t: 522.000000001,
+        y: y.clone(),
+        yp: yp.clone(),
+        from: "test".into(),
+    };
+    let path = dir.join("state.json");
+    sequence::write_state(&path, &packet, &start).unwrap();
+    assert!(sequence::write_state(&path, &packet, &start).is_err());
+    let (t, y2, yp2) = compose::saved_state(path.to_str().unwrap(), &packet, y.len());
+    assert_eq!(t, start.t);
+    assert!(y.iter().zip(&y2).all(|(a, b)| a.to_bits() == b.to_bits()));
+    assert!(yp.iter().zip(&yp2).all(|(a, b)| a.to_bits() == b.to_bits()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 // ------------------------------------------------- comparisons (synthetic)
 
 /// Credited series on the grid `origin + j dt`, each key's instances from
