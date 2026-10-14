@@ -60,7 +60,10 @@ export const createRoomOperations = (deps: RoomOperationsDeps): RoomOperations =
   const systemRemoveRoom = (roomId: string): boolean => {
     const room = rooms.getRoom(roomId)
     if (!room) return false
-    const ownedAgents = team.listByKind('ai').filter(agent => asAIAgent(agent)?.getConfig().ownerRoomId === roomId)
+    const ownedAgents = team.listByKind('ai').flatMap(agent => {
+      const ai = asAIAgent(agent)
+      return ai?.getConfig().ownerRoomId === roomId ? [ai] : []
+    })
     cancelGenerationsInRoom(roomId)
     for (const agentId of room.getParticipantIds()) {
       team.getAgent(agentId)?.leave(roomId)
@@ -78,6 +81,9 @@ export const createRoomOperations = (deps: RoomOperationsDeps): RoomOperations =
         }
       }
       for (const owned of ownedAgents) {
+        // As in removeAgent: an Agent leaving the team stops its turns.
+        owned.close()
+        owned.cancelGeneration()
         team.removeAgent(owned.id)
         for (const survivor of team.listByKind('ai')) asAIAgent(survivor)?.forgetAgent?.(owned.id)
       }
