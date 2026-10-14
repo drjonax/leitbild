@@ -26,23 +26,27 @@
 //!      complement of its block, `A_R = A_RR - A_Rs A_ss^-1 A_sR` (KLU), so
 //!      the water sees the walls' instantaneous response at frozen stores.
 //!      `B` has no entries in those rows or columns, which is checked.
+//!
 //!    The pencil with the surfaces held instead (a fixed-temperature wall) is
 //!    reported as a sensitivity, not gated.
-//! 2. **Reduced coupled** (`K`, under 1,000 coordinates): every coordinate
-//!    of the unit, the nuclear and solid ones lumped so the 77 % in nuclear
-//!    and fuel blocks are not simply dropped. Regional populations, the
-//!    network, the SG secondaries and metal and the rods stay individual.
-//!    Each material carrier (an assembly half) joins the sector-half of its
-//!    largest production support: its precursors per group, its six
-//!    inventories, its 25 histories per group, its fuel and clad stores and
-//!    surfaces per node are lumped over the carriers of that sector-half;
-//!    helium per sector; passive stores per sector and kind (the in-core
-//!    guide per sector-half). Lumping is a Galerkin aggregation of the actual
-//!    pencil, `A_K = W^T A V`, `B_K = W^T B V`, with `V` a uniform
-//!    perturbation of the members in the solver's scaled coordinates (a
-//!    uniform relative change, the scales being the prepared stocks) and `W`
-//!    the members' mean row. It is exact for modes uniform within each lump
-//!    and represents no mode between members of one lump.
+//! 2. **Coupled nuclear-thermal** (`K`, critic M3): a named restriction of
+//!    the same Jacobian that keeps the feedback paths `R` freezes: the 24
+//!    regional populations, every carrier's two fuel nodes (the Doppler
+//!    functional reads them) and clad store (the heat path to the water), the
+//!    network (moderator density, boron), the SG secondaries and metal, and
+//!    the rods (rod reactivity). Surfaces are eliminated as in `R`.
+//!    Everything else is held at zero perturbation: precursors, poison and
+//!    fuel inventories, delayed-energy histories, helium and passive stores.
+//!    The held linear blocks (precursors, inventories, histories) are diagonal
+//!    in their own coordinates, so their own spectra are their decay
+//!    constants (`-lambda`, checked and reported); what holding them drops is
+//!    their coupling, chiefly the delayed-neutron return, so the check sees
+//!    prompt kinetics. The count is set by the plant (24 + 772 + 386 + 261 +
+//!    20 + 156 = 1,619), above the planned 1,000: `dggev` at that size is
+//!    about a minute, on the same Accelerate path.
+//!
+//! Ungated sensitivities: `R` with the surfaces held (a fixed-temperature
+//! wall), and the network alone (to attribute network-intrinsic modes).
 //!
 //! # Predicates (per pencil and state)
 //!
@@ -518,9 +522,8 @@ impl Restriction<'_> {
             }
         }
         for &j in self.eliminate {
-            for p in self.pointers[j]..self.pointers[j + 1] {
-                b_coupling = b_coupling.max(b[p].abs());
-            }
+            let column = &b[self.pointers[j]..self.pointers[j + 1]];
+            b_coupling = column.iter().fold(b_coupling, |m, v| m.max(v.abs()));
         }
         assert_eq!(
             b_coupling, 0.,
@@ -601,69 +604,107 @@ impl Restriction<'_> {
     }
 }
 
-/// The lumped pencil: `group[i]` is coordinate `i`'s lump (every coordinate
-/// belongs to one); `A_K[I][J] = mean over i in I of sum over j in J of A_ij`.
-fn aggregate(
+/// The held linear blocks' own spectra: within the precursor, inventory and
+/// history rows held outside `keep`, `B` is the identity and the coupling
+/// graph of `A` is acyclic (decay chains I -> Xe, Pm -> Sm and the fission
+/// feed from the fissile inventory; checked by a topological order), so the
+/// held block is triangular and its eigenvalues are its diagonal: `-A_ii`,
+/// the decay (and depletion) constants.
+#[allow(clippy::too_many_arguments)] // One pencil's CSC, its restriction and its names.
+fn held_linear_blocks(
     pointers: &[usize],
     indices: &[usize],
     a: &[f64],
     b: &[f64],
-    group: &[usize],
-    names: &[String],
-    ids: &[f64],
-    tolerance: &[f64],
-    forcings: &[Vec<f64>],
-) -> (Dense, Vec<Vec<f64>>) {
-    let k = names.len();
-    let mut size = vec![0usize; k];
-    let mut algebraic = vec![None::<bool>; k];
-    let mut tol = vec![f64::INFINITY; k];
-    for (i, &g) in group.iter().enumerate() {
-        size[g] += 1;
-        let alg = ids[i] == 0.;
-        assert!(
-            algebraic[g].is_none_or(|x| x == alg),
-            "lump {} mixes differential and algebraic members",
-            names[g]
-        );
-        algebraic[g] = Some(alg);
-        tol[g] = tol[g].min(tolerance[i]);
+    keep: &[usize],
+    eliminate: &[usize],
+    classes: &[Class],
+    labels: &[String],
+) -> Value {
+    let linear = |c: Class| {
+        matches!(
+            c,
+            Class::Precursor
+                | Class::Fissile
+                | Class::Fertile
+                | Class::Iodine
+                | Class::Xenon
+                | Class::Promethium
+                | Class::Samarium
+                | Class::FissionHistory
+                | Class::CaptureHistory
+        )
+    };
+    let n = classes.len();
+    let mut held: Vec<bool> = classes.iter().map(|c| linear(*c)).collect();
+    for &i in keep.iter().chain(eliminate) {
+        held[i] = false;
     }
-    let (mut da, mut db) = (vec![0.; k * k], vec![0.; k * k]);
-    for j in 0..group.len() {
-        let gj = group[j];
+    let mut by: BTreeMap<String, (usize, f64, f64)> = BTreeMap::new();
+    let mut largest_off = (0f64, String::new());
+    let mut b_departure = 0f64;
+    let mut indegree = vec![0usize; n];
+    let mut out: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for j in 0..n {
+        if !held[j] {
+            continue;
+        }
         for p in pointers[j]..pointers[j + 1] {
-            let gi = group[indices[p]];
-            let w = 1. / size[gi] as f64;
-            da[gj * k + gi] += w * a[p];
-            db[gj * k + gi] += w * b[p];
+            let i = indices[p];
+            if !held[i] {
+                continue;
+            }
+            if i == j {
+                let e = by.entry(format!("{:?}", classes[j])).or_insert((
+                    0,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                ));
+                // Row y' - (feed - lambda y): A_jj = lambda.
+                e.0 += 1;
+                e.1 = e.1.min(a[p]);
+                e.2 = e.2.max(a[p]);
+                b_departure = b_departure.max((b[p] - 1.).abs());
+            } else {
+                if b[p] != 0. {
+                    b_departure = b_departure.max(b[p].abs());
+                }
+                if a[p] != 0. {
+                    out[j].push(i);
+                    indegree[i] += 1;
+                    if a[p].abs() > largest_off.0 {
+                        largest_off = (a[p].abs(), format!("{} <- {}", labels[i], labels[j]));
+                    }
+                }
+            }
         }
     }
-    let forced = forcings
-        .iter()
-        .map(|f| {
-            let mut out = vec![0.; k];
-            for (i, &g) in group.iter().enumerate() {
-                out[g] += f[i] / size[g] as f64;
+    // Kahn's order over the held coupling graph: every node ordered <=> acyclic.
+    let mut ready: Vec<usize> = (0..n).filter(|&i| held[i] && indegree[i] == 0).collect();
+    let mut ordered = 0;
+    while let Some(j) = ready.pop() {
+        ordered += 1;
+        for &i in &out[j] {
+            indegree[i] -= 1;
+            if indegree[i] == 0 {
+                ready.push(i);
             }
-            out
+        }
+    }
+    let total = held.iter().filter(|h| **h).count();
+    let blocks: serde_json::Map<String, Value> = by
+        .into_iter()
+        .map(|(k, (count, lo, hi))| {
+            (
+                k,
+                json!({"coordinates": count, "diagonal_decay_constants_per_s": [lo, hi]}),
+            )
         })
         .collect();
-    (
-        Dense {
-            n: k,
-            a: da,
-            b: db,
-            labels: names
-                .iter()
-                .zip(&size)
-                .map(|(n, s)| format!("{n} (x{s})"))
-                .collect(),
-            algebraic: algebraic.iter().filter(|x| **x == Some(true)).count(),
-            tolerance: tol,
-        },
-        forced,
-    )
+    json!({"held_coordinates": total, "blocks": blocks,
+        "triangular": ordered == total, "own_eigenvalues": if ordered == total { "-A_ii: the decay and depletion constants" } else { "NOT triangular: eigenvalues not the diagonal" },
+        "largest_off_diagonal_within_held": {"value": largest_off.0, "entry": largest_off.1},
+        "largest_b_departure_from_identity": b_departure})
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -673,8 +714,30 @@ struct Gate {
     max_excitation_ratio: f64,
 }
 
+/// Write one dense pencil for offline analysis into the directory named by
+/// `LD01_S2_SPECTRUM_DUMP`, if set: `<name>.json` (labels, algebraic count)
+/// and `<name>.a.f64`, `<name>.b.f64` (column-major, little-endian).
+fn dump(name: &str, d: &Dense) {
+    let Some(dir) = std::env::var_os("LD01_S2_SPECTRUM_DUMP") else {
+        return;
+    };
+    let base = Path::new(&dir).join(name.replace('/', "-"));
+    let bytes = |m: &[f64]| m.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+    for (ext, m) in [("a.f64", &d.a), ("b.f64", &d.b)] {
+        let path = base.with_extension(ext);
+        assert!(!path.exists(), "dumps are never overwritten");
+        std::fs::write(path, bytes(m)).unwrap();
+    }
+    std::fs::write(
+        base.with_extension("json"),
+        serde_json::to_vec(&json!({"n": d.n, "labels": d.labels, "algebraic": d.algebraic, "tolerance": d.tolerance})).unwrap(),
+    )
+    .unwrap();
+}
+
 /// Decompose one pencil, excite its events and evaluate the predicates.
 fn judge(name: &str, d: &Dense, events: &[(&str, Vec<f64>)], gate: Gate) -> (Value, bool) {
+    dump(name, d);
     let started = cpu_s();
     let s = spectrum::decompose(d.n, &d.a, &d.b).unwrap_or_else(|e| panic!("{name}: {e}"));
     let evs: Vec<Event<'_>> = events
@@ -753,8 +816,31 @@ fn judge(name: &str, d: &Dense, events: &[(&str, Vec<f64>)], gate: Gate) -> (Val
             .map(|(i, (r, m))| json!({"hz": m.frequency_hz, "zeta": m.damping_ratio, "ratio": r.ratio, "coordinate": d.labels[r.coordinate], "dominant": dominant(i, 4)}))
             .collect();
         fast_excited_total += fast.len();
+        // A mode with lambda = 0 within its bound turns a step forcing into a
+        // drift, not a transient: its rate is reported apart (a degenerate
+        // null space has no unique basis, so only the largest rate is kept).
+        let null = |m: usize| report.modes[m].lambda.abs() <= report.modes[m].error_bound;
+        let drift = (0..ex.responses.len())
+            .filter(|&m| null(m))
+            .map(|m| {
+                let k = if report.modes[m].pair { 2. } else { 1. };
+                let sensitivity = s.shapes[m]
+                    .right
+                    .iter()
+                    .zip(&d.tolerance)
+                    .map(|(v, t)| v.abs() / t)
+                    .fold(0., f64::max);
+                (k * ex.responses[m].projection.abs() * sensitivity, m)
+            })
+            .fold((0., None), |best: (f64, Option<usize>), (rate, m)| {
+                if rate > best.0 { (rate, Some(m)) } else { best }
+            });
+        let max_resolved = (0..ex.responses.len())
+            .filter(|&m| !null(m))
+            .map(|m| ex.responses[m].ratio)
+            .fold(0., f64::max);
         let top: Vec<Value> = {
-            let mut idx: Vec<usize> = (0..ex.responses.len()).collect();
+            let mut idx: Vec<usize> = (0..ex.responses.len()).filter(|&m| !null(m)).collect();
             idx.sort_by(|&x, &y| ex.responses[y].ratio.total_cmp(&ex.responses[x].ratio));
             idx.iter()
                 .take(5)
@@ -765,8 +851,14 @@ fn judge(name: &str, d: &Dense, events: &[(&str, Vec<f64>)], gate: Gate) -> (Val
                 })
                 .collect()
         };
-        excitations.push(json!({"event": ename, "max_ratio": ex.max_ratio, "fast_lightly_damped_above_ratio": fast,
+        let fast_modes = (0..ex.responses.len())
+            .filter(|&m| report.modes[m].frequency_hz > gate.fast_mode_hz)
+            .map(|m| ex.responses[m].ratio)
+            .fold(0., f64::max);
+        excitations.push(json!({"event": ename, "max_ratio_nonnull_modes": max_resolved, "max_ratio_modes_above_fast_hz": fast_modes,
+            "fast_lightly_damped_above_ratio": fast,
             "largest_ratios": top,
+            "null_mode_drift": {"largest_rate_tolerances_per_s": drift.0, "dominant": drift.1.map(|m| dominant(m, 4))},
             "forcing_inf_norm_over_tolerance": events.iter().find(|e| e.0 == *ename).map(|e| e.1.iter().zip(&d.tolerance).map(|(f, t)| f.abs() / t).fold(0., f64::max))}));
     }
     let infinite_ok = report.infinite.count == d.algebraic;
@@ -824,97 +916,6 @@ fn judge(name: &str, d: &Dense, events: &[(&str, Vec<f64>)], gate: Gate) -> (Val
     )
 }
 
-// ---------------------------------------------------------------------------
-// The lumps of the reduced coupled pencil.
-
-/// Group of every joined coordinate (see the module comment), with names.
-fn lumps(joined: &Joined<If97>, raw: &Value) -> (Vec<usize>, Vec<String>) {
-    // Each carrier's sector-half: that of its largest production support.
-    let supports = raw["feedback_metadata"]["supports"].as_array().unwrap();
-    let carriers = raw["hot"]["energy"]["carriers"].as_array().unwrap();
-    let mut best: Vec<(f64, usize)> = vec![(-1., 0); carriers.len()];
-    for s in supports {
-        let (r, a) = (
-            s["region"].as_u64().unwrap() as usize,
-            s["material"].as_u64().unwrap() as usize,
-        );
-        let g = s["production_reference_per_s"].as_f64().unwrap();
-        if g > best[a].0 {
-            best[a] = (g, r);
-        }
-    }
-    let key_of: BTreeMap<String, (usize, usize)> = carriers
-        .iter()
-        .zip(&best)
-        .map(|(c, &(_, r))| (c["id"].as_str().unwrap().to_string(), (r / 6, (r % 6) / 3)))
-        .collect();
-    let sector_of = |assembly: &str| key_of[&format!("{assembly}/segment/0")].0;
-    let inside = |label: &str, prefix: &str| -> Option<String> {
-        label
-            .strip_prefix(prefix)
-            .and_then(|r| r.strip_suffix(']'))
-            .map(str::to_string)
-    };
-    let mut names: Vec<String> = Vec::new();
-    let mut index: BTreeMap<String, usize> = BTreeMap::new();
-    let mut group = Vec::new();
-    for (owner, layout) in joined.layouts() {
-        for (label, class) in layout.labels.iter().zip(&layout.classes) {
-            let carrier = |id: &str| key_of[id];
-            let name = match (owner, class) {
-                ("nuclear", Class::RegionalPopulation) => format!("nuclear/{label}"),
-                ("nuclear", Class::Precursor | Class::FissionHistory | Class::CaptureHistory) => {
-                    // C[id][g] or E[id][g].
-                    let (head, rest) = label.split_once('[').unwrap();
-                    let (id, g) = rest.split_once("][").unwrap();
-                    let (s, h) = carrier(id);
-                    format!("nuclear/{head}[s{s}h{h}][{}", g)
-                }
-                ("nuclear", _) => {
-                    let (head, rest) = label.split_once('[').unwrap();
-                    let (s, h) = carrier(rest.strip_suffix(']').unwrap());
-                    format!("nuclear/{head}[s{s}h{h}]")
-                }
-                ("solids", Class::FuelEnergy) => {
-                    let rest = label.strip_prefix("U_fuel[").unwrap();
-                    let (id, k) = rest.split_once("][").unwrap();
-                    let (s, h) = carrier(id);
-                    format!("solids/U_fuel[s{s}h{h}][{k}")
-                }
-                ("solids", Class::CladEnergy | Class::Surface) => {
-                    let (head, rest) = label.split_once('[').unwrap();
-                    let (s, h) = carrier(rest.strip_suffix(']').unwrap());
-                    format!("solids/{head}[s{s}h{h}]")
-                }
-                ("solids", Class::HeliumEnergy) => {
-                    let id = inside(label, "U_helium[").unwrap();
-                    let assembly = id.split_once('/').unwrap().0;
-                    format!("solids/U_helium[s{}]", sector_of(assembly))
-                }
-                ("solids", Class::PassiveEnergy) => {
-                    let id = inside(label, "U_passive[").unwrap();
-                    let (assembly, kind) = id.split_once('/').unwrap();
-                    match kind.strip_prefix("guide/CORE.") {
-                        Some(h) => {
-                            let (s, half) = key_of[&format!("{assembly}/segment/{h}")];
-                            format!("solids/U_passive[s{s}h{half}][guide/CORE]")
-                        }
-                        None => format!("solids/U_passive[s{}][{kind}]", sector_of(assembly)),
-                    }
-                }
-                (owner, _) => format!("{owner}/{label}"),
-            };
-            let next = names.len();
-            let g = *index.entry(name.clone()).or_insert_with(|| {
-                names.push(name);
-                next
-            });
-            group.push(g);
-        }
-    }
-    (group, names)
-}
-
 fn write_receipt(receipt: &Value) {
     if let Some(path) = std::env::var_os("LD01_S2_SPECTRUM_RECEIPT") {
         let path = Path::new(&path);
@@ -961,12 +962,11 @@ fn margin_value(m: &post_trip_domain::Margin) -> f64 {
 
 #[test]
 #[ignore = "zero-time receipt: requires the joined packet, the wiki, maintained IF97, stock IDA/KLU and Accelerate"]
-fn z6_restricted_and_reduced_coupled_spectrum_with_the_trip_excitations() {
+fn z6_restricted_and_coupled_spectrum_with_the_trip_excitations() {
     let wall = Instant::now();
     let cpu0 = cpu_s();
     let Started {
         mut joined,
-        raw,
         t,
         y,
         yp,
@@ -974,6 +974,7 @@ fn z6_restricted_and_reduced_coupled_spectrum_with_the_trip_excitations() {
         atol,
         rtol,
         mut receipt,
+        ..
     } = started();
     let gates = s1_gates();
     let gate = Gate {
@@ -1004,7 +1005,18 @@ fn z6_restricted_and_reduced_coupled_spectrum_with_the_trip_excitations() {
     let surfaces: Vec<usize> = (o.solids..o.secondary)
         .filter(|&i| classes[i] == Class::Surface)
         .collect();
-    let (group, names) = lumps(&joined, &raw);
+    // The coupled restriction: regional N, fuel and clad stores, network,
+    // SG secondaries and metal, rods; surfaces eliminated; the rest held.
+    let coupled: Vec<usize> = (0..n)
+        .filter(|&i| {
+            keep.contains(&i)
+                || matches!(
+                    classes[i],
+                    Class::RegionalPopulation | Class::FuelEnergy | Class::CladEnergy
+                )
+        })
+        .collect();
+    let network_only: Vec<usize> = (0..o.nuclear).collect();
     let (pointers, indices) = {
         let p = &joined.structure().unwrap().0;
         (p.pointers().to_vec(), p.indices().to_vec())
@@ -1085,8 +1097,18 @@ fn z6_restricted_and_reduced_coupled_spectrum_with_the_trip_excitations() {
         eliminate: &[],
         ..restriction
     };
+    let coupled_restriction = Restriction {
+        keep: &coupled,
+        ..restriction
+    };
+    let network_alone = Restriction {
+        keep: &network_only,
+        eliminate: &[],
+        ..restriction
+    };
     let mut verdicts = Vec::new();
     let mut pencils = Vec::new();
+    let mut held_blocks = Value::Null;
     for (state, a, b, ids, evs) in [
         (
             "held",
@@ -1104,55 +1126,49 @@ fn z6_restricted_and_reduced_coupled_spectrum_with_the_trip_excitations() {
         ),
     ] {
         let forcings: Vec<Vec<f64>> = evs.iter().map(|(_, v)| v.clone()).collect();
-        let (dense, forced, schur) = restriction.apply(a, b, &forcings, &labels, ids, &tolerance);
-        let named: Vec<(&str, Vec<f64>)> = evs.iter().map(|(n, _)| *n).zip(forced).collect();
-        let (mut verdict, go) = judge(&format!("restricted/{state}"), &dense, &named, gate);
-        verdict["schur"] = schur;
-        verdicts.push(go);
-        pencils.push(verdict);
-        // Sensitivity: the surfaces held (fixed wall temperature); not gated.
-        let (dense, forced, _) = held_walls.apply(a, b, &forcings, &labels, ids, &tolerance);
-        let named: Vec<(&str, Vec<f64>)> = evs.iter().map(|(n, _)| *n).zip(forced).collect();
-        let (mut sensitivity, _) = judge(
-            &format!("restricted-held-walls/{state}"),
-            &dense,
-            &named,
-            gate,
-        );
-        sensitivity["gated"] = json!(false);
-        pencils.push(sensitivity);
-        // The reduced coupled check.
-        let (dense, forced) = aggregate(
-            &pointers, &indices, a, b, &group, &names, ids, &tolerance, &forcings,
-        );
-        let named: Vec<(&str, Vec<f64>)> = evs.iter().map(|(n, _)| *n).zip(forced).collect();
-        let (verdict, go) = judge(&format!("reduced-coupled/{state}"), &dense, &named, gate);
-        verdicts.push(go);
-        pencils.push(verdict);
+        let mut run = |name: &str, r: &Restriction<'_>, gated: bool| {
+            let (dense, forced, schur) = r.apply(a, b, &forcings, &labels, ids, &tolerance);
+            let named: Vec<(&str, Vec<f64>)> = evs.iter().map(|(n, _)| *n).zip(forced).collect();
+            let (mut verdict, go) = judge(&format!("{name}/{state}"), &dense, &named, gate);
+            verdict["schur"] = schur;
+            verdict["gated"] = json!(gated);
+            if gated {
+                verdicts.push(go);
+            }
+            pencils.push(verdict);
+        };
+        run("restricted", &restriction, true);
+        run("coupled-nuclear-thermal", &coupled_restriction, true);
+        run("restricted-held-walls", &held_walls, false);
+        run("network-alone", &network_alone, false);
+        if state == "held" {
+            held_blocks = held_linear_blocks(
+                &pointers, &indices, a, b, &coupled, &surfaces, &classes, &labels,
+            );
+        }
     }
     let go = verdicts.iter().all(|g| *g);
-    let lump_counts = {
-        let mut m: BTreeMap<String, usize> = BTreeMap::new();
-        for name in &names {
-            *m.entry(name.split('/').next().unwrap().to_string())
-                .or_default() += 1;
-        }
-        m
-    };
     receipt["kind"] = json!("s2-z6-restricted-spectrum");
     receipt["status"] = json!(
         "zero-time receipt (G10 Z6); S2 is not declared: not evidence until revision 7 is published"
     );
     receipt["gate"] = json!({"source": "ld01-s1-gates spectrum (G14)", "fastModeHz": gate.fast_mode_hz, "lightDamping": gate.light_damping, "maxExcitationRatio": gate.max_excitation_ratio});
     receipt["restriction"] = json!({
-        "decision": "S2-D8 (lead): network + SG + metal + rods, plus a reduced coupled nuclear-thermal check under 1,000 coordinates; Accelerate dggev, no new dependency",
+        "decision": "S2-D8 (lead): network + SG + metal + rods, plus a coupled nuclear-thermal check; both named restrictions of the joined Jacobian (critic M3); Accelerate dggev, no new dependency",
         "restricted": {"coordinates": keep.len(), "network": o.nuclear, "secondary": o.rods - o.secondary, "rods": o.end - o.rods,
             "sg_metal": keep.iter().filter(|&&i| i >= o.solids && i < o.secondary).count(), "pzr_metal": "absent until G6 composes it",
             "frozen_differential": n - keep.len() - surfaces.len(), "eliminated_algebraic_surfaces": surfaces.len(),
             "treatment": "frozen differential coordinates held (zero perturbation, rows dropped); algebraic surfaces on their constraints by the exact Schur complement; held-surface pencil reported as a sensitivity"},
-        "reduced_coupled": {"coordinates": names.len(), "by_owner": lump_counts,
-            "lumping": "each carrier in the sector-half of its largest production support; precursors and histories per group, inventories per kind, fuel/clad/surfaces per node, helium per sector, passive per sector and kind (in-core guide per sector-half); regional N, network, SG, SG metal and rods individual",
-            "projection": "Galerkin aggregation: V uniform scaled perturbation of the members, W the members' mean row; exact for modes uniform within a lump"},
+        "coupled_nuclear_thermal": {"coordinates": coupled.len(),
+            "kept": "regional populations, fuel nodes and clad stores of every carrier, the network, the SG secondaries and metal, the rods (named rows and columns of the joined Jacobian)",
+            "regional_populations": coupled.iter().filter(|&&i| classes[i] == Class::RegionalPopulation).count(),
+            "fuel_nodes": coupled.iter().filter(|&&i| classes[i] == Class::FuelEnergy).count(),
+            "clad_stores": coupled.iter().filter(|&&i| classes[i] == Class::CladEnergy).count(),
+            "eliminated_algebraic_surfaces": surfaces.len(),
+            "held": "precursors, fissile/fertile/poison inventories, delayed-energy histories (linear, constant coefficients), helium and passive stores: zero perturbation",
+            "held_linear_blocks": held_blocks,
+            "planned_bound": "under 1,000 (S2-D8); the plant's 386 carriers x 3 stores set 1,619",
+            "critic": "M3 (accepted): named restrictions of the model's own Jacobian, no aggregated surrogate"},
     });
     receipt["events"] = events;
     receipt["pencils"] = json!(pencils);
@@ -1269,26 +1285,36 @@ fn d3_shutdown_margin_at_the_state_and_on_the_z3_envelope() {
         };
         let doubled = judged(&ext);
         let once = judged(&nominal);
-        let summary = |a: &Result<post_trip_domain::Admission, post_trip_domain::Error>| match a {
-            Ok(a) => {
-                json!({"admitted": true, "domain": a.domain, "margin_holds": a.margin.holds, "margin_dk_k": margin_value(&a.margin),
-                "water_term_max": a.margin.water_terms.iter().cloned().fold(f64::NEG_INFINITY, f64::max)})
-            }
-            Err(post_trip_domain::Error::Unsupported {
-                domain,
-                margin_holds,
-                exit,
-            }) => {
-                json!({"admitted": false, "domain": domain, "margin_holds": margin_holds, "exit": format!("{exit:?}")})
-            }
-            Err(e) => json!({"error": format!("{e:?}")}),
+        let margin = |e: &Extension| {
+            post_trip_domain::margin_at(
+                feedback,
+                nuclear.kinetics(),
+                fixed,
+                &neutrons,
+                conditions,
+                e,
+            )
+            .expect("margin at the envelope point")
         };
+        let summary = |a: &Result<post_trip_domain::Admission, post_trip_domain::Error>,
+                       m: &post_trip_domain::Margin| {
+            let verdict = match a {
+                Ok(a) => json!({"admitted": true, "domain": a.domain}),
+                Err(post_trip_domain::Error::Unsupported { domain, exit, .. }) => {
+                    json!({"admitted": false, "domain": domain, "exit": format!("{exit:?}")})
+                }
+                Err(e) => json!({"error": format!("{e:?}")}),
+            };
+            json!({"verdict": verdict, "margin_holds": m.holds, "margin_dk_k": margin_value(m),
+                "water_term_range": [m.water_terms.iter().cloned().fold(f64::INFINITY, f64::min), m.water_terms.iter().cloned().fold(f64::NEG_INFINITY, f64::max)]})
+        };
+        let (m2, m1) = (margin(&ext), margin(&nominal));
         let holds = matches!(&doubled, Ok(a) if a.margin.holds);
         all_hold &= holds;
         let ratios: Vec<f64> = reference.iter().map(|rho| density / rho).collect();
         points.push(json!({"temperature": row["temperature"], "T_K": temperature, "pressure_Pa": pressure, "rho_kg_m3": density,
             "density_ratio_range": [ratios.iter().cloned().fold(f64::INFINITY, f64::min), ratios.iter().cloned().fold(f64::NEG_INFINITY, f64::max)],
-            "water_term_doubled": summary(&doubled), "water_term_nominal": summary(&once)}));
+            "water_term_doubled": summary(&doubled, &m2), "water_term_nominal": summary(&once, &m1)}));
     }
     receipt["kind"] = json!("s2-d3-post-trip-margin");
     receipt["status"] =

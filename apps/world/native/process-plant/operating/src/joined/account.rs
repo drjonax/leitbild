@@ -74,8 +74,13 @@ impl Identity {
     }
     /// A boundary term, entering positive.
     fn boundary(&mut self, name: &str, rate: f64) {
+        self.boundary_parts(name, rate, rate.abs());
+    }
+    /// A boundary term summed over parts (`abs` the sum of the parts'
+    /// absolute values: each part is a term of the identity).
+    fn boundary_parts(&mut self, name: &str, rate: f64, abs: f64) {
         self.defect -= rate;
-        self.terms_abs += rate.abs();
+        self.terms_abs += abs;
         self.terms.push((name.into(), -rate));
     }
     /// `|defect| / (1 + sum |terms|)`.
@@ -326,8 +331,9 @@ impl Plan {
 
     /// The ledger integrands' names, in [`Account::boundary`] order: the
     /// primary's net mass and boron receipts, each SG's feed, steam and
-    /// relief mass then energy, and the unit's event energy, motor work and
-    /// bearing loss (entering positive).
+    /// relief mass then energy, and the unit's event energy, motor work,
+    /// bearing loss and the rods' pressure-work remainder, reported as its
+    /// own ledger (entering positive).
     pub fn ledger_names(&self) -> Vec<String> {
         let mut names = vec![
             "primary_mass_kg".to_string(),
@@ -343,7 +349,15 @@ impl Plan {
                 names.push(format!("SG.{id}.{port}_j"));
             }
         }
-        names.extend(["event_j", "motor_work_j", "bearing_loss_j"].map(String::from));
+        names.extend(
+            [
+                "event_j",
+                "motor_work_j",
+                "bearing_loss_j",
+                "rod_pressure_work_remainder_j",
+            ]
+            .map(String::from),
+        );
         names
     }
 
@@ -446,6 +460,21 @@ impl Plan {
             rods.mechanical_rate_w,
             rods.mechanical_rate_w.abs(),
         );
+        // Decision 0012's hydrostatic remainder of the moving volumes: the
+        // bodies' pressure-force power against the boundary work the network
+        // pays at its cells' pressures. Reported as its own term, never a
+        // source: an account read without a captured evaluation refuses
+        // while any body moves.
+        let remainder = match rods.power {
+            Some([force, heat, boundary]) => force + heat + boundary,
+            None if rods.mechanical_rate_w != 0. => {
+                return Err(fatal(
+                    "the rod bodies move but their power ledger was not captured (read the account through Joined::account)",
+                ));
+            }
+            None => 0.,
+        };
+        e.boundary("rod pressure-work remainder (reported)", remainder);
         e.boundary(
             "fission and capture event energy",
             heats.nuclear.event_w.value,
@@ -541,7 +570,7 @@ impl Plan {
                 q.push(port(id, name)?.energy_w);
             }
         }
-        q.extend([event, b("motor_work_w")?, -b("bearing_loss_w")?]);
+        q.extend([event, b("motor_work_w")?, -b("bearing_loss_w")?, remainder]);
         account.boundary = q;
         Ok(account)
     }
@@ -572,21 +601,32 @@ impl Plan {
         k.store("regional populations", n, n_abs);
         let (c, c_abs) = self.rates(rows, yp, &self.precursors);
         k.store("material precursors", c, c_abs);
-        let (mut generation, mut source) = (0., 0.);
+        // Each region's and carrier's part is a term of the balance.
+        let [
+            mut generation,
+            mut generation_abs,
+            mut source,
+            mut source_abs,
+        ] = [0.; 4];
         for ((&i, f), p) in self.populations.iter().zip(&feedback.regions).zip(regions) {
-            generation += f.reactivity.value / p.generation_time_s * y[i] * self.scales[i];
+            let g = f.reactivity.value / p.generation_time_s * y[i] * self.scales[i];
+            generation += g;
+            generation_abs += g.abs();
             source += f.external_source_per_s.value;
+            source_abs += f.external_source_per_s.value.abs();
         }
-        let mut export = 0.;
+        let (mut export, mut export_abs) = (0., 0.);
         for (a, (m, fraction)) in materials.iter().zip(outside).enumerate() {
             for g in 0..DELAYED {
                 let i = self.precursors[a * DELAYED + g];
-                export += fraction * m.decay_constants_per_s[g] * y[i] * self.scales[i];
+                let e = fraction * m.decay_constants_per_s[g] * y[i] * self.scales[i];
+                export += e;
+                export_abs += e.abs();
             }
         }
-        k.boundary("net generation rho N / Lambda", generation);
-        k.boundary("external sources", source);
-        k.boundary("outside-field delayed export", -export);
+        k.boundary_parts("net generation rho N / Lambda", generation, generation_abs);
+        k.boundary_parts("external sources", source, source_abs);
+        k.boundary_parts("outside-field delayed export", -export, export_abs);
         Ok(k)
     }
 
@@ -734,7 +774,13 @@ impl<P: Properties + WaterProperties> Joined<P> {
         y: &[f64],
         yp: &[f64],
     ) -> Result<Account, Failure> {
-        self.evaluate(t, y, yp, None, 0., None)?;
-        plan.read(self, y, yp)
+        let rods = self.rods_mut().ok_or_else(|| fatal("no rod owner"))?;
+        rods.capture_account(true);
+        let evaluated = self.evaluate(t, y, yp, None, 0., None);
+        let account = evaluated.and_then(|()| plan.read(self, y, yp));
+        if let Some(rods) = self.rods_mut() {
+            rods.capture_account(false);
+        }
+        account
     }
 }
