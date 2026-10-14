@@ -34,7 +34,7 @@ use crate::{
     sparse::{self, Coloring, Pattern},
     thermal::{self, Scalar, WaterProperties},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 fn s(v: f64) -> Scalar {
@@ -135,6 +135,10 @@ struct Blocks<P> {
     /// Per solid coordinate: the closed scope of its owner column and the
     /// store whose temperature it sets, compiled at first use.
     column_scopes: Vec<Option<(solids::Closed, Option<usize>)>>,
+    /// Per local coupling input (its moved cells, `usize::MAX`, its moved
+    /// faces): the wall cells and the closed solid scope it reaches,
+    /// compiled at first use.
+    local_scopes: BTreeMap<Vec<usize>, (Vec<usize>, solids::Closed)>,
     /// Wall time of the local coupler's calls, by kind.
     coupler: CouplerCounters,
 }
@@ -342,6 +346,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             rod_reads,
             secondary_outputs,
             column_scopes: vec![None; solids.layout().len()],
+            local_scopes: BTreeMap::new(),
             coupler: CouplerCounters::default(),
             nuclear_rows: vec![s(0.); nuclear.layout().len()],
             solid_rows: vec![s(0.); solids.layout().len()],
@@ -1408,6 +1413,8 @@ struct Scratch {
     sink: Vec<[[Scalar; 3]; 2]>,
     /// The rod clusters one call evaluates.
     clusters: Vec<usize>,
+    /// One local coupling call's scope key.
+    key: Vec<usize>,
 }
 
 /// What one local coupling call re-evaluated: global joined rows in solver
@@ -1501,8 +1508,17 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         fluid: &Fluid<'_>,
         receipts: &mut Receipts<'_>,
     ) -> Result<(), Failure> {
-        let wall = self.wall_cells(cells, faces);
-        let scope = self.scope(cells, &wall);
+        let key = &mut self.scratch.key;
+        key.clear();
+        key.extend_from_slice(cells);
+        key.push(usize::MAX);
+        key.extend_from_slice(faces);
+        if !self.blocks.local_scopes.contains_key(&key[..]) {
+            let wall = self.wall_cells(cells, faces);
+            let scope = self.scope(cells, &wall);
+            let key = self.scratch.key.clone();
+            self.blocks.local_scopes.insert(key, (wall, scope));
+        }
         let o = self.blocks.offsets;
         let Blocks {
             properties,
@@ -1513,10 +1529,12 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             scales,
             source_water,
             coupler,
+            local_scopes,
             ..
         } = &mut *self.blocks;
+        let (wall, scope) = &local_scopes[&self.scratch.key[..]];
         let solids_started = Instant::now();
-        let replaced = solids.wall_water_local(properties, fluid, &wall)?;
+        let replaced = solids.wall_water_local(properties, fluid, wall)?;
         let solved = view(
             self.y,
             self.yp,
@@ -1533,7 +1551,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 &heats.nuclear.fuel_w,
                 fluid,
                 views,
-                &scope,
+                scope,
                 receipts,
                 &mut self.solid_rows,
                 &mut self.heat,
