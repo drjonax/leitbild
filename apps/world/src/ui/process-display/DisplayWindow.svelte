@@ -482,6 +482,12 @@
       notice = 'That Plant is not in this Run.'
       if (shown === null && deck[0]) showEntry(deck[0])
     }
+    // The dialog takes focus itself as it opens, and gives it back to the window as it closes.
+    if (next.instructorActions && entry !== null) {
+      if (plantTarget.ok) openPlantActions()
+      else notice = `Instructor actions: ${plantTarget.reason}`
+      return
+    }
     if (next.focus) void focusWindow()
   }
 

@@ -76,6 +76,11 @@
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
   import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
+  import PlantCard, { type PlantCardAction } from '../process-display/PlantCard.svelte'
+  import { plantCardView } from '../process-display/plant-card.ts'
+  import { processPlantPackId } from '../../packs/process-plant/model.ts'
+  import type { MapCardFrame } from '../map/object-card-anchor.ts'
+  import { readRunAssistantOffer, requestRunAssistant } from '../run-assistant-messages.ts'
   import { createProcedureSession, type ProcedureSession } from '../procedures/procedure-session.ts'
   import {
     procedureRunSummariesForScope,
@@ -222,6 +227,11 @@
   // another Run needs nothing from this one.
   let displayWindowRunId = $state<SimulationRunId | null>(null)
   let displayWindowOpen = $state(false)
+  // The Plant card a click on a unit's icon or rail row opened, and the rail row that opened it, which Esc gives focus back to.
+  let plantCard = $state<{ readonly objectId: ObjectId; readonly opener: HTMLElement | null } | null>(null)
+  let plantCardFrame = $state.raw<MapCardFrame | null>(null)
+  // Whether the Host offers the Run's Assistant room on this page (`run-assistant-messages.ts`).
+  let runAssistantOffered = $state(false)
   let displayWindowRequest = $state.raw<DisplayWindowRequest | null>(null)
   let conversationDisplays = $state.raw<ReadonlyArray<EmbeddedViewListing>>([])
   let displayWindowRequestSequence = 0
@@ -304,6 +314,8 @@
           : mapConfig.layers.filter(layer => layer !== 'weather'),
       })
   const mapVisible = $derived(mapConfig !== null)
+  /** A Plant has a card, which a click on its icon or rail row opens where the click orders nothing (`map-target-routing.ts`). */
+  const opensPlantCard = (object: OperationalObject): boolean => mapVisible && object.packId === processPlantPackId
   const railVisible = $derived(railConfig !== null)
   const footerVisible = true
   const guidanceOverlayVisible = true
@@ -337,7 +349,7 @@
     return mutedOnMap ? objects.filter(object => mutedOnMap(object, targetContext)).map(object => object.id) : emptyStringArray
   })
   const mapCameraInteraction = $derived(mapCameraInteractionFor(activePack?.packs ?? []))
-  const mapClickContext = $derived<MapClickContext>({ controller: selectedControllerObject, targeting: activePack?.targeting, context: targetContext, panel: mapTargetPanel })
+  const mapClickContext = $derived<MapClickContext>({ controller: selectedControllerObject, targeting: activePack?.targeting, context: targetContext, panel: mapTargetPanel, opensCard: opensPlantCard })
   const mapStartupFailed = $derived(startupSteps.find(step => step.id === 'map')?.status === 'failed')
   const displayRunJoin = $derived.by<DeckRunJoin>(() => {
     if (simulationRunId !== null) return { state: 'joined' }
@@ -355,6 +367,10 @@
   const debugStartup = new URLSearchParams(location.search).get('debugStartup') === '1'
   const categoryRows = $derived<ReadonlyArray<CategoryRow>>(categoryRowsForStartingView(allCategoryRows, railConfig))
   const objectById = $derived(new Map(objects.map(object => [object.id, object])))
+  const plantCardObject = $derived(plantCard === null ? null : objectById.get(plantCard.objectId) ?? null)
+  const mapHighlightedObjectIds = $derived(plantCard === null
+    ? scenarioState?.highlightedObjectIds ?? emptyStringArray
+    : [...(scenarioState?.highlightedObjectIds ?? emptyStringArray), plantCard.objectId])
   $effect(() => {
     const rows = categoryRows
     untrack(() => {
@@ -958,7 +974,7 @@
 
   // Opened (or jumped) from the rail, the window takes focus and gives it back
   // on close; opened from chat, it leaves focus with the conversation.
-  const requestDisplayWindow = (target: DisplayWindowTarget, focus: boolean): void => {
+  const requestDisplayWindow = (target: DisplayWindowTarget, focus: boolean, instructorActions = false): void => {
     if (focus) {
       const active = document.activeElement
       displayWindowReturnFocus = active instanceof HTMLElement ? active : null
@@ -966,7 +982,7 @@
       displayWindowReturnFocus = null
     }
     displayWindowRequestSequence += 1
-    displayWindowRequest = { sequence: displayWindowRequestSequence, target, focus }
+    displayWindowRequest = { sequence: displayWindowRequestSequence, target, focus, instructorActions }
     displayWindowOpen = true
     void (async (): Promise<void> => {
       try {
@@ -1359,6 +1375,12 @@
 
   /** One path for map clicks: a map-target panel takes every target click; otherwise the Pack's targeting sends. */
   const followMapClick = (route: MapClickRoute): void => {
+    if (route.kind === 'card') {
+      if (placementMode === null) openPlantCard(route.objectId)
+      return
+    }
+    // A click on anything else lets the card go; it then does what it always did.
+    closePlantCard()
     if (route.kind === 'none') return
     if (route.kind === 'select') {
       selectedControllerId = route.objectId
@@ -1377,6 +1399,51 @@
     }
     void sendCommand(route.command.kind, route.command.payload, route.subject)
   }
+
+  const openPlantCard = (objectId: ObjectId): void => {
+    const active = document.activeElement
+    const fromRail = active instanceof HTMLElement && active.closest('.control-rail') !== null
+    plantCard = { objectId, opener: fromRail ? active : plantCard?.opener ?? null }
+  }
+
+  const closePlantCard = (): void => {
+    plantCard = null
+    plantCardFrame = null
+  }
+
+  // Esc or the card's close button: focus goes back to the rail row that opened it.
+  const dismissPlantCard = (): void => {
+    const opener = plantCard?.opener ?? null
+    closePlantCard()
+    if (opener?.isConnected) opener.focus()
+  }
+
+  // Every action opens something on top or beside; the card has done its job and goes.
+  const followPlantCardAction = (action: PlantCardAction): void => {
+    const object = plantCardObject
+    if (object === null) return
+    const procedure = plantCardView(object, procedureSummariesForObject(object))?.procedure.summary ?? undefined
+    closePlantCard()
+    switch (action) {
+      case 'overview': return openProcessDisplay(object)
+      case 'procedures': return openProcedureSystemAt(object, procedure)
+      case 'instructor': return requestDisplayWindow({ kind: 'overview', objectId: object.id }, true, true)
+      case 'assistant': {
+        if (simulationRunId === null) throw new Error('the Run\'s Assistant was offered before the Run was joined')
+        return requestRunAssistant({ workspaceId: activeWorkspaceId(), simulationRunId }, { parent: window.parent, origin: location.origin })
+      }
+      case 'component-graph': return openProcessPlantArtifact(object, 'compiled-graph-mermaid')
+      case 'specification': return openProcessPlantArtifact(object, 'authored-spec')
+      case 'credibility': return openProcessPlantCredibility(object)
+      case 'catalog': return openProcessPlantCatalog(object)
+    }
+  }
+
+  // An order context takes the map over (a unit chosen, a placement, a map-target panel, an assignment), and a removed Plant has no card.
+  $effect(() => {
+    if (plantCard === null) return
+    if (selectedControllerId !== null || placementMode !== null || mapTargetPanel !== null || mapAssignment !== null || plantCardObject === null) untrack(closePlantCard)
+  })
 
   const selectObject = (object: OperationalObject): void => {
     markSeen(object)
@@ -1870,7 +1937,18 @@
       }
       requestDisplayWindow({ kind: 'listing', listing: message.view }, false)
     }
+    // The Host answers the ready message below with whether the Run offers its Assistant room.
+    const receiveRunAssistantOffer = (event: MessageEvent): void => {
+      const offer = readRunAssistantOffer(event, { origin: location.origin, parent: window.parent })
+      if (offer === null) return
+      if (offer.kind === 'rejected') {
+        status = `Run Assistant: ${offer.reason}`
+        return
+      }
+      runAssistantOffered = offer.available
+    }
     window.addEventListener('message', receiveDisplayWindowMessage)
+    window.addEventListener('message', receiveRunAssistantOffer)
     window.parent.postMessage(displayWindowReadyMessage(), location.origin)
     completeStep('route')
     completeStep('interface')
@@ -1879,6 +1957,7 @@
     const executionPoll = window.setInterval(() => { void refreshExecution() }, 1_000)
     return () => {
       window.removeEventListener('message', receiveDisplayWindowMessage)
+      window.removeEventListener('message', receiveRunAssistantOffer)
       cleanupInternalDiagnosticsGlobal()
       longTaskMonitor?.stop()
       longTaskMonitor = null
@@ -1980,6 +2059,7 @@
         {railConfig}
         {placementMode}
         {selectedControllerId}
+        cardObjectId={plantCard?.objectId ?? null}
         {categoryMapVisibility}
         deferObjectRows={!richOperationalUiReady}
         {presentationFor}
@@ -1991,9 +2071,6 @@
         {openProcessDisplay}
         {openProcedureSystem}
         {openProcedureSystemAt}
-        {openProcessPlantArtifact}
-        {openProcessPlantCatalog}
-        {openProcessPlantCredibility}
         {openDroneControl}
         {openDroneProfileEditor}
         {procedureSummariesForObject}
@@ -2034,7 +2111,7 @@
           {clock}
           {routeRevision}
           {debugMapInput}
-          highlightedObjectIds={scenarioState?.highlightedObjectIds ?? emptyStringArray}
+          highlightedObjectIds={mapHighlightedObjectIds}
           mutedObjectIds={mapMutedObjectIds}
           prompt={mapPrompt}
           {hiddenObjectCategoryIds}
@@ -2073,13 +2150,32 @@
           cameraInteraction={mapCameraInteraction}
           cameraPadding={mapCameraPadding}
           targetPicking={targetPickingWanted(mapClickContext)}
-          onGroundSelected={groundClicksWanted(mapClickContext) ? selectGround : undefined}
+          onGroundSelected={plantCard !== null ? () => closePlantCard() : groundClicksWanted(mapClickContext) ? selectGround : undefined}
           targetPreviewFor={targetPreviewsWanted(mapClickContext) ? previewTarget : undefined}
+          takesDiskClicks={opensPlantCard}
+          cardObjectId={plantCard?.objectId ?? null}
+          onCardFrame={frame => { plantCardFrame = frame }}
         />
       {:else if mapVisible}
         <div class="map-loading">Starting map...</div>
       {:else}
         <div class="surface-empty"></div>
+      {/if}
+      {#if plantCardObject !== null}
+        {@const view = plantCardView(plantCardObject, procedureSummariesForObject(plantCardObject))}
+        {@const plantSystemAvailable = processPlantIdForObject(plantCardObject) !== null}
+        {#if view !== null}
+          <PlantCard
+            {view}
+            objectId={plantCardObject.id}
+            frame={plantCardFrame}
+            instructorOffered={controllerControls && plantSystemAvailable}
+            assistantOffered={runAssistantOffered && simulationRunId !== null}
+            engineeringOffered={plantSystemAvailable}
+            onAction={followPlantCardAction}
+            onClose={dismissPlantCard}
+          />
+        {/if}
       {/if}
       {#if mapAssignmentPicker}
         <section

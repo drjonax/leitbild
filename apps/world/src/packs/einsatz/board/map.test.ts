@@ -241,7 +241,7 @@ describe('Board map targets and previews', () => {
       }
       const targets: Array<Parameters<NonNullable<MapTargetPanel['onMapTarget']>>> = []
       const panel: MapTargetPanel = { label: 'Board', packId: einsatzPackId, onMapTarget: (controllerId, target) => { targets.push([controllerId, target]) }, previewMapTarget: (controllerId, target) => screen.preview(controllerId, target) }
-      const click = (controller: string | null): MapClickContext => ({ controller: controller === null ? null : object(controller), targeting, context: { objects }, panel })
+      const click = (controller: string | null): MapClickContext => ({ controller: controller === null ? null : object(controller), targeting, context: { objects }, panel, opensCard: () => false })
 
       // With nothing selected, a click selects what it hits, the carrier quietly as a controller.
       expect(routeObjectClick(object('u1'), click(null))).toEqual({ kind: 'select', objectId: 'u1' as ObjectId, note: null })

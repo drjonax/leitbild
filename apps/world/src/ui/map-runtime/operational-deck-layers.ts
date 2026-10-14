@@ -1,4 +1,5 @@
 import type { Layer, PickingInfo } from '@deck.gl/core'
+import type { OperationalObject } from '../../core/model/index.ts'
 import { IconLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers'
 import type { CatalogueSymbolAtlasState } from './catalogue-symbol-atlas.ts'
 import { darkStroke, rgba, white } from './colors.ts'
@@ -37,6 +38,16 @@ export interface OperationalDeckLayerConfig {
    * alone, as it always has.
    */
   readonly disksPick: boolean
+  /**
+   * Objects whose whole disk takes a mouse click and hover on every surface,
+   * not only while it picks targets: those a click opens a card for
+   * (`OperationalMap.svelte`, `takesDiskClicks`). Every other disk picks only
+   * as `disksPick` says, so it never takes a ground, placement or Pack feature
+   * click that used to pass between a glyph's strokes. Null for a finger or
+   * a pen, which pick within a radius around the strokes that the disk would
+   * widen (`map/map-pointer.ts`).
+   */
+  readonly diskClicks: ((object: OperationalObject) => boolean) | null
   /** The zoom step the icons are laid out for (`point-declutter.ts`, `fanZoomOf`). */
   readonly zoom: number
   readonly assignmentInteraction?: MapAssignmentInteraction
@@ -276,6 +287,8 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
   const layerData = config.layerData ?? createOperationalDeckLayerDataCache().dataFor(snapshot, visibleFamilies, config.catalogueAtlas, config.zoom)
   const visiblePaths = layerData.visiblePaths
   const points = layerData.points
+  const diskClicks = config.diskClicks
+  const diskClickPoints = config.disksPick || diskClicks === null ? emptyPoints : points.filter(point => diskClicks(point.object))
   const catalogueAtlas = config.catalogueAtlas
   const onSymbolClick = (info: PickingInfo<OperationalPointFeature>): void => {
     const point = asPointPicking(info)
@@ -450,6 +463,29 @@ export const createOperationalDeckLayers = (config: OperationalDeckLayerConfig):
         getFillColor: snapshot.revisions.points,
       },
     }),
+    // The disks of objects a click opens a card for, drawn transparent and
+    // picked: a click anywhere on such a disk is its object's. Not needed
+    // while every disk picks.
+    ...(diskClickPoints.length > 0
+      ? [new ScatterplotLayer<OperationalPointFeature>({
+          id: 'leitbild-object-disk-clicks',
+          data: diskClickPoints,
+          pickable: true,
+          visible: visible(visibleFamilies, 'objects'),
+          radiusUnits: 'pixels',
+          stroked: false,
+          filled: true,
+          getPosition: point => point.position,
+          getRadius: point => statusDiskRadiusPx(point.sizePx),
+          getFillColor: rgba(0, 0, 0, 0),
+          onClick: onSymbolClick,
+          onHover: onSymbolHover,
+          updateTriggers: {
+            getPosition: snapshot.revisions.points,
+            getRadius: snapshot.revisions.points,
+          },
+        })]
+      : []),
     new IconLayer<OperationalPointFeature>({
       id: 'leitbild-object-symbols',
       data: layerData.compiledPoints,

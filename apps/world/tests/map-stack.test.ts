@@ -83,6 +83,7 @@ describe('objects stacked under one tap', () => {
       visibleFamilies: new Set(['objects']),
       catalogueAtlas: emptyCatalogueSymbolAtlas,
       disksPick: false,
+      diskClicks: null,
       zoom: 10,
       onObjectSelected: () => undefined,
       onObjectSeen: () => undefined,
