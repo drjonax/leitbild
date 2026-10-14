@@ -549,7 +549,12 @@ impl<S: System> Ida<S> {
     /// `target`, or a located root, or the armed stop time; the outcome is
     /// as [`Ida::advance`]'s, at the returned time. Read the step's
     /// interpolant by [`Ida::dense`] (lead decision S3-D1 #6).
-    pub fn step(&mut self, target: f64, y: &mut [f64], yp: &mut [f64]) -> Result<Advance> {
+    pub fn advance_one_step(
+        &mut self,
+        target: f64,
+        y: &mut [f64],
+        yp: &mut [f64],
+    ) -> Result<Advance> {
         if self.failed {
             return Err("IDA handle is fail-stopped".into());
         }

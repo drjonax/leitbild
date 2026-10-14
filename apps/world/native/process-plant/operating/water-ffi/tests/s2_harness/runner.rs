@@ -588,6 +588,7 @@ pub fn advance(
     let dt_series = spec.observation_s.unwrap_or(spec.output_s);
     let per_output = (spec.output_s / dt_series).round() as usize;
     let last_sample = (spec.duration_s / dt_series).round() as usize;
+    let per_second = (1. / dt_series).round() as usize;
     let grid = |j: usize| t0 + j as f64 * dt_series;
     let mut j = 1usize;
     let (mut ys, mut yps) = (y.clone(), yp.clone());
@@ -612,7 +613,7 @@ pub fn advance(
         // root, or the armed stop.
         let tally0: Tally = ida.system().tally;
         let c0 = thread_cpu_s();
-        let outcome = ida.step(boundary, &mut y, &mut yp);
+        let outcome = ida.advance_one_step(boundary, &mut y, &mut yp);
         let call = thread_cpu_s() - c0;
         let tally = ida.system().tally.since(tally0);
         attribution.call(call, tally, false, part);
@@ -685,13 +686,15 @@ pub fn advance(
                     process_s: process_cpu_s() - process0,
                     observation_s: attribution.observation(),
                 });
-                if let Some(f) = settled.as_mut() {
-                    let whole = ((at - t0) - (at - t0).round()).abs() < 1e-9;
-                    if whole && f(&credited) {
-                        exit = Some(format!("settled at t = {} s", at - t0));
-                        ended = Some(at);
-                        break;
-                    }
+                // The settled check at each whole simulated second (the
+                // sample index just taken is a multiple of a second's samples).
+                if let Some(f) = settled.as_mut()
+                    && (j - 1).is_multiple_of(per_second)
+                    && f(&credited)
+                {
+                    exit = Some(format!("settled at t = {} s", at - t0));
+                    ended = Some(at);
+                    break;
                 }
             } else {
                 observations += 1;

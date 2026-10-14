@@ -1038,9 +1038,13 @@ fn analyse_source(source: &str, crate_source: bool) -> Vec<Finding> {
                 .into_iter()
                 .any(|(c, b)| convergence_test(&t[c.0..c.1], &flags) && exits(&t, b))
             || midpoint(&t, from, to, &updated);
-        // A loop that advances stock IDA iterates in time, not on F(x) = 0.
-        let integrates =
-            (from..to).any(|k| is(&t[k], "advance") && is(&t[k - 1], ".") && is(&t[k + 1], "("));
+        // A loop that advances stock IDA iterates in time, not on F(x) = 0:
+        // `.advance(` (IDA_NORMAL) or `.advance_one_step(` (IDA_ONE_STEP).
+        let integrates = (from..to).any(|k| {
+            (is(&t[k], "advance") || is(&t[k], "advance_one_step"))
+                && is(&t[k - 1], ".")
+                && is(&t[k + 1], "(")
+        });
         let iteration = !iterates.is_empty() && converges && !integrates;
         if iteration {
             found(
