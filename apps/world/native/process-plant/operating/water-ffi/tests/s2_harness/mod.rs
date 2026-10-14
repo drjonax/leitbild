@@ -10,8 +10,14 @@
 //! - [`conservation`]: a run's identities and ledger closures, in the
 //!   schema's `identities` and `ledger` sections.
 #![allow(dead_code)] // Each test crate (s2_gates, s2_conservation) uses its own subset.
+pub mod compare;
 pub mod compose;
 pub mod conservation;
 pub mod gates;
+pub mod guards;
+pub mod meter;
+pub mod outputs;
 pub mod receipt;
 pub mod run;
+pub mod runner;
+pub mod sequence;

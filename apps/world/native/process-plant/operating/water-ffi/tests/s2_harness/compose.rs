@@ -245,8 +245,18 @@ pub struct Composed {
     pub cpu_s: f64,
 }
 
+/// Step (A)'s export: S1's settled face volume flows, rotor momenta and
+/// summary ([`s1_settled_flows`]), deterministic for one packet and build,
+/// so a harness composing several runs computes it once.
+pub type Settled = (Vec<f64>, Vec<f64>, Value);
+
 /// Steps (A)-(D) on the packet named by `LD01_OPERATING_HOT_SPINE_PACKET`.
 pub fn compose(shared: &Block) -> Composed {
+    compose_from(shared, None)
+}
+
+/// Steps (A)-(D), with step (A)'s export given (`Some`) or computed.
+pub fn compose_from(shared: &Block, settled: Option<&Settled>) -> Composed {
     let started = process_cpu_s();
     let packet = packet_file();
     let network_packet: NetworkPacket =
@@ -254,7 +264,14 @@ pub fn compose(shared: &Block) -> Composed {
     let joined_packet: packet::Packet =
         serde_json::from_slice(&packet.bytes).expect("joined packet");
     let raw: Value = serde_json::from_slice(&packet.bytes).expect("packet json");
-    let (flows, momenta, s1) = s1_settled_flows(&network_packet, shared);
+    let (flows, momenta, s1) = match settled {
+        Some((flows, momenta, s1)) => (
+            flows.clone(),
+            momenta.clone(),
+            json!({"reused": "step (A)'s export computed once by this harness", "export": s1}),
+        ),
+        None => s1_settled_flows(&network_packet, shared),
+    };
     let (network, y_network, network_ids, flowing) =
         composed_network(&network_packet, &flows, &momenta);
     let section: SecondarySection =

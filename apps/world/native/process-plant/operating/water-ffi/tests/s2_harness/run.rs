@@ -47,6 +47,11 @@ pub struct RunSpec {
     pub total_guard_s: f64,
     /// A step cap reported only (R0's), `None` where none is declared.
     pub report_only_step_cap: Option<i64>,
+    /// Caps and guard reported only, never stopping the run (R0's CPU cap;
+    /// every cap of a smoke run, whose caps are not declared values).
+    pub caps_report_only: bool,
+    /// Observe the rods' travel (trip runs: insertion times).
+    pub rods_observed: bool,
 }
 
 impl RunSpec {
@@ -60,7 +65,8 @@ impl RunSpec {
             "continuation": (self.window_s < self.duration_s).then(|| json!({"from_s": self.window_s, "max_step_s": null, "restart": "exact consistent start"})),
             "commands": self.commands.iter().map(|(t, c)| json!({"t_s": t, "command": c})).collect::<Vec<_>>(),
             "solver_cap_s": self.solver_cap_s, "total_guard_s": self.total_guard_s,
-            "report_only_step_cap": self.report_only_step_cap})
+            "report_only_step_cap": self.report_only_step_cap, "caps_report_only": self.caps_report_only,
+            "rods_observed": self.rods_observed})
     }
 }
 
@@ -76,9 +82,15 @@ pub struct CpuBuckets {
     /// Jacobian CPU by assembly kind (network local coupling, owner columns,
     /// nuclear partials, the rest), from the joined counters' shares.
     pub jacobian_by_kind: Value,
-    pub klu_analyze_and_factor_s: f64,
-    pub klu_refactor_s: f64,
-    pub klu_solve_s: f64,
+    /// Stock KLU inside `IDASolve`, by operation: `None` until a timing
+    /// shim on the SUNLinSol_KLU ops exists (lead-owned `src/ida.c`,
+    /// S2-D16); until then that CPU is inside `solver_internals_s`.
+    pub klu_analyze_and_factor_s: Option<f64>,
+    pub klu_refactor_s: Option<f64>,
+    pub klu_solve_s: Option<f64>,
+    /// How stock KLU's CPU is attributed, and its counts priced as a
+    /// diagnostic.
+    pub klu_note: Value,
     pub consistent_start_s: f64,
     pub root_s: f64,
     pub observation_s: f64,
@@ -92,9 +104,9 @@ impl CpuBuckets {
         self.solver_internals_s
             + self.residual_s
             + self.jacobian_s
-            + self.klu_analyze_and_factor_s
-            + self.klu_refactor_s
-            + self.klu_solve_s
+            + self.klu_analyze_and_factor_s.unwrap_or(0.)
+            + self.klu_refactor_s.unwrap_or(0.)
+            + self.klu_solve_s.unwrap_or(0.)
             + self.consistent_start_s
             + self.root_s
             + self.observation_s
@@ -102,15 +114,18 @@ impl CpuBuckets {
             + self.account_s
             + self.harness_s
     }
-    /// Solver CPU as the declaration defines it: process CPU less
-    /// observation, root-return handling and the ledger (G11).
+    /// Solver CPU as the declaration defines it (G11): process CPU less
+    /// observation and the ledger's extra evaluation (and the harness's own
+    /// ledger closures at outputs).
     pub fn solver(&self, process_s: f64) -> f64 {
         process_s - self.observation_s - self.ledger_s - self.account_s
     }
     pub fn json(&self, process_s: f64, clock: &str) -> Value {
         let attributed = self.attributed();
         json!({"process_s": process_s, "solver_s": self.solver(process_s), "attributed_s": attributed,
-            "attributed_fraction": attributed / process_s, "clock": clock,
+            "attributed_fraction": attributed / process_s, "unattributed_s": process_s - attributed,
+            "observation_s": self.observation_s, "ledger_s": self.ledger_s, "clock": clock,
+            "klu_in_ida": self.klu_note,
             "buckets": {"solver_internals_s": self.solver_internals_s, "residual_s": self.residual_s,
                 "jacobian_s": self.jacobian_s, "jacobian_by_kind": self.jacobian_by_kind,
                 "klu_analyze_and_factor_s": self.klu_analyze_and_factor_s, "klu_refactor_s": self.klu_refactor_s,
@@ -146,6 +161,13 @@ pub struct RunRecord {
     pub observations: usize,
     /// The credited outputs' summary (the series stay in the run).
     pub credited: Value,
+    /// Caps and guards: values, mode, and where each was reached.
+    pub caps: Value,
+    /// D3 (a) at every accepted sample (S2-D23): domain, margin, exit.
+    pub domain: Value,
+    /// A declared exit that ended the run explicitly (a domain exit, a
+    /// declared limit), never a failure.
+    pub exit: Option<String>,
 }
 
 impl RunRecord {
@@ -161,20 +183,23 @@ impl RunRecord {
     }
     pub fn json(&self) -> Value {
         let spec = self.spec.as_ref().map(RunSpec::json).unwrap_or(Value::Null);
-        let identity = |k: &str| self.identities.get(k).cloned().unwrap_or(Value::Null);
-        let ledger = |k: &str| self.ledger.get(k).cloned().unwrap_or(Value::Null);
+        let section = |v: &Value, keys: &[&str]| -> Value {
+            let mut out = v.as_object().cloned().unwrap_or_default();
+            for k in keys {
+                out.entry(k.to_string()).or_insert(Value::Null);
+            }
+            Value::Object(out)
+        };
         json!({"configuration": spec,
             "reached_s": self.reached_s, "failure": self.failure, "cap_reached": self.cap_reached,
             "counts": self.counts.json(), "window_counts": self.window_counts.map(Counts::json),
             "continuation_counts": self.continuation_counts.map(Counts::json),
             "restarts": self.restarts, "restart_count_by_kind": self.restart_count_by_kind(),
             "cpu": self.cpu.json(self.process_cpu_s, &self.clock),
-            "identities": {"bound_relative": identity("bound_relative"), "unit_energy": identity("unit_energy"),
-                "primary_mass": identity("primary_mass"), "primary_boron": identity("primary_boron"), "sg_mass": identity("sg_mass")},
-            "ledger": {"gate": ledger("gate"), "bound_local_tolerance_units": ledger("bound_local_tolerance_units"),
-                "closures": ledger("closures"), "reinitialised_at_s": ledger("reinitialised_at_s"), "trapezoid": ledger("trapezoid")},
+            "identities": section(&self.identities, &["bound_relative", "unit_energy", "primary_mass", "primary_boron", "sg_mass"]),
+            "ledger": section(&self.ledger, &["gate", "bound_local_tolerance_units", "closures", "reinitialised_at_s", "trapezoid"]),
             "samples": {"outputs": self.outputs, "observations": self.observations},
-            "credited": self.credited})
+            "credited": self.credited, "caps": self.caps, "domain": self.domain, "exit": self.exit})
     }
     /// The run's own schema gaps (a run without a spec lacks its
     /// configuration's keys).
