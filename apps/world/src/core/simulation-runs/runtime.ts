@@ -862,10 +862,12 @@ export const createSimulationRunRuntime = async (config: {
   const handleCoreCommand = async (command: CommandEnvelope, commandSource: Provenance['source'], actor: Actor): Promise<CommandResult | null> => {
     const at = nowIso()
     if (command.kind !== deleteObjectCommandKind) {
+      const actorKind = actor.role === 'ai_agent' ? 'ai' as const : actor.role === 'system' ? 'system' as const : 'person' as const
       try {
         const commit = await prepareProcedureCommand({
           command,
           procedures: state.snapshot().procedures,
+          actorKind,
           readDocument: async documentConfig =>
             await procedureSourceService.readDocument(documentConfig),
           ...(procedureSourceService.assertTargetApplicable === undefined ? {} : { assertTargetApplicable: procedureSourceService.assertTargetApplicable }),
@@ -898,7 +900,7 @@ export const createSimulationRunRuntime = async (config: {
             simulationRunId: config.id, at: nowIso(), procedures: snapshot.procedures,
             simulationTime: runClock.read().currentTime,
             commandSource,
-            actorKind: actor.role === 'ai_agent' ? 'ai' : actor.role === 'system' ? 'system' : 'person',
+            actorKind,
             ...(actor.displayName === undefined ? {} : { actorLabel: actor.displayName }),
             objectIds: new Set(snapshot.objects.map(object => object.id)),
             objects: new Map(snapshot.objects.map(object => [object.id, object])),
