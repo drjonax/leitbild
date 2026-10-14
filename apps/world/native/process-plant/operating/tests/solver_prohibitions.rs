@@ -368,6 +368,10 @@ const SOLVER_API: &[&str] = &[
     "ilaver",
 ];
 
+/// libc CPU clocks a source may declare for its own measurements (a
+/// binary's stderr timing): not solver API, accepted outside the pin.
+const MEASUREMENT_CLOCKS: &[&str] = &["clock_gettime", "getrusage"];
+
 /// Crate dependencies of both operating crates.
 const DEPENDENCIES: &[&str] = &["leitbild-operating-plant", "serde", "serde_json"];
 
@@ -911,13 +915,59 @@ const GLOBALISATION: [&str; 9] = [
     "underrelax",
 ];
 
-/// Every finding of the rules above in one Rust source.
+/// Token ranges of the unit-test items of a crate source: an item under
+/// exactly `#[test]` or `#[cfg(test)]` (with any further attributes), to the
+/// end of its body or its `;`. Such code is compiled only into the crate's
+/// test harness, never into the library or a binary.
+fn unit_test_items(t: &[Token]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    for k in 0..t.len().saturating_sub(6) {
+        if !(is(&t[k], "#") && is(&t[k + 1], "[")) {
+            continue;
+        }
+        let end = close(t, k + 1);
+        let inner: Vec<&str> = t[k + 2..end].iter().map(|x| x.text.as_str()).collect();
+        if inner != ["test"] && inner != ["cfg", "(", "test", ")"] {
+            continue;
+        }
+        // Skip any further attributes, then the item to its body or `;`.
+        let mut j = end + 1;
+        while j + 1 < t.len() && is(&t[j], "#") && is(&t[j + 1], "[") {
+            j = close(t, j + 1) + 1;
+        }
+        let stop = match body_open(t, j) {
+            Some(open) => close(t, open),
+            None => (j..t.len())
+                .find(|q| is(&t[*q], ";"))
+                .unwrap_or(t.len() - 1),
+        };
+        ranges.push((k, stop));
+    }
+    ranges
+}
+
+/// Every finding of the rules above in one Rust source of a test target
+/// (`tests/`): nothing is exempt, since harness code makes receipts.
 fn analyse(source: &str) -> Vec<Finding> {
+    analyse_source(source, false)
+}
+
+/// Every finding in one Rust source; in a crate source (`src/`) the unit
+/// tests are not searched.
+fn analyse_source(source: &str, crate_source: bool) -> Vec<Finding> {
     let t = lex(source);
     let fns = functions(&t);
     let name_at = |k: usize| enclosing(&fns, k).map_or("<item>".to_string(), |f| f.name.clone());
+    let exempt = if crate_source {
+        unit_test_items(&t)
+    } else {
+        Vec::new()
+    };
     let mut out = Vec::new();
     let mut found = |k: usize, rule: &'static str, what: String| {
+        if exempt.iter().any(|(a, b)| *a <= k && k <= *b) {
+            return;
+        }
         out.push(Finding {
             function: name_at(k),
             rule,
@@ -1230,7 +1280,8 @@ fn no_custom_solver_outside_the_reviewed_iterations() {
     let mut scanned = 0;
     for (path, source) in sources().iter().filter(|(p, _)| p.ends_with(".rs")) {
         scanned += 1;
-        for f in analyse(source) {
+        let crate_source = path.starts_with("src/") || path.starts_with("water-ffi/src/");
+        for f in analyse_source(source, crate_source) {
             counts
                 .entry((path.clone(), f.function.clone(), f.rule))
                 .or_default()
@@ -1285,6 +1336,9 @@ fn solver_api_is_the_stock_wrappers_pinned_set() {
             continue;
         }
         for (name, line) in foreign_identifiers(&path, &source) {
+            if MEASUREMENT_CLOCKS.contains(&name.as_str()) {
+                continue;
+            }
             if !SOLVER_API.contains(&name.as_str()) {
                 problems.push(format!("{path}:{line}: `{name}` is not on the pinned list"));
             }
@@ -1656,4 +1710,30 @@ fn physics(rotors: &[Rotor]) -> f64 {
 }
 "##;
     assert_eq!(analyse(clean), Vec::new());
+}
+
+/// Unit tests in a crate source are not searched; the same loop in
+/// production code there, under a wider `cfg`, or in a test target is.
+#[test]
+fn unit_tests_of_crate_sources_are_exempt_and_nothing_else() {
+    let newton = "let mut x = 1.0; for _ in 0..50 { let f = law(x); x -= f / slope(x); if f.abs() < 1e-10 { break; } }";
+    let unit = format!(
+        "pub fn law(x: f64) -> f64 {{ x }}\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn inverse() {{ {newton} }}\n}}\n#[test]\n#[ignore]\nfn alone() {{ {newton} }}"
+    );
+    assert_eq!(analyse_source(&unit, true), Vec::new());
+    // A test target's #[test] is searched: harnesses make receipts.
+    assert!(rules(&unit).contains("iteration"));
+    for production in [
+        format!("pub fn inverse() {{ {newton} }}"),
+        format!("#[cfg(any(test, feature = \"x\"))]\npub fn inverse() {{ {newton} }}"),
+        format!("#[cfg(not(test))]\npub fn inverse() {{ {newton} }}"),
+        format!("#[cfg(test)]\nmod tests;\npub fn inverse() {{ {newton} }}"),
+    ] {
+        assert!(
+            analyse_source(&production, true)
+                .iter()
+                .any(|f| f.rule == "iteration"),
+            "{production}"
+        );
+    }
 }
