@@ -59,7 +59,7 @@ use leitbild_operating_plant::{
 use leitbild_operating_water::{
     If97,
     ida::{Advance, Ida, Initial},
-    joined::{Discrete, Integrated, Restart, consistent_start, discrete_restart},
+    joined::{Discrete, Integrated, Matrices, Restart, consistent_start, discrete_restart},
     network::Integrated as NetworkIntegrated,
 };
 use serde_json::{Map, Value, json};
@@ -610,6 +610,9 @@ fn smoke() {
     let start_weights = weights(&y, &atol, rtol);
     let (yp, start) = consistent_start(
         &mut joined,
+        // The start's matrices since S2-D4 (6d1ee9be): the colored
+        // reference, as this pin was recorded; blocks are the production's.
+        Matrices::Colored,
         0.,
         &mut y,
         &ids,
@@ -653,6 +656,8 @@ fn smoke() {
         first_step_s: FIRST_STEP_S,
         start_bound: START_BOUND,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     };
     restart.configure(&mut ida).unwrap();
@@ -1031,9 +1036,17 @@ fn settled_state_pin() {
         .iter()
         .fold(0_f64, |m, r| m.max(r.value.abs()));
     let start_weights = weights(&y, &atol, rtol);
-    let (yp, report) =
-        consistent_start(&mut joined, t, &mut y, &ids, &start_weights, START_BOUND, 3)
-            .expect("exact consistent start at the settled state");
+    let (yp, report) = consistent_start(
+        &mut joined,
+        Matrices::Colored,
+        t,
+        &mut y,
+        &ids,
+        &start_weights,
+        START_BOUND,
+        3,
+    )
+    .expect("exact consistent start at the settled state");
     joined.evaluate(t, &y, &yp, None, 0., None).unwrap();
     let rows: Vec<f64> = joined.rows().iter().map(|r| r.value).collect();
     let rates = settling_rates(&mut joined, &network_packet, t, &y, &yp);

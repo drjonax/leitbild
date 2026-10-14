@@ -1032,6 +1032,8 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         first_step_s: FIRST_STEP_S,
         start_bound: 1e-12,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
@@ -1439,6 +1441,8 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
         first_step_s: FIRST_STEP_S,
         start_bound: 1e-12,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     }
     .configure(&mut ida)
