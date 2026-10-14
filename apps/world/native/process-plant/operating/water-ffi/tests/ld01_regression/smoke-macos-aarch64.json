@@ -63,7 +63,7 @@
     "z1": {
       "constraint_rate_within_bound": true,
       "projection_passes": 1,
-      "rate_passes": 2,
+      "rate_passes": 1,
       "residual_within_bound": true
     }
   },

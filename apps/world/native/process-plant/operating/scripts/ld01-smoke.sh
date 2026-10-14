@@ -51,7 +51,7 @@ phases = ", ".join("%s %.1f" % (k, v) for k, v in info["phase_cpu_s"].items())
 print("ld01-smoke: process CPU %.1f s (%s); load %s" % (info["process_cpu_s"], phases, info["load_average"]))'
 fi
 if [ "$status" -ne 0 ]; then
-  sed -n '/differs from\|no committed\|panicked/,/^note:/p' "$log" >&2
+  sed -n -E '/differs from|no committed|panicked/,/^note:/p' "$log" >&2
   echo "ld01-smoke: FAILED after $((ended - started)) s (build $((built - started)) s); full log $log" >&2
   exit "$status"
 fi
