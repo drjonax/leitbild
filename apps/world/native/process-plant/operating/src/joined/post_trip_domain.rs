@@ -1,5 +1,4 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/reactor/kinetics.md#post-trip-domain-extension
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#d3-kinetics-domain-after-a-trip-blocks-the-s2-trip
 //! D3 (a): the post-trip kinetics domain, checked on accepted states.
 //!
 //! The `ld01-post-trip-domain` block widens two source-feedback domains, the
