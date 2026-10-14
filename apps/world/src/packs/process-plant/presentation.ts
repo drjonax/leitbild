@@ -21,6 +21,13 @@ const parseUnitData = (object: OperationalObject): ProcessPlantUnitPackData | nu
   return parsed.success ? parsed.data : null
 }
 
+// What the Plant's card leads with: its status and the operating mode it is
+// in, then the energy its sources put in and its sinks take out. A Plant whose
+// runtime is pending has no energy to state yet.
+const glanceOf = (projection: ProcessPlantUnitProjection): ReadonlyArray<string> => projection.statusTone === 'idle'
+  ? [projection.statusLabel]
+  : [projection.modeLabel === undefined ? projection.statusLabel : `${projection.statusLabel} · ${projection.modeLabel}`, projection.summary]
+
 const presentationForUnit = (object: OperationalObject, data: ProcessPlantUnitPackData): PackObjectPresentation => {
   const projection = data.projection ?? emptyProcessPlantProjection(object.timestamps.updatedAt)
   return {
@@ -29,6 +36,7 @@ const presentationForUnit = (object: OperationalObject, data: ProcessPlantUnitPa
     color: colorByTone[projection.statusTone],
     summary: projection.summary,
     status: packStatus(projection.statusTone, projection.statusLabel),
+    glance: glanceOf(projection),
     fields: [
       packField('model', 'Model', data.model.ref),
       packField('operating-point', 'Operating point', data.operatingPoint.ref),

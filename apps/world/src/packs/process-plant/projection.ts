@@ -11,7 +11,7 @@ import {
   type ProcessPlantUnitPackData,
   type ProcessPlantUnitProjection,
 } from './model.ts'
-import type { ProcessPlantIcLifecycleState } from './runtime/index.ts'
+import { processPlantOperatingMode, type ProcessPlantIcLifecycleState } from './runtime/index.ts'
 import type { ProcessPlantVariableHandle } from './runtime/variable-table.ts'
 import type { ProcessPlantRuntimeInstance } from './runtime-instance.ts'
 
@@ -87,6 +87,18 @@ const activeLifecycles = (
     .filter(lifecycle => lifecycle.active && !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService)
 }
 
+// Whether a trip of a first-out group the model declares as its reactor trip is among them.
+const reactorTripped = (
+  plant: ProcessPlantRuntimeInstance,
+  lifecycles: ReadonlyArray<ProcessPlantIcLifecycleState>,
+): boolean => {
+  const groups = new Set(plant.plant.automation.firstOutGroups.filter(group => group.reactorTrip).map(group => group.id))
+  return lifecycles.some(lifecycle => {
+    const group = lifecycle.annunciator?.firstOutGroup
+    return lifecycle.kind === 'trip' && group !== undefined && groups.has(group)
+  })
+}
+
 const statusFor = (
   lifecycles: ReadonlyArray<ProcessPlantIcLifecycleState>,
 ): {
@@ -132,12 +144,16 @@ export const projectedProcessPlantUnit = (config: {
     processPlantField('runtime-performance', 'Runtime', formatRuntimePerformance(plant)),
   ]
   const headline = rail.headline.map(plan => readField(plant, plan))
+  // The operating mode the unit overview names (composed-display-query.ts).
+  const mode = processPlantOperatingMode({ system: plant.plant, runtime: plant.runtime, modes: plant.plant.automation.operatingModes })
   const projection: ProcessPlantUnitProjection = {
     schemaVersion: 1,
     summary: headline.length === 0 ? status.label : headline.map(field => `${field.label} ${field.value}`).join(' · '),
     statusTone: status.tone,
     statusLabel: status.label,
     ...(status.highestSeverity === undefined ? {} : { highestSeverity: status.highestSeverity }),
+    ...(mode === null ? {} : { modeLabel: mode.label }),
+    ...(reactorTripped(plant, lifecycles) ? { reactorTripped: true } : {}),
     activeAlarmCount: lifecycles.filter(lifecycle => lifecycle.kind === 'alarm').length,
     activeTripCount,
     fields,

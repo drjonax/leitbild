@@ -27,6 +27,14 @@ export const processPlantUnitProjectionSchema = z.object({
   statusTone: z.enum(['ready', 'working', 'error', 'idle']),
   statusLabel: z.string().min(1),
   highestSeverity: z.enum(['info', 'notice', 'warning', 'critical']).optional(),
+  /** The label of the operating mode the Plant is in; absent where its model declares none or none holds. */
+  modeLabel: z.string().min(1).optional(),
+  /**
+   * Present while a trip of a first-out group the model declares as its
+   * reactor trip is active and annunciated; other trips (an auxiliary feed
+   * start, a turbine trip) leave it absent.
+   */
+  reactorTripped: z.literal(true).optional(),
   activeAlarmCount: z.number().int().nonnegative(),
   activeTripCount: z.number().int().nonnegative(),
   fields: z.array(processPlantUnitProjectionFieldSchema),
