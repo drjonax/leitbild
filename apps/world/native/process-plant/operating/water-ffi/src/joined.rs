@@ -546,6 +546,19 @@ pub fn consistent_start_exempting<P: Properties + WaterProperties>(
     Ok((yp, report))
 }
 
+/// Each transacting owner's own coordinate range: the SG secondary, the rods
+/// and the PZR block (G6), which follows the rods and is empty while its
+/// owner is not composed.
+fn owner_ranges(
+    o: leitbild_operating_plant::joined::operator::Offsets,
+) -> [(&'static str, std::ops::Range<usize>); 3] {
+    [
+        ("secondary", o.secondary..o.rods),
+        ("rods", o.rods..o.pzr),
+        ("pzr", o.pzr..o.end),
+    ]
+}
+
 /// The owners (name, coordinate range) whose transaction changed the value
 /// of a coordinate that was differential before it (`identity_before`):
 /// lead decision S2-D21's transacted owners, such as a seated rod (travel
@@ -710,7 +723,7 @@ mod integrated {
             .map(|(v, a)| 1. / (relative * v.abs() + a))
             .collect();
         let o = joined.offsets();
-        let owners = [("secondary", o.secondary..o.rods), ("rods", o.rods..o.end)];
+        let owners = super::owner_ranges(o);
         let transacted = transacted_owners(&owners, &before, y, &identity_before);
         let exempt: Vec<bool> = if transacted.is_empty() {
             Vec::new()
@@ -946,7 +959,34 @@ mod integrated {
 
 #[cfg(test)]
 mod tests {
-    use super::{correction_wrms, transacted_owners};
+    use super::{correction_wrms, owner_ranges, transacted_owners};
+    use leitbild_operating_plant::joined::operator::Offsets;
+
+    #[test]
+    fn each_transacting_owner_owns_only_its_own_coordinates() {
+        let composed = Offsets {
+            nuclear: 2,
+            solids: 4,
+            secondary: 6,
+            rods: 9,
+            pzr: 12,
+            end: 15,
+        };
+        let [secondary, rods, pzr] = owner_ranges(composed);
+        assert_eq!(secondary, ("secondary", 6..9));
+        assert_eq!(
+            rods,
+            ("rods", 9..12),
+            "the rods end where the PZR block starts"
+        );
+        assert_eq!(pzr, ("pzr", 12..15));
+        let without = Offsets {
+            pzr: 12,
+            end: 12,
+            ..composed
+        };
+        assert!(owner_ranges(without)[2].1.is_empty());
+    }
 
     #[test]
     fn the_guard_leaves_out_only_the_exempt_coordinates_and_reports_them() {
