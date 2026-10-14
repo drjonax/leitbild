@@ -14,6 +14,14 @@ quadratures = ["ida"]
 
 [dependencies]
 leitbild-operating-plant = { path = ".." }
+# The steady solids preparation binary's one JSON boundary.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+# G18/S2-D3: the steady solid state by stock IDA (needs the `ida` feature).
+[[bin]]
+name = "prepare_steady_solids"
+required-features = ["ida"]
 
 [dev-dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
