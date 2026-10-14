@@ -131,7 +131,9 @@ test.skipIf(!native)('actual wiki geometry, finite caloric recipients, wet SG st
   expect(r.geometry.materialContacts).toHaveLength(448)
   expect(sum(r.geometry.materialContacts.map(c=>c.cladArea_m2))).toBeCloseTo(193*264*Math.PI*.0095*4,8)
   for(const sg of r.steamGenerators){
-    expect(sg.mass_kg).toBeCloseTo(56054.76789328862,7)
+    // S2-D18: prepared at the hot reference's 6.36314 MPa with 72 m3 liquid.
+    expect(sg.pressure_Pa).toBe(6363140);expect(sg.liquidVolume_m3).toBe(72)
+    expect(sg.mass_kg).toBeCloseTo(55667.541481887456,7)
     expect(sg.derivative.pressureEnergy).toBeGreaterThan(0)
     expect(sum(sg.metal.map(m=>m.capacity_J_K))).toBe(150e6)
     expect(sum(sg.metal.map(m=>m.exchangeArea_m2))).toBe(5000)

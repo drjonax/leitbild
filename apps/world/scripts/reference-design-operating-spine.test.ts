@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { carveOperatingPrimary, compileOperatingHousingLosses, compileOperatingLineLosses, compileOperatingPoint, compileOperatingSurgeHydraulics, fittingLoss,
+import { carveOperatingPrimary, compileOperatingHousingLosses, compileOperatingPowerBasis, powerBasisSources, compileOperatingLineLosses, compileOperatingPoint, compileOperatingSurgeHydraulics, fittingLoss,
   nativeSteadySolids, operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine, settleInputChanges,
   type FaceLossSection, type OperatingSpineSeed, type SteadySolidsSettle } from './reference-design-operating-spine'
 import { fuelFeedbackTemperature, operatingCladCaloric, operatingFuelCaloric, type SteadySolids } from './reference-design-operating-fluid'
@@ -220,6 +220,17 @@ test('declared operating point reads each owner statement once', () => {
   expect(() => compileOperatingPoint(missing, pzr, 1500)).toThrow('Missing operating-point owner')
 })
 
+test('G17 power basis is read once from each owner statement and must agree', () => {
+  const history = '### Compact hot-reference energy and material preparation\n\n**Preparation power (G17, 11 October).** The duty less pump heat, giving **2,992.5 MW**, 2.17% above.\n\n### Next\n',
+    kinetics = '### Selected hot reference coefficient package\n\n`referenceFissions_per_s` is the rate. G17 re-bases it to the joined settled power, 2,992.5 MW (Z2).\n',
+    docs = { [powerBasisSources.basis.page]: history, [powerBasisSources.check.page]: kinetics }
+  expect(compileOperatingPowerBasis(docs)).toBe(2992.5e6)
+  expect(() => compileOperatingPowerBasis({ ...docs, [powerBasisSources.check.page]: kinetics.replace('2,992.5', '2,992.6') })).toThrow('disagree')
+  expect(() => compileOperatingPowerBasis({ ...docs, [powerBasisSources.basis.page]: history.replace('\n\n### Next', '\n\n**Preparation power (G17, 12 October).** Again, giving **2,992.5 MW**.\n\n### Next') })).toThrow('Expected one')
+  expect(() => compileOperatingPowerBasis({ ...docs, [powerBasisSources.basis.page]: history.replace('giving', 'about') })).toThrow('Expected one')
+  expect(() => compileOperatingPowerBasis({ [powerBasisSources.basis.page]: history })).toThrow('Missing power-basis owner')
+})
+
 test('the two passes may differ only in the leaves the solid preparation owns', () => {
   const seed = { thermal: { scope: 'SEED', fuel_bands: [{ id: 'a', fuel_temperatures_k: [593, 593], surface_seed_k: [593, 593, 593], source_w: [1, 1] }],
       helium: [{ temperature_k: 593, energy_j: 1, nr_j_k: 2 }], water: [{ temperature_k: 563 }] },
@@ -276,7 +287,7 @@ test.skipIf(!wiki || !if97)('actual seed and steady passes: the steady solids ow
   const basis = seen!.settleBasis, derivation = seen!.settleDerivation
   expect(basis.coreMassFlux_kg_m2_s).toBe(derivation.enthalpyReferenceFlow_kg_s / derivation.coreMainFlowArea_m2)
   expect(basis.sgPrimaryMassFlux_kg_m2_s).toEqual(['A', 'B'].map(id => ({ id, massFlux_kg_m2_s: derivation.enthalpyReferenceFlow_kg_s / 2 / 1.25 })))
-  expect(basis.basisPower_W).toBe(seen!.packet.thermal.source_total_w)
+  expect(basis.basisPower_W).toBe(2992.5e6); expect(derivation.preparedPower_W).toBe(seen!.packet.thermal.source_total_w)
   for (const [i, b] of p.thermal.fuel_bands.entries()) {
     const c = steady.carriers[i]!
     expect(b.id).toBe(c.id); expect(b.fuel_temperatures_k).toEqual(c.fuel_temperatures_k); expect(b.fuel_energies_j).toEqual(c.fuel_energies_j)

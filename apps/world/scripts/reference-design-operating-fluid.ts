@@ -23,7 +23,7 @@ const overlap=(a:number,b:number,c:number,d:number)=>Math.max(0,Math.min(b,d)-Ma
 const hash=(s:string|Uint8Array)=>createHash('sha256').update(s).digest('hex')
 const hotSchema=z.object({primaryPressure_Pa:z.number().min(1e5).max(16e6),achievedRodTravel_m:z.number().finite().nonnegative(),
   boronReference_ppmEq:z.number().finite().nonnegative(),gapAccommodationReferenceTemperature_K:z.number().positive(),
-  initialLoopMassflow_kg_s:z.literal(0),sgMetalSegments:z.literal(4)}).strict()
+  sgSecondaryPressure_Pa:z.number().min(1e5).max(16e6),initialLoopMassflow_kg_s:z.literal(0),sgMetalSegments:z.literal(4)}).strict()
 const positiveNumber=z.number().finite().positive(),finiteNumber=z.number().finite()
 const record=z.record(z.string(),z.unknown())
 /** The steady solid state at the reference power (G18 by S2-D2, SG metal by
@@ -457,7 +457,11 @@ export async function prepareOperatingFluid(directory:string,if97Directory:strin
     input={fuel:parseFuelConstruction(documents[0]!),handling:parseFuelHandling(documents[1]!),control:parseControlAbsorber(documents[2]!),achievedRodTravel_m:reference.achievedRodTravel_m,physical},geometry=operatingFluidGeometry(input)
   return withOperatingIf97(if97Directory,async query=>{
     const points=await query([physical.inlet_K,(physical.inlet_K+physical.outlet_K)/2,physical.outlet_K].map(T=>({branch:'liquid' as const,p:reference.primaryPressure_Pa,T}))),
-      endpoints=await query([{branch:'sat-liquid',p:balance.secondaryPressure_MPaAbs*1e6,T:0},{branch:'sat-vapor',p:balance.secondaryPressure_MPaAbs*1e6,T:0}]),
+      // S2-D18: the composed state's SG secondaries at the hot reference's
+      // preparation pressure (Z2's emergent steady pressure at the G17 basis),
+      // with the balance input's volumes; the 6 MPa balance input stays the
+      // cycle sizing reference. A preparation choice: the settle decides p_s.
+      endpoints=await query([{branch:'sat-liquid',p:reference.sgSecondaryPressure_Pa,T:0},{branch:'sat-vapor',p:reference.sgSecondaryPressure_Pa,T:0}]),
       regions=geometry.regions.map(r=>{const q=points.find(q=>q.T===r.temperature_K)!,chart=fixedVolumeChart(r.volume_m3,q);return {...r,pressure_Pa:q.p,water:q,...chart,
         liquidMass_kg:chart.mass_kg,steamMass_kg:0,airMass_kg:0,nitrogenMass_kg:0,
         absorberTracer_kgEq:chart.mass_kg*reference.boronReference_ppmEq/1e6}}),

@@ -512,14 +512,39 @@ export function compileOperatingPoint(docs: Readonly<Record<string, string>>,
     scope: 'Declared selections for a consistent prepared state. They are controller/indication setpoints and the supported speed request, not imposed pressures, levels or flows, and not evidence that the preparation is stationary.' }
 }
 
+/** G17's declared preparation-power basis, an owner statement in reviewed
+ * prose: once under its heading in heat-and-history, and the same value in
+ * the kinetics owner's re-base statement. A reworded, duplicated or
+ * disagreeing statement refuses. The source package's own deposition at the
+ * re-based rate sits near, not at, it; the steady solids settle holds the
+ * two within G17's ceiling. */
+export const powerBasisSources = {
+  basis: { page: 'systems/reactor/heat-and-history.md', heading: 'Compact hot-reference energy and material preparation' },
+  check: { page: 'systems/reactor/kinetics.md', heading: 'Selected hot reference coefficient package' },
+} as const
+export function compileOperatingPowerBasis(docs: Readonly<Record<string, string>>) {
+  const statement = (source: { page: string, heading: string }, pattern: RegExp) => {
+    const text = docs[source.page]
+    if (text === undefined) throw Error('Missing power-basis owner ' + source.page)
+    const found = [...headingText(text, source.heading).matchAll(pattern)]
+    if (found.length !== 1) throw Error(`Expected one G17 power-basis statement in ${source.page} § ${source.heading}`)
+    return Number(found[0]![1]!.replaceAll(',', '')) * 1e6
+  }
+  const basis = statement(powerBasisSources.basis, /\*\*Preparation power \(G17[^*]*\*\*[^\n]*?giving \*\*([0-9][0-9,]*(?:\.[0-9]+)?) MW\*\*/g),
+    check = statement(powerBasisSources.check, /G17 re-bases it to the joined settled power, ([0-9][0-9,]*(?:\.[0-9]+)?) MW/g)
+  if (!(Number.isFinite(basis) && basis > 0) || basis !== check) throw Error('G17 power-basis owners disagree')
+  return basis
+}
+
 /** One compile of the spine at the given solid preparation. Only
  * `prepareOperatingSpine` calls it: once at the stock-IDA settle's seed and
  * once at the steady solid state the settle returns. */
 async function compileOperatingSpinePass(wiki: string, if97: string, solids: SolidPreparation) {
   const base = join(wiki, 'world/packs/process-plant/reference-designs/ld-01'), read = (p: string) => Bun.file(join(base, p)).text()
-  const [hot, fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc] = await Promise.all([
+  const [hot, fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc, historyDoc, kineticsDoc] = await Promise.all([
     prepareOperatingHot(wiki, if97, solids), read('systems/reactor/fuel-construction.md'), read('systems/reactor/fuel-handling-and-pool.md'),
-    read('systems/reactor/control-absorber-and-guide-water.md'), read('model/operating-thermal.md'), read('systems/reactor/phase-dependent-heat-transfer.md')])
+    read('systems/reactor/control-absorber-and-guide-water.md'), read('model/operating-thermal.md'), read('systems/reactor/phase-dependent-heat-transfer.md'),
+    read(powerBasisSources.basis.page), read(powerBasisSources.check.page)])
   const originalThermal = compileOperatingThermal(parseFuelConstruction(fuelDoc), parseFuelHandling(handlingDoc), parseControlAbsorber(controlDoc),
     hot.fluid, hot.energy, parseOperatingThermal(thermalDoc), parseTransferThermal(handlingDoc), parseOperatingFuelGap(gapDoc))
   const hotOwner = hot.fluid.geometry.regions.find(r => r.id === 'HOT.A')!
@@ -595,11 +620,13 @@ async function compileOperatingSpinePass(wiki: string, if97: string, solids: Sol
       return areas[0]!
     }
   if (!(coreArea > 0) || !(flow > 0) || loop !== flow / 2) throw Error('Settle flow basis needs the core flow area and the reference flow')
-  const settleBasis = { basisPower_W: thermal.source_total_w, coreMassFlux_kg_m2_s: flow / coreArea,
+  const settleBasis = { basisPower_W: compileOperatingPowerBasis({ [powerBasisSources.basis.page]: historyDoc, [powerBasisSources.check.page]: kineticsDoc }),
+    coreMassFlux_kg_m2_s: flow / coreArea,
     sgPrimaryMassFlux_kg_m2_s: thermal.secondaries.map(g => ({ id: g.id, massFlux_kg_m2_s: loop / sgArea(g.id) })) }
   const settleDerivation = { enthalpyReferenceFlow_kg_s: flow, coreMainFlowArea_m2: coreArea, loopReferenceFlow_kg_s: loop,
     sgPrimaryFlowArea_m2: thermal.secondaries.map(g => ({ id: g.id, area_m2: sgArea(g.id) })),
-    basisPower: 'thermal.source_total_w: the reference power the source package deposits at the G17 rate; the settle refuses unless its nuclear block reproduces it to 1e-6' }
+    preparedPower_W: thermal.source_total_w, powerBasisSources,
+    basisPower: 'G17\'s declared basis (owner statements); the settle refuses unless its nuclear block reproduces the packet\'s thermal.source_total_w to 1e-9 and lies within G17\'s 2e-3 of this basis' }
   return { packet, settleBasis, settleDerivation }
 }
 
