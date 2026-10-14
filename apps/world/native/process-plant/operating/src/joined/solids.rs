@@ -1225,6 +1225,11 @@ impl Solids {
         {
             return Err(fatal("stage length"));
         }
+        // One property boundary for this scope's evaluation: each query and
+        // wet/film turnover at bit-identical inputs is answered once, with
+        // the answer a fresh query returns; nothing outlives the call.
+        let shared = thermal::Shared::new(properties);
+        let properties = &shared;
         heat.secondary_w.clear();
         heat.secondary_w.resize(self.secondaries, s(0.));
         heat.primary_to_metal_w.clear();
