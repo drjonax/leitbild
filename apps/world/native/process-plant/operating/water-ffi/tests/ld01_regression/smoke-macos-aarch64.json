@@ -1,0 +1,81 @@
+{
+  "counts": {
+    "census": {
+      "composed": [
+        17242,
+        1193,
+        18435
+      ],
+      "histories": 9650,
+      "with_pending": [
+        17302,
+        1301,
+        18603
+      ]
+    },
+    "composition": {
+      "algebraic": 1301,
+      "dimension": 18603,
+      "owner_transactions": 1,
+      "s1_settling": {
+        "convergence_failures": 1,
+        "error_failures": 4,
+        "jacobians": 32,
+        "residuals": 276,
+        "settled": true,
+        "steps": 220
+      },
+      "surface_max_iterations": 3,
+      "surface_sets": 386
+    },
+    "oracle": {
+      "columns": 200,
+      "outside_pattern": 0,
+      "within_1e-9": true
+    },
+    "release_restart": {
+      "algebraic_after": 1249,
+      "algebraic_before": 1301,
+      "clusters": 52,
+      "constraint_rate_within_bound": true,
+      "opening_transactions": 1,
+      "placements": 0,
+      "projection_passes": 1,
+      "rate_passes": 1,
+      "released_clusters": 52,
+      "residual_within_bound": true,
+      "trip_transactions": 2
+    },
+    "settle": {
+      "convergence_failures": 0,
+      "error_failures": 131,
+      "failure": null,
+      "jacobians": 508,
+      "last_order": 2,
+      "linear_setups": 508,
+      "nonlinear_iterations": 2198,
+      "reached": true,
+      "residuals": 2198,
+      "steps": 1403,
+      "system_jacobians": 508,
+      "system_residuals": 4210
+    },
+    "z1": {
+      "constraint_rate_within_bound": true,
+      "projection_passes": 1,
+      "rate_passes": 2,
+      "residual_within_bound": true
+    }
+  },
+  "environment": {
+    "if97_revision": "0be7b51f35c47e59e6f91f4f0f47108bf997e50c",
+    "metastable_page_sha256": "0138902a4409a6f999a5fab689f95e39e09f68c2e15b097b43541a3d9c640536",
+    "packet_sha256": "9eb6e37d907be08bba3e9cc1a8bffee6756dac1f56c32b2e92c58a519b97dfcb",
+    "sundials_version": "7.5.0",
+    "water_adapter_sha256": "f59a5dbb4c97c9687c187d786244e580dd88a97637347d6f8f77b0b2da43b9f1"
+  },
+  "kind": "ld01-smoke",
+  "oracle_columns": 200,
+  "platform": "macos-aarch64",
+  "settle_s": 1.0
+}
