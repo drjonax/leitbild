@@ -404,7 +404,7 @@ fn s2_07_resettle_to_the_declared_settling_thresholds() {
                         first_second = Some(named(&cumulative));
                     }
                     let full = window.len() == samples_per_window + 1;
-                    if k % LOG_EVERY == 0 {
+                    if k.is_multiple_of(LOG_EVERY) {
                         let rs = if full {
                             let w: Vec<Vec<Vec<f64>>> = window.iter().cloned().collect();
                             ranges(&w, output_s, &thresholds)
@@ -417,7 +417,7 @@ fn s2_07_resettle_to_the_declared_settling_thresholds() {
                             "cpu_s": z1::cpu_s() - started});
                         writeln!(log, "{}", serde_json::to_string(&line).unwrap()).unwrap();
                         log.flush().unwrap();
-                        if k % (LOG_EVERY * 10) == 0 {
+                        if k.is_multiple_of(LOG_EVERY * 10) {
                             history.push(line);
                         }
                         eprintln!(
@@ -435,7 +435,7 @@ fn s2_07_resettle_to_the_declared_settling_thresholds() {
                             }
                         }
                     }
-                    if k % checkpoint_every == 0 {
+                    if k.is_multiple_of(checkpoint_every) {
                         checkpoints.push(write_state(
                             &format!("checkpoint-{:05}s.json", t.round() as i64),
                             t,
