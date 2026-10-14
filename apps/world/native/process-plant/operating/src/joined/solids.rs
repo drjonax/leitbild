@@ -909,34 +909,6 @@ impl Solids {
         out
     }
 
-    /// The fuel assemblies' solid groups for a steady preparation: every
-    /// connected component of the incidence over halves, helium, plenum and
-    /// passive contacts and their stores, as a closed scope with its own
-    /// coordinates. The SG segments belong to no group.
-    pub fn assembly_groups(&self) -> Result<Vec<(Closed, Vec<usize>)>, Failure> {
-        let mut assigned = vec![false; self.metal0()];
-        let mut groups = Vec::new();
-        for i in 0..self.metal0() {
-            if assigned[i] {
-                continue;
-            }
-            let (scope, _) = self.column_scope(i)?;
-            let closed = self.close(&scope);
-            if !closed.segments.is_empty() {
-                return Err(fatal(format!("solid coordinate {i} reaches an SG segment")));
-            }
-            let own = self.scope_coordinates(&closed);
-            for &j in &own {
-                if assigned[j] {
-                    return Err(fatal(format!("solid coordinate {j} in two groups")));
-                }
-                assigned[j] = true;
-            }
-            groups.push((closed, own));
-        }
-        Ok(groups)
-    }
-
     /// The wall water of the last [`Solids::wall_water`] call at `cell`.
     pub fn wall_water_at(&self, cell: usize) -> Option<WallWater> {
         self.wall_slot

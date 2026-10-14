@@ -83,8 +83,14 @@ const CHECKPOINTS: usize = 18;
 const RATE_W: f64 = 1e-3;
 const TEMPERATURE_RATE_K_S: f64 = 1e-6;
 const SURFACE_W: f64 = 1e-3;
-/// The declared basis must equal the nuclear block's heat within this.
-const BASIS_RELATIVE: f64 = 1e-6;
+/// The nuclear block's prepared heat must equal the packet's own
+/// `thermal.source_total_w` within `PACKET_RELATIVE` (one compile), and the
+/// declared G17 basis within `BASIS_RELATIVE`, G17's power-basis mismatch
+/// ceiling (build-readiness, P2 - G17 mechanics: confirmed above 2e-3).
+/// The re-based source does not scale every capture and binding term
+/// linearly, so the prepared heat sits near, not at, the basis.
+const PACKET_RELATIVE: f64 = 1e-9;
+const BASIS_RELATIVE: f64 = 2e-3;
 /// Domain admission of the steady nodes beyond the feedback's fuel domain:
 /// the surface initializer's admission (fuel surface 500-2000 K, clad
 /// surfaces 290-1800 K; `initialization.rs`) and the Zircaloy caloric and
@@ -167,6 +173,8 @@ pub struct Basis {
     pub fuel_heat_w: f64,
     pub coolant_heat_w: f64,
     pub total_heat_w: f64,
+    /// (total - basis) / basis.
+    pub relative_to_basis: f64,
     pub packet_source_total_w: f64,
     pub core_mass_flux_kg_m2_s: f64,
     pub wall_water: Vec<WallCell>,
@@ -724,6 +732,30 @@ fn run() -> Result<Steady, Failure> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
     let raw: serde_json::Value = serde_json::from_str(&input)?;
+    let out = settle(prepare(&raw)?)?;
+    eprintln!(
+        "prepare_steady_solids: {:.3} CPU-s",
+        cpu_seconds() - started
+    );
+    Ok(out)
+}
+
+/// Everything the settle reads, from one input document.
+pub struct Prepared {
+    pub packet: Packet,
+    pub section: Section,
+    pub feed_j_kg: f64,
+    pub basis: Basis,
+    pub fuel_w: Vec<Scalar>,
+    pub system: SolidsSystem,
+    pub y: Vec<f64>,
+    pub yp: Vec<f64>,
+}
+
+/// The frozen basis, the solids system and its initial state (the packet's
+/// stocks and surface seeds, each store's rate there as the derivative
+/// guess).
+pub fn prepare(raw: &serde_json::Value) -> Result<Prepared, Failure> {
     let packet: Packet = serde_json::from_value(raw.clone())?;
     let steady: SteadyInput = serde_json::from_value(
         raw.get("steady")
@@ -814,9 +846,18 @@ fn run() -> Result<Steady, Failure> {
     let fuel_heat_w: f64 = fuel_w.iter().map(|v| v.value).sum();
     let coolant_heat_w: f64 = nheat.coolant_w.iter().map(|v| v.value).sum();
     let total_heat_w = fuel_heat_w + coolant_heat_w;
-    if (total_heat_w - basis_power_w).abs() > BASIS_RELATIVE * basis_power_w {
+    let source_total_w = packet.thermal.source_total_w;
+    let packet_gap = (total_heat_w - source_total_w).abs();
+    if !packet_gap.is_finite() || packet_gap > PACKET_RELATIVE * source_total_w.abs() {
         return Err(format!(
-            "the packet's prepared nuclear heat {total_heat_w} W is not the declared basis {basis_power_w} W"
+            "the nuclear block's prepared heat {total_heat_w} W is not the packet's source total {source_total_w} W"
+        )
+        .into());
+    }
+    let relative_to_basis = (total_heat_w - basis_power_w) / basis_power_w;
+    if !relative_to_basis.is_finite() || relative_to_basis.abs() > BASIS_RELATIVE {
+        return Err(format!(
+            "the packet's prepared nuclear heat {total_heat_w} W is not at the declared basis {basis_power_w} W ({relative_to_basis:e} relative)"
         )
         .into());
     }
@@ -905,27 +946,66 @@ fn run() -> Result<Steady, Failure> {
 
     let layout = solids.layout().clone();
     let n = layout.len();
-    let mut y: Vec<f64> = solids
+    let y: Vec<f64> = solids
         .prepared()
         .iter()
         .zip(&layout.scales)
         .map(|(v, sc)| v / sc)
         .collect();
-    let differential = layout.ids();
     let mut system = SolidsSystem::new(solids, points, fuel_w.clone(), views)?;
-    let jacobian_nonzeros = system.nonzeros;
     // The initial derivative guess: each store's rate at the packet's
     // stocks; stock IDACalcIC then makes the surfaces and rates consistent.
     let mut yp = vec![0.; n];
-    {
-        let zero = vec![0.; n];
-        system.physical_rows(&y, &zero).map_err(nf)?;
-        for (i, v) in yp.iter_mut().enumerate() {
-            if layout.differential[i] {
-                *v = -system.rows[i].value / layout.row_scales[i];
-            }
+    let zero = vec![0.; n];
+    system.physical_rows(&y, &zero).map_err(nf)?;
+    for (i, v) in yp.iter_mut().enumerate() {
+        if layout.differential[i] {
+            *v = -system.rows[i].value / layout.row_scales[i];
         }
     }
+    Ok(Prepared {
+        basis: Basis {
+            basis_power_w,
+            fuel_heat_w,
+            coolant_heat_w,
+            total_heat_w,
+            relative_to_basis,
+            packet_source_total_w: source_total_w,
+            core_mass_flux_kg_m2_s: core_flux,
+            wall_water,
+            passive_water,
+            secondaries: secondary_basis,
+        },
+        packet,
+        section,
+        feed_j_kg,
+        fuel_w,
+        system,
+        y,
+        yp,
+    })
+}
+
+/// One stock IDA run from the prepared state to the first checkpoint that
+/// meets the criterion, then the steady state's receipt and admission.
+pub fn settle(p: Prepared) -> Result<Steady, Failure> {
+    let Prepared {
+        packet,
+        section,
+        feed_j_kg,
+        basis,
+        fuel_w,
+        system,
+        mut y,
+        mut yp,
+    } = p;
+    let layout = system.solids.layout().clone();
+    let n = layout.len();
+    let differential = layout.ids();
+    let jacobian_nonzeros = system.nonzeros;
+    let secondaries = &packet.thermal.secondaries;
+    let water = &packet.thermal.water;
+    let secondary_basis = &basis.secondaries;
     let marks = checkpoints();
     let atol = vec![ABSOLUTE_TOLERANCE_SCALED; n];
     let mut solver = Ida::new(
@@ -1129,7 +1209,7 @@ fn run() -> Result<Steady, Failure> {
     let mut sg_metal = Vec::with_capacity(packet.thermal.sg_segments.len());
     let mut generators: Vec<Generator> = secondaries
         .iter()
-        .zip(&secondary_basis)
+        .zip(secondary_basis)
         .zip(&section.steam_generators)
         .map(|((g, b), sg)| -> Result<Generator, Failure> {
             let hg = WaterProperties::saturation(&If97, s(g.pressure_pa))?
@@ -1226,17 +1306,7 @@ fn run() -> Result<Steady, Failure> {
                 rule: "at the latest accepted IDA step at or after a checkpoint, every differential store has |dU/dt| < rate_w or |dU/dt| dT/dU < temperature_rate_k_s, from the laws at zero derivative, and every surface balance is under surface_residual_w; the first checkpoint where this holds ends the run, none by the last refuses",
             },
         },
-        basis: Basis {
-            basis_power_w,
-            fuel_heat_w,
-            coolant_heat_w,
-            total_heat_w,
-            packet_source_total_w: packet.thermal.source_total_w,
-            core_mass_flux_kg_m2_s: core_flux,
-            wall_water,
-            passive_water,
-            secondaries: secondary_basis,
-        },
+        basis,
         carriers,
         helium,
         passive,
@@ -1277,10 +1347,6 @@ fn run() -> Result<Steady, Failure> {
             jacobian_nonzeros,
         },
     };
-    eprintln!(
-        "prepare_steady_solids: {:.3} CPU-s",
-        cpu_seconds() - started
-    );
     Ok(out)
 }
 
@@ -1447,5 +1513,153 @@ mod tests {
             );
             assert!(jump > 0. && jump < width);
         }
+    }
+
+    /// The packet named by `LD01_OPERATING_HOT_SPINE_PACKET` with a steady
+    /// section at its own source total and fixed trial fluxes.
+    fn packet_input() -> serde_json::Value {
+        let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET")
+            .expect("LD01_OPERATING_HOT_SPINE_PACKET");
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).expect("packet")).expect("packet json");
+        let total = raw["thermal"]["source_total_w"]
+            .as_f64()
+            .expect("source total");
+        let ids: Vec<serde_json::Value> = raw["thermal"]["secondaries"]
+            .as_array()
+            .expect("secondaries")
+            .iter()
+            .map(|g| serde_json::json!({"id": g["id"], "massFlux_kg_m2_s": 6972.5}))
+            .collect();
+        raw["steady"] = serde_json::json!({"basisPower_W": total,
+            "coreMassFlux_kg_m2_s": 3725.0, "sgPrimaryMassFlux_kg_m2_s": ids});
+        raw
+    }
+
+    /// Every CSC column of the stock-IDA Jacobian (the column's closed
+    /// scope, `Solids::rows_local`) equals the full evaluation seeded on
+    /// that column bitwise inside its pattern, and the full evaluation's
+    /// direction is exactly zero outside it.
+    #[test]
+    #[ignore = "requires LD01_OPERATING_HOT_SPINE_PACKET and the water library"]
+    fn jacobian_columns_equal_the_full_evaluation() {
+        let p = prepare(&packet_input()).expect("prepared");
+        let mut system = p.system;
+        let n = system.dimension();
+        let nnz = system.nonzeros();
+        let (mut data, mut rows, mut pointers) =
+            (vec![0.; nnz], vec![0i64; nnz], vec![0i64; n + 1]);
+        let cj = 3.7;
+        system
+            .jacobian(0., cj, &p.y, &p.yp, &mut data, &mut rows, &mut pointers)
+            .expect("jacobian");
+        assert_eq!(pointers[n] as usize, nnz);
+        let mut seed = vec![0.; n];
+        let mut temperatures = solids::Temperatures::default();
+        let mut full = vec![s(0.); n];
+        let mut sink = vec![[[s(0.); 3]; 2]; system.points.len()];
+        let mut heat = solids::Heat::default();
+        let (mut inside, mut outside) = (0usize, 0usize);
+        for j in 0..n {
+            seed[j] = 1.;
+            let x = Coordinates::new(&p.y, &p.yp, Some(&seed), cj, &system.scales).unwrap();
+            system.solids.temperatures(x, &mut temperatures).unwrap();
+            let fluid = frozen_fluid(&system.points);
+            system
+                .solids
+                .rows(
+                    &If97,
+                    x,
+                    &temperatures,
+                    &system.fuel_w,
+                    &fluid,
+                    &system.views,
+                    &mut Receipts::new(&mut sink),
+                    &mut full,
+                    &mut heat,
+                )
+                .unwrap();
+            seed[j] = 0.;
+            let (a, b) = (pointers[j] as usize, pointers[j + 1] as usize);
+            let pattern: Vec<usize> = rows[a..b].iter().map(|r| *r as usize).collect();
+            for (i, v) in full.iter().enumerate() {
+                let d = v.direction / system.row_scales[i];
+                match pattern.binary_search(&i) {
+                    Ok(k) => {
+                        assert_eq!(
+                            data[a + k].to_bits(),
+                            d.to_bits(),
+                            "column {j} row {i}: {} against {d}",
+                            data[a + k]
+                        );
+                        inside += 1;
+                    }
+                    Err(_) => {
+                        assert_eq!(d, 0., "column {j} row {i} outside the pattern: {d}");
+                        outside += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(inside, nnz);
+        eprintln!("{n} columns, {nnz} pattern entries bitwise, {outside} zeros outside");
+    }
+
+    /// Two settles of the same input give the same document, byte for
+    /// byte; the criterion, the admission and the SG ordering hold.
+    #[test]
+    #[ignore = "requires LD01_OPERATING_HOT_SPINE_PACKET and the SUNDIALS build"]
+    fn the_settle_is_deterministic_and_meets_its_criterion() {
+        let raw = packet_input();
+        let a = serde_json::to_string(&settle(prepare(&raw).unwrap()).unwrap()).unwrap();
+        let b = serde_json::to_string(&settle(prepare(&raw).unwrap()).unwrap()).unwrap();
+        assert_eq!(a, b);
+        let out: serde_json::Value = serde_json::from_str(&a).unwrap();
+        let steady = &out["steady"];
+        assert!(steady["worst_surface_residual_w"].as_f64().unwrap() < SURFACE_W);
+        assert!(out["checkpoints"].as_array().unwrap().last().unwrap()["failing_stores"] == 0);
+        for c in out["carriers"].as_array().unwrap() {
+            let d = c["doppler_reference_k"].as_f64().unwrap();
+            let [inner, outer] = [0, 1].map(|k| c["fuel_temperatures_k"][k].as_f64().unwrap());
+            assert!(outer < d && d < inner);
+        }
+        for g in out["steam_generators"].as_array().unwrap() {
+            let [lo, hi] = [0, 1].map(|k| g["metal_temperature_k"][k].as_f64().unwrap());
+            assert!(g["saturation_k"].as_f64().unwrap() < lo);
+            assert!(hi < g["primary_temperature_k"].as_f64().unwrap());
+            let (i, o) = (
+                g["primary_to_metal_w"].as_f64().unwrap(),
+                g["metal_to_secondary_w"].as_f64().unwrap(),
+            );
+            // Four segments, each within the metal's temperature-rate screen.
+            assert!((i - o).abs() < 4. * TEMPERATURE_RATE_K_S * 3.75e7);
+        }
+    }
+
+    /// The declared basis, the SG flux ids and the steady section refuse
+    /// visibly.
+    #[test]
+    #[ignore = "requires LD01_OPERATING_HOT_SPINE_PACKET and the water library"]
+    fn the_preparation_refuses_inconsistent_inputs() {
+        let refuse = |raw: &serde_json::Value, needle: &str| {
+            let e = prepare(raw).err().expect("refused").to_string();
+            assert!(e.contains(needle), "{e}");
+        };
+        let mut raw = packet_input();
+        let total = raw["steady"]["basisPower_W"].as_f64().unwrap();
+        raw["steady"]["basisPower_W"] = serde_json::json!(total * 1.0021);
+        refuse(&raw, "declared basis");
+        let mut raw = packet_input();
+        raw["steady"]["sgPrimaryMassFlux_kg_m2_s"][0]["id"] = serde_json::json!("B");
+        refuse(&raw, "thermal.secondaries id");
+        let mut raw = packet_input();
+        raw["steady"]["coreMassFlux_kg_m2_s"] = serde_json::json!(-1.);
+        refuse(&raw, "coreMassFlux");
+        let mut raw = packet_input();
+        raw.as_object_mut().unwrap().remove("steady");
+        refuse(&raw, "no `steady` section");
+        let mut raw = packet_input();
+        raw["steady"]["extra"] = serde_json::json!(1);
+        refuse(&raw, "unknown field");
     }
 }
