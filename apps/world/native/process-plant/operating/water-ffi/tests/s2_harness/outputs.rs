@@ -271,3 +271,90 @@ pub fn admit(
 ) -> Result<Admission, post_trip_domain::Error> {
     post_trip_domain::admit_accepted(joined.nuclear(), extension, joined.travel(), t, 0.)
 }
+
+/// D3 (a) at one sample, for every owner option (the operator evaluated
+/// there): the compiled-domain admission, and the source-free operator's
+/// margin `delta*` (Δk/k, the smallest real eigenvalue of the 24 × 24
+/// pencil `(M, diag(1/Λ))` by stock `dggev`) with the record's doubled water
+/// term and with the nominal one, beside the densities and pressures that
+/// bound the domains. The S2-10 probe's measure (`s2_trip_probe::d3_at`).
+pub fn d3_point(
+    joined: &Joined<If97>,
+    extension: &Extension,
+    reference_density: &[f64],
+    t: f64,
+    origin: f64,
+) -> Value {
+    use leitbild_operating_plant::source_feedback as sf;
+    let n = joined.nuclear();
+    let at = post_trip_domain::AcceptedConditions::of(n, joined.travel(), t);
+    let feedback = n.feedback();
+    let mut out = sf::Output::new(
+        feedback.region_count(),
+        feedback.material_count(),
+        feedback.support_count(),
+    );
+    let original = match feedback.validate_accepted(&at.neutrons, at.conditions(), t, &mut out) {
+        Ok(()) => json!("inside"),
+        Err(e) => json!(format!("{e:?}")),
+    };
+    let margin = |e: &Extension| -> Value {
+        match post_trip_domain::margin_at(
+            feedback,
+            n.kinetics(),
+            post_trip_domain::fixed(n),
+            &at.neutrons,
+            at.conditions(),
+            e,
+        ) {
+            Ok(m) => {
+                let r = m.reactivity_gain.len();
+                let mut g = vec![0.; r * r];
+                for i in 0..r {
+                    g[i * r + i] = m.reactivity_gain[i];
+                }
+                let delta = leitbild_operating_water::spectrum::decompose(r, &m.operator, &g)
+                    .map(|s| {
+                        s.modes
+                            .iter()
+                            .map(|x| x.lambda.re)
+                            .fold(f64::INFINITY, f64::min)
+                    })
+                    .ok();
+                json!({"holds": m.holds, "margin_dk_k": delta})
+            }
+            Err(e) => json!({"error": format!("{e:?}")}),
+        }
+    };
+    let mut nominal = *extension;
+    nominal.margin_water_term_factor = 1.;
+    let water = joined.region_water();
+    let ratio = water
+        .iter()
+        .zip(reference_density)
+        .map(|(w, r)| w.density_kg_m3.value / r)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let pressure = water
+        .iter()
+        .map(|w| w.pressure_pa.value)
+        .fold(f64::INFINITY, f64::min);
+    json!({"t_s": t - origin, "original_domain": original, "density_ratio_max": ratio,
+        "pressure_min_pa": pressure,
+        "margin_water_doubled": margin(extension), "margin_water_nominal": margin(&nominal)})
+}
+
+/// The regions' reference water densities of the source feedback (the
+/// packet's `feedback_metadata.regions[].reference_density_kg_m3`), for
+/// D3 (a)'s density ratio.
+pub fn reference_densities(raw: &Value) -> Result<Vec<f64>, String> {
+    raw["feedback_metadata"]["regions"]
+        .as_array()
+        .ok_or("the packet has no feedback_metadata.regions")?
+        .iter()
+        .map(|r| {
+            r["reference_density_kg_m3"]
+                .as_f64()
+                .ok_or_else(|| "a region without reference_density_kg_m3".to_string())
+        })
+        .collect()
+}

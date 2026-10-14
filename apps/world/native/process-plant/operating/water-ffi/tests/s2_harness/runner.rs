@@ -37,7 +37,7 @@ use super::{
     conservation::Conservation,
     gates::Declaration,
     meter::{Attribution, Metered, Tally, jacobian_by_kind},
-    outputs::{Reader, admit},
+    outputs::{Reader, admit, d3_point},
     run::{CpuBuckets, RunRecord, RunSpec},
 };
 use crate::{
@@ -84,6 +84,7 @@ pub struct Mark {
 
 /// What a run produced: its schema record and the series its judgements
 /// read.
+#[derive(Clone)]
 pub struct Run {
     pub record: RunRecord,
     pub origin: f64,
@@ -98,6 +99,9 @@ pub struct Run {
     pub end: Start,
     pub attribution: Attribution,
     pub conservation_pass: bool,
+    /// The D3 (a) exit's time when the run continued past it for
+    /// information: its declared verdict is judged up to it.
+    pub information_from: Option<f64>,
 }
 
 /// The restart configuration from `ld01-s2-gates` (G13, K4).
@@ -237,6 +241,11 @@ struct DomainRecord {
     first_margin_hold: Option<f64>,
     first_extended: Option<f64>,
     exit: Option<Value>,
+    /// D3 (a) every simulated second: domain, doubled and nominal margins.
+    trajectory: Vec<Value>,
+    /// The exit's time when the run continued past it for information.
+    information_from: Option<f64>,
+    information_failure: Option<String>,
 }
 
 /// One run from `start` on the fresh composition `c` under `spec`.
@@ -250,6 +259,7 @@ pub fn advance(
     spec: &RunSpec,
     reader: &Reader,
     extension: &Extension,
+    d3_reference: &[f64],
     mut settled: Option<&mut dyn FnMut(&Credited) -> bool>,
 ) -> Run {
     let process0 = process_cpu_s();
@@ -315,6 +325,7 @@ pub fn advance(
                 end: start.clone(),
                 attribution,
                 conservation_pass: false,
+                information_from: None,
             };
         }
     };
@@ -677,6 +688,20 @@ pub fn advance(
                 break;
             }
             j += 1;
+            // D3 (a)'s margins every simulated second, on the sample's
+            // evaluation (the account's), for every owner option.
+            if (j - 1).is_multiple_of(per_second) {
+                let started = thread_cpu_s();
+                let point = d3_point(
+                    &ida.system().integrated().joined,
+                    extension,
+                    d3_reference,
+                    at,
+                    t0,
+                );
+                domain.trajectory.push(point);
+                attribution.observation_handler_s += thread_cpu_s() - started;
+            }
             if output {
                 outputs += 1;
                 marks.push(Mark {
@@ -702,6 +727,10 @@ pub fn advance(
             if domain.exit.is_some() && spec.domain_exit_stops {
                 ended = Some(at);
                 break;
+            }
+            if domain.exit.is_some() && domain.information_from.is_none() {
+                // Judged up to here; continued for information only.
+                domain.information_from = Some(at);
             }
         }
         if let Some(at) = ended {
@@ -757,7 +786,12 @@ pub fn advance(
         {
             step_cap_reached_at = Some(t - t0);
         }
-        if !spec.caps_report_only && (cap_reached_at.is_some() || guard_reached_at.is_some()) {
+        // Caps bind the declared run only: after a D3 (a) exit continued for
+        // information they are recorded, never enforced.
+        if !spec.caps_report_only
+            && domain.information_from.is_none()
+            && (cap_reached_at.is_some() || guard_reached_at.is_some())
+        {
             record.cap_reached = true;
             failure = Some(format!(
                 "{} reached at {} s",
@@ -828,6 +862,20 @@ pub fn advance(
     };
     record.process_cpu_s = process;
     record.reached_s = t - t0;
+    if let Some(from) = domain.information_from {
+        // A failure after the exit ends the information only.
+        domain.information_failure = failure.take();
+        exit = Some(format!(
+            "{} at t = {} s; continued to {} s for information only",
+            domain
+                .exit
+                .as_ref()
+                .and_then(|x| x["label"].as_str())
+                .unwrap_or("D3 (a) exit"),
+            from - t0,
+            t - t0
+        ));
+    }
     record.failure = failure;
     record.exit = exit;
     record.counts = totals;
@@ -853,6 +901,9 @@ pub fn advance(
         "samples_margin_not_holding": domain.margin_failures,
         "first_margin_holds_at_s": domain.first_margin_hold.map(|x| x - t0),
         "first_extended_at_s": domain.first_extended.map(|x| x - t0),
+        "information_from_s": domain.information_from.map(|x| x - t0),
+        "information_failure": domain.information_failure,
+        "every_second": domain.trajectory,
         "margin_note": "the 1 % shutdown-margin test of the source-free operator; at power (critical) it does not hold, and it is reported, not a stop",
         "exit": domain.exit});
     let conservation_pass = conservation.identities_pass() && conservation.ledger_pass();
@@ -877,5 +928,6 @@ pub fn advance(
         },
         attribution,
         conservation_pass,
+        information_from: domain.information_from,
     }
 }

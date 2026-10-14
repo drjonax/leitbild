@@ -585,7 +585,18 @@ pub fn saved_state(path: &str, packet: &PacketFile, dimension: usize) -> (f64, V
             .map(|v| v.as_f64().unwrap())
             .collect()
     };
-    let (y, yp) = (vector("y"), vector("yp"));
+    // The exact bits when the state carries them (the S2-07 format).
+    let exact = |k: &str| -> Option<Vec<f64>> {
+        state[format!("{k}_bits")].as_array().map(|a| {
+            a.iter()
+                .map(|v| f64::from_bits(u64::from_str_radix(v.as_str().unwrap(), 16).unwrap()))
+                .collect()
+        })
+    };
+    let (y, yp) = (
+        exact("y").unwrap_or_else(|| vector("y")),
+        exact("yp").unwrap_or_else(|| vector("yp")),
+    );
     assert!(
         y.len() == dimension && yp.len() == dimension,
         "{path} has {} coordinates, the composition {dimension}",

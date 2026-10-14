@@ -770,7 +770,7 @@ fn the_holds_drift_is_each_filtered_outputs_departure_from_its_start_value() {
 #[test]
 #[ignore = "NOT-EVIDENCE smoke (M4): requires the joined packet, a settled state, the S2 declaration, the wiki, IF97 and stock IDAS/KLU"]
 fn s2_smoke() {
-    use sequence::{Harness, Mode, judge_hold, judge_trip, saved_start, state_receipt};
+    use sequence::{Harness, Mode, judge_hold, saved_start, state_receipt};
     let env = |k: &str, default: f64| -> f64 {
         std::env::var(k).map_or(default, |v| v.parse().unwrap_or_else(|_| panic!("{k}={v}")))
     };
@@ -836,7 +836,7 @@ fn s2_smoke() {
         ));
     }
     if let Some(trip) = done.get("trip") {
-        gates_out.extend(judge_trip(
+        gates_out.extend(sequence::judge_trip_declared_and_information(
             &h,
             trip,
             done.get("R0"),
@@ -895,15 +895,12 @@ fn s2_smoke() {
     );
 }
 
-/// S2-15: the declared sequence. It refuses before any work unless the
-/// gates are pinned, no TBD is open, and S1 run 6 and the zero-time
-/// receipts are named; every run is pre-checked against the remaining work
-/// bound. Run only by the lead, in a quiet window.
-#[test]
-#[ignore = "S2-15 gate run: lead only, quiet window"]
-fn s2_gate_run() {
-    use sequence::{Harness, Mode, composed_start, judge_hold, judge_trip, settle, state_receipt};
-    let mut h = Harness::new(Mode::Gate).unwrap_or_else(|e| panic!("{e}"));
+/// The gate run's refusals before any work: the pin, the TBD register and
+/// the external receipts this phase needs.
+fn gate_refusals(
+    h: &mut sequence::Harness,
+    required: &[&str],
+) -> (Value, Value, Result<Value, Vec<String>>, Vec<String>) {
     let log = std::fs::read_to_string(guards::decision_log_page()).ok();
     let pin = guards::pin(&h.d.gates, log.as_deref()).unwrap();
     let tbd = guards::tbd_state(&h.d.gates, log.as_deref()).unwrap();
@@ -912,85 +909,194 @@ fn s2_gate_run() {
         .as_str()
         .unwrap_or_default()
         .to_string();
-    let external = sequence::external_receipts(&mut h, &app);
+    let external = sequence::external_receipts(h, &app, required);
     if let Err(e) = &external {
         refusals.extend(e.iter().cloned());
     }
+    (pin, tbd, external, refusals)
+}
+
+/// S2-15 phase 1, in the quiet window after S1 run 6, Z5, Z6 and Z7: it
+/// refuses before any work unless the gates are pinned, no TBD is open and
+/// the window's receipts pass (`LD01_S2_EXTERNAL_MANIFEST`); then the
+/// composed-state receipts and the settle under its cap. It writes the
+/// settled state (`LD01_S2_GATE_STATE_OUT`, S2-07 format with exact bits)
+/// for the settled Z3/Z6 and phase 2, and the hand-over
+/// (`LD01_S2_GATE_PHASE1_OUT`). Lead only.
+#[test]
+#[ignore = "S2-15 gate run phase 1: lead only, quiet window"]
+fn s2_gate_prepare() {
+    use sequence::{Harness, Mode, composed_start, settle, state_receipt};
+    let mut h = Harness::new(Mode::Gate).unwrap_or_else(|e| panic!("{e}"));
+    let (pin, tbd, external, refusals) = gate_refusals(
+        &mut h,
+        &["S1run6", "Z5", "Z6composed", "Z7", "Z2", "Z3composed", "Z4"],
+    );
     assert!(
         refusals.is_empty(),
         "the S2 gate run refuses: {refusals:#?}"
     );
-    let name = std::env::var("LD01_S2_GATE_RECEIPT").expect("LD01_S2_GATE_RECEIPT");
-    let path = sequence::receipt_path("integ", &name);
+    let state_out = std::path::PathBuf::from(
+        std::env::var("LD01_S2_GATE_STATE_OUT").expect("LD01_S2_GATE_STATE_OUT"),
+    );
+    let phase_out = std::path::PathBuf::from(
+        std::env::var("LD01_S2_GATE_PHASE1_OUT").expect("LD01_S2_GATE_PHASE1_OUT"),
+    );
+    assert!(
+        !state_out.exists() && !phase_out.exists(),
+        "never overwritten"
+    );
     let composed = h.compose("composed-state receipts");
     let start = composed_start(&composed);
+    let derived = composed.receipt["derived_tolerances"].clone();
     drop(composed);
-    let composed_entry = state_receipt(&mut h, &start, "composed-state receipts");
+    let mut composed_entry = state_receipt(&mut h, &start, "composed-state receipts");
+    composed_entry["derived_tolerances"] = derived;
+    let mut zero_time = json!({"composed": composed_entry, "external_phase1": external.unwrap()});
+    let (status, state) = match settle(&mut h, &start) {
+        Some((run, judgement)) => {
+            zero_time["settle"] = judgement.clone();
+            if judgement["settled"] == json!(true) {
+                sequence::write_state(&state_out, &h.packet, &run.end)
+                    .unwrap_or_else(|e| panic!("{e}"));
+                (
+                    "settled".to_string(),
+                    json!({"path": state_out, "sha256": provenance::sha256_file(state_out.to_str().unwrap()).ok(), "t_s": run.end.t}),
+                )
+            } else {
+                (
+                    "incomplete: not settled within the settling cap".into(),
+                    Value::Null,
+                )
+            }
+        }
+        None => ("incomplete: the settle did not run".into(), Value::Null),
+    };
+    let phase = json!({"kind": "s2-gate-run-phase-1", "status": status, "settled_state": state,
+        "pin": pin, "tbd": tbd, "zero_time": zero_time, "handover": h.handover(),
+        "process_cpu_s": cpu::process_cpu_s(), "app_commit": provenance::git_provenance()["app_commit"]});
+    std::fs::write(&phase_out, serde_json::to_vec_pretty(&phase).unwrap()).unwrap();
+    println!(
+        "{}",
+        json!({"status": phase["status"], "settled_state": phase["settled_state"], "work_bound": h.work.json()})
+    );
+}
+
+/// S2-15 phase 2: from phase 1's hand-over (`LD01_S2_GATE_PHASE1`) and
+/// settled state, after the settled Z3/Z6 (in the manifest): the settled
+/// receipts, the hold and its reference, the trip with R0, R1 and R2 (each
+/// judged up to its labelled D3 (a) exit and continued for information),
+/// the contrary cases; every run pre-checked against the remaining work
+/// bound. The full receipt to `$LD01_RECEIPTS/integ/<LD01_S2_GATE_RECEIPT>`.
+/// Lead only, quiet window.
+#[test]
+#[ignore = "S2-15 gate run phase 2: lead only, quiet window"]
+fn s2_gate_run() {
+    use sequence::{Harness, Mode, judge_hold, saved_start, state_receipt};
+    let mut h = Harness::new(Mode::Gate).unwrap_or_else(|e| panic!("{e}"));
+    let phase_path = std::env::var("LD01_S2_GATE_PHASE1").expect("LD01_S2_GATE_PHASE1");
+    let phase: Value = serde_json::from_slice(&std::fs::read(&phase_path).expect("phase 1"))
+        .expect("phase 1 json");
+    assert_eq!(
+        phase["status"],
+        json!("settled"),
+        "phase 1 did not settle: {}",
+        phase["status"]
+    );
+    assert_eq!(
+        phase["app_commit"],
+        provenance::git_provenance()["app_commit"],
+        "phase 1 ran at another app commit"
+    );
+    let state_path = phase["settled_state"]["path"].as_str().unwrap().to_string();
+    assert_eq!(
+        provenance::sha256_file(&state_path).ok().as_deref(),
+        phase["settled_state"]["sha256"].as_str(),
+        "the settled state changed since phase 1"
+    );
+    h.restore(&phase["handover"])
+        .unwrap_or_else(|e| panic!("{e}"));
+    let (pin, tbd, external, refusals) = gate_refusals(&mut h, &["Z6settled", "Z3settled"]);
+    assert!(
+        refusals.is_empty(),
+        "the S2 gate run refuses: {refusals:#?}"
+    );
+    assert_eq!(
+        pin["declared_sha256"], phase["pin"]["declared_sha256"],
+        "the pin changed between phases"
+    );
+    let name = std::env::var("LD01_S2_GATE_RECEIPT").expect("LD01_S2_GATE_RECEIPT");
+    let path = sequence::receipt_path("integ", &name);
+    assert!(!path.exists(), "never overwritten");
+    let composed = h.compose("settled-state receipts");
+    let dimension = composed.y.len();
+    drop(composed);
+    let settled = saved_start(&state_path, &h.packet, dimension);
+    let mut zero_time = phase["zero_time"].clone();
+    zero_time["settled"] = state_receipt(&mut h, &settled, "settled-state receipts");
+    zero_time["external_phase2"] = external.unwrap();
     let mut comparisons = serde_json::Map::new();
     let mut gates_out = Vec::new();
     let mut status = "complete".to_string();
-    let settled_state = settle(&mut h, &start);
-    let mut zero_time = json!({"composed": composed_entry, "external": external.unwrap()});
-    if let Some((run, judgement)) = settled_state {
-        let settled = run.end.clone();
-        zero_time["settled"] = state_receipt(&mut h, &settled, "settled-state receipts");
-        zero_time["settle"] = judgement;
-        let d = &h.d.gates;
-        let (hold_s, trip_s) = (d.number("/hold/duration_s"), d.number("/trip/duration_s"));
-        let window = d.number("/trip/window_s");
-        let post = h.d.shared.number("/recovery/postWindow_s");
-        let mut done: BTreeMap<String, runner::Run> = BTreeMap::new();
-        for (name, duration) in [
-            ("hold", hold_s),
-            ("holdReference", hold_s),
-            ("trip", trip_s),
-            ("R0", window + post),
-            ("R1", window),
-            ("R2", trip_s),
-            (
-                "noTurbineTrip",
-                h.d.gates.number("/contrary/noTurbineTrip/duration_s"),
-            ),
-        ] {
-            let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
-            match h.run(&spec, &settled, None) {
-                Some(run) => {
-                    done.insert(name.into(), run);
-                }
-                None => {
-                    status = format!("incomplete: {name} not started (work bound)");
-                    break;
-                }
+    let d = &h.d.gates;
+    let (hold_s, trip_s) = (d.number("/hold/duration_s"), d.number("/trip/duration_s"));
+    let window = d.number("/trip/window_s");
+    let post = h.d.shared.number("/recovery/postWindow_s");
+    let no_trip_s = d.number("/contrary/noTurbineTrip/duration_s");
+    let mut done: BTreeMap<String, runner::Run> = BTreeMap::new();
+    for (name, duration) in [
+        ("hold", hold_s),
+        ("holdReference", hold_s),
+        ("trip", trip_s),
+        ("R0", window + post),
+        ("R1", window),
+        ("R2", trip_s),
+        ("noTurbineTrip", no_trip_s),
+    ] {
+        let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
+        match h.run(&spec, &settled, None) {
+            Some(run) => {
+                println!(
+                    "{}",
+                    json!({"run": name, "reached_s": run.record.reached_s, "failure": run.record.failure,
+                        "exit": run.record.exit, "process_cpu_s": run.record.process_cpu_s})
+                );
+                done.insert(name.into(), run);
+            }
+            None => {
+                status = format!("incomplete: {name} not started (work bound)");
+                break;
             }
         }
-        for unsupported in ["stuckCluster", "headerReservoir"] {
-            h.d.gates.whole(&format!("/contrary/{unsupported}"));
-            h.sequence.push(json!({"run": unsupported, "started": false,
-                "reason": "the joined model has no command for this case yet: S2 is incomplete until it has"}));
-            status = format!("incomplete: contrary case {unsupported} not executable");
-        }
-        if let Some(hold) = done.get("hold") {
-            gates_out.extend(judge_hold(
-                &h,
-                hold,
-                done.get("holdReference"),
-                &mut comparisons,
-            ));
-        }
-        if let Some(trip) = done.get("trip") {
-            gates_out.extend(judge_trip(
-                &h,
-                trip,
-                done.get("R0"),
-                done.get("R1"),
-                done.get("R2"),
-                &mut comparisons,
-            ));
-        }
-    } else {
-        status = "incomplete: the settle did not run".into();
     }
-    let passed = gates_out.iter().all(|g| g["pass"] == json!(true));
+    for unsupported in ["stuckCluster", "headerReservoir"] {
+        h.d.gates.whole(&format!("/contrary/{unsupported}"));
+        h.sequence.push(json!({"run": unsupported, "started": false,
+            "reason": "the joined model has no command for this case yet (CONTRARY lane): S2 is incomplete until it has"}));
+        status = format!("incomplete: contrary case {unsupported} not executable");
+    }
+    if let Some(hold) = done.get("hold") {
+        gates_out.extend(judge_hold(
+            &h,
+            hold,
+            done.get("holdReference"),
+            &mut comparisons,
+        ));
+    }
+    if let Some(trip) = done.get("trip") {
+        gates_out.extend(sequence::judge_trip_declared_and_information(
+            &h,
+            trip,
+            done.get("R0"),
+            done.get("R1"),
+            done.get("R2"),
+            &mut comparisons,
+        ));
+    }
+    let passed = gates_out
+        .iter()
+        .filter(|g| g["judged"] == json!(true))
+        .all(|g| g["pass"] == json!(true));
     let verdict = if status != "complete" {
         "incomplete".to_string()
     } else if passed {
@@ -998,7 +1104,7 @@ fn s2_gate_run() {
     } else {
         "FAIL".to_string()
     };
-    let r = h.receipt(
+    let mut r = h.receipt(
         "s2-gate-run",
         &status,
         &verdict,
@@ -1008,5 +1114,167 @@ fn s2_gate_run() {
         Value::Object(comparisons),
         gates_out,
     );
+    r["phase1"] = json!({"path": phase_path, "sha256": provenance::sha256_file(&phase_path).ok(),
+        "process_cpu_s": phase["process_cpu_s"]});
     receipt::write(&path, &r).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Z5 at the S2-15 start (quiet window): the projection's unit costs and the
+/// per-sample observation cost, thread-CPU best-of `LD01_S2_Z5_ROUNDS` (5)
+/// rounds at the composed state of the frozen tuple, as revision 7's TBD
+/// register asks ("Z5 thread-CPU best-of in the quiet window at the frozen
+/// code"):
+/// - the value residual and the block Jacobian (System callbacks of the
+///   integrated operator), stock KLU AMD factor, refactor and solve on the
+///   block pattern, `c_s = stepResiduals × (residual + solve)` and
+///   `c_J = Jacobian + refactor` as the projection prices them;
+/// - the exact consistent start on the block matrices with its cached
+///   symbolic analyses (a restart's start);
+/// - one dense-output sample as the runner takes it: the interpolant read,
+///   the account, the credited outputs and D3 (a).
+///
+/// The receipt (`$LD01_RECEIPTS/integ/<LD01_S2_Z5_RECEIPT>`) carries the
+/// three fill values. NOT a gate: a measurement for the fills.
+#[test]
+#[ignore = "Z5 unit costs at the S2-15 start: quiet window"]
+fn s2_z5_unit_costs() {
+    use leitbild_operating_water::{
+        ida::{Ida, Initial, System},
+        joined::{Integrated, Matrices, consistent_start},
+        joined_ledger::Ledgered,
+        klu::SparseLu,
+    };
+    let rounds: usize = std::env::var("LD01_S2_Z5_ROUNDS").map_or(5, |v| v.parse().unwrap());
+    let name = std::env::var("LD01_S2_Z5_RECEIPT").expect("LD01_S2_Z5_RECEIPT");
+    let path = sequence::receipt_path("integ", &name);
+    assert!(!path.exists(), "never overwritten");
+    let mut h = sequence::Harness::new(sequence::Mode::Gate).unwrap_or_else(|e| panic!("{e}"));
+    let c = h.compose("Z5");
+    let compose::Composed {
+        mut joined,
+        y,
+        yp,
+        ids,
+        atol,
+        rtol,
+        structure,
+        mut analyses,
+        ..
+    } = c;
+    let best = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+    let timed = |f: &mut dyn FnMut()| {
+        let t0 = cpu::thread_cpu_s();
+        f();
+        cpu::thread_cpu_s() - t0
+    };
+    // The exact consistent start (cached analyses, as at a restart).
+    let weights = compose::error_weights(&y, rtol, &atol);
+    let mut starts = Vec::new();
+    for _ in 0..rounds {
+        let mut y1 = y.clone();
+        starts.push(timed(&mut || {
+            consistent_start(
+                &mut joined,
+                Matrices::Blocks {
+                    structure: &structure,
+                    analyses: &mut analyses,
+                },
+                0.,
+                &mut y1,
+                &ids,
+                &weights,
+                compose::START_BOUND,
+                2,
+            )
+            .expect("consistent start");
+        }));
+    }
+    let mut integrated = Integrated::from_blocks(joined, structure, analyses).unwrap();
+    let n = y.len();
+    let nnz = integrated.nonzeros();
+    let (mut out, mut data) = (vec![0.; n], vec![0.; nnz]);
+    let (mut rows, mut pointers) = (vec![0i64; nnz], vec![0i64; n + 1]);
+    let cj = 1. / h.d.gates.number("/observationInterval_s");
+    let (mut residuals, mut jacobians) = (Vec::new(), Vec::new());
+    for _ in 0..rounds {
+        residuals.push(timed(&mut || {
+            integrated.residual(0., &y, &yp, &mut out).unwrap()
+        }));
+        jacobians.push(timed(&mut || {
+            integrated
+                .jacobian(0., cj, &y, &yp, &mut data, &mut rows, &mut pointers)
+                .unwrap()
+        }));
+    }
+    let mut lu = SparseLu::analyze(n, &pointers, &rows).expect("KLU analyze");
+    let (mut factors, mut refactors, mut solves) = (Vec::new(), Vec::new(), Vec::new());
+    for _ in 0..rounds {
+        factors.push(timed(&mut || lu.factor(&data).expect("factor")));
+        refactors.push(timed(&mut || lu.refactor(&data).expect("refactor")));
+        let mut rhs = out.clone();
+        solves.push(timed(&mut || lu.solve(&mut rhs).expect("solve")));
+    }
+    // One dense-output sample as the runner takes it, after one step.
+    let reader = h.reader().clone();
+    let ledgered = Ledgered::new(integrated, cpu::thread_cpu_s).unwrap();
+    let mut ida = Ida::new(
+        meter::Metered::new(ledgered),
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .unwrap();
+    ida.set_max_order(h.d.gates.count("/maxOrder") as usize)
+        .unwrap();
+    runner::restart_configuration(&h.d)
+        .configure(&mut ida)
+        .unwrap();
+    let (mut ys, mut yps) = (y.clone(), yp.clone());
+    let reached = ida
+        .advance_one_step(1., &mut ys, &mut yps)
+        .unwrap()
+        .reached()
+        .unwrap();
+    let mut samples = Vec::new();
+    for _ in 0..rounds {
+        let at = 0.5 * reached;
+        samples.push(timed(&mut || {
+            ida.dense(at, &mut ys, &mut yps).unwrap();
+            let account = ida.system_mut().inner.account(at, &ys, &yps).unwrap();
+            let joined = &ida.system().inner.integrated.joined;
+            let values = reader.read(joined, &ys, false).unwrap();
+            let admitted = outputs::admit(joined, &h.extension, at);
+            std::hint::black_box((account, values, admitted.is_ok()));
+        }));
+    }
+    let k = h.d.gates.number("/projection/stepResiduals");
+    let (f, s, j, r) = (
+        best(&residuals),
+        best(&solves),
+        best(&jacobians),
+        best(&refactors),
+    );
+    let unit = json!({"residual_s": f, "jacobian_s": j, "klu_factor_s": best(&factors), "klu_refactor_s": r,
+        "klu_solve_s": s, "c_s_s": k * (f + s), "c_J_s": j + r,
+        "rule": "thread-CPU best-of in the quiet window at the frozen code; c_s = stepResiduals x (residual + KLU solve), c_J = block Jacobian + KLU AMD refactor"});
+    let receipt = json!({"kind": "s2-z5-unit-costs", "status": "zero-time measurement for the S2-15 fills (Z5); not a gate",
+        "provenance": h.header()["provenance"], "machine": h.header()["machine"], "rounds": rounds, "cj_per_s": cj,
+        "rounds_s": {"residual": residuals, "jacobian": jacobians, "klu_factor": factors, "klu_refactor": refactors,
+            "klu_solve": solves, "consistent_start": starts, "dense_sample": samples},
+        "fill_values": {"projection.unitCosts": unit,
+            "projection.consistentStart_cpu_s": best(&starts),
+            "totalGuard.perSampleObservation_s": best(&samples)},
+        "notes": {"consistent_start": "best-of at the composed state on cached analyses; the S2-10 median over its restarts (loaded) was 0.065 s and a 52-rod seat start 0.25 s",
+            "dense_sample": "interpolant read + account + credited outputs (no rods) + D3 (a), as the runner samples"},
+        "process_cpu_s": cpu::process_cpu_s()});
+    std::fs::write(&path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    println!(
+        "{}",
+        json!({"receipt": path, "fill_values": receipt["fill_values"]})
+    );
 }
