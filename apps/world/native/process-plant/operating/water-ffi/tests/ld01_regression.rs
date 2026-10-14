@@ -1176,6 +1176,16 @@ fn settled_state() {
 /// commit accepted only when its tree is that hash, a checkout's HEAD.
 #[test]
 fn wiki_provenance_verifies_a_named_commit_against_the_tree() {
+    // The provenance needs git; a host without it (the Linux build image)
+    // cannot write such receipts at all, and says so here.
+    if std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipped: git is not installed on this host");
+        return;
+    }
     let git = |cwd: &Path, args: &[&str]| {
         let out = std::process::Command::new("git")
             .current_dir(cwd)
