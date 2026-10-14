@@ -5,7 +5,16 @@ import {
   emptyProcessPlantProjection,
   processPlantUnitPackDataSchema,
   type ProcessPlantUnitPackData,
+  type ProcessPlantUnitProjection,
 } from './model.ts'
+
+// A Plant whose runtime is pending is drawn grey, as an object the Pack does not know is.
+const colorByTone: Readonly<Record<ProcessPlantUnitProjection['statusTone'], string>> = {
+  error: '#c7352b',
+  working: '#c77d13',
+  ready: '#22845d',
+  idle: '#667085',
+}
 
 const parseUnitData = (object: OperationalObject): ProcessPlantUnitPackData | null => {
   const parsed = processPlantUnitPackDataSchema.safeParse(object.packData)
@@ -17,7 +26,7 @@ const presentationForUnit = (object: OperationalObject, data: ProcessPlantUnitPa
   return {
     categoryId: 'process-plants',
     icon: 'factory',
-    color: projection.statusTone === 'error' ? '#c7352b' : projection.statusTone === 'working' ? '#c77d13' : '#22845d',
+    color: colorByTone[projection.statusTone],
     summary: projection.summary,
     status: packStatus(projection.statusTone, projection.statusLabel),
     fields: [
@@ -40,7 +49,7 @@ export const processPlantPresentation: PackPresentationContribution = {
     const data = parseUnitData(object)
     if (data) return presentationForUnit(object, data)
     return {
-      categoryId: 'unknown', icon: 'circle-question-mark', color: '#667085', summary: object.operational.status,
+      categoryId: 'unknown', icon: 'circle-question-mark', color: colorByTone.idle, summary: object.operational.status,
       status: packStatus('idle', object.operational.status),
       fields: [packField('warning', 'Warning', 'Object is outside the process-plant Pack vocabulary')],
     }

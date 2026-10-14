@@ -75,12 +75,16 @@ const readField = (
   return processPlantField(String(plan.path), variable.label, formatValue(variable.value, variable.unit))
 }
 
+// The active alarms and trips, counted as the unit's displays annunciate
+// them: shelved, suppressed and out-of-service ones annunciate nowhere, so
+// they neither count nor colour the Plant on the map.
 const activeLifecycles = (
   plant: ProcessPlantRuntimeInstance,
 ): ReadonlyArray<ProcessPlantIcLifecycleState> => {
   const snapshot = plant.protection?.snapshot()
   if (!snapshot) return []
-  return [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active)
+  return [...snapshot.alarms, ...snapshot.trips]
+    .filter(lifecycle => lifecycle.active && !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService)
 }
 
 const statusFor = (
