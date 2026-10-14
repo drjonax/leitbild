@@ -40,6 +40,11 @@ impl Scalar {
     fn ln(self) -> Self {
         Self::new(self.value.ln(), self.direction / self.value)
     }
+    // Always inlined, as it was while it was small: a constant exponent is
+    // then folded at each call site exactly as `f64::powf` is on the value
+    // path (`pow(x, 2.0)` becomes `x * x`), so the Scalar and f64 laws
+    // agree bit for bit (water-ffi value_only_wall).
+    #[inline(always)]
     fn pow(self, exponent: f64) -> Self {
         // q=0 has a finite tangent only for exponents >=1 or a zero seed.
         let d = if self.value == 0. && self.direction == 0. {
@@ -83,6 +88,7 @@ impl Scalar {
 /// in [2^-200, 2^200] and |exponent - 1| <= 4, so the power lies in
 /// [2^-800, 2^800]. Then `exponent * power * z` equals `exponent * z` bit
 /// for bit for either signed zero `z` ([`Scalar::pow`]'s zero direction).
+#[inline(always)]
 fn zero_tangent_scale(value: f64, exponent: f64) -> bool {
     const LOWEST: f64 = f64::from_bits(0x3370_0000_0000_0000); // 2^-200
     const HIGHEST: f64 = f64::from_bits(0x4c70_0000_0000_0000); // 2^200
@@ -193,6 +199,7 @@ impl Number for Scalar {
     fn ln(self) -> Self {
         Scalar::ln(self)
     }
+    #[inline(always)]
     fn pow(self, exponent: f64) -> Self {
         Scalar::pow(self, exponent)
     }
@@ -236,6 +243,7 @@ impl Number for f64 {
     fn ln(self) -> Self {
         f64::ln(self)
     }
+    #[inline(always)]
     fn pow(self, exponent: f64) -> Self {
         self.powf(exponent)
     }
