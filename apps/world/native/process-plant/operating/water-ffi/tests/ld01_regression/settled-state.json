@@ -41,7 +41,7 @@
       "core_power": {
         "change": 2.465658683941025e-06,
         "holds": true,
-        "threshold": 6.9e-05
+        "threshold": 6.8e-05
       },
       "loop_flow": {
         "change": 4.539785717758468e-07,
@@ -51,12 +51,12 @@
       "pt1_pa": {
         "change": 342.00543351471424,
         "holds": true,
-        "threshold": 345.0
+        "threshold": 344.0
       },
       "pzr_level_m": {
         "change": 1.3608556059807597e-05,
         "holds": true,
-        "threshold": 0.0007
+        "threshold": 0.00068
       },
       "sg_liquid_m3": {
         "change": 2.3037813434712007e-05,
@@ -66,7 +66,7 @@
       "sg_pressure_pa": {
         "change": 15.738928690552711,
         "holds": true,
-        "threshold": 345.0
+        "threshold": 344.0
       }
     }
   }
