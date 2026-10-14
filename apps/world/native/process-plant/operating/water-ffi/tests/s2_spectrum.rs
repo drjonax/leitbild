@@ -26,6 +26,7 @@
 //!      complement of its block, `A_R = A_RR - A_Rs A_ss^-1 A_sR` (KLU), so
 //!      the water sees the walls' instantaneous response at frozen stores.
 //!      `B` has no entries in those rows or columns, which is checked.
+//!
 //!    The pencil with the surfaces held instead (a fixed-temperature wall) is
 //!    reported as a sensitivity, not gated.
 //! 2. **Coupled nuclear-thermal** (`K`, critic M3): a named restriction of
@@ -521,9 +522,8 @@ impl Restriction<'_> {
             }
         }
         for &j in self.eliminate {
-            for p in self.pointers[j]..self.pointers[j + 1] {
-                b_coupling = b_coupling.max(b[p].abs());
-            }
+            let column = &b[self.pointers[j]..self.pointers[j + 1]];
+            b_coupling = column.iter().fold(b_coupling, |m, v| m.max(v.abs()));
         }
         assert_eq!(
             b_coupling, 0.,
@@ -610,6 +610,7 @@ impl Restriction<'_> {
 /// feed from the fissile inventory; checked by a topological order), so the
 /// held block is triangular and its eigenvalues are its diagonal: `-A_ii`,
 /// the decay (and depletion) constants.
+#[allow(clippy::too_many_arguments)] // One pencil's CSC, its restriction and its names.
 fn held_linear_blocks(
     pointers: &[usize],
     indices: &[usize],
