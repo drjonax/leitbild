@@ -6,7 +6,8 @@
 // It states what the registry's ownsAutonomousWork treats as keeping a
 // Workspace loaded, plus comparisons, in at most four facts:
 //   - AI Agents generating a turn (an answer, a trigger, a procedure step, a
-//     turn an approved proposal resumed). Active.
+//     turn an approved proposal resumed) or with one queued, which includes
+//     the cooldown after a reply that reads 'idle'. Active.
 //   - model comparisons whose job runs; they call the model outside any
 //     Agent's turn (agents/comparisons.ts). Active.
 //   - background work outside any Agent's turn: script runs advancing in an
@@ -56,7 +57,10 @@ const activityOf = (runtime: AgentsWorkspaceRuntime): WorkspaceActivityItem[] =>
   const triggers = agents.reduce((sum, agent) => sum + (agent.getTriggers?.().filter(trigger => trigger.enabled).length ?? 0), 0)
   return [
     ...fact('agents-answering', true, [
-      { count: agents.filter(agent => asAIAgent(agent)?.state.get() === 'generating').length, one: 'AI agent answering', many: 'AI agents answering' },
+      { count: agents.filter(agent => {
+        const ai = asAIAgent(agent)
+        return ai !== undefined && (ai.state.get() === 'generating' || ai.hasQueuedTurn())
+      }).length, one: 'AI agent answering', many: 'AI agents answering' },
     ]),
     ...fact('comparisons-running', true, [
       { count: runtime.comparisons.running(), one: 'model comparison running', many: 'model comparisons running' },

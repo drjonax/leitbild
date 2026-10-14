@@ -479,14 +479,25 @@
     history.pushState(null, '', url)
     void refreshResources(workspace.id).catch(cause => { refreshError = String(cause) })
   }
-  const toggleRunAssistant = async (): Promise<void> => {
-    if (!workspace || !selectedWorldResource || !selectedRunFamily || !assistantCapability) return
-    if (agentsVisible) {
-      agentsVisible = false
-      const url = new URL(location.href)
-      url.searchParams.delete('agents')
-      history.replaceState(null, '', url)
-      return
+  // A Run offers its Assistant where it belongs to a run family, Agents
+  // publishes the Assistant and the Run declares no roles; its World page then
+  // offers it too.
+  const runAssistantAvailable = $derived(workspace !== null && selectedWorldResource !== undefined && selectedRunFamily !== undefined
+    && assistantCapability !== undefined && !runDeclaresRoles(selectedWorldResource))
+  // Shows the shown Run's Assistant room: the room shown when it serves the
+  // Run, else one that does, else a family room whose scope is widened to the
+  // Run, else a new one. It never hides the room, so the World page may ask
+  // for it as often as it likes.
+  // One open at a time, whoever asks (the toolbar launcher or a World page): a second click
+  // while the first is still finding or creating the room waits for it, so no second room is made.
+  let runAssistantOpening: Promise<void> | null = null
+  const openRunAssistant = (): Promise<void> => {
+    runAssistantOpening ??= openRunAssistantRoom().finally(() => { runAssistantOpening = null })
+    return runAssistantOpening
+  }
+  const openRunAssistantRoom = async (): Promise<void> => {
+    if (!runAssistantAvailable || !workspace || !selectedWorldResource || !selectedRunFamily || !assistantCapability) {
+      throw new Error('Run Assistant is unavailable for this Run')
     }
     const existing = selectedAgentsResource && roomSelectsRun(selectedAgentsResource, selectedWorldResource)
       ? selectedAgentsResource
@@ -539,6 +550,13 @@
     agentsVisible = true
     const url = new URL(location.href)
     url.searchParams.set('agents', selectedAgentsRoomId!)
+    history.replaceState(null, '', url)
+  }
+  const toggleRunAssistant = async (): Promise<void> => {
+    if (!agentsVisible) return openRunAssistant()
+    agentsVisible = false
+    const url = new URL(location.href)
+    url.searchParams.delete('agents')
     history.replaceState(null, '', url)
   }
   const showRunAssistant = (): void => {
@@ -686,7 +704,8 @@
     {#if refreshError}<p class="notice error" role="alert">Catalog refresh failed: {refreshError}</p>{/if}
     {#if showingComposer}
     <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}
-      {runRefusal} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} bind:worldPane />
+      {runRefusal} onOpenRun={runId => switchWorldRun(runId)} {runAssistantAvailable} onOpenRunAssistant={openRunAssistant}
+      onError={message => { error = message }} bind:worldPane />
     {#if peopleShown && people && peopleState?.chat}<PeopleChat session={people} chat={peopleState.chat} notice={peopleState.notice} outboxSaved={peopleState.outboxSaved} anchor={worldPane}
       focusRequest={chatFocusRequest} onClose={closePeopleChat} />{/if}
     {:else}

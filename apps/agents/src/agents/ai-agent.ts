@@ -476,6 +476,10 @@ export const createAIAgent = (
   }
 
   const tryEvaluate = (triggerRoomId: string): void => {
+    // A closing runtime starts no turns. Dropping is intentional: the message
+    // stays in the Room's canonical transcript, and close() already dropped
+    // the queued and requested turns.
+    if (cm.isClosed()) return
     if (cm.isBusy()) {
       cm.addPending(triggerRoomId)
       return
@@ -621,11 +625,11 @@ export const createAIAgent = (
             : cm.nextPending() ?? undefined
           if (nextRoom) {
             if (nextRoom !== triggerRoomId) cm.consumePending(nextRoom)
-            // After a respond, delay re-evaluation to let other agents' messages coalesce
+            // After a respond, delay re-evaluation to let other agents' messages coalesce.
+            // The concurrency manager owns the delayed turn, so whenIdle waits
+            // for it and cancelGeneration or close drops it.
             if (wasRespond) {
-              setTimeout(() => {
-                if (cm.isEpochCurrent(epoch)) tryEvaluate(nextRoom)
-              }, EVAL_COOLDOWN_MS)
+              cm.scheduleNext(nextRoom, EVAL_COOLDOWN_MS, tryEvaluate)
             } else {
               tryEvaluate(nextRoom)
             }
@@ -793,7 +797,13 @@ export const createAIAgent = (
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; requestedTurns.clear(); cm.cancelAll() },
+    hasQueuedTurn: cm.hasQueuedWork,
+    close: () => { requestedTurns.clear(); cm.close() },
     requestTurn: (roomId: string, turn: RequestedTurn) => {
+      // Only a closing runtime closes an Agent still in the Team, and removal
+      // and shutdown close it while admitted Workspace operations still run.
+      // Marked as runWorkspaceOperation marks a closing runtime.
+      if (cm.isClosed()) throw Object.assign(new Error(`Agents Workspace is closing; ${config.name} takes no requested turns`), { code: 'workspace_closing' })
       if (requestedTurns.has(roomId) || runningRequests.has(roomId)) return { kind: 'refused', reason: 'pending', message: `${config.name} is already working on a request in this room; ask again when its reply arrives` }
       if (getScriptContext?.(roomId, resolveName(agentId))) return { kind: 'refused', reason: 'script', message: 'A script directs this room; requested turns wait until it ends' }
       const queued = cm.isBusy()

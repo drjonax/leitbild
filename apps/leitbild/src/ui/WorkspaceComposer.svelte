@@ -2,6 +2,7 @@
   import { onDestroy, untrack } from 'svelte'
   import type { WorkspaceResourceReference, WorkspaceSubjectReference } from '@leitbild/contracts'
   import { createViewRelay, type WorldPane } from './view-relay.ts'
+  import { createRunAssistantBridge } from './run-assistant-bridge.ts'
   import { workspaceSubjectFocusMessage } from './workspace-focus.ts'
 
   interface Props {
@@ -15,6 +16,10 @@
     readonly runRefusal: (run: WorkspaceResourceReference) => Promise<string | null>
     /** Opens a Run in a World pane beside the chat, as switching Runs does. */
     readonly onOpenRun: (runId: string) => void
+    /** Whether the shown Run offers its Assistant, as the Host's own launcher does; its World page may then offer it too. */
+    readonly runAssistantAvailable: boolean
+    /** Shows the shown Run's Assistant room, creating it where none serves the Run; it never hides the room. */
+    readonly onOpenRunAssistant: () => Promise<void>
     readonly onError: (message: string) => void
     /** The World pane, for overlays anchored to it (the people chat); null without a Run. */
     worldPane?: HTMLElement | null
@@ -26,7 +31,10 @@
   const collapseThreshold = 12
   const minimumOpenShare = 20
 
-  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, runRefusal, onOpenRun, onError, worldPane = $bindable(null) }: Props = $props()
+  let {
+    workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, runRefusal, onOpenRun,
+    runAssistantAvailable, onOpenRunAssistant, onError, worldPane = $bindable(null),
+  }: Props = $props()
   let splitPercent = $state(initialSplit)
   let lastOpenSplit = $state(initialSplit)
   let collapsedPane = $state<CollapsedPane>(null)
@@ -137,6 +145,18 @@
   })
   onDestroy(() => relay.dispose())
 
+  // The World page asks for the Run's Assistant room; like the relay, the
+  // bridge keeps its state in a plain closure.
+  const assistantBridge = createRunAssistantBridge({
+    workspaceId: () => workspaceId,
+    worldRunId: () => worldRunId,
+    available: () => runAssistantAvailable,
+    postToWorld: message => worldFrame?.contentWindow?.postMessage(message, location.origin),
+    openAssistant: () => onOpenRunAssistant(),
+    showAgents: () => { if (collapsedPane === 'agents') restoreSplit() },
+    reportError: message => onError(message),
+  })
+
   // The World document that last said it listens; a frame that loads another
   // document (a reload, or the World start page) no longer listens.
   let listeningWorldDocument: Document | null = null
@@ -148,6 +168,7 @@
     else if (event.source === worldFrame?.contentWindow) {
       if ((event.data as { readonly type?: unknown } | null)?.type === 'leitbild:view-window-ready') listeningWorldDocument = worldFrame?.contentDocument ?? null
       relay.fromWorld(event.data)
+      assistantBridge.fromWorld(event.data)
     }
   }
 
@@ -157,6 +178,7 @@
     if (worldFrame?.contentDocument === listeningWorldDocument) return
     listeningWorldDocument = null
     relay.worldFrameUnloaded()
+    assistantBridge.worldFrameUnloaded()
   }
 
   // A new Run gives the World frame a new document (or none), which listens only
@@ -164,7 +186,16 @@
   // frame's load event, so readiness is reset here rather than on load.
   $effect(() => {
     worldRunId
-    untrack(() => relay.worldFrameUnloaded())
+    untrack(() => {
+      relay.worldFrameUnloaded()
+      assistantBridge.worldFrameUnloaded()
+    })
+  })
+
+  // Declared after the Run's effect, so a new Run's availability never reaches the previous Run's document.
+  $effect(() => {
+    runAssistantAvailable
+    untrack(() => assistantBridge.availabilityChanged())
   })
 
   // Another Room or a closed chat ends the Agents document that listed the displays.

@@ -351,6 +351,8 @@ export interface DisplayWindowRequest {
   readonly target: DisplayWindowTarget
   /** Opened from the rail: the window takes focus. From chat it must not steal the composer's keys. */
   readonly focus: boolean
+  /** Opened from a Plant card's Instructor row: the window opens its Instructor actions on the Plant shown. */
+  readonly instructorActions: boolean
 }
 
 /** The entry a request opens: the deck's own when present, else the self-contained listing. */

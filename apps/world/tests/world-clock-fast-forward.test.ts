@@ -173,8 +173,10 @@ describe('World clock across a fixed-duration fast-forward', () => {
         }
       }
       const reset = await resetWhenFree()
-      view.join(reset.snapshot())
-      const restarted = reset.snapshot().clock!.currentTime
+      // One snapshot: the restarted Run runs on, so a second read can stand a millisecond later.
+      const restartedSnapshot = reset.snapshot()
+      view.join(restartedSnapshot)
+      const restarted = restartedSnapshot.clock!.currentTime
       expect(Date.parse(restarted)).toBeLessThan(Date.parse(final.currentSimulationTime))
       expect(view.clock()?.currentTime).toBe(restarted)
       view.answer(beforeReset, late!.execution)

@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test'
+import { describe, test, expect, spyOn } from 'bun:test'
 import { createTriggerScheduler } from './scheduler.ts'
 import type { Trigger } from './types.ts'
 
@@ -260,6 +260,31 @@ describe('createTriggerScheduler', () => {
     // Crucially: lastFiredAt unchanged so the trigger re-evaluates next tick.
     expect(agent.triggers[0]!.lastFiredAt).toBe(0)
     sched.stop()
+  })
+
+  // Eviction stops the scheduler before scripts stop, and a stopping script
+  // removes its cast, which invalidates. A closing runtime never ticks again.
+  test('stop is final: a later invalidate starts no ticking', () => {
+    const trigger: Trigger = {
+      id: 't1', name: 'heartbeat', prompt: 'ping', mode: 'post',
+      intervalSec: 60, enabled: true, roomId: 'r1', lastFiredAt: 0,
+    }
+    const agent = mkAgent('A', 'human', [trigger])
+    const room = mkRoom('r1', agent)
+    const intervals = spyOn(globalThis, 'setInterval')
+    try {
+      const sched = createTriggerScheduler({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        team: { listAgents: () => [agent as any], getAgent: () => agent as any } as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        rooms: { getRoom: () => room as any } as any,
+      })
+      // An enabled trigger starts the tick.
+      expect(intervals).toHaveBeenCalledTimes(1)
+      sched.stop()
+      sched.invalidate()
+      expect(intervals).toHaveBeenCalledTimes(1)
+    } finally { intervals.mockRestore() }
   })
 
 })

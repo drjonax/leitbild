@@ -311,6 +311,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         objects: initialObjects,
         plants,
         at: nowIso(),
+        simulationTime: clock.currentTime,
         connectedPlantIds,
       }).map(object => [object.id, object]),
     )
@@ -430,6 +431,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         objectsById,
         plants,
         at: nowIso(),
+        simulationTime: new Date(simulationMs).toISOString() as IsoTimestamp,
         connectedPlantIds,
         provenance: {
           source: 'simulator',

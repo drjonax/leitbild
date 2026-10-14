@@ -63,6 +63,15 @@ export interface PackObjectPresentation {
    * callsign and phase code. Without it the map draws no label.
    */
   readonly mapLabel?: string
+  /**
+   * A few short lines that stand for an object that has a card of its own,
+   * such as its status and what it is doing now: the map's hover preview
+   * shows them beneath its label instead of every field, as a preview of the
+   * card's first lines. The rail row's tooltip keeps every field, with the
+   * context other Packs add (the weather at the object). Without them the
+   * hover lists the fields.
+   */
+  readonly glance?: ReadonlyArray<string>
 }
 
 export interface PackObjectField {

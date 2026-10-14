@@ -35,6 +35,8 @@ export interface OperationalRenderControllerState {
   readonly assignmentInteraction: MapAssignmentInteraction
   /** Whether the icons' disks take clicks and hover too (`OperationalDeckLayerConfig`, `disksPick`). */
   readonly disksPick: boolean
+  /** Objects whose whole disk takes a click on every surface, or null for a finger (`OperationalDeckLayerConfig`, `diskClicks`). */
+  readonly diskClicks: ((object: OperationalObject) => boolean) | null
   /**
    * What an object's presentation depends on besides the object itself, such
    * as the roles a screen chose to see: a change presents every object again.
@@ -145,6 +147,7 @@ const renderSignatureFor = (
   interactionRevision: number,
   catalogueAtlasRevision: number,
   disksPick: boolean,
+  diskClicks: boolean,
   zoom: number,
 ): string => [
   snapshot.revisions.points,
@@ -155,6 +158,7 @@ const renderSignatureFor = (
   interactionRevision,
   catalogueAtlasRevision,
   disksPick,
+  diskClicks,
   zoom,
 ].join('|')
 
@@ -252,7 +256,7 @@ export const createOperationalRenderController = (
     const catalogueAtlas = config.catalogueAtlas.current()
     const zoom = fanZoomOf(runtime.map.getZoom())
     layoutZoom = zoom
-    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.disksPick, zoom)
+    const renderSignature = renderSignatureFor(snapshot, state.visibleFamilies, state.assignmentInteraction.revision, catalogueAtlas.revision, state.disksPick, state.diskClicks !== null, zoom)
     const deckUpdated = renderSignature !== lastRenderSignature
     if (deckUpdated) {
       lastRenderSignature = renderSignature
@@ -264,6 +268,7 @@ export const createOperationalRenderController = (
           visibleFamilies: state.visibleFamilies,
           catalogueAtlas,
           disksPick: state.disksPick,
+          diskClicks: state.diskClicks,
           zoom,
           onObjectSelected: point => {
             config.onObjectSelected(point.object)

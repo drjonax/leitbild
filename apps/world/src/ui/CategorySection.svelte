@@ -3,7 +3,6 @@
   import type { OperationalObject } from '../core/model/index.ts'
   import type { PackCreateObjectType, PackObjectPresentation } from '../core/packs/protocol.ts'
   import IconButton from './components/IconButton.svelte'
-  import type { ProcessPlantArtifactKind } from './process-display/process-display-client.ts'
   import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from './procedures/procedure-run-selectors.ts'
   import FieldVisibilityMenu from './FieldVisibilityMenu.svelte'
   import ObjectRow from './ObjectRow.svelte'
@@ -19,6 +18,8 @@
     readonly fieldOptions: ReadonlyArray<FieldVisibilityOption>
     readonly presentedRows: ReadonlyArray<PresentedObjectRow>
     readonly selectedControllerId: string | null
+    /** The object whose card is open (`PlantCard.svelte`). */
+    readonly cardObjectId?: string | null
     readonly categoryMapVisible: boolean
     readonly isFieldVisible: (categoryId: string, field: string) => boolean
     readonly toggleField: (categoryId: string, field: string) => void
@@ -34,9 +35,6 @@
     readonly openProcessDisplay?: (object: OperationalObject) => void
     readonly openProcedureSystem?: (object: OperationalObject) => void
     readonly openProcedureSystemAt?: (object: OperationalObject, summary?: ProcedureRunSummary) => void
-    readonly openProcessPlantArtifact?: (object: OperationalObject, artifact: ProcessPlantArtifactKind) => void
-    readonly openProcessPlantCatalog?: (object: OperationalObject) => void
-    readonly openProcessPlantCredibility?: (object: OperationalObject) => void
     readonly openDroneControl?: (object: OperationalObject) => void
     readonly openDroneProfileEditor?: (object: OperationalObject) => void
     readonly procedureSummariesForObject?: (object: OperationalObject) => ProcedureRunSummaryGroup
@@ -51,6 +49,7 @@
     fieldOptions,
     presentedRows,
     selectedControllerId,
+    cardObjectId = null,
     categoryMapVisible,
     isFieldVisible,
     toggleField,
@@ -65,9 +64,6 @@
     openProcessDisplay,
     openProcedureSystem,
     openProcedureSystemAt,
-    openProcessPlantArtifact,
-    openProcessPlantCatalog,
-    openProcessPlantCredibility,
     openDroneControl,
     openDroneProfileEditor,
     procedureSummariesForObject,
@@ -131,6 +127,7 @@
         presentation={entry.presentation}
         statusPresentation={entry.status}
         selected={selectedControllerId === entry.object.id}
+        cardOpen={cardObjectId === entry.object.id}
         hasNewInfo={entry.hasNewInfo}
         visibleFields={entry.visibleFields}
         {markSeen}
@@ -140,9 +137,6 @@
         {openProcessDisplay}
         {openProcedureSystem}
         {openProcedureSystemAt}
-        {openProcessPlantArtifact}
-        {openProcessPlantCatalog}
-        {openProcessPlantCredibility}
         {openDroneControl}
         {openDroneProfileEditor}
         procedureSummaries={procedureSummariesForObject?.(entry.object)}

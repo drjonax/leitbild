@@ -28,6 +28,7 @@ export interface TriggerScheduler {
   // Call after add/update/delete to refresh the "any triggers exist" cache and
   // start/stop the timer accordingly. Idempotent.
   readonly invalidate: () => void
+  // Final, for a closing runtime: the timer stops and nothing restarts it.
   readonly stop: () => void
   // For testing: force one tick immediately. Returns the fire list.
   readonly tickNow: () => Promise<ReadonlyArray<{ readonly agentId: string; readonly triggerId: string }>>
@@ -51,6 +52,9 @@ export interface SchedulerDeps {
 export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler => {
   const now = deps.now ?? Date.now
   let timer: ReturnType<typeof setInterval> | null = null
+  // Set by stop(). A closing runtime still changes its Team while scripts stop
+  // (removeAgent invalidates), but its scheduler never ticks again.
+  let stopped = false
   // Lever 1: cached flag. Recomputed by invalidate(). Tick early-returns
   // when false. Cheap because invalidate runs O(agents × triggers) on a
   // mutation event, not every tick.
@@ -147,24 +151,35 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
   }
 
   const start = (): void => {
+    if (stopped) throw new Error('Trigger scheduler is stopped; it never ticks again')
     if (timer) return
     timer = setInterval(() => { void tick() }, TICK_MS)
   }
 
-  const stop = (): void => {
+  // Lever 2's pause; invalidate restarts the timer on the next trigger.
+  const pause = (): void => {
     if (!timer) return
     clearInterval(timer)
     timer = null
   }
 
+  const stop = (): void => {
+    stopped = true
+    pause()
+  }
+
   const invalidate = (): void => {
+    // A stopped scheduler belongs to a closing runtime: the Agents leaving its
+    // Team as scripts stop must not restart ticks there, so there is nothing
+    // to refresh.
+    if (stopped) return
     // Stagger any unstaggered triggers (lever 3). Runs over all agents but
     // is idempotent — only mutates triggers with undefined lastFiredAt.
     for (const agent of deps.team.listAgents()) stagger(agent)
     anyTriggers = recomputeAnyTriggers()
     // Lever 2: stop the timer when not needed; restart on first trigger.
     if (anyTriggers) start()
-    else stop()
+    else pause()
   }
 
   // Boot: compute initial state and start (or not).

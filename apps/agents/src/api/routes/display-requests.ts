@@ -1,7 +1,8 @@
 // POST /rooms/:room/messages/:message/display-request — a reader asks the
 // author of an answer to show it as a live display (see
-// core/display-request.ts). A refusal answers with its rule's code and status;
-// any other error propagates like every other route's.
+// core/display-request.ts). A refusal answers with its rule's code and status,
+// and a closing Workspace with 409 workspace_closing as the module API answers
+// it; any other error propagates like every other route's.
 import { z } from 'zod'
 import type { RouteEntry } from './types.ts'
 import { errorResponse, json } from './helpers.ts'
@@ -40,6 +41,8 @@ export const displayRequestRoutes: RouteEntry[] = [
         const { queued } = system.requestDisplay(roomId, messageId, body.data.requesterId)
         return json({ queued } satisfies DisplayRequestAccepted, 202)
       } catch (error) {
+        // A request admitted before removal or shutdown closed the author.
+        if (error instanceof Error && 'code' in error && error.code === 'workspace_closing') return json({ error: error.message, code: 'workspace_closing' }, 409)
         if (!isDisplayRequestRefusal(error)) throw error
         return json({ error: error.message, code: error.code } satisfies DisplayRequestRefused, DISPLAY_REQUEST_REFUSAL_STATUS[error.code])
       }

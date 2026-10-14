@@ -617,6 +617,10 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
     const removeAgent = (id: string): boolean => {
       const agent = team.getAgent(id)
       if (!agent) return false
+      // A removed Agent leaves the team, so no later drain sees it: stop its
+      // turns now, dropping a queued one and cancelling a running one.
+      const ai = asAIAgent(agent)
+      if (ai) { ai.close(); ai.cancelGeneration() } // Human Agents take no turns.
       for (const profile of rooms.listAllRooms()) {
         const room = rooms.getRoom(profile.id)
         if (room?.hasMember(id)) {

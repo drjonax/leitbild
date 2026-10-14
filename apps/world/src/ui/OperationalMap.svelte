@@ -43,6 +43,7 @@
   import { createMapStackChooser } from './map/map-stack-chooser.ts'
   import { objectsUnder, stackPick } from './map/map-stack.ts'
   import { disksPickFor, hoverCardsFor, longPressObject, pickingRadiusFor } from './map/map-pointer.ts'
+  import { objectCardAnchor, sameCardFrame, type MapCardFrame } from './map/object-card-anchor.ts'
   import { operationalIconPx } from './map-runtime/symbol-kit.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
@@ -140,6 +141,17 @@
     readonly onGroundSelected?: (point: GeoJsonPoint) => void
     /** The order preview a hovered object's card shows, when the selected controller's Pack describes targets. */
     readonly targetPreviewFor?: (object: OperationalObject) => PackTargetPreview | null
+    /**
+     * Objects a click opens a card for: a mouse click or hover anywhere on
+     * their coloured disk is theirs on every surface, not only while the
+     * surface picks targets. Every other object's disk picks as before. It
+     * answers by the object alone, so the icons are not drawn again for it.
+     */
+    readonly takesDiskClicks?: (object: OperationalObject) => boolean
+    /** The object whose card is open: its hover card stays away, and the map reports where its icon is drawn. */
+    readonly cardObjectId?: string | null
+    /** Where the open card's icon is drawn as the camera and the icons move, and the map's clear part (`map/object-card-anchor.ts`). */
+    readonly onCardFrame?: (frame: MapCardFrame) => void
   }
 
   const {
@@ -196,6 +208,9 @@
     targetPicking = false,
     onGroundSelected,
     targetPreviewFor,
+    takesDiskClicks = () => false,
+    cardObjectId = null,
+    onCardFrame = () => undefined,
   }: Props = $props()
 
   let mapElement = $state<HTMLDivElement | null>(null)
@@ -203,7 +218,7 @@
   let mapInputDebugEntries = $state<ReadonlyArray<string>>([])
   let mapInputDebugSummary = $state('Waiting for map input')
   let cachedPackMapFeatures = $state<ReadonlyArray<PackMapFeature>>([])
-  const packFeatureLayer = createPackFeatureLayer(selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) }, message => onMapError(message))
+  const packFeatureLayer = createPackFeatureLayer(selection => { clickHandled = true; featureSelection = selection }, message => onMapError(message))
   const syncPackFeatures = () => { if (runtime) packFeatureLayer.update(runtime.map, cachedPackMapFeatures, visibleFamilies()) }
   let appliedTheme: ThemeMode | null = null
   let appliedCameraKey: string | null = null
@@ -223,6 +238,9 @@
   let longPressConsumedUntil = 0
   // Set while one map click is handled by an object, a Pack feature or a handle, so it is not also a ground click.
   let clickHandled = false
+  // One click selects one thing: a Pack feature beneath an object's icon (a grid line under a Plant) is selected only when no object took the click.
+  let objectTookClick = false
+  let featureSelection: NonNullable<PackMapFeature['selection']> | null = null
 
   const assignmentInteraction = (): MapAssignmentInteraction => ({
     revision: interactionRevision,
@@ -293,6 +311,40 @@
     })))
   }
 
+  // The open card's frame, measured once per animation frame while the map draws.
+  let cardFrameRequest: number | null = null
+  let lastCardFrame: MapCardFrame | null = null
+  const reportCardFrame = (): void => {
+    cardFrameRequest = null
+    const current = runtime
+    if (cardObjectId === null || current === null) return
+    const canvas = current.map.getCanvas()
+    const bounds = canvas.getBoundingClientRect()
+    const clear = {
+      left: cameraPadding.left,
+      top: cameraPadding.top,
+      right: canvas.clientWidth - cameraPadding.right,
+      bottom: canvas.clientHeight - cameraPadding.bottom,
+    }
+    const frame: MapCardFrame = {
+      origin: { x: bounds.left, y: bounds.top },
+      clear,
+      anchor: objectCardAnchor({
+        points: operationalRenderController.points(),
+        objectId: cardObjectId,
+        screenOf: position => current.map.project([position[0], position[1]]),
+        clear,
+      }),
+    }
+    if (sameCardFrame(lastCardFrame, frame)) return
+    lastCardFrame = frame
+    onCardFrame(frame)
+  }
+  const scheduleCardFrame = (): void => {
+    if (cardObjectId === null || cardFrameRequest !== null) return
+    cardFrameRequest = requestAnimationFrame(reportCardFrame)
+  }
+
   const popupController = createMapPopupController({
     getMap: () => runtime?.map ?? null,
     presentationFor: (object) => presentationFor(object),
@@ -327,12 +379,14 @@
       placementCursorActive: placementCursor !== null,
       assignmentInteraction: assignmentInteraction(),
       disksPick: disksPickFor(targetPicking, pickingRadius),
+      diskClicks: pickingRadius === 0 ? takesDiskClicks : null,
       presentationKey,
     }),
     hasNewInfo: object => hasNewInfo(object),
     presentationFor: object => presentationFor(object),
     onObjectSelected: object => {
       clickHandled = true
+      objectTookClick = true
       if (performance.now() < longPressConsumedUntil) return
       const stack = stackUnderPointer()
       if (stack.length > 1) {
@@ -346,7 +400,7 @@
     onObjectSeen: object => onObjectSeen(object),
     onObjectHover: object => {
       hoveredObject = object
-      if (object && hoverCardsFor(lastPointerType)) popupController.show(object)
+      if (object && hoverCardsFor(lastPointerType) && object.id !== cardObjectId) popupController.show(object)
       else popupController.hide()
     },
     onAssignmentHandleSelected: handle => { clickHandled = true; suppressBackgroundClick = true; onAssignmentHandleSelected(handle.controllerId) },
@@ -376,7 +430,7 @@
     query: (request, signal) => queryLiveMapLayer(request, signal),
     rasterize: rasterizeSymbol,
     documentHidden: () => document.hidden,
-    onSelect: selection => { clickHandled = true; if (!placementMode) onPackFeatureSelected(selection) },
+    onSelect: selection => { clickHandled = true; featureSelection = selection },
     onHover: hover => { if (hover && hoverCardsFor(lastPointerType)) popupController.showCard(hover); else popupController.hide() },
     onError: message => onMapError(`Live map layer: ${message}`),
   })
@@ -561,11 +615,17 @@
           // synchronously, because the deck overlay picks with pickAsync 'sync' (map-runtime.ts).
           // A double-click's extra object click leaves no mark on the next click.
           clickHandled = false
+          objectTookClick = false
+          featureSelection = null
           // Any click lets a stack's chooser go; an object click on a stack shows a new one.
           stackChooser.hide()
           queueMicrotask(() => {
             const outcome = mapClickOutcome({ suppressed: suppressBackgroundClick, assignmentActive, handled: clickHandled })
+            const feature = objectTookClick ? null : featureSelection
             clickHandled = false
+            objectTookClick = false
+            featureSelection = null
+            if (feature !== null && !placementMode) onPackFeatureSelected(feature)
             if (outcome === 'suppressed') suppressBackgroundClick = false
             else if (outcome === 'assignment-cancel') onAssignmentCancelled()
             else if (outcome === 'ground') onGroundSelected?.(point)
@@ -595,6 +655,8 @@
       runtime = nextRuntime
       // Icons that would overlap fan out anew at each zoom step (point-declutter.ts).
       nextRuntime.map.on('zoom', () => operationalRenderController.syncZoom())
+      // Every frame the map draws, the open card follows its icon: a pan, a zoom, a resize, icons fanned anew.
+      nextRuntime.map.on('render', scheduleCardFrame)
       const canvas = nextRuntime.map.getCanvas()
       let holdTimer: ReturnType<typeof setTimeout> | null = null
       let holdStart: { x: number; y: number } | null = null
@@ -688,6 +750,8 @@
       cleanupMapPerformanceGlobal()
       resetMapInputDebugController()
       operationalRenderController.destroy()
+      if (cardFrameRequest !== null) cancelAnimationFrame(cardFrameRequest)
+      cardFrameRequest = null
       catalogueAtlas.reset()
       packFeatureLayer.destroy()
       packOverlayController.destroy()
@@ -763,6 +827,17 @@
 
   $effect(() => { packDataRevisionKey; untrack(() => { void packOverlayController.refresh() }) })
   $effect(() => { perspectiveEpoch; untrack(() => { hoveredObject = null; popupController.hide(); stackChooser.hide() }) })
+
+  // A card opening takes over from its object's hover card; it is placed at once, then on every frame the map draws.
+  $effect(() => {
+    cardObjectId
+    cameraPadding
+    untrack(() => {
+      if (cardObjectId !== null && hoveredObject?.id === cardObjectId) popupController.hide()
+      lastCardFrame = null
+      scheduleCardFrame()
+    })
+  })
 
   $effect(() => {
     mapConfig.layers.join('|')
