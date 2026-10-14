@@ -13,6 +13,7 @@ use crate::{cpu::process_cpu_s, gates::Block, provenance::sha256_file};
 use leitbild_operating_plant::{
     initialization::SurfacePolicy,
     joined::{
+        blocks::JoinedJacobian,
         operator::{Joined, RodPort, SecondaryPort},
         packet,
     },
@@ -28,6 +29,7 @@ use leitbild_operating_plant::{
 use leitbild_operating_water::{
     If97,
     ida::{Ida, Initial},
+    joined::{Analyses, Matrices, consistent_start as joined_start},
     network::Integrated as NetworkIntegrated,
 };
 use serde_json::{Value, json};
@@ -233,6 +235,11 @@ pub struct Composed {
     pub atol: Vec<f64>,
     pub rtol: f64,
     pub packet: PacketFile,
+    /// JAC's block structure compiled at the composed state and the
+    /// symbolic analyses the start made on it (S2-D4), for
+    /// `Integrated::from_blocks`.
+    pub structure: JoinedJacobian,
+    pub analyses: Analyses,
     /// The composition's receipt: S1 settling, owners, surfaces, the start.
     pub receipt: Value,
     pub cpu_s: f64,
@@ -287,9 +294,17 @@ pub fn compose(shared: &Block) -> Composed {
     let classes = classes(shared);
     let atol = joined_tolerances(&joined, &y, classes);
     let weights = error_weights(&y, classes.relative, &atol);
+    let compile_cpu = process_cpu_s();
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block structure");
+    let compile_cpu_s = process_cpu_s() - compile_cpu;
+    let mut analyses = Analyses::default();
     let start_cpu = process_cpu_s();
-    let (yp, start) = leitbild_operating_water::joined::consistent_start(
+    let (yp, start) = joined_start(
         &mut joined,
+        Matrices::Blocks {
+            structure: &structure,
+            analyses: &mut analyses,
+        },
         0.,
         &mut y,
         &ids,
@@ -304,7 +319,8 @@ pub fn compose(shared: &Block) -> Composed {
         "owners_prepared": owners.iter().map(|t| t.receipt.clone()).collect::<Vec<_>>(),
         "surfaces_worst_residual_w": surfaces.iter().map(|s| s.residual_w.iter().fold(0., |a: f64, r| a.max(r.abs()))).fold(0., f64::max),
         "start": {"residual": [start.residual.value, start.residual.row], "constraint_rate": [start.constraint_rate.value, start.constraint_rate.row],
-            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes, "cpu_s": start_cpu_s},
+            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes, "cpu_s": start_cpu_s,
+            "assembly": "blocks (S2-D4)", "block_compile_cpu_s": compile_cpu_s},
         "dimension": y.len(), "algebraic": ids.iter().filter(|v| **v == 0.).count(),
     });
     Composed {
@@ -316,6 +332,8 @@ pub fn compose(shared: &Block) -> Composed {
         atol,
         rtol: classes.relative,
         packet,
+        structure,
+        analyses,
         receipt,
         cpu_s: process_cpu_s() - started,
     }

@@ -8,13 +8,22 @@
 //! held bitwise, the correction's WRMS with the integrator's weights at most
 //! 1), then the rates solve one linear system whose differential rows are
 //! `dF/dy'` and whose algebraic rows are `dg/dy`, exact in one pass. The
-//! matrices come from the colored assemblies at `cj = 0` and `cj = 1`. No
-//! IDACalcIC, no iteration of the rates, no tolerance is loosened: a missed
-//! bound refuses, naming the row. No solver algorithm lives here.
+//! matrices come from JAC's block assembly at `cj = 0` and `cj = 1` on its
+//! element-exact pattern (lead decision S2-D4); stock KLU's symbolic
+//! analyses of that pattern and of the projection's algebraic submatrix are
+//! made once and reused by later starts, and every start factors afresh.
+//! The colored assemblies on the structural pattern remain the reference
+//! the block start is checked against. No IDACalcIC, no iteration of the
+//! rates, no tolerance is loosened: a missed bound refuses, naming the row.
+//! No solver algorithm lives here.
 use crate::klu::SparseLu;
 use leitbild_operating_plant::{
-    joined::operator::Joined,
+    joined::{
+        blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        operator::Joined,
+    },
     network::{Failure, Properties},
+    sparse::Pattern,
     thermal::WaterProperties,
 };
 
@@ -58,9 +67,17 @@ pub struct Report {
     /// later ones removing round-off only).
     pub rate_passes: usize,
     pub bound: f64,
+    /// `"blocks"` or `"colored"`.
+    pub assembly: &'static str,
     pub nonzeros: usize,
+    /// Colors of the structural pattern (colored assembly only).
     pub colors: usize,
+    /// Stock KLU symbolic analyses this start made: the rate system's and
+    /// the projection's. A block start reusing its cached analyses makes
+    /// none.
+    pub analyses: [usize; 2],
     pub jacobian_s: Vec<f64>,
+    pub analyze_s: Vec<f64>,
     pub factor_s: Vec<f64>,
     pub solve_s: Vec<f64>,
 }
@@ -72,9 +89,89 @@ fn csc_i64(pointers: &[usize], indices: &[usize]) -> (Vec<i64>, Vec<i64>) {
     )
 }
 
-/// One colored assembly at `(t, y, 0)` with stage coefficient `cj`.
+/// Stock KLU's symbolic analyses for the block start on one compiled
+/// structure, made once and reused: the rate system's (the whole
+/// element-exact pattern) and the projection's (its algebraic submatrix,
+/// with the submatrix's positions in the pattern's stored order, analyzed
+/// again only when the algebraic set changes, as at a grip release). Only
+/// KLU's ordering and symbolic structure are reused: every start factors
+/// afresh with KLU's pivoting `factor`. A cache made on another pattern
+/// refuses.
+#[derive(Default)]
+pub struct Analyses {
+    rates: Option<Rates>,
+    projection: Option<Projection>,
+    /// Symbolic analyses made so far: rate system, projection.
+    made: [usize; 2],
+}
+struct Rates {
+    pointers: Vec<i64>,
+    rows: Vec<i64>,
+    lu: SparseLu,
+}
+struct Projection {
+    algebraic: Vec<bool>,
+    positions: Vec<usize>,
+    lu: SparseLu,
+}
+impl Analyses {
+    /// Symbolic analyses made so far: rate system, projection.
+    pub fn made(&self) -> [usize; 2] {
+        self.made
+    }
+}
+
+/// The algebraic submatrix of `pattern` (algebraic rows, algebraic
+/// columns): its local CSC pattern and each entry's position in the
+/// pattern's stored order.
+fn submatrix(pattern: &Pattern, algebraic: &[bool]) -> (usize, Vec<i64>, Vec<i64>, Vec<usize>) {
+    let (pointers, indices) = (pattern.pointers(), pattern.indices());
+    let mut k = 0;
+    let local: Vec<Option<usize>> = algebraic
+        .iter()
+        .map(|a| {
+            a.then(|| {
+                k += 1;
+                k - 1
+            })
+        })
+        .collect();
+    let mut sub_pointers = vec![0i64];
+    let mut sub_rows = Vec::new();
+    let mut positions = Vec::new();
+    for (j, a) in algebraic.iter().enumerate() {
+        if !a {
+            continue;
+        }
+        for position in pointers[j]..pointers[j + 1] {
+            if let Some(r) = local[indices[position]] {
+                sub_rows.push(r as i64);
+                positions.push(position);
+            }
+        }
+        sub_pointers.push(sub_rows.len() as i64);
+    }
+    (k, sub_pointers, sub_rows, positions)
+}
+
+/// Where the start's matrices come from.
+pub enum Matrices<'a> {
+    /// JAC's block assembly on its element-exact pattern, with the cached
+    /// symbolic analyses: the start's own matrices (lead decision S2-D4).
+    Blocks {
+        structure: &'a JoinedJacobian,
+        analyses: &'a mut Analyses,
+    },
+    /// The colored assemblies on the operator's structural pattern,
+    /// analyzed afresh: the reference the block start is checked against.
+    Colored,
+}
+
+/// One assembly of `dF/dy + cj dF/dy'` at `(t, y, 0)` into `values`, in the
+/// stored order of the matrices' pattern.
 fn assemble<P: Properties + WaterProperties>(
     joined: &mut Joined<P>,
+    matrices: &Matrices<'_>,
     t: f64,
     cj: f64,
     y: &[f64],
@@ -83,15 +180,24 @@ fn assemble<P: Properties + WaterProperties>(
 ) -> Result<(), Failure> {
     let zero = vec![0.; y.len()];
     let started = Instant::now();
-    joined.jacobian(t, cj, y, &zero, values)?;
+    match matrices {
+        // The block assembly makes its own unseeded evaluation at (t, y, 0)
+        // before the operator's local coupler reads it.
+        Matrices::Blocks { structure, .. } => {
+            jacobian_blocks(joined, structure, t, cj, y, &zero, values, Classes::ALL)?
+        }
+        Matrices::Colored => joined.jacobian(t, cj, y, &zero, values)?,
+    }
     report.jacobian_s.push(started.elapsed().as_secs_f64());
     Ok(())
 }
 
 /// The exact consistent start of the joined residual at `t`: `y` holds the
 /// projected state on success, and the consistent rates are returned.
+#[allow(clippy::too_many_arguments)] // The state, its identity and weights, and the start's controls.
 pub fn consistent_start<P: Properties + WaterProperties>(
     joined: &mut Joined<P>,
+    mut matrices: Matrices<'_>,
     t: f64,
     y: &mut [f64],
     differential: &[f64],
@@ -108,23 +214,33 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     {
         return Err(fatal("layout, bound or passes"));
     }
-    let (pointers, indices, colors) = {
-        let (pattern, coloring) = joined
-            .structure()
-            .ok_or_else(|| fatal("the joined operator has no structure"))?;
-        (
-            pattern.pointers().to_vec(),
-            pattern.indices().to_vec(),
-            coloring.count(),
-        )
+    let colored: Pattern;
+    let (pattern, colors, assembly): (&Pattern, usize, &'static str) = match &matrices {
+        Matrices::Blocks { structure, .. } => (&structure.pattern, 0, "blocks"),
+        Matrices::Colored => {
+            let (pattern, coloring) = joined
+                .structure()
+                .ok_or_else(|| fatal("the joined operator has no structure"))?;
+            let count = coloring.count();
+            colored = pattern.clone();
+            (&colored, count, "colored")
+        }
     };
+    if pattern.rows() != n || pattern.columns() != n {
+        return Err(fatal("the matrices' pattern is not the operator's"));
+    }
+    let (pointers, indices) = (pattern.pointers(), pattern.indices());
     let nnz = indices.len();
     let mut report = Report {
         bound,
+        assembly,
         nonzeros: nnz,
         colors,
         ..Report::default()
     };
+    // A colored start analyzes afresh into its own cache; a block start
+    // uses the structure's.
+    let mut fresh = Analyses::default();
     let algebraic: Vec<bool> = differential.iter().map(|d| *d == 0.).collect();
     let zero = vec![0.; n];
     let rows_at = |joined: &mut Joined<P>, y: &[f64], yp: &[f64]| -> Result<Vec<f64>, Failure> {
@@ -144,56 +260,53 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     report.constraint_before = constraint(&rows);
     report.constraint_after = report.constraint_before;
     let mut values = vec![0.; nnz];
-    // 1. Projection of the algebraic coordinates, differential ones held.
-    let local: Vec<Option<usize>> = {
-        let mut k = 0;
-        algebraic
-            .iter()
-            .map(|a| {
-                a.then(|| {
-                    k += 1;
-                    k - 1
-                })
-            })
-            .collect()
-    };
-    let m = algebraic.iter().filter(|a| **a).count();
-    let mut sub_pointers = vec![0usize];
-    let mut sub_rows = Vec::new();
-    let mut sub_positions = Vec::new();
-    for j in 0..n {
-        if !algebraic[j] {
-            continue;
-        }
-        for position in pointers[j]..pointers[j + 1] {
-            if let Some(r) = local[indices[position]] {
-                sub_rows.push(r);
-                sub_positions.push(position);
-            }
-        }
-        sub_pointers.push(sub_rows.len());
-    }
-    let mut projector: Option<SparseLu> = None;
+    // 1. Projection of the algebraic coordinates, differential ones held,
+    // on the algebraic submatrix of this pattern.
     while (report.constraint_after.value.is_nan() || report.constraint_after.value > bound)
         && report.projection_passes < passes
     {
         report.projection_passes += 1;
-        assemble(joined, t, 0., y, &mut values, &mut report)?;
-        let sub: Vec<f64> = sub_positions.iter().map(|p| values[*p]).collect();
-        let lu = match projector.as_mut() {
-            Some(lu) => lu,
+        assemble(joined, &matrices, t, 0., y, &mut values, &mut report)?;
+        let analyses = match &mut matrices {
+            Matrices::Blocks { analyses, .. } => &mut **analyses,
+            Matrices::Colored => &mut fresh,
+        };
+        if analyses
+            .projection
+            .as_ref()
+            .is_some_and(|p| p.algebraic != algebraic)
+        {
+            analyses.projection = None;
+        }
+        let projection = match analyses.projection.as_mut() {
+            Some(p) => p,
             None => {
-                let (p, r) = csc_i64(&sub_pointers, &sub_rows);
-                projector.insert(SparseLu::analyze(m, &p, &r).map_err(|e| fatal(e.to_string()))?)
+                let (m, sub_pointers, sub_rows, positions) = submatrix(pattern, &algebraic);
+                let started = Instant::now();
+                let lu = SparseLu::analyze(m, &sub_pointers, &sub_rows)
+                    .map_err(|e| fatal(format!("projection analysis: {e}")))?;
+                report.analyze_s.push(started.elapsed().as_secs_f64());
+                report.analyses[1] += 1;
+                analyses.made[1] += 1;
+                analyses.projection.insert(Projection {
+                    algebraic: algebraic.clone(),
+                    positions,
+                    lu,
+                })
             }
         };
+        let sub: Vec<f64> = projection.positions.iter().map(|p| values[*p]).collect();
         let started = Instant::now();
-        lu.factor(&sub)
+        projection
+            .lu
+            .factor(&sub)
             .map_err(|e| fatal(format!("projection: {e}")))?;
         report.factor_s.push(started.elapsed().as_secs_f64());
         let mut rhs: Vec<f64> = (0..n).filter(|i| algebraic[*i]).map(|i| -rows[i]).collect();
         let started = Instant::now();
-        lu.solve(&mut rhs)
+        projection
+            .lu
+            .solve(&mut rhs)
             .map_err(|e| fatal(format!("projection: {e}")))?;
         report.solve_s.push(started.elapsed().as_secs_f64());
         let mut k = 0;
@@ -233,9 +346,9 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     }
     // 2. The consistent rates: differential rows dF/dy', algebraic rows dg/dy.
     let mut a = vec![0.; nnz];
-    assemble(joined, t, 0., y, &mut a, &mut report)?;
+    assemble(joined, &matrices, t, 0., y, &mut a, &mut report)?;
     let mut ab = vec![0.; nnz];
-    assemble(joined, t, 1., y, &mut ab, &mut report)?;
+    assemble(joined, &matrices, t, 1., y, &mut ab, &mut report)?;
     let matrix: Vec<f64> = (0..nnz)
         .map(|p| {
             if algebraic[indices[p]] {
@@ -245,8 +358,45 @@ pub fn consistent_start<P: Properties + WaterProperties>(
             }
         })
         .collect();
-    let (p, r) = csc_i64(&pointers, &indices);
-    let mut lu = SparseLu::analyze(n, &p, &r).map_err(|e| fatal(e.to_string()))?;
+    let analyses = match &mut matrices {
+        Matrices::Blocks { analyses, .. } => &mut **analyses,
+        Matrices::Colored => &mut fresh,
+    };
+    let lu = match analyses.rates.as_mut() {
+        Some(rates) => {
+            let same = rates.pointers.len() == pointers.len()
+                && rates.rows.len() == nnz
+                && rates
+                    .pointers
+                    .iter()
+                    .zip(pointers)
+                    .all(|(a, b)| *a == *b as i64)
+                && rates.rows.iter().zip(indices).all(|(a, b)| *a == *b as i64);
+            if !same {
+                return Err(fatal(
+                    "the cached analyses belong to another pattern; compile a structure with its own",
+                ));
+            }
+            &mut rates.lu
+        }
+        None => {
+            let (p, r) = csc_i64(pointers, indices);
+            let started = Instant::now();
+            let lu =
+                SparseLu::analyze(n, &p, &r).map_err(|e| fatal(format!("rate analysis: {e}")))?;
+            report.analyze_s.push(started.elapsed().as_secs_f64());
+            report.analyses[0] += 1;
+            analyses.made[0] += 1;
+            &mut analyses
+                .rates
+                .insert(Rates {
+                    pointers: p,
+                    rows: r,
+                    lu,
+                })
+                .lu
+        }
+    };
     let started = Instant::now();
     lu.factor(&matrix)
         .map_err(|e| fatal(format!("rates: {e}")))?;
@@ -307,7 +457,7 @@ pub fn consistent_start<P: Properties + WaterProperties>(
 pub use integrated::{Assembly, Discrete, Integrated, Restart, Restarted, discrete_restart};
 
 mod integrated {
-    use super::Report;
+    use super::{Analyses, Matrices, Report};
     use crate::ida::{Failure, Ida, KluOrdering, System};
     use leitbild_operating_plant::{
         joined::{
@@ -385,7 +535,9 @@ mod integrated {
     ///    refuses;
     /// 3. the differential identity is recomputed from the owners' modes;
     /// 4. the exact consistent start at the transacted `y` (the projection
-    ///    may change algebraic coordinates only);
+    ///    may change algebraic coordinates only), on the system's own
+    ///    assembly: on blocks with the system's cached symbolic analyses,
+    ///    on colored (the reference) afresh;
     /// 5. IDAReInit with the consistent rates and the segment configuration.
     #[allow(clippy::too_many_arguments)] // One restart: event, state, identity and tolerances.
     pub fn discrete_restart<P: Properties + WaterProperties>(
@@ -398,7 +550,12 @@ mod integrated {
         relative: f64,
         restart: &Restart,
     ) -> Result<Restarted, String> {
-        let joined = &mut ida.system_mut().joined;
+        let Integrated {
+            joined,
+            assembly,
+            analyses,
+            ..
+        } = ida.system_mut();
         if absolute.len() != y.len() {
             return Err("restart tolerances layout".into());
         }
@@ -420,8 +577,16 @@ mod integrated {
             .zip(absolute)
             .map(|(v, a)| 1. / (relative * v.abs() + a))
             .collect();
+        let matrices = match assembly {
+            Assembly::Blocks(structure) => Matrices::Blocks {
+                structure,
+                analyses,
+            },
+            Assembly::Colored => Matrices::Colored,
+        };
         let (yp, report) = super::consistent_start(
             joined,
+            matrices,
             t,
             y,
             &ids,
@@ -452,12 +617,14 @@ mod integrated {
     }
 
     /// The joined operator as one stock-IDA system, with its sparse
-    /// Jacobian. A partial composition (a prepared port) is refused.
+    /// Jacobian and the symbolic analyses its block restarts reuse. A
+    /// partial composition (a prepared port) is refused.
     pub struct Integrated<P: Properties> {
         pub joined: Joined<P>,
         rows: Vec<i64>,
         pointers: Vec<i64>,
         assembly: Assembly,
+        analyses: Analyses,
     }
     impl<P: Properties + WaterProperties> Integrated<P> {
         /// On the colored assembly.
@@ -476,6 +643,7 @@ mod integrated {
                 rows,
                 pointers,
                 assembly: Assembly::Colored,
+                analyses: Analyses::default(),
             })
         }
         /// On the block assembly, compiled at the value state `(t, y, 0)`;
@@ -489,16 +657,39 @@ mod integrated {
             let structure = JoinedJacobian::compile(&mut joined, t, y).map_err(|f| match f {
                 network::Failure::Recoverable(r) | network::Failure::Fatal(r) => r,
             })?;
+            Self::from_blocks(joined, structure, Analyses::default())
+        }
+        /// On a block structure already compiled for this operator, with the
+        /// symbolic analyses its consistent start made (a cache made on
+        /// another pattern refuses at the first restart).
+        pub fn from_blocks(
+            joined: Joined<P>,
+            structure: JoinedJacobian,
+            analyses: Analyses,
+        ) -> Result<Self, String> {
+            if !joined.integrable() {
+                return Err(
+                    "a joined operator with a prepared SG or rod port cannot be integrated".into(),
+                );
+            }
+            if structure.pattern.rows() != joined.dimension() {
+                return Err("the block structure is not this operator's".into());
+            }
             let (pointers, rows) = structure.pattern.to_i64()?;
             Ok(Self {
                 joined,
                 rows,
                 pointers,
                 assembly: Assembly::Blocks(Box::new(structure)),
+                analyses,
             })
         }
         pub fn assembly(&self) -> &Assembly {
             &self.assembly
+        }
+        /// The symbolic analyses the restarts' block starts reuse.
+        pub fn analyses(&self) -> &Analyses {
+            &self.analyses
         }
     }
     impl<P: Properties + WaterProperties> System for Integrated<P> {
