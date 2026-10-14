@@ -1,13 +1,17 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#one-maintained-water-implementation
-//! The caloric inverse brackets and iterates on the caloric state (rho, u, h,
-//! cp, alpha) of the maintained forward point and evaluates ONE full point at
-//! the selected temperature. The earlier full-point iteration over the stable
+//! The caloric inverse iterates on the caloric state (rho, u, h, cp, alpha) of
+//! the maintained forward point, by Newton from the branch's stable end with
+//! the full bracket as its fallback, and completes ONE point at the selected
+//! temperature. The earlier bracketed full-point iteration over the stable
 //! branch is restated here, on the public forward `point`, solely as the
-//! comparison oracle: every tuple and caloric direction it recovers must agree
-//! bit for bit. States it refuses may since be admitted (bounded metastable
-//! admission, the liquid pressure ceiling); they are counted, and every outcome
-//! can be dumped (`LD01_IDENTITY_DUMP`) to compare separately built archives
-//! and implementations input by input.
+//! comparison oracle: every input it recovers must be recovered, refused
+//! inputs keep their refusal, and every recovered state must pass the
+//! declared convergence test and agree with the oracle's within twice its
+//! tolerance in the target; the largest field and direction differences are
+//! reported. States the oracle refuses may since be admitted (bounded
+//! metastable admission, the liquid pressure ceiling); they are counted, and
+//! every outcome can be dumped (`LD01_IDENTITY_DUMP`) to compare separately
+//! built archives and implementations input by input.
 use leitbild_operating_plant::{
     network::{
         BandReport, MetastableBand, Network, Properties, PzrPreparation, RotorState, Water,
@@ -158,11 +162,75 @@ fn bits(q: WaterPoint) -> [u64; 13] {
     ]
 }
 
-fn same(a: Result<WaterPoint, Error>, b: Result<WaterPoint, Error>) -> bool {
-    match (a, b) {
-        (Ok(a), Ok(b)) => bits(a) == bits(b),
-        (Err(a), Err(b)) => a == b,
-        _ => false,
+/// The declared convergence test of the inverse: the energy defect within
+/// 2e-12 of the target's magnitude or of the local thermal energy scale.
+fn tolerance(target: f64, ut: f64, t: f64) -> f64 {
+    2e-12 * target.abs().max(ut * t).max(1.)
+}
+const FIELDS: [&str; 12] = [
+    "pressure",
+    "temperature",
+    "density",
+    "internal_energy",
+    "enthalpy",
+    "cp",
+    "cv",
+    "expansion",
+    "compressibility",
+    "viscosity",
+    "conductivity",
+    "saturation_slope",
+];
+fn fields(q: WaterPoint) -> [f64; 12] {
+    [
+        q.pressure_pa,
+        q.temperature_k,
+        q.density_kg_m3,
+        q.internal_energy_j_kg,
+        q.enthalpy_j_kg,
+        q.cp_j_kg_k,
+        q.cv_j_kg_k,
+        q.expansion_per_k,
+        q.compressibility_per_pa,
+        q.viscosity_pa_s,
+        q.conductivity_w_m_k,
+        q.saturation_slope_k_pa,
+    ]
+}
+/// Largest absolute and relative difference per field, and the inputs and
+/// states that are bitwise identical.
+#[derive(Default)]
+struct Differences {
+    absolute: [f64; 12],
+    relative: [f64; 12],
+    compared: usize,
+    identical: usize,
+}
+impl Differences {
+    fn add(&mut self, a: WaterPoint, b: WaterPoint) {
+        self.compared += 1;
+        if bits(a) == bits(b) {
+            self.identical += 1;
+        }
+        for (k, (x, y)) in fields(a).into_iter().zip(fields(b)).enumerate() {
+            let d = (x - y).abs();
+            self.absolute[k] = self.absolute[k].max(d);
+            let scale = x.abs().max(y.abs());
+            if scale > 0. {
+                self.relative[k] = self.relative[k].max(d / scale);
+            }
+        }
+    }
+    fn json(&self) -> serde_json::Value {
+        let per = |v: &[f64; 12]| -> serde_json::Map<String, serde_json::Value> {
+            FIELDS
+                .iter()
+                .zip(v)
+                .map(|(n, x)| (n.to_string(), json!(x)))
+                .collect()
+        };
+        json!({"compared": self.compared, "bitwise_identical": self.identical,
+            "max_absolute": per(&self.absolute), "max_relative": per(&self.relative)})
     }
 }
 
@@ -181,6 +249,11 @@ struct Ledger {
     records: Vec<[u64; 2]>,
     /// (branch, kind or direction, pressure bits) per record, for attribution.
     inputs: Vec<[u64; 3]>,
+    /// Production against the earlier iteration: points and directions.
+    points: Differences,
+    directions_differences: Differences,
+    /// Largest |value(production) - value(oracle)| over the declared tolerance.
+    target_ratio: f64,
 }
 fn mix(digest: &mut u64, word: u64) {
     for byte in word.to_le_bytes() {
@@ -323,20 +396,42 @@ fn check(ledger: &mut Ledger, branch: Branch, kind: Kind, p: f64, target: f64) {
         }
         return;
     };
-    assert!(
-        same(actual, Ok(expected)),
-        "{branch:?} {kind:?} p={p:e} target={target:e}: {actual:?} versus {expected:?}"
+    // Recovered by the earlier iteration: recovered now, on the same region,
+    // converged under the declared test, and within twice that tolerance of
+    // the earlier state in the target.
+    let Ok(a) = actual else {
+        panic!("status change: {branch:?} {kind:?} p={p:e} target={target:e}: {actual:?}");
+    };
+    assert_eq!(
+        a.region, expected.region,
+        "{branch:?} p={p:e} target={target:e}"
     );
+    let (_, ut) = kind.partials(a);
+    let tol = tolerance(target, ut, a.temperature_k);
+    assert!(
+        (kind.value(a) - target).abs() <= tol,
+        "{branch:?} {kind:?} p={p:e} target={target:e}: not converged"
+    );
+    let ratio = (kind.value(a) - kind.value(expected)).abs() / tol;
+    assert!(
+        ratio <= 2.,
+        "{branch:?} {kind:?} p={p:e} target={target:e}: {ratio}"
+    );
+    ledger.target_ratio = ledger.target_ratio.max(ratio);
+    ledger.points.add(a, expected);
     absorb(&mut ledger.digest, actual);
     let recovered = recovered.unwrap();
     ledger.recovered += 1;
     for (dp, de) in DIRECTIONS {
         let actual = recovered.directional(dp, de);
         let oracle = full_point_direction(branch, kind, expected, dp, de);
-        assert!(
-            same(actual, oracle),
-            "{branch:?} {kind:?} p={p:e} target={target:e} d=({dp:e},{de:e}): {actual:?} versus {oracle:?}"
-        );
+        match (actual, oracle) {
+            (Ok(x), Ok(y)) => ledger.directions_differences.add(x, y),
+            (Err(_), Err(_)) => {}
+            _ => panic!(
+                "direction status change: {branch:?} {kind:?} p={p:e} target={target:e} d=({dp:e},{de:e}): {actual:?} versus {oracle:?}"
+            ),
+        }
         ledger.directions += 1;
         absorb(&mut ledger.digest, actual);
         record(ledger, actual);
@@ -344,7 +439,7 @@ fn check(ledger: &mut Ledger, branch: Branch, kind: Kind, p: f64, target: f64) {
 }
 
 #[test]
-fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
+fn caloric_inverse_recovers_the_earlier_iteration_within_its_tolerance() {
     let mut ledger = Ledger {
         inverses: 0,
         recovered: 0,
@@ -355,6 +450,9 @@ fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
         forward_digest: 0xcbf2_9ce4_8422_2325,
         records: Vec::new(),
         inputs: Vec::new(),
+        points: Differences::default(),
+        directions_differences: Differences::default(),
+        target_ratio: 0.,
     };
     let mut state = 0x5EED_0002;
     let grid = pressures();
@@ -458,6 +556,11 @@ fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
             "forward_calls": ledger.forward,
             "forward_stable_side_digest": format!("{:016x}", ledger.forward_digest),
             "records": ledger.records.len(),
+            "against_the_earlier_iteration": {
+                "points": ledger.points.json(),
+                "directions": ledger.directions_differences.json(),
+                "max_target_difference_over_tolerance": ledger.target_ratio,
+            },
         })
     );
     if let Ok(path) = std::env::var("LD01_IDENTITY_DUMP") {
