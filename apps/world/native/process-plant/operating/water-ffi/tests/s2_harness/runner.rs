@@ -1,21 +1,24 @@
 //! One declared S2 run on stock IDAS/KLU: from a consistently started state
 //! of a fresh composition, under its [`RunSpec`], to its record.
 //!
-//! - **System.** `Metered<Observed<Ledgered<If97>>>`: the joined operator on
-//!   JAC's block Jacobian with the IDAS ledgers ([`Ledgered`]), one
-//!   observation root after the owners' event roots ([`Observed`]), and every
-//!   callback timed ([`Metered`]). None of the wrappers changes a step.
-//! - **Stops.** Outputs every `output_s` by stock IDA_NORMAL targets;
-//!   credited observations every `observation_s` strictly inside each output
-//!   interval by the observation root; forced stops (stock tstop) at the
-//!   owners' time events, the declared commands and the window's end.
+//! - **System.** `Metered<Ledgered<If97>>`: the joined operator on JAC's
+//!   block Jacobian with the IDAS ledgers ([`Ledgered`]), every callback
+//!   timed ([`Metered`]). Neither wrapper changes a step.
+//! - **Steps and samples** (lead decision S3-D1 #6). Stock IDASolve runs in
+//!   IDA_ONE_STEP mode, one accepted step per call, with forced stops (stock
+//!   tstop) at the owners' time events, the declared commands and the
+//!   window's end; it returns early only at the owners' own roots. After
+//!   each call every sample time it passed (every `observation_s`, the
+//!   outputs every `output_s` among them) is read from that step's stock
+//!   interpolant (IDAGetDky, the ledger by IDAGetQuadDky): no IDASolve call
+//!   stops at a sample time, so sampling changes no step.
 //! - **Restarts.** Every command, time event and located owner root is one
 //!   `discrete_restart` (transactions, bound placement, identity, the exact
 //!   consistent start on the block Jacobian, IDAReInit with dcj, the Newton
 //!   coefficient and the first step), the ledger carried by stock
 //!   IDAQuadReInit; the conservation record is sampled on both sides. At the
 //!   window's end of a run with a continuation, H1's restart, then no cap.
-//! - **Samples.** At every output and observation: the account (one joined
+//! - **Samples.** At every sample: the account (one joined
 //!   evaluation; the identities judged), the credited outputs read from that
 //!   evaluation, and D3 (a) at the state; at every output, the ledger
 //!   closures. Under S2-D23 (revised) the first state D3 (a) does not admit
@@ -40,7 +43,6 @@ use super::{
 use crate::{
     counts::Counts,
     cpu::{process_cpu_s, thread_cpu_s},
-    observe::Observed,
 };
 use leitbild_operating_plant::joined::post_trip_domain::{Domain, Error as DomainError, Extension};
 use leitbild_operating_water::{
@@ -53,9 +55,9 @@ use leitbild_operating_water::{
     joined_ledger::{self, Ledgered, Segment},
 };
 use serde_json::{Value, json};
-use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+use std::collections::BTreeMap;
 
-type System = Metered<Observed<Ledgered<If97>>>;
+type System = Metered<Ledgered<If97>>;
 /// The run's inventories at a state (the account plan's, at the run's
 /// tolerances).
 type Inventory<'a> = dyn Fn(&Ida<System>, &[f64]) -> Result<Vec<leitbild_operating_plant::joined::account::Held>, String>
@@ -118,43 +120,6 @@ pub fn restart_configuration(d: &Declaration) -> Restart {
     }
 }
 
-/// Observation times `origin + j dt` strictly inside output intervals.
-struct Clock {
-    next: Rc<Cell<f64>>,
-    origin: f64,
-    dt: f64,
-    per_output: usize,
-    end: usize,
-    never: f64,
-    j: usize,
-}
-impl Clock {
-    fn new(origin: f64, dt: f64, output_s: f64, span_s: f64, never: f64) -> Self {
-        let mut c = Self {
-            next: Rc::new(Cell::new(never)),
-            origin,
-            dt,
-            per_output: (output_s / dt).round() as usize,
-            end: (span_s / dt).round() as usize,
-            never,
-            j: 0,
-        };
-        c.arm();
-        c
-    }
-    fn arm(&mut self) {
-        self.j += 1;
-        while self.j.is_multiple_of(self.per_output) {
-            self.j += 1;
-        }
-        self.next.set(if self.j < self.end {
-            self.origin + self.j as f64 * self.dt
-        } else {
-            self.never
-        });
-    }
-}
-
 /// A restart instant's kinds, from its transactions' receipts (as the
 /// S2-10 probe names them) and the located roots.
 fn kinds(done: &Restarted, discrete: &str) -> (Vec<String>, Vec<(String, f64)>, Value) {
@@ -198,6 +163,30 @@ fn kinds(done: &Restarted, discrete: &str) -> (Vec<String>, Vec<(String, f64)>, 
         push(discrete, &mut kinds);
     }
     (kinds, seats, json!(events))
+}
+
+/// The ledger at `t` within the last step: the segment's carried value at
+/// its start, otherwise stock IDAGetQuadDky on the step's interpolant.
+fn ledger_dense(ida: &Ida<System>, segment: &Segment, t: f64) -> Result<Vec<f64>, String> {
+    if t == segment.started_s {
+        return Ok(segment.started_q.clone());
+    }
+    let mut q = vec![0.; segment.started_q.len()];
+    ida.quadratures_at(t, &mut q)?;
+    Ok(q)
+}
+
+/// FNV-1a over the exact bits of every value (the settled-state
+/// regression's digest).
+pub fn fnv1a(values: &[f64]) -> String {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for v in values {
+        for b in v.to_bits().to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{h:#018x}")
 }
 
 /// A segment's stock counters since its IDAReInit; a segment that made no
@@ -338,12 +327,8 @@ pub fn advance(
     let integrated = Integrated::from_blocks(joined, structure, analyses).expect("integrated");
     let ledgered = Ledgered::new(integrated, thread_cpu_s).expect("ledgered system");
     let ledger_names = ledgered.names();
-    let mut clock = spec
-        .observation_s
-        .map(|dt| Clock::new(t0, dt, spec.output_s, spec.duration_s, end + 1e6));
-    let observed = Observed::after_roots(ledgered, clock.as_ref().map(|c| c.next.clone()));
     let mut ida: Ida<System> = Ida::new(
-        Metered::new(observed),
+        Metered::new(ledgered),
         Initial {
             time: t0,
             y: &y,
@@ -366,7 +351,7 @@ pub fn advance(
     }
     let mut segment = joined_ledger::start_ledger(&mut ida, t0, vec![0.; ledger_names.len()])
         .expect("ledger start");
-    let plan = ida.system().inner.inner.plan.clone();
+    let plan = ida.system().inner.plan.clone();
     let inventory = |ida: &Ida<System>, y: &[f64]| {
         plan.inventory(&ida.system().integrated().joined, y, &atol, rtol)
             .map_err(|e| format!("inventory: {e:?}"))
@@ -426,7 +411,6 @@ pub fn advance(
         let account = ida
             .system_mut()
             .inner
-            .inner
             .account(t, y, yp)
             .map_err(|e| format!("account at {t} s: {e}"))?;
         conservation.sample(t, &account);
@@ -478,7 +462,7 @@ pub fn advance(
         attribution.observation_handler_s += thread_cpu_s() - started;
         if output {
             let started = thread_cpu_s();
-            let q = joined_ledger::ledger_at(ida, segment, t)?;
+            let q = ledger_dense(ida, segment, t)?;
             let held = inventory(ida, y)?;
             conservation.output(t, &held, &q);
             attribution.account_s += thread_cpu_s() - started;
@@ -496,7 +480,6 @@ pub fn advance(
         let started = thread_cpu_s();
         let account = ida
             .system_mut()
-            .inner
             .inner
             .account(t, y, yp)
             .map_err(|e| format!("account at {t} s: {e}"))?;
@@ -541,7 +524,6 @@ pub fn advance(
         spec.commands.iter().map(|(s, c)| (t0 + s, *c)).collect();
     commands.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut t = t0;
-    let mut k = 1usize;
     // One discrete restart at `t`, the ledger carried.
     macro_rules! restart_at {
         ($discrete:expr, $name:expr) => {{
@@ -601,6 +583,14 @@ pub fn advance(
     }
     let mut boundary_set: Option<f64> = None;
     let trace = std::env::var_os("LD01_S2_TRACE").is_some();
+    // The sample grid: every observation (every output when unobserved),
+    // read from stock's interpolant after each step (S3-D1 #6).
+    let dt_series = spec.observation_s.unwrap_or(spec.output_s);
+    let per_output = (spec.output_s / dt_series).round() as usize;
+    let last_sample = (spec.duration_s / dt_series).round() as usize;
+    let grid = |j: usize| t0 + j as f64 * dt_series;
+    let mut j = 1usize;
+    let (mut ys, mut yps) = (y.clone(), yp.clone());
     while failure.is_none() && exit.is_none() && t < end {
         // The next forced stop: time event, command, window end, run end.
         let event = ida.system().integrated().joined.next_time_event(t);
@@ -618,14 +608,17 @@ pub fn advance(
             ida.stop_at(boundary).expect("stop boundary");
             boundary_set = Some(boundary);
         }
-        let target = (t0 + k as f64 * spec.output_s).min(boundary);
-        let steps0 = ida.stats().expect("stats").steps;
+        // One stock IDA_ONE_STEP call: one accepted step, a located owner
+        // root, or the armed stop.
         let tally0: Tally = ida.system().tally;
         let c0 = thread_cpu_s();
-        let outcome = ida.advance(target, &mut y, &mut yp);
+        let outcome = ida.step(boundary, &mut y, &mut yp);
+        let call = thread_cpu_s() - c0;
+        let tally = ida.system().tally.since(tally0);
+        attribution.call(call, tally, false, part);
         if trace {
             eprintln!(
-                "trace t={t:.17} k={k} target={target:.17} boundary={boundary:.17} event={event:?} outcome={:?}",
+                "trace t={t:.17} boundary={boundary:.17} event={event:?} outcome={:?}",
                 outcome.as_ref().map(|o| match o {
                     Advance::Reached(x) => format!("reached {x:.17}"),
                     Advance::Root { time, directions } => format!(
@@ -635,124 +628,103 @@ pub fn advance(
                 })
             );
         }
-        let call = thread_cpu_s() - c0;
-        let tally = ida.system().tally.since(tally0);
-        let stats = ida.stats().expect("stats");
-        let stepped = stats.steps != steps0;
-        match outcome {
+        let (time, roots) = match outcome {
             Err(e) => {
-                attribution.call(call, tally, false, part);
-                let refusal = ida.system().inner.inner.refusal.clone();
+                let refusal = ida.system().inner.refusal.clone();
                 failure = Some(format!(
-                    "stock IDA at {} s (target {target}, boundary {boundary}, time event {event:?}): {e}; ledger refusal {refusal:?}",
+                    "stock IDA at {} s (boundary {boundary}, time event {event:?}): {e}; ledger refusal {refusal:?}",
                     t - t0
                 ));
+                break;
             }
-            Ok(Advance::Reached(time)) => {
-                attribution.call(call, tally, false, part);
-                t = time;
-                let on_output = (t - (t0 + k as f64 * spec.output_s)).abs() <= 1e-9;
-                if on_output {
-                    if let Err(e) = sample(
-                        &mut ida,
-                        &segment,
-                        t,
-                        &y,
-                        &yp,
-                        true,
-                        true,
-                        reader,
-                        extension,
-                        rods,
-                        &mut conservation,
-                        &mut credited,
-                        &mut domain,
-                        &mut attribution,
-                        &inventory,
-                    ) {
-                        failure = Some(e);
-                    }
-                    outputs += 1;
-                    k += 1;
-                    marks.push(Mark {
-                        t,
-                        counts: totals.plus(worked(&stats)),
-                        solver_s: attribution.solver_s(),
-                        process_s: process_cpu_s() - process0,
-                        observation_s: attribution.observation(),
-                    });
-                    if let Some(f) = settled.as_mut() {
-                        let whole = ((t - t0) - (t - t0).round()).abs() < 1e-9;
-                        if whole && f(&credited) {
-                            exit = Some(format!("settled at t = {} s", t - t0));
-                        }
-                    }
-                }
-                if failure.is_none() && t == boundary && t < end {
-                    boundary_set = None;
-                    if event.is_some_and(|e| e == t) {
-                        restart_at!(Discrete::TimeEvent, "time event");
-                    }
-                    while failure.is_none() && commands.first().is_some_and(|(at, _)| *at <= t) {
-                        let (_, command) = commands.remove(0);
-                        restart_at!(Discrete::Command(command), "command");
-                    }
-                    if failure.is_none() && part == 0 && continuation && t >= window_end {
-                        window_counts = Some(totals.plus(worked(&ida.stats().expect("stats"))));
-                        part = 1;
-                        ida.remove_max_step().unwrap();
-                        restart_at!(Discrete::TimeEvent, "H1");
-                    }
-                }
+            Ok(Advance::Reached(time)) => (time, None),
+            Ok(Advance::Root { time, directions }) => (time, Some(directions)),
+        };
+        let stats = ida.stats().expect("stats");
+        // Every grid point up to the returned time, from the step's
+        // interpolant (stock IDAGetDky): no IDASolve stops at them.
+        let fuzz = 1e-14 * time.abs().max(1.);
+        let mut ended: Option<f64> = None;
+        while failure.is_none() && j <= last_sample && grid(j) <= time + fuzz {
+            let at = grid(j).min(time);
+            let started = thread_cpu_s();
+            let dense = ida.dense(at, &mut ys, &mut yps);
+            attribution.observation_handler_s += thread_cpu_s() - started;
+            if let Err(e) = dense {
+                failure = Some(e);
+                break;
             }
-            Ok(Advance::Root { time, directions }) => {
-                t = time;
-                let (own, observation) = ida.system().inner.split(&directions);
-                let own_rooted = own.iter().any(|d| *d != 0);
-                let own: Vec<i32> = own.to_vec();
-                attribution.call(call, tally, observation && !own_rooted && !stepped, part);
-                // An owner root located on an output time is that output.
-                let on_output = (t - (t0 + k as f64 * spec.output_s)).abs() <= 1e-9;
-                if observation || on_output {
-                    if let Err(e) = sample(
-                        &mut ida,
-                        &segment,
-                        t,
-                        &y,
-                        &yp,
-                        on_output,
-                        true,
-                        reader,
-                        extension,
-                        rods,
-                        &mut conservation,
-                        &mut credited,
-                        &mut domain,
-                        &mut attribution,
-                        &inventory,
-                    ) {
-                        failure = Some(e);
-                    }
-                    if on_output {
-                        outputs += 1;
-                        k += 1;
-                        marks.push(Mark {
-                            t,
-                            counts: totals.plus(worked(&stats)),
-                            solver_s: attribution.solver_s(),
-                            process_s: process_cpu_s() - process0,
-                            observation_s: attribution.observation(),
-                        });
-                    } else {
-                        observations += 1;
-                    }
-                    if observation && let Some(c) = clock.as_mut() {
-                        c.arm();
+            let output = j.is_multiple_of(per_output);
+            if let Err(e) = sample(
+                &mut ida,
+                &segment,
+                at,
+                &ys,
+                &yps,
+                output,
+                true,
+                reader,
+                extension,
+                rods,
+                &mut conservation,
+                &mut credited,
+                &mut domain,
+                &mut attribution,
+                &inventory,
+            ) {
+                failure = Some(e);
+                break;
+            }
+            j += 1;
+            if output {
+                outputs += 1;
+                marks.push(Mark {
+                    t: at,
+                    counts: totals.plus(worked(&stats)),
+                    solver_s: attribution.solver_s(),
+                    process_s: process_cpu_s() - process0,
+                    observation_s: attribution.observation(),
+                });
+                if let Some(f) = settled.as_mut() {
+                    let whole = ((at - t0) - (at - t0).round()).abs() < 1e-9;
+                    if whole && f(&credited) {
+                        exit = Some(format!("settled at t = {} s", at - t0));
+                        ended = Some(at);
+                        break;
                     }
                 }
-                if own_rooted && failure.is_none() {
-                    boundary_set = None;
-                    restart_at!(Discrete::Roots(&own), "roots");
+            } else {
+                observations += 1;
+            }
+            if domain.exit.is_some() && spec.domain_exit_stops {
+                ended = Some(at);
+                break;
+            }
+        }
+        if let Some(at) = ended {
+            // The run ends at that sample: its state is the interpolant's.
+            t = at;
+            y.copy_from_slice(&ys);
+            yp.copy_from_slice(&yps);
+        } else if failure.is_none() {
+            t = time;
+            if let Some(directions) = roots {
+                boundary_set = None;
+                restart_at!(Discrete::Roots(&directions), "roots");
+            } else if t == boundary && t < end {
+                boundary_set = None;
+                if event.is_some_and(|e| e == t) {
+                    restart_at!(Discrete::TimeEvent, "time event");
+                }
+                while failure.is_none() && commands.first().is_some_and(|(at, _)| *at <= t) {
+                    let (_, command) = commands.remove(0);
+                    restart_at!(Discrete::Command(command), "command");
+                }
+                if failure.is_none() && part == 0 && continuation && t >= window_end {
+                    window_counts = Some(totals.plus(worked(&ida.stats().expect("stats"))));
+                    part = 1;
+                    ida.remove_max_step().unwrap();
+                    restart_at!(Discrete::TimeEvent, "H1");
                 }
             }
         }
@@ -884,7 +856,9 @@ pub fn advance(
     let series_dt = spec.observation_s.unwrap_or(spec.output_s);
     record.credited = json!({"series_dt_s": series_dt, "samples": credited.len(),
         "keys": credited.outputs.iter().map(|(k, v)| (k.clone(), json!(v.len()))).collect::<serde_json::Map<_, _>>(),
-        "seats": seats.len()});
+        "seats": seats.len(),
+        "end_state": {"t_s": t - t0, "y_fnv1a": fnv1a(&y), "yp_fnv1a": fnv1a(&yp),
+            "digest": "FNV-1a over the exact bits of every value, as the settled-state regression digests its rows"}});
     Run {
         record,
         origin: t0,

@@ -5,15 +5,15 @@
 //! [`Metered`] delegates every callback unchanged (KLU ordering, roots and
 //! quadratures included), so metering changes no step; it only reads the
 //! thread clock around each call. The runner's [`Attribution`] then takes
-//! each `IDASolve` call's thread CPU and:
-//! - a call that returned at the observation root with `IDAGetNumSteps`
-//!   unchanged is observation, in full (the declaration's rule (b));
-//! - any other call is solver work: its residual, Jacobian, root-function
+//! each `IDASolve` call's thread CPU (one IDA_ONE_STEP step each; samples are
+//! read from stock's interpolant between calls, S3-D1 #6, so no call returns
+//! at an observation and the declaration's rule (b) never applies):
+//! - every call is solver work: its residual, Jacobian, root-function
 //!   and ledger-quadrature callback CPU go to their buckets, and the rest of
 //!   the call (stock IDA's own work, stock KLU's setup and solves inside it
 //!   included) to `solver_internals_s`;
-//! - the output handler (account, credited outputs, D3 at each sample) is
-//!   observation (rule (a)); a discrete restart's CPU is `consistent_start_s`
+//! - the sample handler (the interpolant read, account, credited outputs, D3
+//!   at each sample) is observation (rule (a)); a discrete restart's CPU is `consistent_start_s`
 //!   (the exact start's assemblies, KLU and IDAReInit); ledger reads and
 //!   closures at outputs are `account_s`; everything else the run's thread
 //!   did is `harness_s`. Unattributed CPU is the process CPU outside the run
