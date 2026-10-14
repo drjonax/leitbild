@@ -176,6 +176,20 @@ fn joined_residual_profile() {
         .iter()
         .map(|s| identities(&mut joined, s, &dense, cj))
         .collect();
+    // Optionally every value-residual row per state, for comparing a change
+    // that is not bitwise against its base, entry by entry.
+    if let Ok(path) = std::env::var("LD01_PERF_ROWS_OUT") {
+        let rows: Vec<Value> = states
+            .iter()
+            .map(|s| {
+                joined
+                    .evaluate(s.t, &s.y, &s.yp, None, 0., None)
+                    .expect("value residual");
+                json!({"state": s.label, "rows": joined.rows().iter().map(|r| r.value).collect::<Vec<_>>()})
+            })
+            .collect();
+        write_receipt(&path, &json!({"app_commit": commit, "rows": rows}));
+    }
     let mut jacobian_identity = Value::Null;
     if jacobians {
         let hot = &states[0];
