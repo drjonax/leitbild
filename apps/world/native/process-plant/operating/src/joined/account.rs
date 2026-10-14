@@ -1,5 +1,4 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#joined-spine-at-power
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#s2-declaration-joined-hot-spine-at-power
 //! The unit's conservation account of one joined evaluation: the S2
 //! identities, the boundary terms the IDAS ledgers integrate, and the
 //! inventories those ledgers are judged against. Read-only: nothing here

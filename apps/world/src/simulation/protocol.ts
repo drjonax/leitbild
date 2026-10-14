@@ -127,6 +127,12 @@ export interface PackCommandContext {
    * which a Pack grants nothing reserved to a person, an agent or the Run.
    */
   readonly origin?: CommandOrigin
+  /**
+   * The objects whose active procedure Run the caller drives, stamped by core
+   * on every command it issues: a Pack may let an AI agent operate them as
+   * that procedure's operator, until a person takes the Run over.
+   */
+  readonly procedureDriven?: ReadonlySet<string>
 }
 
 export interface PackRuntimeStateStore {

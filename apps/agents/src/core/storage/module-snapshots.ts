@@ -151,6 +151,7 @@ const messageSchema = z.object({
   correlationId: z.string().optional(),
   inReplyTo: z.array(z.string()).optional(),
   cause: messageCauseSchema.optional(),
+  progress: z.literal(true).optional(),
   generationMs: z.number().finite().optional(),
   generationTraceId: z.string().optional(),
   promptTokens: z.number().finite().optional(),

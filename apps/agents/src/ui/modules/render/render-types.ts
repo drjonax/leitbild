@@ -39,6 +39,9 @@ export interface UIMessage {
   // Messages this one was produced in response to. A display-request reply
   // names the answer it shows first.
   inReplyTo?: ReadonlyArray<string>
+  // A line an Agent posted while its turn still runs (server Message.progress);
+  // rendered as one compact row, its answer follows as an ordinary message.
+  progress?: true
   // Image attachments forwarded from server Message.attachments. Rendered
   // as inline thumbnails below the message body; click → full-size modal.
   attachments?: ReadonlyArray<MessageAttachment>

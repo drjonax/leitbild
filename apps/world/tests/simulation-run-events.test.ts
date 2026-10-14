@@ -162,6 +162,24 @@ describe('simulation run event helpers', () => {
     }))).toThrow('missing type')
   })
 
+  test('reads a procedure Run lifecycle event whole and fails visibly for a malformed one', () => {
+    const at = '2026-01-01T10:14:45.000Z'
+    const envelope = { id: 'event:procedure-1', simulationRunId: messageScope.simulationRunId, seq: 7, at, provenance: { source: 'ai' } }
+    const parse = (event: Record<string, unknown>) => parseSimulationRunEventBatchMessage(JSON.stringify({
+      type: 'events', ...messageScope, snapshotSeq: 7, events: [{ ...envelope, ...event }],
+    }))
+    const driver = { kind: 'ai', actorId: 'actor:ai:assistant', label: 'Assistant', since: at }
+    expect<unknown>(parse({ type: 'procedure.run.driver.changed', runId: 'procedure-run:e0', driver, reason: 'started', changedAt: at, changedBy: 'actor:ai:assistant' })?.events[0]?.procedureRun)
+      .toEqual({ type: 'procedure.run.driver.changed', runId: 'procedure-run:e0', driver, reason: 'started', changedAt: at, changedBy: 'actor:ai:assistant' })
+    expect(parse({ type: 'procedure.run.closed', runId: 'procedure-run:e0', status: 'transferred', closedAt: at, closedBy: 'actor:ai:assistant' })?.events[0]?.procedureRun)
+      .toMatchObject({ type: 'procedure.run.closed', status: 'transferred' })
+    expect(parse({ type: 'procedure.step.updated', runId: 'procedure-run:e0', stepId: 'step-2', update: {}, updatedAt: at, updatedBy: 'actor:ai:assistant' })?.events[0]?.procedureRun)
+      .toBeUndefined()
+    expect(() => parse({ type: 'procedure.run.closed', runId: 'procedure-run:e0', status: 'paused', closedAt: at, closedBy: 'actor:ai:assistant' }))
+      .toThrow('invalid WebSocket event: procedure.run.closed')
+    expect(() => parse({ type: 'procedure.run.started' })).toThrow('invalid WebSocket event: procedure.run.started')
+  })
+
   test('upserts objects without duplicating object ids', () => {
     const objects = scenarioObjects()
     const object = objects[0]

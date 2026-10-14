@@ -4,13 +4,12 @@ import {
   procedureRunIdSchema, procedureRunStatusSchema, procedureStepDecisionSchema, procedureTextBlockSchema,
   type IsoTimestamp, type ProcedureDocument, type ProcedureRunState, type ProcedureStep,
 } from '../../core/model/index.ts'
-import { procedureBranchVerdict } from './driver-rules.ts'
 import { readProcedureTags, type ProcedureObservationPort, type ProcedureTagRead } from './pack-observations.ts'
 
 // One step of a live procedure Run, compact enough to work through step by
-// step: what it says, which branches an AI agent may select and why not, the
-// step's tags as World reads them on the run's plant now, and the safety
-// function colours the document monitors. Empty fields are left out.
+// step: what it says, its branches, the step's tags as World reads them on
+// the run's plant now, and the safety function colours the document
+// monitors. Empty fields are left out.
 
 const stepCommentLength = 500
 
@@ -54,11 +53,11 @@ const stepBranchSchema = z.object({
   outcome: procedureBranchSchema.shape.outcome,
   targetKind: procedureBranchSchema.shape.targetKind,
   target: z.string(),
+  /** The label of the step it leads to, where that is a step of this procedure ("11" for step 11). */
+  targetLabel: z.string().optional(),
   targetStepId: z.string().optional(),
   execution: procedureBranchSchema.shape.execution,
   because: z.string().optional(),
-  aiMaySelect: z.boolean(),
-  personOnlyReason: z.string().optional(),
 }).strict()
 
 const stepSchema = z.object({
@@ -198,8 +197,8 @@ export const composeProcedureStepView = async (config: {
     readProcedureTags({ observations: ports.observations, declared: document.tags, tagIds: step.tagIds }),
     csfRows(document, ports),
   ])
-  const readableTagIds = new Set(reads.filter(read => read.value !== undefined).map(read => read.tagId))
   const observation = run.observations?.find(item => item.stepId === step.id)
+  const labels = new Map(document.steps.map(candidate => [candidate.id, candidate.label]))
   const state = run.stepStates.find(item => item.stepId === step.id)
   // Read the clock after the reads, so the view's plant time is not older than its readings.
   const clock = ports.clock()
@@ -213,21 +212,17 @@ export const composeProcedureStepView = async (config: {
       label: step.label,
       ...(step.title === `Step ${step.label}` ? {} : { title: step.title }),
       blocks: step.blocks.filter(block => !omittedBlockKinds.has(block.kind)).map(block => ({ kind: block.kind, text: withoutLinkTargets(block.text) })),
-      branches: step.branches.map((branch, index) => {
-        const verdict = procedureBranchVerdict({ run, step, branch, readableTagIds })
-        return {
-          index,
-          label: branch.label,
-          ...(branch.outcome === undefined ? {} : { outcome: branch.outcome }),
-          targetKind: branch.targetKind,
-          target: branch.target,
-          ...(branch.targetStepId === undefined ? {} : { targetStepId: branch.targetStepId }),
-          ...(branch.execution === undefined ? {} : { execution: branch.execution }),
-          ...(branch.because === undefined ? {} : { because: withoutLinkTargets(branch.because) }),
-          aiMaySelect: verdict.aiMaySelect,
-          ...(verdict.aiMaySelect ? {} : { personOnlyReason: verdict.personOnlyReason }),
-        }
-      }),
+      branches: step.branches.map((branch, index) => ({
+        index,
+        label: branch.label,
+        ...(branch.outcome === undefined ? {} : { outcome: branch.outcome }),
+        targetKind: branch.targetKind,
+        target: branch.target,
+        ...(branch.targetKind === 'step' && labels.has(branch.target) ? { targetLabel: labels.get(branch.target)! } : {}),
+        ...(branch.targetStepId === undefined ? {} : { targetStepId: branch.targetStepId }),
+        ...(branch.execution === undefined ? {} : { execution: branch.execution }),
+        ...(branch.because === undefined ? {} : { because: withoutLinkTargets(branch.because) }),
+      })),
       ...(observation === undefined ? {} : { observation: {
         status: observation.result.status,
         ...(observation.result.reason === undefined ? {} : { reason: observation.result.reason }),
