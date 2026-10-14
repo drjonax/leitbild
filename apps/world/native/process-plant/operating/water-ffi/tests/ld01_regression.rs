@@ -663,6 +663,8 @@ fn smoke() {
         first_step_s: FIRST_STEP_S,
         start_bound: START_BOUND,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     };
     restart.configure(&mut ida).unwrap();
