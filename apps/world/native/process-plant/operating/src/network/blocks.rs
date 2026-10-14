@@ -673,7 +673,11 @@ impl<P: Properties> Blocks<'_, P> {
     }
 
     /// The stratified cell's 19 rows on the pass's column, port receipts
-    /// and the given boundary.
+    /// and the given boundary. Their only property calls are the relief
+    /// restriction's, on its energy adiabats (enthalpy targets), while the
+    /// relief has lift or a lift direction: they take the network's own
+    /// properties with their directions, as the residual does; the column
+    /// itself is the held one.
     fn pzr_rows(
         &self,
         pass: &Pass,
@@ -690,7 +694,7 @@ impl<P: Properties> Blocks<'_, P> {
         Ok(net
             .stratified
             .residual_on(
-                self.held,
+                &net.properties,
                 pass.column,
                 &x,
                 &rate,

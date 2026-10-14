@@ -1233,7 +1233,7 @@ fn assemble<P: Properties + WaterProperties>(
     for (name, range, named) in [
         ("solid", o.solids..o.secondary, classes.solids),
         ("secondary", o.secondary..o.rods, classes.secondary),
-        ("rod", o.rods..o.end, classes.rods),
+        ("rod", o.rods..o.pzr, classes.rods),
     ] {
         if !named {
             continue;

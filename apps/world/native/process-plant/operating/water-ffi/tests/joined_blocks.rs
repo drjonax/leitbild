@@ -313,6 +313,20 @@ fn joined_blocks_against_colored() {
             v * (1. + perturb * u)
         })
         .collect();
+    // G6: LD01_JAC_PZR_LIFT (full strokes) lifts the PZR relief before both
+    // assemblies, so the relief restriction's columns are compared lifted.
+    let lift = std::env::var("LD01_JAC_PZR_LIFT")
+        .ok()
+        .map(|v| v.parse::<f64>().expect("LD01_JAC_PZR_LIFT"));
+    let mut y = y;
+    if let Some(lift) = lift {
+        let relief = joined.pzr().and_then(|b| b.relief());
+        assert!(
+            relief.is_some(),
+            "LD01_JAC_PZR_LIFT needs a composed PZR relief"
+        );
+        y[o.pzr] = lift;
+    }
     let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
     let mine = &structure.pattern;
     // Every colored nonzero lies in the block pattern.
@@ -358,6 +372,16 @@ fn joined_blocks_against_colored() {
     let mut worst = 0_f64;
     let mut worst_at = json!(null);
     let mut differing = Vec::new();
+    // The worst column-relative difference per column block.
+    let block_of = |j: usize| match j {
+        j if j < o.nuclear => "network",
+        j if j < o.solids => "nuclear",
+        j if j < o.secondary => "solids",
+        j if j < o.rods => "secondary",
+        j if j < o.pzr => "rods",
+        _ => "pzr",
+    };
+    let mut by_block: BTreeMap<&str, f64> = BTreeMap::new();
     for j in 0..n {
         let mut entries: BTreeMap<usize, [f64; 2]> = BTreeMap::new();
         for (row, v) in stored_column(&reference, &colored, j) {
@@ -374,6 +398,8 @@ fn joined_blocks_against_colored() {
             .max(1e-300);
         for (row, e) in &compared {
             let d = (e[0] - e[1]).abs() / scale;
+            let w = by_block.entry(block_of(j)).or_insert(0.);
+            *w = w.max(d);
             if d > worst {
                 worst = d;
                 worst_at = json!({"row": row, "column": j, "colored": e[0], "blocks": e[1]});
@@ -406,7 +432,7 @@ fn joined_blocks_against_colored() {
     let klu_structural = klu(&reference, &colored);
     let receipt = json!({
         "kind": "s2-joined-blocks-against-colored-NOT-EVIDENCE",
-        "relative_state_perturbation": perturb,
+        "relative_state_perturbation": perturb, "pzr_relief_lift": lift,
         "block_assembly_refused": refused,
         "klu_block_pattern": klu_blocks, "klu_structural_pattern": klu_structural,
         "composition": {"dimension": n, "offsets": o, "full_owners": full},
@@ -416,7 +442,7 @@ fn joined_blocks_against_colored() {
         "colored_nonzeros_outside_block_pattern": outside.len(),
         "outside_sample": outside.iter().take(20).collect::<Vec<_>>(),
         "columns_compared": n,
-        "worst_column_relative": worst, "worst_at": worst_at,
+        "worst_column_relative": worst, "worst_at": worst_at, "worst_by_column_block": by_block,
         "above_1e-9": differing,
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
