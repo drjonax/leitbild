@@ -37,11 +37,11 @@ use crate::{
         stratified::{
             self, Boundary, Cell, Column, Heat, PortKind, ReliefDevice, ReliefMotion, ReliefState,
         },
-        walls::{MetalRates, ShellBlock, WallCase, Walls},
+        walls::{ShellBlock, WallCase, Walls},
     },
     thermal::{Scalar, WaterProperties},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 fn s(v: f64) -> Scalar {
@@ -156,6 +156,17 @@ impl Relief {
     }
 }
 
+/// The PZR block's part of the unit's conservation account
+/// (`joined::account`), from the last captured value evaluation: what
+/// enters the unit through the metal (Joule power) and leaves it (the
+/// exterior loss to the containment). The relief's outflow is the cell's
+/// own (`network::stratified::Flows::relief`).
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct Ledger {
+    pub joule_w: f64,
+    pub exterior_w: f64,
+}
+
 /// The joined PZR block.
 pub struct Pzr {
     heaters: Heaters,
@@ -171,8 +182,10 @@ pub struct Pzr {
     lift_root_bound: Option<f64>,
     layout: Layout,
     prepared: Vec<f64>,
-    /// The metal's sources of the last value evaluation.
-    rates: Option<MetalRates>,
+    /// Record the account's terms at value evaluations (only the account
+    /// turns it on), and the last value evaluation's record.
+    capture: bool,
+    captured: Option<Ledger>,
 }
 
 impl Pzr {
@@ -281,7 +294,8 @@ impl Pzr {
             lift_root_bound: None,
             layout,
             prepared,
-            rates: None,
+            capture: false,
+            captured: None,
         })
     }
 
@@ -316,9 +330,16 @@ impl Pzr {
     pub fn saturation_temperature_k(&self) -> f64 {
         self.saturation_temperature_k
     }
-    /// The metal's sources of the last value evaluation.
-    pub fn rates(&self) -> Option<&MetalRates> {
-        self.rates.as_ref()
+    /// Record the account's terms at the following value evaluations
+    /// (`true`) or stop (`false`). Every value evaluation replaces the
+    /// record, so it is always the last value evaluation's or none; only the
+    /// conservation account turns it on, around its own evaluation.
+    pub fn capture_account(&mut self, on: bool) {
+        self.capture = on;
+    }
+    /// The last captured value evaluation's account terms.
+    pub fn captured(&self) -> Option<Ledger> {
+        self.captured
     }
     /// First steel coordinate.
     pub fn metal_base(&self) -> usize {
@@ -336,7 +357,8 @@ impl Pzr {
 
     /// The cell's boundary on `column` and every own row in physical units
     /// (`rows`, layout order), at the block's coordinates `x`; `record`
-    /// keeps the metal's sources (a value evaluation's).
+    /// marks a value evaluation, whose account terms replace the record
+    /// while the account captures them.
     pub fn boundary<P: WaterProperties>(
         &mut self,
         properties: &P,
@@ -384,7 +406,11 @@ impl Pzr {
             relief,
         };
         if record {
-            self.rates = Some(rates);
+            self.captured = self.capture.then(|| Ledger {
+                joule_w: rates.rods.iter().map(|r| r.joule_w).sum::<f64>()
+                    + rates.walls.iter().map(|w| w.joule_w.value).sum::<f64>(),
+                exterior_w: rates.walls.iter().map(|w| w.exterior_w.value).sum(),
+            });
         }
         Ok(boundary)
     }
