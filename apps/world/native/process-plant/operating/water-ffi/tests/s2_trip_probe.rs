@@ -190,7 +190,7 @@ struct Segment {
     solver_cpu_s: f64,
     /// Steps and Jacobians at the first output where the last step reached
     /// the window cap (chunk resolution), and that output's time.
-    at_cap: Option<(i64, i64, f64)>,
+    at_cap: Option<(i64, i64, f64, f64)>,
     max_step_s: f64,
 }
 
@@ -223,9 +223,18 @@ fn kinds_of(
                 relief.push(json!({"valve": e["valve"], "threshold": e["threshold"], "direction": e["direction"],
                     "before": e["before"], "after": e["after"], "superseded": e["superseded"]}));
             }
+        } else if r["owner"] == "pzr" && r["command"].is_null() {
+            if !kinds.contains(&"PZR relief".to_string()) {
+                kinds.push("PZR relief".to_string());
+            }
+            relief.push(json!({"valve": "PZR relief", "demand_root": r["demand_root"], "travel_root": r["travel_root"],
+                "before": r["before"], "after": r["after"], "stop": r["stop"]}));
         } else if r["event"] == "STOP ramp end" {
             kinds.push("ramp end".to_string());
-        } else if r["command"] == "TurbineTrip" || r["turbine_trip_s"].is_number() {
+        } else if r["command"] == "TurbineTrip"
+            || r["turbine_trip_s"].is_number()
+            || (r["owner"] == "pzr" && !r["command"].is_null())
+        {
             if !kinds.contains(&"command".to_string()) {
                 kinds.push("command".to_string());
             }
@@ -327,6 +336,10 @@ fn root_labels(
             }
         }
     }
+    // The PZR block's relief (G6): its demand and travel roots.
+    if joined.root_count() == labels.len() + 2 {
+        labels.extend(["PZR relief:demand".into(), "PZR relief:travel".into()]);
+    }
     labels
 }
 
@@ -423,26 +436,65 @@ fn trip(duration_s: f64) -> Value {
         "the settled state belongs to another packet"
     );
     let Started {
-        joined,
+        mut joined,
+        y: y_composed,
+        yp: yp_composed,
         ids,
         network_ids,
-        atol,
+        mut atol,
         rtol,
         structure,
         analyses,
         receipt: preparation,
         ..
     } = started_full_composition();
-    let preparation_cpu_s = z1::cpu_s() - started;
+    // The state's exact bits where the file carries them (S2-07's pin),
+    // otherwise its floats.
     let vector = |k: &str| -> Vec<f64> {
-        state[k]
-            .as_array()
-            .unwrap_or_else(|| panic!("settled {k}"))
-            .iter()
-            .map(|v| v.as_f64().unwrap())
-            .collect()
+        match state[format!("{k}_bits")].as_array() {
+            Some(bits) => bits
+                .iter()
+                .map(|b| f64::from_bits(u64::from_str_radix(b.as_str().unwrap(), 16).unwrap()))
+                .collect(),
+            None => state[k]
+                .as_array()
+                .unwrap_or_else(|| panic!("settled {k}"))
+                .iter()
+                .map(|v| v.as_f64().unwrap())
+                .collect(),
+        }
     };
     let (mut y, mut yp) = (vector("y"), vector("yp"));
+    // S2-D24: the guide currents' derived tolerance class, from the model's
+    // Jacobian at the composed state (declared), and the same at the
+    // settled state (reported only).
+    let derived_at = |joined: &mut leitbild_operating_plant::joined::operator::Joined<
+        leitbild_operating_water::If97,
+    >,
+                      t: f64,
+                      y: &[f64],
+                      yp: &[f64]| {
+        derived_guide_current_tolerance(joined, &structure, t, y, yp, &atol)
+    };
+    let derived = if std::env::var("LD01_S2_TRIP_G12_GUIDE_CURRENTS").is_ok() {
+        None
+    } else {
+        Some(derived_at(&mut joined, 0., &y_composed, &yp_composed))
+    };
+    let derived_settled = derived_at(&mut joined, state["t_s"].as_f64().unwrap(), &y, &yp);
+    let g12_guide_atol: Vec<f64> = derived_settled.indices.iter().map(|i| atol[*i]).collect();
+    if let Some(d) = &derived {
+        for i in &d.indices {
+            atol[*i] = d.scaled;
+        }
+    }
+    let derived_receipt = json!({
+        "decision": "S2-D24: atol_m = atol_p x |dm/d(dp)| from the model Jacobian at the composed state (rods/GuideCurrent only)",
+        "applied": derived.as_ref().map(DerivedTolerance::receipt),
+        "at_settled_state_reported_only": derived_settled.receipt(),
+        "g12_scaled_before": g12_guide_atol.first(),
+    });
+    let preparation_cpu_s = z1::cpu_s() - started;
     let t0 = state["t_s"].as_f64().expect("settled t_s");
     assert_eq!(y.len(), joined.dimension(), "settled state layout");
     let o = joined.offsets();
@@ -532,6 +584,13 @@ fn trip(duration_s: f64) -> Value {
         by.into_values().collect()
     };
     let mut most_groups = (0usize, t0);
+    // D3 (a) along the run (S2-D23 as approved): the first accepted output
+    // where the doubled-water-term margin fails, and the first where the
+    // state is admitted by neither the compiled domains nor the extension
+    // (the labelled D3 exit; the run continues for information).
+    let mut d3_first_margin_fail: Option<f64> = None;
+    let mut d3_exit: Option<(f64, String)> = None;
+    let mut d3_samples = 0usize;
     let mut first_split: Option<f64> = None;
     let mut restarts: Vec<Value> = Vec::new();
     let mut samples: Vec<Value> = Vec::new();
@@ -610,6 +669,8 @@ fn trip(duration_s: f64) -> Value {
                         let l = &labels[*i];
                         if l.starts_with("rod ") {
                             if *d < 0 { "rod seat group" } else { "rod root" }.to_string()
+                        } else if l.starts_with("PZR") {
+                            "PZR relief".to_string()
                         } else {
                             format!("SG relief SG.{}", l.split('.').nth(1).unwrap_or("?"))
                         }
@@ -655,7 +716,7 @@ fn trip(duration_s: f64) -> Value {
         let segment = before.map(|s| {
             json!({"from_s": s.from_s - t0, "to_s": s.to_s - t0, "counts": named(&s.counts),
                 "solver_cpu_s": s.solver_cpu_s, "max_step_s": s.max_step_s,
-                "at_cap": s.at_cap.map(|(st, j, at)| json!({"steps": st, "jacobians": j, "t_s": at - t0}))})
+                "at_cap": s.at_cap.map(|(st, j, at, cpu)| json!({"steps": st, "jacobians": j, "t_s": at - t0, "solver_cpu_s": cpu}))})
         });
         restarts.push(json!({
             "index": restarts.len(), "t_s": t - t0, "discrete": name, "kinds": kinds, "detail": detail,
@@ -739,7 +800,7 @@ fn trip(duration_s: f64) -> Value {
                 let st = ida.stats().unwrap();
                 segment.max_step_s = segment.max_step_s.max(st.last_step);
                 if segment.at_cap.is_none() && st.last_step >= WINDOW_MAX_STEP_S * (1. - 1e-9) {
-                    segment.at_cap = Some((st.steps, st.jacobians, t));
+                    segment.at_cap = Some((st.steps, st.jacobians, t, segment.solver_cpu_s));
                 }
                 let g = groups(&y);
                 if g.len() > most_groups.0 {
@@ -783,7 +844,27 @@ fn trip(duration_s: f64) -> Value {
                             - v.iter().cloned().fold(f64::INFINITY, f64::min)
                     };
                     let value = |(l, i): &(String, usize)| json!([l, y[*i] * scales[*i]]);
-                    let d3_sample = d3.as_ref().map(|(e, reference)| d3_at(j, e, reference, t));
+                    let d3_sample = d3.as_ref().map(|(e, reference)| {
+                        let mut v = d3_at(j, e, reference, t);
+                        let admission =
+                            post_trip_domain::admit_accepted(j.nuclear(), e, j.travel(), t, 0.);
+                        v["admission"] = match &admission {
+                            Ok(a) => json!({"domain": a.domain, "margin_holds": a.margin.holds}),
+                            Err(err) => json!({"unsupported": format!("{err:?}")}),
+                        };
+                        d3_samples += 1;
+                        if d3_first_margin_fail.is_none()
+                            && v["margin_water_doubled"]["holds"] == json!(false)
+                        {
+                            d3_first_margin_fail = Some(t - t0);
+                        }
+                        if d3_exit.is_none()
+                            && let Err(err) = &admission
+                        {
+                            d3_exit = Some((t - t0, format!("{err:?}")));
+                        }
+                        v
+                    });
                     samples.push(json!({"t_s": t - t0, "released_w": j.heats().nuclear.released_w.value, "d3": d3_sample,
                         "sg_pressure_pa": pressures.iter().map(value).collect::<Vec<_>>(),
                         "sg_liquid_m3": liquid.iter().map(value).collect::<Vec<_>>(),
@@ -914,12 +995,18 @@ fn trip(duration_s: f64) -> Value {
         .map(|g| g.into_iter().map(|c| cluster_ids[c].clone()).collect())
         .collect();
     let window_cpu = solver_cpu_s[0] + restart_cpu_s[0];
+    let d3_summary = json!({"record": d3.as_ref().map(|(e, _)| json!(e)), "samples": d3_samples,
+        "first_doubled_margin_failure_s": d3_first_margin_fail,
+        "d3_exit": d3_exit.as_ref().map(|(t, e)| json!({"t_s": t, "label": "D3 (a) EXIT: the run ends here under S2-D23; continued to the end for information only", "verdict": e})),
+        "rule": "S2-D23 as approved: the extension holds per accepted state while the doubled-water-term margin >= the record's shutdown_margin_minimum; a state admitted by neither the compiled domains nor the extension is the labelled exit"});
     let receipt = json!({
         "kind": "s2-10-trip-probe",
-        "status": "NOT-EVIDENCE probe; S2 is not declared and no gate is judged. PROVISIONAL: from the pre-G18 settled state, whose p_s starts about 0.7 MPa below the 6.36 MPa design value, so SG relief cycles are undercounted; the PZR boundary is closed (G6 pending), so no PZR relief can root",
+        "status": "NOT-EVIDENCE probe; S2 is not declared and no gate is judged; PREVIEW (critic H4): recorded before any TBD fill. The start is the state named in settled_state; its composition (G6 PZR block, packet) is the packet's",
         "provenance": spine::provenance(),
         "preparation": preparation,
         "settled_state": {"path": state_path, "sha256": spine::sha256(&state_bytes), "t_s": t0},
+        "derived_tolerance": derived_receipt,
+        "d3": d3_summary,
         "configuration": {"source": "S2 declaration draft revision 6, Trip, and its block (maxOrder 2, newtonCoefficient 0.33, deltaCjLSetup 0.1, restartInitialStep_s 1e-4)",
             "duration_s": duration_s, "window_s": WINDOW_S, "window_max_step_s": WINDOW_MAX_STEP_S, "max_order": MAX_ORDER,
             "newton_coefficient": NEWTON_COEFFICIENT, "delta_cj_lsetup": DELTA_CJ_LSETUP, "first_step_s": FIRST_STEP_S,
@@ -1299,5 +1386,127 @@ fn s3_d1_restart_against_stop_and_continue_at_a_c0_kink() {
     println!("{}", serde_json::to_string(&receipt).unwrap());
     if let Some(p) = &receipt_path {
         std::fs::write(p, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    }
+}
+
+/// S2-D24's derived class for the rods' guide currents at one state.
+struct DerivedTolerance {
+    t_s: f64,
+    /// The guide-current coordinates (= their passage rows).
+    indices: Vec<usize>,
+    scaled: f64,
+    atol_m_kg_s: f64,
+    atol_p_pa: f64,
+    /// |dm/d(dp)| per cluster (kg/s per Pa), and the class value (the
+    /// smallest: the tightest tolerance).
+    sensitivity: Vec<f64>,
+    class_sensitivity: f64,
+    pressures: [String; 2],
+    same_sign_rows: usize,
+}
+impl DerivedTolerance {
+    fn receipt(&self) -> Value {
+        let mut s = self.sensitivity.clone();
+        s.sort_by(f64::total_cmp);
+        json!({"state_t_s": self.t_s, "coordinates": self.indices.len(),
+            "atol_p_pa": self.atol_p_pa, "pressures": self.pressures,
+            "sensitivity_kg_s_per_pa": {"class_value_min": self.class_sensitivity, "median": s[s.len() / 2], "max": s[s.len() - 1]},
+            "atol_m_kg_s": self.atol_m_kg_s, "scaled": self.scaled,
+            "rows_with_same_sign_pressure_partials": self.same_sign_rows,
+            "rodcost_fit_kg_s_per_pa": 4.8e-6})
+    }
+}
+
+/// atol_m = atol_p x |dm/d(dp)| (S2-D24) from the block Jacobian A = dF/dy at
+/// (t, y, yp): per guide-current row, the implicit sensitivity of the
+/// current to its two plena, dm/dp_j = -(dR/dp_j)/(dR/dm), and the
+/// difference sensitivity (dm/dp_a - dm/dp_b)/2; atol_p is the pressure
+/// class's own absolute tolerance at those plena. The class value takes the
+/// smallest sensitivity over the clusters.
+fn derived_guide_current_tolerance(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<leitbild_operating_water::If97>,
+    structure: &leitbild_operating_plant::joined::blocks::JoinedJacobian,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+    atol: &[f64],
+) -> DerivedTolerance {
+    use leitbild_operating_plant::joined::blocks::{Classes, jacobian_blocks};
+    let mut values = vec![0.; structure.pattern.nonzeros()];
+    jacobian_blocks(joined, structure, t, 0., y, yp, &mut values, Classes::ALL)
+        .expect("block Jacobian");
+    let scales = joined.scales();
+    let classes: Vec<(String, String)> = joined
+        .layouts()
+        .iter()
+        .flat_map(|(owner, l)| {
+            l.labels
+                .iter()
+                .zip(&l.classes)
+                .map(move |(label, class)| (format!("{owner}/{class:?}"), label.clone()))
+        })
+        .collect();
+    let guide: Vec<usize> = (0..classes.len())
+        .filter(|i| classes[*i].0 == "rods/GuideCurrent")
+        .collect();
+    let is_guide: std::collections::BTreeSet<usize> = guide.iter().copied().collect();
+    let pressure = |j: usize| classes[j].0 == "network/CellPressure";
+    // Per guide row: its own diagonal and its pressure partials.
+    let mut rows: BTreeMap<usize, (f64, Vec<(usize, f64)>)> = BTreeMap::new();
+    let (pointers, indices) = (structure.pattern.pointers(), structure.pattern.indices());
+    for j in 0..classes.len() {
+        for q in pointers[j]..pointers[j + 1] {
+            let r = indices[q];
+            if !is_guide.contains(&r) {
+                continue;
+            }
+            let e = rows.entry(r).or_default();
+            if r == j {
+                e.0 = values[q];
+            } else if pressure(j) && values[q] != 0. {
+                e.1.push((j, values[q]));
+            }
+        }
+    }
+    let mut sensitivity = Vec::new();
+    let mut same_sign = 0;
+    let mut plena: Option<[usize; 2]> = None;
+    for r in &guide {
+        let (diagonal, partials) = &rows[r];
+        assert!(*diagonal != 0., "guide row {r} has no own partial");
+        let mut d: Vec<(usize, f64)> = partials
+            .iter()
+            .map(|(j, a)| (*j, -(a / scales[*j]) / (diagonal / scales[*r])))
+            .collect();
+        d.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
+        assert!(d.len() >= 2, "guide row {r} reads fewer than two plena");
+        let (a, b) = (d[0], d[1]);
+        if a.1.signum() == b.1.signum() {
+            same_sign += 1;
+        }
+        let (high, low) = if a.1 >= b.1 { (a, b) } else { (b, a) };
+        plena.get_or_insert([high.0, low.0]);
+        sensitivity.push(((high.1 - low.1) / 2.).abs());
+    }
+    let [pa, pb] = plena.expect("guide currents");
+    let atol_p_pa = (atol[pa] * scales[pa]).min(atol[pb] * scales[pb]);
+    let class_sensitivity = sensitivity.iter().copied().fold(f64::INFINITY, f64::min);
+    let atol_m_kg_s = atol_p_pa * class_sensitivity;
+    let scaled_by_index: Vec<f64> = guide.iter().map(|i| atol_m_kg_s / scales[*i]).collect();
+    let scaled = scaled_by_index[0];
+    assert!(
+        scaled_by_index.iter().all(|s| *s == scaled),
+        "the guide currents share one scale"
+    );
+    DerivedTolerance {
+        t_s: t,
+        indices: guide,
+        scaled,
+        atol_m_kg_s,
+        atol_p_pa,
+        sensitivity,
+        class_sensitivity,
+        pressures: [classes[pa].1.clone(), classes[pb].1.clone()],
+        same_sign_rows: same_sign,
     }
 }
