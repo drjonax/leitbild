@@ -3,7 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { carveOperatingPrimary, compileOperatingHousingLosses, compileOperatingLineLosses, compileOperatingPoint, compileOperatingSurgeHydraulics, fittingLoss,
-  operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine, type FaceLossSection } from './reference-design-operating-spine'
+  nativeSteadySolids, operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine, settleInputChanges,
+  type FaceLossSection, type OperatingSpineSeed, type SteadySolidsSettle } from './reference-design-operating-spine'
+import { fuelFeedbackTemperature, operatingCladCaloric, operatingFuelCaloric, type SteadySolids } from './reference-design-operating-fluid'
 import { operatingCirculationCycles, type Section } from './reference-design-operating-hydraulics'
 import { compileOperatingPzr } from './reference-design-operating-pzr'
 import { routeElevation } from './reference-design-surge-route'
@@ -218,10 +220,84 @@ test('declared operating point reads each owner statement once', () => {
   expect(() => compileOperatingPoint(missing, pzr, 1500)).toThrow('Missing operating-point owner')
 })
 
-const wiki = process.env.LD01_WIKI_ROOT, if97 = process.env.LD01_IF97_DIRECTORY
+test('the two passes may differ only in the leaves the solid preparation owns', () => {
+  const seed = { thermal: { scope: 'SEED', fuel_bands: [{ id: 'a', fuel_temperatures_k: [593, 593], surface_seed_k: [593, 593, 593], source_w: [1, 1] }],
+      helium: [{ temperature_k: 593, energy_j: 1, nr_j_k: 2 }], water: [{ temperature_k: 563 }] },
+    hot: { fluid: { solid_stores: [{ id: 'x', energy_j: 1, capacity_j_k: 2 }] } }, feedback_reference: { fuelTemperature_K: [593], pressure_Pa: [1] } },
+    steady = structuredClone(seed)
+  steady.thermal.scope = 'steady'; steady.thermal.fuel_bands[0]!.fuel_temperatures_k = [950, 900]
+  steady.thermal.fuel_bands[0]!.surface_seed_k = [700, 650, 600]; steady.thermal.helium[0]!.temperature_k = 700
+  steady.hot.fluid.solid_stores[0]!.energy_j = 3; steady.hot.fluid.solid_stores[0]!.capacity_j_k = 4; steady.feedback_reference.fuelTemperature_K = [921]
+  expect(settleInputChanges(seed, steady)).toEqual([])
+  const moved = structuredClone(steady); moved.thermal.fuel_bands[0]!.source_w = [1, 2]; moved.thermal.water[0]!.temperature_k = 564
+  moved.thermal.helium[0]!.nr_j_k = 3; moved.feedback_reference.pressure_Pa = [2]
+  expect(settleInputChanges(seed, moved)).toEqual(['thermal.fuel_bands.0.source_w.1', 'thermal.helium.0.nr_j_k', 'thermal.water.0.temperature_k', 'feedback_reference.pressure_Pa.0'])
+  const extra = structuredClone(steady) as typeof steady & { added?: number }; extra.added = 1
+  expect(settleInputChanges(seed, extra)).toEqual(['added'])
+})
+
+/** TEST FIXTURE ONLY: a synthetic "steady" state that moves every solid store
+ * away from the seed by fixed offsets (no law is solved), to check the two
+ * passes, the stock identities and the packet roles on the actual package.
+ * Production compiles take the native stock-IDA settle. */
+function syntheticSettle(change: (s: SteadySolids, seed: OperatingSpineSeed['packet']['thermal']) => void = () => {}): SteadySolidsSettle {
+  return async (seed: OperatingSpineSeed) => {
+    const t = seed.packet.thermal, steady: SteadySolids = { identity: 'LD01-STEADY-SOLIDS-1',
+      carriers: t.fuel_bands.map((b, i) => {
+        const T: [number, number] = [b.fuel_temperatures_k[0]! + 300 + i % 5, b.fuel_temperatures_k[1]! + 250 + i % 3], clad = b.clad_temperature_k + 20
+        return { id: b.id, fuel_temperatures_k: T, fuel_energies_j: [0, 1].map(k => b.fuel_masses_kg[k]! * operatingFuelCaloric(T[k]!).specificEnergy_J_kg) as [number, number],
+          clad_temperature_k: clad, clad_energy_j: b.clad_mass_kg * operatingCladCaloric(clad).specificEnergy_J_kg,
+          surface_temperatures_k: [T[1] - 150, clad + 10, clad - 10], doppler_reference_k: fuelFeedbackTemperature(T[0], T[1]) }
+      }),
+      helium: t.helium.map(h => ({ id: h.id, temperature_k: h.temperature_k + 100, energy_j: h.capacity_j_k * (h.temperature_k + 100) })),
+      passive: t.passive_stores.map(p => ({ id: p.id, temperature_k: p.temperature_k + 1, energy_j: p.mass_kg * operatingCladCaloric(p.temperature_k + 1).specificEnergy_J_kg })),
+      sg_metal: t.sg_segments.map(g => ({ id: g.id, temperature_k: g.temperature_k + .5, energy_j: g.capacity_j_k * (g.temperature_k + .5 - 273.15) })),
+      receipt: { fixture: 'test-only synthetic steady state' } }
+    change(steady, t)
+    return { steady, provenance: { binary: { name: 'synthetic', sha256: '' }, inputSha256: '', outputSha256: '', receipt: steady.receipt } }
+  }
+}
+
+const wiki = process.env.LD01_WIKI_ROOT, if97 = process.env.LD01_IF97_DIRECTORY, steadySolids = process.env.LD01_OPERATING_STEADY_SOLIDS
 if (!!wiki !== !!if97) throw Error('Supply both actual wiki and pinned IF97 directory')
+test.skipIf(!wiki || !if97)('actual seed and steady passes: the steady solids own every store and the Doppler references, nothing else', async () => {
+  let seen: OperatingSpineSeed | undefined
+  const settle = syntheticSettle(), p = await prepareOperatingSpine(wiki!, if97!, async seed => { seen = seed; return settle(seed) }),
+    steady = (await settle(seen!)).steady
+  expect(seen!.packet.thermal.scope).toContain('SEED ONLY'); expect(p.thermal.scope).not.toContain('SEED')
+  // The seed is every core store at the prepared core outlet water, the SG
+  // metal at the mean of its primary inlet water and secondary saturation.
+  expect(new Set(seen!.packet.thermal.fuel_bands.flatMap(b => [...b.fuel_temperatures_k, b.clad_temperature_k]))).toEqual(new Set([593.15]))
+  expect(seen!.settleBasis.coreMassFlux_kg_m2_s).toBeCloseTo(seen!.settleBasis.enthalpyReferenceFlow_kg_s / seen!.settleBasis.coreMainFlowArea_m2, 12)
+  for (const [i, b] of p.thermal.fuel_bands.entries()) {
+    const c = steady.carriers[i]!
+    expect(b.id).toBe(c.id); expect(b.fuel_temperatures_k).toEqual(c.fuel_temperatures_k); expect(b.fuel_energies_j).toEqual(c.fuel_energies_j)
+    expect(b.surface_seed_k).toEqual(c.surface_temperatures_k); expect(b.geometry.accommodation).toBeCloseTo(.425 - 2.3e-4 * 650, 15)
+    expect(p.feedback_reference.fuelTemperature_K[i]).toBe(c.doppler_reference_k)
+  }
+  expect(p.thermal.helium.map(h => h.temperature_k)).toEqual(steady.helium.map(h => h.temperature_k))
+  expect(p.thermal.passive_stores.map(s => s.energy_j)).toEqual(steady.passive.map(s => s.energy_j))
+  expect(p.thermal.sg_segments.map(s => s.energy_j)).toEqual(steady.sg_metal.map(s => s.energy_j))
+  const stores = new Map(p.hot.fluid.solid_stores.map(s => [s.id, s.energy_j]))
+  expect(stores.size).toBe(2710)
+  for (const c of steady.carriers) expect(stores.get(c.id + '/fuel/1')).toBe(c.fuel_energies_j[1])
+  for (const g of steady.sg_metal) expect(stores.get(g.id)).toBe(g.energy_j)
+  expect(p.provenance.steadySolids.receipt).toEqual({ fixture: 'test-only synthetic steady state' })
+  for (const [change, error] of [
+    [(s: SteadySolids) => { s.carriers.pop() }, 'Missing steady carrier'],
+    [(s: SteadySolids) => { s.passive.push({ ...s.passive[0]!, id: 'unowned' }) }, 'does not own'],
+    [(s: SteadySolids) => { s.carriers[3]!.fuel_energies_j[0] *= 1 + 1e-9 }, 'caloric primitive'],
+    [(s: SteadySolids) => { s.carriers[3]!.doppler_reference_k += 1e-6 }, 'Doppler reference'],
+    [(s: SteadySolids) => { s.carriers[3]!.fuel_temperatures_k[0] = 2100 }, 'outside its admitted 290--2000 K'],
+    [(s: SteadySolids, t: OperatingSpineSeed['packet']['thermal']) => {
+      const c = s.carriers[3]!; c.fuel_temperatures_k[0] = 1850; c.fuel_energies_j[0] = t.fuel_bands[3]!.fuel_masses_kg[0]! * operatingFuelCaloric(1850).specificEnergy_J_kg
+      c.doppler_reference_k = fuelFeedbackTemperature(...c.fuel_temperatures_k) }, 'outside its admitted 500--1800 K'],
+    [(s: SteadySolids) => { s.sg_metal[0]!.temperature_k = 600; s.sg_metal[0]!.energy_j = 37.5e6 * (600 - 273.15) }, 'between its secondary'],
+  ] as const) await expect(prepareOperatingSpine(wiki!, if97!, syntheticSettle(change))).rejects.toThrow(error)
+}, 120000)
+
 test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, finite store and hydraulic cycle; native consumes it', async () => {
-  const p = await prepareOperatingSpine(wiki!, if97!)
+  const p = await prepareOperatingSpine(wiki!, if97!, steadySolids ? nativeSteadySolids(steadySolids, wiki!) : syntheticSettle())
   expect(p.thermal.water).toHaveLength(27); expect(p.edges).toHaveLength(33)
   expect(p.hot.fluid.regions.map(r => r.id)).toEqual(p.thermal.water.map(r => r.id))
   expect(p.source_water).toHaveLength(24); expect(p.water_flow_area_m2).toHaveLength(27); expect(p.water_boron_amount_kg_eq).toHaveLength(27)

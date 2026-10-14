@@ -7,7 +7,7 @@ const wiki = process.env.LD01_WIKI_ROOT, if97 = process.env.LD01_IF97_DIRECTORY,
   executable = process.env.LD01_OPERATING_PREPARATION
 
 test.skipIf(!wiki || !if97 || !executable)('same current owner package passes native equations; corrupted joins fail', async () => {
-  const data = await prepareOperatingHot(wiki!, if97!),
+  const data = await prepareOperatingHot(wiki!, if97!, { kind: 'provisional' }),
     run = async (value: unknown) => {
       const child = Bun.spawn([executable!], { stdin: new Blob([JSON.stringify(value)]), stdout: 'pipe', stderr: 'pipe' }),
         [out, error, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])

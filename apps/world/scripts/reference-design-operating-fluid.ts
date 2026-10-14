@@ -22,9 +22,39 @@ const sum=(v:readonly number[])=>v.reduce((a,b)=>a+b,0)
 const overlap=(a:number,b:number,c:number,d:number)=>Math.max(0,Math.min(b,d)-Math.max(a,c))
 const hash=(s:string|Uint8Array)=>createHash('sha256').update(s).digest('hex')
 const hotSchema=z.object({primaryPressure_Pa:z.number().min(1e5).max(16e6),achievedRodTravel_m:z.number().finite().nonnegative(),
-  boronReference_ppmEq:z.number().finite().nonnegative(),
-  fuelTemperature_K:z.number().min(290).max(2000),cladTemperature_K:z.number().min(290).max(1800),
-  heliumTemperature_K:z.number().positive(),initialLoopMassflow_kg_s:z.literal(0),sgMetalSegments:z.literal(4)}).strict()
+  boronReference_ppmEq:z.number().finite().nonnegative(),gapAccommodationReferenceTemperature_K:z.number().positive(),
+  initialLoopMassflow_kg_s:z.literal(0),sgMetalSegments:z.literal(4)}).strict()
+const positiveNumber=z.number().finite().positive(),finiteNumber=z.number().finite()
+const storeSchema=z.object({id:z.string().min(1),temperature_k:positiveNumber,energy_j:finiteNumber}).strict()
+/** The steady solid state at the reference power (G18 by S2-D2, SG metal by
+ * S2-D3), as the native stock-IDA `prepare_steady_solids` writes it: every
+ * store's steady temperature and energy, every half's surfaces and each
+ * carrier's Doppler reference. Its receipt (IDA statistics, the declared
+ * steady criterion and the reached rates) is recorded, never consumed. */
+export const steadySolidsSchema=z.object({identity:z.literal('LD01-STEADY-SOLIDS-1'),
+  carriers:z.array(z.object({id:z.string().min(1),fuel_temperatures_k:z.tuple([positiveNumber,positiveNumber]),
+    fuel_energies_j:z.tuple([finiteNumber,finiteNumber]),clad_temperature_k:positiveNumber,clad_energy_j:finiteNumber,
+    surface_temperatures_k:z.tuple([positiveNumber,positiveNumber,positiveNumber]),doppler_reference_k:positiveNumber}).strict()),
+  helium:z.array(storeSchema),passive:z.array(storeSchema),sg_metal:z.array(storeSchema),
+  receipt:z.record(z.string(),z.unknown())}).strict()
+export type SteadySolids=z.infer<typeof steadySolidsSchema>
+/** Where the prepared solid stocks come from: the steady solid state, or the
+ * explicit seed of its own solve. The seed puts every core solid store at
+ * the prepared core outlet water temperature and each SG metal segment at
+ * the mean of its primary inlet water and secondary saturation; it is the
+ * stock-IDA settle's initial state only, and the spine compiler never emits
+ * a packet prepared from it. No temperature is authored either way. */
+export type SolidPreparation={kind:'provisional'}|{kind:'steady',steady:SteadySolids}
+type ResolvedSolids={kind:'provisional',coreSeed_K:number,sgMetalSeed_K:number}|{kind:'steady',steady:SteadySolids}
+/** Domain admission of one computed solid node, in place of the removed
+ * authored-temperature bounds: the node's own law domain, named on refusal.
+ * Nothing is clipped. */
+export function admitSolidNode(id:string,T:number,domain:readonly [number,number]){
+  if(!Number.isFinite(T)||T<domain[0]||T>domain[1])throw Error(`Solid node ${id} at ${T} K is outside its admitted ${domain[0]}--${domain[1]} K`)
+  return T
+}
+/** The caloric laws' admitted domains (thermal.rs owns the laws). */
+export const solidDomains_K={fuel:[290,2000],zircaloy:[290,1800]} as const
 function jsonBlock(text:string,name:string){
   const rows=[...text.matchAll(new RegExp('^```'+name+'\\s*\\n([\\s\\S]*?)^```\\s*$','gm'))]
   if(rows.length!==1)throw Error('Expected one '+name+' block')
@@ -57,30 +87,67 @@ export function operatingCladCaloric(T:number){
   return {specificEnergy_J_kg:energy,cp_J_kg_K:positive(cp)}
 }
 
-export function prepareOperatingMaterials(f:Fuel,h:Handling,reference:ReturnType<typeof parseOperatingHotReference>){
-  const g=fuelHandlingChecks(h,f),fuel=operatingFuelCaloric(reference.fuelTemperature_K),clad=operatingCladCaloric(reference.cladTemperature_K),
+/** One caloric stock at temperature `T`: its energy from the steady solve
+ * (the native law's own state, checked against this port of its primitive
+ * to 1e-10 relative) or, for the seed, from this port. */
+function stock(id:string,mass_kg:number,T:number,caloric:(T:number)=>{specificEnergy_J_kg:number,cp_J_kg_K:number},energy_J?:number){
+  const c=caloric(T),own=mass_kg*c.specificEnergy_J_kg
+  if(energy_J!==undefined&&Math.abs(energy_J-own)>1e-10*Math.max(Math.abs(own),mass_kg*1e3))
+    throw Error(`Steady stock ${id} energy ${energy_J} J disagrees with the caloric primitive's ${own} J at ${T} K`)
+  return {temperature_K:T,energy_J:energy_J??own,capacity_J_K:mass_kg*c.cp_J_kg_K}
+}
+/** One lookup per steady store list: unique ids, every id found, and (by
+ * `covered`) every row consumed exactly once. */
+function steadyRows<T extends {id:string}>(rows:readonly T[],label:string){
+  const m=new Map(rows.map(r=>[r.id,r] as const)),used=new Set<string>()
+  if(m.size!==rows.length)throw Error('Duplicate steady '+label)
+  return {get:(id:string)=>{const r=m.get(id);if(!r)throw Error(`Missing steady ${label} ${id}`);used.add(id);return r},
+    covered:()=>{if(used.size!==m.size)throw Error(`The steady ${label} list holds ${m.size-used.size} store(s) the preparation does not own`)}}
+}
+/** The Doppler law's own fuel measure of two equal-mass nodes. */
+export const fuelFeedbackTemperature=(inner_K:number,outer_K:number)=>((Math.sqrt(inner_K)+Math.sqrt(outer_K))/2)**2
+export type ResolvedSolidPreparation=ResolvedSolids
+export function prepareOperatingMaterials(f:Fuel,h:Handling,solids:ResolvedSolids){
+  const g=fuelHandlingChecks(h,f),
     gasVolume=f.rodsPerAssembly*Math.PI*(((f.rodOuterDiameter_m/2-f.cladThickness_m)**2-(f.pelletDiameter_m/2)**2)*f.activeLength_m+
       (f.rodOuterDiameter_m/2-f.cladThickness_m)**2*f.plenumLength_m),nR=f.fillPressure_Pa*gasVolume/f.referenceTemperature_K,
-    fuelMass=g.assembly.fuel_kg/2,cladMass=g.assembly.activeClad_kg/2
-  const carriers=fuelAssemblyPositions(h,f).flatMap(fa=>[0,1].map(half=>({id:fa.id+`/segment/${half}`,faId:fa.id,half,
-    fuelNodes:[0,1].map(radial=>({radial,mass_kg:fuelMass/2,temperature_K:reference.fuelTemperature_K,
-      energy_J:fuelMass/2*fuel.specificEnergy_J_kg,capacity_J_K:fuelMass/2*fuel.cp_J_kg_K})),
-    clad:{mass_kg:cladMass,temperature_K:reference.cladTemperature_K,energy_J:cladMass*clad.specificEnergy_J_kg,capacity_J_K:cladMass*clad.cp_J_kg_K}})))
-  const passive=operatingCladCaloric(reference.cladTemperature_K)
-  return {fuelCaloric:fuel,cladCaloric:clad,carriers,passiveCaloric:passive,
-    passive:fuelAssemblyPositions(h,f).flatMap(fa=>[
+    fuelMass=g.assembly.fuel_kg/2,cladMass=g.assembly.activeClad_kg/2,
+    steady=solids.kind==='steady'?{carrier:steadyRows(solids.steady.carriers,'carrier'),helium:steadyRows(solids.steady.helium,'helium'),
+      passive:steadyRows(solids.steady.passive,'passive store')}:undefined,
+    seed=solids.kind==='provisional'?solids.coreSeed_K:NaN,{fuel,zircaloy}=solidDomains_K
+  const carriers=fuelAssemblyPositions(h,f).flatMap(fa=>[0,1].map(half=>{
+    const id=fa.id+`/segment/${half}`,st=steady?.carrier.get(id),
+      nodes=[0,1].map(radial=>({radial,mass_kg:fuelMass/2,...stock(`${id}/fuel/${radial}`,fuelMass/2,
+        admitSolidNode(`${id}/fuel/${radial}`,st?st.fuel_temperatures_k[radial]!:seed,fuel),operatingFuelCaloric,st?.fuel_energies_j[radial])})),
+      surfaces=st?st.surface_temperatures_k.map((T,k)=>admitSolidNode(`${id}/${['fuel-surface','clad-inner','clad-outer'][k]}`,T,k===0?fuel:zircaloy)):[seed,seed,seed],
+      measure=fuelFeedbackTemperature(nodes[0]!.temperature_K,nodes[1]!.temperature_K)
+    // The reference is the law's own measure of the same steady nodes: the
+    // native value, checked here against its definition.
+    if(st&&!(Math.abs(st.doppler_reference_k-measure)<=1e-12*measure))
+      throw Error(`Steady Doppler reference of ${id} (${st.doppler_reference_k} K) is not its nodes' [mean sqrt T]^2 (${measure} K)`)
+    return {id,faId:fa.id,half,fuelNodes:nodes,
+      clad:{mass_kg:cladMass,...stock(`${id}/clad`,cladMass,admitSolidNode(`${id}/clad`,st?st.clad_temperature_k:seed,zircaloy),operatingCladCaloric,st?.clad_energy_j)},
+      surfaceSeed_K:surfaces,dopplerReference_K:st?st.doppler_reference_k:measure}
+  }))
+  const passive=fuelAssemblyPositions(h,f).flatMap(fa=>[
       ...[{name:'LOWER',length:h.bottomFittingLength_m},{name:'CORE.1',length:f.activeLength_m/2},
         {name:'CORE.2',length:f.activeLength_m/2},{name:'UPPER',length:f.plenumLength_m+h.topFittingLength_m}]
         .map(span=>({id:fa.id+'/guide/'+span.name,mass_kg:g.assembly.guide_kg*span.length/g.assembly.fullLength_m})),
       {id:fa.id+'/plenum-clad',mass_kg:g.assembly.plenumClad_kg},
       {id:fa.id+'/bottom-fitting',mass_kg:h.bottomFitting_kg},
       {id:fa.id+'/top-fitting',mass_kg:h.topFitting_kg},
-    ].map(p=>({...p,temperature_K:reference.cladTemperature_K,energy_J:p.mass_kg*passive.specificEnergy_J_kg,
-      capacity_J_K:p.mass_kg*passive.cp_J_kg_K}))),
-    helium:fuelAssemblyPositions(h,f).map(fa=>({id:fa.id+'/helium',
-    volume_m3:gasVolume,nR_J_K:nR,temperature_K:reference.heliumTemperature_K,pressure_Pa:nR*reference.heliumTemperature_K/gasVolume,
-    energy_J:1.5*nR*reference.heliumTemperature_K,capacity_J_K:1.5*nR})),
-    scope:'Two equal-area fuel nodes and one clad per material half, one sealed helium per FA; no radial steady solution or contact evolution'}
+    ].map(p=>{const st=steady?.passive.get(p.id)
+      return {...p,...stock(p.id,p.mass_kg,admitSolidNode(p.id,st?st.temperature_k:seed,zircaloy),operatingCladCaloric,st?.energy_j)}}))
+  const helium=fuelAssemblyPositions(h,f).map(fa=>{
+    const id=fa.id+'/helium',st=steady?.helium.get(id),T=st?st.temperature_k:seed,energy=1.5*nR*T
+    if(!(Number.isFinite(T)&&T>0))throw Error(`Helium ${id} at ${T} K is not a positive temperature`)
+    if(st&&Math.abs(st.energy_j-energy)>1e-10*energy)throw Error(`Steady helium ${id} energy disagrees with 1.5 nRT`)
+    return {id,volume_m3:gasVolume,nR_J_K:nR,temperature_K:T,pressure_Pa:nR*T/gasVolume,energy_J:st?st.energy_j:energy,capacity_J_K:1.5*nR}
+  })
+  if(steady){steady.carrier.covered();steady.helium.covered();steady.passive.covered()}
+  return {carriers,passive,helium,solids:solids.kind,
+    scope:solids.kind==='steady'?'Two equal-area fuel nodes and one clad per material half, one sealed helium per FA and every passive store at the steady solid state of the reference power (G18, stock-IDA settle S2-D2)'
+      :'SEED ONLY: every core solid store at the prepared core outlet water temperature, the stock-IDA settle\'s initial state; never emitted'}
 }
 
 const querySource=String.raw`
@@ -356,7 +423,7 @@ export function preparePressureContinuity(regions:readonly PressureRegion[],edge
   throw Error('Pressure preparation donor branch limit')
 }
 
-export async function prepareOperatingFluid(directory:string,if97Directory:string,sourceHeat_W:number){
+export async function prepareOperatingFluid(directory:string,if97Directory:string,sourceHeat_W:number,solids:SolidPreparation){
   positive(sourceHeat_W)
   const root='world/packs/process-plant/reference-designs/ld-01/',files=['systems/reactor/fuel-construction.md','systems/reactor/fuel-handling-and-pool.md','systems/reactor/control-absorber-and-guide-water.md',
       'model/operating-hot-reference.md','numerical-basis.md','systems/primary-coolant/mechanical-energy-and-geometry.md','model/connected-primary-initialization.md','systems/primary-coolant/surge-route.md',
@@ -383,11 +450,31 @@ export async function prepareOperatingFluid(directory:string,if97Directory:strin
       regions=geometry.regions.map(r=>{const q=points.find(q=>q.T===r.temperature_K)!,chart=fixedVolumeChart(r.volume_m3,q);return {...r,pressure_Pa:q.p,water:q,...chart,
         liquidMass_kg:chart.mass_kg,steamMass_kg:0,airMass_kg:0,nitrogenMass_kg:0,
         absorberTracer_kgEq:chart.mass_kg*reference.boronReference_ppmEq/1e6}}),
-      sg=saturatedVolumeChart(balance.secondaryVolume_m3,balance.secondaryLiquidVolume_m3,endpoints[0]!,endpoints[1]!),wallTemperature=(physical.inlet_K+sg.temperature_K)/2,
+      sg=saturatedVolumeChart(balance.secondaryVolume_m3,balance.secondaryLiquidVolume_m3,endpoints[0]!,endpoints[1]!),
       referenceFlow=sourceHeat_W/(points[2]!.h-points[0]!.h),A=sum(regions.map(r=>r.massPAtEnergy_kg_Pa)),
-      solidStocks=prepareOperatingMaterials(input.fuel,input.handling,reference)
+      resolved:ResolvedSolids=solids.kind==='steady'?solids:{kind:'provisional',coreSeed_K:physical.outlet_K,sgMetalSeed_K:(physical.inlet_K+sg.temperature_K)/2},
+      solidStocks=prepareOperatingMaterials(input.fuel,input.handling,resolved),
+      steadyMetal=resolved.kind==='steady'?steadyRows(resolved.steady.sg_metal,'SG metal segment'):undefined,
+      // An SG metal segment's energy is C (T - 273.15 K). At the steady state
+      // it carries no source, so it lies strictly between the secondary
+      // saturation and its SG primary water: a law screen, not a bound.
+      metal=(id:string,capacity_J_K:number)=>{
+        if(!steadyMetal){const T=(resolved as {sgMetalSeed_K:number}).sgMetalSeed_K;return {temperature_K:T,energy_J:capacity_J_K*(T-273.15)}}
+        const st=steadyMetal.get(id),own=capacity_J_K*(st.temperature_k-273.15)
+        if(Math.abs(st.energy_j-own)>1e-10*Math.abs(own))throw Error(`Steady SG metal ${id} energy disagrees with C (T - 273.15 K)`)
+        if(!(st.temperature_k>sg.temperature_K&&st.temperature_k<physical.inlet_K))
+          throw Error(`Steady SG metal ${id} at ${st.temperature_k} K is not between its secondary saturation ${sg.temperature_K} K and primary ${physical.inlet_K} K`)
+        return {temperature_K:st.temperature_k,energy_J:st.energy_j}
+      },
+      steamGenerators=['A','B'].map(id=>({id,...sg,metal:Array.from({length:4},(_,i)=>{
+        const capacity_J_K=balance.wallCapacity_MJ_K*1e6/4,segment=`SG.${id}.METAL.${i}`
+        return {id:segment,developedStart_m:sgSegment_m*i,developedEnd_m:sgSegment_m*(i+1),capacity_J_K,...metal(segment,capacity_J_K),
+          exchangeArea_m2:sgContact.exchangeArea_m2*sgSegment_m/mechanics.sgDevelopedLength_m}}),
+        liquidDensity_kg_m3:endpoints[0]!.rho,steamDensity_kg_m3:endpoints[1]!.rho,airMass_kg:0,nitrogenMass_kg:0,absorberTracer_kgEq:0}))
+    steadyMetal?.covered()
     if(!Number.isFinite(A)||A===0)throw Error('Singular connected primary inventory pressure')
-    return {scope:'Finite prepared nonsteady hot reference; local/chart checks, not balanced circulation or IDA index-1 admission',
+    return {scope:resolved.kind==='steady'?'Finite prepared hot reference with every solid store at the steady solid state of the reference power (G18); local/chart checks, not balanced circulation or IDA index-1 admission'
+      :'SEED ONLY: finite prepared hot reference with every solid store at the stock-IDA settle\'s initial state; never emitted',
       hotReference:reference,sourceCapsule_m:input.handling.sourceCapsule_m,
       provenance:{if97Revision:nativeIf97Revision,headerSha256:nativeIf97HeaderSha256,licenseSha256:nativeIf97LicenseSha256,sourceSha256:hash(await Bun.file(import.meta.path).text()),propertyAdapterSha256:hash(querySource),
         helperSources:await Promise.all(['reference-design-fuel-materials.ts','reference-design-fuel-construction.ts','reference-design-fuel-handling.ts','reference-design-control-absorber.ts','reference-design-surge-route.ts','reference-design-if97-primitives.ts','reference-design-balance.ts'].map(async name=>({name,sha256:hash(await Bun.file(join(import.meta.dir,name)).text())}))),
@@ -404,21 +491,17 @@ export async function prepareOperatingFluid(directory:string,if97Directory:strin
         energyRule:'Decision0012 operating low-Mach: fixed Eulerian Vi, shared thermal enthalpy once; paid shaft work once to pumpwater. Fluid K/PE feedback is diagnosed/bounded, not an exact additional thermal stock. Local budgets and joined momentum/pressure chart remain unadmitted.'},
       materials:{fuelMass_kg:geometry.fuelMass_kg,activeCladMass_kg:geometry.activeCladMass_kg,fullGuideMass_kg:geometry.fullGuideMass_kg,
         plenumCladMass_kg:geometry.plenumCladMass_kg,fittingMass_kg:geometry.fittingMass_kg,coreWetArea_m2:geometry.coreWetArea_m2,
-        fuelTemperature_K:reference.fuelTemperature_K,cladTemperature_K:reference.cladTemperature_K,heliumTemperature_K:reference.heliumTemperature_K,
-        fuelCaloric:{e_J_kg:solidStocks.fuelCaloric.specificEnergy_J_kg,cp_J_kg_K:solidStocks.fuelCaloric.cp_J_kg_K},
-        cladCaloric:{e_J_kg:solidStocks.cladCaloric.specificEnergy_J_kg,cp_J_kg_K:solidStocks.cladCaloric.cp_J_kg_K},
-        solidStores:[...solidStocks.passive,...solidStocks.helium].map(s=>({id:s.id,energy_J:s.energy_J,capacity_J_K:s.capacity_J_K})),
+        solidPreparation:resolved,
+        solidStores:[...solidStocks.passive,...solidStocks.helium].map(s=>({id:s.id,temperature_K:s.temperature_K,energy_J:s.energy_J,capacity_J_K:s.capacity_J_K})),
         preparedCarriers:solidStocks.carriers},
-      steamGenerators:['A','B'].map(id=>({id,...sg,metal:Array.from({length:4},(_,i)=>({id:`SG.${id}.METAL.${i}`,developedStart_m:sgSegment_m*i,developedEnd_m:sgSegment_m*(i+1),
-        capacity_J_K:balance.wallCapacity_MJ_K*1e6/4,energy_J:balance.wallCapacity_MJ_K*1e6/4*(wallTemperature-273.15),temperature_K:wallTemperature,
-        exchangeArea_m2:sgContact.exchangeArea_m2*sgSegment_m/mechanics.sgDevelopedLength_m})),
-        liquidDensity_kg_m3:endpoints[0]!.rho,steamDensity_kg_m3:endpoints[1]!.rho,airMass_kg:0,nitrogenMass_kg:0,absorberTracer_kgEq:0})),
+      steamGenerators,
       geometry,propertyPoints:points,secondaryPropertyPoints:endpoints}
   })
 }
 
 if(import.meta.main){
-  const [wiki,if97,Q]=Bun.argv.slice(2)
-  if(!wiki||!if97||!Q||Bun.argv.length!==5)throw Error('Usage: operating-fluid <wiki root> <pinned IF97 directory> <actual current source heat W>')
-  console.log(JSON.stringify(await prepareOperatingFluid(wiki,if97,Number(Q))))
+  const [wiki,if97,Q,steady]=Bun.argv.slice(2)
+  if(!wiki||!if97||!Q||!steady||Bun.argv.length!==6)
+    throw Error('Usage: operating-fluid <wiki root> <pinned IF97 directory> <actual current source heat W> <steady solids JSON of prepare_steady_solids>')
+  console.log(JSON.stringify(await prepareOperatingFluid(wiki,if97,Number(Q),{kind:'steady',steady:steadySolidsSchema.parse(await Bun.file(steady).json())})))
 }

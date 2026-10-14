@@ -77,7 +77,7 @@ test('native metadata exports the existing immutable source, not a recalibration
 const actualWiki=process.env.LD01_WIKI_ROOT,actualIf97=process.env.LD01_IF97_DIRECTORY,
   nativeSourceTest=process.env.LD01_OPERATING_SOURCE_TEST
 test.skipIf(!actualWiki||!actualIf97||!nativeSourceTest)('actual current-source native value and direction match the consumed TS owner',async()=>{
-  const hot=await prepareOperatingHot(actualWiki!,actualIf97!),m=hot.compiledSource,
+  const hot=await prepareOperatingHot(actualWiki!,actualIf97!,{kind:'provisional'}),m=hot.compiledSource,
     current=structuredClone(m.reference.conditions) as MutableConditions,
     d=Object.fromEntries(Object.entries(current).map(([k,v])=>[k,Array.isArray(v)?v.map(()=>0):0])) as MutableConditions,
     names={fuelTemperature_K:'fuel_temperature_k',waterDensity_kg_m3:'water_density_kg_m3',boron_ppmEq:'boron_ppm_eq',

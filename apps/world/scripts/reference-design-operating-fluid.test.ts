@@ -48,7 +48,7 @@ if(!!wiki!==!!if97)throw Error('Supply both LD01_WIKI_ROOT and LD01_IF97_DIRECTO
 const native=!!wiki&&!!if97
 
 test.skipIf(!native)('actual wiki geometry, finite caloric recipients, wet SG stocks and simultaneous chart',async()=>{
-  const r=await prepareOperatingFluid(wiki!,if97!,2.9e9),p=r.primary
+  const r=await prepareOperatingFluid(wiki!,if97!,2.9e9,{kind:'provisional'}),p=r.primary
   expect(p.regions).toHaveLength(26);expect(p.edges).toHaveLength(32);expect(p.cycleCount).toBe(7)
   // The 52 stems displace water through the full 8.00–8.05 m cap bore as
   // well as the neck above it; the independent housing geometry test checks
