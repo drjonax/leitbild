@@ -618,7 +618,7 @@ describe('evaluate (tool loop)', () => {
   test("the Assistant's iteration threshold pauses its turn for the person, who may let it finish", async () => {
     // A cost guard, not a quota: past it the Agent asks the person (Continue / Stop) and keeps its turn.
     const threshold = getBundledRoomDefinition('leitbild-assistant')!.room.agents[0]!.maxToolIterations!
-    expect(threshold).toBe(20)
+    expect(threshold).toBe(40)
     const { provider, calls } = makeScriptedProvider([
       ...Array.from({ length: threshold + 2 }, () => ({ toolCalls: [{ function: { name: 'a', arguments: {} } }] })),
       { content: 'held at step 4 for your judgement' },
@@ -672,6 +672,54 @@ describe('evaluate (tool loop)', () => {
     const second = calls[1]!
     expect(second.messages.some(m => m.content.includes(huge))).toBe(true)
     expect(second.messages.some(m => m.content.includes('characters omitted'))).toBe(false)
+  })
+
+  test('progress lines are posted as each round returns, in call order, and the model never reads them', async () => {
+    const order: string[] = []
+    const { provider, calls } = makeScriptedProvider([
+      { toolCalls: [
+        { function: { name: 'workspace_call', arguments: { calls: [{ key: 'start', operationId: 'world.procedure.run.start', input: {}, say: 'Started E-0 on unit 1' }] } } },
+        { function: { name: 'note', arguments: {} } },
+      ] },
+      { toolCalls: [{ function: { name: 'workspace_call', arguments: { calls: [{ key: 'step', operationId: 'world.procedure.run.transition', input: {}, say: 'E-0 step 1 · Verified → step 2' }] } } }] },
+      { content: 'Unit 1 · E-0 step 2 · holding for your judgement' },
+    ])
+    const counted: LLMProvider = { ...provider, chat: async request => { order.push(`model ${calls.length + 1}`); return provider.chat(request) } }
+    // A scripted executor: lines need no execution evidence.
+    const exec: ToolExecutor = async toolCalls => toolCalls.map(call => {
+      const said = (call.arguments.calls as ReadonlyArray<{ say?: string }> | undefined)?.flatMap(entry => entry.say === undefined ? [] : [entry.say]) ?? []
+      return { success: true, data: { results: [{ key: 'k', operationId: 'op', success: true, data: { ok: true } }] }, ...(said.length > 0 ? { progress: said } : {}) }
+    })
+    const result = await evaluate(baseContextResult(), baseConfig, counted, exec, undefined, 'room-1', {
+      toolDefinitions: [],
+      onProgress: line => { order.push(`posted ${line}`) },
+    })
+    expect(result.decision.response).toEqual({ action: 'respond', content: 'Unit 1 · E-0 step 2 · holding for your judgement' })
+    // Each line is posted before the next model pass: live, not with the answer.
+    expect(order).toEqual(['model 1', 'posted Started E-0 on unit 1', 'model 2', 'posted E-0 step 1 · Verified → step 2', 'model 3'])
+    // The tool results the model reads carry no line: it wrote them itself.
+    const toolEvidence = calls.at(-1)!.messages.filter(message => message.role === 'tool').map(message => message.content)
+    expect(toolEvidence).toHaveLength(3)
+    expect(toolEvidence.some(content => content.includes('Started E-0') || content.includes('Verified → step 2'))).toBe(false)
+  })
+
+  test('a line of a call that returned is posted even when the turn is cancelled right after it', async () => {
+    const controller = new AbortController()
+    const posted: string[] = []
+    const { provider, calls } = makeScriptedProvider([
+      { toolCalls: [{ function: { name: 'workspace_call', arguments: {} } }] },
+      { content: 'never asked' },
+    ])
+    const exec: ToolExecutor = async () => {
+      controller.abort()
+      return [{ success: true, data: { results: [] }, progress: ['Proposed the manual reactor trip on unit 1'] }]
+    }
+    const result = await evaluate(baseContextResult(), baseConfig, provider, exec, undefined, 'room-1', {
+      toolDefinitions: [], signal: controller.signal, onProgress: line => { posted.push(line) },
+    })
+    expect(posted).toEqual(['Proposed the manual reactor trip on unit 1'])
+    expect(calls).toHaveLength(1)
+    expect(result.decision.response.action).toBe('error')
   })
 })
 

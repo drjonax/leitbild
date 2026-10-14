@@ -277,4 +277,23 @@ describe('stateHandlers — thinking persistence', () => {
     // thinking had to already be in $messageThinking.
     expect(seenWhenRoomMessagesFired).toBe('pre-transfer reasoning')
   })
+
+  test('a progress line leaves the sender generating and its reasoning for the answer that follows', () => {
+    $agents.setKey('agent-1', { id: 'agent-1', name: 'Aiden', state: 'generating' } as never)
+    $liveThinking.setKey('agent-1', 'the reasoning')
+    const post = (id: string, over: Record<string, unknown> = {}) => stateHandlers.message!({
+      type: 'message',
+      message: { id, roomId: 'room-1', senderId: 'agent-1', senderName: 'Aiden', content: id, timestamp: 0, type: 'chat', ...over },
+    } as never)
+
+    post('line-1', { progress: true })
+    expect($roomMessages.get()['room-1']!.map(message => [message.id, message.progress])).toEqual([['line-1', true]])
+    expect($agents.get()['agent-1']!.state).toBe('generating')
+    expect($messageThinking.get()['line-1']).toBeUndefined()
+    expect($liveThinking.get()['agent-1']).toBe('the reasoning')
+
+    post('answer')
+    expect($agents.get()['agent-1']!.state).toBe('idle')
+    expect($messageThinking.get()['answer']).toBe('the reasoning')
+  })
 })

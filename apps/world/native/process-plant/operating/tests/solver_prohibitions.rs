@@ -133,10 +133,17 @@ const ALLOWED: &[(&str, &str, &str, usize, &str)] = &[
     ),
     (
         "water-ffi/src/joined.rs",
-        "consistent_start",
+        "consistent_start_exempting",
         "iteration",
         2,
-        "declared exact consistent start of the joined residual: KLU constraint projection passes and rate passes",
+        "declared exact consistent start of the joined residual: KLU constraint projection passes and rate passes (lead decision S2-D21: up to 12 passes after an owner transaction)",
+    ),
+    (
+        "water-ffi/src/lib.rs",
+        "from_stable_end",
+        "iteration",
+        1,
+        "caloric inverse first guess from the stable end (lead decision S2-D5): Newton on one scalar temperature inside the branch bracket, None falls back to the full bracketed inverse",
     ),
     (
         "src/thermal.rs",

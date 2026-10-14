@@ -12,6 +12,10 @@ export interface ToolResult {
   readonly success: boolean
   readonly data?: unknown
   readonly error?: string
+  // Lines for the person, in order, that the turn posts to its Room as the
+  // calling Agent's own progress messages (Message.progress) as soon as this
+  // result returns (workspace_call `say`). Never part of what the model reads.
+  readonly progress?: ReadonlyArray<string>
 }
 
 // Options for tool-internal LLM calls — model is inherited from the calling agent.

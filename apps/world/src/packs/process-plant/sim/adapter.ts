@@ -32,7 +32,7 @@ import {
 import { processPlantDefinitionSchema,type ProcessPlantDefinition } from '../config.ts'
 import type { ProcessPlantControlProposeResult } from '../capabilities.ts'
 import { validateProcessPlantControlWrite } from '../control-write-validation.ts'
-import { aiProposeOnlyRefusal, instructorOnlyRefusal, throttledUnder, validateOperatorWrite } from '../operations/command-guard.ts'
+import { aiProposeOnlyRefusal, drivesProcedureOn, instructorOnlyRefusal, throttledUnder, validateOperatorWrite } from '../operations/command-guard.ts'
 import { listedResetsFor, proposalPortsFor, resetContextFor } from '../operations/instance-ports.ts'
 import { resetRefusal } from '../operations/actuation-reset.ts'
 import { decideProposal, proposeOperation } from '../operations/proposals.ts'
@@ -353,9 +353,10 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
       proposalId?: string,
     ): string | null => {
       if (plant.protection === undefined) return `process plant I&C is not configured for plant: ${plant.plant.id}`
-      if (context.origin !== 'person' && context.origin !== 'system') {
+      // An AI agent resets one itself only as the operator of a procedure it drives on this Plant.
+      if (context.origin !== 'person' && context.origin !== 'system' && !(context.origin === 'ai' && drivesProcedureOn(context, plant.plant.id))) {
         return context.origin === 'ai'
-          ? 'An AI agent proposes an actuation reset for a person to approve (world.process-plant.control.propose with reset); it does not reset one itself'
+          ? 'An AI agent proposes an actuation reset for a person to approve (world.process-plant.control.propose with reset); it resets one itself only while it drives an active procedure Run on this Plant'
           : 'A reset needs who takes it'
       }
       const refusal = resetRefusal(plant.plant, plant.protection.snapshot(), ruleId, resetContextFor(plant))
@@ -498,7 +499,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
-          const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+          const aiRefusal = aiProposeOnlyRefusal(command.kind, context, payload.data.plantId, aiOperationOf(payload.data.plantId))
           if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           try {
             const commands = commandsForProcessPlantAction({
@@ -538,7 +539,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
-          const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+          const aiRefusal = aiProposeOnlyRefusal(command.kind, context, payload.data.plantId, aiOperationOf(payload.data.plantId))
           if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           if (!plant.protection) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant I&C is not configured for plant: ${payload.data.plantId}` }
           // Resetting a latched protection actuation's alarm or trip resets the actuation: as a reset is offered, never around it.
@@ -658,7 +659,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
           const plant = plants.get(payload.data.plantId)
           if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
-          const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+          const aiRefusal = aiProposeOnlyRefusal(command.kind, context, payload.data.plantId, aiOperationOf(payload.data.plantId))
           if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
           const validation = validateOperatorWrite({
             system: plant.plant,
@@ -697,7 +698,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         if (!payload.success) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: payload.error.message }
         const plant = plants.get(payload.data.plantId)
         if (!plant) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: `process plant not found: ${payload.data.plantId}` }
-        const aiRefusal = aiProposeOnlyRefusal(command.kind, context.origin, aiOperationOf(payload.data.plantId))
+        const aiRefusal = aiProposeOnlyRefusal(command.kind, context, payload.data.plantId, aiOperationOf(payload.data.plantId))
         if (aiRefusal !== null) return { ok: false, commandId: command.id, rejectedAt: acceptedAt, reason: aiRefusal }
         try {
           const validation = validateOperatorWrite({

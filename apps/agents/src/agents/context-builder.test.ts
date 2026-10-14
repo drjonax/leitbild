@@ -59,6 +59,21 @@ test('a joined Agent uses the current compression summary without replaying cach
   expect(history.incoming).toEqual([])
 })
 
+test('the messages a turn answered are flushed before the progress lines it posted meanwhile, and after its earlier answers', () => {
+  const message = (id: string, timestamp: number, over: Partial<Message> = {}): Message =>
+    ({ id, roomId: 'room-1', senderId: 'human', content: id, timestamp, type: 'chat', ...over })
+  // An earlier answer, then a question that came while it was written, then this turn's two lines.
+  const history = mkHistory('room-1', 'General', undefined, [
+    message('earlier answer', 3, { senderId: 'agent-1' }),
+    message('line 1', 6, { senderId: 'agent-1', progress: true }),
+    message('line 2', 7, { senderId: 'agent-1', progress: true }),
+  ])
+  history.incoming.push(message('question', 2), message('arrived meanwhile', 8))
+  flushIncoming({ ids: new Set(['question']), triggerRoomId: 'room-1' }, history)
+  expect(history.rooms.get('room-1')!.history.map(entry => entry.id)).toEqual(['earlier answer', 'question', 'line 1', 'line 2'])
+  expect(history.incoming.map(entry => entry.id)).toEqual(['arrived meanwhile'])
+})
+
 describe('context-builder includePrompts', () => {
   test('all sections included by default (undefined includePrompts)', () => {
     const result = buildContext(mkDeps(), 'room-1')

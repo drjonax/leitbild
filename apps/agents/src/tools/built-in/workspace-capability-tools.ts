@@ -38,6 +38,9 @@ const HOST_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_PAGE_SIZE = 30
 const MAX_PAGE_SIZE = 100
 const MAX_READ_BATCH_SIZE = 12
+// One chat line: room for a procedure step's decision with its deciding
+// values, as long as the basis World records for a transition.
+const MAX_SAY_LENGTH = 300
 
 const failure = (code: string, message: string, details?: Record<string, unknown>): ToolResult => ({
   success: false,
@@ -298,6 +301,7 @@ const callInputSchema = z.object({
     input:z.unknown().describe('Arguments matching the operation input schema. Reuse known schemas; discover unfamiliar ones before guessing parameters.'),
     expectedRevision:z.number().int().nonnegative().optional().describe('Supply only when the operation supports a current revision precondition.'),
     idempotencyKey:z.string().min(1).max(256).optional().describe('Retry key only for operations advertising acceptsIdempotencyKey. Verify unknown change outcomes rather than blindly retrying.'),
+    say:z.string().trim().min(1).max(MAX_SAY_LENGTH).optional().describe('A short line for the person, posted to this conversation as your own message once this call succeeds, before your answer: e.g. a procedure step you decided and why, or a plant operation you made. Never for reads.'),
   }).strict()).min(1).max(MAX_READ_BATCH_SIZE).describe('One read or change, or a batch of independent reads. Results follow request order; concurrent reads are not an atomic snapshot.'),
 }).strict()
 
@@ -508,7 +512,7 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
   const call: Tool = {
     name: 'workspace_call',
     description: 'Call discovered operations; batch only independent reads. A missing Resource or Definition target resolves only when exactly one eligible target is in scope; otherwise choose an exact discovered target.',
-    usage: 'Use exact operation IDs and targets returned by workspace_explore. Reads and changes use the same call shape. Batch only independent reads; issue changes separately. Supply idempotencyKey only when the discovered operation advertises acceptsIdempotencyKey. A target Module enforces current run restrictions and safety checks.',
+    usage: 'Use exact operation IDs and targets returned by workspace_explore. Reads and changes use the same call shape. Batch only independent reads; issue changes separately. Supply idempotencyKey only when the discovered operation advertises acceptsIdempotencyKey. A change may carry `say`: once it succeeds, that line is posted to the Room as the Agent\'s own progress message while its turn continues; a read carrying it is refused. A target Module enforces current run restrictions and safety checks.',
     returns: 'Results in request order. Each result contains either data or a structured error such as out-of-scope, restricted, stale, or invalid input.',
     parameters: z.toJSONSchema(callInputSchema, { io: 'input' }),
     execute: async (rawParams, context) => {
@@ -547,6 +551,17 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
               operationId: entry.operationId,
               success: false,
               error: 'idempotency_not_supported: This operation does not advertise caller-supplied retry keys',
+            }
+          }
+          // A line says what a change did; a read changes nothing to report.
+          // Refused before invocation, like a retry key, so the other reads of
+          // a batch still run.
+          if (entry.say !== undefined && entry.operation?.risk === 'read') {
+            return {
+              key: entry.key,
+              operationId: entry.operationId,
+              success: false,
+              error: 'say_not_for_reads: say reports a change; call this read again without say',
             }
           }
           try {
@@ -593,7 +608,10 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
             return { key: entry.key, operationId: entry.operationId, success: false, error: `workspace_outcome_unknown: ${error instanceof Error ? error.message : String(error)}` }
           }
         }))
-        return { success: true, data: { results } }
+        // The line of each call that succeeded, in request order; a refused
+        // or unknown outcome posts nothing. It needs no execution evidence.
+        const progress = prepared.flatMap((entry, index) => entry.say !== undefined && results[index]!.success ? [entry.say] : [])
+        return { success: true, data: { results }, ...(progress.length === 0 ? {} : { progress }) }
       } catch (error) {
         if (error && typeof error === 'object' && 'success' in error) return error as ToolResult
         return failure('invalid_tool_input', error instanceof Error ? error.message : String(error))

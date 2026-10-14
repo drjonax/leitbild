@@ -9,8 +9,8 @@ import {
   procedureRunTransitionPayloadSchema,
 } from '../../core/model/index.ts'
 import {
-  aiResetRefusal, assertAiDecisionEvidence, assertAiDrives, assertAiMayDrive, assertAiStepUpdate,
-  procedureBranchVerdict, procedureDriver, sameProcedureDriver, type ProcedureActorKind,
+  aiResetRefusal, assertAiDecisionEvidence, assertAiDrives, assertAiMayDrive, assertAiStepUpdate, assertAiWorksCurrentStep,
+  procedureDriver, sameProcedureDriver, type ProcedureActorKind,
 } from './driver-rules.ts'
 import { procedureEvidenceReadingText, readProcedureTags, type ProcedureObservationPort, type ProcedureTagRead } from './pack-observations.ts'
 
@@ -67,6 +67,8 @@ export const prepareProcedureCommand = async (config: {
   readonly soleSourceId?: () => string
   /** A scope's live observations, read as the command's actor. A transition citing evidence tags reads them here. */
   readonly observations?: (plantId: string) => ProcedureObservationPort
+  /** Who issues the command, as its commit will be told: an AI agent's transition citing no evidence reads the step's tags here. */
+  readonly actorKind?: ProcedureActorKind
 }): Promise<((context: ProcedureCommitContext) => ReadonlyArray<SimulationRunEvent>) | null> => {
   const { command } = config
   const assertDocumentScope = (context: ProcedureCommitContext, document: ProcedureDocument, scope: ProcedureRunScope): void => {
@@ -205,30 +207,34 @@ export const prepareProcedureCommand = async (config: {
     const evidenceTagIds = payload.evidenceTagIds ?? []
     if (new Set(evidenceTagIds).size !== evidenceTagIds.length) throw new Error('evidenceTagIds name a tag more than once')
     const uncited = evidenceTagIds.filter(tagId => !step.tagIds.includes(tagId))
-    // Refused at commit, after who drives and whether the branch is an AI's to select.
+    // Refused at commit, after who drives and whether the step is the current one.
     const uncitedEvidence = uncited.length === 0 ? undefined : new Error(`${uncited.map(tagId => `«${tagId}»`).join(', ')} ${uncited.length === 1 ? 'is' : 'are'} not cited in step ${step.label}; evidence is up to six of the step's own tags${step.tagIds.length === 0 ? ', and it cites none' : `: ${step.tagIds.join(', ')}`}.`)
+    const observations = () => {
+      if (config.observations === undefined) throw new Error('this command path reads no plant observations')
+      return config.observations(preparedRun.scope.plantId)
+    }
     const evidenceReads: ReadonlyArray<ProcedureTagRead> = evidenceTagIds.length === 0 || uncitedEvidence !== undefined ? [] : await readProcedureTags({
-      observations: () => {
-        if (config.observations === undefined) throw new Error('this command path reads no plant observations')
-        return config.observations(preparedRun.scope.plantId)
-      },
-      declared: document.tags,
-      tagIds: evidenceTagIds,
+      observations, declared: document.tags, tagIds: evidenceTagIds,
     })
     const evidence = evidenceReads.map(read => ({ tagId: read.tagId, reading: procedureEvidenceReadingText(read) }))
+    // An AI agent cites no evidence only where none of the step's tags reads now.
+    const readableStepTagIds = config.actorKind === 'ai' && payload.evidenceTagIds === undefined && step.tagIds.length > 0
+      ? (await readProcedureTags({ observations, declared: document.tags, tagIds: step.tagIds }))
+          .filter(read => read.value !== undefined).map(read => read.tagId)
+      : undefined
     return context => {
       const run = activeRunFor(context.procedures, payload.runId)
       assertDocumentScope(context, document, run.scope)
       if (targetDocument) assertDocumentScope(context, targetDocument, run.scope)
       if (context.actorKind === 'ai') {
         assertAiDrives(run, command.actorId)
-        const verdict = procedureBranchVerdict({ run, step, branch })
-        if (!verdict.aiMaySelect) throw new Error(verdict.personOnlyReason)
+        assertAiWorksCurrentStep(run, step)
       }
       if (uncitedEvidence !== undefined) throw uncitedEvidence
       if (context.actorKind === 'ai') {
         assertAiDecisionEvidence({ step, ...(payload.basis === undefined ? {} : { basis: payload.basis }),
-          ...(payload.evidenceTagIds === undefined ? {} : { evidenceTagIds: payload.evidenceTagIds }), reads: evidenceReads })
+          ...(payload.evidenceTagIds === undefined ? {} : { evidenceTagIds: payload.evidenceTagIds }), reads: evidenceReads,
+          ...(readableStepTagIds === undefined ? {} : { readableStepTagIds }) })
       }
       // Deliberate off-path decisions remain possible, but asynchronously prepared
       // requests must not race another operator's newly accepted navigation.
