@@ -391,11 +391,11 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
         ) {
             Ok(r) => r,
             Err(e) => {
-                let roots: Vec<String> = roots
+                let located: Vec<String> = roots
                     .iter()
                     .map(|(i, d)| format!("{} {d:+}", labels[*i]))
                     .collect();
-                let message = format!("{name} restart with roots {roots:?}: {e}");
+                let message = format!("{name} restart with roots {located:?}: {e}");
                 // Where the refused start moved the state: each
                 // coordinate's change from the located state, over the
                 // integrator's weight there (algebraic: the projection's
@@ -426,8 +426,32 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
                     changed.push((c.abs(), i));
                 }
                 changed.sort_by(|a, b| b.0.total_cmp(&a.0));
+                // The refused instant's kinds, from its located roots.
+                let mut kinds: Vec<String> = roots
+                    .iter()
+                    .map(|(i, d)| {
+                        let l = &labels[*i];
+                        if l.starts_with("rod ") {
+                            if *d < 0 { "rod seat group" } else { "rod root" }.to_string()
+                        } else {
+                            format!("SG relief SG.{}", l.split('.').nth(1).unwrap_or("?"))
+                        }
+                    })
+                    .collect();
+                kinds.sort();
+                kinds.dedup();
+                if kinds.is_empty() {
+                    kinds.push(name.to_string());
+                }
+                let rooted: Vec<String> = roots
+                    .iter()
+                    .filter(|(i, _)| labels[*i].starts_with("rod "))
+                    .map(|(i, _)| labels[*i].trim_start_matches("rod ").to_string())
+                    .collect();
                 restarts.push(json!({
                         "index": restarts.len(), "t_s": t - t0, "discrete": name, "failed": message,
+                        "kinds": kinds, "rod_clusters_rooted": rooted,
+                        "roots": roots.iter().map(|(i, d)| json!({"root": labels[*i], "direction": d})).collect::<Vec<_>>(),
                         "trajectory_groups_before": pre.len(),
                         "refused_start_state_change": {
                             "note": "y as the refused start left it against the located state; WRMS over all coordinates = sqrt(sum / n)",
@@ -696,8 +720,7 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
         .filter(|r| {
             !r["detail"]["seated_clusters"]
                 .as_array()
-                .unwrap()
-                .is_empty()
+                .is_none_or(|a| a.is_empty())
         })
         .map(|r| json!({"t_s": r["t_s"], "clusters": r["detail"]["seated_clusters"]}))
         .collect();
