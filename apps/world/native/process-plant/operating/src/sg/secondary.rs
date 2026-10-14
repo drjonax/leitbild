@@ -490,6 +490,7 @@ impl<P: Properties> Secondary<P> for Secondaries {
             mechanical_rate_w: 0.,
             crossings,
             received_heat_w: self.boundary.iter().map(|b| b.heat_w.value).collect(),
+            power: None,
         }
     }
     fn prepared(&self) -> Vec<f64> {

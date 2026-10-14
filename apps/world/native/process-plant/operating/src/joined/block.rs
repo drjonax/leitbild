@@ -289,6 +289,13 @@ pub struct OwnerAccount {
     /// Heat each of the owner's volumes received from another block as its
     /// rows used it (W): the SG secondary's metal heat, per SG.
     pub received_heat_w: Vec<f64>,
+    /// The rod bodies' power ledger of the last captured value evaluation
+    /// ([`Rods::capture_account`]): fluid-force power, heat paid to the swept
+    /// water, boundary work the network pays through `-p V'` (W). Their sum
+    /// is the bodies' pressure-work remainder (decision 0012's hydrostatic
+    /// remainder of the moving volumes), which the unit's energy account
+    /// reports as its own term. `None` where nothing was captured.
+    pub power: Option<[f64; 3]>,
 }
 
 /// One port's crossing of the unit's envelope, positive entering.
@@ -441,7 +448,14 @@ pub trait Rods<P> {
     fn prepare(&mut self, properties: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure>;
     /// The conservation account at these coordinates and the owner's own
     /// physical rows of the same evaluation: the bodies' kinetic and
-    /// potential energy and its rate as the rows imply it. The guide
-    /// passages carry water between network cells only, so no crossing.
+    /// potential energy and its rate as the rows imply it, and the power
+    /// ledger the last captured evaluation recorded. The guide passages
+    /// carry water between network cells only, so no crossing.
     fn account(&self, x: Coordinates<'_>, rows: &[Scalar]) -> Result<OwnerAccount, Failure>;
+    /// Record the bodies' power ledger at the following value evaluations
+    /// (`true`) or stop (`false`). Every value evaluation replaces the
+    /// record, so it is always the last value evaluation's or none. Only the
+    /// conservation account turns it on, around its own evaluation, so no
+    /// residual or Jacobian evaluation pays for it.
+    fn capture_account(&mut self, on: bool);
 }

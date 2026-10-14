@@ -19,11 +19,12 @@ mod observe;
 #[path = "common/provenance.rs"]
 mod provenance;
 mod s2_harness;
-pub use s2_harness::{compose, gates, receipt, run};
+use conservation::Conservation;
+pub use s2_harness::{compose, conservation, gates, receipt, run};
 
 use leitbild_operating_plant::{
     joined::{
-        account::{Account, Closure, Held, Plan},
+        account::{Account, Held, Plan},
         block::Command,
     },
     thermal::Scalar,
@@ -149,19 +150,6 @@ fn write_new(receipt: &Value, variable: &str) {
     }
 }
 
-/// One output's conservation: the worst identity and every ledger closure.
-struct Output {
-    t: f64,
-    account: Account,
-    closures: Vec<Closure>,
-}
-impl Output {
-    fn json(&self) -> Value {
-        json!({"t_s": self.t, "worst_identity": worst(&self.account),
-            "closures": self.closures.iter().map(|c| json!({"name": c.name, "units": c.units, "closure": c.closure, "change": c.inventory_change, "ledger": c.ledger})).collect::<Vec<_>>()})
-    }
-}
-
 /// A settle segment, then the turbine trip's first second, on the IDAS
 /// ledgers: from the composed state, or from a saved settled state of this
 /// packet (`LD01_S2_SETTLED_STATE`, re-started exactly). At every output the
@@ -184,8 +172,6 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
     let bitwise_s = env("LD01_S2_BITWISE_S", 0.5);
     let (declaration, c) = setup();
     let g = &declaration.gates;
-    let bound = g.number("/identityRelative");
-    let units_bound = g.number("/ledger/boundLocalToleranceUnits");
     let window_cap_s = declaration.shared.number("/eventWindow/maxStep_s");
     let output_s = g.number("/outputInterval_s");
     let restart = Restart {
@@ -270,27 +256,23 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
             .expect("inventory")
     };
     let held0 = inventory(&ida, &y);
-    let q0 = segment.started_q.clone();
-    let mut outputs: Vec<Output> = Vec::new();
+    let mut settle = Conservation::new(g, plan.clone(), held0, segment.started_q.clone());
     let mut restarts: Vec<Value> = Vec::new();
     let mut bitwise_state: Option<Vec<f64>> = None;
+    // One accepted output: the identities at the state and the ledger's
+    // closure against the inventories there.
     let observe = |ida: &mut Ida<Ledgered<If97>>,
                    segment: &Segment,
                    t: f64,
                    y: &[f64],
                    yp: &[f64],
-                   outputs: &mut Vec<Output>| {
+                   record: &mut Conservation| {
         let q = joined_ledger::ledger_at(ida, segment, t).expect("ledger");
         let account = ida.system_mut().account(t, y, yp).expect("account");
-        let held = inventory(ida, y);
-        let closures = plan.closures(&held0, &held, &q0, &q);
-        outputs.push(Output {
-            t,
-            account,
-            closures,
-        });
+        record.sample(t, &account);
+        record.output(t, &inventory(ida, y), &q);
     };
-    observe(&mut ida, &segment, 0., &y, &yp, &mut outputs);
+    observe(&mut ida, &segment, 0., &y, &yp, &mut settle);
     // The settle segment: no event is declared; a root or time event fails.
     ida.stop_at(settle_s).unwrap();
     let mut t = 0.;
@@ -303,7 +285,7 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
         {
             Advance::Reached(time) => {
                 t = time;
-                observe(&mut ida, &segment, t, &y, &yp, &mut outputs);
+                observe(&mut ida, &segment, t, &y, &yp, &mut settle);
                 if bitwise_state.is_none() && (t - bitwise_s).abs() < 1e-9 {
                     bitwise_state = Some(y.clone());
                 }
@@ -314,10 +296,17 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
             }
         }
     }
-    let settle_outputs = outputs.len();
     let settle_counts = ida.stats().unwrap();
-    // The trip: the command at the segment's end, then the owners' time
-    // events and roots, each a discrete restart carrying the ledger.
+    // The trip: its own record from the segment's end, the command there,
+    // then the owners' time events and roots, each a discrete restart
+    // carrying the ledger.
+    let mut trip = Conservation::new(
+        g,
+        plan.clone(),
+        inventory(&ida, &y),
+        joined_ledger::ledger_at(&ida, &segment, t).unwrap(),
+    );
+    observe(&mut ida, &segment, t, &y, &yp, &mut trip);
     let trip_end = settle_s + trip_s;
     let restart_at = |ida: &mut Ida<Ledgered<If97>>,
                       segment: &mut Segment,
@@ -326,12 +315,14 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
                       kind: &str,
                       y: &mut Vec<f64>,
                       yp: &mut Vec<f64>,
-                      restarts: &mut Vec<Value>| {
+                      restarts: &mut Vec<Value>,
+                      record: &mut Conservation| {
         let carried = joined_ledger::ledger_at(ida, segment, t).expect("ledger at the restart");
         let started = cpu::process_cpu_s();
         let done = discrete_restart(ida, t, discrete, y, &network_ids, &atol, rtol, &restart)
             .unwrap_or_else(|e| panic!("{kind} restart at {t} s: {e}"));
         *segment = joined_ledger::restart_ledger(ida, t, carried.clone()).expect("ledger re-init");
+        record.restarted(t);
         ida.set_max_order(max_order).unwrap();
         ida.set_max_step(window_cap_s).unwrap();
         ida.stop_at(
@@ -348,13 +339,6 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
             "start_residual": done.report.residual.value, "start_cpu_s": cpu::process_cpu_s() - started,
             "ledger_carried": after == carried, "ledger_reinitialised": true}));
     };
-    let observed_restart =
-        |ida: &mut Ida<Ledgered<If97>>,
-         segment: &Segment,
-         t: f64,
-         y: &[f64],
-         yp: &[f64],
-         outputs: &mut Vec<Output>| observe(ida, segment, t, y, yp, outputs);
     restart_at(
         &mut ida,
         &mut segment,
@@ -364,9 +348,9 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
         &mut y,
         &mut yp,
         &mut restarts,
+        &mut trip,
     );
-    observed_restart(&mut ida, &segment, settle_s, &y, &yp, &mut outputs);
-    t = settle_s;
+    observe(&mut ida, &segment, settle_s, &y, &yp, &mut trip);
     while t < trip_end - 1e-12 {
         let event = ida.system().integrated.joined.next_time_event(t);
         let target = (t + output_s)
@@ -375,6 +359,7 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
         match ida.advance(target, &mut y, &mut yp).expect("trip") {
             Advance::Reached(time) => {
                 t = time;
+                observe(&mut ida, &segment, t, &y, &yp, &mut trip);
                 if event.is_some_and(|e| (e - t).abs() <= 1e-12 * e.abs().max(1.)) {
                     restart_at(
                         &mut ida,
@@ -385,12 +370,14 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
                         &mut y,
                         &mut yp,
                         &mut restarts,
+                        &mut trip,
                     );
+                    observe(&mut ida, &segment, t, &y, &yp, &mut trip);
                 }
-                observed_restart(&mut ida, &segment, t, &y, &yp, &mut outputs);
             }
             Advance::Root { time, directions } => {
                 t = time;
+                observe(&mut ida, &segment, t, &y, &yp, &mut trip);
                 restart_at(
                     &mut ida,
                     &mut segment,
@@ -400,8 +387,9 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
                     &mut y,
                     &mut yp,
                     &mut restarts,
+                    &mut trip,
                 );
-                observed_restart(&mut ida, &segment, t, &y, &yp, &mut outputs);
+                observe(&mut ida, &segment, t, &y, &yp, &mut trip);
             }
         }
     }
@@ -445,65 +433,34 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
             .count();
         json!({"at_s": bitwise_s, "coordinates_differing": differing})
     });
-    // Verdicts over the samples.
-    let max_identity = |range: std::ops::Range<usize>| {
-        outputs[range]
-            .iter()
-            .map(|o| o.account.worst().relative())
-            .fold(0., f64::max)
-    };
-    let max_units = |range: std::ops::Range<usize>| -> Value {
-        let mut by = serde_json::Map::new();
-        for o in &outputs[range] {
-            for c in &o.closures {
-                let m = by.get(&c.name).and_then(Value::as_f64).unwrap_or(0.);
-                by.insert(c.name.clone(), json!(m.max(c.units)));
-            }
-        }
-        Value::Object(by)
-    };
-    let settle_identity = max_identity(0..settle_outputs);
-    let settle_units = max_units(0..settle_outputs);
-    let trip_units = max_units(settle_outputs..outputs.len());
-    let settle_ledger_pass = settle_units
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|u| u.as_f64().unwrap() <= units_bound);
     let receipt = json!({
         "kind": "s2-conservation-ledgers-NOT-EVIDENCE",
         "status": "NOT-EVIDENCE harness probe (S2-14 M2); S2 is not declared. PZR boundary closed (G6 pending)",
         "provenance": provenance::git_provenance(),
         "packet": packet.path, "packet_sha256": packet.sha256,
         "declaration": declaration.receipt()["page"],
-        "bounds": {"identity_relative": bound, "ledger_local_tolerance_units": units_bound},
         "start": from, "composition": composition,
         "configuration": {"rtol": rtol, "max_order": max_order, "newton_coefficient": restart.newton_coefficient, "delta_cj_lsetup": restart.delta_cj_lsetup,
             "first_step_s": restart.first_step_s, "output_s": output_s, "settle_s": settle_s, "trip_s": trip_s, "trip_window_max_step_s": window_cap_s},
-        "ledger_names": names,
-        "settle": {"outputs": settle_outputs, "max_identity_relative": settle_identity, "identities_close": settle_identity <= bound,
-            "max_ledger_units": settle_units, "ledgers_close": settle_ledger_pass,
+        "settle": {"identities": settle.identities_json(), "ledger": settle.ledger_json(),
             "steps": settle_counts.steps, "residuals": settle_counts.residuals, "jacobians": settle_counts.jacobians},
-        "trip": {"outputs": outputs.len() - settle_outputs, "max_identity_relative": max_identity(settle_outputs..outputs.len()),
-            "max_ledger_units": trip_units, "restarts": restarts},
+        "trip": {"identities": trip.identities_json(), "ledger": trip.ledger_json(), "restarts": restarts},
         "ledger_changes_no_step": bitwise,
         "ledger_cost": {"calls": ledger_cpu.calls, "thread_cpu_s": ledger_cpu.cpu_s},
-        "outputs": outputs.iter().map(Output::json).collect::<Vec<_>>(),
-        "final_account": outputs.last().map(|o| o.account.json()),
         "cost": {"process_cpu_s": cpu::process_cpu_s() - process0, "wall_s": wall.elapsed().as_secs_f64(), "load_average": cpu::load_average()},
     });
-    println!("{}", serde_json::to_string(&json!({"settle": receipt["settle"], "trip": {"max_identity_relative": receipt["trip"]["max_identity_relative"], "max_ledger_units": receipt["trip"]["max_ledger_units"], "restarts": receipt["trip"]["restarts"]}, "ledger_changes_no_step": receipt["ledger_changes_no_step"], "ledger_cost": receipt["ledger_cost"], "cost": receipt["cost"]})).unwrap());
+    let brief = |r: &Value| {
+        json!({"identities_pass": r["identities"]["pass"], "unit_energy": r["identities"]["unit_energy"]["max_relative"],
+        "worst_kinetics": r["identities"]["kinetics_source_balance"]["max_relative"],
+        "ledger_pass": r["ledger"]["pass"], "ledger": r["ledger"]["closures"], "reinitialised_at_s": r["ledger"]["reinitialised_at_s"]})
+    };
+    println!("{}", serde_json::to_string(&json!({"settle": brief(&receipt["settle"]), "trip": brief(&receipt["trip"]), "ledger_changes_no_step": receipt["ledger_changes_no_step"], "ledger_cost": receipt["ledger_cost"], "cost": receipt["cost"]})).unwrap());
     write_new(&receipt, "LD01_S2_LEDGER_RECEIPT");
+    assert!(settle.identities_pass(), "{}", settle.identities_json());
+    assert!(settle.ledger_pass(), "{}", settle.ledger_json()["closures"]);
+    assert!(trip.ledger_pass(), "{}", trip.ledger_json()["closures"]);
     assert!(
-        settle_identity <= bound,
-        "identities over the settle segment: {settle_identity}"
-    );
-    assert!(
-        settle_ledger_pass,
-        "ledgers over the settle segment: {settle_units}"
-    );
-    assert!(
-        restarts.iter().all(|r| r["ledger_carried"] == json!(true)),
+        restarts.iter().all(|r| r["ledger_carried"] == json!(true)) && restarts.len() >= 3,
         "{restarts:?}"
     );
     if let Some(b) = receipt["ledger_changes_no_step"].as_object() {
