@@ -36,38 +36,31 @@ use leitbild_operating_water::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{cell::Cell as Slot, f64::consts::PI, rc::Rc, time::Instant};
+use std::{f64::consts::PI, time::Instant};
 
-#[repr(C)]
-struct Timespec {
-    seconds: i64,
-    nanoseconds: i64,
-}
-unsafe extern "C" {
-    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
-}
-/// CLOCK_PROCESS_CPUTIME_ID on macOS.
-const PROCESS_CPU_CLOCK: i32 = 12;
-fn cpu_s() -> f64 {
-    let mut t = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: one live stack Timespec matching the C layout; the C library
-    // writes it and keeps no pointer.
-    let status = unsafe { clock_gettime(PROCESS_CPU_CLOCK, &mut t) };
-    assert_eq!(status, 0, "process CPU clock unavailable");
-    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
-}
-/// The 1-, 5- and 15-minute load averages (`vm.loadavg`), recorded at the
-/// receipt's start and end for the declared CPU measurement hygiene.
-fn load_average() -> String {
-    std::process::Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .expect("load average")
-}
+// Process CPU (CLOCK_PROCESS_CPUTIME_ID) and the 1-, 5- and 15-minute load
+// averages, recorded at the receipt's start and end for the declared CPU
+// measurement hygiene.
+#[path = "common/cpu.rs"]
+mod cpu;
+use cpu::{load_average, process_cpu_s as cpu_s};
+// The helpers S1 shares with the S2 gate harness (s2_gates.rs).
+#[path = "common/counts.rs"]
+mod counts;
+#[path = "common/filter.rs"]
+mod filter;
+#[path = "common/observe.rs"]
+mod observe;
+#[path = "common/provenance.rs"]
+mod provenance;
+use counts::{CONVERGENCE_FAILURES_COUNTER, Counts, Mark};
+use filter::{
+    CAP_CYCLE_RULE, DECLARED_FILTER, EXCESS_SPECTRUM_METHOD, WELCH_SEGMENT_S, cap_cycle_output,
+    content_above_band, deviation, excess_spectrum, larger, max_abs, mean, padding_s, welch,
+    zero_phase_lowpass,
+};
+use observe::{Clock, Observed, whole};
+use provenance::{WATER_BUILD, WATER_LIB_DIR, sha256_file, strict_block, water_build};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -210,8 +203,6 @@ struct Budgets {
     uncredited_above_hz: f64,
 }
 
-/// The filter the harness implements; the declared block must name it.
-const DECLARED_FILTER: &str = "zero-phase 4th-order Butterworth";
 /// The restart the harness implements at each event window's forced stop
 /// ([`restart`], H1); the declared block must name it.
 const DECLARED_RESTART: &str = "exact consistent start";
@@ -222,11 +213,6 @@ const DECLARED_RESTART: &str = "exact consistent start";
 /// restart sets this stock value again before the continuation's first step.
 const STOCK_NEWTON_COEFFICIENT: f64 = 0.33;
 
-/// `span` is a whole number, at least one, of `unit`s, to rounding.
-fn whole(span: f64, unit: f64) -> bool {
-    let n = (span / unit).round();
-    n >= 1. && (n * unit - span).abs() <= 1e-9 * span
-}
 impl Gates {
     /// Checks of the declared configuration before any run: the block names
     /// the implemented filter and restart; the observation interval divides
@@ -299,105 +285,6 @@ impl Gates {
     fn cap_steps(&self, span_s: f64) -> i64 {
         (self.run_cap_factor * self.budget_steps(span_s)) as i64
     }
-}
-
-/// The single JSON object inside one fenced strict block of a wiki page.
-fn strict_block<T: for<'a> Deserialize<'a>>(page: &str, fence: &str) -> T {
-    let text = std::fs::read_to_string(page).unwrap_or_else(|e| panic!("{page}: {e}"));
-    let open = format!("```{fence}\n");
-    let start = text
-        .find(&open)
-        .unwrap_or_else(|| panic!("{page} has no ```{fence} block"))
-        + open.len();
-    let end = start
-        + text[start..]
-            .find("\n```")
-            .expect("unterminated strict block");
-    serde_json::from_str(&text[start..end]).unwrap_or_else(|e| panic!("{fence}: {e}"))
-}
-
-/// The water build this binary links: build.rs links the IF97 archive in
-/// `LD01_OPERATING_WATER_LIB_DIR`, and this test embeds that directory's
-/// build receipt as it stood when the test was compiled.
-const WATER_LIB_DIR: &str = env!("LD01_OPERATING_WATER_LIB_DIR");
-const WATER_BUILD: &str = include_str!(concat!(
-    env!("LD01_OPERATING_WATER_LIB_DIR"),
-    "/water-build.json"
-));
-/// The water build's receipt in the exact layout
-/// `reference-design-operating-water.ts` writes, parsed only to check it.
-#[allow(dead_code)] // Parsed to check its exact layout; the S1 receipt carries the file itself.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct WaterBuild {
-    revision: String,
-    header_sha256: String,
-    license_sha256: String,
-    adapter_sha256: String,
-    library_sha256: String,
-    platform: String,
-    architecture: String,
-    metastable_band: WaterBuildBand,
-}
-#[allow(dead_code)] // As for `WaterBuild`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct WaterBuildBand {
-    page: String,
-    page_sha256: String,
-    heading: String,
-    fence: String,
-    band: MetastableBand,
-}
-/// SHA-256 of a file, hex, by the system's `shasum`.
-fn sha256_file(path: &str) -> Result<String, String> {
-    let out = std::process::Command::new("shasum")
-        .args(["-a", "256", path])
-        .output()
-        .map_err(|e| format!("shasum {path}: {e}"))?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    match text.split_whitespace().next() {
-        Some(hash) if out.status.success() && hash.len() == 64 => Ok(hash.to_string()),
-        _ => Err(format!(
-            "shasum {path} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        )),
-    }
-}
-/// The provenance of the water build this binary links, refused unless
-/// sound: `receipt` (the receipt embedded at compile time) must still be
-/// `directory`'s `water-build.json`, byte for byte; the directory's archive
-/// must have the receipt's SHA-256, since the static archive is not
-/// byte-reproducible and only its hash names the build; and the receipt's
-/// band must be the packet's. Returns the receipt verbatim, parsed.
-fn water_build(
-    packet_band: &MetastableBand,
-    receipt: &str,
-    directory: &str,
-) -> Result<Value, String> {
-    let file = format!("{directory}/water-build.json");
-    let on_disk = std::fs::read_to_string(&file).map_err(|e| format!("{file}: {e}"))?;
-    if on_disk != receipt {
-        return Err(format!(
-            "{file} is not the build receipt this binary was compiled with"
-        ));
-    }
-    let build: WaterBuild = serde_json::from_str(receipt).map_err(|e| format!("{file}: {e}"))?;
-    let library = format!("{directory}/libld01_operating_water.a");
-    let library_sha256 = sha256_file(&library)?;
-    if library_sha256 != build.library_sha256 {
-        return Err(format!(
-            "{library} has SHA-256 {library_sha256}, not its receipt's {}",
-            build.library_sha256
-        ));
-    }
-    if build.metastable_band.band != *packet_band {
-        return Err(format!(
-            "the water build's band {:?} differs from the packet's {packet_band:?}",
-            build.metastable_band.band
-        ));
-    }
-    serde_json::from_str(receipt).map_err(|e| format!("{file}: {e}"))
 }
 
 /// Named topology used by the credited outputs, resolved from packet ids.
@@ -582,166 +469,6 @@ fn sample<P: Properties>(
     }
 }
 
-/// Delegates every stock-IDA callback unchanged and, when observing,
-/// declares one root function g = t - next. Stock IDA locates its zeros on
-/// its own interpolant after each step and returns there, so observing
-/// changes no step, order, Newton iteration or Jacobian.
-struct Observed<S> {
-    inner: S,
-    next: Option<Rc<Slot<f64>>>,
-}
-impl<S: System> Observed<S> {
-    fn new(inner: S, next: Option<Rc<Slot<f64>>>) -> Self {
-        assert_eq!(
-            inner.root_count(),
-            0,
-            "the observed system declares roots of its own"
-        );
-        Self { inner, next }
-    }
-}
-impl<S: System> System for Observed<S> {
-    fn dimension(&self) -> usize {
-        self.inner.dimension()
-    }
-    fn nonzeros(&self) -> usize {
-        self.inner.nonzeros()
-    }
-    fn root_count(&self) -> usize {
-        usize::from(self.next.is_some())
-    }
-    fn residual(
-        &mut self,
-        time: f64,
-        y: &[f64],
-        yp: &[f64],
-        out: &mut [f64],
-    ) -> Result<(), Failure> {
-        self.inner.residual(time, y, yp, out)
-    }
-    fn jacobian(
-        &mut self,
-        time: f64,
-        cj: f64,
-        y: &[f64],
-        yp: &[f64],
-        data: &mut [f64],
-        rows: &mut [i64],
-        pointers: &mut [i64],
-    ) -> Result<(), Failure> {
-        self.inner.jacobian(time, cj, y, yp, data, rows, pointers)
-    }
-    fn roots(&mut self, time: f64, _: &[f64], _: &[f64], out: &mut [f64]) -> Result<(), Failure> {
-        match &self.next {
-            Some(next) => {
-                out.fill(time - next.get());
-                Ok(())
-            }
-            None => Err(Failure::Fatal(
-                "root evaluation without an observation clock".into(),
-            )),
-        }
-    }
-}
-/// Fine observation times j*dt over [0, window], skipping the output grid
-/// that `advance` targets reach; `next` is the root function's time.
-struct Clock {
-    next: Rc<Slot<f64>>,
-    dt: f64,
-    per_output: usize,
-    /// Index of the window's end; observations by root lie below it.
-    end: usize,
-    /// A time past the run's end, never reached.
-    never: f64,
-    j: usize,
-}
-impl Clock {
-    fn new(dt: f64, output_s: f64, window_s: f64, never: f64) -> Self {
-        assert!(
-            whole(output_s, dt) && output_s / dt >= 2. && whole(window_s, output_s),
-            "fine observation grid: {dt} s within {output_s} s outputs over {window_s} s"
-        );
-        Self {
-            next: Rc::new(Slot::new(never)),
-            dt,
-            per_output: (output_s / dt).round() as usize,
-            end: (window_s / dt).round() as usize,
-            never,
-            j: 0,
-        }
-    }
-    /// Arm the next observation strictly inside an output interval.
-    fn arm(&mut self) {
-        self.j += 1;
-        while self.j.is_multiple_of(self.per_output) {
-            self.j += 1;
-        }
-        self.next.set(if self.j < self.end {
-            self.j as f64 * self.dt
-        } else {
-            self.never
-        });
-    }
-}
-
-/// Stock counters at one point of a run.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Counts {
-    steps: i64,
-    residuals: i64,
-    jacobians: i64,
-    nonlinear_iterations: i64,
-    error_failures: i64,
-    /// IDAGetNumNonlinSolvConvFails ([`CONVERGENCE_FAILURES_COUNTER`]).
-    convergence_failures: i64,
-    linear_setups: i64,
-}
-/// What stock's Newton convergence-failure count counts, as the receipt
-/// states it (SUNDIALS 7.5.0 `sunnonlinsol_newton.c`).
-const CONVERGENCE_FAILURES_COUNTER: &str = "IDAGetNumNonlinSolvConvFails (SUNDIALS 7.5.0): every failed Newton attempt of stock's SUNNonlinSol_Newton, including one retried within the same step with a fresh Jacobian (counted even when that retry converges) and one ended by a recoverable residual or linear-solve failure; the same counter behind H1a's run-4 figures";
-impl Counts {
-    fn of(s: &Stats) -> Self {
-        Self {
-            steps: s.steps,
-            residuals: s.residuals,
-            jacobians: s.jacobians,
-            nonlinear_iterations: s.nonlinear_iterations,
-            error_failures: s.error_failures,
-            convergence_failures: s.convergence_failures,
-            linear_setups: s.linear_setups,
-        }
-    }
-    /// The counts after `earlier` in the same history (R0's past its
-    /// window's end).
-    fn since(self, earlier: Self) -> Self {
-        Self {
-            steps: self.steps - earlier.steps,
-            residuals: self.residuals - earlier.residuals,
-            jacobians: self.jacobians - earlier.jacobians,
-            nonlinear_iterations: self.nonlinear_iterations - earlier.nonlinear_iterations,
-            error_failures: self.error_failures - earlier.error_failures,
-            convergence_failures: self.convergence_failures - earlier.convergence_failures,
-            linear_setups: self.linear_setups - earlier.linear_setups,
-        }
-    }
-    /// The counts of one run over two histories: these, then `later`'s
-    /// after a restart (stock restarts its counters at IDAReInit).
-    fn plus(self, later: Self) -> Self {
-        Self {
-            steps: self.steps + later.steps,
-            residuals: self.residuals + later.residuals,
-            jacobians: self.jacobians + later.jacobians,
-            nonlinear_iterations: self.nonlinear_iterations + later.nonlinear_iterations,
-            error_failures: self.error_failures + later.error_failures,
-            convergence_failures: self.convergence_failures + later.convergence_failures,
-            linear_setups: self.linear_setups + later.linear_setups,
-        }
-    }
-    fn json(self) -> Value {
-        json!({"steps":self.steps,"residuals":self.residuals,"jacobians":self.jacobians,"nonlinear_iterations":self.nonlinear_iterations,"error_failures":self.error_failures,"convergence_failures":self.convergence_failures,"linear_setups":self.linear_setups})
-    }
-}
-
 /// Fine observation of a run's window on a probe network configured as the
 /// run's own network (same packet, rotor states and event).
 struct Observation {
@@ -754,18 +481,6 @@ struct Observation {
 struct Continuation {
     duration_s: f64,
     step_cap: i64,
-}
-/// A run's stock counters (from its start) and step at one of its outputs,
-/// which stock reaches by interpolation, with no forced stop: the step that
-/// straddles the output counts before it.
-#[derive(Clone, Copy, Debug, Default)]
-struct Mark {
-    t: f64,
-    counts: Counts,
-    last_step_s: f64,
-    last_order: i32,
-    /// The step stock will attempt next.
-    current_step_s: f64,
 }
 struct Spec<'a> {
     rtol: f64,
@@ -1262,86 +977,6 @@ fn run_json(run: &Run) -> Value {
 }
 
 // ---- The contract's comparison (E0, E1) and the E3 checks. ----
-fn mean(v: &[f64]) -> f64 {
-    v.iter().sum::<f64>() / v.len() as f64
-}
-/// Population standard deviation.
-fn deviation(v: &[f64]) -> f64 {
-    let m = mean(v);
-    (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
-}
-fn rms(v: &[f64]) -> f64 {
-    (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt()
-}
-/// The larger value; a NaN propagates rather than vanishing in a max.
-fn larger(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.max(b)
-    }
-}
-fn max_abs(v: &[f64]) -> f64 {
-    v.iter().fold(0., |m, x| larger(m, x.abs()))
-}
-/// Fourth-order Butterworth low-pass at `cutoff_hz` for samples every `dt`
-/// s: two bilinear biquads prewarped at the cutoff, each [b0, b1, b2, a1, a2].
-fn butterworth(cutoff_hz: f64, dt: f64) -> [[f64; 5]; 2] {
-    let (s, c) = (2. * PI * cutoff_hz * dt).sin_cos();
-    [
-        1. / (2. * (PI / 8.).cos()),
-        1. / (2. * (3. * PI / 8.).cos()),
-    ]
-    .map(|q| {
-        let alpha = s / (2. * q);
-        let a0 = 1. + alpha;
-        [
-            (1. - c) / 2. / a0,
-            (1. - c) / a0,
-            (1. - c) / 2. / a0,
-            -2. * c / a0,
-            (1. - alpha) / a0,
-        ]
-    })
-}
-/// The cascade in transposed direct form II, each section started in its
-/// steady state for its first input (unit DC gain).
-fn cascade(x: &mut [f64], sections: &[[f64; 5]; 2]) {
-    for &[b0, b1, b2, a1, a2] in sections {
-        let first = x[0];
-        let mut z2 = (b2 - a2) * first;
-        let mut z1 = (b1 - a1) * first + z2;
-        for v in x.iter_mut() {
-            let input = *v;
-            let out = b0 * input + z1;
-            z1 = b1 * input - a1 * out + z2;
-            z2 = b2 * input - a2 * out;
-            *v = out;
-        }
-    }
-}
-/// Odd-reflection padding at each end, 5/cutoff s: about 12 e-folds of the
-/// slowest pole, whose decay rate is 2 pi f_c sin(pi/8).
-fn padding_s(cutoff_hz: f64) -> f64 {
-    5. / cutoff_hz
-}
-/// The declared zero-phase 4th-order Butterworth low-pass of samples every
-/// `dt` s: the cascade forward, then backward (|H|^2, -6 dB at the cutoff),
-/// over odd reflection padding at both ends.
-fn zero_phase_lowpass(x: &[f64], cutoff_hz: f64, dt: f64) -> Vec<f64> {
-    let n = x.len();
-    assert!(n >= 2, "a filtered series needs two observations");
-    let pad = ((padding_s(cutoff_hz) / dt).round() as usize).min(n - 1);
-    let sections = butterworth(cutoff_hz, dt);
-    let mut ext: Vec<f64> = (1..=pad).rev().map(|i| 2. * x[0] - x[i]).collect();
-    ext.extend_from_slice(x);
-    ext.extend((1..=pad).map(|i| 2. * x[n - 1] - x[n - 1 - i]));
-    cascade(&mut ext, &sections);
-    ext.reverse();
-    cascade(&mut ext, &sections);
-    ext.reverse();
-    ext[pad..pad + n].to_vec()
-}
 /// A run's credited series over [0, window]: every observation present, on
 /// the grid j*dt.
 fn window_series(run: &Run, window_s: f64, dt: f64) -> Result<&[Credited], String> {
@@ -1466,9 +1101,8 @@ fn above_band(
     cutoff_hz: f64,
     dt: f64,
 ) -> Vec<f64> {
-    let x: Vec<f64> = series.iter().map(|c| pick(c) - pick(&series[0])).collect();
-    let low = zero_phase_lowpass(&x, cutoff_hz, dt);
-    x.iter().zip(&low).map(|(a, b)| a - b).collect()
+    let raw: Vec<f64> = series.iter().map(pick).collect();
+    content_above_band(&raw, cutoff_hz, dt)
 }
 /// E3's cap-cycle check as amended by H2: the RMS over the window of each
 /// credited output's content above the credited band ([`above_band`]), in
@@ -1503,19 +1137,14 @@ fn cap_cycle(
             let mut outputs = serde_json::Map::new();
             let mut pass = true;
             for (i, name) in CAP_CYCLE_OUTPUTS.iter().enumerate() {
-                let (x, y, floor) = (rms(&a[i]), rms(&b[i]), floors[i]);
-                let below_floor = x <= floor;
-                let output_pass = below_floor || x <= ratio_max * y;
+                let (output, output_pass) =
+                    cap_cycle_output(&a[i], &b[i], floors[i], ratio_max, dt, cutoff_hz);
                 pass &= output_pass;
-                outputs.insert(
-                    name.to_string(),
-                    json!({"run_rms":x,"r1_rms":y,"ratio":x / y,"floor":floor,"judged":!below_floor,"pass":output_pass,
-                        "excess_spectrum":excess_spectrum(&a[i], &b[i], dt, cutoff_hz)}),
-                );
+                outputs.insert(name.to_string(), output);
             }
             (
                 json!({"cutoff_hz":cutoff_hz,"window_s":window_s,"ratio_max":ratio_max,
-                    "rule":"an output passes if its run RMS above the cutoff is at or below its floor (H2: the declared fraction of its credited budget, the roof's being its sample-noise budget), or at most ratio_max times R1's; judged is true where the run RMS exceeds the floor",
+                    "rule":CAP_CYCLE_RULE,
                     "excess_spectrum":EXCESS_SPECTRUM_METHOD,
                     "outputs":outputs,"pass":pass}),
                 pass,
@@ -1526,81 +1155,6 @@ fn cap_cycle(
             false,
         ),
     }
-}
-
-/// The Welch segment of the excess spectrum, about 2 s (H2's diagnostic).
-const WELCH_SEGMENT_S: f64 = 2.;
-const EXCESS_SPECTRUM_METHOD: &str = "diagnostic only, never a gate: one-sided Welch power spectral densities (unit^2/Hz) of the run's and R1's above-band content x - lowpass(x), the series the check uses; Hann windows of 2 s (the whole window when shorter), 50% overlap, each segment's mean removed, by direct DFT. Over the bins strictly above the cutoff: excess_hz is the bin with the largest P_run - P_R1 (null when no bin exceeds R1) and excess_density that difference, excess_share that bin's share of the run's power above the cutoff, and run_dominant_hz the run's own largest bin";
-/// One-sided Welch power spectral density of `x`, sampled every `dt` s:
-/// periodic-Hann segments of `segment_s` (the whole series when shorter) at
-/// 50% overlap, each segment's mean removed, by direct DFT on exact
-/// twiddles. Returns the density per bin k at k / (n dt) Hz (the unit
-/// squared per Hz; its sum times the bin spacing is the series' variance),
-/// the bin spacing and the number of segments.
-fn welch(x: &[f64], dt: f64, segment_s: f64) -> (Vec<f64>, f64, usize) {
-    let n = ((segment_s / dt).round() as usize).min(x.len());
-    assert!(n >= 2, "a Welch segment needs two observations");
-    let window: Vec<f64> = (0..n)
-        .map(|i| 0.5 - 0.5 * (2. * PI * i as f64 / n as f64).cos())
-        .collect();
-    let (sin, cos): (Vec<f64>, Vec<f64>) = (0..n)
-        .map(|j| (2. * PI * j as f64 / n as f64).sin_cos())
-        .unzip();
-    let mut density = vec![0.; n / 2 + 1];
-    let mut segments = 0;
-    for start in (0..=x.len() - n).step_by((n / 2).max(1)) {
-        let segment = &x[start..start + n];
-        let m = mean(segment);
-        let tapered: Vec<f64> = segment
-            .iter()
-            .zip(&window)
-            .map(|(v, w)| (v - m) * w)
-            .collect();
-        for (k, d) in density.iter_mut().enumerate() {
-            let (mut re, mut im, mut j) = (0., 0., 0);
-            for v in &tapered {
-                re += v * cos[j];
-                im -= v * sin[j];
-                j += k;
-                if j >= n {
-                    j -= n;
-                }
-            }
-            *d += re * re + im * im;
-        }
-        segments += 1;
-    }
-    let scale = dt / (window.iter().map(|w| w * w).sum::<f64>() * segments as f64);
-    for (k, d) in density.iter_mut().enumerate() {
-        // One-sided: every bin but DC and an even segment's Nyquist bin
-        // carries its negative-frequency twin.
-        *d *= if k == 0 || 2 * k == n {
-            scale
-        } else {
-            2. * scale
-        };
-    }
-    (density, 1. / (n as f64 * dt), segments)
-}
-/// H2's diagnostic on one output, never a gate: over the Welch bins strictly
-/// above `cutoff_hz` of the run's and R1's above-band content, the bin of
-/// the largest excess P_run - P_R1 (its frequency only where it is an
-/// excess), that bin's share of the run's power above the cutoff, and the
-/// run's own dominant frequency.
-fn excess_spectrum(run: &[f64], r1: &[f64], dt: f64, cutoff_hz: f64) -> Value {
-    let (p, df, segments) = welch(run, dt, WELCH_SEGMENT_S);
-    let (q, _, _) = welch(r1, dt, WELCH_SEGMENT_S);
-    let above: Vec<usize> = (0..p.len())
-        .filter(|k| *k as f64 * df > cutoff_hz)
-        .collect();
-    let power: f64 = above.iter().map(|k| p[*k]).sum();
-    let largest =
-        |f: &dyn Fn(usize) -> f64| above.iter().copied().max_by(|a, b| f(*a).total_cmp(&f(*b)));
-    let excess = largest(&|k| p[k] - q[k]).filter(|k| p[*k] > q[*k]);
-    let dominant = largest(&|k| p[k]).filter(|_| power > 0.);
-    json!({"excess_hz":excess.map(|k| k as f64 * df),"excess_density":excess.map(|k| p[k] - q[k]),"excess_share":excess.map(|k| p[k] / power),
-        "run_dominant_hz":dominant.map(|k| k as f64 * df),"run_power_above_cutoff":power * df,
-        "resolution_hz":df,"segment_s":1. / df,"segments":segments})
 }
 
 /// H1's recovery gate on an event run continued past its window, judged on

@@ -313,6 +313,20 @@ fn joined_blocks_against_colored() {
             v * (1. + perturb * u)
         })
         .collect();
+    // G6: LD01_JAC_PZR_LIFT (full strokes) lifts the PZR relief before both
+    // assemblies, so the relief restriction's columns are compared lifted.
+    let lift = std::env::var("LD01_JAC_PZR_LIFT")
+        .ok()
+        .map(|v| v.parse::<f64>().expect("LD01_JAC_PZR_LIFT"));
+    let mut y = y;
+    if let Some(lift) = lift {
+        let relief = joined.pzr().and_then(|b| b.relief());
+        assert!(
+            relief.is_some(),
+            "LD01_JAC_PZR_LIFT needs a composed PZR relief"
+        );
+        y[o.pzr] = lift;
+    }
     let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
     let mine = &structure.pattern;
     // Every colored nonzero lies in the block pattern.
@@ -345,9 +359,29 @@ fn joined_blocks_against_colored() {
         }
         best = best.min(cpu() - s);
     }
+    // The block values' bits, for a bitwise comparison of two builds.
+    if let Ok(path) = std::env::var("LD01_JAC_VALUES_OUT") {
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, &bytes))
+            .unwrap_or_else(|e| panic!("values {path} must be new: {e}"));
+    }
     let mut worst = 0_f64;
     let mut worst_at = json!(null);
     let mut differing = Vec::new();
+    // The worst column-relative difference per column block.
+    let block_of = |j: usize| match j {
+        j if j < o.nuclear => "network",
+        j if j < o.solids => "nuclear",
+        j if j < o.secondary => "solids",
+        j if j < o.rods => "secondary",
+        j if j < o.pzr => "rods",
+        _ => "pzr",
+    };
+    let mut by_block: BTreeMap<&str, f64> = BTreeMap::new();
     for j in 0..n {
         let mut entries: BTreeMap<usize, [f64; 2]> = BTreeMap::new();
         for (row, v) in stored_column(&reference, &colored, j) {
@@ -364,6 +398,8 @@ fn joined_blocks_against_colored() {
             .max(1e-300);
         for (row, e) in &compared {
             let d = (e[0] - e[1]).abs() / scale;
+            let w = by_block.entry(block_of(j)).or_insert(0.);
+            *w = w.max(d);
             if d > worst {
                 worst = d;
                 worst_at = json!({"row": row, "column": j, "colored": e[0], "blocks": e[1]});
@@ -396,7 +432,7 @@ fn joined_blocks_against_colored() {
     let klu_structural = klu(&reference, &colored);
     let receipt = json!({
         "kind": "s2-joined-blocks-against-colored-NOT-EVIDENCE",
-        "relative_state_perturbation": perturb,
+        "relative_state_perturbation": perturb, "pzr_relief_lift": lift,
         "block_assembly_refused": refused,
         "klu_block_pattern": klu_blocks, "klu_structural_pattern": klu_structural,
         "composition": {"dimension": n, "offsets": o, "full_owners": full},
@@ -406,7 +442,7 @@ fn joined_blocks_against_colored() {
         "colored_nonzeros_outside_block_pattern": outside.len(),
         "outside_sample": outside.iter().take(20).collect::<Vec<_>>(),
         "columns_compared": n,
-        "worst_column_relative": worst, "worst_at": worst_at,
+        "worst_column_relative": worst, "worst_at": worst_at, "worst_by_column_block": by_block,
         "above_1e-9": differing,
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
@@ -574,6 +610,7 @@ fn joined_blocks_profile() {
         let mut this = Vec::new();
         for (k, (label, classes)) in configurations.iter().enumerate() {
             let before = ledger.borrow().snapshot();
+            let coupler_before = serde_json::to_value(joined.coupler_counters()).unwrap();
             let s = cpu();
             jacobian_blocks(
                 &mut joined,
@@ -591,8 +628,13 @@ fn joined_blocks_profile() {
             this.push(spent);
             if round == 0 {
                 let after = ledger.borrow().snapshot();
+                let coupler = tally_between(
+                    &coupler_before,
+                    &serde_json::to_value(joined.coupler_counters()).unwrap(),
+                );
                 calls.push(
-                    json!({"classes": label, "property_calls": Ledger::between(&before, &after)}),
+                    json!({"classes": label, "property_calls": Ledger::between(&before, &after),
+                        "local_coupler_wall": coupler}),
                 );
             }
         }
@@ -663,6 +705,8 @@ fn joined_blocks_profile() {
         "clock": "CLOCK_THREAD_CPUTIME_ID, QOS_CLASS_USER_INTERACTIVE",
         "app_commit": commit, "app_dirty": dirty,
         "packet": declared.packet_path, "packet_sha256": sha256_file(&declared.packet_path),
+        "wiki_root": std::env::var("LD01_WIKI_ROOT").ok(),
+        "water_lib_dir": std::env::var("LD01_OPERATING_WATER_LIB_DIR").ok(),
         "load_average_start": load_start,
         "composition": {"dimension": n, "offsets": o},
         "cj_per_s": cj, "rounds": rounds,
@@ -680,6 +724,19 @@ fn joined_blocks_profile() {
     if let Ok(path) = std::env::var("LD01_JAC_RECEIPT") {
         write_receipt(&path, &receipt);
     }
+}
+
+/// The local coupler's calls and wall time between two snapshots of
+/// `Joined::coupler_counters`, per kind.
+fn tally_between(before: &Value, after: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for (kind, a) in after.as_object().unwrap() {
+        let b = &before[kind];
+        let calls = a["calls"].as_u64().unwrap() - b["calls"].as_u64().unwrap();
+        let ms = 1e3 * (a["wall_s"].as_f64().unwrap() - b["wall_s"].as_f64().unwrap());
+        out.insert(kind.clone(), json!({"calls": calls, "wall_ms": ms}));
+    }
+    Value::Object(out)
 }
 
 /// Diagnostic: sizes of the solids' incidence and of the closed scopes the
@@ -787,7 +844,8 @@ fn joined_dense_lines() {
         i if i < o.solids => "nuclear",
         i if i < o.secondary => "solids",
         i if i < o.rods => "secondary",
-        _ => "rods",
+        i if i < o.pzr => "rods",
+        _ => "pzr",
     };
     let mut lines: Vec<(usize, usize)> = (0..n).map(|i| (row_count[i] + col_count[i], i)).collect();
     lines.sort_unstable_by(|a, b| b.cmp(a));

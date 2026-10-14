@@ -36,9 +36,11 @@ export function compileOperatingThermal(f:Fuel,h:Handling,control:ControlAbsorbe
     n=f.assemblies,rf=f.pelletDiameter_m/2,ri=f.rodOuterDiameter_m/2-f.cladThickness_m,ro=f.rodOuterDiameter_m/2,
     heliumVolume=f.rodsPerAssembly*Math.PI*((ri*ri-rf*rf)*f.activeLength_m+ri*ri*f.plenumLength_m),
     heliumNr=f.fillPressure_Pa*heliumVolume/f.referenceTemperature_K,
-    accommodation=.425-2.3e-4*reference.heliumTemperature_K,
+    // G18: the gap law's accommodation at its named fixed basis, never the
+    // live helium temperature (operating-hot-reference.md).
+    accommodation=.425-2.3e-4*reference.gapAccommodationReferenceTemperature_K,
     assemblies=fuelAssemblyPositions(h,f),pins=fuelLatticeSites(f),body=controlAbsorberGeometry(control,f,h),
-    solids=prepareOperatingMaterials(f,h,reference),
+    solids=prepareOperatingMaterials(f,h,fluid.materials.solidPreparation),
     index=(id:string)=>{const i=regions.findIndex(r=>r.id===id);if(i<0)throw Error('Missing thermal water recipient '+id);return i}
   if(n!==193||material.length!==386||energy.carriers.length!==386||regions.length!==26||accommodation<=0||
     !close(fluid.materials.fuelMass_kg,geometry.fuelMass_kg)||!close(fluid.materials.activeCladMass_kg,geometry.cladMass_kg))
@@ -52,15 +54,16 @@ export function compileOperatingThermal(f:Fuel,h:Handling,control:ControlAbsorbe
   if(![gap.fuelEmissivity,gap.cladEmissivity].every(x=>Number.isFinite(x)&&x>0&&x<=1))throw Error('Invalid owned gap emissivities')
   const helium=assemblies.map(fa=>{
     const id=fa.id+'/helium',stock=fluid.materials.solidStores.find(s=>s.id===id)
-    if(!stock||!close(stock.capacity_J_K,1.5*heliumNr)||!close(stock.energy_J,stock.capacity_J_K*reference.heliumTemperature_K))
+    if(!stock||!close(stock.capacity_J_K,1.5*heliumNr)||!close(stock.energy_J,stock.capacity_J_K*stock.temperature_K))
       throw Error('Shared sealed helium stock mismatch '+id)
-    return {id,volume_m3:heliumVolume,nr_j_k:heliumNr,temperature_k:reference.heliumTemperature_K,
+    return {id,volume_m3:heliumVolume,nr_j_k:heliumNr,temperature_k:stock.temperature_K,
       energy_j:stock.energy_J,capacity_j_k:stock.capacity_J_K}
   })
   const fuel_bands=material.map((a,i)=>{
     const event=energy.carriers[i]!,original=solids.carriers[i]!,gas=helium.findIndex(g=>g.id===a.faId+'/helium'),masses=a.fuelNodes.map(node=>node.mass_kg)
     if(event.id!==a.id||gas<0||a.fuelNodes.length!==2||!close(masses[0]!,masses[1]!))throw Error('Fuel event/thermal identity mismatch')
     if(a.id!==original.id||a.faId!==original.faId||a.half!==original.half||!close(a.clad.mass_kg,original.clad.mass_kg)||
+      a.surfaceSeed_K.some((T,k)=>T!==original.surfaceSeed_K[k])||
       !close(a.clad.energy_J,original.clad.energy_J)||a.fuelNodes.some((node,j)=>node.radial!==j||
         !close(node.mass_kg,original.fuelNodes[j]!.mass_kg)||!close(node.energy_J,original.fuelNodes[j]!.energy_J)||
         !close(node.temperature_K,original.fuelNodes[j]!.temperature_K)))throw Error('Actual prepared fuel caloric identity mismatch')
@@ -69,9 +72,9 @@ export function compileOperatingThermal(f:Fuel,h:Handling,control:ControlAbsorbe
       fuel_masses_kg:masses,fuel_energies_j:a.fuelNodes.map(node=>node.energy_J),
       clad_mass_kg:a.clad.mass_kg,clad_energy_j:a.clad.energy_J,
       source_w:masses.map(mass=>event.fuel_W*mass/sum(masses)),
-      // ONLY an algebraic initial guess. Three residuals must be initialized
-      // by the consuming DAE; these are not a solved radial preparation.
-      surface_seed_k:[a.fuelNodes[1]!.temperature_K,a.clad.temperature_K,a.clad.temperature_K],
+      // The steady surfaces (G18): the consuming DAE still initializes its
+      // three residuals at the composed water; these seed that solve.
+      surface_seed_k:[...a.surfaceSeed_K],
       geometry:{fuel_radius_m:rf,clad_inner_radius_m:ri,clad_outer_radius_m:ro,rod_length_m:f.activeLength_m/2,
         rods:f.rodsPerAssembly,helium_volume_m3:heliumVolume,helium_nr_j_k:heliumNr,accommodation,
         fuel_emissivity:gap.fuelEmissivity,clad_emissivity:gap.cladEmissivity}}
@@ -152,13 +155,14 @@ export function compileOperatingThermal(f:Fuel,h:Handling,control:ControlAbsorbe
       liquid_volume_m3:sg.liquidVolume_m3,volume_m3:sg.volume_m3,mass_kg:sg.mass_kg,energy_j:sg.internalEnergy_J})),
     passive_stores:fluid.materials.solidStores.filter(s=>!s.id.endsWith('/helium')).map(s=>{
       const original=solids.passive.find(p=>p.id===s.id)
-      if(!original||!close(original.energy_J,s.energy_J)||!close(original.capacity_J_K,s.capacity_J_K))
+      if(!original||!close(original.energy_J,s.energy_J)||!close(original.capacity_J_K,s.capacity_J_K)||original.temperature_K!==s.temperature_K)
         throw Error('Passive caloric identity mismatch '+s.id)
       return {id:s.id,material:'zircaloy' as const,energy_j:s.energy_J,capacity_j_k:s.capacity_J_K,
-        temperature_k:reference.cladTemperature_K,mass_kg:original.mass_kg}
+        temperature_k:s.temperature_K,mass_kg:original.mass_kg}
     }),
     direct_water_source_w,source_total_w,
     surface_algebraic_count:3*fuel_bands.length,
-    scope:'Actual nonsteady finite material/contact inputs; surface seeds are not initialized constraints, no achieved thermal trajectory. Existing owned signed250/5 nonfuel contacts, finite fitting areas and shared helium/plenum contact; guides have finite half-wall resistance. Absorber thermal feedback and moved/open-core qualification are uncredited.'}
+    scope:(fluid.materials.solidPreparation.kind==='steady'?'Actual finite material/contact inputs, every solid store at the steady solid state of the reference power (G18); surface seeds are the steady surfaces, not constraints initialized at the composed water; no achieved thermal trajectory.'
+      :'SEED ONLY: every solid store at the stock-IDA settle\'s initial state; never emitted.')+' Existing owned signed250/5 nonfuel contacts, finite fitting areas and shared helium/plenum contact; guides have finite half-wall resistance. Absorber thermal feedback and moved/open-core qualification are uncredited.'}
 }
 export type OperatingThermalPacket=ReturnType<typeof compileOperatingThermal>

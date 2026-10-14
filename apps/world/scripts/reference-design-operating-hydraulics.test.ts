@@ -75,7 +75,7 @@ test('geometric main inertia includes shared supports once and excludes split in
 const wiki=process.env.LD01_WIKI_ROOT,if97=process.env.LD01_IF97_DIRECTORY
 if(!!wiki!==!!if97)throw Error('Supply both LD01_WIKI_ROOT and LD01_IF97_DIRECTORY for actual hydraulic input tests')
 test.skipIf(!wiki||!if97)('actual19 circulation supports,29 covered contacts, owned finite receivers and current input map',async()=>{
-  const f=await prepareOperatingFluid(wiki!,if97!,2.9e9),h=await loadOperatingHydraulics(wiki!,f.geometry),g=f.geometry
+  const f=await prepareOperatingFluid(wiki!,if97!,2.9e9,{kind:'provisional'}),h=await loadOperatingHydraulics(wiki!,f.geometry),g=f.geometry
   expect(h.sections).toHaveLength(19);expect(h.coveredEdges).toHaveLength(29);expect(h.unclosedTreeEdges).toHaveLength(3)
   expect(h.cycles.columns).toHaveLength(7)
   expect(h.mainInertance.aa).toBeGreaterThan(h.mainInertance.ab)

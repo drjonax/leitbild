@@ -101,7 +101,7 @@ test('the metastable band is the one H3 range; the superseded two-range block is
 const wiki=process.env.LD01_WIKI_ROOT,if97=process.env.LD01_IF97_DIRECTORY
 if(!!wiki!==!!if97)throw Error('Supply both actual wiki and pinned IF97 directory')
 test.skipIf(!wiki||!if97)('actual owner pages compile one stratified PZR cell with traceable provenance',async()=>{
-  const f=await prepareOperatingFluid(wiki!,if97!,2.9e9),p=await prepareOperatingPzr(wiki!,f.geometry.regions.find(r=>r.id==='HOT.A')!)
+  const f=await prepareOperatingFluid(wiki!,if97!,2.9e9,{kind:'provisional'}),p=await prepareOperatingPzr(wiki!,f.geometry.regions.find(r=>r.id==='HOT.A')!)
   expect(p.cell.fluidVolume_m3).toBeCloseTo(59.74867258771282,12)
   expect(p.cell.freeArea).toHaveLength(3);expect(p.cell.taps.map(t=>t.id)).toEqual(['PT1','LT.LOW','LT.HIGH'])
   expect([p.cell.absorberMassFraction,p.cell.interfacialLength_m]).toEqual([.001,.003])

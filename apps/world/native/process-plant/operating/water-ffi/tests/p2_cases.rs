@@ -102,16 +102,7 @@ fn sh(args: &[&str], dir: &str) -> String {
 /// The 1-, 5- and 15-minute load averages, recorded beside every CPU
 /// measurement on the shared machine.
 fn load_average() -> Value {
-    let out = Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
-    let v: Vec<f64> = out
-        .split_whitespace()
-        .filter_map(|w| w.parse().ok())
-        .collect();
-    json!(v)
+    json!(p2_harness::clock::load_averages())
 }
 fn sha256(bytes: &[u8]) -> String {
     let mut child = Command::new("shasum")
@@ -1061,7 +1052,13 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             liquid_reference_kg_m3: sat.liquid.density.value,
             vapor_reference_kg_m3: sat.vapor.density.value,
             gravity_m_s2: ctx.gravity_m_s2,
-            span_m: p.tap(st::LT_HIGH).unwrap() - p.tap(st::LT_LOW).unwrap(),
+            span_m: {
+                let (low, high) = p
+                    .level_taps()
+                    .unwrap()
+                    .expect("gate 5's cutout needs the cell's LT taps");
+                high - low
+            },
         }
     });
     // Receipt series stride; a smoke run may ask for every sample.

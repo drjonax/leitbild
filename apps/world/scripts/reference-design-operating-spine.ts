@@ -2,7 +2,7 @@
  * ownership/incidence; Rust owns all current numerical residual laws. The
  * removed SURGE stock is exported, never discarded or used as a held boundary. */
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { parseFuelConstruction } from './reference-design-fuel-construction'
 import { parseFuelHandling } from './reference-design-fuel-handling'
 import { parseControlAbsorber } from './reference-design-control-absorber'
@@ -10,9 +10,10 @@ import { parseTransferThermal } from './reference-design-fuel-transfer-thermal'
 import { parseOperatingFuelGap } from './reference-design-fuel-cooling'
 import { prepareOperatingHot } from './reference-design-operating-hot'
 import { compileOperatingThermal, parseOperatingThermal } from './reference-design-operating-thermal'
-import { fluidTree, preparePressureContinuity } from './reference-design-operating-fluid'
+import { fluidTree, preparePressureContinuity, steadySolidsSchema, type SolidPreparation, type SteadySolids } from './reference-design-operating-fluid'
 import { loadOperatingHydraulics, operatingMainInertance, type Section } from './reference-design-operating-hydraulics'
 import { prepareOperatingPzr, type compileOperatingPzr } from './reference-design-operating-pzr'
+import { prepareOperatingSecondary } from './reference-design-operating-sg'
 import { operatingSourceNativeMetadata } from './reference-design-operating-source'
 import { routeElevation } from './reference-design-surge-route'
 
@@ -511,11 +512,39 @@ export function compileOperatingPoint(docs: Readonly<Record<string, string>>,
     scope: 'Declared selections for a consistent prepared state. They are controller/indication setpoints and the supported speed request, not imposed pressures, levels or flows, and not evidence that the preparation is stationary.' }
 }
 
-export async function prepareOperatingSpine(wiki: string, if97: string) {
+/** G17's declared preparation-power basis, an owner statement in reviewed
+ * prose: once under its heading in heat-and-history, and the same value in
+ * the kinetics owner's re-base statement. A reworded, duplicated or
+ * disagreeing statement refuses. The source package's own deposition at the
+ * re-based rate sits near, not at, it; the steady solids settle holds the
+ * two within G17's ceiling. */
+export const powerBasisSources = {
+  basis: { page: 'systems/reactor/heat-and-history.md', heading: 'Compact hot-reference energy and material preparation' },
+  check: { page: 'systems/reactor/kinetics.md', heading: 'Selected hot reference coefficient package' },
+} as const
+export function compileOperatingPowerBasis(docs: Readonly<Record<string, string>>) {
+  const statement = (source: { page: string, heading: string }, pattern: RegExp) => {
+    const text = docs[source.page]
+    if (text === undefined) throw Error('Missing power-basis owner ' + source.page)
+    const found = [...headingText(text, source.heading).matchAll(pattern)]
+    if (found.length !== 1) throw Error(`Expected one G17 power-basis statement in ${source.page} § ${source.heading}`)
+    return Number(found[0]![1]!.replaceAll(',', '')) * 1e6
+  }
+  const basis = statement(powerBasisSources.basis, /\*\*Preparation power \(G17[^*]*\*\*[^\n]*?giving \*\*([0-9][0-9,]*(?:\.[0-9]+)?) MW\*\*/g),
+    check = statement(powerBasisSources.check, /G17 re-bases it to the joined settled power, ([0-9][0-9,]*(?:\.[0-9]+)?) MW/g)
+  if (!(Number.isFinite(basis) && basis > 0) || basis !== check) throw Error('G17 power-basis owners disagree')
+  return basis
+}
+
+/** One compile of the spine at the given solid preparation. Only
+ * `prepareOperatingSpine` calls it: once at the stock-IDA settle's seed and
+ * once at the steady solid state the settle returns. */
+async function compileOperatingSpinePass(wiki: string, if97: string, solids: SolidPreparation) {
   const base = join(wiki, 'world/packs/process-plant/reference-designs/ld-01'), read = (p: string) => Bun.file(join(base, p)).text()
-  const [hot, fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc] = await Promise.all([
-    prepareOperatingHot(wiki, if97), read('systems/reactor/fuel-construction.md'), read('systems/reactor/fuel-handling-and-pool.md'),
-    read('systems/reactor/control-absorber-and-guide-water.md'), read('model/operating-thermal.md'), read('systems/reactor/phase-dependent-heat-transfer.md')])
+  const [hot, fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc, historyDoc, kineticsDoc] = await Promise.all([
+    prepareOperatingHot(wiki, if97, solids), read('systems/reactor/fuel-construction.md'), read('systems/reactor/fuel-handling-and-pool.md'),
+    read('systems/reactor/control-absorber-and-guide-water.md'), read('model/operating-thermal.md'), read('systems/reactor/phase-dependent-heat-transfer.md'),
+    read(powerBasisSources.basis.page), read(powerBasisSources.check.page)])
   const originalThermal = compileOperatingThermal(parseFuelConstruction(fuelDoc), parseFuelHandling(handlingDoc), parseControlAbsorber(controlDoc),
     hot.fluid, hot.energy, parseOperatingThermal(thermalDoc), parseTransferThermal(handlingDoc), parseOperatingFuelGap(gapDoc))
   const hotOwner = hot.fluid.geometry.regions.find(r => r.id === 'HOT.A')!
@@ -557,7 +586,7 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
   const packetHydraulics = { ...hydraulics, sections: [...hydraulics.sections, ...faceLosses],
     passiveLossScope: operatingPassiveLossScope(mechanics.lossScope, faceLosses) }
   const hash = (s: string) => createHash('sha256').update(s).digest('hex')
-  return { identity: 'LD01-HOT-SPINE-1', thermal, hot: { ...hot.nativeInput, fluid: nativeFluid },
+  const packet = { identity: 'LD01-HOT-SPINE-1', thermal, hot: { ...hot.nativeInput, fluid: nativeFluid },
     feedback_metadata: operatingSourceNativeMetadata(hot.compiledSource), feedback_reference: hot.compiledSource.reference.conditions,
     edges: carved.edges, source_water, water_flow_area_m2: carved.regions.map(r => r.mainFlowArea_m2),
     water_boron_amount_kg_eq: carved.regions.map(r => r.absorberTracer_kgEq), hydraulics: packetHydraulics, pzr: { ...pzr, cell }, mechanics,
@@ -579,10 +608,97 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
         'model/operating-thermal.md', 'systems/reactor/phase-dependent-heat-transfer.md'].map((name, i) => ({ name,
           sha256: hash([fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc][i]!) })) },
     scope: 'Connected current source/finite-thermal/primary residual inputs, with explicit external surge/PZR dependencies. No held-pressure, complete mechanical, global-rank or trajectory admission.' }
+  // The settle's basis (G18 inputs; no new value): the packet's reference
+  // power, and the preparation's enthalpy reference flow at that power (the
+  // flow that keeps the design coolant state steady) as one uniform mass flux
+  // over the core's main flow area and, per loop, over each SG primary's.
+  const coreArea = sum(carved.regions.filter(r => /^CORE\.(NE|NW|SW|SE)\.1$/.test(r.id)).map(r => r.mainFlowArea_m2)),
+    flow = hot.fluid.primary.enthalpyReferenceFlow_kg_s, loop = hot.fluid.primary.loopReferenceFlow_kg_s,
+    sgArea = (side: string) => {
+      const areas = [...new Set(thermal.sg_segments.filter(g => thermal.secondaries[g.secondary]!.id === side).map(g => g.primary_flow_area_m2))]
+      if (areas.length !== 1 || !(areas[0]! > 0)) throw Error(`SG.${side} primary segments need one flow area`)
+      return areas[0]!
+    }
+  if (!(coreArea > 0) || !(flow > 0) || loop !== flow / 2) throw Error('Settle flow basis needs the core flow area and the reference flow')
+  const settleBasis = { basisPower_W: compileOperatingPowerBasis({ [powerBasisSources.basis.page]: historyDoc, [powerBasisSources.check.page]: kineticsDoc }),
+    coreMassFlux_kg_m2_s: flow / coreArea,
+    sgPrimaryMassFlux_kg_m2_s: thermal.secondaries.map(g => ({ id: g.id, massFlux_kg_m2_s: loop / sgArea(g.id) })) }
+  const settleDerivation = { enthalpyReferenceFlow_kg_s: flow, coreMainFlowArea_m2: coreArea, loopReferenceFlow_kg_s: loop,
+    sgPrimaryFlowArea_m2: thermal.secondaries.map(g => ({ id: g.id, area_m2: sgArea(g.id) })),
+    preparedPower_W: thermal.source_total_w, powerBasisSources,
+    basisPower: 'G17\'s declared basis (owner statements); the settle refuses unless its nuclear block reproduces the packet\'s thermal.source_total_w to 1e-9 and lies within G17\'s 2e-3 of this basis' }
+  return { packet, settleBasis, settleDerivation }
+}
+
+export type OperatingSpineSeed = Awaited<ReturnType<typeof compileOperatingSpinePass>>
+export type SteadySolidsProvenance = { binary: { name: string, sha256: string }, inputSha256: string, outputSha256: string,
+  basis: Record<string, unknown>, receipt: Record<string, unknown> }
+/** The producer of the steady solid state from the seed compile: in
+ * production `nativeSteadySolids`, the stock-IDA settle binary. */
+export type SteadySolidsSettle = (seed: OperatingSpineSeed) => Promise<{ steady: SteadySolids, provenance: SteadySolidsProvenance }>
+
+/** Leaves of the spine packet that the solid preparation owns. Every other
+ * leaf must be bitwise identical between the seed and the steady compile:
+ * the steady state was then computed at exactly the emitted packet's coolant,
+ * nuclear state, contacts and geometry. */
+export const solidOwnedLeaves = [
+  /^thermal\.fuel_bands\.\d+\.(fuel_temperatures_k|fuel_energies_j|surface_seed_k)(\.\d+)?$/,
+  /^thermal\.fuel_bands\.\d+\.(clad_temperature_k|clad_energy_j)$/,
+  /^thermal\.(helium|sg_segments)\.\d+\.(temperature_k|energy_j)$/,
+  /^thermal\.passive_stores\.\d+\.(temperature_k|energy_j|capacity_j_k)$/,
+  /^thermal\.scope$/,
+  /^hot\.fluid\.solid_stores\.\d+\.(energy_j|capacity_j_k)$/,
+  /^feedback_reference\.fuelTemperature_K\.\d+$/,
+  /^feedback_metadata\.materials\.\d+\.reference_fuel_temperature_k$/,
+] as const
+export function settleInputChanges(seed: unknown, steady: unknown, owned: readonly RegExp[] = solidOwnedLeaves) {
+  const out: string[] = [], walk = (a: unknown, b: unknown, path: string) => {
+    if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object' && Array.isArray(a) === Array.isArray(b)) {
+      const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+      for (const k of keys) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], path ? path + '.' + k : k)
+    } else if (!Object.is(a, b) && !owned.some(r => r.test(path))) out.push(path)
+  }
+  walk(seed, steady, '')
+  return out
+}
+
+/** Two passes (G18): the seed compile is the stock-IDA settle's input, the
+ * steady compile is emitted with the settle's provenance. A changed settle
+ * input between the passes refuses; the seed packet is never returned. */
+export async function prepareOperatingSpine(wiki: string, if97: string, settle: SteadySolidsSettle) {
+  const seed = await compileOperatingSpinePass(wiki, if97, { kind: 'provisional' }),
+    { steady, provenance } = await settle(seed),
+    { packet } = await compileOperatingSpinePass(wiki, if97, { kind: 'steady', steady }),
+    changed = settleInputChanges(seed.packet, packet)
+  if (changed.length) throw Error(`The steady solid state was settled at different inputs (${changed.length}): ` + changed.slice(0, 8).join(', '))
+  return { ...packet, provenance: { ...packet.provenance, steadySolids: provenance } }
+}
+
+/** The stock-IDA steady solids settle (`prepare_steady_solids`, owned by the
+ * operating crate), on the seed packet with the SG owner's section and the
+ * settle's flow basis. The binary is deterministic, so its output hash pins
+ * the steady state; a refusal stops the compile. */
+export async function steadySolidsInput(seed: OperatingSpineSeed, wiki: string) {
+  return JSON.stringify({ ...seed.packet, secondary: await prepareOperatingSecondary(wiki), steady: seed.settleBasis })
+}
+export function nativeSteadySolids(executable: string, wiki: string): SteadySolidsSettle {
+  return async seed => {
+    const input = await steadySolidsInput(seed, wiki),
+      child = Bun.spawn([executable], { stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe' }),
+      [output, error, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    if (status !== 0) throw Error('The steady solids settle refused: ' + error.trim())
+    const steady = steadySolidsSchema.parse(JSON.parse(output)), hash = (s: string | Uint8Array) => createHash('sha256').update(s).digest('hex')
+    if (steady.packet_identity !== seed.packet.identity || steady.thermal_identity !== seed.packet.thermal.identity)
+      throw Error('The steady solids settle answered another packet')
+    const { method, basis, admission, steady: reached, checkpoints, ida, steam_generators } = steady
+    return { steady, provenance: { binary: { name: basename(executable), sha256: hash(await Bun.file(executable).bytes()) },
+      inputSha256: hash(input), outputSha256: hash(output), basis: { ...seed.settleBasis, derivation: seed.settleDerivation },
+      receipt: { method, basis, admission, reached, checkpoints, ida, steam_generators } } }
+  }
 }
 
 if (import.meta.main) {
-  const [wiki, if97] = Bun.argv.slice(2)
-  if (!wiki || !if97 || Bun.argv.length !== 4) throw Error('Usage: operating-spine <wiki root> <pinned IF97 directory>')
-  console.log(JSON.stringify(await prepareOperatingSpine(wiki, if97)))
+  const [wiki, if97, settle] = Bun.argv.slice(2)
+  if (!wiki || !if97 || !settle || Bun.argv.length !== 5) throw Error('Usage: operating-spine <wiki root> <pinned IF97 directory> <prepare_steady_solids executable>')
+  console.log(JSON.stringify(await prepareOperatingSpine(wiki, if97, nativeSteadySolids(settle, wiki))))
 }

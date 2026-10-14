@@ -244,13 +244,14 @@ fn prepared_saturated_column_is_an_exact_rest_state() {
     // Hydrostatic consistency of the column and taps.
     let taps = p.cell.taps(&If97, c).unwrap();
     assert_eq!(taps.pt1_pa.value, x.roof_pressure.value);
-    assert_eq!(taps.level_low_pa.value, c.bottom_pressure.value);
+    let level = taps.level.expect("the LD-01 cell declares the LT pair");
+    assert_eq!(level.low_pa.value, c.bottom_pressure.value);
     let weight = G
         * (x.admitted_mass.value * (c.boundary_elevation.value - 6.5) / x.admitted_volume.value
             + x.resident_mass.value * (12.5 - c.boundary_elevation.value)
                 / x.resident_volume.value
             + x.vapor_mass.value * 6. / x.vapor_volume.value);
-    assert!((taps.level_difference_pa.value - weight).abs() < 1e-8 * weight);
+    assert!((level.difference_pa.value - weight).abs() < 1e-8 * weight);
     assert!((taps.collapsed_level_m.value - 6.).abs() < 1e-12);
     // The surge port sees p_bottom and the φ = 1/2 A/R liquid mixture.
     let port = p.cell.port_view(c, 0).unwrap();
@@ -753,7 +754,7 @@ fn shut() -> Boundary {
     Boundary {
         relief: Some(st::ReliefState {
             lift: s(0.),
-            back_pressure_pa: s(101_325.),
+            back_pressure_pa: Some(s(101_325.)),
         }),
         ..Boundary::closed()
     }
@@ -954,7 +955,7 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
     let rate = active_rates();
     let relief = st::ReliefState {
         lift: s(0.6),
-        back_pressure_pa: s(3.0e5),
+        back_pressure_pa: Some(s(3.0e5)),
     };
     let boundary = Boundary {
         heat: Heat {
@@ -1053,7 +1054,7 @@ fn relief_outlet_is_dry_without_drops_and_its_roots_follow_raw_pt1() {
     let boundary = Boundary {
         relief: Some(st::ReliefState {
             lift: s(1.),
-            back_pressure_pa: s(101_325.),
+            back_pressure_pa: Some(s(101_325.)),
         }),
         ..Boundary::closed()
     };
@@ -1066,7 +1067,7 @@ fn relief_outlet_is_dry_without_drops_and_its_roots_follow_raw_pt1() {
     let shut = Boundary {
         relief: Some(st::ReliefState {
             lift: s(0.),
-            back_pressure_pa: s(101_325.),
+            back_pressure_pa: Some(s(101_325.)),
         }),
         ..Boundary::closed()
     };
@@ -1350,7 +1351,7 @@ fn walls_with_every_port_kind_are_conserved_exactly() {
         walls: walls.clone(),
         relief: Some(st::ReliefState {
             lift: s(0.4),
-            back_pressure_pa: s(2.5e5),
+            back_pressure_pa: Some(s(2.5e5)),
         }),
         ..Boundary::closed()
     };
@@ -1454,7 +1455,7 @@ fn relief_open_jacobian_cost_report() {
             let boundary = Boundary {
                 relief: Some(st::ReliefState {
                     lift: Scalar::new(0.6, lift),
-                    back_pressure_pa: s(3.0e5),
+                    back_pressure_pa: Some(s(3.0e5)),
                 }),
                 ..Boundary::closed()
             };
@@ -1547,7 +1548,7 @@ fn held_relief_partials_reproduce_the_per_column_dual_directions() {
         let boundary = Boundary {
             relief: Some(st::ReliefState {
                 lift: Scalar::new(0.6, lift),
-                back_pressure_pa: Scalar::new(3.0e5, 0.),
+                back_pressure_pa: Some(Scalar::new(3.0e5, 0.)),
             }),
             ..Boundary::closed()
         };

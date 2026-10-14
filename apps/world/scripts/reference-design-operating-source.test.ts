@@ -7,8 +7,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareOperatingHot } from './reference-design-operating-hot'
-import { compileOperatingSource, evaluateOperatingSource, operatingReferenceFissions, operatingSourceDirection, operatingSourceNativeMetadata,
-  operatingSourceFreshFuelAtoms, parseOperatingSource, validateOperatingSourceAccepted,
+import { compileOperatingPostTripDomain, compileOperatingSource, evaluateOperatingSource, operatingPostTripDomainNative, operatingReferenceFissions,
+  operatingSourceDirection, operatingSourceNativeMetadata, operatingSourceFreshFuelAtoms, parseOperatingPostTripDomain, parseOperatingSource,
+  validateOperatingSourceAccepted,
   type OperatingSourceCoefficients, type OperatingSourceConditions, type OperatingSourceConstruction, type OperatingSourceDirection } from './reference-design-operating-source'
 
 // Literal original construction; neither fine-field preparation nor an imported
@@ -77,7 +78,7 @@ test('native metadata exports the existing immutable source, not a recalibration
 const actualWiki=process.env.LD01_WIKI_ROOT,actualIf97=process.env.LD01_IF97_DIRECTORY,
   nativeSourceTest=process.env.LD01_OPERATING_SOURCE_TEST
 test.skipIf(!actualWiki||!actualIf97||!nativeSourceTest)('actual current-source native value and direction match the consumed TS owner',async()=>{
-  const hot=await prepareOperatingHot(actualWiki!,actualIf97!),m=hot.compiledSource,
+  const hot=await prepareOperatingHot(actualWiki!,actualIf97!,{kind:'provisional'}),m=hot.compiledSource,
     current=structuredClone(m.reference.conditions) as MutableConditions,
     d=Object.fromEntries(Object.entries(current).map(([k,v])=>[k,Array.isArray(v)?v.map(()=>0):0])) as MutableConditions,
     names={fuelTemperature_K:'fuel_temperature_k',waterDensity_kg_m3:'water_density_kg_m3',boron_ppmEq:'boron_ppm_eq',
@@ -138,6 +139,29 @@ const flattened = (r: ReturnType<typeof evaluateOperatingSource>) => [
   ...r.inputs.fissions_per_population_s, ...r.inputs.emission_fractions, ...r.inputs.outside_fractions,
   ...r.carrierFissions_per_s, ...r.exposure_per_m2_s, ...r.poisonCapture_per_s.flatMap(i => [i.xenon, i.samarium]), ...r.rodOverlap,
 ]
+
+describe('D3 (a) post-trip domain extension', () => {
+  const block = { densityRatioMax: 1.125, pressureMin_Pa: 12500000, shutdownMarginMin_dk_k: 0.01, marginWaterTermFactor: 2,
+    extrapolationSensitivity: [0.5, 1, 2] }
+  const page = (d: object) => '```reference-operating-source\n' + JSON.stringify(p) + '\n```\n\n```ld01-post-trip-domain\n' + JSON.stringify(d) + '\n```\n'
+  test('one strict block widens only the density-ratio and pressure domains and crosses to the native Extension', () => {
+    expect(parseOperatingPostTripDomain(page(block), p)).toEqual(block as never)
+    expect(operatingPostTripDomainNative(parseOperatingPostTripDomain(page(block), p))).toEqual({ density_ratio_maximum: 1.125,
+      pressure_minimum_pa: 12500000, shutdown_margin_minimum: 0.01, margin_water_term_factor: 2, extrapolation_sensitivity: [0.5, 1, 2] })
+    expect(() => parseOperatingPostTripDomain(page(block) + page(block), p)).toThrow('one')
+    expect(() => parseOperatingPostTripDomain('```reference-operating-source\n' + JSON.stringify(p) + '\n```\n', p)).toThrow('one')
+    expect(() => parseOperatingPostTripDomain(page({ ...block, extra: 1 }), p)).toThrow()
+    expect(() => parseOperatingPostTripDomain(page({ ...block, densityRatioMax: 1.09 }), p)).toThrow('widen')
+    expect(() => parseOperatingPostTripDomain(page({ ...block, pressureMin_Pa: 14.5e6 }), p)).toThrow('widen')
+    expect(() => parseOperatingPostTripDomain(page({ ...block, shutdownMarginMin_dk_k: 0 }), p)).toThrow()
+    expect(() => parseOperatingPostTripDomain(page({ ...block, marginWaterTermFactor: 0.5 }), p)).toThrow('weaken')
+    expect(() => parseOperatingPostTripDomain(page({ ...block, extrapolationSensitivity: [1, 1, 2] }), p)).toThrow('sensitivity')
+  })
+  test.skipIf(!process.env.LD01_WIKI_ROOT)('the actual kinetics owner page compiles the joined packet section', async () => {
+    expect(await compileOperatingPostTripDomain(process.env.LD01_WIKI_ROOT!)).toEqual({ density_ratio_maximum: 1.125,
+      pressure_minimum_pa: 12500000, shutdown_margin_minimum: 0.01, margin_water_term_factor: 2, extrapolation_sensitivity: [0.5, 1, 2] })
+  })
+})
 
 describe('authored hot operating source', () => {
   test('one strict consumed owner block and explicit current material references are mandatory', () => {

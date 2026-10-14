@@ -12,12 +12,15 @@
 //! SG secondary and rod owners implement [`block::Secondary`] and
 //! [`block::Rods`]; until an owner composes its block, the census lists it
 //! as pending and no composed evaluation includes it.
+pub mod account;
 pub mod block;
 pub mod blocks;
 pub mod census;
 pub mod nuclear;
 pub mod operator;
 pub mod packet;
+pub mod post_trip_domain;
+pub mod pzr;
 pub mod solids;
 
 use crate::network::{Network, PZR_COORDINATES, Properties, stratified};

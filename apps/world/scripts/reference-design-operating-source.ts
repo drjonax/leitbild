@@ -1,5 +1,6 @@
 /** One explicitly authored hot LD-01 regional source configuration. Offline
  * constitutive compilation/evaluation only; no solver or fine-field preparation. */
+import { join } from 'node:path'
 import { z } from 'zod'
 import type { compileOperatingMapping } from './reference-design-operating-mapping'
 import type { ControlAbsorber } from './reference-design-control-absorber'
@@ -41,6 +42,38 @@ export function parseOperatingSource(document: string): OperatingSourceCoefficie
   const blocks = [...document.matchAll(/^```reference-operating-source\s*\n([\s\S]*?)^```\s*$/gm)]
   if (blocks.length !== 1) throw Error('Expected one reference-operating-source block')
   return schema.parse(JSON.parse(blocks[0]![1]!))
+}
+
+// D3 (a), kinetics.md "Post-trip domain extension": it widens the density-ratio
+// and pressure domains only while the native accepted-state check holds (the
+// source-free regional operator, water term at the factor, at least the margin
+// subcritical); otherwise the domains above apply.
+const postTripSchema = z.object({
+  densityRatioMax: positive, pressureMin_Pa: positive, shutdownMarginMin_dk_k: positive,
+  marginWaterTermFactor: positive, extrapolationSensitivity: z.tuple([positive, positive, positive]),
+}).strict()
+export type OperatingPostTripDomain = z.infer<typeof postTripSchema>
+export function parseOperatingPostTripDomain(document: string, source: OperatingSourceCoefficients): OperatingPostTripDomain {
+  const blocks = [...document.matchAll(/^```ld01-post-trip-domain\s*\n([\s\S]*?)^```\s*$/gm)]
+  if (blocks.length !== 1) throw Error('Expected one ld01-post-trip-domain block')
+  const d = postTripSchema.parse(JSON.parse(blocks[0]![1]!)), [low, nominal, high] = d.extrapolationSensitivity
+  if (d.densityRatioMax < source.densityRatioDomain[1]) throw Error('The post-trip density-ratio maximum must widen the source domain')
+  if (d.pressureMin_Pa > source.pressureDomain_Pa[0]) throw Error('The post-trip pressure minimum must widen the source domain')
+  if (d.shutdownMarginMin_dk_k >= 1) throw Error('Invalid post-trip shutdown margin')
+  if (d.marginWaterTermFactor < 1) throw Error('The post-trip margin water-term factor must not weaken the term')
+  if (!(low < nominal && nominal === 1 && nominal < high)) throw Error('Invalid post-trip extrapolation sensitivity')
+  return d
+}
+/** Native boundary of D3 (a): joined/post_trip_domain.rs `Extension`. */
+export function operatingPostTripDomainNative(d: OperatingPostTripDomain) {
+  return { density_ratio_maximum: d.densityRatioMax, pressure_minimum_pa: d.pressureMin_Pa,
+    shutdown_margin_minimum: d.shutdownMarginMin_dk_k, margin_water_term_factor: d.marginWaterTermFactor,
+    extrapolation_sensitivity: [...d.extrapolationSensitivity] }
+}
+/** The joined packet's `post_trip_domain` section from the wiki's kinetics owner page. */
+export async function compileOperatingPostTripDomain(wiki: string) {
+  const document = await Bun.file(join(wiki, 'world/packs/process-plant/reference-designs/ld-01/systems/reactor/kinetics.md')).text()
+  return operatingPostTripDomainNative(parseOperatingPostTripDomain(document, parseOperatingSource(document)))
 }
 type Mapping = ReturnType<typeof compileOperatingMapping>
 export type OperatingSourceConstruction = {

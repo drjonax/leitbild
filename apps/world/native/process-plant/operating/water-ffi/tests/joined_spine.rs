@@ -7,12 +7,14 @@
 //! The harness needs stock IDA/KLU (`--features ida`).
 #![cfg(feature = "ida")]
 use leitbild_operating_plant::{
-    joined::{self, census, nuclear::Nuclear, packet, solids::Solids},
+    joined::{self, census, nuclear::Nuclear, packet, pzr::Pzr, solids::Solids},
     network::{Network, PzrPreparation, packet::Packet as NetworkPacket},
 };
 use leitbild_operating_water::If97;
 use serde_json::{Value, json};
 use std::path::Path;
+#[path = "ld01_regression/wiki.rs"]
+mod wiki;
 
 /// The S1 harness's declared PZR preparation controls (s1_hydraulics.rs).
 const PZR: PzrPreparation = PzrPreparation {
@@ -20,7 +22,7 @@ const PZR: PzrPreparation = PzrPreparation {
     max_passes: 50,
 };
 
-fn packet_bytes() -> (String, Vec<u8>) {
+pub fn packet_bytes() -> (String, Vec<u8>) {
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET")
         .expect("LD01_OPERATING_HOT_SPINE_PACKET names the compiled spine packet");
     let bytes = std::fs::read(&path).expect("packet");
@@ -28,8 +30,10 @@ fn packet_bytes() -> (String, Vec<u8>) {
 }
 
 /// App and wiki provenance of a receipt: commits and whether the worktrees
-/// were clean. The wiki is the archive or checkout named by `LD01_WIKI_ROOT`.
-fn provenance() -> Value {
+/// were clean. The wiki is the archive or checkout named by `LD01_WIKI_ROOT`;
+/// its tree hash is recorded and `LD01_WIKI_COMMIT` is verified against it
+/// (`ld01_regression/wiki.rs`), so an archive's receipt names its commit.
+pub fn provenance() -> Value {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)
@@ -42,7 +46,7 @@ fn provenance() -> Value {
         "app_commit": git(&["rev-parse", "HEAD"]),
         "app_worktree_dirty": !git(&["status", "--porcelain"]).is_empty(),
         "wiki": wiki,
-        "wiki_commit": wiki.as_ref().map(|w| git(&["-C", w, "rev-parse", "HEAD"])),
+        "wiki_provenance": wiki.as_ref().map(|w| wiki::provenance(Path::new(w)).expect("wiki provenance")),
     })
 }
 
@@ -78,24 +82,43 @@ fn joined_census_against_table_1_1() {
         ids(solids.layout()),
     );
     assert_eq!(n_ids, ids(&network_layout), "network identity");
+    // G6: the PZR owner from the packet's pzrMetal section, at the prepared
+    // cell's Tsat(p_s); a packet compiled before G6 has none.
+    let pzr = joined_packet.pzr_metal.as_ref().map(|section| {
+        Pzr::new(
+            network.stratified(),
+            section,
+            network.pzr_saturation_temperature_k(),
+        )
+        .expect("PZR owner")
+    });
+    let p_ids = pzr.as_ref().map(|b| b.differential());
+    let mut composed = vec![
+        census::Composed {
+            owner: "network",
+            layout: &network_layout,
+            differential: &n_ids,
+        },
+        census::Composed {
+            owner: "nuclear",
+            layout: nuclear.layout(),
+            differential: &k_ids,
+        },
+        census::Composed {
+            owner: "solids",
+            layout: solids.layout(),
+            differential: &s_ids,
+        },
+    ];
+    if let (Some(b), Some(ids)) = (&pzr, &p_ids) {
+        composed.push(census::Composed {
+            owner: "pzr",
+            layout: b.layout(),
+            differential: ids,
+        });
+    }
     let c = census::census(
-        &[
-            census::Composed {
-                owner: "network",
-                layout: &network_layout,
-                differential: &n_ids,
-            },
-            census::Composed {
-                owner: "nuclear",
-                layout: nuclear.layout(),
-                differential: &k_ids,
-            },
-            census::Composed {
-                owner: "solids",
-                layout: solids.layout(),
-                differential: &s_ids,
-            },
-        ],
+        &composed,
         &[joined::pending_secondary(), joined::pending_rods()],
     );
     let row = |name: &str| {
@@ -118,8 +141,19 @@ fn joined_census_against_table_1_1() {
     assert_eq!(row("Network cells").composed, Some([152, 35]));
     assert_eq!(row("Network faces").composed, Some([70, 0]));
     assert_eq!(row("RCP rotors").composed, Some([4, 0]));
-    assert_eq!(c.composed, [17242, 1193, 18435]);
-    assert_eq!(c.with_pending, [17302, 1301, 18603]);
+    // G6: 3 heater rod segments, 5 shell bands and 2 heads, and the lift.
+    let g6 = match &pzr {
+        Some(b) => {
+            let relief = usize::from(b.relief().is_some());
+            let metal = b.layout().len() - relief;
+            assert_eq!(row("PZR heater rod").composed, Some([metal, 0]));
+            assert_eq!(row("PZR relief lift").composed, Some([relief, 0]));
+            metal + relief
+        }
+        None => 0,
+    };
+    assert_eq!(c.composed, [17242 + g6, 1193, 18435 + g6]);
+    assert_eq!(c.with_pending, [17302 + g6, 1301, 18603 + g6]);
     let histories = nuclear.histories();
     assert_eq!(histories.len(), 9650);
     let receipt = json!({
@@ -139,12 +173,16 @@ fn joined_census_against_table_1_1() {
             ]
         },
         "network": {"dimension": network.dimension(), "regular_cells": cells, "faces": network.face_count(), "rotors": network.rotor_count()},
+        "pzr": pzr.as_ref().map(|b| json!({"coordinates": b.layout().labels, "steel_temperature_k": b.saturation_temperature_k(),
+            "heater_demand_w": b.request_w(), "bank_power_w": b.bank_power_w(),
+            "relief": b.relief().map(|r| json!({"port": r.port, "opening_pa": r.device.opening_pa, "reseat_pa": r.device.reseat_pa,
+                "full_strokes_per_s": r.device.full_strokes_per_s, "back_pressure_pa": r.back_pressure_pa}))})),
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
     write_receipt(&receipt);
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub fn sha256(bytes: &[u8]) -> String {
     let out = std::process::Command::new("shasum")
         .args(["-a", "256"])
         .stdin(std::process::Stdio::piped())
@@ -163,7 +201,7 @@ fn sha256(bytes: &[u8]) -> String {
         .to_string()
 }
 
-mod z1 {
+pub mod z1 {
     use super::*;
     use leitbild_operating_plant::{
         joined::{
@@ -603,17 +641,52 @@ fn z1_probe(full: bool) {
         (p.nonzeros(), c.count())
     };
     let bound = 1e-12;
+    // Lead decision S2-D4: the start runs on JAC's block assembly with
+    // cached symbolic analyses; `LD01_START_ASSEMBLY=colored` runs the
+    // colored reference. The block structure is compiled once per mode,
+    // outside the start.
+    let start_assembly = std::env::var("LD01_START_ASSEMBLY").unwrap_or_else(|_| "blocks".into());
     let timer = z1::cpu_s();
-    let start = leitbild_operating_water::joined::consistent_start(
-        &mut joined,
-        0.,
-        &mut y,
-        &ids,
-        &weights,
-        bound,
-        3,
-    );
-    let start_cpu_s = z1::cpu_s() - timer;
+    let structure = match start_assembly.as_str() {
+        "blocks" => Some(
+            leitbild_operating_plant::joined::blocks::JoinedJacobian::compile(&mut joined, 0., &y)
+                .expect("block structure"),
+        ),
+        "colored" => None,
+        other => panic!("LD01_START_ASSEMBLY {other}: blocks or colored"),
+    };
+    let compile_cpu_s = z1::cpu_s() - timer;
+    let mut analyses = leitbild_operating_water::joined::Analyses::default();
+    let y_before = y.clone();
+    let start_at = |joined: &mut Joined<If97>,
+                    y: &mut [f64],
+                    analyses: &mut leitbild_operating_water::joined::Analyses| {
+        let matrices = match &structure {
+            Some(structure) => leitbild_operating_water::joined::Matrices::Blocks {
+                structure,
+                analyses,
+            },
+            None => leitbild_operating_water::joined::Matrices::Colored,
+        };
+        let timer = z1::cpu_s();
+        let start = leitbild_operating_water::joined::consistent_start(
+            joined, matrices, 0., y, &ids, &weights, bound, 3,
+        );
+        (start, z1::cpu_s() - timer)
+    };
+    let (start, start_cpu_s) = start_at(&mut joined, &mut y, &mut analyses);
+    // The same start again from the same state, on the analyses the first
+    // made: a restart's own cost.
+    let mut y_repeat = y_before.clone();
+    let (repeat, repeat_cpu_s) = start_at(&mut joined, &mut y_repeat, &mut analyses);
+    let repeat_receipt = match (&start, &repeat) {
+        (Ok((yp, _)), Ok((yp_repeat, r))) => json!({
+            "cpu_s": repeat_cpu_s, "analyses": r.analyses,
+            "jacobian_wall_s": r.jacobian_s, "klu_factor_wall_s": r.factor_s, "klu_solve_wall_s": r.solve_s,
+            "bitwise_equal_to_first": yp == yp_repeat && y == y_repeat}),
+        (_, Err(e)) => json!({"refused": format!("{e:?}")}),
+        _ => Value::Null,
+    };
     let start_receipt = match &start {
         Ok((yp, r)) => {
             joined.evaluate(0., &y, yp, None, 0., None).unwrap();
@@ -633,7 +706,8 @@ fn z1_probe(full: bool) {
                     k += 1;
                 }
             }
-            json!({"bound": r.bound, "constraint_before": [r.constraint_before.value, r.constraint_before.row],
+            json!({"assembly": r.assembly, "nonzeros": r.nonzeros, "analyses": r.analyses, "klu_analyze_wall_s": r.analyze_s,
+                "bound": r.bound, "constraint_before": [r.constraint_before.value, r.constraint_before.row],
                 "constraint_after": [r.constraint_after.value, r.constraint_after.row], "projection_passes": r.projection_passes,
                 "correction": [r.correction.value, r.correction.row], "correction_wrms": r.correction_wrms,
                 "residual": [r.residual.value, r.residual.row], "constraint_rate": [r.constraint_rate.value, r.constraint_rate.row], "rate_passes": r.rate_passes,
@@ -717,7 +791,11 @@ fn z1_probe(full: bool) {
         json!({"history_prepared_release_w": released, "rcp_once_paid_shaft_power_w": shaft,
             "feed_enthalpy_j_kg": h_feed, "steam_demand_kg_s": demand,
             "at_prepared_sg_pressure": at(prepared_p), "at_z2_emergent_sg_pressure": at(6.3631e6),
-            "other_heat": "PZR boundary closed (no heater, wall loss or relief composed); no other sink or source in the composition",
+            "other_heat": if joined.pzr().is_some() {
+                "the PZR metal's heater demand (P4) equals its exterior loss at the composed Tsat(p_s); relief closed; no other sink or source in the composition"
+            } else {
+                "PZR boundary closed (no heater, wall loss or relief composed); no other sink or source in the composition"
+            },
             "confirmed_above": 2e-3})
     } else {
         Value::Null
@@ -726,14 +804,18 @@ fn z1_probe(full: bool) {
         "kind": if full { "s2-z1-full-composition" } else { "s2-z1-part1-composed-residual" },
         "owners_prepared": owners_prepared,
         "g17_power_basis": g17,
+        "pzr": pzr_receipt(&joined),
         "pattern": {"nonzeros": pattern_nnz, "colors": colors},
         "consistent_start": start_receipt,
         "consistent_start_cpu_s": start_cpu_s,
+        "consistent_start_repeat": repeat_receipt,
+        "start_assembly": {"assembly": start_assembly, "block_compile_cpu_s": compile_cpu_s,
+            "basis": "lead decision S2-D4: block assembly on the element-exact pattern with KLU's symbolic analyses cached; colored is the reference (LD01_START_ASSEMBLY=colored)"},
         "colored_jacobian_random_directions": direction_checks,
         "status": if full {
-            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Z1 on the full composition: network, nuclear, solids, the SG secondary owner and the rod owner with its guide currents prepared at the composed state. The PZR boundary is closed: shell metal and relief pending (G6), heaters at zero by G6"
+            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Z1 on the full composition: network, nuclear, solids, the SG secondary owner and the rod owner with its guide currents prepared at the composed state, and the PZR owner as `pzr` states (G6)"
         } else {
-            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR boundary is closed (shell metal and relief pending, heaters at zero by G6)"
+            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR owner as `pzr` states (G6)"
         },
         "packet": path,
         "packet_sha256": sha256(&bytes),
@@ -755,24 +837,49 @@ fn z1_probe(full: bool) {
     write_receipt(&receipt);
 }
 
+/// The PZR owner of a composition (G6), for receipts.
+fn pzr_receipt(joined: &leitbild_operating_plant::joined::operator::Joined<If97>) -> Value {
+    match joined.pzr() {
+        Some(b) => json!({
+            "composed": true,
+            "coordinates": b.layout().labels,
+            "steel_temperature_k": b.saturation_temperature_k(),
+            "heater_demand_w": b.request_w(),
+            "bank_power_w": b.bank_power_w(),
+            "heater_demand_basis": "P4 (S2 design choices, 11 October): the metal's exterior loss at the composed Tsat(p_s), computed once and held constant; it stands in for the pressure controller's steady output (S3)",
+            "relief": b.relief().map(|r| json!({"opening_pa": r.device.opening_pa, "reseat_pa": r.device.reseat_pa,
+                "full_strokes_per_s": r.device.full_strokes_per_s, "receiver_back_pressure_pa": r.back_pressure_pa,
+                "motion": format!("{:?}", r.motion), "demand_open": r.demand_open})),
+        }),
+        None => json!({"composed": false,
+            "boundary": "closed: a packet compiled before G6 (no pzrMetal section): no heater, shell metal or relief"}),
+    }
+}
+
 /// The full composition at the hot reference, consistently started.
-struct Started {
-    joined: leitbild_operating_plant::joined::operator::Joined<If97>,
-    y: Vec<f64>,
-    yp: Vec<f64>,
+pub struct Started {
+    pub joined: leitbild_operating_plant::joined::operator::Joined<If97>,
+    pub y: Vec<f64>,
+    pub yp: Vec<f64>,
     /// Differential identity (joined, then the network's own), absolute
     /// tolerances and relative tolerance.
-    ids: Vec<f64>,
-    network_ids: Vec<f64>,
-    atol: Vec<f64>,
-    rtol: f64,
+    pub ids: Vec<f64>,
+    pub network_ids: Vec<f64>,
+    pub atol: Vec<f64>,
+    pub rtol: f64,
     /// A receipt of the preparation.
-    receipt: Value,
+    pub receipt: Value,
+    /// The composed state before its consistent start.
+    pub unstarted: Vec<f64>,
+    /// JAC's block structure compiled at the composed state, and the
+    /// symbolic analyses the start made on it (lead decision S2-D4).
+    pub structure: leitbild_operating_plant::joined::blocks::JoinedJacobian,
+    pub analyses: leitbild_operating_water::joined::Analyses,
 }
 
 /// The full composition at the hot reference, consistently started: memo
-/// §3 (A)-(D).
-fn started_full_composition() -> Started {
+/// §3 (A)-(D), the start on the block assembly (lead decision S2-D4).
+pub fn started_full_composition() -> Started {
     use leitbild_operating_plant::{
         initialization::SurfacePolicy,
         joined::operator::{Joined, RodPort, SecondaryPort},
@@ -828,13 +935,31 @@ fn started_full_composition() -> Started {
         .absolute_tolerances(&y[..n_net], classes)
         .unwrap();
     atol.resize(y.len(), classes.stock_scaled);
+    // G12: the lift's absolute tolerance (the scaled floor at its unit
+    // scale) bounds its distance from a stop at a travel root.
+    if let Some(b) = joined.pzr_mut() {
+        b.declare_lift_root_bound(classes.stock_scaled)
+            .expect("lift root bound");
+    }
     let weights: Vec<f64> = y
         .iter()
         .zip(&atol)
         .map(|(v, a)| 1. / (classes.relative * v.abs() + a))
         .collect();
+    let unstarted = y.clone();
+    let timer = z1::cpu_s();
+    let structure =
+        leitbild_operating_plant::joined::blocks::JoinedJacobian::compile(&mut joined, 0., &y)
+            .expect("block structure");
+    let compile_cpu_s = z1::cpu_s() - timer;
+    let mut analyses = leitbild_operating_water::joined::Analyses::default();
+    let timer = z1::cpu_s();
     let (yp, start) = leitbild_operating_water::joined::consistent_start(
         &mut joined,
+        leitbild_operating_water::joined::Matrices::Blocks {
+            structure: &structure,
+            analyses: &mut analyses,
+        },
         0.,
         &mut y,
         &ids,
@@ -843,13 +968,15 @@ fn started_full_composition() -> Started {
         3,
     )
     .expect("exact consistent start");
+    let start_cpu_s = z1::cpu_s() - timer;
     let receipt = json!({
         "packet": path, "packet_sha256": sha256(&bytes), "provenance": provenance(),
         "s1_settling": s1, "flowing_preparation_max_cycle_drive_pa": flowing["max_cycle_drive_pa"],
         "owners_prepared": owners.iter().map(|t| t.receipt.clone()).collect::<Vec<_>>(),
         "surfaces_worst_residual_w": surfaces.iter().map(|s| s.residual_w.iter().fold(0., |a: f64, r| a.max(r.abs()))).fold(0., f64::max),
         "start": {"residual": [start.residual.value, start.residual.row], "constraint_rate": [start.constraint_rate.value, start.constraint_rate.row],
-            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes},
+            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes,
+            "assembly": start.assembly, "analyses": start.analyses, "cpu_s": start_cpu_s, "block_compile_cpu_s": compile_cpu_s},
         "dimension": y.len(), "algebraic": ids.iter().filter(|v| **v == 0.).count(),
         "tolerances": {"relative": classes.relative, "network": "S1's tolerance classes (ld01-s1-gates)", "new_classes_scaled_absolute": classes.stock_scaled, "basis": "G12"},
     });
@@ -862,11 +989,14 @@ fn started_full_composition() -> Started {
         atol,
         rtol: classes.relative,
         receipt,
+        unstarted,
+        structure,
+        analyses,
     }
 }
 
 /// One observation of the joined state at an accepted output.
-fn observe(
+pub fn observe(
     joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
     t: f64,
     y: &[f64],
@@ -941,6 +1071,8 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         network_ids,
         atol,
         rtol,
+        structure,
+        analyses,
         ..
     } = started_full_composition();
     let algebraic = |ids: &[f64]| ids.iter().filter(|v| **v == 0.).count();
@@ -951,8 +1083,8 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
     let trip = joined.command(0., &mut y, Command::TurbineTrip).unwrap();
     assert_eq!(
         trip.len(),
-        2,
-        "both owners take the command; nothing is due at once"
+        2 + usize::from(joined.pzr().is_some()),
+        "every composed owner takes the command; nothing is due at once"
     );
     let open = joined.next_time_event(0.).expect("the holding opening");
     let rods = joined.rods().unwrap();
@@ -964,10 +1096,12 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         first_step_s: FIRST_STEP_S,
         start_bound: 1e-12,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
-        Integrated::with_blocks(joined, 0., &y).unwrap(),
+        Integrated::from_blocks(joined, structure, analyses).unwrap(),
         Initial {
             time: 0.,
             y: &y,
@@ -978,9 +1112,17 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         },
     )
     .unwrap();
+    // Every joined solve is on AMD (decision 0013); COLAMD is unusable on
+    // the exact pattern.
+    assert_eq!(
+        leitbild_operating_water::ida::System::klu_ordering(ida.system()),
+        leitbild_operating_water::ida::KluOrdering::Amd
+    );
     restart.configure(&mut ida).unwrap();
+    let analyses_before = ida.system().analyses().made();
     // The stop at the opening, without stepping: the release root t - open
     // is exactly zero there, so only the time event can release.
+    let timer = z1::cpu_s();
     let restarted = discrete_restart(
         &mut ida,
         open,
@@ -992,7 +1134,17 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         &restart,
     )
     .unwrap();
+    let restart_cpu_s = z1::cpu_s() - timer;
     let (done, yp_open, report) = (&restarted.transactions, &restarted.yp, &restarted.report);
+    // The release changes the algebraic set: the projection's analysis is
+    // made again, the rate system's is reused.
+    assert_eq!(report.assembly, "blocks");
+    assert_eq!(report.analyses[0], 0, "the rate analysis is reused");
+    assert_eq!(
+        ida.system().analyses().made()[0],
+        analyses_before[0],
+        "no new rate analysis"
+    );
     assert!(
         restarted.placements.is_empty(),
         "{:?}",
@@ -1033,10 +1185,231 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         "opening_s": open, "ramp_end_s": end, "released_clusters": clusters,
         "algebraic_before": held, "algebraic_after": algebraic(&ids_open),
         "start": {"residual": report.residual.value, "constraint_rate": report.constraint_rate.value,
-            "projection_passes": report.projection_passes, "rate_passes": report.rate_passes},
+            "projection_passes": report.projection_passes, "rate_passes": report.rate_passes,
+            "assembly": report.assembly, "analyses_made": report.analyses, "jacobian_wall_s": report.jacobian_s,
+            "klu_analyze_wall_s": report.analyze_s, "klu_factor_wall_s": report.factor_s, "klu_solve_wall_s": report.solve_s},
+        "restart_cpu_s": restart_cpu_s,
         "configuration": {"newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "firstStep_s": FIRST_STEP_S},
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
+}
+
+/// Column-relative difference of a block matrix against the colored
+/// reference on every column: per column, the largest |difference| of any
+/// row stored by either over the column's largest |colored| entry (JAC's
+/// oracle measure), and the same over the larger of that and `scale`'s
+/// column (for `B`, formed as a difference of two assemblies, `A`'s).
+fn column_relative(
+    colored_pattern: &leitbild_operating_plant::sparse::Pattern,
+    colored: &[f64],
+    blocks_pattern: &leitbild_operating_plant::sparse::Pattern,
+    blocks: &[f64],
+    scale: Option<&[f64]>,
+) -> Value {
+    let n = colored_pattern.columns();
+    let (mut worst, mut worst_at, mut outside) = (0_f64, Value::Null, 0usize);
+    let mut worst_scaled = 0_f64;
+    for j in 0..n {
+        let mut entries: std::collections::BTreeMap<usize, [f64; 2]> = Default::default();
+        let (cp, bp) = (colored_pattern.pointers(), blocks_pattern.pointers());
+        let (cs, bs) = (cp[j]..cp[j + 1], bp[j]..bp[j + 1]);
+        for (row, v) in colored_pattern.indices()[cs.clone()]
+            .iter()
+            .zip(&colored[cs.clone()])
+        {
+            entries.entry(*row).or_default()[0] = *v;
+            if *v != 0. && blocks_pattern.position(*row, j).is_none() {
+                outside += 1;
+            }
+        }
+        for (row, v) in blocks_pattern.indices()[bs.clone()].iter().zip(&blocks[bs]) {
+            entries.entry(*row).or_default()[1] = *v;
+        }
+        let column = entries.values().map(|e| e[0].abs()).fold(0., f64::max);
+        let other = scale.map_or(0., |a| a[cs].iter().map(|v| v.abs()).fold(0., f64::max));
+        for (row, e) in &entries {
+            let d = (e[0] - e[1]).abs();
+            let relative = d / column.max(1e-300);
+            if relative > worst {
+                worst = relative;
+                worst_at = json!({"row": row, "column": j, "colored": e[0], "blocks": e[1]});
+            }
+            worst_scaled = worst_scaled.max(d / column.max(other).max(1e-300));
+        }
+    }
+    json!({"worst_column_relative": worst, "worst_at": worst_at,
+        "worst_over_the_larger_of_the_column_and_a": worst_scaled,
+        "colored_nonzeros_outside_block_pattern": outside, "columns": n})
+}
+
+/// Lead decision S2-D4's check of the block start against the colored
+/// reference (NOT-EVIDENCE zero-time check): `A = dF/dy` (cj = 0) and
+/// `B = dF/dy'` (the cj = 1 assembly less A, as the start forms it), from
+/// JAC's block assembly and from the colored assemblies, column-relative on
+/// every column, at the composed state and at the released state (the TG
+/// TRIP's holding opening: all 52 clusters free); and the two consistent
+/// starts from the same state at each.
+#[test]
+#[ignore = "NOT-EVIDENCE zero-time check: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn the_block_start_matrices_match_the_colored_reference_at_the_composed_and_released_states() {
+    use leitbild_operating_plant::joined::{
+        block::Command,
+        blocks::{Classes, jacobian_blocks},
+        operator::Joined,
+    };
+    use leitbild_operating_water::joined::{Analyses, Matrices, consistent_start};
+    let started = z1::cpu_s();
+    let Started {
+        mut joined,
+        y,
+        ids,
+        network_ids,
+        atol,
+        rtol,
+        unstarted,
+        structure,
+        mut analyses,
+        receipt: preparation,
+        ..
+    } = started_full_composition();
+    let n = y.len();
+    let zero = vec![0.; n];
+    let matrices = |joined: &mut Joined<If97>, t: f64, y: &[f64]| -> Value {
+        let colored_pattern = joined.structure().unwrap().0.clone();
+        let mut ca = vec![0.; colored_pattern.nonzeros()];
+        let mut cab = ca.clone();
+        joined.jacobian(t, 0., y, &zero, &mut ca).unwrap();
+        joined.jacobian(t, 1., y, &zero, &mut cab).unwrap();
+        let bp = &structure.pattern;
+        let mut ba = vec![0.; bp.nonzeros()];
+        let mut bab = ba.clone();
+        jacobian_blocks(joined, &structure, t, 0., y, &zero, &mut ba, Classes::ALL).unwrap();
+        jacobian_blocks(joined, &structure, t, 1., y, &zero, &mut bab, Classes::ALL).unwrap();
+        let cb: Vec<f64> = cab.iter().zip(&ca).map(|(x, a)| x - a).collect();
+        let bb: Vec<f64> = bab.iter().zip(&ba).map(|(x, a)| x - a).collect();
+        // B as the start forms it carries one rounding of A + B in each
+        // path; at cj = 2^20 (exact scaling) that rounding is of B's own
+        // size, so this B compares the two assemblies' dF/dy' itself.
+        let big = 1048576.;
+        let mut cbig = vec![0.; colored_pattern.nonzeros()];
+        let mut bbig = vec![0.; bp.nonzeros()];
+        joined.jacobian(t, big, y, &zero, &mut cbig).unwrap();
+        jacobian_blocks(
+            joined,
+            &structure,
+            t,
+            big,
+            y,
+            &zero,
+            &mut bbig,
+            Classes::ALL,
+        )
+        .unwrap();
+        let cb_big: Vec<f64> = cbig.iter().zip(&ca).map(|(x, a)| (x - a) / big).collect();
+        let bb_big: Vec<f64> = bbig.iter().zip(&ba).map(|(x, a)| (x - a) / big).collect();
+        json!({"a": column_relative(&colored_pattern, &ca, bp, &ba, None),
+            "b": column_relative(&colored_pattern, &cb_big, bp, &bb_big, None),
+            "b_as_the_start_forms_it_at_cj_1": column_relative(&colored_pattern, &cb, bp, &bb, Some(&ca)),
+            "b_definition": "b: (J(cj = 2^20) - J(cj = 0)) / 2^20 on each path; b_as_the_start_forms_it_at_cj_1: J(cj = 1) - J(cj = 0), whose rounding of A + B is up to one ulp of the column's A in either path"})
+    };
+    let weights = |y: &[f64]| -> Vec<f64> {
+        y.iter()
+            .zip(&atol)
+            .map(|(v, a)| 1. / (rtol * v.abs() + a))
+            .collect()
+    };
+    // Both starts from the same state: projected states and rates.
+    let starts = |joined: &mut Joined<If97>,
+                  analyses: &mut Analyses,
+                  t: f64,
+                  y0: &[f64],
+                  ids: &[f64]|
+     -> Value {
+        let w = weights(y0);
+        let (mut yb, mut yc) = (y0.to_vec(), y0.to_vec());
+        let timer = z1::cpu_s();
+        let (pb, rb) = consistent_start(
+            joined,
+            Matrices::Blocks {
+                structure: &structure,
+                analyses,
+            },
+            t,
+            &mut yb,
+            ids,
+            &w,
+            1e-12,
+            3,
+        )
+        .expect("block start");
+        let block_cpu_s = z1::cpu_s() - timer;
+        let timer = z1::cpu_s();
+        let (pc, rc) = consistent_start(joined, Matrices::Colored, t, &mut yc, ids, &w, 1e-12, 3)
+            .expect("colored start");
+        let colored_cpu_s = z1::cpu_s() - timer;
+        let (mut dy, mut dyp, mut ypmax) = (0_f64, (0_f64, 0usize), 0_f64);
+        for i in 0..n {
+            dy = dy.max((yb[i] - yc[i]).abs() * w[i]);
+            if (pb[i] - pc[i]).abs() > dyp.0 {
+                dyp = ((pb[i] - pc[i]).abs(), i);
+            }
+            ypmax = ypmax.max(pc[i].abs());
+        }
+        let summary = |r: &leitbild_operating_water::joined::Report, cpu: f64| {
+            json!({"assembly": r.assembly, "cpu_s": cpu, "residual": [r.residual.value, r.residual.row],
+                "constraint_rate": [r.constraint_rate.value, r.constraint_rate.row],
+                "projection_passes": r.projection_passes, "rate_passes": r.rate_passes,
+                "correction_wrms": r.correction_wrms, "analyses_made": r.analyses,
+                "jacobian_wall_s": r.jacobian_s, "klu_analyze_wall_s": r.analyze_s,
+                "klu_factor_wall_s": r.factor_s, "klu_solve_wall_s": r.solve_s})
+        };
+        json!({"blocks": summary(&rb, block_cpu_s), "colored": summary(&rc, colored_cpu_s),
+            "projected_state_max_weighted_difference": dy,
+            "rates_max_abs_difference": dyp.0, "rates_max_at": dyp.1,
+            "rates_max_abs_difference_over_max_abs_rate": dyp.0 / ypmax.max(1e-300)})
+    };
+    let composed_matrices = matrices(&mut joined, 0., &y);
+    let composed_starts = starts(&mut joined, &mut analyses, 0., &unstarted, &ids);
+    // The released state: the manual turbine TRIP at t = 0 and its holding
+    // opening, transacted at its time.
+    let mut released = y.clone();
+    joined
+        .command(0., &mut released, Command::TurbineTrip)
+        .unwrap();
+    let open = joined.next_time_event(0.).expect("the holding opening");
+    let done = joined.time_events(open, &mut released).unwrap();
+    let ids_open = joined.differential(&network_ids);
+    let algebraic = |ids: &[f64]| ids.iter().filter(|v| **v == 0.).count();
+    let released_matrices = matrices(&mut joined, open, &released);
+    let released_starts = starts(&mut joined, &mut analyses, open, &released, &ids_open);
+    let receipt = json!({
+        "kind": "s2-block-start-against-colored",
+        "status": "NOT-EVIDENCE zero-time check of lead decision S2-D4; no trajectory",
+        "preparation": preparation,
+        "criterion": {"matrices_column_relative": 1e-13, "start_bound": 1e-12},
+        "composed": {"t_s": 0., "algebraic": algebraic(&ids), "matrices": composed_matrices, "starts": composed_starts},
+        "released": {"t_s": open, "transactions": done.len(), "algebraic": algebraic(&ids_open),
+            "matrices": released_matrices, "starts": released_starts},
+        "analyses_made_in_total": analyses.made(),
+        "total_cpu_s": z1::cpu_s() - started,
+        "load_average": String::from_utf8_lossy(&std::process::Command::new("sysctl").args(["-n","vm.loadavg"]).output().unwrap().stdout).trim().to_string(),
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    write_receipt(&receipt);
+    for state in ["composed", "released"] {
+        for m in ["a", "b"] {
+            let c = &receipt[state]["matrices"][m];
+            assert_eq!(
+                c["colored_nonzeros_outside_block_pattern"],
+                json!(0),
+                "{state} {m}"
+            );
+            assert!(
+                c["worst_column_relative"].as_f64().unwrap() <= 1e-13,
+                "{state} {m}: {c}"
+            );
+        }
+    }
 }
 
 /// Per-block wall time of the block Jacobians so far: the local coupler's
@@ -1079,6 +1452,111 @@ fn jacobian_attribution(
         json!({"wall_s_per_jacobian": (c.jacobian_wall_s - coupler) / n}),
     );
     json!({"jacobians": c.jacobians, "wall_s_per_jacobian": c.jacobian_wall_s / n, "by_kind": per})
+}
+
+/// G6 on the joined operator: the PZR relief's two roots follow the PZR
+/// block's own (after the SG and rod owners'), and its transactions change
+/// the lift only at a mechanical stop, exactly to 1 at full lift and
+/// exactly to 0 on the seat; the seated state restarts consistently.
+/// Zero-time; the roots are driven by declared crossings, not by a
+/// trajectory.
+#[test]
+#[ignore = "NOT-EVIDENCE zero-time check: requires a G6 joined packet (pzrMetal), the wiki, IF97 and stock IDA/KLU"]
+fn the_pzr_relief_roots_and_stops_transact_on_the_joined_state() {
+    use leitbild_operating_plant::{
+        joined::{operator::Joined, pzr::DISARMED},
+        network::{PZR_PRESSURE, stratified::ReliefMotion},
+    };
+    let Started {
+        mut joined,
+        y,
+        ids,
+        atol,
+        rtol,
+        ..
+    } = started_full_composition();
+    let relief = joined
+        .pzr()
+        .and_then(|b| b.relief())
+        .expect("a G6 packet composes the PZR relief");
+    let o = joined.offsets();
+    let n = joined.root_count();
+    let owners = joined.secondary().unwrap().root_count() + joined.rods().unwrap().root_count();
+    assert_eq!(
+        n,
+        owners + 2,
+        "the relief's demand and travel roots come last"
+    );
+    let roots = |joined: &mut Joined<If97>, y: &[f64]| {
+        let mut out = vec![0.; n];
+        joined.roots(0., y, &vec![0.; y.len()], &mut out).unwrap();
+        [out[n - 2], out[n - 1]]
+    };
+    let roof = joined.network.pzr.base + PZR_PRESSURE;
+    let p_roof = y[roof] * joined.network.scales()[roof];
+    assert_eq!(
+        roots(&mut joined, &y),
+        [p_roof - relief.device.opening_pa, DISARMED]
+    );
+    let crossing = |demand: i32, travel: i32| {
+        let mut d = vec![0; n];
+        d[n - 2] = demand;
+        d[n - 1] = travel;
+        d
+    };
+    let state = |joined: &Joined<If97>| {
+        let r = joined.pzr().unwrap().relief().unwrap();
+        (r.demand_open, r.motion)
+    };
+    let mut y = y;
+    // Demand rising through the opening pressure: the lift starts opening.
+    let before = y.clone();
+    joined.transact(0., &crossing(1, 0), &mut y).unwrap();
+    assert_eq!(state(&joined), (true, ReliefMotion::Opening));
+    assert_eq!(y, before, "a demand crossing changes no coordinate");
+    assert_eq!(
+        roots(&mut joined, &y),
+        [p_roof - relief.device.reseat_pa, 1.]
+    );
+    // The full-lift stop: exactly 1, open.
+    y[o.pzr] = 1. - 4e-9;
+    let done = joined.transact(0., &crossing(0, -1), &mut y).unwrap();
+    assert_eq!(y[o.pzr], 1.);
+    assert_eq!(state(&joined), (true, ReliefMotion::Open));
+    assert_eq!(done[0].receipt["stop"]["lift_after"], 1.);
+    assert_eq!(roots(&mut joined, &y)[1], DISARMED);
+    // Demand falling through the reseat pressure, then the seat: exactly 0.
+    joined.transact(0., &crossing(-1, 0), &mut y).unwrap();
+    assert_eq!(state(&joined), (false, ReliefMotion::Closing));
+    assert_eq!(roots(&mut joined, &y)[1], 1.);
+    y[o.pzr] = 3e-9;
+    joined.transact(0., &crossing(0, -1), &mut y).unwrap();
+    assert_eq!(y[o.pzr], 0.);
+    assert_eq!(state(&joined), (false, ReliefMotion::Closed));
+    // A crossing the demand state contradicts refuses.
+    assert!(joined.transact(0., &crossing(-1, 0), &mut y).is_err());
+    // The seated relief restarts by the exact consistent start.
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (rtol * v.abs() + a))
+        .collect();
+    let (_, start) = leitbild_operating_water::joined::consistent_start(
+        &mut joined,
+        leitbild_operating_water::joined::Matrices::Colored,
+        0.,
+        &mut y,
+        &ids,
+        &weights,
+        1e-12,
+        2,
+    )
+    .expect("the seated relief restarts");
+    println!(
+        "{}",
+        json!({"kind":"s2-g6-relief-transactions","status":"NOT-EVIDENCE zero-time check; declared crossings, no trajectory",
+            "roots":n,"relief_roots":[n - 2, n - 1],"p_roof_pa":p_roof,"restart":format!("{start:?}")})
+    );
 }
 
 #[test]
@@ -1132,6 +1610,8 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
         first_step_s: FIRST_STEP_S,
         start_bound: 1e-12,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     }
     .configure(&mut ida)
@@ -1300,10 +1780,10 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
 /// S2's Newton configuration (claude/ld01-wiki c968921, "Configuration
 /// superseded the same day"): stock's own 0.33 Newton coefficient and an
 /// iteration-matrix refresh when cj changes by 10% (IDASetDeltaCjLSetup).
-const NEWTON_COEFFICIENT: f64 = 0.33;
-const DELTA_CJ_LSETUP: f64 = 0.1;
+pub const NEWTON_COEFFICIENT: f64 = 0.33;
+pub const DELTA_CJ_LSETUP: f64 = 0.1;
 /// G13: the first step at every restart (s).
-const FIRST_STEP_S: f64 = 1e-4;
+pub const FIRST_STEP_S: f64 = 1e-4;
 /// Output target spacing of one stock IDA call (s).
 const ADVANCE_CHUNK_S: f64 = 0.01;
 
@@ -1499,7 +1979,8 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
         "predecessors": ["settling-probe-1-log.jsonl (ac0f7106) was stopped before its first 1 s output: its 0.01 Newton coefficient was superseded the same day",
             "settling-probe-2-log.jsonl (1590dae0, colored Jacobian) was stopped before its first 1 s output when the block Jacobian landed; its packet lacked R3's passageBlendSpeed",
             "settling-probe-3-log.jsonl (c0db454d, block Jacobian) was stopped before its first 1 s output to add the coupler's scope-proportional calls and the per-block Jacobian attribution; values are unchanged (JAC's oracle, b1b9bfd3)"],
-        "status": "NOT-EVIDENCE probe; S2 is not declared. PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
+        "status": "NOT-EVIDENCE probe; S2 is not declared. The PZR owner as `pzr` states (G6)",
+        "pzr": pzr_receipt(&ida.system().joined),
         "preparation": preparation,
         "configuration": {"maxOrder": 2, "relativeTolerance": rtol, "absoluteTolerance": "the S1 classes' scaled floor for every new class (G12)",
             "newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "newtonSource": "claude/ld01-wiki c968921 (supersedes a66ee83's 0.01): stock coefficient 0.33 with IDASetDeltaCjLSetup 0.1 at every IDA start and restart",

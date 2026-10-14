@@ -9,14 +9,17 @@ import { parseDecayHistory } from './reference-design-decay-history'
 import { compileOperatingMapping, type OperatingPartition } from './reference-design-operating-mapping'
 import { compileOperatingSource, evaluateOperatingSource, parseOperatingSource } from './reference-design-operating-source'
 import { parseOperatingEnergy, prepareOperatingEnergy } from './reference-design-operating-energy'
-import { prepareOperatingFluid, preparePressureContinuity } from './reference-design-operating-fluid'
+import { admitSolidNode, prepareOperatingFluid, preparePressureContinuity, steadySolidsSchema, type SolidPreparation } from './reference-design-operating-fluid'
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex')
 const MeV_J = 1.602176634e-13
 const sum = (v: readonly number[]) => v.reduce((a, b) => a + b, 0)
 const close = (a: number, b: number) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 5e-12 * Math.max(Math.abs(a), Math.abs(b), 1e-100)
 
-export async function prepareOperatingHot(wiki: string, if97: string) {
+/** `solids` is the steady solid state (G18) or, only for the spine
+ * compiler's settle input and for checks that do not read solid
+ * temperatures, the explicit seed of that settle. */
+export async function prepareOperatingHot(wiki: string, if97: string, solids: SolidPreparation) {
   const root = 'world/packs/process-plant/reference-designs/ld-01/',
     names = ['systems/reactor/fuel-construction.md', 'systems/reactor/fuel-handling-and-pool.md',
       'systems/reactor/control-absorber-and-guide-water.md', 'systems/reactor/kinetics.md', 'systems/reactor/heat-and-history.md'],
@@ -40,10 +43,14 @@ export async function prepareOperatingHot(wiki: string, if97: string) {
     energy = prepareOperatingEnergy(mapping, sourceCoefficients, energyCoefficients, history),
     // Q normalizes only a diagnostic eventual-enthalpy flow. It is NOT injected
     // into current fluid Udot: finite fuel receives most of this current heat.
-    fluid = await prepareOperatingFluid(wiki, if97, energy.totalDeposited_W),
+    fluid = await prepareOperatingFluid(wiki, if97, energy.totalDeposited_W, solids),
+    // Each carrier's Doppler reference is its own steady nodes' law measure
+    // (G18 role 2), matched by identity, never a material-level scalar.
+    reference = new Map(fluid.materials.preparedCarriers.map(c => [c.id, c] as const)),
+    carrierReference = (id: string) => { const c = reference.get(id); if (!c) throw Error('No prepared solid carrier ' + id); return c },
     coolant = fluid.primary.sourceBandToCoolant.map(index => fluid.primary.regions[index]!),
     referenceThermo = {
-      fuelTemperature_K: mapping.carriers.map(() => fluid.materials.fuelTemperature_K),
+      fuelTemperature_K: energy.carriers.map(c => carrierReference(c.id).dopplerReference_K),
       waterDensity_kg_m3: coolant.map(r => r.water.rho), pressure_Pa: coolant.map(r => r.water.p),
       moderatorTemperature_K: coolant.map(r => r.water.T),
       boron_ppmEq: coolant.map(() => fluid.hotReference.boronReference_ppmEq),
@@ -59,6 +66,9 @@ export async function prepareOperatingHot(wiki: string, if97: string) {
       },
     }, referenceThermo),
     achieved = evaluateOperatingSource(source, source.reference.neutrons, source.reference.conditions)
+  // The feedback law's own domain admits every fuel node it can read.
+  for (const c of fluid.materials.preparedCarriers) for (const n of c.fuelNodes)
+    admitSolidNode(`${c.id}/fuel/${n.radial}`, n.temperature_K, sourceCoefficients.fuelDomain_K)
   for (const [a, c] of energy.carriers.entries()) {
     if (!close(c.fissions_per_s, achieved.carrierFissions_per_s[a]!) || !close(c.exposure_per_m2_s, achieved.exposure_per_m2_s[a]!))
       throw Error('Compiled hot source disagrees with finite material preparation: ' + c.id)
@@ -128,9 +138,11 @@ export async function prepareOperatingHot(wiki: string, if97: string) {
 }
 
 if (import.meta.main) {
-  const [wiki, if97, native, receipt] = Bun.argv.slice(2)
-  if (!wiki || !if97 || !native || ![5, 6].includes(Bun.argv.length)) throw Error('Usage: operating-hot <wiki root> <pinned IF97 directory> <native prepare_hot executable> [receipt.json]')
-  const packageData = await prepareOperatingHot(wiki, if97), bytes = JSON.stringify(packageData.nativeInput),
+  const [wiki, if97, steady, native, receipt] = Bun.argv.slice(2)
+  if (!wiki || !if97 || !steady || !native || ![6, 7].includes(Bun.argv.length))
+    throw Error('Usage: operating-hot <wiki root> <pinned IF97 directory> <steady solids JSON of prepare_steady_solids> <native prepare_hot executable> [receipt.json]')
+  const packageData = await prepareOperatingHot(wiki, if97, { kind: 'steady', steady: steadySolidsSchema.parse(await Bun.file(steady).json()) }),
+    bytes = JSON.stringify(packageData.nativeInput),
     child = Bun.spawn([native], { stdin: new Blob([bytes]), stdout: 'pipe', stderr: 'pipe' }),
     [output, error, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
   if (status !== 0) throw Error('Native hot preparation failed: ' + error)

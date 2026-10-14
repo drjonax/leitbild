@@ -924,6 +924,8 @@ impl WaterPoint {
 pub mod ida;
 #[cfg(feature = "ida")]
 pub mod joined;
+#[cfg(feature = "quadratures")]
+pub mod joined_ledger;
 #[cfg(feature = "ida")]
 pub mod klu;
 pub mod network;

@@ -19,7 +19,7 @@ use crate::{
     kinetics,
     network::{
         BlockJacobian, Failure, Fluid, Held, LocalCoupling, NetworkSeed, Properties, Receipts,
-        Replay,
+        Replay, stratified,
     },
     poisons, source_feedback as sf,
     sparse::Pattern,
@@ -163,11 +163,14 @@ pub fn nuclear_partials(
         })
         .map_err(trial)?;
     // d N_i' / d rho_i = N_i / Lambda_i: the model's own reactivity action.
-    let state: Vec<f64> = x[..m0].to_vec();
+    // Region i's reactivity acts on population i alone, so one direction
+    // with every region's unit reactivity gives each region's, entry for
+    // entry the single-region direction's.
+    let state = &x[..m0];
     let zero_state = vec![0.; m0];
-    let zero_regions = vec![
+    let unit_reactivity = vec![
         kinetics::RegionInput {
-            reactivity: 0.,
+            reactivity: 1.,
             external_source_per_s: 0.
         };
         r
@@ -178,28 +181,23 @@ pub fn nuclear_partials(
     let zero_outside = vec![0.; k.outside_fractions.len()];
     let mut rates = vec![0.; m0];
     let mut fissions = vec![0.; a];
-    let mut per_reactivity = vec![0.; r];
-    for i in 0..r {
-        let mut d = zero_regions.clone();
-        d[i].reactivity = 1.;
-        kinetics
-            .directional_derivative(
-                &state,
-                inputs,
-                &zero_state,
-                kinetics::Inputs {
-                    regions: &d,
-                    transfer_rates_per_s: &zero_transfer,
-                    fissions_per_population_s: &zero_production,
-                    emission_fractions: &zero_emission,
-                    outside_fractions: &zero_outside,
-                },
-                &mut rates,
-                &mut fissions,
-            )
-            .map_err(trial)?;
-        per_reactivity[i] = rates[i];
-    }
+    kinetics
+        .directional_derivative(
+            state,
+            inputs,
+            &zero_state,
+            kinetics::Inputs {
+                regions: &unit_reactivity,
+                transfer_rates_per_s: &zero_transfer,
+                fissions_per_population_s: &zero_production,
+                emission_fractions: &zero_emission,
+                outside_fractions: &zero_outside,
+            },
+            &mut rates,
+            &mut fissions,
+        )
+        .map_err(trial)?;
+    let per_reactivity = &rates[..r];
     let beta: Vec<f64> = k
         .delayed_yields_per_fission
         .iter()
@@ -664,6 +662,10 @@ pub struct JoinedJacobian {
     template: LinearTemplate,
     /// Global row scale of every joined row (a network row is its own).
     row_scales: Vec<f64>,
+    /// Global coordinate scale of every joined coordinate.
+    scales: Vec<f64>,
+    /// The nuclear partials' entry counts, which no state changes.
+    partials_len: [usize; 6],
 }
 
 /// Which column classes an assembly covers. The production assembly
@@ -677,6 +679,8 @@ pub struct Classes {
     pub solids: bool,
     pub secondary: bool,
     pub rods: bool,
+    /// The PZR metal and relief block (G6).
+    pub pzr: bool,
 }
 impl Classes {
     pub const ALL: Self = Self {
@@ -685,6 +689,7 @@ impl Classes {
         solids: true,
         secondary: true,
         rods: true,
+        pzr: true,
     };
     pub const NONE: Self = Self {
         network: false,
@@ -692,6 +697,7 @@ impl Classes {
         solids: false,
         secondary: false,
         rods: false,
+        pzr: false,
     };
 }
 
@@ -735,14 +741,16 @@ impl Clock<'_> {
     }
 }
 
-/// The nuclear block's partials at the operator's last evaluation.
+/// The nuclear block's partials at the operator's last evaluation, with
+/// the joined coordinate scales and the entry counts to reserve.
 fn partials_at<P: Properties + WaterProperties>(
     joined: &Joined<P>,
     t: f64,
     y: &[f64],
+    scales: &[f64],
+    len: [usize; 6],
 ) -> Result<NuclearPartials, Failure> {
     let o = joined.offsets();
-    let scales = joined.scales();
     let x: Vec<f64> = (o.nuclear..o.solids).map(|i| y[i] * scales[i]).collect();
     let fuel_t: Vec<f64> = joined
         .fuel_feedback_temperatures()
@@ -750,7 +758,15 @@ fn partials_at<P: Properties + WaterProperties>(
         .map(|v| v.value)
         .collect();
     let travel: Vec<f64> = joined.travel().iter().map(|v| v.value).collect();
-    let mut partials = NuclearPartials::default();
+    let mut partials = NuclearPartials {
+        feeds: Vec::new(),
+        own: Vec::with_capacity(len[0]),
+        fuel_t: Vec::with_capacity(len[1]),
+        water: Vec::with_capacity(len[2]),
+        travel: Vec::with_capacity(len[3]),
+        fuel_w: Vec::with_capacity(len[4]),
+        coolant_w: Vec::with_capacity(len[5]),
+    };
     nuclear_partials(
         joined.nuclear(),
         o.nuclear,
@@ -778,7 +794,16 @@ impl JoinedJacobian {
         let zero = vec![0.; y.len()];
         joined.evaluate(t, y, &zero, None, 0., None)?;
         let template = joined.nuclear().linear_template(o.nuclear);
-        let partials = partials_at(joined, t, y)?;
+        let scales = joined.scales();
+        let partials = partials_at(joined, t, y, &scales, [0; 6])?;
+        let partials_len = [
+            partials.own.len(),
+            partials.fuel_t.len(),
+            partials.water.len(),
+            partials.travel.len(),
+            partials.fuel_w.len(),
+            partials.coolant_w.len(),
+        ];
         let columns = joined_pattern(joined, &template, &partials)?;
         let pattern = Pattern::from_columns(o.end, &columns).map_err(fatal)?;
         let network = joined.network.block_jacobian()?;
@@ -792,6 +817,8 @@ impl JoinedJacobian {
             network,
             template,
             row_scales,
+            scales,
+            partials_len,
         })
     }
 }
@@ -823,11 +850,13 @@ impl Sink<'_> {
 }
 
 /// The operator's coupler as the network replay's hook, noting whether
-/// this column called it (its `last()` is stale otherwise) and, when
+/// this column called it (its `last()` is stale otherwise), whether it
+/// asked for the stratified boundary (`last_pzr()` likewise) and, when
 /// profiled, the time spent in it.
 struct Hook<'a, 'b, P> {
     coupler: &'a mut LocalCoupler<'b, P>,
     called: bool,
+    pzr_called: bool,
     clock: Option<fn() -> f64>,
     spent: f64,
 }
@@ -836,6 +865,7 @@ impl<'a, 'b, P> Hook<'a, 'b, P> {
         Self {
             coupler,
             called: false,
+            pzr_called: false,
             clock,
             spent: 0.,
         }
@@ -852,6 +882,19 @@ impl<P: Properties + WaterProperties> LocalCoupling for Hook<'_, '_, P> {
         self.called = true;
         let started = self.clock.map_or(0., |c| c());
         let result = self.coupler.local(cells, faces, fluid, receipts);
+        if let Some(c) = self.clock {
+            self.spent += c() - started;
+        }
+        result
+    }
+    fn pzr_boundary(
+        &mut self,
+        cell: &stratified::Cell,
+        column: &stratified::Column,
+    ) -> Result<stratified::Boundary, Failure> {
+        self.pzr_called = true;
+        let started = self.clock.map_or(0., |c| c());
+        let result = self.coupler.pzr_boundary(cell, column);
         if let Some(c) = self.clock {
             self.spent += c() - started;
         }
@@ -1020,10 +1063,10 @@ fn assemble<P: Properties + WaterProperties>(
     joined.evaluate(t, y, yp, None, 0., Some(&mut reuse))?;
     clock.book("base: joined evaluation", started, 0.);
     let started = clock.now();
-    let partials = partials_at(joined, t, y)?;
+    let scales = &structure.scales;
+    let partials = partials_at(joined, t, y, scales, structure.partials_len)?;
     clock.book("base: nuclear partials", started, 0.);
     let started = clock.now();
-    let scales = joined.scales();
     let deposition: Vec<Vec<(usize, f64)>> = joined.nuclear().deposition().to_vec();
     values.fill(0.);
     let mut sink = Sink {
@@ -1113,6 +1156,12 @@ fn assemble<P: Properties + WaterProperties>(
                 local += hook.spent;
                 locals += 1;
                 ports.local(&mut sink, j, hook.coupler.last(), sign)?;
+            }
+            // A PZR column's PZR block rows, through the boundary's laws.
+            if hook.pzr_called {
+                for (row, v) in hook.coupler.last_pzr() {
+                    sink.add(*row, j, v.direction / sign)?;
+                }
             }
             let spent = hook.spent;
             clock.book("network columns: replay and chains", started, spent);
@@ -1207,7 +1256,7 @@ fn assemble<P: Properties + WaterProperties>(
     for (name, range, named) in [
         ("solid", o.solids..o.secondary, classes.solids),
         ("secondary", o.secondary..o.rods, classes.secondary),
-        ("rod", o.rods..o.end, classes.rods),
+        ("rod", o.rods..o.pzr, classes.rods),
     ] {
         if !named {
             continue;
@@ -1297,6 +1346,31 @@ fn assemble<P: Properties + WaterProperties>(
         if clock.0.is_some() {
             clock.book_spent(chain_piece, 1, total - own.1 - replays.1 - local.1);
         }
+    }
+    // The PZR block's columns (G6): its own rows at the base column, and the
+    // stratified rows through the boundary's directions.
+    if classes.pzr && o.end > o.pzr {
+        let started = clock.now();
+        let cell = network.stratified();
+        let column = *network
+            .pzr_column()
+            .ok_or_else(|| fatal("the PZR columns need the base evaluation's column"))?;
+        seed.receipts.clear();
+        seed.volumes.clear();
+        for j in o.pzr..o.end {
+            let boundary = coupler.pzr_column(j, cell, &column)?;
+            for (row, v) in coupler.last_pzr() {
+                sink.add(*row, j, v.direction)?;
+            }
+            seed.pzr_boundary = Some(boundary);
+            response.clear();
+            replay.external(&seed, None, &mut response)?;
+            for &(row, d) in &response {
+                sink.add(row, j, d)?;
+            }
+        }
+        seed.pzr_boundary = None;
+        clock.book("pzr columns: block rows and stratified replay", started, 0.);
     }
     Ok(())
 }

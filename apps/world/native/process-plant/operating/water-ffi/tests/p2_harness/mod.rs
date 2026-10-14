@@ -47,33 +47,12 @@ use leitbild_operating_water::{
 use serde_json::{Value, json};
 use std::time::Instant;
 
-#[repr(C)]
-struct Timespec {
-    seconds: i64,
-    nanoseconds: i64,
-}
-unsafe extern "C" {
-    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
-}
-fn clock(id: i32) -> f64 {
-    let mut t = Timespec {
-        seconds: 0,
-        nanoseconds: 0,
-    };
-    // SAFETY: one live stack Timespec matching the C layout; the C library
-    // writes it and keeps no pointer.
-    let status = unsafe { clock_gettime(id, &mut t) };
-    assert_eq!(status, 0, "CPU clock {id} unavailable");
-    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
-}
-/// CLOCK_PROCESS_CPUTIME_ID on macOS, as the S1 harness measures.
-pub fn cpu_s() -> f64 {
-    clock(12)
-}
-/// CLOCK_THREAD_CPUTIME_ID on macOS, reported beside it.
-pub fn thread_cpu_s() -> f64 {
-    clock(16)
-}
+// CLOCK_PROCESS_CPUTIME_ID as the S1 harness measures (`cpu_s`), and
+// CLOCK_THREAD_CPUTIME_ID reported beside it.
+#[path = "../common/cpu.rs"]
+pub mod clock;
+#[allow(unused_imports)] // Each test crate uses its own subset.
+pub use clock::{process_cpu_s as cpu_s, thread_cpu_s};
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
@@ -482,7 +461,7 @@ impl CellSystem {
                 s(0.),
                 Some(ReliefState {
                     lift: s(0.),
-                    back_pressure_pa: s(r.back_pressure_pa),
+                    back_pressure_pa: Some(s(r.back_pressure_pa)),
                 }),
             ),
             Some(r) => {
@@ -494,7 +473,7 @@ impl CellSystem {
                     row,
                     Some(ReliefState {
                         lift,
-                        back_pressure_pa: s(r.back_pressure_pa),
+                        back_pressure_pa: Some(s(r.back_pressure_pa)),
                     }),
                 )
             }
@@ -597,7 +576,10 @@ impl CellSystem {
         let x = Coordinates::from_slice(&xv).map_err(|f| text(&f))?;
         let column = self.cell.column(&If97, &x, None).map_err(|f| text(&f))?;
         let taps = self.cell.taps(&If97, &column).map_err(|f| text(&f))?;
-        Ok(c.level(taps.level_difference_pa.value))
+        let level = taps
+            .level
+            .ok_or("gate 5's cutout reads the LT pair, which this cell does not declare")?;
+        Ok(c.level(level.difference_pa.value))
     }
     pub fn root_values(&self, y: &[f64], roots: &[Root], out: &mut [f64]) -> Result<(), String> {
         let v = |i: usize| y[i] * self.scales[i];
@@ -1001,7 +983,11 @@ pub fn sample(
         pt1_pa: taps.pt1_pa.value,
         interface_pa: c.interface_pressure.value,
         bottom_pa: c.bottom_pressure.value,
-        lt_dp_pa: taps.level_difference_pa.value,
+        lt_dp_pa: taps
+            .level
+            .ok_or("the LD-01 sample reads the LT pair, which this cell does not declare")?
+            .difference_pa
+            .value,
         mixture_level_m: taps.mixture_level_m.value,
         collapsed_level_m: taps.collapsed_level_m.value,
         boundary_elevation_m: c.boundary_elevation.value,
