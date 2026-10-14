@@ -11,6 +11,7 @@ import {
   type CompiledProcessPlant,
   type ProcessPlantIcLifecycleState,
 } from '../src/packs/process-plant/index.ts'
+import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
 import { processPlantPresentation } from '../src/packs/process-plant/presentation.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { scenarios } from './fixtures/scenarios.ts'
@@ -83,6 +84,7 @@ describe('a Plant\'s projection, which colours it on the map', () => {
           : lifecycle.id === notice.id ? { ...lifecycle, active: true, outOfService: true }
             : lifecycle),
       at,
+      simulationTime: at,
     })
     expect(projectionOf(silenced)).toMatchObject({ statusTone: 'ready', statusLabel: 'Normal', activeAlarmCount: 0, activeTripCount: 0 })
     expect(projectionOf(silenced).highestSeverity).toBeUndefined()
@@ -95,13 +97,14 @@ describe('a Plant\'s projection, which colours it on the map', () => {
         : lifecycle.id === trip.id ? { ...lifecycle, active: true, shelved: true }
           : lifecycle),
       at,
+      simulationTime: at,
     })
     expect(projectionOf(annunciated)).toMatchObject({ statusTone: 'working', highestSeverity: 'warning', activeAlarmCount: 1, activeTripCount: 0 })
     expect(presented(annunciated).color).toBe('#c77d13')
   })
 
   test('draws a Plant whose runtime is pending grey, not green', () => {
-    const pending = projectedProcessPlantUnit({ object: unit, plant: undefined, at })
+    const pending = projectedProcessPlantUnit({ object: unit, plant: undefined, at, simulationTime: at })
     expect(projectionOf(pending).statusTone).toBe('idle')
     const presentation = presented(pending)
     expect(presentation.color).toBe('#667085')
@@ -109,27 +112,28 @@ describe('a Plant\'s projection, which colours it on the map', () => {
   })
 
   test('names the operating mode the Plant is in, and none where its model declares none or none holds', () => {
-    expect(projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at })).modeLabel).toBe('Power operation')
+    expect(projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at, simulationTime: at })).modeLabel).toBe('Power operation')
     const withModes = (operatingModes: CompiledProcessPlant['automation']['operatingModes']): CompiledProcessPlant =>
       ({ ...compiled, automation: { ...compiled.automation, operatingModes } })
-    const undeclared = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, withModes([])), at }))
+    const undeclared = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, withModes([])), at, simulationTime: at }))
     expect('modeLabel' in undeclared).toBe(false)
     // At full power the unit is in none of its shutdown modes.
     const shutdownOnly = withModes(compiled.automation.operatingModes.filter(mode => mode.id === 'coldShutdown'))
     expect(shutdownOnly.automation.operatingModes).toHaveLength(1)
-    expect('modeLabel' in projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, shutdownOnly), at }))).toBe(false)
+    expect('modeLabel' in projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, shutdownOnly), at, simulationTime: at }))).toBe(false)
   })
 
   test('marks the reactor tripped only while a trip of a first-out group the model declares as its reactor trip is active, whether or not its alarm is shelved or suppressed', () => {
-    const fed = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(feedStart.id)), at }))
+    const fed = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(feedStart.id)), at, simulationTime: at }))
     expect(fed).toMatchObject({ statusTone: 'error', activeTripCount: 1 })
     expect('reactorTripped' in fed).toBe(false)
-    const tripped = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(feedStart.id, reactorTrip.id)), at }))
+    const tripped = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(feedStart.id, reactorTrip.id)), at, simulationTime: at }))
     expect(tripped).toMatchObject({ reactorTripped: true, activeTripCount: 2 })
     const shelved = projectionOf(projectedProcessPlantUnit({
       object: unit,
       plant: plantWith(lifecycle => lifecycle.id === reactorTrip.id ? { ...lifecycle, active: true, shelved: true } : lifecycle),
       at,
+      simulationTime: at,
     }))
     // Shelving the trip's alarm takes it off the count and the colour, not off the Plant's state.
     expect(shelved).toMatchObject({ reactorTripped: true, activeTripCount: 0 })
@@ -137,39 +141,67 @@ describe('a Plant\'s projection, which colours it on the map', () => {
       object: unit,
       plant: plantWith(lifecycle => lifecycle.id === reactorTrip.id ? { ...lifecycle, active: true, outOfService: true } : lifecycle),
       at,
+      simulationTime: at,
     }))
     expect('reactorTripped' in outOfService).toBe(false)
   })
 
   test('a projection stored before the mode and the reactor trip were projected still restores', () => {
-    const projected = projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(reactorTrip.id)), at })
+    const projected = projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(reactorTrip.id)), at, simulationTime: at })
     const data = processPlantUnitPackDataSchema.parse(projected.packData)
     const { modeLabel, reactorTripped, ...stored } = projectionOf(projected)
     expect(modeLabel).toBe('Power operation')
     expect(reactorTripped).toBe(true)
     expect(processPlantUnitPackDataSchema.safeParse({ ...data, projection: stored }).success).toBe(true)
   })
+
+  test('reads the energy its model declares on sources and sinks by variable, at the Run time, as its summary words them', () => {
+    const simulationTime = '2026-10-14T06:30:00.000Z' as IsoTimestamp
+    const projection = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at, simulationTime }))
+    expect(projection.energy.map(reading => [reading.path, reading.role, reading.unit, reading.simulationTime])).toEqual([
+      ['core.totalThermalPowerMw', 'source', 'MW', simulationTime],
+      ['turbine.electricMw', 'sink', 'MW', simulationTime],
+    ])
+    expect(projection.summary).toBe(projection.energy.map(reading => `${reading.label} ${formatQuantity(reading.value!, reading.unit)}`).join(' · '))
+    expect(projectionOf(projectedProcessPlantUnit({ object: unit, plant: undefined, at, simulationTime })).energy).toEqual([])
+  })
+
+  test('a projection stored before the energy readings were projected no longer restores: the owner chose to restart such Runs (14 Oct 2026)', () => {
+    const projected = projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at, simulationTime: at })
+    const data = processPlantUnitPackDataSchema.parse(projected.packData)
+    const { energy, ...stored } = projectionOf(projected)
+    expect(energy).toHaveLength(2)
+    expect(processPlantUnitPackDataSchema.safeParse({ ...data, projection: stored }).success).toBe(false)
+  })
+
+  test('names its most challenged critical safety function, and none where its model declares none', () => {
+    // At full power every judged function is green: the first declared green one stands for them.
+    const normal = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at, simulationTime: at }))
+    expect(normal.worstSafetyFunction).toMatchObject({ id: 'core-cooling', shortLabel: 'CORE COOL', status: 'green' })
+    const undeclared = { ...compiled, automation: { ...compiled.automation, safetyFunctions: [] } }
+    expect('worstSafetyFunction' in projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, undeclared), at, simulationTime: at }))).toBe(false)
+  })
 })
 
 describe('a Plant\'s glance, which stands for it on the map\'s hover and the rail\'s tooltip', () => {
   test('is its status and operating mode, then the energy its sources put in and its sinks take out', () => {
-    const normal = projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at })
+    const normal = projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at, simulationTime: at })
     const summary = projectionOf(normal).summary
     expect(summary).toMatch(/^Core thermal power [0-9]+ MW · Electrical output [0-9]+ MW$/)
     expect(presented(normal).glance).toEqual(['Normal · Power operation', summary])
-    const tripped = projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(reactorTrip.id)), at })
+    const tripped = projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(reactorTrip.id)), at, simulationTime: at })
     expect(presented(tripped).glance).toEqual(['Critical alarm or trip active · Power operation', projectionOf(tripped).summary])
   })
 
   test('is the status alone where no mode holds, and only "Runtime pending" before the runtime runs', () => {
     const modeless = { ...compiled, automation: { ...compiled.automation, operatingModes: [] } }
-    const unmoded = projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, modeless), at })
+    const unmoded = projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, modeless), at, simulationTime: at })
     expect(presented(unmoded).glance).toEqual(['Normal', projectionOf(unmoded).summary])
-    expect(presented(projectedProcessPlantUnit({ object: unit, plant: undefined, at })).glance).toEqual(['Runtime pending'])
+    expect(presented(projectedProcessPlantUnit({ object: unit, plant: undefined, at, simulationTime: at })).glance).toEqual(['Runtime pending'])
   })
 
   test('leaves the fields the rail lets people show or hide as they were', () => {
-    const fields = presented(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at })).fields.map(field => field.key)
+    const fields = presented(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet), at, simulationTime: at })).fields.map(field => field.key)
     expect(fields.slice(0, 2)).toEqual(['model', 'operating-point'])
     expect(fields).toEqual(expect.arrayContaining(['active-alarms', 'active-trips', 'runtime-performance']))
   })

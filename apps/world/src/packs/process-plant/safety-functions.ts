@@ -197,6 +197,27 @@ export const evaluateSafetyFunction = (config: {
 export const evaluateSafetyFunctions = (system: CompiledProcessPlant, runtime: ProcessPlantRuntime): ReadonlyArray<SafetyFunctionEvaluation> =>
   system.automation.safetyFunctions.map(safetyFunction => evaluateSafetyFunction({ system, runtime, safetyFunction }))
 
+// How far each status stands from a satisfied function. Red and orange call
+// for their restoration procedure; a function that cannot be judged comes
+// next, since it may be either; yellow is an off-normal condition whose
+// procedure is the operators' choice; a function not judged in this state
+// says nothing.
+const challenge: Readonly<Record<SafetyFunctionStatus, number>> = {
+  red: 5,
+  orange: 4,
+  unknown: 3,
+  yellow: 2,
+  green: 1,
+  'not-monitored': 0,
+}
+
+/** The most challenged of the functions judged, the first declared among equals; undefined where none is declared. */
+export const worstSafetyFunction = (evaluations: ReadonlyArray<SafetyFunctionEvaluation>): SafetyFunctionEvaluation | undefined =>
+  evaluations.reduce<SafetyFunctionEvaluation | undefined>(
+    (worst, evaluation) => worst === undefined || challenge[evaluation.status] > challenge[worst.status] ? evaluation : worst,
+    undefined,
+  )
+
 /**
  * The signals the Plant's critical safety functions judge: those their status
  * trees and checks compare, not those that only say when a function or check

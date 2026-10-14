@@ -21,6 +21,38 @@ export const processPlantUnitProjectionFieldSchema = z.object({
 }).strict()
 export type ProcessPlantUnitProjectionField = z.infer<typeof processPlantUnitProjectionFieldSchema>
 
+/**
+ * A rate the Plant's model declares on an energy source or sink, as read at
+ * a Run time. The projection's `updatedAt` is wall time; `simulationTime` is
+ * the Run time the historian records the same variable at, so a trend can
+ * continue its recorded series with these readings.
+ */
+export const processPlantUnitEnergyReadingSchema = z.object({
+  /** The rate's variable path, which also names its recorded series (recordingSeriesIdFor). */
+  path: z.string().min(1),
+  label: z.string().min(1),
+  /** A source puts energy into the Plant; a sink takes it out. */
+  role: z.enum(['source', 'sink']),
+  /** In the variable's native unit; null where it reads no finite number. */
+  value: z.number().finite().nullable(),
+  unit: z.string(),
+  simulationTime: isoTimestampSchema,
+}).strict()
+export type ProcessPlantUnitEnergyReading = z.infer<typeof processPlantUnitEnergyReadingSchema>
+
+/** A critical safety function as its status tree judges it (safety-functions.ts). */
+export const processPlantUnitSafetyFunctionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  shortLabel: z.string().min(1),
+  status: z.enum(['red', 'orange', 'yellow', 'green', 'unknown', 'not-monitored']),
+  /** The function restoration procedure its colour sends operators to. */
+  procedure: z.string().min(1).optional(),
+  /** What its status means, or why it is unknown or not judged. */
+  meaning: z.string().min(1),
+}).strict()
+export type ProcessPlantUnitSafetyFunction = z.infer<typeof processPlantUnitSafetyFunctionSchema>
+
 export const processPlantUnitProjectionSchema = z.object({
   schemaVersion: z.literal(1),
   summary: z.string().min(1),
@@ -37,6 +69,13 @@ export const processPlantUnitProjectionSchema = z.object({
   reactorTripped: z.literal(true).optional(),
   activeAlarmCount: z.number().int().nonnegative(),
   activeTripCount: z.number().int().nonnegative(),
+  /** The rates of the energy sources and sinks its model declares, in declaration order, as `summary` words them; empty until its runtime runs. */
+  energy: z.array(processPlantUnitEnergyReadingSchema),
+  /**
+   * Its most challenged critical safety function now (worstSafetyFunction);
+   * absent where its model declares none or its runtime has not started.
+   */
+  worstSafetyFunction: processPlantUnitSafetyFunctionSchema.optional(),
   fields: z.array(processPlantUnitProjectionFieldSchema),
   updatedAt: isoTimestampSchema,
 }).strict()
@@ -86,6 +125,7 @@ export const emptyProcessPlantProjection = (at: IsoTimestamp): ProcessPlantUnitP
   statusLabel: 'Runtime pending',
   activeAlarmCount: 0,
   activeTripCount: 0,
+  energy: [],
   fields: [
     processPlantField('runtime', 'Runtime', 'pending'),
   ],

@@ -3,7 +3,7 @@ import { answerProcessPlantQuery, commandsForProcessPlantAction, compileProcessP
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, type ProcessPlantRuntime } from '../src/packs/process-plant/runtime/index.ts'
 import { assertProcessPlantIcSafetyFunctionsValid } from '../src/packs/process-plant/runtime/ic/control-protection-validation.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
-import { evaluateSafetyFunction, evaluateSafetyFunctions, safetyFunctionSignals, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
+import { evaluateSafetyFunction, evaluateSafetyFunctions, safetyFunctionSignals, worstSafetyFunction, type SafetyFunctionEvaluation, type SafetyFunctionStatus } from '../src/packs/process-plant/safety-functions.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -163,6 +163,20 @@ describe('critical safety function status trees', () => {
       return runtime.readVariableSnapshot(path)
     } }
     expect(judged(failed).get('core-cooling')).toMatchObject({ status: 'unknown', meaning: expect.stringContaining('Acquisition failed') })
+  })
+
+  test('the most challenged function: red, orange, one that cannot be judged, yellow, then green; the first declared among equals', () => {
+    const runtime = after(null, 2)
+    expect(worstSafetyFunction(evaluateSafetyFunctions(plant, runtime))).toMatchObject({ id: 'core-cooling', status: 'green' })
+    expect(worstSafetyFunction(evaluateSafetyFunctions(plant, reading(runtime, { 'reactorTripBreakerA.closed': false })))).toMatchObject({ id: 'subcriticality', status: 'red', procedure: 'FR-S.1' })
+    const now = evaluateSafetyFunctions(plant, runtime)
+    const judgedAs = (...statuses: ReadonlyArray<SafetyFunctionStatus>): ReadonlyArray<SafetyFunctionEvaluation> =>
+      now.map((evaluation, index) => ({ ...evaluation, status: statuses[index]! }))
+    expect(worstSafetyFunction(judgedAs('green', 'yellow', 'unknown', 'orange', 'green', 'green'))?.id).toBe('rcs-integrity')
+    expect(worstSafetyFunction(judgedAs('not-monitored', 'yellow', 'unknown', 'green', 'green', 'yellow'))?.id).toBe('heat-sink')
+    expect(worstSafetyFunction(judgedAs('green', 'yellow', 'green', 'yellow', 'green', 'green'))?.id).toBe('core-cooling')
+    expect(worstSafetyFunction(judgedAs('not-monitored', 'not-monitored', 'not-monitored', 'not-monitored', 'not-monitored', 'not-monitored'))?.id).toBe('subcriticality')
+    expect(worstSafetyFunction([])).toBeUndefined()
   })
 
   test('the assessments capability returns every function with its path, labelled reference-model criteria, and refuses an undeclared one', () => {

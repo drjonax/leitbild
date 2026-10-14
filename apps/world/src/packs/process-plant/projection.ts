@@ -8,12 +8,15 @@ import {
   emptyProcessPlantProjection,
   processPlantField,
   processPlantUnitPackDataSchema,
+  type ProcessPlantUnitEnergyReading,
   type ProcessPlantUnitPackData,
   type ProcessPlantUnitProjection,
+  type ProcessPlantUnitSafetyFunction,
 } from './model.ts'
 import { processPlantOperatingMode, type ProcessPlantIcLifecycleState } from './runtime/index.ts'
 import type { ProcessPlantVariableHandle } from './runtime/variable-table.ts'
 import type { ProcessPlantRuntimeInstance } from './runtime-instance.ts'
+import { evaluateSafetyFunctions, worstSafetyFunction } from './safety-functions.ts'
 
 const severityRank: Readonly<Record<ProcessPlantIcLifecycleState['severity'], number>> = {
   info: 1,
@@ -46,8 +49,8 @@ interface RailFieldPlan {
 
 interface RailPlan {
   readonly fields: ReadonlyArray<RailFieldPlan>
-  /** The energy sources' and sinks' rates, for the summary line. */
-  readonly headline: ReadonlyArray<RailFieldPlan>
+  /** The energy sources' and sinks' rates, for the summary line and the energy readings. */
+  readonly headline: ReadonlyArray<RailFieldPlan & { readonly role: ProcessPlantUnitEnergyReading['role'] }>
 }
 
 // Re-planned only when what the overview leads with changes (a trip, a mode).
@@ -61,8 +64,8 @@ const railPlanFor = (plant: ProcessPlantRuntimeInstance): RailPlan => {
   const planOf = (path: VariablePath): RailFieldPlan => ({ path, handle: plant.runtime.resolveVariableHandle(path) })
   // The energy the Plant takes in and gives out, as its sources' and sinks' declared rates.
   const ends = plant.plant.graph.components
-    .flatMap(component => component.semantics.energy.flatMap(role => (role.role === 'transfer' ? [] : [role.rate])))
-  const plan = { fields: leads.map(planOf), headline: ends.map(planOf) }
+    .flatMap(component => component.semantics.energy.flatMap(role => (role.role === 'transfer' ? [] : [{ ...planOf(role.rate), role: role.role }])))
+  const plan = { fields: leads.map(planOf), headline: ends }
   railPlanCache.set(plant, { key, plan })
   return plan
 }
@@ -85,6 +88,39 @@ const activeLifecycles = (
   if (!snapshot) return []
   return [...snapshot.alarms, ...snapshot.trips]
     .filter(lifecycle => lifecycle.active && !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService)
+}
+
+// A declared energy rate as it reads now, at the Run time the runtime stands
+// at. The compiler declares every rate a solved power, so it reads a number.
+const energyReading = (
+  plant: ProcessPlantRuntimeInstance,
+  plan: RailPlan['headline'][number],
+  simulationTime: IsoTimestamp,
+): ProcessPlantUnitEnergyReading => {
+  const variable = plant.runtime.readVariableSnapshotHandle(plan.handle)
+  if (typeof variable.value !== 'number') throw new Error(`energy rate ${String(plan.path)} reads no number`)
+  return {
+    path: String(plan.path),
+    label: variable.label,
+    role: plan.role,
+    value: Number.isFinite(variable.value) ? variable.value : null,
+    unit: variable.unit,
+    simulationTime,
+  }
+}
+
+// The most challenged critical safety function, where the model declares any.
+const worstSafetyFunctionOf = (plant: ProcessPlantRuntimeInstance): ProcessPlantUnitSafetyFunction | undefined => {
+  const worst = worstSafetyFunction(evaluateSafetyFunctions(plant.plant, plant.runtime))
+  if (worst === undefined) return undefined
+  return {
+    id: worst.id,
+    label: worst.label,
+    shortLabel: worst.shortLabel,
+    status: worst.status,
+    ...(worst.procedure === undefined ? {} : { procedure: worst.procedure }),
+    meaning: worst.meaning,
+  }
 }
 
 // Whether a trip of a first-out group the model declares as its reactor trip
@@ -119,7 +155,10 @@ const statusFor = (
 export const projectedProcessPlantUnit = (config: {
   readonly object: OperationalObject
   readonly plant: ProcessPlantRuntimeInstance | undefined
+  /** Wall time, for `updatedAt`. */
   readonly at: IsoTimestamp
+  /** The Run time the Plant's runtime stands at, for its readings. */
+  readonly simulationTime: IsoTimestamp
   readonly connected?: boolean
 }): OperationalObject => {
   const parsed = processPlantUnitPackDataSchema.safeParse(config.object.packData)
@@ -145,6 +184,7 @@ export const projectedProcessPlantUnit = (config: {
     processPlantField('runtime-performance', 'Runtime', formatRuntimePerformance(plant)),
   ]
   const headline = rail.headline.map(plan => readField(plant, plan))
+  const worst = worstSafetyFunctionOf(plant)
   // The operating mode the unit overview names (composed-display-query.ts).
   const mode = processPlantOperatingMode({ system: plant.plant, runtime: plant.runtime, modes: plant.plant.automation.operatingModes })
   const projection: ProcessPlantUnitProjection = {
@@ -157,6 +197,8 @@ export const projectedProcessPlantUnit = (config: {
     ...(reactorTripped(plant) ? { reactorTripped: true } : {}),
     activeAlarmCount: lifecycles.filter(lifecycle => lifecycle.kind === 'alarm').length,
     activeTripCount,
+    energy: rail.headline.map(plan => energyReading(plant, plan, config.simulationTime)),
+    ...(worst === undefined ? {} : { worstSafetyFunction: worst }),
     fields,
     updatedAt: config.at,
   }
@@ -180,6 +222,8 @@ export const projectedProcessPlantUnit = (config: {
   }
 }
 
+// What makes a projection new: everything but its wall time. Its energy
+// readings carry their Run time, so a running Plant's are new each step.
 export const processPlantProjectionKey = (object: OperationalObject): string => {
   const parsed = processPlantUnitPackDataSchema.safeParse(object.packData)
   const projection = parsed.success ? parsed.data.projection : undefined
