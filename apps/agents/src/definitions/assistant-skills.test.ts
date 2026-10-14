@@ -71,7 +71,7 @@ describe('Leitbild Assistant skills', () => {
     // discovery; start, transition and wait return the next step, and the Core's controls are read alone.
     expect(runner.body).toContain('## Call these directly')
     expect(runner.body).toContain('`world.procedure.run.start` {procedureId: "E-0", scope: {plantId, label: <unit>}} → `next`')
-    expect(runner.body).toContain('`world.procedure.run.transition` {runId, stepId, branchIndex, basis, evidenceTagIds} → `next`')
+    expect(runner.body).toContain('`world.procedure.run.transition` {runId, stepId, branchIndex, basis, evidenceTagIds} + `say` → `next`')
     expect(runner.body).toContain('`world.simulation-run.wait` {simulationSeconds, procedureRunId} → `next`')
     expect(runner.body).toContain('`world.procedure.run.step.read` {}: on "continue" or after a refusal')
     expect(runner.body).toContain('`world.process-plant.controls.list` {plantId, items: ["core"]}, never unfiltered')

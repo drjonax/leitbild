@@ -75,7 +75,7 @@ const requestedEffort = flags.get('--reasoning-effort')
 interface Price { readonly input: number; readonly cached: number; readonly write: number; readonly output: number }
 /** USD per million tokens, and the most one probe turn may cost (budget guard). */
 const PRICES: Readonly<Record<string, Price & { readonly worstTurnUsd: number }>> = {
-  'openai/gpt-6-sol': { input: 2.00, cached: 0.20, write: 2.50, output: 10, worstTurnUsd: 1.20 },
+  'openai/gpt-6-sol': { input: 2.00, cached: 0.20, write: 2.50, output: 10, worstTurnUsd: 0.90 },
   'openai/gpt-6-luna': { input: 0.10, cached: 0.01, write: 0.125, output: 0.50, worstTurnUsd: 0.08 },
 }
 /** Tokens per turn, estimated for an autonomous E-0 turn of about 25 rounds (most of each prompt cached), then a "continue". */
