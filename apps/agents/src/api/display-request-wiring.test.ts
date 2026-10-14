@@ -85,4 +85,42 @@ describe('display request wiring', () => {
     expect(requests[2]!.messages.at(-1)!.content).toContain('The reader asked for a live display')
     expect(room.getRetainedMessages().some(message => message.content.includes('[Display request]'))).toBe(false)
   })
+
+  // Removal and shutdown close the Agents before admitted operations finish,
+  // so a request admitted earlier can reach a closed author.
+  test('a request reaching a closed author answers 409 workspace_closing and starts no turn', async () => {
+    let streams = 0
+    const gateway = {
+      ...makeStubGateway(),
+      stream: async function* (): AsyncIterable<StreamChunk> {
+        streams++
+        yield { delta: 'Pressurizer level is steady at 55 %.', done: false }
+        yield { delta: '', done: true, finishReason: 'stop', tokensUsed: { prompt: 1, completion: 1 } }
+      },
+    }
+    const deployment = createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(gateway) })
+    const system = createAgentsWorkspaceRuntime({ deployment })
+    const room = system.rooms.createRoom({ name: 'Displays', createdBy: 'test' })
+    const assistant = await system.spawnAIAgent({ name: 'Assistant', model: 'mock-model', persona: 'Answer briefly.', skills: [DISPLAY_SKILL] }) as AIAgent
+    const human = await system.spawnHumanAgent({ name: 'Alice' }, () => {})
+    await system.addAgentToRoom(assistant.id, room.profile.id, 'test')
+    await system.addAgentToRoom(human.id, room.profile.id, 'test')
+    system.routeMessage({ rooms: [room.profile.id] }, { senderId: human.id, senderName: 'Alice', content: 'How is pressurizer level?', type: 'chat' })
+    await assistant.whenIdle()
+    const answer = room.getRetainedMessages().find(message => message.senderId === assistant.id && message.type === 'chat')!
+
+    assistant.close()
+    const path = displayRequestPath(room.profile.id, answer.id)
+    const route = displayRequestRoutes.find(entry => entry.method === 'POST' && entry.pattern.test(path))!
+    const response = await route.handler(
+      new Request(`http://agents.test${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requesterId: human.id }) }),
+      path.match(route.pattern)!,
+      { system } as unknown as RouteContext,
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({ error: 'Agents Workspace is closing; Assistant takes no requested turns', code: 'workspace_closing' })
+    expect(assistant.state.get()).toBe('idle')
+    expect(assistant.hasQueuedTurn()).toBe(false)
+    expect(streams).toBe(1)
+  })
 })

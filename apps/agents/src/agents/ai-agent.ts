@@ -772,8 +772,10 @@ export const createAIAgent = (
     hasQueuedTurn: cm.hasQueuedWork,
     close: () => { requestedTurns.clear(); cm.close() },
     requestTurn: (roomId: string, turn: RequestedTurn) => {
-      // Callers reach a closing runtime only through refused Workspace operations.
-      if (cm.isClosed()) throw new Error(`${config.name} is closed and takes no requested turns`)
+      // Only a closing runtime closes an Agent still in the Team, and removal
+      // and shutdown close it while admitted Workspace operations still run.
+      // Marked as runWorkspaceOperation marks a closing runtime.
+      if (cm.isClosed()) throw Object.assign(new Error(`Agents Workspace is closing; ${config.name} takes no requested turns`), { code: 'workspace_closing' })
       if (requestedTurns.has(roomId) || runningRequests.has(roomId)) return { kind: 'refused', reason: 'pending', message: `${config.name} is already working on a request in this room; ask again when its reply arrives` }
       if (getScriptContext?.(roomId, resolveName(agentId))) return { kind: 'refused', reason: 'script', message: 'A script directs this room; requested turns wait until it ends' }
       const queued = cm.isBusy()
