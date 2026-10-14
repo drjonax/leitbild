@@ -418,9 +418,10 @@ fn summary(mut values: Vec<f64>, scale: f64) -> Value {
         "max": scale * values.last().copied().unwrap_or(f64::NAN), "mean": scale * mean})
 }
 
-/// The production inverse's iteration restated on the public forward point
-/// (the identity oracle of `thermo_identity.rs`), counting caloric states:
-/// both bracket ends, every Newton iterate, then the one full point.
+/// The earlier production inverse's bracketed iteration restated on the
+/// public forward point (the identity oracle of `thermo_identity.rs`),
+/// counting its Newton iterates; the production inverse now starts from the
+/// stable end, so these counts describe the earlier path.
 fn iterations(
     branch: Branch,
     p: f64,
@@ -478,22 +479,6 @@ fn iterations(
         };
     }
     Err(Error::NativeFailure)
-}
-fn bits(q: &WaterPoint) -> [u64; 12] {
-    [
-        q.pressure_pa.to_bits(),
-        q.temperature_k.to_bits(),
-        q.density_kg_m3.to_bits(),
-        q.internal_energy_j_kg.to_bits(),
-        q.enthalpy_j_kg.to_bits(),
-        q.cp_j_kg_k.to_bits(),
-        q.cv_j_kg_k.to_bits(),
-        q.expansion_per_k.to_bits(),
-        q.compressibility_per_pa.to_bits(),
-        q.viscosity_pa_s.to_bits(),
-        q.conductivity_w_m_k.to_bits(),
-        q.saturation_slope_k_pa.to_bits(),
-    ]
 }
 
 /// Re-time one recorded query in isolation: the best of `repeats` wall times.
@@ -632,7 +617,23 @@ fn s1_network_residual_property_profile() {
                 .caloric(vapor, q.pressure, q.argument, enthalpy)
                 .map(|c| c.point())
                 .expect("production inverse");
-            assert_eq!(bits(&oracle), bits(&production), "oracle iteration differs");
+            // The production inverse starts from the stable end; the earlier
+            // bracketed iteration restated here agrees within its tolerance.
+            let value = |q: &WaterPoint| {
+                if enthalpy {
+                    q.enthalpy_j_kg
+                } else {
+                    q.internal_energy_j_kg
+                }
+            };
+            let scale = q
+                .argument
+                .abs()
+                .max(production.cp_j_kg_k * production.temperature_k);
+            assert!(
+                (value(&production) - value(&oracle)).abs() <= 4e-12 * scale.max(1.),
+                "production and the earlier iteration disagree beyond the tolerance"
+            );
             checked += 1;
             newton.push(count as f64);
             let mut best = f64::INFINITY;
@@ -706,7 +707,7 @@ fn s1_network_residual_property_profile() {
         "queries": by_kind,
         "caloric_inverse": {"checked_against_oracle": checked,
             "newton_iterates": summary(newton, 1.),
-            "caloric_states_per_inverse": "2 bracket ends + Newton iterates, then one full forward point",
+            "caloric_states_per_inverse": "earlier bracketed path: 2 bracket ends + Newton iterates, then one full forward point",
             "full_forward_point_at_root_us": summary(forward_us, 1e6)},
         "jacobian": {"states": jacobian_states.len(), "colors": structure.coloring.count(),
             "cpu_ms": summary(jacobian_cpu, 1e3), "digest": format!("{jacobian_digest:016x}")},
