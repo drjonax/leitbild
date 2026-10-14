@@ -1012,6 +1012,89 @@ impl RodBlock {
         }
         Ok([fluid_force * v, heat, boundary])
     }
+
+    /// Cluster `c`'s rows (physical: travel rate, motion or rest, passage
+    /// balance) and its guide receipts, as [`Rods::rows`] composes them.
+    fn cluster_rows(
+        &self,
+        c: usize,
+        x: &Coordinates<'_>,
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+    ) -> Result<[Scalar; 3], Failure> {
+        let f = self.forces(c, x, fluid)?;
+        let (y, v) = (x.value(3 * c), x.value(3 * c + 1));
+        let travel = x.rate(3 * c) - v;
+        let motion = match self.modes[c] {
+            Mode::Free => {
+                if self.spider_drag == SpiderDrag::Pending {
+                    return Err(fatal(
+                        "rods: a free body needs the S2 spider-drag selection, which is pending (envelope disk or declared omission)",
+                    ));
+                }
+                x.rate(3 * c + 1) - f.net / s(self.mass)
+            }
+            Mode::Held | Mode::Seated => v,
+        };
+        for (cell, [mass, enthalpy, tracer]) in self.transport(c, x, fluid)? {
+            receipts.add(cell, 0, mass, enthalpy, tracer)?;
+        }
+        // Wall work over the annulus span, by swept length and share.
+        let branch = Branch::of_rate(x.rate(3 * c).value);
+        let wall_work = -f.wall * v;
+        let tip = self.body_bottom + y.value;
+        let length = s(self.guide_top) - (s(self.body_bottom) + y);
+        for cell in &self.cells {
+            let (value, slope) = overlap(
+                cell.bottom,
+                cell.top,
+                (tip, 1.),
+                (self.guide_top, 0.),
+                branch,
+            );
+            if value == 0. && slope == 0. {
+                continue;
+            }
+            let share = s(cell.weights[c]) * Scalar::new(value, slope * y.direction) / length;
+            receipts.heat(cell.index, share * wall_work)?;
+        }
+        let drag_work = -f.spider_drag * v;
+        for (cell, _, fraction) in self.spider_cells(fluid, y, branch) {
+            if fraction.value != 0. || fraction.direction != 0. {
+                receipts.heat(cell, fraction * drag_work)?;
+            }
+        }
+        Ok([travel, motion, f.passage_residual])
+    }
+}
+
+/// Whether the fluid state of `cell` carries any direction: its pressure,
+/// a present phase's fraction, density, enthalpy or concentration, or a
+/// caloric point's direction.
+fn moved(fluid: &Fluid<'_>, cell: usize) -> bool {
+    let c = &fluid.cells[cell];
+    c.pressure.direction != 0.
+        || c.phase.iter().flatten().any(|p| {
+            [p.fraction, p.density, p.enthalpy, p.boron_concentration]
+                .iter()
+                .any(|v| v.direction != 0.)
+        })
+        || fluid.points[cell].iter().flatten().any(|(_, d)| {
+            [
+                d.pressure_pa,
+                d.temperature_k,
+                d.density_kg_m3,
+                d.internal_energy_j_kg,
+                d.enthalpy_j_kg,
+                d.cp_j_kg_k,
+                d.expansion_per_k,
+                d.compressibility_per_pa,
+                d.viscosity_pa_s,
+                d.conductivity_w_m_k,
+            ]
+            .iter()
+            .any(|v| *v != 0.)
+        })
 }
 
 impl<P> Rods<P> for RodBlock {
@@ -1140,50 +1223,85 @@ impl<P> Rods<P> for RodBlock {
             return Err(fatal("rods: row layout"));
         }
         for c in 0..self.clusters.len() {
-            let f = self.forces(c, &x, fluid)?;
-            let (y, v) = (x.value(3 * c), x.value(3 * c + 1));
-            rows[3 * c] = x.rate(3 * c) - v;
-            rows[3 * c + 1] = match self.modes[c] {
-                Mode::Free => {
-                    if self.spider_drag == SpiderDrag::Pending {
-                        return Err(fatal(
-                            "rods: a free body needs the S2 spider-drag selection, which is pending (envelope disk or declared omission)",
-                        ));
-                    }
-                    x.rate(3 * c + 1) - f.net / s(self.mass)
-                }
-                Mode::Held | Mode::Seated => v,
-            };
-            rows[3 * c + 2] = f.passage_residual;
-            for (cell, [mass, enthalpy, tracer]) in self.transport(c, &x, fluid)? {
-                receipts.add(cell, 0, mass, enthalpy, tracer)?;
+            let r = self.cluster_rows(c, &x, fluid, receipts)?;
+            rows[3 * c..3 * c + 3].copy_from_slice(&r);
+        }
+        Ok(())
+    }
+    fn rows_local(
+        &mut self,
+        _: &P,
+        _: f64,
+        x: Coordinates<'_>,
+        fluid: &Fluid<'_>,
+        clusters: &[usize],
+        receipts: &mut Receipts<'_>,
+        out: &mut Vec<(usize, Scalar)>,
+    ) -> Result<(), Failure> {
+        out.clear();
+        if x.len() != self.layout.len() {
+            return Err(fatal("rods: row layout"));
+        }
+        for &c in clusters {
+            if c >= self.clusters.len() {
+                return Err(fatal(format!("rods: cluster {c} outside the block")));
             }
-            // Wall work over the annulus span, by swept length and share.
+            let r = self.cluster_rows(c, &x, fluid, receipts)?;
+            out.extend((0..3).map(|k| (3 * c + k, r[k])));
+        }
+        Ok(())
+    }
+    fn readers(
+        &self,
+        x: Coordinates<'_>,
+        fluid: &Fluid<'_>,
+        cells: &[usize],
+        _faces: &[usize],
+        out: &mut Vec<usize>,
+    ) -> Result<(), Failure> {
+        out.clear();
+        if x.len() != self.layout.len() {
+            return Err(fatal("rods: reader layout"));
+        }
+        // A cluster's rows read the three plena (its forces, its passage and
+        // its spider); its receipts read them and the cells holding its tips
+        // (the R2 junction). No face chart is read.
+        let moved_cells: Vec<usize> = cells
+            .iter()
+            .copied()
+            .filter(|c| *c < self.regular && moved(fluid, *c))
+            .collect();
+        if moved_cells.is_empty() {
+            return Ok(());
+        }
+        let n = self.clusters.len();
+        if moved_cells
+            .iter()
+            .any(|c| [self.lower, self.upper, self.main].contains(c))
+        {
+            out.extend(0..n);
+            return Ok(());
+        }
+        for c in 0..n {
             let branch = Branch::of_rate(x.rate(3 * c).value);
-            let wall_work = -f.wall * v;
-            let tip = self.body_bottom + y.value;
-            let length = s(self.guide_top) - (s(self.body_bottom) + y);
-            for cell in &self.cells {
-                let (value, slope) = overlap(
-                    cell.bottom,
-                    cell.top,
-                    (tip, 1.),
-                    (self.guide_top, 0.),
-                    branch,
-                );
-                if value == 0. && slope == 0. {
-                    continue;
-                }
-                let share = s(cell.weights[c]) * Scalar::new(value, slope * y.direction) / length;
-                receipts.heat(cell.index, share * wall_work)?;
-            }
-            let drag_work = -f.spider_drag * v;
-            for (cell, _, fraction) in self.spider_cells(fluid, y, branch) {
-                if fraction.value != 0. || fraction.direction != 0. {
-                    receipts.heat(cell, fraction * drag_work)?;
-                }
+            if self
+                .tip_cells(c, x.value(3 * c).value, branch)
+                .iter()
+                .any(|(cell, _)| moved_cells.contains(cell))
+            {
+                out.push(c);
             }
         }
+        Ok(())
+    }
+    fn coordinate_readers(&self, i: usize, out: &mut Vec<usize>) -> Result<(), Failure> {
+        out.clear();
+        if i >= self.layout.len() {
+            return Err(fatal(format!("rods: coordinate {i} outside the block")));
+        }
+        // Each cluster's rows, receipts, travel and volumes read its own
+        // three coordinates only.
+        out.push(i / 3);
         Ok(())
     }
     fn structure(&self) -> Structure {

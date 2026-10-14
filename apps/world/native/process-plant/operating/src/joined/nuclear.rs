@@ -39,6 +39,13 @@ const DELAYED: usize = kinetics::DELAYED_GROUPS;
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
 }
+/// A history's tangent at zero directions: exactly +0 (its coefficients
+/// are nonnegative), the direction heat of an unseeded evaluation.
+const UNSEEDED_HEAT: heat_history::Heat = heat_history::Heat {
+    prompt_w: 0.,
+    delayed_w: 0.,
+    retained_input_w: 0.,
+};
 fn fatal(reason: impl Into<String>) -> Failure {
     Failure::Fatal(format!("joined nuclear: {}", reason.into()))
 }
@@ -682,6 +689,11 @@ impl Nuclear {
         }
         heat.fuel_w.resize(a, s(0.));
         heat.coolant_w.resize(a, s(0.));
+        // An unseeded evaluation carries zero directions everywhere: its
+        // rows' and heats' directions are exactly +0 without the tangent
+        // laws (which are linear in those zero directions), so it evaluates
+        // the values only.
+        let seeded = x.seeded();
         let w = &mut self.work;
         let mut out = w.feedback.take().ok_or_else(|| fatal("feedback buffer"))?;
         let result = (|| {
@@ -725,21 +737,27 @@ impl Nuclear {
             for i in 0..m0 {
                 let v = x.value(i);
                 w.state_value[i] = v.value;
-                w.state_direction[i] = v.direction;
+                if seeded {
+                    w.state_direction[i] = v.direction;
+                }
             }
             for i in 0..r {
                 w.region_value[i] = kinetics::RegionInput {
                     reactivity: out.regions[i].reactivity.value,
                     external_source_per_s: out.regions[i].external_source_per_s.value,
                 };
-                w.region_direction[i] = kinetics::RegionInput {
-                    reactivity: out.regions[i].reactivity.direction,
-                    external_source_per_s: out.regions[i].external_source_per_s.direction,
-                };
+                if seeded {
+                    w.region_direction[i] = kinetics::RegionInput {
+                        reactivity: out.regions[i].reactivity.direction,
+                        external_source_per_s: out.regions[i].external_source_per_s.direction,
+                    };
+                }
             }
             for (k, g) in out.fissions_per_population_s.iter().enumerate() {
                 w.production_value[k] = g.value;
-                w.production_direction[k] = g.direction;
+                if seeded {
+                    w.production_direction[k] = g.direction;
+                }
             }
             let inputs = kinetics::Inputs {
                 regions: &w.region_value,
@@ -763,7 +781,7 @@ impl Nuclear {
                     &mut w.fission_value,
                 )
                 .map_err(trial)?;
-            if x.seeded() {
+            if seeded {
                 self.kinetics
                     .directional_derivative(
                         &w.state_value,
@@ -777,6 +795,7 @@ impl Nuclear {
             } else {
                 w.rate_direction.fill(0.);
                 w.fission_direction.fill(0.);
+                w.history_rate_direction.fill(0.);
             }
             for (i, row) in rows.iter_mut().enumerate().take(m0) {
                 *row = x.rate(i) - Scalar::new(w.rate_value[i], w.rate_direction[i]);
@@ -792,15 +811,23 @@ impl Nuclear {
                     .capture
                     .rates(fertile.value, exposure.value)
                     .map_err(trial)?;
-                let dc = self
-                    .capture
-                    .tangent(
-                        fertile.value,
-                        exposure.value,
-                        fertile.direction,
-                        exposure.direction,
-                    )
-                    .map_err(trial)?;
+                let dc = if seeded {
+                    self.capture
+                        .tangent(
+                            fertile.value,
+                            exposure.value,
+                            fertile.direction,
+                            exposure.direction,
+                        )
+                        .map_err(trial)?
+                } else {
+                    capture::Receipt {
+                        captures_per_s: 0.,
+                        target_rate_per_s: 0.,
+                        product_rate_per_s: 0.,
+                        binding_w: 0.,
+                    }
+                };
                 let base = m0 + 6 * c;
                 rows[base] = x.rate(base) + fissions;
                 rows[base + 1] =
@@ -821,18 +848,20 @@ impl Nuclear {
                     capture_per_s: captures.map(|v| v.value),
                 };
                 self.poison.rates(&pv, pi, &mut pr).map_err(trial)?;
-                self.poison
-                    .tangent(
-                        &pv,
-                        pi,
-                        &pd,
-                        poisons::InputDirection {
-                            fissions_per_s: fissions.direction,
-                            capture_per_s: captures.map(|v| v.direction),
-                        },
-                        &mut dp,
-                    )
-                    .map_err(trial)?;
+                if seeded {
+                    self.poison
+                        .tangent(
+                            &pv,
+                            pi,
+                            &pd,
+                            poisons::InputDirection {
+                                fissions_per_s: fissions.direction,
+                                capture_per_s: captures.map(|v| v.direction),
+                            },
+                            &mut dp,
+                        )
+                        .map_err(trial)?;
+                }
                 for k in 0..4 {
                     rows[base + 2 + k] = x.rate(base + 2 + k) - Scalar::new(pr[k], dp[k]);
                 }
@@ -840,7 +869,9 @@ impl Nuclear {
                 for g in 0..HISTORIES {
                     let q = x.value(h0 + g);
                     w.history_value[g] = q.value;
-                    w.history_direction[g] = q.direction;
+                    if seeded {
+                        w.history_direction[g] = q.direction;
+                    }
                 }
                 let f = self
                     .fission
@@ -850,14 +881,17 @@ impl Nuclear {
                         &mut w.history_rate_value[..FISSION_GROUPS],
                     )
                     .map_err(trial)?;
-                let df = self
-                    .fission
-                    .tangent(
-                        &w.history_direction[..FISSION_GROUPS],
-                        fissions.direction,
-                        &mut w.history_rate_direction[..FISSION_GROUPS],
-                    )
-                    .map_err(trial)?;
+                let df = if seeded {
+                    self.fission
+                        .tangent(
+                            &w.history_direction[..FISSION_GROUPS],
+                            fissions.direction,
+                            &mut w.history_rate_direction[..FISSION_GROUPS],
+                        )
+                        .map_err(trial)?
+                } else {
+                    UNSEEDED_HEAT
+                };
                 let cf = self
                     .fertile
                     .rates(
@@ -866,14 +900,17 @@ impl Nuclear {
                         &mut w.history_rate_value[FISSION_GROUPS..],
                     )
                     .map_err(trial)?;
-                let dcf = self
-                    .fertile
-                    .tangent(
-                        &w.history_direction[FISSION_GROUPS..],
-                        dc.captures_per_s,
-                        &mut w.history_rate_direction[FISSION_GROUPS..],
-                    )
-                    .map_err(trial)?;
+                let dcf = if seeded {
+                    self.fertile
+                        .tangent(
+                            &w.history_direction[FISSION_GROUPS..],
+                            dc.captures_per_s,
+                            &mut w.history_rate_direction[FISSION_GROUPS..],
+                        )
+                        .map_err(trial)?
+                } else {
+                    UNSEEDED_HEAT
+                };
                 for g in 0..HISTORIES {
                     let rate = Scalar::new(w.history_rate_value[g], w.history_rate_direction[g]);
                     heat.stored_rate_w = heat.stored_rate_w + rate;

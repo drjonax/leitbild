@@ -44,6 +44,11 @@ impl Scalar {
         // q=0 has a finite tangent only for exponents >=1 or a zero seed.
         let d = if self.value == 0. && self.direction == 0. {
             0.
+        } else if self.direction == 0. && zero_tangent_scale(self.value, exponent) {
+            // A zero direction (either sign) times the finite factor
+            // `exponent * value^(exponent - 1)`: the same signed zero,
+            // without evaluating the factor's power.
+            exponent * self.direction
         } else {
             exponent * self.value.powf(exponent - 1.) * self.direction
         };
@@ -72,6 +77,16 @@ impl Scalar {
             other
         }
     }
+}
+/// Whether `exponent * value^(exponent - 1)` is certainly finite with the
+/// sign of `exponent` (or a zero of that sign): `value` is a positive normal
+/// in [2^-200, 2^200] and |exponent - 1| <= 4, so the power lies in
+/// [2^-800, 2^800]. Then `exponent * power * z` equals `exponent * z` bit
+/// for bit for either signed zero `z` ([`Scalar::pow`]'s zero direction).
+fn zero_tangent_scale(value: f64, exponent: f64) -> bool {
+    const LOWEST: f64 = f64::from_bits(0x3370_0000_0000_0000); // 2^-200
+    const HIGHEST: f64 = f64::from_bits(0x4c70_0000_0000_0000); // 2^200
+    (LOWEST..=HIGHEST).contains(&value) && (exponent - 1.).abs() <= 4.
 }
 impl From<f64> for Scalar {
     fn from(x: f64) -> Self {
@@ -465,32 +480,48 @@ pub struct Caloric {
 /// Existing reviewed material law with its explicit 300 K datum. The energy
 /// chart is nonlinear: prepared cp is not a constant mission heat capacity.
 pub fn fuel_caloric(t: Scalar) -> Result<Caloric> {
+    let (specific_energy, cp) = fuel_caloric_of(t)?;
+    Ok(Caloric {
+        specific_energy,
+        cp,
+    })
+}
+/// [`fuel_caloric`]'s energy and cp on the law's number: on `f64` bit for
+/// bit the values of the `Scalar` law, without its directions.
+fn fuel_caloric_of<N: Number>(t: N) -> Result<(N, N)> {
     t.finite()?;
-    if !(290. ..=2000.).contains(&t.value) {
+    if !(290. ..=2000.).contains(&t.value()) {
         return Err("fuel caloric domain 290--2000 K");
     }
     // The primitive and cp share their two exponentials, each evaluated
     // once; the 300 K datum is the same primitive, evaluated once.
-    let primitive = |exp: Scalar, x: Scalar, arrhenius: Scalar| {
-        s(296.7 * 535.285) / (exp - s(1.)) + s(0.0243 / 2.) * x * x + s(8.745e7) * arrhenius
-    };
-    let exponentials = |x: Scalar| ((s(535.285) / x).exp(), (-s(1.577e5 / 8.3143) / x).exp());
+    fn primitive<N: Number>(exp: N, x: N, arrhenius: N) -> N {
+        N::from(296.7 * 535.285) / (exp - N::from(1.))
+            + N::from(0.0243 / 2.) * x * x
+            + N::from(8.745e7) * arrhenius
+    }
+    fn exponentials<N: Number>(x: N) -> (N, N) {
+        (
+            (N::from(535.285) / x).exp(),
+            (-N::from(1.577e5 / 8.3143) / x).exp(),
+        )
+    }
     static DATUM: std::sync::OnceLock<Scalar> = std::sync::OnceLock::new();
     let datum = *DATUM.get_or_init(|| {
         let (exp, arrhenius) = exponentials(s(300.));
         primitive(exp, s(300.), arrhenius)
     });
-    let q = s(535.285) / t;
+    let q = N::from(535.285) / t;
     let exp = q.exp();
-    let arrhenius = (-s(1.577e5 / 8.3143) / t).exp();
-    let cp = s(296.7) * q * q * exp / ((exp - s(1.)) * (exp - s(1.)))
-        + s(0.0243) * t
-        + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * arrhenius;
+    let arrhenius = (-N::from(1.577e5 / 8.3143) / t).exp();
+    let cp = N::from(296.7) * q * q * exp / ((exp - N::from(1.)) * (exp - N::from(1.)))
+        + N::from(0.0243) * t
+        + N::from(8.745e7 * 1.577e5 / 8.3143) / (t * t) * arrhenius;
     positive(cp)?;
-    Ok(Caloric {
-        specific_energy: (primitive(exp, t, arrhenius) - datum).finite()?,
-        cp: cp.finite()?,
-    })
+    Ok((
+        (primitive(exp, t, arrhenius) - N::of(datum)).finite()?,
+        cp.finite()?,
+    ))
 }
 /// Piecewise-linear cp with its exact quadratic primitive. Knot tangents are
 /// the selected right-hand cp slope; E and dE/dT remain continuous.
@@ -564,10 +595,12 @@ pub fn clad_temperature(u: Scalar) -> Result<Scalar> {
 /// iteration bound is a termination guard, not a time step.
 pub fn fuel_temperature(u: Scalar) -> Result<Scalar> {
     u.finite()?;
-    let energy = |t: f64| fuel_caloric(s(t)).map(|c| (c.specific_energy.value, c.cp.value));
+    // The law's values on plain numbers, and its domain ends' energies
+    // evaluated once: the values the `Scalar` law returns, bit for bit.
+    let energy = fuel_caloric_of::<f64>;
+    static ENDS: std::sync::OnceLock<Result<(f64, f64)>> = std::sync::OnceLock::new();
+    let (u_lo, u_hi) = (*ENDS.get_or_init(|| Ok((energy(290.)?.0, energy(2000.)?.0))))?;
     let (mut lo, mut hi) = (290., 2000.);
-    let (u_lo, _) = energy(lo)?;
-    let (u_hi, _) = energy(hi)?;
     if !(u_lo..=u_hi).contains(&u.value) {
         return Err("fuel caloric inverse outside 290--2000 K");
     }
@@ -1735,6 +1768,90 @@ pub fn secondary_wall<P: WaterProperties>(
 }
 
 #[cfg(test)]
+mod zero_direction_power {
+    use super::*;
+
+    /// The tangent [`Scalar::pow`] evaluated before its zero-direction
+    /// shortcut, restated as the reference.
+    fn reference(x: Scalar, exponent: f64) -> Scalar {
+        let d = if x.value == 0. && x.direction == 0. {
+            0.
+        } else {
+            exponent * x.value.powf(exponent - 1.) * x.direction
+        };
+        Scalar::new(x.value.powf(exponent), d)
+    }
+
+    #[test]
+    fn zero_direction_powers_are_the_reference_bit_for_bit() {
+        let exponents = [
+            -4.,
+            -3.,
+            -2.5,
+            -1.,
+            -0.5,
+            -0.,
+            0.,
+            1e-300,
+            0.15,
+            0.27,
+            1. / 3.,
+            0.4,
+            0.5,
+            0.668,
+            0.8,
+            1.,
+            1.5,
+            2.,
+            3.,
+            4.,
+            5.,
+            5.5,
+            6.,
+            7.,
+            1e3,
+            -1e3,
+            1e300,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        let mut values = vec![
+            0.,
+            -0.,
+            f64::MIN_POSITIVE,
+            5e-324,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::from_bits(0x3370_0000_0000_0000),
+            f64::from_bits(0x3370_0000_0000_0000).next_down(),
+            f64::from_bits(0x4c70_0000_0000_0000),
+            f64::from_bits(0x4c70_0000_0000_0000).next_up(),
+        ];
+        let mut v = 1e-310;
+        while v < 1e308 {
+            values.extend([v, -v, v * 1.37, -v * 0.71]);
+            v *= 17.3;
+        }
+        for &value in &values {
+            for &exponent in &exponents {
+                for direction in [0., -0.] {
+                    let x = Scalar::new(value, direction);
+                    let (actual, expected) = (x.pow(exponent), reference(x, exponent));
+                    assert_eq!(
+                        (actual.value.to_bits(), actual.direction.to_bits()),
+                        (expected.value.to_bits(), expected.direction.to_bits()),
+                        "{value:e}^{exponent} with direction {direction}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod current_port_regression {
     use super::*;
     use std::cell::Cell;
@@ -1935,6 +2052,70 @@ mod current_port_regression {
             }
         }
         assert!(compared > 19_000);
+    }
+
+    /// The fuel caloric inverse on the law's plain values with its domain
+    /// ends evaluated once is bit for bit the inverse iterating the
+    /// `Scalar` law, in values, directions and refusals.
+    #[test]
+    fn fuel_temperature_on_plain_values_is_the_scalar_inverse_bit_for_bit() {
+        let reference = |u: Scalar| -> Result<Scalar> {
+            u.finite()?;
+            let energy = |t: f64| fuel_caloric(s(t)).map(|c| (c.specific_energy.value, c.cp.value));
+            let (mut lo, mut hi) = (290., 2000.);
+            let (u_lo, _) = energy(lo)?;
+            let (u_hi, _) = energy(hi)?;
+            if !(u_lo..=u_hi).contains(&u.value) {
+                return Err("fuel caloric inverse outside 290--2000 K");
+            }
+            let mut t = lo + (hi - lo) * (u.value - u_lo) / (u_hi - u_lo);
+            for _ in 0..64 {
+                let (e, cp) = energy(t)?;
+                let defect = e - u.value;
+                if defect.abs() <= 2e-12 * u.value.abs().max(cp * t) {
+                    return Scalar::new(t, u.direction / cp).finite();
+                }
+                if defect < 0. {
+                    lo = t;
+                } else {
+                    hi = t;
+                }
+                let next = t - defect / cp;
+                t = if next > lo && next < hi {
+                    next
+                } else {
+                    0.5 * (lo + hi)
+                };
+            }
+            Err("fuel caloric inverse did not converge")
+        };
+        let (u_lo, u_hi) = (
+            fuel_caloric(s(290.)).unwrap().specific_energy.value,
+            fuel_caloric(s(2000.)).unwrap().specific_energy.value,
+        );
+        let mut compared = 0;
+        for i in 0..=20_000 {
+            let value = u_lo - 1e3 + (u_hi - u_lo + 2e3) * f64::from(i) / 20_000.;
+            for direction in [0., -0., 1., -3.7e3, 2.5e5] {
+                let u = Scalar::new(value, direction);
+                match (fuel_temperature(u), reference(u)) {
+                    (Ok(a), Ok(b)) => {
+                        assert_eq!(bits2(a), bits2(b), "u {value} du {direction}");
+                        compared += 1;
+                    }
+                    (a, b) => assert_eq!(a.err(), b.err(), "u {value} du {direction}"),
+                }
+            }
+        }
+        for value in [u_lo, u_hi, u_lo.next_down(), u_hi.next_up(), f64::NAN] {
+            let u = Scalar::new(value, 1.);
+            assert_eq!(
+                fuel_temperature(u).map(bits2),
+                reference(u).map(bits2),
+                "u {value}"
+            );
+        }
+        assert!(compared > 90_000);
     }
 
     #[test]

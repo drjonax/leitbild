@@ -34,7 +34,7 @@ use crate::{
     sparse::{self, Coloring, Pattern},
     thermal::{self, Scalar, WaterProperties},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 fn s(v: f64) -> Scalar {
@@ -135,6 +135,10 @@ struct Blocks<P> {
     /// Per solid coordinate: the closed scope of its owner column and the
     /// store whose temperature it sets, compiled at first use.
     column_scopes: Vec<Option<(solids::Closed, Option<usize>)>>,
+    /// Per local coupling input (its moved cells, `usize::MAX`, its moved
+    /// faces): the wall cells and the closed solid scope it reaches,
+    /// compiled at first use.
+    local_scopes: BTreeMap<Vec<usize>, (Vec<usize>, solids::Closed)>,
     /// Wall time of the local coupler's calls, by kind.
     coupler: CouplerCounters,
 }
@@ -146,7 +150,7 @@ struct Blocks<P> {
 pub struct CouplerCounters {
     pub local: Tally,
     /// Inside `local`: the solids' wall refresh and closed-scope rows, and
-    /// the rod owner's whole evaluation when reached.
+    /// the rod clusters' evaluation when reached.
     pub local_solids: Tally,
     pub local_rods: Tally,
     pub solid_columns: Tally,
@@ -342,6 +346,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             rod_reads,
             secondary_outputs,
             column_scopes: vec![None; solids.layout().len()],
+            local_scopes: BTreeMap::new(),
             coupler: CouplerCounters::default(),
             nuclear_rows: vec![s(0.); nuclear.layout().len()],
             solid_rows: vec![s(0.); solids.layout().len()],
@@ -839,7 +844,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
         cj: f64,
     ) -> (&'a Network<P>, LocalCoupler<'a, P>) {
         let endpoints = self.faces.iter().map(|f| (f.from, f.to)).collect();
-        let rod_rows = vec![s(0.); self.blocks.rod_rows.len()];
+        let rod_rows = Vec::new();
         let scratch = Scratch {
             seed: vec![0.; self.blocks.offsets.end],
             secondary_rows: vec![s(0.); self.blocks.secondary_rows.len()],
@@ -1406,6 +1411,10 @@ struct Scratch {
     volumes: Vec<CellVolume>,
     /// Receipts of a port whose receipts must stay without direction.
     sink: Vec<[[Scalar; 3]; 2]>,
+    /// The rod clusters one call evaluates.
+    clusters: Vec<usize>,
+    /// One local coupling call's scope key.
+    key: Vec<usize>,
 }
 
 /// What one local coupling call re-evaluated: global joined rows in solver
@@ -1427,7 +1436,8 @@ pub struct LocalRows {
 pub struct LocalCoupler<'a, P> {
     blocks: &'a mut Blocks<P>,
     t: f64,
-    rod_rows: Vec<Scalar>,
+    /// The evaluated rod clusters' rows, `(own row, value)`.
+    rod_rows: Vec<(usize, Scalar)>,
     scratch: Scratch,
     y: &'a [f64],
     yp: &'a [f64],
@@ -1477,8 +1487,8 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     /// holds every row they complete, value for value equal to the full
     /// coupling's. The column's wall water is refreshed for the call and
     /// put back after it, so every other column reads the base water. The
-    /// rod owner, when it reads a listed cell or face, is evaluated whole:
-    /// its rows and guide receipts.
+    /// rod clusters that read a listed cell whose fluid moved are evaluated:
+    /// their rows and guide receipts ([`Rods::readers`]).
     pub fn local(
         &mut self,
         cells: &[usize],
@@ -1498,8 +1508,17 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         fluid: &Fluid<'_>,
         receipts: &mut Receipts<'_>,
     ) -> Result<(), Failure> {
-        let wall = self.wall_cells(cells, faces);
-        let scope = self.scope(cells, &wall);
+        let key = &mut self.scratch.key;
+        key.clear();
+        key.extend_from_slice(cells);
+        key.push(usize::MAX);
+        key.extend_from_slice(faces);
+        if !self.blocks.local_scopes.contains_key(&key[..]) {
+            let wall = self.wall_cells(cells, faces);
+            let scope = self.scope(cells, &wall);
+            let key = self.scratch.key.clone();
+            self.blocks.local_scopes.insert(key, (wall, scope));
+        }
         let o = self.blocks.offsets;
         let Blocks {
             properties,
@@ -1510,10 +1529,12 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             scales,
             source_water,
             coupler,
+            local_scopes,
             ..
         } = &mut *self.blocks;
+        let (wall, scope) = &local_scopes[&self.scratch.key[..]];
         let solids_started = Instant::now();
-        let replaced = solids.wall_water_local(properties, fluid, &wall)?;
+        let replaced = solids.wall_water_local(properties, fluid, wall)?;
         let solved = view(
             self.y,
             self.yp,
@@ -1530,7 +1551,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 &heats.nuclear.fuel_w,
                 fluid,
                 views,
-                &scope,
+                scope,
                 receipts,
                 &mut self.solid_rows,
                 &mut self.heat,
@@ -1577,16 +1598,26 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 o.rods..o.end,
                 &scales[3].coordinates,
             )?;
-            let evaluated = b.rows(properties, self.t, x, fluid, receipts, &mut self.rod_rows);
+            // Only the clusters reading a moved cell take a direction.
+            let clusters = &mut self.scratch.clusters;
+            let evaluated = b.readers(x, fluid, cells, faces, clusters).and_then(|()| {
+                b.rows_local(
+                    properties,
+                    self.t,
+                    x,
+                    fluid,
+                    clusters,
+                    receipts,
+                    &mut self.rod_rows,
+                )
+            });
             self.blocks.coupler.local_rods.add(rods_started);
             evaluated?;
             let scales = &self.blocks.scales;
             self.last.rows.extend(
                 self.rod_rows
                     .iter()
-                    .zip(&scales[3].rows)
-                    .enumerate()
-                    .map(|(i, (r, row_scale))| (o.rods + i, *r / s(*row_scale))),
+                    .map(|(i, r)| (o.rods + i, *r / s(scales[3].rows[*i]))),
             );
         }
         Ok(())
@@ -1646,7 +1677,8 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     ///   coordinates and the seeded heat. The heat's path is therefore
     ///   already in `rows`, and `secondary_w` stays empty: chaining it again
     ///   through [`LocalCoupler::secondary_heat_column`] would count it twice.
-    /// - Rods: travel, moving volumes, every rod row and the guide receipts.
+    /// - Rods: travel, moving volumes, and the rows and guide receipts of
+    ///   the clusters reading the column.
     pub fn owner_column(
         &mut self,
         column: usize,
@@ -1668,7 +1700,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         } else if column < o.rods {
             self.secondary_column(column - o.secondary, fluid, receipts, out)
         } else {
-            self.rod_column(fluid, receipts, out)
+            self.rod_column(column, fluid, receipts, out)
         };
         self.scratch.seed[column] = 0.;
         let c = &mut self.blocks.coupler;
@@ -1856,10 +1888,11 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         Ok(())
     }
 
-    /// Travel, moving volumes, rod rows and guide receipts for the seeded
-    /// rod coordinate.
+    /// Travel, moving volumes, and the rows and guide receipts of the
+    /// clusters reading the seeded rod coordinate (global `column`).
     fn rod_column(
         &mut self,
+        column: usize,
         fluid: &Fluid<'_>,
         receipts: &mut Receipts<'_>,
         out: &mut OwnerRows,
@@ -1899,13 +1932,22 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         b.volumes(x, compiled_volumes, volumes)?;
         let moved = rod_reads.as_ref().map_or(&[][..], |r| &r.volume_cells[..]);
         out.volumes.extend(moved.iter().map(|c| (*c, volumes[*c])));
-        b.rows(properties, self.t, x, fluid, receipts, &mut self.rod_rows)?;
+        // Only the clusters reading the seeded coordinate take a direction.
+        let clusters = &mut self.scratch.clusters;
+        b.coordinate_readers(column - o.rods, clusters)?;
+        b.rows_local(
+            properties,
+            self.t,
+            x,
+            fluid,
+            clusters,
+            receipts,
+            &mut self.rod_rows,
+        )?;
         out.rows.extend(
             self.rod_rows
                 .iter()
-                .zip(&scales[3].rows)
-                .enumerate()
-                .map(|(i, (r, row_scale))| (o.rods + i, *r / s(*row_scale))),
+                .map(|(i, r)| (o.rods + i, *r / s(scales[3].rows[*i]))),
         );
         Ok(())
     }

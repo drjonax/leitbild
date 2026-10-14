@@ -4,19 +4,24 @@
  * section compiler, and Rust owns every law. The spine sections are
  * unchanged, so the network and the joined blocks read the same bytes.
  *
- * Sections: `secondary` (the SG secondary owner, prepareOperatingSecondary)
- * and `rods` (the rod owner, compileOperatingRods). The PZR metal and relief
+ * Sections: `secondary` (the SG secondary owner, prepareOperatingSecondary),
+ * `rods` (the rod owner, compileOperatingRods) and `post_trip_domain` (D3 (a),
+ * compileOperatingPostTripDomain). The PZR metal and relief
  * section joins as its compiler lands; a missing section is never stood in
  * for.
  *
- * Usage: bun reference-design-operating-joined.ts <wiki root> <pinned IF97 directory> */
+ * The spine is compiled in two passes around the stock-IDA steady solids
+ * settle (G18); `settle` produces that steady state.
+ *
+ * Usage: bun reference-design-operating-joined.ts <wiki root> <pinned IF97 directory> <prepare_steady_solids executable> */
 import { createHash } from 'node:crypto'
 import { compileOperatingRods } from './reference-design-operating-rods'
 import { prepareOperatingSecondary } from './reference-design-operating-sg'
-import { prepareOperatingSpine } from './reference-design-operating-spine'
+import { compileOperatingPostTripDomain } from './reference-design-operating-source'
+import { nativeSteadySolids, prepareOperatingSpine, type SteadySolidsSettle } from './reference-design-operating-spine'
 
-export async function prepareOperatingJoined(wiki: string, if97: string) {
-  const spine = await prepareOperatingSpine(wiki, if97)
+export async function prepareOperatingJoined(wiki: string, if97: string, settle: SteadySolidsSettle) {
+  const spine = await prepareOperatingSpine(wiki, if97, settle)
   const secondary = await prepareOperatingSecondary(wiki)
   const rods = await compileOperatingRods(wiki)
   if (rods.clusters.length !== spine.feedback_reference.achievedRodTravel_m.length)
@@ -27,13 +32,13 @@ export async function prepareOperatingJoined(wiki: string, if97: string) {
   for (const [i, g] of secondary.steamGenerators.entries())
     if (g.volume_m3 !== spine.thermal.secondaries[i]!.volume_m3) throw Error(`SG.${g.id} volume disagrees with its prepared stock`)
   const hash = (s: string) => createHash('sha256').update(s).digest('hex')
-  return { ...spine, identity: 'LD01-JOINED-SPINE-1', secondary, rods,
+  return { ...spine, identity: 'LD01-JOINED-SPINE-1', secondary, rods, post_trip_domain: await compileOperatingPostTripDomain(wiki),
     provenance: { ...spine.provenance, joinedSourceSha256: hash(await Bun.file(import.meta.path).text()) },
     scope: 'Joined S2 inputs: the compact spine packet unchanged, with the SG secondary and rod owners\' strict sections. The PZR metal and relief section is pending: absent, not stood in for. No trajectory admission.' }
 }
 
 if (import.meta.main) {
-  const [wiki, if97] = Bun.argv.slice(2)
-  if (!wiki || !if97 || Bun.argv.length !== 4) throw Error('Usage: operating-joined <wiki root> <pinned IF97 directory>')
-  console.log(JSON.stringify(await prepareOperatingJoined(wiki, if97)))
+  const [wiki, if97, settle] = Bun.argv.slice(2)
+  if (!wiki || !if97 || !settle || Bun.argv.length !== 5) throw Error('Usage: operating-joined <wiki root> <pinned IF97 directory> <prepare_steady_solids executable>')
+  console.log(JSON.stringify(await prepareOperatingJoined(wiki, if97, nativeSteadySolids(settle, wiki))))
 }

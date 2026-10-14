@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os'
 import {join, resolve} from 'node:path'
 import {nativeIf97HeaderSha256, nativeIf97LicenseSha256, nativeIf97Revision, nativeIf97Source} from './reference-design-if97-primitives'
 import {metastableSchema, ownedBlock, pzrOwners} from './reference-design-operating-pzr'
+import {wikiProvenance} from './reference-design-wiki-provenance'
 
 const hash=(v:Uint8Array|string)=>createHash('sha256').update(v).digest('hex')
 
@@ -489,6 +490,24 @@ int ld01_water_vapor_sat_density(double T,double dT,double* value,double* direct
 }
 `
 
+/** The compiler and archiver of this build, pinned in its receipt. The
+ * archive is deterministic (no timestamps, uid, gid or modes): Apple's
+ * `libtool -static -D` (with ZERO_AR_DATE=1 for Apple's `ar` underneath) on
+ * macOS, GNU `ar rcsD` elsewhere, so an unchanged adapter and compiler
+ * rebuild to the same library hash. */
+export function waterToolchain(platform:string=process.platform){
+  const first=(args:string[])=>{
+    const run=Bun.spawnSync(args,{stdout:'pipe',stderr:'pipe'})
+    if(run.exitCode!==0)throw Error(`${args.join(' ')}: ${run.stderr.toString().trim()}`)
+    return run.stdout.toString().split('\n')[0]!.trim()
+  }
+  return {compiler:{command:'c++',version:first(['c++','--version']),target:first(['c++','-dumpmachine']),
+      flags:['-std=c++17','-O2','-fPIC']},
+    archiver:platform==='darwin'?'libtool -static -D (ZERO_AR_DATE=1)':'ar rcsD'}
+}
+const archiveCommand=(platform:string,library:string,object:string)=>
+  platform==='darwin'?['libtool','-static','-D','-o',library,object]:['ar','rcsD',library,object]
+
 export async function buildOperatingWater(if97Directory:string,wikiRoot:string,outputDirectory:string){
   const directory=resolve(if97Directory),output=resolve(outputDirectory),wiki=resolve(wikiRoot)
   const [header,license]=await Promise.all(['IF97.h','LICENSE'].map(n=>Bun.file(join(directory,n)).bytes()))
@@ -496,16 +515,20 @@ export async function buildOperatingWater(if97Directory:string,wikiRoot:string,o
     throw Error('Pinned maintained IF97 header/license mismatch')
   const page=await Bun.file(join(wiki,metastableBandPage)).bytes()
   const band=parseMetastableBand(ownedBlock(new TextDecoder().decode(page),pzrOwners.metastable.heading,pzrOwners.metastable.fence))
+  const wikiSource=await wikiProvenance(wiki)
+  const toolchain=waterToolchain()
   const source=operatingWaterBridge(band)
   await mkdir(output,{recursive:true})
   const work=await mkdtemp(join(tmpdir(),'ld01-water-build-'))
   try{
     const object=join(work,'water.o'),library=join(output,'libld01_operating_water.a')
-    const compile=Bun.spawn(['c++','-std=c++17','-O2','-fPIC','-I',directory,'-x','c++','-c','-o',object,'-'],
+    const compile=Bun.spawn(['c++',...toolchain.compiler.flags,'-I',directory,'-x','c++','-c','-o',object,'-'],
       {stdin:new Blob([source]),stdout:'pipe',stderr:'pipe'})
     const [compileError,code]=await Promise.all([new Response(compile.stderr).text(),compile.exited])
     if(code!==0)throw Error(compileError||'Operating water bridge compilation failed')
-    const archive=Bun.spawn(['ar','rcs',library,object],{stdout:'pipe',stderr:'pipe'})
+    await rm(library,{force:true})
+    const archive=Bun.spawn(archiveCommand(process.platform,library,object),
+      {stdout:'pipe',stderr:'pipe',env:{...Bun.env,ZERO_AR_DATE:'1'}})
     const [archiveError,status]=await Promise.all([new Response(archive.stderr).text(),archive.exited])
     if(status!==0)throw Error(archiveError||'Operating water archive failed')
     // Written by this hash-verified build for inspection. Cargo links the
@@ -514,6 +537,7 @@ export async function buildOperatingWater(if97Directory:string,wikiRoot:string,o
     const receipt={revision:nativeIf97Revision,headerSha256:nativeIf97HeaderSha256,
       licenseSha256:nativeIf97LicenseSha256,adapterSha256:hash(source),
       librarySha256:hash(await Bun.file(library).bytes()),platform:process.platform,architecture:process.arch,
+      toolchain,wiki:{tree:wikiSource.tree,commit:wikiSource.commit,basis:wikiSource.basis},
       metastableBand:{page:metastableBandPage,pageSha256:hash(page),heading:pzrOwners.metastable.heading,
         fence:pzrOwners.metastable.fence,band}}
     await Bun.write(join(output,'water-build.json'),JSON.stringify(receipt,null,2)+'\n')

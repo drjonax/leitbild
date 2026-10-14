@@ -703,6 +703,10 @@ impl Model {
         }
         Ok(())
     }
+    /// The compiled accepted-state domains.
+    pub fn domains(&self) -> Domains {
+        self.parameters.domains
+    }
     /// Additional achieved fissions/Fref SINCE this immutable prepared baseline.
     /// Original30-day spent stocks remain separate and are never reset here.
     pub fn validate_accepted(
@@ -712,6 +716,25 @@ impl Model {
         additional_reference_exposure_s: f64,
         out: &mut Output,
     ) -> Result<(), Error> {
+        self.validate_accepted_within(
+            neutrons,
+            c,
+            additional_reference_exposure_s,
+            out,
+            self.parameters.domains,
+        )
+    }
+    /// [`Model::validate_accepted`] against `domains`: the compiled ones, or
+    /// the D3 (a) post-trip extension while its checked shutdown margin holds
+    /// (`joined::post_trip_domain`, the only other caller).
+    pub fn validate_accepted_within(
+        &self,
+        neutrons: &[Scalar],
+        c: Conditions<'_>,
+        additional_reference_exposure_s: f64,
+        out: &mut Output,
+        domains: Domains,
+    ) -> Result<(), Error> {
         self.evaluate(neutrons, c, out)?;
         let within = |v: f64, b: Bounds, name: &'static str, i: usize| {
             if v < b.minimum || v > b.maximum {
@@ -720,7 +743,7 @@ impl Model {
                 Ok(())
             }
         };
-        let d = self.parameters.domains;
+        let d = domains;
         if !additional_reference_exposure_s.is_finite()
             || additional_reference_exposure_s < 0.
             || additional_reference_exposure_s > d.maximum_additional_reference_exposure_s
