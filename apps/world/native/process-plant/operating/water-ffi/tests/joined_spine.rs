@@ -1145,6 +1145,110 @@ fn jacobian_attribution(
     json!({"jacobians": c.jacobians, "wall_s_per_jacobian": c.jacobian_wall_s / n, "by_kind": per})
 }
 
+/// G6 on the joined operator: the PZR relief's two roots follow the PZR
+/// block's own (after the SG and rod owners'), and its transactions change
+/// the lift only at a mechanical stop, exactly to 1 at full lift and
+/// exactly to 0 on the seat; the seated state restarts consistently.
+/// Zero-time; the roots are driven by declared crossings, not by a
+/// trajectory.
+#[test]
+#[ignore = "NOT-EVIDENCE zero-time check: requires a G6 joined packet (pzrMetal), the wiki, IF97 and stock IDA/KLU"]
+fn the_pzr_relief_roots_and_stops_transact_on_the_joined_state() {
+    use leitbild_operating_plant::{
+        joined::{operator::Joined, pzr::DISARMED},
+        network::{PZR_PRESSURE, stratified::ReliefMotion},
+    };
+    let Started {
+        mut joined,
+        y,
+        ids,
+        atol,
+        rtol,
+        ..
+    } = started_full_composition();
+    let relief = joined
+        .pzr()
+        .and_then(|b| b.relief())
+        .expect("a G6 packet composes the PZR relief");
+    let o = joined.offsets();
+    let n = joined.root_count();
+    let owners = joined.secondary().unwrap().root_count() + joined.rods().unwrap().root_count();
+    assert_eq!(
+        n,
+        owners + 2,
+        "the relief's demand and travel roots come last"
+    );
+    let roots = |joined: &mut Joined<If97>, y: &[f64]| {
+        let mut out = vec![0.; n];
+        joined.roots(0., y, &vec![0.; y.len()], &mut out).unwrap();
+        [out[n - 2], out[n - 1]]
+    };
+    let roof = joined.network.pzr.base + PZR_PRESSURE;
+    let p_roof = y[roof] * joined.network.scales()[roof];
+    assert_eq!(
+        roots(&mut joined, &y),
+        [p_roof - relief.device.opening_pa, DISARMED]
+    );
+    let crossing = |demand: i32, travel: i32| {
+        let mut d = vec![0; n];
+        d[n - 2] = demand;
+        d[n - 1] = travel;
+        d
+    };
+    let state = |joined: &Joined<If97>| {
+        let r = joined.pzr().unwrap().relief().unwrap();
+        (r.demand_open, r.motion)
+    };
+    let mut y = y;
+    // Demand rising through the opening pressure: the lift starts opening.
+    let before = y.clone();
+    joined.transact(0., &crossing(1, 0), &mut y).unwrap();
+    assert_eq!(state(&joined), (true, ReliefMotion::Opening));
+    assert_eq!(y, before, "a demand crossing changes no coordinate");
+    assert_eq!(
+        roots(&mut joined, &y),
+        [p_roof - relief.device.reseat_pa, 1.]
+    );
+    // The full-lift stop: exactly 1, open.
+    y[o.pzr] = 1. - 4e-9;
+    let done = joined.transact(0., &crossing(0, -1), &mut y).unwrap();
+    assert_eq!(y[o.pzr], 1.);
+    assert_eq!(state(&joined), (true, ReliefMotion::Open));
+    assert_eq!(done[0].receipt["stop"]["lift_after"], 1.);
+    assert_eq!(roots(&mut joined, &y)[1], DISARMED);
+    // Demand falling through the reseat pressure, then the seat: exactly 0.
+    joined.transact(0., &crossing(-1, 0), &mut y).unwrap();
+    assert_eq!(state(&joined), (false, ReliefMotion::Closing));
+    assert_eq!(roots(&mut joined, &y)[1], 1.);
+    y[o.pzr] = 3e-9;
+    joined.transact(0., &crossing(0, -1), &mut y).unwrap();
+    assert_eq!(y[o.pzr], 0.);
+    assert_eq!(state(&joined), (false, ReliefMotion::Closed));
+    // A crossing the demand state contradicts refuses.
+    assert!(joined.transact(0., &crossing(-1, 0), &mut y).is_err());
+    // The seated relief restarts by the exact consistent start.
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (rtol * v.abs() + a))
+        .collect();
+    let (_, start) = leitbild_operating_water::joined::consistent_start(
+        &mut joined,
+        0.,
+        &mut y,
+        &ids,
+        &weights,
+        1e-12,
+        2,
+    )
+    .expect("the seated relief restarts");
+    println!(
+        "{}",
+        json!({"kind":"s2-g6-relief-transactions","status":"NOT-EVIDENCE zero-time check; declared crossings, no trajectory",
+            "roots":n,"relief_roots":[n - 2, n - 1],"p_roof_pa":p_roof,"restart":format!("{start:?}")})
+    );
+}
+
 #[test]
 #[ignore = "NOT-EVIDENCE probe: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
 fn reactivity_decomposition_at_the_prepared_and_settled_states() {
