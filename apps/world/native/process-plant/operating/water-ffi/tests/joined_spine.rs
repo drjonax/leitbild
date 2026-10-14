@@ -13,6 +13,8 @@ use leitbild_operating_plant::{
 use leitbild_operating_water::If97;
 use serde_json::{Value, json};
 use std::path::Path;
+#[path = "ld01_regression/wiki.rs"]
+mod wiki;
 
 /// The S1 harness's declared PZR preparation controls (s1_hydraulics.rs).
 const PZR: PzrPreparation = PzrPreparation {
@@ -28,7 +30,9 @@ fn packet_bytes() -> (String, Vec<u8>) {
 }
 
 /// App and wiki provenance of a receipt: commits and whether the worktrees
-/// were clean. The wiki is the archive or checkout named by `LD01_WIKI_ROOT`.
+/// were clean. The wiki is the archive or checkout named by `LD01_WIKI_ROOT`;
+/// its tree hash is recorded and `LD01_WIKI_COMMIT` is verified against it
+/// (`ld01_regression/wiki.rs`), so an archive's receipt names its commit.
 fn provenance() -> Value {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
@@ -42,7 +46,7 @@ fn provenance() -> Value {
         "app_commit": git(&["rev-parse", "HEAD"]),
         "app_worktree_dirty": !git(&["status", "--porcelain"]).is_empty(),
         "wiki": wiki,
-        "wiki_commit": wiki.as_ref().map(|w| git(&["-C", w, "rev-parse", "HEAD"])),
+        "wiki_provenance": wiki.as_ref().map(|w| wiki::provenance(Path::new(w)).expect("wiki provenance")),
     })
 }
 

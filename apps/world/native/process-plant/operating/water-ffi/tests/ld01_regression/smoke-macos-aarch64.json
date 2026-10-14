@@ -68,9 +68,10 @@
     }
   },
   "environment": {
+    "packet_sha256": "9eb6e37d907be08bba3e9cc1a8bffee6756dac1f56c32b2e92c58a519b97dfcb",
+    "s1_gates_sha256": "708aca3b870d6b561a40fa1a6c1c923db8caed40bc5b3a2e72ebf17a86a4c91a",
     "if97_revision": "0be7b51f35c47e59e6f91f4f0f47108bf997e50c",
     "metastable_page_sha256": "0138902a4409a6f999a5fab689f95e39e09f68c2e15b097b43541a3d9c640536",
-    "packet_sha256": "9eb6e37d907be08bba3e9cc1a8bffee6756dac1f56c32b2e92c58a519b97dfcb",
     "sundials_version": "7.5.0",
     "water_adapter_sha256": "f59a5dbb4c97c9687c187d786244e580dd88a97637347d6f8f77b0b2da43b9f1"
   },

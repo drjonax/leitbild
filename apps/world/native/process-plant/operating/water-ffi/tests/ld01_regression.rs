@@ -32,6 +32,8 @@
 #![cfg(feature = "ida")]
 #[path = "common/cpu.rs"]
 mod cpu;
+#[path = "ld01_regression/wiki.rs"]
+mod wiki;
 
 use leitbild_operating_plant::{
     initialization::SurfacePolicy,
@@ -135,6 +137,9 @@ fn packet_bytes() -> (String, Vec<u8>) {
 
 /// The `ld01-s1-gates` block of the wiki named by `LD01_WIKI_ROOT`.
 fn s1_gates() -> Value {
+    serde_json::from_str(&s1_gates_text()).unwrap()
+}
+fn s1_gates_text() -> String {
     let wiki = std::env::var("LD01_WIKI_ROOT").expect("LD01_WIKI_ROOT");
     let page = format!(
         "{wiki}/world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md"
@@ -143,7 +148,7 @@ fn s1_gates() -> Value {
     let open = "```ld01-s1-gates\n";
     let start = text.find(open).expect("ld01-s1-gates") + open.len();
     let end = start + text[start..].find("\n```").unwrap();
-    serde_json::from_str(&text[start..end]).unwrap()
+    text[start..end].to_string()
 }
 fn classes(gates: &Value) -> ToleranceClasses {
     let f = |k: &str| gates[k].as_f64().unwrap_or_else(|| panic!("gate {k}"));
@@ -180,6 +185,7 @@ fn environment(packet_sha256: &str) -> Value {
         .to_string();
     json!({
         "packet_sha256": packet_sha256,
+        "s1_gates_sha256": sha256(s1_gates_text().as_bytes()),
         "if97_revision": receipt["revision"],
         "water_adapter_sha256": receipt["adapterSha256"],
         "metastable_page_sha256": receipt["metastableBand"]["pageSha256"],
@@ -552,6 +558,8 @@ fn smoke() {
         );
     }
     let gates = s1_gates();
+    let wiki_root = std::env::var("LD01_WIKI_ROOT").expect("LD01_WIKI_ROOT");
+    let wiki = wiki::provenance(Path::new(&wiki_root)).expect("wiki provenance");
 
     // Census against memo Table 1.1.
     let census = {
@@ -742,7 +750,7 @@ fn smoke() {
         "{}",
         serde_json::to_string(&json!({
             "smoke": actual,
-            "info": {"packet": path, "z1": z1_info, "oracle": oracle_info, "settle": settle_info, "release_restart": release_info,
+            "info": {"packet": path, "wiki": wiki, "z1": z1_info, "oracle": oracle_info, "settle": settle_info, "release_restart": release_info,
                 "process_cpu_s": total, "phase_cpu_s": phase_cpu, "load_average": [load_start, cpu::load_average()],
                 "scheduling": cpu::SCHEDULING}
         }))
@@ -1139,4 +1147,71 @@ fn settled_state() {
         "settled-state regression:\n{}",
         problems.join("\n")
     );
+}
+
+/// Wiki provenance: git's own tree hash of the directory read, a named
+/// commit accepted only when its tree is that hash, a checkout's HEAD.
+#[test]
+fn wiki_provenance_verifies_a_named_commit_against_the_tree() {
+    let git = |cwd: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(cwd)
+            .args([
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let temporary = std::env::temp_dir().join(format!("ld01-wiki-test-{}", std::process::id()));
+    let (repository, archive) = (temporary.join("repository"), temporary.join("archive"));
+    for d in [&repository.join("world/a"), &archive.join("world/a")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    for root in [&repository, &archive] {
+        std::fs::write(root.join("index.md"), "# Index\n").unwrap();
+        std::fs::write(root.join("world/a/page.md"), "page\n").unwrap();
+        std::fs::write(root.join("world/a-b.md"), "sorted before a/\n").unwrap();
+    }
+    git(&temporary, &["init", "-q", "repository"]);
+    git(&repository, &["add", "-A"]);
+    git(&repository, &["commit", "-q", "-m", "first"]);
+    let first = git(&repository, &["rev-parse", "HEAD"]);
+    std::fs::write(repository.join("index.md"), "# Second\n").unwrap();
+    git(&repository, &["commit", "-q", "-am", "second"]);
+    let second = git(&repository, &["rev-parse", "HEAD"]);
+    let repo = repository.to_string_lossy().to_string();
+    let verified = wiki::provenance_with(&archive, Some(&first[..7]), Some(&repo)).unwrap();
+    assert_eq!(verified["commit"], json!(first));
+    assert_eq!(
+        verified["tree"],
+        json!(git(
+            &repository,
+            &["rev-parse", &format!("{first}^{{tree}}")]
+        ))
+    );
+    let refused = wiki::provenance_with(&archive, Some(&second), Some(&repo)).unwrap_err();
+    assert!(refused.contains("has tree"), "{refused}");
+    assert!(wiki::provenance_with(&archive, Some(&first), None).is_err());
+    assert_eq!(
+        wiki::provenance_with(&archive, None, None).unwrap()["commit"],
+        Value::Null
+    );
+    let head = wiki::provenance_with(&repository, None, None).unwrap();
+    assert_eq!(
+        (head["commit"].clone(), head["basis"].clone()),
+        (json!(second), json!("checkout HEAD, files match its tree"))
+    );
+    std::fs::remove_dir_all(&temporary).unwrap();
 }
