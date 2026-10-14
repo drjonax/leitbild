@@ -847,3 +847,247 @@ fn trip(duration_s: f64) -> Value {
     });
     receipt
 }
+
+/// S3-D1 measurement (NOT-EVIDENCE): two C0 held-input changes, the SG
+/// owner's STOP ramp start (the TG TRIP command to the secondary owner
+/// only, so no rod root is armed) and the ramp's end 0.3 s later, applied
+/// after 1 s of quiet history from the settled state by the two policies an
+/// event policy can choose:
+/// (a) `discrete_restart` at each (exact start, IDAReInit, 1e-4 s first
+///     step), and
+/// (b) stop exactly at each (`stop_at`), let the owner take the change and
+///     continue the retained BDF history (no reinitialization; the steam
+///     demand is continuous in value, only its slope changes),
+/// plus (c) the same stops with no change. Each runs 0.5 s past the first
+/// change; the receipt compares counts, solver CPU and the end states in the
+/// integrator's error weights. `LD01_S3D1_RECEIPT` names a new receipt. A
+/// change that arms a root function (the full TG TRIP arms the rods'
+/// release roots) cannot be continued this way: stock IDA reports the
+/// root function's jump as a root at the first step.
+#[test]
+#[ignore = "NOT-EVIDENCE S3-D1 measurement: requires the joined packet, a settled state, the wiki, IF97 and stock IDA/KLU"]
+fn s3_d1_restart_against_stop_and_continue_at_a_c0_kink() {
+    let state_path = std::env::var("LD01_S2_TRIP_STATE").expect("LD01_S2_TRIP_STATE");
+    let receipt_path = std::env::var_os("LD01_S3D1_RECEIPT");
+    if let Some(p) = &receipt_path {
+        assert!(
+            !std::path::Path::new(p).exists(),
+            "receipts are never overwritten"
+        );
+    }
+    let state: Value =
+        serde_json::from_slice(&std::fs::read(&state_path).expect("state")).expect("state json");
+    let vector = |k: &str| -> Vec<f64> {
+        state[k]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    let t0 = state["t_s"].as_f64().unwrap();
+    let quiet_s = 1.;
+    let after_s = 0.5;
+    let restart = Restart {
+        newton_coefficient: NEWTON_COEFFICIENT,
+        delta_cj_lsetup: DELTA_CJ_LSETUP,
+        first_step_s: FIRST_STEP_S,
+        start_bound: 1e-12,
+        start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
+        bound_placement: 1e-12,
+    };
+    // `refine` divides both tolerances (the reference: the restart policy
+    // at rtol/10, as S2's hold reference).
+    let run = |policy: &str, refine: f64| -> Value {
+        let Started {
+            joined,
+            ids,
+            network_ids,
+            atol,
+            rtol,
+            structure,
+            analyses,
+            ..
+        } = started_full_composition();
+        let (atol, rtol): (Vec<f64>, f64) =
+            (atol.iter().map(|a| a / refine).collect(), rtol / refine);
+        let labels: Vec<String> = joined
+            .layouts()
+            .iter()
+            .flat_map(|(_, l)| l.labels.clone())
+            .collect();
+        let (mut y, mut yp) = (vector("y"), vector("yp"));
+        let nonnegative = joined.network.nonnegative_stocks();
+        let mut ida = Ida::new(
+            Integrated::from_blocks(joined, structure, analyses).unwrap(),
+            Initial {
+                time: t0,
+                y: &y,
+                yp: &yp,
+                differential: &ids,
+                absolute_tolerance: &atol,
+                relative_tolerance: rtol,
+            },
+        )
+        .unwrap();
+        ida.set_max_order(MAX_ORDER).unwrap();
+        ida.constrain_nonnegative(&nonnegative).unwrap();
+        restart.configure(&mut ida).unwrap();
+        let t1 = t0 + quiet_s;
+        ida.stop_at(t1).unwrap();
+        let mut t = t0;
+        while t < t1 {
+            t = ida
+                .advance((t + 0.1).min(t1), &mut y, &mut yp)
+                .unwrap()
+                .reached()
+                .unwrap();
+        }
+        let before = ida.stats().unwrap();
+        let h_before = before.current_step;
+        let started = z1::cpu_s();
+        let mut restart_cpu = 0.;
+        // Counts accumulate over IDAReInit segments (a restart zeroes them).
+        let mut total = [0i64; 8];
+        let base = counts(&before);
+        let mut segment_base = base;
+        let mut add = |ida: &Ida<Integrated<leitbild_operating_water::If97>>, from: [i64; 8]| {
+            let c = counts(&ida.stats().unwrap());
+            for k in 0..8 {
+                total[k] += c[k] - from[k];
+            }
+        };
+        let change = |ida: &mut Ida<Integrated<leitbild_operating_water::If97>>,
+                      t: f64,
+                      y: &mut Vec<f64>,
+                      first: bool|
+         -> f64 {
+            match policy {
+                "stop only" => 0.,
+                _ => {
+                    let joined = &mut ida.system_mut().joined;
+                    if first {
+                        joined
+                            .secondary_mut()
+                            .unwrap()
+                            .command(t, Command::TurbineTrip)
+                            .unwrap();
+                    } else {
+                        let done = joined.time_events(t, y).unwrap();
+                        assert_eq!(done.len(), 1, "the ramp end");
+                    }
+                    if policy == "restart" {
+                        let timer = z1::cpu_s();
+                        discrete_restart(
+                            ida,
+                            t,
+                            Discrete::TimeEvent,
+                            y,
+                            &network_ids,
+                            &atol,
+                            rtol,
+                            &restart,
+                        )
+                        .unwrap();
+                        z1::cpu_s() - timer
+                    } else {
+                        0.
+                    }
+                }
+            }
+        };
+        add(&ida, segment_base);
+        restart_cpu += change(&mut ida, t1, &mut y, true);
+        segment_base = if policy == "restart" { [0; 8] } else { base };
+        let end = t1 + after_s;
+        let ramp_end = t1 + 0.3;
+        let mut ramp_done = false;
+        while t < end {
+            let stop = if ramp_done { end } else { ramp_end };
+            ida.stop_at(stop).unwrap();
+            t = ida
+                .advance((t + 0.01).min(stop), &mut y, &mut yp)
+                .unwrap()
+                .reached()
+                .unwrap();
+            if !ramp_done && t == ramp_end {
+                ramp_done = true;
+                if policy == "restart" {
+                    add(&ida, segment_base);
+                    segment_base = [0; 8];
+                }
+                restart_cpu += change(&mut ida, t, &mut y, false);
+            }
+        }
+        add(&ida, segment_base);
+        let after = ida.stats().unwrap();
+        json!({"policy": policy, "tolerance_divisor": refine, "h_before_s": h_before, "restart_cpu_s": restart_cpu,
+            "cpu_s_to_end": z1::cpu_s() - started,
+            "counts_after_change": named(&total),
+            "last_step_s": after.last_step, "y": y, "atol": atol, "rtol": rtol, "labels": labels})
+    };
+    let runs: Vec<Value> = [
+        ("restart", 1.),
+        ("stop and continue", 1.),
+        ("stop only", 1.),
+        ("restart", 10.),
+    ]
+    .into_iter()
+    .map(|(p, f)| run(p, f))
+    .collect();
+    let y_of = |r: &Value| -> Vec<f64> {
+        r["y"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    let rtol = runs[0]["rtol"].as_f64().unwrap();
+    let atol: Vec<f64> = runs[0]["atol"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    let labels: Vec<String> = runs[0]["labels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    // Each policy's end state against the refined reference, in the
+    // contract's error weights.
+    let against = |y: &[f64], reference: &[f64]| -> Value {
+        let (mut sum, mut max, mut at) = (0., 0_f64, 0usize);
+        for i in 0..y.len() {
+            let w = 1. / (rtol * reference[i].abs() + atol[i]);
+            let d = (y[i] - reference[i]) * w;
+            sum += d * d;
+            if d.abs() > max {
+                (max, at) = (d.abs(), i);
+            }
+        }
+        json!({"wrms_in_error_weights": (sum / y.len() as f64).sqrt(), "max_weighted": max, "max_at": labels[at]})
+    };
+    let reference = y_of(&runs[3]);
+    let receipt = json!({
+        "kind": "s3-d1-c0-kink-policy-measurement",
+        "status": "NOT-EVIDENCE measurement for the S3-D1 event-policy draft; provisional settled state (pre-G18)",
+        "provenance": spine::provenance(),
+        "settled_state": state_path, "quiet_history_s": quiet_s, "after_change_s": after_s,
+        "change": "the SG owner's STOP ramp (TG TRIP to the secondary owner only): steam demand ramps linearly to zero over 0.3 s; two C0 kinks (start, end), no rod involvement",
+        "runs": runs.iter().map(|r| json!({"policy": r["policy"], "tolerance_divisor": r["tolerance_divisor"], "h_before_s": r["h_before_s"], "restart_cpu_s": r["restart_cpu_s"],
+            "cpu_s_to_end": r["cpu_s_to_end"], "counts_after_change": r["counts_after_change"], "last_step_s": r["last_step_s"]})).collect::<Vec<_>>(),
+        "against_the_rtol_over_10_restart_reference_at_end": {
+            "restart": against(&y_of(&runs[0]), &reference),
+            "stop_and_continue": against(&y_of(&runs[1]), &reference),
+            "stop_only_no_change": against(&y_of(&runs[2]), &reference)},
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    if let Some(p) = &receipt_path {
+        std::fs::write(p, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    }
+}
