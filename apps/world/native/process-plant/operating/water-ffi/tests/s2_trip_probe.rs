@@ -465,6 +465,15 @@ fn trip(duration_s: f64) -> Value {
         }
     };
     let (mut y, mut yp) = (vector("y"), vector("yp"));
+    // `LD01_S2_TRIP_ATOL_P_BASIS=relative` takes atol_p as rtol x |p| at the
+    // plena (RODCOST's V1 basis, 155 Pa) instead of the pressure
+    // coordinates' own absolute tolerance (decision 0013's class, rtol /
+    // kappa_s); the receipt names the basis.
+    let relative_basis = match std::env::var("LD01_S2_TRIP_ATOL_P_BASIS").as_deref() {
+        Ok("relative") => Some(rtol),
+        Ok("absolute") | Err(_) => None,
+        Ok(other) => panic!("LD01_S2_TRIP_ATOL_P_BASIS {other}: absolute or relative"),
+    };
     // S2-D24: the guide currents' derived tolerance class, from the model's
     // Jacobian at the composed state (declared), and the same at the
     // settled state (reported only).
@@ -474,7 +483,7 @@ fn trip(duration_s: f64) -> Value {
                       t: f64,
                       y: &[f64],
                       yp: &[f64]| {
-        derived_guide_current_tolerance(joined, &structure, t, y, yp, &atol)
+        derived_guide_current_tolerance(joined, &structure, t, y, yp, &atol, relative_basis)
     };
     let derived = if std::env::var("LD01_S2_TRIP_G12_GUIDE_CURRENTS").is_ok() {
         None
@@ -490,6 +499,8 @@ fn trip(duration_s: f64) -> Value {
     }
     let derived_receipt = json!({
         "decision": "S2-D24: atol_m = atol_p x |dm/d(dp)| from the model Jacobian at the composed state (rods/GuideCurrent only)",
+        "atol_p_basis": if relative_basis.is_some() { "rtol x |p| at the plena (RODCOST V1's 155 Pa basis)" } else { "the pressure coordinates' own absolute tolerance (decision 0013: rtol / isentropic compressibility)" },
+        "g12_class_kept": derived.is_none(),
         "applied": derived.as_ref().map(DerivedTolerance::receipt),
         "at_settled_state_reported_only": derived_settled.receipt(),
         "g12_scaled_before": g12_guide_atol.first(),
@@ -1430,6 +1441,7 @@ fn derived_guide_current_tolerance(
     y: &[f64],
     yp: &[f64],
     atol: &[f64],
+    relative_basis: Option<f64>,
 ) -> DerivedTolerance {
     use leitbild_operating_plant::joined::blocks::{Classes, jacobian_blocks};
     let mut values = vec![0.; structure.pattern.nonzeros()];
@@ -1489,7 +1501,10 @@ fn derived_guide_current_tolerance(
         sensitivity.push(((high.1 - low.1) / 2.).abs());
     }
     let [pa, pb] = plena.expect("guide currents");
-    let atol_p_pa = (atol[pa] * scales[pa]).min(atol[pb] * scales[pb]);
+    let atol_p_pa = match relative_basis {
+        Some(rtol) => rtol * (y[pa] * scales[pa]).abs().min((y[pb] * scales[pb]).abs()),
+        None => (atol[pa] * scales[pa]).min(atol[pb] * scales[pb]),
+    };
     let class_sensitivity = sensitivity.iter().copied().fold(f64::INFINITY, f64::min);
     let atol_m_kg_s = atol_p_pa * class_sensitivity;
     let scaled_by_index: Vec<f64> = guide.iter().map(|i| atol_m_kg_s / scales[*i]).collect();
