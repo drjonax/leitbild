@@ -35,7 +35,7 @@ use leitbild_operating_plant::{
 };
 use leitbild_operating_water::{
     If97,
-    ida::{Advance, Failure, Ida, Initial, System},
+    ida::{Advance, Failure, Ida, Initial, KluOrdering, System},
     network::Integrated,
 };
 use serde_json::{Value, json};
@@ -569,6 +569,10 @@ struct RefreshCounts {
 impl<S: System> System for Recorder<S> {
     fn dimension(&self) -> usize {
         self.inner.dimension()
+    }
+    /// The wrapped system's own KLU ordering (AMD on every joined system).
+    fn klu_ordering(&self) -> KluOrdering {
+        self.inner.klu_ordering()
     }
     fn nonzeros(&self) -> usize {
         self.inner.nonzeros()

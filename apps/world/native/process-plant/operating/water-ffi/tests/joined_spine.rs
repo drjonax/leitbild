@@ -20,7 +20,7 @@ const PZR: PzrPreparation = PzrPreparation {
     max_passes: 50,
 };
 
-fn packet_bytes() -> (String, Vec<u8>) {
+pub fn packet_bytes() -> (String, Vec<u8>) {
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET")
         .expect("LD01_OPERATING_HOT_SPINE_PACKET names the compiled spine packet");
     let bytes = std::fs::read(&path).expect("packet");
@@ -29,7 +29,7 @@ fn packet_bytes() -> (String, Vec<u8>) {
 
 /// App and wiki provenance of a receipt: commits and whether the worktrees
 /// were clean. The wiki is the archive or checkout named by `LD01_WIKI_ROOT`.
-fn provenance() -> Value {
+pub fn provenance() -> Value {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)
@@ -144,7 +144,7 @@ fn joined_census_against_table_1_1() {
     write_receipt(&receipt);
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub fn sha256(bytes: &[u8]) -> String {
     let out = std::process::Command::new("shasum")
         .args(["-a", "256"])
         .stdin(std::process::Stdio::piped())
@@ -163,7 +163,7 @@ fn sha256(bytes: &[u8]) -> String {
         .to_string()
 }
 
-mod z1 {
+pub mod z1 {
     use super::*;
     use leitbild_operating_plant::{
         joined::{
@@ -603,17 +603,52 @@ fn z1_probe(full: bool) {
         (p.nonzeros(), c.count())
     };
     let bound = 1e-12;
+    // Lead decision S2-D4: the start runs on JAC's block assembly with
+    // cached symbolic analyses; `LD01_START_ASSEMBLY=colored` runs the
+    // colored reference. The block structure is compiled once per mode,
+    // outside the start.
+    let start_assembly = std::env::var("LD01_START_ASSEMBLY").unwrap_or_else(|_| "blocks".into());
     let timer = z1::cpu_s();
-    let start = leitbild_operating_water::joined::consistent_start(
-        &mut joined,
-        0.,
-        &mut y,
-        &ids,
-        &weights,
-        bound,
-        3,
-    );
-    let start_cpu_s = z1::cpu_s() - timer;
+    let structure = match start_assembly.as_str() {
+        "blocks" => Some(
+            leitbild_operating_plant::joined::blocks::JoinedJacobian::compile(&mut joined, 0., &y)
+                .expect("block structure"),
+        ),
+        "colored" => None,
+        other => panic!("LD01_START_ASSEMBLY {other}: blocks or colored"),
+    };
+    let compile_cpu_s = z1::cpu_s() - timer;
+    let mut analyses = leitbild_operating_water::joined::Analyses::default();
+    let y_before = y.clone();
+    let start_at = |joined: &mut Joined<If97>,
+                    y: &mut [f64],
+                    analyses: &mut leitbild_operating_water::joined::Analyses| {
+        let matrices = match &structure {
+            Some(structure) => leitbild_operating_water::joined::Matrices::Blocks {
+                structure,
+                analyses,
+            },
+            None => leitbild_operating_water::joined::Matrices::Colored,
+        };
+        let timer = z1::cpu_s();
+        let start = leitbild_operating_water::joined::consistent_start(
+            joined, matrices, 0., y, &ids, &weights, bound, 3,
+        );
+        (start, z1::cpu_s() - timer)
+    };
+    let (start, start_cpu_s) = start_at(&mut joined, &mut y, &mut analyses);
+    // The same start again from the same state, on the analyses the first
+    // made: a restart's own cost.
+    let mut y_repeat = y_before.clone();
+    let (repeat, repeat_cpu_s) = start_at(&mut joined, &mut y_repeat, &mut analyses);
+    let repeat_receipt = match (&start, &repeat) {
+        (Ok((yp, _)), Ok((yp_repeat, r))) => json!({
+            "cpu_s": repeat_cpu_s, "analyses": r.analyses,
+            "jacobian_wall_s": r.jacobian_s, "klu_factor_wall_s": r.factor_s, "klu_solve_wall_s": r.solve_s,
+            "bitwise_equal_to_first": yp == yp_repeat && y == y_repeat}),
+        (_, Err(e)) => json!({"refused": format!("{e:?}")}),
+        _ => Value::Null,
+    };
     let start_receipt = match &start {
         Ok((yp, r)) => {
             joined.evaluate(0., &y, yp, None, 0., None).unwrap();
@@ -633,7 +668,8 @@ fn z1_probe(full: bool) {
                     k += 1;
                 }
             }
-            json!({"bound": r.bound, "constraint_before": [r.constraint_before.value, r.constraint_before.row],
+            json!({"assembly": r.assembly, "nonzeros": r.nonzeros, "analyses": r.analyses, "klu_analyze_wall_s": r.analyze_s,
+                "bound": r.bound, "constraint_before": [r.constraint_before.value, r.constraint_before.row],
                 "constraint_after": [r.constraint_after.value, r.constraint_after.row], "projection_passes": r.projection_passes,
                 "correction": [r.correction.value, r.correction.row], "correction_wrms": r.correction_wrms,
                 "residual": [r.residual.value, r.residual.row], "constraint_rate": [r.constraint_rate.value, r.constraint_rate.row], "rate_passes": r.rate_passes,
@@ -729,6 +765,9 @@ fn z1_probe(full: bool) {
         "pattern": {"nonzeros": pattern_nnz, "colors": colors},
         "consistent_start": start_receipt,
         "consistent_start_cpu_s": start_cpu_s,
+        "consistent_start_repeat": repeat_receipt,
+        "start_assembly": {"assembly": start_assembly, "block_compile_cpu_s": compile_cpu_s,
+            "basis": "lead decision S2-D4: block assembly on the element-exact pattern with KLU's symbolic analyses cached; colored is the reference (LD01_START_ASSEMBLY=colored)"},
         "colored_jacobian_random_directions": direction_checks,
         "status": if full {
             "NOT-EVIDENCE zero-time receipt; S2 is not declared. Z1 on the full composition: network, nuclear, solids, the SG secondary owner and the rod owner with its guide currents prepared at the composed state. The PZR boundary is closed: shell metal and relief pending (G6), heaters at zero by G6"
@@ -756,23 +795,29 @@ fn z1_probe(full: bool) {
 }
 
 /// The full composition at the hot reference, consistently started.
-struct Started {
-    joined: leitbild_operating_plant::joined::operator::Joined<If97>,
-    y: Vec<f64>,
-    yp: Vec<f64>,
+pub struct Started {
+    pub joined: leitbild_operating_plant::joined::operator::Joined<If97>,
+    pub y: Vec<f64>,
+    pub yp: Vec<f64>,
     /// Differential identity (joined, then the network's own), absolute
     /// tolerances and relative tolerance.
-    ids: Vec<f64>,
-    network_ids: Vec<f64>,
-    atol: Vec<f64>,
-    rtol: f64,
+    pub ids: Vec<f64>,
+    pub network_ids: Vec<f64>,
+    pub atol: Vec<f64>,
+    pub rtol: f64,
     /// A receipt of the preparation.
-    receipt: Value,
+    pub receipt: Value,
+    /// The composed state before its consistent start.
+    pub unstarted: Vec<f64>,
+    /// JAC's block structure compiled at the composed state, and the
+    /// symbolic analyses the start made on it (lead decision S2-D4).
+    pub structure: leitbild_operating_plant::joined::blocks::JoinedJacobian,
+    pub analyses: leitbild_operating_water::joined::Analyses,
 }
 
 /// The full composition at the hot reference, consistently started: memo
-/// §3 (A)-(D).
-fn started_full_composition() -> Started {
+/// §3 (A)-(D), the start on the block assembly (lead decision S2-D4).
+pub fn started_full_composition() -> Started {
     use leitbild_operating_plant::{
         initialization::SurfacePolicy,
         joined::operator::{Joined, RodPort, SecondaryPort},
@@ -833,8 +878,20 @@ fn started_full_composition() -> Started {
         .zip(&atol)
         .map(|(v, a)| 1. / (classes.relative * v.abs() + a))
         .collect();
+    let unstarted = y.clone();
+    let timer = z1::cpu_s();
+    let structure =
+        leitbild_operating_plant::joined::blocks::JoinedJacobian::compile(&mut joined, 0., &y)
+            .expect("block structure");
+    let compile_cpu_s = z1::cpu_s() - timer;
+    let mut analyses = leitbild_operating_water::joined::Analyses::default();
+    let timer = z1::cpu_s();
     let (yp, start) = leitbild_operating_water::joined::consistent_start(
         &mut joined,
+        leitbild_operating_water::joined::Matrices::Blocks {
+            structure: &structure,
+            analyses: &mut analyses,
+        },
         0.,
         &mut y,
         &ids,
@@ -843,13 +900,15 @@ fn started_full_composition() -> Started {
         3,
     )
     .expect("exact consistent start");
+    let start_cpu_s = z1::cpu_s() - timer;
     let receipt = json!({
         "packet": path, "packet_sha256": sha256(&bytes), "provenance": provenance(),
         "s1_settling": s1, "flowing_preparation_max_cycle_drive_pa": flowing["max_cycle_drive_pa"],
         "owners_prepared": owners.iter().map(|t| t.receipt.clone()).collect::<Vec<_>>(),
         "surfaces_worst_residual_w": surfaces.iter().map(|s| s.residual_w.iter().fold(0., |a: f64, r| a.max(r.abs()))).fold(0., f64::max),
         "start": {"residual": [start.residual.value, start.residual.row], "constraint_rate": [start.constraint_rate.value, start.constraint_rate.row],
-            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes},
+            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes,
+            "assembly": start.assembly, "analyses": start.analyses, "cpu_s": start_cpu_s, "block_compile_cpu_s": compile_cpu_s},
         "dimension": y.len(), "algebraic": ids.iter().filter(|v| **v == 0.).count(),
         "tolerances": {"relative": classes.relative, "network": "S1's tolerance classes (ld01-s1-gates)", "new_classes_scaled_absolute": classes.stock_scaled, "basis": "G12"},
     });
@@ -862,11 +921,14 @@ fn started_full_composition() -> Started {
         atol,
         rtol: classes.relative,
         receipt,
+        unstarted,
+        structure,
+        analyses,
     }
 }
 
 /// One observation of the joined state at an accepted output.
-fn observe(
+pub fn observe(
     joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
     t: f64,
     y: &[f64],
@@ -941,6 +1003,8 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         network_ids,
         atol,
         rtol,
+        structure,
+        analyses,
         ..
     } = started_full_composition();
     let algebraic = |ids: &[f64]| ids.iter().filter(|v| **v == 0.).count();
@@ -967,7 +1031,7 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
-        Integrated::with_blocks(joined, 0., &y).unwrap(),
+        Integrated::from_blocks(joined, structure, analyses).unwrap(),
         Initial {
             time: 0.,
             y: &y,
@@ -978,9 +1042,17 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         },
     )
     .unwrap();
+    // Every joined solve is on AMD (decision 0013); COLAMD is unusable on
+    // the exact pattern.
+    assert_eq!(
+        leitbild_operating_water::ida::System::klu_ordering(ida.system()),
+        leitbild_operating_water::ida::KluOrdering::Amd
+    );
     restart.configure(&mut ida).unwrap();
+    let analyses_before = ida.system().analyses().made();
     // The stop at the opening, without stepping: the release root t - open
     // is exactly zero there, so only the time event can release.
+    let timer = z1::cpu_s();
     let restarted = discrete_restart(
         &mut ida,
         open,
@@ -992,7 +1064,17 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         &restart,
     )
     .unwrap();
+    let restart_cpu_s = z1::cpu_s() - timer;
     let (done, yp_open, report) = (&restarted.transactions, &restarted.yp, &restarted.report);
+    // The release changes the algebraic set: the projection's analysis is
+    // made again, the rate system's is reused.
+    assert_eq!(report.assembly, "blocks");
+    assert_eq!(report.analyses[0], 0, "the rate analysis is reused");
+    assert_eq!(
+        ida.system().analyses().made()[0],
+        analyses_before[0],
+        "no new rate analysis"
+    );
     assert!(
         restarted.placements.is_empty(),
         "{:?}",
@@ -1033,10 +1115,231 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
         "opening_s": open, "ramp_end_s": end, "released_clusters": clusters,
         "algebraic_before": held, "algebraic_after": algebraic(&ids_open),
         "start": {"residual": report.residual.value, "constraint_rate": report.constraint_rate.value,
-            "projection_passes": report.projection_passes, "rate_passes": report.rate_passes},
+            "projection_passes": report.projection_passes, "rate_passes": report.rate_passes,
+            "assembly": report.assembly, "analyses_made": report.analyses, "jacobian_wall_s": report.jacobian_s,
+            "klu_analyze_wall_s": report.analyze_s, "klu_factor_wall_s": report.factor_s, "klu_solve_wall_s": report.solve_s},
+        "restart_cpu_s": restart_cpu_s,
         "configuration": {"newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "firstStep_s": FIRST_STEP_S},
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
+}
+
+/// Column-relative difference of a block matrix against the colored
+/// reference on every column: per column, the largest |difference| of any
+/// row stored by either over the column's largest |colored| entry (JAC's
+/// oracle measure), and the same over the larger of that and `scale`'s
+/// column (for `B`, formed as a difference of two assemblies, `A`'s).
+fn column_relative(
+    colored_pattern: &leitbild_operating_plant::sparse::Pattern,
+    colored: &[f64],
+    blocks_pattern: &leitbild_operating_plant::sparse::Pattern,
+    blocks: &[f64],
+    scale: Option<&[f64]>,
+) -> Value {
+    let n = colored_pattern.columns();
+    let (mut worst, mut worst_at, mut outside) = (0_f64, Value::Null, 0usize);
+    let mut worst_scaled = 0_f64;
+    for j in 0..n {
+        let mut entries: std::collections::BTreeMap<usize, [f64; 2]> = Default::default();
+        let (cp, bp) = (colored_pattern.pointers(), blocks_pattern.pointers());
+        let (cs, bs) = (cp[j]..cp[j + 1], bp[j]..bp[j + 1]);
+        for (row, v) in colored_pattern.indices()[cs.clone()]
+            .iter()
+            .zip(&colored[cs.clone()])
+        {
+            entries.entry(*row).or_default()[0] = *v;
+            if *v != 0. && blocks_pattern.position(*row, j).is_none() {
+                outside += 1;
+            }
+        }
+        for (row, v) in blocks_pattern.indices()[bs.clone()].iter().zip(&blocks[bs]) {
+            entries.entry(*row).or_default()[1] = *v;
+        }
+        let column = entries.values().map(|e| e[0].abs()).fold(0., f64::max);
+        let other = scale.map_or(0., |a| a[cs].iter().map(|v| v.abs()).fold(0., f64::max));
+        for (row, e) in &entries {
+            let d = (e[0] - e[1]).abs();
+            let relative = d / column.max(1e-300);
+            if relative > worst {
+                worst = relative;
+                worst_at = json!({"row": row, "column": j, "colored": e[0], "blocks": e[1]});
+            }
+            worst_scaled = worst_scaled.max(d / column.max(other).max(1e-300));
+        }
+    }
+    json!({"worst_column_relative": worst, "worst_at": worst_at,
+        "worst_over_the_larger_of_the_column_and_a": worst_scaled,
+        "colored_nonzeros_outside_block_pattern": outside, "columns": n})
+}
+
+/// Lead decision S2-D4's check of the block start against the colored
+/// reference (NOT-EVIDENCE zero-time check): `A = dF/dy` (cj = 0) and
+/// `B = dF/dy'` (the cj = 1 assembly less A, as the start forms it), from
+/// JAC's block assembly and from the colored assemblies, column-relative on
+/// every column, at the composed state and at the released state (the TG
+/// TRIP's holding opening: all 52 clusters free); and the two consistent
+/// starts from the same state at each.
+#[test]
+#[ignore = "NOT-EVIDENCE zero-time check: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn the_block_start_matrices_match_the_colored_reference_at_the_composed_and_released_states() {
+    use leitbild_operating_plant::joined::{
+        block::Command,
+        blocks::{Classes, jacobian_blocks},
+        operator::Joined,
+    };
+    use leitbild_operating_water::joined::{Analyses, Matrices, consistent_start};
+    let started = z1::cpu_s();
+    let Started {
+        mut joined,
+        y,
+        ids,
+        network_ids,
+        atol,
+        rtol,
+        unstarted,
+        structure,
+        mut analyses,
+        receipt: preparation,
+        ..
+    } = started_full_composition();
+    let n = y.len();
+    let zero = vec![0.; n];
+    let matrices = |joined: &mut Joined<If97>, t: f64, y: &[f64]| -> Value {
+        let colored_pattern = joined.structure().unwrap().0.clone();
+        let mut ca = vec![0.; colored_pattern.nonzeros()];
+        let mut cab = ca.clone();
+        joined.jacobian(t, 0., y, &zero, &mut ca).unwrap();
+        joined.jacobian(t, 1., y, &zero, &mut cab).unwrap();
+        let bp = &structure.pattern;
+        let mut ba = vec![0.; bp.nonzeros()];
+        let mut bab = ba.clone();
+        jacobian_blocks(joined, &structure, t, 0., y, &zero, &mut ba, Classes::ALL).unwrap();
+        jacobian_blocks(joined, &structure, t, 1., y, &zero, &mut bab, Classes::ALL).unwrap();
+        let cb: Vec<f64> = cab.iter().zip(&ca).map(|(x, a)| x - a).collect();
+        let bb: Vec<f64> = bab.iter().zip(&ba).map(|(x, a)| x - a).collect();
+        // B as the start forms it carries one rounding of A + B in each
+        // path; at cj = 2^20 (exact scaling) that rounding is of B's own
+        // size, so this B compares the two assemblies' dF/dy' itself.
+        let big = 1048576.;
+        let mut cbig = vec![0.; colored_pattern.nonzeros()];
+        let mut bbig = vec![0.; bp.nonzeros()];
+        joined.jacobian(t, big, y, &zero, &mut cbig).unwrap();
+        jacobian_blocks(
+            joined,
+            &structure,
+            t,
+            big,
+            y,
+            &zero,
+            &mut bbig,
+            Classes::ALL,
+        )
+        .unwrap();
+        let cb_big: Vec<f64> = cbig.iter().zip(&ca).map(|(x, a)| (x - a) / big).collect();
+        let bb_big: Vec<f64> = bbig.iter().zip(&ba).map(|(x, a)| (x - a) / big).collect();
+        json!({"a": column_relative(&colored_pattern, &ca, bp, &ba, None),
+            "b": column_relative(&colored_pattern, &cb_big, bp, &bb_big, None),
+            "b_as_the_start_forms_it_at_cj_1": column_relative(&colored_pattern, &cb, bp, &bb, Some(&ca)),
+            "b_definition": "b: (J(cj = 2^20) - J(cj = 0)) / 2^20 on each path; b_as_the_start_forms_it_at_cj_1: J(cj = 1) - J(cj = 0), whose rounding of A + B is up to one ulp of the column's A in either path"})
+    };
+    let weights = |y: &[f64]| -> Vec<f64> {
+        y.iter()
+            .zip(&atol)
+            .map(|(v, a)| 1. / (rtol * v.abs() + a))
+            .collect()
+    };
+    // Both starts from the same state: projected states and rates.
+    let starts = |joined: &mut Joined<If97>,
+                  analyses: &mut Analyses,
+                  t: f64,
+                  y0: &[f64],
+                  ids: &[f64]|
+     -> Value {
+        let w = weights(y0);
+        let (mut yb, mut yc) = (y0.to_vec(), y0.to_vec());
+        let timer = z1::cpu_s();
+        let (pb, rb) = consistent_start(
+            joined,
+            Matrices::Blocks {
+                structure: &structure,
+                analyses,
+            },
+            t,
+            &mut yb,
+            ids,
+            &w,
+            1e-12,
+            3,
+        )
+        .expect("block start");
+        let block_cpu_s = z1::cpu_s() - timer;
+        let timer = z1::cpu_s();
+        let (pc, rc) = consistent_start(joined, Matrices::Colored, t, &mut yc, ids, &w, 1e-12, 3)
+            .expect("colored start");
+        let colored_cpu_s = z1::cpu_s() - timer;
+        let (mut dy, mut dyp, mut ypmax) = (0_f64, (0_f64, 0usize), 0_f64);
+        for i in 0..n {
+            dy = dy.max((yb[i] - yc[i]).abs() * w[i]);
+            if (pb[i] - pc[i]).abs() > dyp.0 {
+                dyp = ((pb[i] - pc[i]).abs(), i);
+            }
+            ypmax = ypmax.max(pc[i].abs());
+        }
+        let summary = |r: &leitbild_operating_water::joined::Report, cpu: f64| {
+            json!({"assembly": r.assembly, "cpu_s": cpu, "residual": [r.residual.value, r.residual.row],
+                "constraint_rate": [r.constraint_rate.value, r.constraint_rate.row],
+                "projection_passes": r.projection_passes, "rate_passes": r.rate_passes,
+                "correction_wrms": r.correction_wrms, "analyses_made": r.analyses,
+                "jacobian_wall_s": r.jacobian_s, "klu_analyze_wall_s": r.analyze_s,
+                "klu_factor_wall_s": r.factor_s, "klu_solve_wall_s": r.solve_s})
+        };
+        json!({"blocks": summary(&rb, block_cpu_s), "colored": summary(&rc, colored_cpu_s),
+            "projected_state_max_weighted_difference": dy,
+            "rates_max_abs_difference": dyp.0, "rates_max_at": dyp.1,
+            "rates_max_abs_difference_over_max_abs_rate": dyp.0 / ypmax.max(1e-300)})
+    };
+    let composed_matrices = matrices(&mut joined, 0., &y);
+    let composed_starts = starts(&mut joined, &mut analyses, 0., &unstarted, &ids);
+    // The released state: the manual turbine TRIP at t = 0 and its holding
+    // opening, transacted at its time.
+    let mut released = y.clone();
+    joined
+        .command(0., &mut released, Command::TurbineTrip)
+        .unwrap();
+    let open = joined.next_time_event(0.).expect("the holding opening");
+    let done = joined.time_events(open, &mut released).unwrap();
+    let ids_open = joined.differential(&network_ids);
+    let algebraic = |ids: &[f64]| ids.iter().filter(|v| **v == 0.).count();
+    let released_matrices = matrices(&mut joined, open, &released);
+    let released_starts = starts(&mut joined, &mut analyses, open, &released, &ids_open);
+    let receipt = json!({
+        "kind": "s2-block-start-against-colored",
+        "status": "NOT-EVIDENCE zero-time check of lead decision S2-D4; no trajectory",
+        "preparation": preparation,
+        "criterion": {"matrices_column_relative": 1e-13, "start_bound": 1e-12},
+        "composed": {"t_s": 0., "algebraic": algebraic(&ids), "matrices": composed_matrices, "starts": composed_starts},
+        "released": {"t_s": open, "transactions": done.len(), "algebraic": algebraic(&ids_open),
+            "matrices": released_matrices, "starts": released_starts},
+        "analyses_made_in_total": analyses.made(),
+        "total_cpu_s": z1::cpu_s() - started,
+        "load_average": String::from_utf8_lossy(&std::process::Command::new("sysctl").args(["-n","vm.loadavg"]).output().unwrap().stdout).trim().to_string(),
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    write_receipt(&receipt);
+    for state in ["composed", "released"] {
+        for m in ["a", "b"] {
+            let c = &receipt[state]["matrices"][m];
+            assert_eq!(
+                c["colored_nonzeros_outside_block_pattern"],
+                json!(0),
+                "{state} {m}"
+            );
+            assert!(
+                c["worst_column_relative"].as_f64().unwrap() <= 1e-13,
+                "{state} {m}: {c}"
+            );
+        }
+    }
 }
 
 /// Per-block wall time of the block Jacobians so far: the local coupler's
@@ -1300,10 +1603,10 @@ fn reactivity_decomposition_at_the_prepared_and_settled_states() {
 /// S2's Newton configuration (claude/ld01-wiki c968921, "Configuration
 /// superseded the same day"): stock's own 0.33 Newton coefficient and an
 /// iteration-matrix refresh when cj changes by 10% (IDASetDeltaCjLSetup).
-const NEWTON_COEFFICIENT: f64 = 0.33;
-const DELTA_CJ_LSETUP: f64 = 0.1;
+pub const NEWTON_COEFFICIENT: f64 = 0.33;
+pub const DELTA_CJ_LSETUP: f64 = 0.1;
 /// G13: the first step at every restart (s).
-const FIRST_STEP_S: f64 = 1e-4;
+pub const FIRST_STEP_S: f64 = 1e-4;
 /// Output target spacing of one stock IDA call (s).
 const ADVANCE_CHUNK_S: f64 = 0.01;
 
