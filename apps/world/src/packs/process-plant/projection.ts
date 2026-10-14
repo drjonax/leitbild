@@ -87,15 +87,16 @@ const activeLifecycles = (
     .filter(lifecycle => lifecycle.active && !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService)
 }
 
-// Whether a trip of a first-out group the model declares as its reactor trip is among them.
-const reactorTripped = (
-  plant: ProcessPlantRuntimeInstance,
-  lifecycles: ReadonlyArray<ProcessPlantIcLifecycleState>,
-): boolean => {
+// Whether a trip of a first-out group the model declares as its reactor trip
+// is active. This is the Plant's state, not an annunciation: shelving or
+// suppressing the trip's alarm does not reset the trip, so only an
+// out-of-service trip, which judges nothing, is left out.
+const reactorTripped = (plant: ProcessPlantRuntimeInstance): boolean => {
+  const trips = plant.protection?.snapshot().trips ?? []
   const groups = new Set(plant.plant.automation.firstOutGroups.filter(group => group.reactorTrip).map(group => group.id))
-  return lifecycles.some(lifecycle => {
+  return trips.some(lifecycle => {
     const group = lifecycle.annunciator?.firstOutGroup
-    return lifecycle.kind === 'trip' && group !== undefined && groups.has(group)
+    return lifecycle.active && !lifecycle.outOfService && group !== undefined && groups.has(group)
   })
 }
 
@@ -153,7 +154,7 @@ export const projectedProcessPlantUnit = (config: {
     statusLabel: status.label,
     ...(status.highestSeverity === undefined ? {} : { highestSeverity: status.highestSeverity }),
     ...(mode === null ? {} : { modeLabel: mode.label }),
-    ...(reactorTripped(plant, lifecycles) ? { reactorTripped: true } : {}),
+    ...(reactorTripped(plant) ? { reactorTripped: true } : {}),
     activeAlarmCount: lifecycles.filter(lifecycle => lifecycle.kind === 'alarm').length,
     activeTripCount,
     fields,

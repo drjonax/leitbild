@@ -120,7 +120,7 @@ describe('a Plant\'s projection, which colours it on the map', () => {
     expect('modeLabel' in projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(quiet, shutdownOnly), at }))).toBe(false)
   })
 
-  test('marks the reactor tripped only for an annunciated trip of a first-out group the model declares as its reactor trip', () => {
+  test('marks the reactor tripped only while a trip of a first-out group the model declares as its reactor trip is active, whether or not its alarm is shelved or suppressed', () => {
     const fed = projectionOf(projectedProcessPlantUnit({ object: unit, plant: plantWith(activating(feedStart.id)), at }))
     expect(fed).toMatchObject({ statusTone: 'error', activeTripCount: 1 })
     expect('reactorTripped' in fed).toBe(false)
@@ -131,7 +131,14 @@ describe('a Plant\'s projection, which colours it on the map', () => {
       plant: plantWith(lifecycle => lifecycle.id === reactorTrip.id ? { ...lifecycle, active: true, shelved: true } : lifecycle),
       at,
     }))
-    expect('reactorTripped' in shelved).toBe(false)
+    // Shelving the trip's alarm takes it off the count and the colour, not off the Plant's state.
+    expect(shelved).toMatchObject({ reactorTripped: true, activeTripCount: 0 })
+    const outOfService = projectionOf(projectedProcessPlantUnit({
+      object: unit,
+      plant: plantWith(lifecycle => lifecycle.id === reactorTrip.id ? { ...lifecycle, active: true, outOfService: true } : lifecycle),
+      at,
+    }))
+    expect('reactorTripped' in outOfService).toBe(false)
   })
 
   test('a projection stored before the mode and the reactor trip were projected still restores', () => {
