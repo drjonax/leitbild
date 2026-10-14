@@ -66,7 +66,7 @@ describe('Leitbild Assistant skills', () => {
     expect(runner.body).toContain('Never advance, pause or play the clock')
     expect(runner.body).toContain('Hold only for what no reading or control gives')
     // Each decision and operation reaches the chat as it happens, as a say line.
-    expect(runner.body).toContain('Give every transition and write a `say` line')
+    expect(runner.body).toContain('Every transition and write carries `say` beside its input, also after extra reads')
     // Token savings (2026-10-13): the operations are named with their minimal inputs, so a turn needs no
     // discovery; start, transition and wait return the next step, and the Core's controls are read alone.
     expect(runner.body).toContain('## Call these directly')
