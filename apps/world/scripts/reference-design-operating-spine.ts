@@ -583,22 +583,29 @@ async function compileOperatingSpinePass(wiki: string, if97: string, solids: Sol
         'model/operating-thermal.md', 'systems/reactor/phase-dependent-heat-transfer.md'].map((name, i) => ({ name,
           sha256: hash([fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc][i]!) })) },
     scope: 'Connected current source/finite-thermal/primary residual inputs, with explicit external surge/PZR dependencies. No held-pressure, complete mechanical, global-rank or trajectory admission.' }
-  // The settle's flow basis: the preparation's enthalpy reference flow at the
-  // reference power (the flow that keeps the design coolant state steady),
-  // as one uniform mass flux over the core's main flow area, and per loop
-  // over each SG primary's (G18 inputs; no new value).
-  const coreArea = sum(carved.regions.filter(r => /^CORE\.(NE|NW|SW|SE)\.1$/.test(r.id)).map(r => r.mainFlowArea_m2))
-  const sgArea = (side: string) => carved.regions.find(r => r.id === `SG.${side}.PRIMARY`)!.mainFlowArea_m2
-  if (!(coreArea > 0) || !(sgArea('A') > 0) || sgArea('A') !== sgArea('B')) throw Error('Settle flow basis needs the core and SG primary flow areas')
-  const settleBasis = { enthalpyReferenceFlow_kg_s: hot.fluid.primary.enthalpyReferenceFlow_kg_s, coreMainFlowArea_m2: coreArea,
-    coreMassFlux_kg_m2_s: hot.fluid.primary.enthalpyReferenceFlow_kg_s / coreArea,
-    sgPrimaryMassFlux_kg_m2_s: hot.fluid.primary.loopReferenceFlow_kg_s / sgArea('A') }
-  return { packet, settleBasis }
+  // The settle's basis (G18 inputs; no new value): the packet's reference
+  // power, and the preparation's enthalpy reference flow at that power (the
+  // flow that keeps the design coolant state steady) as one uniform mass flux
+  // over the core's main flow area and, per loop, over each SG primary's.
+  const coreArea = sum(carved.regions.filter(r => /^CORE\.(NE|NW|SW|SE)\.1$/.test(r.id)).map(r => r.mainFlowArea_m2)),
+    flow = hot.fluid.primary.enthalpyReferenceFlow_kg_s, loop = hot.fluid.primary.loopReferenceFlow_kg_s,
+    sgArea = (side: string) => {
+      const areas = [...new Set(thermal.sg_segments.filter(g => thermal.secondaries[g.secondary]!.id === side).map(g => g.primary_flow_area_m2))]
+      if (areas.length !== 1 || !(areas[0]! > 0)) throw Error(`SG.${side} primary segments need one flow area`)
+      return areas[0]!
+    }
+  if (!(coreArea > 0) || !(flow > 0) || loop !== flow / 2) throw Error('Settle flow basis needs the core flow area and the reference flow')
+  const settleBasis = { basisPower_W: thermal.source_total_w, coreMassFlux_kg_m2_s: flow / coreArea,
+    sgPrimaryMassFlux_kg_m2_s: thermal.secondaries.map(g => ({ id: g.id, massFlux_kg_m2_s: loop / sgArea(g.id) })) }
+  const settleDerivation = { enthalpyReferenceFlow_kg_s: flow, coreMainFlowArea_m2: coreArea, loopReferenceFlow_kg_s: loop,
+    sgPrimaryFlowArea_m2: thermal.secondaries.map(g => ({ id: g.id, area_m2: sgArea(g.id) })),
+    basisPower: 'thermal.source_total_w: the reference power the source package deposits at the G17 rate; the settle refuses unless its nuclear block reproduces it to 1e-6' }
+  return { packet, settleBasis, settleDerivation }
 }
 
 export type OperatingSpineSeed = Awaited<ReturnType<typeof compileOperatingSpinePass>>
 export type SteadySolidsProvenance = { binary: { name: string, sha256: string }, inputSha256: string, outputSha256: string,
-  receipt: Record<string, unknown> }
+  basis: Record<string, unknown>, receipt: Record<string, unknown> }
 /** The producer of the steady solid state from the seed compile: in
  * production `nativeSteadySolids`, the stock-IDA settle binary. */
 export type SteadySolidsSettle = (seed: OperatingSpineSeed) => Promise<{ steady: SteadySolids, provenance: SteadySolidsProvenance }>
@@ -644,16 +651,22 @@ export async function prepareOperatingSpine(wiki: string, if97: string, settle: 
  * operating crate), on the seed packet with the SG owner's section and the
  * settle's flow basis. The binary is deterministic, so its output hash pins
  * the steady state; a refusal stops the compile. */
+export async function steadySolidsInput(seed: OperatingSpineSeed, wiki: string) {
+  return JSON.stringify({ ...seed.packet, secondary: await prepareOperatingSecondary(wiki), steady: seed.settleBasis })
+}
 export function nativeSteadySolids(executable: string, wiki: string): SteadySolidsSettle {
   return async seed => {
-    const secondary = await prepareOperatingSecondary(wiki),
-      input = JSON.stringify({ ...seed.packet, secondary, steady: seed.settleBasis }),
+    const input = await steadySolidsInput(seed, wiki),
       child = Bun.spawn([executable], { stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe' }),
       [output, error, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
     if (status !== 0) throw Error('The steady solids settle refused: ' + error.trim())
     const steady = steadySolidsSchema.parse(JSON.parse(output)), hash = (s: string | Uint8Array) => createHash('sha256').update(s).digest('hex')
+    if (steady.packet_identity !== seed.packet.identity || steady.thermal_identity !== seed.packet.thermal.identity)
+      throw Error('The steady solids settle answered another packet')
+    const { method, basis, admission, steady: reached, checkpoints, ida, steam_generators } = steady
     return { steady, provenance: { binary: { name: basename(executable), sha256: hash(await Bun.file(executable).bytes()) },
-      inputSha256: hash(input), outputSha256: hash(output), receipt: steady.receipt } }
+      inputSha256: hash(input), outputSha256: hash(output), basis: { ...seed.settleBasis, derivation: seed.settleDerivation },
+      receipt: { method, basis, admission, reached, checkpoints, ida, steam_generators } } }
   }
 }
 

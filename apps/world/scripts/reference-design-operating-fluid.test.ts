@@ -1,7 +1,10 @@
 import {expect,test} from 'bun:test'
 import {fuelMaterialPython} from './reference-design-fuel-materials'
-import {operatingFuelCaloric,operatingCladCaloric,parseOperatingHotReference,prepareOperatingFluid,
+import {operatingFuelCaloric,operatingCladCaloric,parseOperatingHotReference,prepareOperatingFluid,prepareOperatingMaterials,admitSolidNode,
+  fuelFeedbackTemperature,steadySolidsSchema,type SteadySolids,
   waterPartials,fixedVolumeChart,saturatedVolumeChart,withOperatingIf97,fluidTree,treeContinuity,pressureContinuityProjection,preparePressureContinuity} from './reference-design-operating-fluid'
+import {parseFuelHandling} from './reference-design-fuel-handling'
+import type {parseFuelConstruction} from './reference-design-fuel-construction'
 
 const sum=(a:readonly number[])=>a.reduce((x,y)=>x+y,0)
 test('caloric laws retain their datum and exact primitive derivatives',()=>{
@@ -41,6 +44,62 @@ test('one-gauge incidence preserves prescribed cycle current and rejects materia
   expect(()=>treeContinuity(r,e,[1,1,1],[0])).toThrow('Nonconservative')
   expect(()=>fluidTree(r,[{from:0,to:1}])).toThrow('Disconnected')
   expect(()=>parseOperatingHotReference('```reference-operating-hot\n{"primaryPressure_Pa":0}\n```')).toThrow()
+})
+
+// Fixture geometry (as the fuel construction/handling tests): 193 FAs.
+const fuel:ReturnType<typeof parseFuelConstruction>={design:'LD-01-fresh-fuel-reference',assemblies:193,
+  latticeSide:17,rodsPerAssembly:264,guidesPerAssembly:25,pitch_m:.0126,rodOuterDiameter_m:.0095,
+  cladThickness_m:.00057,pelletDiameter_m:.0082,guideOuterDiameter_m:.0122,activeLength_m:4,
+  plenumLength_m:.25,fillPressure_Pa:2e6,referenceTemperature_K:300,fuelDensityFraction:.95,
+  fuelTheoreticalDensity_kg_m3:10960,cladDensity_kg_m3:6551,power_W:3e9,
+  coolantPressures_MPa:[15.2,15.1,15],coolantTemperatures_K:[563.15,578.15,593.15]}
+const handling=parseFuelHandling('```reference-fuel-handling\n'+JSON.stringify({slotRadiusSquared:61,supportRadius_m:1.85,bottomFittingLength_m:.25,bottomFitting_kg:10,
+  topFittingLength_m:.15,topFitting_kg:10,guideInnerDiameter_m:.011,seatedBottom_m:-2.25,transferBottom_m:4.25,surface_m:14,minimumActiveCover_m:5,
+  sourceThimbleDiameter_m:.006,sourceThimbleBottom_m:-3.5,sourceThimbleTop_m:2.5,sourceCapsule_m:-1,wellArea_m2:25,wellFloor_m:4,canalWidth_m:1,
+  canalLength_m:6,canalFloor_m:3.5,poolSide_m:10,poolFloor_m:-.75,rackSide:14,rackPitch_m:.5,rackSleeveSide_m:.3,rackSkin_m:.0005,panelB10_kg_m2:.2,
+  b4cDensity_kg_m3:2500,b10AtomFraction:.199,b10MolarMass_kg_mol:.010012937,b4cMolarMass_kg_mol:.055255,hoistForce_N:10000,hoistPower_W:5000,
+  motionSpeed_m_s:.05,gravity_m_s2:9.80665})+'\n```\n')
+
+test('solid stocks come from the steady state by id, with caloric, Doppler and domain checks',()=>{
+  const seed=prepareOperatingMaterials(fuel,handling,{kind:'provisional',coreSeed_K:593.15,sgMetalSeed_K:555}),
+    mass=(id:string)=>seed.passive.find(p=>p.id===id)!.mass_kg
+  expect(seed.carriers).toHaveLength(386);expect(seed.passive).toHaveLength(1351);expect(seed.helium).toHaveLength(193)
+  expect(seed.carriers.every(c=>c.dopplerReference_K===593.15&&c.surfaceSeed_K.every(T=>T===593.15))).toBe(true)
+  expect(seed.scope).toContain('SEED ONLY')
+  // TEST FIXTURE: a synthetic steady state (no law is solved here).
+  const steady=():SteadySolids=>({identity:'LD01-STEADY-SOLIDS-1',packet_identity:'p',thermal_identity:'t',method:{},basis:{},
+    carriers:seed.carriers.map((c,i)=>{const T:[number,number]=[900+i%9,800+i%4],m=c.fuelNodes[0]!.mass_kg
+      return {id:c.id,fuel_store_ids:[c.id+'/fuel/0',c.id+'/fuel/1'],clad_store_id:c.id+'/clad',fuel_temperatures_k:T,
+        fuel_energies_j:[m*operatingFuelCaloric(T[0]).specificEnergy_J_kg,m*operatingFuelCaloric(T[1]).specificEnergy_J_kg],
+        clad_temperature_k:610,clad_energy_j:c.clad.mass_kg*operatingCladCaloric(610).specificEnergy_J_kg,surface_temperatures_k:[700,620,600],
+        doppler_reference_k:fuelFeedbackTemperature(T[0],T[1]),fuel_heat_w:1,rates_w:[0,0,0],surface_residuals_w:[0,0,0],gap:{}}}),
+    helium:seed.helium.map(h=>({id:h.id,temperature_k:690,energy_j:h.capacity_J_K*690,pressure_pa:h.nR_J_K*690/h.volume_m3,rate_w:0})),
+    passive:seed.passive.map(p=>({id:p.id,temperature_k:580,energy_j:mass(p.id)*operatingCladCaloric(580).specificEnergy_J_kg,rate_w:0})),
+    sg_metal:[],steam_generators:[],admission:{},steady:{},checkpoints:[],ida:{}})
+  const value=steady(),s=prepareOperatingMaterials(fuel,handling,{kind:'steady',steady:value})
+  expect(s.carriers[5]!.fuelNodes.map(n=>n.temperature_K)).toEqual(value.carriers[5]!.fuel_temperatures_k)
+  expect(s.carriers[5]!.fuelNodes[1]!.energy_J).toBe(value.carriers[5]!.fuel_energies_j[1])
+  expect(s.carriers[5]!.fuelNodes[1]!.capacity_J_K).toBeCloseTo(s.carriers[5]!.fuelNodes[1]!.mass_kg*operatingFuelCaloric(801).cp_J_kg_K,6)
+  expect(s.carriers[5]!.dopplerReference_K).toBe(value.carriers[5]!.doppler_reference_k)
+  expect(s.carriers[5]!.surfaceSeed_K).toEqual([700,620,600])
+  expect(s.helium[0]!.temperature_K).toBe(690);expect(s.helium[0]!.pressure_Pa).toBeCloseTo(value.helium[0]!.pressure_pa,6)
+  expect(s.passive.every(p=>p.temperature_K===580)).toBe(true);expect(s.scope).toContain('G18')
+  const refuse=(change:(v:SteadySolids)=>void,error:string)=>{const v=steady();change(v)
+    expect(()=>prepareOperatingMaterials(fuel,handling,{kind:'steady',steady:v})).toThrow(error)}
+  refuse(v=>{v.carriers.pop()},'Missing steady carrier')
+  refuse(v=>{v.helium.push({...v.helium[0]!})},'Duplicate steady helium')
+  refuse(v=>{v.passive.push({...v.passive[0]!,id:'unowned'})},'does not own')
+  refuse(v=>{v.carriers[0]!.clad_energy_j*=1.001},'caloric primitive')
+  refuse(v=>{v.carriers[0]!.doppler_reference_k=900},'Doppler reference')
+  refuse(v=>{v.carriers[0]!.surface_temperatures_k[2]=250},'outside its admitted 290--1800 K')
+  refuse(v=>{v.passive[0]!.temperature_k=1900},'outside its admitted 290--1800 K')
+  refuse(v=>{v.helium[0]!.energy_j*=1.01},'1.5 nRT')
+  expect(()=>steadySolidsSchema.parse({...steady(),extra:1})).toThrow()
+  expect(()=>steadySolidsSchema.parse({...steady(),carriers:[{...steady().carriers[0]!,doppler_reference_k:NaN}]})).toThrow()
+  expect(()=>admitSolidNode('x',NaN,[290,1800])).toThrow('Solid node x')
+  expect(admitSolidNode('x',290,[290,1800])).toBe(290)
+  expect(fuelFeedbackTemperature(900,900)).toBeCloseTo(900,12)
+  expect(fuelFeedbackTemperature(1000,800)).toBeCloseTo(((Math.sqrt(1000)+Math.sqrt(800))/2)**2,12)
 })
 
 const wiki=process.env.LD01_WIKI_ROOT,if97=process.env.LD01_IF97_DIRECTORY

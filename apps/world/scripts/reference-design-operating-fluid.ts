@@ -25,18 +25,26 @@ const hotSchema=z.object({primaryPressure_Pa:z.number().min(1e5).max(16e6),achie
   boronReference_ppmEq:z.number().finite().nonnegative(),gapAccommodationReferenceTemperature_K:z.number().positive(),
   initialLoopMassflow_kg_s:z.literal(0),sgMetalSegments:z.literal(4)}).strict()
 const positiveNumber=z.number().finite().positive(),finiteNumber=z.number().finite()
-const storeSchema=z.object({id:z.string().min(1),temperature_k:positiveNumber,energy_j:finiteNumber}).strict()
+const record=z.record(z.string(),z.unknown())
 /** The steady solid state at the reference power (G18 by S2-D2, SG metal by
- * S2-D3), as the native stock-IDA `prepare_steady_solids` writes it: every
- * store's steady temperature and energy, every half's surfaces and each
- * carrier's Doppler reference. Its receipt (IDA statistics, the declared
- * steady criterion and the reached rates) is recorded, never consumed. */
+ * S2-D3), as the native stock-IDA `prepare_steady_solids` writes it (schema
+ * frozen by the SOLIDS lane at 033d69e5). Consumed: every store's steady
+ * temperature and energy, every half's surfaces and each carrier's Doppler
+ * reference, all by packet id. Its method, basis, admission, reached state,
+ * checkpoints and IDA counters are recorded, never consumed. */
 export const steadySolidsSchema=z.object({identity:z.literal('LD01-STEADY-SOLIDS-1'),
-  carriers:z.array(z.object({id:z.string().min(1),fuel_temperatures_k:z.tuple([positiveNumber,positiveNumber]),
-    fuel_energies_j:z.tuple([finiteNumber,finiteNumber]),clad_temperature_k:positiveNumber,clad_energy_j:finiteNumber,
-    surface_temperatures_k:z.tuple([positiveNumber,positiveNumber,positiveNumber]),doppler_reference_k:positiveNumber}).strict()),
-  helium:z.array(storeSchema),passive:z.array(storeSchema),sg_metal:z.array(storeSchema),
-  receipt:z.record(z.string(),z.unknown())}).strict()
+  packet_identity:z.string(),thermal_identity:z.string(),method:record,basis:record,
+  carriers:z.array(z.object({id:z.string().min(1),fuel_store_ids:z.tuple([z.string(),z.string()]),clad_store_id:z.string(),
+    fuel_temperatures_k:z.tuple([positiveNumber,positiveNumber]),fuel_energies_j:z.tuple([finiteNumber,finiteNumber]),
+    clad_temperature_k:positiveNumber,clad_energy_j:finiteNumber,
+    surface_temperatures_k:z.tuple([positiveNumber,positiveNumber,positiveNumber]),doppler_reference_k:positiveNumber,
+    fuel_heat_w:finiteNumber,rates_w:z.tuple([finiteNumber,finiteNumber,finiteNumber]),
+    surface_residuals_w:z.tuple([finiteNumber,finiteNumber,finiteNumber]),gap:record}).strict()),
+  helium:z.array(z.object({id:z.string().min(1),temperature_k:positiveNumber,energy_j:finiteNumber,pressure_pa:positiveNumber,rate_w:finiteNumber}).strict()),
+  passive:z.array(z.object({id:z.string().min(1),temperature_k:positiveNumber,energy_j:finiteNumber,rate_w:finiteNumber}).strict()),
+  sg_metal:z.array(z.object({id:z.string().min(1),generator:z.string(),temperature_k:positiveNumber,energy_j:finiteNumber,
+    primary_to_metal_w:finiteNumber,metal_to_secondary_w:finiteNumber,rate_w:finiteNumber}).strict()),
+  steam_generators:z.array(record),admission:record,steady:record,checkpoints:z.array(record),ida:record}).strict()
 export type SteadySolids=z.infer<typeof steadySolidsSchema>
 /** Where the prepared solid stocks come from: the steady solid state, or the
  * explicit seed of its own solve. The seed puts every core solid store at
@@ -123,6 +131,8 @@ export function prepareOperatingMaterials(f:Fuel,h:Handling,solids:ResolvedSolid
       measure=fuelFeedbackTemperature(nodes[0]!.temperature_K,nodes[1]!.temperature_K)
     // The reference is the law's own measure of the same steady nodes: the
     // native value, checked here against its definition.
+    if(st&&(st.fuel_store_ids.some((store,k)=>store!==`${id}/fuel/${k}`)||st.clad_store_id!==`${id}/clad`))
+      throw Error(`Steady carrier ${id} names other stores`)
     if(st&&!(Math.abs(st.doppler_reference_k-measure)<=1e-12*measure))
       throw Error(`Steady Doppler reference of ${id} (${st.doppler_reference_k} K) is not its nodes' [mean sqrt T]^2 (${measure} K)`)
     return {id,faId:fa.id,half,fuelNodes:nodes,
@@ -141,7 +151,8 @@ export function prepareOperatingMaterials(f:Fuel,h:Handling,solids:ResolvedSolid
   const helium=fuelAssemblyPositions(h,f).map(fa=>{
     const id=fa.id+'/helium',st=steady?.helium.get(id),T=st?st.temperature_k:seed,energy=1.5*nR*T
     if(!(Number.isFinite(T)&&T>0))throw Error(`Helium ${id} at ${T} K is not a positive temperature`)
-    if(st&&Math.abs(st.energy_j-energy)>1e-10*energy)throw Error(`Steady helium ${id} energy disagrees with 1.5 nRT`)
+    if(st&&(Math.abs(st.energy_j-energy)>1e-10*energy||Math.abs(st.pressure_pa-nR*T/gasVolume)>1e-10*st.pressure_pa))
+      throw Error(`Steady helium ${id} energy or pressure disagrees with 1.5 nRT and nRT/V`)
     return {id,volume_m3:gasVolume,nR_J_K:nR,temperature_K:T,pressure_Pa:nR*T/gasVolume,energy_J:st?st.energy_j:energy,capacity_J_K:1.5*nR}
   })
   if(steady){steady.carrier.covered();steady.helium.covered();steady.passive.covered()}

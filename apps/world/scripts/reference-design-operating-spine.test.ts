@@ -242,19 +242,24 @@ test('the two passes may differ only in the leaves the solid preparation owns', 
  * Production compiles take the native stock-IDA settle. */
 function syntheticSettle(change: (s: SteadySolids, seed: OperatingSpineSeed['packet']['thermal']) => void = () => {}): SteadySolidsSettle {
   return async (seed: OperatingSpineSeed) => {
-    const t = seed.packet.thermal, steady: SteadySolids = { identity: 'LD01-STEADY-SOLIDS-1',
+    const t = seed.packet.thermal, fixture = { fixture: 'test-only synthetic steady state' }, steady: SteadySolids = {
+      identity: 'LD01-STEADY-SOLIDS-1', packet_identity: seed.packet.identity, thermal_identity: t.identity, method: fixture, basis: fixture,
       carriers: t.fuel_bands.map((b, i) => {
         const T: [number, number] = [b.fuel_temperatures_k[0]! + 300 + i % 5, b.fuel_temperatures_k[1]! + 250 + i % 3], clad = b.clad_temperature_k + 20
-        return { id: b.id, fuel_temperatures_k: T, fuel_energies_j: [0, 1].map(k => b.fuel_masses_kg[k]! * operatingFuelCaloric(T[k]!).specificEnergy_J_kg) as [number, number],
+        return { id: b.id, fuel_store_ids: [b.fuel_store_ids[0]!, b.fuel_store_ids[1]!], clad_store_id: b.clad_store_id, fuel_temperatures_k: T,
+          fuel_energies_j: [0, 1].map(k => b.fuel_masses_kg[k]! * operatingFuelCaloric(T[k]!).specificEnergy_J_kg) as [number, number],
           clad_temperature_k: clad, clad_energy_j: b.clad_mass_kg * operatingCladCaloric(clad).specificEnergy_J_kg,
-          surface_temperatures_k: [T[1] - 150, clad + 10, clad - 10], doppler_reference_k: fuelFeedbackTemperature(T[0], T[1]) }
+          surface_temperatures_k: [T[1] - 150, clad + 10, clad - 10], doppler_reference_k: fuelFeedbackTemperature(T[0], T[1]),
+          fuel_heat_w: b.source_w[0]! + b.source_w[1]!, rates_w: [0, 0, 0], surface_residuals_w: [0, 0, 0], gap: fixture }
       }),
-      helium: t.helium.map(h => ({ id: h.id, temperature_k: h.temperature_k + 100, energy_j: h.capacity_j_k * (h.temperature_k + 100) })),
-      passive: t.passive_stores.map(p => ({ id: p.id, temperature_k: p.temperature_k + 1, energy_j: p.mass_kg * operatingCladCaloric(p.temperature_k + 1).specificEnergy_J_kg })),
-      sg_metal: t.sg_segments.map(g => ({ id: g.id, temperature_k: g.temperature_k + .5, energy_j: g.capacity_j_k * (g.temperature_k + .5 - 273.15) })),
-      receipt: { fixture: 'test-only synthetic steady state' } }
+      helium: t.helium.map(h => ({ id: h.id, temperature_k: h.temperature_k + 100, energy_j: h.capacity_j_k * (h.temperature_k + 100),
+        pressure_pa: h.nr_j_k * (h.temperature_k + 100) / h.volume_m3, rate_w: 0 })),
+      passive: t.passive_stores.map(p => ({ id: p.id, temperature_k: p.temperature_k + 1, energy_j: p.mass_kg * operatingCladCaloric(p.temperature_k + 1).specificEnergy_J_kg, rate_w: 0 })),
+      sg_metal: t.sg_segments.map(g => ({ id: g.id, generator: t.secondaries[g.secondary]!.id, temperature_k: g.temperature_k + .5,
+        energy_j: g.capacity_j_k * (g.temperature_k + .5 - 273.15), primary_to_metal_w: 0, metal_to_secondary_w: 0, rate_w: 0 })),
+      steam_generators: [], admission: fixture, steady: fixture, checkpoints: [], ida: fixture }
     change(steady, t)
-    return { steady, provenance: { binary: { name: 'synthetic', sha256: '' }, inputSha256: '', outputSha256: '', receipt: steady.receipt } }
+    return { steady, provenance: { binary: { name: 'synthetic', sha256: '' }, inputSha256: '', outputSha256: '', basis: seed.settleBasis, receipt: fixture } }
   }
 }
 
@@ -268,7 +273,10 @@ test.skipIf(!wiki || !if97)('actual seed and steady passes: the steady solids ow
   // The seed is every core store at the prepared core outlet water, the SG
   // metal at the mean of its primary inlet water and secondary saturation.
   expect(new Set(seen!.packet.thermal.fuel_bands.flatMap(b => [...b.fuel_temperatures_k, b.clad_temperature_k]))).toEqual(new Set([593.15]))
-  expect(seen!.settleBasis.coreMassFlux_kg_m2_s).toBeCloseTo(seen!.settleBasis.enthalpyReferenceFlow_kg_s / seen!.settleBasis.coreMainFlowArea_m2, 12)
+  const basis = seen!.settleBasis, derivation = seen!.settleDerivation
+  expect(basis.coreMassFlux_kg_m2_s).toBe(derivation.enthalpyReferenceFlow_kg_s / derivation.coreMainFlowArea_m2)
+  expect(basis.sgPrimaryMassFlux_kg_m2_s).toEqual(['A', 'B'].map(id => ({ id, massFlux_kg_m2_s: derivation.enthalpyReferenceFlow_kg_s / 2 / 1.25 })))
+  expect(basis.basisPower_W).toBe(seen!.packet.thermal.source_total_w)
   for (const [i, b] of p.thermal.fuel_bands.entries()) {
     const c = steady.carriers[i]!
     expect(b.id).toBe(c.id); expect(b.fuel_temperatures_k).toEqual(c.fuel_temperatures_k); expect(b.fuel_energies_j).toEqual(c.fuel_energies_j)
@@ -288,6 +296,8 @@ test.skipIf(!wiki || !if97)('actual seed and steady passes: the steady solids ow
     [(s: SteadySolids) => { s.passive.push({ ...s.passive[0]!, id: 'unowned' }) }, 'does not own'],
     [(s: SteadySolids) => { s.carriers[3]!.fuel_energies_j[0] *= 1 + 1e-9 }, 'caloric primitive'],
     [(s: SteadySolids) => { s.carriers[3]!.doppler_reference_k += 1e-6 }, 'Doppler reference'],
+    [(s: SteadySolids) => { s.carriers[3]!.clad_store_id = 'other' }, 'names other stores'],
+    [(s: SteadySolids) => { s.helium[3]!.pressure_pa *= 1 + 1e-9 }, 'nRT/V'],
     [(s: SteadySolids) => { s.carriers[3]!.fuel_temperatures_k[0] = 2100 }, 'outside its admitted 290--2000 K'],
     [(s: SteadySolids, t: OperatingSpineSeed['packet']['thermal']) => {
       const c = s.carriers[3]!; c.fuel_temperatures_k[0] = 1850; c.fuel_energies_j[0] = t.fuel_bands[3]!.fuel_masses_kg[0]! * operatingFuelCaloric(1850).specificEnergy_J_kg
