@@ -89,6 +89,10 @@ impl Block {
         self.read.borrow_mut().insert(pointer.into());
         Ok(v)
     }
+    /// A subtree read whole, as data (every leaf under it counts as read).
+    pub fn whole(&self, pointer: &str) -> Value {
+        self.at(pointer).unwrap_or_else(|e| panic!("{e}")).clone()
+    }
     /// A finite number.
     pub fn number(&self, pointer: &str) -> f64 {
         let v = self.at(pointer).unwrap_or_else(|e| panic!("{e}"));
@@ -273,27 +277,5 @@ impl Declaration {
         json!({"page": declaration_page(), "gates": self.gates.receipt(), "accuracy": self.accuracy.receipt(),
             "shared": {"fence": self.shared.fence, "page": self.shared.page, "page_sha256": self.shared.page_sha256},
             "contract": {"fence": self.contract.fence, "page": self.contract.page, "page_sha256": self.contract.page_sha256, "block": self.contract.value}})
-    }
-}
-
-/// Derived run caps, each from its declared basis (the work-bound table):
-/// a quiet or trip run's solver-CPU cap is `runCapFactor` times its budget
-/// over its duration; the references' caps are declared directly.
-pub fn solver_cap_s(gates: &Block, run: &str) -> f64 {
-    let factor = gates.number("/runCapFactor");
-    match run {
-        "hold" => {
-            factor * gates.number("/hold/budget_cpu_s_per_s") * gates.number("/hold/duration_s")
-        }
-        "trip" => {
-            factor
-                * gates.number("/trip/wholeTripBudget_cpu_s_per_s")
-                * gates.number("/trip/duration_s")
-        }
-        "holdReference" | "R0" | "R1" | "R2" => {
-            gates.number(&format!("/referenceCaps_cpu_s/{run}"))
-        }
-        "zeroTime" => gates.number("/zeroTime/maxSolverCpu_s"),
-        other => panic!("no declared solver-CPU cap basis for run {other}"),
     }
 }

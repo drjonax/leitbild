@@ -8,6 +8,16 @@
 //! retuned here. Every receipt carries the full schema of
 //! `s2_harness/receipt.rs` and is written only to a new file.
 //!
+//! - `s2_gate_run` (ignored): the declared sequence; it refuses before any
+//!   work unless the gates are pinned, no TBD is open and S1 run 6 and the
+//!   zero-time receipts are named.
+//! - `s2_smoke` (ignored, M4): a short hold and trip from a saved settled
+//!   state through the same runner, NOT evidence.
+//! - unit tests on fixtures and synthetic signals: the declaration's reading,
+//!   the pin and TBD refusals, the work-bound pre-check, the cap rule, the
+//!   comparisons, located-event timing, the settling measure and the
+//!   settle-cap fit.
+//!
 //! The harness needs stock IDAS (`--features quadratures` with the IDAS
 //! prefix): every S2 run integrates its conservation ledgers as stock
 //! quadratures (K2).
@@ -23,55 +33,69 @@ mod observe;
 #[path = "common/provenance.rs"]
 mod provenance;
 mod s2_harness;
-pub use s2_harness::{compose, gates, receipt, run};
+pub use s2_harness::{
+    compare, compose, conservation, gates, guards, meter, outputs, receipt, run, runner, sequence,
+};
 
-use gates::{Block, Declaration, solver_cap_s};
+use compare::{Credited, key};
+use gates::{Block, Declaration};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
-/// Revision 6's `ld01-s2-gates`, as the unit tests' fixture (the harness
-/// itself reads the declaration page).
-const GATES_FIXTURE: &str = r#"{"sharedFrom":"ld01-s1-gates","maxOrder":2,"referenceToleranceFactor":0.1,"outputInterval_s":0.1,"newtonCoefficient":0.33,"deltaCjLSetup":0.1,"restartInitialStep_s":0.0001,"build":"quadratures","kluOrdering":"AMD","projectedStep_s":{"quiet":0.0045,"window":0.008},"costMeasurement":{"solverCpu":"process CPU less observation, root-return handling and ledger","record":["process","solver","observation","ledger","cpuModel","qosClass","coreClass"],"quietWindow":true},"totalCpu_s":2700,"runCapFactor":2,"totalGuard":{"rule":"solver cap + runCapFactor x observed samples x Z5 per-sample observation and root-return cost"},"identityRelative":1e-09,"preparation":{"pzrHeater":{"beforeK1_W":0,"atPower":"composed-state PZR metal exterior and head loss, computed once, held constant through settling, re-settling and hold"},"pzrRelief":true},"zeroTime":{"maxSolverCpu_s":120,"settledRepeats":["Z6"],"recompositionRepeats":["Z1","Z6"]},"settling":{"maxSimulated_s":null,"maxCpu_s":null,"capBasis":"S2-JOIN fitted approach rates (open)","judgedOn":"credited outputs; uncredited cells, SURGE among them, reported only","window_s":20,"corePowerRelative":0.0001,"cellTemperature_K":0.01,"pzrRoofPressure_Pa":1000,"sgPressure_Pa":1000,"loopFlowRelativeChange":0.0005},"powerBasis":{"mechanism":"A","preparedSourceHeat_W":2928922000,"referenceFissionsRebase":1.02626,"probeSettledPower_W":3005840000,"confirmRelative":0.002,"rebaseAgainAboveConfirm":true,"resettle":true},"hold":{"duration_s":300,"measuredFrom_s":10,"budget_cpu_s_per_s":0.1,"maxResidualsPerStep":1.5,"residualCount":"IDAGetNumResEvals","driftCeiling":{"corePowerRelative":0.002,"averageCoolant_K":0.1,"pzrRoofPressure_Pa":10000,"pzrLevel_m":0.02,"sgPressure_Pa":10000,"sgLiquidVolume_m3":0.1},"averageCoolant":"mass-weighted mean liquid temperature of the 27 primary cells"},"trip":{"duration_s":60,"window_s":20,"wholeTripBudget_cpu_s_per_s":0.35,"requireSeating":true,"referenceSpans":{"R1":"window","R2":"trip"},"projectedRestartsInWindow":40},"referenceCaps_cpu_s":{"holdReference":90,"R0":30,"R1":160,"R2":135},"r0ReportOnlyStepCap":3750,"contrary":{"stuckCluster":{"cluster":"highest worth in the source feedback","duration_s":60},"noTurbineTrip":{"initiation":"LD01.TRIP.MANUAL","holdingCircuitOpen_s":0,"steamDemand":"constant A/B","duration_s":60},"headerReservoir":{"pressure_Pa":6000000,"caps":"the settling caps"},"outputs":"output interval only","maxCpu_s_per_trip_case":42},"spectralStates":["composed","settled"],"directionalCheck":{"relative":1e-06,"norm":"scaled row","coordinateDirections":"all","randomDirectionsPerBlock":20,"scheme":"central","incrementOfScale":1e-05,"kinkRule":"one-sided on the state's side across a C0 kink, donor flip or relief or mode switch","innerSolveRelativeMax":1e-12,"exactAbsence":{"rule":"phase mass exactly 0, or impulse 0 with inertance 0","composedCount":63,"check":"analytic column against the colored path"}},"ledger":{"gate":"IDAS quadrature","boundLocalToleranceUnits":1,"trapezoid":"reported","reportOverTime":true}}"#;
+/// Revision 7's blocks and the shared S1 blocks, as the unit tests'
+/// fixtures (the harness itself reads the declaration page and the wiki).
+const GATES_R7: &str = include_str!("s2_harness/fixtures/ld01-s2-gates-r7.json");
+const ACCURACY_R7: &str = include_str!("s2_harness/fixtures/ld01-s2-accuracy-r7.json");
+const S1_GATES: &str = include_str!("s2_harness/fixtures/ld01-s1-gates.json");
+const CONTRACT: &str = include_str!("s2_harness/fixtures/ld01-accuracy-contract.json");
+
+fn fixture() -> Declaration {
+    Declaration {
+        gates: Block::from_json("ld01-s2-gates", GATES_R7).unwrap(),
+        accuracy: Block::from_json("ld01-s2-accuracy", ACCURACY_R7).unwrap(),
+        shared: Block::from_json("ld01-s1-gates", S1_GATES).unwrap(),
+        contract: Block::from_json("ld01-accuracy-contract", CONTRACT).unwrap(),
+    }
+}
+
+/// `gates` with `pointer` set to `value`.
+fn with(text: &str, pointer: &str, value: Value) -> Block {
+    let mut v: Value = serde_json::from_str(text).unwrap();
+    *v.pointer_mut(pointer).unwrap() = value;
+    Block::from_json("ld01-s2-gates", &v.to_string()).unwrap()
+}
+
+// ------------------------------------------------------- declaration data
 
 /// Zero-time check of the declaration, NOT S2 evidence: the blocks load
-/// from their pages, pass the declaration's own checks, and the derived run
-/// caps are printed with every value no harness code consumes yet.
+/// from their pages and pass the declaration's own checks; the declared
+/// SHA-256 the pin compares, the TBD register's state and every value no
+/// harness code consumes are printed.
 #[test]
 #[ignore = "requires the S2 declaration page and the wiki"]
 fn s2_declared_gates() {
     let d = Declaration::load().unwrap_or_else(|e| panic!("{e}"));
-    let caps: serde_json::Map<String, Value> = [
-        "hold",
-        "holdReference",
-        "trip",
-        "R0",
-        "R1",
-        "R2",
-        "zeroTime",
-    ]
-    .iter()
-    .map(|r| (r.to_string(), json!(solver_cap_s(&d.gates, r))))
-    .collect();
+    let log = std::fs::read_to_string(guards::decision_log_page()).ok();
+    let pin = guards::pin(&d.gates, log.as_deref()).unwrap();
+    let tbd = guards::tbd_state(&d.gates, log.as_deref()).unwrap();
+    compare::Budgets::from(&d).unwrap();
     println!(
         "{}",
-        json!({"kind": "s2-declared-gates-NOT-EVIDENCE", "declaration": d.receipt(),
-            "solver_caps_s": caps, "total_cpu_s": d.gates.number("/totalCpu_s"),
+        json!({"kind": "s2-declared-gates-NOT-EVIDENCE", "declaration": d.receipt()["page"],
+            "pin": pin, "tbd": tbd, "gate_run_refusals": guards::gate_run_refusals(&pin, &tbd),
             "unread": d.unread()})
     );
 }
 
 #[test]
 fn every_declared_value_is_read_by_pointer_and_the_unread_ones_are_listed() {
-    let gates = Block::from_json("ld01-s2-gates", GATES_FIXTURE).unwrap();
+    let gates = Block::from_json("ld01-s2-gates", GATES_R7).unwrap();
     assert_eq!(gates.number("/hold/duration_s"), 300.);
     assert_eq!(gates.open_number("/settling/maxCpu_s"), None);
     assert_eq!(gates.open_number("/settling/window_s"), Some(20.));
-    assert_eq!(gates.count("/r0ReportOnlyStepCap"), 3750);
+    assert_eq!(gates.count("/r0ReportOnly/stepCap"), 3750);
     assert!(gates.flag("/trip/requireSeating"));
-    assert_eq!(gates.texts("/spectralStates"), ["composed", "settled"]);
-    // The derived caps follow the work-bound table's bases.
-    assert_eq!(solver_cap_s(&gates, "hold"), 60.);
-    assert_eq!(solver_cap_s(&gates, "trip"), 42.);
-    assert_eq!(solver_cap_s(&gates, "R1"), 160.);
+    assert_eq!(gates.texts("/spectral/states").len(), 2);
     let unread = gates.unread();
     assert!(!unread.contains(&"/hold/duration_s".to_string()));
     assert!(
@@ -79,21 +103,32 @@ fn every_declared_value_is_read_by_pointer_and_the_unread_ones_are_listed() {
         "{unread:?}"
     );
     // An array is one leaf; an object read whole covers its leaves.
-    assert!(!unread.contains(&"/spectralStates".to_string()));
-    assert!(unread.contains(&"/directionalCheck/exactAbsence/composedCount".to_string()));
+    assert!(!unread.contains(&"/spectral/states".to_string()));
+    gates.whole("/directionalCheck");
+    assert!(
+        !gates
+            .unread()
+            .iter()
+            .any(|p| p.starts_with("/directionalCheck/"))
+    );
     // A missing or mistyped key refuses loudly.
     let missing = std::panic::catch_unwind(|| {
-        Block::from_json("ld01-s2-gates", GATES_FIXTURE)
+        Block::from_json("ld01-s2-gates", GATES_R7)
             .unwrap()
             .number("/hold/notDeclared")
     });
     assert!(missing.is_err());
     let mistyped = std::panic::catch_unwind(|| {
-        Block::from_json("ld01-s2-gates", GATES_FIXTURE)
+        Block::from_json("ld01-s2-gates", GATES_R7)
             .unwrap()
             .number("/build")
     });
     assert!(mistyped.is_err());
+    // The fixture's budgets read from their owners.
+    let b = compare::Budgets::from(&fixture()).unwrap();
+    assert_eq!(b.power_basis_w, 2_992_500_000.);
+    assert_eq!(b.insertion_fractions, [0.1, 0.5, 0.9, 1.0]);
+    assert_eq!(b.observation_s, 0.002);
 }
 
 #[test]
@@ -109,6 +144,8 @@ fn a_fenced_block_is_found_once_and_refused_when_absent_or_repeated() {
     assert!(gates::fenced("```ld01-s2-gates\n{", "ld01-s2-gates", "p").is_err());
 }
 
+// ---------------------------------------------------------------- receipts
+
 /// A receipt with every schema section, as the runner assembles one.
 fn complete_receipt() -> Value {
     let mut r = json!({});
@@ -119,6 +156,7 @@ fn complete_receipt() -> Value {
         receipt::put(&mut r, p, json!({}));
     }
     receipt::put(&mut r, "/gates", json!([]));
+    receipt::put(&mut r, "/sequence", json!([]));
     let mut record = run::RunRecord {
         spec: Some(run::RunSpec {
             name: "hold".into(),
@@ -137,6 +175,9 @@ fn complete_receipt() -> Value {
             solver_cap_s: 2.,
             total_guard_s: 3.,
             report_only_step_cap: None,
+            caps_report_only: true,
+            rods_observed: false,
+            domain_exit_stops: true,
         }),
         process_cpu_s: 1.,
         ..run::RunRecord::default()
@@ -167,14 +208,21 @@ fn the_receipt_schema_names_every_section_and_refuses_a_gap() {
         json!(1)
     );
     assert_eq!(r["runs"]["hold"]["cpu"]["attributed_fraction"], json!(0.5));
+    // Stock KLU inside IDASolve is null until the lead's timing shim.
+    assert_eq!(
+        r["runs"]["hold"]["cpu"]["buckets"]["klu_solve_s"],
+        Value::Null
+    );
     // Each level of the schema is checked: top, run, comparison and gate.
     for (pointer, expected) in [
         ("/machine", "/machine/cpu_model"),
+        ("/declaration/pin", "/declaration/pin"),
         ("/runs/hold/ledger", "/runs/hold/ledger/gate"),
         (
             "/runs/hold/cpu/buckets",
             "/runs/hold/cpu/buckets/klu_solve_s",
         ),
+        ("/runs/hold/domain", "/runs/hold/domain"),
         (
             "/comparisons/hold_vs_reference/within",
             "/comparisons/hold_vs_reference/within",
@@ -214,4 +262,751 @@ fn the_receipt_schema_names_every_section_and_refuses_a_gap() {
     receipt::write(&path, &r).unwrap();
     assert!(receipt::write(&path, &r).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// ----------------------------------------------------- pin, TBD, work bound
+
+#[test]
+fn the_pin_refuses_unless_the_declared_sha_equals_the_logged_rp1_row() {
+    let gates = Block::from_json("ld01-s2-gates", GATES_R7).unwrap();
+    let declared = guards::declared_sha256(&gates).unwrap();
+    assert_eq!(declared.len(), 64);
+    // No log, a log without a pin row, and a wrong pin all refuse.
+    for log in [
+        None,
+        Some("| ID | Date | Decision |\n| --- | --- | --- |\n| RP1 | 14 Oct | Frozen gates |\n"),
+        Some(&*format!(
+            "| RP1-pin | 15 Oct | ld01-s2-gates frozen | sha256 {} |\n",
+            "0".repeat(64)
+        )),
+    ] {
+        let pin = guards::pin(&gates, log).unwrap();
+        assert_eq!(pin["pinned"], json!(false), "{pin}");
+        assert!(!guards::gate_run_refusals(&pin, &json!({})).is_empty());
+    }
+    // The matching row pins; the last matching row in page order counts.
+    let log = format!(
+        "| RP1-pin | 15 Oct | ld01-s2-gates frozen | sha256 {} |\n| RP1-pin | 16 Oct | ld01-s2-gates re-pinned | sha256 {declared} |\n",
+        "a".repeat(64)
+    );
+    let pin = guards::pin(&gates, Some(&log)).unwrap();
+    assert_eq!(pin["pinned"], json!(true), "{pin}");
+    assert_eq!(pin["frozen_sha256"], json!(declared));
+    // A row naming two SHA values is ambiguous and refuses.
+    let two = format!("| RP1-pin | x | ld01-s2-gates | {declared} {declared} |\n");
+    assert!(guards::pin(&gates, Some(&two)).is_err());
+    // Filling a TBD leaves the declared SHA unchanged (a fill is not a
+    // revision); changing any declared value changes it.
+    let filled = with(GATES_R7, "/caps_cpu_s/trip", json!(42.));
+    assert_eq!(guards::declared_sha256(&filled).unwrap(), declared);
+    assert_ne!(
+        guards::sha256_bytes(guards::canonical(&filled.value).as_bytes()).unwrap(),
+        guards::sha256_bytes(guards::canonical(&gates.value).as_bytes()).unwrap()
+    );
+    let changed = with(GATES_R7, "/hold/budget_cpu_s_per_s", json!(0.2));
+    assert_ne!(guards::declared_sha256(&changed).unwrap(), declared);
+    // Canonical JSON sorts keys at every level.
+    assert_eq!(
+        guards::canonical(&json!({"b": [1, {"d": 2, "c": 3}], "a": null})),
+        r#"{"a":null,"b":[1,{"c":3,"d":2}]}"#
+    );
+}
+
+#[test]
+fn a_gate_run_refuses_while_a_tbd_is_open_unlogged_or_undeclared() {
+    let gates = Block::from_json("ld01-s2-gates", GATES_R7).unwrap();
+    let declared = guards::declared_sha256(&gates).unwrap();
+    let pin_row = format!("| RP1-pin | 15 Oct | ld01-s2-gates frozen | sha256 {declared} |\n");
+    let pin = guards::pin(&gates, Some(&pin_row)).unwrap();
+    // Revision 7 as drafted: every listed TBD is open.
+    let tbd = guards::tbd_state(&gates, Some(&pin_row)).unwrap();
+    let listed = gates.value["tbd"].as_object().unwrap().len();
+    assert!(listed >= 17, "{tbd}");
+    let open = tbd["open"].as_array().unwrap().len();
+    assert_eq!(open, listed, "{tbd}");
+    let refusals = guards::gate_run_refusals(&pin, &tbd);
+    assert_eq!(refusals.len(), listed, "{refusals:?}");
+    assert!(
+        refusals
+            .iter()
+            .any(|r| r.contains("totalGuard.perSampleObservation_s"))
+    );
+    // Every TBD filled: an unlogged fill still refuses; a fill row naming
+    // the key and a receipt SHA admits it.
+    let mut v: Value = serde_json::from_str(GATES_R7).unwrap();
+    let keys: Vec<String> = v["tbd"].as_object().unwrap().keys().cloned().collect();
+    for k in &keys {
+        *v.pointer_mut(&guards::dotted_pointer(k)).unwrap() = json!(1.0);
+    }
+    let all = Block::from_json("ld01-s2-gates", &v.to_string()).unwrap();
+    assert_eq!(guards::declared_sha256(&all).unwrap(), declared);
+    let tbd = guards::tbd_state(&all, Some(&pin_row)).unwrap();
+    assert_eq!(tbd["unlogged_fills"], json!(listed));
+    assert_eq!(guards::gate_run_refusals(&pin, &tbd).len(), listed);
+    let mut log = pin_row.clone();
+    for (i, k) in keys.iter().enumerate() {
+        log.push_str(&format!(
+            "| S2-F{i} | 16 Oct | fill {k} | receipt sha256 {} |\n",
+            "b".repeat(64)
+        ));
+    }
+    let tbd = guards::tbd_state(&all, Some(&log)).unwrap();
+    assert_eq!(tbd["closed"], json!(true), "{tbd}");
+    assert!(guards::gate_run_refusals(&pin, &tbd).is_empty());
+    // A null the register does not list refuses as undeclared.
+    let stray = with(&v.to_string(), "/hold/duration_s", Value::Null);
+    let tbd = guards::tbd_state(&stray, Some(&log)).unwrap();
+    assert_eq!(tbd["undeclared_nulls"], json!(["/hold/duration_s"]));
+    assert!(!guards::gate_run_refusals(&pin, &tbd).is_empty());
+}
+
+#[test]
+fn a_run_that_does_not_fit_the_remaining_bound_is_not_started_and_s2_is_incomplete() {
+    let gates = Block::from_json("ld01-s2-gates", GATES_R7).unwrap();
+    let mut work = guards::WorkBound::new(&gates);
+    assert_eq!(work.bound_s, 2700.);
+    work.charge("S1 run 6", 1100.);
+    work.charge("zero-time receipts", 150.);
+    assert_eq!(work.admit("hold", 1400.), guards::Admission::Start);
+    work.charge("hold", 1400.);
+    let refused = work.admit("trip", 60.);
+    assert_eq!(
+        refused,
+        guards::Admission::Incomplete {
+            remaining_s: 50.,
+            guard_s: 60.
+        }
+    );
+    // An unbounded guard never starts.
+    assert!(matches!(
+        work.admit("R0", f64::INFINITY),
+        guards::Admission::Incomplete { .. }
+    ));
+    let j = work.json();
+    assert_eq!(j["within"], json!(true));
+    assert_eq!(j["not_started"].as_array().unwrap().len(), 2);
+    assert!(
+        j["rule"]
+            .as_str()
+            .unwrap()
+            .contains("incomplete, not failed")
+    );
+}
+
+#[test]
+fn declared_caps_are_read_as_data_and_refused_below_the_cap_rule() {
+    let gates = Block::from_json("ld01-s2-gates", GATES_R7).unwrap();
+    // Declared values: the hold's 60 is 2 x 0.1 x 300.
+    let hold = guards::declared_cap(&gates, "hold", 300.).unwrap();
+    assert_eq!(hold["cap_s"], json!(60.));
+    assert_eq!(hold["floor_s"], json!(60.));
+    // Open caps refuse while TBD.
+    assert!(
+        guards::declared_cap(&gates, "trip", 60.)
+            .unwrap_err()
+            .contains("open")
+    );
+    // A fill below 2 x budget (0.35 x 60 = 21) refuses; R1's floor is 160.
+    let low = with(GATES_R7, "/caps_cpu_s/trip", json!(41.));
+    assert!(guards::declared_cap(&low, "trip", 60.).is_err());
+    let ok = with(GATES_R7, "/caps_cpu_s/trip", json!(42.));
+    assert_eq!(
+        guards::declared_cap(&ok, "trip", 60.).unwrap()["cap_s"],
+        json!(42.)
+    );
+    let r1 = with(GATES_R7, "/caps_cpu_s/R1", json!(100.));
+    assert!(guards::declared_cap(&r1, "R1", 20.).is_err());
+    // The total guard needs the per-sample observation cost (TBD(HARNESS)).
+    assert!(guards::total_guard(&gates, 60., 150_000.).is_err());
+    let observed = with(
+        GATES_R7,
+        "/totalGuard/perSampleObservation_s",
+        json!(0.0013),
+    );
+    assert!((guards::total_guard(&observed, 60., 150_000.).unwrap() - 450.).abs() < 1e-9);
+}
+
+#[test]
+fn a_pressure_driven_current_takes_the_pressure_class_through_its_own_sensitivity() {
+    // Three coordinates: pressures p0, p1 (atol 2 and 4) and an algebraic
+    // current m (row 2): g = 3 m - 0.5 p0 + 0.5 p1 (m = (p0 - p1)/6), plus
+    // a non-pressure coordinate 3 the row also reads.
+    // CSC by column: col 0 rows {2}, col 1 rows {2}, col 2 rows {2},
+    // col 3 rows {2, 3}.
+    let pointers = [0, 1, 2, 3, 5];
+    let rows = [2, 2, 2, 2, 3];
+    let values = [-0.5, 0.5, 3., 100., 1.];
+    let pressure = [true, true, false, false];
+    let atol = [2., 4., 1e-8, 1e-8];
+    let d = compose::derived_tolerances(&pointers, &rows, &values, &[2], &pressure, &atol).unwrap();
+    // |dm/dp0| = |dm/dp1| = 1/6; the larger product is p1's: 4/6.
+    assert!((d[0].0 - 4. / 6.).abs() < 1e-15, "{d:?}");
+    assert!((d[0].1 - 1. / 6.).abs() < 1e-15);
+    assert_eq!(d[0].2, 1);
+    // A row without its diagonal, or reading no pressure, refuses.
+    let no_diagonal = [-0.5, 0.5, 0., 100., 1.];
+    assert!(
+        compose::derived_tolerances(&pointers, &rows, &no_diagonal, &[2], &pressure, &atol)
+            .is_err()
+    );
+    assert!(
+        compose::derived_tolerances(&pointers, &rows, &values, &[2], &[false; 4], &atol).is_err()
+    );
+}
+
+#[test]
+fn d3_a_ends_a_run_only_where_the_predicate_does_not_admit_the_state() {
+    use runner::{D3, d3_exit};
+    // Inside the compiled domain, and in the extension while the margin
+    // holds (S2-D23 as revised): the run continues.
+    for admitted in [
+        D3::Admitted {
+            extended: false,
+            margin_holds: false,
+        },
+        D3::Admitted {
+            extended: true,
+            margin_holds: true,
+        },
+    ] {
+        assert_eq!(d3_exit(&admitted), None);
+    }
+    // Outside with the 1 % margin failed: the labelled margin exit.
+    let failed = D3::Unsupported {
+        margin_holds: false,
+        exit: "density".into(),
+    };
+    assert_eq!(d3_exit(&failed), Some("D3 (a) margin exit"));
+    let outside = D3::Unsupported {
+        margin_holds: true,
+        exit: "pressure".into(),
+    };
+    assert_eq!(d3_exit(&outside), Some("D3 (a) source-domain exit"));
+}
+
+// ------------------------------------------------- comparisons (synthetic)
+
+/// Credited series on the grid `origin + j dt`, each key's instances from
+/// `f(key, instance, t)`.
+fn synthetic(
+    origin: f64,
+    dt: f64,
+    n: usize,
+    instances: &[(&'static str, usize)],
+    f: &dyn Fn(&str, usize, f64) -> f64,
+) -> Credited {
+    let mut c = Credited::default();
+    for j in 0..=n {
+        let t = j as f64 * dt;
+        let sample: Vec<(&str, Vec<f64>)> = instances
+            .iter()
+            .map(|(k, m)| (*k, (0..*m).map(|i| f(k, i, t)).collect()))
+            .collect();
+        c.push(origin + t, &sample).unwrap();
+    }
+    c
+}
+
+const ALL: [(&str, usize); 11] = [
+    (key::CORE_POWER_W, 1),
+    (key::REGIONAL_FRACTION, 3),
+    (key::FUEL_DOPPLER_K, 3),
+    (key::CORE_CELL_K, 2),
+    (key::AVERAGE_COOLANT_K, 1),
+    (key::PZR_ROOF_PA, 1),
+    (key::PZR_LEVEL_M, 1),
+    (key::CORE_DP_PA, 1),
+    (key::LOOP_FLOW_KG_S, 2),
+    (key::SG_PRESSURE_PA, 2),
+    (key::SG_LIQUID_M3, 2),
+];
+
+fn base(k: &str, i: usize, _t: f64) -> f64 {
+    match k {
+        key::CORE_POWER_W => 2.9925e9,
+        key::REGIONAL_FRACTION => 1. / 3.,
+        key::PZR_ROOF_PA => 1.55e7,
+        key::SG_PRESSURE_PA => 6.36e6 + i as f64,
+        _ => 500. + i as f64,
+    }
+}
+
+#[test]
+fn the_comparison_takes_the_contract_metrics_of_the_filtered_difference() {
+    let d = fixture();
+    let b = compare::Budgets::from(&d).unwrap();
+    let (origin, dt, n) = (600., b.observation_s, 5000);
+    let reference = synthetic(origin, dt, n, &ALL, &base);
+    // Offsets well inside the band: a constant roof bias of 300 Pa, a
+    // 0.2 Hz SG pressure wave of 1,500 Pa, core power 2.0e6 W (6.7e-4 of
+    // the basis), one regional fraction 5e-4; and 20 Hz content on the
+    // level that the filter removes.
+    let run = synthetic(origin, dt, n, &ALL, &|k, i, t| {
+        base(k, i, t)
+            + match (k, i) {
+                (key::PZR_ROOF_PA, _) => 300.,
+                (key::SG_PRESSURE_PA, 1) => 1500. * (2. * std::f64::consts::PI * 0.2 * t).sin(),
+                (key::CORE_POWER_W, _) => 2.0e6,
+                (key::REGIONAL_FRACTION, 2) => 5e-4,
+                (key::PZR_LEVEL_M, _) => 0.05 * (2. * std::f64::consts::PI * 20. * t).sin(),
+                _ => 0.,
+            }
+    });
+    let m = compare::compare(&run, &reference, origin, 0., 10., &b);
+    let v = |k: &str| m["metrics"][k]["value"].as_f64().unwrap();
+    assert_eq!(m["evaluable"], json!(true), "{m}");
+    assert!((v("pzr_roof_bias_pa") - 300.).abs() < 1e-6, "{m}");
+    assert!(v("pzr_roof_sample_noise_pa") < 1e-6);
+    assert!((v("sg_pressure_pa") - 1500.).abs() < 5., "{m}");
+    assert!((v("core_power_relative") - 2.0e6 / 2.9925e9).abs() < 1e-9);
+    assert!((v("regional_fraction") - 5e-4).abs() < 1e-9);
+    // 20 Hz is ten times the cutoff: the 4th-order filter, twice, leaves
+    // about 1e-8 of it.
+    assert!(v("pzr_level_m") < 1e-6, "{m}");
+    assert_eq!(m["within"], json!(true), "{m}");
+    // One output over its budget fails the comparison; a missing output
+    // makes it not evaluable.
+    let over = synthetic(origin, dt, n, &ALL, &|k, i, t| {
+        base(k, i, t) + if k == key::SG_PRESSURE_PA { 2500. } else { 0. }
+    });
+    let m = compare::compare(&over, &reference, origin, 0., 10., &b);
+    assert_eq!(m["within"], json!(false));
+    assert!(m["metrics"]["sg_pressure_pa"]["value"].as_f64().unwrap() > 2000.);
+    let missing = synthetic(origin, dt, n, &ALL[..5], &base);
+    let m = compare::compare(&missing, &reference, origin, 0., 10., &b);
+    assert_eq!(m["evaluable"], json!(false));
+    // A series off the grid or too short is refused, not compared.
+    let short = synthetic(origin, dt, 100, &ALL, &base);
+    let m = compare::compare(&short, &reference, origin, 0., 10., &b);
+    assert_eq!(m["evaluable"], json!(false));
+}
+
+#[test]
+fn rod_insertion_times_interpolate_and_compare_by_time_difference() {
+    let d = fixture();
+    let b = compare::Budgets::from(&d).unwrap();
+    let (origin, dt) = (10., 0.002);
+    let fall = |delay: f64| {
+        move |_: &str, _: usize, t: f64| -> f64 {
+            // Released at 0.2 s + delay, uniform 2 m/s from 2.8 m.
+            (2.8 - 2. * (t - 0.2 - delay).max(0.)).max(0.)
+        }
+    };
+    let run = synthetic(origin, dt, 1000, &[(key::ROD_TRAVEL_M, 2)], &fall(0.));
+    let reference = synthetic(origin, dt, 1000, &[(key::ROD_TRAVEL_M, 2)], &fall(0.03));
+    let seats: BTreeMap<usize, f64> = [(0, origin + 1.6), (1, origin + 1.6)].into();
+    let late: BTreeMap<usize, f64> = [(0, origin + 1.63), (1, origin + 1.63)].into();
+    let a = compare::insertion_times(&run, origin, 2.8, &b.insertion_fractions, &seats).unwrap();
+    // 0.1 of 2.8 m is 0.28 m: 0.2 + 0.14 s.
+    assert!((a[0][0].unwrap() - 0.34).abs() < 1e-9, "{a:?}");
+    assert!((a[0][1].unwrap() - 0.9).abs() < 1e-9);
+    assert!((a[0][3].unwrap() - 1.6).abs() < 1e-12);
+    let r =
+        compare::insertion_times(&reference, origin, 2.8, &b.insertion_fractions, &late).unwrap();
+    let v = compare::compare_timing(&a, &r, &b);
+    assert!(
+        (v["max_abs_s"].as_f64().unwrap() - 0.03).abs() < 1e-9,
+        "{v}"
+    );
+    assert_eq!(v["within"], json!(true));
+    // 0.06 s is beyond thresholdTiming_s; a seat in one run only is a miss.
+    let slow = synthetic(origin, dt, 1000, &[(key::ROD_TRAVEL_M, 2)], &fall(0.06));
+    let s = compare::insertion_times(&slow, origin, 2.8, &b.insertion_fractions, &seats).unwrap();
+    assert_eq!(compare::compare_timing(&a, &s, &b)["within"], json!(false));
+    let unseated =
+        compare::insertion_times(&run, origin, 2.8, &b.insertion_fractions, &BTreeMap::new())
+            .unwrap();
+    let v = compare::compare_timing(&a, &unseated, &b);
+    assert_eq!(v["misses"].as_array().unwrap().len(), 2);
+    assert_eq!(v["within"], json!(false));
+}
+
+// ----------------------------------------------- settling and the cap fit
+
+#[test]
+fn trailing_ranges_are_the_window_max_minus_min() {
+    let x: Vec<f64> = (0..200)
+        .map(|k| ((k * 37) % 101) as f64 * 0.5 - (k as f64 * 0.1).sin())
+        .collect();
+    for n in [1, 7, 50] {
+        let fast = compare::trailing_ranges(&x, n);
+        assert_eq!(fast.len(), x.len() - n);
+        for (k, r) in fast.iter().enumerate() {
+            let w = &x[k..=k + n];
+            let brute = w.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - w.iter().copied().fold(f64::INFINITY, f64::min);
+            assert_eq!(*r, brute);
+        }
+    }
+}
+
+/// A settling signal per quantity instance: an exponentially decaying
+/// 0.05 Hz oscillation of amplitude `a0 * scale`, rate `k`, about `base`.
+fn settling(origin: f64, dt: f64, seconds: f64, k: f64) -> (Credited, Vec<compare::Quantity>) {
+    let q = compare::settling_quantities(&fixture());
+    let instances: Vec<(&'static str, usize)> = q.iter().map(|q| (q.key, 2)).collect();
+    let mut keys = instances.clone();
+    keys.dedup();
+    let thresholds: BTreeMap<&str, (f64, bool)> = q
+        .iter()
+        .map(|q| (q.key, (q.threshold, q.relative)))
+        .collect();
+    let n = (seconds / dt).round() as usize;
+    let c = synthetic(origin, dt, n, &keys, &|key, i, t| {
+        let (threshold, relative) = thresholds[key];
+        let base = 1000. + i as f64;
+        let scale = if relative {
+            threshold * base
+        } else {
+            threshold
+        };
+        base + 50. * scale * (-k * t).exp() * (2. * std::f64::consts::PI * 0.05 * t).sin()
+    });
+    (c, q)
+}
+
+#[test]
+fn the_settled_judgement_takes_each_quantitys_last_window_range() {
+    let (dt, window, cutoff) = (0.1, 20., 2.);
+    // 50 x threshold at t = 0 decaying at 0.02 /s: below the threshold
+    // (range about 2 x amplitude) after ln(100)/0.02 = 230 s.
+    let (early, q) = settling(0., dt, 150., 0.02);
+    let (is, v) = compare::settled(&early, &q, window, dt, cutoff);
+    assert!(!is, "{v}");
+    let (late, q) = settling(0., dt, 400., 0.02);
+    let (is, v) = compare::settled(&late, &q, window, dt, cutoff);
+    assert!(is, "{v}");
+    assert_eq!(v["quantities"].as_array().unwrap().len(), 2 * q.len());
+    // Too short for a window: not evaluable, never settled.
+    let (short, q) = settling(0., dt, 10., 0.02);
+    assert!(!compare::settled(&short, &q, window, dt, cutoff).0);
+}
+
+#[test]
+fn the_exponential_fit_recovers_rate_and_crossing() {
+    let t: Vec<f64> = (0..100).map(|k| 300. + k as f64).collect();
+    let r: Vec<f64> = t.iter().map(|t| 7. * (-0.01 * (t - 300.)).exp()).collect();
+    let f = compare::Exponential::fit(&t, &r).unwrap();
+    assert!((f.k_per_s - 0.01).abs() < 1e-12 && (f.a - 7.).abs() < 1e-10);
+    assert!(f.rms_log_residual < 1e-12);
+    // 7 e^{-0.01 (t-300)} = 1 at t = 300 + 100 ln 7.
+    assert!((f.reaches(1.).unwrap() - (300. + 100. * 7_f64.ln())).abs() < 1e-8);
+    // A growing range never reaches its threshold; a zero range refuses.
+    let grow: Vec<f64> = r.iter().rev().copied().collect();
+    assert!(
+        compare::Exponential::fit(&t, &grow)
+            .unwrap()
+            .reaches(1.)
+            .is_none()
+    );
+    let mut zero = r.clone();
+    zero[5] = 0.;
+    assert!(compare::Exponential::fit(&t, &zero).is_err());
+}
+
+#[test]
+fn the_settle_cap_fit_is_twice_the_fitted_crossing_and_its_cpu() {
+    let (dt, window, cutoff) = (0.1, 20., 2.);
+    let (run, q) = settling(0., dt, 200., 0.02);
+    // A CPU trace of 0.5 CPU-s per simulated second.
+    let cpu: Vec<(f64, f64)> = run.t.iter().map(|t| (*t, 0.5 * t)).collect();
+    let fit = compare::settle_cap_fit(&run, 0., &cpu, &q, window, dt, cutoff);
+    assert_eq!(fit["evaluable"], json!(true), "{fit}");
+    // The fitted rate is the envelope's, 0.02 /s, within the fit's
+    // oscillation; t_fit near ln(50 x 2 / 1)/0.02 = 230 s (range over a
+    // 20 s window of the decaying wave is about 2 x envelope).
+    for f in fit["fits"].as_array().unwrap() {
+        let k = f["k_per_s"].as_f64().unwrap();
+        assert!((k - 0.02).abs() < 0.004, "{f}");
+        assert!(f["inputs_every_1s"].as_array().unwrap().len() >= 70);
+    }
+    let t_fit = fit["t_fit_s"].as_f64().unwrap();
+    assert!((180. ..280.).contains(&t_fit), "{fit}");
+    assert_eq!(fit["cap_simulated_s"].as_f64().unwrap(), 2. * t_fit);
+    // Beyond the run's end the CPU is extrapolated at the last half's rate.
+    assert_eq!(fit["cpu_extrapolated"], json!(true));
+    assert!((fit["cap_cpu_s"].as_f64().unwrap() - 2. * 0.5 * t_fit).abs() < 1e-6);
+    // A growing quantity refuses the fit.
+    let (grow, q) = settling(0., dt, 200., -0.01);
+    let fit = compare::settle_cap_fit(&grow, 0., &cpu, &q, window, dt, cutoff);
+    assert_eq!(fit["evaluable"], json!(false));
+    assert!(fit["t_fit_s"].is_null());
+}
+
+#[test]
+fn the_holds_drift_is_each_filtered_outputs_departure_from_its_start_value() {
+    let d = fixture();
+    let ceilings = compare::drift_ceilings(&d);
+    let keys: Vec<(&'static str, usize)> = ceilings.iter().map(|(k, _, _)| (*k, 1)).collect();
+    // A 5 kPa roof ramp over 300 s and 0.15 m^3 on the SG volume.
+    let run = synthetic(0., 0.1, 3000, &keys, &|k, _, t| {
+        1000.
+            + match k {
+                key::PZR_ROOF_PA => 5000. * t / 300.,
+                key::SG_LIQUID_M3 => 0.15 * t / 300.,
+                _ => 0.,
+            }
+    });
+    let v = compare::drift(&run, 0., 10., &ceilings, 0.1, 2.);
+    let roof = v["outputs"][key::PZR_ROOF_PA]["value"].as_f64().unwrap();
+    assert!((roof - 5000. * 290. / 300.).abs() < 1., "{v}");
+    assert_eq!(
+        v["within"],
+        json!(false),
+        "the SG volume drifts 0.145 > 0.1"
+    );
+}
+
+// --------------------------------------------------------------- the runs
+
+/// M4: a smoke run, NOT evidence. From the saved settled state
+/// (`LD01_S2_SETTLED_STATE`): a hold of `LD01_S2_SMOKE_HOLD_S` (10 s) with
+/// its rtol/10 reference, and the trip for `LD01_S2_SMOKE_TRIP_S` (2 s; the
+/// rod seat is at about 2.53 s) with R1, R0 and R2 over the same span
+/// (`LD01_S2_SMOKE_RUNS`, default all six). The full receipt schema is
+/// written to `$LD01_RECEIPTS/harness-b/` (`LD01_S2_SMOKE_RECEIPT` names
+/// the file). Caps are reported only; `LD01_S2_RUN_CPU_GUARD_S` bounds each
+/// run.
+#[test]
+#[ignore = "NOT-EVIDENCE smoke (M4): requires the joined packet, a settled state, the S2 declaration, the wiki, IF97 and stock IDAS/KLU"]
+fn s2_smoke() {
+    use sequence::{Harness, Mode, judge_hold, judge_trip, saved_start, state_receipt};
+    let env = |k: &str, default: f64| -> f64 {
+        std::env::var(k).map_or(default, |v| v.parse().unwrap_or_else(|_| panic!("{k}={v}")))
+    };
+    let hold_s = env("LD01_S2_SMOKE_HOLD_S", 10.);
+    let trip_s = env("LD01_S2_SMOKE_TRIP_S", 2.);
+    let runs: Vec<String> = std::env::var("LD01_S2_SMOKE_RUNS")
+        .unwrap_or_else(|_| "hold,holdReference,trip,R1,R0,R2".into())
+        .split(',')
+        .map(str::to_string)
+        .collect();
+    let path = sequence::receipt_path(
+        "harness-b",
+        &std::env::var("LD01_S2_SMOKE_RECEIPT")
+            .expect("LD01_S2_SMOKE_RECEIPT names the new receipt file"),
+    );
+    assert!(
+        !path.exists(),
+        "receipts are never overwritten: {}",
+        path.display()
+    );
+    let mut h = Harness::new(Mode::Smoke).unwrap_or_else(|e| panic!("{e}"));
+    let log = std::fs::read_to_string(guards::decision_log_page()).ok();
+    let pin = guards::pin(&h.d.gates, log.as_deref()).unwrap();
+    let tbd = guards::tbd_state(&h.d.gates, log.as_deref()).unwrap();
+    let refusals = guards::gate_run_refusals(&pin, &tbd);
+    // The composed state's zero-time entry, then the saved settled state.
+    let composed = h.compose("composed-state receipt");
+    let composed_entry = json!({"from": "the composed state", "z1": composed.receipt["start"],
+        "derived_tolerances": composed.receipt["derived_tolerances"],
+        "dimension": composed.receipt["dimension"], "algebraic": composed.receipt["algebraic"],
+        "cpu_s": composed.cpu_s});
+    let dimension = composed.y.len();
+    drop(composed);
+    let state = std::env::var("LD01_S2_SETTLED_STATE").expect("LD01_S2_SETTLED_STATE");
+    let start = saved_start(&state, &h.packet, dimension);
+    let settled_entry = state_receipt(&mut h, &start, "settled-state receipt");
+    let mut done: BTreeMap<String, runner::Run> = BTreeMap::new();
+    for name in &runs {
+        let duration = match name.as_str() {
+            "hold" | "holdReference" => hold_s,
+            _ => trip_s,
+        };
+        let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
+        if let Some(run) = h.run(&spec, &start, None) {
+            println!(
+                "{}",
+                json!({"run": name, "reached_s": run.record.reached_s, "failure": run.record.failure,
+                    "exit": run.record.exit, "process_cpu_s": run.record.process_cpu_s,
+                    "attributed_fraction": run.record.json()["cpu"]["attributed_fraction"],
+                    "restarts": run.record.restarts.len(), "counts": run.record.counts.json()})
+            );
+            done.insert(name.clone(), run);
+        }
+    }
+    let mut comparisons = serde_json::Map::new();
+    let mut gates_out = Vec::new();
+    if let Some(hold) = done.get("hold") {
+        gates_out.extend(judge_hold(
+            &h,
+            hold,
+            done.get("holdReference"),
+            &mut comparisons,
+        ));
+    }
+    if let Some(trip) = done.get("trip") {
+        gates_out.extend(judge_trip(
+            &h,
+            trip,
+            done.get("R0"),
+            done.get("R1"),
+            done.get("R2"),
+            &mut comparisons,
+        ));
+    }
+    // The per-sample observation cost, a preview of TBD(HARNESS) (loaded;
+    // not a fill: fills are quiet-window best-of).
+    let per_sample: BTreeMap<String, Value> = done
+        .iter()
+        .map(|(k, r)| {
+            let samples = (r.record.outputs + r.record.observations) as f64;
+            (k.clone(), json!(r.attribution.observation() / samples))
+        })
+        .collect();
+    let fractions: Vec<f64> = done
+        .values()
+        .map(|r| {
+            r.record.json()["cpu"]["attributed_fraction"]
+                .as_f64()
+                .unwrap_or(0.)
+        })
+        .collect();
+    let worst_fraction = fractions.iter().copied().fold(f64::INFINITY, f64::min);
+    let min_fraction = h.d.gates.number("/costMeasurement/attributedMinFraction");
+    h.d.gates.whole("/costMeasurement");
+    let mut r = h.receipt(
+        "s2-smoke-NOT-EVIDENCE",
+        "NOT-EVIDENCE smoke (S2-14 M4): a short hold and trip from a saved settled state on the S2 harness; S2 is not declared (revision 7 draft, TBDs open), caps are reported only and no gate is judged",
+        "not judged (smoke)",
+        pin,
+        tbd,
+        json!({"composed": composed_entry, "settled": settled_entry,
+            "external": "Z2-Z7 are other lanes' receipts; a gate run names them (LD01_S2_ZERO_TIME_RECEIPTS)"}),
+        Value::Object(comparisons),
+        gates_out,
+    );
+    r["smoke"] = json!({"hold_s": hold_s, "trip_s": trip_s, "runs": runs,
+        "trip_note": "the trip runs LD01_S2_SMOKE_TRIP_S from the settled state; this build carries S2-D21's seat restarts (rod seat at about 2.53 s); D3 (a) ends a run at the first state it does not admit (S2-D23 revised)",
+        "declaration_page": h.d.receipt()["page"],
+        "domain_exit_stops": std::env::var("LD01_S2_SMOKE_DOMAIN_EXIT").as_deref() != Ok("report"),
+        "gate_run_refusals_now": refusals,
+        "per_sample_observation_s_preview": per_sample,
+        "attributed_fraction": {"worst": worst_fraction, "declared_min": min_fraction, "met": worst_fraction >= min_fraction}});
+    receipt::write(&path, &r).unwrap_or_else(|e| panic!("{e}"));
+    println!(
+        "{}",
+        json!({"receipt": path, "attributed_fraction_worst": worst_fraction, "gates": r["gates"].as_array().map(|g| g.iter().map(|x| json!([x["id"], x["pass"]])).collect::<Vec<_>>()),
+            "work_bound": r["work_bound"]["total_cpu_s"], "cost": r["cost"]})
+    );
+    assert!(
+        worst_fraction >= min_fraction,
+        "CPU attribution {worst_fraction} below {min_fraction}"
+    );
+}
+
+/// S2-15: the declared sequence. It refuses before any work unless the
+/// gates are pinned, no TBD is open, and S1 run 6 and the zero-time
+/// receipts are named; every run is pre-checked against the remaining work
+/// bound. Run only by the lead, in a quiet window.
+#[test]
+#[ignore = "S2-15 gate run: lead only, quiet window"]
+fn s2_gate_run() {
+    use sequence::{Harness, Mode, composed_start, judge_hold, judge_trip, settle, state_receipt};
+    let mut h = Harness::new(Mode::Gate).unwrap_or_else(|e| panic!("{e}"));
+    let log = std::fs::read_to_string(guards::decision_log_page()).ok();
+    let pin = guards::pin(&h.d.gates, log.as_deref()).unwrap();
+    let tbd = guards::tbd_state(&h.d.gates, log.as_deref()).unwrap();
+    let mut refusals = guards::gate_run_refusals(&pin, &tbd);
+    let app = provenance::git_provenance()["app_commit"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let external = sequence::external_receipts(&mut h, &app);
+    if let Err(e) = &external {
+        refusals.extend(e.iter().cloned());
+    }
+    assert!(
+        refusals.is_empty(),
+        "the S2 gate run refuses: {refusals:#?}"
+    );
+    let name = std::env::var("LD01_S2_GATE_RECEIPT").expect("LD01_S2_GATE_RECEIPT");
+    let path = sequence::receipt_path("integ", &name);
+    let composed = h.compose("composed-state receipts");
+    let start = composed_start(&composed);
+    drop(composed);
+    let composed_entry = state_receipt(&mut h, &start, "composed-state receipts");
+    let mut comparisons = serde_json::Map::new();
+    let mut gates_out = Vec::new();
+    let mut status = "complete".to_string();
+    let settled_state = settle(&mut h, &start);
+    let mut zero_time = json!({"composed": composed_entry, "external": external.unwrap()});
+    if let Some((run, judgement)) = settled_state {
+        let settled = run.end.clone();
+        zero_time["settled"] = state_receipt(&mut h, &settled, "settled-state receipts");
+        zero_time["settle"] = judgement;
+        let d = &h.d.gates;
+        let (hold_s, trip_s) = (d.number("/hold/duration_s"), d.number("/trip/duration_s"));
+        let window = d.number("/trip/window_s");
+        let post = h.d.shared.number("/recovery/postWindow_s");
+        let mut done: BTreeMap<String, runner::Run> = BTreeMap::new();
+        for (name, duration) in [
+            ("hold", hold_s),
+            ("holdReference", hold_s),
+            ("trip", trip_s),
+            ("R0", window + post),
+            ("R1", window),
+            ("R2", trip_s),
+            (
+                "noTurbineTrip",
+                h.d.gates.number("/contrary/noTurbineTrip/duration_s"),
+            ),
+        ] {
+            let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
+            match h.run(&spec, &settled, None) {
+                Some(run) => {
+                    done.insert(name.into(), run);
+                }
+                None => {
+                    status = format!("incomplete: {name} not started (work bound)");
+                    break;
+                }
+            }
+        }
+        for unsupported in ["stuckCluster", "headerReservoir"] {
+            h.d.gates.whole(&format!("/contrary/{unsupported}"));
+            h.sequence.push(json!({"run": unsupported, "started": false,
+                "reason": "the joined model has no command for this case yet: S2 is incomplete until it has"}));
+            status = format!("incomplete: contrary case {unsupported} not executable");
+        }
+        if let Some(hold) = done.get("hold") {
+            gates_out.extend(judge_hold(
+                &h,
+                hold,
+                done.get("holdReference"),
+                &mut comparisons,
+            ));
+        }
+        if let Some(trip) = done.get("trip") {
+            gates_out.extend(judge_trip(
+                &h,
+                trip,
+                done.get("R0"),
+                done.get("R1"),
+                done.get("R2"),
+                &mut comparisons,
+            ));
+        }
+    } else {
+        status = "incomplete: the settle did not run".into();
+    }
+    let passed = gates_out.iter().all(|g| g["pass"] == json!(true));
+    let verdict = if status != "complete" {
+        "incomplete".to_string()
+    } else if passed {
+        "PASS".to_string()
+    } else {
+        "FAIL".to_string()
+    };
+    let r = h.receipt(
+        "s2-gate-run",
+        &status,
+        &verdict,
+        pin,
+        tbd,
+        zero_time,
+        Value::Object(comparisons),
+        gates_out,
+    );
+    receipt::write(&path, &r).unwrap_or_else(|e| panic!("{e}"));
 }

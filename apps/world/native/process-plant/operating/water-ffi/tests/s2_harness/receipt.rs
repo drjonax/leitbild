@@ -10,7 +10,8 @@
 //! ```text
 //! kind, status, verdict
 //! declaration   page, gates{fence,page,page_sha256,block,unread}, accuracy{..},
-//!               shared{fence,page,page_sha256}, contract{fence,page,page_sha256,block}
+//!               shared{fence,page,page_sha256}, contract{fence,page,page_sha256,block},
+//!               pin (frozen-gates check), tbd (the TBD register's state)
 //! provenance    app_commit, app_worktree_dirty, wiki, wiki_commit, wiki_commit_named,
 //!               packet, packet_sha256, water_build, sundials_prefix, features
 //! machine       cpu_model, scheduling, core_class, load_average_start, load_average_end
@@ -23,6 +24,7 @@
 //! gates[]       id, value, bound, pass, judged, basis
 //! work_bound    total_cpu_s, bound_s, within, runs.<name>{solver_cpu_s, solver_cap_s,
 //!               total_cpu_s, total_guard_s, cap_reached}
+//! sequence[]    the declared order as executed: run, started, reason or outcome
 //! cost          process_cpu_s, wall_s
 //! ```
 use serde_json::{Value, json};
@@ -40,6 +42,8 @@ pub const TOP_SCHEMA: &[&str] = &[
     "/declaration/accuracy/unread",
     "/declaration/shared/page_sha256",
     "/declaration/contract/block",
+    "/declaration/pin",
+    "/declaration/tbd",
     "/provenance/app_commit",
     "/provenance/app_worktree_dirty",
     "/provenance/wiki",
@@ -74,6 +78,7 @@ pub const TOP_SCHEMA: &[&str] = &[
     "/work_bound/bound_s",
     "/work_bound/within",
     "/work_bound/runs",
+    "/sequence",
     "/cost/process_cpu_s",
     "/cost/wall_s",
 ];
@@ -137,6 +142,11 @@ pub const RUN_SCHEMA: &[&str] = &[
     "/samples/outputs",
     "/samples/observations",
     "/credited",
+    // Caps and guards (H1, M1), D3 (a) at every accepted sample (S2-D23),
+    // and a declared exit that ended the run explicitly.
+    "/caps",
+    "/domain",
+    "/exit",
 ];
 
 /// Pointers, relative to `/comparisons/<name>`, every comparison carries.
