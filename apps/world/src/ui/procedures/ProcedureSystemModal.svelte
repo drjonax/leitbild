@@ -13,6 +13,7 @@
     ProcedureBranch,
     ProcedureDocument,
     ProcedureId,
+    ProcedureRunId,
     ProcedureRunScope,
     ProcedureRunState,
     ProcedureStep,
@@ -21,11 +22,13 @@
     ProcedureTag,
     ProcedureTagId,
   } from '../../core/model/index.ts'
+  import { sameProcedureScope } from '../../core/model/index.ts'
   import type { PackObjectStatusPresentation, PackProcedureContribution } from '../../core/packs/protocol.ts'
   import StatusIndicator from '../components/StatusIndicator.svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ProcedureRunBadges from './ProcedureRunBadges.svelte'
   import { procedureDialog } from './procedure-dialog.ts'
+  import { procedureFollowAction, procedureFollowMark, type ProcedureFollowMark } from './procedure-follow.ts'
   import ProcedureTagDisplay from './ProcedureTagDisplay.svelte'
   import type { EmbeddedViewListing } from '@leitbild/contracts'
   import {
@@ -86,6 +89,8 @@
     readonly windowOffsetIndex?: number
     /** Raised by the route when this unit's procedures are opened again: focus this window (and its requested procedure). */
     readonly focusRequest?: number
+    /** The Run an AI agent last started on this unit, a new object per start: shown without raising or focusing this window. */
+    readonly aiStart?: { readonly runId: ProcedureRunId }
     readonly selectUnit: (objectId: ObjectId) => void
     /** Opens a display in the Workspace's process display window, where it can be operated. */
     readonly openDisplay?: (listing: EmbeddedViewListing) => void
@@ -147,6 +152,7 @@
     initialProcedureId = undefined,
     windowOffsetIndex = 0,
     focusRequest = 0,
+    aiStart = undefined,
     selectUnit,
     openDisplay = undefined,
     close,
@@ -215,6 +221,14 @@
   /** The unit the shown document was loaded for; its scroll position is remembered under that unit. */
   let documentScope: ProcedureRunScope | null = null
   const procedureScrollPositions = new Map<string, number>()
+  /** What this window last showed of its Run; an AI agent's move is the difference it follows. */
+  let followMark: ProcedureFollowMark | null = null
+  let followTimer: number | null = null
+  /** The AI start this window was asked to show, until it does; and the last start taken. */
+  let aiStartRunId: ProcedureRunId | null = null
+  let takenAiStart: { readonly runId: ProcedureRunId } | undefined
+  /** When the person last pointed, wheeled, touched or typed in this window. */
+  let lastInteractionAt: number | null = null
 
   const currentUnitContext = $derived(unitContexts.find(unit => unit.plantId === plantId) ?? {
     plantId: plantId,
@@ -630,6 +644,37 @@
         block: 'start',
         behavior,
       })
+    })
+  }
+
+  // An AI agent driving the shown Run moves this window on with it, once the
+  // person has left the window alone; it never takes focus.
+  const followAiDriver = (): void => {
+    if (disposed || !document) return
+    const shown = { documentKey: procedureViewKey(document, currentScope), run: selectedProcedureRun }
+    const requested = aiStartRunId === null ? undefined : runs.find(run => run.runId === aiStartRunId)
+    const action = procedureFollowAction({
+      runs,
+      shown,
+      mark: followMark,
+      request: requested !== undefined && sameProcedureScope(requested.scope, currentScope) ? requested : null,
+      ownWrite: pendingControl !== null,
+      // An open confirmation is the person at work: nothing moves under it.
+      idleForMs: confirmation !== null ? 0 : lastInteractionAt === null ? Number.POSITIVE_INFINITY : Date.now() - lastInteractionAt,
+    })
+    if (action.kind === 'wait') {
+      if (followTimer !== null) window.clearTimeout(followTimer)
+      followTimer = window.setTimeout(() => { followTimer = null; followAiDriver() }, action.delayMs)
+      return
+    }
+    aiStartRunId = null
+    followMark = procedureFollowMark(shown.documentKey, shown.run)
+    if (action.kind === 'scroll') scrollToProcedureStep(action.stepId)
+    // A Run shown opens at its current step, as the person's own confirmed transfer opens its destination.
+    if (action.kind === 'show') void loadProcedure(action.run.procedureId, true, {
+      sourceId: action.run.sourceId,
+      sourceRevision: action.run.sourceRevision,
+      sourcePath: action.run.sourcePath,
     })
   }
 
@@ -1177,6 +1222,11 @@
   }
 
   runOnMount(() => {
+    // The person's own pointer, wheel, touch or key in the window holds an AI agent's moves off.
+    const windowElement = procedureWindowElement
+    if (!windowElement) throw new Error('procedure window element is not mounted')
+    const noteInteraction = (): void => { lastInteractionAt = Date.now() }
+    const interactionEvents = ['pointerdown', 'wheel', 'touchstart', 'keydown'] as const
     if (!boundsInitialized) {
       windowBounds = clampWindowBounds(defaultWindowBounds())
       boundsInitialized = true
@@ -1191,6 +1241,7 @@
       windowBounds = clampWindowBounds(windowBounds)
     }
     window.addEventListener('resize', handleResize)
+    for (const type of interactionEvents) windowElement.addEventListener(type, noteInteraction, { capture: true, passive: true })
     return () => {
       disposed = true
       latestProcedureLoadRequest++
@@ -1201,8 +1252,29 @@
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame)
       window.clearInterval(interval)
       window.removeEventListener('resize', handleResize)
+      for (const type of interactionEvents) windowElement.removeEventListener(type, noteInteraction, { capture: true })
       if (toastTimer !== null) window.clearTimeout(toastTimer)
+      if (followTimer !== null) window.clearTimeout(followTimer)
     }
+  })
+
+  // Each Run read, document load and unit change may show an AI agent's move.
+  $effect(() => {
+    runs
+    document
+    currentScope
+    untrack(followAiDriver)
+  })
+
+  // Every re-render passes the same start object back; only a new one is a new AI start.
+  $effect(() => {
+    const start = aiStart
+    if (start === undefined || start === takenAiStart) return
+    untrack(() => {
+      takenAiStart = start
+      aiStartRunId = start.runId
+      followAiDriver()
+    })
   })
 
   // Opening this unit's procedures again focuses this window instead of a second one.
