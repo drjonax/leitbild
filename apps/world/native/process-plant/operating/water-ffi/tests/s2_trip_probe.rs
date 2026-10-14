@@ -27,8 +27,9 @@ mod spine;
 
 use leitbild_operating_plant::joined::block::Command;
 use leitbild_operating_water::{
-    ida::{Advance, Ida, Initial, KluOrdering, Stats, System},
-    joined::{Discrete, Integrated, Restart, Restarted, discrete_restart},
+    If97,
+    ida::{Advance, Failure, Ida, Initial, KluOrdering, Stats, System},
+    joined::{Discrete, Integrated, JoinedSystem, Restart, Restarted, discrete_restart},
 };
 use serde_json::{Value, json};
 use spine::{
@@ -79,6 +80,105 @@ fn named(c: &[i64; 8]) -> Value {
             .map(|(k, v)| (k.to_string(), json!(v)))
             .collect::<serde_json::Map<_, _>>()
     )
+}
+
+/// The integrated operator with a ledger of its root-function calls: an
+/// FNV-1a digest of every call's time and root values, in order, and their
+/// process CPU. Every other call is forwarded unchanged (the KLU ordering
+/// included); the probe reaches the operator through it as before.
+struct RootLedger {
+    inner: Integrated<If97>,
+    digest: u64,
+    calls: usize,
+    cpu_s: f64,
+}
+impl RootLedger {
+    fn new(inner: Integrated<If97>) -> Self {
+        Self {
+            inner,
+            digest: 0xcbf2_9ce4_8422_2325,
+            calls: 0,
+            cpu_s: 0.,
+        }
+    }
+    fn json(&self) -> Value {
+        json!({"calls": self.calls, "cpu_s": self.cpu_s,
+            "digest": format!("{:016x}", self.digest),
+            "digest_of": "FNV-1a over each root call's time bits then its root values' bits, in call order"})
+    }
+}
+impl std::ops::Deref for RootLedger {
+    type Target = Integrated<If97>;
+    fn deref(&self) -> &Integrated<If97> {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for RootLedger {
+    fn deref_mut(&mut self) -> &mut Integrated<If97> {
+        &mut self.inner
+    }
+}
+impl System for RootLedger {
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+    fn nonzeros(&self) -> usize {
+        self.inner.nonzeros()
+    }
+    fn root_count(&self) -> usize {
+        self.inner.root_count()
+    }
+    fn residual(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        self.inner.residual(t, y, yp, out)
+    }
+    fn jacobian(
+        &mut self,
+        t: f64,
+        cj: f64,
+        y: &[f64],
+        yp: &[f64],
+        data: &mut [f64],
+        rows: &mut [i64],
+        pointers: &mut [i64],
+    ) -> Result<(), Failure> {
+        self.inner.jacobian(t, cj, y, yp, data, rows, pointers)
+    }
+    fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let started = z1::cpu_s();
+        let result = self.inner.roots(t, y, yp, out);
+        self.cpu_s += z1::cpu_s() - started;
+        self.calls += 1;
+        for word in std::iter::once(t.to_bits()).chain(out.iter().map(|v| v.to_bits())) {
+            for byte in word.to_le_bytes() {
+                self.digest = (self.digest ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        result
+    }
+    fn klu_ordering(&self) -> KluOrdering {
+        self.inner.klu_ordering()
+    }
+    fn quadrature_count(&self) -> usize {
+        self.inner.quadrature_count()
+    }
+    fn quadrature(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
+        self.inner.quadrature(t, y, yp, out)
+    }
+}
+impl JoinedSystem for RootLedger {
+    type Properties = If97;
+    fn integrated(&self) -> &Integrated<If97> {
+        &self.inner
+    }
+    fn integrated_mut(&mut self) -> &mut Integrated<If97> {
+        &mut self.inner
+    }
 }
 
 /// One integration segment between two restarts.
@@ -400,7 +500,7 @@ fn trip(duration_s: f64) -> Value {
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
-        Integrated::from_blocks(joined, structure, analyses).expect("integrable"),
+        RootLedger::new(Integrated::from_blocks(joined, structure, analyses).expect("integrable")),
         Initial {
             time: t0,
             y: &y,
@@ -439,7 +539,7 @@ fn trip(duration_s: f64) -> Value {
     let end = t0 + duration_s;
     let window_end = t0 + WINDOW_S;
     // One restart: the transactions and the exact start by discrete_restart.
-    let do_restart = |ida: &mut Ida<Integrated<leitbild_operating_water::If97>>,
+    let do_restart = |ida: &mut Ida<RootLedger>,
                       t: f64,
                       discrete: Discrete<'_>,
                       name: &str,
@@ -595,7 +695,7 @@ fn trip(duration_s: f64) -> Value {
         ..Segment::default()
     };
     let mut next_sample = t0;
-    let close = |ida: &Ida<Integrated<leitbild_operating_water::If97>>, mut s: Segment, to: f64| {
+    let close = |ida: &Ida<RootLedger>, mut s: Segment, to: f64| {
         let st = ida.stats().unwrap();
         s.counts = counts(&st);
         s.to_s = to;
@@ -838,6 +938,7 @@ fn trip(duration_s: f64) -> Value {
             "after_window": {"solver_s": solver_cpu_s[1], "restarts_s": restart_cpu_s[1]},
             "trip_per_simulated_s": (window_cpu + solver_cpu_s[1] + restart_cpu_s[1]) / (t - t0).max(1e-9),
             "observation_s": observation_cpu_s,
+            "roots": ida.system().json(),
             "joined_counters": c,
             "residual_wall_s_per_call": c.residual_wall_s / c.residuals.max(1) as f64,
             "jacobian_wall_s_per_call": c.jacobian_wall_s / c.jacobians.max(1) as f64,

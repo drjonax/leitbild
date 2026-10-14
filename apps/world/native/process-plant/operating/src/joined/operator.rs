@@ -87,6 +87,9 @@ pub struct Counters {
     pub coupled_wall_s: f64,
     pub jacobians: usize,
     pub jacobian_wall_s: f64,
+    /// Root-function calls and their wall time.
+    pub roots: usize,
+    pub root_wall_s: f64,
 }
 
 /// The last evaluation's heats, for receipts and conservation.
@@ -685,6 +688,19 @@ impl<P: Properties + WaterProperties> Joined<P> {
         )
     }
     pub fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let started = Instant::now();
+        let result = self.root_values(t, y, yp, out);
+        self.counters.roots += 1;
+        self.counters.root_wall_s += started.elapsed().as_secs_f64();
+        result
+    }
+    fn root_values(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
         let o = self.blocks.offsets;
         let ns = self.secondary().map_or(0, |b| b.root_count());
         let nr = self.rods().map_or(0, |b| b.root_count());
