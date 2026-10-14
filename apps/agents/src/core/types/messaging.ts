@@ -54,6 +54,10 @@ export interface Message {
   readonly correlationId?: string     // shared across multi-target deliveries
   readonly inReplyTo?: ReadonlyArray<string>  // IDs of messages this response is causally derived from
   readonly cause?: MessageCause       // see MessageCause docstring above
+  // A line an AI Agent posted while its turn still runs, saying what it just
+  // did (workspace_call `say`); the turn's answer follows as an ordinary
+  // message. No Agent answers it, and it carries no generation evidence.
+  readonly progress?: true
   readonly generationMs?: number
   // Reference to the separately stored complete LLM request for this reply.
   // Keeping the request outside Message prevents room reads and future model

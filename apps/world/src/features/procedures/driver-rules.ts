@@ -1,54 +1,20 @@
-import type { ActorId, IsoTimestamp, ProcedureBranch, ProcedureRunDriver, ProcedureRunState, ProcedureStep } from '../../core/model/index.ts'
+import type { ActorId, IsoTimestamp, ProcedureRunDriver, ProcedureRunState, ProcedureStep } from '../../core/model/index.ts'
 import type { ProcedureTagRead } from './pack-observations.ts'
 
-// Who may work a procedure Run, and which decisions an AI agent may take on
-// it. The AI keeps place and advances only along an authored normal branch to
-// another step of the same procedure, on readable evidence; a person selects
-// every other branch, resets, and takes over by acting. World enforces these
-// at commit; the step read reports the same verdicts from the same functions.
+// Who may work a procedure Run, and how an AI agent decides on it. An AI
+// agent that drives a Run works its current step as the procedure says: it
+// selects any declared branch there (a normal, response-not-obtained or
+// unknown outcome; to a step, another procedure or END) on a stated basis,
+// citing the step's tags World reads now wherever any of them reads. A person
+// takes over by acting, and resets. World enforces these at commit.
 
 /** Who issues a procedure command: an AI agent, a person, or the Run itself (its Scenario timeline). */
 export type ProcedureActorKind = 'ai' | 'person' | 'system'
 
-export type ProcedureBranchVerdict =
-  | { readonly aiMaySelect: true }
-  | { readonly aiMaySelect: false; readonly personOnlyReason: string }
-
-const personOnly = (personOnlyReason: string): ProcedureBranchVerdict => ({ aiMaySelect: false, personOnlyReason })
-
-// What makes a branch a person's: its authored outcome and where it leads.
-const personBranchKind = (branch: ProcedureBranch): string | null => {
-  const words = [
-    ...(branch.outcome === 'rno' ? ['RNO'] : branch.outcome === 'unknown' ? ['unknown-outcome'] : branch.outcome === undefined ? ['unlabelled'] : []),
-    ...(branch.targetKind === 'step' ? [] : branch.targetKind === 'procedure' ? ['transfer'] : branch.targetKind === 'end' ? ['END'] : [branch.targetKind]),
-  ]
-  return words.length === 0 ? null : words.join(' ')
-}
-
-const withArticle = (words: string): string => `${/^(?:[aeiou]|RNO)/i.test(words) ? 'an' : 'a'} ${words}`
-
-/**
- * Whether an AI agent may select this branch now, and why not where it may not.
- * `readableTagIds`: the step's tags World read a value for, where they were read.
- */
-export const procedureBranchVerdict = (config: {
-  readonly run: Pick<ProcedureRunState, 'status' | 'currentStepId'>
-  readonly step: ProcedureStep
-  readonly branch: ProcedureBranch
-  readonly readableTagIds?: ReadonlySet<string>
-}): ProcedureBranchVerdict => {
-  const { run, step, branch } = config
-  const kind = personBranchKind(branch)
-  if (kind !== null) return personOnly(`"${branch.label} → ${branch.target}" is ${withArticle(kind)} branch: a person selects it in the procedure window.`)
-  if (run.status !== 'active') return personOnly(`The procedure run is ${run.status}; no branch of it can be selected.`)
-  if (run.currentStepId !== step.id) {
-    return personOnly(`Step ${step.label} is not the run's current step${run.currentStepId === undefined ? '' : ` (${run.currentStepId})`}: an AI agent works only the current step.`)
-  }
-  if (step.tagIds.length === 0) return personOnly(`Step ${step.label} cites no plant tag World can read: a person decides this step.`)
-  if (config.readableTagIds !== undefined && !step.tagIds.some(tagId => config.readableTagIds!.has(tagId))) {
-    return personOnly(`None of step ${step.label}'s tags can be read on this plant now: a person decides this step.`)
-  }
-  return { aiMaySelect: true }
+/** An AI agent selects a branch only of its Run's current step. */
+export const assertAiWorksCurrentStep = (run: Pick<ProcedureRunState, 'currentStepId'>, step: ProcedureStep): void => {
+  if (run.currentStepId === step.id) return
+  throw new Error(`Step ${step.label} is not the run's current step${run.currentStepId === undefined ? '' : ` (${run.currentStepId})`}: an AI agent works only the current step; read it with world.procedure.run.step.read.`)
 }
 
 const runName = (run: ProcedureRunState): string => `${run.procedureId} on ${run.scope.label ?? run.scope.plantId}`
@@ -91,23 +57,32 @@ export const assertAiStepUpdate = (update: {
   }
 }
 
-/** An AI agent's selection rests on a stated basis and on the step's own tags, each read by World now. */
+/**
+ * An AI agent's selection rests on a stated basis and, wherever the step's
+ * tags read on the plant now, on those it relied on, each read by World now.
+ * `readableStepTagIds`: the step's tags that read now, read for a selection
+ * that cites none.
+ */
 export const assertAiDecisionEvidence = (config: {
   readonly step: ProcedureStep
   readonly basis?: string
   readonly evidenceTagIds?: ReadonlyArray<string>
   readonly reads: ReadonlyArray<ProcedureTagRead>
+  readonly readableStepTagIds?: ReadonlyArray<string>
 }): void => {
   const { step } = config
   if (config.basis === undefined) {
-    throw new Error('An AI agent selects a branch only with a basis: the criterion, the values read with units and plant time, and what could not be observed (at most 300 characters).')
+    throw new Error('An AI agent selects a branch only with a basis: what the step asks, the values read with units and plant time, and what could not be observed (at most 300 characters).')
   }
   if (config.evidenceTagIds === undefined) {
-    throw new Error(`An AI agent cites 1 to 6 of step ${step.label}'s tags as evidenceTagIds (${step.tagIds.join(', ')}); World reads them and records the readings with the decision.`)
+    if (step.tagIds.length === 0) return
+    if (config.readableStepTagIds === undefined) throw new Error('This transition was prepared without its actor, so the step\'s tags were not read: an AI agent\'s selection cannot be checked.')
+    if (config.readableStepTagIds.length === 0) return
+    throw new Error(`Step ${step.label}'s ${config.readableStepTagIds.map(tagId => `«${tagId}»`).join(', ')} ${config.readableStepTagIds.length === 1 ? 'reads' : 'read'} on this plant now: cite those you relied on as evidenceTagIds (1 to 6); World reads them and records the readings with the decision.`)
   }
   for (const read of config.reads) {
-    if (read.binding === 'missing') throw new Error(`«${read.tagId}» is not in the plant model: a person decides step ${step.label} in the procedure window.`)
-    if (read.value === undefined) throw new Error(`«${read.tagId}» could not be read (${read.unavailable ?? 'no value'}): a person decides step ${step.label} in the procedure window.`)
+    if (read.binding === 'missing') throw new Error(`«${read.tagId}» is not in the plant model: cite only tags World reads now, and say in the basis what is not observable.`)
+    if (read.value === undefined) throw new Error(`«${read.tagId}» could not be read (${read.unavailable ?? 'no value'}): cite only tags World reads now, and say in the basis what is not observable.`)
   }
 }
 

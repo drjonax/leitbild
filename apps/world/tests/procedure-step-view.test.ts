@@ -110,9 +110,8 @@ describe('procedure step view', () => {
     expect(JSON.stringify(view)).not.toContain('preamble')
     expect(JSON.stringify(view)).not.toContain('basis.md')
     expect(view.step!.branches).toEqual([
-      { index: 0, label: 'Verified', outcome: 'normal', targetKind: 'step', target: 'verify-turbine-trip', because: 'rapid neutron flux decrease confirms core shutdown', aiMaySelect: true },
-      { index: 1, label: 'Not verified', outcome: 'rno', targetKind: 'procedure', target: 'FR-S.1', aiMaySelect: false,
-        personOnlyReason: '"Not verified → FR-S.1" is an RNO transfer branch: a person selects it in the procedure window.' },
+      { index: 0, label: 'Verified', outcome: 'normal', targetKind: 'step', target: 'verify-turbine-trip', targetLabel: '2', because: 'rapid neutron flux decrease confirms core shutdown' },
+      { index: 1, label: 'Not verified', outcome: 'rno', targetKind: 'procedure', target: 'FR-S.1' },
     ])
     expect(view.tags).toEqual([
       { id: 'TRIP-BKR-A', description: 'reactor trip breaker A position', binding: 'resolved', notes: { 'model-note': 'the model reports closed as a boolean' },
@@ -125,7 +124,7 @@ describe('procedure step view', () => {
     expect(view.step!.state).toBeUndefined()
   })
 
-  test('a missing or unreadable tag is reported with its reason, never dropped; a step none of whose tags reads is a person\'s', async () => {
+  test('a missing or unreadable tag is reported with its reason, never dropped', async () => {
     const calls: string[] = []
     const view = await composeProcedureStepView({ run: run(), document: document('csfs-monitored: []'), ports: ports({ calls,
       reads: { 'TRIP-BKR-A': 'missing', 'TRIP-BKR-B': new Error('runtime unavailable'), 'NIS-PR-AVG': 'missing' } }) })
@@ -134,7 +133,6 @@ describe('procedure step view', () => {
       { id: 'TRIP-BKR-B', description: 'reactor trip breaker B position', binding: 'resolved', unavailable: 'runtime unavailable' },
       { id: 'NIS-PR-AVG', description: 'power range neutron flux average', binding: 'missing', warnings: ['requested percent unavailable'], unavailable: 'not in the plant model' },
     ])
-    expect(view.step!.branches[0]).toMatchObject({ aiMaySelect: false, personOnlyReason: "None of step 1's tags can be read on this plant now: a person decides this step." })
     // CSFs only when the procedure monitors them.
     expect(view.csfs).toBeUndefined()
     expect(calls.some(call => call.startsWith('csfs:'))).toBe(false)
@@ -160,12 +158,11 @@ describe('procedure step view', () => {
     expect(earlier.run.stepNumber).toBe(1)
     expect(earlier.step!.state!.decision).toMatchObject({ basis: 'Breakers open.', evidence: [{ tagId: 'TRIP-BKR-A', reading: 'false' }], selectedByLabel: 'Assistant' })
     expect(earlier.step!.state!.comment).toHaveLength(500)
-    expect(earlier.step!.branches[0]).toMatchObject({ aiMaySelect: false, personOnlyReason: "Step 1 is not the run's current step (verify-turbine-trip): an AI agent works only the current step." })
 
     const current = await composeProcedureStepView({ run: decided, document: document('csfs-monitored: []'), ports: ports() })
     expect(current.step).toMatchObject({ id: 'verify-turbine-trip', observation: { status: 'unknown', reason: 'no binding', simulationTime: '2026-10-13T08:00:50.000Z' } })
     expect(current.tags).toBeUndefined()
-    expect(current.step!.branches[0]).toMatchObject({ aiMaySelect: false, personOnlyReason: '"Verified → END" is an END branch: a person selects it in the procedure window.' })
+    expect(current.step!.branches).toEqual([{ index: 0, label: 'Verified', outcome: 'normal', targetKind: 'end', target: 'END' }])
 
     await expect(composeProcedureStepView({ run: decided, document: document(), stepId: 'no-such-step', ports: ports() }))
       .rejects.toMatchObject({ code: procedureStepNotFoundCode })

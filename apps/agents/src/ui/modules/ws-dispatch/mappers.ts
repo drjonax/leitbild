@@ -35,6 +35,7 @@ export const toUIMessage = (m: Message): UIMessage => ({
   ...(m.cause ? { cause: m.cause } : {}),
   // A display-request reply links back to its answer through inReplyTo[0].
   ...(m.inReplyTo ? { inReplyTo: m.inReplyTo } : {}),
+  ...(m.progress ? { progress: true as const } : {}),
   ...(m.attachments ? { attachments: m.attachments } : {}),
   ...(m.toolTrace ? { toolTrace: m.toolTrace } : {}),
 })

@@ -25,13 +25,13 @@ guardPlantTests()
 // Plant are the instructor's: neither a person's nor an AI agent's control
 // write or ramp reaches them, while a person's instructor action and the
 // Run's own write do (S1, QA-3). An AI agent proposes operations on a Plant
-// for a person to approve, unless the Plant opts into direct AI operation
-// (QA-1).
+// for a person to approve, unless it drives an active procedure Run on the
+// Plant or the Plant opts into direct AI operation (QA-1).
 
 const operator: Actor = { id: 'actor:human:origin-operator' as ActorId, label: 'Origin test operator', role: 'operator' }
 const agent: Actor = { id: 'actor:ai:origin-agent' as ActorId, label: 'Origin test agent', role: 'ai_agent' }
 const scenario: Actor = { id: 'actor:origin-scenario' as ActorId, label: 'Origin test scenario', role: 'system' }
-const proposeOnly = 'An AI agent proposes operations on this Plant for a person to approve (world.process-plant.control.propose); it does not operate it directly'
+const proposeOnly = 'An AI agent proposes operations on this Plant for a person to approve (world.process-plant.control.propose); it operates it directly only while it drives an active procedure Run on it'
 
 const withRun = async (body: (run: SimulationRunRuntime, plantId: string) => Promise<void>): Promise<void> => {
   const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-command-origin-'))
@@ -59,14 +59,14 @@ const commandResult = async (run: SimulationRunRuntime, actor: Actor, capability
   return outcome.result
 }
 
-/** The test Plant opted into direct AI operation, on its own Pack connection. */
-const withDirectPlant = async (body: (connection: PackRuntimeConnection, plantId: string) => Promise<void>): Promise<void> => {
+/** The test Plant on its own Pack connection, opted into direct AI operation where `direct`. */
+const withPlantConnection = async (direct: boolean, body: (connection: PackRuntimeConnection, plantId: string) => Promise<void>): Promise<void> => {
   const builtIn = scenarios.find(candidate => candidate.id === 'test-plant')!
   const plant = builtIn.initialObjects.find(object => object.packId === 'process-plant')!
-  const direct: OperationalObject = { ...plant, packData: { ...(plant.packData as Record<string, unknown>), aiOperation: 'direct' } }
+  const object: OperationalObject = direct ? { ...plant, packData: { ...(plant.packData as Record<string, unknown>), aiOperation: 'direct' } } : plant
   const connection = await createLocalProcessPlantPackRuntimeAdapter().connect({
     simulationRunId: 'run:command-origin' as SimulationRunId,
-    scenario: { scenarioId: builtIn.id, runtimeIds: ['process-plant.local'], connections: [], world: builtIn.world, initialObjects: [direct], runtimeConfig: {} },
+    scenario: { scenarioId: builtIn.id, runtimeIds: ['process-plant.local'], connections: [], world: builtIn.world, initialObjects: [object], runtimeConfig: {} },
   })
   try {
     await body(connection, String(plant.id))
@@ -75,7 +75,7 @@ const withDirectPlant = async (body: (connection: PackRuntimeConnection, plantId
   }
 }
 
-const send = async (connection: PackRuntimeConnection, kind: string, payload: unknown, origin: CommandOrigin): Promise<CommandResult> =>
+const send = async (connection: PackRuntimeConnection, kind: string, payload: unknown, origin: CommandOrigin, procedureDriven?: ReadonlySet<string>): Promise<CommandResult> =>
   await connection.sendCommand({
     id: `command:${crypto.randomUUID()}` as CommandId,
     simulationRunId: 'run:command-origin' as SimulationRunId,
@@ -84,7 +84,7 @@ const send = async (connection: PackRuntimeConnection, kind: string, payload: un
     targetObjectIds: [],
     payload,
     issuedAt: '2026-01-01T09:00:00.000Z' as IsoTimestamp,
-  } satisfies CommandEnvelope, { origin })
+  } satisfies CommandEnvelope, { origin, ...(procedureDriven === undefined ? {} : { procedureDriven }) })
 
 describe('who issues a Plant command', () => {
   test('an AI agent\'s command is journaled as the AI\'s, a person\'s as the operator\'s', async () => {
@@ -128,7 +128,7 @@ describe('who issues a Plant command', () => {
   })
 
   test('on a Plant that opts into direct AI operation an agent operates it, but never reaches a fault', async () => {
-    await withDirectPlant(async (connection, plantId) => {
+    await withPlantConnection(true, async (connection, plantId) => {
       expect((await send(connection, processPlantControlWriteCommandKind, { plantId, tagId: 'CHG-PUMP-B', value: true }, 'ai')).ok).toBe(true)
       const fault = await send(connection, processPlantControlWriteCommandKind, { plantId, path: 'pressurizer.reliefValveFailureActive', value: true }, 'ai')
       expect(fault).toMatchObject({ ok: false, reason: 'pressurizer.reliefValveFailureActive is a fault the scenario injects: only instructor actions and the Scenario set it' })
@@ -136,6 +136,20 @@ describe('who issues a Plant command', () => {
       expect(action.ok).toBe(false)
       if (!action.ok) expect(action.reason).toContain('is a fault the scenario injects')
       expect((await send(connection, processPlantActionInvokeCommandKind, { plantId, actionId: 'pressurizer-relief-open', parameters: { positionPercent: 20 } }, 'person')).ok).toBe(true)
+    })
+  })
+
+  test('an AI agent operates the controls of a Plant whose procedure Run it drives, but sets up no event and reaches no fault', async () => {
+    await withPlantConnection(false, async (connection, plantId) => {
+      const driving = new Set([plantId])
+      expect((await send(connection, processPlantControlWriteCommandKind, { plantId, tagId: 'CHG-PUMP-B', value: true }, 'ai', driving)).ok).toBe(true)
+      expect(await send(connection, processPlantControlWriteCommandKind, { plantId, tagId: 'CHG-PUMP-B', value: false }, 'ai', new Set(['plant:another'])))
+        .toMatchObject({ ok: false, reason: proposeOnly })
+      const fault = await send(connection, processPlantControlWriteCommandKind, { plantId, path: 'pressurizer.reliefValveFailureActive', value: true }, 'ai', driving)
+      expect(fault).toMatchObject({ ok: false, reason: 'pressurizer.reliefValveFailureActive is a fault the scenario injects: only instructor actions and the Scenario set it' })
+      expect(await send(connection, processPlantActionInvokeCommandKind, { plantId, actionId: 'turbine-trip', parameters: {} }, 'ai', driving)).toMatchObject({
+        ok: false, reason: 'An instructor action is a person\'s or the Scenario\'s: driving a procedure Run lets an AI agent operate the Plant\'s controls, not set up the event the procedure answers',
+      })
     })
   })
 })

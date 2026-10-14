@@ -34,7 +34,7 @@ Check: reactor trip breakers «TRIP-BKR-A» AND «TRIP-BKR-B» OPEN AND neutron 
 - Not verified [outcome: rno] → [[FR-S.1]]
 ## Step 2 [id: verify-turbine-trip]
 Check: all turbine stop valves CLOSED
-- Verified [outcome: normal] → END
+- Verified [outcome: normal] → [[ES-0.1]]
 
 ## Tags
 
@@ -134,7 +134,7 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(view.sequence).toBe(run.snapshot().seq)
     expect(view.paused).toBe(true)
     expect(view.run).toMatchObject({ runId, procedureId: 'E-0', plantId, unit: 'Unit A1', currentStepId: 'verify-reactor-trip', stepNumber: 1, totalSteps: 2, driver: { kind: 'ai' } })
-    expect(view.step.branches.map((branch: { aiMaySelect: boolean }) => branch.aiMaySelect)).toEqual([true, false])
+    expect(view.step.branches.map((branch: { outcome: string; target: string; targetLabel?: string }) => `${branch.outcome} ${branch.target} ${branch.targetLabel ?? '-'}`)).toEqual(['normal verify-turbine-trip 2', 'rno FR-S.1 -'])
     expect(view.tags.map((tag: { id: string }) => tag.id)).toEqual(['TRIP-BKR-A', 'TRIP-BKR-B', 'NIS-PR-AVG'])
     for (const tag of structuredClone(view.tags)) expect(tag.reading).toMatchObject({ formatted: expect.any(String), quality: expect.any(String) })
     expect(view.csfs.map((csf: { id: string }) => csf.id)).toEqual(['subcriticality', 'core-cooling', 'heat-sink', 'rcs-integrity', 'containment', 'rcs-inventory'])
@@ -143,7 +143,7 @@ describe('the AI procedure runner through the World Module API', () => {
     const transition = await invoke('world.procedure.run.transition', { runId, stepId: 'verify-reactor-trip', branchIndex: 0, basis, evidenceTagIds: ['TRIP-BKR-A', 'NIS-PR-AVG'] }, ai)
     expect(transition.status).toBe(200)
     expect(transition.body.result).toMatchObject({ ok: true, next: { run: { currentStepId: 'verify-turbine-trip', stepNumber: 2 }, step: { id: 'verify-turbine-trip' } } })
-    expect(transition.body.result.next.step.branches[0]).toMatchObject({ aiMaySelect: false, personOnlyReason: expect.stringContaining('END branch') })
+    expect(transition.body.result.next.step.branches).toEqual([{ index: 0, label: 'Verified', outcome: 'normal', targetKind: 'procedure', target: 'ES-0.1' }])
     expect(transition.body.result.next.sequence).toBe(run.snapshot().seq)
     const decision = run.snapshot().procedures!.runs[0]!.stepStates.find(step => step.stepId === 'verify-reactor-trip')!.decision!
     expect(decision).toMatchObject({ selectedBy: 'actor:ai:assistant', selectedByLabel: 'Assistant', basis })
@@ -175,6 +175,37 @@ describe('the AI procedure runner through the World Module API', () => {
     expect(denied.status).toBe(403)
     expect(denied.body.error.code).toBe('agent_access_restricted')
     expect((await invoke('world.procedure.run.step.read', { runId }, human)).status).toBe(200)
+  })
+
+  test('an AI agent\'s transfer answers with the destination\'s current step, which it now drives', async () => {
+    const { registry, workspaceId, run, plantId } = await setup()
+    const invoke = invoker(registry, workspaceId, run.id)
+    const ai = access(workspaceId, { kind: 'ai', id: 'assistant', displayName: 'Assistant' })
+    const started = await invoke('world.procedure.run.start', { procedureId: 'E-0', scope: { plantId, label: 'Unit A1' } }, ai)
+    const runId = started.body.result.pinned.runId
+    await invoke('world.procedure.run.transition', { runId, stepId: 'verify-reactor-trip', branchIndex: 0, basis: 'Test-only selection.', evidenceTagIds: ['NIS-PR-AVG'] }, ai)
+    // Step 2 cites no tag: a basis alone carries the AI's transfer.
+    const transfer = await invoke('world.procedure.run.transition', { runId, stepId: 'verify-turbine-trip', branchIndex: 0, basis: 'Test-only: stop valves not observable in the model.' }, ai)
+    expect(transfer.status).toBe(200)
+    const destination = run.snapshot().procedures!.runs.find(candidate => candidate.procedureId === 'ES-0.1')!
+    expect(run.snapshot().procedures!.runs.find(candidate => candidate.runId === runId)).toMatchObject({ status: 'transferred' })
+    expect(destination).toMatchObject({ status: 'active', driver: { kind: 'ai', actorId: 'actor:ai:assistant' } })
+    expect(transfer.body.result.next).toMatchObject({ run: { runId: destination.runId, procedureId: 'ES-0.1', currentStepId: 'monitor', stepNumber: 1 }, step: { id: 'monitor' } })
+  })
+
+  test('an AI agent operates the Plant whose procedure Run it drives, until a person takes the Run over', async () => {
+    const { registry, workspaceId, run, plantId } = await setup()
+    const invoke = invoker(registry, workspaceId, run.id)
+    const ai = access(workspaceId, { kind: 'ai', id: 'assistant', displayName: 'Assistant' })
+    const human = access(workspaceId, { kind: 'human' })
+    const write = { plantId, tagId: 'CHG-PUMP-B', value: true }
+    expect((await invoke('world.process-plant.control.write', write, ai)).body.error.message).toContain('it operates it directly only while it drives an active procedure Run on it')
+    const started = await invoke('world.procedure.run.start', { procedureId: 'E-0', scope: { plantId, label: 'Unit A1' } }, ai)
+    expect((await invoke('world.process-plant.control.write', write, ai)).status).toBe(200)
+    await invoke('world.procedure.run.drive', { runId: started.body.result.pinned.runId, action: 'claim' }, human)
+    const refused = await invoke('world.process-plant.control.write', { ...write, value: false }, ai)
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.message).toContain('it operates it directly only while it drives an active procedure Run on it')
   })
 
   test('a step read without runId names the runs when the caller drives none or several; a start without sourceId needs a sole source', async () => {
