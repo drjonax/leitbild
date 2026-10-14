@@ -9,14 +9,17 @@
  * section joins as its compiler lands; a missing section is never stood in
  * for.
  *
- * Usage: bun reference-design-operating-joined.ts <wiki root> <pinned IF97 directory> */
+ * The spine is compiled in two passes around the stock-IDA steady solids
+ * settle (G18); `settle` produces that steady state.
+ *
+ * Usage: bun reference-design-operating-joined.ts <wiki root> <pinned IF97 directory> <prepare_steady_solids executable> */
 import { createHash } from 'node:crypto'
 import { compileOperatingRods } from './reference-design-operating-rods'
 import { prepareOperatingSecondary } from './reference-design-operating-sg'
-import { prepareOperatingSpine } from './reference-design-operating-spine'
+import { nativeSteadySolids, prepareOperatingSpine, type SteadySolidsSettle } from './reference-design-operating-spine'
 
-export async function prepareOperatingJoined(wiki: string, if97: string) {
-  const spine = await prepareOperatingSpine(wiki, if97)
+export async function prepareOperatingJoined(wiki: string, if97: string, settle: SteadySolidsSettle) {
+  const spine = await prepareOperatingSpine(wiki, if97, settle)
   const secondary = await prepareOperatingSecondary(wiki)
   const rods = await compileOperatingRods(wiki)
   if (rods.clusters.length !== spine.feedback_reference.achievedRodTravel_m.length)
@@ -33,7 +36,7 @@ export async function prepareOperatingJoined(wiki: string, if97: string) {
 }
 
 if (import.meta.main) {
-  const [wiki, if97] = Bun.argv.slice(2)
-  if (!wiki || !if97 || Bun.argv.length !== 4) throw Error('Usage: operating-joined <wiki root> <pinned IF97 directory>')
-  console.log(JSON.stringify(await prepareOperatingJoined(wiki, if97)))
+  const [wiki, if97, settle] = Bun.argv.slice(2)
+  if (!wiki || !if97 || !settle || Bun.argv.length !== 5) throw Error('Usage: operating-joined <wiki root> <pinned IF97 directory> <prepare_steady_solids executable>')
+  console.log(JSON.stringify(await prepareOperatingJoined(wiki, if97, nativeSteadySolids(settle, wiki))))
 }

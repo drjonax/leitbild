@@ -25,7 +25,7 @@ test.skipIf(!wiki || !if97)('actual thermal recipients/calorics compile once; co
   const base = join(wiki!, 'world/packs/process-plant/reference-designs/ld-01'),
     read = (name: string) => Bun.file(join(base, name)).text(),
     [hot, fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc] = await Promise.all([
-      prepareOperatingHot(wiki!, if97!), read('systems/reactor/fuel-construction.md'),
+      prepareOperatingHot(wiki!, if97!, { kind: 'provisional' }), read('systems/reactor/fuel-construction.md'),
       read('systems/reactor/fuel-handling-and-pool.md'), read('systems/reactor/control-absorber-and-guide-water.md'),
       read('model/operating-thermal.md'), read('systems/reactor/phase-dependent-heat-transfer.md')]),
     fuel = parseFuelConstruction(fuelDoc), handling = parseFuelHandling(handlingDoc), control = parseControlAbsorber(controlDoc),
