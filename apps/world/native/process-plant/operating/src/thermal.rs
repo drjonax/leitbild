@@ -44,6 +44,11 @@ impl Scalar {
         // q=0 has a finite tangent only for exponents >=1 or a zero seed.
         let d = if self.value == 0. && self.direction == 0. {
             0.
+        } else if self.direction == 0. && zero_tangent_scale(self.value, exponent) {
+            // A zero direction (either sign) times the finite factor
+            // `exponent * value^(exponent - 1)`: the same signed zero,
+            // without evaluating the factor's power.
+            exponent * self.direction
         } else {
             exponent * self.value.powf(exponent - 1.) * self.direction
         };
@@ -72,6 +77,16 @@ impl Scalar {
             other
         }
     }
+}
+/// Whether `exponent * value^(exponent - 1)` is certainly finite with the
+/// sign of `exponent` (or a zero of that sign): `value` is a positive normal
+/// in [2^-200, 2^200] and |exponent - 1| <= 4, so the power lies in
+/// [2^-800, 2^800]. Then `exponent * power * z` equals `exponent * z` bit
+/// for bit for either signed zero `z` ([`Scalar::pow`]'s zero direction).
+fn zero_tangent_scale(value: f64, exponent: f64) -> bool {
+    const LOWEST: f64 = f64::from_bits(0x3370_0000_0000_0000); // 2^-200
+    const HIGHEST: f64 = f64::from_bits(0x4c70_0000_0000_0000); // 2^200
+    (LOWEST..=HIGHEST).contains(&value) && (exponent - 1.).abs() <= 4.
 }
 impl From<f64> for Scalar {
     fn from(x: f64) -> Self {
@@ -1732,6 +1747,90 @@ pub fn secondary_wall<P: WaterProperties>(
         s(0.)
     };
     (s(area) * (wet * liquid + (s(1.) - wet) * gas)).finite()
+}
+
+#[cfg(test)]
+mod zero_direction_power {
+    use super::*;
+
+    /// The tangent [`Scalar::pow`] evaluated before its zero-direction
+    /// shortcut, restated as the reference.
+    fn reference(x: Scalar, exponent: f64) -> Scalar {
+        let d = if x.value == 0. && x.direction == 0. {
+            0.
+        } else {
+            exponent * x.value.powf(exponent - 1.) * x.direction
+        };
+        Scalar::new(x.value.powf(exponent), d)
+    }
+
+    #[test]
+    fn zero_direction_powers_are_the_reference_bit_for_bit() {
+        let exponents = [
+            -4.,
+            -3.,
+            -2.5,
+            -1.,
+            -0.5,
+            -0.,
+            0.,
+            1e-300,
+            0.15,
+            0.27,
+            1. / 3.,
+            0.4,
+            0.5,
+            0.668,
+            0.8,
+            1.,
+            1.5,
+            2.,
+            3.,
+            4.,
+            5.,
+            5.5,
+            6.,
+            7.,
+            1e3,
+            -1e3,
+            1e300,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        let mut values = vec![
+            0.,
+            -0.,
+            f64::MIN_POSITIVE,
+            5e-324,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::from_bits(0x3370_0000_0000_0000),
+            f64::from_bits(0x3370_0000_0000_0000).next_down(),
+            f64::from_bits(0x4c70_0000_0000_0000),
+            f64::from_bits(0x4c70_0000_0000_0000).next_up(),
+        ];
+        let mut v = 1e-310;
+        while v < 1e308 {
+            values.extend([v, -v, v * 1.37, -v * 0.71]);
+            v *= 17.3;
+        }
+        for &value in &values {
+            for &exponent in &exponents {
+                for direction in [0., -0.] {
+                    let x = Scalar::new(value, direction);
+                    let (actual, expected) = (x.pow(exponent), reference(x, exponent));
+                    assert_eq!(
+                        (actual.value.to_bits(), actual.direction.to_bits()),
+                        (expected.value.to_bits(), expected.direction.to_bits()),
+                        "{value:e}^{exponent} with direction {direction}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
