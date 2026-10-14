@@ -305,9 +305,17 @@ pub fn compare(
                 let by: Vec<f64> = series.iter().map(|s| max_abs(s) / scale).collect();
                 let value = by.iter().copied().fold(0., larger);
                 within &= value <= budget;
+                // Where the largest difference lies (s from the origin): a
+                // maximum within the filter's padding of a window end that
+                // cuts a fast transient is the zero-phase filter's edge.
+                let at = series
+                    .iter()
+                    .flat_map(|s| s.iter().enumerate())
+                    .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+                    .map(|(j, _)| from + j as f64 * dt);
                 metrics.insert(
                     name.into(),
-                    json!({"value": value, "budget": budget, "scale": scale, "by_instance": by}),
+                    json!({"value": value, "budget": budget, "scale": scale, "at_s": at, "by_instance": by}),
                 );
             }
             Err(e) => missing.push(e),
