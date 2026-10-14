@@ -194,6 +194,8 @@ fn s2_ledgers_close_over_a_settle_segment_and_carry_across_restarts() {
         first_step_s: g.number("/restartInitialStep_s"),
         start_bound: compose::START_BOUND,
         start_passes: 2,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: compose::START_BOUND,
     };
     let max_order = g.count("/maxOrder") as usize;

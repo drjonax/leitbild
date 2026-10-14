@@ -396,6 +396,9 @@ fn started() -> Started {
         .collect();
     let (yp, start) = leitbild_operating_water::joined::consistent_start(
         &mut joined,
+        // The start's matrices since S2-D4 (6d1ee9be): the colored
+        // reference, as this probe ran before; blocks are the production's.
+        leitbild_operating_water::joined::Matrices::Colored,
         0.,
         &mut y,
         &ids,

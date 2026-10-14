@@ -38,6 +38,9 @@ use std::collections::BTreeMap;
 
 /// The draft's trip timing (S2 declaration draft revision 6, "Trip"; G1).
 const DURATION_S: f64 = 60.;
+/// The S2-D21 check's span: past the first rod seat (t0 + 2.53 s from the
+/// provisional settled state).
+const SEAT_CHECK_S: f64 = 2.7;
 const WINDOW_S: f64 = 20.;
 const WINDOW_MAX_STEP_S: f64 = 0.02;
 const MAX_ORDER: usize = 2;
@@ -230,19 +233,87 @@ fn root_labels(
 #[test]
 #[ignore = "NOT-EVIDENCE S2-10 probe: requires the joined packet, a settled state, the wiki, IF97 and stock IDA/KLU"]
 fn s2_trip_probe_counts_the_restart_instants_by_kind() {
-    let started = z1::cpu_s();
-    let state_path = std::env::var("LD01_S2_TRIP_STATE").expect("LD01_S2_TRIP_STATE");
-    let cpu_cap_s: f64 =
-        std::env::var("LD01_S2_TRIP_CPU_CAP_S").map_or(1800., |v| v.parse().unwrap());
     let receipt_path = std::env::var_os("LD01_S2_TRIP_RECEIPT");
-    let start_passes: usize =
-        std::env::var("LD01_S2_TRIP_START_PASSES").map_or(2, |v| v.parse().unwrap());
     if let Some(p) = &receipt_path {
         assert!(
             !std::path::Path::new(p).exists(),
             "receipts are never overwritten"
         );
     }
+    let receipt = trip(DURATION_S);
+    if let Some(p) = &receipt_path {
+        std::fs::write(p, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    }
+    println!(
+        "{}",
+        serde_json::to_string(&json!({"failure": receipt["failure"], "reached_s": receipt["reached_s"],
+        "restart_instants": receipt["restart_instants"], "rods": {"seated": receipt["rods"]["seated"], "groups": receipt["rods"]["seat_groups"].as_array().map(|g| g.len()),
+        "most_bitwise_trajectory_groups": receipt["rods"]["most_bitwise_trajectory_groups"]}, "totals": receipt["totals"], "cpu": receipt["cpu"]["window"]}))
+        .unwrap()
+    );
+}
+
+/// Lead decision S2-D21 on the actual trip: the first rod seat (all 52
+/// clusters at one located instant) restarts exactly. The rod owner is the
+/// one transacted owner; the start takes at most the declared 12 passes,
+/// its WRMS guard leaves out the rods' algebraic coordinates (each seated
+/// body's speed and guide current) and reports their correction, and the
+/// constraint and rate bounds hold at 1e-12. NOT-EVIDENCE; about 40 CPU-s.
+#[test]
+#[ignore = "NOT-EVIDENCE S2-D21 check: requires the joined packet, a settled state, the wiki, IF97 and stock IDA/KLU"]
+fn the_rod_seat_restarts_exactly_after_its_transaction() {
+    let receipt = trip(SEAT_CHECK_S);
+    let summary = |r: &Value| {
+        json!({"t_s": r["t_s"], "kinds": r["kinds"], "failed": r["failed"], "start": r["start"],
+        "transacted": r["transacted"], "passes_allowed": r["passes_allowed"]})
+    };
+    let restarts = receipt["restarts"].as_array().unwrap();
+    println!(
+        "{}",
+        serde_json::to_string(
+            &json!({"failure": receipt["failure"], "reached_s": receipt["reached_s"],
+            "restarts": restarts.iter().map(summary).collect::<Vec<_>>()})
+        )
+        .unwrap()
+    );
+    assert!(receipt["failure"].is_null(), "{}", receipt["failure"]);
+    let seat = restarts
+        .iter()
+        .find(|r| {
+            r["kinds"]
+                .as_array()
+                .is_some_and(|k| k.contains(&json!("rod seat group")))
+        })
+        .expect("a rod seat within the check");
+    assert_eq!(
+        seat["detail"]["seated_clusters"].as_array().unwrap().len(),
+        52
+    );
+    assert_eq!(seat["transacted"], json!(["rods"]));
+    assert_eq!(seat["passes_allowed"], json!(12));
+    let start = &seat["start"];
+    assert!(start["projection_passes"].as_u64().unwrap() <= 12);
+    assert!(start["residual"].as_f64().unwrap() <= 1e-12);
+    assert!(start["constraint_rate"].as_f64().unwrap() <= 1e-12);
+    assert!(start["correction_wrms"].as_f64().unwrap() <= 1.);
+    // Each seated body's speed and guide current: 2 x 52 exempt coordinates.
+    assert_eq!(start["exempt"]["coordinates"], json!(104));
+    // Every other restart before it is ordinary: 2 passes, nothing exempt.
+    for r in restarts.iter().take_while(|r| r["t_s"] != seat["t_s"]) {
+        assert_eq!(r["passes_allowed"], json!(2), "{}", summary(r));
+        assert!(r["start"]["exempt"].is_null());
+    }
+}
+
+/// The trip from `LD01_S2_TRIP_STATE` over `duration_s` (the window's
+/// timing unchanged), as one receipt.
+fn trip(duration_s: f64) -> Value {
+    let started = z1::cpu_s();
+    let state_path = std::env::var("LD01_S2_TRIP_STATE").expect("LD01_S2_TRIP_STATE");
+    let cpu_cap_s: f64 =
+        std::env::var("LD01_S2_TRIP_CPU_CAP_S").map_or(1800., |v| v.parse().unwrap());
+    let start_passes: usize =
+        std::env::var("LD01_S2_TRIP_START_PASSES").map_or(2, |v| v.parse().unwrap());
     let state_bytes = std::fs::read(&state_path).expect("settled state");
     let state: Value = serde_json::from_slice(&state_bytes).expect("settled state json");
     let (packet_path, _) = spine::packet_bytes();
@@ -324,6 +395,8 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
         // The restarts' declared passes (the release restart's); a
         // diagnostic run may name others, and the receipt says so.
         start_passes,
+        // Lead decision S2-D21: P_tx after an owner transaction.
+        transaction_passes: 12,
         bound_placement: 1e-12,
     };
     let mut ida = Ida::new(
@@ -363,7 +436,7 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
     let mut restart_cpu_s = [0., 0.]; // window, after
     let mut solver_cpu_s = [0., 0.];
     let mut failure: Option<String> = None;
-    let end = t0 + DURATION_S;
+    let end = t0 + duration_s;
     let window_end = t0 + WINDOW_S;
     // One restart: the transactions and the exact start by discrete_restart.
     let do_restart = |ida: &mut Ida<Integrated<leitbild_operating_water::If97>>,
@@ -484,6 +557,7 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
             "index": restarts.len(), "t_s": t - t0, "discrete": name, "kinds": kinds, "detail": detail,
             "roots": roots.iter().map(|(i, d)| json!({"root": labels[*i], "direction": d})).collect::<Vec<_>>(),
             "placements": restarted.placements.len(),
+            "transacted": restarted.transacted, "passes_allowed": restarted.passes_allowed,
             "trajectory_groups_before": pre.len(),
             "algebraic_after": algebraic,
             "start": {"assembly": r.assembly, "projection_passes": r.projection_passes, "rate_passes": r.rate_passes,
@@ -491,7 +565,9 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
                 "assembly_wall_s": r.jacobian_s.iter().sum::<f64>(), "klu_analyze_wall_s": r.analyze_s.iter().sum::<f64>(),
                 "klu_factor_wall_s": r.factor_s.iter().sum::<f64>(), "klu_solve_wall_s": r.solve_s.iter().sum::<f64>(),
                 "residual": r.residual.value, "constraint_rate": r.constraint_rate.value,
-                "correction_wrms": r.correction_wrms},
+                "correction_wrms": r.correction_wrms,
+                "exempt": r.exempt.map(|e| json!({"coordinates": e.coordinates, "wrms": e.wrms,
+                    "max_weighted": e.max.value, "max_at": coordinates[e.max.row].1}))},
             "restart_cpu_s": cpu,
             "segment_before": segment,
         }));
@@ -540,7 +616,7 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
             break;
         }
         let event = ida.system().joined.next_time_event(t);
-        let boundary = if in_window { window_end } else { end };
+        let boundary = if in_window { window_end.min(end) } else { end };
         let stop = event.map_or(boundary, |e| e.min(boundary));
         if let Err(e) = ida.stop_at(stop) {
             failure = Some(format!("stop at {stop}: {e}"));
@@ -620,7 +696,7 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
                     add(&closed, w);
                     let (discrete, name) = if event == Some(t) {
                         (Discrete::TimeEvent, "time event")
-                    } else if in_window && t == window_end {
+                    } else if in_window && t == window_end && t < end {
                         (Discrete::TimeEvent, "H1")
                     } else {
                         segments.push(closed);
@@ -740,10 +816,11 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
         "preparation": preparation,
         "settled_state": {"path": state_path, "sha256": spine::sha256(&state_bytes), "t_s": t0},
         "configuration": {"source": "S2 declaration draft revision 6, Trip, and its block (maxOrder 2, newtonCoefficient 0.33, deltaCjLSetup 0.1, restartInitialStep_s 1e-4)",
-            "duration_s": DURATION_S, "window_s": WINDOW_S, "window_max_step_s": WINDOW_MAX_STEP_S, "max_order": MAX_ORDER,
+            "duration_s": duration_s, "window_s": WINDOW_S, "window_max_step_s": WINDOW_MAX_STEP_S, "max_order": MAX_ORDER,
             "newton_coefficient": NEWTON_COEFFICIENT, "delta_cj_lsetup": DELTA_CJ_LSETUP, "first_step_s": FIRST_STEP_S,
             "relative_tolerance": rtol, "start_passes": start_passes,
             "start_passes_note": if start_passes == 2 { "the restarts' declared 2 passes" } else { "DIAGNOSTIC: not the declared 2 passes" },
+            "transaction_passes": 12, "transaction_rule": "lead decision S2-D21: after an owner transaction that changed one of its differential coordinates, up to 12 passes, the WRMS guard over every coordinate but the transacted owners' algebraic ones (reported)",
             "h1": "restart by the exact consistent start at the window's end, then no step cap",
             "chunk_s": CHUNK_S, "sample_s": SAMPLE_S, "jacobian": "block (claude/ld01-r-restart, lead decision S2-D4)", "klu_ordering": "AMD"},
         "failure": failure,
@@ -768,14 +845,5 @@ fn s2_trip_probe_counts_the_restart_instants_by_kind() {
         "restarts": restarts,
         "samples": samples,
     });
-    if let Some(p) = &receipt_path {
-        std::fs::write(p, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
-    }
-    println!(
-        "{}",
-        serde_json::to_string(&json!({"failure": receipt["failure"], "reached_s": receipt["reached_s"],
-        "restart_instants": receipt["restart_instants"], "rods": {"seated": seated, "groups": receipt["rods"]["seat_groups"].as_array().map(|g| g.len()),
-        "most_bitwise_trajectory_groups": most_groups.0}, "totals": receipt["totals"], "cpu": receipt["cpu"]["window"]}))
-        .unwrap()
-    );
+    receipt
 }

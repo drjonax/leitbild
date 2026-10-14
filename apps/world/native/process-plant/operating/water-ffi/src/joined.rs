@@ -66,6 +66,10 @@ pub struct Report {
     /// Passes of the rate solve on the one factorization (the first exact,
     /// later ones removing round-off only).
     pub rate_passes: usize,
+    /// The projection's correction of the coordinates exempt from the WRMS
+    /// guard (lead decision S2-D21: a transacted owner's algebraic
+    /// coordinates), reported, never bounded; `None` when none is exempt.
+    pub exempt: Option<Exempt>,
     pub bound: f64,
     /// `"blocks"` or `"colored"`.
     pub assembly: &'static str,
@@ -80,6 +84,66 @@ pub struct Report {
     pub analyze_s: Vec<f64>,
     pub factor_s: Vec<f64>,
     pub solve_s: Vec<f64>,
+}
+
+/// The correction of the coordinates a start exempts from its WRMS guard:
+/// how many, their own WRMS with the integrator's weights, and the largest
+/// weighted change.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Exempt {
+    pub coordinates: usize,
+    pub wrms: f64,
+    pub max: Largest,
+}
+
+/// The projection's correction `y - start` over the integrator's weights:
+/// the WRMS of every coordinate not `exempt` (the guard's), and the exempt
+/// coordinates' own WRMS and largest weighted change (reported). With none
+/// exempt the guard's WRMS is over all coordinates, summed in the same
+/// order as ever.
+fn correction_wrms(
+    y: &[f64],
+    start: &[f64],
+    weights: &[f64],
+    exempt: &[bool],
+) -> (f64, Option<Exempt>) {
+    let weighted: Vec<f64> = y
+        .iter()
+        .zip(start)
+        .zip(weights)
+        .map(|((a, b), w)| (a - b) * w)
+        .collect();
+    let is_exempt = |i: usize| exempt.get(i).copied().unwrap_or(false);
+    let guarded = (0..weighted.len()).filter(|i| !is_exempt(*i)).count();
+    let wrms = (weighted
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !is_exempt(*i))
+        .map(|(_, v)| v * v)
+        .sum::<f64>()
+        / guarded as f64)
+        .sqrt();
+    let count = weighted.len() - guarded;
+    let exempted = (count > 0).then(|| {
+        let sum: f64 = weighted
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| is_exempt(*i))
+            .map(|(_, v)| v * v)
+            .sum();
+        Exempt {
+            coordinates: count,
+            wrms: (sum / count as f64).sqrt(),
+            max: largest(
+                weighted
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(i, _)| is_exempt(*i)),
+            ),
+        }
+    });
+    (wrms, exempted)
 }
 
 fn csc_i64(pointers: &[usize], indices: &[usize]) -> (Vec<i64>, Vec<i64>) {
@@ -197,7 +261,7 @@ fn assemble<P: Properties + WaterProperties>(
 #[allow(clippy::too_many_arguments)] // The state, its identity and weights, and the start's controls.
 pub fn consistent_start<P: Properties + WaterProperties>(
     joined: &mut Joined<P>,
-    mut matrices: Matrices<'_>,
+    matrices: Matrices<'_>,
     t: f64,
     y: &mut [f64],
     differential: &[f64],
@@ -205,14 +269,48 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     bound: f64,
     passes: usize,
 ) -> Result<(Vec<f64>, Report), Failure> {
+    consistent_start_exempting(
+        joined,
+        matrices,
+        t,
+        y,
+        differential,
+        weights,
+        &[],
+        bound,
+        passes,
+    )
+}
+
+/// [`consistent_start`] with the coordinates marked `exempt` left out of
+/// the projection's WRMS guard and reported instead ([`Report::exempt`]):
+/// lead decision S2-D21, for a transacted owner's algebraic coordinates
+/// after its transaction. Everything else, the constraint and rate bounds
+/// included, is unchanged. `exempt` is empty or one flag per coordinate.
+#[allow(clippy::too_many_arguments)] // As consistent_start, with the exemption.
+pub fn consistent_start_exempting<P: Properties + WaterProperties>(
+    joined: &mut Joined<P>,
+    mut matrices: Matrices<'_>,
+    t: f64,
+    y: &mut [f64],
+    differential: &[f64],
+    weights: &[f64],
+    exempt: &[bool],
+    bound: f64,
+    passes: usize,
+) -> Result<(Vec<f64>, Report), Failure> {
     let n = joined.dimension();
     if y.len() != n
         || differential.len() != n
         || weights.len() != n
+        || !(exempt.is_empty() || exempt.len() == n)
+        || exempt.iter().zip(differential).any(|(e, d)| *e && *d != 0.)
         || !(bound.is_finite() && bound > 0.)
         || passes == 0
     {
-        return Err(fatal("layout, bound or passes"));
+        return Err(fatal(
+            "layout, bound or passes, or an exempt differential coordinate",
+        ));
     }
     let colored: Pattern;
     let (pattern, colors, assembly): (&Pattern, usize, &'static str) = match &matrices {
@@ -331,13 +429,7 @@ pub fn consistent_start<P: Properties + WaterProperties>(
             report.constraint_after
         )));
     }
-    let weighted: Vec<f64> = y
-        .iter()
-        .zip(&start)
-        .zip(weights)
-        .map(|((a, b), w)| (a - b) * w)
-        .collect();
-    report.correction_wrms = (weighted.iter().map(|v| v * v).sum::<f64>() / n as f64).sqrt();
+    (report.correction_wrms, report.exempt) = correction_wrms(y, &start, weights, exempt);
     if report.correction_wrms.is_nan() || report.correction_wrms > 1. {
         return Err(fatal(format!(
             "the projection exceeds the solver's error scale: WRMS {}",
@@ -454,12 +546,34 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     Ok((yp, report))
 }
 
+/// The owners (name, coordinate range) whose transaction changed the value
+/// of a coordinate that was differential before it (`identity_before`):
+/// lead decision S2-D21's transacted owners, such as a seated rod (travel
+/// and speed) or a seated relief disc (lift). A mode change alone, or a
+/// change of an algebraic coordinate, does not make an owner transacted.
+fn transacted_owners(
+    owners: &[(&'static str, std::ops::Range<usize>)],
+    before: &[f64],
+    after: &[f64],
+    identity_before: &[f64],
+) -> Vec<&'static str> {
+    owners
+        .iter()
+        .filter(|(_, range)| {
+            range
+                .clone()
+                .any(|i| identity_before[i] != 0. && before[i].to_bits() != after[i].to_bits())
+        })
+        .map(|(name, _)| *name)
+        .collect()
+}
+
 pub use integrated::{
     Assembly, Discrete, Integrated, JoinedSystem, Restart, Restarted, discrete_restart,
 };
 
 mod integrated {
-    use super::{Analyses, Matrices, Report};
+    use super::{Analyses, Matrices, Report, transacted_owners};
     use crate::ida::{Failure, Ida, KluOrdering, System};
     use leitbild_operating_plant::{
         joined::{
@@ -482,8 +596,9 @@ mod integrated {
     /// restart because stock IDAReInit retains it: the Newton coefficient
     /// and the linear-setup cj bound (claude/ld01-wiki c968921: 0.33 and
     /// 0.1), G13's first step (1e-4 s), the exact consistent start's bound
-    /// and rate passes, and the largest roundoff violation of a nonnegative
-    /// stock a restart places on its bound, in solver scaling
+    /// and passes, the passes of a start after an owner transaction (lead
+    /// decision S2-D21: 12), and the largest roundoff violation of a
+    /// nonnegative stock a restart places on its bound, in solver scaling
     /// (claude/ld01-wiki 014676f: 1e-12).
     #[derive(Clone, Copy, Debug)]
     pub struct Restart {
@@ -492,6 +607,9 @@ mod integrated {
         pub first_step_s: f64,
         pub start_bound: f64,
         pub start_passes: usize,
+        /// The start's passes after an owner transaction changed a
+        /// differential coordinate of its owner (S2-D21, P_tx).
+        pub transaction_passes: usize,
         pub bound_placement: f64,
     }
 
@@ -501,6 +619,13 @@ mod integrated {
         pub transactions: Vec<Transaction>,
         /// Nonnegative stocks placed on their bound, each reported.
         pub placements: Vec<network::Placement>,
+        /// The owners whose transactions changed one of their differential
+        /// coordinates (S2-D21); their algebraic coordinates were exempt
+        /// from the start's WRMS guard ([`Report::exempt`]).
+        pub transacted: Vec<&'static str>,
+        /// The start's pass bound: `transaction_passes` after an owner
+        /// transaction, `start_passes` otherwise.
+        pub passes_allowed: usize,
         pub yp: Vec<f64>,
         pub report: Report,
     }
@@ -532,11 +657,17 @@ mod integrated {
     /// 2. a nonnegative network stock below zero by less than the declared
     ///    roundoff is placed on its bound and reported; a larger violation
     ///    refuses;
-    /// 3. the differential identity is recomputed from the owners' modes;
+    /// 3. the differential identity is recomputed from the owners' modes; an
+    ///    owner whose transaction changed one of its differential
+    ///    coordinates (a rod or relief seat) is transacted (S2-D21);
     /// 4. the exact consistent start at the transacted `y` (the projection
     ///    may change algebraic coordinates only), on the system's own
     ///    assembly: on blocks with the system's cached symbolic analyses,
     ///    on colored (the reference) afresh;
+    ///    After an owner transaction the start takes up to the declared
+    ///    `transaction_passes`, and its WRMS guard leaves out the transacted
+    ///    owners' algebraic coordinates, whose correction it reports; the
+    ///    constraint and rate bounds are unchanged (S2-D21);
     /// 5. IDAReInit with the consistent rates and the segment configuration.
     #[allow(clippy::too_many_arguments)] // One restart: event, state, identity and tolerances.
     pub fn discrete_restart<S: JoinedSystem>(
@@ -561,6 +692,8 @@ mod integrated {
         let message = |f: network::Failure| match f {
             network::Failure::Recoverable(r) | network::Failure::Fatal(r) => r,
         };
+        let before = y.to_vec();
+        let identity_before = joined.differential(network_ids);
         let mut done = match discrete {
             Discrete::Roots(directions) => joined.transact(t, directions, y).map_err(message)?,
             Discrete::TimeEvent => Vec::new(),
@@ -576,6 +709,26 @@ mod integrated {
             .zip(absolute)
             .map(|(v, a)| 1. / (relative * v.abs() + a))
             .collect();
+        let o = joined.offsets();
+        let owners = [("secondary", o.secondary..o.rods), ("rods", o.rods..o.end)];
+        let transacted = transacted_owners(&owners, &before, y, &identity_before);
+        let exempt: Vec<bool> = if transacted.is_empty() {
+            Vec::new()
+        } else {
+            (0..y.len())
+                .map(|i| {
+                    ids[i] == 0.
+                        && owners
+                            .iter()
+                            .any(|(name, range)| transacted.contains(name) && range.contains(&i))
+                })
+                .collect()
+        };
+        let passes_allowed = if transacted.is_empty() {
+            restart.start_passes
+        } else {
+            restart.transaction_passes
+        };
         let matrices = match assembly {
             Assembly::Blocks(structure) => Matrices::Blocks {
                 structure,
@@ -583,15 +736,16 @@ mod integrated {
             },
             Assembly::Colored => Matrices::Colored,
         };
-        let (yp, report) = super::consistent_start(
+        let (yp, report) = super::consistent_start_exempting(
             joined,
             matrices,
             t,
             y,
             &ids,
             &weights,
+            &exempt,
             restart.start_bound,
-            restart.start_passes,
+            passes_allowed,
         )
         .map_err(message)?;
         ida.reinitialize(t, y, &yp)?;
@@ -600,6 +754,8 @@ mod integrated {
         Ok(Restarted {
             transactions: done,
             placements,
+            transacted,
+            passes_allowed,
             yp,
             report,
         })
@@ -785,5 +941,56 @@ mod integrated {
             }
             .map_err(failure)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{correction_wrms, transacted_owners};
+
+    #[test]
+    fn the_guard_leaves_out_only_the_exempt_coordinates_and_reports_them() {
+        let start = [1., 2., 3., 4.];
+        let y = [1., 2.5, 3., 4. - 2e-3];
+        let weights = [1., 2., 1., 1e3];
+        // Weighted changes: 0, 1, 0, -2.
+        let (all, none) = correction_wrms(&y, &start, &weights, &[]);
+        assert!((all - (5f64 / 4.).sqrt()).abs() < 1e-12);
+        assert_eq!(none, None);
+        let (guard, exempt) = correction_wrms(&y, &start, &weights, &[false, false, false, true]);
+        assert!((guard - (1f64 / 3.).sqrt()).abs() < 1e-12);
+        let exempt = exempt.unwrap();
+        assert_eq!(exempt.coordinates, 1);
+        assert!((exempt.wrms - 2.).abs() < 1e-12);
+        assert_eq!(exempt.max.row, 3);
+        assert!((exempt.max.value - 2.).abs() < 1e-12);
+        // An all-false mask is the unexempted guard, bit for bit.
+        let (same, nothing) = correction_wrms(&y, &start, &weights, &[false; 4]);
+        assert_eq!(same.to_bits(), all.to_bits());
+        assert_eq!(nothing, None);
+    }
+
+    #[test]
+    fn an_owner_is_transacted_only_by_a_changed_differential_coordinate() {
+        let owners = [("secondary", 0..2), ("rods", 2..5)];
+        let before = [1., 2., 3., 4., 5.];
+        let identity = [1., 0., 1., 1., 0.];
+        // Nothing changed: no owner.
+        assert!(transacted_owners(&owners, &before, &before, &identity).is_empty());
+        // An algebraic coordinate alone (rods' 5th) does not transact.
+        let after = [1., 2., 3., 4., 6.];
+        assert!(transacted_owners(&owners, &before, &after, &identity).is_empty());
+        // A seat: travel and speed set to zero.
+        let after = [1., 2., 0., 0., 5.];
+        assert_eq!(
+            transacted_owners(&owners, &before, &after, &identity),
+            vec!["rods"]
+        );
+        // A relief disc seated (lift to zero) and a rod seat together.
+        let after = [0., 2., 0., 4., 5.];
+        assert_eq!(
+            transacted_owners(&owners, &before, &after, &identity),
+            vec!["secondary", "rods"]
+        );
     }
 }
