@@ -2,6 +2,7 @@
   export type PlantCardAction =
     | 'overview'
     | 'procedures'
+    | 'safety-procedure'
     | 'instructor'
     | 'assistant'
     | 'component-graph'
@@ -12,6 +13,7 @@
 
 <script lang="ts">
   import { tick } from 'svelte'
+  import type { SimulationRunId } from '../../core/model/index.ts'
   import { ChevronRight, ClipboardList, Ellipsis, FileText, GitBranch, Library, MonitorCog, ShieldCheck, Sparkles, X, Zap } from 'lucide-svelte'
   import StatusDot from '../components/StatusDot.svelte'
   import {
@@ -21,7 +23,10 @@
     type ObjectCardPlacement,
     type ScreenRect,
   } from '../map/object-card-anchor.ts'
+  import { composedDisplayClient } from '../embed/composed-display/composed-display-client.ts'
+  import { sparkline, sparklineText } from '../embed/composed-display/sparkline.ts'
   import type { PlantCardView } from './plant-card.ts'
+  import { createPlantCardTrends, PLANT_CARD_TREND_MS, type PlantCardLine } from './plant-card-trends.ts'
 
   // A Plant's card on the map: the unit at a glance, and what to open next.
   // It stands beside the unit's icon, never over the map's other units where
@@ -33,6 +38,8 @@
     readonly view: PlantCardView
     /** Which unit the card shows: a new one takes focus again. */
     readonly objectId: string
+    /** The Run whose historian the energy lines begin from; null draws none. */
+    readonly simulationRunId: SimulationRunId | null
     readonly frame: MapCardFrame | null
     /** Whether this screen may order the Plant: only then does it offer Instructor actions. */
     readonly instructorOffered: boolean
@@ -44,7 +51,7 @@
     readonly onClose: () => void
   }
 
-  let { view, objectId, frame, instructorOffered, assistantOffered, engineeringOffered, onAction, onClose }: Props = $props()
+  let { view, objectId, simulationRunId, frame, instructorOffered, assistantOffered, engineeringOffered, onAction, onClose }: Props = $props()
 
   const cardWidth = 300
   let section = $state<HTMLElement | null>(null)
@@ -74,6 +81,33 @@
     moreOpen = false
     void tick().then(() => section?.focus({ preventScroll: true }))
   })
+
+  // The energy lines: their history once per unit, then the readings the projection brings (plant-card-trends.ts).
+  const trends = createPlantCardTrends({ history: composedDisplayClient.history })
+  let lines = $state.raw<ReadonlyMap<string, PlantCardLine>>(new Map())
+  $effect(() => {
+    const unsubscribe = trends.subscribe(() => { lines = trends.lines() })
+    return () => {
+      unsubscribe()
+      trends.close()
+    }
+  })
+  $effect(() => {
+    trends.show({ runId: simulationRunId, objectId, energy: view.energy ?? [] })
+  })
+
+  const sparkSize = { width: 64, height: 18 } as const
+  const drawn = (path: string, now: number | undefined, unit: string) => {
+    const line = lines.get(path)
+    if (line?.kind !== 'line' || now === undefined) return null
+    const geometry = sparkline({ points: line.points, now, windowMs: PLANT_CARD_TREND_MS, size: sparkSize, limit: null, resolution: null })
+    if (geometry.path === '') return null
+    return { geometry, text: sparklineText({ recorded: true, windowMs: PLANT_CARD_TREND_MS, unit, resolution: null, line: geometry, historyMissing: false, historyError: undefined }) }
+  }
+  const noLine = (path: string): string | undefined => {
+    const line = lines.get(path)
+    return line?.kind === 'none' ? line.reason : undefined
+  }
 
   const act = (action: PlantCardAction): void => {
     moreOpen = false
@@ -127,8 +161,41 @@
       <X size={16} />
     </button>
   </header>
-  {#if view.energy !== null}
-    <p class="plant-card-energy">{view.energy}</p>
+  {#if view.energy !== null && view.energy.length > 0}
+    {@const now = Math.max(...view.energy.flatMap(reading => reading.point === null ? [] : [reading.point.t]))}
+    <dl class="plant-card-energy">
+      {#each view.energy as reading (reading.path)}
+        {@const trend = drawn(reading.path, Number.isFinite(now) ? now : undefined, reading.unit)}
+        <dt>{reading.label}</dt>
+        <dd class="plant-card-energy-value" title={trend === null ? noLine(reading.path) : undefined}>{reading.text}</dd>
+        <dd class="plant-card-energy-trend">
+          {#if trend !== null}
+            <svg width={sparkSize.width} height={sparkSize.height} role="img" aria-label="{reading.label}, {trend.text}">
+              <title>{trend.text}</title>
+              <rect width={sparkSize.width} height={sparkSize.height} rx="3" />
+              <path d={trend.geometry.path} />
+              {#if trend.geometry.end}<circle cx={trend.geometry.end.x} cy={trend.geometry.end.y} r="2" />{/if}
+            </svg>
+          {/if}
+        </dd>
+      {/each}
+    </dl>
+  {/if}
+  {#if view.safetyFunction !== null}
+    <div class="plant-card-csf">
+      <span class="plant-card-csf-chip {view.safetyFunction.status}" title={view.safetyFunction.title}>{view.safetyFunction.text}</span>
+      {#if view.safetyFunction.notRunning !== null}
+        <button
+          type="button"
+          class="plant-card-csf-open"
+          onclick={() => act('safety-procedure')}
+          aria-label="{view.safetyFunction.notRunning} not running: open it in the procedure window"
+          title="Open {view.safetyFunction.notRunning} in the procedure window"
+        >
+          Not running<ChevronRight size={13} />
+        </button>
+      {/if}
+    </div>
   {/if}
 
   <div class="plant-card-rows">
@@ -260,12 +327,66 @@
   .plant-card-close:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
   .plant-card-energy {
-    margin: 4px 12px 0 30px;
-    color: var(--text);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 64px;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+    margin: 6px 12px 0 30px;
     font-size: 12px;
     line-height: 1.4;
-    font-variant-numeric: tabular-nums;
   }
+  .plant-card-energy dt { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+  .plant-card-energy dd { margin: 0; }
+  .plant-card-energy-value { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .plant-card-energy-trend { display: flex; height: 18px; }
+  /* The track spans the whole window, so a line that reaches back only a minute (a young Run) reads as one. */
+  .plant-card-energy-trend rect { fill: color-mix(in srgb, var(--border) 45%, transparent); }
+  .plant-card-energy-trend path { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linejoin: round; }
+  .plant-card-energy-trend circle { fill: var(--text); }
+
+  /* The status-tree colours (WOG F-0): red and orange call for their procedure, yellow allows it, green is satisfied. */
+  .plant-card-csf {
+    --csf-orange: #d9661f;
+    --csf-yellow: #e2b80c;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 12px 0 30px;
+    font-size: 12px;
+  }
+  :global(:root.dark) .plant-card-csf { --csf-orange: #ff9447; --csf-yellow: #f2d04a; }
+  .plant-card-csf-chip {
+    padding: 0 6px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 17px;
+    white-space: nowrap;
+    cursor: help;
+  }
+  .plant-card-csf-chip.red { color: #fff; background: var(--critical); }
+  .plant-card-csf-chip.orange { color: #17202a; background: var(--csf-orange); }
+  .plant-card-csf-chip.yellow { color: #17202a; background: var(--csf-yellow); }
+  .plant-card-csf-chip.green { color: var(--success); border-color: var(--success); }
+  .plant-card-csf-chip.unknown { color: var(--muted); border-color: var(--border); border-style: dashed; }
+  .plant-card-csf-open {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 24px;
+    padding: 0 4px;
+    color: var(--accent);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+  }
+  .plant-card-csf-open:hover, .plant-card-csf-open:focus-visible { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
   .plant-card-rows {
     display: flex;
@@ -377,7 +498,7 @@
 
   @media (pointer: coarse) {
     .plant-card-row, .plant-card-menu button { min-height: 44px; }
-    .plant-card-tool, .plant-card-close { min-height: 44px; }
+    .plant-card-tool, .plant-card-close, .plant-card-csf-open { min-height: 44px; }
     .plant-card-close { width: 44px; }
   }
 </style>

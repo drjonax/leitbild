@@ -1144,14 +1144,14 @@
       : emptyProcedureRunSummaries
   }
 
-  const openProcedureSystemAt = (object: OperationalObject, summary?: ProcedureRunSummary): void => {
+  const openProcedureWindowAt = (object: OperationalObject, procedureId?: ProcedureId): void => {
     if (procedureScopeForObject(object) === null) return
     // One procedure window per unit: opening it again raises and focuses the open one.
     const open = procedureSystemWindows.find(entry => entry.objectId === object.id)
     if (open) {
       procedureSystemWindows = [...procedureSystemWindows.filter(entry => entry.id !== open.id), {
         ...open,
-        ...(summary?.procedureId === undefined ? {} : { initialProcedureId: summary.procedureId }),
+        ...(procedureId === undefined ? {} : { initialProcedureId: procedureId }),
         focusRequest: (open.focusRequest ?? 0) + 1,
       }]
       return
@@ -1161,11 +1161,14 @@
       {
         id: nextFloatingWindowId('procedure-system', object.id),
         objectId: object.id,
-        ...(summary?.procedureId === undefined ? {} : { initialProcedureId: summary.procedureId }),
+        ...(procedureId === undefined ? {} : { initialProcedureId: procedureId }),
       },
     ]
     void loadProcedureSystemModal()
   }
+
+  const openProcedureSystemAt = (object: OperationalObject, summary?: ProcedureRunSummary): void =>
+    openProcedureWindowAt(object, summary?.procedureId)
 
   const openProcedureSystem = (object: OperationalObject): void => {
     openProcedureSystemAt(object)
@@ -1425,13 +1428,15 @@
   const followPlantCardAction = (action: PlantCardAction): void => {
     const object = plantCardObject
     if (object === null) return
-    const procedure = plantCardView(object, procedureSummariesForObject(object))?.procedure.summary ?? undefined
+    const view = plantCardView(object, procedureSummariesForObject(object))
+    const procedure = view?.procedure.summary ?? undefined
     const returnTo = plantCard?.opener?.isConnected ? plantCard.opener : document.querySelector<HTMLElement>('.surface-main .maplibregl-canvas')
     closePlantCard()
     returnTo?.focus({ preventScroll: true })
     switch (action) {
       case 'overview': return openProcessDisplay(object)
       case 'procedures': return openProcedureSystemAt(object, procedure)
+      case 'safety-procedure': return openProcedureWindowAt(object, view?.safetyFunction?.notRunning ?? undefined)
       case 'instructor': return requestDisplayWindow({ kind: 'overview', objectId: object.id }, true, true)
       case 'assistant': {
         if (simulationRunId === null) throw new Error('the Run\'s Assistant was offered before the Run was joined')
@@ -2173,6 +2178,7 @@
           <PlantCard
             {view}
             objectId={plantCardObject.id}
+            {simulationRunId}
             frame={plantCardFrame}
             instructorOffered={controllerControls && plantSystemAvailable}
             assistantOffered={runAssistantOffered && simulationRunId !== null}

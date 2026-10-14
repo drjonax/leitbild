@@ -1,8 +1,14 @@
 import type { OperationalObject } from '../../core/model/index.ts'
+import { procedureIdSchema, type ProcedureId } from '../../core/model/procedures.ts'
+import { formatQuantity } from '../../packs/process-plant/displays/display-text.ts'
+import { safetyFunctionStatusWords } from '../../packs/process-plant/displays/safety-function-content.ts'
+import type { TrendPoint } from '../../packs/process-plant/displays/trend-reading.ts'
 import {
   emptyProcessPlantProjection,
   processPlantUnitPackDataSchema,
+  type ProcessPlantUnitEnergyReading,
   type ProcessPlantUnitProjection,
+  type ProcessPlantUnitSafetyFunction,
 } from '../../packs/process-plant/model.ts'
 import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../procedures/procedure-run-selectors.ts'
 import { procedureRunSummaryTitle } from '../procedures/procedure-run-selectors.ts'
@@ -12,7 +18,8 @@ import { procedureRunSummaryTitle } from '../procedures/procedure-run-selectors.
  * actions would open, in the projection's own words. The card is a launcher:
  * it reads the Plant's projection and procedure runs, which the surface holds
  * already, and nothing on it writes to the Plant. Every value comes from the
- * model (its energy sentence, its declared operating modes, its alarms); a
+ * model (its declared energy rates, operating modes, alarms and critical
+ * safety functions); a
  * Plant whose runtime is pending says only that, never a placeholder count.
  */
 
@@ -37,6 +44,28 @@ export interface PlantCardProcedure {
   readonly drivenByAi: boolean
 }
 
+export interface PlantCardEnergy {
+  /** Its variable, which also names the series the Run's historian records it in. */
+  readonly path: string
+  readonly label: string
+  /** "3400 MW"; "—" where it reads no number. */
+  readonly text: string
+  /** Its native unit, which its line's points are in. */
+  readonly unit: string
+  /** The reading at its Run time, for the line; null where it reads no number. */
+  readonly point: TrendPoint | null
+}
+
+export interface PlantCardSafetyFunction {
+  readonly status: Exclude<ProcessPlantUnitSafetyFunction['status'], 'not-monitored'>
+  /** "HEAT SINK · FR-H.1", "CORE COOL ?", or "CSF" where none is challenged. */
+  readonly text: string
+  /** Its name, status and what that means, for the tooltip. */
+  readonly title: string
+  /** The procedure its colour sends operators to, where no active run on the unit runs it; null otherwise. */
+  readonly notRunning: ProcedureId | null
+}
+
 export interface PlantCardView {
   readonly name: string
   readonly tone: PlantCardTone
@@ -45,8 +74,10 @@ export interface PlantCardView {
   readonly chip: 'Tripped' | 'Pending' | null
   /** The declared operating mode the Plant is in; null where it declares none or none holds. */
   readonly mode: string | null
-  /** The model's energy in → out sentence; null until the runtime runs. */
-  readonly energy: string | null
+  /** The rates of the energy sources and sinks the model declares; null until the runtime runs. */
+  readonly energy: ReadonlyArray<PlantCardEnergy> | null
+  /** The most challenged critical safety function; null where none is declared, none is judged now, or the runtime is pending. */
+  readonly safetyFunction: PlantCardSafetyFunction | null
   /** Null until the runtime runs: the pending projection's zero counts are no fact. */
   readonly alarms: PlantCardAlarms | null
   readonly procedure: PlantCardProcedure
@@ -77,6 +108,31 @@ export const plantCardProcedure = (summaries: ProcedureRunSummaryGroup): PlantCa
   }
 }
 
+export const plantCardEnergy = (reading: ProcessPlantUnitEnergyReading): PlantCardEnergy => ({
+  path: reading.path,
+  label: reading.label,
+  text: reading.value === null ? '—' : formatQuantity(reading.value, reading.unit),
+  unit: reading.unit,
+  point: reading.value === null ? null : { t: Date.parse(reading.simulationTime), v: reading.value },
+})
+
+export const plantCardSafetyFunction = (
+  worst: ProcessPlantUnitSafetyFunction | undefined,
+  summaries: ProcedureRunSummaryGroup,
+): PlantCardSafetyFunction | null => {
+  if (worst === undefined || worst.status === 'not-monitored') return null
+  const status = worst.status
+  if (status === 'green') return { status, text: 'CSF', title: 'Critical safety functions: none challenged', notRunning: null }
+  const procedure = worst.procedure === undefined ? null : procedureIdSchema.safeParse(worst.procedure)
+  const running = procedure?.success === true && summaries.active.some(summary => summary.procedureId === procedure.data)
+  return {
+    status,
+    text: worst.procedure !== undefined ? `${worst.shortLabel} · ${worst.procedure}` : status === 'unknown' ? `${worst.shortLabel} ?` : worst.shortLabel,
+    title: `${worst.label}: ${safetyFunctionStatusWords(status)}\n${worst.meaning}`,
+    notRunning: procedure?.success === true && !running ? procedure.data : null,
+  }
+}
+
 /** The card of a Plant object, or null for an object that is no Plant. */
 export const plantCardView = (object: OperationalObject, summaries: ProcedureRunSummaryGroup): PlantCardView | null => {
   const parsed = processPlantUnitPackDataSchema.safeParse(object.packData)
@@ -89,7 +145,8 @@ export const plantCardView = (object: OperationalObject, summaries: ProcedureRun
     statusLabel: projection.statusLabel,
     chip: pending ? 'Pending' : projection.reactorTripped === true ? 'Tripped' : null,
     mode: projection.modeLabel ?? null,
-    energy: pending ? null : projection.summary,
+    energy: pending ? null : projection.energy.map(plantCardEnergy),
+    safetyFunction: pending ? null : plantCardSafetyFunction(projection.worstSafetyFunction, summaries),
     alarms: pending ? null : plantCardAlarms(projection),
     procedure: plantCardProcedure(summaries),
   }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { IsoTimestamp, OperationalObject } from '../src/core/model/index.ts'
-import { processPlantUnitPackDataSchema, type ProcessPlantUnitProjection } from '../src/packs/process-plant/model.ts'
+import { recordingSeriesIdFor, type IsoTimestamp, type OperationalObject, type SimulationRunId } from '../src/core/model/index.ts'
+import { HOLD_GAP_MS, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { processPlantUnitPackDataSchema, type ProcessPlantUnitProjection, type ProcessPlantUnitSafetyFunction } from '../src/packs/process-plant/model.ts'
 import type { OperationalPointFeature } from '../src/ui/map-runtime/types.ts'
 import {
   dockObjectCard,
@@ -10,7 +11,8 @@ import {
   type MapCardFrame,
   type MapObjectAnchor,
 } from '../src/ui/map/object-card-anchor.ts'
-import { plantCardView } from '../src/ui/process-display/plant-card.ts'
+import { plantCardView, type PlantCardEnergy } from '../src/ui/process-display/plant-card.ts'
+import { createPlantCardTrends, PLANT_CARD_TREND_MS, type PlantCardHistory } from '../src/ui/process-display/plant-card-trends.ts'
 import { objectHoverCardHtml } from '../src/ui/map/object-hover-card.ts'
 import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../src/ui/procedures/procedure-run-selectors.ts'
 import { scenarios } from './fixtures/scenarios.ts'
@@ -19,6 +21,9 @@ const at = '2026-10-14T09:00:00.000Z' as IsoTimestamp
 const unit = scenarios.find(scenario => scenario.id === 'test-plant')?.initialObjects.find(object => object.packId === 'process-plant')
 if (unit === undefined) throw new Error('the Plant fixture has no Plant')
 
+// The Run's own time, which the energy readings carry; the projection's updatedAt is wall time.
+const runAt = '2026-10-14T06:30:00.000Z' as IsoTimestamp
+
 const running: ProcessPlantUnitProjection = {
   schemaVersion: 1,
   summary: 'Core thermal power 3400 MW · Electrical output 1162 MW',
@@ -26,9 +31,22 @@ const running: ProcessPlantUnitProjection = {
   statusLabel: 'Normal',
   activeAlarmCount: 0,
   activeTripCount: 0,
+  energy: [
+    { path: 'core.totalThermalPowerMw', label: 'Core thermal power', role: 'source', value: 3400, unit: 'MW', simulationTime: runAt },
+    { path: 'turbine.electricMw', label: 'Electrical output', role: 'sink', value: 1162.17, unit: 'MW', simulationTime: runAt },
+  ],
   fields: [],
   updatedAt: at,
 }
+
+const heatSink = (status: ProcessPlantUnitSafetyFunction['status'], procedure?: string): ProcessPlantUnitSafetyFunction => ({
+  id: 'heat-sink',
+  label: 'Heat sink',
+  shortLabel: 'HEAT SINK',
+  status,
+  ...(procedure === undefined ? {} : { procedure }),
+  meaning: 'No steam generator has level on span and feed is below the minimum flow: the secondary heat sink is lost.',
+})
 
 const plantWith = (projection: ProcessPlantUnitProjection | undefined): OperationalObject => {
   const data = processPlantUnitPackDataSchema.parse(unit.packData)
@@ -47,7 +65,7 @@ const runOf = (procedureId: string, step: { readonly label: string; readonly nam
 } as unknown as ProcedureRunSummary)
 
 describe('a Plant card says what its projection and procedure runs say', () => {
-  test('a running unit: its energy sentence, its mode, no chip, "No alarms" and "None running"', () => {
+  test('a running unit: its energy readings at their Run time, its mode, no chip, "No alarms" and "None running"', () => {
     const view = plantCardView(plantWith({ ...running, modeLabel: 'Power operation' }), noRuns)
     expect(view).toEqual({
       name: unit.label,
@@ -55,7 +73,11 @@ describe('a Plant card says what its projection and procedure runs say', () => {
       statusLabel: 'Normal',
       chip: null,
       mode: 'Power operation',
-      energy: 'Core thermal power 3400 MW · Electrical output 1162 MW',
+      energy: [
+        { path: 'core.totalThermalPowerMw', label: 'Core thermal power', text: '3400 MW', unit: 'MW', point: { t: Date.parse(runAt), v: 3400 } },
+        { path: 'turbine.electricMw', label: 'Electrical output', text: '1162 MW', unit: 'MW', point: { t: Date.parse(runAt), v: 1162.17 } },
+      ],
+      safetyFunction: null,
       alarms: { text: 'No alarms', severity: null },
       procedure: { text: 'None running', title: null, summary: null, drivenByAi: false },
     })
@@ -86,8 +108,111 @@ describe('a Plant card says what its projection and procedure runs say', () => {
     expect(plantCardView(plantWith(running), { active: [frh], inactive: [e0] })?.procedure.text).toBe('FR-H.1')
   })
 
+  test('a reading that is no number reads "—" and has no point for its line', () => {
+    const [thermal] = running.energy
+    const view = plantCardView(plantWith({ ...running, energy: [{ ...thermal!, value: null }] }), noRuns)
+    expect(view?.energy).toEqual([{ path: 'core.totalThermalPowerMw', label: 'Core thermal power', text: '—', unit: 'MW', point: null }])
+  })
+
+  test('the safety function line names the most challenged one in its colour, with the procedure it calls for while no run runs it', () => {
+    const frh = runOf('FR-H.1', { label: '2', name: 'Check secondary heat sink' })
+    const lost = plantWith({ ...running, worstSafetyFunction: heatSink('red', 'FR-H.1') })
+    expect(plantCardView(lost, noRuns)?.safetyFunction).toEqual({
+      status: 'red',
+      text: 'HEAT SINK · FR-H.1',
+      title: 'Heat sink: RED\nNo steam generator has level on span and feed is below the minimum flow: the secondary heat sink is lost.',
+      notRunning: 'FR-H.1',
+    })
+    // Running it, or a run of it ended and entered again, is no longer "not running".
+    expect(plantCardView(lost, { active: [frh], inactive: [] })?.safetyFunction?.notRunning).toBeNull()
+    expect(plantCardView(lost, { active: [], inactive: [frh] })?.safetyFunction?.notRunning).toBe('FR-H.1')
+  })
+
+  test('none challenged reads "CSF" in green; one that cannot be judged reads "?"; none judged now, none declared or a pending runtime show no line', () => {
+    const green = plantCardView(plantWith({ ...running, worstSafetyFunction: heatSink('green') }), noRuns)?.safetyFunction
+    expect(green).toEqual({ status: 'green', text: 'CSF', title: 'Critical safety functions: none challenged', notRunning: null })
+    expect(plantCardView(plantWith({ ...running, worstSafetyFunction: heatSink('unknown') }), noRuns)?.safetyFunction).toMatchObject({ status: 'unknown', text: 'HEAT SINK ?', notRunning: null })
+    expect(plantCardView(plantWith({ ...running, worstSafetyFunction: heatSink('not-monitored') }), noRuns)?.safetyFunction).toBeNull()
+    expect(plantCardView(plantWith(running), noRuns)?.safetyFunction).toBeNull()
+    expect(plantCardView(plantWith({ ...running, statusTone: 'idle', worstSafetyFunction: heatSink('red', 'FR-H.1') }), noRuns)?.safetyFunction).toBeNull()
+    // A procedure name the procedure window cannot open is named, not linked.
+    expect(plantCardView(plantWith({ ...running, worstSafetyFunction: heatSink('orange', 'see the shift supervisor') }), noRuns)?.safetyFunction)
+      .toMatchObject({ text: 'HEAT SINK · see the shift supervisor', notRunning: null })
+  })
+
   test('an object that is no Plant has no card', () => {
     expect(plantCardView({ ...unit, packData: { type: 'drone' } }, noRuns)).toBeNull()
+  })
+})
+
+describe('a Plant card\'s energy lines begin with the Run\'s recorded history, never with the card', () => {
+  const runId = 'run:card' as SimulationRunId
+  const t0 = Date.parse(runAt)
+  const thermal = (t: number, v: number | null): PlantCardEnergy =>
+    ({ path: 'core.totalThermalPowerMw', label: 'Core thermal power', text: v === null ? '—' : `${v} MW`, unit: 'MW', point: v === null ? null : { t, v } })
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  /** A historian that answers each read when told to, and says what it was asked. */
+  const historian = () => {
+    const asked: Array<{ readonly seriesId: string; readonly from: number; readonly to: number; readonly answer: (points: ReadonlyArray<TrendPoint>) => void; readonly fail: (error: Error) => void }> = []
+    const history: PlantCardHistory = (_run, seriesId, window) => new Promise((resolve, reject) => {
+      asked.push({ seriesId, ...window, answer: resolve, fail: reject })
+    })
+    return { asked, history }
+  }
+
+  test('reads the ten minutes before now from the series the historian records the rate in, then continues with each newer reading', async () => {
+    const { asked, history } = historian()
+    const trends = createPlantCardTrends({ history })
+    trends.show({ runId, objectId: unit.id, energy: [thermal(t0, 3400)] })
+    expect(asked.map(read => [read.seriesId, read.from, read.to])).toEqual([[recordingSeriesIdFor(unit.id, 'core.totalThermalPowerMw'), t0 - PLANT_CARD_TREND_MS - HOLD_GAP_MS, t0]])
+    expect(trends.lines().get('core.totalThermalPowerMw')).toEqual({ kind: 'reading' })
+    // A reading the projection brings while the history is read continues the line once it is read.
+    trends.show({ runId, objectId: unit.id, energy: [thermal(t0 + 1_000, 3401)] })
+    asked[0]!.answer([{ t: t0 - 120_000, v: 3398 }, { t: t0 - 1_000, v: 3399 }, { t: t0, v: 3400 }])
+    await settle()
+    expect(trends.lines().get('core.totalThermalPowerMw')).toEqual({ kind: 'line', points: [{ t: t0 - 120_000, v: 3398 }, { t: t0 - 1_000, v: 3399 }, { t: t0, v: 3400 }, { t: t0 + 1_000, v: 3401 }] })
+    // The same reading again adds nothing; a newer one extends the line, and those whose hold ends before the window leave it.
+    trends.show({ runId, objectId: unit.id, energy: [thermal(t0 + 1_000, 3401)] })
+    trends.show({ runId, objectId: unit.id, energy: [thermal(t0 + PLANT_CARD_TREND_MS + HOLD_GAP_MS, 3402)] })
+    const line = trends.lines().get('core.totalThermalPowerMw')
+    expect(line?.kind === 'line' ? line.points.map(point => point.v) : null).toEqual([3400, 3401, 3402])
+    expect(asked).toHaveLength(1)
+  })
+
+  test('no line where the historian holds nothing in the window or cannot be read, nor where no Run is joined, however long the card stays open', async () => {
+    const { asked, history } = historian()
+    const trends = createPlantCardTrends({ history })
+    trends.show({ runId, objectId: unit.id, energy: [thermal(t0, 3400), { ...thermal(t0, 1162), path: 'turbine.electricMw' }] })
+    asked[0]!.answer([])
+    asked[1]!.fail(new Error('the historian is unavailable'))
+    await settle()
+    for (let second = 1; second <= 60; second += 1) trends.show({ runId, objectId: unit.id, energy: [thermal(t0 + second * 1_000, 3400)] })
+    expect(trends.lines().get('core.totalThermalPowerMw')).toEqual({ kind: 'none', reason: 'The Run\'s historian holds none of its readings from the last 10 min' })
+    expect(trends.lines().get('turbine.electricMw')).toEqual({ kind: 'none', reason: 'Its history could not be read: the historian is unavailable' })
+    const unjoined = createPlantCardTrends({ history })
+    unjoined.show({ runId: null, objectId: unit.id, energy: [thermal(t0, 3400)] })
+    expect(unjoined.lines().get('core.totalThermalPowerMw')?.kind).toBe('none')
+    expect(asked).toHaveLength(2)
+  })
+
+  test('another unit, or Run time that goes back, reads the history again, and a read for a unit no longer shown is dropped', async () => {
+    const { asked, history } = historian()
+    const trends = createPlantCardTrends({ history })
+    trends.show({ runId, objectId: unit.id, energy: [thermal(t0, 3400)] })
+    trends.show({ runId, objectId: 'plant:other', energy: [thermal(t0, 2900)] })
+    asked[0]!.answer([{ t: t0, v: 3400 }])
+    asked[1]!.answer([{ t: t0 - 1_000, v: 2900 }])
+    await settle()
+    expect(trends.lines().get('core.totalThermalPowerMw')).toEqual({ kind: 'line', points: [{ t: t0 - 1_000, v: 2900 }, { t: t0, v: 2900 }] })
+    // The Run restarted: its time stands before the line's last point.
+    trends.show({ runId, objectId: 'plant:other', energy: [thermal(t0 - 600_000, 3400)] })
+    expect(asked.map(read => read.to)).toEqual([t0, t0, t0 - 600_000])
+    expect(trends.lines().get('core.totalThermalPowerMw')).toEqual({ kind: 'reading' })
+    trends.close()
+    asked[2]!.answer([{ t: t0 - 600_000, v: 3400 }])
+    await settle()
+    expect(trends.lines().size).toBe(0)
   })
 })
 
