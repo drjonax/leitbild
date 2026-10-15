@@ -295,7 +295,11 @@ pub fn admit(
     extension: &Extension,
     t: f64,
 ) -> Result<Admission, post_trip_domain::Error> {
-    post_trip_domain::admit_accepted(joined.nuclear(), extension, joined.travel(), t, 0.)
+    // Owner answer B1: the regions' coolant phase at the same evaluation.
+    let phase = joined
+        .region_phases()
+        .map_err(|f| post_trip_domain::Error::Phase(format!("{f:?}")))?;
+    post_trip_domain::admit_accepted(joined.nuclear(), &phase, extension, joined.travel(), t, 0.)
 }
 
 /// D3 (a) at one sample, for every owner option (the operator evaluated

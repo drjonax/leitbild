@@ -74,6 +74,9 @@ pub enum Error {
     Operator(&'static str),
     Kinetics(kinetics::Error),
     Feedback(sf::Error),
+    /// The accepted state's coolant phase could not be evaluated (owner
+    /// answer B1's check needs each region's saturation temperature).
+    Phase(String),
     /// A source-domain exit at an accepted state: an unsupported result.
     Unsupported {
         domain: Domain,
@@ -472,15 +475,25 @@ pub fn fixed(nuclear: &Nuclear) -> Fixed<'_> {
 /// feedback inputs of the last evaluation. `travel` is the rods' achieved
 /// travel of the same evaluation (`Joined::travel`), `t` the simulated time
 /// since preparation (the capsule age is `age0 + t`, as in the rows).
+///
+/// Owner answer B1 (15 Oct 2026): `phase` is each core region's coolant
+/// phase at the same evaluation (`Joined::region_phases`); a region that is
+/// not single-phase liquid below saturation ends the run as an unsupported
+/// kinetics-domain exit ([`sf::phase_absence`]), in the domain the state
+/// was admitted to.
 pub fn admit_accepted(
     nuclear: &Nuclear,
+    phase: &[sf::RegionPhase],
     extension: &Extension,
     travel: &[Scalar],
     t: f64,
     additional_reference_exposure_s: f64,
 ) -> Result<Admission, Error> {
+    if phase.len() != nuclear.regions() {
+        return Err(Error::Length("phase"));
+    }
     let at = AcceptedConditions::of(nuclear, travel, t);
-    admit(
+    let admission = admit(
         nuclear.feedback(),
         nuclear.kinetics(),
         fixed(nuclear),
@@ -488,5 +501,11 @@ pub fn admit_accepted(
         at.conditions(),
         additional_reference_exposure_s,
         extension,
-    )
+    )?;
+    sf::phase_absence(phase).map_err(|exit| Error::Unsupported {
+        domain: admission.domain,
+        margin_holds: admission.margin.holds,
+        exit,
+    })?;
+    Ok(admission)
 }

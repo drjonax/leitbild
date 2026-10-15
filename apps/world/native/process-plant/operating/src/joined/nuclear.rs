@@ -60,6 +60,9 @@ pub struct RegionWater {
     pub boron_ppm_eq: Scalar,
     pub pressure_pa: Scalar,
     pub temperature_k: Scalar,
+    /// The vapour mass of the owner cell (owner answer B1's phase-absence
+    /// check reads it; the source feedback does not).
+    pub vapor_kg: Scalar,
 }
 
 /// One linear history row: `E' = yield * feed - decay * E`.

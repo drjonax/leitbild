@@ -513,3 +513,35 @@ fn the_margin_is_judged_on_the_doubled_water_term() {
         (Domain::Original, false, "density ratio")
     );
 }
+
+/// Owner answer B1: an accepted state's core regions must be single-phase
+/// liquid below saturation with no vapour; the first region that is not
+/// is the exit.
+#[test]
+fn a_region_at_saturation_or_with_vapour_is_a_phase_absence_exit() {
+    use leitbild_operating_plant::source_feedback::{Error, RegionPhase, phase_absence};
+    let liquid = RegionPhase {
+        saturation_departure_k: -20.,
+        vapor_kg: 0.,
+    };
+    assert_eq!(phase_absence(&[liquid; 3]), Ok(()));
+    let mut at_saturation = [liquid; 3];
+    at_saturation[1].saturation_departure_k = 0.;
+    assert_eq!(
+        phase_absence(&at_saturation),
+        Err(Error::OutsideDomain("phase absence", 1))
+    );
+    let mut vapour = [liquid; 3];
+    vapour[2].vapor_kg = 1e-12;
+    vapour[0].saturation_departure_k = -1e-9;
+    assert_eq!(
+        phase_absence(&vapour),
+        Err(Error::OutsideDomain("phase absence", 2))
+    );
+    let mut nan = [liquid; 3];
+    nan[0].saturation_departure_k = f64::NAN;
+    assert_eq!(
+        phase_absence(&nan),
+        Err(Error::OutsideDomain("phase absence", 0))
+    );
+}
