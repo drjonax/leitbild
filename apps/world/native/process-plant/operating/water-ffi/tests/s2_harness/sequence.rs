@@ -695,14 +695,31 @@ pub enum RuleI {
 }
 
 impl RuleI {
+    /// From `trip.ruleI` (r7.2): the owner's `answer`, and for A4 the
+    /// consequences the block states with it (each read, so none is left
+    /// unread; the harness implements them as listed on [`RuleI`]).
     pub fn from(g: &super::gates::Block) -> Result<Self, String> {
-        match g.text("/trip/ruleI").as_str() {
-            "A0" => Ok(Self::A0),
-            "A1" => Ok(Self::A1),
-            "A3" => Ok(Self::A3),
-            "A4" => Ok(Self::A4),
-            other => Err(format!("trip.ruleI {other}: A0, A1, A3 or A4")),
+        let rule = match g.text("/trip/ruleI/answer").as_str() {
+            "A0" => Self::A0,
+            "A1" => Self::A1,
+            "A3" => Self::A3,
+            "A4" => Self::A4,
+            other => return Err(format!("trip.ruleI.answer {other}: A0, A1, A3 or A4")),
+        };
+        if rule == Self::A4 {
+            for k in [
+                "completion",
+                "d3",
+                "recoveryJudged",
+                "tripAverageTo",
+                "r2ComparisonTo",
+                "contraryTo",
+                "postTripExtension",
+            ] {
+                g.text(&format!("/trip/ruleI/{k}"));
+            }
         }
+        Ok(rule)
     }
 
     /// The trip's judged end (s from its start) and whether D3 (a) set it:

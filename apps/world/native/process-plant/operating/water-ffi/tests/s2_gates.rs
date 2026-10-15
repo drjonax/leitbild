@@ -665,9 +665,13 @@ fn rule_i_ends_the_judged_trip_at_the_d3_exit_only_under_a4() {
     assert_eq!(RuleI::A4.end(60., None), (60., false));
     assert_eq!(RuleI::A4.end(26., Some(26.)), (26., false));
     // The rule is read from the block and refuses anything else.
+    // r7.2's form: the answer with A4's stated consequences.
     let with_rule = |v: &str| {
         let mut g: Value = serde_json::from_str(GATES_R7_1).unwrap();
-        g["trip"]["ruleI"] = json!(v);
+        g["trip"]["ruleI"] = json!({"answer": v, "completion": "60 s, or until D3 (a) ends the trip, labelled",
+            "d3": "as approved", "recoveryJudged": "from the window end to the D3 (a) end",
+            "tripAverageTo": "the D3 (a) end", "r2ComparisonTo": "the D3 (a) end",
+            "contraryTo": "their own D3 exit", "postTripExtension": "S3 obligation"});
         RuleI::from(&Block::from_json("ld01-s2-gates", &g.to_string()).unwrap())
     };
     assert_eq!(with_rule("A4"), Ok(RuleI::A4));
