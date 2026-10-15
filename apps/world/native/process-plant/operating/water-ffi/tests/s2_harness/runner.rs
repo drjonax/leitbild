@@ -204,6 +204,38 @@ fn worked(stats: &leitbild_operating_water::ida::Stats) -> Counts {
     }
 }
 
+/// Where an output's physical admission (the inventory) and ledger closure
+/// are judged (lead decision DR-P3-GATE-1): on the accepted solver step that
+/// first reaches it, never on the interpolated output state, since stock
+/// IDA's constraints (nonnegative stocks) hold on accepted steps only.
+#[derive(Clone, Debug, Default)]
+pub struct Closures {
+    pending: Vec<f64>,
+    /// (step time, the outputs it judged).
+    pub judged: Vec<(f64, usize)>,
+}
+impl Closures {
+    /// Outputs still waiting for an accepted step.
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+    /// An output sampled from the interpolant: its closure waits.
+    pub fn output(&mut self, t: f64) {
+        self.pending.push(t);
+    }
+    /// An accepted step end at `tn` (not a root return, whose step its
+    /// restart discards): the waiting outputs it reaches, judged on it.
+    pub fn accepted(&mut self, tn: f64) -> Vec<f64> {
+        let fuzz = 1e-14 * tn.abs().max(1.);
+        let (due, wait): (Vec<f64>, Vec<f64>) = self.pending.iter().partition(|t| **t <= tn + fuzz);
+        self.pending = wait;
+        if !due.is_empty() {
+            self.judged.push((tn, due.len()));
+        }
+        due
+    }
+}
+
 /// D3 (a) at one accepted state, as the predicate decides it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum D3 {
@@ -593,6 +625,7 @@ pub fn advance(
         restart_at!(Discrete::Command(command), "command");
     }
     let mut boundary_set: Option<f64> = None;
+    let mut closures = Closures::default();
     let trace = std::env::var_os("LD01_S2_TRACE").is_some();
     // The sample grid: every observation (every output when unobserved),
     // read from stock's interpolant after each step (S3-D1 #6).
@@ -673,7 +706,7 @@ pub fn advance(
                 at,
                 &ys,
                 &yps,
-                output,
+                false,
                 true,
                 reader,
                 extension,
@@ -704,6 +737,7 @@ pub fn advance(
             }
             if output {
                 outputs += 1;
+                closures.output(at);
                 marks.push(Mark {
                     t: at,
                     counts: totals.plus(worked(&stats)),
@@ -731,6 +765,29 @@ pub fn advance(
             if domain.exit.is_some() && domain.information_from.is_none() {
                 // Judged up to here; continued for information only.
                 domain.information_from = Some(at);
+            }
+        }
+        // DR-P3-GATE-1: the physical admission (inventory) and the ledger
+        // closure of every output are judged on the accepted step that first
+        // reaches it (the state IDA's constraints hold on), never on the
+        // interpolant; a root return's step is discarded by its restart, so
+        // its outputs wait for the next accepted step.
+        if failure.is_none() && roots.is_none() {
+            let covered = closures.accepted(time);
+            if !covered.is_empty() {
+                let started = thread_cpu_s();
+                let judged = ledger_dense(&ida, &segment, time)
+                    .and_then(|q| inventory(&ida, &y).map(|held| (q, held)));
+                match judged {
+                    Ok((q, held)) => conservation.output(time, &held, &q),
+                    Err(e) => {
+                        failure = Some(format!(
+                            "at the accepted step {} s reaching the outputs {covered:?}: {e}",
+                            time - t0
+                        ))
+                    }
+                }
+                attribution.account_s += thread_cpu_s() - started;
             }
         }
         if let Some(at) = ended {
@@ -887,6 +944,9 @@ pub fn advance(
     record.observations = observations;
     record.identities = conservation.identities_json();
     record.ledger = conservation.ledger_json();
+    record.ledger["placement"] = json!({"rule": "DR-P3-GATE-1: each output's inventory admission and ledger closure are judged on the accepted solver step that first reaches it (y and IDAGetQuad at that step), not on the interpolated output state; identities and credited outputs stay on the sample grid",
+        "accepted_steps_judged": closures.judged.len(), "outputs_judged": closures.judged.iter().map(|(_, n)| n).sum::<usize>(),
+        "outputs_unjudged_at_end": closures.pending_len()});
     record.caps = json!({"solver_cap_s": spec.solver_cap_s, "total_guard_s": spec.total_guard_s,
         "report_only": spec.caps_report_only, "solver_cap_reached_at_s": cap_reached_at,
         "total_guard_reached_at_s": guard_reached_at, "report_only_step_cap": spec.report_only_step_cap,

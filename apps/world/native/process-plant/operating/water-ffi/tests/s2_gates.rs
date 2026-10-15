@@ -577,6 +577,57 @@ fn a_handed_over_state_is_read_back_bit_for_bit() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn admission_is_judged_on_accepted_steps_not_on_the_interpolant() {
+    // A near-empty stock (the PZR drop mass) on three accepted steps, all
+    // admitted (>= 0), with an interpolant that dips below zero between the
+    // first two (as stock IDA's dense output may: its constraints hold on
+    // accepted steps only), and outputs every 0.1 s.
+    let steps = [(0.0, 2e-7), (0.35, 1e-7), (0.9, 3e-7)];
+    let interpolant = |t: f64| -> f64 {
+        if t < 0.35 {
+            2e-7 - 1e-6 * (t * (0.35 - t)) / 0.03
+        } else {
+            1e-7 + 2e-7 * (t - 0.35) / 0.55
+        }
+    };
+    let admitted = |v: f64| v >= 0.;
+    assert!(
+        !admitted(interpolant(0.2)),
+        "the interpolant dips below zero at 0.2 s"
+    );
+    let judge = |steps: &[(f64, f64)]| -> Result<usize, String> {
+        let mut c = runner::Closures::default();
+        let mut judged = 0;
+        let mut next = 1;
+        for (tn, value) in steps.iter().skip(1) {
+            while (next as f64) * 0.1 <= *tn + 1e-12 {
+                c.output(next as f64 * 0.1);
+                next += 1;
+            }
+            let covered = c.accepted(*tn);
+            if !covered.is_empty() {
+                if !admitted(*value) {
+                    return Err(format!("stock {value} at the accepted step {tn} s"));
+                }
+                judged += covered.len();
+            }
+        }
+        Ok(judged)
+    };
+    // Judged on the accepted steps: every output passes.
+    assert_eq!(judge(&steps), Ok(9));
+    // An admitted-step violation still fails.
+    let violated = [(0.0, 2e-7), (0.35, -1e-9), (0.9, 3e-7)];
+    assert!(judge(&violated).is_err());
+    // Outputs wait across a root return: none is judged until an accepted step.
+    let mut c = runner::Closures::default();
+    c.output(0.1);
+    assert_eq!(c.pending_len(), 1);
+    assert_eq!(c.accepted(0.12), vec![0.1]);
+    assert_eq!(c.judged, vec![(0.12, 1)]);
+}
+
 // ------------------------------------------------- comparisons (synthetic)
 
 /// Credited series on the grid `origin + j dt`, each key's instances from
