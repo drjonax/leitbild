@@ -345,7 +345,7 @@ pub fn compose_from(
     .expect("exact consistent start");
     let start_cpu_s = process_cpu_s() - start_cpu;
     let mut atol = atol;
-    let pressure_outputs = crate::outputs::cell_pressure_outputs(&joined, &network_packet)
+    let pressure_outputs = super::outputs::cell_pressure_outputs(&joined, &network_packet)
         .expect("credited outputs on cell pressures");
     let derived = match derived {
         Some(rule) => derive_tolerances(
@@ -460,7 +460,7 @@ pub const PRESSURE_CLASS: &str = "network/CellPressure";
 /// class (`owner/Class` of the joined layouts), the rule text, the decision,
 /// the declared value in kg/s (TBD until filled) and G12's value, with every
 /// credited output's absolute budget (the comparison's metrics of scale 1,
-/// [`crate::compare::Budgets`]) from which the outputs each coordinate
+/// [`super::compare::Budgets`]) from which the outputs each coordinate
 /// determines take theirs ([`determined_tolerances`]).
 #[derive(Clone, Debug)]
 pub struct DerivedRule {
@@ -482,7 +482,7 @@ impl DerivedRule {
         if d.gates.value.get("derivedTolerance").is_none() {
             return Ok(None);
         }
-        let budgets = crate::compare::Budgets::from(d)?
+        let budgets = super::compare::Budgets::from(d)?
             .metrics()
             .into_iter()
             .filter(|(_, _, scale, _)| *scale == 1.)
@@ -623,7 +623,7 @@ pub fn determined_tolerances(
 /// the rule's class takes the tightest credited budget among the credited
 /// outputs it determines times its sensitivity, from the block Jacobian's
 /// own row at `(t, y, y')` ([`determined_tolerances`] over `outputs`, the
-/// credited outputs on cell pressures, [`crate::outputs::cell_pressure_outputs`];
+/// credited outputs on cell pressures, [`super::outputs::cell_pressure_outputs`];
 /// for the rods' guide currents: core DP's budget × `|∂m/∂Δp|`). The declared
 /// value is applied once filled; while it is open the derived one is
 /// applied, labelled a preview. The receipt records every covered

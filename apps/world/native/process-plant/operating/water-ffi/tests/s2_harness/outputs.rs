@@ -339,15 +339,7 @@ pub fn d3_point(
                 for i in 0..r {
                     g[i * r + i] = m.reactivity_gain[i];
                 }
-                let delta = leitbild_operating_water::spectrum::decompose(r, &m.operator, &g)
-                    .map(|s| {
-                        s.modes
-                            .iter()
-                            .map(|x| x.lambda.re)
-                            .fold(f64::INFINITY, f64::min)
-                    })
-                    .ok();
-                json!({"holds": m.holds, "margin_dk_k": delta})
+                json!({"holds": m.holds, "margin_dk_k": smallest_real_mode(r, &m.operator, &g)})
             }
             Err(e) => json!({"error": format!("{e:?}")}),
         }
@@ -367,6 +359,32 @@ pub fn d3_point(
     json!({"t_s": t - origin, "original_domain": original, "density_ratio_max": ratio,
         "pressure_min_pa": pressure,
         "margin_water_doubled": margin(extension), "margin_water_nominal": margin(&nominal)})
+}
+
+/// `delta*`: the smallest real eigenvalue of the `r × r` pencil `(a, b)` by
+/// stock `dggev`, Accelerate's on macOS (S2-D13).
+#[cfg(target_os = "macos")]
+fn smallest_real_mode(r: usize, a: &[f64], b: &[f64]) -> Value {
+    json!(
+        leitbild_operating_water::spectrum::decompose(r, a, b)
+            .map(|s| {
+                s.modes
+                    .iter()
+                    .map(|x| x.lambda.re)
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .ok()
+    )
+}
+
+/// Off macOS the spectrum is not run (DR-P3-LINUX-SPECTRUM): S2-D13's
+/// test-only LAPACK is not in the offline build, so the margin is recorded
+/// as not run on this platform, never as a number. It is reported only;
+/// D3 (a)'s admission (`admit`) does not use it.
+#[cfg(not(target_os = "macos"))]
+fn smallest_real_mode(_: usize, _: &[f64], _: &[f64]) -> Value {
+    json!({"verdict": "not run on this platform",
+        "reason": "the dggev spectrum is Accelerate's (macOS, S2-D13); no test-only LAPACK is in the offline Linux build"})
 }
 
 /// The regions' reference water densities of the source feedback (the
