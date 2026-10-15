@@ -601,10 +601,12 @@ fn admission_is_judged_on_accepted_steps_not_on_the_interpolant() {
         let mut judged = 0;
         let mut next = 1;
         for (tn, value) in steps.iter().skip(1) {
-            while (next as f64) * 0.1 <= *tn + 1e-12 {
-                c.output(next as f64 * 0.1);
-                next += 1;
+            // The outputs every 0.1 s up to this accepted step.
+            let last = (tn / 0.1).floor() as usize;
+            for k in next..=last {
+                c.output(k as f64 * 0.1);
             }
+            next = last + 1;
             let covered = c.accepted(*tn);
             if !covered.is_empty() {
                 if !admitted(*value) {
