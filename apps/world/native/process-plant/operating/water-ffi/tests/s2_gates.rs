@@ -1421,7 +1421,13 @@ fn s2_gate_prepare() {
         }
         None => ("incomplete: the settle did not run".into(), Value::Null),
     };
-    let phase = json!({"kind": "s2-gate-run-phase-1", "status": status, "settled_state": state,
+    let dry = sequence::dry_run().unwrap_or_else(|e| panic!("{e}"));
+    let kind = if dry {
+        "s2-gate-dry-run-phase-1"
+    } else {
+        "s2-gate-run-phase-1"
+    };
+    let phase = json!({"kind": kind, "dry_run": dry, "status": status, "settled_state": state,
         "pin": pin, "tbd": tbd, "zero_time": zero_time, "handover": h.handover(),
         "process_cpu_s": cpu::process_cpu_s(), "app_commit": provenance::git_provenance()["app_commit"]});
     std::fs::write(&phase_out, serde_json::to_vec_pretty(&phase).unwrap()).unwrap();
@@ -1446,6 +1452,12 @@ fn s2_gate_run() {
     let phase_path = std::env::var("LD01_S2_GATE_PHASE1").expect("LD01_S2_GATE_PHASE1");
     let phase: Value = serde_json::from_slice(&std::fs::read(&phase_path).expect("phase 1"))
         .expect("phase 1 json");
+    let dry = sequence::dry_run().unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        phase["dry_run"],
+        json!(dry),
+        "a gate run starts only from a gate phase 1, a dry run only from a dry one (RP12)"
+    );
     assert_eq!(
         phase["status"],
         json!("settled"),
@@ -1475,7 +1487,7 @@ fn s2_gate_run() {
         "the pin changed between phases"
     );
     let name = std::env::var("LD01_S2_GATE_RECEIPT").expect("LD01_S2_GATE_RECEIPT");
-    let path = sequence::receipt_path("integ", &name);
+    let path = sequence::receipt_path(if dry { "dry" } else { "integ" }, &name);
     assert!(!path.exists(), "never overwritten");
     let composed = h.compose("settled-state receipts");
     let dimension = composed.y.len();
@@ -1492,14 +1504,19 @@ fn s2_gate_run() {
     let window = d.number("/trip/window_s");
     let post = h.d.shared.number("/recovery/postWindow_s");
     let no_trip_s = d.number("/contrary/noTurbineTrip/duration_s");
+    let (hold_s, trip_s, r0_s, r1_s, r2_s) = if dry {
+        sequence::dry_durations(d)
+    } else {
+        (hold_s, trip_s, window + post, window, trip_s)
+    };
     let mut done: BTreeMap<String, runner::Run> = BTreeMap::new();
     for (name, duration) in [
         ("hold", hold_s),
         ("holdReference", hold_s),
         ("trip", trip_s),
-        ("R0", window + post),
-        ("R1", window),
-        ("R2", trip_s),
+        ("R0", r0_s),
+        ("R1", r1_s),
+        ("R2", r2_s),
         ("noTurbineTrip", no_trip_s),
     ] {
         let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
@@ -1577,8 +1594,17 @@ fn s2_gate_run() {
     } else {
         "FAIL".to_string()
     };
+    let (kind, status, verdict) = if dry {
+        (
+            "s2-gate-dry-run",
+            format!("DRY RUN (RP12), NOT EVIDENCE, reduced durations: {status}"),
+            format!("DRY RUN, NOT EVIDENCE: {verdict}"),
+        )
+    } else {
+        ("s2-gate-run", status, verdict)
+    };
     let mut r = h.receipt(
-        "s2-gate-run",
+        kind,
         &status,
         &verdict,
         pin,
@@ -1812,4 +1838,15 @@ fn the_trip_is_compared_only_where_both_runs_reached() {
         sequence::reference_spans(20., 60., 15., 60., true),
         vec![(0., 15.)]
     );
+}
+
+#[test]
+fn the_dry_run_is_declared_shorter_and_never_evidence() {
+    // RP12: the trip, R0 and R2 run past the window far enough to cover
+    // the S2 trip's D3 (a) exit (24.3 s); the hold past its measured-from
+    // time; R1 is the window.
+    let g = Block::from_json("ld01-s2-gates", GATES_R7_1).unwrap();
+    let (hold, trip, r0, r1, r2) = sequence::dry_durations(&g);
+    assert_eq!((hold, trip, r0, r1, r2), (12., 26., 26., 20., 26.));
+    assert!(trip > 24.3 && hold < g.number("/hold/duration_s"));
 }
