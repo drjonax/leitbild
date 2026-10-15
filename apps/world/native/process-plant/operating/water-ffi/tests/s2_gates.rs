@@ -568,9 +568,16 @@ fn the_windows_external_receipts_are_checked_by_kind_and_charged() {
         "z6-no.json",
         json!({"verdict": "NO-GO: a resolved positive real part"}),
     );
+    // The S2-15 envelope's shape: the doubled-term margin positive but
+    // under 1 % at a point, the nominal one holding everywhere.
+    let point = |doubled: f64, nominal: bool| {
+        json!({"water_term_doubled": {"margin_dk_k": doubled, "margin_holds": doubled >= 0.01},
+            "water_term_nominal": {"margin_dk_k": 0.021, "margin_holds": nominal}})
+    };
     let z3 = file(
         "z3.json",
-        json!({"z3_envelope": {"every_point_holds_with_water_term_doubled": false}}),
+        json!({"z3_envelope": {"every_point_holds_with_water_term_doubled": false,
+            "points": [point(0.0037, true), point(0.012, true)]}}),
     );
     let mut nogo = manifest.clone();
     nogo.insert(
@@ -599,7 +606,7 @@ fn the_windows_external_receipts_are_checked_by_kind_and_charged() {
         "composed": {"z1": {"residual": 2e-14, "constraint_rate": 1e-14, "bound": 1e-12}},
         "settled": {"z1": {"residual": 3e-13, "constraint_rate": 2e-12, "bound": 1e-12}},
         "external_phase1": {"Z7": z7}, "external_phase2": {"Z3settled": out["Z3settled"].clone()}});
-    let gates = sequence::zero_time_gates(&zero_time);
+    let gates = sequence::zero_time_gates(&zero_time, sequence::RuleI::A0);
     let verdict = |id: &str| {
         gates
             .iter()
@@ -624,7 +631,47 @@ fn the_windows_external_receipts_are_checked_by_kind_and_charged() {
         Some((json!(false), json!(true)))
     );
     assert_eq!(verdict("zero_time.Z2"), Some((json!(false), json!(false))));
+    // Rule I: Z3 under each answer to request A, from the same receipt.
+    let z3_under = |rule| {
+        sequence::zero_time_gates(&zero_time, rule)
+            .into_iter()
+            .find(|g| g["id"] == "zero_time.Z3.settled")
+            .map(|g| (g["pass"].clone(), g["judged"].clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        z3_under(sequence::RuleI::A4),
+        (json!(false), json!(false)),
+        "A4: informational"
+    );
+    assert_eq!(
+        z3_under(sequence::RuleI::A1),
+        (json!(true), json!(true)),
+        "A1: nominal holds, doubled > 0"
+    );
+    assert_eq!(z3_under(sequence::RuleI::A3), (json!(true), json!(true)));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn rule_i_ends_the_judged_trip_at_the_d3_exit_only_under_a4() {
+    use sequence::RuleI;
+    // S2-15 run 3: the D3 (a) exit at 24.274 s of a 60 s trip.
+    assert_eq!(RuleI::A4.end(60., Some(24.274)), (24.274, true));
+    for rule in [RuleI::A0, RuleI::A1, RuleI::A3] {
+        assert_eq!(rule.end(60., Some(24.274)), (60., false), "{rule:?}");
+    }
+    // No exit, or one at or after the run's own end: the duration.
+    assert_eq!(RuleI::A4.end(60., None), (60., false));
+    assert_eq!(RuleI::A4.end(26., Some(26.)), (26., false));
+    // The rule is read from the block and refuses anything else.
+    let with_rule = |v: &str| {
+        let mut g: Value = serde_json::from_str(GATES_R7_1).unwrap();
+        g["trip"]["ruleI"] = json!(v);
+        RuleI::from(&Block::from_json("ld01-s2-gates", &g.to_string()).unwrap())
+    };
+    assert_eq!(with_rule("A4"), Ok(RuleI::A4));
+    assert!(with_rule("A2").is_err());
 }
 
 #[test]
@@ -1582,7 +1629,8 @@ fn s2_gate_run() {
             &mut comparisons,
         ));
     }
-    gates_out.extend(sequence::zero_time_gates(&zero_time));
+    let rule = sequence::RuleI::from(&h.d.gates).unwrap_or_else(|e| panic!("{e}"));
+    gates_out.extend(sequence::zero_time_gates(&zero_time, rule));
     let passed = gates_out
         .iter()
         .filter(|g| g["judged"] == json!(true))
