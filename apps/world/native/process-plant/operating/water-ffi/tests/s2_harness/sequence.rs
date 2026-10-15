@@ -866,7 +866,14 @@ pub fn judge_trip(
         );
         within
     };
-    let reached = |r: &Run| r.record.reached_s;
+    // A run is compared up to its last credited sample: a run stopped by a
+    // guard or failure between samples has reached further than its series.
+    let reached = |r: &Run| {
+        compared_reach(
+            r.record.reached_s,
+            r.credited.t.last().map(|t| t - r.origin),
+        )
+    };
     let mut accuracy = true;
     let mut evaluated = 0;
     for (name, reference, after_window) in [("R1", r1, false), ("R2", r2, true)] {
@@ -985,6 +992,13 @@ pub fn judge_trip(
     }
     out.extend(conservation_gates(h, "trip", trip));
     out
+}
+
+/// How far a run can be compared: its reach, or its last credited sample
+/// when that is earlier (a run stopped between samples); no sample, no
+/// span beyond 0.
+pub fn compared_reach(reached_s: f64, last_sample_s: Option<f64>) -> f64 {
+    last_sample_s.map_or(0., |s| s.min(reached_s))
 }
 
 /// The trip's comparison spans against one reference (`referenceSpans`:

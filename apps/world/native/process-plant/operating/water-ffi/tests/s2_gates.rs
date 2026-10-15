@@ -1864,6 +1864,15 @@ fn a_run_end_hands_on_the_accepted_step_never_an_interpolant() {
 }
 
 #[test]
+fn a_run_stopped_between_samples_is_compared_to_its_last_sample() {
+    // S2 close dry run: R2 stopped by its total guard at 24.3879 s, its last
+    // sample at 24.386 s; the span ends at the sample.
+    assert_eq!(sequence::compared_reach(24.3879, Some(24.386)), 24.386);
+    assert_eq!(sequence::compared_reach(26., Some(26.)), 26.);
+    assert_eq!(sequence::compared_reach(3., None), 0.);
+}
+
+#[test]
 fn the_trip_is_compared_only_where_both_runs_reached() {
     // S2-15 r7.1: the trip's declared part ends at its D3 (a) exit at
     // 24.274 s, R2's at 24.284 s; the after-window span ends at the trip's.
