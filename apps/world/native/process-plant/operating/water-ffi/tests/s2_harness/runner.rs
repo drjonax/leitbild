@@ -156,7 +156,7 @@ fn kinds(done: &Restarted, discrete: &str) -> (Vec<String>, Vec<(String, f64)>, 
             events.extend(list.iter().cloned());
         } else if r["event"] == "STOP ramp end" {
             push("ramp end", &mut kinds);
-        } else if r["command"].is_string() || r["turbine_trip_s"].is_number() {
+        } else if !r["command"].is_null() || r["turbine_trip_s"].is_number() {
             push("command", &mut kinds);
         } else {
             push("other", &mut kinds);

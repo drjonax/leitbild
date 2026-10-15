@@ -219,6 +219,13 @@ impl Harness {
                 spec.commands = vec![(0., Command::ManualReactorTrip)];
                 spec.observation_s = None;
             }
+            // G7's stuck cluster: the trip, outputs only. Its StuckCluster
+            // command ahead of the TRIP names the highest-worth cluster at
+            // the run's start state ([`Harness::stuck_cluster_spec`]).
+            "stuckCluster" => {
+                trip(&mut spec);
+                spec.observation_s = None;
+            }
             other => return Err(format!("{other} is not a run this model can execute")),
         }
         // Caps: the declared ones in a gate run; in a smoke, 2 x the
@@ -246,6 +253,26 @@ impl Harness {
             }
         }
         Ok(spec)
+    }
+
+    /// The stuck-cluster contrary run's spec from `start`: the trip with the
+    /// highest-worth cluster's [`Command::StuckCluster`] issued at t = 0
+    /// ahead of the TRIP, and the selection's receipt ([`stuck_cluster`]).
+    pub fn stuck_cluster_spec(
+        &mut self,
+        duration_s: f64,
+        start: &Start,
+    ) -> Result<(RunSpec, Value), String> {
+        let selection = stuck_cluster(self, start)?;
+        let cluster = selection["index"]
+            .as_u64()
+            .ok_or("the stuck-cluster selection names no index")? as usize;
+        let mut spec = self.spec("stuckCluster", duration_s)?;
+        spec.commands
+            .insert(0, (0., Command::StuckCluster { cluster }));
+        self.sequence
+            .push(json!({"item": "stuckCluster selection", "selection": selection}));
+        Ok((spec, selection))
     }
 
     /// Pre-check, compose, run, charge.
@@ -1096,6 +1123,150 @@ pub fn receipt_path(lane: &str, name: &str) -> std::path::PathBuf {
 /// Writes the receipt, refused unless complete and new.
 pub fn write(path: &std::path::Path, r: &Value) -> Result<(), String> {
     receipt::write(path, r)
+}
+
+/// G7's "highest worth in the source feedback", as the harness computes it
+/// (CONTRARY lane's proposal; the lead declares it).
+pub const WORTH_RULE: &str = "each cluster's worth is the rod reactivity its full insertion (seated, travel 0) removes in the source feedback, every other cluster at its start travel, summed over the regions with weights n_i^2 / sum n^2 (first-order perturbation, self-adjoint approximation; n_i the regional populations at the start state); the highest worth is stuck; exact ties take the lowest index and are reported; the n_i-weighted ranking is reported beside it";
+
+/// Per cluster, the weighted rod reactivity its full insertion removes:
+/// `sum_i w_i (rho_rods,i(start) - rho_rods,i(cluster seated))`, from the
+/// source feedback's own reactivity terms.
+pub fn cluster_worths(
+    model: &leitbild_operating_plant::source_feedback::Model,
+    inputs: &leitbild_operating_plant::joined::nuclear::FeedbackInputs,
+    travel_m: &[f64],
+    weights: &[f64],
+) -> Result<Vec<f64>, String> {
+    use leitbild_operating_plant::{
+        source_feedback::{Conditions, ReactivityTerms},
+        thermal::Scalar,
+    };
+    let regions = inputs.neutrons.len();
+    if weights.len() != regions || travel_m.len() != model.rod_count() {
+        return Err("cluster worths: layout".into());
+    }
+    let c = |v: &[f64]| -> Vec<Scalar> { v.iter().map(|x| Scalar::constant(*x)).collect() };
+    let (f, d, b, p, m) = (
+        c(&inputs.fuel_temperature_k),
+        c(&inputs.water_density_kg_m3),
+        c(&inputs.boron_ppm_eq),
+        c(&inputs.pressure_pa),
+        c(&inputs.moderator_temperature_k),
+    );
+    let (fi, xe, sm, op) = (
+        c(&inputs.fissile_atoms),
+        c(&inputs.xenon_atoms),
+        c(&inputs.samarium_atoms),
+        c(&inputs.capture_loss_change_m2),
+    );
+    let rods = |travel: &[f64]| -> Result<Vec<f64>, String> {
+        let t = c(travel);
+        let mut out = vec![ReactivityTerms::default(); regions];
+        model
+            .reactivity_terms(
+                Conditions {
+                    fuel_temperature_k: &f,
+                    water_density_kg_m3: &d,
+                    boron_ppm_eq: &b,
+                    pressure_pa: &p,
+                    moderator_temperature_k: &m,
+                    fissile_atoms: &fi,
+                    xenon_atoms: &xe,
+                    samarium_atoms: &sm,
+                    capture_loss_change_m2: &op,
+                    achieved_rod_travel_m: &t,
+                    // The reactivity terms do not read the capsule age.
+                    capsule_age_s: Scalar::constant(0.),
+                },
+                &mut out,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(out.iter().map(|r| r.rods).collect())
+    };
+    let base = rods(travel_m)?;
+    (0..travel_m.len())
+        .map(|k| {
+            let mut inserted = travel_m.to_vec();
+            inserted[k] = 0.;
+            let r = rods(&inserted)?;
+            Ok(weights
+                .iter()
+                .zip(base.iter().zip(&r))
+                .map(|(w, (a, b))| w * (a - b))
+                .sum())
+        })
+        .collect()
+}
+
+/// Normalized region weights `n_i^power / sum n^power`.
+pub fn population_weights(neutrons: &[f64], power: i32) -> Result<Vec<f64>, String> {
+    let w: Vec<f64> = neutrons.iter().map(|n| n.powi(power)).collect();
+    let total: f64 = w.iter().sum();
+    if !(total.is_finite() && total > 0.) || w.iter().any(|v| !(v.is_finite() && *v >= 0.)) {
+        return Err(format!(
+            "region weights need finite nonnegative populations ({total})"
+        ));
+    }
+    Ok(w.iter().map(|v| v / total).collect())
+}
+
+/// The highest worth's index (lowest among exact ties) and every index
+/// that ties it.
+pub fn highest_worth(worths: &[f64]) -> Result<(usize, Vec<usize>), String> {
+    if worths.is_empty() || worths.iter().any(|w| !w.is_finite()) {
+        return Err(format!(
+            "cluster worths must be finite and present: {worths:?}"
+        ));
+    }
+    let best = worths.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let ties: Vec<usize> = (0..worths.len()).filter(|c| worths[*c] == best).collect();
+    Ok((ties[0], ties))
+}
+
+/// G7's stuck cluster at a start state, by [`WORTH_RULE`], with its receipt.
+pub fn stuck_cluster(h: &mut Harness, start: &Start) -> Result<Value, String> {
+    let declared = h.d.gates.text("/contrary/stuckCluster/cluster");
+    let raw: Value = serde_json::from_slice(&h.packet.bytes).map_err(|e| e.to_string())?;
+    let mut c = h.compose("stuck-cluster selection");
+    let started = cpu::process_cpu_s();
+    c.joined
+        .evaluate(start.t, &start.y, &start.yp, None, 0., None)
+        .map_err(|e| format!("stuck-cluster selection at the start state: {e:?}"))?;
+    let inputs = c.joined.nuclear().feedback_inputs();
+    let travel: Vec<f64> = c.joined.travel().iter().map(|s| s.value).collect();
+    let model = c.joined.nuclear().feedback();
+    let squared = cluster_worths(
+        model,
+        &inputs,
+        &travel,
+        &population_weights(&inputs.neutrons, 2)?,
+    )?;
+    let linear = cluster_worths(
+        model,
+        &inputs,
+        &travel,
+        &population_weights(&inputs.neutrons, 1)?,
+    )?;
+    h.work
+        .charge("stuck-cluster selection", cpu::process_cpu_s() - started);
+    let (index, ties) = highest_worth(&squared)?;
+    let (linear_index, linear_ties) = highest_worth(&linear)?;
+    let id = |k: usize| raw["rods"]["clusters"][k]["id"].clone();
+    if id(index).is_null() || raw["rods"]["clusters"].as_array().map(Vec::len) != Some(travel.len())
+    {
+        return Err(
+            "the packet's rods section does not name the source feedback's clusters".into(),
+        );
+    }
+    Ok(
+        json!({"declared": declared, "rule": WORTH_RULE, "from": start.from, "t_s": start.t,
+        "index": index, "cluster": id(index), "worth": squared[index],
+        "ties": ties.iter().map(|k| json!({"index": k, "cluster": id(*k)})).collect::<Vec<_>>(),
+        "worths_n2": squared, "worths_n": linear,
+        "n_weighted": {"index": linear_index, "ties": linear_ties, "agrees": linear_ties.contains(&index)},
+        "travel_m": travel, "populations": inputs.neutrons}),
+    )
 }
 
 /// The settle with its settled check and H4's fit, for the gate run (and

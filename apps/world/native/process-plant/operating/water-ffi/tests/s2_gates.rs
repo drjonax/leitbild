@@ -814,6 +814,99 @@ fn rod_insertion_times_interpolate_and_compare_by_time_difference() {
 // ----------------------------------------------- settling and the cap fit
 
 #[test]
+fn the_stuck_cluster_is_the_highest_worth_with_ties_reported() {
+    use sequence::{highest_worth, population_weights};
+    let (k, ties) = highest_worth(&[1e-3, 3e-3, 2e-3, 3e-3]).unwrap();
+    assert_eq!((k, ties), (1, vec![1, 3]), "exact ties: the lowest index");
+    assert!(highest_worth(&[]).is_err());
+    assert!(highest_worth(&[1e-3, f64::NAN]).is_err());
+    let w = population_weights(&[1., 3.], 2).unwrap();
+    assert!((w[0] - 0.1).abs() < 1e-15 && (w[1] - 0.9).abs() < 1e-15);
+    assert!(population_weights(&[0., 0.], 1).is_err());
+    assert!(population_weights(&[-1., 2.], 1).is_err());
+    assert_eq!(guards::cap_key("stuckCluster").unwrap(), "contraryTripEach");
+}
+
+#[test]
+fn a_clusters_worth_is_the_weighted_rod_reactivity_its_insertion_removes() {
+    use leitbild_operating_plant::{joined::nuclear::FeedbackInputs, source_feedback as sf};
+    // Two synthetic sectors over the whole active height, three clusters:
+    // A in sector 0, B shared, C in sector 1; all withdrawn (travel 4 m).
+    let parameters: sf::Parameters = serde_json::from_value(json!({
+        "generation_time_s": 2e-5, "nu_effective": 2.43, "doppler_per_sqrt_k": -1.15e-3,
+        "water_worth": 0.15, "boron_per_ppm_eq": -8e-5, "rod_worth": 0.1,
+        "sigma_xe_m2": 2e-22, "sigma_sm_m2": 4e-24, "capsule_births_per_s": 0.,
+        "capsule_decay_per_s": 1e-8, "inserted_active_bottom_m": -2., "rod_active_length_m": 4.,
+        "rod_maximum_travel_m": 4.,
+        "domains": {"fuel_temperature_k": {"minimum": 500, "maximum": 1800},
+            "moderator_temperature_k": {"minimum": 550, "maximum": 610},
+            "pressure_pa": {"minimum": 1.4e7, "maximum": 1.6e7}, "density_ratio": {"minimum": 0.85, "maximum": 1.1},
+            "boron_ppm_eq": {"minimum": 0, "maximum": 2500}, "fissile_ratio": {"minimum": 0.95, "maximum": 1},
+            "reactivity": {"minimum": -0.3, "maximum": 0.15}, "maximum_additional_reference_exposure_s": 1e5}}))
+    .unwrap();
+    let region = |weights: [f64; 3]| sf::Region {
+        rho_base: 0.,
+        reference_density_kg_m3: 700.,
+        reference_boron_ppm_eq: 0.,
+        reference_rod_overlap: 0.,
+        source_weight: 0.5,
+        z0_m: -2.,
+        z1_m: 2.,
+        rod_weights: weights.to_vec(),
+    };
+    let gamma = 1. / (2.43 * 2e-5);
+    let support = |region: usize| sf::Support {
+        region,
+        material: 0,
+        production_reference_per_s: gamma,
+        exposure_per_population_s_m2: 0.,
+        fuel_importance: 1.,
+    };
+    let model = sf::Model::new(
+        parameters,
+        vec![region([0.5, 0.5, 0.]), region([0., 0.5, 0.5])],
+        vec![sf::Material {
+            reference_fissile_atoms: 1.,
+            reference_fuel_temperature_k: 900.,
+            reference_xenon_atoms: 0.,
+            reference_samarium_atoms: 0.,
+            reference_nonpoison_capture_opacity_m2: 0.,
+        }],
+        vec![support(0), support(1)],
+    )
+    .unwrap();
+    let inputs = FeedbackInputs {
+        neutrons: vec![1., 3.],
+        fuel_temperature_k: vec![900.],
+        water_density_kg_m3: vec![700., 700.],
+        boron_ppm_eq: vec![0., 0.],
+        pressure_pa: vec![1.5e7, 1.5e7],
+        moderator_temperature_k: vec![580., 580.],
+        fissile_atoms: vec![1.],
+        xenon_atoms: vec![0.],
+        samarium_atoms: vec![0.],
+        capture_loss_change_m2: vec![0.],
+    };
+    let worths = |power| {
+        let w = sequence::population_weights(&inputs.neutrons, power).unwrap();
+        sequence::cluster_worths(&model, &inputs, &[4., 4., 4.], &w).unwrap()
+    };
+    // Full insertion adds overlap w_ik in each sector: worth = 0.1 sum_i W_i w_ik.
+    for (got, want) in worths(2).iter().zip([0.005, 0.05, 0.045]) {
+        assert!((got - want).abs() < 1e-15, "{got} vs {want}");
+    }
+    for (got, want) in worths(1).iter().zip([0.0125, 0.05, 0.0375]) {
+        assert!((got - want).abs() < 1e-15, "{got} vs {want}");
+    }
+    assert_eq!(sequence::highest_worth(&worths(2)).unwrap(), (1, vec![1]));
+    // A cluster already seated adds nothing.
+    let w = sequence::population_weights(&inputs.neutrons, 2).unwrap();
+    let seated = sequence::cluster_worths(&model, &inputs, &[0., 4., 4.], &w).unwrap();
+    assert_eq!(seated[0], 0.);
+    assert!(sequence::cluster_worths(&model, &inputs, &[4., 4.], &w).is_err());
+}
+
+#[test]
 fn trailing_ranges_are_the_window_max_minus_min() {
     let x: Vec<f64> = (0..200)
         .map(|k| ((k * 37) % 101) as f64 * 0.5 - (k as f64 * 0.1).sin())
@@ -1003,7 +1096,12 @@ fn s2_smoke() {
             "hold" | "holdReference" => hold_s,
             _ => trip_s,
         };
-        let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
+        let spec = if name == "stuckCluster" {
+            h.stuck_cluster_spec(duration, &start).map(|(spec, _)| spec)
+        } else {
+            h.spec(name, duration)
+        }
+        .unwrap_or_else(|e| panic!("{e}"));
         if let Some(run) = h.run(&spec, &start, None) {
             println!(
                 "{}",
@@ -1259,12 +1357,35 @@ fn s2_gate_run() {
             }
         }
     }
-    for unsupported in ["stuckCluster", "headerReservoir"] {
-        h.d.gates.whole(&format!("/contrary/{unsupported}"));
-        h.sequence.push(json!({"run": unsupported, "started": false,
-            "reason": "the joined model has no command for this case yet (CONTRARY lane): S2 is incomplete until it has"}));
-        status = format!("incomplete: contrary case {unsupported} not executable");
+    // G7's stuck cluster: the highest-worth cluster at the settled state
+    // keeps its grip through the trip (Command::StuckCluster, CONTRARY).
+    if status == "complete" {
+        let duration = h.d.gates.number("/contrary/stuckCluster/duration_s");
+        match h.stuck_cluster_spec(duration, &settled) {
+            Ok((spec, _)) => match h.run(&spec, &settled, None) {
+                Some(run) => {
+                    println!(
+                        "{}",
+                        json!({"run": "stuckCluster", "reached_s": run.record.reached_s, "failure": run.record.failure,
+                            "exit": run.record.exit, "process_cpu_s": run.record.process_cpu_s})
+                    );
+                    done.insert("stuckCluster".into(), run);
+                }
+                None => status = "incomplete: stuckCluster not started (work bound)".into(),
+            },
+            Err(e) => {
+                h.sequence
+                    .push(json!({"run": "stuckCluster", "started": false, "reason": e}));
+                status = "incomplete: contrary case stuckCluster not selected".into();
+            }
+        }
     }
+    // The 6 MPa header reservoir moved to S5 (lead decision S2-D28): no wiki
+    // law yet holds the SG steam boundary at a reservoir pressure. Recorded,
+    // never run, and not counted against S2's completeness.
+    h.d.gates.whole("/contrary/headerReservoir");
+    h.sequence.push(json!({"run": "headerReservoir", "started": false, "moved": "S5",
+        "reason": "moved to S5 by S2-D28: no selected law holds the SG steam boundary at a reservoir pressure (MS.ISO effective areas unsized; an imposed SG pressure is excluded by the S2 secondary block)"}));
     if let Some(hold) = done.get("hold") {
         gates_out.extend(judge_hold(
             &h,
