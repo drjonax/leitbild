@@ -70,6 +70,11 @@ pub struct Start {
     pub y: Vec<f64>,
     pub yp: Vec<f64>,
     pub from: String,
+    /// An accepted solver step, an exact consistent start or a saved
+    /// hand-over of one: the only states a run starts from or a phase hands
+    /// on (DR-P3-GATE-3). False for a dense-output or located-root state and
+    /// for the end of a failed run.
+    pub accepted: bool,
 }
 
 /// Cumulative counts and CPU at one output.
@@ -204,31 +209,25 @@ fn worked(stats: &leitbild_operating_water::ida::Stats) -> Counts {
     }
 }
 
-/// The state a run that ends at a sample hands on (DR-P3-GATE-1's rule
-/// applied to the hand-over): a settled stop hands on the accepted step
-/// that first reaches the settled sample (`step`, the state IDA's
-/// constraints hold on), never the interpolant there, which may dip
-/// below a near-empty stock's zero between admitted steps; the settled
-/// verdict stays judged on the sample. A settled sample reached by a root
-/// return has no accepted step to hand on (its step is discarded by the
-/// restart) and refuses. Any other end (a D3 (a) exit) keeps the
-/// sample's interpolated state: nothing starts from it.
+/// The state a run that ends at a sample hands on (DR-P3-GATE-3, DR-P3-GATE-1's
+/// rule applied to every hand-over): the accepted step that first reaches
+/// the sample (`step`, the state IDA's constraints hold on and the
+/// closures admitted), never the interpolant there, which may dip below a
+/// near-empty stock's zero between admitted steps; the run's verdicts stay
+/// judged on the sample. A sample reached by a root return has no accepted
+/// step (the restart discards it): its state is returned as not accepted,
+/// and no run starts from it nor phase hands it on ([`Start::accepted`]).
+/// Returns `(t, y, y', accepted)`.
 pub fn end_state(
-    settled: bool,
     sample: (f64, &[f64], &[f64]),
     step: (f64, &[f64], &[f64]),
     root_return: bool,
-) -> Result<(f64, Vec<f64>, Vec<f64>), String> {
-    if !settled {
-        return Ok((sample.0, sample.1.to_vec(), sample.2.to_vec()));
-    }
+) -> (f64, Vec<f64>, Vec<f64>, bool) {
     if root_return {
-        return Err(format!(
-            "settled at {} s on a root return: no accepted step to hand on",
-            sample.0
-        ));
+        (sample.0, sample.1.to_vec(), sample.2.to_vec(), false)
+    } else {
+        (step.0, step.1.to_vec(), step.2.to_vec(), true)
     }
-    Ok((step.0, step.1.to_vec(), step.2.to_vec()))
 }
 
 /// The declared limits' marker in an owner's refusal of a limit root (the
@@ -350,6 +349,11 @@ pub fn advance(
     d3_reference: &[f64],
     mut settled: Option<&mut dyn FnMut(&Credited) -> bool>,
 ) -> Run {
+    assert!(
+        start.accepted,
+        "DR-P3-GATE-3: a run starts only from an accepted step or a consistent start, not from {}",
+        start.from
+    );
     let process0 = process_cpu_s();
     let thread0 = thread_cpu_s();
     let restart = restart_configuration(d);
@@ -597,6 +601,9 @@ pub fn advance(
     };
     let rods = spec.rods_observed;
     let mut failure: Option<String> = None;
+    // Whether the run's last state is one a later run may start from
+    // ([`Start::accepted`]).
+    let mut end_accepted = true;
     let mut exit: Option<String> = None;
     let mut outputs = 0usize;
     let mut observations = 0usize;
@@ -762,7 +769,6 @@ pub fn advance(
         // interpolant (stock IDAGetDky): no IDASolve stops at them.
         let fuzz = 1e-14 * time.abs().max(1.);
         let mut ended: Option<f64> = None;
-        let mut settled_stop = false;
         while failure.is_none() && j <= last_sample && grid(j) <= time + fuzz {
             let at = grid(j).min(time);
             let started = thread_cpu_s();
@@ -826,7 +832,6 @@ pub fn advance(
                 {
                     exit = Some(format!("settled at t = {} s", at - t0));
                     ended = Some(at);
-                    settled_stop = true;
                     break;
                 }
             } else {
@@ -865,21 +870,14 @@ pub fn advance(
             }
         }
         if let Some(at) = ended {
-            // The run ends at that sample; a settled stop hands on the
-            // accepted step reaching it ([`end_state`]).
-            match end_state(
-                settled_stop,
-                (at, &ys, &yps),
-                (time, &y, &yp),
-                roots.is_some(),
-            ) {
-                Ok((te, ye, ype)) => {
-                    t = te;
-                    y.copy_from_slice(&ye);
-                    yp.copy_from_slice(&ype);
-                }
-                Err(e) => failure = Some(e),
-            }
+            // The run ends at that sample and hands on the accepted step
+            // reaching it ([`end_state`]).
+            let (te, ye, ype, accepted) =
+                end_state((at, &ys, &yps), (time, &y, &yp), roots.is_some());
+            t = te;
+            y.copy_from_slice(&ye);
+            yp.copy_from_slice(&ype);
+            end_accepted = accepted;
         } else if failure.is_none() {
             t = time;
             if let Some(directions) = roots {
@@ -1019,6 +1017,7 @@ pub fn advance(
             t - t0
         ));
     }
+    let end_accepted = end_accepted && failure.is_none();
     record.failure = failure;
     record.exit = exit;
     record.counts = totals;
@@ -1077,6 +1076,7 @@ pub fn advance(
             y,
             yp,
             from: format!("the end of {}", spec.name),
+            accepted: end_accepted,
         },
         attribution,
         conservation_pass,

@@ -434,6 +434,7 @@ pub fn composed_start(c: &Composed) -> Start {
         y: c.y.clone(),
         yp: c.yp.clone(),
         from: "the composed state".into(),
+        accepted: true,
     }
 }
 
@@ -445,6 +446,7 @@ pub fn saved_start(path: &str, packet: &compose::PacketFile, dimension: usize) -
         y,
         yp,
         from: path.to_string(),
+        accepted: true,
     }
 }
 
@@ -1212,6 +1214,12 @@ pub fn write_state(
 ) -> Result<(), String> {
     if path.exists() {
         return Err(format!("never overwritten: {}", path.display()));
+    }
+    if !s.accepted {
+        return Err(format!(
+            "DR-P3-GATE-3: {} is not an accepted step and is never handed on",
+            s.from
+        ));
     }
     let bits =
         |v: &[f64]| -> Vec<String> { v.iter().map(|x| format!("{:016x}", x.to_bits())).collect() };

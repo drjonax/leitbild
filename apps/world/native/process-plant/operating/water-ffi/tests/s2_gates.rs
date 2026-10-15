@@ -726,6 +726,7 @@ fn a_handed_over_state_is_read_back_bit_for_bit() {
         y: y.clone(),
         yp: yp.clone(),
         from: "test".into(),
+        accepted: true,
     };
     let path = dir.join("state.json");
     sequence::write_state(&path, &packet, &start).unwrap();
@@ -1752,17 +1753,34 @@ fn s2_z5_unit_costs() {
 }
 
 #[test]
-fn a_settled_stop_hands_on_the_accepted_step_not_the_interpolant() {
-    // The settled sample at 523 s lies inside the step reaching 524.6 s; the
-    // interpolant there dips below a near-empty stock's zero (S2-15 r7.1,
-    // phase 2's start), the accepted step does not.
+fn a_run_end_hands_on_the_accepted_step_never_an_interpolant() {
+    // DR-P3-GATE-3: the settled sample at 523 s lies inside the step reaching
+    // 524.6 s; the interpolant there dips below a near-empty stock's zero
+    // (S2-15 r7.1, phase 2's start), the accepted step does not.
     let (ys, yps) = (vec![1., -1.4e-26], vec![0., 0.]);
     let (y, yp) = (vec![1., 2e-9], vec![0., 1e-12]);
-    let (t, y2, yp2) = runner::end_state(true, (523., &ys, &yps), (524.6, &y, &yp), false).unwrap();
-    assert_eq!((t, y2, yp2), (524.6, y.clone(), yp.clone()));
-    // A settled sample on a root return has no accepted step: refused.
-    assert!(runner::end_state(true, (523., &ys, &yps), (523.2, &y, &yp), true).is_err());
-    // Any other end keeps the sample (nothing starts from it).
-    let (t, y3, _) = runner::end_state(false, (24.282, &ys, &yps), (24.3, &y, &yp), false).unwrap();
-    assert_eq!((t, y3), (24.282, ys));
+    let (t, y2, yp2, accepted) = runner::end_state((523., &ys, &yps), (524.6, &y, &yp), false);
+    assert_eq!((t, y2, yp2, accepted), (524.6, y.clone(), yp.clone(), true));
+    // A sample on a root return has no accepted step: not accepted, and
+    // never written as a hand-over.
+    let (t, y3, yp3, accepted) = runner::end_state((523., &ys, &yps), (523.2, &y, &yp), true);
+    assert_eq!((t, &y3, accepted), (523., &ys, false));
+    let dir = std::env::temp_dir().join(format!("s2-gate3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let packet = compose::PacketFile {
+        path: "/packet.json".into(),
+        bytes: Vec::new(),
+        sha256: "0".repeat(64),
+    };
+    let interpolant = runner::Start {
+        t,
+        y: y3,
+        yp: yp3,
+        from: "a root return".into(),
+        accepted,
+    };
+    let refused = sequence::write_state(&dir.join("state.json"), &packet, &interpolant);
+    assert!(refused.is_err_and(|e| e.contains("DR-P3-GATE-3")));
+    assert!(!dir.join("state.json").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
 }
