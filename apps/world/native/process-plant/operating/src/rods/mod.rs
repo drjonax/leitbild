@@ -586,6 +586,49 @@ impl RodBlock {
     pub fn set_failed_release(&mut self, c: usize) {
         self.failed_release[c] = true;
     }
+    /// Whether cluster `c`'s grip is declared stuck (G7).
+    pub fn failed_release(&self, c: usize) -> bool {
+        self.failed_release[c]
+    }
+    /// G7's declared malfunction ([`Command::StuckCluster`]): cluster `c`'s
+    /// grip stays closed when the holding circuit opens. Only a held cluster
+    /// whose release is not yet due can be declared, and only once; nothing
+    /// moves, so no coordinate or differential identity changes.
+    fn stick(&mut self, t: f64, c: usize) -> Result<Transaction, Failure> {
+        let n = self.clusters.len();
+        let Some(cluster) = self.clusters.get(c) else {
+            return Err(fatal(format!(
+                "rods: stuck cluster {c} is not one of the {n} clusters"
+            )));
+        };
+        let id = &cluster.id;
+        if !t.is_finite() {
+            return Err(fatal("rods: stuck-cluster command time"));
+        }
+        if self.modes[c] != Mode::Held {
+            return Err(fatal(format!(
+                "rods: {id} is {:?}, not held: a stuck grip is declared before its release",
+                self.modes[c]
+            )));
+        }
+        if let Some(open) = self.holding_open_at
+            && open <= t
+        {
+            return Err(fatal(format!(
+                "rods: the holding circuit opened at {open} s, so {id}'s release is already due"
+            )));
+        }
+        if self.failed_release[c] {
+            return Err(fatal(format!("rods: {id} is already declared stuck")));
+        }
+        self.failed_release[c] = true;
+        Ok(Transaction {
+            deposits: Vec::new(),
+            receipt: json!({"owner": "rods", "command": "StuckCluster", "t_s": t, "cluster": id, "index": c,
+                "grip": "stays closed when the holding circuit opens; every other cluster releases normally (G7)",
+                "holding_circuit_opens_s": self.holding_open_at}),
+        })
+    }
     /// The holding circuit opens at `t`: the manual reactor-trip interrupt
     /// of G7's no-turbine-trip case. The turbine TRIP opens it after the
     /// declared delay instead ([`Command::TurbineTrip`]).
@@ -1472,6 +1515,7 @@ impl<P> Rods<P> for RodBlock {
     }
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure> {
         match command {
+            Command::StuckCluster { cluster } => self.stick(t, cluster),
             Command::ManualReactorTrip => self.open_holding_circuit(t),
             Command::TurbineTrip => {
                 let open = t + self.holding_delay;
