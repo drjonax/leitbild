@@ -477,10 +477,9 @@ pub fn fixed(nuclear: &Nuclear) -> Fixed<'_> {
 /// since preparation (the capsule age is `age0 + t`, as in the rows).
 ///
 /// Owner answer B1 (15 Oct 2026): `phase` is each core region's coolant
-/// phase at the same evaluation (`Joined::region_phases`); a region that is
-/// not single-phase liquid below saturation ends the run as an unsupported
-/// kinetics-domain exit ([`sf::phase_absence`]), in the domain the state
-/// was admitted to.
+/// phase at the same evaluation (`Joined::region_phases`); a region whose
+/// coolant cell holds vapour ends the run as an unsupported kinetics-domain
+/// exit ([`sf::phase_absence`]), in the domain the state was admitted to.
 pub fn admit_accepted(
     nuclear: &Nuclear,
     phase: &[sf::RegionPhase],

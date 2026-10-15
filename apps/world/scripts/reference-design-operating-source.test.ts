@@ -157,9 +157,10 @@ describe('D3 (a) post-trip domain extension', () => {
     expect(() => parseOperatingPostTripDomain(page({ ...block, marginWaterTermFactor: 0.5 }), p)).toThrow('weaken')
     expect(() => parseOperatingPostTripDomain(page({ ...block, extrapolationSensitivity: [1, 1, 2] }), p)).toThrow('sensitivity')
   })
+  // Since owner answer B1 (15 Oct 2026) kinetics.md states pressureMin_Pa = 8 MPa, the base floor.
   test.skipIf(!process.env.LD01_WIKI_ROOT)('the actual kinetics owner page compiles the joined packet section', async () => {
     expect(await compileOperatingPostTripDomain(process.env.LD01_WIKI_ROOT!)).toEqual({ density_ratio_maximum: 1.125,
-      pressure_minimum_pa: 12500000, shutdown_margin_minimum: 0.01, margin_water_term_factor: 2, extrapolation_sensitivity: [0.5, 1, 2] })
+      pressure_minimum_pa: 8000000, shutdown_margin_minimum: 0.01, margin_water_term_factor: 2, extrapolation_sensitivity: [0.5, 1, 2] })
   })
 })
 

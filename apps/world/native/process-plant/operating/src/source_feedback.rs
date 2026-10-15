@@ -204,24 +204,31 @@ pub struct MaterialPartials {
 /// coolant cell holds.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct RegionPhase {
-    /// `T_l - Tsat(p)` of the region's coolant [K].
+    /// `T_l - Tsat(p)` of the region's coolant [K]: reported, and it must be
+    /// a number (the phase is then evaluable); its sign is not judged.
     pub saturation_departure_k: f64,
     /// Vapour mass in the region's coolant cell [kg].
     pub vapor_kg: f64,
 }
 
-/// Owner answer B1: pressure no longer stands in for single-phase validity.
-/// On an accepted state every core region's coolant must be single-phase
-/// liquid below saturation with no vapour in its coolant cell; the first
-/// region that fails is a kinetics-domain exit (`OutsideDomain("phase
-/// absence", region)`). A check only: no equation, coefficient or tolerance
-/// changes.
+/// The [`Error::OutsideDomain`] name of a phase-absence exit.
+pub const PHASE_ABSENCE: &str = "phase absence";
+
+/// Owner answer B1 as kinetics.md states it (S2-D42): pressure no longer
+/// stands in for single-phase validity. On an accepted state every core
+/// region's coolant must be single-phase liquid, with no vapour in its
+/// coolant cell; the first region that fails is a kinetics-domain exit
+/// (`OutsideDomain(PHASE_ABSENCE, region)`). Liquid at or above saturation
+/// without vapour (the metastable liquid G1 admits before a birth) is
+/// phase-absent; a phase that cannot be evaluated (a non-finite departure
+/// or vapour mass) fails. A check only: no equation, coefficient or
+/// tolerance changes.
 pub fn phase_absence(phase: &[RegionPhase]) -> Result<(), Error> {
     match phase
         .iter()
-        .position(|r| !(r.saturation_departure_k < 0. && r.vapor_kg == 0.))
+        .position(|r| !(r.saturation_departure_k.is_finite() && r.vapor_kg == 0.))
     {
-        Some(i) => Err(Error::OutsideDomain("phase absence", i)),
+        Some(i) => Err(Error::OutsideDomain(PHASE_ABSENCE, i)),
         None => Ok(()),
     }
 }
