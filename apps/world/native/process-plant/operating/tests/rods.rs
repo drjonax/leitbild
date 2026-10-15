@@ -754,6 +754,76 @@ fn the_holding_opening_releases_every_held_cluster_once_as_a_time_event() {
 }
 
 #[test]
+fn the_stuck_cluster_command_keeps_one_grip_closed_at_the_opening() {
+    let water = z4_field(0.);
+    let mut b = block(SpiderDrag::Omitted);
+    let mut physical = held(&mut b, &water, 2.8);
+    let before = physical.clone();
+    let identity = Rods::<()>::differential(&b);
+    // G7's malfunction, declared on a held grip before the trip: nothing
+    // moves and the differential identity is unchanged.
+    let tx = Rods::<()>::command(&mut b, 1.5, Command::StuckCluster { cluster: 5 }).unwrap();
+    assert!(tx.deposits.is_empty());
+    assert_eq!(tx.receipt["command"], "StuckCluster");
+    assert_eq!(tx.receipt["cluster"], "LD01.CR.006");
+    assert_eq!(tx.receipt["index"], 5);
+    assert!(b.failed_release(5));
+    assert!((0..52).filter(|c| *c != 5).all(|c| !b.failed_release(c)));
+    assert_eq!(Rods::<()>::differential(&b), identity);
+    assert_eq!(Rods::<()>::next_time_event(&b, 1.5), None, "no time event");
+    // Refused: twice, and a cluster that does not exist.
+    assert!(Rods::<()>::command(&mut b, 1.5, Command::StuckCluster { cluster: 5 }).is_err());
+    assert!(Rods::<()>::command(&mut b, 1.5, Command::StuckCluster { cluster: 52 }).is_err());
+    // The trip that follows opens the circuit after its declared delay; a
+    // second grip may still be declared stuck before the opening.
+    Rods::<()>::command(&mut b, 1.5, Command::TurbineTrip).unwrap();
+    let open = Rods::<()>::next_time_event(&b, 1.5).unwrap();
+    Rods::<()>::command(&mut b, 1.6, Command::StuckCluster { cluster: 7 }).unwrap();
+    // The stuck grips' release roots are disarmed; the others arm at the
+    // opening.
+    let d = fluid_data(&water);
+    let f = fluid(&d);
+    let y = solver(&b, &physical);
+    let yp = vec![0.; y.len()];
+    let scales = Rods::<()>::layout(&b).scales.clone();
+    let x = Coordinates::new(&y, &yp, None, 0., &scales).unwrap();
+    let mut roots = vec![0.; 52];
+    Rods::<()>::roots(&mut b, &(), 1.65, x, &f, &mut roots).unwrap();
+    for (c, root) in roots.iter().enumerate() {
+        if c == 5 || c == 7 {
+            assert_eq!(*root, 1., "cluster {c}");
+        } else {
+            assert!((root - (1.65 - open)).abs() < 1e-12, "cluster {c}");
+        }
+    }
+    // The opening releases the other 50 once and keeps both stuck grips.
+    let tx = Rods::<()>::time_event(&mut b, &(), open, &mut physical)
+        .unwrap()
+        .expect("the opening is due");
+    assert_eq!(tx.receipt["rods"].as_array().unwrap().len(), 50);
+    assert_eq!(physical, before, "a release moves no coordinate");
+    for c in 0..52 {
+        let expected = if c == 5 || c == 7 {
+            Mode::Held
+        } else {
+            Mode::Free
+        };
+        assert_eq!(b.modes()[c], expected, "cluster {c}");
+        assert_eq!(
+            Rods::<()>::differential(&b)[3 * c + 1],
+            if expected == Mode::Free { 1. } else { 0. }
+        );
+    }
+    // After the opening a grip can no longer be declared stuck: a released
+    // body is free, a held one's release was already due.
+    assert!(Rods::<()>::command(&mut b, open, Command::StuckCluster { cluster: 0 }).is_err());
+    let mut other = block(SpiderDrag::Omitted);
+    held(&mut other, &water, 2.8);
+    Rods::<()>::command(&mut other, 0., Command::ManualReactorTrip).unwrap();
+    assert!(Rods::<()>::command(&mut other, 0., Command::StuckCluster { cluster: 5 }).is_err());
+}
+
+#[test]
 fn a_free_body_refuses_a_pending_spider_drag_selection() {
     let water = z4_field(0.);
     let mut b = block(SpiderDrag::Pending);

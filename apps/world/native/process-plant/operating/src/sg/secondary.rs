@@ -795,6 +795,13 @@ impl<P: Properties> Secondary<P> for Secondaries {
 
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure> {
         match command {
+            // G7's stuck cluster is the rod owner's malfunction; the steam
+            // demand is untouched (the turbine TRIP that follows ramps it).
+            Command::StuckCluster { .. } => Ok(Transaction {
+                deposits: Vec::new(),
+                receipt: json!({"owner":"secondary","command":"StuckCluster","t_s":t,
+                    "steamDemand":"unchanged (a rod malfunction)"}),
+            }),
             // G7: the steam demand stays at its constant A/B values.
             Command::ManualReactorTrip => Ok(Transaction {
                 deposits: Vec::new(),

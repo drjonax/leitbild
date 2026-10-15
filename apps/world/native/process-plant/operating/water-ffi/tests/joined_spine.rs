@@ -1194,6 +1194,127 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
     println!("{}", serde_json::to_string(&receipt).unwrap());
 }
 
+#[test]
+#[ignore = "NOT-EVIDENCE zero-time check: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn the_stuck_cluster_command_keeps_its_grip_at_the_opening_and_the_rest_release() {
+    use leitbild_operating_plant::joined::block::Command;
+    use leitbild_operating_water::{
+        ida::{Ida, Initial},
+        joined::{Discrete, Integrated, Restart, discrete_restart},
+    };
+    let Started {
+        mut joined,
+        y,
+        yp,
+        ids,
+        network_ids,
+        atol,
+        rtol,
+        structure,
+        analyses,
+        ..
+    } = started_full_composition();
+    let algebraic = |ids: &[f64]| ids.iter().filter(|v| **v == 0.).count();
+    let held = algebraic(&ids);
+    let clusters = joined.rods().unwrap().clusters();
+    let stuck = clusters - 1;
+    let mut y = y;
+    let before = y.clone();
+    // G7's declared malfunction through every composed owner: no
+    // coordinate, identity or time event changes, and the steam demand is
+    // untouched (no TRIP latched).
+    let declared = joined
+        .command(0., &mut y, Command::StuckCluster { cluster: stuck })
+        .unwrap();
+    assert_eq!(declared.len(), 2 + usize::from(joined.pzr().is_some()));
+    assert_eq!(y, before, "the declaration moves no coordinate");
+    assert_eq!(joined.differential(&network_ids), ids);
+    assert_eq!(joined.next_time_event(0.), None);
+    assert!(declared.iter().all(|d| d.deposits.is_empty()));
+    assert_eq!(declared[1].receipt["command"], "StuckCluster");
+    assert_eq!(declared[1].receipt["index"], json!(stuck));
+    // The same declaration twice is refused.
+    assert!(
+        joined
+            .command(0., &mut y, Command::StuckCluster { cluster: stuck })
+            .is_err()
+    );
+    // The manual turbine TRIP: the circuit opens after its declared delay.
+    joined.command(0., &mut y, Command::TurbineTrip).unwrap();
+    let open = joined.next_time_event(0.).expect("the holding opening");
+    let restart = Restart {
+        newton_coefficient: NEWTON_COEFFICIENT,
+        delta_cj_lsetup: DELTA_CJ_LSETUP,
+        first_step_s: FIRST_STEP_S,
+        start_bound: 1e-12,
+        start_passes: 2,
+        transaction_passes: 12,
+        bound_placement: 1e-12,
+    };
+    let mut ida = Ida::new(
+        Integrated::from_blocks(joined, structure, analyses).unwrap(),
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .unwrap();
+    restart.configure(&mut ida).unwrap();
+    // The stop at the opening: every other cluster releases, the stuck one
+    // stays held with its algebraic speed row.
+    let restarted = discrete_restart(
+        &mut ida,
+        open,
+        Discrete::TimeEvent,
+        &mut y,
+        &network_ids,
+        &atol,
+        rtol,
+        &restart,
+    )
+    .unwrap();
+    let (done, report) = (&restarted.transactions, &restarted.report);
+    assert_eq!(done.len(), 1, "the rod owner's opening only: {done:?}");
+    let releases = done[0].receipt["rods"].as_array().unwrap();
+    let stuck_id = declared[1].receipt["cluster"].as_str().unwrap().to_string();
+    assert_eq!(releases.len(), clusters - 1);
+    assert!(releases.iter().all(|r| r["event"] == "grip release"));
+    assert!(releases.iter().all(|r| r["cluster"] != json!(stuck_id)));
+    let ids_open = ida.system().joined.differential(&network_ids);
+    assert_eq!(algebraic(&ids_open), held - (clusters - 1));
+    let o = ida.system().joined.offsets();
+    assert_eq!(ids_open[o.rods + 3 * stuck + 1], 0., "the stuck speed row");
+    assert!(report.residual.value <= 1e-12 && report.constraint_rate.value <= 1e-12);
+    assert!(restarted.yp.iter().all(|v| v.is_finite()));
+    // Nothing more is due at the opening, and a declaration after it is
+    // refused.
+    assert!(
+        ida.system_mut()
+            .joined
+            .time_events(open, &mut y)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        ida.system_mut()
+            .joined
+            .command(open, &mut y, Command::StuckCluster { cluster: 0 })
+            .is_err()
+    );
+    println!(
+        "{}",
+        json!({"kind": "s2-stuck-cluster-opening", "status": "NOT-EVIDENCE zero-time check; no trajectory",
+            "stuck": stuck_id, "opening_s": open, "released": releases.len(),
+            "algebraic_before": held, "algebraic_after": algebraic(&ids_open),
+            "start": {"residual": report.residual.value, "constraint_rate": report.constraint_rate.value,
+                "projection_passes": report.projection_passes, "rate_passes": report.rate_passes}})
+    );
+}
+
 /// Column-relative difference of a block matrix against the colored
 /// reference on every column: per column, the largest |difference| of any
 /// row stored by either over the column's largest |colored| entry (JAC's
