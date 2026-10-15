@@ -441,15 +441,15 @@ pub fn dry_run() -> Result<bool, String> {
     }
 }
 
-/// The dry run's durations (s): the hold to 2 s past its measured-from
-/// time; the trip, R0 and R2 to 6 s past the window, past the S2 trip's
+/// The dry run's durations (s): the hold to 10 s past its measured-from
+/// time (steps enough for its per-step and cost measures); the trip, R0 and R2 to 6 s past the window, past the S2 trip's
 /// D3 (a) exit (≈24.3 s), so the declared part, the information
 /// continuation and the after-window span are all exercised; R1 (the
 /// window), the stuck cluster and the no-turbine-trip case as declared.
 /// Returns `(hold, trip, R0, R1, R2)`.
 pub fn dry_durations(g: &super::gates::Block) -> (f64, f64, f64, f64, f64) {
     let window = g.number("/trip/window_s");
-    let hold = g.number("/hold/measuredFrom_s") + 2.;
+    let hold = g.number("/hold/measuredFrom_s") + 10.;
     let trip = window + 6.;
     (hold, trip, trip, window, trip)
 }
