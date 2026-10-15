@@ -514,34 +514,48 @@ fn the_margin_is_judged_on_the_doubled_water_term() {
     );
 }
 
-/// Owner answer B1: an accepted state's core regions must be single-phase
-/// liquid below saturation with no vapour; the first region that is not
-/// is the exit.
+/// Owner answer B1 as kinetics.md states it (S2-D42): an accepted state's
+/// core regions must hold no vapour; the first region that does is the exit.
+/// Liquid at or above saturation without vapour (G1's metastable liquid up to
+/// its +0.5 K birth) is phase-absent; a phase that cannot be evaluated fails.
 #[test]
-fn a_region_at_saturation_or_with_vapour_is_a_phase_absence_exit() {
-    use leitbild_operating_plant::source_feedback::{Error, RegionPhase, phase_absence};
+fn a_region_with_vapour_or_an_unevaluable_phase_is_a_phase_absence_exit() {
+    use leitbild_operating_plant::source_feedback::{
+        Error, PHASE_ABSENCE, RegionPhase, phase_absence,
+    };
     let liquid = RegionPhase {
         saturation_departure_k: -20.,
         vapor_kg: 0.,
     };
     assert_eq!(phase_absence(&[liquid; 3]), Ok(()));
-    let mut at_saturation = [liquid; 3];
-    at_saturation[1].saturation_departure_k = 0.;
-    assert_eq!(
-        phase_absence(&at_saturation),
-        Err(Error::OutsideDomain("phase absence", 1))
-    );
+    // At saturation and metastable up to G1's birth: no vapour, phase-absent.
+    for departure in [0., 0.3, 0.5] {
+        let mut metastable = [liquid; 3];
+        metastable[1].saturation_departure_k = departure;
+        assert_eq!(phase_absence(&metastable), Ok(()), "{departure} K");
+    }
     let mut vapour = [liquid; 3];
     vapour[2].vapor_kg = 1e-12;
-    vapour[0].saturation_departure_k = -1e-9;
+    vapour[0].saturation_departure_k = 0.4;
     assert_eq!(
         phase_absence(&vapour),
-        Err(Error::OutsideDomain("phase absence", 2))
+        Err(Error::OutsideDomain(PHASE_ABSENCE, 2))
     );
-    let mut nan = [liquid; 3];
-    nan[0].saturation_departure_k = f64::NAN;
-    assert_eq!(
-        phase_absence(&nan),
-        Err(Error::OutsideDomain("phase absence", 0))
-    );
+    assert_eq!(PHASE_ABSENCE, "phase absence");
+    for bad in [f64::NAN, f64::INFINITY] {
+        let mut departure = [liquid; 3];
+        departure[0].saturation_departure_k = bad;
+        assert_eq!(
+            phase_absence(&departure),
+            Err(Error::OutsideDomain(PHASE_ABSENCE, 0)),
+            "{bad}"
+        );
+        let mut vapour = [liquid; 3];
+        vapour[1].vapor_kg = bad;
+        assert_eq!(
+            phase_absence(&vapour),
+            Err(Error::OutsideDomain(PHASE_ABSENCE, 1)),
+            "{bad}"
+        );
+    }
 }
