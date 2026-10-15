@@ -1843,10 +1843,10 @@ fn the_trip_is_compared_only_where_both_runs_reached() {
 #[test]
 fn the_dry_run_is_declared_shorter_and_never_evidence() {
     // RP12: the trip, R0 and R2 run past the window far enough to cover
-    // the S2 trip's D3 (a) exit (24.3 s); the hold 10 s past its
-    // measured-from time; R1 is the window.
+    // the S2 trip's D3 (a) exit (24.3 s); the hold past its measured-from
+    // time; R1 is the window.
     let g = Block::from_json("ld01-s2-gates", GATES_R7_1).unwrap();
     let (hold, trip, r0, r1, r2) = sequence::dry_durations(&g);
-    assert_eq!((hold, trip, r0, r1, r2), (20., 26., 26., 20., 26.));
+    assert_eq!((hold, trip, r0, r1, r2), (12., 26., 26., 20., 26.));
     assert!(trip > 24.3 && hold < g.number("/hold/duration_s"));
 }
