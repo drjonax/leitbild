@@ -26,7 +26,7 @@ use super::{
     outputs::{Reader, admit, extension, reference_densities},
     receipt::{self, gate},
     run::RunSpec,
-    runner::{Run, Start, advance},
+    runner::{DomainExit, Run, Start, advance},
 };
 use crate::{
     cpu,
@@ -79,6 +79,7 @@ impl Harness {
         let raw: Value = serde_json::from_slice(&packet.bytes).map_err(|e| e.to_string())?;
         let network_packet: NetworkPacket =
             serde_json::from_slice(&packet.bytes).map_err(|e| e.to_string())?;
+        compose::carries_b1(&raw)?;
         let (extension, extension_source) = extension(&raw)?;
         let reference_travel_m = raw["rods"]["reference_travel_m"]
             .as_f64()
@@ -685,7 +686,9 @@ fn cap_cycle(h: &Harness, trip: &Run, r1: &Run, window: f64) -> (Value, bool) {
 ///   Completion, H1/H1a recovery (window end to the end), G1's trip average
 ///   and the references' comparisons are judged up to that end; an end
 ///   inside the window leaves the remaining window recorded truncated, not
-///   failed; Z3 is informational.
+///   failed; Z3 is informational. Only a D3 (a) exit ends the trip so
+///   (S2-D41): owner answer B1's phase-absence exit is an exit that leaves
+///   the trip incomplete under every rule, its gates judged up to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuleI {
     A0,
@@ -724,12 +727,28 @@ impl RuleI {
 
     /// The trip's judged end (s from its start) and whether D3 (a) set it:
     /// under A4 its D3 (a) exit when that comes before the run's duration,
-    /// otherwise the duration.
-    pub fn end(self, duration_s: f64, d3_exit_s: Option<f64>) -> (f64, bool) {
-        match (self, d3_exit_s) {
-            (Self::A4, Some(x)) if x < duration_s => (x, true),
+    /// otherwise the duration. A B1 phase-absence exit never sets it
+    /// (S2-D41).
+    pub fn end(self, duration_s: f64, exit: Option<(f64, DomainExit)>) -> (f64, bool) {
+        match (self, exit) {
+            (Self::A4, Some((x, DomainExit::D3))) if x < duration_s => (x, true),
             _ => (duration_s, false),
         }
+    }
+
+    /// trip.completion: the judged end, whether D3 (a) set it, and whether
+    /// the trip completed: no failure, and either D3 (a) ended it under A4
+    /// or it reached its declared duration with no exit. Any other exit
+    /// (a D3 (a) exit under A0, A1 or A3, B1's phase-absence exit under
+    /// every rule, a declared limit) leaves it incomplete.
+    pub fn completion(self, trip: &TripEnd) -> (f64, bool, bool) {
+        let (end, d3_end) = self.end(trip.duration_s, trip.exit);
+        let completed = !trip.failed
+            && (d3_end
+                || (!trip.exited
+                    && trip.reached_s >= trip.duration_s - 1e-9
+                    && trip.duration_s >= trip.declared_s));
+        (end, d3_end, completed)
     }
 
     /// Z3 under this rule from the envelope receipt's points: `(judged,
@@ -750,6 +769,20 @@ impl RuleI {
     }
 }
 
+/// What trip.completion reads of a trip.
+#[derive(Clone, Copy, Debug)]
+pub struct TripEnd {
+    pub declared_s: f64,
+    pub duration_s: f64,
+    /// The first kinetics-domain exit (s from the start) where the run
+    /// continued past it for information, and which exit it was.
+    pub exit: Option<(f64, DomainExit)>,
+    pub failed: bool,
+    /// Whether the run's record carries an exit.
+    pub exited: bool,
+    pub reached_s: f64,
+}
+
 pub fn judge_trip(
     h: &Harness,
     trip: &Run,
@@ -767,21 +800,27 @@ pub fn judge_trip(
     let post = s.number("/recovery/postWindow_s");
     let mut out = Vec::new();
     let rule = RuleI::from(g).unwrap_or_else(|e| panic!("{e}"));
-    let d3_exit = trip.information_from.map(|x| x - trip.origin);
-    let (end, d3_end) = rule.end(duration, d3_exit);
-    let completed = trip.record.failure.is_none()
-        && (d3_end
-            || (trip.record.exit.is_none()
-                && trip.record.reached_s >= duration - 1e-9
-                && duration >= declared));
+    let exit = trip
+        .information_from
+        .zip(trip.domain_exit)
+        .map(|(x, kind)| (x - trip.origin, kind));
+    let (end, d3_end, completed) = rule.completion(&TripEnd {
+        declared_s: declared,
+        duration_s: duration,
+        exit,
+        failed: trip.record.failure.is_some(),
+        exited: trip.record.exit.is_some(),
+        reached_s: trip.record.reached_s,
+    });
     out.push(gate(
         "trip.completion",
         json!({"reached_s": trip.record.reached_s, "failure": trip.record.failure, "exit": trip.record.exit,
-            "rule_i": format!("{rule:?}"), "judged_end_s": end, "ended_by_d3": d3_end}),
+            "rule_i": format!("{rule:?}"), "judged_end_s": end, "ended_by_d3": d3_end,
+            "domain_exit": trip.domain_exit.map(|k| format!("{k:?}"))}),
         json!(declared),
         completed,
         judged,
-        "trip.duration_s with no no-go (rule I: under A4, or until D3 (a) ends it)",
+        "trip.duration_s with no no-go (rule I: under A4, or until D3 (a) ends it; a B1 phase-absence exit leaves it incomplete, S2-D41)",
     ));
     // Cost: window, recovery, whole trip, step trigger.
     let solver_at = |t: f64| mark_at(trip, t).map(|m| m.solver_s);
@@ -1021,7 +1060,7 @@ pub fn reference_spans(
 }
 
 /// A run's declared part: everything up to `until` (absolute time), its
-/// D3 (a) exit when it continued past it for information.
+/// kinetics-domain exit when it continued past it for information.
 pub fn truncated(run: &Run, until: f64) -> Run {
     let mut r = run.clone();
     let keep = r
@@ -1069,7 +1108,7 @@ pub fn judge_trip_declared_and_information(
         for mut g in judge_trip(h, trip, r0, r1, r2, &mut info) {
             let id = format!("information.{}", g["id"].as_str().unwrap_or(""));
             let basis = format!(
-                "INFORMATION ONLY (past the D3 (a) exit): {}",
+                "INFORMATION ONLY (past the kinetics-domain exit): {}",
                 g["basis"].as_str().unwrap_or("")
             );
             g["id"] = json!(id);

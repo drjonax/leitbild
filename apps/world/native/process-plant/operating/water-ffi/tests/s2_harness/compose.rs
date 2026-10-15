@@ -85,6 +85,38 @@ pub fn packet_file() -> PacketFile {
     }
 }
 
+/// Owner answer B1 (15 Oct 2026, decision log R5-B): HOT-SOURCE-1's base
+/// pressure floor and D3 (a)'s post-trip `pressureMin_Pa`, both 8 MPa.
+pub const B1_PRESSURE_FLOOR_PA: f64 = 8e6;
+
+/// Before any run: the packet carries owner answer B1, its kinetics base
+/// pressure floor (`feedback_metadata.parameters.domains.pressure_pa.minimum`)
+/// and its post-trip `post_trip_domain.pressure_minimum_pa` both
+/// [`B1_PRESSURE_FLOOR_PA`]. A packet compiled from a pre-B1 wiki is refused
+/// by name, never run (its trip would end at the old floor).
+pub fn carries_b1(raw: &Value) -> Result<(), String> {
+    for (name, pointer) in [
+        (
+            "feedback_metadata.parameters.domains.pressure_pa.minimum (the kinetics base floor)",
+            "/feedback_metadata/parameters/domains/pressure_pa/minimum",
+        ),
+        (
+            "post_trip_domain.pressure_minimum_pa (D3 (a)'s pressureMin)",
+            "/post_trip_domain/pressure_minimum_pa",
+        ),
+    ] {
+        match raw.pointer(pointer).and_then(Value::as_f64) {
+            Some(v) if v == B1_PRESSURE_FLOOR_PA => {}
+            other => {
+                return Err(format!(
+                    "the packet does not carry owner answer B1: {name} is {other:?} Pa, B1 states {B1_PRESSURE_FLOOR_PA} Pa"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// S1's declared network-only settling from rest (step (A)), run only to
 /// export the settled flows: the RCPs start from rest through the drive
 /// law and the network settles under S1's own tolerance classes and caps.

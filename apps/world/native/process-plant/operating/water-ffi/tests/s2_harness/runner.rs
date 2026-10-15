@@ -24,7 +24,11 @@
 //!   closures. Under S2-D23 (revised) the first state D3 (a) does not admit
 //!   (outside the compiled domain with the 1 % margin failed, or outside the
 //!   extension) ends the run there, labelled ("D3 (a) margin exit at t = …"),
-//!   a declared exit.
+//!   a declared exit. Owner answer B1's phase absence (kinetics.md: on every
+//!   accepted state, no vapour in a core region's coolant cell) is judged
+//!   at every sample and at every accepted step and restart start on its
+//!   own evaluation; its exit is labelled "B1 phase-absence exit", which is
+//!   not D3 (a)'s (S2-D41).
 //! - **Caps.** Solver CPU against `solver_cap_s` and the run's process CPU
 //!   against `total_guard_s` after every `IDASolve` call; reaching either
 //!   fails the run, unless the spec reports caps only (R0, smoke runs), which
@@ -44,7 +48,10 @@ use crate::{
     counts::Counts,
     cpu::{process_cpu_s, thread_cpu_s},
 };
-use leitbild_operating_plant::joined::post_trip_domain::{Domain, Error as DomainError, Extension};
+use leitbild_operating_plant::{
+    joined::post_trip_domain::{Domain, Error as DomainError, Extension},
+    source_feedback as sf,
+};
 use leitbild_operating_water::{
     If97,
     ida::{Advance, Ida, Initial},
@@ -104,9 +111,11 @@ pub struct Run {
     pub end: Start,
     pub attribution: Attribution,
     pub conservation_pass: bool,
-    /// The D3 (a) exit's time when the run continued past it for
+    /// The kinetics-domain exit's time when the run continued past it for
     /// information: its declared verdict is judged up to it.
     pub information_from: Option<f64>,
+    /// Which exit the run's first kinetics-domain exit was (S2-D41).
+    pub domain_exit: Option<DomainExit>,
 }
 
 /// The restart configuration from `ld01-s2-gates` (G13, K4).
@@ -300,12 +309,39 @@ pub enum D3 {
     Admitted { extended: bool, margin_holds: bool },
     /// Outside every admitted domain: unsupported.
     Unsupported { margin_holds: bool, exit: String },
+    /// Admitted by D3 (a), but owner answer B1's phase absence fails: a core
+    /// region's coolant cell holds vapour, or its phase cannot be evaluated.
+    PhaseAbsence { region: usize, margin_holds: bool },
+}
+
+/// The label of owner answer B1's exit, as the S3 cases write it.
+pub const B1_EXIT: &str = "B1 phase-absence exit";
+
+/// Which kinetics-domain exit ended a run's declared part (S2-D41): D3 (a)'s
+/// (the only exit rule I's A4 lets end a trip early) or B1's phase absence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DomainExit {
+    D3,
+    B1,
+}
+
+impl D3 {
+    /// The exit this verdict is, if any.
+    pub fn exit(&self) -> Option<DomainExit> {
+        match self {
+            D3::Admitted { .. } => None,
+            D3::Unsupported { .. } => Some(DomainExit::D3),
+            D3::PhaseAbsence { .. } => Some(DomainExit::B1),
+        }
+    }
 }
 
 /// S2-D23 as revised (PLAN §9): D3 (a) applies exactly as approved; a run
 /// ends, labelled, at the first state the predicate does not admit: "D3 (a)
 /// margin exit" when the 1 % margin no longer holds, otherwise a
-/// source-domain exit. An admitted state, extended or not, continues.
+/// source-domain exit. An admitted state, extended or not, continues. A
+/// state D3 (a) admits whose phase absence fails ends it as owner answer
+/// B1's exit, labelled as the S3 cases label it (S2-D41).
 pub fn d3_exit(verdict: &D3) -> Option<&'static str> {
     match verdict {
         D3::Admitted { .. } => None,
@@ -316,6 +352,33 @@ pub fn d3_exit(verdict: &D3) -> Option<&'static str> {
         D3::Unsupported {
             margin_holds: true, ..
         } => Some("D3 (a) source-domain exit"),
+        D3::PhaseAbsence { .. } => Some(B1_EXIT),
+    }
+}
+
+/// Owner answer B1 at an accepted state, on its own evaluation (the
+/// account's, as at a sample): `Some(region)` for the first core region that
+/// is not phase-absent.
+fn accepted_phase(
+    ida: &mut Ida<System>,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+) -> Result<Option<usize>, String> {
+    ida.system_mut()
+        .inner
+        .account(t, y, yp)
+        .map_err(|e| format!("account at the accepted state {t} s: {e}"))?;
+    let phase = ida
+        .system()
+        .integrated()
+        .joined
+        .region_phases()
+        .map_err(|f| format!("region phases at the accepted state {t} s: {f:?}"))?;
+    match sf::phase_absence(&phase) {
+        Ok(()) => Ok(None),
+        Err(sf::Error::OutsideDomain(sf::PHASE_ABSENCE, region)) => Ok(Some(region)),
+        Err(e) => Err(format!("phase absence at the accepted state {t} s: {e:?}")),
     }
 }
 
@@ -328,6 +391,10 @@ struct DomainRecord {
     first_margin_hold: Option<f64>,
     first_extended: Option<f64>,
     exit: Option<Value>,
+    exit_kind: Option<DomainExit>,
+    /// Accepted steps and restart starts whose phase absence was judged on
+    /// their own evaluation (owner answer B1).
+    accepted_checked: u64,
     /// D3 (a) every simulated second: domain, doubled and nominal margins.
     trajectory: Vec<Value>,
     /// The exit's time when the run continued past it for information.
@@ -422,6 +489,7 @@ pub fn advance(
                 attribution,
                 conservation_pass: false,
                 information_from: None,
+                domain_exit: None,
             };
         }
     };
@@ -553,6 +621,14 @@ pub fn advance(
             Err(DomainError::Unsupported {
                 domain: _,
                 margin_holds,
+                exit: sf::Error::OutsideDomain(sf::PHASE_ABSENCE, region),
+            }) => D3::PhaseAbsence {
+                region,
+                margin_holds,
+            },
+            Err(DomainError::Unsupported {
+                domain: _,
+                margin_holds,
                 exit,
             }) => D3::Unsupported {
                 margin_holds,
@@ -570,6 +646,7 @@ pub fn advance(
         {
             domain.exit =
                 Some(json!({"t_s": t, "label": label, "verdict": format!("{verdict:?}")}));
+            domain.exit_kind = verdict.exit();
         }
         attribution.observation_handler_s += thread_cpu_s() - started;
         if output {
@@ -664,6 +741,24 @@ pub fn advance(
                     yp.copy_from_slice(&done.yp);
                     let cpu = thread_cpu_s() - started;
                     attribution.restart(cpu, part);
+                    // Owner answer B1 at the restart's consistent start.
+                    if domain.exit.is_none() {
+                        let started = thread_cpu_s();
+                        match accepted_phase(&mut ida, t, &y, &yp) {
+                            Ok(None) => {}
+                            Ok(Some(region)) => {
+                                let verdict = format!("phase absence fails at region {region} at the restart's consistent start");
+                                domain.exit = Some(json!({"t_s": t, "label": B1_EXIT, "verdict": verdict}));
+                                domain.exit_kind = Some(DomainExit::B1);
+                                if !spec.domain_exit_stops {
+                                    domain.information_from = Some(t);
+                                }
+                            }
+                            Err(e) => failure = Some(e),
+                        }
+                        domain.accepted_checked += 1;
+                        attribution.observation_handler_s += thread_cpu_s() - started;
+                    }
                     let (kinds, located, events) = kinds(&done, $name);
                     for (id, at) in &located {
                         if let Some(c) = cluster_index.get(id) {
@@ -845,6 +940,29 @@ pub fn advance(
                 // Judged up to here; continued for information only.
                 domain.information_from = Some(at);
             }
+        }
+        // Owner answer B1 on the accepted step itself (kinetics.md: every
+        // accepted state), after the samples it covers; a root return's step
+        // is discarded by its restart.
+        if failure.is_none() && roots.is_none() && ended.is_none() && domain.exit.is_none() {
+            let started = thread_cpu_s();
+            match accepted_phase(&mut ida, time, &y, &yp) {
+                Ok(None) => {}
+                Ok(Some(region)) => {
+                    let verdict =
+                        format!("phase absence fails at region {region} on the accepted step");
+                    domain.exit = Some(json!({"t_s": time, "label": B1_EXIT, "verdict": verdict}));
+                    domain.exit_kind = Some(DomainExit::B1);
+                    if spec.domain_exit_stops {
+                        ended = Some(time);
+                    } else {
+                        domain.information_from = Some(time);
+                    }
+                }
+                Err(e) => failure = Some(e),
+            }
+            domain.accepted_checked += 1;
+            attribution.observation_handler_s += thread_cpu_s() - started;
         }
         // DR-P3-GATE-1: the physical admission (inventory) and the ledger
         // closure of every output are judged on the accepted step that first
@@ -1048,6 +1166,8 @@ pub fn advance(
         "solver_calls": attribution.solver_calls.0, "observation_returns": attribution.observation_returns.0,
         "rule": "solver CPU (G11) = IDASolve calls that advanced the step count or returned at an owner root, less the ledger quadrature, plus discrete restarts; checked against the cap after every call; the total guard against the run's process CPU"});
     record.domain = json!({"predicate": "joined::post_trip_domain::admit_accepted at every accepted sample (S2-D23 revised: D3 (a) as approved, the post-trip extension holding while the doubled-water-term margin is at least 1 %; the first state it does not admit ends the run, labelled)",
+        "phase_absence": "owner answer B1 (kinetics.md, S2-D41/D42): no vapour in any core region's coolant cell, judged at every sample (inside admit_accepted) and at every accepted step and restart start on its own evaluation; its exit is labelled \"B1 phase-absence exit\", not a D3 (a) exit",
+        "accepted_states_phase_checked": domain.accepted_checked,
         "samples": domain.samples, "worst_pivot": domain.worst_pivot,
         "samples_margin_not_holding": domain.margin_failures,
         "first_margin_holds_at_s": domain.first_margin_hold.map(|x| x - t0),
@@ -1081,5 +1201,6 @@ pub fn advance(
         attribution,
         conservation_pass,
         information_from: domain.information_from,
+        domain_exit: domain.exit_kind,
     }
 }
