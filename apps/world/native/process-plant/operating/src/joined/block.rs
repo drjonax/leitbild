@@ -239,6 +239,13 @@ pub enum Command {
     /// command's time, with no turbine trip (G7's contrary case). The steam
     /// demand stays at its constant A/B values as a declared boundary.
     ManualReactorTrip,
+    /// G7's stuck cluster, a declared malfunction: the named cluster's grip
+    /// stays closed when the holding circuit opens, and every other cluster
+    /// releases normally. It is declared while the cluster is still held,
+    /// before the trip that opens the circuit; it changes no coordinate.
+    /// `cluster` is indexed as the source feedback's rods (the rod owner's
+    /// cluster order); the harness names the highest-worth one.
+    StuckCluster { cluster: usize },
 }
 
 /// Structural dependencies of one block, in its own indices, for the joined
