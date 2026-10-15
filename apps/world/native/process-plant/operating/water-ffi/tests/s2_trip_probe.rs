@@ -857,8 +857,19 @@ fn trip(duration_s: f64) -> Value {
                     let value = |(l, i): &(String, usize)| json!([l, y[*i] * scales[*i]]);
                     let d3_sample = d3.as_ref().map(|(e, reference)| {
                         let mut v = d3_at(j, e, reference, t);
-                        let admission =
-                            post_trip_domain::admit_accepted(j.nuclear(), e, j.travel(), t, 0.);
+                        let admission = j
+                            .region_phases()
+                            .map_err(|f| post_trip_domain::Error::Phase(format!("{f:?}")))
+                            .and_then(|phase| {
+                                post_trip_domain::admit_accepted(
+                                    j.nuclear(),
+                                    &phase,
+                                    e,
+                                    j.travel(),
+                                    t,
+                                    0.,
+                                )
+                            });
                         v["admission"] = match &admission {
                             Ok(a) => json!({"domain": a.domain, "margin_holds": a.margin.holds}),
                             Err(err) => json!({"unsupported": format!("{err:?}")}),

@@ -1218,8 +1218,10 @@ fn d3_shutdown_margin_at_the_state_and_on_the_z3_envelope() {
     } = started();
     let (ext, ext_source) = extension(&raw);
     joined.evaluate(t, &y, &yp, None, 0., None).expect("state");
-    let at_state = post_trip_domain::admit_accepted(joined.nuclear(), &ext, joined.travel(), t, 0.)
-        .expect("the state itself is admitted");
+    let phase = joined.region_phases().expect("region phases");
+    let at_state =
+        post_trip_domain::admit_accepted(joined.nuclear(), &phase, &ext, joined.travel(), t, 0.)
+            .expect("the state itself is admitted");
     let nuclear = joined.nuclear();
     let feedback = nuclear.feedback();
     let f = nuclear.feedback_inputs();

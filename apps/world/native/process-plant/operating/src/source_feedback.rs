@@ -198,6 +198,33 @@ pub struct MaterialPartials {
     pub xenon: f64,
     pub samarium: f64,
 }
+
+/// One core region's coolant phase on an accepted state (owner answer B1,
+/// 15 Oct 2026): the liquid's departure from saturation and the vapour its
+/// coolant cell holds.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct RegionPhase {
+    /// `T_l - Tsat(p)` of the region's coolant [K].
+    pub saturation_departure_k: f64,
+    /// Vapour mass in the region's coolant cell [kg].
+    pub vapor_kg: f64,
+}
+
+/// Owner answer B1: pressure no longer stands in for single-phase validity.
+/// On an accepted state every core region's coolant must be single-phase
+/// liquid below saturation with no vapour in its coolant cell; the first
+/// region that fails is a kinetics-domain exit (`OutsideDomain("phase
+/// absence", region)`). A check only: no equation, coefficient or tolerance
+/// changes.
+pub fn phase_absence(phase: &[RegionPhase]) -> Result<(), Error> {
+    match phase
+        .iter()
+        .position(|r| !(r.saturation_departure_k < 0. && r.vapor_kg == 0.))
+    {
+        Some(i) => Err(Error::OutsideDomain("phase absence", i)),
+        None => Ok(()),
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
     InvalidMetadata(&'static str),

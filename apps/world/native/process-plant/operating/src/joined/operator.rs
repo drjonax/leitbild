@@ -408,6 +408,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
                     boron_ppm_eq: s(0.),
                     pressure_pa: s(0.),
                     temperature_k: s(0.),
+                    vapor_kg: s(0.),
                 };
                 nuclear.regions()
             ],
@@ -490,6 +491,25 @@ impl<P: Properties + WaterProperties> Joined<P> {
     /// region: exactly the port values the nuclear rows read.
     pub fn region_water(&self) -> &[RegionWater] {
         &self.blocks.water
+    }
+    /// Owner answer B1: each core region's coolant phase at the last
+    /// evaluation (the region water above): the liquid's departure from
+    /// saturation at its own pressure and its owner cell's vapour mass.
+    /// Read on accepted states only, never inside a residual.
+    pub fn region_phases(&self) -> Result<Vec<crate::source_feedback::RegionPhase>, Failure> {
+        self.blocks
+            .water
+            .iter()
+            .map(|w| {
+                let saturation =
+                    Properties::saturation_caloric(&self.blocks.properties, s(w.pressure_pa.value))
+                        .map_err(|e| fatal(format!("region phase saturation: {e}")))?;
+                Ok(crate::source_feedback::RegionPhase {
+                    saturation_departure_k: w.temperature_k.value - saturation.temperature.value,
+                    vapor_kg: w.vapor_kg.value,
+                })
+            })
+            .collect()
     }
     /// Each carrier's feedback fuel temperature of the last evaluation.
     pub fn fuel_feedback_temperatures(&self) -> &[Scalar] {
@@ -1563,6 +1583,7 @@ fn region_water(fluid: &Fluid<'_>, i: usize, j: usize) -> Result<RegionWater, Fa
         boron_ppm_eq: s(1e6) * fluid.tracer[j] / liquid,
         pressure_pa: fluid.cells[j].pressure,
         temperature_k: Scalar::new(q.temperature_k, d.temperature_k),
+        vapor_kg: fluid.vapor_mass[j],
     })
 }
 

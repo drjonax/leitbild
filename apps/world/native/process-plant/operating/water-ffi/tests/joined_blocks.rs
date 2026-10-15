@@ -105,6 +105,7 @@ fn nuclear_partials_against_seeded_rows() {
                 boron_ppm_eq: Scalar::constant(1e6 * b / ml),
                 pressure_pa: Scalar::constant(p),
                 temperature_k: Scalar::constant(If97.values(&point).temperature_k),
+                vapor_kg: Scalar::constant(mv),
             }
         })
         .collect();

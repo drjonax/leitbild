@@ -814,6 +814,8 @@ pub fn prepare(raw: &serde_json::Value) -> Result<Prepared, Failure> {
                 boron_ppm_eq: s(1e6 * packet.water_boron_amount_kg_eq[j] / w.mass_kg),
                 pressure_pa: s(w.pressure_pa),
                 temperature_k: s(w.temperature_k),
+                // The prepared water is liquid: no vapour in the owner cell.
+                vapor_kg: s(0.),
             }
         })
         .collect();
