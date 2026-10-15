@@ -16,7 +16,10 @@
 //! - **TBD register.** Every key of `tbd` names a dotted pointer into the
 //!   block. A gate run refuses while any is `null`; a filled one must have
 //!   its own decision-log row naming the key and a 64-hex receipt SHA-256.
-//!   A `null` in the block that `tbd` does not list refuses as undeclared.
+//!   The last such row that no row supersedes counts: a row whose cell
+//!   reads `Superseded: <ID>, ...` (a reopening, S2-F01r) removes those
+//!   rows, so a reopened value needs a new fill row. A `null` in the block
+//!   that `tbd` does not list refuses as undeclared.
 //! - **Work bound.** `totalCpu_s` of process CPU covers every S2 receipt,
 //!   run, reference, contrary case and S1 run 6. Before each run the
 //!   remaining bound is compared with the run's total guard; a run that does
@@ -160,6 +163,23 @@ fn rows(page: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The IDs of rows another row supersedes: every row ID named, as a whole
+/// token, after `Superseded:` in a cell (`Superseded: S2-F01`).
+fn superseded_rows(log_rows: &[Vec<String>]) -> std::collections::BTreeSet<String> {
+    let ids: std::collections::BTreeSet<&str> = log_rows
+        .iter()
+        .filter_map(|c| c.first().map(String::as_str))
+        .collect();
+    log_rows
+        .iter()
+        .flatten()
+        .filter_map(|cell| cell.split_once("Superseded:").map(|(_, rest)| rest))
+        .flat_map(|rest| rest.split(|c: char| c == ',' || c == ';' || c.is_whitespace()))
+        .filter(|token| ids.contains(token))
+        .map(str::to_string)
+        .collect()
+}
+
 /// The frozen SHA of `ld01-s2-gates` the log pins: the last RP1 row naming
 /// the block and exactly one 64-hex value. `Ok(None)` when no row pins it.
 pub fn frozen_sha256(log: &str) -> Result<Option<(String, String)>, String> {
@@ -207,15 +227,22 @@ pub fn pin(gates: &Block, log: Option<&str>) -> Result<Value, String> {
 pub fn tbd_state(gates: &Block, log: Option<&str>) -> Result<Value, String> {
     let register = tbd_register(gates)?;
     let log_rows = log.map(rows).unwrap_or_default();
+    let superseded = superseded_rows(&log_rows);
     let mut open = Vec::new();
     let mut fills = Vec::new();
     for (key, lane, value) in &register {
         if value.is_null() {
             open.push(json!({"key": key, "lane": lane}));
         } else {
-            let row = log_rows.iter().find(|cells| {
+            // The LAST row naming the key with a receipt SHA-256 (as the pin
+            // takes the last RP1 row) that no row supersedes: a reopened
+            // value is matched only by a fill logged for it, never by the
+            // superseded one.
+            let row = log_rows.iter().rev().find(|cells| {
                 let text = cells.join(" | ");
-                text.contains(key.as_str()) && !hex64(&text).is_empty()
+                text.contains(key.as_str())
+                    && !hex64(&text).is_empty()
+                    && !cells.first().is_some_and(|id| superseded.contains(id))
             });
             fills.push(json!({"key": key, "lane": lane, "value": value,
                 "logged_row": row.and_then(|c| c.first().cloned()),

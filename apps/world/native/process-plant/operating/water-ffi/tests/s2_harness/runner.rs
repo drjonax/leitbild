@@ -70,6 +70,11 @@ pub struct Start {
     pub y: Vec<f64>,
     pub yp: Vec<f64>,
     pub from: String,
+    /// An accepted solver step, an exact consistent start or a saved
+    /// hand-over of one: the only states a run starts from or a phase hands
+    /// on (DR-P3-GATE-3). False for a dense-output or located-root state and
+    /// for the end of a failed run.
+    pub accepted: bool,
 }
 
 /// Cumulative counts and CPU at one output.
@@ -156,7 +161,7 @@ fn kinds(done: &Restarted, discrete: &str) -> (Vec<String>, Vec<(String, f64)>, 
             events.extend(list.iter().cloned());
         } else if r["event"] == "STOP ramp end" {
             push("ramp end", &mut kinds);
-        } else if r["command"].is_string() || r["turbine_trip_s"].is_number() {
+        } else if !r["command"].is_null() || r["turbine_trip_s"].is_number() {
             push("command", &mut kinds);
         } else {
             push("other", &mut kinds);
@@ -201,6 +206,27 @@ fn worked(stats: &leitbild_operating_water::ida::Stats) -> Counts {
         Counts::default()
     } else {
         Counts::of(stats)
+    }
+}
+
+/// The state a run that ends at a sample hands on (DR-P3-GATE-3, DR-P3-GATE-1's
+/// rule applied to every hand-over): the accepted step that first reaches
+/// the sample (`step`, the state IDA's constraints hold on and the
+/// closures admitted), never the interpolant there, which may dip below a
+/// near-empty stock's zero between admitted steps; the run's verdicts stay
+/// judged on the sample. A sample reached by a root return has no accepted
+/// step (the restart discards it): its state is returned as not accepted,
+/// and no run starts from it nor phase hands it on ([`Start::accepted`]).
+/// Returns `(t, y, y', accepted)`.
+pub fn end_state(
+    sample: (f64, &[f64], &[f64]),
+    step: (f64, &[f64], &[f64]),
+    root_return: bool,
+) -> (f64, Vec<f64>, Vec<f64>, bool) {
+    if root_return {
+        (sample.0, sample.1.to_vec(), sample.2.to_vec(), false)
+    } else {
+        (step.0, step.1.to_vec(), step.2.to_vec(), true)
     }
 }
 
@@ -323,6 +349,11 @@ pub fn advance(
     d3_reference: &[f64],
     mut settled: Option<&mut dyn FnMut(&Credited) -> bool>,
 ) -> Run {
+    assert!(
+        start.accepted,
+        "DR-P3-GATE-3: a run starts only from an accepted step or a consistent start, not from {}",
+        start.from
+    );
     let process0 = process_cpu_s();
     let thread0 = thread_cpu_s();
     let restart = restart_configuration(d);
@@ -570,6 +601,9 @@ pub fn advance(
     };
     let rods = spec.rods_observed;
     let mut failure: Option<String> = None;
+    // Whether the run's last state is one a later run may start from
+    // ([`Start::accepted`]).
+    let mut end_accepted = true;
     let mut exit: Option<String> = None;
     let mut outputs = 0usize;
     let mut observations = 0usize;
@@ -836,10 +870,14 @@ pub fn advance(
             }
         }
         if let Some(at) = ended {
-            // The run ends at that sample: its state is the interpolant's.
-            t = at;
-            y.copy_from_slice(&ys);
-            yp.copy_from_slice(&yps);
+            // The run ends at that sample and hands on the accepted step
+            // reaching it ([`end_state`]).
+            let (te, ye, ype, accepted) =
+                end_state((at, &ys, &yps), (time, &y, &yp), roots.is_some());
+            t = te;
+            y.copy_from_slice(&ye);
+            yp.copy_from_slice(&ype);
+            end_accepted = accepted;
         } else if failure.is_none() {
             t = time;
             if let Some(directions) = roots {
@@ -979,6 +1017,7 @@ pub fn advance(
             t - t0
         ));
     }
+    let end_accepted = end_accepted && failure.is_none();
     record.failure = failure;
     record.exit = exit;
     record.counts = totals;
@@ -1037,6 +1076,7 @@ pub fn advance(
             y,
             yp,
             from: format!("the end of {}", spec.name),
+            accepted: end_accepted,
         },
         attribution,
         conservation_pass,

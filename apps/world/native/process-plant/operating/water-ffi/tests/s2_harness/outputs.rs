@@ -242,6 +242,32 @@ impl Reader {
     }
 }
 
+/// The credited outputs defined on the network's cell-pressure coordinates
+/// (the class S2-D24r's sensitivities are taken on), each with the joined
+/// coordinates it reads: `core_dp_pa` = p(LOWER) − p(UPPER), as
+/// [`Reader::read`] computes it. No other credited output is one: the PZR
+/// roof is a tap of the stratified column and the SG pressures are the
+/// secondary's `p_s`.
+pub fn cell_pressure_outputs(
+    joined: &Joined<If97>,
+    packet: &NetworkPacket,
+) -> Result<Vec<(&'static str, Vec<usize>)>, String> {
+    let base = |id: &str| {
+        packet
+            .mechanics
+            .regions
+            .iter()
+            .position(|r| r.id == id)
+            .and_then(|c| joined.network.cell_layout.get(c))
+            .map(|l| l.base)
+            .ok_or_else(|| format!("no regular cell {id}"))
+    };
+    Ok(vec![(
+        key::CORE_DP_PA,
+        vec![base("LOWER")?, base("UPPER")?],
+    )])
+}
+
 /// D3 (a)'s record: the packet's `post_trip_domain` section, or for a
 /// packet compiled before it (9eb6e37d) the source compiler's output for
 /// the same wiki in the file `LD01_POST_TRIP_DOMAIN` (as SPECTRUM reads it).

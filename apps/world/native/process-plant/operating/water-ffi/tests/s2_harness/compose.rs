@@ -257,9 +257,13 @@ pub fn compose(shared: &Block) -> Composed {
 }
 
 /// Steps (A)-(D), with step (A)'s export given (`Some`) or computed, and
-/// with `ld01-s2-gates`' derived tolerance classes (S2-D24,
-/// [`derive_tolerances`]) applied when `gates` is given and declares them.
-pub fn compose_from(shared: &Block, gates: Option<&Block>, settled: Option<&Settled>) -> Composed {
+/// with the declared derived tolerance class (S2-D24r,
+/// [`derive_tolerances`]) applied when a rule is given.
+pub fn compose_from(
+    shared: &Block,
+    derived: Option<&DerivedRule>,
+    settled: Option<&Settled>,
+) -> Composed {
     let started = process_cpu_s();
     let packet = packet_file();
     let network_packet: NetworkPacket =
@@ -341,20 +345,23 @@ pub fn compose_from(shared: &Block, gates: Option<&Block>, settled: Option<&Sett
     .expect("exact consistent start");
     let start_cpu_s = process_cpu_s() - start_cpu;
     let mut atol = atol;
-    let derived = match gates {
-        Some(g) => derive_tolerances(
+    let pressure_outputs = crate::outputs::cell_pressure_outputs(&joined, &network_packet)
+        .expect("credited outputs on cell pressures");
+    let derived = match derived {
+        Some(rule) => derive_tolerances(
             &mut joined,
             &structure,
-            g,
+            rule,
+            &pressure_outputs,
             classes.relative,
             0.,
             &y,
             &yp,
             &mut atol,
         )
-        .expect("S2-D24 derived tolerance classes"),
+        .expect("S2-D24r derived tolerance class"),
         None => {
-            json!({"declared": false, "reason": "composed on G12's classes only (no ld01-s2-gates given)"})
+            json!({"declared": false, "reason": "composed on G12's classes only (no derived class declared or given)"})
         }
     };
     let receipt = json!({
@@ -445,47 +452,196 @@ pub fn derived_tolerances(
         .collect()
 }
 
-/// The pressure class whose columns set an S2-D24 current: the network's
+/// The pressure class whose columns set an S2-D24r current: the network's
 /// cell pressures (decision 0013's pressure rows).
 pub const PRESSURE_CLASS: &str = "network/CellPressure";
 
-/// S2-D24 applied to `atol` as `ld01-s2-gates` declares it
-/// (`derivedTolerance`: the covered class as `owner/Class` of the joined
-/// layouts, the rule, the declared value in kg/s, TBD(lead) until filled,
-/// and G12's value it replaces).
-///
-/// The rule `atol_m = atol_p × |∂m/∂Δp|` is evaluated from the block
-/// Jacobian `∂F/∂y` at `(t, y, y')` ([`derived_tolerances`]). `atol_p` is the
-/// pressure class as revision 7 and RODCOST's V1 state it, the contract's
-/// `rtol |p|` (≈155 Pa); the pressure coordinates' own absolute tolerance
-/// (rtol over the isentropic compressibility, kPa) gives a much looser
-/// class and is reported beside it, never applied. When `value_kg_s` is
-/// declared, that value is applied to every covered coordinate (in its
-/// solver scaling) and the derived one is reported against it; while it is
-/// open, the derived value is applied, labelled a preview. Absent from the
-/// block, nothing changes and the receipt says so. Returns the receipt: each
-/// covered coordinate's applied and derived tolerance and sensitivity.
-#[allow(clippy::too_many_arguments)] // The operator, its structure, the rule, the contract's rtol and the state.
+/// S2-D24r as `ld01-s2-gates` declares it (`derivedTolerance`): the covered
+/// class (`owner/Class` of the joined layouts), the rule text, the decision,
+/// the declared value in kg/s (TBD until filled) and G12's value, with every
+/// credited output's absolute budget (the comparison's metrics of scale 1,
+/// [`crate::compare::Budgets`]) from which the outputs each coordinate
+/// determines take theirs ([`determined_tolerances`]).
+#[derive(Clone, Debug)]
+pub struct DerivedRule {
+    pub class: String,
+    pub rule: String,
+    pub decision: String,
+    pub g12_kg_s: f64,
+    pub declared_kg_s: Option<f64>,
+    /// `(credited output key, absolute budget)` of every compared output.
+    pub budgets: Vec<(&'static str, f64)>,
+}
+
+impl DerivedRule {
+    /// The rule from the declaration; `Ok(None)` when the block declares no
+    /// derived class. The budgets are the credited blocks' own
+    /// (`ld01-accuracy-contract`, `ld01-s2-accuracy`), read as the
+    /// comparison reads them.
+    pub fn from(d: &crate::gates::Declaration) -> Result<Option<Self>, String> {
+        if d.gates.value.get("derivedTolerance").is_none() {
+            return Ok(None);
+        }
+        let budgets = crate::compare::Budgets::from(d)?
+            .metrics()
+            .into_iter()
+            .filter(|(_, _, scale, _)| *scale == 1.)
+            .map(|(_, output, _, budget)| (output, budget))
+            .collect();
+        Ok(Some(Self {
+            class: d.gates.text("/derivedTolerance/class"),
+            rule: d.gates.text("/derivedTolerance/rule"),
+            decision: d.gates.text("/derivedTolerance/decision"),
+            g12_kg_s: d.gates.number("/derivedTolerance/g12Value_kg_s"),
+            declared_kg_s: d.gates.open_number("/derivedTolerance/value_kg_s"),
+            budgets,
+        }))
+    }
+
+    /// The credited outputs on cell pressures with their budgets; an output
+    /// without an absolute budget refuses.
+    pub fn credited(
+        &self,
+        outputs: &[(&'static str, Vec<usize>)],
+    ) -> Result<Vec<CreditedPressure>, String> {
+        outputs
+            .iter()
+            .map(|(name, columns)| {
+                let budget_pa = self
+                    .budgets
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, b)| *b)
+                    .ok_or_else(|| format!("the credited output {name} has no absolute budget"))?;
+                if !(budget_pa.is_finite() && budget_pa > 0.) {
+                    return Err(format!(
+                        "the credited output {name}'s budget is {budget_pa}"
+                    ));
+                }
+                Ok(CreditedPressure {
+                    name: (*name).to_string(),
+                    budget_pa,
+                    columns: columns.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// A credited output defined on pressure coordinates: its key, its budget
+/// (Pa) and the joined coordinates it reads.
+#[derive(Clone, Debug)]
+pub struct CreditedPressure {
+    pub name: String,
+    pub budget_pa: f64,
+    pub columns: Vec<usize>,
+}
+
+/// One credited output a derived coordinate determines.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Determined {
+    pub output: String,
+    pub budget_pa: f64,
+    /// `|∂m/∂p_j|` in SI (kg/s per Pa), the largest over the output's
+    /// coordinates the row reads (for a difference output, `|∂m/∂Δp|`).
+    pub sensitivity: f64,
+    pub column: usize,
+    /// `budget × sensitivity` (kg/s).
+    pub tolerance: f64,
+}
+
+/// S2-D24r on a Jacobian in CSC (`pointers`, `rows`, `values`: the stored
+/// order of the joined pattern, `∂F/∂y` in solver scaling; `scales` the
+/// coordinates' SI scales): each row `r` of `derived` is an algebraic
+/// current set by pressures, with `∂m/∂p_j = −J[r,j] / J[r,r]`. The credited
+/// outputs it determines are those whose coordinates its row reads (a
+/// nonzero entry); each gives `budget × |∂m/∂p|` over its own coordinates.
+/// Returns per row the outputs it determines, tightest first: the first is
+/// the row's derived tolerance (kg/s), so every determined output's budget
+/// holds. A row without a finite nonzero diagonal, or that determines no
+/// credited output, refuses.
+pub fn determined_tolerances(
+    pointers: &[usize],
+    rows: &[usize],
+    values: &[f64],
+    derived: &[usize],
+    credited: &[CreditedPressure],
+    scales: &[f64],
+) -> Result<Vec<Vec<Determined>>, String> {
+    let index: std::collections::BTreeMap<usize, usize> =
+        derived.iter().enumerate().map(|(k, r)| (*r, k)).collect();
+    let mut diagonal = vec![None; derived.len()];
+    let mut entries: Vec<Vec<(usize, f64)>> = vec![Vec::new(); derived.len()];
+    for j in 0..pointers.len() - 1 {
+        for position in pointers[j]..pointers[j + 1] {
+            if let Some(k) = index.get(&rows[position]) {
+                if rows[position] == j {
+                    diagonal[*k] = Some(values[position]);
+                } else if values[position] != 0. {
+                    entries[*k].push((j, values[position]));
+                }
+            }
+        }
+    }
+    derived
+        .iter()
+        .enumerate()
+        .map(|(k, r)| {
+            let d = diagonal[k]
+                .filter(|d| *d != 0. && d.is_finite())
+                .ok_or_else(|| format!("row {r} has no finite nonzero diagonal"))?;
+            let mut determined: Vec<Determined> = credited
+                .iter()
+                .filter_map(|o| {
+                    entries[k]
+                        .iter()
+                        .filter(|(j, _)| o.columns.contains(j))
+                        .map(|(j, v)| ((v / d).abs() * scales[*r] / scales[*j], *j))
+                        .max_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(sensitivity, column)| Determined {
+                            output: o.name.clone(),
+                            budget_pa: o.budget_pa,
+                            sensitivity,
+                            column,
+                            tolerance: o.budget_pa * sensitivity,
+                        })
+                })
+                .collect();
+            if determined.is_empty() {
+                return Err(format!(
+                    "row {r} determines no credited output (it reads none of their coordinates)"
+                ));
+            }
+            determined.sort_by(|a, b| a.tolerance.total_cmp(&b.tolerance));
+            Ok(determined)
+        })
+        .collect()
+}
+
+/// S2-D24r applied to `atol` (lead decision, re-declared after the S2-15
+/// result; the original S2-D24 used rtol·|p| as atol_p): every coordinate of
+/// the rule's class takes the tightest credited budget among the credited
+/// outputs it determines times its sensitivity, from the block Jacobian's
+/// own row at `(t, y, y')` ([`determined_tolerances`] over `outputs`, the
+/// credited outputs on cell pressures, [`crate::outputs::cell_pressure_outputs`];
+/// for the rods' guide currents: core DP's budget × `|∂m/∂Δp|`). The declared
+/// value is applied once filled; while it is open the derived one is
+/// applied, labelled a preview. The receipt records every covered
+/// coordinate's applied and derived tolerance, the outputs it determines
+/// with their budgets and sensitivities, and the superseded rtol·|p| basis
+/// beside it for the record.
+#[allow(clippy::too_many_arguments)] // The operator, its structure, the rule, the outputs, the contract's rtol and the state.
 pub fn derive_tolerances(
     joined: &mut Joined<If97>,
     structure: &JoinedJacobian,
-    gates: &Block,
+    rule: &DerivedRule,
+    outputs: &[(&'static str, Vec<usize>)],
     rtol: f64,
     t: f64,
     y: &[f64],
     yp: &[f64],
     atol: &mut [f64],
 ) -> Result<Value, String> {
-    if gates.value.get("derivedTolerance").is_none() {
-        return Ok(
-            json!({"declared": false, "reason": "ld01-s2-gates declares no derivedTolerance: G12's classes stand"}),
-        );
-    }
-    let class = gates.text("/derivedTolerance/class");
-    let rule = gates.text("/derivedTolerance/rule");
-    let decision = gates.text("/derivedTolerance/decision");
-    let g12_kg_s = gates.number("/derivedTolerance/g12Value_kg_s");
-    let declared_kg_s = gates.open_number("/derivedTolerance/value_kg_s");
     let class_of: Vec<String> = joined
         .layouts()
         .iter()
@@ -500,57 +656,71 @@ pub fn derive_tolerances(
         return Err("the layouts do not cover the joined coordinates".into());
     }
     let pressure: Vec<bool> = class_of.iter().map(|c| c == PRESSURE_CLASS).collect();
-    if !pressure.iter().any(|p| *p) {
-        return Err(format!(
-            "no coordinate of the pressure class {PRESSURE_CLASS}"
-        ));
+    let credited = rule.credited(outputs)?;
+    for o in &credited {
+        if let Some(j) = o
+            .columns
+            .iter()
+            .find(|j| !pressure.get(**j).copied().unwrap_or(false))
+        {
+            return Err(format!(
+                "{} reads coordinate {j}, which is not of the pressure class {PRESSURE_CLASS}",
+                o.name
+            ));
+        }
     }
-    let rows: Vec<usize> = (0..y.len()).filter(|i| class_of[*i] == class).collect();
+    let rows: Vec<usize> = (0..y.len())
+        .filter(|i| class_of[*i] == rule.class)
+        .collect();
     if rows.is_empty() {
-        return Err(format!("no coordinate of the derived class {class}"));
+        return Err(format!("no coordinate of the derived class {}", rule.class));
     }
     let scales = joined.scales();
     let mut values = vec![0.; structure.pattern.indices().len()];
     jacobian_blocks(joined, structure, t, 0., y, yp, &mut values, Classes::ALL)
         .map_err(|e| format!("block Jacobian at the composed state: {e:?}"))?;
-    let relative: Vec<f64> = y.iter().map(|v| rtol * v.abs()).collect();
     let (pointers, indices) = (structure.pattern.pointers(), structure.pattern.indices());
-    let derived = derived_tolerances(pointers, indices, &values, &rows, &pressure, &relative)?;
-    let absolute = derived_tolerances(pointers, indices, &values, &rows, &pressure, atol)?;
+    let determined = determined_tolerances(pointers, indices, &values, &rows, &credited, &scales)?;
+    let relative: Vec<f64> = y.iter().map(|v| rtol * v.abs()).collect();
+    let superseded = derived_tolerances(pointers, indices, &values, &rows, &pressure, &relative)?;
     let mut per = Vec::new();
-    let mut applied_kg_s: Vec<f64> = Vec::new();
-    for ((r, d), a) in rows.iter().zip(&derived).zip(&absolute) {
+    let (mut applied_kg_s, mut derived_kg_s) = (Vec::new(), Vec::new());
+    for ((r, d), old) in rows.iter().zip(&determined).zip(&superseded) {
         let scale = scales[*r];
-        let applied = declared_kg_s.map_or(d.0, |v| v / scale);
+        let tightest = &d[0];
+        let applied = rule.declared_kg_s.unwrap_or(tightest.tolerance);
         per.push(
             json!({"coordinate": labels[*r], "g12_atol_kg_s": atol[*r] * scale,
-            "applied_atol_kg_s": applied * scale, "derived_atol_kg_s": d.0 * scale,
-            "dm_ddp_kg_s_per_pa": d.1 * scale / scales[d.2], "pressure_column": labels[d.2],
-            "atol_p_pa": relative[d.2] * scales[d.2],
-            "with_the_pressure_coordinates_absolute_tolerance_kg_s": a.0 * scale,
-            "pressure_absolute_tolerance_pa": atol[d.2] * scales[d.2]}),
+            "applied_atol_kg_s": applied, "derived_atol_kg_s": tightest.tolerance,
+            "determines": d.iter().map(|o| json!({"output": o.output, "budget_pa": o.budget_pa,
+                "dm_ddp_kg_s_per_pa": o.sensitivity, "pressure_column": labels[o.column],
+                "tolerance_kg_s": o.tolerance})).collect::<Vec<_>>(),
+            "superseded_s2_d24_rtol_p_basis_kg_s": old.0 * scale}),
         );
-        applied_kg_s.push(applied * scale);
-        atol[*r] = applied;
+        applied_kg_s.push(applied);
+        derived_kg_s.push(tightest.tolerance);
+        atol[*r] = applied / scale;
     }
-    let range = |v: Vec<f64>| {
+    let range = |v: &[f64]| {
         [
             v.iter().copied().fold(f64::INFINITY, f64::min),
             v.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         ]
     };
-    let derived_kg_s: Vec<f64> = rows
+    let mut budgets: Vec<(String, f64)> = determined
         .iter()
-        .zip(&derived)
-        .map(|(r, d)| d.0 * scales[*r])
+        .map(|d| (d[0].output.clone(), d[0].budget_pa))
         .collect();
+    budgets.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    budgets.dedup();
     Ok(
-        json!({"declared": true, "decision": decision, "class": class, "rule": rule,
-        "atol_p": "the contract's rtol |p| at the evaluated state (revision 7, RODCOST V1); the pressure coordinates' own absolute tolerance is reported beside it",
-        "pressure_class": PRESSURE_CLASS, "relative_tolerance": rtol, "t_s": t,
-        "g12_value_kg_s": g12_kg_s, "declared_value_kg_s": declared_kg_s,
-        "applied": if declared_kg_s.is_some() { "the declared value" } else { "PREVIEW: the derived value (value_kg_s is TBD(lead))" },
-        "applied_kg_s_range": range(applied_kg_s), "derived_kg_s_range": range(derived_kg_s),
+        json!({"declared": true, "decision": rule.decision, "class": rule.class, "rule": rule.rule,
+        "credited_outputs_on_pressures": credited.iter().map(|o| json!({"output": o.name, "budget_pa": o.budget_pa,
+            "coordinates": o.columns.iter().map(|j| labels[*j].clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        "tightest_budgets_applied": budgets, "pressure_class": PRESSURE_CLASS, "t_s": t,
+        "g12_value_kg_s": rule.g12_kg_s, "declared_value_kg_s": rule.declared_kg_s,
+        "applied": if rule.declared_kg_s.is_some() { "the declared value" } else { "PREVIEW: the derived value (value_kg_s is TBD(lead))" },
+        "applied_kg_s_range": range(&applied_kg_s), "derived_kg_s_range": range(&derived_kg_s),
         "coordinates": per.len(), "per_coordinate": per}),
     )
 }

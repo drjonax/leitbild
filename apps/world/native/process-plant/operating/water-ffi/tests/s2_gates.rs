@@ -45,6 +45,8 @@ use std::collections::BTreeMap;
 /// Revision 7's blocks and the shared S1 blocks, as the unit tests'
 /// fixtures (the harness itself reads the declaration page and the wiki).
 const GATES_R7: &str = include_str!("s2_harness/fixtures/ld01-s2-gates-r7.json");
+/// The published r7.1 block (spec wiki 80e78b6), pinned by RP1-pin-r7.1.
+const GATES_R7_1: &str = include_str!("s2_harness/fixtures/ld01-s2-gates-r7.1.json");
 const ACCURACY_R7: &str = include_str!("s2_harness/fixtures/ld01-s2-accuracy-r7.json");
 const S1_GATES: &str = include_str!("s2_harness/fixtures/ld01-s1-gates.json");
 const CONTRACT: &str = include_str!("s2_harness/fixtures/ld01-accuracy-contract.json");
@@ -353,6 +355,34 @@ fn a_gate_run_refuses_while_a_tbd_is_open_unlogged_or_undeclared() {
     let tbd = guards::tbd_state(&all, Some(&log)).unwrap();
     assert_eq!(tbd["closed"], json!(true), "{tbd}");
     assert!(guards::gate_run_refusals(&pin, &tbd).is_empty());
+    // A reopened value (S2-F01r's form: a row superseding the fill, with no
+    // SHA) is unlogged until its own fill row; then that row counts, never
+    // the superseded one.
+    let logged = |log: &str| {
+        let tbd = guards::tbd_state(&all, Some(log)).unwrap();
+        let row = tbd["fills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["key"] == "derivedTolerance.value_kg_s")
+            .map(|f| f["logged_row"].clone())
+            .unwrap();
+        (row, tbd["unlogged_fills"].clone())
+    };
+    let first = keys
+        .iter()
+        .position(|k| k == "derivedTolerance.value_kg_s")
+        .unwrap();
+    assert_eq!(logged(&log), (json!(format!("S2-F{first}")), json!(0)));
+    let reopened = format!(
+        "{log}| S2-F{first}r | 17 Oct | the guide-current class value is open again | rule changed | Superseded: S2-F{first} |\n"
+    );
+    assert_eq!(logged(&reopened), (Value::Null, json!(1)));
+    let refill = format!(
+        "{reopened}| S2-F99 | 17 Oct | refill derivedTolerance.value_kg_s | receipt sha256 {} |\n",
+        "c".repeat(64)
+    );
+    assert_eq!(logged(&refill), (json!("S2-F99"), json!(0)));
     // A null the register does not list refuses as undeclared.
     let stray = with(&v.to_string(), "/hold/duration_s", Value::Null);
     let tbd = guards::tbd_state(&stray, Some(&log)).unwrap();
@@ -532,18 +562,148 @@ fn the_windows_external_receipts_are_checked_by_kind_and_charged() {
     unmeasured.insert("Z7".into(), json!({"receipt": z7}));
     let (_, _, refusals) = sequence::check_external(&unmeasured, &["Z7"], "abc");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
+    // A red gate (Z6 NO-GO, Z3's margin not holding) is recorded, never a
+    // refusal; S1 run 6 not passing refuses (above).
     let failing = file(
         "z6-no.json",
         json!({"verdict": "NO-GO: a resolved positive real part"}),
+    );
+    let z3 = file(
+        "z3.json",
+        json!({"z3_envelope": {"every_point_holds_with_water_term_doubled": false}}),
     );
     let mut nogo = manifest.clone();
     nogo.insert(
         "Z6composed".into(),
         json!({"receipt": failing, "process_cpu_s": 1.0}),
     );
-    let (_, _, refusals) = sequence::check_external(&nogo, &["Z6composed"], "abc");
+    nogo.insert(
+        "Z3settled".into(),
+        json!({"receipt": z3, "process_cpu_s": 1.8}),
+    );
+    let (out, _, refusals) = sequence::check_external(&nogo, &["Z6composed", "Z3settled"], "abc");
+    assert!(refusals.is_empty(), "{refusals:?}");
+    assert_eq!(out["Z6composed"]["pass"], json!(false));
+    assert_eq!(out["Z3settled"]["pass"], json!(false));
+    let notz3 = file("z3-wrong.json", json!({"kind": "something else"}));
+    nogo.insert(
+        "Z3composed".into(),
+        json!({"receipt": notz3, "process_cpu_s": 1.0}),
+    );
+    let (_, _, refusals) = sequence::check_external(&nogo, &["Z3composed"], "abc");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
+    // The zero-time gates in the verdict: red Z3, green Z7, Z1 judged,
+    // an absent gate red, a reported one not judged.
+    let z7 = sequence::check_external(&manifest, &["Z7"], "abc").0["Z7"].clone();
+    let zero_time = json!({
+        "composed": {"z1": {"residual": 2e-14, "constraint_rate": 1e-14, "bound": 1e-12}},
+        "settled": {"z1": {"residual": 3e-13, "constraint_rate": 2e-12, "bound": 1e-12}},
+        "external_phase1": {"Z7": z7}, "external_phase2": {"Z3settled": out["Z3settled"].clone()}});
+    let gates = sequence::zero_time_gates(&zero_time);
+    let verdict = |id: &str| {
+        gates
+            .iter()
+            .find(|g| g["id"] == id)
+            .map(|g| (g["pass"].clone(), g["judged"].clone()))
+    };
+    assert_eq!(
+        verdict("zero_time.Z1.composed"),
+        Some((json!(true), json!(true)))
+    );
+    assert_eq!(
+        verdict("zero_time.Z1.settled"),
+        Some((json!(false), json!(true)))
+    );
+    assert_eq!(
+        verdict("zero_time.Z3.settled"),
+        Some((json!(false), json!(true)))
+    );
+    assert_eq!(verdict("zero_time.Z7"), Some((json!(true), json!(true))));
+    assert_eq!(
+        verdict("zero_time.Z6.settled"),
+        Some((json!(false), json!(true)))
+    );
+    assert_eq!(verdict("zero_time.Z2"), Some((json!(false), json!(false))));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn s2_d24r_takes_the_tightest_credited_budget_times_the_sensitivity() {
+    // The rule from the published r7.1 block (pinned by RP1-pin-r7.1):
+    // its class and rule text, the value open, the credited budgets the
+    // comparison reads.
+    let mut d = fixture();
+    d.gates = Block::from_json("ld01-s2-gates", GATES_R7_1).unwrap();
+    assert_eq!(
+        guards::declared_sha256(&d.gates).unwrap(),
+        "d4a6a84cf60e2038074f51db6fd4f07ffe14429cae36438287bd680f889fb88c"
+    );
+    let rule = compose::DerivedRule::from(&d).unwrap().unwrap();
+    assert_eq!(rule.class, "rods/GuideCurrent");
+    assert_eq!(rule.declared_kg_s, None);
+    assert!(
+        rule.rule
+            .starts_with("atol_m = the tightest credited budget")
+    );
+    // Core DP's budget (50 Pa) and an SG pressure budget for the second
+    // output below.
+    let outputs = [
+        (key::CORE_DP_PA, vec![0, 1]),
+        (key::SG_PRESSURE_PA, vec![4]),
+    ];
+    let credited = rule.credited(&outputs).unwrap();
+    assert_eq!(credited[0].budget_pa, 50.);
+    let sg = credited[1].budget_pa;
+    assert!(sg > 50., "{sg}");
+    assert!(
+        rule.credited(&[("pzr_roof_pa", vec![0])]).is_err(),
+        "an output without an absolute budget refuses"
+    );
+    // Synthetic CSC, coordinates p0, p1 (core DP's, scaled 1e6 and 2e6 Pa),
+    // m (row 2, scale 0.5 kg/s), q (scale 1), p4 (the SG output's, 1e6 Pa),
+    // p5 (an uncredited pressure, 1e6 Pa):
+    // row 2: 3 m - 0.5 p0 + 0.5 p1 + 100 q, so dm/dp0 = 1/6 scaled,
+    //   = (1/6)(0.5/1e6) kg/s per Pa;
+    // row 3: q - 2 p4 + 0.1 p1 (reads core DP's p1 and the SG output's p4);
+    // row 5: p5 + m (reads m only, no credited output's coordinate).
+    let scales = [1e6, 2e6, 0.5, 1., 1e6, 1e6];
+    // Columns: 0 {2}, 1 {2, 3}, 2 {2, 5}, 3 {2, 3}, 4 {3}, 5 {5}.
+    let pointers = [0, 1, 3, 5, 7, 8, 9];
+    let rows = [2, 2, 3, 2, 5, 2, 3, 3, 5];
+    let values = [-0.5, 0.5, 0.1, 3., 1., 100., 1., -2., 1.];
+    let determined =
+        compose::determined_tolerances(&pointers, &rows, &values, &[2, 3], &credited, &scales)
+            .unwrap();
+    // Row 2 determines core DP alone: 50 Pa x |dm/dp| over its columns
+    // (p0's is the larger in SI units).
+    let m = &determined[0];
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0].column, 0);
+    let dm_dp = (0.5 / 3.) * 0.5 / 1e6;
+    assert!((m[0].sensitivity - dm_dp).abs() < 1e-22, "{m:?}");
+    assert!((m[0].tolerance - 50. * dm_dp).abs() < 1e-20);
+    assert_eq!(m[0].output, key::CORE_DP_PA);
+    // Row 3 reads both outputs' coordinates: the tightest comes first.
+    let q = &determined[1];
+    assert_eq!(q.len(), 2);
+    assert!(q[0].tolerance <= q[1].tolerance, "{q:?}");
+    let core: f64 = 50. * 0.1 * 1. / 2e6;
+    let sg_tolerance = sg * 2. * 1. / 1e6;
+    assert!(
+        (q[0].tolerance - core.min(sg_tolerance)).abs() < 1e-18,
+        "{q:?}"
+    );
+    // A row that reads no credited output's coordinate refuses, as does a
+    // row without its diagonal.
+    assert!(
+        compose::determined_tolerances(&pointers, &rows, &values, &[5], &credited, &scales)
+            .is_err()
+    );
+    let no_diagonal = [-0.5, 0.5, 0.1, 0., 1., 100., 1., -2., 1.];
+    assert!(
+        compose::determined_tolerances(&pointers, &rows, &no_diagonal, &[2], &credited, &scales)
+            .is_err()
+    );
 }
 
 #[test]
@@ -566,6 +726,7 @@ fn a_handed_over_state_is_read_back_bit_for_bit() {
         y: y.clone(),
         yp: yp.clone(),
         from: "test".into(),
+        accepted: true,
     };
     let path = dir.join("state.json");
     sequence::write_state(&path, &packet, &start).unwrap();
@@ -814,6 +975,99 @@ fn rod_insertion_times_interpolate_and_compare_by_time_difference() {
 // ----------------------------------------------- settling and the cap fit
 
 #[test]
+fn the_stuck_cluster_is_the_highest_worth_with_ties_reported() {
+    use sequence::{highest_worth, population_weights};
+    let (k, ties) = highest_worth(&[1e-3, 3e-3, 2e-3, 3e-3]).unwrap();
+    assert_eq!((k, ties), (1, vec![1, 3]), "exact ties: the lowest index");
+    assert!(highest_worth(&[]).is_err());
+    assert!(highest_worth(&[1e-3, f64::NAN]).is_err());
+    let w = population_weights(&[1., 3.], 2).unwrap();
+    assert!((w[0] - 0.1).abs() < 1e-15 && (w[1] - 0.9).abs() < 1e-15);
+    assert!(population_weights(&[0., 0.], 1).is_err());
+    assert!(population_weights(&[-1., 2.], 1).is_err());
+    assert_eq!(guards::cap_key("stuckCluster").unwrap(), "contraryTripEach");
+}
+
+#[test]
+fn a_clusters_worth_is_the_weighted_rod_reactivity_its_insertion_removes() {
+    use leitbild_operating_plant::{joined::nuclear::FeedbackInputs, source_feedback as sf};
+    // Two synthetic sectors over the whole active height, three clusters:
+    // A in sector 0, B shared, C in sector 1; all withdrawn (travel 4 m).
+    let parameters: sf::Parameters = serde_json::from_value(json!({
+        "generation_time_s": 2e-5, "nu_effective": 2.43, "doppler_per_sqrt_k": -1.15e-3,
+        "water_worth": 0.15, "boron_per_ppm_eq": -8e-5, "rod_worth": 0.1,
+        "sigma_xe_m2": 2e-22, "sigma_sm_m2": 4e-24, "capsule_births_per_s": 0.,
+        "capsule_decay_per_s": 1e-8, "inserted_active_bottom_m": -2., "rod_active_length_m": 4.,
+        "rod_maximum_travel_m": 4.,
+        "domains": {"fuel_temperature_k": {"minimum": 500, "maximum": 1800},
+            "moderator_temperature_k": {"minimum": 550, "maximum": 610},
+            "pressure_pa": {"minimum": 1.4e7, "maximum": 1.6e7}, "density_ratio": {"minimum": 0.85, "maximum": 1.1},
+            "boron_ppm_eq": {"minimum": 0, "maximum": 2500}, "fissile_ratio": {"minimum": 0.95, "maximum": 1},
+            "reactivity": {"minimum": -0.3, "maximum": 0.15}, "maximum_additional_reference_exposure_s": 1e5}}))
+    .unwrap();
+    let region = |weights: [f64; 3]| sf::Region {
+        rho_base: 0.,
+        reference_density_kg_m3: 700.,
+        reference_boron_ppm_eq: 0.,
+        reference_rod_overlap: 0.,
+        source_weight: 0.5,
+        z0_m: -2.,
+        z1_m: 2.,
+        rod_weights: weights.to_vec(),
+    };
+    let gamma = 1. / (2.43 * 2e-5);
+    let support = |region: usize| sf::Support {
+        region,
+        material: 0,
+        production_reference_per_s: gamma,
+        exposure_per_population_s_m2: 0.,
+        fuel_importance: 1.,
+    };
+    let model = sf::Model::new(
+        parameters,
+        vec![region([0.5, 0.5, 0.]), region([0., 0.5, 0.5])],
+        vec![sf::Material {
+            reference_fissile_atoms: 1.,
+            reference_fuel_temperature_k: 900.,
+            reference_xenon_atoms: 0.,
+            reference_samarium_atoms: 0.,
+            reference_nonpoison_capture_opacity_m2: 0.,
+        }],
+        vec![support(0), support(1)],
+    )
+    .unwrap();
+    let inputs = FeedbackInputs {
+        neutrons: vec![1., 3.],
+        fuel_temperature_k: vec![900.],
+        water_density_kg_m3: vec![700., 700.],
+        boron_ppm_eq: vec![0., 0.],
+        pressure_pa: vec![1.5e7, 1.5e7],
+        moderator_temperature_k: vec![580., 580.],
+        fissile_atoms: vec![1.],
+        xenon_atoms: vec![0.],
+        samarium_atoms: vec![0.],
+        capture_loss_change_m2: vec![0.],
+    };
+    let worths = |power| {
+        let w = sequence::population_weights(&inputs.neutrons, power).unwrap();
+        sequence::cluster_worths(&model, &inputs, &[4., 4., 4.], &w).unwrap()
+    };
+    // Full insertion adds overlap w_ik in each sector: worth = 0.1 sum_i W_i w_ik.
+    for (got, want) in worths(2).iter().zip([0.005, 0.05, 0.045]) {
+        assert!((got - want).abs() < 1e-15, "{got} vs {want}");
+    }
+    for (got, want) in worths(1).iter().zip([0.0125, 0.05, 0.0375]) {
+        assert!((got - want).abs() < 1e-15, "{got} vs {want}");
+    }
+    assert_eq!(sequence::highest_worth(&worths(2)).unwrap(), (1, vec![1]));
+    // A cluster already seated adds nothing.
+    let w = sequence::population_weights(&inputs.neutrons, 2).unwrap();
+    let seated = sequence::cluster_worths(&model, &inputs, &[0., 4., 4.], &w).unwrap();
+    assert_eq!(seated[0], 0.);
+    assert!(sequence::cluster_worths(&model, &inputs, &[4., 4.], &w).is_err());
+}
+
+#[test]
 fn trailing_ranges_are_the_window_max_minus_min() {
     let x: Vec<f64> = (0..200)
         .map(|k| ((k * 37) % 101) as f64 * 0.5 - (k as f64 * 0.1).sin())
@@ -1003,7 +1257,12 @@ fn s2_smoke() {
             "hold" | "holdReference" => hold_s,
             _ => trip_s,
         };
-        let spec = h.spec(name, duration).unwrap_or_else(|e| panic!("{e}"));
+        let spec = if name == "stuckCluster" {
+            h.stuck_cluster_spec(duration, &start).map(|(spec, _)| spec)
+        } else {
+            h.spec(name, duration)
+        }
+        .unwrap_or_else(|e| panic!("{e}"));
         if let Some(run) = h.run(&spec, &start, None) {
             println!(
                 "{}",
@@ -1259,12 +1518,35 @@ fn s2_gate_run() {
             }
         }
     }
-    for unsupported in ["stuckCluster", "headerReservoir"] {
-        h.d.gates.whole(&format!("/contrary/{unsupported}"));
-        h.sequence.push(json!({"run": unsupported, "started": false,
-            "reason": "the joined model has no command for this case yet (CONTRARY lane): S2 is incomplete until it has"}));
-        status = format!("incomplete: contrary case {unsupported} not executable");
+    // G7's stuck cluster: the highest-worth cluster at the settled state
+    // keeps its grip through the trip (Command::StuckCluster, CONTRARY).
+    if status == "complete" {
+        let duration = h.d.gates.number("/contrary/stuckCluster/duration_s");
+        match h.stuck_cluster_spec(duration, &settled) {
+            Ok((spec, _)) => match h.run(&spec, &settled, None) {
+                Some(run) => {
+                    println!(
+                        "{}",
+                        json!({"run": "stuckCluster", "reached_s": run.record.reached_s, "failure": run.record.failure,
+                            "exit": run.record.exit, "process_cpu_s": run.record.process_cpu_s})
+                    );
+                    done.insert("stuckCluster".into(), run);
+                }
+                None => status = "incomplete: stuckCluster not started (work bound)".into(),
+            },
+            Err(e) => {
+                h.sequence
+                    .push(json!({"run": "stuckCluster", "started": false, "reason": e}));
+                status = "incomplete: contrary case stuckCluster not selected".into();
+            }
+        }
     }
+    // The 6 MPa header reservoir moved to S5 (lead decision S2-D28): no wiki
+    // law yet holds the SG steam boundary at a reservoir pressure. Recorded,
+    // never run, and not counted against S2's completeness.
+    h.d.gates.whole("/contrary/headerReservoir");
+    h.sequence.push(json!({"run": "headerReservoir", "started": false, "moved": "S5",
+        "reason": "moved to S5 by S2-D28: no selected law holds the SG steam boundary at a reservoir pressure (MS.ISO effective areas unsized; an imposed SG pressure is excluded by the S2 secondary block)"}));
     if let Some(hold) = done.get("hold") {
         gates_out.extend(judge_hold(
             &h,
@@ -1283,6 +1565,7 @@ fn s2_gate_run() {
             &mut comparisons,
         ));
     }
+    gates_out.extend(sequence::zero_time_gates(&zero_time));
     let passed = gates_out
         .iter()
         .filter(|g| g["judged"] == json!(true))
@@ -1466,5 +1749,67 @@ fn s2_z5_unit_costs() {
     println!(
         "{}",
         json!({"receipt": path, "fill_values": receipt["fill_values"]})
+    );
+}
+
+#[test]
+fn a_run_end_hands_on_the_accepted_step_never_an_interpolant() {
+    // DR-P3-GATE-3: the settled sample at 523 s lies inside the step reaching
+    // 524.6 s; the interpolant there dips below a near-empty stock's zero
+    // (S2-15 r7.1, phase 2's start), the accepted step does not.
+    let (ys, yps) = (vec![1., -1.4e-26], vec![0., 0.]);
+    let (y, yp) = (vec![1., 2e-9], vec![0., 1e-12]);
+    let (t, y2, yp2, accepted) = runner::end_state((523., &ys, &yps), (524.6, &y, &yp), false);
+    assert_eq!((t, y2, yp2, accepted), (524.6, y.clone(), yp.clone(), true));
+    // A sample on a root return has no accepted step: not accepted, and
+    // never written as a hand-over.
+    let (t, y3, yp3, accepted) = runner::end_state((523., &ys, &yps), (523.2, &y, &yp), true);
+    assert_eq!((t, &y3, accepted), (523., &ys, false));
+    let dir = std::env::temp_dir().join(format!("s2-gate3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let packet = compose::PacketFile {
+        path: "/packet.json".into(),
+        bytes: Vec::new(),
+        sha256: "0".repeat(64),
+    };
+    let interpolant = runner::Start {
+        t,
+        y: y3,
+        yp: yp3,
+        from: "a root return".into(),
+        accepted,
+    };
+    let refused = sequence::write_state(&dir.join("state.json"), &packet, &interpolant);
+    assert!(refused.is_err_and(|e| e.contains("DR-P3-GATE-3")));
+    assert!(!dir.join("state.json").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_trip_is_compared_only_where_both_runs_reached() {
+    // S2-15 r7.1: the trip's declared part ends at its D3 (a) exit at
+    // 24.274 s, R2's at 24.284 s; the after-window span ends at the trip's.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 24.274, 24.284, true),
+        vec![(0., 20.), (20., 24.274)]
+    );
+    // And at the reference's when it ends first.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 24.284, 24.274, true),
+        vec![(0., 20.), (20., 24.274)]
+    );
+    // R1 over the window only; whole runs to the declared duration.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 60., 20., false),
+        vec![(0., 20.)]
+    );
+    assert_eq!(
+        sequence::reference_spans(20., 60., 60., 60., true),
+        vec![(0., 20.), (20., 60.)]
+    );
+    // An exit inside the window shortens the window span.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 15., 60., true),
+        vec![(0., 15.)]
     );
 }

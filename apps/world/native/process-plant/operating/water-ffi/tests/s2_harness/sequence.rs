@@ -121,9 +121,10 @@ impl Harness {
                 cpu::process_cpu_s() - started,
             );
         }
+        let derived = compose::DerivedRule::from(&self.d).unwrap_or_else(|e| panic!("{e}"));
         let c = compose::compose_from(
             &self.d.shared,
-            Some(&self.d.gates),
+            derived.as_ref(),
             self.settled_flows.as_ref(),
         );
         if self.reader.is_none() {
@@ -219,6 +220,13 @@ impl Harness {
                 spec.commands = vec![(0., Command::ManualReactorTrip)];
                 spec.observation_s = None;
             }
+            // G7's stuck cluster: the trip, outputs only. Its StuckCluster
+            // command ahead of the TRIP names the highest-worth cluster at
+            // the run's start state ([`Harness::stuck_cluster_spec`]).
+            "stuckCluster" => {
+                trip(&mut spec);
+                spec.observation_s = None;
+            }
             other => return Err(format!("{other} is not a run this model can execute")),
         }
         // Caps: the declared ones in a gate run; in a smoke, 2 x the
@@ -246,6 +254,26 @@ impl Harness {
             }
         }
         Ok(spec)
+    }
+
+    /// The stuck-cluster contrary run's spec from `start`: the trip with the
+    /// highest-worth cluster's [`Command::StuckCluster`] issued at t = 0
+    /// ahead of the TRIP, and the selection's receipt ([`stuck_cluster`]).
+    pub fn stuck_cluster_spec(
+        &mut self,
+        duration_s: f64,
+        start: &Start,
+    ) -> Result<(RunSpec, Value), String> {
+        let selection = stuck_cluster(self, start)?;
+        let cluster = selection["index"]
+            .as_u64()
+            .ok_or("the stuck-cluster selection names no index")? as usize;
+        let mut spec = self.spec("stuckCluster", duration_s)?;
+        spec.commands
+            .insert(0, (0., Command::StuckCluster { cluster }));
+        self.sequence
+            .push(json!({"item": "stuckCluster selection", "selection": selection}));
+        Ok((spec, selection))
     }
 
     /// Pre-check, compose, run, charge.
@@ -406,6 +434,7 @@ pub fn composed_start(c: &Composed) -> Start {
         y: c.y.clone(),
         yp: c.yp.clone(),
         from: "the composed state".into(),
+        accepted: true,
     }
 }
 
@@ -417,6 +446,7 @@ pub fn saved_start(path: &str, packet: &compose::PacketFile, dimension: usize) -
         y,
         yp,
         from: path.to_string(),
+        accepted: true,
     }
 }
 
@@ -717,16 +747,13 @@ pub fn judge_trip(
     let reached = |r: &Run| r.record.reached_s;
     let mut accuracy = true;
     let mut evaluated = 0;
-    if let Some(r) = r1 {
-        accuracy &= compare_to("R1", r, 0., window.min(reached(r)), comparisons);
-        evaluated += 1;
-    }
-    if let Some(r) = r2 {
-        accuracy &= compare_to("R2", r, 0., window.min(reached(r)), comparisons);
-        evaluated += 1;
-        if duration > window && reached(r) > window {
-            accuracy &= compare_to("R2", r, window, duration.min(reached(r)), comparisons);
+    for (name, reference, after_window) in [("R1", r1, false), ("R2", r2, true)] {
+        let Some(r) = reference else { continue };
+        for (from, to) in reference_spans(window, duration, reached(trip), reached(r), after_window)
+        {
+            accuracy &= compare_to(name, r, from, to, comparisons);
         }
+        evaluated += 1;
     }
     g.whole("/trip/referenceSpans");
     out.push(gate(
@@ -836,6 +863,25 @@ pub fn judge_trip(
     }
     out.extend(conservation_gates(h, "trip", trip));
     out
+}
+
+/// The trip's comparison spans against one reference (`referenceSpans`:
+/// R1 over the window, R2 over the window and after it), each within the
+/// part both runs reached: a declared part ends at its own run's D3 (a)
+/// exit, so neither run is compared where it has no samples.
+pub fn reference_spans(
+    window: f64,
+    duration: f64,
+    trip_reached: f64,
+    reference_reached: f64,
+    after_window: bool,
+) -> Vec<(f64, f64)> {
+    let end = trip_reached.min(reference_reached);
+    let mut spans = vec![(0., window.min(end))];
+    if after_window && duration > window && end > window {
+        spans.push((window, duration.min(end)));
+    }
+    spans
 }
 
 /// A run's declared part: everything up to `until` (absolute time), its
@@ -954,10 +1000,11 @@ pub fn state_receipt(h: &mut Harness, start: &Start, item: &str) -> Value {
 /// | Name | Pass rule |
 /// | --- | --- |
 /// | `S1run6` | kind `s1-hydraulics-admission`, verdict `PASS…`, app commit = this binary's (re-run in the window at the gate commit) |
-/// | `Z6composed`, `Z6settled` | verdict `GO…` |
-/// | `Z7` | `failures` = 0 |
+/// | `Z6composed`, `Z6settled` | verdict `GO…` (a gate: recorded, never a refusal) |
+/// | `Z3composed`, `Z3settled` | D3 (a)'s doubled-term margin holds at every Z3 envelope point (a gate) |
+/// | `Z7` | `failures` = 0 (a gate) |
 /// | `Z5` | kind `s2-z5-unit-costs` |
-/// | others (`Z2`, `Z3composed`, `Z3settled`, `Z4`) | recorded; judged by their own receipts |
+/// | others (`Z2`, `Z4`) | recorded; reported only (r7) |
 pub fn external_receipts(
     h: &mut Harness,
     app_commit: &str,
@@ -1036,6 +1083,9 @@ pub fn check_external(
                 "{name}: run in the window but no process_cpu_s measured"
             ));
         }
+        // The pass rule by kind. S1 run 6 is a prerequisite (refuses unless
+        // it passes) and Z5 a measurement (refuses unless it is one); Z3,
+        // Z6 and Z7 are gates, recorded red or green, never a refusal.
         let pass = match *name {
             "S1run6" => json!(
                 r["kind"] == "s1-hydraulics-admission"
@@ -1045,11 +1095,25 @@ pub fn check_external(
             "Z6composed" | "Z6settled" => {
                 json!(r["verdict"].as_str().is_some_and(|v| v.starts_with("GO")))
             }
+            // Z3's margin (r7): D3 (a)'s predicate with the doubled water
+            // term holds at every point of the Z3 post-trip envelope.
+            "Z3composed" | "Z3settled" => match r
+                .pointer("/z3_envelope/every_point_holds_with_water_term_doubled")
+                .and_then(Value::as_bool)
+            {
+                Some(holds) => json!(holds),
+                None => {
+                    refusals.push(format!(
+                        "{name} ({path}) is not a D3 (a) margin receipt on the Z3 envelope"
+                    ));
+                    Value::Null
+                }
+            },
             "Z7" => json!(r["failures"] == json!(0)),
             "Z5" => json!(r["kind"] == "s2-z5-unit-costs"),
             _ => Value::Null,
         };
-        if pass == json!(false) {
+        if pass == json!(false) && matches!(*name, "S1run6" | "Z5") {
             refusals.push(format!(
                 "{name} ({path}) does not pass: kind {}, verdict {}, app commit {} (this binary {app_commit})",
                 r["kind"], r["verdict"], r["app_commit"]
@@ -1068,6 +1132,94 @@ pub fn check_external(
     (out, charges, refusals)
 }
 
+/// r7's zero-time gates as verdict entries: Z1 at each state (the exact
+/// start's residual and constraint rate within the start bound), Z3's
+/// margin and both Z6 pencils at both states, Z7, and S1 run 6 (a
+/// prerequisite); Z2, Z4 and Z5 are reported (`judged` false).
+pub fn zero_time_gates(zero_time: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    for state in ["composed", "settled"] {
+        let z1 = &zero_time[state]["z1"];
+        let (residual, rate, bound) = (
+            z1["residual"].as_f64(),
+            z1["constraint_rate"].as_f64(),
+            z1["bound"].as_f64(),
+        );
+        let pass = residual
+            .zip(rate)
+            .zip(bound)
+            .is_some_and(|((r, c), b)| r <= b && c <= b);
+        out.push(gate(
+            &format!("zero_time.Z1.{state}"),
+            json!({"residual": residual, "constraint_rate": rate}),
+            json!(bound),
+            pass,
+            true,
+            "Z1: the exact consistent start on the block Jacobian (residual and constraint rate within the start bound)",
+        ));
+    }
+    let externals = [&zero_time["external_phase1"], &zero_time["external_phase2"]];
+    let find = |name: &str| externals.iter().find_map(|e| e.get(name)).cloned();
+    for (name, id, judged, basis) in [
+        (
+            "S1run6",
+            "prerequisite.S1_run_6",
+            true,
+            "S1 run 6 PASS at the gate commit (G16)",
+        ),
+        (
+            "Z3composed",
+            "zero_time.Z3.composed",
+            true,
+            "Z3's margin: D3 (a) with the doubled water term >= 1 % at every Z3 envelope point",
+        ),
+        (
+            "Z3settled",
+            "zero_time.Z3.settled",
+            true,
+            "Z3's margin at the settled state",
+        ),
+        (
+            "Z6composed",
+            "zero_time.Z6.composed",
+            true,
+            "Z6: both named restrictions GO",
+        ),
+        (
+            "Z6settled",
+            "zero_time.Z6.settled",
+            true,
+            "Z6 at the settled state",
+        ),
+        (
+            "Z7",
+            "zero_time.Z7",
+            true,
+            "Z7: every directional check within 1e-6",
+        ),
+        ("Z2", "zero_time.Z2", false, "Z2: reported"),
+        ("Z4", "zero_time.Z4", false, "Z4: reported"),
+        (
+            "Z5",
+            "zero_time.Z5",
+            false,
+            "Z5: reported (its values are the S2-F16..F18 fills)",
+        ),
+    ] {
+        let entry = find(name);
+        let pass = entry.as_ref().is_some_and(|e| e["pass"] == json!(true));
+        out.push(gate(
+            id,
+            entry.map_or(Value::Null, |e| json!({"receipt": e["receipt"], "sha256": e["sha256"], "verdict": e["verdict"], "pass": e["pass"]})),
+            json!("its kind's pass rule"),
+            if judged { pass } else { false },
+            judged,
+            basis,
+        ));
+    }
+    out
+}
+
 /// The phase-1 hand-over: the gate run's settled state (the S2-07 format,
 /// floats and exact bits) for the settled-state zero-time receipts and the
 /// runs phase.
@@ -1078,6 +1230,12 @@ pub fn write_state(
 ) -> Result<(), String> {
     if path.exists() {
         return Err(format!("never overwritten: {}", path.display()));
+    }
+    if !s.accepted {
+        return Err(format!(
+            "DR-P3-GATE-3: {} is not an accepted step and is never handed on",
+            s.from
+        ));
     }
     let bits =
         |v: &[f64]| -> Vec<String> { v.iter().map(|x| format!("{:016x}", x.to_bits())).collect() };
@@ -1096,6 +1254,150 @@ pub fn receipt_path(lane: &str, name: &str) -> std::path::PathBuf {
 /// Writes the receipt, refused unless complete and new.
 pub fn write(path: &std::path::Path, r: &Value) -> Result<(), String> {
     receipt::write(path, r)
+}
+
+/// G7's "highest worth in the source feedback", as the harness computes it
+/// (CONTRARY lane's proposal; the lead declares it).
+pub const WORTH_RULE: &str = "each cluster's worth is the rod reactivity its full insertion (seated, travel 0) removes in the source feedback, every other cluster at its start travel, summed over the regions with weights n_i^2 / sum n^2 (first-order perturbation, self-adjoint approximation; n_i the regional populations at the start state); the highest worth is stuck; exact ties take the lowest index and are reported; the n_i-weighted ranking is reported beside it";
+
+/// Per cluster, the weighted rod reactivity its full insertion removes:
+/// `sum_i w_i (rho_rods,i(start) - rho_rods,i(cluster seated))`, from the
+/// source feedback's own reactivity terms.
+pub fn cluster_worths(
+    model: &leitbild_operating_plant::source_feedback::Model,
+    inputs: &leitbild_operating_plant::joined::nuclear::FeedbackInputs,
+    travel_m: &[f64],
+    weights: &[f64],
+) -> Result<Vec<f64>, String> {
+    use leitbild_operating_plant::{
+        source_feedback::{Conditions, ReactivityTerms},
+        thermal::Scalar,
+    };
+    let regions = inputs.neutrons.len();
+    if weights.len() != regions || travel_m.len() != model.rod_count() {
+        return Err("cluster worths: layout".into());
+    }
+    let c = |v: &[f64]| -> Vec<Scalar> { v.iter().map(|x| Scalar::constant(*x)).collect() };
+    let (f, d, b, p, m) = (
+        c(&inputs.fuel_temperature_k),
+        c(&inputs.water_density_kg_m3),
+        c(&inputs.boron_ppm_eq),
+        c(&inputs.pressure_pa),
+        c(&inputs.moderator_temperature_k),
+    );
+    let (fi, xe, sm, op) = (
+        c(&inputs.fissile_atoms),
+        c(&inputs.xenon_atoms),
+        c(&inputs.samarium_atoms),
+        c(&inputs.capture_loss_change_m2),
+    );
+    let rods = |travel: &[f64]| -> Result<Vec<f64>, String> {
+        let t = c(travel);
+        let mut out = vec![ReactivityTerms::default(); regions];
+        model
+            .reactivity_terms(
+                Conditions {
+                    fuel_temperature_k: &f,
+                    water_density_kg_m3: &d,
+                    boron_ppm_eq: &b,
+                    pressure_pa: &p,
+                    moderator_temperature_k: &m,
+                    fissile_atoms: &fi,
+                    xenon_atoms: &xe,
+                    samarium_atoms: &sm,
+                    capture_loss_change_m2: &op,
+                    achieved_rod_travel_m: &t,
+                    // The reactivity terms do not read the capsule age.
+                    capsule_age_s: Scalar::constant(0.),
+                },
+                &mut out,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(out.iter().map(|r| r.rods).collect())
+    };
+    let base = rods(travel_m)?;
+    (0..travel_m.len())
+        .map(|k| {
+            let mut inserted = travel_m.to_vec();
+            inserted[k] = 0.;
+            let r = rods(&inserted)?;
+            Ok(weights
+                .iter()
+                .zip(base.iter().zip(&r))
+                .map(|(w, (a, b))| w * (a - b))
+                .sum())
+        })
+        .collect()
+}
+
+/// Normalized region weights `n_i^power / sum n^power`.
+pub fn population_weights(neutrons: &[f64], power: i32) -> Result<Vec<f64>, String> {
+    let w: Vec<f64> = neutrons.iter().map(|n| n.powi(power)).collect();
+    let total: f64 = w.iter().sum();
+    if !(total.is_finite() && total > 0.) || w.iter().any(|v| !(v.is_finite() && *v >= 0.)) {
+        return Err(format!(
+            "region weights need finite nonnegative populations ({total})"
+        ));
+    }
+    Ok(w.iter().map(|v| v / total).collect())
+}
+
+/// The highest worth's index (lowest among exact ties) and every index
+/// that ties it.
+pub fn highest_worth(worths: &[f64]) -> Result<(usize, Vec<usize>), String> {
+    if worths.is_empty() || worths.iter().any(|w| !w.is_finite()) {
+        return Err(format!(
+            "cluster worths must be finite and present: {worths:?}"
+        ));
+    }
+    let best = worths.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let ties: Vec<usize> = (0..worths.len()).filter(|c| worths[*c] == best).collect();
+    Ok((ties[0], ties))
+}
+
+/// G7's stuck cluster at a start state, by [`WORTH_RULE`], with its receipt.
+pub fn stuck_cluster(h: &mut Harness, start: &Start) -> Result<Value, String> {
+    let declared = h.d.gates.text("/contrary/stuckCluster/cluster");
+    let raw: Value = serde_json::from_slice(&h.packet.bytes).map_err(|e| e.to_string())?;
+    let mut c = h.compose("stuck-cluster selection");
+    let started = cpu::process_cpu_s();
+    c.joined
+        .evaluate(start.t, &start.y, &start.yp, None, 0., None)
+        .map_err(|e| format!("stuck-cluster selection at the start state: {e:?}"))?;
+    let inputs = c.joined.nuclear().feedback_inputs();
+    let travel: Vec<f64> = c.joined.travel().iter().map(|s| s.value).collect();
+    let model = c.joined.nuclear().feedback();
+    let squared = cluster_worths(
+        model,
+        &inputs,
+        &travel,
+        &population_weights(&inputs.neutrons, 2)?,
+    )?;
+    let linear = cluster_worths(
+        model,
+        &inputs,
+        &travel,
+        &population_weights(&inputs.neutrons, 1)?,
+    )?;
+    h.work
+        .charge("stuck-cluster selection", cpu::process_cpu_s() - started);
+    let (index, ties) = highest_worth(&squared)?;
+    let (linear_index, linear_ties) = highest_worth(&linear)?;
+    let id = |k: usize| raw["rods"]["clusters"][k]["id"].clone();
+    if id(index).is_null() || raw["rods"]["clusters"].as_array().map(Vec::len) != Some(travel.len())
+    {
+        return Err(
+            "the packet's rods section does not name the source feedback's clusters".into(),
+        );
+    }
+    Ok(
+        json!({"declared": declared, "rule": WORTH_RULE, "from": start.from, "t_s": start.t,
+        "index": index, "cluster": id(index), "worth": squared[index],
+        "ties": ties.iter().map(|k| json!({"index": k, "cluster": id(*k)})).collect::<Vec<_>>(),
+        "worths_n2": squared, "worths_n": linear,
+        "n_weighted": {"index": linear_index, "ties": linear_ties, "agrees": linear_ties.contains(&index)},
+        "travel_m": travel, "populations": inputs.neutrons}),
+    )
 }
 
 /// The settle with its settled check and H4's fit, for the gate run (and
