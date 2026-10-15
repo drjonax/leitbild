@@ -45,6 +45,8 @@ use std::collections::BTreeMap;
 /// Revision 7's blocks and the shared S1 blocks, as the unit tests'
 /// fixtures (the harness itself reads the declaration page and the wiki).
 const GATES_R7: &str = include_str!("s2_harness/fixtures/ld01-s2-gates-r7.json");
+/// The published r7.1 block (spec wiki 80e78b6), pinned by RP1-pin-r7.1.
+const GATES_R7_1: &str = include_str!("s2_harness/fixtures/ld01-s2-gates-r7.1.json");
 const ACCURACY_R7: &str = include_str!("s2_harness/fixtures/ld01-s2-accuracy-r7.json");
 const S1_GATES: &str = include_str!("s2_harness/fixtures/ld01-s1-gates.json");
 const CONTRACT: &str = include_str!("s2_harness/fixtures/ld01-accuracy-contract.json");
@@ -353,6 +355,34 @@ fn a_gate_run_refuses_while_a_tbd_is_open_unlogged_or_undeclared() {
     let tbd = guards::tbd_state(&all, Some(&log)).unwrap();
     assert_eq!(tbd["closed"], json!(true), "{tbd}");
     assert!(guards::gate_run_refusals(&pin, &tbd).is_empty());
+    // A reopened value (S2-F01r's form: a row superseding the fill, with no
+    // SHA) is unlogged until its own fill row; then that row counts, never
+    // the superseded one.
+    let logged = |log: &str| {
+        let tbd = guards::tbd_state(&all, Some(log)).unwrap();
+        let row = tbd["fills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["key"] == "derivedTolerance.value_kg_s")
+            .map(|f| f["logged_row"].clone())
+            .unwrap();
+        (row, tbd["unlogged_fills"].clone())
+    };
+    let first = keys
+        .iter()
+        .position(|k| k == "derivedTolerance.value_kg_s")
+        .unwrap();
+    assert_eq!(logged(&log), (json!(format!("S2-F{first}")), json!(0)));
+    let reopened = format!(
+        "{log}| S2-F{first}r | 17 Oct | the guide-current class value is open again | rule changed | Superseded: S2-F{first} |\n"
+    );
+    assert_eq!(logged(&reopened), (Value::Null, json!(1)));
+    let refill = format!(
+        "{reopened}| S2-F99 | 17 Oct | refill derivedTolerance.value_kg_s | receipt sha256 {} |\n",
+        "c".repeat(64)
+    );
+    assert_eq!(logged(&refill), (json!("S2-F99"), json!(0)));
     // A null the register does not list refuses as undeclared.
     let stray = with(&v.to_string(), "/hold/duration_s", Value::Null);
     let tbd = guards::tbd_state(&stray, Some(&log)).unwrap();
@@ -532,18 +562,148 @@ fn the_windows_external_receipts_are_checked_by_kind_and_charged() {
     unmeasured.insert("Z7".into(), json!({"receipt": z7}));
     let (_, _, refusals) = sequence::check_external(&unmeasured, &["Z7"], "abc");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
+    // A red gate (Z6 NO-GO, Z3's margin not holding) is recorded, never a
+    // refusal; S1 run 6 not passing refuses (above).
     let failing = file(
         "z6-no.json",
         json!({"verdict": "NO-GO: a resolved positive real part"}),
+    );
+    let z3 = file(
+        "z3.json",
+        json!({"z3_envelope": {"every_point_holds_with_water_term_doubled": false}}),
     );
     let mut nogo = manifest.clone();
     nogo.insert(
         "Z6composed".into(),
         json!({"receipt": failing, "process_cpu_s": 1.0}),
     );
-    let (_, _, refusals) = sequence::check_external(&nogo, &["Z6composed"], "abc");
+    nogo.insert(
+        "Z3settled".into(),
+        json!({"receipt": z3, "process_cpu_s": 1.8}),
+    );
+    let (out, _, refusals) = sequence::check_external(&nogo, &["Z6composed", "Z3settled"], "abc");
+    assert!(refusals.is_empty(), "{refusals:?}");
+    assert_eq!(out["Z6composed"]["pass"], json!(false));
+    assert_eq!(out["Z3settled"]["pass"], json!(false));
+    let notz3 = file("z3-wrong.json", json!({"kind": "something else"}));
+    nogo.insert(
+        "Z3composed".into(),
+        json!({"receipt": notz3, "process_cpu_s": 1.0}),
+    );
+    let (_, _, refusals) = sequence::check_external(&nogo, &["Z3composed"], "abc");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
+    // The zero-time gates in the verdict: red Z3, green Z7, Z1 judged,
+    // an absent gate red, a reported one not judged.
+    let z7 = sequence::check_external(&manifest, &["Z7"], "abc").0["Z7"].clone();
+    let zero_time = json!({
+        "composed": {"z1": {"residual": 2e-14, "constraint_rate": 1e-14, "bound": 1e-12}},
+        "settled": {"z1": {"residual": 3e-13, "constraint_rate": 2e-12, "bound": 1e-12}},
+        "external_phase1": {"Z7": z7}, "external_phase2": {"Z3settled": out["Z3settled"].clone()}});
+    let gates = sequence::zero_time_gates(&zero_time);
+    let verdict = |id: &str| {
+        gates
+            .iter()
+            .find(|g| g["id"] == id)
+            .map(|g| (g["pass"].clone(), g["judged"].clone()))
+    };
+    assert_eq!(
+        verdict("zero_time.Z1.composed"),
+        Some((json!(true), json!(true)))
+    );
+    assert_eq!(
+        verdict("zero_time.Z1.settled"),
+        Some((json!(false), json!(true)))
+    );
+    assert_eq!(
+        verdict("zero_time.Z3.settled"),
+        Some((json!(false), json!(true)))
+    );
+    assert_eq!(verdict("zero_time.Z7"), Some((json!(true), json!(true))));
+    assert_eq!(
+        verdict("zero_time.Z6.settled"),
+        Some((json!(false), json!(true)))
+    );
+    assert_eq!(verdict("zero_time.Z2"), Some((json!(false), json!(false))));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn s2_d24r_takes_the_tightest_credited_budget_times_the_sensitivity() {
+    // The rule from the published r7.1 block (pinned by RP1-pin-r7.1):
+    // its class and rule text, the value open, the credited budgets the
+    // comparison reads.
+    let mut d = fixture();
+    d.gates = Block::from_json("ld01-s2-gates", GATES_R7_1).unwrap();
+    assert_eq!(
+        guards::declared_sha256(&d.gates).unwrap(),
+        "d4a6a84cf60e2038074f51db6fd4f07ffe14429cae36438287bd680f889fb88c"
+    );
+    let rule = compose::DerivedRule::from(&d).unwrap().unwrap();
+    assert_eq!(rule.class, "rods/GuideCurrent");
+    assert_eq!(rule.declared_kg_s, None);
+    assert!(
+        rule.rule
+            .starts_with("atol_m = the tightest credited budget")
+    );
+    // Core DP's budget (50 Pa) and an SG pressure budget for the second
+    // output below.
+    let outputs = [
+        (key::CORE_DP_PA, vec![0, 1]),
+        (key::SG_PRESSURE_PA, vec![4]),
+    ];
+    let credited = rule.credited(&outputs).unwrap();
+    assert_eq!(credited[0].budget_pa, 50.);
+    let sg = credited[1].budget_pa;
+    assert!(sg > 50., "{sg}");
+    assert!(
+        rule.credited(&[("pzr_roof_pa", vec![0])]).is_err(),
+        "an output without an absolute budget refuses"
+    );
+    // Synthetic CSC, coordinates p0, p1 (core DP's, scaled 1e6 and 2e6 Pa),
+    // m (row 2, scale 0.5 kg/s), q (scale 1), p4 (the SG output's, 1e6 Pa),
+    // p5 (an uncredited pressure, 1e6 Pa):
+    // row 2: 3 m - 0.5 p0 + 0.5 p1 + 100 q, so dm/dp0 = 1/6 scaled,
+    //   = (1/6)(0.5/1e6) kg/s per Pa;
+    // row 3: q - 2 p4 + 0.1 p1 (reads core DP's p1 and the SG output's p4);
+    // row 5: p5 + m (reads m only, no credited output's coordinate).
+    let scales = [1e6, 2e6, 0.5, 1., 1e6, 1e6];
+    // Columns: 0 {2}, 1 {2, 3}, 2 {2, 5}, 3 {2, 3}, 4 {3}, 5 {5}.
+    let pointers = [0, 1, 3, 5, 7, 8, 9];
+    let rows = [2, 2, 3, 2, 5, 2, 3, 3, 5];
+    let values = [-0.5, 0.5, 0.1, 3., 1., 100., 1., -2., 1.];
+    let determined =
+        compose::determined_tolerances(&pointers, &rows, &values, &[2, 3], &credited, &scales)
+            .unwrap();
+    // Row 2 determines core DP alone: 50 Pa x |dm/dp| over its columns
+    // (p0's is the larger in SI units).
+    let m = &determined[0];
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0].column, 0);
+    let dm_dp = (0.5 / 3.) * 0.5 / 1e6;
+    assert!((m[0].sensitivity - dm_dp).abs() < 1e-22, "{m:?}");
+    assert!((m[0].tolerance - 50. * dm_dp).abs() < 1e-20);
+    assert_eq!(m[0].output, key::CORE_DP_PA);
+    // Row 3 reads both outputs' coordinates: the tightest comes first.
+    let q = &determined[1];
+    assert_eq!(q.len(), 2);
+    assert!(q[0].tolerance <= q[1].tolerance, "{q:?}");
+    let core: f64 = 50. * 0.1 * 1. / 2e6;
+    let sg_tolerance = sg * 2. * 1. / 1e6;
+    assert!(
+        (q[0].tolerance - core.min(sg_tolerance)).abs() < 1e-18,
+        "{q:?}"
+    );
+    // A row that reads no credited output's coordinate refuses, as does a
+    // row without its diagonal.
+    assert!(
+        compose::determined_tolerances(&pointers, &rows, &values, &[5], &credited, &scales)
+            .is_err()
+    );
+    let no_diagonal = [-0.5, 0.5, 0.1, 0., 1., 100., 1., -2., 1.];
+    assert!(
+        compose::determined_tolerances(&pointers, &rows, &no_diagonal, &[2], &credited, &scales)
+            .is_err()
+    );
 }
 
 #[test]
@@ -1404,6 +1564,7 @@ fn s2_gate_run() {
             &mut comparisons,
         ));
     }
+    gates_out.extend(sequence::zero_time_gates(&zero_time));
     let passed = gates_out
         .iter()
         .filter(|g| g["judged"] == json!(true))

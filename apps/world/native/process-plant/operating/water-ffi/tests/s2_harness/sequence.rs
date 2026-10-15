@@ -121,9 +121,10 @@ impl Harness {
                 cpu::process_cpu_s() - started,
             );
         }
+        let derived = compose::DerivedRule::from(&self.d).unwrap_or_else(|e| panic!("{e}"));
         let c = compose::compose_from(
             &self.d.shared,
-            Some(&self.d.gates),
+            derived.as_ref(),
             self.settled_flows.as_ref(),
         );
         if self.reader.is_none() {
@@ -981,10 +982,11 @@ pub fn state_receipt(h: &mut Harness, start: &Start, item: &str) -> Value {
 /// | Name | Pass rule |
 /// | --- | --- |
 /// | `S1run6` | kind `s1-hydraulics-admission`, verdict `PASS…`, app commit = this binary's (re-run in the window at the gate commit) |
-/// | `Z6composed`, `Z6settled` | verdict `GO…` |
-/// | `Z7` | `failures` = 0 |
+/// | `Z6composed`, `Z6settled` | verdict `GO…` (a gate: recorded, never a refusal) |
+/// | `Z3composed`, `Z3settled` | D3 (a)'s doubled-term margin holds at every Z3 envelope point (a gate) |
+/// | `Z7` | `failures` = 0 (a gate) |
 /// | `Z5` | kind `s2-z5-unit-costs` |
-/// | others (`Z2`, `Z3composed`, `Z3settled`, `Z4`) | recorded; judged by their own receipts |
+/// | others (`Z2`, `Z4`) | recorded; reported only (r7) |
 pub fn external_receipts(
     h: &mut Harness,
     app_commit: &str,
@@ -1063,6 +1065,9 @@ pub fn check_external(
                 "{name}: run in the window but no process_cpu_s measured"
             ));
         }
+        // The pass rule by kind. S1 run 6 is a prerequisite (refuses unless
+        // it passes) and Z5 a measurement (refuses unless it is one); Z3,
+        // Z6 and Z7 are gates, recorded red or green, never a refusal.
         let pass = match *name {
             "S1run6" => json!(
                 r["kind"] == "s1-hydraulics-admission"
@@ -1072,11 +1077,25 @@ pub fn check_external(
             "Z6composed" | "Z6settled" => {
                 json!(r["verdict"].as_str().is_some_and(|v| v.starts_with("GO")))
             }
+            // Z3's margin (r7): D3 (a)'s predicate with the doubled water
+            // term holds at every point of the Z3 post-trip envelope.
+            "Z3composed" | "Z3settled" => match r
+                .pointer("/z3_envelope/every_point_holds_with_water_term_doubled")
+                .and_then(Value::as_bool)
+            {
+                Some(holds) => json!(holds),
+                None => {
+                    refusals.push(format!(
+                        "{name} ({path}) is not a D3 (a) margin receipt on the Z3 envelope"
+                    ));
+                    Value::Null
+                }
+            },
             "Z7" => json!(r["failures"] == json!(0)),
             "Z5" => json!(r["kind"] == "s2-z5-unit-costs"),
             _ => Value::Null,
         };
-        if pass == json!(false) {
+        if pass == json!(false) && matches!(*name, "S1run6" | "Z5") {
             refusals.push(format!(
                 "{name} ({path}) does not pass: kind {}, verdict {}, app commit {} (this binary {app_commit})",
                 r["kind"], r["verdict"], r["app_commit"]
@@ -1093,6 +1112,94 @@ pub fn check_external(
         );
     }
     (out, charges, refusals)
+}
+
+/// r7's zero-time gates as verdict entries: Z1 at each state (the exact
+/// start's residual and constraint rate within the start bound), Z3's
+/// margin and both Z6 pencils at both states, Z7, and S1 run 6 (a
+/// prerequisite); Z2, Z4 and Z5 are reported (`judged` false).
+pub fn zero_time_gates(zero_time: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    for state in ["composed", "settled"] {
+        let z1 = &zero_time[state]["z1"];
+        let (residual, rate, bound) = (
+            z1["residual"].as_f64(),
+            z1["constraint_rate"].as_f64(),
+            z1["bound"].as_f64(),
+        );
+        let pass = residual
+            .zip(rate)
+            .zip(bound)
+            .is_some_and(|((r, c), b)| r <= b && c <= b);
+        out.push(gate(
+            &format!("zero_time.Z1.{state}"),
+            json!({"residual": residual, "constraint_rate": rate}),
+            json!(bound),
+            pass,
+            true,
+            "Z1: the exact consistent start on the block Jacobian (residual and constraint rate within the start bound)",
+        ));
+    }
+    let externals = [&zero_time["external_phase1"], &zero_time["external_phase2"]];
+    let find = |name: &str| externals.iter().find_map(|e| e.get(name)).cloned();
+    for (name, id, judged, basis) in [
+        (
+            "S1run6",
+            "prerequisite.S1_run_6",
+            true,
+            "S1 run 6 PASS at the gate commit (G16)",
+        ),
+        (
+            "Z3composed",
+            "zero_time.Z3.composed",
+            true,
+            "Z3's margin: D3 (a) with the doubled water term >= 1 % at every Z3 envelope point",
+        ),
+        (
+            "Z3settled",
+            "zero_time.Z3.settled",
+            true,
+            "Z3's margin at the settled state",
+        ),
+        (
+            "Z6composed",
+            "zero_time.Z6.composed",
+            true,
+            "Z6: both named restrictions GO",
+        ),
+        (
+            "Z6settled",
+            "zero_time.Z6.settled",
+            true,
+            "Z6 at the settled state",
+        ),
+        (
+            "Z7",
+            "zero_time.Z7",
+            true,
+            "Z7: every directional check within 1e-6",
+        ),
+        ("Z2", "zero_time.Z2", false, "Z2: reported"),
+        ("Z4", "zero_time.Z4", false, "Z4: reported"),
+        (
+            "Z5",
+            "zero_time.Z5",
+            false,
+            "Z5: reported (its values are the S2-F16..F18 fills)",
+        ),
+    ] {
+        let entry = find(name);
+        let pass = entry.as_ref().is_some_and(|e| e["pass"] == json!(true));
+        out.push(gate(
+            id,
+            entry.map_or(Value::Null, |e| json!({"receipt": e["receipt"], "sha256": e["sha256"], "verdict": e["verdict"], "pass": e["pass"]})),
+            json!("its kind's pass rule"),
+            if judged { pass } else { false },
+            judged,
+            basis,
+        ));
+    }
+    out
 }
 
 /// The phase-1 hand-over: the gate run's settled state (the S2-07 format,
