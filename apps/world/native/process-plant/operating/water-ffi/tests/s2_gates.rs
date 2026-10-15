@@ -630,6 +630,50 @@ fn admission_is_judged_on_accepted_steps_not_on_the_interpolant() {
     assert_eq!(c.judged, vec![(0.12, 1)]);
 }
 
+#[test]
+fn a_references_ledger_counts_in_the_contracts_tolerance_units_and_a_declared_limit_is_an_exit() {
+    let spec = |rtol: f64, atol_factor: f64| run::RunSpec {
+        name: "x".into(),
+        duration_s: 1.,
+        window_s: 1.,
+        rtol,
+        atol_factor,
+        max_step_s: None,
+        newton_coefficient: 0.33,
+        delta_cj_lsetup: 0.1,
+        first_step_s: 1e-4,
+        max_order: 2,
+        output_s: 0.1,
+        observation_s: None,
+        commands: Vec::new(),
+        solver_cap_s: 1.,
+        total_guard_s: 1.,
+        report_only_step_cap: None,
+        caps_report_only: false,
+        rods_observed: false,
+        domain_exit_stops: true,
+    };
+    let contract = vec![1e-8, 2e-8];
+    let tight: Vec<f64> = contract.iter().map(|a| a * 0.1).collect();
+    // R2 (rtol/100, atol x 0.1): the contract's tolerances (DR-P3-GATE-2).
+    let (a, r, reference) =
+        runner::ledger_tolerances(&spec(1e-7, 0.1), (&contract, 1e-5), (&tight, 1e-7));
+    assert!(reference && a == contract.as_slice() && r == 1e-5);
+    // A declared run keeps its own, which are the contract's.
+    let (a, r, reference) =
+        runner::ledger_tolerances(&spec(1e-5, 1.), (&contract, 1e-5), (&contract, 1e-5));
+    assert!(!reference && a == contract.as_slice() && r == 1e-5);
+    // The SG crown guard's refusal is the run's declared limit, not a failure.
+    let refusal = "roots restart: S2 domain exit (unsupported): SG.B crown first uncovery at t = 531.87 s, V_l = 71.25 m³";
+    assert_eq!(
+        runner::declared_limit(refusal).as_deref(),
+        Some(
+            "S2 domain exit (unsupported): SG.B crown first uncovery at t = 531.87 s, V_l = 71.25 m³"
+        )
+    );
+    assert_eq!(runner::declared_limit("stock IDA status -3"), None);
+}
+
 // ------------------------------------------------- comparisons (synthetic)
 
 /// Credited series on the grid `origin + j dt`, each key's instances from
