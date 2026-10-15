@@ -1784,3 +1784,32 @@ fn a_run_end_hands_on_the_accepted_step_never_an_interpolant() {
     assert!(!dir.join("state.json").exists());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn the_trip_is_compared_only_where_both_runs_reached() {
+    // S2-15 r7.1: the trip's declared part ends at its D3 (a) exit at
+    // 24.274 s, R2's at 24.284 s; the after-window span ends at the trip's.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 24.274, 24.284, true),
+        vec![(0., 20.), (20., 24.274)]
+    );
+    // And at the reference's when it ends first.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 24.284, 24.274, true),
+        vec![(0., 20.), (20., 24.274)]
+    );
+    // R1 over the window only; whole runs to the declared duration.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 60., 20., false),
+        vec![(0., 20.)]
+    );
+    assert_eq!(
+        sequence::reference_spans(20., 60., 60., 60., true),
+        vec![(0., 20.), (20., 60.)]
+    );
+    // An exit inside the window shortens the window span.
+    assert_eq!(
+        sequence::reference_spans(20., 60., 15., 60., true),
+        vec![(0., 15.)]
+    );
+}

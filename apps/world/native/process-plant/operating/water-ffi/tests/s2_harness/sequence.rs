@@ -747,16 +747,13 @@ pub fn judge_trip(
     let reached = |r: &Run| r.record.reached_s;
     let mut accuracy = true;
     let mut evaluated = 0;
-    if let Some(r) = r1 {
-        accuracy &= compare_to("R1", r, 0., window.min(reached(r)), comparisons);
-        evaluated += 1;
-    }
-    if let Some(r) = r2 {
-        accuracy &= compare_to("R2", r, 0., window.min(reached(r)), comparisons);
-        evaluated += 1;
-        if duration > window && reached(r) > window {
-            accuracy &= compare_to("R2", r, window, duration.min(reached(r)), comparisons);
+    for (name, reference, after_window) in [("R1", r1, false), ("R2", r2, true)] {
+        let Some(r) = reference else { continue };
+        for (from, to) in reference_spans(window, duration, reached(trip), reached(r), after_window)
+        {
+            accuracy &= compare_to(name, r, from, to, comparisons);
         }
+        evaluated += 1;
     }
     g.whole("/trip/referenceSpans");
     out.push(gate(
@@ -866,6 +863,25 @@ pub fn judge_trip(
     }
     out.extend(conservation_gates(h, "trip", trip));
     out
+}
+
+/// The trip's comparison spans against one reference (`referenceSpans`:
+/// R1 over the window, R2 over the window and after it), each within the
+/// part both runs reached: a declared part ends at its own run's D3 (a)
+/// exit, so neither run is compared where it has no samples.
+pub fn reference_spans(
+    window: f64,
+    duration: f64,
+    trip_reached: f64,
+    reference_reached: f64,
+    after_window: bool,
+) -> Vec<(f64, f64)> {
+    let end = trip_reached.min(reference_reached);
+    let mut spans = vec![(0., window.min(end))];
+    if after_window && duration > window && end > window {
+        spans.push((window, duration.min(end)));
+    }
+    spans
 }
 
 /// A run's declared part: everything up to `until` (absolute time), its
