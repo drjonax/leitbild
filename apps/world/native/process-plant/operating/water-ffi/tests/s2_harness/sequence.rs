@@ -23,7 +23,7 @@ use super::{
     compose::{self, Composed, Settled},
     gates::Declaration,
     guards::{self, Admission, WorkBound},
-    outputs::{Reader, admit, extension},
+    outputs::{Reader, admit, extension, reference_densities},
     receipt::{self, gate},
     run::RunSpec,
     runner::{Run, Start, advance},
@@ -56,6 +56,8 @@ pub struct Harness {
     pub packet: compose::PacketFile,
     pub network_packet: NetworkPacket,
     pub reference_travel_m: f64,
+    /// The source feedback's reference water densities (D3 (a)).
+    pub d3_reference: Vec<f64>,
     settled_flows: Option<Settled>,
     reader: Option<Reader>,
     pub work: WorkBound,
@@ -82,6 +84,7 @@ impl Harness {
             .as_f64()
             .ok_or("the packet's rods section has no reference_travel_m")?;
         let work = WorkBound::new(&d.gates);
+        let d3_reference = reference_densities(&raw)?;
         Ok(Self {
             mode,
             d,
@@ -91,6 +94,7 @@ impl Harness {
             packet,
             network_packet,
             reference_travel_m,
+            d3_reference,
             settled_flows: None,
             reader: None,
             work,
@@ -164,8 +168,17 @@ impl Harness {
             report_only_step_cap: None,
             caps_report_only: smoke,
             rods_observed: false,
-            domain_exit_stops: !(smoke
-                && std::env::var("LD01_S2_SMOKE_DOMAIN_EXIT").as_deref() == Ok("report")),
+            // D3 (a) as approved ends a trip-type run's declared part at its
+            // labelled exit; the gate run continues it for information only
+            // (every owner option), a smoke only when asked.
+            domain_exit_stops: if smoke {
+                std::env::var("LD01_S2_SMOKE_DOMAIN_EXIT").as_deref() != Ok("report")
+            } else {
+                !matches!(
+                    name,
+                    "trip" | "R0" | "R1" | "R2" | "noTurbineTrip" | "stuckCluster"
+                )
+            },
         };
         let window = g.number("/trip/window_s").min(duration_s);
         let trip = |spec: &mut RunSpec| {
@@ -267,6 +280,7 @@ impl Harness {
             spec,
             self.reader(),
             &self.extension,
+            &self.d3_reference,
             settled_check,
         );
         self.work.charge(&spec.name, run.record.process_cpu_s);
@@ -280,6 +294,32 @@ impl Harness {
             "failure": run.record.failure, "exit": run.record.exit, "process_cpu_s": run.record.process_cpu_s}));
         self.runs.insert(spec.name.clone(), run.record.json());
         Some(run)
+    }
+
+    /// What the next phase of a gate run restores: the work bound's
+    /// charges, the sequence so far and the run records.
+    pub fn handover(&self) -> Value {
+        json!({"charged": self.work.charged.iter().map(|(k, c)| json!([k, c])).collect::<Vec<_>>(),
+            "not_started": self.work.not_started, "sequence": self.sequence,
+            "runs": self.runs, "work_runs": self.work_runs})
+    }
+    /// Restore a previous phase's [`Harness::handover`].
+    pub fn restore(&mut self, v: &Value) -> Result<(), String> {
+        let charged = v["charged"].as_array().ok_or("handover without charges")?;
+        for c in charged {
+            let item = c[0].as_str().ok_or("charge item")?;
+            let cpu = c[1].as_f64().ok_or("charge CPU")?;
+            self.work.charge(&format!("{item} (phase 1)"), cpu);
+        }
+        self.work.not_started = v["not_started"].as_array().cloned().unwrap_or_default();
+        self.sequence = v["sequence"].as_array().cloned().unwrap_or_default();
+        for (k, r) in v["runs"].as_object().ok_or("handover runs")? {
+            self.runs.insert(k.clone(), r.clone());
+        }
+        for (k, r) in v["work_runs"].as_object().ok_or("handover work runs")? {
+            self.work_runs.insert(k.clone(), r.clone());
+        }
+        Ok(())
     }
 
     /// The receipt's provenance, machine and configuration sections.
@@ -798,6 +838,70 @@ pub fn judge_trip(
     out
 }
 
+/// A run's declared part: everything up to `until` (absolute time), its
+/// D3 (a) exit when it continued past it for information.
+pub fn truncated(run: &Run, until: f64) -> Run {
+    let mut r = run.clone();
+    let keep = r
+        .credited
+        .t
+        .iter()
+        .take_while(|t| **t <= until + 1e-9)
+        .count();
+    r.credited.t.truncate(keep);
+    for series in r.credited.outputs.values_mut() {
+        for s in series.iter_mut() {
+            s.truncate(keep);
+        }
+    }
+    r.marks.retain(|m| m.t <= until + 1e-9);
+    r.seats.retain(|_, t| *t <= until + 1e-9);
+    r.record.reached_s = until - r.origin;
+    r
+}
+
+/// The trip's gates on each run's declared part (up to its D3 (a) exit),
+/// and, where any run continued past its exit, the same gates on the whole
+/// runs for information only (ids prefixed `information.`, never judged;
+/// comparisons likewise), for the owner's options.
+pub fn judge_trip_declared_and_information(
+    h: &Harness,
+    trip: &Run,
+    r0: Option<&Run>,
+    r1: Option<&Run>,
+    r2: Option<&Run>,
+    comparisons: &mut serde_json::Map<String, Value>,
+) -> Vec<Value> {
+    let cut = |r: &Run| {
+        r.information_from
+            .map_or_else(|| r.clone(), |at| truncated(r, at))
+    };
+    let (t, a, b, c) = (cut(trip), r0.map(cut), r1.map(cut), r2.map(cut));
+    let mut out = judge_trip(h, &t, a.as_ref(), b.as_ref(), c.as_ref(), comparisons);
+    let continued = [Some(trip), r0, r1, r2]
+        .iter()
+        .flatten()
+        .any(|r| r.information_from.is_some());
+    if continued {
+        let mut info = serde_json::Map::new();
+        for mut g in judge_trip(h, trip, r0, r1, r2, &mut info) {
+            let id = format!("information.{}", g["id"].as_str().unwrap_or(""));
+            let basis = format!(
+                "INFORMATION ONLY (past the D3 (a) exit): {}",
+                g["basis"].as_str().unwrap_or("")
+            );
+            g["id"] = json!(id);
+            g["judged"] = json!(false);
+            g["basis"] = json!(basis);
+            out.push(g);
+        }
+        for (k, v) in info {
+            comparisons.insert(format!("information.{k}"), v);
+        }
+    }
+    out
+}
+
 /// D3 (a) and the exact start at a start state, as a zero-time entry.
 pub fn state_receipt(h: &mut Harness, start: &Start, item: &str) -> Value {
     let mut c = h.compose(item);
@@ -824,7 +928,8 @@ pub fn state_receipt(h: &mut Harness, start: &Start, item: &str) -> Value {
             let d3 = match c.joined.evaluate(start.t, &y, &yp, None, 0., None) {
                 Ok(()) => match admit(&c.joined, &h.extension, start.t) {
                     Ok(a) => json!({"domain": a.domain, "margin_holds": a.margin.holds,
-                        "worst_pivot": a.margin.pivots.iter().copied().fold(f64::INFINITY, f64::min)}),
+                        "worst_pivot": a.margin.pivots.iter().copied().fold(f64::INFINITY, f64::min),
+                        "margins": super::outputs::d3_point(&c.joined, &h.extension, &h.d3_reference, start.t, start.t)}),
                     Err(e) => json!({"refused": format!("{e}")}),
                 },
                 Err(e) => json!({"refused": format!("{e:?}")}),
@@ -839,58 +944,38 @@ pub fn state_receipt(h: &mut Harness, start: &Start, item: &str) -> Value {
     }
 }
 
-/// External receipts named in `LD01_S2_ZERO_TIME_RECEIPTS` (`{"Z2": path,
-/// …}`) and S1 run 6's (`LD01_S2_S1_RUN6_RECEIPT`), each with its SHA-256;
-/// S1 run 6 must pass at this app commit, and its CPU is charged.
-pub fn external_receipts(h: &mut Harness, app_commit: &str) -> Result<Value, Vec<String>> {
-    let mut refusals = Vec::new();
-    let mut out = serde_json::Map::new();
-    match std::env::var("LD01_S2_S1_RUN6_RECEIPT") {
+/// The receipts other tests wrote in the window, from the manifest
+/// `LD01_S2_EXTERNAL_MANIFEST`: `{name: {"receipt": path, "process_cpu_s":
+/// x}}`, the CPU measured around each test by the window script (`time -p`,
+/// user + sys), or `{"receipt": path, "reused": true}` for a preview receipt
+/// reused (charged nothing in the window). Each named one is read, hashed,
+/// checked by its kind's pass rule, recorded and its CPU charged.
+///
+/// | Name | Pass rule |
+/// | --- | --- |
+/// | `S1run6` | kind `s1-hydraulics-admission`, verdict `PASS…`, app commit = this binary's (re-run in the window at the gate commit) |
+/// | `Z6composed`, `Z6settled` | verdict `GO…` |
+/// | `Z7` | `failures` = 0 |
+/// | `Z5` | kind `s2-z5-unit-costs` |
+/// | others (`Z2`, `Z3composed`, `Z3settled`, `Z4`) | recorded; judged by their own receipts |
+pub fn external_receipts(
+    h: &mut Harness,
+    app_commit: &str,
+    required: &[&str],
+) -> Result<Value, Vec<String>> {
+    let manifest: BTreeMap<String, Value> = match std::env::var("LD01_S2_EXTERNAL_MANIFEST") {
         Ok(path) => match std::fs::read(&path)
             .map_err(|e| e.to_string())
-            .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| e.to_string()))
+            .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
         {
-            Ok(r) => {
-                let pass = r["kind"] == "s1-hydraulics-admission"
-                    && r["verdict"].as_str().is_some_and(|v| v.starts_with("PASS"));
-                let at_commit = r["app_commit"].as_str() == Some(app_commit);
-                let cpu_s = r["total_cpu_s"].as_f64().unwrap_or(f64::NAN);
-                if !pass {
-                    refusals.push(format!("S1 run 6 ({path}) did not pass: {}", r["verdict"]));
-                }
-                if !at_commit {
-                    refusals.push(format!(
-                        "S1 run 6 ran at {} , not at the frozen app commit {app_commit}",
-                        r["app_commit"]
-                    ));
-                }
-                h.work.charge("S1 run 6", cpu_s);
-                out.insert(
-                    "s1_run6".into(),
-                    json!({"path": path, "sha256": crate::provenance::sha256_file(&path).ok(),
-                    "verdict": r["verdict"], "app_commit": r["app_commit"], "total_cpu_s": cpu_s,
-                    "cap_cpu_s": h.d.gates.number("/caps_cpu_s/s1Run6")}),
-                );
-            }
-            Err(e) => refusals.push(format!("S1 run 6's receipt {path}: {e}")),
+            Ok(m) => m,
+            Err(e) => return Err(vec![format!("LD01_S2_EXTERNAL_MANIFEST {path}: {e}")]),
         },
-        Err(_) => refusals.push("LD01_S2_S1_RUN6_RECEIPT names no S1 run 6 receipt".into()),
-    }
-    match std::env::var("LD01_S2_ZERO_TIME_RECEIPTS") {
-        Ok(text) => match serde_json::from_str::<BTreeMap<String, String>>(&text) {
-            Ok(map) => {
-                for z in ["Z2", "Z3", "Z4", "Z5", "Z6", "Z7"] {
-                    match map.get(z) {
-                        Some(p) => {
-                            out.insert(z.into(), json!({"path": p, "sha256": crate::provenance::sha256_file(p).ok()}));
-                        }
-                        None => refusals.push(format!("no {z} receipt named")),
-                    }
-                }
-            }
-            Err(e) => refusals.push(format!("LD01_S2_ZERO_TIME_RECEIPTS: {e}")),
-        },
-        Err(_) => refusals.push("LD01_S2_ZERO_TIME_RECEIPTS names no zero-time receipts".into()),
+        Err(_) => return Err(vec!["LD01_S2_EXTERNAL_MANIFEST names no manifest".into()]),
+    };
+    let (mut out, charges, refusals) = check_external(&manifest, required, app_commit);
+    for (name, cpu) in charges {
+        h.work.charge(&name, cpu);
     }
     // The values those receipts judge are delegated to them.
     out.insert(
@@ -904,6 +989,102 @@ pub fn external_receipts(h: &mut Harness, app_commit: &str) -> Result<Value, Vec
     } else {
         Err(refusals)
     }
+}
+
+/// What [`check_external`] found: the receipts' entries, the charges and
+/// the refusals.
+pub type Checked = (
+    serde_json::Map<String, Value>,
+    Vec<(String, f64)>,
+    Vec<String>,
+);
+
+/// [`external_receipts`]' checks on a manifest: each required entry's
+/// receipt read, hashed and judged by its kind's pass rule; the charges
+/// (name, CPU) of those run in the window; the refusals.
+pub fn check_external(
+    manifest: &BTreeMap<String, Value>,
+    required: &[&str],
+    app_commit: &str,
+) -> Checked {
+    let mut refusals = Vec::new();
+    let mut charges = Vec::new();
+    let mut out = serde_json::Map::new();
+    for name in required {
+        let Some(entry) = manifest.get(*name) else {
+            refusals.push(format!("the manifest names no {name} receipt"));
+            continue;
+        };
+        let Some(path) = entry["receipt"].as_str() else {
+            refusals.push(format!("{name}: no receipt path"));
+            continue;
+        };
+        let r: Value = match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        {
+            Ok(r) => r,
+            Err(e) => {
+                refusals.push(format!("{name} ({path}): {e}"));
+                continue;
+            }
+        };
+        let reused = entry["reused"] == json!(true);
+        let cpu = entry["process_cpu_s"].as_f64();
+        if !reused && cpu.is_none() {
+            refusals.push(format!(
+                "{name}: run in the window but no process_cpu_s measured"
+            ));
+        }
+        let pass = match *name {
+            "S1run6" => json!(
+                r["kind"] == "s1-hydraulics-admission"
+                    && r["verdict"].as_str().is_some_and(|v| v.starts_with("PASS"))
+                    && r["app_commit"].as_str() == Some(app_commit)
+            ),
+            "Z6composed" | "Z6settled" => {
+                json!(r["verdict"].as_str().is_some_and(|v| v.starts_with("GO")))
+            }
+            "Z7" => json!(r["failures"] == json!(0)),
+            "Z5" => json!(r["kind"] == "s2-z5-unit-costs"),
+            _ => Value::Null,
+        };
+        if pass == json!(false) {
+            refusals.push(format!(
+                "{name} ({path}) does not pass: kind {}, verdict {}, app commit {} (this binary {app_commit})",
+                r["kind"], r["verdict"], r["app_commit"]
+            ));
+        }
+        if let Some(c) = cpu.filter(|_| !reused) {
+            charges.push((name.to_string(), c));
+        }
+        out.insert(
+            name.to_string(),
+            json!({"receipt": path, "sha256": crate::provenance::sha256_file(path).ok(),
+                "kind": r["kind"], "verdict": r["verdict"], "status": r["status"],
+                "process_cpu_s": cpu, "reused": reused, "pass": pass}),
+        );
+    }
+    (out, charges, refusals)
+}
+
+/// The phase-1 hand-over: the gate run's settled state (the S2-07 format,
+/// floats and exact bits) for the settled-state zero-time receipts and the
+/// runs phase.
+pub fn write_state(
+    path: &std::path::Path,
+    packet: &compose::PacketFile,
+    s: &Start,
+) -> Result<(), String> {
+    if path.exists() {
+        return Err(format!("never overwritten: {}", path.display()));
+    }
+    let bits =
+        |v: &[f64]| -> Vec<String> { v.iter().map(|x| format!("{:016x}", x.to_bits())).collect() };
+    let state = json!({"packet": packet.path, "packet_sha256": packet.sha256, "t_s": s.t,
+        "y": s.y, "y_bits": bits(&s.y), "yp": s.yp, "yp_bits": bits(&s.yp)});
+    std::fs::write(path, serde_json::to_vec(&state).unwrap())
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// The receipt's path: a new file under `$LD01_RECEIPTS/<lane>/`.

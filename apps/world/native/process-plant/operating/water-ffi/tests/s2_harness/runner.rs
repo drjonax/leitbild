@@ -37,7 +37,7 @@ use super::{
     conservation::Conservation,
     gates::Declaration,
     meter::{Attribution, Metered, Tally, jacobian_by_kind},
-    outputs::{Reader, admit},
+    outputs::{Reader, admit, d3_point},
     run::{CpuBuckets, RunRecord, RunSpec},
 };
 use crate::{
@@ -84,6 +84,7 @@ pub struct Mark {
 
 /// What a run produced: its schema record and the series its judgements
 /// read.
+#[derive(Clone)]
 pub struct Run {
     pub record: RunRecord,
     pub origin: f64,
@@ -98,6 +99,9 @@ pub struct Run {
     pub end: Start,
     pub attribution: Attribution,
     pub conservation_pass: bool,
+    /// The D3 (a) exit's time when the run continued past it for
+    /// information: its declared verdict is judged up to it.
+    pub information_from: Option<f64>,
 }
 
 /// The restart configuration from `ld01-s2-gates` (G13, K4).
@@ -200,6 +204,67 @@ fn worked(stats: &leitbild_operating_water::ida::Stats) -> Counts {
     }
 }
 
+/// The declared limits' marker in an owner's refusal of a limit root (the
+/// SG crown and pickup guards: "S2 domain exit (unsupported): …"): such a
+/// refusal is the run's explicit end at its declared limit, never a failure.
+pub fn declared_limit(refusal: &str) -> Option<String> {
+    refusal
+        .find("S2 domain exit")
+        .map(|k| refusal[k..].to_string())
+}
+
+/// DR-P3-GATE-2: a run's ledger closures are counted in the contract's
+/// tolerance units (the composed `atol` and the contract `rtol`). A declared
+/// run's own tolerances are the contract's; a reference's are tighter while
+/// stock IDAS integrates the ledger without error control, so its closure is
+/// reported against the contract's tolerances (re-declared after the S2-15
+/// result; that R2 ledger verdict stays red in its record). Returns the
+/// ledger's `(atol, rtol)` and whether the run is a reference.
+pub fn ledger_tolerances<'a>(
+    spec: &RunSpec,
+    contract: (&'a [f64], f64),
+    run: (&'a [f64], f64),
+) -> (&'a [f64], f64, bool) {
+    let reference = spec.rtol != contract.1 || spec.atol_factor != 1.;
+    if reference {
+        (contract.0, contract.1, true)
+    } else {
+        (run.0, run.1, false)
+    }
+}
+
+/// Where an output's physical admission (the inventory) and ledger closure
+/// are judged (lead decision DR-P3-GATE-1): on the accepted solver step that
+/// first reaches it, never on the interpolated output state, since stock
+/// IDA's constraints (nonnegative stocks) hold on accepted steps only.
+#[derive(Clone, Debug, Default)]
+pub struct Closures {
+    pending: Vec<f64>,
+    /// (step time, the outputs it judged).
+    pub judged: Vec<(f64, usize)>,
+}
+impl Closures {
+    /// Outputs still waiting for an accepted step.
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+    /// An output sampled from the interpolant: its closure waits.
+    pub fn output(&mut self, t: f64) {
+        self.pending.push(t);
+    }
+    /// An accepted step end at `tn` (not a root return, whose step its
+    /// restart discards): the waiting outputs it reaches, judged on it.
+    pub fn accepted(&mut self, tn: f64) -> Vec<f64> {
+        let fuzz = 1e-14 * tn.abs().max(1.);
+        let (due, wait): (Vec<f64>, Vec<f64>) = self.pending.iter().partition(|t| **t <= tn + fuzz);
+        self.pending = wait;
+        if !due.is_empty() {
+            self.judged.push((tn, due.len()));
+        }
+        due
+    }
+}
+
 /// D3 (a) at one accepted state, as the predicate decides it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum D3 {
@@ -237,6 +302,11 @@ struct DomainRecord {
     first_margin_hold: Option<f64>,
     first_extended: Option<f64>,
     exit: Option<Value>,
+    /// D3 (a) every simulated second: domain, doubled and nominal margins.
+    trajectory: Vec<Value>,
+    /// The exit's time when the run continued past it for information.
+    information_from: Option<f64>,
+    information_failure: Option<String>,
 }
 
 /// One run from `start` on the fresh composition `c` under `spec`.
@@ -250,6 +320,7 @@ pub fn advance(
     spec: &RunSpec,
     reader: &Reader,
     extension: &Extension,
+    d3_reference: &[f64],
     mut settled: Option<&mut dyn FnMut(&Credited) -> bool>,
 ) -> Run {
     let process0 = process_cpu_s();
@@ -268,9 +339,13 @@ pub fn advance(
         mut analyses,
         ..
     } = c;
+    let contract_atol = atol.clone();
+    let contract_rtol = rtol;
     let atol: Vec<f64> = atol.iter().map(|a| a * spec.atol_factor).collect();
-    let _contract_rtol = rtol;
     let rtol = spec.rtol;
+    // DR-P3-GATE-2: the ledger's tolerance units.
+    let (ledger_atol, ledger_rtol, reference) =
+        ledger_tolerances(spec, (&contract_atol, contract_rtol), (&atol, rtol));
     let mut attribution = Attribution::default();
     let mut record = RunRecord {
         spec: Some(spec.clone()),
@@ -315,6 +390,7 @@ pub fn advance(
                 end: start.clone(),
                 attribution,
                 conservation_pass: false,
+                information_from: None,
             };
         }
     };
@@ -353,8 +429,13 @@ pub fn advance(
         .expect("ledger start");
     let plan = ida.system().inner.plan.clone();
     let inventory = |ida: &Ida<System>, y: &[f64]| {
-        plan.inventory(&ida.system().integrated().joined, y, &atol, rtol)
-            .map_err(|e| format!("inventory: {e:?}"))
+        plan.inventory(
+            &ida.system().integrated().joined,
+            y,
+            ledger_atol,
+            ledger_rtol,
+        )
+        .map_err(|e| format!("inventory: {e:?}"))
     };
     let held0 = inventory(&ida, &y).expect("inventory at the start");
     let mut conservation =
@@ -571,7 +652,14 @@ pub fn advance(
                 }
                 Err(e) => {
                     attribution.restart(thread_cpu_s() - started, part);
-                    failure = Some(format!("{} restart at {} s: {e}", $name, t - t0));
+                    // A declared limit ends the run explicitly: an exit,
+                    // never a failure (revision 7, contrary cases).
+                    match declared_limit(&e) {
+                        Some(limit) => {
+                            exit = Some(format!("ended at declared limit at t = {} s: {limit}", t - t0))
+                        }
+                        None => failure = Some(format!("{} restart at {} s: {e}", $name, t - t0)),
+                    }
                 }
             }
         }};
@@ -582,6 +670,7 @@ pub fn advance(
         restart_at!(Discrete::Command(command), "command");
     }
     let mut boundary_set: Option<f64> = None;
+    let mut closures = Closures::default();
     let trace = std::env::var_os("LD01_S2_TRACE").is_some();
     // The sample grid: every observation (every output when unobserved),
     // read from stock's interpolant after each step (S3-D1 #6).
@@ -662,7 +751,7 @@ pub fn advance(
                 at,
                 &ys,
                 &yps,
-                output,
+                false,
                 true,
                 reader,
                 extension,
@@ -677,8 +766,23 @@ pub fn advance(
                 break;
             }
             j += 1;
+            // D3 (a)'s margins every simulated second, on the sample's
+            // evaluation (the account's), for every owner option.
+            if (j - 1).is_multiple_of(per_second) {
+                let started = thread_cpu_s();
+                let point = d3_point(
+                    &ida.system().integrated().joined,
+                    extension,
+                    d3_reference,
+                    at,
+                    t0,
+                );
+                domain.trajectory.push(point);
+                attribution.observation_handler_s += thread_cpu_s() - started;
+            }
             if output {
                 outputs += 1;
+                closures.output(at);
                 marks.push(Mark {
                     t: at,
                     counts: totals.plus(worked(&stats)),
@@ -702,6 +806,33 @@ pub fn advance(
             if domain.exit.is_some() && spec.domain_exit_stops {
                 ended = Some(at);
                 break;
+            }
+            if domain.exit.is_some() && domain.information_from.is_none() {
+                // Judged up to here; continued for information only.
+                domain.information_from = Some(at);
+            }
+        }
+        // DR-P3-GATE-1: the physical admission (inventory) and the ledger
+        // closure of every output are judged on the accepted step that first
+        // reaches it (the state IDA's constraints hold on), never on the
+        // interpolant; a root return's step is discarded by its restart, so
+        // its outputs wait for the next accepted step.
+        if failure.is_none() && roots.is_none() {
+            let covered = closures.accepted(time);
+            if !covered.is_empty() {
+                let started = thread_cpu_s();
+                let judged = ledger_dense(&ida, &segment, time)
+                    .and_then(|q| inventory(&ida, &y).map(|held| (q, held)));
+                match judged {
+                    Ok((q, held)) => conservation.output(time, &held, &q),
+                    Err(e) => {
+                        failure = Some(format!(
+                            "at the accepted step {} s reaching the outputs {covered:?}: {e}",
+                            time - t0
+                        ))
+                    }
+                }
+                attribution.account_s += thread_cpu_s() - started;
             }
         }
         if let Some(at) = ended {
@@ -757,7 +888,12 @@ pub fn advance(
         {
             step_cap_reached_at = Some(t - t0);
         }
-        if !spec.caps_report_only && (cap_reached_at.is_some() || guard_reached_at.is_some()) {
+        // Caps bind the declared run only: after a D3 (a) exit continued for
+        // information they are recorded, never enforced.
+        if !spec.caps_report_only
+            && domain.information_from.is_none()
+            && (cap_reached_at.is_some() || guard_reached_at.is_some())
+        {
             record.cap_reached = true;
             failure = Some(format!(
                 "{} reached at {} s",
@@ -828,6 +964,21 @@ pub fn advance(
     };
     record.process_cpu_s = process;
     record.reached_s = t - t0;
+    if let Some(from) = domain.information_from {
+        // A failure after the exit ends the information only; so does a
+        // declared limit reached in the continuation.
+        domain.information_failure = failure.take().or(exit.take());
+        exit = Some(format!(
+            "{} at t = {} s; continued to {} s for information only",
+            domain
+                .exit
+                .as_ref()
+                .and_then(|x| x["label"].as_str())
+                .unwrap_or("D3 (a) exit"),
+            from - t0,
+            t - t0
+        ));
+    }
     record.failure = failure;
     record.exit = exit;
     record.counts = totals;
@@ -839,6 +990,15 @@ pub fn advance(
     record.observations = observations;
     record.identities = conservation.identities_json();
     record.ledger = conservation.ledger_json();
+    record.ledger["placement"] = json!({"rule": "DR-P3-GATE-1: each output's inventory admission and ledger closure are judged on the accepted solver step that first reaches it (y and IDAGetQuad at that step), not on the interpolated output state; identities and credited outputs stay on the sample grid",
+        "accepted_steps_judged": closures.judged.len(), "outputs_judged": closures.judged.iter().map(|(_, n)| n).sum::<usize>(),
+        "outputs_unjudged_at_end": closures.pending_len(),
+        "tolerance_units": if reference {
+            "the contract's (DR-P3-GATE-2: a reference's ledger is reported against the contract's tolerances; re-declared after the S2-15 result, whose R2 ledger verdict stays red)"
+        } else {
+            "the run's own, the contract's"
+        },
+        "reference": reference});
     record.caps = json!({"solver_cap_s": spec.solver_cap_s, "total_guard_s": spec.total_guard_s,
         "report_only": spec.caps_report_only, "solver_cap_reached_at_s": cap_reached_at,
         "total_guard_reached_at_s": guard_reached_at, "report_only_step_cap": spec.report_only_step_cap,
@@ -853,6 +1013,9 @@ pub fn advance(
         "samples_margin_not_holding": domain.margin_failures,
         "first_margin_holds_at_s": domain.first_margin_hold.map(|x| x - t0),
         "first_extended_at_s": domain.first_extended.map(|x| x - t0),
+        "information_from_s": domain.information_from.map(|x| x - t0),
+        "information_failure": domain.information_failure,
+        "every_second": domain.trajectory,
         "margin_note": "the 1 % shutdown-margin test of the source-free operator; at power (critical) it does not hold, and it is reported, not a stop",
         "exit": domain.exit});
     let conservation_pass = conservation.identities_pass() && conservation.ledger_pass();
@@ -877,5 +1040,6 @@ pub fn advance(
         },
         attribution,
         conservation_pass,
+        information_from: domain.information_from,
     }
 }
