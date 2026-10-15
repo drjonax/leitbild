@@ -1750,3 +1750,19 @@ fn s2_z5_unit_costs() {
         json!({"receipt": path, "fill_values": receipt["fill_values"]})
     );
 }
+
+#[test]
+fn a_settled_stop_hands_on_the_accepted_step_not_the_interpolant() {
+    // The settled sample at 523 s lies inside the step reaching 524.6 s; the
+    // interpolant there dips below a near-empty stock's zero (S2-15 r7.1,
+    // phase 2's start), the accepted step does not.
+    let (ys, yps) = (vec![1., -1.4e-26], vec![0., 0.]);
+    let (y, yp) = (vec![1., 2e-9], vec![0., 1e-12]);
+    let (t, y2, yp2) = runner::end_state(true, (523., &ys, &yps), (524.6, &y, &yp), false).unwrap();
+    assert_eq!((t, y2, yp2), (524.6, y.clone(), yp.clone()));
+    // A settled sample on a root return has no accepted step: refused.
+    assert!(runner::end_state(true, (523., &ys, &yps), (523.2, &y, &yp), true).is_err());
+    // Any other end keeps the sample (nothing starts from it).
+    let (t, y3, _) = runner::end_state(false, (24.282, &ys, &yps), (24.3, &y, &yp), false).unwrap();
+    assert_eq!((t, y3), (24.282, ys));
+}

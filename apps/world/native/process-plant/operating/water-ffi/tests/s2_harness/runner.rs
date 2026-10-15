@@ -204,6 +204,33 @@ fn worked(stats: &leitbild_operating_water::ida::Stats) -> Counts {
     }
 }
 
+/// The state a run that ends at a sample hands on (DR-P3-GATE-1's rule
+/// applied to the hand-over): a settled stop hands on the accepted step
+/// that first reaches the settled sample (`step`, the state IDA's
+/// constraints hold on), never the interpolant there, which may dip
+/// below a near-empty stock's zero between admitted steps; the settled
+/// verdict stays judged on the sample. A settled sample reached by a root
+/// return has no accepted step to hand on (its step is discarded by the
+/// restart) and refuses. Any other end (a D3 (a) exit) keeps the
+/// sample's interpolated state: nothing starts from it.
+pub fn end_state(
+    settled: bool,
+    sample: (f64, &[f64], &[f64]),
+    step: (f64, &[f64], &[f64]),
+    root_return: bool,
+) -> Result<(f64, Vec<f64>, Vec<f64>), String> {
+    if !settled {
+        return Ok((sample.0, sample.1.to_vec(), sample.2.to_vec()));
+    }
+    if root_return {
+        return Err(format!(
+            "settled at {} s on a root return: no accepted step to hand on",
+            sample.0
+        ));
+    }
+    Ok((step.0, step.1.to_vec(), step.2.to_vec()))
+}
+
 /// The declared limits' marker in an owner's refusal of a limit root (the
 /// SG crown and pickup guards: "S2 domain exit (unsupported): …"): such a
 /// refusal is the run's explicit end at its declared limit, never a failure.
@@ -735,6 +762,7 @@ pub fn advance(
         // interpolant (stock IDAGetDky): no IDASolve stops at them.
         let fuzz = 1e-14 * time.abs().max(1.);
         let mut ended: Option<f64> = None;
+        let mut settled_stop = false;
         while failure.is_none() && j <= last_sample && grid(j) <= time + fuzz {
             let at = grid(j).min(time);
             let started = thread_cpu_s();
@@ -798,6 +826,7 @@ pub fn advance(
                 {
                     exit = Some(format!("settled at t = {} s", at - t0));
                     ended = Some(at);
+                    settled_stop = true;
                     break;
                 }
             } else {
@@ -836,10 +865,21 @@ pub fn advance(
             }
         }
         if let Some(at) = ended {
-            // The run ends at that sample: its state is the interpolant's.
-            t = at;
-            y.copy_from_slice(&ys);
-            yp.copy_from_slice(&yps);
+            // The run ends at that sample; a settled stop hands on the
+            // accepted step reaching it ([`end_state`]).
+            match end_state(
+                settled_stop,
+                (at, &ys, &yps),
+                (time, &y, &yp),
+                roots.is_some(),
+            ) {
+                Ok((te, ye, ype)) => {
+                    t = te;
+                    y.copy_from_slice(&ye);
+                    yp.copy_from_slice(&ype);
+                }
+                Err(e) => failure = Some(e),
+            }
         } else if failure.is_none() {
             t = time;
             if let Some(directions) = roots {
