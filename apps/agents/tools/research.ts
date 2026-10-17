@@ -49,7 +49,7 @@ const parseAtomEntries = (xml: string): ArxivEntry[] => {
   return entries
 }
 
-const arxivSearchTool: Tool = {
+const createArxivSearchTool = (endpoint: string): Tool => ({
   name: 'arxiv_search',
   description: 'Search academic papers on arXiv by keyword or phrase.',
   usage: 'Search academic papers on arXiv. Free, no API key needed. Best for physics, CS, math, economics.',
@@ -67,7 +67,7 @@ const arxivSearchTool: Tool = {
     if (!query) return { success: false, error: '"query" is required' }
     const maxResults = typeof params.max_results === 'number' ? params.max_results : 5
 
-    const url = `http://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=${maxResults}&sortBy=relevance`
+    const url = `${endpoint}?search_query=all:${encodeURIComponent(query)}&max_results=${maxResults}&sortBy=relevance`
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15_000)
 
@@ -91,7 +91,7 @@ const arxivSearchTool: Tool = {
       return { success: false, error: err instanceof Error ? err.message : 'arXiv search failed' }
     }
   },
-}
+})
 
 // ---- DOI Lookup (Crossref) ----
 
@@ -115,7 +115,7 @@ interface CrossrefResponse {
   message?: CrossrefMessage
 }
 
-const doiLookupTool: Tool = {
+const createDoiLookupTool = (endpoint: string): Tool => ({
   name: 'doi_lookup',
   description: 'Resolve a DOI to full citation metadata using the Crossref API.',
   usage: 'Resolve a DOI to full citation metadata. Free, no API key needed.',
@@ -131,7 +131,7 @@ const doiLookupTool: Tool = {
     const doi = params.doi as string | undefined
     if (!doi) return { success: false, error: '"doi" is required' }
 
-    const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`
+    const url = `${endpoint}/${encodeURIComponent(doi)}`
 
     try {
       const response = await fetch(url, {
@@ -176,7 +176,7 @@ const doiLookupTool: Tool = {
       return { success: false, error: err instanceof Error ? err.message : 'DOI lookup failed' }
     }
   },
-}
+})
 
 // ---- Semantic Scholar ----
 
@@ -194,7 +194,7 @@ interface S2Response {
   data?: S2Paper[]
 }
 
-const semanticScholarTool: Tool = {
+const createSemanticScholarTool = (endpoint: string): Tool => ({
   name: 'semantic_scholar',
   description: 'Search academic papers via Semantic Scholar with citation counts and AI summaries.',
   usage: 'Search academic papers with citation counts and AI-generated summaries (tldr). Broader than arXiv — covers all fields.',
@@ -213,7 +213,7 @@ const semanticScholarTool: Tool = {
     const limit = typeof params.limit === 'number' ? params.limit : 5
 
     const fields = 'title,authors,year,abstract,citationCount,tldr,externalIds'
-    const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=${fields}`
+    const url = `${endpoint}?query=${encodeURIComponent(query)}&limit=${limit}&fields=${fields}`
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15_000)
 
@@ -248,6 +248,26 @@ const semanticScholarTool: Tool = {
       return { success: false, error: err instanceof Error ? err.message : 'Semantic Scholar search failed' }
     }
   },
+})
+
+// ---- Endpoints ----
+
+// Base URLs of the three APIs. The loaded tools use the public services;
+// tests pass a local server's URLs.
+export interface ResearchEndpoints {
+  readonly arxiv: string            // Atom query endpoint
+  readonly crossref: string         // works endpoint; the DOI is appended as one path segment
+  readonly semanticScholar: string  // paper search endpoint
 }
 
-export default [arxivSearchTool, doiLookupTool, semanticScholarTool]
+export const createResearchTools = (endpoints: ResearchEndpoints): Tool[] => [
+  createArxivSearchTool(endpoints.arxiv),
+  createDoiLookupTool(endpoints.crossref),
+  createSemanticScholarTool(endpoints.semanticScholar),
+]
+
+export default createResearchTools({
+  arxiv: 'http://export.arxiv.org/api/query',
+  crossref: 'https://api.crossref.org/works',
+  semanticScholar: 'https://api.semanticscholar.org/graph/v1/paper/search',
+})
