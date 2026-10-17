@@ -6,7 +6,7 @@
 //   ~/.leitbild/memory/<sanitized-name>/facts.json — key-value JSON object
 // ============================================================================
 
-import type { Tool, ToolContext, ToolResult } from '../src/core/types.ts'
+import type { Tool, ToolContext, ToolResult } from '../src/core/types/tool.ts'
 import { mkdir, appendFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'

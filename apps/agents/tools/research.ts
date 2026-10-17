@@ -3,7 +3,7 @@
 // and Semantic Scholar.
 // ============================================================================
 
-import type { Tool, ToolResult } from '../src/core/types.ts'
+import type { Tool, ToolResult } from '../src/core/types/tool.ts'
 
 // ---- arXiv ----
 

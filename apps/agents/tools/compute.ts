@@ -2,7 +2,7 @@
 // Compute Tools — Mathematical evaluation, JSON path extraction, table formatting.
 // ============================================================================
 
-import type { Tool, ToolResult } from '../src/core/types.ts'
+import type { Tool, ToolResult } from '../src/core/types/tool.ts'
 
 // Only allow safe arithmetic characters: digits, operators, parens, spaces,
 // decimal points, percent, scientific notation (e/E), and commas (for readability).

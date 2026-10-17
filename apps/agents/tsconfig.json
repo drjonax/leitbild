@@ -21,6 +21,6 @@
     "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": false
   },
-  "include": ["src/**/*.ts", "experiments/**/*.ts"],
+  "include": ["src/**/*.ts", "tools/**/*.ts", "experiments/**/*.ts"],
   "exclude": ["src/ui/**/*.ts", "src/biometrics/**/*.ts", "experiments/out/**"]
 }

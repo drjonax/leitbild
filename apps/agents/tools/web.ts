@@ -5,7 +5,7 @@
 // fetch_url strips HTML and returns clean text content.
 // ============================================================================
 
-import type { Tool, ToolResult } from '../src/core/types.ts'
+import type { Tool, ToolResult } from '../src/core/types/tool.ts'
 
 interface SearchResult {
   title: string
