@@ -42,7 +42,7 @@ const registryOn = (dataDir: string, workspaceId: ReturnType<typeof newWorkspace
 const states = (objects: ReadonlyArray<any>) => objects.map(object => `${object.id} ${object.lifecycle} ${object.operational?.status ?? '-'}`).sort()
 
 describe('the integrated all-pack fixture', () => {
-  test('is no product Scenario, holds six packs in open mode, plays two simulated minutes with its cues and restores', async () => {
+  test('is no product Scenario, holds six packs in open mode, plays two simulated minutes with its source cues and restores', async () => {
     const fixture = scenarioDefinitionSchema.parse(await Bun.file(fixtureFile).json())
     expect(builtinScenarioDefinitions.some(definition => definition.id === fixture.id)).toBe(false)
     expect(fixture.packs.map(pack => pack.id).sort()).toEqual(['ambulance', 'drone', 'einsatz', 'electric-grid', 'process-plant', 'weather'])
@@ -64,17 +64,12 @@ describe('the integrated all-pack fixture', () => {
     await run.runMaximumPace(new Date(startedAt + 120_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
     const played = run.snapshot()
     expect(Date.parse(played.clock!.currentTime)).toBeGreaterThanOrEqual(startedAt + 120_000)
-    // The added cue fired: both circuits stand open.
-    for (const assetId of ['branch:osm-1022cbf125eebbb4', 'branch:osm-50a77b48767677b0']) {
-      const outcome = await run.invokeCapability(viewer, { capabilityId: 'world.electric-grid.asset.get', input: { gridId: 'grid:halden-four-unit', assetId } })
-      if (outcome.kind !== 'query') throw new Error('asset.get is not a query')
-      expect((outcome.result as { asset: { status: { label: string } } }).asset.status.label).toBe('Open')
-    }
-    // Every cue due in the two minutes started: the dispatch exercise's, the supply run's and the added one.
+    // Every cue due in the two minutes started: the dispatch exercise's and the supply run's. The fixture adds none:
+    // each evaluation scenario declares its own disturbances as setup steps.
     const due = fixture.timeline!.cues.filter(cue => cue.at.kind === 'after_scenario_start' && cue.at.seconds <= 120).map(cue => cue.id).sort()
     const started = run.events().flatMap(event => event.type === 'scenario.cue.started' ? [event.cueId] : []).sort()
     expect(started).toEqual(due)
-    expect(due).toContain('tegneby-north-trips')
+    expect(due).toEqual(expect.arrayContaining(['initial-road-response', 'initial-air-response', 'initial-drone-observations', 'second-truck']))
     const savedObjects = states(played.objects)
     const savedClock = played.clock!.currentTime
     const savedEvents = run.events().length

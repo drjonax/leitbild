@@ -1,7 +1,7 @@
 {
   "id": "integrated-all-packs",
   "title": "Halden integrated: all packs (evaluation fixture)",
-  "description": "Evaluation fixture for the display work (plan v3.1 §6, V14), never a product Scenario: the Halden four-unit power complex with its Grid and weather (halden-power-complex), the Halden ambulance and drone exercise (halden-dispatch) and the Einsatz supply run in open mode (supply-run), composed into one Run as proto-universal did on 19 Oct 2026, without situation-monitor, whose live external feeds are national, wall-clock and not reproducible. One cue is added: a minute in, two 420 kV circuits north of Tegneby trip. Weather is observable context; it does not change Plant or Grid physics.",
+  "description": "Evaluation fixture for the display work (plan v3.1 §6, V14), never a product Scenario: the Halden four-unit power complex with its Grid and weather (halden-power-complex), the Halden ambulance and drone exercise (halden-dispatch) and the Einsatz supply run in open mode (supply-run), composed into one Run as proto-universal did on 19 Oct 2026, without situation-monitor, whose live external feeds are national, wall-clock and not reproducible. It adds nothing of its own: each evaluation scenario declares its disturbances as setup steps. Weather is observable context; it does not change Plant or Grid physics.",
   "objectives": [
     "Evaluation only: give the Assistant and the displays one Run in which every World pack is present and active at once."
   ],
@@ -1776,32 +1776,6 @@
               "message": "30 minutes in, the exercise is over. Check the objectives: a heavy truck at every urgent bulk request within 4 minutes, and no request waiting more than 10 minutes for a truck.",
               "dismissible": true,
               "tone": "update"
-            }
-          }
-        ]
-      },
-      {
-        "id": "tegneby-north-trips",
-        "at": {
-          "kind": "after_scenario_start",
-          "seconds": 60
-        },
-        "title": "Sylling – Tegneby and Follo – Tegneby 420 kV trip",
-        "actions": [
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.electric-grid.open-branch",
-            "input": {
-              "gridId": "grid:halden-four-unit",
-              "assetId": "branch:osm-1022cbf125eebbb4"
-            }
-          },
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.electric-grid.open-branch",
-            "input": {
-              "gridId": "grid:halden-four-unit",
-              "assetId": "branch:osm-50a77b48767677b0"
             }
           }
         ]
