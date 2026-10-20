@@ -12,6 +12,8 @@
   import GridAssetBrowser from './GridAssetBrowser.svelte'
   import GridContingencyView from './GridContingencyView.svelte'
   import GridLfddStages from './GridLfddStages.svelte'
+  import type { MapCover } from '../surface-panel-contract.ts'
+  import { gridPanelMapCover } from './panel-cover.ts'
 
   type MapTarget =
     | { readonly kind: 'point'; readonly center: readonly [number, number] }
@@ -25,9 +27,11 @@
     /** `<gridId>#<assetId>` selected on the map or in this panel. */
     readonly selectedItemId?: string | null
     readonly onSelectItem?: (itemId: string | null) => void
+    /** The surface keeps the map camera and the alarm strip clear of what this panel covers. */
+    readonly onMapCover: (cover: MapCover) => void
   }
 
-  const { simulationRunId, objects, onClose, onFocusMap = () => undefined, selectedItemId = null, onSelectItem = () => undefined }: Props = $props()
+  const { simulationRunId, objects, onClose, onFocusMap = () => undefined, selectedItemId = null, onSelectItem = () => undefined, onMapCover }: Props = $props()
 
   interface GridOverviewSummary {
     readonly gridId: string
@@ -250,6 +254,12 @@
       applyAndPersistFrame({ ...frame, top: frame.top + step })
     }
   }
+
+  // The panel is drawn only once its Grid's summary arrives; until then it covers nothing.
+  $effect(() => {
+    const cover = gridPanelMapCover(panelElement === null ? null : frame, parentSize().width)
+    untrack(() => onMapCover(cover))
+  })
 
   const panelStyle = $derived(frame
     ? `left: ${frame.left}px; top: ${frame.top}px; width: ${frame.width}px; height: ${frame.height}px;`
