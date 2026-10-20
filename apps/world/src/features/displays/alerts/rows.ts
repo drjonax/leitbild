@@ -6,7 +6,8 @@ import type { IsoTimestamp } from '../../../core/model/time.ts'
 // The alert read model (plan v3.1 §2.2, §2.7; architecture A6): pure over the
 // core alert slot, so the main app, the server and later the embed read alerts
 // alike. It imports no Pack. Words for objects come from presentation; a
-// group's heading is its object's label (R21), never a raw id.
+// group's heading is its object's label, never a raw id (R21, R32: group
+// words come in P2).
 
 export type AlertRowState = 'active-unack' | 'active-ack' | 'returned-unack'
 
@@ -18,7 +19,6 @@ export interface AlertRow {
   readonly packId: string
   readonly categoryId: string
   readonly group: { readonly objectId: ObjectId; readonly subjectGroup?: string }
-  readonly groupLabel: string
   /** Unmodified, facets included. */
   readonly alert: AlertState
   /** null: "priority not declared"; nothing derives one from `severity` (R1). */
@@ -33,8 +33,6 @@ export type AlertObject = Pick<OperationalObject, 'id' | 'packId' | 'lifecycle' 
 export interface AlertPresentation {
   readonly label: string
   readonly categoryId: string
-  /** Subject-group headings the Pack declares (a grid island's label); a group without one is headed by the object's label. */
-  readonly groupLabels?: Readonly<Record<string, string>>
 }
 
 /** Returned to normal and acknowledged is no longer an alert; a Pack removes such a record. */
@@ -56,7 +54,6 @@ export const alertRows = <T extends AlertObject>(objects: ReadonlyArray<T>, pres
         packId: object.packId,
         categoryId: presented.categoryId,
         group: subjectGroup === undefined ? { objectId: object.id } : { objectId: object.id, subjectGroup },
-        groupLabel: (subjectGroup === undefined ? undefined : presented.groupLabels?.[subjectGroup]) ?? presented.label,
         alert,
         priority: alert.priority ?? null,
         state,
