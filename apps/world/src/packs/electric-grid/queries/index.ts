@@ -13,6 +13,7 @@ import { gridPowerFlowQuery } from './power-flow.ts'
 import { gridSummaryQuery } from './summary.ts'
 import { gridObservationDeclarationsQuery } from '../observation/declarations.ts'
 import { gridObservationReadQuery } from '../observation/read.ts'
+import { gridObservationTopologyQuery } from '../observation/topology.ts'
 
 /** Published order of the Electric Grid query Capabilities. */
 const electricGridQueries: ReadonlyArray<ElectricGridQuery> = [
@@ -30,6 +31,7 @@ const electricGridQueries: ReadonlyArray<ElectricGridQuery> = [
   gridMapStateQuery,
   gridObservationDeclarationsQuery,
   gridObservationReadQuery,
+  gridObservationTopologyQuery,
 ]
 
 const queryById = new Map(electricGridQueries.map(query => [query.capability.id, query]))

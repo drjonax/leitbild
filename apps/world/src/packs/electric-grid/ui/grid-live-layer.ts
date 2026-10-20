@@ -12,7 +12,7 @@ import type {
   PackMapFeatureSelection,
 } from '../../../core/packs/protocol.ts'
 import type { PackMapAppearance, PackMapLegend, PackMapTheme, PackMapThemedColor } from '../../../core/packs/reference-style.ts'
-import { parseElectricGridObjectData } from '../model.ts'
+import { gridModelAttribution, parseElectricGridObjectData } from '../model.ts'
 import {
   gridMapGeometryResultSchema,
   gridMapStateResultSchema,
@@ -760,8 +760,7 @@ export const gridLiveMapLayer: PackLiveMapLayer = {
   layersFor,
   imagesFor,
   referenceContext: { datasetIds: [gridNorwayStyle.datasetId], color: gridReferenceContextColor },
-  // The Grid Model's sources and licences; NOTICE.md and each asset's provenance give the detail.
-  attribution: 'Grid model: © OpenStreetMap contributors (ODbL) · NVE (NLOD 2.0) · Elhub, Kartverket, SSB, Svenska kraftnät, ENTSO-E via Energy-Charts (CC BY 4.0)',
+  attribution: gridModelAttribution,
 }
 
 export const gridLiveStateLegend: PackMapLegend = {

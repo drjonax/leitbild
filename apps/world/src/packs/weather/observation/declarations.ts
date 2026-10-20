@@ -1,6 +1,6 @@
 // Weather observation declarations (plan v3.1 §2.2; architecture A1, N5): every probe and area declares
 // the weather quantities in their core unit codes, a probe's recorded by the `probes` profile. The
-// severity ladder's rules are each quantity's thresholds; no alert is raised from them.
+// severity ladder's rules are each quantity's advisory thresholds; no alert is raised from them.
 import { createHash } from 'node:crypto'
 import { recordingSeriesIdFor, type OperationalObject, type ScenarioRecordingSelection } from '../../../core/model/index.ts'
 import { defineObservationCapability, observationShapes, type ObservationDeclaration } from '../../../core/observation/capabilities.ts'
@@ -26,7 +26,7 @@ export const declareWeather = (objectId: string, data: WeatherPackData, recordin
     valueType: quantity.quantity === 'state' ? 'enum' : 'number',
     ...(quantity.quantity === 'state' ? { states: precipitationTypeSchema.options.map(value => ({ value, label: value.replaceAll('_', ' ') })) } : {}),
     thresholds: weatherSeverityLadder.filter(rule => rule.quantity === quantity.id).map((rule, order) => ({
-      id: `${rule.severity}-${rule.quantity}`, direction: rule.direction, value: rule.limit, order: order + 1, effect: 'rating', priority: tickPriority[rule.severity],
+      id: `${rule.severity}-${rule.quantity}`, direction: rule.direction, value: rule.limit, order: order + 1, effect: 'advisory', priority: tickPriority[rule.severity],
     })),
     series: data.definition.type === 'weather_probe' && intervalMs !== undefined ? { seriesId: recordingSeriesIdFor(objectId, quantity.id), intervalMs } : null,
   }))
