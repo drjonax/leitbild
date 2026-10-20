@@ -6,7 +6,7 @@
   import { commandsHeld, indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
   import { drawnLook, flapCount, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, rowText, shutdownDemanded, stubWordText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
-  import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/quantity-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf, expectedAfter } from '../panel-presenters.ts'
   import type { DisplayAnnunciation } from '../../../../packs/process-plant/displays/annunciators.ts'
