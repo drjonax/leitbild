@@ -32,6 +32,9 @@ export const defineSimulationCommandCapability = (config: Omit<SimulationCapabil
   readonly risk?: 'write' | 'destructive'
 }): SimulationCapability => defineSimulationCapability({ ...config, kind: 'command', risk: config.risk ?? 'write' })
 
+/** Public: callable through the broker and the Run, listed in catalogs. A system-audience Capability is World core's alone. */
+export const isPublicCapability = (capability: Pick<SimulationCapability, 'audience'>): boolean => capability.audience !== 'system'
+
 export const capabilityIds = (
   capabilities: ReadonlyArray<SimulationCapability>,
   kind: SimulationCapabilityKind,

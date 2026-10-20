@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { z,ZodError } from 'zod'
 import { openRunHistorian, recordedHistoryOf } from '../../features/historian/store.ts'
 import { createProcedureSourceService,type ProcedureSourceService } from '../../features/procedures/source.ts'
-import { capabilityJsonSchema } from '../../simulation/capabilities.ts'
+import { observationProviderFor } from '../../features/displays/observation/port.ts'
+import { capabilityJsonSchema, isPublicCapability } from '../../simulation/capabilities.ts'
 import { worldCoreCapabilities } from '../../simulation/core-capabilities.ts'
 import type { PackRuntimeAdapter, PackWorkspaceCapability } from '../../simulation/protocol.ts'
 import { createRuntimeHub } from '../../simulation/runtime-hub.ts'
@@ -257,7 +258,7 @@ export const createSimulationRunRegistry = (config: {
   const capabilityIdsForRuntimeIds = (runtimeIds: ReadonlyArray<string>): ReadonlyArray<string> => {
     const activeRuntimeIds = new Set(runtimeIds)
     return [...new Set(installedCapabilities
-      .filter(entry => entry.runtimeId === 'world.core' || activeRuntimeIds.has(entry.runtimeId))
+      .filter(entry => isPublicCapability(entry.capability) && (entry.runtimeId === 'world.core' || activeRuntimeIds.has(entry.runtimeId)))
       .map(entry => entry.capability.id))].sort()
   }
 
@@ -365,7 +366,7 @@ export const createSimulationRunRegistry = (config: {
         packId: 'world',
         runtimeId: 'world.core',
       })),
-      ...activeAdapters.flatMap(adapter => adapter.capabilities.map(capability => ({
+      ...activeAdapters.flatMap(adapter => adapter.capabilities.filter(isPublicCapability).map(capability => ({
         id: capability.id,
         kind: capability.kind,
         title: capability.title,
@@ -673,6 +674,7 @@ export const createSimulationRunRegistry = (config: {
         roleAwarePackIds: scenarioRuntime.packs.flatMap(pack => pack.roleAware === true ? [pack.descriptor.id] : []),
         procedureSourceService,
         procedureProvider: object => scenarioRuntime.packs.find(pack => pack.descriptor.id === object.packId)?.procedures,
+        observationProvider: observationProviderFor(scenarioRuntime.packs),
         runtimeStateLoaders: Object.fromEntries(Object.entries(runtimeStateStores).map(([runtimeId, store]) => [runtimeId, store.load])),
         ...(historian === undefined ? {} : { historian }),
       })

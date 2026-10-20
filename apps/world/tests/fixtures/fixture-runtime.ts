@@ -21,6 +21,9 @@ import {
   type RunViewer,
   type ScenarioRecordingSelection,
 } from '../../src/core/model/index.ts'
+import { defineObservationCapability, observationShapes, type ObservationDeclaration } from '../../src/core/observation/capabilities.ts'
+import type { Observation } from '../../src/core/observation/model.ts'
+import type { TopologyGraph } from '../../src/core/observation/topology.ts'
 import { defineSimulationCommandCapability, defineSimulationQueryCapability } from '../../src/simulation/capabilities.ts'
 import type {
   PackRuntimeAdapter,
@@ -34,6 +37,7 @@ import {
   fixtureConfigSchema,
   fixtureDataOf,
   fixtureItemSchema,
+  fixtureObservationIds,
   fixturePackId,
   fixtureRecordingProfiles,
   fixtureRuntimeId,
@@ -119,7 +123,41 @@ const capabilities = [
     input: objectInput, output: z.object({ object: operationalObjectSchema.nullable() }).strict(),
     inspectObjectIds: raw => [objectInput.parse(raw).objectId],
   }),
+  defineObservationCapability('declarations', { id: fixtureObservationIds.declarations, title: 'Declare unit observations', description: 'Speed and status of each unit, measured on its engine.' }),
+  defineObservationCapability('read', { id: fixtureObservationIds.read, title: 'Read unit observations', description: 'Current speed and status of units.' }),
+  defineObservationCapability('topology', { id: fixtureObservationIds.topology, title: 'Draw a unit', description: 'A unit\'s tank feeding its engine.' }),
 ]
+
+/** Units' observation content; the revision never changes because the declared set never does. */
+const observationRevision = 'fixture-observation-1'
+const overspeedMps = 40
+const unitDeclaration = (unit: OperationalObject, recorded: boolean): ObservationDeclaration => ({
+  objectId: unit.id, revision: observationRevision,
+  elements: [{ id: 'engine', class: 'mover', label: `${unit.label} engine` }, { id: 'tank', class: 'store', label: `${unit.label} tank` }],
+  observables: [
+    { ref: `${unit.id}#speed`, label: `${unit.label} speed`, quantity: 'speed', unit: 'm/s', valueType: 'number', tag: 'SPD', element: 'engine', series: null,
+      thresholds: [{ id: 'overspeed', direction: 'high', value: overspeedMps, order: 1, effect: 'alarm', priority: 'caution' }] },
+    { ref: `${unit.id}#status`, label: `${unit.label} status`, quantity: 'state', unit: '', valueType: 'text', thresholds: [],
+      series: recorded ? { seriesId: recordingSeriesIdFor(unit.id, 'operational.status'), intervalMs: 1_000 } : null },
+  ],
+})
+const unitObservations = (unit: OperationalObject, at: IsoTimestamp): ReadonlyArray<Observation> => {
+  const speed = unit.spatial.position?.speedMps ?? 0
+  return [
+    { ref: `${unit.id}#speed`, at, clock: 'simulation', value: speed, quality: 'good', priority: speed > overspeedMps ? 'caution' : 'none', rank: 1 },
+    { ref: `${unit.id}#status`, at, clock: 'simulation', value: unit.operational.status, quality: 'good', priority: 'none', rank: 2 },
+  ]
+}
+const unitTopology = (unit: OperationalObject): TopologyGraph => ({
+  objectId: unit.id, revision: observationRevision, family: 'flow',
+  media: [{ id: 'fuel', label: 'Fuel', kind: 'fluid' }], groups: [], boundaries: [],
+  nodes: [
+    { id: 'tank', element: 'tank', class: 'store', kind: 'tank', label: `${unit.label} tank`, rank: '1', ports: [{ id: 'out', rank: '1', medium: 'fuel', direction: 'out' }], bindings: [] },
+    { id: 'engine', element: 'engine', class: 'mover', kind: 'engine', label: `${unit.label} engine`, rank: '2', ports: [{ id: 'in', rank: '1', medium: 'fuel', direction: 'in' }],
+      bindings: [{ role: 'flow', ref: `${unit.id}#speed` }] },
+  ],
+  edges: [{ id: 'feed', rank: '1', from: { node: 'tank', port: 'out' }, to: { node: 'engine', port: 'in' }, medium: 'fuel', directed: true, bindings: [] }],
+})
 
 /** Realtime cadence of motion and recording between explicit Run advances. */
 const tickIntervalMs = 500
@@ -335,6 +373,33 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
       throw new Error(`Unsupported fixture command: ${command.kind}`)
     }
 
+    // Observation reads answer within the stamped viewer's picture, as every fixture query does.
+    const unitFor = (objectId: ObjectId, viewer: RunViewer | undefined): OperationalObject => {
+      const object = objects.get(objectId)
+      if (!object || !inPicture(object, viewer) || fixtureDataOf(object).type !== 'unit') throw new Error(`${objectId} is not a unit in this picture`)
+      return object
+    }
+    const observationHandlers: Readonly<Record<string, (raw: unknown, viewer: RunViewer | undefined) => unknown>> = {
+      [fixtureObservationIds.declarations]: (raw, viewer) => {
+        const input = observationShapes.declarations.input.parse(raw)
+        return { declarations: input.objectIds.map(objectId => input.known?.[objectId] === observationRevision
+          ? { objectId, revision: observationRevision, unchanged: true as const }
+          : unitDeclaration(unitFor(objectId, viewer), config.recording !== undefined)) }
+      },
+      [fixtureObservationIds.read]: (raw, viewer) => {
+        const input = observationShapes.read.input.parse(raw)
+        const at = runClock.read().currentTime
+        if ('lead' in input) return { observations: unitObservations(unitFor(input.lead.objectId, viewer), at).slice(0, input.lead.count), unknown: [] }
+        const values = new Map(input.refs.flatMap(ref => unitObservations(unitFor(objectIdSchema.parse(ref.slice(0, ref.indexOf('#'))), viewer), at)).map(entry => [entry.ref, entry]))
+        return { observations: input.refs.flatMap(ref => values.get(ref) ?? []), unknown: input.refs.filter(ref => !values.has(ref)) }
+      },
+      [fixtureObservationIds.topology]: (raw, viewer) => {
+        const input = observationShapes.topology.input.parse(raw)
+        const unit = unitFor(input.objectId, viewer)
+        return input.known === observationRevision ? { objectId: unit.id, revision: observationRevision, unchanged: true } : unitTopology(unit)
+      },
+    }
+
     const interval = setInterval(advanceToRunClock, tickIntervalMs)
 
     return {
@@ -372,6 +437,7 @@ export const createFixturePackRuntimeAdapter = (): PackRuntimeAdapter => ({
           stateInput.parse(request.input)
           return { viewer: request.viewer ?? null }
         }
+        if (request.capabilityId in observationHandlers) return observationHandlers[request.capabilityId]!(request.input, request.viewer)
         throw new Error(`Unsupported fixture query: ${request.capabilityId}`)
       },
       validateObjectDeletion: (objectId, candidates) => {
