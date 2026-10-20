@@ -1,14 +1,14 @@
 <script lang="ts">
   import { ChevronsUp, ChevronDown, ChevronUp, Copy, FileCode2, RotateCcw, Search, X, ZoomIn, ZoomOut } from 'lucide-svelte'
   import { tick } from 'svelte'
-  import type { SimulationRunId } from '../../core/model/index.ts'
+  import type { SimulationRunId } from '../../../core/model/index.ts'
   import {
     readProcessPlantArtifact,
     type ProcessPlantArtifact,
     type ProcessPlantArtifactComponent,
     type ProcessPlantArtifactKind,
     type ProcessPlantArtifactSourceLink,
-  } from './process-display-client.ts'
+  } from '../../../ui/process-display/process-display-client.ts'
 
   interface Props {
     readonly simulationRunId: SimulationRunId

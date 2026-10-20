@@ -1,12 +1,12 @@
 <script lang="ts">
   import { Copy, Search, X } from 'lucide-svelte'
-  import type { SimulationRunId } from '../../core/model/index.ts'
+  import type { SimulationRunId } from '../../../core/model/index.ts'
   import {
     readProcessPlantCatalog,
     type ProcessPlantCatalog,
     type ProcessPlantCatalogEntry,
     type ProcessPlantActionCatalogEntry,
-  } from './process-display-client.ts'
+  } from '../../../ui/process-display/process-display-client.ts'
 
   interface Props {
     readonly simulationRunId: SimulationRunId
