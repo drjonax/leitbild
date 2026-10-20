@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { alertSeveritySchema, alertStateSchema, priorityLevels, type AlertSeverity, type Priority } from '../src/core/model/alerts.ts'
 import { deltaE, parseColour, readReservedSets, reservedColourNames } from '../scripts/displays/reserved-colour-distance.ts'
 
 // T04a (plan v3.1 §2.7, Appendix F; gate G1): the colour rules a World-drawn
 // display keeps. Each rule is checked against a planted violation that must
-// fail. The parts that read the severity table (ui/displays/severity.ts), the
-// alert read model (features/displays/alerts/) and the alert record's
-// priority (core/model/alerts.ts) land with those files.
+// fail. The parts that read the severity table (ui/displays/severity.ts) and
+// the alert read model (features/displays/alerts/) land with those files.
 
 const src = join(import.meta.dir, '../src')
 
@@ -88,5 +88,34 @@ describe('T04a: OpenBridge 2.0.0 keeps the alert families apart in every palette
         expect({ palette, left, right, apart: deltaE(sets[palette][left], sets[palette][right]) >= floor }).toEqual({ palette, left, right, apart: true })
       }
     }
+  })
+})
+
+describe('T04a: an alert\'s priority agrees with its severity (core/model/alerts.ts)', () => {
+  // Written out here, not imported, so a change to the record's own table fails this test.
+  const agrees: Readonly<Record<AlertSeverity, ReadonlyArray<Priority>>> = {
+    critical: ['alarm', 'emergency'],
+    warning: ['caution', 'warning'],
+    info: ['none', 'notice'],
+  }
+  const record = { id: 'a1', kind: 'trip', message: 'Reactor trip', raisedAt: '2026-10-20T08:00:00.000Z', acknowledged: false }
+
+  test('every severity and priority pair parses exactly when they agree', () => {
+    for (const severity of alertSeveritySchema.options) {
+      for (const priority of priorityLevels) {
+        expect({ severity, priority, parses: alertStateSchema.safeParse({ ...record, severity, priority }).success })
+          .toEqual({ severity, priority, parses: agrees[severity].includes(priority) })
+      }
+    }
+  })
+
+  test('without a priority every severity parses and none is derived', () => {
+    for (const severity of alertSeveritySchema.options) expect(alertStateSchema.parse({ ...record, severity }).priority).toBeUndefined()
+  })
+
+  test('planted: a critical alert declared as a caution is refused on its priority', () => {
+    const result = alertStateSchema.safeParse({ ...record, severity: 'critical', priority: 'caution' })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.map(issue => issue.path.join('.'))).toEqual(['priority'])
   })
 })
