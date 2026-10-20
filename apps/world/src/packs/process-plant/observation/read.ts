@@ -2,17 +2,18 @@ import type { IsoTimestamp, ObjectId, Priority } from '../../../core/model/index
 import type { Observation } from '../../../core/observation/model.ts'
 import type { PackRuntimeRecordedHistory } from '../../../simulation/protocol.ts'
 import type { VariablePath } from '../graph/index.ts'
-import { annunciating, expectedAfterGroup, pendingActions, plantAlarmPriority, priorityOrder } from '../ic/alarm-philosophy.ts'
+import { annunciating, colours, expectedAfterGroup, pendingActions, plantAlarmPriority, priorityOrder } from '../ic/alarm-philosophy.ts'
 import { overviewCandidates, overviewKeyValues, plantNowOf } from '../ic/key-values.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantSignalQuality } from '../signals.ts'
 import { declaredObservable, type PlantRecording } from './declarations.ts'
 
 // A Plant's values as World reads them (plan v3.1 §2.2): the value and its
-// quality now; its priority, the worst alarm or trip annunciating with a
-// limit on it that the value is past now (so a value in caution or worse
-// always has its alert, T05, and one only watched as a permissive, a gate or
-// a state stays neutral); none where that alarm came in as the expected
+// quality now; its priority, the worst alarm or trip annunciating whose
+// condition holds now with a limit on it the value is past (ic/alarm-
+// philosophy.ts colours, the rule the alert slot names it by: so a value in
+// caution or worse always has its alert, T05, and one only watched as a
+// permissive, a gate or a state stays neutral); none where that alarm came in as the expected
 // consequence of a first-out (a steam generator's shrink after a reactor
 // trip); since when a discrete value holds, from the Run's record; the time
 // left where a named delay runs down to one of its limits. Reads only:
@@ -54,8 +55,7 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
     const variable = system.runtime.readVariableSnapshot(binding.path)
     const limitsOf = (ruleId: string) => declared.thresholds.filter(threshold => threshold.id === ruleId || threshold.id.startsWith(`${ruleId}#`))
     const reading = typeof variable.value === 'number' ? variable.value : null
-    const past = (ruleId: string) => reading !== null && limitsOf(ruleId).some(limit => limit.direction === 'low' ? reading < limit.value : reading > limit.value)
-    const on = alarms.filter(lifecycle => past(lifecycle.ruleId))
+    const on = snapshot === undefined ? [] : alarms.filter(lifecycle => colours(snapshot, lifecycle, limitsOf(lifecycle.ruleId), reading))
       .map(lifecycle => ({ lifecycle, priority: plantAlarmPriority(lifecycle.severity, lifecycle.annunciator?.priority), after: expectedAfterGroup(plant, lifecycle, all) }))
       .sort((left, right) => priorityOrder[right.priority] - priorityOrder[left.priority])
     const colouring = on.find(entry => entry.after === null)

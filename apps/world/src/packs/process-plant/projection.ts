@@ -4,8 +4,7 @@ import type { PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { VariablePath } from './graph/index.ts'
 import { formatQuantity } from './quantity-text.ts'
 import { overviewKeyValues, plantNowOf } from './ic/key-values.ts'
-import { annunciating, isStanding, pendingActions, plantAlarmPriority, plantAlertSeverity, ruleWatches } from './ic/alarm-philosophy.ts'
-import { icThresholdsForSignal } from './ic/thresholds.ts'
+import { annunciating, isStanding, pendingActions, plantAlarmPriority, plantAlertSeverity, ruleLimits, ruleWatches } from './ic/alarm-philosophy.ts'
 import type { CompiledProcessPlant } from './plant-compiler.ts'
 import {
   emptyProcessPlantProjection,
@@ -184,8 +183,10 @@ const alertsOf = (objectId: string, plant: ProcessPlantRuntimeInstance, simulati
   return [...showing, ...returned].map(lifecycle => {
     const priority = plantAlarmPriority(lifecycle.severity, lifecycle.annunciator?.priority)
     const rule = compiled.automation.rules.find(candidate => candidate.id === lifecycle.ruleId)!
+    // The values it colours (ruleLimits, the read's own rule): the one it names, else the one state it watches.
+    const limits = ruleLimits(compiled, rule)
     const watched = ruleWatches(compiled, rule)
-    const limited = watched.length === 1 && compiled.graph.signalBindingByPath.get(watched[0]!)?.published === true ? watched[0]! : undefined
+    const named = limits.length === 1 ? limits[0] : limits.length === 0 && watched.length === 1 && compiled.graph.signalBindingByPath.get(watched[0]!)?.published === true ? watched[0] : undefined
     const group = lifecycle.annunciator?.firstOutGroup
     return {
       id: lifecycle.id,
@@ -201,8 +202,8 @@ const alertsOf = (objectId: string, plant: ProcessPlantRuntimeInstance, simulati
       ...(lifecycle.active && isStanding(compiled, lifecycle, { all: showing, pending, elapsedMs, priority }) ? { standing: true as const } : {}),
       ...(lifecycle.firstOut && group !== undefined && lifecycle.firstOutRank !== undefined && membersOf(compiled, group) > 1 ? { firstOut: { group, rank: lifecycle.firstOutRank } } : {}),
       ...(lifecycle.annunciator?.equipmentId === undefined ? {} : { subject: { element: lifecycle.annunciator.equipmentId } }),
-      ...(limited === undefined ? {} : { observable: `${objectId}#${limited}` }),
-      ...(limited !== undefined && icThresholdsForSignal(compiled, limited).thresholds.some(threshold => threshold.ruleId === rule.id) ? { threshold: rule.id } : {}),
+      ...(named === undefined ? {} : { observable: `${objectId}#${named}` }),
+      ...(limits.length === 0 ? {} : { threshold: rule.id }),
       priority,
       ...(lifecycle.lastActiveElapsedMs === undefined ? {} : { clock: 'simulation' as const }),
     }

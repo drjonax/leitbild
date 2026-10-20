@@ -13,6 +13,8 @@ guardPlantTests()
 // power that trips the unit.
 
 let plant: SteadyPlantRun
+let turbineTripped: SteadyPlantRun
+const limitsOf = new Map<string, ReadonlyArray<string>>()
 let port: ObservationPort
 let refs: ReadonlyArray<string>
 const readAll = async (): Promise<ReadonlyArray<Observation>> => {
@@ -34,6 +36,7 @@ beforeAll(async () => {
   port = plant.run.observations(plantOperator)
   const [declaration] = await port.declarations([plant.plantId])
   refs = 'observables' in declaration! ? declaration.observables.map(observable => observable.ref) : []
+  if ('observables' in declaration!) for (const observable of declaration.observables) limitsOf.set(path({ ref: observable.ref } as Observation), observable.thresholds.map(threshold => threshold.id))
   await plant.runTo(10_000)
   facts.leadAtPower = await lead()
   facts.atPower = await readAll()
@@ -53,9 +56,25 @@ beforeAll(async () => {
   facts.leadTripped = await lead()
   facts.tripped = await readAll()
   facts.alerts = plant.unit().alerts
+  // A second unit: the turbine tripped at 10:00:10, read a minute on (the eval lane's spot check on Unit 2).
+  turbineTripped = await createSteadyPlantRun()
+  await turbineTripped.runTo(10_000)
+  await turbineTripped.invoke(plantOperator, 'world.process-plant.action.invoke', { actionId: 'turbine-trip', parameters: {} })
+  await turbineTripped.runTo(70_000)
+  const trippedPort = turbineTripped.run.observations(plantOperator)
+  facts.afterTurbineTrip = []
+  for (let at = 0; at < refs.length; at += 64) facts.afterTurbineTrip.push(...(await trippedPort.read({ refs: refs.slice(at, at + 64).map(ref => `${turbineTripped.plantId}${ref.slice(ref.indexOf('#'))}`) })).observations)
+  facts.afterTurbineTripAlerts = turbineTripped.unit().alerts
 })
 
-afterAll(async () => { await plant.remove() })
+afterAll(async () => {
+  await plant.remove()
+  await turbineTripped.remove()
+})
+
+/** The alert a value's colour comes from: active, of its priority, under its title, naming one of the value's limits and the value where it names one. */
+const alertFor = (alerts: ReadonlyArray<any>, observation: Observation) => alerts.find(alert => alert.returned !== true && alert.priority === observation.priority
+  && alert.message === observation.why && (limitsOf.get(path(observation)) ?? []).includes(alert.threshold) && (alert.observable === undefined || alert.observable === observation.ref))
 
 describe('plant observation read (P3)', () => {
   test('at power every declared value reads, good and neutral; an undeclared one is unknown', () => {
@@ -82,12 +101,22 @@ describe('plant observation read (P3)', () => {
     expect(facts.frequencyBack.timeToAct).toBeUndefined()
   })
 
-  test('T05: a value in caution or worse has its active alert in the unit\'s slot, by its title and priority', () => {
-    const coloured = facts.tripped.filter((observation: Observation) => priorityOrder[observation.priority] >= priorityOrder.caution)
-    expect(coloured.length).toBeGreaterThan(0)
-    for (const observation of coloured) {
-      expect(facts.alerts.some((alert: any) => alert.message === observation.why && alert.priority === observation.priority && alert.returned !== true), path(observation)).toBe(true)
+  test('T05: a value in caution or worse has its active alert in the unit\'s slot, which names its limit and the value', () => {
+    for (const [read, alerts] of [[facts.tripped, facts.alerts], [facts.afterTurbineTrip, facts.afterTurbineTripAlerts]] as const) {
+      const coloured = read.filter((observation: Observation) => priorityOrder[observation.priority] >= priorityOrder.caution)
+      expect(coloured.length).toBeGreaterThan(0)
+      expect(coloured.filter((observation: Observation) => alertFor(alerts, observation) === undefined).map(path)).toEqual([])
     }
+  })
+
+  test('T05 a minute after a turbine trip: low Tavg is coloured by the feedwater isolation, named in the slot; the shut stop valve is neutral', () => {
+    const read = (of: string) => facts.afterTurbineTrip.find((observation: Observation) => path(observation) === of)
+    const tavg = read('vessel.meanPrimaryCoolantTemperatureC')
+    expect(tavg).toMatchObject({ priority: 'alarm', why: 'Feedwater isolation on reactor trip, low Tavg' })
+    expect(alertFor(facts.afterTurbineTripAlerts, tavg)).toMatchObject({ kind: 'trip', threshold: 'reactor-trip-low-tavg-feedwater-isolation', observable: tavg.ref })
+    // Its trip stands latched, but its condition (power operation, power above 50 %) no longer holds: the valve shut after it is no news.
+    expect(read('turbineStopValve.effectivePositionFraction')).toMatchObject({ value: 0, priority: 'none' })
+    expect(facts.afterTurbineTripAlerts.find((alert: any) => alert.threshold === 'reactor-turbine-trip')).toMatchObject({ latched: true })
   })
 
   test('T05: after the trip the diesel running, rods on the bottom and the nuclear instruments below range stay neutral', () => {

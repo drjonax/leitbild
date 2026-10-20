@@ -10,7 +10,7 @@ import type {
   ProcessPlantIcSnapshot,
 } from '../runtime/index.ts'
 import { conditionBindings } from './actuations.ts'
-import { NAMED_DELAY_MIN_MS } from './thresholds.ts'
+import { icThresholdsForSignal, NAMED_DELAY_MIN_MS } from './thresholds.ts'
 
 // The Plant's alarm philosophy in World's terms, in one place: the priority
 // an alarm or trip has (its limit tick, the value it colours and its alert in
@@ -68,6 +68,36 @@ export const ruleWatches = (plant: CompiledProcessPlant, rule: ProcessPlantIcRul
   watchedByRule.set(plant.automation, known)
   return known.get(rule.id)!
 }
+
+const limitedByRule = new WeakMap<CompiledProcessPlant['automation'], Map<string, ReadonlyArray<VariablePath>>>()
+
+/**
+ * The published signals a rule sets a limit on (ic/thresholds.ts, the limits
+ * every display draws): what its alarm or trip colours, and names in the
+ * alert slot. A gate, a permissive or a state the rule only reads is none.
+ */
+export const ruleLimits = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): ReadonlyArray<VariablePath> => {
+  const known = limitedByRule.get(plant.automation) ?? new Map<string, ReadonlyArray<VariablePath>>()
+  limitedByRule.set(plant.automation, known)
+  const limits = known.get(rule.id) ?? ruleWatches(plant, rule).filter(path => plant.graph.signalBindingByPath.get(path)?.published === true
+    && icThresholdsForSignal(plant, path).thresholds.some(threshold => threshold.ruleId === rule.id))
+  known.set(rule.id, limits)
+  return limits
+}
+
+/**
+ * The value an annunciating alarm or trip colours, by the one rule the read
+ * and the alert slot share: its rule's condition holds now (a latched trip
+ * whose condition has cleared colours nothing; a stop valve shut after its
+ * trip reads neutral) and the value is past that rule's limit on it.
+ */
+export const colours = (
+  snapshot: ProcessPlantIcSnapshot,
+  lifecycle: ProcessPlantIcLifecycleState,
+  limits: ReadonlyArray<{ readonly direction: 'low' | 'high'; readonly value: number }>,
+  reading: number | null,
+): boolean => reading !== null && snapshot.rules.find(state => state.ruleId === lifecycle.ruleId)?.activeSinceElapsedMs !== undefined
+  && limits.some(limit => (limit.direction === 'low' ? reading < limit.value : reading > limit.value))
 
 /** The rules whose condition holds and whose named delay (an hour-scale wait, never a confirming second) is running down: their limit and plant milliseconds left. */
 export const pendingActions = (plant: CompiledProcessPlant, snapshot: ProcessPlantIcSnapshot, elapsedMs: number): ReadonlyArray<{ readonly rule: ProcessPlantIcRule; readonly leftMs: number }> => {
