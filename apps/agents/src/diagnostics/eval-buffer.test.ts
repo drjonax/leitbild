@@ -213,3 +213,15 @@ describe('eval-buffer', () => {
     expect(c1?.success).toBe(true)
   })
 })
+
+describe('eval buffer corrections', () => {
+  test('keeps every correction pass of a turn with its causes', () => {
+    const buffer = createEvalBuffer()
+    let listener: OnEvalEvent | undefined
+    buffer.attach(cb => { listener = cb; return () => {} })
+    const scope = { agentId: 'a1', agentName: 'Assistant', roomId: 'r1' }
+    listener!(scope, { kind: 'correction', causes: ['contradiction'], issues: ['It cites 290 °C as current, but the display reads CET-AVG 302 °C now.'], traceId: 't1' })
+    listener!(scope, { kind: 'eval_completed', outcome: 'respond', traceId: 't1' })
+    expect(buffer.getByTraceId('t1')!.corrections).toEqual([{ causes: ['contradiction'], issues: ['It cites 290 °C as current, but the display reads CET-AVG 302 °C now.'] }])
+  })
+})

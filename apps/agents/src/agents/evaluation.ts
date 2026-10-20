@@ -8,7 +8,7 @@
 
 import type { AgentResponse, AIAgentConfig } from '../core/types/agent.ts'
 import type { ChatRequest, GenerationQuery, LLMCallOptions, LLMProvider, ProviderContinuation } from '../core/types/llm.ts'
-import type { EvalEventCore } from '../core/types/agent-eval.ts'
+import type { CorrectionCause, EvalEventCore } from '../core/types/agent-eval.ts'
 import type { NativeToolCall, ToolCall, ToolDefinition, ToolExecutor, ToolResult } from '../core/types/tool.ts'
 import type { MessageCause, ToolTraceEntry } from '../core/types/messaging.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
@@ -292,21 +292,27 @@ const callLLMOnce = async (
 // Mermaid is excluded by design: its parser is browser-only; a server-side
 // validator would only catch trivial cases (oversized, completely wrong
 // keyword) and miss real syntax errors. Honest scoping > pretend-bulletproof.
-const mapFenceErrors = (content: string): ReadonlyArray<string> =>
+/** One reason a response's blocks send it back, with the cause it is logged under. */
+interface FenceError {
+  readonly cause: CorrectionCause
+  readonly error: string
+}
+
+const mapFenceErrors = (content: string): ReadonlyArray<FenceError> =>
   extractFences(content, ['map', 'geojson']).flatMap(fence => {
     const result = parseMapBody(fence.body)
-    return result.ok ? [] : [`\`\`\`${fence.language}\` block at content line ${fence.startLine} (see the rendering skill for the schema):\n${formatMapErrors(result.errors)}`]
+    return result.ok ? [] : [{ cause: 'map-fence' as const, error: `\`\`\`${fence.language}\` block at content line ${fence.startLine} (see the rendering skill for the schema):\n${formatMapErrors(result.errors)}` }]
   })
 
 // A view fence must name a display this turn actually composed. Evidence of
 // earlier turns is not accepted: the answer must present what it just built.
 // A display composed in this turn and left out is corrected too: the answer
 // would point the operator to a display that is not there.
-const viewFenceErrors = (content: string, viewRefs: ReadonlySet<string>): ReadonlyArray<string> => {
+const viewFenceErrors = (content: string, viewRefs: ReadonlySet<string>): ReadonlyArray<FenceError> => {
   const fences = extractFences(content, [VIEW_FENCE_LANGUAGE])
   if (fences.length === 0) {
     const latest = [...viewRefs].at(-1)
-    return latest === undefined ? [] : [`This turn composed a display (viewRef ${latest}) but the response does not present it. End the response with the \`${VIEW_FENCE_LANGUAGE}\` block (view ${latest}), or, if that display does not answer the question, say so in one sentence and never refer to it as shown.`]
+    return latest === undefined ? [] : [{ cause: 'unpresented-view', error: `This turn composed a display (viewRef ${latest}) but the response does not present it. End the response with the \`${VIEW_FENCE_LANGUAGE}\` block (view ${latest}), or, if that display does not answer the question, say so in one sentence and never refer to it as shown.` }]
   }
   const errors: string[] = []
   if (fences.length > 1) errors.push(`Show at most one display per answer; the response has ${fences.length} \`${VIEW_FENCE_LANGUAGE}\` blocks.`)
@@ -318,7 +324,7 @@ const viewFenceErrors = (content: string, viewRefs: ReadonlySet<string>): Readon
       errors.push(`\`${VIEW_FENCE_LANGUAGE}\` block at content line ${fence.startLine}: ${ref} is not a display composed in this turn. Paste the viewRef returned by world.process-plant.display.compose, or remove the block if no display was composed.`)
     }
   }
-  return errors
+  return errors.map(error => ({ cause: 'view-fence', error }))
 }
 
 // A turn that must present a live view (RequestedTurn.requireView) and
@@ -326,10 +332,12 @@ const viewFenceErrors = (content: string, viewRefs: ReadonlySet<string>): Readon
 // the model can still compose it. A second answer without one stands.
 const REQUIRED_VIEW_CORRECTION = `The reader asked for a live display, and this response presents none. If you have not composed one yet, compose it now and end the response with its \`${VIEW_FENCE_LANGUAGE}\` block. If no display can be produced, reply with one sentence saying why.`
 
-const validateResponseFences = (content: string, viewRefs: ReadonlySet<string>): { ok: boolean; errors: string } => {
-  const errors = [...mapFenceErrors(content), ...viewFenceErrors(content, viewRefs)]
-  return { ok: errors.length === 0, errors: errors.join('\n\n') }
-}
+const validateResponseFences = (content: string, viewRefs: ReadonlySet<string>): ReadonlyArray<FenceError> =>
+  [...mapFenceErrors(content), ...viewFenceErrors(content, viewRefs)]
+
+/** The correction event of a pass: each cause once, in order, with every issue it names. */
+const correctionEvent = (entries: ReadonlyArray<{ readonly cause: CorrectionCause; readonly issue: string }>): EvalEventCore =>
+  ({ kind: 'correction', causes: [...new Set(entries.map(entry => entry.cause))], issues: entries.map(entry => entry.issue) })
 
 /** viewRefs that successful workspace_call results in this turn made presentable. */
 export const collectViewRefs = (into: Set<string>, tool: string, result: ToolResult): void => {
@@ -403,13 +411,14 @@ const correctResponse = async (
   let fenceRetries = 0
   let consistencyCorrections = 0
   for (;;) {
-    const validation = validateResponseFences(content, viewRefs)
+    const fenceErrors = validateResponseFences(content, viewRefs)
     let correction: string
-    if (!validation.ok) {
+    if (fenceErrors.length > 0) {
       if (fenceRetries === MAX_FENCE_RETRIES) break
       fenceRetries++
+      onEvent?.(correctionEvent(fenceErrors.map(({ cause, error }) => ({ cause, issue: error }))))
       correction =
-        `Your previous response contained one or more invalid fenced blocks:\n\n${validation.errors}\n\n` +
+        `Your previous response contained one or more invalid fenced blocks:\n\n${fenceErrors.map(entry => entry.error).join('\n\n')}\n\n` +
         `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`
     } else {
       // Valid fences: does the display the answer presents contradict it, and does it claim what its turn did not do?
@@ -418,6 +427,10 @@ const correctResponse = async (
       const claims = done ? [] : operationClaimIssues(content, operations)
       if (issues.length === 0 && claims.length === 0) return content
       consistencyCorrections++
+      onEvent?.(correctionEvent([
+        ...claims.map(issue => ({ cause: 'claimed-execution' as const, issue })),
+        ...issues.map(issue => ({ cause: 'contradiction' as const, issue })),
+      ]))
       correction = claims.length > 0 ? claimCorrection(claims, issues) : consistencyCorrection(issues)
     }
     // Append the response + a precise correction prompt. The next LLM call
@@ -711,6 +724,7 @@ export const evaluate = async (
         viewInsisted = true
         insistRounds++
         context.push({ role: 'assistant', content, ...(streamResult.continuation ? { continuation: streamResult.continuation } : {}) })
+        onEvent?.(correctionEvent([{ cause: 'required-view', issue: 'The reader asked for a live display, and the response presents none.' }]))
         context.push({ role: 'user', content: REQUIRED_VIEW_CORRECTION })
         continue
       }

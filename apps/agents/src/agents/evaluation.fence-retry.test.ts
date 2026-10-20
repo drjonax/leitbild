@@ -498,3 +498,42 @@ describe('evaluation operation claims', () => {
     expect(result.decision.response).toEqual({ action: 'respond', content: proposed })
   })
 })
+
+describe('evaluation correction causes', () => {
+  // Every pass that sends an answer back is logged, before it runs, with why.
+  const fenced = (ref: string): string => `CET-AVG is currently 290 °C.\n\n\`\`\`leitbild-view\nview ${ref}\n\`\`\``
+  const viewContent = { items: [{ names: ['CET-AVG', 'Core coolant outlet temperature'], values: [{ value: 302.4, unit: '°C' }], limits: [], history: true }], span: null, lead: null }
+  const corrections = async (answers: ReadonlyArray<{ content: string; toolCalls?: ChatResponse['toolCalls'] }>, requireView = false) => {
+    let index = 0
+    const provider: LLMProvider = { models: async () => [], chat: async () => ({ ...mkResponse(''), ...answers[Math.min(index++, answers.length - 1)]! }) }
+    const executor = async (calls: ReadonlyArray<{ callId?: string }>) => [{
+      success: true,
+      data: { results: [{ key: 'compose', operationId: 'world.process-plant.display.compose', success: true, data: { viewContent }, viewRef: `${calls[0]!.callId}/compose` }] },
+    }]
+    const events: Array<{ kind: string; causes?: ReadonlyArray<string>; issues?: ReadonlyArray<string> }> = []
+    await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+      requireView,
+      onEvent: event => { if (event.kind === 'correction') events.push(event) },
+    })
+    return events
+  }
+  const compose = { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] }
+
+  test('a required display, an unpresented one, an invalid block and a contradicted value each name their cause', async () => {
+    expect(await corrections([{ content: 'No display.' }, { content: 'Still none.' }], true)).toEqual([
+      { kind: 'correction', causes: ['required-view'], issues: ['The reader asked for a live display, and the response presents none.'] },
+    ])
+    const unpresented = await corrections([compose, { content: 'Core cooling holds.' }, { content: 'Core cooling holds.' }, { content: 'Core cooling holds.' }])
+    expect(unpresented.map(event => event.causes)).toEqual([['unpresented-view'], ['unpresented-view']])
+    const map = await corrections([{ content: '```map\n{"features":[{"type":"marker","lat":999,"lng":5}]}\n```' }, { content: 'fixed' }])
+    expect(map.map(event => event.causes)).toEqual([['map-fence']])
+    expect(await corrections([compose, { content: fenced('call_0_0/compose') }, { content: fenced('call_0_0/compose') }])).toEqual([
+      { kind: 'correction', causes: ['contradiction'], issues: ['It cites 290 °C as current, but the display reads CET-AVG 302 °C now.'] },
+    ])
+  })
+
+  test('an answer that needs no correction logs none', async () => {
+    expect(await corrections([{ content: 'Core cooling holds.' }])).toEqual([])
+  })
+})

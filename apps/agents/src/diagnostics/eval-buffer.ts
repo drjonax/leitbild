@@ -15,7 +15,7 @@
 // (and a soft privacy leak). One ring per System matches every other
 // per-Workspace store.
 
-import type { EvalEvent, EvalEventScope, OnEvalEvent } from '../core/types/agent-eval.ts'
+import type { CorrectionCause, EvalEvent, EvalEventScope, OnEvalEvent } from '../core/types/agent-eval.ts'
 
 export interface ToolCallTrace {
   readonly tool: string
@@ -43,6 +43,8 @@ export interface EvalRecord {
   toolNames?: ReadonlyArray<string>
   toolCalls: ToolCallTrace[]
   warnings: string[]
+  // Every correction pass of the turn, with why it ran.
+  corrections: Array<{ readonly causes: ReadonlyArray<CorrectionCause>; readonly issues: ReadonlyArray<string> }>
   modelFallback?: { preferred: string; effective: string; reason: string }
   outcome?: Extract<EvalEvent, { kind: 'eval_completed' }>['outcome']
 }
@@ -101,6 +103,7 @@ export const createEvalBuffer = (config: EvalBufferConfig = {}): EvalBuffer => {
         startedAt: Date.now(),
         toolCalls: [],
         warnings: [],
+        corrections: [],
       }
       open.set(tid, rec)
     }
@@ -130,6 +133,9 @@ export const createEvalBuffer = (config: EvalBufferConfig = {}): EvalBuffer => {
       }
       case 'warning':
         rec.warnings.push(event.message)
+        return
+      case 'correction':
+        rec.corrections.push({ causes: event.causes, issues: event.issues })
         return
       case 'model_fallback':
         rec.modelFallback = { preferred: event.preferred, effective: event.effective, reason: event.reason }
