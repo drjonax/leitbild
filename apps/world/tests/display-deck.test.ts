@@ -32,6 +32,7 @@ const advisoryState = (plantId: string): string => JSON.stringify({
     title: 'Pressure check',
     question: 'Is the pressure recovering?',
     need: 'Decide on spray now',
+    subjects: ['PT-455'],
     panels: [{ kind: 'alarms', scope: 'plant' }],
   },
   issuedAt: '2026-10-10T09:00:00.000Z',
