@@ -480,7 +480,6 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   }, [] as MimicStub[])
   groupedStubs.forEach((stub, at) => {
     const id = `s${at}`
-    const component = graph.components[stub.component]!
     stubs.set(id, stub)
     // A power line's far end says under its name whether the equipment it names is live ("from UAT", "LIVE"), its room kept for the longest word.
     const word = stubWordOf(graph, stub)
