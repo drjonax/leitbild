@@ -30,7 +30,7 @@ export const displayScope: ReadonlyArray<ScopeGroup> = [
     name: 'Agents display code',
     include: [
       'apps/agents/src/core/render-validators/view-fence.ts', 'apps/agents/src/core/render-validators/view-envelope.ts',
-      'apps/agents/src/core/display-request.ts', 'apps/agents/src/agents/display-requests.ts', 'apps/agents/src/agents/answer-consistency.ts',
+      'apps/agents/src/core/display-request.ts', 'apps/agents/src/agents/display-requests.ts', 'apps/agents/src/agents/answer-consistency.ts', 'apps/agents/src/agents/answer-reading.ts',
       'apps/agents/src/ui/modules/display-request.ts', 'apps/agents/src/ui/modules/live-view/**',
     ],
   },
