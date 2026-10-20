@@ -42,6 +42,7 @@ describe('weather observation declarations (N5)', () => {
     expect(of(declare(probe.id), 'visibilityM').thresholds.map(threshold => [threshold.id, threshold.direction, threshold.value, threshold.priority]))
       .toEqual([['hazard-visibilityM', 'low', 800, 'warning'], ['adverse-visibilityM', 'low', 2000, 'caution']])
     expect(of(declare(probe.id), 'wetness').thresholds.map(threshold => [threshold.value, threshold.priority])).toEqual([[0.2, 'notice']])
+    expect(declare(probe.id).observables.flatMap(observable => observable.thresholds).every(threshold => threshold.effect === 'advisory')).toBe(true)
     const ladder = weatherSeverityLadder as Array<(typeof weatherSeverityLadder)[number]>
     const saved = [...ladder]
     const state = weatherPackDataSchema.parse(foggy(probe).packData).sample.state
