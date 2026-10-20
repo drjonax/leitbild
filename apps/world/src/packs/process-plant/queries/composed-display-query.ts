@@ -14,11 +14,11 @@ import {
   composedDisplayCompositionSchema,
   composedDisplayStateSchema,
   overviewDisplayStateSchema,
-  PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS,
   processDisplayStatePlantId,
   readProcessDisplayState,
   UNSUPPORTED_DISPLAY_FORMAT,
 } from '../displays/composition.ts'
+import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS, equipmentItemId } from '../equipment/items.ts'
 import {
   compileComposedDisplay,
   composedDisplayLead,
@@ -46,7 +46,6 @@ import { simulationClock } from '../displays/display-text.ts'
 import { displayValue, valueDigits, writtenDecimals } from '../quantity-text.ts'
 import { heldCommands, indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { valueRowReading } from '../displays/mimic/rows.ts'
-import { mimicItemId } from '../displays/mimic/bindings.ts'
 import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
 import { evaluateSafetyFunctions } from '../safety-functions.ts'
 import { safetyFunctionChip, safetyFunctionShows, safetyFunctionStatuses } from '../displays/safety-function-content.ts'
@@ -193,7 +192,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     // does not establish how much Historian data exists within that axis.
     const historyMs = system.runtime.elapsedMs()
     const drawn = mimics.flatMap(mimic => mimic.items.map(item => ({
-      id: mimicItemId(system.plant.graph, item.binding.item),
+      id: equipmentItemId(system.plant.graph, item.binding.item),
       label: item.binding.label,
       state: itemLook(item.binding, now).words || 'no state drawn',
       // The values written beside it, and what they measure: the wider instrument's where a reading is off its span.
@@ -290,7 +289,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       simulationClock: simulationClock(Date.parse(simulationTime)),
       shows: [...composedDisplayShows(display, system.runtime.elapsedMs()), ...safetyFunctionShows(evaluateSafetyFunctions(system.plant, system.runtime))],
       equipment: mimics.flatMap(mimic => mimic.items
-        .map(item => ({ id: mimicItemId(system.plant.graph, item.binding.item), label: item.binding.label, state: itemLook(item.binding, now).words || 'no state drawn' }))),
+        .map(item => ({ id: equipmentItemId(system.plant.graph, item.binding.item), label: item.binding.label, state: itemLook(item.binding, now).words || 'no state drawn' }))),
     }
   }
 

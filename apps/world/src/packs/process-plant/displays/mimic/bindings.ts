@@ -2,7 +2,6 @@ import type {
   AspectReading,
   AspectTravel,
   CompiledComponent,
-  CompiledEmbeddedDevice,
   CompiledInsertion,
   CompiledPlantGraph,
   CompiledStateAspect,
@@ -10,10 +9,10 @@ import type {
   StateAspect,
   VariablePath,
 } from '../../graph/index.ts'
-import { ratedFlowForLink } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../../runtime/index.ts'
-import { processLinkFlowFidelityFor, type ProcessLinkFlowFidelity } from '../../runtime/links/link-flow-fidelity.ts'
+import { equipmentItemLabel, type EquipmentItem } from '../../equipment/items.ts'
+import { NO_FLOW_FRACTION } from '../../equipment/link-flow.ts'
 import { resolveProcessPlantSignalBinding } from '../../signals.ts'
 import { actionOf, icRuleKind, icThresholdsForSignal } from '../../ic/thresholds.ts'
 import { limitOrderName, thresholdName } from '../display-text.ts'
@@ -23,20 +22,8 @@ import { limitOrderName, thresholdName } from '../display-text.ts'
 // signals only; a command only annotates a disagreement; an item is framed by
 // the alarm rules that watch its own signals alone.
 
-/** A drawn item: a component, or a device the model bundles inside one (the PORV). */
-export type MimicItem =
-  | { readonly kind: 'component'; readonly component: number }
-  | { readonly kind: 'device'; readonly component: number; readonly device: string }
-
-/** The id an agent names an item by: its component, or its component and the bundled device ("pressurizer.reliefValve"). */
-export const mimicItemId = (graph: CompiledPlantGraph, item: MimicItem): string =>
-  item.kind === 'component' ? String(graph.components[item.component]!.id) : `${graph.components[item.component]!.id}.${item.device}`
-
-export const mimicItemKey = (item: MimicItem): string =>
+export const mimicItemKey = (item: EquipmentItem): string =>
   item.kind === 'component' ? `c${item.component}` : `c${item.component}:${item.device}`
-
-/** Below this fraction of a link's rated flow it reads "no flow": numerical noise, a coasting pump's tail. */
-export const NO_FLOW_FRACTION = 0.0025
 
 export interface MimicStateBinding {
   readonly aspect: StateAspect
@@ -124,7 +111,7 @@ export interface MimicRangeBinding {
 }
 
 export interface MimicItemBinding {
-  readonly item: MimicItem
+  readonly item: EquipmentItem
   /** The operator's short name. */
   readonly label: string
   readonly state: MimicStateBinding | null
@@ -164,23 +151,11 @@ export interface MimicFrame {
   readonly modeIds?: ReadonlyArray<string>
 }
 
-export interface MimicFlowBinding {
-  readonly flowPath: VariablePath
-  readonly fidelity: ProcessLinkFlowFidelity
-  /** Null when nothing upstream is rated: "no flow" cannot be judged. */
-  readonly noFlowBelow: number | null
-}
-
 const aspectOf = (aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect): CompiledStateAspect | undefined =>
   aspects.find(candidate => candidate.aspect === aspect)
 
-const labelOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
-
-export const deviceLabel = (component: CompiledComponent, device: CompiledEmbeddedDevice): string =>
-  component.metadata?.presentation?.embedded?.[device.id] ?? `${labelOf(component)} ${device.label}`
-
 /** Which item a signal belongs to: the device that bundles it, else the component that owns it. Pipes own no item. */
-const ownerItem = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): MimicItem | null => {
+const ownerItem = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): EquipmentItem | null => {
   if (binding.owner.type !== 'component') return null
   const component = graph.components[binding.owner.componentIndex]!
   const device = component.semantics.embedded.find(candidate => candidate.variables.includes(binding.path))
@@ -455,7 +430,7 @@ const rangeBindings = (graph: CompiledPlantGraph, component: CompiledComponent):
 
 export const itemBinding = (
   plant: CompiledProcessPlant,
-  item: MimicItem,
+  item: EquipmentItem,
   aspect: StateAspect | null,
   framed: ReadonlyMap<string, ReadonlyArray<ProcessPlantIcRule>>,
 ): MimicItemBinding => {
@@ -471,7 +446,7 @@ export const itemBinding = (
   const drawnState = state?.state?.path
   return {
     item,
-    label: device === undefined ? labelOf(component) : deviceLabel(component, device),
+    label: equipmentItemLabel(component, device),
     state,
     values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path, drawnState)) : [],
     ranges: device === undefined ? rangeBindings(graph, component) : [],
@@ -517,12 +492,4 @@ export const linkPowerBinding = (graph: CompiledPlantGraph, linkIndex: number): 
   const energized = link.variables.find(variable => String(variable.path) === `${link.id}.energized`)
   if (energized === undefined) throw new Error(`power link ${link.id} has no energized state to draw`)
   return { energizedPath: energized.path }
-}
-
-export const linkFlowBinding = (graph: CompiledPlantGraph, linkIndex: number): MimicFlowBinding => {
-  const link = graph.links[linkIndex]!
-  const flow = link.variables.find(variable => String(variable.path).endsWith('.flowKgPerS'))
-  if (flow === undefined) throw new Error(`link ${link.id} has no flow variable to draw`)
-  const rated = ratedFlowForLink(graph, link)
-  return { flowPath: flow.path, fidelity: processLinkFlowFidelityFor(graph, link), noFlowBelow: rated === null ? null : rated * NO_FLOW_FRACTION }
 }

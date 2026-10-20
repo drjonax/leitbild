@@ -14,10 +14,10 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
-import { conditionBindings } from '../src/packs/process-plant/displays/actuations.ts'
+import { conditionBindings } from '../src/packs/process-plant/ic/actuations.ts'
 import { compileDetailDisplay, composedPanelPens, type OverviewView } from '../src/packs/process-plant/displays/compose.ts'
 import { PROCESS_DISPLAY_SAMPLE_MAX_PATHS } from '../src/packs/process-plant/displays/composition.ts'
-import { equipmentKeyValues, plantNowOf } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { equipmentKeyValues, plantNowOf } from '../src/packs/process-plant/ic/key-values.ts'
 import { compileFaceplate, faceplateEnds, groupStates } from '../src/packs/process-plant/displays/faceplate.ts'
 import { faceplateLines, faceplateNow, type CompiledFaceplate, type Faceplate } from '../src/packs/process-plant/displays/faceplate-live.ts'
 import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'

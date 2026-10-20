@@ -17,12 +17,11 @@ import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/ind
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import { displayValue, formatQuantity, unitLabel } from '../quantity-text.ts'
 import { actionOf, icRuleKind } from '../ic/thresholds.ts'
-import { deviceLabel, mimicItemId, type MimicItem } from '../displays/mimic/bindings.ts'
-import { presentationFor } from '../displays/mimic/presentation.ts'
+import { equipmentItemId, equipmentItemLabel, notEquipmentReason, type EquipmentItem } from '../equipment/items.ts'
 import { instructorOnlyRefusal } from './command-guard.ts'
 import { demandStepOf, modulatingDemandSpan } from './demand-span.ts'
 
-// What a person may operate on each drawn item, read from what the model
+// What a person may operate on each item of equipment, read from what the model
 // declares: an aspect's writable command is a two-state control in the
 // aspect's words (a pump STARTs and STOPs, an isolating valve OPENs and
 // SHUTs, a breaker CLOSEs and OPENs); a modulating valve's position command
@@ -38,8 +37,8 @@ import { demandStepOf, modulatingDemandSpan } from './demand-span.ts'
 // sit (plan-final I-1). What a command sets going (a trip whose condition
 // reads what it moves) and what works against it (automation writing the
 // same command) come from the I&C config. Nothing here names a Plant,
-// equipment, signal or component kind: the mimic's kind table only says
-// what is drawn.
+// equipment, signal or component kind: the model's equipment items
+// (equipment/items.ts) say what is operated, and a drawing draws them.
 
 /** A rule an operation sets going or that works against it, as displays name what the I&C does there ("RX TRIP", "AFW", "CTL"). */
 export interface ControlRule {
@@ -140,8 +139,8 @@ export interface WithheldControl {
 }
 
 export interface ItemControls {
-  readonly item: MimicItem
-  /** The id an agent names the item by (mimicItemId). */
+  readonly item: EquipmentItem
+  /** The id an agent names the item by (equipmentItemId). */
   readonly id: string
   readonly label: string
   /**
@@ -246,8 +245,6 @@ export const demandSetting = (control: OfferedControl, value: ProcessVariableVal
   if (end !== undefined) return { ok: true, word: end.word }
   return { ok: true, word: `${value < position ? demand.words.throttle : demand.words.open} to ${shown(value)}` }
 }
-
-const labelOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
 
 const localPath = (component: CompiledComponent, path: VariablePath): string => String(path).slice(String(component.id).length + 1)
 
@@ -438,13 +435,13 @@ const itemWritables = (graph: CompiledPlantGraph, component: CompiledComponent, 
   })
 }
 
-const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem): { readonly label: string; readonly position: VariablePath | undefined; readonly classified: ReadonlyArray<Classified> } => {
+const classifiedFor = (plant: CompiledProcessPlant, item: EquipmentItem): { readonly label: string; readonly position: VariablePath | undefined; readonly classified: ReadonlyArray<Classified> } => {
   const graph = plant.graph
   const component = graph.components[item.component]!
   const device = item.kind === 'device' ? component.semantics.embedded.find(candidate => candidate.id === item.device) : undefined
   if (item.kind === 'device' && device === undefined) throw new Error(`component ${component.id} bundles no device ${item.device}`)
   const aspects = device?.aspects ?? component.semantics.aspects
-  const label = device === undefined ? labelOf(component) : deviceLabel(component, device)
+  const label = equipmentItemLabel(component, device)
   const isolations = new Set([...component.semantics.aspects, ...component.semantics.embedded.flatMap(candidate => candidate.aspects)].map(aspect => aspect.isolation).filter(defined))
   const context = {
     component,
@@ -464,12 +461,12 @@ const classifiedFor = (plant: CompiledProcessPlant, item: MimicItem): { readonly
   return { label, position, classified: ordered.map(binding => classify(plant, context, binding)) }
 }
 
-/** The controls one drawn item offers, and the writable variables it withholds with why. */
-export const deriveItemControls = (plant: CompiledProcessPlant, item: MimicItem): ItemControls => {
+/** The controls one item of equipment offers, and the writable variables it withholds with why. */
+export const deriveItemControls = (plant: CompiledProcessPlant, item: EquipmentItem): ItemControls => {
   const { label, position, classified } = classifiedFor(plant, item)
   return {
     item,
-    id: mimicItemId(plant.graph, item),
+    id: equipmentItemId(plant.graph, item),
     label,
     ...(position === undefined ? {} : { position }),
     offered: classified.flatMap(entry => 'offered' in entry ? [entry.offered] : []),
@@ -477,11 +474,11 @@ export const deriveItemControls = (plant: CompiledProcessPlant, item: MimicItem)
   }
 }
 
-/** Every item a mimic can draw: each component its kind table draws, and each device such a component bundles. */
-export const operableItems = (plant: CompiledProcessPlant): ReadonlyArray<MimicItem> =>
-  plant.graph.components.flatMap((component): ReadonlyArray<MimicItem> => presentationFor(component).element === 'not-drawn' ? [] : [
+/** Every item of equipment: each component that is equipment, and each device such a component bundles. */
+export const operableItems = (plant: CompiledProcessPlant): ReadonlyArray<EquipmentItem> =>
+  plant.graph.components.flatMap((component): ReadonlyArray<EquipmentItem> => notEquipmentReason(component) !== undefined ? [] : [
     { kind: 'component', component: component.index },
-    ...component.semantics.embedded.map((device): MimicItem => ({ kind: 'device', component: component.index, device: device.id })),
+    ...component.semantics.embedded.map((device): EquipmentItem => ({ kind: 'device', component: component.index, device: device.id })),
   ])
 
 const readsComponent = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, component: CompiledComponent): boolean =>
@@ -521,7 +518,7 @@ export const plantControlsFor = (plant: CompiledProcessPlant): PlantControls => 
 }
 
 /**
- * Every drawn item's controls, with the pushbuttons of undrawn logic (a
+ * Every item's controls, with the pushbuttons of logic that is no item (a
  * manual trip, the SI block) on the energy ends their rules command (QA-11):
  * the drawing has no symbol for the logic itself.
  */
@@ -531,7 +528,7 @@ export const derivePlantControls = (plant: CompiledProcessPlant): PlantControls 
   const attached = new Map<number, OfferedControl[]>()
   const unplaced: Array<{ readonly path: VariablePath; readonly reason: string }> = []
   for (const component of plant.graph.components) {
-    if (presentationFor(component).element !== 'not-drawn') continue
+    if (notEquipmentReason(component) === undefined) continue
     const { classified } = classifiedFor(plant, { kind: 'component', component: component.index })
     const pushbuttons = classified.flatMap(entry => 'offered' in entry && entry.offered.form === 'pushbutton' ? [entry.offered] : [])
     if (pushbuttons.length === 0) continue

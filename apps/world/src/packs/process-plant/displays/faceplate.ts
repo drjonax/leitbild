@@ -4,7 +4,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule, ProcessPlantIcSafetyFunctionCondition, ProcessPlantIcStatusTreeNode } from '../runtime/index.ts'
 import { processPlantIcLifecycleIdFor } from '../runtime/ic/control-protection-lifecycle.ts'
 import { findProcessPlantSignalBinding, resolveProcessPlantSignalBinding, type ProcessPlantSignalReference } from '../signals.ts'
-import { actionStates, automaticActions, conditionBindings, type AutomaticAction } from './actuations.ts'
+import { actionStates, automaticActions, conditionBindings, type AutomaticAction } from '../ic/actuations.ts'
 import { z } from 'zod'
 import type {
   CompiledFaceplate,
@@ -23,7 +23,7 @@ import { displayValue, unitLabel } from '../quantity-text.ts'
 import { actionOf, firstOutGroupOf } from '../ic/thresholds.ts'
 import { presentationFor } from './mimic/presentation.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
-import { equipmentKeyValues, isDemand, readsAsMeasured, type PlantNow } from './overview-key-values.ts'
+import { equipmentKeyValues, isDemand, readsAsMeasured, type PlantNow } from '../ic/key-values.ts'
 
 // A faceplate: everything about one end of the Plant's energy path (what
 // heats its coolant, what takes the work out of its steam) on one panel,
@@ -74,7 +74,7 @@ export interface FaceplateWithheld {
 export const faceplateEnds = (plant: CompiledProcessPlant): ReadonlyArray<number> => [...new Set(energyEnds(plant.graph).map(end => end.component.index))]
 
 // A signal belongs to the node that owns its path and to the equipment it is
-// bound to, as a detail's lead values count it (overview-key-values.ts).
+// bound to, as a detail's lead values count it (ic/key-values.ts).
 const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
   String(binding.path).split('.')[0]!,
   ...(binding.equipmentId === undefined ? [] : [String(binding.equipmentId)]),

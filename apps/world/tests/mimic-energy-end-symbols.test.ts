@@ -19,11 +19,11 @@ import { overviewDrawingRoom } from '../src/packs/process-plant/displays/compose
 import { compileMimic, compileMimicScope, type MimicBudget } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import type { CompiledMimic, MimicDrawnItem } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
-import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
+import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { chatMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { drawnLook, itemTreatment, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
-import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { overviewKeyValues } from '../src/packs/process-plant/ic/key-values.ts'
 import { processPlantSignalQuality } from '../src/packs/process-plant/signals.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
@@ -82,7 +82,7 @@ const room = overviewDrawingRoom({ width: 1896, height: 972 }, 'column', {
   tileWidth: 134,
 })!
 const overviewOf = (shown: CompiledProcessPlant): CompiledMimic => {
-  const principal = principalCircuits(shown.graph)
+  const principal = overviewScope(shown.graph)
   if (!principal.ok) throw new Error(principal.reason)
   const result = compileMimicScope(shown, principal.scope, { profile: overviewMimicProfile, ...room })
   if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))

@@ -1,5 +1,6 @@
 import type { VariablePath } from '../../graph/index.ts'
-import type { MimicFlowBinding, MimicItemBinding, MimicStubWord } from './bindings.ts'
+import type { MimicItemBinding, MimicStubWord } from './bindings.ts'
+import type { LinkFlowBinding } from '../../equipment/link-flow.ts'
 import type { DiagramZone, Face, PlacedNode } from './layout/index.ts'
 import { DIAGRAM_ENGINE_VERSION } from './layout/index.ts'
 import type { MimicPresentation } from './presentation.ts'
@@ -90,7 +91,7 @@ export type MimicPipeState =
    * pumps' suctions), `parallel` holds the others' flows and the drawn pipe
    * carries flow while any of them does.
    */
-  | { readonly kind: 'fluid'; readonly flow: MimicFlowBinding; readonly parallel: ReadonlyArray<MimicFlowBinding> }
+  | { readonly kind: 'fluid'; readonly flow: LinkFlowBinding; readonly parallel: ReadonlyArray<LinkFlowBinding> }
   | { readonly kind: 'power'; readonly energizedPath: VariablePath | null }
 
 export interface MimicDrawnPipe {

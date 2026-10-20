@@ -3,9 +3,21 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { COMPOSED_READOUTS_MAX_SIGNALS, GENERATED_DETAIL_MAX_LEAD_VALUES } from './composition.ts'
-import { actionFlows, actionFlowsInto, actionStates, actsIn, armed, automaticActions, conditionBindings, feedsTransferIntake } from './actuations.ts'
-import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
+import { ACTION_REACH_LINKS, actionFlows, actionFlowsInto, actionStates, actsIn, armed, automaticActions, conditionBindings, feedsTransferIntake } from './actuations.ts'
+
+/**
+ * The most values a unit leads with in its overview and on its map card:
+ * what an operator takes in at a glance, the energy ends among them.
+ */
+export const OVERVIEW_MAX_LEAD_VALUES = 6
+
+/**
+ * The most values equipment opened from an overview leads with: its column
+ * has no annunciator tiles, so it holds more than an overview's six in a Full
+ * HD window (the core's nuclear instruments and exit thermocouples beside its
+ * power and margins).
+ */
+export const GENERATED_DETAIL_MAX_LEAD_VALUES = 8
 
 /**
  * A signal an operator reads as measured: published, and read-only, or a
@@ -68,8 +80,8 @@ export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): R
     const value = now.read(path)
     return range !== undefined && typeof value === 'number' && value >= range.min && value <= range.max
   }
-  const shown = [...leads.filter(path => !normal(path)), ...leads.filter(normal)].slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length))
-  return (endsFirst ? [...ends, ...shown] : [...shown, ...ends]).slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+  const shown = [...leads.filter(path => !normal(path)), ...leads.filter(normal)].slice(0, Math.max(0, OVERVIEW_MAX_LEAD_VALUES - ends.length))
+  return (endsFirst ? [...ends, ...shown] : [...shown, ...ends]).slice(0, OVERVIEW_MAX_LEAD_VALUES)
 }
 
 /**
@@ -103,7 +115,7 @@ export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): 
     const action = actions.get(rule.id)
     if (action === undefined) return []
     const started = { ...action, writes: action.writes.filter(write => now.read(write.binding.path) === write.value) }
-    return actionFlows(plant, started, MIMIC_REACH_LINKS).filter(flow => flow.effect === 'starts').map(flow => flow.path)
+    return actionFlows(plant, started, ACTION_REACH_LINKS).filter(flow => flow.effect === 'starts').map(flow => flow.path)
   })
   const judgedEquipment = [...new Set(inForce.filter(rule => ruleKind(rule) !== null && canAct(rule))
     .flatMap(rule => conditionBindings(plant, rule.condition).flatMap(binding => binding.owner.type === 'component' ? [binding.owner.componentIndex] : [])))]
@@ -120,8 +132,8 @@ export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): 
       ...sources.flatMap(source => first(source.index)),
       ...inForce.flatMap(rule => {
         const action = actions.get(rule.id)
-        return action === undefined ? [] : actionFlows(plant, action, MIMIC_REACH_LINKS)
-          .filter(flow => flow.effect === 'starts' && feedsTransferIntake(plant, flow.path, MIMIC_REACH_LINKS)).map(flow => flow.path)
+        return action === undefined ? [] : actionFlows(plant, action, ACTION_REACH_LINKS)
+          .filter(flow => flow.effect === 'starts' && feedsTransferIntake(plant, flow.path, ACTION_REACH_LINKS)).map(flow => flow.path)
       }),
     ])].filter(readable)
   const leads = [...new Set([...guarding, ...delivered, ...keyed])].filter(path => leadable(path) && !ends.includes(path))

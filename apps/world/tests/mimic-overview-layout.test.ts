@@ -13,9 +13,9 @@ import { compileMimicScope, planMimicDiagram, type MimicBudget } from '../src/pa
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { layoutDiagram, verifyDiagram } from '../src/packs/process-plant/displays/mimic/layout/index.ts'
 import type { CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
-import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
+import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
-import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { overviewKeyValues } from '../src/packs/process-plant/ic/key-values.ts'
 import { drawnLook, flapPlaces, flapTexts, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { openBridgeDevice, readoutBlockWidth, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
@@ -47,7 +47,7 @@ const ROOM: Readonly<Record<number, Omit<MimicBudget, 'profile'>>> = { 2: fullHd
 const budgetFor = (loops: number): MimicBudget => ({ profile: overviewMimicProfile, ...ROOM[loops]! })
 
 const scopeOf = (plant: CompiledProcessPlant) => {
-  const principal = principalCircuits(plant.graph)
+  const principal = overviewScope(plant.graph)
   if (!principal.ok) throw new Error(principal.reason)
   return principal.scope
 }

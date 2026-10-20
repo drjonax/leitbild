@@ -1,4 +1,4 @@
-import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from './name-matching.ts'
+import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from '../name-matching.ts'
 import { z } from 'zod'
 import type { EmbeddedViewContent } from '@leitbild/contracts'
 import { recordingSeriesIdFor } from '../../../core/model/index.ts'
@@ -51,20 +51,27 @@ import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } 
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
-import { principalCircuits } from './mimic/principal.ts'
-import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { overviewScope } from './mimic/principal.ts'
+import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from '../ic/key-values.ts'
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { operatingPointReading, operatingPointValue } from '../operating-point.ts'
-import { commandingActions } from './actuations.ts'
+import { commandingActions } from '../ic/actuations.ts'
 import { evidenceLines } from './evidence-width.ts'
 import { criterionOfReadings } from './safety-criteria.ts'
 import { compileFaceplate, faceplateEnds } from './faceplate.ts'
 import { faceplateMostLines, type CompiledFaceplate, type FaceplateCondition } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
-import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
+import { MIMIC_REACH_LINKS, itemServices, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
+import { plantCarriers, plantLoops } from '../equipment/circuits.ts'
+import { componentDescription } from '../equipment/items.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import { mimicQuickLookPaths, type MimicQuickLooks } from './mimic/quick-look.ts'
-import { icAlarmRuleIdsForEquipment, icThresholdsForSignal, type ComposedDisplayCombinedRule, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
+import {
+  icAlarmRuleIdsForEquipment,
+  icThresholdsForSignal,
+  type ComposedDisplayCombinedRule,
+  type ComposedDisplayThreshold,
+} from '../ic/thresholds.ts'
 
 export interface ComposedDisplayPen {
   readonly ref: string
@@ -1407,7 +1414,7 @@ const drawingExtras = (
 
 /**
  * The unit overview World generates for a Plant: its lead values for the
- * mode it is in (protection, delivery and energy, overview-key-values.ts),
+ * mode it is in (protection, delivery and energy, ic/key-values.ts),
  * its principal circuits drawn by the
  * overview profile (principal.ts), and the whole Plant's active alarms. Every
  * part comes from the model; nothing names equipment. It is drawn for the
@@ -1416,7 +1423,7 @@ const drawingExtras = (
 export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, recordedSeriesIds: ReadonlySet<string>, view: OverviewView | null): ComposedDisplayCompileResult => {
   const issues: ComposedDisplayIssue[] = []
   const readouts = leadValues(system, overviewKeyValues(system.plant, plantNow(system)), recordedSeriesIds, issues)
-  const circuits = principalCircuits(system.plant.graph)
+  const circuits = overviewScope(system.plant.graph)
   if (!circuits.ok) return { ok: false, issues: [{ path: 'overview', message: circuits.reason }] }
   if (issues.length > 0) return { ok: false, issues }
   // The tiles at each width their names fit, widest first; the widest must fit, so a narrower one only ever saves height.

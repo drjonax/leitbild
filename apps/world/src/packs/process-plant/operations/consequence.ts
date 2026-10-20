@@ -4,10 +4,11 @@ import { variablePathSchema } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
-import { actsIn } from '../displays/actuations.ts'
+import { actsIn } from '../ic/actuations.ts'
 import { formatQuantity } from '../quantity-text.ts'
 import { actionOf, icRuleKind } from '../ic/thresholds.ts'
-import { linkFlowBinding, type MimicItem } from '../displays/mimic/bindings.ts'
+import { linkFlowBinding } from '../equipment/link-flow.ts'
+import type { EquipmentItem } from '../equipment/items.ts'
 import type { ControlRule, OfferedControl } from './controls.ts'
 
 // What an operation that stops, shuts, disconnects or throttles takes away,
@@ -66,7 +67,7 @@ interface ItemPath {
 const comparisonLeaves = (condition: ProcessPlantIcCondition): ReadonlyArray<Extract<ProcessPlantIcCondition, { type: 'comparison' }>> =>
   condition.type === 'comparison' ? [condition] : condition.type === 'not' ? comparisonLeaves(condition.condition) : condition.conditions.flatMap(comparisonLeaves)
 
-const pathFor = (plant: CompiledProcessPlant, item: MimicItem): ItemPath | null => {
+const pathFor = (plant: CompiledProcessPlant, item: EquipmentItem): ItemPath | null => {
   const graph = plant.graph
   const component = graph.components[item.component]!
   const device = item.kind === 'device' ? component.semantics.embedded.find(candidate => candidate.id === item.device) : undefined
@@ -101,7 +102,7 @@ const pathFor = (plant: CompiledProcessPlant, item: MimicItem): ItemPath | null 
 const pathsByPlant = new WeakMap<CompiledProcessPlant, Map<string, ItemPath | null>>()
 
 /** pathFor, once per drawn item of a compiled Plant. */
-const itemPathOf = (plant: CompiledProcessPlant, item: MimicItem): ItemPath | null => {
+const itemPathOf = (plant: CompiledProcessPlant, item: EquipmentItem): ItemPath | null => {
   const key = item.kind === 'device' ? `${item.component}.${item.device}` : String(item.component)
   const byItem = pathsByPlant.get(plant) ?? new Map<string, ItemPath | null>()
   pathsByPlant.set(plant, byItem)
@@ -133,7 +134,7 @@ export interface ConsequenceContext {
 }
 
 /** The carrier of a drawn item's path, where it has one: what the off option's verb depends on. */
-export const itemCarrier = (plant: CompiledProcessPlant, item: MimicItem): 'fluid' | 'power' | null => itemPathOf(plant, item)?.carrier ?? null
+export const itemCarrier = (plant: CompiledProcessPlant, item: EquipmentItem): 'fluid' | 'power' | null => itemPathOf(plant, item)?.carrier ?? null
 
 /**
  * What an operation on a drawn item takes away now, worded with `verb`; null
@@ -143,7 +144,7 @@ export const itemCarrier = (plant: CompiledProcessPlant, item: MimicItem): 'flui
  */
 export const operationConsequence = (
   plant: CompiledProcessPlant,
-  item: MimicItem,
+  item: EquipmentItem,
   verb: ConsequenceVerb,
   context: ConsequenceContext,
   alsoActuates: ReadonlyArray<ControlRule> = [],

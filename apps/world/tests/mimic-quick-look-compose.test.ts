@@ -10,7 +10,7 @@ import {
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { compileDetailDisplay, compileOverviewDisplay, composedDisplaySignals, type ComposedMimicPanel } from '../src/packs/process-plant/displays/compose.ts'
 import { mimicQuickLookPaths, QUICK_LOOK_LEADS } from '../src/packs/process-plant/displays/mimic/quick-look.ts'
-import { plantNowOf } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { plantNowOf } from '../src/packs/process-plant/ic/key-values.ts'
 import { createMimicQuickLook, quickLookValue } from '../src/ui/embed/composed-display/mimic/quick-look-source.ts'
 import type { ComposedDisplaySample } from '../src/ui/embed/composed-display/composed-display-client.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'

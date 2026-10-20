@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { idSchema, isoTimestampSchema } from '../../../core/model/index.ts'
 import { variablePathSchema } from '../graph/index.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
+import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../equipment/items.ts'
 
 // An AI-composed display states WHAT the operator should see and WHY. The
 // Pack owns HOW: resolution, units, I&C thresholds, scales, layout and live
@@ -214,17 +215,6 @@ export const composedDisplayStateSchema = z.object({
 export const overviewDisplayStateSchema = z.object({
   overview: z.object({ plantId: idSchema }).strict(),
 }).strict()
-
-/** The most components one detail opens: a drawn symbol stands for one, or for a group of parallel equipment. */
-export const PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS = 8
-
-/**
- * The most values equipment opened from an overview leads with: its column
- * has no annunciator tiles, so it holds more than an overview's six in a Full
- * HD window (the core's nuclear instruments and exit thermocouples beside its
- * power and margins).
- */
-export const GENERATED_DETAIL_MAX_LEAD_VALUES = 8
 
 /**
  * Equipment opened from a generated display: World draws what feeds it and

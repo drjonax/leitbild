@@ -11,10 +11,10 @@ import { compileDetailDisplay, compileOverviewDisplay, overviewDrawingRoom, type
 import { compileMimic, compileMimicScope } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH, type CompiledMimic, type MimicDrawnItem } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { presentationFor } from '../src/packs/process-plant/displays/mimic/presentation.ts'
-import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
+import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { openBridgeDevice, reactorVesselBottom } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
-import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { overviewKeyValues } from '../src/packs/process-plant/ic/key-values.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
@@ -42,7 +42,7 @@ const room = overviewDrawingRoom(fullHd, 'column', {
   tileWidth: 134,
 })!
 const overview = ((): CompiledMimic => {
-  const principal = principalCircuits(plant.graph)
+  const principal = overviewScope(plant.graph)
   if (!principal.ok) throw new Error(principal.reason)
   const result = compileMimicScope(plant, principal.scope, { profile: overviewMimicProfile, ...room })
   if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))

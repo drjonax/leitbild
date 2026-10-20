@@ -11,7 +11,7 @@ import {
   type PlantGraphSpec,
   type ProcessVariableLimits,
 } from '../src/packs/process-plant/index.ts'
-import { equipmentKeyValues, isDemand, leadValuesKey, overviewKeyValues, readsAsMeasured, type PlantNow } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { equipmentKeyValues, isDemand, leadValuesKey, overviewKeyValues, readsAsMeasured, type PlantNow } from '../src/packs/process-plant/ic/key-values.ts'
 import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'

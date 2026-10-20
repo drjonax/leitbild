@@ -2,7 +2,7 @@ import type { ProcessVariableValue, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule, ProcessPlantIcSnapshot } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
-import { actsIn } from '../displays/actuations.ts'
+import { actsIn } from '../ic/actuations.ts'
 import { icRuleKind } from '../ic/thresholds.ts'
 import { compareIcValues, type ControlOption, type ControlRule, type OfferedControl, type OpposingRule } from './controls.ts'
 

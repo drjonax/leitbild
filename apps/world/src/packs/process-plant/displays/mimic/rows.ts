@@ -1,4 +1,5 @@
-import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicRangeBinding, MimicShutdownBinding, MimicStubWord } from './bindings.ts'
+import type { MimicFrame, MimicItemBinding, MimicRangeBinding, MimicShutdownBinding, MimicStubWord } from './bindings.ts'
+import type { LinkFlowBinding } from '../../equipment/link-flow.ts'
 import { flowLook, itemLook, powerLook, shutdownLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
@@ -459,7 +460,7 @@ export const itemTreatment = (look: ItemLook, alarmed: boolean, demanded = false
   alarmed ? 'alarm' : look.mismatch !== null || demanded ? 'abnormal' : 'normal'
 
 /** A pipe standing for parallel pipes carries flow while any of them does; it is unknown when none does and any is unknown. */
-export const bundleFlowLook = (flows: ReadonlyArray<MimicFlowBinding>, index: SampleIndex): FlowLook => {
+export const bundleFlowLook = (flows: ReadonlyArray<LinkFlowBinding>, index: SampleIndex): FlowLook => {
   const looks = flows.map(flow => flowLook(flow, index))
   const order: ReadonlyArray<FlowLook['look']> = ['forward', 'reverse', 'flowing', 'unknown', 'none']
   return looks.reduce((best, look) => (order.indexOf(look.look) < order.indexOf(best.look) ? look : best))
