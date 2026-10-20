@@ -17,6 +17,7 @@ import { composedDisplayLayout } from '../src/packs/process-plant/displays/compo
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { drawnLook, itemTreatment } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 
 guardPlantTests()
 
@@ -362,7 +363,7 @@ describe('the alarms a generated display annunciates', () => {
   test('are the active ones and those that cleared unacknowledged; never shelved, suppressed or out of service, and never ones that have not fired', () => {
     const base = plant()
     const lifecycle = (id: string, phase: string, flags: { active: boolean; acknowledged: boolean; shelved?: boolean; suppressed?: boolean; outOfService?: boolean }) => ({
-      id, ruleId: id, kind: 'alarm', title: id, severity: 'warning', phase, firstOut: false,
+      id, ruleId: id, kind: 'alarm', title: id, severity: 'warning', phase, firstOut: false, latched: false,
       shelved: false, suppressed: false, outOfService: false, ...flags,
     })
     const system = {
@@ -370,6 +371,7 @@ describe('the alarms a generated display annunciates', () => {
       protection: {
         ...base.protection,
         snapshot: () => ({
+          rules: ['normal', 'active', 'cleared', 'done', 'shelved', 'suppressed', 'out'].map(ruleId => ({ ruleId, active: ruleId === 'active' || ruleId === 'shelved' || ruleId === 'suppressed' || ruleId === 'out', latched: false, firedCount: 1 })),
           alarms: [
             lifecycle('normal', 'normal', { active: false, acknowledged: false }),
             lifecycle('active', 'activeUnacknowledged', { active: true, acknowledged: false }),
@@ -391,5 +393,35 @@ describe('the alarms a generated display annunciates', () => {
       recordedSeriesIds: new Set(),
     }) as { alarms: ReadonlyArray<{ id: string; active: boolean }> }
     expect(sample.alarms.map(alarm => [alarm.id, alarm.active])).toEqual([['active', true], ['cleared', false]])
+  })
+
+  test('say apart a latched actuation whose condition cleared from one whose condition holds', () => {
+    // SG B after its low-low level started AFW and then overfilled: the AFW start stays latched, its condition gone.
+    const base = plant()
+    const trip = (id: string, latched: boolean) => ({
+      id, ruleId: id, kind: 'trip', title: id, severity: 'critical', phase: 'activeAcknowledged', firstOut: false, active: true, acknowledged: true, latched,
+      shelved: false, suppressed: false, outOfService: false,
+    })
+    const system = {
+      ...base,
+      protection: {
+        ...base.protection,
+        snapshot: () => ({
+          rules: [{ ruleId: 'sg-b-afw', active: false, latched: true, firedCount: 1 }, { ruleId: 'sg-c-afw', active: true, latched: true, firedCount: 1 }],
+          alarms: [],
+          trips: [trip('sg-b-afw', true), trip('sg-c-afw', true)],
+        }),
+      },
+    } as unknown as ProcessPlantRuntimeInstance
+    const sample = answerProcessPlantQuery({
+      request: { capabilityId: 'world.process-plant.display.sample', input: { plantId: system.plant.id, paths: ['core.powerMw'], alarms: true } },
+      plants: new Map([[system.plant.id, system]]),
+      objects: new Map(),
+      simulationTime: '2026-10-09T10:00:00.000Z' as IsoTimestamp,
+      recordedSeriesIds: new Set(),
+    })
+    expect((sample as { alarms: ReadonlyArray<{ id: string; active: boolean; latched: boolean; conditionActive: boolean }> }).alarms.map(alarm => [alarm.id, alarm.active, alarm.latched, alarm.conditionActive]))
+      .toEqual([['sg-b-afw', true, true, false], ['sg-c-afw', true, true, true]])
+    expect(() => processPlantCapabilities.find(capability => capability.id === 'world.process-plant.display.sample')!.output.parse(sample)).not.toThrow()
   })
 })

@@ -62,10 +62,11 @@ const shownAt = (state: (typeof pinned)[number]): ReadonlyArray<Shown> => {
   for (let second = 0; second < state.seconds; second += 1) step()
   const mode = processPlantOperatingMode({ system: plant, runtime, modes: plant.automation.operatingModes })
   const snapshot = protection.snapshot()
+  const conditions = new Map(snapshot.rules.map(rule => [rule.ruleId, rule.active]))
   // As display.sample carries them: the annunciated alarms and trips, each safety function's chip, every value asked for.
   const alarms = [...snapshot.alarms, ...snapshot.trips]
     .filter(lifecycle => !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService && (lifecycle.active || lifecycle.phase === 'clearedUnacknowledged'))
-    .map(lifecycle => ({ id: lifecycle.id, ruleId: lifecycle.ruleId, kind: lifecycle.kind, title: lifecycle.title, severity: lifecycle.severity, active: lifecycle.active, acknowledged: lifecycle.acknowledged, firstOut: lifecycle.firstOut, ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }) }))
+    .map(lifecycle => ({ id: lifecycle.id, ruleId: lifecycle.ruleId, kind: lifecycle.kind, title: lifecycle.title, severity: lifecycle.severity, active: lifecycle.active, acknowledged: lifecycle.acknowledged, latched: lifecycle.latched, conditionActive: conditions.get(lifecycle.ruleId)!, firstOut: lifecycle.firstOut, ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }) }))
   return faceplateEnds(plant).map(end => {
     const result = compileDetailDisplay(system, new Set(), [String(plant.graph.components[end]!.id)], fullHd)
     if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))

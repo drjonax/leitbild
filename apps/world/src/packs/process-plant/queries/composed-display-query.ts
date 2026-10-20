@@ -87,12 +87,22 @@ const generatedCache = new WeakMap<ProcessPlantRuntimeInstance, Map<string, Comp
 /**
  * The alarms and trips a display shows: shelved, suppressed and
  * out-of-service ones annunciate nowhere; one that cleared unacknowledged
- * stays listed until it is acknowledged.
+ * stays listed until it is acknowledged. A latched actuation stays active
+ * after its condition clears, so each says whether its rule's condition
+ * holds now (`conditionActive`).
  */
 const annunciated = (system: ProcessPlantRuntimeInstance) => {
   const protection = system.protection?.snapshot()
-  return protection === undefined ? undefined : [...protection.alarms, ...protection.trips]
+  if (protection === undefined) return undefined
+  const conditions = new Map(protection.rules.map(rule => [rule.ruleId, rule.active]))
+  const conditionActive = (ruleId: string): boolean => {
+    const holds = conditions.get(ruleId)
+    if (holds === undefined) throw new Error(`Process Plant ${system.plant.id} keeps no state for I&C rule ${ruleId}`)
+    return holds
+  }
+  return [...protection.alarms, ...protection.trips]
     .filter(lifecycle => !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService && (lifecycle.active || lifecycle.phase === 'clearedUnacknowledged'))
+    .map(lifecycle => ({ ...lifecycle, conditionActive: conditionActive(lifecycle.ruleId) }))
 }
 
 /** Where the Plant declares operating modes, the one it is in, or null where none holds. */
@@ -351,6 +361,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
           severity: lifecycle.severity,
           active: lifecycle.active,
           acknowledged: lifecycle.acknowledged,
+          latched: lifecycle.latched,
+          conditionActive: lifecycle.conditionActive,
           firstOut: lifecycle.firstOut,
           ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }),
         })),

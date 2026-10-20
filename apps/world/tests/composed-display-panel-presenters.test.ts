@@ -199,18 +199,18 @@ describe('composed display panel presenters', () => {
 
   test('alarms read first-out first, then trips, then by severity, then active before cleared, then by onset', () => {
     const alarms: ReadonlyArray<ComposedDisplayAlarm> = [
-      { id: 'a', ruleId: 'sg-b-level-low', kind: 'alarm', title: 'SG B level low', severity: 'warning', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 100_000 },
-      { id: 'b', ruleId: 'sg-b-level-low-low', kind: 'trip', title: 'SG B low-low', severity: 'critical', active: true, acknowledged: false, firstOut: true, firstActiveElapsedMs: 200_000 },
-      { id: 'c', ruleId: 'other', kind: 'alarm', title: 'Other', severity: 'critical', active: true, acknowledged: false, firstOut: false },
-      { id: 'd', ruleId: 'sg-b-feedwater-low', kind: 'alarm', title: 'SG B feed low', severity: 'warning', active: true, acknowledged: false, firstOut: false, firstActiveElapsedMs: 50_000 },
+      { id: 'a', ruleId: 'sg-b-level-low', kind: 'alarm', title: 'SG B level low', severity: 'warning', active: true, acknowledged: true, latched: false, conditionActive: true, firstOut: false, firstActiveElapsedMs: 100_000 },
+      { id: 'b', ruleId: 'sg-b-level-low-low', kind: 'trip', title: 'SG B low-low', severity: 'critical', active: true, acknowledged: false, latched: false, conditionActive: true, firstOut: true, firstActiveElapsedMs: 200_000 },
+      { id: 'c', ruleId: 'other', kind: 'alarm', title: 'Other', severity: 'critical', active: true, acknowledged: false, latched: false, conditionActive: true, firstOut: false },
+      { id: 'd', ruleId: 'sg-b-feedwater-low', kind: 'alarm', title: 'SG B feed low', severity: 'warning', active: true, acknowledged: false, latched: false, conditionActive: true, firstOut: false, firstActiveElapsedMs: 50_000 },
     ]
     // First-out groups name what an alarm row annunciates, by its id.
     const groups = { firstOutGroups: { b: 'RX TRIP', 'sg-c-level-low-low': 'RX TRIP' } }
     expect(visibleAlarms(alarms, 'related', ['sg-b-level-low', 'sg-b-level-low-low', 'sg-b-feedwater-low'], groups).map(alarm => alarm.id)).toEqual(['b', 'd', 'a'])
     const plant: ReadonlyArray<ComposedDisplayAlarm> = [
-      { id: 'cleared', ruleId: 'r1', kind: 'alarm', title: 'Cleared', severity: 'critical', active: false, acknowledged: false, firstOut: false, firstActiveElapsedMs: 1_000 },
-      { id: 'critical', ruleId: 'r2', kind: 'alarm', title: 'Critical', severity: 'critical', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 2_000 },
-      { id: 'trip', ruleId: 'r3', kind: 'trip', title: 'Trip', severity: 'warning', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 3_000 },
+      { id: 'cleared', ruleId: 'r1', kind: 'alarm', title: 'Cleared', severity: 'critical', active: false, acknowledged: false, latched: false, conditionActive: true, firstOut: false, firstActiveElapsedMs: 1_000 },
+      { id: 'critical', ruleId: 'r2', kind: 'alarm', title: 'Critical', severity: 'critical', active: true, acknowledged: true, latched: false, conditionActive: true, firstOut: false, firstActiveElapsedMs: 2_000 },
+      { id: 'trip', ruleId: 'r3', kind: 'trip', title: 'Trip', severity: 'warning', active: true, acknowledged: true, latched: false, conditionActive: true, firstOut: false, firstActiveElapsedMs: 3_000 },
     ]
     expect(visibleAlarms(plant, 'plant', [], groups).map(alarm => alarm.id)).toEqual(['trip', 'critical', 'cleared'])
     expect(visibleAlarms(alarms, 'plant', [], groups).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
@@ -224,7 +224,7 @@ describe('composed display panel presenters', () => {
     // Evaluation run 22, loss of main feedwater: the AFW start came in first; the reactor tripped on SG B low-low level.
     // An alarm row's id is the trip it annunciates, of its rule.
     const trip = (title: string, ruleId: string, effectId: string, at: number, firstOut: boolean): ComposedDisplayAlarm =>
-      ({ id: `trip:${ruleId}:${effectId}`, ruleId, kind: 'trip', title, severity: 'critical', active: true, acknowledged: false, firstOut, firstActiveElapsedMs: at })
+      ({ id: `trip:${ruleId}:${effectId}`, ruleId, kind: 'trip', title, severity: 'critical', active: true, acknowledged: false, latched: false, conditionActive: true, firstOut, firstActiveElapsedMs: at })
     const alarms = [
       trip('Steam generator B low-low level', 'sg-b-afw', 'afw', 60_000, false),
       trip('Auxiliary feedwater start on main feedwater pump trip', 'mfw-afw', 'afw', 3_000, false),
@@ -367,14 +367,14 @@ describe('composed display panel presenters', () => {
 
 describe('annunciator tiles', () => {
   const alarm = (ruleId: string, severity: ComposedDisplayAlarm['severity'], extra: Partial<ComposedDisplayAlarm> = {}): ComposedDisplayAlarm => ({
-    id: `${ruleId}:a`, ruleId, kind: 'alarm', title: ruleId, severity, active: true, acknowledged: true, firstOut: false, ...extra,
+    id: `${ruleId}:a`, ruleId, kind: 'alarm', title: ruleId, severity, active: true, acknowledged: true, latched: false, conditionActive: true, firstOut: false, ...extra,
   })
 
   test('each declared system counts its own active alarms, says how severe the worst is, and whether any is unacknowledged', () => {
     const systems = [{ id: 'steamGenerators', name: 'Steam generators', ruleIds: ['sg-a-low', 'sg-b-low'] }, { id: 'electrical', name: 'Electrical', ruleIds: ['bus-a-dead'] }, { id: 'containment', name: 'Containment', ruleIds: ['ctmt-high'] }]
     const states = annunciatorStates(systems, [
       alarm('sg-a-low', 'warning'),
-      alarm('sg-b-low', 'critical', { acknowledged: false, firstOut: true }),
+      alarm('sg-b-low', 'critical', { acknowledged: false, latched: false, conditionActive: true, firstOut: true }),
       alarm('bus-a-dead', 'notice', { kind: 'trip', firstOut: true }),
       alarm('not-annunciated', 'critical'),
       // Cleared but unacknowledged: listed, not counted as active.
@@ -391,7 +391,7 @@ describe('annunciator tiles', () => {
   test('a tile names what its alarms do as chips and the banner do, never TRIP for an actuation', () => {
     // QA review of run 22, PORV open at 3 min: the Safety injection, Steam generators and Feedwater tiles read "TRIP 1st".
     const trip = (ruleId: string, effect: string, firstOut: boolean): ComposedDisplayAlarm =>
-      ({ id: `trip:${ruleId}:${effect}`, ruleId, kind: 'trip', title: ruleId, severity: 'critical', active: true, acknowledged: false, firstOut })
+      ({ id: `trip:${ruleId}:${effect}`, ruleId, kind: 'trip', title: ruleId, severity: 'critical', active: true, acknowledged: false, latched: false, conditionActive: true, firstOut })
     const annunciation = {
       firstOutGroups: { 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP', 'trip:si:safety-injection': 'SI', 'trip:si-ctmt:safety-injection': 'SI', 'trip:sg-a-afw:afw': 'AFW START', 'trip:sg-b-afw:afw': 'AFW START' },
       groups: { 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP', 'trip:si:safety-injection': 'SI', 'trip:si-ctmt:safety-injection': 'SI', 'trip:sg-a-afw:afw': 'AFW START', 'trip:sg-b-afw:afw': 'AFW START', 'trip:fwi:fwi': 'FWI' },
