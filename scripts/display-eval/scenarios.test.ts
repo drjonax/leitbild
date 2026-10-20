@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { allScenarios, devScenarios, FLAKY_SCENARIO_IDS, KEY_STATUS, NEAR_DUPLICATES } from './scenarios.ts'
+import { allScenarios, devScenarios, FLAKY_SCENARIO_IDS, KEY_STATUS, NEAR_DUPLICATES, smokeScenarios } from './scenarios.ts'
 import { keyNames } from './decisive.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 
@@ -15,6 +15,11 @@ describe('display evaluation scenarios', () => {
       expect(allScenarios.find(scenario => scenario.id === id)?.set).toBe('near-duplicate')
       expect(devScenarios.some(scenario => scenario.id === of)).toBe(true)
     }
+  })
+
+  test('the T1 smoke is 8 dev scenarios, none of them pre-named flaky', () => {
+    expect(smokeScenarios).toHaveLength(8)
+    for (const scenario of smokeScenarios) expect({ id: scenario?.id, set: scenario?.set, flaky: scenario?.flaky }).toEqual({ id: scenario!.id, set: 'dev', flaky: false })
   })
 
   test('every pre-named flaky scenario runs in the dev set, and only those are flagged', () => {

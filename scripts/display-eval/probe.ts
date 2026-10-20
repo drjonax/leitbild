@@ -6,7 +6,7 @@
  *
  *   LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> \
  *   bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<stack dir>/agents.log \
- *     [--set=dev|near-duplicate|all] [--scenarios=<absolute module path>#<export>] [--request-display] [scenario-id ...]
+ *     [--set=dev|smoke|near-duplicate|all] [--scenarios=<absolute module path>#<export>] [--request-display] [scenario-id ...]
  *
  * --set picks the repository scenarios (default dev); --scenarios runs the
  * scenarios a module outside the repository exports instead (the private
@@ -27,13 +27,13 @@
  */
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { allScenarios, devScenarios, loadScenarioModule, type EvalScenario, type OperationExpectation } from './scenarios.ts'
+import { allScenarios, devScenarios, loadScenarioModule, smokeScenarios, type EvalScenario, type OperationExpectation } from './scenarios.ts'
 import { displayEvidenceOf, scoreKey, addedEvidenceUse, answerProse, type ComposeRecord, type KeyResult } from './decisive.ts'
 import { correctionsIn, type Correction } from './corrections.ts'
 import { callsBetween, logOffset, summariseCalls, type ModelCall } from './billing.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 
-const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|near-duplicate|all] [--scenarios=<abs module>#<export>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
+const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|smoke|near-duplicate|all] [--scenarios=<abs module>#<export>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
 const [stage, directory, ...rest] = Bun.argv.slice(2)
 if (!stage || !/^[a-z0-9-]+$/.test(stage) || !directory || !isAbsolute(directory)) throw new Error(usage)
 const option = (name: string): string | undefined => rest.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3)
@@ -54,6 +54,7 @@ const pool: ReadonlyArray<EvalScenario> = external !== undefined
     const set = option('set') ?? 'dev'
     if (set === 'dev') return selected.length === 0 ? devScenarios : allScenarios
     if (set === 'all') return allScenarios
+    if (set === 'smoke') return smokeScenarios
     if (set === 'near-duplicate') return allScenarios.filter(scenario => scenario.set === 'near-duplicate')
     throw new Error(`Unknown --set ${set}. ${usage}`)
   })()

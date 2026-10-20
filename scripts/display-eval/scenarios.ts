@@ -299,6 +299,17 @@ export const allScenarios: ReadonlyArray<EvalScenario> = scenarios.map(scenario 
 }))
 export const devScenarios = allScenarios.filter(scenario => scenario.set === 'dev')
 
+/**
+ * The T1 smoke (architect-remediation eval tiers: 8 dev scenarios × k=1 on
+ * the local stack, for a change to the agent surface): a trend, a mimic, a
+ * line-up, an electrical upset, a procedure check, restraint twice and an
+ * operation; no pre-named flaky scenario, so a smoke failure is a signal.
+ */
+export const SMOKE_SCENARIO_IDS: ReadonlyArray<string> = [
+  'sg-b-runback', 'feed-path-b', 'show-feed-lineup', 'loss-main-feedwater', 'e0-immediate', 'single-state', 'product-question', 'op-afw-throttle',
+]
+export const smokeScenarios = SMOKE_SCENARIO_IDS.map(id => devScenarios.find(scenario => scenario.id === id)!)
+
 // ---- scenarios from a module outside the repository (the private hold-out) ----
 
 // The repository's root has no schema library; the external module is checked field by field.
