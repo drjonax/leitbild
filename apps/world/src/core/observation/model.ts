@@ -62,7 +62,7 @@ export const thresholdSchema = z.object({
   direction: z.enum(['low', 'high']),
   value: z.number().finite(),
   order: z.number().int().min(1).max(4),
-  effect: z.enum(['alarm', 'trip', 'control', 'rating', 'target']),
+  effect: z.enum(['alarm', 'trip', 'control', 'rating', 'target', 'advisory']),
   /** Styles the limit tick only; a value's colour comes from its observation. */
   priority: prioritySchema.exclude(['none']),
   consequence: z.string().max(80).optional(),

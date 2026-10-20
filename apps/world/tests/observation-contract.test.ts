@@ -45,6 +45,9 @@ describe('observation model', () => {
     expect(thresholdSchema.safeParse({ ...threshold, order: 5 }).success).toBe(false)
     expect(thresholdSchema.safeParse({ ...threshold, priority: 'none' }).success).toBe(false)
     expect(thresholdSchema.safeParse({ ...threshold, colour: '#f00' }).success).toBe(false)
+    // R31: a level that advises and raises no alarm (weather's severity ladder).
+    expect(thresholdSchema.parse({ ...threshold, effect: 'advisory', priority: 'notice' }).effect).toBe('advisory')
+    expect(thresholdSchema.safeParse({ ...threshold, effect: 'warning' }).success).toBe(false)
   })
 
   test('an observable is addressed objectId#signal and may name its tag and element', () => {
