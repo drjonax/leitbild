@@ -13,7 +13,9 @@ import {
   type DiagramRoom,
   type DiagramText,
 } from '../src/features/displays/diagram/index.ts'
+import { buildModel } from '../src/features/displays/diagram/model.ts'
 import { costsInReferences } from './cpu-cost.ts'
+import { forcedCrossings } from './diagram-crossing-bound.ts'
 
 // Synthetic, Plant-agnostic fixtures: the engine sees only structure.
 
@@ -142,7 +144,7 @@ const profile: Drawn = {
   flapLabelPadding: 28,
   maxWidth: 1600,
   maxHeight: 1000,
-  limits: { symbols: 40, symbolsPerPartition: 4, sharedSymbols: 8, partitions: 6, crossings: 12, crossingsOverBound: 12, bendsPerEdge: 3 },
+  limits: { symbols: 40, symbolsPerPartition: 4, sharedSymbols: 8, partitions: 6, crossings: 12, bendsPerEdge: 3 },
   fit: [
     { detail: 'full', text: 'right' }, { detail: 'full', text: 'partitionsBelow' }, { detail: 'full', text: 'allBelow' },
     { detail: 'required', text: 'right' }, { detail: 'required', text: 'partitionsBelow' }, { detail: 'required', text: 'allBelow' },
@@ -630,16 +632,18 @@ const longTrain = (partitions: number): DiagramGraph => {
   }
 }
 
+// The crossings a graph's structure forces (diagram-crossing-bound.ts) are a
+// diagnostic of how good a drawing is; the engine's limit is absolute.
 describe('crossings the structure forces', () => {
-  const roomy = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerPartition: 6, crossings: 40, crossingsOverBound: 2 } }
+  const roomy = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerPartition: 6, crossings: 40 } }
+  const forcedOf = (graph: DiagramGraph): number => forcedCrossings(buildModel(graph))
 
   test('three shared symbols reaching every partition force Zarankiewicz\'s ⌊n/2⌋⌊(n−1)/2⌋', () => {
     // A partition drawing keeps shared symbols on one side of the partitions, so it crosses more than the bound here.
-    const lenient = { ...roomy, limits: { ...roomy.limits, crossingsOverBound: 40 } }
     for (const [partitions, forced] of [[3, 1], [4, 2], [6, 6]] as const) {
-      const result = draw(threeSources(partitions), lenient)
+      const result = draw(threeSources(partitions), roomy)
       if (!result.ok) throw new Error(JSON.stringify(result.reasons))
-      expect(result.forcedCrossings).toBe(forced)
+      expect(forcedOf(threeSources(partitions))).toBe(forced)
       expect(result.crossings).toBeGreaterThanOrEqual(forced)
     }
   })
@@ -647,11 +651,8 @@ describe('crossings the structure forces', () => {
   test('a common node reaching every partition across a ladder of two headers is forced across it 2n − 4 times; a train closing the ladder adds one', () => {
     // Two partitions are a ladder of one cycle: the common node reaches both from outside it, unless the train closes it there too.
     for (const partitions of [2, 3, 4, 6]) {
-      const open = draw(ladder(partitions, false), roomy)
-      const closed = draw(ladder(partitions, true), roomy)
-      if (!open.ok || !closed.ok) throw new Error('refused')
-      expect(open.forcedCrossings).toBe(2 * partitions - 4)
-      expect(closed.forcedCrossings).toBe(2 * partitions - 3)
+      expect(forcedOf(ladder(partitions, false))).toBe(2 * partitions - 4)
+      expect(forcedOf(ladder(partitions, true))).toBe(2 * partitions - 3)
     }
   })
 
@@ -659,7 +660,7 @@ describe('crossings the structure forces', () => {
     for (const partitions of [2, 4, 6]) {
       const graph = ladder(partitions, true)
       const result = accepted(graph, roomy)
-      expect(result.crossings).toBeLessThanOrEqual(result.forcedCrossings + 2)
+      expect(result.crossings).toBeLessThanOrEqual(forcedOf(graph) + 2)
       expect(crossings(result)).toBe(result.crossings)
       expect(verifyDiagram(graph, roomy, result)).toEqual([])
       for (const seed of [1, 2]) expect(accepted(scramble(graph, seed), roomy).hash).toBe(result.hash)
@@ -669,9 +670,11 @@ describe('crossings the structure forces', () => {
   test('ever shorter of height, a return leg folds at its turn, then beside it: its head shares the layer of what feeds it', () => {
     for (const partitions of [4, 6]) {
       const graph = longTrain(partitions)
-      const tall = accepted(graph, roomy)
-      const folded = accepted(graph, { ...roomy, maxHeight: tall.height - 1 })
-      const short = { ...roomy, maxHeight: folded.height - 1 }
+      // At most two crossings over the bound, as a drawing an operator reads at a glance.
+      const legible = { ...roomy, limits: { ...roomy.limits, crossings: forcedOf(graph) + 2 } }
+      const tall = accepted(graph, legible)
+      const folded = accepted(graph, { ...legible, maxHeight: tall.height - 1 })
+      const short = { ...legible, maxHeight: folded.height - 1 }
       const result = accepted(graph, short)
       const centre = (id: string): number => {
         const placed = result.nodes.find(candidate => candidate.id === id)!
@@ -681,17 +684,20 @@ describe('crossings the structure forces', () => {
       // The leg (engine to feed pump) is drawn mirrored; the cooler, which the bypass feeds, sits in the bypass's layer, and the train runs down from there.
       expect(centre('cooler')).toBe(centre('bypass'))
       expect(centre('feed-pump')).toBeGreaterThan(centre('cooler'))
-      expect(result.crossings).toBeLessThanOrEqual(result.forcedCrossings + 2)
+      expect(result.crossings).toBeLessThanOrEqual(forcedOf(graph) + 2)
       expect(verifyDiagram(graph, short, result)).toEqual([])
       for (const routed of result.edges) expect(bendsOf(routed.points)).toBeLessThanOrEqual(3)
       for (const seed of [1, 2]) expect(accepted(scramble(graph, seed), short).hash).toBe(result.hash)
     }
   })
 
-  test('a limit relative to the bound refuses a drawing that crosses more than it allows, naming the limit', () => {
-    const strict = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerPartition: 6, crossings: 40, crossingsOverBound: 0 } }
+  test('a limit below what the structure forces refuses the graph, naming the limit and the fewest crossings drawn', () => {
+    const strict = { ...roomy, limits: { ...roomy.limits, crossings: forcedOf(threeSources(6)) - 1 } }
     const result = draw(threeSources(6), strict)
-    if (result.ok) expect(result.crossings).toBe(result.forcedCrossings)
-    else expect(result.reasons).toEqual([expect.objectContaining({ kind: 'density', limit: 'crossingsOverBound', max: 6 })])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reasons).toEqual([expect.objectContaining({ kind: 'density', limit: 'crossings', max: 5 })])
+    const [reason] = result.reasons
+    if (reason?.kind === 'density') expect(reason.count).toBeGreaterThanOrEqual(6)
   })
 })

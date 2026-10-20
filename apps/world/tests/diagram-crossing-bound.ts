@@ -1,5 +1,7 @@
-// The fewest crossings a graph's structure forces on a partition drawing, from the
-// graph alone. A partition drawing is what this engine draws: partitions are disjoint
+// A diagnostic for tests, never on the layout path: the fewest crossings a
+// graph's structure forces on a partition drawing, from the graph alone. The
+// engine's crossing limit is absolute (DiagramProfile limits.crossings); this
+// bound says how far a drawing is from the best any could do. A partition drawing is what this engine draws: partitions are disjoint
 // bands in partition order, a partition's pipes stay in its band, bars are segments
 // across the flow, and shared symbols and common nodes lie outside the partitions' bands.
 // Two structures force crossings:
@@ -31,7 +33,7 @@
 //
 // The bound is the largest of these. It is a lower bound, not the optimum.
 
-import type { Model } from './model.ts'
+import type { Model } from '../src/features/displays/diagram/model.ts'
 
 /** Max-flow over a small network (Edmonds–Karp). */
 const maxFlow = (count: number, capacity: Map<number, Map<number, number>>, source: number, sink: number): number => {

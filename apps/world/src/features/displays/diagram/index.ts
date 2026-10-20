@@ -11,8 +11,8 @@
 // from them. For a room, the first rung with a candidate that verifies,
 // keeps within the crossing limits and fits wins; within it, fewer
 // crossings, then the earlier arrangement (the plain one first), then the
-// better fit. The crossing limits are absolute and relative to the crossings
-// the graph's structure forces (bound.ts). Without one, the result says why:
+// better fit. The crossing limit is absolute: what the HMI standard reads at
+// a glance, never relative to what a graph forces. Without one, the result says why:
 // density (crossings, when every attempt crosses too often, verified or
 // not), the smallest size per orientation, or the verifier's findings.
 // Nothing is truncated silently.
@@ -22,7 +22,6 @@ import { findCrossings, drawingSegments, gapsByEdge } from './crossings.ts'
 import type { DiagramGraph, DiagramLayoutResult, DiagramProfile, DiagramRoom, DiagramViolation, RoutedEdge } from './diagram.ts'
 import { ORIENTATIONS, type Orientation } from './geometry.ts'
 import { geometryHash } from './hash.ts'
-import { forcedCrossings } from './bound.ts'
 import { assignLayers, layerNodes, plainLayering, type LayeringOptions } from './layering.ts'
 import { buildModel, validateProfile, validateRoom, type Model } from './model.ts'
 import { orderLayers, type CommonSide } from './ordering.ts'
@@ -131,9 +130,7 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
     return { layout, leastHeight: () => null }
   }
 
-  const forced = forcedCrossings(model)
-  const allowed = Math.min(profile.limits.crossings, forced + profile.limits.crossingsOverBound)
-  const crossingLimit = allowed === profile.limits.crossings ? 'crossings' as const : 'crossingsOverBound' as const
+  const allowed = profile.limits.crossings
   const structure = analyseStructure(model)
   const optional = model.nodes.some(node => keptLines(node, 'required') < node.lines.length)
   const rungs = profile.fit
@@ -226,7 +223,6 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
         zones: geometry.zones,
         hash: best.hash(),
         crossings: best.crossings,
-        forcedCrossings: forced,
       }
     }
 
@@ -234,7 +230,7 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
     // give: no drawing of this graph would be accepted whatever else is wrong.
     const fewestCrossings = Number.isFinite(fewestVerified) ? fewestVerified : fewestAny
     if (fewestCrossings > allowed) {
-      return { ok: false, reasons: [{ kind: 'density', limit: crossingLimit, count: fewestCrossings, max: allowed }] }
+      return { ok: false, reasons: [{ kind: 'density', limit: 'crossings', count: fewestCrossings, max: allowed }] }
     }
     if (!Number.isFinite(fewestVerified)) return { ok: false, reasons: [{ kind: 'unverifiable', violations: fewestViolations ?? [] }] }
     // Per orientation, the drawing that comes closest to the box.

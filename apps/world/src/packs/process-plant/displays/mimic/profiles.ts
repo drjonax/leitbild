@@ -145,7 +145,7 @@ export const chatMimicProfile: MimicProfile = {
   id: 'chat',
   layout: {
     ...openBridgeDrawing,
-    limits: { symbols: 20, symbolsPerPartition: 3, sharedSymbols: 8, partitions: 4, crossings: 6, crossingsOverBound: 6, bendsPerEdge: 3 },
+    limits: { symbols: 20, symbolsPerPartition: 3, sharedSymbols: 8, partitions: 4, crossings: 6, bendsPerEdge: 3 },
     fit: chatFit,
   },
   readoutSize: 'small',
@@ -170,13 +170,14 @@ export const chatMimicProfile: MimicProfile = {
  * down. Valves on the circuits are markers and parallel equipment is one
  * symbol, which keeps eight loops' worth of symbols legible. Some crossings
  * are forced by the Plant's structure (every loop meets the core and both
- * headers); a drawing may have at most two more than the structure forces.
+ * headers: 2n − 3 for n loops); at most twelve are drawn, whatever a Plant's
+ * structure forces, so six loops draw (eleven) and four keep room to spare.
  */
 export const overviewMimicProfile: MimicProfile = {
   id: 'overview',
   layout: {
     ...openBridgeDrawing,
-    limits: { symbols: 60, symbolsPerPartition: 6, sharedSymbols: 24, partitions: 8, crossings: 40, crossingsOverBound: 2, bendsPerEdge: 3 },
+    limits: { symbols: 60, symbolsPerPartition: 6, sharedSymbols: 24, partitions: 8, crossings: 12, bendsPerEdge: 3 },
     fit: overviewFit,
   },
   readoutSize: 'regular',
@@ -198,13 +199,14 @@ export const overviewMimicProfile: MimicProfile = {
 
 /**
  * Equipment opened from a generated display: its surroundings at 1:1, read
- * at arm's length like the overview and held to the same crossings, but
- * read for which item does what. Every valve is a symbol with its tag and
+ * at arm's length like the overview, but read for which item does what, so
+ * with at most four crossings. Every valve is a symbol with its tag and
  * every parallel item is drawn on its own; stubs name their far ends.
  */
 export const detailMimicProfile: MimicProfile = {
   ...overviewMimicProfile,
   id: 'detail',
+  layout: { ...overviewMimicProfile.layout, limits: { ...overviewMimicProfile.layout.limits, crossings: 4 } },
   valves: 'symbols',
   parallel: 'each',
   stubLabels: 'names',

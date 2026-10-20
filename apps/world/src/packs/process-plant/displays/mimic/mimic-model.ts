@@ -139,8 +139,8 @@ export interface CompiledMimic {
   readonly readoutSize: 'small' | 'regular'
   /** The smallest scale the renderer may show the drawing at; below it the view scrolls. */
   readonly minScale: number
-  /** Pipes crossing pipes or headers (each drawn with a gap), and the fewest the Plant's structure forces. */
-  readonly crossings: { readonly count: number; readonly forced: number }
+  /** Pipes crossing pipes or headers, each drawn with a gap. */
+  readonly crossings: number
   readonly items: ReadonlyArray<MimicDrawnItem>
   readonly pipes: ReadonlyArray<MimicDrawnPipe>
   readonly stubs: ReadonlyArray<MimicDrawnStub>

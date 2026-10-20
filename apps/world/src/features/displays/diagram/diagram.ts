@@ -139,10 +139,8 @@ export interface DiagramProfile {
     readonly symbolsPerPartition: number
     readonly sharedSymbols: number
     readonly partitions: number
-    /** Crossings in any drawing. */
+    /** The most crossings a drawing may have: absolute, never relative to the crossings a graph's structure forces. */
     readonly crossings: number
-    /** Crossings beyond those the graph's structure forces (bound.ts). */
-    readonly crossingsOverBound: number
     readonly bendsPerEdge: number
   }
 }
@@ -224,9 +222,8 @@ export type DiagramLayoutResult =
     readonly zones: ReadonlyArray<DiagramZone>
     /** A stable hash of the geometry, independent of ids. */
     readonly hash: string
-    /** Crossings drawn (each a gap), and the fewest the graph's structure forces on a partition drawing. */
+    /** Crossings drawn, each a gap. */
     readonly crossings: number
-    readonly forcedCrossings: number
   }
   | {
     readonly ok: false

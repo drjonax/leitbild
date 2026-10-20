@@ -40,7 +40,7 @@ const digest = (value: unknown): string => createHash('sha256').update(JSON.stri
 const geometryOf = (mimic: CompiledMimic): unknown => [
   mimic.width,
   mimic.height,
-  mimic.crossings.count,
+  mimic.crossings,
   mimic.hash,
   mimic.items.map(item => [item.id, item.box, item.orientation, item.text, item.frame, item.vessel ?? null]),
   mimic.pipes.map(pipe => [pipe.id, pipe.points, pipe.gaps]),
@@ -49,7 +49,7 @@ const geometryOf = (mimic: CompiledMimic): unknown => [
 ]
 
 const drawn = (mimic: CompiledMimic, output: unknown): string =>
-  `drawn ${mimic.width}x${mimic.height} crossings ${mimic.crossings.count} geometry ${digest(geometryOf(mimic))} output ${digest(output)}`
+  `drawn ${mimic.width}x${mimic.height} crossings ${mimic.crossings} geometry ${digest(geometryOf(mimic))} output ${digest(output)}`
 
 const refused = (messages: ReadonlyArray<string>): string => {
   const text = messages.join(' | ')

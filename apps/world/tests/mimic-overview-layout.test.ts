@@ -12,6 +12,8 @@ import { overviewDrawingRoom } from '../src/packs/process-plant/displays/compose
 import { compileMimicScope, planMimicDiagram, type MimicBudget } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { layoutDiagram, verifyDiagram } from '../src/features/displays/diagram/index.ts'
+import { buildModel } from '../src/features/displays/diagram/model.ts'
+import { forcedCrossings } from './diagram-crossing-bound.ts'
 import type { CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
@@ -25,8 +27,9 @@ guardPlantTests()
 
 // The unit overview: the principal circuits the energy rule finds, drawn by
 // the overview profile at 1:1 with OpenBridge's regular text. The drawing is
-// judged by what the engine guarantees (verified, crossings within the
-// structure's bound plus two, deterministic, id-free) and by the overview's
+// judged by what the engine guarantees (verified, within the profile's
+// crossing limit, deterministic, id-free), by how close it comes to the
+// crossings the structure forces (two over), and by the overview's
 // own rules (markers, grouped parallel equipment, text never below 12/14 px).
 
 const plants = new Map([2, 4, 6].map(loops => [loops, compileProcessPlant(createPwrReferencePlantDefinition({ id: `plant:overview-${loops}`, loopCount: loops }))]))
@@ -125,7 +128,7 @@ const geometry = (mimic: CompiledMimic) => ({
 
 describe('the unit overview of the principal circuits', () => {
   for (const loops of [4, 6]) {
-    test(`${loops} loops: drawn, verified, within the room, crossings at most two over what the structure forces`, () => {
+    test(`${loops} loops: drawn, verified, within the room, within the overview's crossing limit and two of what the structure forces`, () => {
       const plant = plantOf(loops)
       const budget = budgetFor(loops)
       const mimic = overview(plant, budget)
@@ -133,13 +136,14 @@ describe('the unit overview of the principal circuits', () => {
       expect(mimic.height).toBeLessThanOrEqual(budget.maxHeight)
       // The core reaches every loop by two paths around a ladder of the two headers and the loops,
       // and the feed train closes that ladder outside the loops: 2n − 3 crossings are forced (one for two loops).
-      expect(mimic.crossings.forced).toBe(2 * loops - 3)
-      expect(mimic.crossings.count).toBeLessThanOrEqual(mimic.crossings.forced + overviewMimicProfile.layout.limits.crossingsOverBound)
-      expect(mimic.pipes.reduce((sum, pipe) => sum + pipe.gaps.length, 0)).toBe(mimic.crossings.count)
-
-      // The engine's own verifier, run again on the diagram the overview was drawn from.
       const planned = planMimicDiagram(plant, scopeOf(plant), overviewMimicProfile)
       if (!planned.ok) throw new Error('not planned')
+      expect(forcedCrossings(buildModel(planned.graph))).toBe(2 * loops - 3)
+      expect(mimic.crossings).toBeLessThanOrEqual(overviewMimicProfile.layout.limits.crossings)
+      expect(mimic.crossings).toBeLessThanOrEqual(2 * loops - 3 + 2)
+      expect(mimic.pipes.reduce((sum, pipe) => sum + pipe.gaps.length, 0)).toBe(mimic.crossings)
+
+      // The engine's own verifier, run again on the diagram the overview was drawn from.
       const layout = layoutDiagram(planned.graph, overviewMimicProfile.layout, budget)
       if (!layout.ok) throw new Error(JSON.stringify(layout.reasons))
       expect(verifyDiagram(planned.graph, overviewMimicProfile.layout, layout)).toEqual([])
