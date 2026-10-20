@@ -5,8 +5,8 @@
     readonly row: AlertRow
     readonly heading?: string
     readonly firstOut: boolean
-    /** Further first-outs, named after the row's own, earliest first. */
-    readonly also?: ReadonlyArray<AlertRow>
+    /** How many further first-outs the group holds; they head its opened list. */
+    readonly moreFirstOuts?: number
     readonly detail?: string
   }
 </script>
@@ -17,8 +17,9 @@
 
   // Alert rows as the strip draws them, read-only: the priority's glyph and
   // hue from the severity table (no hue without a priority, R1), the alert's
-  // own words, its state and its simulation time. Spans, so a list can sit in
-  // a disclosure's summary.
+  // own words, its state where it is acknowledged or returned (unacknowledged
+  // otherwise) and its simulation time. Spans, so a list can sit in a
+  // disclosure's summary.
   let { lines, palette }: { lines: ReadonlyArray<AlertLine>; palette: Palette } = $props()
 
   const shapes: Readonly<Record<SeverityGlyph, string>> = {
@@ -44,9 +45,9 @@
       {#if line.heading !== undefined}<strong>{line.heading}</strong>{/if}
       {#if line.firstOut}<span class="mark">first out</span>{/if}
       <span>{@render sign(line.row)} {line.row.alert.message}</span>
-      {#each line.also ?? [] as row (row.key)}<span>· {@render sign(row)} {row.alert.message}</span>{/each}
+      {#if (line.moreFirstOuts ?? 0) > 0}<span class="mark">+{line.moreFirstOuts} first out</span>{/if}
       {#if line.row.alert.standing === true}<span class="mark">standing</span>{/if}
-      <span class="muted">{stateWords(line.row)} · {raisedWords(line.row, time)}{line.detail === undefined ? '' : ` · ${line.detail}`}</span>
+      <span class="muted">{line.row.state === 'active-unack' ? '' : `${stateWords(line.row)} · `}{raisedWords(line.row, time)}{line.detail === undefined ? '' : ` · ${line.detail}`}</span>
     </span>
   {/each}
 </span>
