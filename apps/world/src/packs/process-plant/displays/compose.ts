@@ -1542,12 +1542,13 @@ export const compileDetailDisplay = (
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}
   const reaches = Array.from({ length: MIMIC_REACH_LINKS }, (_, step) => MIMIC_REACH_LINKS - step)
   const panels = [{ readouts: readouts?.pens.length ?? 0, annunciators: 0, tileWidth: composedDisplayLayout.annunciatorTile.widths[0] }]
-  const whole = reaches.map(reach => resolveMimicScope(graph, { around: componentIds, ...narrowed, reach }))
+  // Every service it carries first, its power supply too (around alone draws its process only).
+  const services = itemServices(graph, components)
+  const whole = reaches.map(reach => resolveMimicScope(graph, { around: componentIds, ...narrowed, services, reach }))
   const unresolved = whole.find(scope => !scope.ok)
   if (unresolved !== undefined && !unresolved.ok) return { ok: false, issues: unresolved.issues.map(issue => ({ path: 'detail', message: issue.message })) }
   // Where every service at once does not draw legibly, one at a time, the
   // equipment's own first; its other services stop at it.
-  const services = itemServices(graph, components)
   const oneService = services.length < 2 ? [] : services.flatMap(service => reaches.flatMap(reach => {
     const scope = resolveMimicScope(graph, { around: componentIds, ...narrowed, services: [service], reach })
     return scope.ok ? [withOtherServicesStopped(graph, scope.scope, components, services)] : []

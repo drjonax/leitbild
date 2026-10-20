@@ -9,7 +9,12 @@ import { SUGGESTION_COUNT, letters, matchedWords, normalized, words } from '../n
 export interface MimicIntent {
   readonly from?: ReadonlyArray<string> | undefined
   readonly to?: ReadonlyArray<string> | undefined
-  /** What feeds these items and where their outflow goes, by every service they carry unless `services` narrows it. */
+  /**
+   * What feeds these items and where their outflow goes: by the services of
+   * each item's process (the fluid it carries; power only for equipment that
+   * carries nothing else), its other services stopping the drawing at it,
+   * unless `services` names what to draw.
+   */
   readonly around?: ReadonlyArray<string> | undefined
   readonly services?: ReadonlyArray<string> | undefined
   readonly loops?: ReadonlyArray<string> | undefined
@@ -267,9 +272,18 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
   const listed = (carriers: ReadonlySet<string>) => [...carriers].sort().join(', ') || 'nothing'
   // What equipment does carry, so a wrong service is corrected in one call.
   const carriedBy = (list: ReadonlyArray<number>) => list.map(index => `${graph.components[index]!.id} carries ${listed(new Set([...delivered([index]), ...received([index])]))}`).join('; ')
-  // Around an item, every service it carries: its fluid on both sides and its power supply.
+  // Around an item, the services of its process: the fluid it carries on both sides, or its power where it carries
+  // nothing else (a bus, a diesel). Power beside a process is drawn only where services name it: mixed into the
+  // flow it runs as a tree of its own across the process lines (layout audit, Bad 3 and 8); the drawing stops at
+  // the item where it joins instead.
+  const power = new Set(graph.links.filter(link => link.kind === 'electricalPower').map(linkCarrier))
+  const carriedAt = (index: number): ReadonlySet<string> => new Set([...delivered([index]), ...received([index])])
+  const processOf = (index: number): ReadonlyArray<string> => {
+    const fluid = [...carriedAt(index)].filter(carrier => !power.has(carrier))
+    return fluid.length > 0 ? fluid : [...carriedAt(index)]
+  }
   const carriers: ReadonlySet<string> = intent.services !== undefined ? new Set(intent.services)
-    : around.length > 0 ? new Set([...delivered(around), ...received(around)])
+    : around.length > 0 ? new Set(around.flatMap(processOf))
       : from.length > 0 && to.length > 0 ? shared(delivered(from), received(to))
         : from.length > 0 ? delivered(from) : received(to)
   if (intent.services === undefined && around.length === 0 && (from.length === 0 || to.length === 0) && carriers.size > 1) {
@@ -395,7 +409,10 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
   // part of the question; flow leaving the drawing toward them still is.
   const otherLoop = (link: CompiledProcessLink): boolean => intent.loops !== undefined && loopOf(graph, link) !== undefined && !intent.loops.includes(loopOf(graph, link)!)
   const stubs = drawingStops(graph, components, drawnLinks, carriers, otherLoop)
-  return { ok: true, scope: { components, links, stubs, carriers: [...carriers].sort(), names } }
+  // Around items, each service left out of the drawing stops it at them (a pump's power supply).
+  const leftOut = intent.services === undefined ? new Set(around.flatMap(index => [...carriedAt(index)]).filter(carrier => !carriers.has(carrier))) : new Set<string>()
+  const joins = leftOut.size === 0 ? [] : drawingStops(graph, around.filter(index => drawn.has(index)), drawnLinks, leftOut, () => false)
+  return { ok: true, scope: { components, links, stubs: [...stubs, ...joins], carriers: [...carriers].sort(), names } }
 }
 
 /**

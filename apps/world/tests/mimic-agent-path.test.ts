@@ -71,3 +71,19 @@ describe('a valve the model gives no loop', () => {
     expect(partitionOf('auxFeedwaterTurbineSteamValveB')).toBeUndefined()
   })
 })
+
+describe('around an item', () => {
+  test('draws its process, and where its power joins as a stop; power itself only where services name it', () => {
+    const pump = drawn({ around: ['rcpA'], reach: 1 })
+    expect(pump.summary.carriers).toEqual(['primaryCoolant'])
+    expect(drawsEquipment(pump, 'unitBusA')).toBe(false)
+    expect(pump.summary.stops).toContain('RCP A from Unit Bus A')
+    const roomy = compileMimic(plant, { around: ['rcpA'], reach: 1, services: ['primaryCoolant', 'electricalPower'] }, { ...chat, maxHeight: 2000, maxWidth: 2000 })
+    if (!roomy.ok) throw new Error('drawn with its power where there is room')
+    expect(drawsEquipment(roomy.mimic, 'unitBusA')).toBe(true)
+  })
+
+  test('draws power for equipment that carries nothing else', () => {
+    expect(drawn({ around: ['dieselGeneratorA'], reach: 1 }).summary.carriers).toEqual(['electricalPower'])
+  })
+})
