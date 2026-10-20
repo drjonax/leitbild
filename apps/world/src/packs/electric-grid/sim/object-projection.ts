@@ -1,7 +1,9 @@
 import type { IsoTimestamp, ObjectId, OperationalObject, Provenance } from '../../../core/model/index.ts'
 import type { PackRuntimeEvent, PackRuntimeEventHistory } from '../../../simulation/protocol.ts'
 import { electricGridPackDataSchema, gridIdForObject } from '../model.ts'
-import { gridAlarmCounts } from '../runtime/alarms.ts'
+import { gridAlarmCounts, gridAlarmShelved } from '../runtime/alarms.ts'
+import { gridElementName, gridPriority } from '../observation/declarations.ts'
+import { gridAlarmSignal } from '../observation/read.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import { gridElectricalPortsAt } from '../electrical-ports.ts'
 
@@ -20,7 +22,7 @@ const projectionKey = (grid: GridRuntimeInstance): string => {
     highestBranchLoadingPercent: Math.round(value.highestBranchLoadingPercent),
     activeIslandCount: value.activeIslandCount,
     activeAlarmCount: value.activeAlarmCount,
-    alarms: gridAlarmCounts(grid).activeUnacknowledged,
+    alerts: gridAlerts(grid),
     externalConnections: [...grid.externalConnections].map(([id, connection]) => ({
       id,
       connected: connection.connected,
@@ -28,6 +30,24 @@ const projectionKey = (grid: GridRuntimeInstance): string => {
     })),
   })
 }
+
+/**
+ * One alert per alarm record that is active, or returned to normal and still unacknowledged, shelved
+ * records aside: the record's stable title and asset name (never a live value), its simulation-time
+ * raise, and its priority. An island alarm is about the island's group; every other about its element.
+ */
+export const gridAlerts = (grid: GridRuntimeInstance): OperationalObject['alerts'] => [...grid.alarms.records.values()]
+  .filter(record => !gridAlarmShelved(record) && (record.active || !record.acknowledged))
+  .map(record => {
+    const signal = gridAlarmSignal(record)
+    return {
+      id: record.id, kind: `electric_grid_${record.scope}_alarm`, severity: record.priority === 1 ? 'critical' : 'warning', priority: gridPriority[record.priority],
+      message: `${record.title}: ${gridElementName(grid, record.assetId) ?? `${record.assetId} (no longer present)`}`, raisedAt: record.raisedAt, clock: 'simulation', acknowledged: record.acknowledged,
+      ...(record.active ? {} : { returned: true }), subject: record.scope === 'island' ? { group: record.assetId } : { element: record.assetId },
+      ...(signal === undefined ? {} : { observable: `${grid.definition.gridId}#${signal}` }),
+      ...(/^(loading|under-frequency|over-frequency)-/.test(record.condition) ? { threshold: record.condition } : {}),
+    }
+  })
 
 export const projectGridObject = (config: {
   readonly object: OperationalObject
@@ -42,16 +62,7 @@ export const projectGridObject = (config: {
     ...config.object,
     revision: config.object.revision + 1,
     operational: { ...config.object.operational, status, priority },
-    // One health alert summarises the alarm records: its severity follows the most urgent active
-    // alarm, it is acknowledged once every active alarm is, and it dates from the oldest active alarm.
-    alerts: alarms.active === 0 ? [] : [{
-      id: `${config.object.id}:grid-health`,
-      kind: 'electric_grid_health',
-      severity: alarms.highestPriority === 1 ? 'critical' : alarms.highestPriority === 2 ? 'warning' : 'info',
-      message: config.grid.projection.statusLabel,
-      raisedAt: alarms.oldestActiveRaisedAt!,
-      acknowledged: alarms.activeUnacknowledged === 0,
-    }],
+    alerts: gridAlerts(config.grid),
     timestamps: { ...config.object.timestamps, updatedAt: config.at },
     packData: { ...data, electricalPorts: [...gridElectricalPortsAt({ grid: config.grid, at: config.at })], projection: config.grid.projection },
   }
