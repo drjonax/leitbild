@@ -69,7 +69,7 @@ export const verifyLayout = (input: VerifyInput): DiagramViolation[] => {
     if (!onStep(placed.x, grid) || !onStep(placed.y, grid) || !onStep(placed.width, grid) || !onStep(placed.height, grid)) push('pitch', `node ${node.id}`, 'box is off the grid')
     for (const [port, at] of Object.entries(placed.ports)) {
       const along = at.face === 'left' || at.face === 'right' ? at.y : at.x
-      if (!onStep(along, node.role === 'hub' ? grid / 2 : grid)) push('pitch', `node ${node.id}`, `port ${port} is off the grid along its face`)
+      if (!onStep(along, node.role === 'common' ? grid / 2 : grid)) push('pitch', `node ${node.id}`, `port ${port} is off the grid along its face`)
     }
   })
 

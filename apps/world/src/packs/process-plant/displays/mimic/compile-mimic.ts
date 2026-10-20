@@ -5,7 +5,7 @@ import { readingText, unitLabel } from '../../quantity-text.ts'
 import { framingRules, itemBinding, linkPowerBinding, stubWordBinding, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
 import { linkFlowBinding } from '../../equipment/link-flow.ts'
 import { equipmentItemId, type EquipmentItem } from '../../equipment/items.ts'
-import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
+import { diagramCandidates, type DiagramCandidates, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramRoom, type PlacedNode } from '../../../../features/displays/diagram/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
@@ -38,9 +38,6 @@ export type MimicCompileResult =
   | { readonly ok: true; readonly mimic: CompiledMimic }
   | { readonly ok: false; readonly issues: ReadonlyArray<MimicIssue> }
 
-/** The HMI rules the layout enforces: the display's profile in the room it leaves. */
-const profileFor = (budget: MimicBudget): DiagramProfile => ({ ...budget.profile.layout, maxWidth: budget.maxWidth, maxHeight: budget.maxHeight })
-
 interface PlannedItem {
   readonly id: string
   readonly item: EquipmentItem
@@ -50,17 +47,22 @@ interface PlannedItem {
   /** A device's flap lines under OpenBridge's own (MimicDrawnItem.flapLines). */
   readonly flapLines: ReadonlyArray<FlapPart>
   readonly marker: boolean
-  readonly role: DiagramNode['role']
+  readonly role: MimicRole
   readonly rank: string
-  readonly lane?: DiagramNode['lane']
+  /** Its loop's lane: the engine's partition. */
+  readonly lane?: DiagramNode['partition']
   /** The Plant components it stands for: a group's members, or a bundled device's host. */
   readonly components: ReadonlyArray<number>
 }
 
-const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number>): DiagramNode['lane'] | undefined => {
-  const key = component.metadata?.loopId
-  return key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
-}
+/** How the mimic draws an item: a symbol, a bar (a header or bus), or the hub its loops leave and return to (isHub). */
+type MimicRole = 'device' | 'bar' | 'hub'
+
+/** A hub is the engine's common node: one its partitions, the loops' lanes, leave and return to. */
+const diagramRole = (role: MimicRole): DiagramNode['role'] => (role === 'hub' ? 'common' : role)
+
+const laneOf = (key: string | undefined, orders: ReadonlyMap<string, number>): DiagramNode['partition'] | undefined =>
+  key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
 
 const valueRowWidth = (unit: string, fractionDigits: number, integerDigits = 3): number =>
   readoutBlockWidth(integerDigits, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
@@ -284,10 +286,10 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     nodes.push({
       id: planned.id,
       rank: planned.rank,
-      role: planned.role,
+      role: diagramRole(planned.role),
       ...footprintOf(planned),
       ports,
-      ...(planned.lane === undefined ? {} : { lane: planned.lane }),
+      ...(planned.lane === undefined ? {} : { partition: planned.lane }),
       text: {
         lines: [
           // Every item carries its tag, a marker too: a valve's place on a loop does not say which valve it is
@@ -315,6 +317,23 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   const drawn = scope.components.filter(index => !notDrawn.has(index))
   const presentations = new Map(drawn.map(index => [index, presentationFor(graph.components[index]!)]))
   const hubs = new Set(drawn.filter(index => presentations.get(index)!.element !== 'bar' && isHub(graph, graph.components[index]!, drawnLinks)))
+  // A valve the model gives no loop is drawn in a loop's lane where
+  // everything it is piped to in this drawing, its stops aside, belongs to
+  // that one loop (a steam generator's safety valve, which vents out of the
+  // drawing). Read from the drawn links alone, never written to the model, so
+  // the Plant model and its digest stay as they are.
+  const declaredLoop = (component: number): string | undefined => graph.components[component]!.metadata?.loopId
+  const inferredLoops = new Map(drawn.flatMap(index => {
+    if (declaredLoop(index) !== undefined || !isValve(presentations.get(index)!)) return []
+    const neighbours = links.flatMap(link => {
+      const at = graph.links[link]!
+      return at.fromComponentIndex === index ? [at.toComponentIndex] : at.toComponentIndex === index ? [at.fromComponentIndex] : []
+    })
+    const loops = new Set(neighbours.map(declaredLoop))
+    const [loop] = loops
+    return loops.size === 1 && loop !== undefined ? [[index, loop] as const] : []
+  }))
+  const loopOf = (component: number): string | undefined => declaredLoop(component) ?? inferredLoops.get(component)
   const labelOf = (component: number) => itemBinding(plant, { kind: 'component', component }, aspectFor(presentations.get(component)!), framed).label
 
   // Parallel equipment the profile groups: same kind, presentation, loop and
@@ -351,7 +370,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
         return [port, [...new Set(out)].sort(), [...new Set(into)].sort(), stops.sort()]
       })
       if (sides.some(side => side === null)) return null
-      return JSON.stringify([component.kind, presentation, component.metadata?.loopId ?? null, sides])
+      return JSON.stringify([component.kind, presentation, loopOf(index) ?? null, sides])
     }
     const bySignature = new Map<string, number[]>()
     for (const index of drawn) {
@@ -371,7 +390,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     if ((representative.get(index) ?? index) !== index) continue
     const component = graph.components[index]!
     const presentation = presentations.get(index)!
-    const role: DiagramNode['role'] = presentation.element === 'bar' ? 'bar' : hubs.has(index) ? 'hub' : 'device'
+    const role: MimicRole = presentation.element === 'bar' ? 'bar' : hubs.has(index) ? 'hub' : 'device'
     const group = members.get(index) ?? [index]
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
     // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
@@ -397,7 +416,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const ports = [...(usedPorts.get(index) ?? [])].sort()
     const rank = [role, component.kind, component.metadata?.equipmentClass ?? '', component.metadata?.role ?? '', ports.join(','), binding.label].join('|')
     for (const member of group) componentRank.set(member, rank)
-    const lane = laneOf(component, loopOrder)
+    const lane = laneOf(loopOf(index), loopOrder)
     const rows = itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan })
     addItem(
       { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: withSparklines(rows, presentation, profile), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
@@ -435,7 +454,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
         if (!items.has(id)) {
           const presentation = embeddedPresentation(device)
           const binding = itemBinding(plant, { kind: 'device', component: host.index, device: device.id }, 'position', framed)
-          const lane = laneOf(host, loopOrder)
+          const lane = laneOf(loopOf(host.index), loopOrder)
           const marker = profile.valves === 'markers' && isValve(presentation)
           addItem(
             { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands, offSpan: profile.offSpan }), marker, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
@@ -464,12 +483,11 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   }, [] as MimicStub[])
   groupedStubs.forEach((stub, at) => {
     const id = `s${at}`
-    const component = graph.components[stub.component]!
     stubs.set(id, stub)
     // A power line's far end says under its name whether the equipment it names is live ("from UAT", "LIVE"), its room kept for the longest word.
     const word = stubWordOf(graph, stub)
     const text = stubText(graph, stub, profile.stubLabels)
-    const lane = laneOf(component, loopOrder)
+    const lane = laneOf(loopOf(stub.component), loopOrder)
     nodes.push({
       id,
       rank: `stub|${componentRank.get(stub.component)}|${stub.port}|${stub.direction}`,
@@ -477,7 +495,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       cells: { width: 1, height: 1 },
       portInset: 0,
       ports: [{ id: 'end', direction: stub.direction === 'out' ? 'in' : 'out', rank: 'end' }],
-      ...(lane === undefined ? {} : { lane }),
+      ...(lane === undefined ? {} : { partition: lane }),
       text: { lines: [
         { width: measure('tag', text, text), height: openBridgeDevice.tagLine, required: true },
         ...(word === null ? [] : [{ width: Math.max(...stubWordTexts(word).map(shown => measure('tag', shown, text))), height: openBridgeDevice.tagLine, required: true }]),
@@ -646,11 +664,11 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     height: layout.height,
     readoutSize: profile.readoutSize,
     minScale: profile.minScale,
-    crossings: { count: layout.crossings, forced: layout.forcedCrossings },
+    crossings: layout.crossings,
     items,
     pipes: [...pipes, ...stubPipes],
     stubs: stubs.map(({ edge: _edge, ...stub }) => stub),
-    zones: layout.zones.map(zone => ({ ...zone, label: `Loop ${zone.lane}` })),
+    zones: layout.zones.map(zone => ({ lane: zone.partition, x: zone.x, y: zone.y, width: zone.width, height: zone.height, label: `Loop ${zone.partition}` })),
     paths,
     trendPaths: [...new Set(items.flatMap(trendPathsOf))],
     summary: {
@@ -665,18 +683,18 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
 }
 
 // Each orientation the layout tries reports its own size; the closest fit says how far off the drawing is.
-const closestSize = (reasons: Extract<DiagramLayoutResult, { ok: false }>['reasons'], budget: MimicBudget) => {
-  const overflow = (reason: { readonly width: number; readonly height: number }) => Math.max(reason.width / budget.maxWidth, reason.height / budget.maxHeight)
+const closestSize = (reasons: Extract<DiagramLayoutResult, { ok: false }>['reasons'], room: DiagramRoom) => {
+  const overflow = (reason: { readonly width: number; readonly height: number }) => Math.max(reason.width / room.maxWidth, reason.height / room.maxHeight)
   const sizes = reasons.filter(reason => reason.kind === 'size')
   return sizes.length === 0 ? undefined : sizes.reduce((best, reason) => overflow(reason) < overflow(best) ? reason : best)
 }
 
-const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, budget: MimicBudget): string => result.reasons.filter(reason => reason.kind !== 'size' || reason === closestSize(result.reasons, budget)).map(reason => {
+const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, room: DiagramRoom): string => result.reasons.filter(reason => reason.kind !== 'size' || reason === closestSize(result.reasons, room)).map(reason => {
   if (reason.kind === 'density') {
-    const what = { symbols: 'symbols', symbolsPerLane: 'symbols in one loop', sharedSymbols: 'shared symbols outside the loops', lanes: 'loops', crossings: 'crossing pipes', crossingsOverBound: 'crossing pipes', bendsPerEdge: 'bends in one pipe' }[reason.limit]
+    const what = { symbols: 'symbols', symbolsPerPartition: 'symbols in one loop', sharedSymbols: 'shared symbols outside the loops', partitions: 'loops', crossings: 'crossing pipes', bendsPerEdge: 'bends in one pipe' }[reason.limit]
     return `${reason.count} ${what} (at most ${reason.max} stay legible at a glance)`
   }
-  if (reason.kind === 'size') return `the drawing needs ${reason.width} × ${reason.height} px, and this display leaves ${budget.maxWidth} × ${budget.maxHeight}`
+  if (reason.kind === 'size') return `the drawing needs ${reason.width} × ${reason.height} px, and this display leaves ${room.maxWidth} × ${room.maxHeight}`
   return `the layout could not be verified (${reason.violations.slice(0, 2).map(violation => `${violation.rule}: ${violation.detail}`).join('; ')})`
 }).filter((reason, index, all) => all.indexOf(reason) === index).join('; ')
 
@@ -688,23 +706,86 @@ export const planMimicDiagram = (plant: CompiledProcessPlant, scope: MimicScope,
   return planned.issues.length > 0 ? { ok: false, issues: planned.issues } : { ok: true, graph: planned.graph }
 }
 
-const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scope: MimicScope, budget: MimicBudget): Attempted => {
-  // Each badge reservation the profile allows, the roomiest first, until the drawing fits.
-  let attempted: Attempted | undefined
-  for (const badges of budget.profile.badges) {
-    const planned = plan(plant, scope, budget.profile, badges)
-    if (planned.issues.length > 0) return { ok: false, issues: planned.issues }
-    // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
-    if (planned.graph.nodes.length === 0) {
-      const reasons = scope.components.map(index => presentationFor(plant.graph.components[index]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
-      return { ok: false, issues: [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }] }
-    }
-    const layout = layoutDiagram(planned.graph, profileFor(budget))
-    if (layout.ok) return { ok: true, mimic: assemble(plant, intent, budget.profile, scope, planned, layout) }
-    attempted = { ok: false, layout }
-  }
-  return attempted!
+/**
+ * A scope planned under a profile, for each badge reservation it allows with
+ * the candidate drawings of its diagram (diagramCandidates): drawn for any
+ * room without planning or laying it out again. Reservations are planned,
+ * and rungs laid out, only as a room first needs them.
+ */
+interface ScopeDrawing {
+  /** The roomiest badge reservation that fits the room, the drawing carrying `intent` as its identity. */
+  readonly draw: (intent: MimicIntent | null, room: DiagramRoom) => Attempted
+  /** The least room height it draws in at a width; null where it draws at no height there. */
+  readonly leastHeight: (maxWidth: number) => number | null
 }
+
+const planScope = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): ScopeDrawing => {
+  const reservations: Array<{ readonly planned: Planned; readonly candidates: DiagramCandidates } | { readonly issues: ReadonlyArray<MimicIssue> }> = []
+  // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
+  const notDrawable = (): ReadonlyArray<MimicIssue> => {
+    const reasons = scope.components.map(component => presentationFor(plant.graph.components[component]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
+    return [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }]
+  }
+  const reservation = (index: number) => {
+    const known = reservations[index]
+    if (known !== undefined) return known
+    const planned = plan(plant, scope, profile, profile.badges[index]!)
+    const entry = planned.issues.length > 0 ? { issues: planned.issues }
+      : planned.graph.nodes.length === 0 ? { issues: notDrawable() }
+        : { planned, candidates: diagramCandidates(planned.graph, profile.layout) }
+    reservations[index] = entry
+    return entry
+  }
+  const draw = (intent: MimicIntent | null, room: DiagramRoom): Attempted => {
+    // Each badge reservation the profile allows, the roomiest first, until the drawing fits.
+    let attempted: Attempted | undefined
+    for (const index of profile.badges.keys()) {
+      const entry = reservation(index)
+      if ('issues' in entry) return { ok: false, issues: entry.issues }
+      const layout = entry.candidates.layout(room)
+      if (layout.ok) return { ok: true, mimic: assemble(plant, intent, profile, scope, entry.planned, layout) }
+      attempted = { ok: false, layout }
+    }
+    return attempted!
+  }
+  const leastHeight = (maxWidth: number): number | null => {
+    let least: number | null = null
+    for (const index of profile.badges.keys()) {
+      const entry = reservation(index)
+      if ('issues' in entry) break
+      const height = entry.candidates.leastHeight(maxWidth)
+      if (height !== null) least = least === null ? height : Math.min(least, height)
+    }
+    return least
+  }
+  return { draw, leastHeight }
+}
+
+/** Scopes drawn per Plant and profile, the one drawn longest ago evicted first: an overview, the details opened from it, chat's retries. */
+const SCOPE_DRAWINGS = 96
+const scopeDrawings = new WeakMap<CompiledProcessPlant, WeakMap<MimicProfile, Map<string, ScopeDrawing>>>()
+
+/** A scope's drawing under a profile, planned and laid out once whatever rooms it is drawn for. */
+const scopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): ScopeDrawing => {
+  const byProfile = scopeDrawings.get(plant) ?? new WeakMap<MimicProfile, Map<string, ScopeDrawing>>()
+  scopeDrawings.set(plant, byProfile)
+  const drawings = byProfile.get(profile) ?? new Map<string, ScopeDrawing>()
+  byProfile.set(profile, drawings)
+  const key = JSON.stringify(scope)
+  const known = drawings.get(key)
+  if (known !== undefined) {
+    drawings.delete(key)
+    drawings.set(key, known)
+    return known
+  }
+  const created = planScope(plant, scope, profile)
+  if (drawings.size >= SCOPE_DRAWINGS) drawings.delete(drawings.keys().next().value!)
+  drawings.set(key, created)
+  return created
+}
+
+const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scope: MimicScope, budget: MimicBudget): Attempted =>
+  scopeDrawing(plant, scope, budget.profile).draw(intent, budget)
 
 /**
  * An intent drawn with its parallel supplies (withParallelSupplies), the most
@@ -735,13 +816,19 @@ const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget:
 }
 
 // Narrower intents that draw part of the same question; each is compiled, and only those that fit are offered.
+// None leaves out what the question is about: a loop set keeps the loop of each item named (of alike items
+// named in the plural, one), as resolveMimicScope requires of every intent.
 const narrower = (plant: CompiledProcessPlant, intent: MimicIntent): ReadonlyArray<MimicIntent> => {
   const resolved = resolveMimicScope(plant.graph, intent)
   if (!resolved.ok) return []
-  const drawnLoops = plantLoops(plant.graph).filter(loop => resolved.scope.components.some(index => plant.graph.components[index]!.metadata?.loopId === loop))
-  const loopSets = intent.loops === undefined && drawnLoops.length > 1
+  const loopOfComponent = (index: number): string | undefined => plant.graph.components[index]!.metadata?.loopId
+  const named = [...(intent.from ?? []), ...(intent.to ?? []), ...(intent.around ?? [])]
+    .map(name => resolved.scope.names.filter(entry => entry.name === name).flatMap(entry => loopOfComponent(entry.component) ?? []))
+  const keepsNamed = (loops: ReadonlyArray<string>): boolean => named.every(theirs => theirs.length === 0 || theirs.some(loop => loops.includes(loop)))
+  const drawnLoops = plantLoops(plant.graph).filter(loop => resolved.scope.components.some(index => loopOfComponent(index) === loop))
+  const loopSets = (intent.loops === undefined && drawnLoops.length > 1
     ? [drawnLoops.slice(0, 2), ...drawnLoops.map(loop => [loop])]
-    : intent.loops !== undefined && intent.loops.length > 1 ? intent.loops.map(loop => [loop]) : []
+    : intent.loops !== undefined && intent.loops.length > 1 ? intent.loops.map(loop => [loop]) : []).filter(keepsNamed)
   const serviceSets = (intent.services ?? []).length > 1 ? intent.services!.map(service => [service]) : []
   // A drawing from one end or around its items can stop closer to them; around, that keeps it centred on what was asked about.
   const oneEnded = (intent.from === undefined) !== (intent.to === undefined) || intent.around !== undefined
@@ -772,11 +859,26 @@ export const compileMimic = (plant: CompiledProcessPlant, intent: MimicIntent, b
 
 /**
  * World's own path: a scope it resolved itself (the unit overview's principal
- * circuits), drawn by the budget's profile, or refused with why it does not
- * fit. The drawing's identity carries no intent.
+ * circuits, the surroundings of equipment opened from it), drawn by a
+ * profile for any room the display leaves it, or refused with why it does
+ * not fit there; and the least height it draws in at a width. The drawing's
+ * identity carries no intent.
  */
-export const compileMimicScope = (plant: CompiledProcessPlant, scope: MimicScope, budget: MimicBudget): MimicCompileResult => {
-  const result = compileScope(plant, null, scope, budget)
-  if (result.ok || 'issues' in result) return result as MimicCompileResult
-  return { ok: false, issues: [{ field: '(mimic)', message: layoutReasons(result.layout, budget) }] }
+export interface MimicScopeDrawing {
+  readonly draw: (room: DiagramRoom) => MimicCompileResult
+  readonly leastHeight: (maxWidth: number) => number | null
 }
+
+export const mimicScopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): MimicScopeDrawing => {
+  const drawing = scopeDrawing(plant, scope, profile)
+  const draw = (room: DiagramRoom): MimicCompileResult => {
+    const result = drawing.draw(null, room)
+    if (result.ok || 'issues' in result) return result as MimicCompileResult
+    return { ok: false, issues: [{ field: '(mimic)', message: layoutReasons(result.layout, room) }] }
+  }
+  return { draw, leastHeight: drawing.leastHeight }
+}
+
+/** World's own path for one room (mimicScopeDrawing). */
+export const compileMimicScope = (plant: CompiledProcessPlant, scope: MimicScope, budget: MimicBudget): MimicCompileResult =>
+  mimicScopeDrawing(plant, scope, budget.profile).draw(budget)

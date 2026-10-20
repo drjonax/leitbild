@@ -744,6 +744,9 @@ Action: Inspect «OTHER-STEP».
     expect((capabilities.body as { capabilities: Array<{ id: string }> }).capabilities.map(item => item.id)).toContain(
       'world.object.delete',
     )
+    // The displays an agent presents with its answer declare it; Agents gate "Show display" on the marker, not on an id.
+    expect(moduleCapabilityCollectionSchema.parse(capabilities.body).capabilities.filter(item => item.publishes?.includes('embedded-view')).map(item => String(item.id)).sort())
+      .toEqual(['world.process-plant.display.compose', 'world.process-plant.display.overview'])
     const definitions = await call(registry, `/internal/workspaces/${workspaceId}/definitions`)
     const parsedDefinitions = moduleDefinitionCollectionSchema.parse(definitions.body)
     const scenario = parsedDefinitions.definitions.find(definition => definition.ref.id === 'test-response')!

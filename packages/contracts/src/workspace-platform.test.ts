@@ -268,6 +268,27 @@ describe('dynamic Resource and Capability discovery', () => {
     expect(capability).not.toHaveProperty('resourceId')
   })
 
+  test('a Capability declares what its result publishes: an embedded view, about the Resource it is invoked on, named once', () => {
+    const compose = {
+      id: 'world.process-plant.display.compose',
+      moduleId: 'world',
+      kind: 'query',
+      scope: { kind: 'resource', resourceType: 'world.simulation-run' },
+      title: 'display · compose',
+      description: 'Compose a small live operator display.',
+      risk: 'read',
+      idempotent: true,
+      inputSchema: { type: 'object' },
+      outputSchema: { type: 'object' },
+    } as const
+    expect(moduleCapabilityDescriptorSchema.parse({ ...compose, publishes: ['embedded-view'] }).publishes).toEqual(['embedded-view'])
+    expect(moduleCapabilityDescriptorSchema.parse(compose)).not.toHaveProperty('publishes')
+    expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, publishes: [] })).toThrow()
+    expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, publishes: ['embedded-view', 'embedded-view'] })).toThrow('each publication once')
+    expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, publishes: ['dashboard'] })).toThrow()
+    expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, scope: { kind: 'workspace' }, publishes: ['embedded-view'] })).toThrow('about the Resource')
+  })
+
   test('keeps the selected Resource in each invocation instead of Agent configuration', () => {
     const workspaceId = newWorkspaceId()
     const invocation = moduleCapabilityInvocationSchema.parse({

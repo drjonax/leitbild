@@ -15,6 +15,7 @@
 import type { ToolResult } from '../core/types/tool.ts'
 
 /** The operation through which an AI agent proposes a plant command for a person to approve (World). */
+// Dated exception (P0, 2026-10-20): names a World operation id, against the platform rule that Agents discover Capabilities at runtime, until the swap (plan v3.1 §7), when command receipts replace this English claim check.
 export const PROPOSE_OPERATION_ID = 'world.process-plant.control.propose'
 
 /** One operation a workspace_call of this turn issued, with what it returned. */

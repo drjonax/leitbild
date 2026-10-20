@@ -18,16 +18,17 @@ import { $agents, $roomMessages } from './stores.ts'
 import type { UIMessage } from './render/render-types.ts'
 import {
   DISPLAY_REQUEST_CAUSE,
-  DISPLAY_SKILL,
+  displayRequestOfferPath,
   displayRequestPath,
   showsView,
   type DisplayRequestAccepted,
   type DisplayRequestBody,
+  type DisplayRequestOffer,
   type DisplayRequestRefused,
 } from '../../core/display-request.ts'
 
-/** Whether a message may offer the request. Whether its author holds the
- *  display Skill is asked separately, from the server. */
+/** Whether a message may offer the request. Whether its Room's Scope reaches
+ *  an operation that publishes a display is asked separately, from the server. */
 export const offersDisplayRequest = (message: UIMessage, sender: { readonly kind: string } | undefined): boolean =>
   message.type === 'chat'
   && message.roomId !== undefined
@@ -60,24 +61,25 @@ export const refusalMessage = (status: number, body: string): { readonly text: s
 
 const toastError = (text: string): void => showToast(document.body, text, { type: 'error', position: 'fixed' })
 
-// One lookup per Agent for the page session. A failed lookup is logged and
-// forgotten: the action stays hidden and the next render asks again.
-const skillLookups = new Map<string, Promise<boolean>>()
-const holdsDisplaySkill = (agentId: string): Promise<boolean> => {
-  const known = skillLookups.get(agentId)
+// One lookup per Room and Agent for the page session. A failed lookup is
+// logged and forgotten: the action stays hidden and the next render asks again.
+const offerLookups = new Map<string, Promise<boolean>>()
+const offersDisplay = (roomId: string, agentId: string): Promise<boolean> => {
+  const key = JSON.stringify([roomId, agentId])
+  const known = offerLookups.get(key)
   if (known) return known
   const lookup = (async () => {
-    const response = await apiFetch(`/agents/${encodeURIComponent(agentId)}`)
+    const response = await apiFetch(displayRequestOfferPath(roomId, agentId))
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const detail = await response.json() as { readonly skills?: unknown }
-    if (!Array.isArray(detail.skills)) throw new Error('the Agent detail lists no Skills')
-    return detail.skills.includes(DISPLAY_SKILL)
+    const offer = await response.json() as Partial<DisplayRequestOffer>
+    if (typeof offer.offered !== 'boolean') throw new Error('the offer names no answer')
+    return offer.offered
   })().catch((error: unknown) => {
-    skillLookups.delete(agentId)
-    console.error(`Display request: cannot tell whether Agent ${agentId} holds the ${DISPLAY_SKILL} Skill; its answers offer no display request.`, error)
+    offerLookups.delete(key)
+    console.error(`Display request: cannot tell whether Agent ${agentId}'s answers in Room ${roomId} may offer a display; they offer none.`, error)
     return false
   })
-  skillLookups.set(agentId, lookup)
+  offerLookups.set(key, lookup)
   return lookup
 }
 
@@ -98,7 +100,7 @@ const pending = new Map<string, PendingRequest>()
 interface Row {
   readonly answer: UIMessage
   readonly agentName: string
-  holdsSkill?: boolean   // unknown until the lookup resolves
+  offered?: boolean      // unknown until the lookup resolves
   displayReply?: string  // id of a rendered reply that shows the display
 }
 const rows = new WeakMap<HTMLElement, Row>()
@@ -152,7 +154,7 @@ const paint = (host: HTMLElement, row: Row): void => {
       : `${agentName} is composing the display and posts it as a reply.`)
     status.disabled = true
     host.appendChild(status)
-  } else if (row.holdsSkill === true) {
+  } else if (row.offered === true) {
     const offer = rowButton('Show display', icon('chart-line', { size: 13 }), `Show this answer as a live display. ${agentName} composes one and posts it as a reply.`)
     offer.disabled = requesting.has(answer.id)
     offer.onclick = () => { void requestDisplay(answer) }
@@ -168,8 +170,8 @@ const repaint = (answerId: string): void => {
   if (found) paint(found.host, found.row)
 }
 
-/** The action row under an eligible answer. It stays empty until the author is
- *  known to hold the display Skill, so the offer never flashes and vanishes. */
+/** The action row under an eligible answer. It stays empty until the Room is
+ *  known to reach a display publisher, so the offer never flashes and vanishes. */
 export const displayRequestRow = (answer: UIMessage, agentName: string): HTMLElement => {
   const host = document.createElement('div')
   host.className = 'flex items-center mt-1'
@@ -177,8 +179,8 @@ export const displayRequestRow = (answer: UIMessage, agentName: string): HTMLEle
   const row: Row = { answer, agentName }
   rows.set(host, row)
   paint(host, row)
-  void holdsDisplaySkill(answer.senderId).then(holds => {
-    row.holdsSkill = holds
+  void offersDisplay(answer.roomId!, answer.senderId).then(offered => {
+    row.offered = offered
     paint(host, row)
   })
   return host

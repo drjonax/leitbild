@@ -216,17 +216,6 @@ const stoppedReadings = (plant: CompiledProcessPlant, component: number, acted: 
   return [...declared.filter(state), ...common, ...declared.filter(path => !state(path))]
 }
 
-/**
- * What a detail's lead values depend on besides its equipment: the same key
- * draws the same values. Its parts: the mode, the readings measuring nothing
- * now, and the equipment whose shutdown readings lead (stoppedReadings).
- */
-export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): string => {
-  const stopped = [...commandedByActedTrips(plant, now)].map(component => plant.graph.components[component]!)
-    .filter(component => component.semantics.shutdownReadings.length > 0).map(component => String(component.id)).sort()
-  return `${now.mode ?? 'no mode'}|${[...notMeaningfulNow(plant, now)].sort().join(',')}|${stopped.join(',')}`
-}
-
 // A signal belongs to the node that owns its path and to the equipment it is
 // bound to, as the alarms related to a display count it (ic/thresholds.ts):
 // the core's outlet temperature and the RCS subcooling margin are both bound

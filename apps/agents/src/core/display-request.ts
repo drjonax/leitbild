@@ -2,7 +2,7 @@
 // live display to show that answer as one. The request is fulfilled by an
 // ordinary turn of the same Agent — same Skills, tools, evaluation loop and
 // ```leitbild-view guard as any answer — with one transient instruction that
-// carries the answer. How a display is composed stays in the display Skill and
+// carries the answer. How a display is composed stays in the Agent's Skills and
 // the owning Module, so both paths change together. The reply is posted as a
 // new message (a view resolves only against the turn that composed it) whose
 // cause names the requester and whose inReplyTo starts with the answer.
@@ -14,15 +14,22 @@ import { VIEW_FENCE_LANGUAGE } from './render-validators/view-fence.ts'
 /** MessageCause kind stamped on the reply a display request produces. */
 export const DISPLAY_REQUEST_CAUSE = 'display-request'
 
-/** The Skill that teaches an Agent to compose displays; only its holders are asked. */
-export const DISPLAY_SKILL = 'operator-displays'
-
 /** True when the content presents a live view. */
 export const showsView = (content: string): boolean => extractFences(content, [VIEW_FENCE_LANGUAGE]).length > 0
 
 /** Route of the request, relative to the Agents API base (as apiFetch takes it). */
 export const displayRequestPath = (roomId: string, messageId: string): string =>
   `/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(messageId)}/display-request`
+
+/** Route asking whether an Agent's answers in a Room offer the request (GET). */
+export const displayRequestOfferPath = (roomId: string, agentId: string): string =>
+  `/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(agentId)}/display-request`
+
+/** 200 response of the offer route: whether the Room's Scope reaches an operation
+ *  that publishes a display (the capability descriptor's `publishes` marker). */
+export interface DisplayRequestOffer {
+  readonly offered: boolean
+}
 
 export interface DisplayRequestBody {
   // The human Agent (Room member) on whose behalf the reader asks.
@@ -44,7 +51,7 @@ export type DisplayRequestRefusalCode =
   | 'display_already_shown'
   | 'agent_unavailable'
   | 'room_paused'
-  | 'display_skill_missing'
+  | 'no_display_publisher'
   | 'request_pending'
   | 'script_running'
 
@@ -57,7 +64,7 @@ export const DISPLAY_REQUEST_REFUSAL_STATUS: Readonly<Record<DisplayRequestRefus
   display_already_shown: 409,
   agent_unavailable: 409,
   room_paused: 409,
-  display_skill_missing: 409,
+  no_display_publisher: 409,
   request_pending: 409,
   script_running: 409,
 }

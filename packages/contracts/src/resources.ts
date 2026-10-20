@@ -90,6 +90,13 @@ export type WorkspaceSubjectFocusMessage = z.infer<typeof workspaceSubjectFocusM
 
 const jsonSchemaSchema = z.record(z.string(), z.unknown())
 
+// What a Capability's successful result publishes for other Modules to
+// present, declared by its owning Module: `embedded-view` is an embedded view
+// publication in the result's `view` (embedded-views.ts), which an Agent can
+// present with its answer.
+export const capabilityPublicationSchema = z.enum(['embedded-view'])
+export type CapabilityPublication = z.infer<typeof capabilityPublicationSchema>
+
 export const moduleCapabilityDescriptorSchema = z.object({
   id: capabilityIdSchema,
   moduleId: moduleIdSchema,
@@ -113,9 +120,16 @@ export const moduleCapabilityDescriptorSchema = z.object({
   // uncertain retry. This is distinct from semantic repeat safety.
   acceptsIdempotencyKey: z.literal(true).optional(),
   schedulable: z.boolean().optional(),
+  publishes: z.array(capabilityPublicationSchema).min(1).optional(),
   inputSchema: jsonSchemaSchema,
   outputSchema: jsonSchemaSchema,
 }).strict().superRefine((capability, ctx) => {
+  if (capability.publishes !== undefined && new Set(capability.publishes).size !== capability.publishes.length) {
+    ctx.addIssue({ code: 'custom', path: ['publishes'], message: 'A Capability names each publication once' })
+  }
+  if (capability.publishes?.includes('embedded-view') && capability.scope.kind !== 'resource') {
+    ctx.addIssue({ code: 'custom', path: ['publishes'], message: 'An embedded view is published about the Resource a Capability is invoked on' })
+  }
   if (!capability.id.startsWith(`${capability.moduleId}.`)) {
     ctx.addIssue({ code: 'custom', path: ['id'], message: 'Capability id must be namespaced by its owning Module' })
   }

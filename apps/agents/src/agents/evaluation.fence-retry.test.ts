@@ -186,6 +186,8 @@ describe('evaluation view-fence guard', () => {
     expect(callLog.length).toBe(2)
     const correction = callLog[1]!.request.messages.at(-1)!.content
     expect(correction).toContain('call_0_0/compose is not a display composed in this turn')
+    // Any Module's operation may compose the display: the guard names none.
+    expect(correction).not.toMatch(/\bworld\.[a-z-]+\./)
     expect(result.decision.response).toEqual({ action: 'respond', content: 'Pressure is holding in its control band.' })
   })
 
@@ -313,10 +315,13 @@ describe('evaluation required view (display requests)', () => {
 })
 
 describe('evaluation answer-display consistency', () => {
-  // Run 19 rcp-trip: the answer cited a loop flow its display did not show.
   const fenced = (text: string): string => `${text}\n\n\`\`\`leitbild-view\nview call_0_0/compose\n\`\`\``
-  const inconsistent = fenced('Core cooling is not confirmed. All four RCP loops were at about 401 kg/s; CET-AVG is 302.4 °C.')
-  const corrected = fenced('Core cooling is not confirmed. CET-AVG is 302.4 °C; loop flow (not shown) is about 401 kg/s.')
+  // Run 19 rcp-trip: the answer cited a loop flow its display did not show,
+  // which the offline grounding metrics measure; it is no correction turn.
+  const unshown = fenced('Core cooling is not confirmed. All four RCP loops were at about 401 kg/s; CET-AVG is 302.4 °C.')
+  // A current value its display reads otherwise.
+  const inconsistent = fenced('Core cooling is not confirmed. CET-AVG is currently 290 °C.')
+  const corrected = fenced('Core cooling is not confirmed. CET-AVG is currently 302.4 °C.')
   const viewContent = {
     items: [{ names: ['CET-AVG', 'Core coolant outlet temperature'], values: [{ value: 302.4, unit: '°C' }], limits: [], history: true }],
     span: { shownMs: 60_000, horizonMs: 120_000 },
@@ -343,17 +348,23 @@ describe('evaluation answer-display consistency', () => {
     return { calls, result }
   }
 
-  test('an answer citing what its display does not show is corrected once, naming each issue', async () => {
+  test('an answer citing a value its display contradicts is corrected once, naming each issue', async () => {
     const { calls, result } = await run([inconsistent, corrected])
     expect(calls).toHaveLength(3)
     const correction = calls[2]!.messages.at(-1)!.content
-    expect(correction).toContain('- It cites 401 kg/s, but the display shows no value in kg/s.')
-    expect(correction).toContain('mark one "(not shown)"')
+    expect(correction).toContain('- It cites 290 °C as current, but the display reads CET-AVG 302 °C now.')
+    expect(correction).toContain('mark one from elsewhere "(not shown)"')
     expect(correction).not.toMatch(/\b(?:below|above) the answer\b/)
     expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
   })
 
-  test('a second disagreement is posted as it is: one correction per answer', async () => {
+  test('a value the display does not show, a window, a lead or a watch item costs no correction turn', async () => {
+    const { calls, result } = await run([unshown])
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: unshown })
+  })
+
+  test('a second contradiction is posted as it is: one correction per answer', async () => {
     const { calls, result } = await run([inconsistent, inconsistent])
     expect(calls).toHaveLength(3)
     expect(result.decision.response).toEqual({ action: 'respond', content: inconsistent })
@@ -438,9 +449,9 @@ describe('evaluation answer-display consistency', () => {
       key: 'compose', operationId: 'world.process-plant.display.compose', success: true, viewRef: 'call_0_0/compose',
       data: { view: { viewType: 'process-plant.composed-display', title: 'Core cooling', height: 340 }, shows: ['trend'], viewContent },
     }] })
-    // The answer-consistency check read viewContent from the raw result, and the fence check its viewRef.
+    // The contradiction check read viewContent from the raw result, and the fence check its viewRef.
     expect(calls).toHaveLength(3)
-    expect(calls[2]!.messages.at(-1)!.content).toContain('- It cites 401 kg/s, but the display shows no value in kg/s.')
+    expect(calls[2]!.messages.at(-1)!.content).toContain('- It cites 290 °C as current, but the display reads CET-AVG 302 °C now.')
     expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
     expect(result.decision.toolTrace![0]!.resultBytes).toBe(new TextEncoder().encode(evidence).byteLength)
     expect(display.data.results[0]!.embeddedView.state).toBe(state)
@@ -487,5 +498,44 @@ describe('evaluation operation claims', () => {
     const { calls, result } = await run([proposed])
     expect(calls).toHaveLength(2)
     expect(result.decision.response).toEqual({ action: 'respond', content: proposed })
+  })
+})
+
+describe('evaluation correction causes', () => {
+  // Every pass that sends an answer back is logged, before it runs, with why.
+  const fenced = (ref: string): string => `CET-AVG is currently 290 °C.\n\n\`\`\`leitbild-view\nview ${ref}\n\`\`\``
+  const viewContent = { items: [{ names: ['CET-AVG', 'Core coolant outlet temperature'], values: [{ value: 302.4, unit: '°C' }], limits: [], history: true }], span: null, lead: null }
+  const corrections = async (answers: ReadonlyArray<{ content: string; toolCalls?: ChatResponse['toolCalls'] }>, requireView = false) => {
+    let index = 0
+    const provider: LLMProvider = { models: async () => [], chat: async () => ({ ...mkResponse(''), ...answers[Math.min(index++, answers.length - 1)]! }) }
+    const executor = async (calls: ReadonlyArray<{ callId?: string }>) => [{
+      success: true,
+      data: { results: [{ key: 'compose', operationId: 'world.process-plant.display.compose', success: true, data: { viewContent }, viewRef: `${calls[0]!.callId}/compose` }] },
+    }]
+    const events: Array<{ kind: string; causes?: ReadonlyArray<string>; issues?: ReadonlyArray<string> }> = []
+    await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+      requireView,
+      onEvent: event => { if (event.kind === 'correction') events.push(event) },
+    })
+    return events
+  }
+  const compose = { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] }
+
+  test('a required display, an unpresented one, an invalid block and a contradicted value each name their cause', async () => {
+    expect(await corrections([{ content: 'No display.' }, { content: 'Still none.' }], true)).toEqual([
+      { kind: 'correction', causes: ['required-view'], issues: ['The reader asked for a live display, and the response presents none.'] },
+    ])
+    const unpresented = await corrections([compose, { content: 'Core cooling holds.' }, { content: 'Core cooling holds.' }, { content: 'Core cooling holds.' }])
+    expect(unpresented.map(event => event.causes)).toEqual([['unpresented-view'], ['unpresented-view']])
+    const map = await corrections([{ content: '```map\n{"features":[{"type":"marker","lat":999,"lng":5}]}\n```' }, { content: 'fixed' }])
+    expect(map.map(event => event.causes)).toEqual([['map-fence']])
+    expect(await corrections([compose, { content: fenced('call_0_0/compose') }, { content: fenced('call_0_0/compose') }])).toEqual([
+      { kind: 'correction', causes: ['contradiction'], issues: ['It cites 290 °C as current, but the display reads CET-AVG 302 °C now.'] },
+    ])
+  })
+
+  test('an answer that needs no correction logs none', async () => {
+    expect(await corrections([{ content: 'Core cooling holds.' }])).toEqual([])
   })
 })

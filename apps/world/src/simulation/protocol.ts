@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,RecordedSample,RunViewer,ScenarioRecordingSelection,ScenarioRole,ScenarioSide,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
 import type { PackRuntimeClock } from '../core/packs/protocol.ts'
+import type { CapabilityPublication } from '@leitbild/contracts'
 
 export interface PackRuntimeSnapshot {
   readonly simulationRunId: SimulationRunId
@@ -157,6 +158,9 @@ export interface SimulationCapability {
   readonly input: z.ZodType
   readonly output: z.ZodType
   readonly schedulable?: boolean
+  /** What a successful result publishes for other Modules to present (contracts resources.ts):
+   * `embedded-view` where the result carries an embedded view publication in `view`. */
+  readonly publishes?: ReadonlyArray<CapabilityPublication>
   /** Objects whose detailed state a query inspects. Broad discovery/list
    * operations deliberately omit this: they may reveal that an object exists,
    * but not bypass a restriction on detailed inspection. */

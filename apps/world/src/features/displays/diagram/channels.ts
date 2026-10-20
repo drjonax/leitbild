@@ -57,7 +57,7 @@ export const planChannels = (input: {
 }): ChannelPlan => {
   const { model, profile, layering, structure, pin, tighten } = input
   const items = layering.items
-  const isHub = (item: number): boolean => items[item]!.node !== null && model.nodes[items[item]!.node!]!.role === 'hub'
+  const isCommon = (item: number): boolean => items[item]!.node !== null && model.nodes[items[item]!.node!]!.role === 'common'
   const channelCount = layering.layerCount + 1
   const jogs: Jog[][] = Array.from({ length: channelCount }, () => [])
   const passes: number[][] = Array.from({ length: channelCount }, () => [])
@@ -70,9 +70,9 @@ export const planChannels = (input: {
       const p = chain.items[k]!
       const q = chain.items[k + 1]!
       const layer = items[p]!.layer
-      // A hub sits beside the layers: its step runs in the channel before the item it reaches.
-      const channel = step === 'next' ? (isHub(p) ? items[q]!.layer : layer + 1) : step === 'turnAbove' ? layer + 1 : layer
-      const sideOf = (item: number, own: PinSide): PinSide => (isHub(item) ? 'side' : own)
+      // A common node sits beside the layers: its step runs in the channel before the item it reaches.
+      const channel = step === 'next' ? (isCommon(p) ? items[q]!.layer : layer + 1) : step === 'turnAbove' ? layer + 1 : layer
+      const sideOf = (item: number, own: PinSide): PinSide => (isCommon(item) ? 'side' : own)
       const a = { c: pin[index]![k]!, side: sideOf(p, step === 'turnBelow' ? 'high' : 'low') }
       const b = { c: pin[index]![k + 1]!, side: sideOf(q, step === 'turnAbove' ? 'low' : 'high') }
       channels.push(channel)

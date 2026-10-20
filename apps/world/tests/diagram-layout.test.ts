@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  diagramCandidates,
   layoutDiagram,
   verifyDiagram,
   type DiagramEdge,
@@ -9,19 +10,22 @@ import {
   type DiagramLayoutResult,
   type DiagramNode,
   type DiagramProfile,
+  type DiagramRoom,
   type DiagramText,
-} from '../src/packs/process-plant/displays/mimic/layout/index.ts'
+} from '../src/features/displays/diagram/index.ts'
+import { buildModel } from '../src/features/displays/diagram/model.ts'
 import { costsInReferences } from './cpu-cost.ts'
+import { forcedCrossings } from './diagram-crossing-bound.ts'
 
 // Synthetic, Plant-agnostic fixtures: the engine sees only structure.
 
 type Line = DiagramText['lines'][number]
 const tag = (width: number): Line => ({ width, height: 16, required: true })
 const row = (width: number, required = false): Line => ({ width, height: 20, required })
-const LANES = ['A', 'B', 'C', 'D', 'E', 'F']
+const PARTITIONS = ['A', 'B', 'C', 'D', 'E', 'F']
 
 interface NodeOptions {
-  readonly lane?: number
+  readonly partition?: number
   readonly cells?: readonly [number, number]
   readonly inset?: number
   readonly lines?: ReadonlyArray<Line>
@@ -36,7 +40,7 @@ const node = (id: string, role: DiagramNode['role'], rank: string, ports: Record
   cells: { width: options.cells?.[0] ?? 2, height: options.cells?.[1] ?? 2 },
   portInset: options.inset ?? 0,
   ports: Object.entries(ports).map(([port, direction]) => ({ id: port, direction, rank: port })),
-  ...(options.lane === undefined ? {} : { lane: { key: `lane-${LANES[options.lane]}`, order: options.lane } }),
+  ...(options.partition === undefined ? {} : { partition: { key: `partition-${PARTITIONS[options.partition]}`, order: options.partition } }),
   text: { lines: options.lines ?? [] },
   frameable: options.frameable ?? false,
   ...(options.flapWidth === undefined ? {} : { flapWidth: options.flapWidth }),
@@ -46,12 +50,12 @@ const edge = (id: string, rank: string, from: string, to: string): DiagramEdge =
   const [toNode, toPort] = to.split(':') as [string, string]
   return { id, rank, from: { node: fromNode, port: fromPort }, to: { node: toNode, port: toPort } }
 }
-const pump = (id: string, rank: string, lane?: number): DiagramNode =>
-  node(id, 'device', rank, { in: 'in', out: 'out' }, { ...(lane === undefined ? {} : { lane }), lines: [tag(44), row(40)], frameable: true, flapWidth: 52 })
-const valve = (id: string, rank: string, lane?: number): DiagramNode =>
-  node(id, 'device', rank, { in: 'in', out: 'out' }, { ...(lane === undefined ? {} : { lane }), lines: [tag(48), row(44)], frameable: true, flapWidth: 40 })
-const vessel = (id: string, rank: string, ports: Record<string, 'in' | 'out'>, lane?: number): DiagramNode =>
-  node(id, 'device', rank, ports, { ...(lane === undefined ? {} : { lane }), cells: [2, 4], inset: 5, lines: [tag(40), row(52, true)], frameable: true, flapWidth: 44 })
+const pump = (id: string, rank: string, partition?: number): DiagramNode =>
+  node(id, 'device', rank, { in: 'in', out: 'out' }, { ...(partition === undefined ? {} : { partition }), lines: [tag(44), row(40)], frameable: true, flapWidth: 52 })
+const valve = (id: string, rank: string, partition?: number): DiagramNode =>
+  node(id, 'device', rank, { in: 'in', out: 'out' }, { ...(partition === undefined ? {} : { partition }), lines: [tag(48), row(44)], frameable: true, flapWidth: 40 })
+const vessel = (id: string, rank: string, ports: Record<string, 'in' | 'out'>, partition?: number): DiagramNode =>
+  node(id, 'device', rank, ports, { ...(partition === undefined ? {} : { partition }), cells: [2, 4], inset: 5, lines: [tag(40), row(52, true)], frameable: true, flapWidth: 44 })
 
 const chain = (): DiagramGraph => ({
   nodes: [
@@ -67,38 +71,38 @@ const chain = (): DiagramGraph => ({
   ],
 })
 
-const headerFanOut = (lanes: number): DiagramGraph => ({
+const headerFanOut = (partitions: number): DiagramGraph => ({
   nodes: [
     pump('pump-1', 'pump.1'),
     pump('pump-2', 'pump.2'),
     node('header', 'bar', 'header', { in: 'in', out: 'out' }, { lines: [tag(56)] }),
-    ...Array.from({ length: lanes }, (_, lane) => [valve(`valve-${lane}`, 'valve', lane), vessel(`vessel-${lane}`, 'vessel', { in: 'in' }, lane)]).flat(),
+    ...Array.from({ length: partitions }, (_, partition) => [valve(`valve-${partition}`, 'valve', partition), vessel(`vessel-${partition}`, 'vessel', { in: 'in' }, partition)]).flat(),
   ],
   edges: [
     edge('p1', 'feed', 'pump-1:out', 'header:in'),
     edge('p2', 'feed', 'pump-2:out', 'header:in'),
-    ...Array.from({ length: lanes }, (_, lane) => [
-      edge(`b-${lane}`, 'branch', 'header:out', `valve-${lane}:in`),
-      edge(`l-${lane}`, 'line', `valve-${lane}:out`, `vessel-${lane}:in`),
+    ...Array.from({ length: partitions }, (_, partition) => [
+      edge(`b-${partition}`, 'branch', 'header:out', `valve-${partition}:in`),
+      edge(`l-${partition}`, 'line', `valve-${partition}:out`, `vessel-${partition}:in`),
     ]).flat(),
   ],
 })
 
-/** The classic loop drawing: every lane leaves the hub and returns to it. */
-const hubLoops = (lanes: number): DiagramGraph => ({
+/** The classic loop drawing: every partition leaves the common node and returns to it. */
+const commonLoops = (partitions: number): DiagramGraph => ({
   nodes: [
-    node('hub', 'hub', 'hub', Object.fromEntries(Array.from({ length: lanes }, (_, lane) => [[`out-${LANES[lane]}`, 'out'], [`in-${LANES[lane]}`, 'in']]).flat()), { cells: [2, 4], inset: 5, lines: [tag(36)] }),
-    ...Array.from({ length: lanes }, (_, lane) => [vessel(`vessel-${lane}`, 'vessel', { in: 'in', out: 'out' }, lane), pump(`pump-${lane}`, 'pump', lane)]).flat(),
+    node('common', 'common', 'common', Object.fromEntries(Array.from({ length: partitions }, (_, partition) => [[`out-${PARTITIONS[partition]}`, 'out'], [`in-${PARTITIONS[partition]}`, 'in']]).flat()), { cells: [2, 4], inset: 5, lines: [tag(36)] }),
+    ...Array.from({ length: partitions }, (_, partition) => [vessel(`vessel-${partition}`, 'vessel', { in: 'in', out: 'out' }, partition), pump(`pump-${partition}`, 'pump', partition)]).flat(),
   ],
-  edges: Array.from({ length: lanes }, (_, lane) => [
-    edge(`hot-${lane}`, 'hot', `hub:out-${LANES[lane]}`, `vessel-${lane}:in`),
-    edge(`mid-${lane}`, 'mid', `vessel-${lane}:out`, `pump-${lane}:in`),
-    edge(`cold-${lane}`, 'cold', `pump-${lane}:out`, `hub:in-${LANES[lane]}`),
+  edges: Array.from({ length: partitions }, (_, partition) => [
+    edge(`hot-${partition}`, 'hot', `common:out-${PARTITIONS[partition]}`, `vessel-${partition}:in`),
+    edge(`mid-${partition}`, 'mid', `vessel-${partition}:out`, `pump-${partition}:in`),
+    edge(`cold-${partition}`, 'cold', `pump-${partition}:out`, `common:in-${PARTITIONS[partition]}`),
   ]).flat(),
 })
 
-/** Two headers (feed and auxiliary feed) feeding the same lane vessels. */
-const combined = (lanes: number): DiagramGraph => ({
+/** Two headers (feed and auxiliary feed) feeding the same partition vessels. */
+const combined = (partitions: number): DiagramGraph => ({
   nodes: [
     pump('feed-pump-1', 'feed.pump.1'),
     pump('feed-pump-2', 'feed.pump.2'),
@@ -106,11 +110,11 @@ const combined = (lanes: number): DiagramGraph => ({
     pump('aux-pump-2', 'aux.pump.2'),
     node('feed-header', 'bar', 'feed.header', { in: 'in', out: 'out' }, { lines: [tag(64)] }),
     node('aux-header', 'bar', 'aux.header', { in: 'in', out: 'out' }, { lines: [tag(60)] }),
-    ...Array.from({ length: lanes }, (_, lane) => [
-      valve(`feed-valve-${lane}`, 'feed.valve', lane),
-      valve(`aux-valve-${lane}`, 'aux.valve', lane),
-      vessel(`vessel-${lane}`, 'vessel', { feed: 'in', aux: 'in', steam: 'out' }, lane),
-      node(`steam-${lane}`, 'stub', 'steam', { in: 'in' }, { lane, cells: [2, 1], lines: [tag(64)] }),
+    ...Array.from({ length: partitions }, (_, partition) => [
+      valve(`feed-valve-${partition}`, 'feed.valve', partition),
+      valve(`aux-valve-${partition}`, 'aux.valve', partition),
+      vessel(`vessel-${partition}`, 'vessel', { feed: 'in', aux: 'in', steam: 'out' }, partition),
+      node(`steam-${partition}`, 'stub', 'steam', { in: 'in' }, { partition, cells: [2, 1], lines: [tag(64)] }),
     ]).flat(),
   ],
   edges: [
@@ -118,18 +122,19 @@ const combined = (lanes: number): DiagramGraph => ({
     edge('fp2', 'feed', 'feed-pump-2:out', 'feed-header:in'),
     edge('ap1', 'aux', 'aux-pump-1:out', 'aux-header:in'),
     edge('ap2', 'aux', 'aux-pump-2:out', 'aux-header:in'),
-    ...Array.from({ length: lanes }, (_, lane) => [
-      edge(`fb-${lane}`, 'branch', 'feed-header:out', `feed-valve-${lane}:in`),
-      edge(`fl-${lane}`, 'line', `feed-valve-${lane}:out`, `vessel-${lane}:feed`),
-      edge(`ab-${lane}`, 'branch', 'aux-header:out', `aux-valve-${lane}:in`),
-      edge(`al-${lane}`, 'line', `aux-valve-${lane}:out`, `vessel-${lane}:aux`),
-      edge(`st-${lane}`, 'steam', `vessel-${lane}:steam`, `steam-${lane}:in`),
+    ...Array.from({ length: partitions }, (_, partition) => [
+      edge(`fb-${partition}`, 'branch', 'feed-header:out', `feed-valve-${partition}:in`),
+      edge(`fl-${partition}`, 'line', `feed-valve-${partition}:out`, `vessel-${partition}:feed`),
+      edge(`ab-${partition}`, 'branch', 'aux-header:out', `aux-valve-${partition}:in`),
+      edge(`al-${partition}`, 'line', `aux-valve-${partition}:out`, `vessel-${partition}:aux`),
+      edge(`st-${partition}`, 'steam', `vessel-${partition}:steam`, `steam-${partition}:in`),
     ]).flat(),
   ],
 })
 
-// OpenBridge on its 24 px grid; the box is generous so every fixture fits.
-const profile: DiagramProfile = {
+// OpenBridge on its 24 px grid, and a room so generous every fixture fits.
+type Drawn = DiagramProfile & DiagramRoom
+const profile: Drawn = {
   grid: 24,
   cell: 24,
   pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5 },
@@ -139,15 +144,16 @@ const profile: DiagramProfile = {
   flapLabelPadding: 28,
   maxWidth: 1600,
   maxHeight: 1000,
-  limits: { symbols: 40, symbolsPerLane: 4, sharedSymbols: 8, lanes: 6, crossings: 12, crossingsOverBound: 12, bendsPerEdge: 3 },
+  limits: { symbols: 40, symbolsPerPartition: 4, sharedSymbols: 8, partitions: 6, crossings: 12, bendsPerEdge: 3 },
   fit: [
-    { detail: 'full', text: 'right' }, { detail: 'full', text: 'lanesBelow' }, { detail: 'full', text: 'allBelow' },
-    { detail: 'required', text: 'right' }, { detail: 'required', text: 'lanesBelow' }, { detail: 'required', text: 'allBelow' },
+    { detail: 'full', text: 'right' }, { detail: 'full', text: 'partitionsBelow' }, { detail: 'full', text: 'allBelow' },
+    { detail: 'required', text: 'right' }, { detail: 'required', text: 'partitionsBelow' }, { detail: 'required', text: 'allBelow' },
   ],
 }
 
-const accepted = (graph: DiagramGraph, using: DiagramProfile = profile): Extract<DiagramLayoutResult, { ok: true }> => {
-  const result = layoutDiagram(graph, using)
+const draw = (graph: DiagramGraph, using: Drawn): DiagramLayoutResult => layoutDiagram(graph, using, using)
+const accepted = (graph: DiagramGraph, using: Drawn = profile): Extract<DiagramLayoutResult, { ok: true }> => {
+  const result = draw(graph, using)
   if (!result.ok) throw new Error(`layout refused: ${JSON.stringify(result.reasons)}`)
   return result
 }
@@ -173,13 +179,13 @@ const scramble = (graph: DiagramGraph, seed: number): DiagramGraph => {
   const fresh = (prefix: string): string => `${prefix}${Math.floor(next() * 1e9).toString(36)}`
   const nodeIds = new Map(graph.nodes.map(n => [n.id, fresh('n')]))
   const portIds = new Map(graph.nodes.flatMap(n => n.ports.map(p => [`${n.id}:${p.id}`, fresh('p')] as const)))
-  const laneKeys = new Map(graph.nodes.flatMap(n => (n.lane === undefined ? [] : [[n.lane.key, fresh('z')] as const])))
+  const partitionKeys = new Map(graph.nodes.flatMap(n => (n.partition === undefined ? [] : [[n.partition.key, fresh('z')] as const])))
   return {
     nodes: shuffle(graph.nodes, next).map(n => ({
       ...n,
       id: nodeIds.get(n.id)!,
       ports: shuffle(n.ports, next).map(p => ({ ...p, id: portIds.get(`${n.id}:${p.id}`)! })),
-      ...(n.lane === undefined ? {} : { lane: { key: laneKeys.get(n.lane.key)!, order: n.lane.order } }),
+      ...(n.partition === undefined ? {} : { partition: { key: partitionKeys.get(n.partition.key)!, order: n.partition.order } }),
     })),
     edges: shuffle(graph.edges, next).map(e => ({
       ...e,
@@ -192,10 +198,10 @@ const scramble = (graph: DiagramGraph, seed: number): DiagramGraph => {
 
 const fixtures: ReadonlyArray<readonly [string, DiagramGraph]> = [
   ['chain', chain()],
-  ...[2, 3, 4, 6].flatMap(lanes => [
-    [`header fan-out, ${lanes} lanes`, headerFanOut(lanes)] as const,
-    [`hub loops, ${lanes} lanes`, hubLoops(lanes)] as const,
-    [`combined headers, ${lanes} lanes`, combined(lanes)] as const,
+  ...[2, 3, 4, 6].flatMap(partitions => [
+    [`header fan-out, ${partitions} partitions`, headerFanOut(partitions)] as const,
+    [`common loops, ${partitions} partitions`, commonLoops(partitions)] as const,
+    [`combined headers, ${partitions} partitions`, combined(partitions)] as const,
   ]),
 ]
 
@@ -204,7 +210,7 @@ describe('diagram layout engine', () => {
     test(`${name}: accepted, verified clean, deterministic and id-free`, () => {
       const result = accepted(graph)
       expect(verifyDiagram(graph, profile, result)).toEqual([])
-      for (let run = 0; run < 50; run++) expect(layoutDiagram(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
+      for (let run = 0; run < 50; run++) expect(draw(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
       for (const seed of [1, 2, 3]) expect(accepted(scramble(graph, seed)).hash).toBe(result.hash)
     })
   }
@@ -220,8 +226,8 @@ describe('diagram layout engine', () => {
     for (const routed of result.edges) expect(routed.points).toHaveLength(2)
   })
 
-  test('loop drawings have no crossings at any lane count', () => {
-    for (const lanes of [2, 3, 4, 6]) expect(crossings(accepted(hubLoops(lanes)))).toBe(0)
+  test('loop drawings have no crossings at any partition count', () => {
+    for (const partitions of [2, 3, 4, 6]) expect(crossings(accepted(commonLoops(partitions)))).toBe(0)
   })
 
   test('the combined drawing gaps every crossing on the vertical pipe', () => {
@@ -238,21 +244,21 @@ describe('diagram layout engine', () => {
     }
   })
 
-  test('adding lanes leaves lane 0 of a loop drawing where it was', () => {
-    // A box too short for lanes stacked vertically, so flow runs bottom to top.
+  test('adding partitions leaves partition 0 of a loop drawing where it was', () => {
+    // A box too short for partitions stacked vertically, so flow runs bottom to top.
     const wide = { ...profile, maxWidth: 2400, maxHeight: 520 }
-    const lane0 = (result: Extract<DiagramLayoutResult, { ok: true }>) => ({
+    const partition0 = (result: Extract<DiagramLayoutResult, { ok: true }>) => ({
       nodes: result.nodes.filter(n => n.id === 'vessel-0' || n.id === 'pump-0'),
       edges: result.edges.filter(e => e.id.endsWith('-0')),
       zone: result.zones[0],
     })
-    const base = accepted(hubLoops(4), wide)
-    const hub = base.nodes.find(n => n.id === 'hub')!
+    const base = accepted(commonLoops(4), wide)
+    const common = base.nodes.find(n => n.id === 'common')!
     const pump0 = base.nodes.find(n => n.id === 'pump-0')!
     const vessel0 = base.nodes.find(n => n.id === 'vessel-0')!
-    expect(hub.x).toBeLessThan(vessel0.x)
+    expect(common.x).toBeLessThan(vessel0.x)
     expect(pump0.y).toBeLessThan(vessel0.y)
-    for (const lanes of [5, 6]) expect(lane0(accepted(hubLoops(lanes), wide))).toEqual(lane0(base))
+    for (const partitions of [5, 6]) expect(partition0(accepted(commonLoops(partitions), wide))).toEqual(partition0(base))
   })
 
   test('symbols snap to the grid and ports sit on grid lines', () => {
@@ -282,7 +288,7 @@ describe('diagram layout engine', () => {
 
   test('a drawing too wide with text right of its symbols fits with text below them', () => {
     const budget = { ...profile, maxWidth: 600, maxHeight: 624 }
-    const graph = hubLoops(4)
+    const graph = commonLoops(4)
     const roomy = accepted(graph)
     expect(roomy.width).toBeGreaterThan(600)
     for (const placed of roomy.nodes.filter(n => /^(vessel|pump)-/.test(n.id))) expect(placed.text!.side).toBe('right')
@@ -296,12 +302,27 @@ describe('diagram layout engine', () => {
     expect(verifyDiagram(graph, budget, result)).toEqual([])
     expect(crossings(result)).toBe(0)
     for (const seed of [1, 2]) expect(accepted(scramble(graph, seed), budget).hash).toBe(result.hash)
-    // Lane symbols go below first; the shared pumps under a header keep their text right.
+    // Partition symbols go below first; the shared pumps under a header keep their text right.
     const fanOut = accepted(headerFanOut(6), budget)
     expect(fanOut.width).toBeLessThanOrEqual(600)
     expect(fanOut.nodes.find(n => n.id === 'valve-0')!.text!.side).toBe('bottom')
     expect(fanOut.nodes.find(n => n.id === 'pump-1')!.text!.side).toBe('right')
     expect(verifyDiagram(headerFanOut(6), budget, fanOut)).toEqual([])
+  })
+
+  test("a graph's candidates answer every room as a layout for that room alone does, and say the least height at each width", () => {
+    for (const graph of [commonLoops(4), headerFanOut(6), combined(3)]) {
+      const candidates = diagramCandidates(graph, profile)
+      const rooms = [300, 450, 600, 800, 1200].flatMap(maxWidth => [200, 400, 624, 900].map(maxHeight => ({ maxWidth, maxHeight })))
+      for (const room of rooms) {
+        const answered = candidates.layout(room)
+        expect(answered).toEqual(layoutDiagram(graph, profile, room))
+        // A room draws exactly when it is at least as tall as the least height at its width.
+        const least = candidates.leastHeight(room.maxWidth)
+        expect(answered.ok).toBe(least !== null && least <= room.maxHeight)
+        if (least !== null) expect(candidates.layout({ maxWidth: room.maxWidth, maxHeight: least }).ok).toBe(true)
+      }
+    }
   })
 
   test('when the full text does not fit, optional trailing lines go, and the result says how many show', () => {
@@ -313,7 +334,7 @@ describe('diagram layout engine', () => {
   })
 
   test('the verifier finds tampered geometry', () => {
-    const graph = hubLoops(2)
+    const graph = commonLoops(2)
     const result = accepted(graph)
     const rules = (tampered: typeof result): string[] => [...new Set(verifyDiagram(graph, profile, tampered).map(v => v.rule))]
     const vessel = result.nodes.find(n => n.id === 'vessel-0')!
@@ -334,19 +355,23 @@ describe('diagram layout engine', () => {
   })
 
   test('too many symbols or too wide a drawing is refused with explicit reasons', () => {
-    const crowded = layoutDiagram(combined(4), { ...profile, limits: { ...profile.limits, symbols: 12, symbolsPerLane: 2 } })
+    const crowded = draw(combined(4), { ...profile, limits: { ...profile.limits, symbols: 12, symbolsPerPartition: 2 } })
     expect(crowded).toEqual({
       ok: false,
       reasons: [
         { kind: 'density', limit: 'symbols', count: 16, max: 12 },
-        { kind: 'density', limit: 'symbolsPerLane', count: 3, max: 2 },
+        { kind: 'density', limit: 'symbolsPerPartition', count: 3, max: 2 },
       ],
     })
-    const tangled = layoutDiagram(combined(4), { ...profile, limits: { ...profile.limits, crossings: 2 } })
+    // The per-partition limit holds where partitions stand side by side; one partition alone answers to the symbol limit.
+    const sparse = { ...profile, limits: { ...profile.limits, symbolsPerPartition: 1 } }
+    expect(draw(combined(1), sparse).ok).toBe(true)
+    expect(draw(combined(2), sparse)).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'symbolsPerPartition', count: 3, max: 1 }] })
+    const tangled = draw(combined(4), { ...profile, limits: { ...profile.limits, crossings: 2 } })
     expect(tangled).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'crossings', count: 4, max: 2 }] })
-    const lanes = layoutDiagram(hubLoops(6), { ...profile, limits: { ...profile.limits, lanes: 4 } })
-    expect(lanes).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'lanes', count: 6, max: 4 }] })
-    const narrow = layoutDiagram(hubLoops(6), { ...profile, maxWidth: 400, maxHeight: 300 })
+    const partitions = draw(commonLoops(6), { ...profile, limits: { ...profile.limits, partitions: 4 } })
+    expect(partitions).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'partitions', count: 6, max: 4 }] })
+    const narrow = draw(commonLoops(6), { ...profile, maxWidth: 400, maxHeight: 300 })
     expect(narrow.ok).toBe(false)
     if (narrow.ok) return
     expect(narrow.reasons.length).toBe(2)
@@ -358,13 +383,13 @@ describe('diagram layout engine', () => {
 
   test('input the engine cannot order by structure is rejected', () => {
     const twins: DiagramGraph = { nodes: [pump('a', 'same'), pump('b', 'same')], edges: [edge('e', 'line', 'a:out', 'b:in')] }
-    expect(() => layoutDiagram(twins, profile)).toThrow(/share rank/)
+    expect(() => draw(twins, profile)).toThrow(/share rank/)
     const backwards: DiagramGraph = { nodes: [pump('a', 'a'), pump('b', 'b')], edges: [edge('e', 'line', 'a:in', 'b:in')] }
-    expect(() => layoutDiagram(backwards, profile)).toThrow(/leaves through in-port/)
+    expect(() => draw(backwards, profile)).toThrow(/leaves through in-port/)
   })
 
   test('the engine imports nothing outside itself: it stays Plant-agnostic', () => {
-    const folder = join(import.meta.dir, '../src/packs/process-plant/displays/mimic/layout')
+    const folder = join(import.meta.dir, '../src/features/displays/diagram')
     for (const file of readdirSync(folder).filter(name => name.endsWith('.ts'))) {
       const specifiers = [...readFileSync(join(folder, file), 'utf8').matchAll(/from '([^']+)'/g)].map(match => match[1]!)
       for (const specifier of specifiers) expect(specifier.startsWith('./') || specifier === 'node:crypto').toBe(true)
@@ -380,29 +405,29 @@ describe('diagram layout engine', () => {
     const largest = dense()
     expect([largest.nodes.length, largest.edges.length]).toEqual([40, 60])
     const graphs = [...fixtures.map(([, graph]) => graph), largest]
-    const costs = costsInReferences(graphs.map(graph => () => layoutDiagram(graph, profile)), 5)
+    const costs = costsInReferences(graphs.map(graph => () => draw(graph, profile)), 5)
     expect(Math.max(...costs)).toBeLessThan(4)
   }, 120_000)
 })
 
-/** 40 nodes and 60 edges: the combined drawing at six lanes with suction, drains, bypasses, recirculation and spills. */
+/** 40 nodes and 60 edges: the combined drawing at six partitions with suction, drains, bypasses, recirculation and spills. */
 const dense = (): DiagramGraph => {
-  const lanes = 6
-  const base = combined(lanes)
+  const partitions = 6
+  const base = combined(partitions)
   return {
     nodes: [
       ...base.nodes.map(n => (n.id.startsWith('vessel-') ? { ...n, ports: [...n.ports, { id: 'drain', direction: 'out' as const, rank: 'drain' }] } : n)),
       vessel('tank', 'tank', { out: 'out', return: 'in' }),
-      ...Array.from({ length: lanes }, (_, lane) => node(`drain-${lane}`, 'stub', 'drain', { in: 'in' }, { lane, cells: [2, 1], lines: [tag(48)] })),
+      ...Array.from({ length: partitions }, (_, partition) => node(`drain-${partition}`, 'stub', 'drain', { in: 'in' }, { partition, cells: [2, 1], lines: [tag(48)] })),
       ...['a', 'b', 'c'].map(k => node(`spill-${k}`, 'stub', `spill.${k}`, { in: 'in' }, { cells: [2, 1], lines: [tag(40)] })),
     ],
     edges: [
       ...base.edges,
       ...['feed-pump-1', 'feed-pump-2', 'aux-pump-1', 'aux-pump-2'].map((p, i) => edge(`t-${i}`, 'suction', 'tank:out', `${p}:in`)),
-      ...Array.from({ length: lanes }, (_, lane) => [
-        edge(`dr-${lane}`, 'drain', `vessel-${lane}:drain`, `drain-${lane}:in`),
-        edge(`by-${lane}`, 'bypass', 'feed-header:out', `vessel-${lane}:feed`),
-        edge(`rc-${lane}`, 'recirculation', `aux-valve-${lane}:out`, 'tank:return'),
+      ...Array.from({ length: partitions }, (_, partition) => [
+        edge(`dr-${partition}`, 'drain', `vessel-${partition}:drain`, `drain-${partition}:in`),
+        edge(`by-${partition}`, 'bypass', 'feed-header:out', `vessel-${partition}:feed`),
+        edge(`rc-${partition}`, 'recirculation', `aux-valve-${partition}:out`, 'tank:return'),
       ]).flat(),
       edge('sp-a', 'spill', 'feed-header:out', 'spill-a:in'),
       edge('sp-a2', 'spill.2', 'feed-header:out', 'spill-a:in'),
@@ -472,12 +497,12 @@ const skippingEdges = (): DiagramGraph => ({
   ],
 })
 
-/** The loop drawing with a makeup pump that joins lane A's return at the hub's port. */
-const hubWithMakeup = (lanes: number): DiagramGraph => {
-  const loops = hubLoops(lanes)
+/** The loop drawing with a makeup pump that joins partition A's return at the common node's port. */
+const commonWithMakeup = (partitions: number): DiagramGraph => {
+  const loops = commonLoops(partitions)
   return {
     nodes: [...loops.nodes, vessel('makeup-tank', 'makeup.tank', { out: 'out' }), pump('makeup', 'makeup.pump')],
-    edges: [...loops.edges, edge('m1', 'makeup', 'makeup-tank:out', 'makeup:in'), edge('m2', 'makeup', 'makeup:out', 'hub:in-A')],
+    edges: [...loops.edges, edge('m1', 'makeup', 'makeup-tank:out', 'makeup:in'), edge('m2', 'makeup', 'makeup:out', 'common:in-A')],
   }
 }
 
@@ -487,19 +512,19 @@ const bendsOf = (points: ReadonlyArray<readonly [number, number]>): number =>
     return !((a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1]))
   }).length
 
-describe('long edges, stubs and shared hub ports', () => {
+describe('long edges, stubs and shared common node ports', () => {
   const cases: ReadonlyArray<readonly [string, DiagramGraph]> = [
     ['a pump with its suction and its supply', pumpWithSupply()],
     ['edges that skip a layer between symbols', skippingEdges()],
-    ['a makeup line joining a loop at the hub, 2 lanes', hubWithMakeup(2)],
-    ['a makeup line joining a loop at the hub, 4 lanes', hubWithMakeup(4)],
+    ['a makeup line joining a loop at the common, 2 partitions', commonWithMakeup(2)],
+    ['a makeup line joining a loop at the common, 4 partitions', commonWithMakeup(4)],
   ]
   for (const [name, graph] of cases) {
     test(`${name}: accepted, verified, at most three bends a pipe, deterministic and id-free`, () => {
       const result = accepted(graph)
       expect(verifyDiagram(graph, profile, result)).toEqual([])
       for (const routed of result.edges) expect(bendsOf(routed.points)).toBeLessThanOrEqual(3)
-      expect(layoutDiagram(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
+      expect(draw(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
       for (const seed of [1, 2]) expect(accepted(scramble(graph, seed)).hash).toBe(result.hash)
     })
   }
@@ -514,10 +539,10 @@ describe('long edges, stubs and shared hub ports', () => {
     for (const id of ['k3', 'k5', 'k6']) expect(bendsOf(result.edges.find(e => e.id === id)!.points)).toBeLessThanOrEqual(2)
   })
 
-  test('edges reaching one hub port from both sides meet it in one place', () => {
-    for (const lanes of [2, 4]) {
-      const result = accepted(hubWithMakeup(lanes))
-      const place = result.nodes.find(n => n.id === 'hub')!.ports['in-A']!
+  test('edges reaching one common node port from both sides meet it in one place', () => {
+    for (const partitions of [2, 4]) {
+      const result = accepted(commonWithMakeup(partitions))
+      const place = result.nodes.find(n => n.id === 'common')!.ports['in-A']!
       for (const id of ['cold-0', 'm2']) expect(result.edges.find(e => e.id === id)!.points.at(-1)).toEqual([place.x, place.y])
     }
   })
@@ -525,37 +550,37 @@ describe('long edges, stubs and shared hub ports', () => {
 
 // Crossings the structure forces, and drawings that keep within two of them.
 
-/** Three shared symbols each joined to every lane's vessel: K(3, n). */
-const threeSources = (lanes: number): DiagramGraph => ({
+/** Three shared symbols each joined to every partition's vessel: K(3, n). */
+const threeSources = (partitions: number): DiagramGraph => ({
   nodes: [
     pump('source-1', 'source.1'),
     pump('source-2', 'source.2'),
     pump('source-3', 'source.3'),
-    ...Array.from({ length: lanes }, (_, lane) => vessel(`vessel-${lane}`, 'vessel', { a: 'in', b: 'in', c: 'in' }, lane)),
+    ...Array.from({ length: partitions }, (_, partition) => vessel(`vessel-${partition}`, 'vessel', { a: 'in', b: 'in', c: 'in' }, partition)),
   ],
-  edges: Array.from({ length: lanes }, (_, lane) => [
-    edge(`a-${lane}`, 'a', 'source-1:out', `vessel-${lane}:a`),
-    edge(`b-${lane}`, 'b', 'source-2:out', `vessel-${lane}:b`),
-    edge(`c-${lane}`, 'c', 'source-3:out', `vessel-${lane}:c`),
+  edges: Array.from({ length: partitions }, (_, partition) => [
+    edge(`a-${partition}`, 'a', 'source-1:out', `vessel-${partition}:a`),
+    edge(`b-${partition}`, 'b', 'source-2:out', `vessel-${partition}:b`),
+    edge(`c-${partition}`, 'c', 'source-3:out', `vessel-${partition}:c`),
   ]).flat(),
 })
 
 /**
- * Loops through a hub, each loop's exchanger also on a feed header and a
- * steam header (a ladder the hub must reach across), with or without a train
+ * Loops through a common node, each loop's exchanger also on a feed header and a
+ * steam header (a ladder the common node must reach across), with or without a train
  * of shared symbols that returns from the steam header to the feed header.
  */
-const ladder = (lanes: number, closed: boolean): DiagramGraph => ({
+const ladder = (partitions: number, closed: boolean): DiagramGraph => ({
   nodes: [
-    node('hub', 'hub', 'hub', Object.fromEntries(Array.from({ length: lanes }, (_, lane) => [[`out-${LANES[lane]}`, 'out'], [`in-${LANES[lane]}`, 'in']]).flat()), { cells: [2, 4], inset: 5, lines: [tag(36)] }),
+    node('common', 'common', 'common', Object.fromEntries(Array.from({ length: partitions }, (_, partition) => [[`out-${PARTITIONS[partition]}`, 'out'], [`in-${PARTITIONS[partition]}`, 'in']]).flat()), { cells: [2, 4], inset: 5, lines: [tag(36)] }),
     node('feed', 'bar', 'feed', { in: 'in', out: 'out' }, { lines: [tag(40)] }),
     node('steam', 'bar', 'steam', { in: 'in', out: 'out' }, { lines: [tag(48)] }),
     ...(closed ? [pump('engine', 'train.1'), vessel('cooler', 'train.2', { in: 'in', out: 'out' }), pump('feed-pump', 'train.3')] : []),
-    ...Array.from({ length: lanes }, (_, lane) => [
-      valve(`feed-valve-${lane}`, 'feed.valve', lane),
-      vessel(`exchanger-${lane}`, 'exchanger', { hot: 'in', cold: 'out', feed: 'in', steam: 'out' }, lane),
-      pump(`pump-${lane}`, 'pump', lane),
-      valve(`steam-valve-${lane}`, 'steam.valve', lane),
+    ...Array.from({ length: partitions }, (_, partition) => [
+      valve(`feed-valve-${partition}`, 'feed.valve', partition),
+      vessel(`exchanger-${partition}`, 'exchanger', { hot: 'in', cold: 'out', feed: 'in', steam: 'out' }, partition),
+      pump(`pump-${partition}`, 'pump', partition),
+      valve(`steam-valve-${partition}`, 'steam.valve', partition),
     ]).flat(),
   ],
   edges: [
@@ -565,14 +590,14 @@ const ladder = (lanes: number, closed: boolean): DiagramGraph => ({
       edge('t3', 'train', 'cooler:out', 'feed-pump:in'),
       edge('t4', 'train', 'feed-pump:out', 'feed:in'),
     ] : []),
-    ...Array.from({ length: lanes }, (_, lane) => [
-      edge(`hot-${lane}`, 'hot', `hub:out-${LANES[lane]}`, `exchanger-${lane}:hot`),
-      edge(`cold-${lane}`, 'cold', `exchanger-${lane}:cold`, `pump-${lane}:in`),
-      edge(`return-${lane}`, 'return', `pump-${lane}:out`, `hub:in-${LANES[lane]}`),
-      edge(`fb-${lane}`, 'feed', 'feed:out', `feed-valve-${lane}:in`),
-      edge(`fl-${lane}`, 'feed.line', `feed-valve-${lane}:out`, `exchanger-${lane}:feed`),
-      edge(`sl-${lane}`, 'steam.line', `exchanger-${lane}:steam`, `steam-valve-${lane}:in`),
-      edge(`sb-${lane}`, 'steam', `steam-valve-${lane}:out`, 'steam:in'),
+    ...Array.from({ length: partitions }, (_, partition) => [
+      edge(`hot-${partition}`, 'hot', `common:out-${PARTITIONS[partition]}`, `exchanger-${partition}:hot`),
+      edge(`cold-${partition}`, 'cold', `exchanger-${partition}:cold`, `pump-${partition}:in`),
+      edge(`return-${partition}`, 'return', `pump-${partition}:out`, `common:in-${PARTITIONS[partition]}`),
+      edge(`fb-${partition}`, 'feed', 'feed:out', `feed-valve-${partition}:in`),
+      edge(`fl-${partition}`, 'feed.line', `feed-valve-${partition}:out`, `exchanger-${partition}:feed`),
+      edge(`sl-${partition}`, 'steam.line', `exchanger-${partition}:steam`, `steam-valve-${partition}:in`),
+      edge(`sb-${partition}`, 'steam', `steam-valve-${partition}:out`, 'steam:in'),
     ]).flat(),
   ],
 })
@@ -581,10 +606,10 @@ const ladder = (lanes: number, closed: boolean): DiagramGraph => ({
  * The open ladder closed by a long train from the steam header back to the
  * feed header: a throttle, an engine, a cooler (which a bypass from the
  * header also reaches), a lift pump, a tank and a feed pump. Its return leg
- * is deeper than the lanes are tall.
+ * is deeper than the partitions are tall.
  */
-const longTrain = (lanes: number): DiagramGraph => {
-  const base = ladder(lanes, false)
+const longTrain = (partitions: number): DiagramGraph => {
+  const base = ladder(partitions, false)
   return {
     nodes: [
       ...base.nodes,
@@ -611,36 +636,35 @@ const longTrain = (lanes: number): DiagramGraph => {
   }
 }
 
+// The crossings a graph's structure forces (diagram-crossing-bound.ts) are a
+// diagnostic of how good a drawing is; the engine's limit is absolute.
 describe('crossings the structure forces', () => {
-  const roomy = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerLane: 6, crossings: 40, crossingsOverBound: 2 } }
+  const roomy = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerPartition: 6, crossings: 40 } }
+  const forcedOf = (graph: DiagramGraph): number => forcedCrossings(buildModel(graph))
 
-  test('three shared symbols reaching every lane force Zarankiewicz\'s ⌊n/2⌋⌊(n−1)/2⌋', () => {
-    // A lane drawing keeps shared symbols on one side of the lanes, so it crosses more than the bound here.
-    const lenient = { ...roomy, limits: { ...roomy.limits, crossingsOverBound: 40 } }
-    for (const [lanes, forced] of [[3, 1], [4, 2], [6, 6]] as const) {
-      const result = layoutDiagram(threeSources(lanes), lenient)
+  test('three shared symbols reaching every partition force Zarankiewicz\'s ⌊n/2⌋⌊(n−1)/2⌋', () => {
+    // A partition drawing keeps shared symbols on one side of the partitions, so it crosses more than the bound here.
+    for (const [partitions, forced] of [[3, 1], [4, 2], [6, 6]] as const) {
+      const result = draw(threeSources(partitions), roomy)
       if (!result.ok) throw new Error(JSON.stringify(result.reasons))
-      expect(result.forcedCrossings).toBe(forced)
+      expect(forcedOf(threeSources(partitions))).toBe(forced)
       expect(result.crossings).toBeGreaterThanOrEqual(forced)
     }
   })
 
-  test('a hub reaching every lane across a ladder of two headers is forced across it 2n − 4 times; a train closing the ladder adds one', () => {
-    // Two lanes are a ladder of one cycle: the hub reaches both from outside it, unless the train closes it there too.
-    for (const lanes of [2, 3, 4, 6]) {
-      const open = layoutDiagram(ladder(lanes, false), roomy)
-      const closed = layoutDiagram(ladder(lanes, true), roomy)
-      if (!open.ok || !closed.ok) throw new Error('refused')
-      expect(open.forcedCrossings).toBe(2 * lanes - 4)
-      expect(closed.forcedCrossings).toBe(2 * lanes - 3)
+  test('a common node reaching every partition across a ladder of two headers is forced across it 2n − 4 times; a train closing the ladder adds one', () => {
+    // Two partitions are a ladder of one cycle: the common node reaches both from outside it, unless the train closes it there too.
+    for (const partitions of [2, 3, 4, 6]) {
+      expect(forcedOf(ladder(partitions, false))).toBe(2 * partitions - 4)
+      expect(forcedOf(ladder(partitions, true))).toBe(2 * partitions - 3)
     }
   })
 
   test('the closed ladder draws within two crossings of the bound, verified, deterministic and id-free', () => {
-    for (const lanes of [2, 4, 6]) {
-      const graph = ladder(lanes, true)
+    for (const partitions of [2, 4, 6]) {
+      const graph = ladder(partitions, true)
       const result = accepted(graph, roomy)
-      expect(result.crossings).toBeLessThanOrEqual(result.forcedCrossings + 2)
+      expect(result.crossings).toBeLessThanOrEqual(forcedOf(graph) + 2)
       expect(crossings(result)).toBe(result.crossings)
       expect(verifyDiagram(graph, roomy, result)).toEqual([])
       for (const seed of [1, 2]) expect(accepted(scramble(graph, seed), roomy).hash).toBe(result.hash)
@@ -648,11 +672,13 @@ describe('crossings the structure forces', () => {
   })
 
   test('ever shorter of height, a return leg folds at its turn, then beside it: its head shares the layer of what feeds it', () => {
-    for (const lanes of [4, 6]) {
-      const graph = longTrain(lanes)
-      const tall = accepted(graph, roomy)
-      const folded = accepted(graph, { ...roomy, maxHeight: tall.height - 1 })
-      const short = { ...roomy, maxHeight: folded.height - 1 }
+    for (const partitions of [4, 6]) {
+      const graph = longTrain(partitions)
+      // At most two crossings over the bound, as a drawing an operator reads at a glance.
+      const legible = { ...roomy, limits: { ...roomy.limits, crossings: forcedOf(graph) + 2 } }
+      const tall = accepted(graph, legible)
+      const folded = accepted(graph, { ...legible, maxHeight: tall.height - 1 })
+      const short = { ...legible, maxHeight: folded.height - 1 }
       const result = accepted(graph, short)
       const centre = (id: string): number => {
         const placed = result.nodes.find(candidate => candidate.id === id)!
@@ -662,17 +688,20 @@ describe('crossings the structure forces', () => {
       // The leg (engine to feed pump) is drawn mirrored; the cooler, which the bypass feeds, sits in the bypass's layer, and the train runs down from there.
       expect(centre('cooler')).toBe(centre('bypass'))
       expect(centre('feed-pump')).toBeGreaterThan(centre('cooler'))
-      expect(result.crossings).toBeLessThanOrEqual(result.forcedCrossings + 2)
+      expect(result.crossings).toBeLessThanOrEqual(forcedOf(graph) + 2)
       expect(verifyDiagram(graph, short, result)).toEqual([])
       for (const routed of result.edges) expect(bendsOf(routed.points)).toBeLessThanOrEqual(3)
       for (const seed of [1, 2]) expect(accepted(scramble(graph, seed), short).hash).toBe(result.hash)
     }
   })
 
-  test('a limit relative to the bound refuses a drawing that crosses more than it allows, naming the limit', () => {
-    const strict = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerLane: 6, crossings: 40, crossingsOverBound: 0 } }
-    const result = layoutDiagram(threeSources(6), strict)
-    if (result.ok) expect(result.crossings).toBe(result.forcedCrossings)
-    else expect(result.reasons).toEqual([expect.objectContaining({ kind: 'density', limit: 'crossingsOverBound', max: 6 })])
+  test('a limit below what the structure forces refuses the graph, naming the limit and the fewest crossings drawn', () => {
+    const strict = { ...roomy, limits: { ...roomy.limits, crossings: forcedOf(threeSources(6)) - 1 } }
+    const result = draw(threeSources(6), strict)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reasons).toEqual([expect.objectContaining({ kind: 'density', limit: 'crossings', max: 5 })])
+    const [reason] = result.reasons
+    if (reason?.kind === 'density') expect(reason.count).toBeGreaterThanOrEqual(6)
   })
 })

@@ -11,6 +11,7 @@ import {
   workspaceDefinitionRevisionReferenceSchema,
   workspaceResourceCatalogSchema,
   workspaceResourceReferenceSchema,
+  type CapabilityId,
   type ModuleCapabilityDescriptor,
   type ModuleDefinitionDescriptor,
   type ModuleResourceDescriptor,
@@ -36,6 +37,11 @@ export const WORKSPACE_CAPABILITY_TOOL_NAMES = ['workspace_explore', 'workspace_
 // much evidence a task needs; Pack-owned operations own domain pagination.
 const HOST_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_PAGE_SIZE = 30
+// A page carrying schemas holds about 2 KB per operation (World's operations
+// with input schemas: 0.8-5.6 KB), re-sent on every later model call of the
+// turn: by default it holds what a focused search needs, and always every
+// exact ID asked for.
+const DEFAULT_SCHEMA_PAGE_SIZE = 5
 const MAX_PAGE_SIZE = 100
 const MAX_READ_BATCH_SIZE = 12
 // One chat line: room for a procedure step's decision with its deciding
@@ -85,11 +91,18 @@ const readHostError = async (response: Response): Promise<ToolResult> => {
 // schemas (15 KB) are named for an explicit read instead.
 const MAX_REFUSAL_SCHEMA_BYTES = 4096
 
+/** An operation's schema as the model reads it: every constraint, without the dialect URI each one repeats. */
+const schemaForModel = (schema: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => {
+  const { $schema: _dialect, ...constraints } = schema
+  return constraints
+}
+
 const refusedInputSchema = (refusal: ToolResult, operation: ModuleCapabilityDescriptor): Record<string, unknown> => {
   if ((refusal.data as { code?: unknown }).code !== 'invalid_request') return {}
-  const bytes = new TextEncoder().encode(JSON.stringify(operation.inputSchema)).byteLength
+  const inputSchema = schemaForModel(operation.inputSchema)
+  const bytes = new TextEncoder().encode(JSON.stringify(inputSchema)).byteLength
   return bytes <= MAX_REFUSAL_SCHEMA_BYTES
-    ? { inputSchema: operation.inputSchema }
+    ? { inputSchema }
     : { inputSchemaOmitted: `${bytes} bytes; read it with workspace_explore view=operations, operationIds ["${operation.id}"], includeInputSchema true` }
 }
 
@@ -262,8 +275,10 @@ const compactResource = (resource: ModuleResourceDescriptor) => {
 const textTerms = (value: string): ReadonlyArray<string> =>
   [...new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter(term => term.length >= 2) ?? [])]
 
-const matchedTextTerms = (operation: ModuleCapabilityDescriptor, query: string): ReadonlyArray<string> => {
-  const haystackTerms = new Set(textTerms([
+/** The words an operation is found by: its name (id and title) and everything said about it. */
+const operationTerms = (operation: ModuleCapabilityDescriptor): { readonly name: ReadonlySet<string>; readonly all: ReadonlySet<string> } => ({
+  name: new Set(textTerms(`${operation.id} ${operation.title}`)),
+  all: new Set(textTerms([
     operation.id,
     operation.title,
     operation.description,
@@ -271,12 +286,43 @@ const matchedTextTerms = (operation: ModuleCapabilityDescriptor, query: string):
     operation.kind,
     operation.risk,
     ...(operation.searchTerms ?? []),
-  ].join(' ')))
-  return textTerms(query).filter(term => haystackTerms.has(term))
-}
+  ].join(' '))),
+})
 
-const textMatchScore = (operation: ModuleCapabilityDescriptor, query: string): number =>
-  matchedTextTerms(operation, query).length
+/**
+ * An operation id passed as a query names that operation, exactly as
+ * `operationIds` does. Read as words it would split into its namespace
+ * ("world", "process", "plant", …), which every operation of its Pack shares,
+ * and match them all: five ids as queries returned 30 operations with their
+ * schemas, 52 KB re-sent on every later model call of the turn.
+ */
+const isOperationIdQuery = (query: string): boolean => capabilityIdSchema.safeParse(query).success
+
+// Okapi BM25's customary constants: how fast a match saturates, and how much
+// an operation's vocabulary size discounts it.
+const BM25_K1 = 1.2
+const BM25_B = 0.75
+
+/**
+ * How well a query's words match a field of an operation, by Okapi BM25 over
+ * the operations being searched: a rare word says a lot about which operation
+ * is meant, a word every candidate shares ("world", a Pack's own name) almost
+ * nothing, and a match in a large vocabulary (an operation listing every
+ * action it invokes) less than one in a short description. An operation named
+ * for the words asked for ranks first, then by all it says. Ranking only: any
+ * matched word still selects an operation.
+ */
+const bm25 = (operations: ReadonlyArray<ReadonlySet<string>>): ((terms: ReadonlySet<string>, matched: ReadonlyArray<string>) => number) => {
+  const frequency = new Map<string, number>()
+  for (const terms of operations) for (const term of terms) frequency.set(term, (frequency.get(term) ?? 0) + 1)
+  const averageSize = operations.reduce((sum, terms) => sum + terms.size, 0) / Math.max(1, operations.length)
+  const idf = (term: string): number => {
+    const count = frequency.get(term) ?? 0
+    return Math.log((operations.length - count + 0.5) / (count + 0.5) + 1)
+  }
+  return (terms, matched) => matched.reduce((sum, term) =>
+    sum + idf(term) * (BM25_K1 + 1) / (1 + BM25_K1 * (1 - BM25_B + BM25_B * terms.size / averageSize)), 0)
+}
 
 const targetInputSchema = z.discriminatedUnion('kind', [
   z.object({kind:z.literal('resource'),ref:workspaceResourceReferenceSchema}).strict(),
@@ -286,12 +332,12 @@ const exploreInputSchema = z.object({
   view:z.enum(['scope','operations']).default('scope').describe('scope lists exact Resources and Definition revisions; operations searches their available reads and changes. Each view has its own pagination.'),
   target:targetInputSchema.optional().describe('An exact discovered target, unchanged. Omit to search across the current Room Scope; browser focus does not widen scope.'),
   moduleId:z.string().optional(), resourceType:z.string().optional(), definitionType:z.string().optional(),
-  queries:z.array(z.string().trim().min(1).max(256)).max(8).default([]).describe('Alternative plain-language operation searches, ranked by word overlap. Searches operation descriptions, not asset names or live state. Use view=operations.'),
+  queries:z.array(z.string().trim().min(1).max(256)).max(8).default([]).describe('Alternative plain-language operation searches, ranked by word overlap. Searches operation descriptions, not asset names or live state. A query that is an operation ID is read as that exact ID. Use view=operations.'),
   operationIds:z.array(capabilityIdSchema).max(24).default([]).describe('Exact known operation IDs. May be combined with queries; results matching either are returned, with exact IDs first.'),
   includeInputSchema:z.boolean().default(false).describe('Include callable input schemas for returned operations. Request with a focused search or known IDs; omitted by default for compact browsing.'),
   includeOutputSchema:z.boolean().default(false).describe('Include output schemas when needed to interpret results. Usually leave off; these can be large.'),
   offset:z.number().int().nonnegative().default(0).describe('Continue the same view and filters from this result offset.'),
-  limit:z.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE).describe('Maximum entries in this page. Use a small page when requesting detailed schemas; hasMore indicates additional results.'),
+  limit:z.number().int().min(1).max(MAX_PAGE_SIZE).optional().describe(`Maximum entries in this page; hasMore indicates additional results. Default ${DEFAULT_PAGE_SIZE}, or with schemas ${DEFAULT_SCHEMA_PAGE_SIZE} plus every exact ID asked for.`),
 }).strict()
 const callInputSchema = z.object({
   calls:z.array(z.object({
@@ -331,15 +377,16 @@ export const workspaceCallResultForModel = (result: ToolResult): ToolResult => {
   }) } }
 }
 
-export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDeps): ReadonlyArray<Tool> => {
+// The Workspace's published catalogs, read through the Host. Revalidated on
+// every access: a parsed operation catalog is reused only when the Host
+// confirms the exact same content; membership and policy stay live.
+const createCatalogReader = (deps: WorkspaceCapabilityToolsDeps) => {
   const fetchImpl = deps.fetchImpl ?? fetch
   const workspacePath = `${origin(deps.hostBaseUrl)}/api/workspaces/${encodeURIComponent(deps.workspaceId)}`
-  // Revalidate on every access. Only reuse a parsed operation catalog when
-  // the Host confirms the exact same content; membership/policy stays live.
   let operationCache: { etag: string; catalog: ReturnType<typeof workspaceCapabilityCatalogSchema.parse> } | undefined
-  const loadOperations = async (context: ToolContext) => {
+  const loadOperations = async (signal: AbortSignal | undefined) => {
     const cached = operationCache
-    const response = await getJson(fetchImpl, catalogPath(workspacePath, 'capabilities'), context.signal, cached?.etag)
+    const response = await getJson(fetchImpl, catalogPath(workspacePath, 'capabilities'), signal, cached?.etag)
     if (response.status === 304) {
       if (!cached) throw new Error('Host returned 304 without a cached operation catalog')
       return cached.catalog
@@ -353,21 +400,57 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
     operationCache = etag ? {etag,catalog} : undefined
     return catalog
   }
-
-  const loadCatalogs = async (context: ToolContext) => {
+  const loadPublished = async (signal: AbortSignal | undefined) => {
     const [definitionResponse, resourceResponse, operations] = await Promise.all([
-      getJson(fetchImpl, catalogPath(workspacePath, 'definitions'), context.signal),
-      getJson(fetchImpl, catalogPath(workspacePath, 'resources'), context.signal),
-      loadOperations(context),
+      getJson(fetchImpl, catalogPath(workspacePath, 'definitions'), signal),
+      getJson(fetchImpl, catalogPath(workspacePath, 'resources'), signal),
+      loadOperations(signal),
     ])
     for (const response of [definitionResponse, resourceResponse]) {
       if (!response.ok) throw await readHostError(response)
     }
-    const catalogs = {
+    return {
       definitions: workspaceDefinitionCatalogSchema.parse(await definitionResponse.json()),
       resources: workspaceResourceCatalogSchema.parse(await resourceResponse.json()),
       operations,
     }
+  }
+  return { fetchImpl, workspacePath, loadPublished }
+}
+
+/**
+ * The operations within a Room's Scope whose results publish an embedded view
+ * an Agent can present with its answer, as their owning Module declares it
+ * (the descriptor's `publishes` marker), never by a known operation id. A
+ * Room whose Scope reaches none cannot be shown a display.
+ */
+export const createViewPublisherLookup = (deps: WorkspaceCapabilityToolsDeps) => {
+  const reader = createCatalogReader(deps)
+  return async (roomId: string, signal?: AbortSignal): Promise<ReadonlyArray<CapabilityId>> => {
+    const scope = deps.getRoomScope(roomId)
+    if (scope === undefined) throw new Error(`Room ${roomId} has no valid scope`)
+    const catalogs = await (async () => {
+      try { return await reader.loadPublished(signal) }
+      catch (error) {
+        // The Host refusal arrives as a tool failure; this lookup is not a tool.
+        if (error && typeof error === 'object' && 'success' in error) throw new Error((error as ToolResult).error ?? 'Workspace Host request failed')
+        throw error
+      }
+    })()
+    const resolved = resolveScope(scope, catalogs.resources.resources, catalogs.definitions.definitions)
+    const reachable = new Set(resolved.resources.flatMap(resource => resource.capabilityIds))
+    return catalogs.operations.capabilities
+      .filter(operation => operation.publishes?.includes('embedded-view') === true && reachable.has(operation.id))
+      .map(operation => operation.id)
+  }
+}
+
+export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDeps): ReadonlyArray<Tool> => {
+  const { fetchImpl, workspacePath, loadPublished } = createCatalogReader(deps)
+
+  const loadCatalogs = async (context: ToolContext) => {
+    const catalogs = await loadPublished(context.signal)
+    const { operations } = catalogs
     if (!context.comparison) return catalogs
     const captured = context.comparison
     const liveScope = requireRoomScope(context, deps)
@@ -428,7 +511,9 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
         const moduleId = optionalFilter(params.moduleId) === undefined ? undefined : moduleIdSchema.parse(params.moduleId)
         const resourceType = optionalFilter(params.resourceType) === undefined ? undefined : resourceTypeSchema.parse(params.resourceType)
         const definitionType = optionalFilter(params.definitionType) === undefined ? undefined : definitionTypeSchema.parse(params.definitionType)
-        const { operationIds, queries, offset, limit } = params
+        const { offset } = params
+        const queries = params.queries.filter(query => !isOperationIdQuery(query))
+        const operationIds = [...new Set([...params.operationIds, ...params.queries.filter(isOperationIdQuery)])]
 
         const catalogs = await loadCatalogs(context)
         const currentScope = requireRoomScope(context, deps)
@@ -464,14 +549,41 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
           : new Set(target.kind === 'resource'
               ? catalogs.resources.resources.find(resource => referenceKey(resource.ref) === referenceKey(target.ref))?.capabilityIds ?? []
               : catalogs.definitions.definitions.find(definition => referenceKey(definition.ref) === referenceKey(target.ref))?.capabilityIds ?? [])
-        const score = (operation: ModuleCapabilityDescriptor): number => queries.reduce((best, query) => Math.max(best, textMatchScore(operation, query)), 0)
-        const noSelector = operationIds.length === 0 && queries.length === 0
-        const operations = catalogs.operations.capabilities
+        const candidates = catalogs.operations.capabilities
           .filter(operation => relevantIds.has(operation.id))
           .filter(operation => moduleId === undefined || operation.moduleId === moduleId)
-          .filter(operation => noSelector || exactIds.has(operation.id) || score(operation) > 0)
           .filter(operation => target === undefined || applicabilityFailure(operation, target, catalogs.resources.resources, catalogs.definitions.definitions) === undefined)
-          .sort((left, right) => Number(exactIds.has(right.id)) - Number(exactIds.has(left.id)) || score(right) - score(left) || left.id.localeCompare(right.id))
+          .map(operation => ({ operation, terms: operationTerms(operation) }))
+        const nameRelevance = bm25(candidates.map(candidate => candidate.terms.name))
+        const relevance = bm25(candidates.map(candidate => candidate.terms.all))
+        const matches = new Map(candidates.map(({ operation, terms }) => [operation.id, queries.flatMap(query => {
+          const words = textTerms(query)
+          const matched = words.filter(term => terms.all.has(term))
+          return matched.length === 0 ? [] : [{
+            query, matched,
+            nameScore: nameRelevance(terms.name, words.filter(term => terms.name.has(term))),
+            score: relevance(terms.all, matched),
+          }]
+        })]))
+        const noSelector = operationIds.length === 0 && queries.length === 0
+        const byId = (left: ModuleCapabilityDescriptor, right: ModuleCapabilityDescriptor): number => left.id.localeCompare(right.id)
+        const exact = candidates.map(candidate => candidate.operation).filter(operation => exactIds.has(operation.id)).sort(byId)
+        // Each query is its own search: the page takes the best match of
+        // every query before the second best of any, so one broad query
+        // cannot crowd out what another one asked for.
+        const rankings = queries.map(query => candidates
+          .flatMap(({ operation }) => matches.get(operation.id)!.filter(match => match.query === query).map(match => ({ operation, ...match })))
+          .sort((left, right) => right.nameScore - left.nameScore || right.score - left.score || byId(left.operation, right.operation))
+          .map(entry => entry.operation))
+        const searched = Array.from({ length: Math.max(0, ...rankings.map(ranking => ranking.length)) }, (_, rank) =>
+          rankings.flatMap(ranking => ranking[rank] === undefined ? [] : [ranking[rank]]))
+          .flat()
+        const operations = noSelector
+          ? candidates.map(candidate => candidate.operation).sort(byId)
+          : [...new Set([...exact, ...searched])]
+        // An exact ID this Room cannot reach is named, never left to look like an empty search.
+        const unavailableOperationIds = operationIds.filter(id => !operations.some(operation => operation.id === id))
+        const limit = params.limit ?? (params.includeInputSchema ? Math.max(DEFAULT_SCHEMA_PAGE_SIZE, exactIds.size) : DEFAULT_PAGE_SIZE)
         const combined = view === 'scope'
           ? [...definitions.map(value => ({ kind: 'definition' as const, value })), ...resources.map(value => ({ kind: 'resource' as const, value }))]
           : operations.map(value => ({ kind: 'operation' as const, value }))
@@ -486,19 +598,21 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
           offset,
           returned: page.length,
           hasMore: offset + page.length < combined.length,
+          ...(view === 'operations' && unavailableOperationIds.length > 0 ? { unavailableOperationIds } : {}),
           definitions: page.filter(item => item.kind === 'definition').map(item => compactDefinition(item.value as ModuleDefinitionDescriptor)),
           resources: page.filter(item => item.kind === 'resource').map(item => compactResource(item.value as ModuleResourceDescriptor)),
           operations: page.filter(item => item.kind === 'operation').map(item => {
             const operation = item.value as ModuleCapabilityDescriptor
             const { id, inputSchema, outputSchema, searchTerms: _searchTerms, ...descriptor } = operation
-            const matchedTerms = [...new Set(queries.flatMap(query => matchedTextTerms(operation, query)))]
+            const matched = matches.get(id)!
+            const matchedTerms = [...new Set(matched.flatMap(match => match.matched))]
             return {
               ...descriptor,
               operationId: id,
-              ...(queries.length > 0 ? { matchedQueries: queries.filter(query => textMatchScore(operation, query) > 0) } : {}),
+              ...(queries.length > 0 ? { matchedQueries: matched.map(match => match.query) } : {}),
               ...(matchedTerms.length > 0 ? { matchedTerms } : {}),
-              ...(params.includeInputSchema === true ? { inputSchema } : {}),
-              ...(params.includeOutputSchema === true ? { outputSchema } : {}),
+              ...(params.includeInputSchema === true ? { inputSchema: schemaForModel(inputSchema) } : {}),
+              ...(params.includeOutputSchema === true ? { outputSchema: schemaForModel(outputSchema) } : {}),
             }
           }),
         } }
