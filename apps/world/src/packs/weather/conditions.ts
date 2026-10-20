@@ -1,5 +1,6 @@
 import type { IsoTimestamp } from '../../core/model/index.ts'
 import type { WeatherState, WeatherSurface, WeatherAtmosphere } from './model.ts'
+import { weatherQuantities } from './quantities.ts'
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value))
 const precipitationAddsWetness = (type: string): boolean => ['rain', 'freezing_rain', 'sleet', 'hail'].includes(type)
 const precipitationAddsSnow = (type: string): boolean => ['snow', 'sleet'].includes(type)
@@ -65,13 +66,22 @@ export const evolveSurface = (config: {
 }
 
 export type WeatherPresentationSeverity = 'normal' | 'notice' | 'adverse' | 'hazard'
-export const weatherPresentationSeverityForState = (state: WeatherState): WeatherPresentationSeverity =>
-  state.surface.ice > 0.55 || state.atmosphere.visibilityM < 800 || state.atmosphere.windSpeedMps > 25
-    ? 'hazard'
-    : state.surface.snow > 0.45 || state.surface.ice > 0.25 || state.atmosphere.visibilityM < 2000
-      ? 'adverse'
-      : state.atmosphere.precipitation.type !== 'none' ||
-          state.surface.wetness > 0.2 ||
-          state.surface.standingWater > 0.15
-        ? 'notice'
-        : 'normal'
+/** The severity ladder: a quantity (weatherQuantities id) past its limit raises a state to the rule's severity; observation thresholds read these rules. */
+export const weatherSeverityLadder: ReadonlyArray<{ readonly severity: Exclude<WeatherPresentationSeverity, 'normal'>; readonly quantity: string; readonly direction: 'low' | 'high'; readonly limit: number }> = [
+  { severity: 'hazard', quantity: 'ice', direction: 'high', limit: 0.55 },
+  { severity: 'hazard', quantity: 'visibilityM', direction: 'low', limit: 800 },
+  { severity: 'hazard', quantity: 'windSpeedMps', direction: 'high', limit: 25 },
+  { severity: 'adverse', quantity: 'snow', direction: 'high', limit: 0.45 },
+  { severity: 'adverse', quantity: 'ice', direction: 'high', limit: 0.25 },
+  { severity: 'adverse', quantity: 'visibilityM', direction: 'low', limit: 2000 },
+  { severity: 'notice', quantity: 'wetness', direction: 'high', limit: 0.2 },
+  { severity: 'notice', quantity: 'standingWater', direction: 'high', limit: 0.15 },
+]
+export const weatherRulePasses = (rule: (typeof weatherSeverityLadder)[number], value: number | string): boolean =>
+  typeof value === 'number' && (rule.direction === 'high' ? value > rule.limit : value < rule.limit)
+export const weatherPresentationSeverityForState = (state: WeatherState): WeatherPresentationSeverity => {
+  const value = (id: string): number | string => weatherQuantities.find((quantity) => quantity.id === id)!.value(state)
+  const reached = (severity: WeatherPresentationSeverity): boolean =>
+    weatherSeverityLadder.some((rule) => rule.severity === severity && weatherRulePasses(rule, value(rule.quantity)))
+  return reached('hazard') ? 'hazard' : reached('adverse') ? 'adverse' : state.atmosphere.precipitation.type !== 'none' || reached('notice') ? 'notice' : 'normal'
+}
