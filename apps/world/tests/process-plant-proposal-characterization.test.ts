@@ -107,12 +107,15 @@ const observe = async (): Promise<Facts> => {
       return Object.fromEntries(held.proposals.map((entry: any) =>
         [entry.proposal.id, proposalCard(entry.proposal, entry.review ?? null, listed.items.find((item: any) => item.id === entry.proposal.item), [], now)]))
     }
-    const expiries = async () => Object.fromEntries((await invoke(operator, 'world.process-plant.control.proposals', {})).proposals.map((entry: any) => [entry.proposal.id, entry.proposal.expiresAtElapsedMs]))
+    // Plant times count from the first proposal: a new Run plays until it is paused, so the Plant may have stepped once by then.
+    let firstProposedAt = 0
+    const expiries = async () => Object.fromEntries((await invoke(operator, 'world.process-plant.control.proposals', {})).proposals.map((entry: any) => [entry.proposal.id, entry.proposal.expiresAtElapsedMs - firstProposedAt]))
 
     // 10:00:00, at power: an AI agent proposes three operations.
     const block = (await propose('MOV-8000A', 0, 'Isolate the relief line with its block valve', 'PT-455')).commandId
     const msiv = (await propose('MSIV-A', 0, 'Isolate steam generator A', 'SG-A-LVL-NR')).commandId
     const pump = (await propose('CHG-PUMP-B', true, 'Start the standby charging pump', 'PT-455')).commandId
+    firstProposedAt = (await invoke(operator, 'world.process-plant.control.proposals', {})).proposals.find((entry: any) => entry.proposal.id === block).proposal.proposedAtElapsedMs
     const expiresAsRecorded = await expiries()
     const proposed = await cards()
     const agentDecides = { approve: await decide(agent, block, 'approve'), reject: await decide(agent, block, 'reject', 'Not now'), extend: await decide(agent, block, 'extend') }
@@ -186,7 +189,10 @@ const observe = async (): Promise<Facts> => {
         if (event.type !== 'interaction.signal.received' || !event.signal.type.startsWith('process-plant.proposal.')) return []
         const { proposalId, plantId: plant, closed, ...payload } = event.signal.payload
         expect(plant).toBe(plantId)
-        return [{ signal: event.signal.type.replace('process-plant.proposal.', ''), proposal: name(proposalId), ...payload, ...(closed === undefined ? {} : { closed: { ...closed, ...(closed.commandId === undefined ? {} : { commandId: 'the decision' }) } }) }]
+        return [{
+          signal: event.signal.type.replace('process-plant.proposal.', ''), proposal: name(proposalId), ...payload, expiresAtElapsedMs: payload.expiresAtElapsedMs - firstProposedAt,
+          ...(closed === undefined ? {} : { closed: { ...closed, atElapsedMs: closed.atElapsedMs - firstProposedAt, ...(closed.commandId === undefined ? {} : { commandId: 'the decision' }) } }),
+        }]
       }),
       stored: runtimeState.state.plants[0].operations.proposals.map((proposal: any) => ({
         proposal: name(proposal.id), status: proposal.status, reason: proposal.reason,

@@ -37,6 +37,7 @@ beforeAll(async () => {
   await plant.runTo(10_000)
   facts.leadAtPower = await lead()
   facts.atPower = await readAll()
+  facts.atPowerPlant = { mode: (await plant.invoke(plantOperator, 'world.process-plant.display.sample', { paths: ['core.powerRangePercent'] })).mode, alarms: (await plant.invoke(plantOperator, 'world.process-plant.alarms.status', {})).summary }
   facts.undeclared = await port.read({ refs: [`${plant.plantId}#core.noSuchSignal`] })
   // The grid's frequency held at 48.8 Hz: the 30-minute underfrequency turbine trip runs down.
   const frequency = `${plant.plantId}#offsiteGrid.frequencyHz`
@@ -58,9 +59,13 @@ afterAll(async () => { await plant.remove() })
 
 describe('plant observation read (P3)', () => {
   test('at power every declared value reads, good and neutral; an undeclared one is unknown', () => {
-    expect(facts.atPower).toHaveLength(refs.length)
-    expect(facts.atPower.filter((observation: Observation) => observation.priority !== 'none' || observation.quality !== 'good').map(path)).toEqual([])
-    expect(facts.atPower.every((observation: Observation) => observation.clock === 'simulation' && observation.at === '2026-01-01T10:00:10.000Z')).toBe(true)
+    // On a failure the evidence prints: each value off neutral or off good with what set it, the plant's mode and alarms, and the plant time.
+    const evidence = `plant at 10:00:10: ${JSON.stringify(facts.atPowerPlant)}`
+    expect(facts.atPower, evidence).toHaveLength(refs.length)
+    expect(facts.atPower.filter((observation: Observation) => observation.priority !== 'none' || observation.quality !== 'good')
+      .map((observation: Observation) => ({ ref: path(observation), value: observation.value, priority: observation.priority, quality: observation.quality, why: observation.why, at: observation.at })), evidence).toEqual([])
+    expect(facts.atPower.filter((observation: Observation) => observation.clock !== 'simulation' || observation.at !== '2026-01-01T10:00:10.000Z')
+      .map((observation: Observation) => ({ ref: path(observation), at: observation.at, clock: observation.clock })), evidence).toEqual([])
     expect(facts.undeclared).toMatchObject({ observations: [], unknown: [`${plant.plantId}#core.noSuchSignal`] })
   })
 
