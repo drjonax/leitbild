@@ -249,7 +249,7 @@ export const GUIDE_PAGES: ReadonlyArray<GuidePage> = [
       },
       {
         id: 'limits', title: 'Limits and data sources',
-        body: 'Leitbild’s models are for research and training. The PWR is not a qualified model of a real plant, the grid is built from open data rather than today’s grid, and the dispatch exercises are fictional. Data comes from OpenStreetMap, NVE, Elhub, Kartverket, SSB and Energy-Charts (ENTSO-E), among others; Leitbild’s code and documentation are MIT-licensed.',
+        body: 'Leitbild’s models are for research and training: the PWR is not a qualified plant model, the grid uses open data, not today’s grid, and dispatch exercises are fictional. Data: OpenStreetMap, NVE, Elhub, Kartverket, SSB, Energy-Charts (ENTSO-E) and others. Leitbild’s code and documentation are MIT-licensed; its plant displays bundle OpenBridge components under the AGPL.',
         media: null,
         wiki: [wiki('index.md', 'Leitbild'), wiki('world/packs/electric-grid/model-and-data.md', 'Model and data'), wiki('data-credits.md', 'Map and data credits')],
       },
