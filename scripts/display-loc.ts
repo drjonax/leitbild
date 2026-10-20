@@ -37,7 +37,7 @@ export const displayScope: ReadonlyArray<ScopeGroup> = [
   { name: 'Agents operator-displays skill', include: ['apps/agents/skills/operator-displays/**'] },
   { name: 'Host view relay', include: ['apps/leitbild/src/ui/view-relay.ts'] },
   { name: 'Display contracts', include: ['packages/contracts/src/embedded-views.ts', 'packages/contracts/src/embedded-view-route.ts'] },
-  { name: 'Display probe script', include: ['scripts/agent-display-probe.ts'] },
+  { name: 'Display probe script', include: ['scripts/agent-display-probe.ts', 'scripts/display-eval/probe.ts'] },
 ]
 
 /** Phase ceilings in lines (§2.10). The peak is split by ADR: old code with its replacements, plus new code with no predecessor. */
