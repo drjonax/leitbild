@@ -461,14 +461,14 @@ const untypedObjectPaths = (schema: unknown, path = '$'): ReadonlyArray<string> 
 
 describe('electric grid query Capabilities', () => {
   test('publish typed output schemas with properties for every known shape', () => {
-    for (const capability of electricGridQueryCapabilities) {
+    // System-audience observation Capabilities carry the core shapes (assembly checks them) and never reach a catalog.
+    for (const capability of electricGridQueryCapabilities.filter(candidate => candidate.audience !== 'system')) {
       const schema = capabilityJsonSchema(capability.output) as { readonly type?: string; readonly properties?: Record<string, unknown> }
       expect(schema.type).toBe('object')
       expect(Object.keys(schema.properties ?? {}).length).toBeGreaterThan(0)
       const untyped = untypedObjectPaths(schema)
       expect(untyped).toEqual(capability.id === 'world.electric-grid.catalog.list' ? ['$.properties.operatingPointOverridesSchema'] : [])
-      // System-audience observation Capabilities never reach a catalog, so nothing searches them.
-      if (capability.audience !== 'system') expect(capability.searchTerms?.length ?? 0).toBeGreaterThanOrEqual(6)
+      expect(capability.searchTerms?.length ?? 0).toBeGreaterThanOrEqual(6)
     }
     expect(electricGridQueryCapabilities.map(capability => capability.id)).toContain('world.electric-grid.islands.list')
   })
