@@ -52,9 +52,6 @@ const capabilityContract = (capability: PackRuntimeAdapter['capabilities'][numbe
   outputSchema: capabilityJsonSchema(capability.output),
 })
 
-const sameSchema = (a: Parameters<typeof capabilityJsonSchema>[0], b: Parameters<typeof capabilityJsonSchema>[0]): boolean =>
-  JSON.stringify(capabilityJsonSchema(a)) === JSON.stringify(capabilityJsonSchema(b))
-
 /** Refuses an observation contribution whose categories or Capabilities are not the core's (T25). */
 const assertObservationContribution = (pack: WorldPack, adapters: ReadonlyArray<PackRuntimeAdapter>): void => {
   const observation = pack.observation
@@ -78,10 +75,11 @@ const assertObservationContribution = (pack: WorldPack, adapters: ReadonlyArray<
       const capability = adapter.capabilities.find(candidate => candidate.id === capabilityId)
       const shape = observationShapes[kind]
       if (!capability) throw new Error(`Pack Runtime ${adapter.id} lacks observation ${kind} Capability ${capabilityId}`)
-      if (capability.kind !== 'query' || capability.risk !== 'read' || capability.audience !== 'system' || capability.inspectObjectIds === undefined) {
-        throw new Error(`Observation Capability ${capabilityId} must be a system-audience read query that names the objects it inspects`)
+      if (capability.kind !== 'query' || capability.risk !== 'read' || capability.audience !== 'system') {
+        throw new Error(`Observation Capability ${capabilityId} must be a system-audience read query`)
       }
-      if (!sameSchema(capability.input, shape.input) || !sameSchema(capability.output, shape.output)) {
+      // The core's own schema and inspect rule instances, so the Run's parse is the core validation (defineObservationCapability).
+      if (capability.input !== shape.input || capability.output !== shape.output || capability.inspectObjectIds !== shape.inspectObjectIds) {
         throw new Error(`Observation Capability ${capabilityId} differs from the core ${kind} shape`)
       }
     }

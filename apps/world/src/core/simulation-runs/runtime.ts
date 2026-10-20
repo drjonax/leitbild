@@ -5,12 +5,13 @@ import type { RunHistorianStatus } from '../../features/historian/policy.ts'
 import { recordingSeriesQuerySchema, type RecordingPage } from '../model/recording.ts'
 import { prepareProcedureCommand } from '../../features/procedures/run-state.ts'
 import { createProcedureObservationPort,type ProcedureObservationPort } from '../../features/procedures/pack-observations.ts'
+import { createObservationCache, createObservationPort, type ObservationPort } from '../../features/displays/observation/port.ts'
 import { createProcedureSourceService,type ProcedureSourceService, type ProcedureEvidenceRequest, type ProcedureEvidence } from '../../features/procedures/source.ts'
 import type { CommandOrigin,PackRuntimeConnection,PackRuntimeEmission,PackRuntimeEvent,PackRuntimeHealth,PackRuntimeRealtimeInput,PackRuntimeRealtimeMessage,SimulationCapability } from '../../simulation/protocol.ts'
 import type { AgentRestrictions,RunRoles,ScenarioSide,CommandEnvelope,CommandResult,EventId,InteractionEffect,InteractionHandler,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,ProcedureCatalog,ProcedureDocument,ProcedureId,ProcedureSourceId,Provenance,RecordedSample,RecordingProfileDescriptor,RecordingSeriesDescriptor,RecordingSeriesQuery,ScenarioExecutionState,ScenarioRecordingSelection,ScenarioTimeline,ScenarioTimelineAction,ScenarioTimelineCue,SimulationClockState,SimulationClockUpdate,SimulationRunEvent,SimulationRunId } from '../model/index.ts'
 import { procedureObservationUpdatedEventSchema, objectIdSchema, actorIdSchema,agentRestrictionsSchema,commandEnvelopeSchema,deleteObjectCommandKind,deleteObjectPayloadSchema,interactionEffectSchema,interactionSignalSchema,isSideView,notificationIdSchema,nowIso,sidedObjectAudienceIssue,simulationClockUpdateSchema,type AudienceIssue } from '../model/index.ts'
 import { createSimulationClock,type SimulationClock } from '../model/time.ts'
-import type { PackProcedureContribution,PackWikiRef } from '../packs/protocol.ts'
+import type { PackObservationContribution,PackProcedureContribution,PackWikiRef } from '../packs/protocol.ts'
 import type { ScenarioRevisionId } from '../scenarios/library.ts'
 import { canIssueCommand,type Actor } from './actors.ts'
 import { assertRunCapabilityAllowed,isAudienceRefusal,roleGateRefusal,roleViewNotSupportedRefusal,viewerForActor,type RoleGateRefusal } from './role-gates.ts'
@@ -88,6 +89,8 @@ export interface SimulationRunRuntime {
    * contribution, read as `actor` so that actor's restrictions apply.
    */
   readonly procedureObservations: (actor: Actor, plantId: string) => ProcedureObservationPort
+  /** Pack observation content (declarations, values, topology), read lazily as `actor`. */
+  readonly observations: (actor: Actor) => ObservationPort
   readonly publishInteractionSignal: (signal: InteractionSignal, provenance: Provenance) => Promise<void>
   readonly metrics: () => SimulationRunRuntimeMetricsSnapshot
   readonly health: () => ReadonlyArray<PackRuntimeHealth>
@@ -183,6 +186,8 @@ export const createSimulationRunRuntime = async (config: {
   readonly procedureSourceService?: ProcedureSourceService
   /** The procedure contribution of the Pack that owns an object, where that Pack offers one. */
   readonly procedureProvider?: (object: OperationalObject) => PackProcedureContribution | undefined
+  /** The observation contribution of the Pack that owns an object, where it declares the object's category. */
+  readonly observationProvider?: (object: OperationalObject) => PackObservationContribution | undefined
   /** Wall-time transport health bound; never a physical qualification duration. */
   readonly observationAcquisitionTimeoutMs?: number
   readonly historian?: RunHistorian
@@ -1430,19 +1435,29 @@ export const createSimulationRunRuntime = async (config: {
   // An AI agent's command is journaled as the AI's, not as an operator's (plan-final S3).
   const commandSourceOf = (actor: Actor): Provenance['source'] => actor.role === 'ai_agent' ? 'ai' : 'operator'
 
-  const invokeCapability = async (
-    actor: Actor,
-    invocation: SimulationRunCapabilityInvocation,
-  ): Promise<SimulationRunCapabilityInvocationResult> => {
-    assertRunCapabilityAllowed(runRoles, actor, invocation.capabilityId)
+  // The gates every caller passes before a Capability runs, public or as
+  // admitted by World core; restrictions and the viewer stamp follow in
+  // invokeCapabilityThroughRuntime.
+  const admit = (actor: Actor, capabilityId: string): void => {
+    assertRunCapabilityAllowed(runRoles, actor, capabilityId)
     // Deny by default: a side view reaches only Capabilities of role-aware
     // Packs, which answer within its picture. World's own operations and any
     // other Pack's would show it truth.
     const viewer = viewerForActor(runRoles, actor)
     if (viewer !== undefined && isSideView(viewer.sees)) {
-      const packId = runtimeCapabilities.get(invocation.capabilityId)?.packId
-      if (packId === undefined || !roleAwarePackIds.has(packId)) throw roleViewNotSupportedRefusal(`Capability ${invocation.capabilityId}`)
+      const packId = runtimeCapabilities.get(capabilityId)?.packId
+      if (packId === undefined || !roleAwarePackIds.has(packId)) throw roleViewNotSupportedRefusal(`Capability ${capabilityId}`)
     }
+  }
+
+  const invokeCapability = async (
+    actor: Actor,
+    invocation: SimulationRunCapabilityInvocation,
+  ): Promise<SimulationRunCapabilityInvocationResult> => {
+    if (runtimeCapabilities.get(invocation.capabilityId)?.capability.audience === 'system') {
+      throw Object.assign(new Error(`Capability ${invocation.capabilityId} is World's own and not offered to callers`), { code: 'capability_not_public', status: 404 })
+    }
+    admit(actor, invocation.capabilityId)
     // Generic object deletion is a short canonical mutation. Commit it inside
     // the execution queue so maximum pace cannot advance another slice between
     // validation and deletion. Pack cleanup follows the resulting core event.
@@ -1487,6 +1502,20 @@ export const createSimulationRunRuntime = async (config: {
       },
     })
   }
+
+  // Observation Capabilities run only here, admitted as the caller, from an exact execution boundary like any read.
+  const observationCache = createObservationCache()
+  const observations = (actor: Actor): ObservationPort => createObservationPort({
+    object: objectId => committedState.getObject(objectId),
+    provider: object => config.observationProvider?.(object),
+    cache: observationCache,
+    query: async (capabilityId, input) => {
+      if (runtimeCapabilities.get(capabilityId)?.capability.audience !== 'system') throw new Error(`not an observation Capability: ${capabilityId}`)
+      admit(actor, capabilityId)
+      await enqueueOperation(async () => {})
+      return (await invokeCapabilityThroughRuntime(actor, { capabilityId, input }, commandSourceOf(actor))).result
+    },
+  })
 
   const checkpointForCopy = async (): Promise<SimulationRunCopyCheckpoint> => await enqueueOperation(async () => {
     if (commandsInFlight.size > 0 || pendingCues > 0) throw Object.assign(
@@ -1667,6 +1696,7 @@ export const createSimulationRunRuntime = async (config: {
     procedureDocument: async (documentConfig) => await procedureSourceService.readDocument(documentConfig),
     procedureEvidence: async evidenceConfig => await procedureSourceService.readEvidence(evidenceConfig),
     procedureObservations,
+    observations,
     publishInteractionSignal: async (signal: InteractionSignal, provenance: Provenance): Promise<void> => await enqueueOperation(async () => {
         await enqueuePublish(async () => {
           await handleInteractionSignalNow(signal, provenance)

@@ -33,6 +33,9 @@ export const observationDeclarationSchema = z.object({
   const refs = declaration.observables.map(observable => observable.ref)
   if (new Set(refs).size !== refs.length) context.addIssue({ code: 'custom', message: 'duplicate observable ref' })
   if (refs.some(ref => refObjectId(ref) !== declaration.objectId)) context.addIssue({ code: 'custom', message: 'an observable belongs to the declaring object' })
+  // Labels are object-local; World qualifies them with the object's label (R25).
+  const labels = declaration.observables.map(observable => observable.label)
+  if (new Set(labels).size !== labels.length) context.addIssue({ code: 'custom', message: 'duplicate observable label' })
   const elements = declaration.elements.map(element => element.id)
   if (new Set(elements).size !== elements.length) context.addIssue({ code: 'custom', message: 'duplicate element id' })
 })

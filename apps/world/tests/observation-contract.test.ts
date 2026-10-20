@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { cardItemSchema, displayCardSchema } from '../src/core/observation/card.ts'
 import { defineObservationCapability, observationDeclarationSchema, observationShapes } from '../src/core/observation/capabilities.ts'
-import { observableSchema, observationSchema, quantitySchema, stampSchema, thresholdSchema, viewerSchema } from '../src/core/observation/model.ts'
+import { observableSchema, observationSchema, quantitySchema, quantityUnits, stampSchema, thresholdSchema, viewerSchema } from '../src/core/observation/model.ts'
 import {
   dashboardSchema, dashboardsFileSchema, displaySpecSchema, sectionSchema, selectorSchema, viewSchema,
 } from '../src/core/observation/spec.ts'
@@ -20,6 +20,18 @@ describe('observation model', () => {
   test('every stamp names its clock and accepts an offset', () => {
     expect(stampSchema.parse({ at: '2026-10-20T10:00:00+02:00', clock: 'wall' }).clock).toBe('wall')
     expect(stampSchema.safeParse({ at: '2026-10-20T08:00:00Z' }).success).toBe(false)
+  })
+
+  test('each quantity allows only its listed short ASCII unit codes', () => {
+    for (const [quantity, units] of Object.entries(quantityUnits)) {
+      expect(units.length).toBeGreaterThan(0)
+      for (const unit of units) expect(unit).toMatch(/^[\x21-\x7e]{0,8}$/)
+      expect(observableSchema.safeParse({ ...observable, quantity, unit: units[0] }).success).toBe(true)
+    }
+    expect(observableSchema.safeParse({ ...observable, unit: 'percent' }).success).toBe(false)
+    expect(observableSchema.safeParse({ ...observable, quantity: 'temperature', unit: '°C' }).success).toBe(false)
+    expect(observableSchema.safeParse({ ...observable, quantity: 'direction-from', unit: 'degrees FROM north' }).success).toBe(false)
+    expect(observableSchema.safeParse({ ...observable, quantity: 'state', unit: '' }).success).toBe(true)
   })
 
   test('quantities come from the fixed core list only', () => {
@@ -45,7 +57,7 @@ describe('observation model', () => {
 
   test('an observable defaults to no thresholds and may be unrecorded', () => {
     expect(observableSchema.parse(observable).thresholds).toEqual([])
-    expect(observableSchema.parse({ ...observable, series: null, valueType: 'duration', quantity: 'duration' }).series).toBeNull()
+    expect(observableSchema.parse({ ...observable, series: null, valueType: 'duration', quantity: 'duration', unit: 's' }).series).toBeNull()
     expect(observableSchema.safeParse({ ...observable, series: undefined }).success).toBe(false)
     expect(observableSchema.safeParse({ ...observable, thresholds: Array.from({ length: 13 }, (_, index) => ({ ...threshold, id: `t${index}` })) }).success).toBe(false)
   })
@@ -150,10 +162,11 @@ describe('card', () => {
 describe('observation Capabilities', () => {
   const declaration = { objectId: 'unit-2', revision: 'digest-1', observables: [observable] }
 
-  test('a declaration holds its own object\'s observables once, elements default to none', () => {
+  test('a declaration holds its own object\'s observables once, each label once, elements default to none', () => {
     expect(observationDeclarationSchema.parse(declaration).elements).toEqual([])
     expect(observationDeclarationSchema.safeParse({ ...declaration, observables: [observable, observable] }).success).toBe(false)
     expect(observationDeclarationSchema.safeParse({ ...declaration, objectId: 'unit-3' }).success).toBe(false)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, observables: [observable, { ...observable, ref: 'unit-2#SG-A-WR-LVL' }] }).success).toBe(false)
     const element = { id: 'sg-a', class: 'converter', label: 'Steam generator A' }
     expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [element, element] }).success).toBe(false)
   })

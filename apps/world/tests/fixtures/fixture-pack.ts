@@ -32,6 +32,10 @@ import {
 export const fixturePackId = 'fixture'
 export const fixtureRuntimeId = 'fixture.local'
 export const fixtureAdapterId = 'adapter:fixture.local' as AdapterId
+/** Units declare observations: speed and status, measured on an engine fed from a tank. */
+export const fixtureObservationIds = {
+  declarations: 'world.fixture.observation.declarations', read: 'world.fixture.observation.read', topology: 'world.fixture.observation.topology',
+} as const
 
 export const prioritySchema = z.enum(['low', 'normal', 'high'])
 
@@ -166,7 +170,7 @@ export const fixturePack: WorldPack = {
     version: '1.0.0',
     name: 'Fixture',
     description: 'Test-only units, sites and tasks: a unit assigned to a task moves to it in a straight line.',
-    contributions: ['runtime', 'recording', 'scenario', 'presentation'],
+    contributions: ['runtime', 'recording', 'scenario', 'presentation', 'observation'],
   }),
   runtime: {
     runtimes: [{ id: fixtureRuntimeId, version: '1.0.0', label: 'Local fixture runtime', kind: 'local', clock: 'simulation' }],
@@ -179,6 +183,10 @@ export const fixturePack: WorldPack = {
       { id: 'sites', label: 'Sites', emptyLabel: 'No sites', matches: object => typeOf(object) === 'site' },
     ],
     presentObject: object => presentFixtureObject(object),
+  },
+  observation: {
+    categories: ['units'], declarations: fixtureObservationIds.declarations, read: fixtureObservationIds.read,
+    topology: { family: 'flow', capability: fixtureObservationIds.topology },
   },
   scenarioConfigSchema: fixtureConfigSchema,
   validateScenarioConfig: fixtureConfigIssues,

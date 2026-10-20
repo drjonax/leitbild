@@ -21,7 +21,7 @@ import {
 import { createModuleCapabilityRegistry } from '@leitbild/module-runtime'
 import { mapSymbolsInput, mapSymbolsOutput, searchMapSymbols } from '../map-symbols/catalog.ts'
 import { z } from 'zod'
-import { capabilityJsonSchema } from '../../simulation/capabilities.ts'
+import { capabilityJsonSchema, isPublicCapability } from '../../simulation/capabilities.ts'
 import { isCapabilityRejection } from '../../simulation/capability-rejection.ts'
 import {
   isoTimestampSchema,
@@ -627,7 +627,7 @@ const runtimeCapabilityDescriptorsFor = (
   registry: SimulationRunRegistry,
 ): ReadonlyArray<ModuleCapabilityDescriptor> => {
   const byId = new Map<string, ModuleCapabilityDescriptor>()
-  for (const { capability } of registry.installedCapabilities) {
+  for (const { capability } of registry.installedCapabilities.filter(entry => isPublicCapability(entry.capability))) {
     const descriptor = runtimeDescriptorCache.get(capability) ?? moduleCapabilityCollectionSchema.parse({ capabilities: [{
       id: capability.id,
       moduleId: WORLD_MODULE_ID,
