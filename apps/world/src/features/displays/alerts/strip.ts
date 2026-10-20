@@ -44,7 +44,7 @@ const stripGroup = (key: string, order: number, members: ReadonlyArray<AlertRow>
   const attention = members.filter(row => row.alert.standing !== true)
   return {
     key,
-    label: members[0]!.groupLabel,
+    label: members[0]!.objectLabel,
     order,
     worst: worstOf((attention.length > 0 ? attention : members).map(row => row.priority)),
     counts: {

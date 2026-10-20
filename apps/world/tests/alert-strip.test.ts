@@ -3,7 +3,7 @@ import { alertStateSchema, type AlertState, type Priority } from '../src/core/mo
 import type { ObjectId, PackId } from '../src/core/model/ids.ts'
 import type { IsoTimestamp } from '../src/core/model/time.ts'
 import { annunciatorTiles } from '../src/features/displays/alerts/annunciator.ts'
-import { alertRows, groupKey, raisedWords, stateWords, type AlertObject } from '../src/features/displays/alerts/rows.ts'
+import { alertRows, raisedWords, stateWords, type AlertObject } from '../src/features/displays/alerts/rows.ts'
 import { alertStrip, type AlertStrip } from '../src/features/displays/alerts/strip.ts'
 
 // The alert read model and the strip's rules (plan v3.1 §2.7, architecture
@@ -36,7 +36,7 @@ describe('alert rows', () => {
     expect(rows.map(row => [row.key, row.state])).toEqual([
       ['plant:b|b1', 'active-unack'], ['plant:a|a1', 'active-unack'], ['plant:a|a2', 'returned-unack'],
     ])
-    expect(rows[0]).toMatchObject({ objectLabel: 'Label of plant:b', groupLabel: 'Label of plant:b', packId: 'plant', categoryId: 'unit' })
+    expect(rows[0]).toMatchObject({ objectLabel: 'Label of plant:b', packId: 'plant', categoryId: 'unit' })
   })
 
   test('an alert without a priority keeps priority null ("priority not declared"); a critical one never protects a group', () => {
@@ -68,11 +68,10 @@ describe('alert rows', () => {
     ])
   })
 
-  test('a subject group splits its object\'s alarms; it is headed by the label the Pack gives it, else the object\'s, never its id (R21)', () => {
+  test('a subject group splits its object\'s alarms; every group is headed by the object\'s label, never a group id (R21, R32)', () => {
     const objects = [object('grid:g', [alert('n', 'alarm', { subject: { group: 'island-north' } }), alert('s', 'alarm', { subject: { group: 'island-south' } }), alert('e', 'alarm', { subject: { element: 'bus-7' } })])]
-    const rows = alertRows(objects, () => ({ label: 'Grid', categoryId: 'grid', groupLabels: { 'island-north': 'North island' } }))
-    expect(rows.map(row => [groupKey(row), row.groupLabel])).toEqual([['grid:g|island-north', 'North island'], ['grid:g|island-south', 'Grid'], ['grid:g', 'Grid']])
-    expect(alertStrip(rows, { maxRows: 6 }).groups.map(group => group.key)).toEqual(['grid:g', 'grid:g|island-north', 'grid:g|island-south'])
+    const strip = alertStrip(alertRows(objects, () => ({ label: 'Grid', categoryId: 'grid' })), { maxRows: 6 })
+    expect(strip.groups.map(group => [group.key, group.label])).toEqual([['grid:g', 'Grid'], ['grid:g|island-north', 'Grid'], ['grid:g|island-south', 'Grid']])
   })
 })
 

@@ -2246,7 +2246,7 @@
         </section>
       {/if}
       {#if activePack}
-        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} />
+        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} coverRight={mapCameraPadding.right} />
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if runRoles && heldRoleIds}
