@@ -94,7 +94,7 @@ export const planChannels = (input: {
   const pitch: number[] = []
   const fine: boolean[] = []
   const offset: number[][] = []
-  const halfAllowed = profile.grid / 2 >= profile.pipe.outline + 4 && profile.grid / 2 >= profile.pipe.cornerRadius
+  const halfAllowed = profile.grid / 2 >= profile.pipe.outline + profile.pipe.trackGap && profile.grid / 2 >= profile.pipe.cornerRadius
   jogs.forEach((list, channel) => {
     const nets = [...new Set(list.map(entry => entry.net))].sort((a, b) => a - b)
     const pinsOf = new Map(nets.map(net => [net, list.filter(entry => entry.net === net).flatMap(entry => entry.pins)]))

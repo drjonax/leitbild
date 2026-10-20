@@ -51,7 +51,7 @@ const presentationForGrid = (object: OperationalObject): PackObjectPresentation 
     return {
       categoryId: 'electric-grids',
       icon: 'network',
-      color: '#64748b',
+      color: '#6e788c',
       summary: 'Invalid Grid data',
       status: packStatus('error', 'Invalid data'),
       fields: [packField('error', 'Error', 'Invalid electric-grid Pack data')],
@@ -61,7 +61,8 @@ const presentationForGrid = (object: OperationalObject): PackObjectPresentation 
   return {
     categoryId: 'electric-grids',
     icon: 'network',
-    color: projection.statusTone === 'error' ? '#dc2626' : projection.statusTone === 'working' ? '#d97706' : '#0f766e',
+    // One identity colour: the status word and indicator carry the tone; alert hues are kept for alerts (plan v3.1 §2.7, D9).
+    color: '#00878c',
     summary: projection.summary,
     status: packStatus(projection.statusTone, projection.statusLabel),
     fields: [
@@ -86,7 +87,7 @@ export const electricGridPackView: WorldPackView = {
     version: '1.0.0',
     name: 'Electric Grid',
     description: 'Configurable electrical networks with topology, dispatch, dynamics, protection, and live operating views.',
-    contributions: ['runtime', 'recording', 'reference-data', 'scenario', 'presentation'],
+    contributions: ['runtime', 'recording', 'reference-data', 'scenario', 'presentation', 'observation'],
   }),
   runtime: {
     runtimes: [{ id: electricGridRuntimeId, version: '1.0.0', label: 'Local electric grid runtime', kind: 'local', clock: 'simulation' }],

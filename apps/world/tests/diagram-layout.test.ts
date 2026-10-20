@@ -137,7 +137,7 @@ type Drawn = DiagramProfile & DiagramRoom
 const profile: Drawn = {
   grid: 24,
   cell: 24,
-  pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5 },
+  pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5, trackGap: 4 },
   textClearance: 9,
   frameMargin: 1,
   flapHeight: 21,

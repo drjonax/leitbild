@@ -15,6 +15,7 @@ import {
   workspaceRoomScopeSchema,
   workspaceModuleManifestSchema,
   workspaceSchema,
+  publishedContextSchema,
 } from './index.ts'
 
 const now = '2026-08-29T17:00:00.000Z'
@@ -287,6 +288,22 @@ describe('dynamic Resource and Capability discovery', () => {
     expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, publishes: ['embedded-view', 'embedded-view'] })).toThrow('each publication once')
     expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, publishes: ['dashboard'] })).toThrow()
     expect(() => moduleCapabilityDescriptorSchema.parse({ ...compose, scope: { kind: 'workspace' }, publishes: ['embedded-view'] })).toThrow('about the Resource')
+  })
+
+  test('a context is published by a query about its Resource, as bounded text with its time and clock', () => {
+    const context = {
+      id: 'world.simulation-run.context', moduleId: 'world', kind: 'query', scope: { kind: 'resource', resourceType: 'world.simulation-run' },
+      title: 'Run context', description: 'The Run as the Assistant sees it.', risk: 'read', idempotent: true,
+      inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, publishes: ['context'],
+    } as const
+    expect(moduleCapabilityDescriptorSchema.parse(context).publishes).toEqual(['context'])
+    expect(() => moduleCapabilityDescriptorSchema.parse({ ...context, kind: 'command' })).toThrow('published by a query')
+    expect(() => moduleCapabilityDescriptorSchema.parse({ ...context, scope: { kind: 'workspace' } })).toThrow('published by a query')
+    const published = { context: { text: 'Halden · PAUSED', at: '2026-10-20T08:00:00.000Z', clock: 'simulation' } }
+    expect(publishedContextSchema.parse(published)).toEqual(published)
+    expect(publishedContextSchema.safeParse({ context: { ...published.context, text: 'x'.repeat(8_001) } }).success).toBe(false)
+    expect(publishedContextSchema.safeParse({ context: { ...published.context, clock: 'local' } }).success).toBe(false)
+    expect(publishedContextSchema.safeParse({ ...published, objects: [] }).success).toBe(false)
   })
 
   test('keeps the selected Resource in each invocation instead of Agent configuration', () => {

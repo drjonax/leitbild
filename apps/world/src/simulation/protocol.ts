@@ -158,6 +158,9 @@ export interface SimulationCapability {
   readonly input: z.ZodType
   readonly output: z.ZodType
   readonly schedulable?: boolean
+  /** `system`: called only by World core for a caller it admits (a Pack's observation Capabilities);
+   * never on the public path or in the AI catalog. */
+  readonly audience?: 'system'
   /** What a successful result publishes for other Modules to present (contracts resources.ts):
    * `embedded-view` where the result carries an embedded view publication in `view`. */
   readonly publishes?: ReadonlyArray<CapabilityPublication>

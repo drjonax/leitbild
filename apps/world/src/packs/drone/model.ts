@@ -99,7 +99,7 @@ export const droneCapabilitySchema = z.object({
 export type DroneCapability = z.infer<typeof droneCapabilitySchema>
 
 export const droneVisualProfileSchema = z.object({
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#2563eb'),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#4669ff'),
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#f8fafc'),
   scale: z.number().finite().positive().max(10).default(1),
   meshRef: z.string().min(1).max(240).optional(),
@@ -134,7 +134,7 @@ export const droneVehicleModelSchema = z.object({
   sensors: z.array(droneSensorSchema).default([]),
   payloads: z.array(dronePayloadSchema).default([]),
   visual: droneVisualProfileSchema.default({
-    color: '#2563eb',
+    color: '#4669ff',
     accentColor: '#f8fafc',
     scale: 1,
   }),
@@ -283,7 +283,7 @@ export const droneVehicleIdentitySchema = z.object({
   sensors: z.array(droneSensorSchema).default([]),
   payloads: z.array(dronePayloadSchema).default([]),
   visual: droneVisualProfileSchema.default({
-    color: '#2563eb',
+    color: '#4669ff',
     accentColor: '#f8fafc',
     scale: 1,
   }),
@@ -368,7 +368,7 @@ export const defaultDroneVehicleModels: ReadonlyArray<DroneVehicleModel> = [
     sensors: [
       { id: 'wide-camera', kind: 'electro_optical', label: 'Wide camera', rangeM: 650, fovDeg: 95, updateIntervalMs: 200, source: 'payload' },
     ],
-    visual: { color: '#2563eb', accentColor: '#f8fafc', scale: 1 },
+    visual: { color: '#4669ff', accentColor: '#f8fafc', scale: 1 },
   }),
   droneVehicleModelSchema.parse({
     id: 'native-gimbal-quad',
@@ -396,7 +396,7 @@ export const defaultDroneVehicleModels: ReadonlyArray<DroneVehicleModel> = [
     payloads: [
       { id: 'eo-gimbal', kind: 'camera_gimbal', label: 'EO gimbal', quantity: 1, source: 'payload' },
     ],
-    visual: { color: '#0f766e', accentColor: '#ecfeff', scale: 1.08 },
+    visual: { color: '#00878c', accentColor: '#ecfeff', scale: 1.08 },
   }),
   droneVehicleModelSchema.parse({
     id: 'native-interceptor-quad',
@@ -434,7 +434,7 @@ export const defaultDroneVehicleModels: ReadonlyArray<DroneVehicleModel> = [
         source: 'operator_declared',
       },
     ],
-    visual: { color: '#b91c1c', accentColor: '#fee2e2', scale: 1.05 },
+    visual: { color: '#b41e46', accentColor: '#fee2e2', scale: 1.05 },
   }),
   droneVehicleModelSchema.parse({
     id: 'incident-response-fixed-wing',
@@ -449,7 +449,7 @@ export const defaultDroneVehicleModels: ReadonlyArray<DroneVehicleModel> = [
       { id: 'incident-search', kind: 'reconnaissance', label: 'Broad-area incident search', level: 7, source: 'payload', tags: ['incident', 'search', 'casualty'] },
     ],
     sensors: [{ id: 'wide-area-eo', kind: 'electro_optical', label: 'Wide-area EO sensor', rangeM: 3_500, fovDeg: 110, updateIntervalMs: 1_000, source: 'payload', tags: ['incident', 'search'] }],
-    visual: { color: '#315f9b', accentColor: '#e7f0fb', scale: 1.15 },
+    visual: { color: '#6e788c', accentColor: '#e7f0fb', scale: 1.15 },
   }),
   droneVehicleModelSchema.parse({
     id: 'incident-response-quadcopter',
@@ -465,7 +465,7 @@ export const defaultDroneVehicleModels: ReadonlyArray<DroneVehicleModel> = [
     ],
     sensors: [{ id: 'incident-eo-ir', kind: 'electro_optical', label: 'EO/IR incident camera', rangeM: 900, fovDeg: 70, updateIntervalMs: 200, source: 'payload', tags: ['incident', 'casualty', 'detail'] }],
     payloads: [{ id: 'incident-camera', kind: 'camera_gimbal', label: 'Incident camera', quantity: 1, source: 'payload', tags: ['reconnaissance'] }],
-    visual: { color: '#b05d20', accentColor: '#fff3e8', scale: 1.08 },
+    visual: { color: '#af7350', accentColor: '#fff3e8', scale: 1.08 },
   }),
 ]
 

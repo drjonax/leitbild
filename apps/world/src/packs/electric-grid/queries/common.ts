@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { objectIdSchema } from '../../../core/model/index.ts'
+import { objectIdSchema, type ScenarioRecordingSelection } from '../../../core/model/index.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { defineSimulationQueryCapability } from '../../../simulation/capabilities.ts'
 import type { SimulationCapability } from '../../../simulation/protocol.ts'
@@ -11,8 +11,8 @@ export type GridRuntimes = ReadonlyMap<string, GridRuntimeInstance>
 /** One read-only Electric Grid query Capability and the handler answering it. */
 export interface ElectricGridQuery {
   readonly capability: SimulationCapability
-  /** The answer, or a Promise of it from a query that finishes on worker threads. */
-  readonly answer: (rawInput: unknown, grids: GridRuntimes) => unknown
+  /** The answer, or a Promise of it from a query that finishes on worker threads; `recording` is the Run's selection for this Pack. */
+  readonly answer: (rawInput: unknown, grids: GridRuntimes, recording?: ScenarioRecordingSelection) => unknown
 }
 
 export const assetKindSchema = z.enum(['bus', 'branch', 'generator', 'load', 'storage', 'hvdc'])

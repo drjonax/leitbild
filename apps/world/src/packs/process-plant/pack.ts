@@ -19,6 +19,7 @@ import {
   processPlantPwrReferenceModelRef,
 } from './plant-definitions.ts'
 import { processPlantRecordingProfiles, recordedPlantVariables } from './recording.ts'
+import { processPlantObservationCapabilityIds } from './observation/query.ts'
 import { processPlantSimAdapterId } from './sim/constants.ts'
 import { processPlantPackView } from './ui-pack.ts'
 
@@ -154,6 +155,7 @@ export const processPlantPack: WorldPack = {
     }, 0),
   },
   knowledge: { wikiRefs: [{ name: 'Process plant knowledge', url: '/wiki?path=world%2Fpacks%2Fprocess-plant%2Findex.md' }] },
+  observation: { categories: ['process-plants'], declarations: processPlantObservationCapabilityIds.declarations, read: processPlantObservationCapabilityIds.read },
   scenario: {
     itemSchemas: { plant: processPlantScenarioItemSchema },
     expandItem: (spec, context) => {

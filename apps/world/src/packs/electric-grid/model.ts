@@ -8,6 +8,8 @@ import {
 } from './config.ts'
 
 export const electricGridPackId = 'electric-grid' as const
+/** Credits for the Grid Model's licensed sources (NOTICE.md and each asset's provenance give the detail): the live map and topology views carry it. */
+export const gridModelAttribution = 'Grid model: © OpenStreetMap contributors (ODbL) · NVE (NLOD 2.0) · Elhub, Kartverket, SSB, Svenska kraftnät, ENTSO-E via Energy-Charts (CC BY 4.0)'
 
 const finiteNumber = z.number().finite()
 

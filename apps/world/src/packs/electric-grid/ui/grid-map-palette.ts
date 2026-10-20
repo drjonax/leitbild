@@ -1,11 +1,15 @@
 import type { PackMapLegend, PackMapTheme, PackMapThemedColor } from '../../../core/packs/reference-style.ts'
 
 // Reference-grid colours. Red, orange and amber are left free for live
-// overload and alarm states, which a later live layer draws above this one.
-// Pairwise CIEDE2000 distance between voltage classes is ≥ 16 in both themes
-// (132/110 kV: 26 light, 31 dark), and every tagged class has ≥ 4.2:1 contrast
-// against the base map background. Under red-green colour blindness the
-// violet/magenta/blue classes converge; line width carries voltage as well.
+// overload and alarm states, which a later live layer draws above this one,
+// and magenta for OpenBridge's emergency level, so 220 kV is olive (plan v3.1
+// D9), and every class is ≥ 15 (CIEDE2000) from OpenBridge's reserved alert
+// colours in the palettes its theme draws in. Pairwise CIEDE2000 distance
+// between voltage classes is ≥ 17 in both themes (132/110 kV: 19 light, 33
+// dark), and every tagged class has ≥ 4:1 contrast against the base map
+// background (132 kV light, the lowest, 4.0). Under red-green colour blindness
+// 300 and 132 kV (violet, blue) converge and 110 kV teal nears the ≤ 66 kV
+// grey; line width carries voltage as well.
 
 export type GridVoltageClassId = 'kv420' | 'kv300' | 'kv220' | 'kv132' | 'kv110' | 'kv66' | 'unknown'
 
@@ -18,9 +22,9 @@ export interface GridVoltageClass {
 /** Highest first. Bounds (kV, inclusive lower) are in `gridVoltageStops`. */
 export const gridVoltageClasses: ReadonlyArray<GridVoltageClass> = [
   { id: 'kv420', label: '420 kV and HVDC', color: { light: '#1b1f6b', dark: '#dbe1ff' } },
-  { id: 'kv300', label: '300 kV', color: { light: '#7a2fbf', dark: '#b88cff' } },
-  { id: 'kv220', label: '220 kV', color: { light: '#c2389e', dark: '#f07acb' } },
-  { id: 'kv132', label: '132 kV', color: { light: '#1f6fc2', dark: '#4f9cf0' } },
+  { id: 'kv300', label: '300 kV', color: { light: '#6c30c0', dark: '#b88cff' } },
+  { id: 'kv220', label: '220 kV', color: { light: '#6a7a00', dark: '#a3b84a' } },
+  { id: 'kv132', label: '132 kV', color: { light: '#097eb4', dark: '#0681cc' } },
   { id: 'kv110', label: '110 kV', color: { light: '#0b7b7b', dark: '#2fc4b8' } },
   { id: 'kv66', label: '66 kV and below', color: { light: '#737373', dark: '#8f8f8f' } },
   { id: 'unknown', label: 'Voltage not tagged', color: { light: '#a3a3a3', dark: '#5f6670' } },

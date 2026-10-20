@@ -1,9 +1,11 @@
-import type { IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
+import type { AlertState, IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
 import { processPlantElectricalPortsAt } from './electrical-ports.ts'
 import type { PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { VariablePath } from './graph/index.ts'
 import { formatQuantity } from './quantity-text.ts'
 import { overviewKeyValues, plantNowOf } from './ic/key-values.ts'
+import { annunciating, isStanding, pendingActions, plantAlarmPriority, plantAlertSeverity, ruleLimits, ruleWatches } from './ic/alarm-philosophy.ts'
+import type { CompiledProcessPlant } from './plant-compiler.ts'
 import {
   emptyProcessPlantProjection,
   processPlantField,
@@ -136,6 +138,78 @@ const reactorTripped = (plant: ProcessPlantRuntimeInstance): boolean => {
   })
 }
 
+const firstOutMembers = new WeakMap<CompiledProcessPlant['automation'], ReadonlyMap<string, number>>()
+
+// How many alarms and trips each first-out group annunciates: first among one says nothing (R21).
+const membersOf = (plant: CompiledProcessPlant, group: string): number => {
+  const known = firstOutMembers.get(plant.automation) ?? (() => {
+    const counts = new Map<string, number>()
+    for (const rule of plant.automation.rules) {
+      if (!rule.enabled) continue
+      for (const effect of rule.effects) {
+        if (effect.type === 'writeSignal' || effect.annunciator?.firstOutGroup === undefined) continue
+        counts.set(effect.annunciator.firstOutGroup, (counts.get(effect.annunciator.firstOutGroup) ?? 0) + 1)
+      }
+    }
+    return counts
+  })()
+  firstOutMembers.set(plant.automation, known)
+  return known.get(group) ?? 0
+}
+
+// Who an actor id names, by the kind in it: an AI agent, the Run itself (its scenario timeline), or a person.
+const actorKind = (actorId: string): NonNullable<AlertState['acknowledgedBy']> => {
+  const kind = actorId.split(':')[1]
+  return kind === 'ai' ? 'ai' : kind === 'system' || kind === 'scenario-timeline' ? 'system' : 'person'
+}
+
+/**
+ * The unit's alarms and trips in the core alert slot (plan v3.1 §2.2, A2):
+ * those annunciating, and those returned to normal still unacknowledged, with
+ * their facets. Every field is a pure function of the persisted I&C state:
+ * `raisedAt` is the occurrence's plant time (`lastActiveElapsedMs`) at the Run
+ * time the Plant started, so an entry holds while its state does (A3).
+ */
+const alertsOf = (objectId: string, plant: ProcessPlantRuntimeInstance, simulationTime: IsoTimestamp): ReadonlyArray<AlertState> => {
+  const snapshot = plant.protection?.snapshot()
+  if (snapshot === undefined) return []
+  const compiled = plant.plant
+  const origin = Date.parse(simulationTime) - plant.runtime.advancedMs()
+  const elapsedMs = plant.runtime.elapsedMs()
+  const showing = annunciating(snapshot)
+  const pending = pendingActions(compiled, snapshot, elapsedMs)
+  const returned = [...snapshot.alarms, ...snapshot.trips]
+    .filter(lifecycle => !lifecycle.active && !lifecycle.acknowledged && lifecycle.phase === 'clearedUnacknowledged' && !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService)
+  return [...showing, ...returned].map(lifecycle => {
+    const priority = plantAlarmPriority(lifecycle.severity, lifecycle.annunciator?.priority)
+    const rule = compiled.automation.rules.find(candidate => candidate.id === lifecycle.ruleId)!
+    // The values it colours (ruleLimits, the read's own rule): the one it names, else the one state it watches.
+    const limits = ruleLimits(compiled, rule)
+    const watched = ruleWatches(compiled, rule)
+    const named = limits.length === 1 ? limits[0] : limits.length === 0 && watched.length === 1 && compiled.graph.signalBindingByPath.get(watched[0]!)?.published === true ? watched[0] : undefined
+    const group = lifecycle.annunciator?.firstOutGroup
+    return {
+      id: lifecycle.id,
+      kind: lifecycle.kind,
+      severity: plantAlertSeverity(lifecycle.severity),
+      message: lifecycle.title,
+      // A state saved without the plant time it came in leaves the clock out: "time unknown".
+      raisedAt: new Date(origin + (lifecycle.lastActiveElapsedMs ?? 0)).toISOString() as IsoTimestamp,
+      acknowledged: lifecycle.acknowledged,
+      ...(lifecycle.acknowledged && lifecycle.lastActorId !== undefined ? { acknowledgedBy: actorKind(lifecycle.lastActorId) } : {}),
+      ...(lifecycle.active ? {} : { returned: true as const }),
+      ...(lifecycle.latched ? { latched: true as const } : {}),
+      ...(lifecycle.active && isStanding(compiled, lifecycle, { all: showing, pending, elapsedMs, priority }) ? { standing: true as const } : {}),
+      ...(lifecycle.firstOut && group !== undefined && lifecycle.firstOutRank !== undefined && membersOf(compiled, group) > 1 ? { firstOut: { group, rank: lifecycle.firstOutRank } } : {}),
+      ...(lifecycle.annunciator?.equipmentId === undefined ? {} : { subject: { element: lifecycle.annunciator.equipmentId } }),
+      ...(named === undefined ? {} : { observable: `${objectId}#${named}` }),
+      ...(limits.length === 0 ? {} : { threshold: rule.id }),
+      priority,
+      ...(lifecycle.lastActiveElapsedMs === undefined ? {} : { clock: 'simulation' as const }),
+    }
+  })
+}
+
 const statusFor = (
   lifecycles: ReadonlyArray<ProcessPlantIcLifecycleState>,
 ): {
@@ -205,6 +279,7 @@ export const projectedProcessPlantUnit = (config: {
   return {
     ...config.object,
     revision: config.object.revision + 1,
+    alerts: [...alertsOf(String(config.object.id), plant, config.simulationTime)],
     operational: {
       ...config.object.operational,
       status: status.tone === 'ready' ? 'normal' : status.tone === 'error' ? 'critical' : 'degraded',
@@ -231,6 +306,7 @@ export const processPlantProjectionKey = (object: OperationalObject): string => 
     ? JSON.stringify({
         status: object.operational.status,
         priority: object.operational.priority,
+        alerts: object.alerts,
         projection: projection === undefined
           ? undefined
           : {
