@@ -22,6 +22,7 @@ import { createModuleCapabilityRegistry } from '@leitbild/module-runtime'
 import { mapSymbolsInput, mapSymbolsOutput, searchMapSymbols } from '../map-symbols/catalog.ts'
 import { z } from 'zod'
 import { capabilityJsonSchema, isPublicCapability } from '../../simulation/capabilities.ts'
+import { observablesSearchInputSchema, observablesSearchOutputSchema, searchObservables } from '../../features/displays/observation/search.ts'
 import { isCapabilityRejection } from '../../simulation/capability-rejection.ts'
 import {
   isoTimestampSchema,
@@ -1468,6 +1469,30 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
         limit: input.limit,
         objects: objects.slice(input.offset, input.offset + input.limit),
       } })
+    },
+  },
+  {
+    descriptor: {
+      id: 'world.simulation-run.observables.search',
+      moduleId: WORLD_MODULE_ID,
+      kind: 'query',
+      scope: { kind: 'resource', resourceType: 'world.simulation-run' },
+      title: 'Search Observables',
+      description: 'Finds measured values (observables), equipment elements and objects of every Pack in this Run by name, tag or ref; up to 8 queries, 8 matches each. Folds æ, ø and å. Each match gives its exact ref (objectId#signalId), tag, element and objectId. A bare object id lists its lead values first; objectId#tag-or-label resolves a qualified name. When nothing matches fully, each Pack suggests its nearest names. Filter by pack, presentation category or objectId; a Pack id is not an objectId.',
+      searchTerms: ['find signal', 'find tag', 'find value', 'which observable', 'search measurements'],
+      risk: 'read',
+      idempotent: true,
+      inputSchema: capabilityJsonSchema(observablesSearchInputSchema),
+      outputSchema: capabilityJsonSchema(observablesSearchOutputSchema),
+    },
+    invoke: async (registry, invocation) => {
+      const runtime = await registry.load(requireSimulationRunResource(invocation))
+      const input = observablesSearchInputSchema.parse(invocation.input)
+      const results = await searchObservables({
+        objects: runtime.snapshot().objects, denied: deniedInspectionSubjects(runtime, invocation), packs: runtime.packs(),
+        port: runtime.observations(buildSimulationRunActorForAccess(invocation.access)),
+      }, input.queries)
+      return json({ result: observablesSearchOutputSchema.parse({ results }) })
     },
   },
   {
