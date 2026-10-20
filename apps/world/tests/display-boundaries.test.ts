@@ -134,3 +134,56 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
     expect(probe('// a 24 px grid: profile.grid + 24')).toEqual([])
   })
 })
+
+// ELK runs on the server only (D6, elk-licence obligation 3; the built-UI scan
+// is built-ui-scan.test.ts): network.ts is the one module of any app or package
+// that imports elkjs, and no World UI module reaches it through value imports
+// (type-only imports are erased from bundles, so they may name its types).
+const NETWORK = join(src, 'features/displays/topology/network.ts')
+const repository = join(root, '../..')
+const valueImports = (source: string): ReadonlyArray<string> =>
+  [...source.matchAll(/(?:import|export)(\s+type\s)?[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]/g)]
+    .filter(match => match[1] === undefined).map(match => match[2] ?? match[3] ?? match[4]!)
+const resolveModule = (from: string, specifier: string): string | undefined => {
+  const target = resolve(dirname(from), specifier)
+  return [target, `${target}.ts`, `${target}.js`, join(target, 'index.ts')].find(path => existsSync(path) && statSync(path).isFile())
+}
+/** The chain of value imports by which `start` reaches `goal`, or null. */
+const importChain = (start: string, goal: string, seen: Set<string>): ReadonlyArray<string> | null => {
+  if (start === goal) return [goal]
+  if (seen.has(start) || !/\.(ts|js|svelte)$/.test(start)) return null
+  seen.add(start)
+  for (const specifier of valueImports(readFileSync(start, 'utf8')).filter(specifier => specifier.startsWith('.'))) {
+    const next = resolveModule(start, specifier)
+    const chain = next === undefined ? null : importChain(next, goal, seen)
+    if (chain !== null) return [start, ...chain]
+  }
+  return null
+}
+
+describe('ELK stays on the server (D6)', () => {
+  test('only features/displays/topology/network.ts imports elkjs, in every app and package', () => {
+    const trees = ['apps/world/src', 'apps/agents/src', 'apps/leitbild/src', ...readdirSync(join(repository, 'packages')).map(name => `packages/${name}/src`)]
+    const importers = trees.flatMap(tree => filesUnder(join(repository, tree)))
+      .filter(file => /\.(ts|svelte)$/.test(file) && !file.includes('/dist/') && valueImports(readFileSync(file, 'utf8')).some(specifier => specifier === 'elkjs' || specifier.startsWith('elkjs/')))
+      .map(file => relative(repository, file))
+    expect(importers).toEqual([relative(repository, NETWORK)])
+  })
+
+  test('no World UI module reaches network.ts through value imports', () => {
+    const seen = new Set<string>()
+    const chains = filesUnder(join(src, 'ui')).filter(file => /\.(ts|svelte)$/.test(file) && !file.includes('/dist/'))
+      .map(file => importChain(file, NETWORK, seen)).filter(chain => chain !== null).map(chain => chain.map(file => relative(src, file)).join(' -> '))
+    expect(chains).toEqual([])
+    expect(seen.size).toBeGreaterThan(100)
+  })
+
+  test('the ELK rule reads what it names', () => {
+    expect(valueImports('import ELK, { type ElkNode } from \'elkjs/lib/elk-api.js\'')).toEqual(['elkjs/lib/elk-api.js'])
+    expect(valueImports('import type { TopologyLayout } from \'../topology/network.ts\'')).toEqual([])
+    expect(valueImports('export { networkLayout } from \'./network.ts\'\nconst x = await import(\'elkjs\')\nimport \'./side-effect.ts\'')).toEqual(['./network.ts', 'elkjs', './side-effect.ts'])
+    const probe = join(src, 'features/displays/topology/probe.ts')
+    expect(importChain(join(src, 'features/displays/topology/network.ts'), NETWORK, new Set())).toEqual([NETWORK])
+    expect(resolveModule(probe, './network')).toBe(NETWORK)
+  })
+})
