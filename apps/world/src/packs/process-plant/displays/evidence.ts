@@ -19,7 +19,7 @@ import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMea
 import { COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, ratePerMinute, travelText, TREND_HISTORY_LIMIT, type TrendPoint } from './trend-reading.ts'
 import { listedControlsFor } from '../operations/instance-ports.ts'
 import { safetyFunctionCriteria, type SafetyFunctionCriterion } from './safety-criteria.ts'
-import { resolveEquipmentName } from './mimic/scope.ts'
+import { resolveEquipmentName } from '../equipment/names.ts'
 
 // The evidence a composed display carries besides what the agent chose: what
 // the Plant's model says bears on the question now, added by World and

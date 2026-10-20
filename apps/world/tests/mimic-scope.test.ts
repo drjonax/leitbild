@@ -7,7 +7,10 @@ import {
   type CompiledPlantGraph,
 } from '../src/packs/process-plant/index.ts'
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
-import { itemServices, resolveMimicScope, stubText, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import { resolveMimicScope } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
+import { itemServices } from '../src/packs/process-plant/equipment/circuits.ts'
+import { stubText } from '../src/packs/process-plant/displays/mimic/stub-words.ts'
 import { unpresentedKinds } from '../src/packs/process-plant/displays/mimic/presentation.ts'
 import { framingRules, itemBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/equipment/link-flow.ts'

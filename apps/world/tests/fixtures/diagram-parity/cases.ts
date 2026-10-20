@@ -22,7 +22,7 @@ import type { CompiledMimic } from '../../../src/packs/process-plant/displays/mi
 import { MIMIC_MAX_WIDTH } from '../../../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { presentationFor } from '../../../src/packs/process-plant/displays/mimic/presentation.ts'
 import { chatMimicProfile } from '../../../src/packs/process-plant/displays/mimic/profiles.ts'
-import type { MimicIntent } from '../../../src/packs/process-plant/displays/mimic/scope.ts'
+import type { MimicIntent } from '../../../src/packs/process-plant/displays/mimic/mimic-model.ts'
 
 const intents = JSON.parse(readFileSync(new URL('./intents.json', import.meta.url), 'utf8')) as {
   readonly probe: ReadonlyArray<{ readonly intent: MimicIntent; readonly seenIn: ReadonlyArray<string> }>

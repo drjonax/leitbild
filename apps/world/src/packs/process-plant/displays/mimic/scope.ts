@@ -1,29 +1,13 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink } from '../../graph/index.ts'
+import type { MimicIntent } from './mimic-model.ts'
 import { carriersAt, downstreamLinks, linkCarrier, routeLinks, upstreamLinks } from '../../graph/index.ts'
-import { SUGGESTION_COUNT, matchedWords, normalized, words } from '../../../../core/model/text-search.ts'
-import { componentDescription, equipmentSuggestions } from '../../equipment/items.ts'
+import { SUGGESTION_COUNT, words } from '../../../../core/model/text-search.ts'
+import { groupStem, resolveName, serviceResembles, unconnectedReason } from '../../equipment/names.ts'
 import { plantCarriers, plantLoops } from '../../equipment/circuits.ts'
 
 // What a mimic draws, resolved from the agent's intent in plant terms. The
 // scope comes from the static Plant graph alone (never from live values), so
 // the same intent on the same model always draws the same equipment.
-
-export interface MimicIntent {
-  readonly from?: ReadonlyArray<string> | undefined
-  readonly to?: ReadonlyArray<string> | undefined
-  /**
-   * What feeds these items and where their outflow goes: by the services of
-   * each item's process (the fluid it carries; power only for equipment that
-   * carries nothing else), its other services stopping the drawing at it,
-   * unless `services` names what to draw.
-   */
-  readonly around?: ReadonlyArray<string> | undefined
-  readonly services?: ReadonlyArray<string> | undefined
-  readonly loops?: ReadonlyArray<string> | undefined
-  readonly exclude?: ReadonlyArray<string> | undefined
-  /** Links a one-ended or around intent follows; MIMIC_REACH_LINKS unless a display narrows it to fit. */
-  readonly reach?: number | undefined
-}
 
 /** Where the drawing stops: links that leave a drawn component for equipment not drawn, grouped by port. */
 export interface MimicStub {
@@ -61,117 +45,6 @@ const loopOf = (graph: CompiledPlantGraph, link: CompiledProcessLink): string | 
   link.metadata?.loopId
     ?? graph.components[link.fromComponentIndex]!.metadata?.loopId
     ?? graph.components[link.toComponentIndex]!.metadata?.loopId
-
-// The label of one of several alike items, without the letter or number that
-// tells them apart: "Safety Bus A" → "Safety Bus".
-const groupStem = (label: string): string | undefined => {
-  const parts = label.trim().split(/\s+/)
-  return parts.length > 1 && /^([A-Za-z]|\d+)$/.test(parts.at(-1)!) ? parts.slice(0, -1).join(' ') : undefined
-}
-
-/** Components whose label or short label, without its designator, normalizes to one of these. */
-const groupMembers = (graph: CompiledPlantGraph, stems: ReadonlyArray<string>): ReadonlyArray<number> => graph.components
-  .filter(component => [component.label, component.metadata?.presentation?.shortLabel]
-    .some(label => label !== undefined && stems.includes(normalized(groupStem(label) ?? ''))))
-  .map(component => component.index)
-
-type ResolvedName = { readonly components: ReadonlyArray<number>; readonly via: 'id' | 'tag' | 'label' | 'group' }
-
-// What equipment is called: its label, its short label, and its label with
-// the designator its short label carries where the label has none ("Motor-
-// Driven Auxiliary Feedwater Pump A" for the pump whose short label is
-// "MD AFW A"): operators qualify the long name with the letter they know.
-const namesOf = (component: CompiledComponent): ReadonlyArray<string> => {
-  const label = component.label
-  const short = component.metadata?.presentation?.shortLabel
-  const designator = short === undefined || groupStem(short) === undefined ? undefined : short.trim().split(/\s+/).at(-1)!
-  const qualified = designator === undefined || groupStem(label) !== undefined ? [] : [`${label} ${designator}`]
-  return [label, ...(short === undefined ? [] : [short]), ...qualified]
-}
-
-// A name is a component id, a tag measured on equipment (its owner), or one
-// of its names (namesOf), ignoring case, spaces and hyphens ("safety bus A",
-// "SG-B"). The plural of what alike items' labels share names all of them
-// ("safety buses", "steam generators"). A tag on a pipe names the pipe's end
-// that the role points at: what a route starts from, or what it reaches.
-const resolveName = (
-  graph: CompiledPlantGraph,
-  name: string,
-  role: 'from' | 'to' | 'around' | 'exclude',
-): ResolvedName | { readonly error: string; readonly didYouMean: ReadonlyArray<string> } => {
-  const byId = graph.componentIndexById.get(name as never)
-  if (byId !== undefined) return { components: [byId], via: 'id' }
-  const binding = graph.signalBindingByTagId.get(name as never)
-  if (binding !== undefined) {
-    if (binding.owner.type === 'component') return { components: [binding.owner.componentIndex], via: 'tag' }
-    const link = graph.links[binding.owner.linkIndex]!
-    if (role === 'exclude') return { error: `${name} is measured on the pipe ${link.id}; exclude equipment, not a pipe`, didYouMean: [] }
-    // A pipe's tag names the end the role points at; around a pipe means around what it feeds.
-    return { components: [role === 'from' ? link.fromComponentIndex : link.toComponentIndex], via: 'tag' }
-  }
-  const wanted = normalized(name)
-  const byLabel = graph.components.filter(component => namesOf(component).some(label => normalized(label) === wanted))
-  if (byLabel.length === 1) return { components: [byLabel[0]!.index], via: 'label' }
-  if (byLabel.length > 1) return { error: `"${name}" names ${byLabel.length} components; name one by its id`, didYouMean: byLabel.slice(0, SUGGESTION_COUNT).map(component => componentDescription(graph, component.index)) }
-  const plural = groupMembers(graph, [wanted.replace(/ES$/, ''), wanted.replace(/S$/, '')].filter(stem => stem !== wanted))
-  if (plural.length > 1) return { components: plural, via: 'group' }
-  const singular = groupMembers(graph, [wanted])
-  if (singular.length > 1) return { error: `"${name}" fits ${singular.length} components; name one, or all of them in the plural`, didYouMean: singular.slice(0, SUGGESTION_COUNT).map(index => componentDescription(graph, index)) }
-  const bundled = bundledDevices(graph, wanted)
-  if (bundled.length > 0) return { error: bundledDeviceMessage(graph, name, bundled, role), didYouMean: [...new Set(bundled.map(entry => componentDescription(graph, entry.host)))].slice(0, SUGGESTION_COUNT) }
-  return { error: `unknown equipment "${name}"; name one component per entry: its id, a tag measured on it, its label or its short label`, didYouMean: equipmentSuggestions(graph, name) }
-}
-
-/** Equipment by one name, as a mimic resolves it (resolveName): the components it names, or why it names none. */
-export const resolveEquipmentName = (graph: CompiledPlantGraph, name: string): ReturnType<typeof resolveName> => resolveName(graph, name, 'around')
-
-// A device the model bundles inside a component (a pressurizer's relief valve)
-// has a label of its own but is not a component: it is drawn on its host's
-// line, so a name for it is answered with the host and that line's ends.
-const bundledDevices = (graph: CompiledPlantGraph, wanted: string): ReadonlyArray<{ readonly host: number; readonly device: string }> =>
-  graph.components.flatMap(component => Object.entries(component.metadata?.presentation?.embedded ?? {})
-    .filter(([, label]) => normalized(label) === wanted)
-    .map(([device]) => ({ host: component.index, device })))
-
-const bundledDeviceMessage = (graph: CompiledPlantGraph, name: string, bundled: ReadonlyArray<{ readonly host: number; readonly device: string }>, role: 'from' | 'to' | 'around' | 'exclude'): string => {
-  if (new Set(bundled.map(entry => entry.host)).size > 1) {
-    return `"${name}" names devices the model bundles in ${[...new Set(bundled.map(entry => String(graph.components[entry.host]!.id)))].join(', ')}; name the component that holds the one you mean`
-  }
-  const { host, device } = bundled[0]!
-  const component = graph.components[host]!
-  const port = component.semantics.embedded.find(candidate => candidate.id === device)?.port
-  const hostId = String(component.id)
-  const what = `"${name}" is the ${device} the model bundles in ${hostId}${port === undefined ? '' : `, drawn on its ${String(port)} line`}`
-  if (role === 'exclude') return `${what}; it cannot be excluded on its own`
-  if (port === undefined) return `${what}; name ${hostId} instead`
-  const farIds = (indexes: ReadonlyArray<number> | undefined, side: 'from' | 'to') => [...new Set((indexes ?? [])
-    .map(index => graph.links[index]!)
-    .filter(link => String(side === 'to' ? link.fromPortName : link.toPortName) === String(port))
-    .map(link => String(graph.components[side === 'to' ? link.toComponentIndex : link.fromComponentIndex]!.id)))].sort()
-  const downstream = farIds(graph.outgoingLinksByComponent[host], 'to')
-  const upstream = farIds(graph.incomingLinksByComponent[host], 'from')
-  const line = downstream.length > 0 ? `from ${hostId} to ${downstream.join(', ')}` : upstream.length > 0 ? `from ${upstream.join(', ')} to ${hostId}` : undefined
-  return `${what}; name ${hostId} instead${line === undefined ? '' : ` (${line} draws that line with it)`}`
-}
-
-// Links a mimic can draw: pipes and power. Equipment with none (a spare valve,
-// a breaker the model leaves unwired) has nothing to draw.
-const unconnectedReason = (graph: CompiledPlantGraph, index: number, carriers: ReadonlyArray<string>): string | undefined => {
-  const linked = [...(graph.incomingLinksByComponent[index] ?? []), ...(graph.outgoingLinksByComponent[index] ?? [])].map(link => graph.links[link]!)
-  if (linked.some(link => carriers.includes(linkCarrier(link)))) return undefined
-  const id = String(graph.components[index]!.id)
-  if (linked.length === 0) return `${id} is not connected to any equipment in the Plant model, so it cannot be drawn`
-  return `${id} is connected to other equipment only by ${[...new Set(linked.map(link => link.kind))].sort().join(', ')} links, which a mimic does not draw`
-}
-
-// "AFW" for auxFeedwater: the guess's letters, in order, from the same first letter; or a shared word.
-export const serviceResembles = (guess: string, candidate: string): boolean => {
-  const letters_ = guess.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const target = candidate.toLowerCase()
-  let at = 0
-  for (const letter of target) if (letter === letters_[at]) at += 1
-  return (letters_.length >= 2 && letters_[0] === target[0] && at === letters_.length) || matchedWords(words(guess), words(candidate)).length > 0
-}
 
 const sorted = (indexes: Iterable<number>): ReadonlyArray<number> => [...new Set(indexes)].sort((left, right) => left - right)
 
@@ -460,32 +333,6 @@ export const withLeavesStubbed = (graph: CompiledPlantGraph, scope: MimicScope):
 }
 
 /**
- * The services items carry, the ones they do their work in first: those on a
- * port circuit their energy role names (a core's coolant), then by how many
- * of their links each takes. What a drawing narrowed to one service starts
- * with, since every service at once may not draw legibly.
- */
-export const itemServices = (graph: CompiledPlantGraph, items: ReadonlyArray<number>): ReadonlyArray<string> => {
-  const known = new Set(plantCarriers(graph))
-  const tally = new Map<string, { links: number; energy: boolean }>()
-  for (const item of items) {
-    const component = graph.components[item]!
-    const circuits = new Set(component.semantics.energy.flatMap(role => role.role === 'transfer' ? [role.from, role.to] : [role.circuit]))
-    for (const [side, indexes] of [['from', graph.outgoingLinksByComponent[item]], ['to', graph.incomingLinksByComponent[item]]] as const) {
-      for (const index of indexes ?? []) {
-        const link = graph.links[index]!
-        const carrier = linkCarrier(link)
-        if (!known.has(carrier)) continue
-        const circuit = component.ports[String(side === 'from' ? link.fromPortName : link.toPortName)]?.circuit
-        const entry = tally.get(carrier) ?? { links: 0, energy: false }
-        tally.set(carrier, { links: entry.links + 1, energy: entry.energy || (circuit !== undefined && circuits.has(circuit)) })
-      }
-    }
-  }
-  return [...tally].sort(([leftName, left], [rightName, right]) => Number(right.energy) - Number(left.energy) || right.links - left.links || leftName.localeCompare(rightName)).map(([name]) => name)
-}
-
-/**
  * A scope narrowed to some services, with a stop at the given items for
  * every other service they carry, so what the drawing leaves out still shows
  * where it joins.
@@ -540,67 +387,4 @@ export const drawingStops = (
       others: [...stub.others].sort((left, right) => farLabel(left).localeCompare(farLabel(right)) || left.port.localeCompare(right.port) || left.component - right.component),
     }))
     .sort((left, right) => left.component - right.component || left.port.localeCompare(right.port) || left.direction.localeCompare(right.direction))
-}
-
-const STUB_NAMES = 3
-
-/** "cold leg A" for a port named coldLegA. */
-export const portName = (port: string): string => words(port).map(word => word.length === 1 ? word.toUpperCase() : word).join(' ')
-
-// Ports are named only where a component has several alike: connected, of the
-// same circuit and direction (the core's four cold legs; a 4-loop Plant leaves
-// its cold legs E and F unconnected).
-const alikePorts = (graph: CompiledPlantGraph, component: CompiledComponent, port: string): ReadonlyArray<string> => {
-  const first = component.ports[port]
-  const connected = (name: string) => graph.links.some(link =>
-    (link.fromComponentIndex === component.index && String(link.fromPortName) === name) || (link.toComponentIndex === component.index && String(link.toPortName) === name))
-  return Object.entries(component.ports)
-    .filter(([name, other]) => other.circuit !== undefined && other.circuit === first?.circuit && other.direction === first.direction && connected(name))
-    .map(([name]) => name)
-}
-
-/**
- * The one port a lone pipe reaches on a hub of alike ports where nothing is
- * drawn at the others ("cold leg C" of the core's four), so the display can
- * say where the pipe enters. Null otherwise: a port with no alike, alike ports all
- * piped or stubbed (a stub names its own), or several reached, where the
- * equipment drawn on them tells them apart (SG A, RCP A).
- */
-export const loneReachedPort = (graph: CompiledPlantGraph, component: CompiledComponent, piped: ReadonlySet<string>, shown: ReadonlySet<string>): string | null => {
-  const named = [...piped].filter(port => {
-    const alike = alikePorts(graph, component, port)
-    return alike.length > 1 && alike.some(other => !shown.has(other))
-  })
-  return named.length === 1 ? portName(named[0]!) : null
-}
-
-/**
- * What a stub says of its far ends. `names` lists them: "to SG A, SG C, SG D",
- * "to Core cold leg A, cold leg B" where one far component has several such
- * ports. `groups` names alike far ends once by the label they share without
- * their designator, with how many: "from ACC ×4, CHG ×2, SI header"; a lone
- * far end keeps its full name ("from AFW valve A"). A list of names too long
- * to read is grouped too, and what still does not fit is counted ("and 2 more").
- */
-export const stubText = (graph: CompiledPlantGraph, stub: MimicStub, style: 'names' | 'groups' = 'names'): string => {
-  const byComponent = new Map<number, string[]>()
-  for (const other of stub.others) byComponent.set(other.component, [...(byComponent.get(other.component) ?? []), other.port])
-  const parts = [...byComponent].map(([component, ports]) => {
-    const label = shortLabelOf(graph, component)
-    return { label, named: alikePorts(graph, graph.components[component]!, ports[0]!).length > 1 ? `${label} ${ports.map(portName).join(', ')}` : label }
-  })
-  const verb = stub.direction === 'out' ? 'to' : 'from'
-  const listed = (names: ReadonlyArray<string>): string => {
-    const named = names.slice(0, names.length > STUB_NAMES + 1 ? STUB_NAMES : STUB_NAMES + 1)
-    const more = names.length - named.length
-    return `${verb} ${named.join(', ')}${more > 0 ? ` and ${more} more` : ''}`
-  }
-  if (parts.length === 1) return `${verb} ${parts[0]!.named}`
-  if (style === 'names' && parts.length <= STUB_NAMES + 1) return listed(parts.map(part => part.named))
-  const groups = new Map<string, number>()
-  for (const part of parts) {
-    const key = groupStem(part.label) ?? part.label
-    groups.set(key, (groups.get(key) ?? 0) + 1)
-  }
-  return listed([...groups].map(([key, count]) => (count > 1 ? `${key} ×${count}` : parts.find(part => (groupStem(part.label) ?? part.label) === key)!.label)))
 }

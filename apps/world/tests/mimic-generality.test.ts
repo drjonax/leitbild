@@ -10,7 +10,7 @@ import {
 import { compileMimic } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
-import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 
 // Nothing in a mimic may depend on what the reference PWR happens to call its
 // equipment: the same Plant with every component id replaced by an opaque one

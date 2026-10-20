@@ -3,7 +3,8 @@ import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/p
 import { compileMimic, planMimicDiagram, type MimicCompileResult } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
-import { resolveMimicScope, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import { resolveMimicScope } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()

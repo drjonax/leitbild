@@ -8,7 +8,7 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
 import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
-import { stubText } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import { stubText } from '../src/packs/process-plant/displays/mimic/stub-words.ts'
 
 // The overview's circuits come from where energy goes: a heat source's closed
 // circuit, then each closed circuit a transfer feeds. Plants here are built
