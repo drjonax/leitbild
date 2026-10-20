@@ -206,7 +206,7 @@ describe('observation Capabilities', () => {
 })
 
 describe('topology graph', () => {
-  const port = (id: string, medium = 'water') => ({ id, rank: id, medium, direction: 'both' as const })
+  const port = (id: string, medium = 'water') => ({ id, rank: id, media: [medium], direction: 'both' as const })
   const node = (id: string, extra: Record<string, unknown> = {}) => ({
     id, class: 'transfer', kind: 'pipe', label: id, rank: id, ports: [port('a'), port('b')], bindings: [], ...extra,
   })
@@ -219,8 +219,16 @@ describe('topology graph', () => {
     boundaries: [{ node: 'sg', port: 'b', externalPortId: 'steam-out' }],
   }
 
-  test('a consistent graph validates', () => {
+  test('a consistent graph validates, with circuits on ports and groups on edges', () => {
     expect(topologyGraphSchema.parse(graph).nodes).toHaveLength(2)
+    const exchanger = node('sg', { class: 'converter', ports: [
+      { id: 'primary-in', rank: '1', media: ['water'], direction: 'in', circuit: 'primary' }, { id: 'primary-out', rank: '2', media: ['water'], direction: 'out', circuit: 'primary' },
+      { id: 'a', rank: '3', media: ['water'], direction: 'both', circuit: 'secondary' }, { id: 'b', rank: '4', media: ['water'], direction: 'both', circuit: 'secondary' },
+    ] })
+    const parsed = topologyGraphSchema.parse({ ...graph, nodes: [graph.nodes[0], exchanger], edges: [{ ...graph.edges[0], group: 'loop-a' }] })
+    expect([parsed.nodes[1]?.ports[0]?.circuit, parsed.edges[0]?.group]).toEqual(['primary', 'loop-a'])
+    expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { ports: [{ id: 'a', rank: 'a', media: [], direction: 'both' }] }), node('sg')] }).success).toBe(false)
+    expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { ports: [{ id: 'a', rank: 'a', medium: 'water', direction: 'both' }] }), node('sg')] }).success).toBe(false)
   })
 
   test('every reference resolves and media agree along an edge', () => {
@@ -230,6 +238,10 @@ describe('topology graph', () => {
     const steam = { id: 'steam', label: 'Steam', kind: 'steam' }
     expect(issues({ media: [...graph.media, steam], nodes: [node('pump', { ports: [port('a'), port('b', 'steam')] }), node('sg')] }))
       .toEqual(['edge e1 carries water into port pump.b of steam'])
+    // A port may carry several media (R35); the edge's medium must be one of each end's.
+    const both = { id: 'b', rank: 'b', media: ['steam', 'water'], direction: 'both' as const }
+    expect(issues({ media: [...graph.media, steam], nodes: [node('pump', { ports: [port('a'), both] }), node('sg')] })).toBeUndefined()
+    expect(issues({ edges: [{ ...graph.edges[0], group: 'loop-z' }] })).toEqual(['edge e1 has unknown group loop-z'])
     expect(issues({ edges: [{ ...graph.edges[0], to: { node: 'sg', port: 'z' } }] })).toEqual(['edge e1 ends at unknown port sg.z'])
     expect(issues({ boundaries: [{ node: 'sg', port: 'z', externalPortId: 'steam-out' }] })).toEqual(['boundary steam-out names unknown port sg.z'])
     expect(issues({ groups: [...graph.groups, { id: 'g1', label: 'G1', kind: 'k', parent: 'g2' }, { id: 'g2', label: 'G2', kind: 'k', parent: 'g1' }] }))

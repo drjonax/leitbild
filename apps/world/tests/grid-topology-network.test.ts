@@ -28,7 +28,7 @@ const SWITCHYARD = 'bus:curated-halden-pwr-switchyard@420'
 
 const stationView = (graph: TopologyGraph, anchorBus: string, hops: number): NetworkGraph => {
   const buses = new Map(graph.nodes.filter(node => node.class === 'bus' || node.class === 'junction' || node.class === 'boundary').map(node => [node.id, node]))
-  const kv = (busId: string) => graph.media.find(medium => medium.id === buses.get(busId)!.ports[0]!.medium)!.level!.value
+  const kv = (busId: string) => graph.media.find(medium => medium.id === buses.get(busId)!.ports[0]!.media[0])!.level!.value
   const station = (busId: string) => buses.get(busId)!.group ?? busId
   const label = (id: string) => { const group = graph.groups.find(candidate => candidate.id === id); return group?.shortLabel ?? group?.label ?? buses.get(id)!.label }
   const ends = new Map<string, string[]>()
@@ -40,7 +40,7 @@ const stationView = (graph: TopologyGraph, anchorBus: string, hops: number): Net
   const inside = (busId: string) => kv(busId) >= 300 && reach.has(station(busId))
   const pairs = [...new Set(lines.filter(([a, b]) => reach.has(a) && reach.has(b)).map(([a, b]) => [a, b].sort().join('|')))]
   const stubs = new Map(links.flatMap(({ ends: [a, b] }) => [[a, b], [b, a]].filter(([x, y]) => inside(x!) && !inside(y!)).map(([x, y]) => [`stub:${station(y!)}@${kv(y!)}|${station(x!)}`, { at: station(x!), far: `${label(station(y!))} ${kv(y!)} kV` }] as const)))
-  const node = (id: string, text: string) => ({ id, class: 'bus' as const, kind: 'station', label: text, rank: id, ports: [{ id: 'bus', rank: 'bus', medium: 'ac', direction: 'both' as const }], bindings: [] })
+  const node = (id: string, text: string) => ({ id, class: 'bus' as const, kind: 'station', label: text, rank: id, ports: [{ id: 'bus', rank: 'bus', media: ['ac'], direction: 'both' as const }], bindings: [] })
   const edge = (id: string, a: string, b: string) => ({ id, rank: id, from: { node: a, port: 'bus' }, to: { node: b, port: 'bus' }, medium: 'ac', directed: false, bindings: [] })
   return {
     nodes: [...[...reach.keys()].map(id => node(id, label(id))), ...[...stubs].map(([id, stub]) => node(id, stub.far))],
