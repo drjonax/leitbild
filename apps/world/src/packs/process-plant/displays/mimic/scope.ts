@@ -1,6 +1,6 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink } from '../../graph/index.ts'
 import { carriersAt, downstreamLinks, linkCarrier, routeLinks, upstreamLinks } from '../../graph/index.ts'
-import { SUGGESTION_COUNT, matchedWords, normalized, words } from '../../name-matching.ts'
+import { SUGGESTION_COUNT, matchedWords, normalized, words } from '../../../../core/model/text-search.ts'
 import { componentDescription, equipmentSuggestions } from '../../equipment/items.ts'
 import { plantCarriers, plantLoops } from '../../equipment/circuits.ts'
 

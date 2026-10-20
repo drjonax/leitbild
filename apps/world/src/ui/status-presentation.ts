@@ -1,8 +1,4 @@
 import type { PackObjectStatusTone } from '../core/packs/protocol.ts'
 
-export const statusToneColor = (tone: PackObjectStatusTone): string => {
-  if (tone === 'ready') return '#16834f'
-  if (tone === 'working') return '#c17a13'
-  if (tone === 'error') return '#c7352b'
-  return '#667085'
-}
+/** The Plant's map colour, grey while its runtime is pending: a status or priority is a word, never a hue (plan v3.1 §2.7, D9). */
+export const statusToneColor = (tone: PackObjectStatusTone): string => tone === 'idle' ? '#6e788c' : '#0f915f'

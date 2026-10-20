@@ -122,7 +122,7 @@ export const dronePackView = {
       return {
         categoryId: 'drones',
         icon: 'drone',
-        color: data?.vehicle.visual.color ?? '#2563eb',
+        color: data?.vehicle.visual.color ?? '#4669ff',
         summary: data ? droneSummary(data) : object.operational.status,
         status: data ? droneStatus(data) : packStatus('error', 'Invalid drone data'),
         fields: data ? [...droneFields(data), packField('contacts', 'Sensor contacts', contacts.length ? contacts.slice(0, 6).map(contact => `${contact.targetLabel} ${Math.round(contact.distanceM)} m`).join(', ') : 'None in range')] : [packField('error', 'Error', 'Invalid drone pack data')],
@@ -157,7 +157,7 @@ export const dronePackView = {
       label: 'Drone',
       categoryId: 'drones',
       icon: 'drone',
-      color: '#2563eb',
+      color: '#4669ff',
       placementKind: 'point',
       parameters: [
         {

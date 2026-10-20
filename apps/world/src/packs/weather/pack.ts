@@ -184,7 +184,7 @@ export const weatherPack: WorldPack = {
       return {
         categoryId: 'weather',
         icon: 'cloud-rain',
-        color: severity === 'hazard' ? '#dc2626' : severity === 'adverse' ? '#d97706' : '#2563eb',
+        color: '#4669ff',
         summary: data
           ? `${data.definition.type === 'weather_probe' ? 'Probe' : data.definition.enabled ? 'Area' : 'Disabled area'} · ${severity}`
           : 'Invalid Weather data',
@@ -228,7 +228,7 @@ export const weatherPack: WorldPack = {
         label: 'Weather probe',
         categoryId: 'weather',
         icon: 'cloud-rain',
-        color: '#2563eb',
+        color: '#4669ff',
         placementKind: 'point',
       },
       {
@@ -236,7 +236,7 @@ export const weatherPack: WorldPack = {
         label: 'Weather area',
         categoryId: 'weather',
         icon: 'cloud-rain',
-        color: '#2563eb',
+        color: '#4669ff',
         placementKind: 'point',
       },
     ],

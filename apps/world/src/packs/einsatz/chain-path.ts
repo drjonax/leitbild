@@ -74,7 +74,7 @@ export const plannedPaths = (objects: ReadonlyArray<OperationalObject>): Planned
   })
 }
 
-const pathColor = '#2f6f9f'
+const pathColor = '#0a7daf'
 
 /**
  * How a queued segment is drawn: dashed and thin, beneath every operational

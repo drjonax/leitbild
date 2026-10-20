@@ -1,5 +1,5 @@
 import type { CompiledComponent, CompiledEmbeddedDevice, CompiledPlantGraph } from '../graph/index.ts'
-import { SUGGESTION_COUNT, letters, matchedWords, words } from '../name-matching.ts'
+import { SUGGESTION_COUNT, letters, matchedWords, words } from '../../../core/model/text-search.ts'
 
 // The Plant's equipment as people name and operate it, read from the model:
 // each component that is equipment, and each device the model bundles inside
