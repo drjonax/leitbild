@@ -213,6 +213,8 @@ const sorted = (indexes: Iterable<number>): ReadonlyArray<number> => [...new Set
 export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent): MimicScopeResult => {
   const issues: Array<{ readonly field: string; readonly message: string; readonly didYouMean?: ReadonlyArray<string> }> = []
   const names: Array<MimicScope['names'][number]> = []
+  /** What the drawing is about: each end or item named, with the components it names. */
+  const anchors: Array<{ readonly name: string; readonly components: ReadonlyArray<number> }> = []
   const known = plantCarriers(graph)
   const resolveAll = (field: 'from' | 'to' | 'around' | 'exclude', list: ReadonlyArray<string> | undefined): ReadonlyArray<number> => (list ?? []).flatMap((name, index) => {
     const resolved = resolveName(graph, name, field)
@@ -226,6 +228,7 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
       return []
     }
     for (const component of resolved.components) names.push({ name, component, via: resolved.via })
+    if (field !== 'exclude') anchors.push({ name, components: resolved.components })
     return resolved.components
   })
   const from = resolveAll('from', intent.from)
@@ -355,6 +358,30 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
 
   const components = sorted([...inLoops].flatMap(index => [graph.links[index]!.fromComponentIndex, graph.links[index]!.toComponentIndex]))
   const drawn = new Set(components)
+  // Loops narrow a drawing, never past what it is about: each equipment named that the services reach stays in
+  // it (of alike items named in the plural, at least one), or the intent is refused, never drawn without it.
+  const reachedComponents = endsOf(selected)
+  const lost = anchors.filter(anchor => anchor.components.some(component => reachedComponents.has(component)) && !anchor.components.some(component => drawn.has(component)))
+  if (lost.length > 0) {
+    const asked = intent.loops ?? []
+    const loopsAt = (component: number): ReadonlyArray<string> => loops.filter(loop => [...selected].some(index => {
+      const link = graph.links[index]!
+      return (link.fromComponentIndex === component || link.toComponentIndex === component) && loopOf(graph, link) === loop
+    }))
+    return {
+      ok: false,
+      issues: lost.map(anchor => {
+        const at = [...new Set(anchor.components.flatMap(loopsAt))]
+        const what = anchor.components.length === 1 ? ends(anchor.components) : `every one of "${anchor.name}" (${ends(anchor.components)})`
+        return {
+          field: 'loops',
+          message: `${asked.length === 1 ? `loop ${asked[0]} leaves` : `loops ${asked.join(', ')} leave`} out ${what}, which the drawing is about; ${at.length > 0
+            ? `${anchor.components.length === 1 ? 'it lies' : 'they lie'} on ${at.length === 1 ? 'loop' : 'loops'} ${at.join(', ')}: name ${at.length === 1 ? 'that loop' : 'one of those'} too, or drop "loops"`
+            : 'drop "loops"'}`,
+        }
+      }),
+    }
+  }
   // Links among drawn equipment of the drawn services are drawn too (a recirculation line, a cross-tie).
   const links = sorted([...allowed].filter(index => {
     if (inLoops.has(index)) return true

@@ -817,13 +817,19 @@ const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget:
 }
 
 // Narrower intents that draw part of the same question; each is compiled, and only those that fit are offered.
+// None leaves out what the question is about: a loop set keeps the loop of each item named (of alike items
+// named in the plural, one), as resolveMimicScope requires of every intent.
 const narrower = (plant: CompiledProcessPlant, intent: MimicIntent): ReadonlyArray<MimicIntent> => {
   const resolved = resolveMimicScope(plant.graph, intent)
   if (!resolved.ok) return []
-  const drawnLoops = plantLoops(plant.graph).filter(loop => resolved.scope.components.some(index => plant.graph.components[index]!.metadata?.loopId === loop))
-  const loopSets = intent.loops === undefined && drawnLoops.length > 1
+  const loopOfComponent = (index: number): string | undefined => plant.graph.components[index]!.metadata?.loopId
+  const named = [...(intent.from ?? []), ...(intent.to ?? []), ...(intent.around ?? [])]
+    .map(name => resolved.scope.names.filter(entry => entry.name === name).flatMap(entry => loopOfComponent(entry.component) ?? []))
+  const keepsNamed = (loops: ReadonlyArray<string>): boolean => named.every(theirs => theirs.length === 0 || theirs.some(loop => loops.includes(loop)))
+  const drawnLoops = plantLoops(plant.graph).filter(loop => resolved.scope.components.some(index => loopOfComponent(index) === loop))
+  const loopSets = (intent.loops === undefined && drawnLoops.length > 1
     ? [drawnLoops.slice(0, 2), ...drawnLoops.map(loop => [loop])]
-    : intent.loops !== undefined && intent.loops.length > 1 ? intent.loops.map(loop => [loop]) : []
+    : intent.loops !== undefined && intent.loops.length > 1 ? intent.loops.map(loop => [loop]) : []).filter(keepsNamed)
   const serviceSets = (intent.services ?? []).length > 1 ? intent.services!.map(service => [service]) : []
   // A drawing from one end or around its items can stop closer to them; around, that keeps it centred on what was asked about.
   const oneEnded = (intent.from === undefined) !== (intent.to === undefined) || intent.around !== undefined
