@@ -365,12 +365,13 @@ const nextAnswer = async (roomId: string, roomPath: string, prior: ReadonlySet<s
   const startedAt = Date.now()
   while (Date.now() - startedAt < 300_000) { // Probe deadline, not a product limit.
     const messages = (await request(roomPath + '?limit=100')).messages as ReadonlyArray<any>
-    const fresh = messages.filter(message => !prior.has(message.id) && message.senderId === agentId)
+    // A progress line (a `say` beside an operation) is never the answer; Agents marks it `progress: true`.
+    const fresh = messages.filter(message => !prior.has(message.id) && message.senderId === agentId && message.progress !== true)
     const traced = fresh.find(message => typeof message.generationTraceId === 'string')
     if (traced !== undefined) {
       const { turn } = await request(`/api/workspaces/${workspaceId}/agents/rooms/${roomId}/executions/${traced.generationTraceId}`)
       const answer = turn.status === 'running' ? undefined : messages.find(message => message.id === turn.messageId)
-      if (answer !== undefined) return { answer, interim: fresh.filter(message => message.id !== answer.id) }
+      if (answer !== undefined) return { answer, interim: messages.filter(message => !prior.has(message.id) && message.senderId === agentId && message.id !== answer.id) }
     } else {
       const failed = fresh.find(message => message.type === 'error' || message.type === 'pass')
       if (failed !== undefined) return { answer: failed, interim: [] }
