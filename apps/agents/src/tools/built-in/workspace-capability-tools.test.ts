@@ -7,7 +7,7 @@ import {
   workspaceResourceReferenceSchema,
   type WorkspaceRoomScope,
 } from '@leitbild/contracts'
-import { createWorkspaceCapabilityTools, workspaceCallResultForModel } from './workspace-capability-tools.ts'
+import { createViewPublisherLookup, createWorkspaceCapabilityTools, workspaceCallResultForModel } from './workspace-capability-tools.ts'
 import { toolsToDefinitions } from '../../llm/tool-capability.ts'
 
 const workspaceId = newWorkspaceId()
@@ -375,6 +375,35 @@ describe('Workspace progressive-discovery tools', () => {
     expect(operationIdsOf(exact).sort()).toEqual([...verbs].sort())
     // The schema the model reads keeps every constraint, without the dialect URI.
     expect((exact.data as { operations: Array<{ inputSchema: unknown }> }).operations[0]!.inputSchema).toEqual({ type: 'object', properties: { plantId: { type: 'string' } } })
+  })
+
+  test('a Room reaches the display publishers its Scope holds, as their Module marks them, never by id', async () => {
+    const compose = capabilityIdSchema.parse('world.process-plant.display.compose')
+    const base = catalogFetch([])
+    const lookup = (scope: WorkspaceRoomScope, publishes: boolean) => createViewPublisherLookup({
+      workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: roomId => roomId === 'room' ? scope : undefined,
+      fetchImpl: (async (input, init) => {
+        const response = await base(input, init)
+        const path = new URL(String(input)).pathname
+        if (path.endsWith('/capabilities')) {
+          const body = await response.json() as { capabilities: unknown[] }
+          body.capabilities.push({ id: compose, moduleId, kind: 'query', scope: { kind: 'resource', resourceType: run.type }, title: 'display · compose', description: 'Compose a display.', risk: 'read', idempotent: true, ...(publishes ? { publishes: ['embedded-view'] } : {}), inputSchema: { type: 'object' }, outputSchema: { type: 'object' } })
+          return Response.json(body)
+        }
+        if (path.endsWith('/resources')) {
+          // Only Run 01 offers the display operation.
+          const body = await response.json() as { resources: Array<{ ref: typeof run; capabilityIds: string[] }> }
+          body.resources.find(resource => resource.ref.id === run.id)!.capabilityIds.push(compose)
+          return Response.json(body)
+        }
+        return response
+      }) as typeof fetch,
+    })
+    expect(await lookup({ kind: 'workspace' }, true)('room')).toEqual([compose])
+    expect(await lookup({ kind: 'resource', resource: run }, true)('room')).toEqual([compose])
+    expect(await lookup({ kind: 'resource', resource: otherRun }, true)('room')).toEqual([])
+    expect(await lookup({ kind: 'workspace' }, false)('room')).toEqual([])
+    expect(lookup({ kind: 'workspace' }, true)('missing')).rejects.toThrow('has no valid scope')
   })
 
   test('essential discovery and action semantics reach the actual native model schema', () => {

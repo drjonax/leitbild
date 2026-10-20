@@ -60,6 +60,7 @@ import {
   createPostToRoomTool, createGetRoomHistoryTool, createConversationReadTool,
   createRecallTool,
   createQueryDocumentsTool,
+  createViewPublisherLookup,
   createWorkspaceCapabilityTools,
 } from './tools/built-in/index.ts'
 import { createBiometricsTools, BIOMETRICS_PACK_NAMESPACE } from './tools/built-in/biometric-tools.ts'
@@ -72,7 +73,7 @@ import { createDocumentManager, type DocumentManager } from './documents/manager
 import type { DocumentMetadata } from './documents/types.ts'
 import { dirname, join } from 'node:path'
 import { createComparisons } from './agents/comparisons.ts'
-import { requestDisplay } from './agents/display-requests.ts'
+import { displayRequestOffered, requestDisplay, type DisplayRequestDeps } from './agents/display-requests.ts'
 import { createProposalCardReader, proposedOperationsOf, type ProposalCard } from './agents/proposal-cards.ts'
 import { createProposalResumes, type ProposalResumes } from './agents/proposal-resumes.ts'
 import type { DisplayRequestAccepted } from './core/display-request.ts'
@@ -185,8 +186,10 @@ export interface AgentsWorkspaceRuntime {
   // Manual-mode activation: catch the agent up and force one eval.
   readonly activateAgentInRoom: (agentId: string, roomId: string) => { ok: boolean; queued: boolean; reason?: string }
   // Asks the author of an answer to show it as a live display (see
-  // core/display-request.ts). Throws DisplayRequestRefusal naming the rule.
-  readonly requestDisplay: (roomId: string, messageId: string, requesterId: string) => DisplayRequestAccepted
+  // core/display-request.ts). Rejects with DisplayRequestRefusal naming the rule.
+  readonly requestDisplay: (roomId: string, messageId: string, requesterId: string) => Promise<DisplayRequestAccepted>
+  // Whether an Agent's answers in a Room offer that request: its Scope reaches an operation that publishes a display.
+  readonly displayRequestOffered: (roomId: string, agentId: string) => Promise<boolean>
   // The operations a turn proposed and where World says each stands now (agents/proposal-cards.ts).
   // Throws with a code where the Room, the turn or the Workspace Host is missing.
   readonly readProposalCards: (roomId: string, turnId: string) => Promise<ReadonlyArray<ProposalCard>>
@@ -838,6 +841,21 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       ? undefined
       : createProposalResumes({ rooms, team, executions: executionStore, readStatus: proposalCards.read })
 
+    // "Show display" is offered where a Room's Scope reaches an operation whose
+    // Module declares that it publishes a display, asked of the same Host.
+    const displayRequestDeps: DisplayRequestDeps = {
+      rooms,
+      team,
+      isScriptRunning: roomId => scriptRunnerRef?.getRun(roomId) !== undefined,
+      viewPublishers: options.workspaceId !== undefined && options.workspaceHostUrl !== undefined
+        ? createViewPublisherLookup({
+            workspaceId: options.workspaceId,
+            hostBaseUrl: options.workspaceHostUrl,
+            getRoomScope: roomId => rooms.getRoom(roomId)?.profile.scope,
+          })
+        : undefined,
+    }
+
     const runToolOperation = options.runWorkspaceOperation
     const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
       spawnAIAgent(config, llmService, rooms, settings, team, routeMessage, toolRegistry, {
@@ -1041,9 +1059,8 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
         return await proposalCards.read(operations, { id: turn.agentId, name: team.getAgent(turn.agentId)?.name ?? turn.agentId })
       },
       ...(proposalResumes === undefined ? {} : { proposalResumes }),
-      requestDisplay: (roomId, messageId, requesterId) => requestDisplay({
-        rooms, team, isScriptRunning: roomId => scriptRunnerRef?.getRun(roomId) !== undefined,
-      }, roomId, messageId, requesterId),
+      requestDisplay: (roomId, messageId, requesterId) => requestDisplay(displayRequestDeps, roomId, messageId, requesterId),
+      displayRequestOffered: (roomId, agentId) => displayRequestOffered(displayRequestDeps, roomId, agentId),
       setOnMessagePosted: messagePosted.set,
       setOnMessagesRemoved: messagesRemoved.set,
       setOnTurnChanged: turnChanged.set,

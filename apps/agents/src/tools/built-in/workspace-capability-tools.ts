@@ -11,6 +11,7 @@ import {
   workspaceDefinitionRevisionReferenceSchema,
   workspaceResourceCatalogSchema,
   workspaceResourceReferenceSchema,
+  type CapabilityId,
   type ModuleCapabilityDescriptor,
   type ModuleDefinitionDescriptor,
   type ModuleResourceDescriptor,
@@ -376,15 +377,16 @@ export const workspaceCallResultForModel = (result: ToolResult): ToolResult => {
   }) } }
 }
 
-export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDeps): ReadonlyArray<Tool> => {
+// The Workspace's published catalogs, read through the Host. Revalidated on
+// every access: a parsed operation catalog is reused only when the Host
+// confirms the exact same content; membership and policy stay live.
+const createCatalogReader = (deps: WorkspaceCapabilityToolsDeps) => {
   const fetchImpl = deps.fetchImpl ?? fetch
   const workspacePath = `${origin(deps.hostBaseUrl)}/api/workspaces/${encodeURIComponent(deps.workspaceId)}`
-  // Revalidate on every access. Only reuse a parsed operation catalog when
-  // the Host confirms the exact same content; membership/policy stays live.
   let operationCache: { etag: string; catalog: ReturnType<typeof workspaceCapabilityCatalogSchema.parse> } | undefined
-  const loadOperations = async (context: ToolContext) => {
+  const loadOperations = async (signal: AbortSignal | undefined) => {
     const cached = operationCache
-    const response = await getJson(fetchImpl, catalogPath(workspacePath, 'capabilities'), context.signal, cached?.etag)
+    const response = await getJson(fetchImpl, catalogPath(workspacePath, 'capabilities'), signal, cached?.etag)
     if (response.status === 304) {
       if (!cached) throw new Error('Host returned 304 without a cached operation catalog')
       return cached.catalog
@@ -398,21 +400,57 @@ export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDep
     operationCache = etag ? {etag,catalog} : undefined
     return catalog
   }
-
-  const loadCatalogs = async (context: ToolContext) => {
+  const loadPublished = async (signal: AbortSignal | undefined) => {
     const [definitionResponse, resourceResponse, operations] = await Promise.all([
-      getJson(fetchImpl, catalogPath(workspacePath, 'definitions'), context.signal),
-      getJson(fetchImpl, catalogPath(workspacePath, 'resources'), context.signal),
-      loadOperations(context),
+      getJson(fetchImpl, catalogPath(workspacePath, 'definitions'), signal),
+      getJson(fetchImpl, catalogPath(workspacePath, 'resources'), signal),
+      loadOperations(signal),
     ])
     for (const response of [definitionResponse, resourceResponse]) {
       if (!response.ok) throw await readHostError(response)
     }
-    const catalogs = {
+    return {
       definitions: workspaceDefinitionCatalogSchema.parse(await definitionResponse.json()),
       resources: workspaceResourceCatalogSchema.parse(await resourceResponse.json()),
       operations,
     }
+  }
+  return { fetchImpl, workspacePath, loadPublished }
+}
+
+/**
+ * The operations within a Room's Scope whose results publish an embedded view
+ * an Agent can present with its answer, as their owning Module declares it
+ * (the descriptor's `publishes` marker), never by a known operation id. A
+ * Room whose Scope reaches none cannot be shown a display.
+ */
+export const createViewPublisherLookup = (deps: WorkspaceCapabilityToolsDeps) => {
+  const reader = createCatalogReader(deps)
+  return async (roomId: string, signal?: AbortSignal): Promise<ReadonlyArray<CapabilityId>> => {
+    const scope = deps.getRoomScope(roomId)
+    if (scope === undefined) throw new Error(`Room ${roomId} has no valid scope`)
+    const catalogs = await (async () => {
+      try { return await reader.loadPublished(signal) }
+      catch (error) {
+        // The Host refusal arrives as a tool failure; this lookup is not a tool.
+        if (error && typeof error === 'object' && 'success' in error) throw new Error((error as ToolResult).error ?? 'Workspace Host request failed')
+        throw error
+      }
+    })()
+    const resolved = resolveScope(scope, catalogs.resources.resources, catalogs.definitions.definitions)
+    const reachable = new Set(resolved.resources.flatMap(resource => resource.capabilityIds))
+    return catalogs.operations.capabilities
+      .filter(operation => operation.publishes?.includes('embedded-view') === true && reachable.has(operation.id))
+      .map(operation => operation.id)
+  }
+}
+
+export const createWorkspaceCapabilityTools = (deps: WorkspaceCapabilityToolsDeps): ReadonlyArray<Tool> => {
+  const { fetchImpl, workspacePath, loadPublished } = createCatalogReader(deps)
+
+  const loadCatalogs = async (context: ToolContext) => {
+    const catalogs = await loadPublished(context.signal)
+    const { operations } = catalogs
     if (!context.comparison) return catalogs
     const captured = context.comparison
     const liveScope = requireRoomScope(context, deps)
