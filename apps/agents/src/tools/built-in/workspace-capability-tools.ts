@@ -6,6 +6,7 @@ import {
   definitionTypeSchema,
   moduleIdSchema,
   resourceTypeSchema,
+  publishedContextSchema,
   workspaceCapabilityCatalogSchema,
   workspaceDefinitionCatalogSchema,
   workspaceDefinitionRevisionReferenceSchema,
@@ -16,6 +17,7 @@ import {
   type ModuleDefinitionDescriptor,
   type ModuleResourceDescriptor,
   type EmbeddedViewPublication,
+  type PublishedContext,
   type WorkspaceDefinitionRevisionReference,
   type WorkspaceId,
   type WorkspaceResourceReference,
@@ -442,6 +444,46 @@ export const createViewPublisherLookup = (deps: WorkspaceCapabilityToolsDeps) =>
     return catalogs.operations.capabilities
       .filter(operation => operation.publishes?.includes('embedded-view') === true && reachable.has(operation.id))
       .map(operation => operation.id)
+  }
+}
+
+/** A Resource in a Room's Scope and the operation its Module marks as publishing that Resource's context. */
+export interface ContextPublisher {
+  readonly operationId: CapabilityId
+  readonly resource: WorkspaceResourceReference
+}
+
+/**
+ * The context publishers within a Room's Scope (the descriptor's `publishes:
+ * ['context']` marker, never a known operation id) and their read, invoked
+ * through the Host broker as the Agent, so its restrictions apply
+ * (agents/run-context.ts chooses one, never by guessing).
+ */
+export const createContextPublisherLookup = (deps: WorkspaceCapabilityToolsDeps) => {
+  const { fetchImpl, workspacePath, loadPublished } = createCatalogReader(deps)
+  return {
+    publishers: async (roomId: string, signal?: AbortSignal): Promise<ReadonlyArray<ContextPublisher>> => {
+      const scope = deps.getRoomScope(roomId)
+      if (scope === undefined) throw new Error(`Room ${roomId} has no valid scope`)
+      const catalogs = await (async () => {
+        try { return await loadPublished(signal) }
+        catch (error) {
+          if (error && typeof error === 'object' && 'success' in error) throw new Error((error as ToolResult).error ?? 'Workspace Host request failed')
+          throw error
+        }
+      })()
+      const marked = catalogs.operations.capabilities.filter(operation => operation.publishes?.includes('context') === true)
+      return resolveScope(scope, catalogs.resources.resources, catalogs.definitions.definitions).resources.flatMap(resource =>
+        marked.filter(operation => resource.capabilityIds.includes(operation.id)).map(operation => ({ operationId: operation.id, resource: resource.ref })))
+    },
+    read: async (publisher: ContextPublisher, caller: { readonly id: string; readonly name: string }, signal?: AbortSignal): Promise<{ readonly ok: true; readonly context: PublishedContext['context'] } | { readonly ok: false; readonly refusal: ToolResult }> => {
+      const response = await fetchImpl(`${workspacePath}/capabilities/${encodeURIComponent(publisher.operationId)}/invoke`, {
+        method: 'POST', signal: requestSignal(signal), headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ resource: publisher.resource, input: {}, actor: { kind: 'ai', id: caller.id, displayName: caller.name } }),
+      })
+      if (!response.ok) return { ok: false, refusal: await readHostError(response) }
+      return { ok: true, context: publishedContextSchema.parse(((await response.json()) as { result?: unknown }).result).context }
+    },
   }
 }
 

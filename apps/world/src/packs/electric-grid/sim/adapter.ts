@@ -369,7 +369,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       invokeQuery: async (request: PackRuntimeQuery): Promise<unknown> => {
         if (failure !== null) throw new Error(`Electric Grid runtime stopped after a failure: ${failure}`)
         const startedAtMs = performance.now()
-        const response = await answerElectricGridQuery({ request, grids })
+        const response = await answerElectricGridQuery({ request, grids, recording: recordingSelection })
         const gridId = typeof request.input === 'object' && request.input !== null && !Array.isArray(request.input)
           ? (request.input as { readonly gridId?: unknown }).gridId
           : undefined

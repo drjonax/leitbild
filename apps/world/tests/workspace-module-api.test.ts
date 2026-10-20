@@ -167,8 +167,8 @@ Action: Test-only handover.
     expect((await invoke('world.process-plant.procedure-condition.evaluate', { ...conditionInput, targetObjectId: plant.id })).status).toBe(403)
     const context = await invoke('world.simulation-run.context', {})
     expect(context.status).toBe(200)
-    expect(context.body!.result.situation.procedures.runs).toEqual([])
-    expect(context.body!.result.objects.items.some((object: { id: string }) => object.id === plant.id)).toBe(false)
+    expect(context.body!.result.context.text).not.toContain(plant.id)
+    expect(context.body!.result.context.text).toContain('1 objects hidden by this Run\'s AI restrictions')
     expect((await invoke('world.procedure.runs.list', {})).body!.result.runs).toEqual([])
     expect(JSON.stringify((await invoke('world.procedure.runs.list', {}, human)).body)).toContain('restricted-physical-evidence-canary')
     const historical = await invoke('world.simulation-run.changes', { afterSequence: 0, limit: 200 })
@@ -844,7 +844,7 @@ Action: Inspect «OTHER-STEP».
     expect(parsedRunInspection.sections.map(section => section.id)).not.toContain('available-capabilities')
 
     const contextCapabilityId = capabilityIdSchema.parse('world.simulation-run.context')
-    const context = await call<{ result: { briefing: { title: string }; objects: { total: number; returned: number; selection: string; items: Array<{ id: string }> }; affordances: unknown } }>(
+    const context = await call<{ result: { context: { text: string; at: string; clock: string } } }>(
       registry,
       `/internal/workspaces/${workspaceId}/capabilities/${contextCapabilityId}/invoke`,
       {
@@ -859,10 +859,8 @@ Action: Inspect «OTHER-STEP».
         }),
       },
     )
-    expect(context.body?.result.briefing.title).toBe('Training shift')
-    expect(Array.isArray(context.body?.result.objects.items)).toBe(true)
-    expect(context.body?.result.objects.selection).toBe('one-per-pack-kind')
-    expect(context.body?.result.objects.total).toBeGreaterThanOrEqual(context.body?.result.objects.returned ?? 0)
+    expect(context.body?.result.context.text.split('\n')[0]).toStartWith('Training shift · simulation time ')
+    expect(context.body?.result.context.clock).toBe('simulation')
     expect(JSON.stringify(context.body)).not.toContain('timeline')
 
     const searchObjectsCapabilityId = capabilityIdSchema.parse('world.simulation-run.objects.search')
@@ -888,16 +886,7 @@ Action: Inspect «OTHER-STEP».
     const packCapabilityId = capabilityIdSchema.parse('world.fixture.state')
     const publishedCapabilities = moduleCapabilityCollectionSchema.parse(capabilities.body)
     const contextDescriptor = publishedCapabilities.capabilities.find(capability => capability.id === contextCapabilityId)
-    expect(contextDescriptor?.outputSchema).toMatchObject({
-      type: 'object',
-      properties: {
-        subject: { type: 'object' },
-        briefing: { type: 'object' },
-        situation: { type: 'object' },
-        objects: { type: 'object' },
-        affordances: { type: 'object' },
-      },
-    })
+    expect(contextDescriptor).toMatchObject({ publishes: ['context'], outputSchema: { type: 'object', required: ['context'], properties: { context: { type: 'object' } } } })
     const packCapability = publishedCapabilities.capabilities.find(capability => capability.id === packCapabilityId)
     expect(packCapability).toMatchObject({ kind: 'query', scope: { kind: 'resource', resourceType: 'world.simulation-run' } })
     expect(packCapability?.outputSchema).toMatchObject({
@@ -937,7 +926,7 @@ Action: Inspect «OTHER-STEP».
           workspaceId,
           capabilityId: deleteObjectCapabilityId,
           resource: run!.ref,
-          input: { objectId: context.body!.result.objects.items[0]!.id },
+          input: { objectId: searchedObjects.body!.result.objects[0]!.id },
           access,
         }),
       },

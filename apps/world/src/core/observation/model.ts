@@ -6,7 +6,6 @@
  */
 import { z } from 'zod'
 import { observableRefSchema, prioritySchema } from '../model/alerts.ts'
-import { roleSeesSchema } from '../model/roles.ts'
 
 /** Every timestamp names its clock; the two never share an axis. */
 export const clockSchema = z.enum(['simulation', 'wall'])
@@ -63,7 +62,7 @@ export const thresholdSchema = z.object({
   direction: z.enum(['low', 'high']),
   value: z.number().finite(),
   order: z.number().int().min(1).max(4),
-  effect: z.enum(['alarm', 'trip', 'control', 'rating', 'target']),
+  effect: z.enum(['alarm', 'trip', 'control', 'rating', 'target', 'advisory']),
   /** Styles the limit tick only; a value's colour comes from its observation. */
   priority: prioritySchema.exclude(['none']),
   consequence: z.string().max(80).optional(),
@@ -105,9 +104,6 @@ export const observationSchema = stampSchema.extend({
   timeToAct: z.object({ threshold: z.string().min(1), seconds: z.number().nonnegative() }).strict().optional(),
   why: z.string().max(300).optional(),
 }).strict()
-
-/** Whose picture a read is made in: the original caller, never the model's choice. */
-export const viewerSchema = z.object({ actor: z.enum(['person', 'agent']), sees: roleSeesSchema }).strict()
 
 export type Observable = z.output<typeof observableSchema>
 export type Observation = z.output<typeof observationSchema>

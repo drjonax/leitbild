@@ -66,7 +66,7 @@ export const weatherPack: WorldPack = {
     name: 'Weather',
     description:
       'Prescribed atmosphere and persistent heuristic ground conditions. Editable areas, timed changes and probes; no forecast feed or terrain hydrology.',
-    contributions: ['runtime', 'scenario', 'presentation', 'creation', 'recording'],
+    contributions: ['runtime', 'scenario', 'presentation', 'creation', 'recording', 'observation'],
   }),
   scenarioConfigSchema: weatherPackConfigSchema,
   authoring: {
@@ -148,6 +148,8 @@ export const weatherPack: WorldPack = {
     defaultRuntimeId: weatherSimRuntimeId,
   },
   scenario: weatherScenarioSupport,
+  // The runtime's Capabilities (observation/), named here so the main app never loads them; assembly checks they exist.
+  observation: { categories: ['weather'], declarations: 'world.weather.observation.declarations', read: 'world.weather.observation.read' },
   presentation: {
     contextualFieldQueries: (object) =>
       object.packId !== 'weather' && object.spatial.position

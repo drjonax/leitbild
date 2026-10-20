@@ -47,9 +47,13 @@ test('SIGTERM checkpoints a running Weather scenario and restores it without clo
     origin = await start()
     const restored = await invoke('world.simulation-run.context', { resource })
     expect(restored.status).toBe(200)
-    const context = await restored.json() as { result: { objects: { total: number }; situation: { runtimeHealth: Array<{ state: string }> } } }
-    expect(context.result.objects.total).toBeGreaterThan(0)
-    expect(context.result.situation.runtimeHealth.every(health => health.state === 'ready')).toBe(true)
+    const context = await restored.json() as { result: { context: { text: string; clock: string } } }
+    expect(context.result.context.clock).toBe('simulation')
+    expect(context.result.context.text.split('\n').length).toBeGreaterThan(1)
+    const inspected = await (await invoke('world.simulation-run.inspect', { resource })).json() as { result: { sections: Array<{ id: string; data?: { runtimeHealth?: Array<{ state: string }> } }> } }
+    const health = inspected.result.sections.find(section => section.id === 'live-state')?.data?.runtimeHealth ?? []
+    expect(health.length).toBeGreaterThan(0)
+    expect(health.every(entry => entry.state === 'ready')).toBe(true)
     child!.kill('SIGTERM')
     expect(await child!.exited).toBe(0)
   } finally {

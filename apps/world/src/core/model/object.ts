@@ -21,6 +21,8 @@ export interface PositionFix {
   readonly accuracyM?: Meters
   readonly observedAt: IsoTimestamp
   readonly staleAfterMs?: number
+  /** The Run's simulation time of the fix, stamped by its Pack; `observedAt` is wall time. */
+  readonly simAt?: IsoTimestamp
 }
 
 export interface RouteGeometry {
@@ -124,6 +126,7 @@ export const positionFixSchema = z.object({
   accuracyM: metersSchema.optional(),
   observedAt: isoTimestampSchema,
   staleAfterMs: z.number().finite().positive().optional(),
+  simAt: isoTimestampSchema.optional(),
 })
 
 export const routeGeometrySchema = z.object({

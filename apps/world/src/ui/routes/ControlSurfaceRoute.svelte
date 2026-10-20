@@ -72,6 +72,7 @@
   import ControlRail from '../ControlRail.svelte'
   import ScenarioGuidance from '../ScenarioGuidance.svelte'
   import WorldStatusLine from '../WorldStatusLine.svelte'
+  import AlertStrip from '../displays/AlertStrip.svelte'
   import StartupModal from '../StartupModal.svelte'
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
   import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
@@ -2243,6 +2244,9 @@
             <button type="button" disabled={mapAssignmentChoiceIds.length < mapAssignmentPicker.target.minimumChoices || mapAssignmentChoiceIds.length > mapAssignmentPicker.target.maximumChoices} onclick={() => void submitMapAssignmentTarget(mapAssignmentPicker!.target, mapAssignmentChoiceIds)}>Assign</button>
           </div>
         </section>
+      {/if}
+      {#if activePack}
+        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} coverRight={mapCameraPadding.right} />
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if runRoles && heldRoleIds}

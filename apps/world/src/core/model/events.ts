@@ -16,6 +16,8 @@ export interface EventEnvelopeBase {
   readonly seq: number
   readonly at: IsoTimestamp
   readonly provenance: Provenance
+  /** The Run's simulation time at commit; absent on events saved before it was stamped ("time unknown"). */
+  readonly simulationTime?: IsoTimestamp
 }
 
 export type SimulationRunEvent =
@@ -132,6 +134,7 @@ const eventBaseSchema = z.object({
   seq: z.number().int().nonnegative(),
   at: isoTimestampSchema,
   provenance: provenanceSchema,
+  simulationTime: isoTimestampSchema.optional(),
 })
 
 export const simulationRunEventSchema = z.discriminatedUnion('type', [

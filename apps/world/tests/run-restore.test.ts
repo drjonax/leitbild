@@ -48,6 +48,15 @@ const restore = async (name: string) => {
   return { run, runDir, meta, saved }
 }
 
+// Saved events stay unstamped ("time unknown"); every event the restored Run commits carries its simulation time.
+const expectNewEventsStamped = (run: Awaited<ReturnType<typeof restore>>['run'], saved: ReadonlyArray<{ readonly seq: number }>): void => {
+  const lastSaved = Math.max(...saved.map(event => event.seq))
+  const added = run.events().filter(event => event.seq > lastSaved)
+  expect(added.length).toBeGreaterThan(0)
+  expect(added.every(event => event.simulationTime !== undefined)).toBe(true)
+  expect(run.events().filter(event => event.seq <= lastSaved).some(event => event.simulationTime !== undefined)).toBe(false)
+}
+
 // Each object's identity, lifecycle and status as the Run shows it: what a restored Run must give back unchanged.
 const states = (objects: ReadonlyArray<any>) => objects.map(object => `${object.id} ${object.lifecycle} ${object.operational?.status ?? '-'}`).sort()
 
@@ -79,6 +88,7 @@ describe('T03: saved Runs restore', () => {
     const at = Date.parse(snapshot.clock!.currentTime)
     await run.runMaximumPace(new Date(at + 2_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
     expect(Date.parse(run.snapshot().clock!.currentTime)).toBeGreaterThanOrEqual(at + 2_000)
+    expectNewEventsStamped(run, saved.events)
   })
 
   test('the Einsatz supply Run restores its objects, clock and journal', async () => {
@@ -92,5 +102,6 @@ describe('T03: saved Runs restore', () => {
     const at = Date.parse(snapshot.clock!.currentTime)
     await run.runMaximumPace(new Date(at + 2_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
     expect(Date.parse(run.snapshot().clock!.currentTime)).toBeGreaterThanOrEqual(at + 2_000)
+    expectNewEventsStamped(run, saved.events)
   })
 })
