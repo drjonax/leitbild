@@ -341,13 +341,12 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     div.appendChild(header)
 
     // Persisted thinking renders above the response so reading
-    // order is reasoning → answer. `<details>` is open by default so
-    // the user sees the model's chain-of-thought after a kimi-k2.6 or
-    // o-series eval; when the user toggles the global "Thinking" piece
-    // off in the visibility popover (body.mh-hide-thinking), CSS
-    // suppresses the body and collapses to a single-line summary so
-    // the thinking pane doesn't dominate the chat. The user can still
-    // unfold any one message via the disclosure triangle.
+    // order is reasoning → answer. `<details>` is collapsed to a
+    // single-line summary while the global "Thinking" piece is hidden
+    // (body.mh-hide-thinking, the default: message-header-prefs.ts), so
+    // the thinking pane doesn't dominate the chat; showing the piece in
+    // the visibility popover opens it. The user can still unfold any one
+    // message via the disclosure triangle.
     const thinkingText = $messageThinking.get()[msg.id]
     if (thinkingText && thinkingText.length > 0) {
       const det = document.createElement('details')
