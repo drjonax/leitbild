@@ -30,6 +30,7 @@ import type { ToolDefinition, ToolExecutor } from '../core/types/tool.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types/constants.ts'
 import { extractAgentProfile as extractProfile } from './shared.ts'
 import { buildContext, buildSystemSections, estimateTokens, flushIncoming, type BuildContextDeps, type ContextResult } from './context-builder.ts'
+import { discoveryMemo } from './discovery-memo.ts'
 import { evaluate, type EvalResult, type OnDecision } from './evaluation.ts'
 import { createConcurrencyManager } from './concurrency.ts'
 import type { ModelInfo } from '../core/types/model-info.ts'
@@ -267,6 +268,7 @@ export const createAIAgent = (
     contextTokenBudget: resolveContextTokenBudget(effectiveModel, definitions),
     getCompressedIds: (roomId: string) => getCompressedIds?.(roomId) ?? new Set<string>(),
     getCompressionSummary: options?.getCompressionSummary,
+    ...(options?.executionStore === undefined ? {} : { getDiscoveryMemo: (roomId: string) => discoveryMemo(options.executionStore!, roomId, agentId) }),
     getRoomMembers,
     supportsImages: modelSupportsImages(effectiveModel),
     modelForWarn: effectiveModel,
