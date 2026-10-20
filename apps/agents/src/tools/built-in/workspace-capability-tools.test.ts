@@ -300,6 +300,83 @@ describe('Workspace progressive-discovery tools', () => {
     expect(await explore!.execute({ view: 'all' }, context)).toMatchObject({ success: false, error: expect.stringContaining('invalid_tool_input') })
   })
 
+  // A Pack's many operations share the words of its namespace: World's
+  // process-plant ids all read world, process, plant.
+  const packCatalogTools = () => {
+    const nouns = ['plants', 'signals', 'alarms', 'controls', 'components', 'actions', 'credibility', 'catalog', 'graph', 'display', 'assessments', 'conditions']
+    const verbs = ['list', 'search', 'read', 'evaluate', 'compose', 'view', 'propose']
+    const packOperations = nouns.flatMap(noun => verbs.map(verb => ({
+      id: capabilityIdSchema.parse(`world.process-plant.${noun}.${verb}`), moduleId, kind: 'query' as const,
+      scope: { kind: 'resource' as const, resourceType: run.type },
+      title: `${noun} · ${verb}`, description: `Process Plant ${noun}: ${verb} them for one Plant of the Run.`,
+      risk: 'read' as const, idempotent: true,
+      inputSchema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', properties: { plantId: { type: 'string' } } },
+      outputSchema: { type: 'object' },
+    })))
+    const base = catalogFetch([])
+    return createWorkspaceCapabilityTools({
+      workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: () => ({ kind: 'resource', resource: run }),
+      fetchImpl: (async (input, init) => {
+        const response = await base(input, init)
+        const path = new URL(String(input)).pathname
+        if (path.endsWith('/capabilities')) {
+          const body = await response.json() as { capabilities: unknown[] }
+          body.capabilities.push(...packOperations)
+          return Response.json(body)
+        }
+        if (path.endsWith('/resources')) {
+          const body = await response.json() as { resources: Array<{ ref: typeof run; capabilityIds: string[] }> }
+          body.resources[0]!.capabilityIds.push(...packOperations.map(operation => operation.id))
+          return Response.json(body)
+        }
+        return response
+      }) as typeof fetch,
+    })
+  }
+  const operationIdsOf = (result: Awaited<ReturnType<NonNullable<ReturnType<typeof makeTools>[0]>['execute']>>) =>
+    (result.data as { operations: Array<{ operationId: string }> }).operations.map(operation => operation.operationId)
+
+  test('an operation id passed as a query is that exact operation, never its namespace words matched against every operation', async () => {
+    const [explore] = packCatalogTools()
+    const ids = ['world.process-plant.plants.list', 'world.process-plant.signals.search', 'world.process-plant.signals.read', 'world.process-plant.display.compose', 'world.process-plant.assessments.evaluate']
+    const result = await explore!.execute({ view: 'operations', queries: ids, includeInputSchema: true }, context)
+    expect(result).toMatchObject({ success: true, data: { total: 5, returned: 5, hasMore: false } })
+    expect(operationIdsOf(result).sort()).toEqual([...ids].sort())
+    expect(result.data).not.toHaveProperty('unavailableOperationIds')
+    // The same as asking for them by operationIds.
+    expect(await explore!.execute({ view: 'operations', operationIds: ids, includeInputSchema: true }, context)).toEqual(result)
+  })
+
+  test('an exact id this Room cannot reach is named, not answered with a word search', async () => {
+    const [explore] = packCatalogTools()
+    const result = await explore!.execute({ view: 'operations', queries: ['world.process-plant.plant.list', 'world.process-plant.signals.read'] }, context)
+    expect(result).toMatchObject({ success: true, data: { total: 1, unavailableOperationIds: ['world.process-plant.plant.list'] } })
+    expect(operationIdsOf(result)).toEqual(['world.process-plant.signals.read'])
+  })
+
+  test('each plain-language query gets its best match first, by the words that tell operations apart', async () => {
+    const [explore] = packCatalogTools()
+    // Namespace words every operation shares rank nothing; the page takes
+    // every query's best match before any query's second best.
+    const result = await explore!.execute({ view: 'operations', queries: ['world process plant plants list', 'world process plant signals search', 'process plant display compose'], limit: 3 }, context)
+    expect(operationIdsOf(result)).toEqual(['world.process-plant.plants.list', 'world.process-plant.signals.search', 'world.process-plant.display.compose'])
+    expect(result).toMatchObject({ success: true, data: { hasMore: true } })
+  })
+
+  test('a page carrying schemas holds a focused search by default, and always every exact id asked for', async () => {
+    const [explore] = packCatalogTools()
+    const focused = await explore!.execute({ view: 'operations', queries: ['process plant signals'], includeInputSchema: true }, context)
+    expect(focused).toMatchObject({ success: true, data: { returned: 5, hasMore: true } })
+    const compact = await explore!.execute({ view: 'operations', queries: ['process plant signals'] }, context)
+    expect(compact).toMatchObject({ success: true, data: { returned: 30, hasMore: true } })
+    const verbs = ['list', 'search', 'read', 'evaluate', 'compose', 'view', 'propose'].map(verb => `world.process-plant.signals.${verb}`)
+    const exact = await explore!.execute({ view: 'operations', operationIds: verbs, queries: ['alarms'], includeInputSchema: true }, context)
+    expect(exact).toMatchObject({ success: true, data: { returned: 7, hasMore: true } })
+    expect(operationIdsOf(exact).sort()).toEqual([...verbs].sort())
+    // The schema the model reads keeps every constraint, without the dialect URI.
+    expect((exact.data as { operations: Array<{ inputSchema: unknown }> }).operations[0]!.inputSchema).toEqual({ type: 'object', properties: { plantId: { type: 'string' } } })
+  })
+
   test('essential discovery and action semantics reach the actual native model schema', () => {
     const [explore, call] = toolsToDefinitions(makeTools({ kind: 'workspace' }))
     const properties = explore!.function.parameters.properties as Record<string, { description?: string }>
