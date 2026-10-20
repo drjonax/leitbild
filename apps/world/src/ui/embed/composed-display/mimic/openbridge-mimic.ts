@@ -3,16 +3,37 @@
 // factories below set every property explicitly (the truthful-state recipes),
 // so no OpenBridge default can draw a state the model does not have: no
 // "On"/"Off" text, no "000 %", no trend arrow, nothing clickable, and no
-// badge but those an operated display sets (updateSymbolOperation).
-import '@oicl/openbridge-webcomponents/dist/automation/automation-badge/automation-badge.js'
-import '@oicl/openbridge-webcomponents/dist/automation/automation-button/automation-button.js'
-import '@oicl/openbridge-webcomponents/dist/automation/automation-tank/automation-tank.js'
-import '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
+// badge but those an operated display sets (updateSymbolOperation). Elements
+// are created through OpenBridge's own tag types and properties set with its
+// own enums, so a renamed property or value fails the type check on upgrade
+// (openbridge-usage.test.ts checks the same against its Custom Elements Manifest).
+import { ObcAutomationBadgeMode, ObcAutomationBadgeType } from '@oicl/openbridge-webcomponents/dist/automation/automation-badge/automation-badge.js'
+import {
+  AutomationButtonOrientation,
+  AutomationButtonPositioning,
+  AutomationButtonReadoutPosition,
+  AutomationButtonState,
+  AutomationButtonVariant,
+  CircularProgressMode,
+  type ObcAutomationButton,
+} from '@oicl/openbridge-webcomponents/dist/automation/automation-button/automation-button.js'
+import { TankOrientation, TankPositioning, TankType, type ObcAutomationTank } from '@oicl/openbridge-webcomponents/dist/automation/automation-tank/automation-tank.js'
+import type { ObcHeatExchanger } from '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
+import { SpecialtyTankMedium } from '@oicl/openbridge-webcomponents/dist/automation/specialty-tank/abstract-specialty-tank.js'
+import { LineMedium } from '@oicl/openbridge-webcomponents/dist/automation/index.js'
 import '@oicl/openbridge-webcomponents/dist/automation/valve-analoge-two-way-icon/valve-analog-two-way-icon.js'
-import '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readout-block.js'
-import '@oicl/openbridge-webcomponents/dist/components/alert-frame/alert-frame.js'
-import '@oicl/openbridge-webcomponents/dist/components/toggletip/toggletip.js'
+import {
+  ObcTextboxAlignment,
+  ReadoutBlockDataQuality,
+  ReadoutBlockSize,
+  ReadoutBlockVariant,
+  ReadoutValueType,
+  type ObcReadoutBlock,
+} from '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readout-block.js'
+import { ObcAlertFrameMode, ObcAlertFrameThickness, ObcAlertFrameType, type ObcAlertFrame } from '@oicl/openbridge-webcomponents/dist/components/alert-frame/alert-frame.js'
+import { AutomationButtonReadoutStackSize, type AutomationButtonReadoutStack } from '@oicl/openbridge-webcomponents/dist/components/automation-button-readout-stack/automation-button-readout-stack.js'
 import '@oicl/openbridge-webcomponents/dist/components/icon-button/icon-button.js'
+import { AlertType } from '@oicl/openbridge-webcomponents/dist/types.js'
 // The detail dot's magnifying glass, and a popover's pin, handle and resize corner.
 import '@oicl/openbridge-webcomponents/dist/icons/icon-search.js'
 import '@oicl/openbridge-webcomponents/dist/icons/icon-pin-google.js'
@@ -65,13 +86,16 @@ export const loadMimicFont = async (): Promise<void> => {
   await face.load()
 }
 
-type Props = Record<string, unknown>
-const element = <T extends HTMLElement>(tag: string): T & Props => document.createElement(tag) as T & Props
-
 export type AlertStatus = 'alarm' | 'warning' | 'caution'
 
+const ALERT_TYPE: Readonly<Record<AlertStatus, AlertType>> = { alarm: AlertType.Alarm, warning: AlertType.Warning, caution: AlertType.Caution }
+
+// The glyphs a device draws: OpenBridge's two-way valve icon, which shows an opening, or an obi icon.
+const VALVE_ICON = 'obc-valve-analog-two-way-icon'
+type GlyphTag = typeof VALVE_ICON | `obi-${string}`
+
 /** The glyph for a device's family and look, as OpenBridge draws it. */
-const glyph = (family: MimicIconFamily, look: ItemLook, orientation: 'horizontal' | 'vertical'): { readonly tag: string; readonly value?: number } | null => {
+const glyph = (family: MimicIconFamily, look: ItemLook, orientation: 'horizontal' | 'vertical'): { readonly tag: GlyphTag; readonly value?: number } | null => {
   const kind = look.state.kind
   const unknown = kind === 'unknown' || kind === 'none'
   const axis = orientation === 'vertical' ? 'vertical' : 'horizontal'
@@ -86,7 +110,7 @@ const glyph = (family: MimicIconFamily, look: ItemLook, orientation: 'horizontal
       if (family === 'valve-digital' && open < 0.05) return { tag: 'obi-twoway-digital-closed' }
       if (family === 'valve-digital' && open > 0.95) return { tag: 'obi-twoway-digital-open' }
       // A modulating valve, or an isolating one caught between its ends, shows its opening.
-      return { tag: 'obc-valve-analog-two-way-icon', value: Math.round(Math.min(1, Math.max(0, open)) * 100) }
+      return { tag: VALVE_ICON, value: Math.round(Math.min(1, Math.max(0, open)) * 100) }
     }
     case 'valve-check':
       return { tag: 'obi-twoway-digital-non-return' }
@@ -123,11 +147,11 @@ export interface DeviceRows {
  * stack beside or below it, in the readout size the drawing was laid out for
  * (chat: small 11.5 px rows; the unit overview: regular 16 px rows).
  */
-export const createDevice = (readoutSize: 'small' | 'regular'): HTMLElement & Props => {
-  const device = element('obc-automation-button')
-  device.variant = 'regular'
-  device.positioning = 'point'
-  device.readoutSize = readoutSize
+export const createDevice = (readoutSize: 'small' | 'regular'): ObcAutomationButton => {
+  const device = document.createElement('obc-automation-button')
+  device.variant = AutomationButtonVariant.regular
+  device.positioning = AutomationButtonPositioning.point
+  device.readoutSize = readoutSize === 'small' ? AutomationButtonReadoutStackSize.small : AutomationButtonReadoutStackSize.regular
   device.showReadoutStack = true
   device.activated = false
   device.progress = false
@@ -136,7 +160,7 @@ export const createDevice = (readoutSize: 'small' | 'regular'): HTMLElement & Pr
 }
 
 export const updateDevice = (
-  device: HTMLElement & Props,
+  device: ObcAutomationButton,
   family: MimicIconFamily,
   look: ItemLook,
   config: {
@@ -148,40 +172,41 @@ export const updateDevice = (
   },
 ): void => {
   const icon = glyph(family, look, config.orientation)
-  device.readoutPosition = config.textSide
+  device.readoutPosition = config.textSide === 'right' ? AutomationButtonReadoutPosition.right : AutomationButtonReadoutPosition.bottom
   device.tag = config.tag
-  device.state = isOn(look) ? 'open' : 'closed'
+  device.state = isOn(look) ? AutomationButtonState.open : AutomationButtonState.closed
   device.static = look.state.kind === 'unknown' || look.state.kind === 'none' || look.notMeasured || family === 'valve-check' || family === 'battery'
-  device.orientation = config.orientation === 'vertical' && !family.startsWith('pump') ? 'verticalRight' : 'horizontal'
+  device.orientation = config.orientation === 'vertical' && !family.startsWith('pump') ? AutomationButtonOrientation.verticalRight : AutomationButtonOrientation.horizontal
   // No digit count: OpenBridge fills a value row's unused digits with dim
   // hinted zeros, so 35 % at three digits read "035 %". The server reserves
   // the row's width for three digits itself (compile-mimic.ts).
-  device.readouts = config.rows.map(row => row.type === 'value'
+  device.readouts = config.rows.map((row): AutomationButtonReadoutStack => row.type === 'value'
     ? { type: 'value', value: row.value, nDigits: 0, unit: row.unit, direction: 'none', icon: 'none' }
     : { type: row.emphasis ? 'state-on' : 'state-off', value: row.text, hasIcon: false })
   device.alert = config.alert !== null
   if (config.alert !== null) {
-    device.alertFrameStatus = config.alert.status
-    device.alertFrameType = 'bottom-flip'
+    device.alertFrameStatus = ALERT_TYPE[config.alert.status]
+    device.alertFrameType = ObcAlertFrameType.BottomFlip
     // Steady: a chat display has no acknowledgement.
-    device.alertFrameMode = 'acked-active'
-    device.alertFrameThickness = 'small'
+    device.alertFrameMode = ObcAlertFrameMode.ackedActive
+    device.alertFrameThickness = ObcAlertFrameThickness.Small
     device.showAlertCategoryIcon = true
     device.showAlertIcon = false
   }
-  const current = device.querySelector('[slot="icon"]') as (HTMLElement & Props) | null
+  const current = device.querySelector<HTMLElement>('[slot="icon"]')
   if (icon === null) current?.remove()
   else if (current?.tagName.toLowerCase() !== icon.tag) {
     current?.remove()
-    const next = element(icon.tag)
+    const next = document.createElement(icon.tag)
     next.slot = 'icon'
     next.setAttribute('usecsscolor', '')
     device.append(next)
   }
-  const shown = device.querySelector('[slot="icon"]') as (HTMLElement & Props) | null
-  if (shown !== null && icon?.value !== undefined) {
-    shown.value = icon.value
-    shown.closed = icon.value === 0
+  // The valve icon is only ever the device's icon slot.
+  const valve = device.querySelector(VALVE_ICON)
+  if (valve !== null && icon?.value !== undefined) {
+    valve.value = icon.value
+    valve.closed = icon.value === 0
   }
   const label = device.querySelector('[slot="alert-label"]')
   if (config.alert === null) label?.remove()
@@ -203,28 +228,29 @@ export const updateDevice = (
  */
 export const operationBadges = (badges: ItemBadges | null): { readonly who: ReadonlyArray<HTMLElement>; readonly hold: ReadonlyArray<HTMLElement> } => {
   if (badges === null) return { who: [], hold: [] }
-  const iconBadge = (mode: 'regular' | 'enhanced', icon: string): HTMLElement => {
-    const badge = element('obc-automation-badge')
+  const iconBadge = (mode: ObcAutomationBadgeMode, icon: `obi-${string}`): HTMLElement => {
+    const badge = document.createElement('obc-automation-badge')
     badge.mode = mode
-    const glyphElement = element(icon)
+    const glyphElement = document.createElement(icon)
     glyphElement.setAttribute('usecsscolor', '')
     badge.append(glyphElement)
     return badge
   }
-  const typed = (type: 'interlock' | 'command-locked'): HTMLElement => {
-    const badge = element('obc-automation-badge')
-    badge.mode = 'regular'
+  const typed = (type: ObcAutomationBadgeType): HTMLElement => {
+    const badge = document.createElement('obc-automation-badge')
+    badge.mode = ObcAutomationBadgeMode.Regular
     badge.type = type
     return badge
   }
+  const { Regular, Enhanced } = ObcAutomationBadgeMode
   const attribution = badges.attribution?.text
-  const who = badges.proposal !== null ? [iconBadge('enhanced', badges.proposal.text === 'AI ?' ? 'obi-ai-pending' : 'obi-command-request')]
+  const who = badges.proposal !== null ? [iconBadge(Enhanced, badges.proposal.text === 'AI ?' ? 'obi-ai-pending' : 'obi-command-request')]
     : attribution === undefined ? []
-      : attribution === 'OP·AI' ? [iconBadge('regular', 'obi-user'), iconBadge('regular', 'obi-ai')]
-        : [iconBadge('regular', attribution === 'AI' ? 'obi-ai' : 'obi-user')]
-  const hold = badges.interlock !== null ? [typed('interlock')] : badges.commandLocked !== null ? [typed('command-locked')] : []
+      : attribution === 'OP·AI' ? [iconBadge(Regular, 'obi-user'), iconBadge(Regular, 'obi-ai')]
+        : [iconBadge(Regular, attribution === 'AI' ? 'obi-ai' : 'obi-user')]
+  const hold = badges.interlock !== null ? [typed(ObcAutomationBadgeType.Interlock)] : badges.commandLocked !== null ? [typed(ObcAutomationBadgeType.CommandLocked)] : []
   // A person's setting under a standing actuation ("Throttled under …"): OpenBridge's manual badge, beside who acted, where it has room.
-  const manual = badges.throttled !== null && who.length < 2 ? [iconBadge('regular', 'obi-manual')] : []
+  const manual = badges.throttled !== null && who.length < 2 ? [iconBadge(Regular, 'obi-manual')] : []
   return { who: [...who, ...manual], hold }
 }
 
@@ -237,12 +263,12 @@ const badgesKey = (badges: ItemBadges | null): string =>
  * badges in the two corners away from its text, so they never take the room
  * its text stack was laid out in (hasBadgeSpacer stays false: nothing moves).
  */
-export const updateSymbolOperation = (device: HTMLElement & Props, operation: { readonly activated: boolean; readonly badges: ItemBadges | null; readonly textSide: 'right' | 'bottom' }): void => {
+export const updateSymbolOperation = (device: ObcAutomationButton, operation: { readonly activated: boolean; readonly badges: ItemBadges | null; readonly textSide: 'right' | 'bottom' }): void => {
   device.activated = operation.activated
   const progress = operation.badges?.progress ?? null
   device.progress = progress !== null
   if (progress !== null) {
-    device.progressMode = progress.mode === 'determinate' ? 'determinate' : 'indeterminate'
+    device.progressMode = progress.mode === 'determinate' ? CircularProgressMode.determinate : CircularProgressMode.indeterminate
     device.progressValue = progress.mode === 'determinate' ? progress.value : 0
   }
   const key = `${badgesKey(operation.badges)}|${operation.textSide}`
@@ -266,15 +292,17 @@ export const updateVesselOperation = (corners: { readonly who: HTMLElement; read
 }
 
 /** An `obc-automation-tank` filling its box; its fill is the level, or static when the model draws none. */
-export const createTank = (type: 'generic' | 'atmospheric' | 'pressurized'): HTMLElement & Props => {
-  const tank = element('obc-automation-tank')
-  tank.type = type
-  tank.orientation = 'vertical'
-  tank.positioning = 'button'
-  tank.setAttribute('positioning', 'button')
+const TANK_TYPE: Readonly<Record<'generic' | 'atmospheric' | 'pressurized', TankType>> = { generic: TankType.generic, atmospheric: TankType.atmospheric, pressurized: TankType.pressurized }
+
+export const createTank = (type: 'generic' | 'atmospheric' | 'pressurized'): ObcAutomationTank => {
+  const tank = document.createElement('obc-automation-tank')
+  tank.type = TANK_TYPE[type]
+  tank.orientation = TankOrientation.vertical
+  tank.positioning = TankPositioning.button
+  tank.setAttribute('positioning', TankPositioning.button)
   tank.compact = true
   tank.setAttribute('compact', '')
-  tank.medium = 'normal'
+  tank.medium = LineMedium.normal
   tank.max = 100
   tank.showTrendSymbol = false
   tank.clickable = false
@@ -285,7 +313,7 @@ export const createTank = (type: 'generic' | 'atmospheric' | 'pressurized'): HTM
 }
 
 /** A tank's fill, and its program's marker where its level stands off it (`program`; null hides it). */
-export const updateTank = (tank: HTMLElement & Props, level: number | null, program: number | null = null): void => {
+export const updateTank = (tank: ObcAutomationTank, level: number | null, program: number | null = null): void => {
   tank.static = level === null
   tank.toggleAttribute('static', level === null)
   tank.value = level === null ? 0 : Math.min(100, Math.max(0, level))
@@ -294,12 +322,12 @@ export const updateTank = (tank: HTMLElement & Props, level: number | null, prog
   tank.setpoint = level === null || program === null ? undefined : Math.min(100, Math.max(0, program))
 }
 
-export const createHeatExchanger = (): HTMLElement & Props => {
-  const exchanger = element('obc-heat-exchanger')
-  exchanger.positioning = 'button'
-  exchanger.setAttribute('positioning', 'button')
+export const createHeatExchanger = (): ObcHeatExchanger => {
+  const exchanger = document.createElement('obc-heat-exchanger')
+  exchanger.positioning = TankPositioning.button
+  exchanger.setAttribute('positioning', TankPositioning.button)
   // `graphic`, never `medium`: hot and cold colours at rest would claim temperatures.
-  exchanger.medium = 'graphic'
+  exchanger.medium = SpecialtyTankMedium.graphic
   exchanger.static = false
   exchanger.clickable = false
   exchanger.showIcon = true
@@ -308,11 +336,11 @@ export const createHeatExchanger = (): HTMLElement & Props => {
 }
 
 /** A readout block for a value with decimals (the readout stack shows integers only). */
-export const createReadoutBlock = (): HTMLElement & Props => {
-  const block = element('obc-readout-block')
-  block.variant = 'value'
-  block.size = 'small'
-  block.alignment = 'right'
+export const createReadoutBlock = (): ObcReadoutBlock => {
+  const block = document.createElement('obc-readout-block')
+  block.variant = ReadoutBlockVariant.value
+  block.size = ReadoutBlockSize.small
+  block.alignment = ObcTextboxAlignment.Right
   block.hintedZeros = false
   return block
 }
@@ -322,28 +350,30 @@ export const createReadoutBlock = (): HTMLElement & Props => {
  * the text that says only where the quantity is ("<0"), in OpenBridge's
  * low-integrity style, as a readout shows it.
  */
-export const updateReadoutBlock = (block: HTMLElement & Props, value: number | null, fractionDigits: number, maxDigits: number, offScale: string | null = null): void => {
-  block.valueType = offScale === null ? 'number' : 'text'
+export const updateReadoutBlock = (block: ObcReadoutBlock, value: number | null, fractionDigits: number, maxDigits: number, offScale: string | null = null): void => {
+  block.valueType = offScale === null ? ReadoutValueType.number : ReadoutValueType.text
   block.value = offScale ?? value
-  block.dataQuality = offScale === null ? undefined : 'low-integrity'
+  // A Lit property is cleared by setting it to undefined (deleting it would keep its value), which its optional declaration omits.
+  const clearable: { dataQuality?: ReadoutBlockDataQuality | undefined } = block
+  clearable.dataQuality = offScale === null ? undefined : ReadoutBlockDataQuality.lowIntegrity
   block.fractionDigits = fractionDigits
   block.maxDigits = maxDigits
 }
 
 /** A standalone frame for items that are not automation buttons (tanks, heat exchangers, headers). */
-export const createAlertFrame = (): HTMLElement & Props => {
-  const frame = element('obc-alert-frame')
-  frame.type = 'bottom-flip'
-  frame.mode = 'acked-active'
-  frame.thickness = 'small'
+export const createAlertFrame = (): ObcAlertFrame => {
+  const frame = document.createElement('obc-alert-frame')
+  frame.type = ObcAlertFrameType.BottomFlip
+  frame.mode = ObcAlertFrameMode.ackedActive
+  frame.thickness = ObcAlertFrameThickness.Small
   frame.showAlertCategoryIcon = true
   frame.showIcon = false
   frame.append(Object.assign(document.createElement('span'), { slot: 'label' }))
   return frame
 }
 
-export const updateAlertFrame = (frame: HTMLElement & Props, status: AlertStatus, label: string): void => {
-  frame.status = status
+export const updateAlertFrame = (frame: ObcAlertFrame, status: AlertStatus, label: string): void => {
+  frame.status = ALERT_TYPE[status]
   const slot = frame.querySelector('[slot="label"]')
   if (slot !== null) slot.textContent = label
 }
