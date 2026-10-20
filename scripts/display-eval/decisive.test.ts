@@ -23,6 +23,7 @@ const record = {
       ],
       equipment: [{ id: 'auxFeedwaterHeader', label: 'AFW header', state: 'flow' }, { id: 'sgA', label: 'SG A', state: 'filled' }],
       view: { state: JSON.stringify({ evidence: [{ path: 'feedwaterControlValveB.effectivePositionFraction', kind: 'cause', reason: 'command and state disagree' }] }) },
+      viewContent: { items: [{ names: ['MFW-B-CV-POS', 'feedwaterControlValveB.effectivePositionFraction'], values: [{ value: 0.3512, unit: 'fraction', decimals: 2 }], limits: [], history: false }] },
     },
   },
 }
@@ -56,7 +57,9 @@ describe('decisive evidence: semantic and mimic-aware', () => {
   })
 
   test('World-added values are counted by kind with whether the answer cites them', () => {
-    expect(addedEvidenceUse(display, 'Feed valve B (MFW-B-CV-POS) stands at 35 %.')).toEqual([{ kind: 'cause', path: 'feedwaterControlValveB.effectivePositionFraction', cited: true }])
-    expect(addedEvidenceUse(display, 'Level falls.')).toEqual([{ kind: 'cause', path: 'feedwaterControlValveB.effectivePositionFraction', cited: false }])
+    const path = 'feedwaterControlValveB.effectivePositionFraction'
+    expect(addedEvidenceUse(display, 'Feed valve B (MFW-B-CV-POS) stands at 35 %.')).toEqual([{ kind: 'cause', path, cited: true, citedBy: 'name' }])
+    expect(addedEvidenceUse(display, 'Feed valve B stands at 0.35 open.')).toEqual([{ kind: 'cause', path, cited: true, citedBy: 'value' }])
+    expect(addedEvidenceUse(display, 'Level falls by 10.35 %.')).toEqual([{ kind: 'cause', path, cited: false }])
   })
 })

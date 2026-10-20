@@ -28,6 +28,8 @@ export interface DisplayEvidence {
   /** Equipment a mimic draws (the compose result's equipment). */
   readonly drawn: ReadonlySet<string>
   readonly panels: ReadonlyArray<string>
+  /** Each shown value as the display writes it (its viewContent value at its precision), by every name of the item. */
+  readonly shownValues: ReadonlyMap<string, ReadonlyArray<string>>
 }
 
 const MIMIC_EQUIPMENT_FIELDS = ['from', 'to', 'around', 'exclude'] as const
@@ -53,7 +55,12 @@ export const displayEvidenceOf = (record: ComposeRecord): DisplayEvidence => {
     path: String(entry.path), kind: String(entry.kind), ...(typeof entry.reason === 'string' ? { reason: entry.reason } : {}),
   }))
   const drawn = new Set(((data.equipment ?? []) as ReadonlyArray<any>).map(entry => String(entry.id)))
-  return { agentNames, agentEquipment, shown, added, drawn, panels: panels.map(panel => String(panel.kind)) }
+  const shownValues = new Map<string, ReadonlyArray<string>>()
+  for (const item of (data.viewContent?.items ?? []) as ReadonlyArray<any>) {
+    const written = ((item.values ?? []) as ReadonlyArray<any>).flatMap(entry => typeof entry.value === 'number' && Number.isInteger(entry.decimals) ? [entry.value.toFixed(entry.decimals)] : [])
+    if (written.length > 0) for (const name of item.names ?? []) if (typeof name === 'string') shownValues.set(name, written)
+  }
+  return { agentNames, agentEquipment, shown, added, drawn, panels: panels.map(panel => String(panel.kind)), shownValues }
 }
 
 export type HitSource = 'agent' | 'world' | 'mimic' | 'answer'
@@ -125,12 +132,20 @@ export const scoreKey = (key: EvidenceKey, display: DisplayEvidence | null, cont
   return { ...base, hit, ...(hit && best !== undefined ? { by: best.by } : {}), hits, unknown }
 }
 
-/** Every World-added value of a display, by evidence kind, and whether the answer cites it by tag or name. */
-export const addedEvidenceUse = (display: DisplayEvidence, content: string): ReadonlyArray<{ readonly kind: string; readonly path: string; readonly cited: boolean }> => {
+const quotesNumber = (prose: string, written: string): boolean => new RegExp(`(?<![0-9.,])${written.replace('.', '\\.')}(?![0-9])`).test(prose)
+
+/**
+ * Every World-added value of a display, by evidence kind, and whether the
+ * answer uses it: names it (tag, path or shown name), or quotes its value as
+ * the display writes it.
+ */
+export const addedEvidenceUse = (display: DisplayEvidence, content: string): ReadonlyArray<{ readonly kind: string; readonly path: string; readonly cited: boolean; readonly citedBy?: 'name' | 'value' }> => {
   const prose = answerProse(content)
   return display.added.map(entry => {
     const shown = display.shown.find(signal => signal.path === entry.path)
     const names = [entry.path, ...(shown?.tagId === undefined ? [] : [shown.tagId]), ...(shown?.name === undefined ? [] : [shown.name])]
-    return { kind: entry.kind, path: entry.path, cited: names.some(name => mentions(prose, name)) }
+    if (names.some(name => mentions(prose, name))) return { kind: entry.kind, path: entry.path, cited: true, citedBy: 'name' as const }
+    const values = display.shownValues.get(entry.path) ?? []
+    return values.some(written => quotesNumber(prose, written)) ? { kind: entry.kind, path: entry.path, cited: true, citedBy: 'value' as const } : { kind: entry.kind, path: entry.path, cited: false }
   })
 }
