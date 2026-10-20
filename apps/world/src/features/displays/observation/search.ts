@@ -53,12 +53,13 @@ interface Entry extends Omit<SearchMatch, 'score'> {
 }
 const key = (text: string): string => normalized(fold(text))
 
-/** Each object's words: its label, its presentation category and status word; never pack numbers (summary, fields). */
+/** Each object's Pack, presentation category and status word: words only, never its summary or fields (one number, one source). */
 export const presentObjects = (packs: ReadonlyArray<WorldPack>, objects: ReadonlyArray<OperationalObject>) => {
   const packById = new Map(packs.map(pack => [pack.descriptor.id, pack]))
   return new Map<string, { readonly pack: WorldPack | undefined; readonly category: WorldPack['presentation']['categories'][number] | undefined; readonly status: string | undefined }>(objects.map(object => {
+    // A Pack without categories keeps records, not operational objects, and presents none.
     const pack = packById.get(object.packId)
-    const presented = pack?.presentation.presentObject(object, { objects, objectsForPack: id => objects.filter(candidate => candidate.packId === id), tier: 'summary' })
+    const presented = pack === undefined || pack.presentation.categories.length === 0 ? undefined : pack.presentation.presentObject(object, { objects, objectsForPack: id => objects.filter(candidate => candidate.packId === id), tier: 'summary' })
     const category = pack?.presentation.categories.find(candidate => candidate.id === presented?.categoryId)
     return [object.id, { pack, category, status: presented?.status?.label }] as const
   }))

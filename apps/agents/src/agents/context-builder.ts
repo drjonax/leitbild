@@ -222,6 +222,9 @@ export interface BuildContextDeps {
   // One requested turn's instruction (core/types/agent.ts RequestedTurn).
   // Ends the context as a transient user message; never enters history.
   readonly turnInstruction?: string
+  // The Room Scope's Run context read for this turn, or the note saying why
+  // none was (run-context.ts); absent where the Scope publishes none.
+  readonly runContext?: string
 }
 
 const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePrompts> => ({
@@ -288,6 +291,7 @@ export type SystemSectionKey =
   | 'ctx_intro'           // "You are in room X" — always emitted
   | 'ctx_flow'
   | 'ctx_discovery'       // Workspace operations this Agent used earlier in the conversation
+  | 'ctx_run'             // The Room Scope's Run context, read for this turn (run-context.ts)
   | 'ctx_participants'
   | 'ctx_activity'
   | 'ctx_knownAgents'
@@ -411,6 +415,15 @@ export const buildSystemSections = (
     optional: false,
   })
 
+  // Read fresh each turn, so it is the last context child: every stable section keeps the cache prefix.
+  out.push({
+    key: 'ctx_run',
+    label: 'Run context',
+    text: deps.runContext ?? '',
+    enabled: !!deps.runContext,
+    optional: false,
+  })
+
   out.push({
     key: 'responseFormat',
     label: 'RESPONSE FORMAT',
@@ -434,7 +447,7 @@ const CTX_STABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
   'ctx_intro',
 ]
 const CTX_VARIABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
-  'ctx_knownAgents', 'ctx_participants', 'ctx_activity', 'ctx_flow', 'ctx_discovery',
+  'ctx_knownAgents', 'ctx_participants', 'ctx_activity', 'ctx_flow', 'ctx_discovery', 'ctx_run',
 ]
 
 // Map a SystemSection to the XML tag used to fence it. Tag names are

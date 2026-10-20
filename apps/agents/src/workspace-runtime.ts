@@ -60,6 +60,7 @@ import {
   createPostToRoomTool, createGetRoomHistoryTool, createConversationReadTool,
   createRecallTool,
   createQueryDocumentsTool,
+  createContextPublisherLookup,
   createViewPublisherLookup,
   createWorkspaceCapabilityTools,
 } from './tools/built-in/index.ts'
@@ -73,6 +74,7 @@ import { createDocumentManager, type DocumentManager } from './documents/manager
 import type { DocumentMetadata } from './documents/types.ts'
 import { dirname, join } from 'node:path'
 import { createComparisons } from './agents/comparisons.ts'
+import { createRunContextFetcher } from './agents/run-context.ts'
 import { displayRequestOffered, requestDisplay, type DisplayRequestDeps } from './agents/display-requests.ts'
 import { createProposalCardReader, proposedOperationsOf, type ProposalCard } from './agents/proposal-cards.ts'
 import { createProposalResumes, type ProposalResumes } from './agents/proposal-resumes.ts'
@@ -856,12 +858,22 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
         : undefined,
     }
 
+    // Each turn reads its Room Scope's Run context through the same Host (agents/run-context.ts).
+    const fetchRunContext = options.workspaceId !== undefined && options.workspaceHostUrl !== undefined
+      ? createRunContextFetcher(createContextPublisherLookup({
+          workspaceId: options.workspaceId,
+          hostBaseUrl: options.workspaceHostUrl,
+          getRoomScope: roomId => rooms.getRoom(roomId)?.profile.scope,
+        }))
+      : undefined
+
     const runToolOperation = options.runWorkspaceOperation
     const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
       spawnAIAgent(config, llmService, rooms, settings, team, routeMessage, toolRegistry, {
         ...options,
         executionStore,
         executionGrowth,
+        ...(fetchRunContext ? { fetchRunContext } : {}),
         onTurnStart: comparisons.capture,
         onTurnMessageLinked: input => {
           // Absent without a Workspace Host (see proposalResumes above).

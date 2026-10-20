@@ -22,6 +22,7 @@ import { callLLM, streamLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
 import { createToolSurface } from '../tool-surface/index.ts'
 import { WORKSPACE_CAPABILITY_TOOL_NAMES } from '../tools/built-in/workspace-capability-tools.ts'
+import type { RunContextFetcher } from './run-context.ts'
 import type { WorkspaceSubjectReference } from '@leitbild/contracts'
 import type { ExecutionStore } from '../core/executions/store.ts'
 
@@ -325,6 +326,7 @@ export interface SpawnOptions {
   readonly executionStore?: ExecutionStore
   readonly executionGrowth?: ExecutionGrowth
   readonly runToolOperation?: RunToolOperation
+  readonly fetchRunContext?: RunContextFetcher
   readonly overrideId?: string
   readonly getSkills?: (skillNames: ReadonlyArray<string>, roomId: string) => string
   readonly getActiveSkillsDeclarations?: (skillNames: ReadonlyArray<string>, roomId: string) => ReadonlyArray<{
@@ -533,6 +535,7 @@ export const spawnAIAgent = async (
     ...(spawnOptions?.onTurnFinished ? { onTurnFinished: spawnOptions.onTurnFinished } : {}),
     ...(spawnOptions?.executionStore ? { executionStore: spawnOptions.executionStore } : {}),
     ...(spawnOptions?.executionGrowth ? { executionGrowth: spawnOptions.executionGrowth } : {}),
+    ...(spawnOptions?.fetchRunContext ? { fetchRunContext: spawnOptions.fetchRunContext } : {}),
     getWorkspacePrompt: settings.getPrompt,
     getResponseFormat: settings.getResponseFormat,
     getCompressedIds: (roomId: string) => rooms.getRoom(roomId)?.getCompressedIds() ?? new Set(),

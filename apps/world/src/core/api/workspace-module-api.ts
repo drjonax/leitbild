@@ -16,12 +16,14 @@ import {
   type ModuleCapabilityDescriptor,
   type ModuleFeaturedDefinitionCollection,
   type ModuleWorkspaceActivity,
-  type ModuleResourceDescriptor
+  type ModuleResourceDescriptor,
+  publishedContextSchema,
 } from '@leitbild/contracts'
 import { createModuleCapabilityRegistry } from '@leitbild/module-runtime'
 import { mapSymbolsInput, mapSymbolsOutput, searchMapSymbols } from '../map-symbols/catalog.ts'
 import { z } from 'zod'
 import { capabilityJsonSchema, isPublicCapability } from '../../simulation/capabilities.ts'
+import { assembleRunContext } from '../../features/displays/context/run-context.ts'
 import { observablesSearchInputSchema, observablesSearchOutputSchema, searchObservables } from '../../features/displays/observation/search.ts'
 import { isCapabilityRejection } from '../../simulation/capability-rejection.ts'
 import {
@@ -45,7 +47,6 @@ import {
   recordingSeriesDescriptorSchema,
   recordingSeriesQuerySchema,
   sameProcedureScope,
-  scenarioGuidanceSchema,
   simulationClockStateSchema,
   simulationRunEventSchema,
   simulationRunIdSchema,
@@ -280,18 +281,6 @@ const simulationRunSummarySchema = z.object({
   loadError: z.string().min(1).optional(),
 }).strict()
 
-const runtimeHealthSchema = z.object({
-  runtimeId: z.string().min(1),
-  state: z.enum(['ready', 'degraded', 'failed']),
-  failureCount: z.number().int().nonnegative(),
-  lastSuccessfulInteractionAt: isoTimestampSchema,
-  lastFailure: z.object({
-    at: isoTimestampSchema,
-    operation: z.string().min(1),
-    message: z.string().min(1),
-  }).strict().optional(),
-}).strict()
-
 const operationalObjectSummarySchema = z.object({
   id: z.string().min(1),
   kind: z.string().min(1),
@@ -310,62 +299,6 @@ const objectSearchResultSchema = z.object({
   offset: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
   objects: z.array(operationalObjectSummarySchema),
-}).strict()
-
-const simulationRunContextSchema = z.object({
-  subject: z.object({
-    workspaceId: workspaceIdSchema,
-    simulationRunId: simulationRunIdSchema,
-    scenarioId: z.string().min(1),
-    scenarioRevisionId: z.string().min(1),
-  }).strict(),
-  briefing: z.object({
-    title: z.string().min(1),
-    summary: z.string().min(1).optional(),
-    objectives: z.array(z.string().min(1)),
-  }).strict(),
-  situation: z.object({
-    observedAt: isoTimestampSchema,
-    sequence: z.number().int().nonnegative(),
-    runtimeHealth: z.array(runtimeHealthSchema),
-    historian: runHistorianStatusSchema.nullable(),
-    clock: simulationClockStateSchema.optional(),
-    guidance: scenarioGuidanceSchema.optional(),
-    procedures: procedureControlStateSchema,
-    execution: z.object({
-      origin: runCopyOriginSchema.nullable(),
-      state: runExecutionStateSchema,
-    }).strict(),
-  }).strict(),
-  objects: z.object({
-    total: z.number().int().nonnegative(),
-    returned: z.number().int().nonnegative(),
-    selection: z.literal('one-per-pack-kind'),
-    byPack: z.record(z.string(), z.number().int().nonnegative()),
-    byKind: z.record(z.string(), z.number().int().nonnegative()),
-    byStatus: z.record(z.string(), z.number().int().nonnegative()),
-    items: z.array(operationalObjectSummarySchema),
-  }).strict(),
-  affordances: z.object({
-    workspaceId: workspaceIdSchema.nullable(),
-    simulationRunId: simulationRunIdSchema,
-    scenarioId: z.string().min(1).nullable(),
-    scenarioRevisionId: z.string().min(1).nullable(),
-    activePackIds: z.array(z.string().min(1)),
-    runtimes: z.array(z.object({
-      id: z.string().min(1),
-      packId: z.string().min(1),
-      clock: z.enum(['simulation', 'live', 'none']),
-    }).strict()),
-    wikiRefs: z.array(z.object({
-      label: z.string().min(1),
-      path: z.string().min(1),
-    }).passthrough()),
-    recording: z.object({
-      selections: z.array(z.record(z.string(), z.unknown())),
-      profiles: z.array(z.record(z.string(), z.unknown())),
-    }).strict(),
-  }).strict(),
 }).strict()
 
 const simulationChangesSchema = z.object({
@@ -596,27 +529,6 @@ const summarizeOperationalObject = (object: OperationalObject) => ({
   ...(object.operational.intent === undefined ? {} : { intent: object.operational.intent }),
   updatedAt: object.timestamps.updatedAt,
 })
-
-const representativeOperationalObjects = (objects: ReadonlyArray<OperationalObject>) => {
-  const priorityRank = { low: 0, normal: 1, high: 2, critical: 3 } as const
-  const selected = new Map<string, OperationalObject>()
-  for (const object of objects) {
-    const key = `${object.packId}\u0000${object.kind}`
-    const previous = selected.get(key)
-    if (!previous) {
-      selected.set(key, object)
-      continue
-    }
-    const rank = priorityRank[object.operational.priority ?? 'normal']
-    const previousRank = priorityRank[previous.operational.priority ?? 'normal']
-    if (rank > previousRank || (rank === previousRank && object.timestamps.updatedAt > previous.timestamps.updatedAt)) {
-      selected.set(key, object)
-    }
-  }
-  return [...selected.values()]
-    .map(summarizeOperationalObject)
-    .sort((left, right) => left.packId.localeCompare(right.packId) || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id))
-}
 
 const serializableInspection = (value: unknown) =>
   inspectionViewSchema.parse(JSON.parse(JSON.stringify(value)) as unknown)
@@ -1380,60 +1292,24 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       moduleId: WORLD_MODULE_ID,
       kind: 'query',
       scope: { kind: 'resource', resourceType: 'world.simulation-run' },
-      title: 'Read Simulation Context',
-      description: 'Returns an agent-safe briefing, current situation, operational-object summaries, and available Capabilities without exposing private Scenario Timeline content.',
+      title: 'Read Run Context',
+      description: 'The Run as the Assistant sees it: title, simulation time and whether it plays; up to 8 assets with their alerts and the refs of their lead values; each presentation category\'s objects counted by status word with the worst three; record-only Packs; dashboards; each Pack\'s guidance; and how many objects AI restrictions hide. Agents pre-fetch it each turn.',
       risk: 'read',
       idempotent: true,
+      publishes: ['context'],
       inputSchema: z.toJSONSchema(emptyInputSchema, { io: 'input' }),
-      outputSchema: capabilityJsonSchema(simulationRunContextSchema),
+      outputSchema: capabilityJsonSchema(publishedContextSchema),
     },
     invoke: async (registry, invocation) => {
       emptyInputSchema.parse(invocation.input)
       const simulationRunId = requireSimulationRunResource(invocation)
       const runtime = await registry.load(simulationRunId)
-      const [definition, summary, execution] = await Promise.all([
-        registry.compiledScenarioForRun(simulationRunId),
-        registry.summary(simulationRunId),
-        registry.executionStatus(simulationRunId),
-      ])
       const snapshot = runtime.snapshot()
-      const { capabilities: _capabilityDescriptors, ...affordances } = runtime.capabilities()
-      const denied = deniedInspectionSubjects(runtime, invocation)
-      const visibleObjects = snapshot.objects.filter(object => !denied.has(object.id))
-      const contextObjects = representativeOperationalObjects(visibleObjects)
-      return json({ result: {
-        subject: {
-          workspaceId: registry.workspaceId,
-          simulationRunId,
-          scenarioId: summary.scenarioId,
-          scenarioRevisionId: summary.scenarioRevisionId,
-        },
-        briefing: {
-          title: summary.title,
-          ...(definition.description === undefined ? {} : { summary: definition.description }),
-          objectives: definition.objectives ?? [],
-        },
-        situation: {
-          observedAt: new Date().toISOString(),
-          sequence: snapshot.seq,
-          runtimeHealth: runtime.health(),
-          historian: runtime.recordingStatus(),
-          ...(snapshot.clock === undefined ? {} : { clock: snapshot.clock }),
-          ...(snapshot.scenario?.guidance === undefined ? {} : { guidance: snapshot.scenario.guidance }),
-          procedures: visibleProcedureState(runtime, invocation),
-          execution: { origin: summary.origin, state: execution },
-        },
-        objects: {
-          total: visibleObjects.length,
-          returned: contextObjects.length,
-          selection: 'one-per-pack-kind',
-          byPack: countBy(visibleObjects.map(object => object.packId)),
-          byKind: countBy(visibleObjects.map(object => object.kind)),
-          byStatus: countBy(visibleObjects.map(object => object.operational.status)),
-          items: contextObjects,
-        },
-        affordances,
-      } })
+      const context = await assembleRunContext({
+        title: (await registry.summary(simulationRunId)).title, objects: snapshot.objects, denied: deniedInspectionSubjects(runtime, invocation),
+        clock: snapshot.clock, packs: runtime.packs(), port: runtime.observations(buildSimulationRunActorForAccess(invocation.access)),
+      })
+      return json({ result: publishedContextSchema.parse({ context }) })
     },
   },
   {
