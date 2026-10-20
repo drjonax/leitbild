@@ -3,7 +3,7 @@ import type { CompiledPlantGraph, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantIcComparisonOperator } from '../runtime/index.ts'
 import type { SafetyFunctionComparison, SafetyFunctionEvaluation, SafetyFunctionStatus, SafetyFunctionStep } from '../safety-functions.ts'
 import { signalMeasuredOn } from '../signals.ts'
-import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } from './display-text.ts'
+import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } from '../quantity-text.ts'
 
 // How a display words the critical safety functions the Plant declares: a
 // chip per function in its header, its status tree's path behind it, and the

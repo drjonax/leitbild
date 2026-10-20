@@ -2,7 +2,7 @@ import type { IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
 import { processPlantElectricalPortsAt } from './electrical-ports.ts'
 import type { PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { VariablePath } from './graph/index.ts'
-import { formatQuantity } from './displays/display-text.ts'
+import { formatQuantity } from './quantity-text.ts'
 import { overviewKeyValues, plantNowOf } from './displays/overview-key-values.ts'
 import {
   emptyProcessPlantProjection,

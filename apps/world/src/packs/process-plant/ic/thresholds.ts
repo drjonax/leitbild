@@ -2,8 +2,8 @@ import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcFirstOutGroup, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding, resolveProcessPlantSignalPath } from '../signals.ts'
-import { displayValue, unitLabel } from './display-text.ts'
-import { operatingPointValue } from './operating-point.ts'
+import { displayValue, unitLabel } from '../quantity-text.ts'
+import { operatingPointValue } from '../operating-point.ts'
 
 // Thresholds drawn on composed displays come only from the Plant's configured
 // I&C rules. They are named I&C thresholds, not variable limits: they state

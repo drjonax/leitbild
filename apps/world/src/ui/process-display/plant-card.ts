@@ -1,6 +1,6 @@
 import type { OperationalObject } from '../../core/model/index.ts'
 import { procedureIdSchema, type ProcedureId } from '../../core/model/procedures.ts'
-import { formatQuantity } from '../../packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../../packs/process-plant/quantity-text.ts'
 import { safetyFunctionStatusWords } from '../../packs/process-plant/displays/safety-function-content.ts'
 import type { TrendPoint } from '../../packs/process-plant/displays/trend-reading.ts'
 import {

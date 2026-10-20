@@ -3,7 +3,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule, ProcessPlantIcSnapshot } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import { actsIn } from '../displays/actuations.ts'
-import { icRuleKind } from '../displays/ic-thresholds.ts'
+import { icRuleKind } from '../ic/thresholds.ts'
 import { compareIcValues, type ControlOption, type ControlRule, type OfferedControl, type OpposingRule } from './controls.ts'
 
 // Where the rules a control names stand now, in the words an operator acts

@@ -1,5 +1,6 @@
-import { bySeverity, coincidentMargin, displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, readingText, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
-import type { ComposedDisplayThreshold, LimitGate } from './ic-thresholds.ts'
+import { bySeverity, coincidentMargin, isPast, marginTo, marginText, nearestThresholdMargin, type ThresholdMargin } from './display-text.ts'
+import { displayValue, formatValue, offScale, readingText, RESOLUTION_FRACTION, unitLabel } from '../quantity-text.ts'
+import type { ComposedDisplayThreshold, LimitGate } from '../ic/thresholds.ts'
 
 // How a signal's recent history reads: its rate over the display's window,
 // which way it is going, the limit ahead of it and the time to that limit.

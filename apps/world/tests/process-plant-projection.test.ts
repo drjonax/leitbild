@@ -11,7 +11,7 @@ import {
   type CompiledProcessPlant,
   type ProcessPlantIcLifecycleState,
 } from '../src/packs/process-plant/index.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { processPlantPresentation } from '../src/packs/process-plant/presentation.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { scenarios } from './fixtures/scenarios.ts'

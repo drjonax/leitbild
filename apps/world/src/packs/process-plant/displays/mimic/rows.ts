@@ -2,7 +2,7 @@ import type { MimicFlowBinding, MimicFrame, MimicItemBinding, MimicRangeBinding,
 import { flowLook, itemLook, powerLook, shutdownLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
-import { displayValue, logarithmicSpan, offScale, readingText, readingValueText, unitLabel } from '../display-text.ts'
+import { displayValue, logarithmicSpan, offScale, readingText, readingValueText, unitLabel } from '../../quantity-text.ts'
 
 // The text rows beside a drawn item, shared by the server (which reserves
 // their room before any sample exists) and the embed (which fills them). A

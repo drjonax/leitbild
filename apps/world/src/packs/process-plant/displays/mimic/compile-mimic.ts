@@ -1,7 +1,7 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink, VariablePath } from '../../graph/index.ts'
 import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
-import { readingText, unitLabel } from '../display-text.ts'
+import { readingText, unitLabel } from '../../quantity-text.ts'
 import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, stubWordBinding, type MimicItem, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
 import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'

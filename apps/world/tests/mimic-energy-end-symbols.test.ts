@@ -22,7 +22,7 @@ import type { CompiledMimic, MimicDrawnItem } from '../src/packs/process-plant/d
 import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { chatMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { drawnLook, itemTreatment, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { processPlantSignalQuality } from '../src/packs/process-plant/signals.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'

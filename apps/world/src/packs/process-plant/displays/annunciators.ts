@@ -7,7 +7,7 @@ import { composedDisplayLayout } from './composition.ts'
 import { limitOrderName } from './display-text.ts'
 import { energyEnds } from '../graph/index.ts'
 import { automaticActions } from './actuations.ts'
-import { firstOutGroupOf, icRuleKind, icThresholdsForSignal, UNDECLARED_ACTION } from './ic-thresholds.ts'
+import { firstOutGroupOf, icRuleKind, icThresholdsForSignal, UNDECLARED_ACTION } from '../ic/thresholds.ts'
 import { flapText } from './mimic/bindings.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
@@ -125,7 +125,7 @@ export interface DisplayAnnunciation {
 
 /**
  * The single numeric signal a display draws the rule's limit on, alone or
- * inside a combined condition (ic-thresholds.ts), whose limit names it; null
+ * inside a combined condition (ic/thresholds.ts), whose limit names it; null
  * where it draws it on none, or on several.
  */
 const limitedPath = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): VariablePath | null => {
@@ -186,7 +186,7 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
     const threshold = path === null ? undefined : thresholdsOf.get(path)!.find(candidate => candidate.ruleId === rule.id)
     return threshold === undefined ? null : limitOrderName(threshold)
   }
-  // What an annunciated alarm or trip does, as a threshold's action names it (ic-thresholds.ts actionOf), from its own group.
+  // What an annunciated alarm or trip does, as a threshold's action names it (ic/thresholds.ts actionOf), from its own group.
   const actionOfEntry = ({ effect, group }: (typeof annunciated)[number]): string =>
     effect.type === 'alarm.enter' ? 'ALM' : group?.shortLabel ?? UNDECLARED_ACTION
   const tagOf = (entry: (typeof annunciated)[number]): string => {

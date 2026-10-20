@@ -2,8 +2,9 @@
 // lead values (ISA-101 Level 1): which way each value is going and how fast,
 // at a glance, with no axes. Time is Simulation Run time in epoch
 // milliseconds; values are the signal's native unit.
-import { displayValue, formatQuantity, formatValue, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
-import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+import { thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
+import { displayValue, formatQuantity, formatValue } from '../../../packs/process-plant/quantity-text.ts'
+import type { ComposedDisplayThreshold } from '../../../packs/process-plant/ic/thresholds.ts'
 import { HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 import { paddedDomain, rawDomain, stepPath, type ValueDomain } from './trend-geometry.ts'
 

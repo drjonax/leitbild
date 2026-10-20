@@ -1,6 +1,6 @@
-import type { VariablePath } from '../graph/index.ts'
-import type { CompiledProcessPlant } from '../plant-compiler.ts'
-import { createProcessPlantRuntime, type ProcessPlantRuntime } from '../runtime/index.ts'
+import type { VariablePath } from './graph/index.ts'
+import type { CompiledProcessPlant } from './plant-compiler.ts'
+import { createProcessPlantRuntime, type ProcessPlantRuntime } from './runtime/index.ts'
 
 // The Plant at the operating point its model declares, before anything has
 // run: what a signal reads nominally. A display sizes the step it shows a

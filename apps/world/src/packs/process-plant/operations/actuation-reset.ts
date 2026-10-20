@@ -2,7 +2,7 @@ import type { VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule, ProcessPlantIcSnapshot } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
-import { actionOf, conditionText, icRuleKind } from '../displays/ic-thresholds.ts'
+import { actionOf, conditionText, icRuleKind } from '../ic/thresholds.ts'
 import { ruleStatesFrom } from './control-standing.ts'
 
 // A person resets a latched protection actuation (C2b R1): every one that

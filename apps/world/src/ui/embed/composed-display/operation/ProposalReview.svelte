@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../../packs/process-plant/displays/compose.ts'
-  import { shownReading } from '../../../../packs/process-plant/displays/display-text.ts'
+  import { shownReading } from '../../../../packs/process-plant/quantity-text.ts'
   import { rateWindowMs, trendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import type { ProcessPlantProposal, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
   import { sampledGates } from '../panel-presenters.ts'

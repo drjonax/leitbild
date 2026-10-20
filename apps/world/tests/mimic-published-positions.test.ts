@@ -11,7 +11,7 @@ import { compileDetailDisplay, type ComposedMimicPanel } from '../src/packs/proc
 import { itemBinding, type MimicItem } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()

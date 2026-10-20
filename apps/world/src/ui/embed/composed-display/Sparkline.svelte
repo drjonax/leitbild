@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
-  import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+  import type { ComposedDisplayThreshold } from '../../../packs/process-plant/ic/thresholds.ts'
   import { alertTypeOf } from './panel-presenters.ts'
   import { historyStartX, SPARKLINE_SIZE, sparkline, sparklineText } from './sparkline.ts'
   import type { TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'

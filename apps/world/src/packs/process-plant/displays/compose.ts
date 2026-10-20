@@ -43,7 +43,8 @@ import {
   type DisplayEvidence,
   type DisplayEvidenceKind,
 } from './composition.ts'
-import { displayValue, formatQuantity, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
+import { isPast, marginLimitName, nearestThresholdMargin, thresholdName, trendSpanMs } from './display-text.ts'
+import { displayValue, formatQuantity, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, unitLabel, writtenDecimals } from '../quantity-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, turnWords, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
@@ -53,7 +54,7 @@ import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
-import { operatingPointReading, operatingPointValue } from './operating-point.ts'
+import { operatingPointReading, operatingPointValue } from '../operating-point.ts'
 import { commandingActions } from './actuations.ts'
 import { evidenceLines } from './evidence-width.ts'
 import { criterionOfReadings } from './safety-criteria.ts'
@@ -63,12 +64,7 @@ import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import { mimicQuickLookPaths, type MimicQuickLooks } from './mimic/quick-look.ts'
-import {
-  icAlarmRuleIdsForEquipment,
-  icThresholdsForSignal,
-  type ComposedDisplayCombinedRule,
-  type ComposedDisplayThreshold,
-} from './ic-thresholds.ts'
+import { icAlarmRuleIdsForEquipment, icThresholdsForSignal, type ComposedDisplayCombinedRule, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
 
 export interface ComposedDisplayPen {
   readonly ref: string

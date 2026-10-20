@@ -15,7 +15,7 @@ import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../../runtime/index.ts'
 import { processLinkFlowFidelityFor, type ProcessLinkFlowFidelity } from '../../runtime/links/link-flow-fidelity.ts'
 import { resolveProcessPlantSignalBinding } from '../../signals.ts'
-import { actionOf, icRuleKind, icThresholdsForSignal } from '../ic-thresholds.ts'
+import { actionOf, icRuleKind, icThresholdsForSignal } from '../../ic/thresholds.ts'
 import { limitOrderName, thresholdName } from '../display-text.ts'
 
 // What each drawn item shows and from which signals, all read from the model's

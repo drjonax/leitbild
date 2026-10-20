@@ -216,7 +216,7 @@ export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): strin
 }
 
 // A signal belongs to the node that owns its path and to the equipment it is
-// bound to, as the alarms related to a display count it (ic-thresholds.ts):
+// bound to, as the alarms related to a display count it (ic/thresholds.ts):
 // the core's outlet temperature and the RCS subcooling margin are both bound
 // to the reactor coolant system.
 const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [

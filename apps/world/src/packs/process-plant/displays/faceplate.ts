@@ -19,8 +19,8 @@ import type {
   FaceplateSource,
   FaceplateWrite,
 } from './faceplate-live.ts'
-import { displayValue, unitLabel } from './display-text.ts'
-import { actionOf, firstOutGroupOf } from './ic-thresholds.ts'
+import { displayValue, unitLabel } from '../quantity-text.ts'
+import { actionOf, firstOutGroupOf } from '../ic/thresholds.ts'
 import { presentationFor } from './mimic/presentation.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 import { equipmentKeyValues, isDemand, readsAsMeasured, type PlantNow } from './overview-key-values.ts'
@@ -176,7 +176,7 @@ const conditionPaths = (condition: FaceplateCondition): ReadonlyArray<string> =>
     : condition.type === 'not' ? conditionPaths(condition.condition) : condition.conditions.flatMap(conditionPaths)
 
 /**
- * A rule as a faceplate reads it (ic-thresholds.ts reads its limits alike):
+ * A rule as a faceplate reads it (ic/thresholds.ts reads its limits alike):
  * of the conditions it requires together, one that holds at the Plant's
  * declared operating point only arms it (power above P-9 for a reactor trip
  * on turbine trip); the others set it off. A condition not combined so sets
