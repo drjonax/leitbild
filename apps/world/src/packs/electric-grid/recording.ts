@@ -66,7 +66,7 @@ const series = (config: {
   value: config.value,
 })
 
-const operations = [{
+export const gridOperationsSignals = [{
   signalId: 'grid.frequency', title: 'Frequency (largest-load energised island)', quantity: 'frequency', unit: 'Hz', key: 'frequencyHz',
 }, {
   signalId: 'grid.frequency.min', title: 'Lowest island frequency', quantity: 'frequency', unit: 'Hz', key: 'frequencyMinHz',
@@ -97,7 +97,7 @@ const operations = [{
 }, {
   signalId: 'grid.active-alarms', title: 'Active alarms', quantity: 'count', unit: '1', key: 'activeAlarmCount',
 }] as const
-const operationsSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => operations.map(({ key, ...item }) => series({ grid, ...item, value: () => grid.projection[key] }))
+const operationsSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => gridOperationsSignals.map(({ key, ...item }) => series({ grid, ...item, value: () => grid.projection[key] }))
 
 /** Frequency and energisation series of one island, keyed by its stable id. */
 const islandSeries = (grid: GridRuntimeInstance, islandId: string): ReadonlyArray<GridRecordingSeries> => {
@@ -121,7 +121,7 @@ const estimatedIslandSeriesCount = 3
 
 /** The series a Grid records from its start (one island), as createGridRecordingPlan describes them; an HVDC terminal has no bus series. */
 export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId: string): number =>
-  operations.length + estimatedIslandSeriesCount + (profileId === 'engineering'
+  gridOperationsSignals.length + estimatedIslandSeriesCount + (profileId === 'engineering'
     ? (counts.bus - counts.hvdcTerminal) * 2 + counts.branch * 3 + counts.generator + counts.load + counts.storage : 0)
 
 // Per-asset values read the Grid's arrays by model index; bus values exist once the network has been
