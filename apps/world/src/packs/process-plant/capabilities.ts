@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { commandResultSchema, objectIdSchema } from '../../core/model/index.ts'
+import { defineObservationCapability } from '../../core/observation/capabilities.ts'
+import { processPlantObservationCapabilityIds } from './observation/query.ts'
 import {
   defineSimulationCommandCapability,
   defineSimulationQueryCapability,
@@ -467,4 +469,14 @@ export const processPlantCapabilities = [
     risk: 'write',
   }),
   ...processPlantQueryCapabilities,
+  defineObservationCapability('declarations', {
+    id: processPlantObservationCapabilityIds.declarations,
+    title: 'Declare observables',
+    description: 'World\'s observation layer reads what each Plant declares: its published and recorded signals with their limits and series, and its equipment and lines.',
+  }),
+  defineObservationCapability('read', {
+    id: processPlantObservationCapabilityIds.read,
+    title: 'Read observations',
+    description: 'World\'s observation layer reads Plant values with their quality and priority, or the values a unit leads with in its mode.',
+  }),
 ] as const

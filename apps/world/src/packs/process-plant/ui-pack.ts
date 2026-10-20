@@ -16,7 +16,7 @@ export const processPlantPackView = {
     version: '1.0.0',
     name: 'Process Plant',
     description: 'Configurable component-graph process plants with transient dynamics, procedures, controls, and engineering views.',
-    contributions: ['runtime', 'recording', 'knowledge', 'scenario', 'presentation'],
+    contributions: ['runtime', 'recording', 'knowledge', 'scenario', 'presentation', 'observation'],
   }),
   runtime: {
     runtimes: [{ id: processPlantSimRuntimeId, version: '1.0.0', label: 'Local process plant runtime', kind: 'local', clock: 'simulation' }],
