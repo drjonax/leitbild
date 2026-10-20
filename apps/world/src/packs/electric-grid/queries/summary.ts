@@ -8,6 +8,7 @@ import { gridDemandSampleClock } from '../runtime/demand.ts'
 import { gridTablesFor } from '../runtime/state/tables.ts'
 import { modelDiagnosticsSchema, modelFidelitySchema } from './catalog.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema } from './common.ts'
+import { gridLoadingBands } from '../loading-bands.ts'
 import {
   branchDefinitionSchema,
   demandProfileSeriesSchema,
@@ -22,8 +23,6 @@ import {
 const finite = z.number().finite()
 const count = z.number().int().nonnegative()
 
-// 70 %: the corridor attention band below the 85 % loading alarm (runtime/projection.ts); grid overhaul audit C-17.
-const constrainedBranchLoadingPercent = 70
 // A load is affected when any of its demand is unserved: shed manually, by LFDD, or lost to an outage.
 const affectedLoadUnservedMw = 0
 const constrainedBranchRowLimit = 8
@@ -171,7 +170,8 @@ const summaryResultSchema = z.object({
     }).strict().nullable().describe('The process\'s N-1 worker pool, shared by every Grid; null until the first screening creates it.'),
   }).strict(),
   thresholds: z.object({
-    constrainedBranchLoadingPercent: finite.describe('constrainedBranches lists closed branches loaded at or above this percent.'),
+    constrainedBranchLoadingPercent: finite.describe('constrainedBranches lists closed branches loaded at or above this percent, below any loading alarm.'),
+    overloadLoadingPercent: finite.describe('The Automation\'s highest continuous-rating branch loading alarm raises at this percent: a branch at or above it is overloaded.'),
     affectedLoadUnservedMw: finite.describe('affectedLoads lists loads whose unserved demand exceeds this (MW).'),
   }).strict(),
   constrainedBranchCount: count,
@@ -232,9 +232,10 @@ const demandProfilesSummary = (grid: GridRuntimeInstance) => {
 
 const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSchema> => {
   const model = grid.definition.model
+  const bands = gridLoadingBands(grid.definition.automation.alarms)
   const constrained = model.branches
     .map(definition => ({ definition, state: grid.branches.get(definition.id)! }))
-    .filter(branch => branch.state.state === 'closed' && branch.state.loadingPercent >= constrainedBranchLoadingPercent)
+    .filter(branch => branch.state.state === 'closed' && branch.state.loadingPercent >= bands.attentionPercent)
     .sort((left, right) => right.state.loadingPercent - left.state.loadingPercent)
   const affected = model.loads
     .map(definition => ({ definition, state: grid.loads.get(definition.id)! }))
@@ -271,7 +272,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       runtime: { ...grid.diagnostics, energyAudit: { ...grid.diagnostics.energyAudit } },
       contingencyWorkerPool: processContingencyPoolStatus(),
     },
-    thresholds: { constrainedBranchLoadingPercent, affectedLoadUnservedMw },
+    thresholds: { constrainedBranchLoadingPercent: bands.attentionPercent, overloadLoadingPercent: bands.overloadPercent, affectedLoadUnservedMw },
     constrainedBranchCount: constrained.length,
     constrainedBranches: constrained.slice(0, constrainedBranchRowLimit).map(({ definition, state }) => ({
       id: definition.id,

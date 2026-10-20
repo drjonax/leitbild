@@ -44,7 +44,7 @@
       readonly activeAlarmCount: number
       readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly loadMw: number; readonly alarmCount: number }>
     }
-    readonly thresholds: { readonly constrainedBranchLoadingPercent: number }
+    readonly thresholds: { readonly constrainedBranchLoadingPercent: number; readonly overloadLoadingPercent: number }
     readonly constrainedBranchCount: number
     readonly constrainedBranches: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly loadingPercent: number } }>
     readonly generators: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly dispatchMw: number } }>
@@ -462,7 +462,7 @@
           <div>
             <h3>Constrained corridors</h3>
             {#each branches as branch (branch.id)}
-              {@render assetRow(branch.id, branch.label, `${Math.round(branch.state.loadingPercent)}%`, branch.state.loadingPercent >= 100)}
+              {@render assetRow(branch.id, branch.label, `${Math.round(branch.state.loadingPercent)}%`, summary !== null && branch.state.loadingPercent >= summary.thresholds.overloadLoadingPercent)}
             {:else}
               {#if summary}<p class="empty-state">None at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading.</p>{/if}
             {/each}
