@@ -37,9 +37,11 @@ const densityReasons = (model: Model, profile: DiagramProfile): Reason[] => {
   const symbol = (role: string): boolean => role === 'device' || role === 'common'
   const symbols = model.nodes.filter(node => symbol(node.role))
   const perPartition = model.partitions.map((_, partition) => symbols.filter(node => node.partition === partition).length)
+  // The per-partition limit keeps partitions legible side by side; one partition alone (a chain or a tree) answers
+  // to the symbol limit only.
   const counts: Array<[keyof DiagramProfile['limits'], number]> = [
     ['symbols', symbols.length],
-    ['symbolsPerPartition', Math.max(0, ...perPartition)],
+    ...(model.partitions.length >= 2 ? [['symbolsPerPartition', Math.max(...perPartition)] as [keyof DiagramProfile['limits'], number]] : []),
     ['sharedSymbols', symbols.filter(node => node.partition === null).length],
     ['partitions', model.partitions.length],
   ]

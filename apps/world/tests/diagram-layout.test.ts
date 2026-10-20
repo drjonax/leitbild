@@ -363,6 +363,10 @@ describe('diagram layout engine', () => {
         { kind: 'density', limit: 'symbolsPerPartition', count: 3, max: 2 },
       ],
     })
+    // The per-partition limit holds where partitions stand side by side; one partition alone answers to the symbol limit.
+    const sparse = { ...profile, limits: { ...profile.limits, symbolsPerPartition: 1 } }
+    expect(draw(combined(1), sparse).ok).toBe(true)
+    expect(draw(combined(2), sparse)).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'symbolsPerPartition', count: 3, max: 1 }] })
     const tangled = draw(combined(4), { ...profile, limits: { ...profile.limits, crossings: 2 } })
     expect(tangled).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'crossings', count: 4, max: 2 }] })
     const partitions = draw(commonLoops(6), { ...profile, limits: { ...profile.limits, partitions: 4 } })

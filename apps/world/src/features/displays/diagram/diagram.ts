@@ -136,6 +136,7 @@ export interface DiagramProfile {
   /** Density the HMI standard allows. */
   readonly limits: {
     readonly symbols: number
+    /** Symbols in one partition, where two or more are drawn side by side; one partition alone answers to `symbols`. */
     readonly symbolsPerPartition: number
     readonly sharedSymbols: number
     readonly partitions: number
