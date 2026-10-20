@@ -1,4 +1,4 @@
-import type { Face } from './layout/index.ts'
+import type { Face } from '../../../../features/displays/diagram/index.ts'
 import { openBridgeDevice } from './text-metrics.ts'
 
 // Where a reactor vessel stands in the box the layout gave it. A vessel

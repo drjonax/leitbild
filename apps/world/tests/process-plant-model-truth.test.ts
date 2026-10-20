@@ -195,8 +195,8 @@ describe('breakers', () => {
     const route = drawn({ from: ['dieselGeneratorA'], to: ['auxFeedwaterPumpMotor'] })
     const lines = route.mimic.pipes.filter(pipe => !route.mimic.stubs.some(stub => pipe.id.startsWith(`${stub.id}.`)))
     expect(lines.map(pipe => pipeStatesLook([pipe.state], route.sample))).toEqual(lines.map(() => 'live'))
-    // Around the pump, the bus's two feeders stop the drawing as one stub: live, as its diesel feeder is.
-    const around = drawn({ around: ['auxFeedwaterPumpMotor'], reach: 1 })
+    // Around the pump with its power, the bus's two feeders stop the drawing as one stub: live, as its diesel feeder is.
+    const around = drawn({ around: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'], reach: 1 })
     const feeders = around.mimic.stubs.find(stub => stub.states.length === 2 && stub.states.every(state => state.kind === 'power'))!
     expect(feeders.states.map(state => pipeStatesLook([state], around.sample)).sort()).toEqual(['dead', 'live'])
     expect(pipeStatesLook(feeders.states, around.sample)).toBe('live')

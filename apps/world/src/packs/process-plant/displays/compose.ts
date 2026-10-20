@@ -47,12 +47,12 @@ import {
 import { displayValue, formatQuantity, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, turnWords, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
-import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
+import { compileMimic, groupLabel, mimicScopeDrawing, type MimicCompileResult, type MimicScopeDrawing } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
 import { principalCircuits } from './mimic/principal.ts'
-import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { equipmentKeyValues, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { operatingPointReading, operatingPointValue } from './operating-point.ts'
 import { commandingActions } from './actuations.ts'
@@ -349,20 +349,6 @@ const suggestionsFor = (ref: string, graph: CompiledPlantGraph): ReadonlyArray<s
 
 /** The Plant's declared operating mode and live values now: what lead values are chosen by. */
 const plantNow = plantNowOf
-
-/**
- * What equipment opened now leads with besides itself (the Plant's mode, and
- * which readings measure nothing): a detail compiled under the same key shows
- * the same values, so a cached detail is reused only while it still holds.
- */
-export const detailLeadKey = (system: ProcessPlantRuntimeInstance): string => leadValuesKey(system.plant, plantNow(system))
-
-/**
- * What a unit overview leads with now: it follows the Plant's mode and what
- * its protection can still do, so a cached overview is reused only while
- * these hold.
- */
-export const overviewLeadKey = (system: ProcessPlantRuntimeInstance): string => overviewKeyValues(system.plant, plantNow(system)).join(',')
 
 const resolveRef = (system: ProcessPlantRuntimeInstance, ref: string): ProcessSignalBinding | undefined => {
   const tag = processSignalTagIdSchema.safeParse(ref)
@@ -1278,8 +1264,8 @@ const overviewHeight = (arrangement: OverviewArrangement, panels: GeneratedPanel
   return layout.overviewFrame + drawing + stackedPanelsHeight(panels, width) + layout.overviewFooter
 }
 
-/** A generated display's drawing for the room a view leaves it. */
-type GeneratedDrawing = (room: { readonly maxWidth: number; readonly maxHeight: number }) => MimicCompileResult
+/** A generated display's drawing: drawn for the room a view leaves it, its candidate drawings laid out once whatever the room (mimicScopeDrawing). */
+type GeneratedDrawing = MimicScopeDrawing
 
 /**
  * Fits a generated display to its view at 1:1, taking the first that fits:
@@ -1319,25 +1305,20 @@ const fitGenerated = (
     { arrangement: 'column' as const, maxWidth: overviewDrawingRoom({ width: view.width, height: UNCONSTRAINED }, 'column', widest)!.maxWidth },
     { arrangement: 'stacked' as const, maxWidth: view.width - 2 * composedDisplayLayout.overviewPadding },
   ]).filter(rung => rung.maxWidth > 0)
-  // Taller room never stops a drawing that fits in less, so the least height is found by halving.
-  const leastHeight = (draw: GeneratedDrawing, maxWidth: number): MimicCompileResult => {
-    let best = draw({ maxWidth, maxHeight: heights.at(-1) ?? shortest })
-    if (!best.ok) return best
-    let [low, high] = [0, heights.length - 1]
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2)
-      const drawn = draw({ maxWidth, maxHeight: heights[middle]! })
-      if (drawn.ok) { best = drawn; high = middle } else low = middle + 1
-    }
-    return best
+  // Taller room never stops a drawing that fits in less: the least height that draws is the first step at or above
+  // the least height any of its drawings needs at that width. Without one, the tallest step says why nothing draws.
+  const leastHeight = (drawing: GeneratedDrawing, maxWidth: number): MimicCompileResult => {
+    const least = drawing.leastHeight(maxWidth)
+    const step = least === null ? undefined : heights.find(height => height >= least)
+    return drawing.draw({ maxWidth, maxHeight: step ?? heights.at(-1) ?? shortest })
   }
   // Unconstrained room draws whatever can be drawn verified, so the last refusal says why nothing can.
   let refusal: ReadonlyArray<string> = []
   const attempts = [
-    ...drawings.flatMap(draw => whole.map(layout => ({ arrangement: layout.arrangement, panels: layout.panels, draw: () => draw(layout.room) }))),
-    ...scrolling.flatMap(rung => drawings.map(draw => ({ arrangement: rung.arrangement, panels: widest, draw: () => leastHeight(draw, rung.maxWidth) }))),
-    ...(view === null ? [] : drawings.map(draw => ({ arrangement: 'stacked' as const, panels: widest, draw: () => leastHeight(draw, UNCONSTRAINED) }))),
-    ...drawings.map(draw => ({ arrangement: 'stacked' as const, panels: widest, draw: () => draw({ maxWidth: UNCONSTRAINED, maxHeight: UNCONSTRAINED }) })),
+    ...drawings.flatMap(drawing => whole.map(layout => ({ arrangement: layout.arrangement, panels: layout.panels, draw: () => drawing.draw(layout.room) }))),
+    ...scrolling.flatMap(rung => drawings.map(drawing => ({ arrangement: rung.arrangement, panels: widest, draw: () => leastHeight(drawing, rung.maxWidth) }))),
+    ...(view === null ? [] : drawings.map(drawing => ({ arrangement: 'stacked' as const, panels: widest, draw: () => leastHeight(drawing, UNCONSTRAINED) }))),
+    ...drawings.map(drawing => ({ arrangement: 'stacked' as const, panels: widest, draw: () => drawing.draw({ maxWidth: UNCONSTRAINED, maxHeight: UNCONSTRAINED }) })),
   ]
   for (const { arrangement, panels: shown, draw } of attempts) {
     const drawn = draw()
@@ -1435,7 +1416,7 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
     return fitted.ok ? [{ width, systems: fitted.systems }] : []
   })]
   const values = readouts?.pens.length ?? 0
-  const fitted = fitGenerated(view, tiles.map(option => ({ readouts: values, annunciators: option.systems.length, tileWidth: option.width })), [room => compileMimicScope(system.plant, circuits.scope, { profile: overviewMimicProfile, ...room })])
+  const fitted = fitGenerated(view, tiles.map(option => ({ readouts: values, annunciators: option.systems.length, tileWidth: option.width })), [mimicScopeDrawing(system.plant, circuits.scope, overviewMimicProfile)])
   if (!fitted.ok) return { ok: false, issues: fitted.issues.map(message => ({ path: 'overview', message })) }
   const systems = tiles.find(option => option.width === fitted.panels.tileWidth)!.systems
   const extras = drawingExtras(system, fitted.mimic, recordedSeriesIds, issues)
@@ -1445,7 +1426,7 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
 
 /**
  * An energy end's faceplate, for its detail alone: compiled for the Plant's
- * mode as the detail is opened (detailLeadKey), with every value it shows as
+ * mode as the detail is opened, with every value it shows as
  * a readout shows it, its states without the end's name. Null for any other
  * detail.
  */
@@ -1535,7 +1516,7 @@ const sampledPathCount = (mimic: CompiledMimic, faceplate: ComposedFaceplatePane
  * The lead values are chosen for the Plant's operating mode when the detail
  * is opened (what rules acting in that mode judge first, readings that
  * measure nothing then last); they stay as chosen while the detail is open,
- * and opening it again in another mode chooses again (detailLeadKey).
+ * and opening it again in another mode chooses again.
  * An energy end's detail draws the same drawing with its faceplate under it
  * instead, which takes every lead value, so the column beside the drawing
  * holds only the alarms: whole, else compact, where it fits beneath the
@@ -1561,18 +1542,19 @@ export const compileDetailDisplay = (
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}
   const reaches = Array.from({ length: MIMIC_REACH_LINKS }, (_, step) => MIMIC_REACH_LINKS - step)
   const panels = [{ readouts: readouts?.pens.length ?? 0, annunciators: 0, tileWidth: composedDisplayLayout.annunciatorTile.widths[0] }]
-  const whole = reaches.map(reach => resolveMimicScope(graph, { around: componentIds, ...narrowed, reach }))
+  // Every service it carries first, its power supply too (around alone draws its process only).
+  const services = itemServices(graph, components)
+  const whole = reaches.map(reach => resolveMimicScope(graph, { around: componentIds, ...narrowed, services, reach }))
   const unresolved = whole.find(scope => !scope.ok)
   if (unresolved !== undefined && !unresolved.ok) return { ok: false, issues: unresolved.issues.map(issue => ({ path: 'detail', message: issue.message })) }
   // Where every service at once does not draw legibly, one at a time, the
   // equipment's own first; its other services stop at it.
-  const services = itemServices(graph, components)
   const oneService = services.length < 2 ? [] : services.flatMap(service => reaches.flatMap(reach => {
     const scope = resolveMimicScope(graph, { around: componentIds, ...narrowed, services: [service], reach })
     return scope.ok ? [withOtherServicesStopped(graph, scope.scope, components, services)] : []
   }))
   const scopes = [...whole.flatMap(scope => scope.ok ? [scope.scope] : []), ...oneService]
-  const drawings = scopes.map(scope => (room: Parameters<GeneratedDrawing>[0]) => compileMimicScope(system.plant, scope, { profile: detailMimicProfile, ...room }))
+  const drawings = scopes.map(scope => mimicScopeDrawing(system.plant, scope, detailMimicProfile))
   // The drawing first, as it is drawn without a faceplate: a faceplate never changes what a detail draws.
   const fitted = fitGenerated(view, panels, drawings)
   if (!fitted.ok) return { ok: false, issues: [{ path: 'detail', message: `nothing around it can be drawn legibly; ${fitted.issues.join('; ')}` }] }

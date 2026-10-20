@@ -15,8 +15,8 @@ import type { Structure } from './structure.ts'
 export type Detail = DiagramProfile['fit'][number]['detail']
 /**
  * Where symbols' text stacks go: right of each symbol where its pipes allow;
- * the same with the labels of lanes' stubs below their ends; below the
- * symbols of lanes; or below every symbol. Below is narrower and taller, and
+ * the same with the labels of partitions' stubs below their ends; below the
+ * symbols of partitions; or below every symbol. Below is narrower and taller, and
  * right is the richer drawing.
  */
 export type TextPolicy = DiagramProfile['fit'][number]['text']
@@ -58,8 +58,8 @@ export interface AttemptGeometry {
 export const prepare = (model: Model, structure: Structure, layering: Layering, ordering: Ordering, flipped: ReadonlyArray<boolean>, refine: boolean): Prepared => {
   const pipeFaces = model.nodes.map(node => {
     const faces = new Set<AxisFace>()
-    if (node.role === 'hub') {
-      if (node.ports.some(port => port.use !== 'unused')) faces.add(ordering.hubSide === 'low' ? '+c' : '-c')
+    if (node.role === 'common') {
+      if (node.ports.some(port => port.use !== 'unused')) faces.add(ordering.commonSide === 'low' ? '+c' : '-c')
       return faces
     }
     if (node.ports.some(port => port.use === 'target')) faces.add(flipped[node.index] ? '+f' : '-f')
@@ -83,9 +83,9 @@ export const prepare = (model: Model, structure: Structure, layering: Layering, 
       if (roleOf(b) === 'bar') barNeighbours.set(b, [...(barNeighbours.get(b) ?? []), a])
     })
   }
-  const growLow = model.nodes.map(node => node.role !== 'bar' && node.role !== 'hub' && [...barNeighbours.values()]
+  const growLow = model.nodes.map(node => node.role !== 'bar' && node.role !== 'common' && [...barNeighbours.values()]
     .filter(neighbours => neighbours.includes(node.index))
-    .flatMap(neighbours => neighbours.filter(other => other !== node.index && roleOf(other) !== 'hub'))
+    .flatMap(neighbours => neighbours.filter(other => other !== node.index && roleOf(other) !== 'common'))
     .reduce((sum, other) => sum + sideOf(other, node.index), 0) < 0)
   return { model, structure, layering, ordering, flipped, refine, pipeFaces, growLow }
 }
@@ -103,7 +103,7 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
   const footprintOf = (node: Model['nodes'][number], sideEntry: boolean): AxisBox => {
     const own = orientation === 'leftToRight' ? node.height : node.width
     const ports = (['source', 'target'] as const).filter(use => !(sideEntry && use === 'target')).map(use => node.ports.filter(port => port.use === use).length)
-    const across = node.role === 'hub' ? own : Math.max(own, Math.ceil(((Math.max(0, ...ports) + 1) * grid) / profile.cell))
+    const across = node.role === 'common' ? own : Math.max(own, Math.ceil(((Math.max(0, ...ports) + 1) * grid) / profile.cell))
     const box = footprint(alongCells(node) * profile.cell, across * profile.cell, grid)
     if (across === own || !prepared.growLow[node.index]) return box
     // Grown toward the bars that feed it: the symbol's own footprint keeps its place on the anchor.
@@ -126,23 +126,23 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
       continue
     }
     const bottom = axisFace(orientation, 'bottom')
-    // Refined, a hub's label goes on its downstream end, which no pipe reaches: beside the hub it would widen the lanes' band.
-    if (prepared.refine && node.role === 'hub') {
+    // Refined, a common node's label goes on its downstream end, which no pipe reaches: beside the common node it would widen the partitions' band.
+    if (prepared.refine && node.role === 'common') {
       side.push(screenFace(orientation, '+f'))
       entries.push(null)
       shape.push(footprintOf(node, false))
       continue
     }
     const fallback = chooseTextSide(orientation, prepared.pipeFaces[node.index]!)
-    // A lane's stub's label goes below its end where no pipe leaves that way: the lanes narrower, and only a line taller.
-    // Stubs beside the lanes keep theirs at the right, where it widens nothing a lane repeats.
-    if (policy === 'stubsBelow' && node.role === 'stub' && node.lane !== null && !prepared.pipeFaces[node.index]!.has(bottom)) {
+    // A partition's stub's label goes below its end where no pipe leaves that way: the partitions narrower, and only a line taller.
+    // Stubs beside the partitions keep theirs at the right, where it widens nothing a partition repeats.
+    if (policy === 'stubsBelow' && node.role === 'stub' && node.partition !== null && !prepared.pipeFaces[node.index]!.has(bottom)) {
       side.push('bottom')
       entries.push(null)
       shape.push(footprintOf(node, false))
       continue
     }
-    const below = (node.role === 'device' || node.role === 'stub') && (policy === 'allBelow' || (policy === 'lanesBelow' && node.lane !== null))
+    const below = (node.role === 'device' || node.role === 'stub') && (policy === 'allBelow' || (policy === 'partitionsBelow' && node.partition !== null))
     if (!below || !prepared.pipeFaces[node.index]!.has(bottom)) {
       side.push(below ? 'bottom' : fallback)
       entries.push(null)
@@ -196,7 +196,7 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     const barLine = (node: number): AxisBox => ({ f0: -outline / 2, f1: outline / 2, c0: attached.span[node]![0], c1: attached.span[node]![1] })
     const extents: LayerExtent[] = Array.from({ length: layering.layerCount }, () => ({ lowReserve: 0, highReserve: 0, lowFace: 0, highFace: 0 }))
     for (const node of model.nodes) {
-      if (node.role === 'hub') continue
+      if (node.role === 'common') continue
       const layer = items[node.index]!.layer
       const current = extents[layer]!
       if (node.role === 'bar') {
@@ -221,26 +221,26 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     const along = placeAlong(profile, extents, plan)
     const trackF = (channel: number, net: number): number => along.firstTrack[channel]! + plan.offset[channel]![plan.track.get(trackKey(channel, net))!]!
 
-    // Hubs grow along their side face to cover their tracks.
-    const hubPorts = model.nodes.map(() => new Map<number, Set<number>>())
+    // Common nodes grow along their side face to cover their tracks.
+    const commonPorts = model.nodes.map(() => new Map<number, Set<number>>())
     layering.chains.forEach((chain, index) => chain.steps.forEach((_, k) => {
       for (const position of [k, k + 1]) {
         const item = chain.items[position]!
-        if (item >= nodeCount || model.nodes[item]!.role !== 'hub') continue
+        if (item >= nodeCount || model.nodes[item]!.role !== 'common') continue
         const edge = model.edges[chain.edge]!
         const port = item === edge.from ? edge.fromPort : edge.toPort
-        const tracks = hubPorts[item]!.get(port) ?? new Set<number>()
+        const tracks = commonPorts[item]!.get(port) ?? new Set<number>()
         const jog = plan.jog[index]![k]!
         tracks.add(trackF(jog.channel, jog.net))
-        hubPorts[item]!.set(port, tracks)
+        commonPorts[item]!.set(port, tracks)
       }
     }))
     const box: AxisBox[] = model.nodes.map(node => {
       const layer = items[node.index]!.layer
       if (node.role === 'bar') return shiftBox(barLine(node.index), along.axis[layer]! + attached.barRow[node.index]! * grid, 0)
       const placed = shiftBox(shape[node.index]!, along.axis[layer]!, c[node.index]!)
-      if (node.role !== 'hub') return placed
-      const tracks = [...hubPorts[node.index]!.values()].flatMap(set => [...set])
+      if (node.role !== 'common') return placed
+      const tracks = [...commonPorts[node.index]!.values()].flatMap(set => [...set])
       if (tracks.length === 0) return placed
       const low = Math.min(...tracks)
       const high = Math.max(...tracks)
@@ -251,19 +251,19 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
       const f1 = Math.max(f0 + size, ceilTo(high + Math.max(grid, ends?.top ?? 0), grid))
       return { f0, f1, c0: placed.c0, c1: placed.c1 }
     })
-    hubPorts.forEach((ports, node) => ports.forEach((tracks, port) => {
-      if (tracks.size > 1) throw new Error(`hub ${model.nodes[node]!.id} port ${model.nodes[node]!.ports[port]!.id} would need two places on its face; split its edges over separate ports`)
+    commonPorts.forEach((ports, node) => ports.forEach((tracks, port) => {
+      if (tracks.size > 1) throw new Error(`common ${model.nodes[node]!.id} port ${model.nodes[node]!.ports[port]!.id} would need two places on its face; split its edges over separate ports`)
     }))
     // A bar's label goes to the first end no vertical run passes: runs through
     // its layer (dummies), and runs to the other bars of its stack that cross
-    // its row. It keeps clear of the hubs beside the layers and of the frames of
+    // its row. It keeps clear of the common nodes beside the layers and of the frames of
     // the bars stacked with it (a bar's frame spans its whole line, as wide as
     // its label), both ways. Either end reserves the same room along the flow,
     // so the end is chosen once everything is placed.
     const apart = (a: AxisBox | null | undefined, b: AxisBox | null | undefined): boolean => a === null || a === undefined || b === null || b === undefined
       || a.f1 + profile.textClearance <= b.f0 || b.f1 + profile.textClearance <= a.f0 || a.c1 + profile.textClearance <= b.c0 || b.c1 + profile.textClearance <= a.c0
     const overlaps = (a: AxisBox, b: AxisBox): boolean => a.f0 < b.f1 && b.f0 < a.f1 && a.c0 < b.c1 && b.c0 < a.c1
-    const hubsDressed = model.nodes.filter(node => node.role === 'hub').map(node => dressNode(node.index, box[node.index]!))
+    const commonsDressed = model.nodes.filter(node => node.role === 'common').map(node => dressNode(node.index, box[node.index]!))
     const barSide = new Map<number, TextSide>()
     const sideOf = (node: number): TextSide => barSide.get(node) ?? side[node]!
     const blocked: LabelRoom[] = []
@@ -291,8 +291,8 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
           const beside = dress({ orientation, profile, node: other, box: box[other.index]!, lines: kept[other.index]!, side: sideOf(other.index), gap: outline })
           return !overlaps(text.box, box[other.index]!) && apart(text.box, beside.frame) && apart(beside.text?.box, own.frame)
         })
-        const clearOfHubs = hubsDressed.every(hub => !overlaps(text.box, hub.box) && (hub.text === null || !overlaps(text.box, hub.text.box)) && apart(text.box, hub.frame) && apart(hub.text?.box, own.frame))
-        return clearOfBars && clearOfHubs && columns.every(column => column <= low || column >= high)
+        const clearOfCommons = commonsDressed.every(common => !overlaps(text.box, common.box) && (common.text === null || !overlaps(text.box, common.text.box)) && apart(text.box, common.frame) && apart(common.text?.box, own.frame))
+        return clearOfBars && clearOfCommons && columns.every(column => column <= low || column >= high)
       }
       const high = free('+c')
       const low = !high && free('-c')
@@ -305,11 +305,11 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
       if (before === undefined || text === null) continue
       blocked.push({ before, after: first.item, gap: ceilTo((c[first.item]! - first.pin) + grid / 2 + outline + (text.box.c1 - text.box.c0) + outline / 2 + 1, grid) })
     }
-    return { across, attached, plan, along, trackF, hubPorts, box, barSide, blocked }
+    return { across, attached, plan, along, trackF, commonPorts, box, barSide, blocked }
   }
   const first = place([])
   const second = first.blocked.length === 0 ? null : place(first.blocked)
-  const { across, attached, plan, along, trackF, hubPorts, box, barSide } = second !== null && second.blocked.length < first.blocked.length ? second : first
+  const { across, attached, plan, along, trackF, commonPorts, box, barSide } = second !== null && second.blocked.length < first.blocked.length ? second : first
   for (const [bar, end] of barSide) side[bar] = end
   const dressed = model.nodes.map(node => dressNode(node.index, box[node.index]!))
 
@@ -321,7 +321,7 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     if (item >= nodeCount) return [[along.axis[items[item]!.layer]!, pinC]]
     const node = model.nodes[item]!
     if (node.role === 'bar') return [[box[item]!.f0 + outline / 2, pinC]]
-    if (node.role === 'hub') return [[track, pinC]]
+    if (node.role === 'common') return [[track, pinC]]
     if (face === 'out') return [[box[item]!.f1 - node.portInset, pinC]]
     const edge = model.edges[layering.chains[chain]!.edge]!
     const entry = entries[item]?.ports.get(item === edge.from ? edge.fromPort : edge.toPort)
@@ -359,9 +359,9 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     const list: Array<{ id: string; point: Point; face: AxisFace }> = []
     node.ports.forEach((port, index) => {
       if (port.use === 'unused') return
-      if (node.role === 'hub') {
-        const tracks = hubPorts[node.index]!.get(index)
-        const low = ordering.hubSide === 'low'
+      if (node.role === 'common') {
+        const tracks = commonPorts[node.index]!.get(index)
+        const low = ordering.commonSide === 'low'
         if (tracks !== undefined) list.push({ id: port.id, point: [[...tracks][0]!, low ? box[node.index]!.c1 - node.portInset : box[node.index]!.c0 + node.portInset], face: low ? '+c' : '-c' })
         return
       }
@@ -383,15 +383,15 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     return list
   })
 
-  // Lane zones: the lane's band across, its items' reach along.
-  const zoneBoxes: Array<{ lane: number; box: AxisBox }> = model.lanes.map((_, lane) => {
+  // Partition zones: the partition's band across, its items' reach along.
+  const zoneBoxes: Array<{ partition: number; box: AxisBox }> = model.partitions.map((_, partition) => {
     const reach = items.flatMap(item => {
-      if (item.lane !== lane) return []
+      if (item.partition !== partition) return []
       if (item.node === null) return [along.axis[item.layer]!]
       return [dressed[item.node]!.reserve.f0, dressed[item.node]!.reserve.f1]
     })
-    const c0 = across.laneStart + lane * across.pitch
-    return { lane, box: { f0: Math.min(...reach), f1: Math.max(...reach), c0, c1: c0 + across.pitch } }
+    const c0 = across.partitionStart + partition * across.pitch
+    return { partition, box: { f0: Math.min(...reach), f1: Math.max(...reach), c0, c1: c0 + across.pitch } }
   })
 
   // To screen, then translate by whole grid steps so the drawing starts at the origin.
@@ -419,13 +419,13 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     const text = d.text === null ? null : { ...translateRect(rect(d.text.box), dx, dy), side: d.text.side, lines: d.text.lines }
     return { id: node.id, x: r.x, y: r.y, width: r.width, height: r.height, ports: portRecord, text, frame: d.frame === null ? null : translateRect(rect(d.frame), dx, dy) }
   })
-  const zones: DiagramZone[] = zoneBoxes.map(({ lane, box: zoneBox }) => {
+  const zones: DiagramZone[] = zoneBoxes.map(({ partition, box: zoneBox }) => {
     const r = translateRect(rect(zoneBox), dx, dy)
     const x0 = Math.max(0, r.x)
     const y0 = Math.max(0, r.y)
     const x1 = Math.min(width, r.x + r.width)
     const y1 = Math.min(height, r.y + r.height)
-    return { lane: model.lanes[lane]!, x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) }
+    return { partition: model.partitions[partition]!, x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) }
   })
   return { orientation, detail, policy, width, height, nodes, paths: screenPaths.map(path => path.map(move)), zones }
 }
