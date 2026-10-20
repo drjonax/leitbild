@@ -50,7 +50,8 @@ export const createSteadyPlantRun = async (): Promise<SteadyPlantRun> => {
   const run = await registry.create({ scenarioId: steadyPlantScenario.id })
   await run.setClock({ paused: true })
   const plantId = run.snapshot().objects.find(object => object.packId === 'process-plant')!.id
-  const start = Date.parse(run.snapshot().clock!.currentTime)
+  // A new Run plays until it is paused; times count from the Scenario's start, so a reach is exact however long that took.
+  const start = Date.parse(steadyPlantScenario.world.startsAt)
   let down = false
   const shutdown = async (): Promise<void> => {
     if (down) return
