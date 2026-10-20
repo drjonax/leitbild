@@ -1957,6 +1957,8 @@
       }
       if (message.kind === 'views') {
         conversationDisplays = message.views
+        // Each refused listing is left out on its own and said; the rest of the list is shown.
+        if (message.refused.length > 0) status = `Process display window: ${message.refused.map(refused => refused.reason).join('; ')}`
         return
       }
       requestDisplayWindow({ kind: 'listing', listing: message.view }, false)

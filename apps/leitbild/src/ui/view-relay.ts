@@ -104,8 +104,11 @@ export const createViewRelay = (config: {
   const receiveViews = (data: unknown): void => {
     const parsed = embeddedViewsMessageSchema.safeParse(data)
     if (!parsed.success) return config.reportError(`Display list refused: ${firstIssue(parsed.error)}`)
-    if (parsed.data.views.some(foreign)) return config.reportError('Display list refused: a display belongs to another Workspace')
-    views = parsed.data.views
+    // A display about another Workspace is left out on its own, and said; the rest of the list still goes to World.
+    const kept = parsed.data.views.filter(view => !foreign(view))
+    const left = parsed.data.views.length - kept.length
+    if (left > 0) config.reportError(`Display list: ${left === 1 ? 'a display belongs' : `${left} displays belong`} to another Workspace and ${left === 1 ? 'was' : 'were'} left out`)
+    views = kept
     if (worldListening) config.postToWorld(viewsMessage())
   }
 

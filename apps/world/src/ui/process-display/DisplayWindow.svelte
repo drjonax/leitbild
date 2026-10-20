@@ -134,7 +134,7 @@
     readonly origin: ProcessDisplayWindowBounds
   }
 
-  type Popover = 'list' | 'zoom' | 'more'
+  type Popover = 'list' | 'zoom' | 'more' | 'instructor'
   type HeaderTier = 'wide' | 'medium' | 'narrow' | 'tiny'
 
   interface ResizeHandle {
@@ -212,6 +212,7 @@
   let positionButton = $state<HTMLButtonElement | null>(null)
   let zoomButton = $state<HTMLButtonElement | null>(null)
   let moreButton = $state<HTMLButtonElement | null>(null)
+  let instructorButton = $state<HTMLButtonElement | null>(null)
   let showSequence = 0
   let appliedRequest = -1
   let disposed = false
@@ -251,7 +252,9 @@
   const scaled = $derived(currentZoom !== null && !isActualSize(currentZoom.zoom))
   const currentOverview = $derived(current?.source === 'overview' ? overviewViews.get(current.key) ?? null : null)
   const currentEnvelope = $derived(current === null ? null : envelopeFor(current))
-  const connecting = $derived(current !== null && currentOverview?.state !== 'failed'
+  // A listing this window cannot show (another view type) says so in place of a frame.
+  const currentRefusal = $derived(current?.source === 'answer' ? current.refusal : null)
+  const connecting = $derived(current !== null && currentOverview?.state !== 'failed' && currentRefusal === null
     && (currentEnvelope === null || !framesUp.has(current.key)))
   const effectiveBounds = $derived<ProcessDisplayWindowBounds>(maximised
     ? {
@@ -275,7 +278,7 @@
   }))
 
   function envelopeFor(entry: DeckEntry): EmbeddedViewEnvelope | null {
-    if (entry.source === 'answer') return entry.listing.envelope
+    if (entry.source === 'answer') return entry.refusal === null ? entry.listing.envelope : null
     const view = overviewViews.get(entry.key)
     return view?.state === 'ready' ? view.envelope : null
   }
@@ -311,10 +314,11 @@
     const writes = [...pendingZoomWrites.values()]
     pendingZoomWrites.clear()
     for (const { entry, state } of writes) {
+      // A zoom the operator set is remembered; choosing Fit forgets it, so the display reopens at its default.
       const stored = storedDisplayZoom(state)
-      if (stored === null) continue
       try {
-        zoomStoreFor(entry).write(zoomStorageKey(entry), stored)
+        if (stored === null) zoomStoreFor(entry).forget(zoomStorageKey(entry))
+        else zoomStoreFor(entry).write(zoomStorageKey(entry), stored)
       } catch (err) {
         notice = `The zoom of ${entry.title} could not be remembered: ${errorText(err)}`
       }
@@ -445,11 +449,9 @@
     const nextDeck = buildDisplayDeck({ simulationRunId: runId, plants, listings, shown: nextShown })
     showSequence += 1
     shown = nextShown
-    mountedFrames = touchMountedFrames(
-      mountedFrames.filter(frame => nextDeck.some(candidate => candidate.key === frame.key)),
-      entry,
-      showSequence,
-    )
+    const kept = mountedFrames.filter(frame => nextDeck.some(candidate => candidate.key === frame.key))
+    // A listing the window cannot show gets no frame, so it never takes a mounted frame's place.
+    mountedFrames = entry.source === 'answer' && entry.refusal !== null ? kept : touchMountedFrames(kept, entry, showSequence)
     acknowledgement = acknowledgeShown(acknowledgement, listings, entry)
     prepareZoom(entry)
     if (entry.source === 'overview') void loadOverviewView(entry)
@@ -514,7 +516,7 @@
   // --- Popovers and keys ----------------------------------------------------
 
   const popoverTrigger = (which: Popover): HTMLElement | null =>
-    which === 'list' ? positionButton : which === 'zoom' ? zoomButton : moreButton
+    which === 'list' ? positionButton : which === 'zoom' ? zoomButton : which === 'instructor' ? instructorButton : moreButton
 
   const closePopover = (returnFocus: boolean): void => {
     const which = popover
@@ -776,6 +778,20 @@
   })
 </script>
 
+{#snippet instructorItems(inMenu: boolean)}
+  <button
+    type="button"
+    class="display-window-menu-item"
+    role={inMenu ? 'menuitem' : undefined}
+    title={plantTarget.ok ? '' : plantTarget.reason}
+    aria-disabled={!plantTarget.ok}
+    onclick={openPlantActions}
+  >
+    <Zap size={16} aria-hidden="true" />
+    <span>{plantTarget.ok ? `Scenario events and faults on ${plantTarget.plant.label}…` : `Scenario events and faults: ${plantTarget.reason}`}</span>
+  </button>
+{/snippet}
+
 <div class="process-display-window-layer">
   <!-- Zoom keys and Esc act while focus is anywhere in the window: the section delegates them from its controls. -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -915,7 +931,7 @@
             type="button"
             class="display-window-fit"
             aria-pressed={currentZoom?.fit ?? false}
-            title="Fit the display to the window"
+            title="Fit the display to the window; its text stays readable and the display scrolls where it does not fit"
             disabled={currentZoom === null}
             onclick={() => changeZoom({ type: 'toggle-fit' })}
           >Fit</button>
@@ -939,22 +955,28 @@
           <button
             type="button"
             class="display-window-button"
-            aria-label={plantTarget.ok ? `Instructor actions on ${plantTarget.plant.label}` : `Instructor actions unavailable: ${plantTarget.reason}`}
-            title={plantTarget.ok ? `Instructor actions on ${plantTarget.plant.label}: scenario events and faults` : plantTarget.reason}
-            aria-disabled={!plantTarget.ok}
-            onclick={openPlantActions}
-          >
-            <Zap size={17} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="display-window-button"
             aria-label={plantObject !== null ? `Computer-based procedures for ${plantObject.label}` : `Procedures unavailable: ${plantUnavailable ?? ''}`}
             title={plantObject !== null ? `Computer-based procedures for ${plantObject.label}` : (plantUnavailable ?? '')}
             aria-disabled={plantObject === null}
             onclick={() => openProcedures()}
           >
             <ClipboardList size={17} aria-hidden="true" />
+          </button>
+        </div>
+        <!-- The instructor's tools sit apart from the operator's, under their own label: injecting a fault is not an operator action. -->
+        <div class="display-window-instructor" role="group" aria-label="Instructor">
+          <button
+            bind:this={instructorButton}
+            type="button"
+            class="display-window-instructor-button"
+            aria-haspopup="menu"
+            aria-expanded={popover === 'instructor'}
+            title="Instructor tools: scenario events and faults"
+            onclick={() => togglePopover('instructor')}
+          >
+            <Zap size={15} aria-hidden="true" />
+            <span>Instructor</span>
+            <ChevronDown size={14} aria-hidden="true" />
           </button>
         </div>
         <button
@@ -971,7 +993,7 @@
           bind:this={moreButton}
           type="button"
           class="display-window-button display-window-more"
-          aria-label="More: proposals, operations log, Instructor actions, procedures, maximise"
+          aria-label="More: proposals, operations log, procedures, maximise, Instructor tools"
           title="More"
           aria-haspopup="true"
           aria-expanded={popover === 'more'}
@@ -1019,6 +1041,10 @@
       {/each}
       {#if current === null}
         <div class="display-window-message">No process display to show.</div>
+      {:else if currentRefusal !== null}
+        <div class="display-window-message" role="status">
+          <span><strong>{current.title}</strong> cannot be shown here: {currentRefusal}.</span>
+        </div>
       {:else if currentOverview?.state === 'failed' && current.source === 'overview'}
         {@const failedEntry = current}
         <div class="display-window-message error" role="alert">
@@ -1102,7 +1128,8 @@
             <Plus size={16} aria-hidden="true" />
           </button>
         {/if}
-        <button type="button" class="display-window-reset" disabled={currentZoom === null} onclick={() => changeZoom({ type: 'step', step: 'reset' })}>100 %</button>
+        <!-- The readout is the button that opened this popover; this one is an action, and says so. -->
+        <button type="button" class="display-window-reset" disabled={currentZoom === null} onclick={() => changeZoom({ type: 'step', step: 'reset' })}>Reset to 100 %</button>
         {#if tier === 'tiny'}
           <button type="button" class="display-window-fit" aria-pressed={currentZoom?.fit ?? false} disabled={currentZoom === null} onclick={() => changeZoom({ type: 'toggle-fit' })}>Fit</button>
         {/if}
@@ -1124,16 +1151,6 @@
         <button
           type="button"
           class="display-window-menu-item"
-          title={plantTarget.ok ? '' : plantTarget.reason}
-          aria-disabled={!plantTarget.ok}
-          onclick={openPlantActions}
-        >
-          <Zap size={16} aria-hidden="true" />
-          <span>{plantTarget.ok ? `Instructor actions on ${plantTarget.plant.label}` : `Instructor actions: ${plantTarget.reason}`}</span>
-        </button>
-        <button
-          type="button"
-          class="display-window-menu-item"
           title={plantObject !== null ? '' : (plantUnavailable ?? '')}
           aria-disabled={plantObject === null}
           onclick={() => openProcedures()}
@@ -1149,6 +1166,12 @@
           {#if maximised}<Minimize2 size={16} aria-hidden="true" />{:else}<Maximize2 size={16} aria-hidden="true" />{/if}
           <span>{maximised ? 'Restore the window' : 'Maximise the window'}</span>
         </button>
+        <div class="display-window-group-label">Instructor</div>
+        {@render instructorItems(false)}
+      </div>
+    {:else if popover === 'instructor'}
+      <div bind:this={popoverElement} class="display-window-popover instructor" role="menu" aria-label="Instructor">
+        {@render instructorItems(true)}
       </div>
     {/if}
 

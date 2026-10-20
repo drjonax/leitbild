@@ -203,7 +203,6 @@ describe('process display relay', () => {
     const posted = state.world.length
 
     relay.fromAgents(views(listing('b'), listing('b')))
-    relay.fromAgents(views(listing('c', 'run-1', newWorkspaceId())))
     relay.fromAgents({ type: 'leitbild:view-open', view: { ...listing('d'), caption: '' } })
     relay.fromAgents(open(listing('e', 'run-1', newWorkspaceId())))
     relay.fromAgents({ ...open(listing('f')), extra: true })
@@ -213,7 +212,6 @@ describe('process display relay', () => {
 
     expect(state.errors).toEqual([
       'Display list refused: views.1.key: Listed view keys must be unique',
-      'Display list refused: a display belongs to another Workspace',
       expect.stringMatching(/^Display could not be opened: view\.caption: /),
       'Display could not be opened: it belongs to another Workspace',
       expect.stringMatching(/^Display could not be opened: /),
@@ -224,6 +222,14 @@ describe('process display relay', () => {
     expect(state.world).toHaveLength(posted)
     relay.fromWorld(ready)
     expect(state.world.at(-2)).toEqual(views(listing('a')))
+  })
+
+  test('leaves a display about another Workspace out on its own and relays the rest of the list', () => {
+    const { relay, state } = harness({ runs: ['run-1'] })
+    relay.fromWorld(ready)
+    relay.fromAgents(views(listing('a'), listing('c', 'run-1', newWorkspaceId()), listing('d')))
+    expect(state.errors).toEqual(['Display list: a display belongs to another Workspace and was left out'])
+    expect(state.world.at(-1)).toEqual(views(listing('a'), listing('d')))
   })
 
   test('leaves messages outside the window protocol to others', () => {
