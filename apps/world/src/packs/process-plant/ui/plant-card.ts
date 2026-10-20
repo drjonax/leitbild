@@ -1,17 +1,17 @@
-import type { OperationalObject } from '../../core/model/index.ts'
-import { procedureIdSchema, type ProcedureId } from '../../core/model/procedures.ts'
-import { formatQuantity } from '../../packs/process-plant/displays/display-text.ts'
-import { safetyFunctionStatusWords } from '../../packs/process-plant/displays/safety-function-content.ts'
-import type { TrendPoint } from '../../packs/process-plant/displays/trend-reading.ts'
+import type { OperationalObject } from '../../../core/model/index.ts'
+import { procedureIdSchema, type ProcedureId } from '../../../core/model/procedures.ts'
+import { formatQuantity } from '../quantity-text.ts'
+import { safetyFunctionStatusWords } from '../displays/safety-function-content.ts'
+import type { TrendPoint } from '../displays/trend-reading.ts'
 import {
   emptyProcessPlantProjection,
   processPlantUnitPackDataSchema,
   type ProcessPlantUnitEnergyReading,
   type ProcessPlantUnitProjection,
   type ProcessPlantUnitSafetyFunction,
-} from '../../packs/process-plant/model.ts'
-import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../procedures/procedure-run-selectors.ts'
-import { procedureRunSummaryTitle } from '../procedures/procedure-run-selectors.ts'
+} from '../model.ts'
+import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../../../ui/procedures/procedure-run-selectors.ts'
+import { procedureRunSummaryTitle } from '../../../ui/procedures/procedure-run-selectors.ts'
 
 /**
  * What a Plant's card says: the unit at a glance, then what each of its

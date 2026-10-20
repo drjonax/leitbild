@@ -1,5 +1,4 @@
 import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
-import type { VariablePath } from '../../packs/process-plant/graph/index.ts'
 import { embeddedViewEnvelopeSchema, type EmbeddedViewEnvelope, type EmbeddedViewPublication } from '@leitbild/contracts'
 import { querySimulationRunCapability } from '../simulation-run-client.ts'
 import { activeWorkspaceId } from '../workspace-context.ts'
@@ -286,37 +285,6 @@ export const readProcessPlantCredibilityArtifact = async (
     artifact: parseProcessPlantCredibilityArtifactRef(result.artifact),
     content: assertString(result.content, 'process plant credibility artifact requires content'),
   }
-}
-
-export const listProcessPlantVariablePaths = async (
-  simulationRunId: SimulationRunId,
-  plantId: string,
-): Promise<ReadonlyArray<VariablePath>> => {
-  // A bounded page keeps this UI read compatible with very large component
-  // graphs; the loop follows hasMore instead of assuming one response.
-  const pageSize = 200
-  const paths: VariablePath[] = []
-  let offset = 0
-  do {
-    const result = assertObject(await querySimulationRunCapability(
-      simulationRunId,
-      'world.process-plant.variables.search',
-      { plantId, offset, limit: pageSize },
-    ), 'process plant variables search result is malformed')
-    const variables = assertArray(result.variables, 'process plant variables search result has no variables array')
-    for (const item of variables) {
-      const entry = assertObject(item, 'process plant variables search entry is malformed')
-      if (assertString(entry.plantId, 'process plant variables search entry requires plantId') !== plantId) continue
-      const variable = assertObject(entry.variable, 'process plant variables search entry requires variable')
-      paths.push(assertString(variable.path, 'process plant variable requires path') as VariablePath)
-    }
-    const returned = Number(result.returned)
-    if (!Number.isInteger(returned) || returned < 0) throw new Error('process plant variables search result requires returned')
-    offset += returned
-    if (result.hasMore !== true) break
-    if (returned === 0) throw new Error('process plant variables search pagination made no progress')
-  } while (true)
-  return paths
 }
 
 export const readProcessPlantArtifact = async (

@@ -1,7 +1,7 @@
 import type { VariablePath } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import type { ComposedDisplayPen } from '../compose.ts'
-import { equipmentKeyValues, type PlantNow } from '../overview-key-values.ts'
+import { equipmentKeyValues, type PlantNow } from '../../ic/key-values.ts'
 import type { CompiledMimic } from './mimic-model.ts'
 
 // What an interactive drawing's quick looks show: for each drawn item the

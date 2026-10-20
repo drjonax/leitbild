@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { idSchema, isoTimestampSchema } from '../../../core/model/index.ts'
 import { variablePathSchema } from '../graph/index.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
+import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../equipment/items.ts'
 
 // An AI-composed display states WHAT the operator should see and WHY. The
 // Pack owns HOW: resolution, units, I&C thresholds, scales, layout and live
@@ -62,7 +63,6 @@ export const composedDisplayTrendPanelSchema = z.object({
   horizon: composedDisplayHorizonSchema,
   signals: z.array(composedDisplaySignalSchema).min(1).max(COMPOSED_TREND_SCHEMA_MAX_SIGNALS),
 }).strict()
-export type ComposedDisplayTrendPanel = z.infer<typeof composedDisplayTrendPanelSchema>
 
 /** Parallel signals of one unit side by side, e.g. the four loops. */
 export const composedDisplayComparisonPanelSchema = z.object({
@@ -125,9 +125,10 @@ export const composedDisplayCompositionSchema = z.object({
   /**
    * What the question is about: equipment (id, a tag on it, its label) or
    * signals (tag or path). Composing refuses a display that shows any of them
-   * nowhere. Advice composed before subjects existed re-opens without them.
+   * nowhere.
    */
-  subjects: z.array(text(1, 120)).min(1).max(COMPOSED_DISPLAY_MAX_SUBJECTS).optional(),
+  subjects: z.array(text(1, 120), { error: `name in subjects the 1-${COMPOSED_DISPLAY_MAX_SUBJECTS} pieces of equipment (id, tag or label) or signals (tag or path) the question is about; every one must be shown` })
+    .min(1).max(COMPOSED_DISPLAY_MAX_SUBJECTS),
   panels: z.array(composedDisplayPanelSchema).min(1).max(COMPOSED_DISPLAY_MAX_PANELS),
 }).strict()
 export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositionSchema>
@@ -209,24 +210,11 @@ export const composedDisplayStateSchema = z.object({
   const mimics = state.composition.panels.filter(panel => panel.kind === 'mimic').length
   if ((state.drawings?.length ?? 0) !== mimics) ctx.addIssue({ code: 'custom', path: ['drawings'], message: `a display with ${mimics} mimic panels stores ${mimics} drawing hashes` })
 })
-export type ComposedDisplayState = z.infer<typeof composedDisplayStateSchema>
 
 /** A unit overview World generates for a Plant; it holds no advice, so it never goes stale against one. */
 export const overviewDisplayStateSchema = z.object({
   overview: z.object({ plantId: idSchema }).strict(),
 }).strict()
-export type OverviewDisplayState = z.infer<typeof overviewDisplayStateSchema>
-
-/** The most components one detail opens: a drawn symbol stands for one, or for a group of parallel equipment. */
-export const PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS = 8
-
-/**
- * The most values equipment opened from an overview leads with: its column
- * has no annunciator tiles, so it holds more than an overview's six in a Full
- * HD window (the core's nuclear instruments and exit thermocouples beside its
- * power and margins).
- */
-export const GENERATED_DETAIL_MAX_LEAD_VALUES = 8
 
 /**
  * Equipment opened from a generated display: World draws what feeds it and
@@ -239,11 +227,25 @@ export const detailDisplayStateSchema = z.object({
     components: z.array(idSchema).min(1).max(PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS),
   }).strict(),
 }).strict()
-export type DetailDisplayState = z.infer<typeof detailDisplayStateSchema>
 
 /** What an embedded Process Plant display re-opens: an agent's advice, a Plant's unit overview, or equipment opened from it. */
 export const processDisplayStateSchema = z.union([composedDisplayStateSchema, overviewDisplayStateSchema, detailDisplayStateSchema])
 export type ProcessDisplayState = z.infer<typeof processDisplayStateSchema>
+
+/** Why a saved display state is refused: it is not JSON, or not a form World reads (advice composed before subjects were required). */
+export const UNSUPPORTED_DISPLAY_FORMAT = 'Unsupported display format: World cannot show this saved display; ask for the display again'
+
+/** A saved display state as World reads it; null for one it cannot show (UNSUPPORTED_DISPLAY_FORMAT). */
+export const readProcessDisplayState = (state: string): ProcessDisplayState | null => {
+  let json: unknown
+  try {
+    json = JSON.parse(state)
+  } catch {
+    return null
+  }
+  const parsed = processDisplayStateSchema.safeParse(json)
+  return parsed.success ? parsed.data : null
+}
 
 /** The Plant a display state is about. */
 export const processDisplayStatePlantId = (state: ProcessDisplayState): string =>

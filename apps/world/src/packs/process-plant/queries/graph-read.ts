@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { idSchema } from '../../../core/model/index.ts'
 import type { CompiledPlantGraph, CompiledProcessLink, ComponentId } from '../graph/index.ts'
 import { downstreamLinks, linkCarrier, upstreamLinks } from '../graph/index.ts'
-import { equipmentSuggestions } from '../displays/mimic/scope.ts'
+import { equipmentSuggestions } from '../equipment/items.ts'
 import { rejectCapabilityInput } from '../../../simulation/capability-rejection.ts'
 import { capabilityTargetNotFound, paginateProcessPlantSearch, processPlantSearchPaginationShape } from './common.ts'
 

@@ -8,10 +8,11 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { compileDetailDisplay, type ComposedMimicPanel } from '../src/packs/process-plant/displays/compose.ts'
-import { itemBinding, type MimicItem } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { itemBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import type { EquipmentItem } from '../src/packs/process-plant/equipment/items.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -27,9 +28,9 @@ const graph = plant.graph
 const published = (path: string): boolean => graph.signalBindingByPath.get(path as never)?.published === true
 
 /** Every valve the Plant has, a component or a bundled device: what declares an equipment function. */
-const valves = graph.components.flatMap((component, index): ReadonlyArray<{ readonly item: MimicItem; readonly declared: string | undefined }> => [
-  ...(component.semantics.function === undefined ? [] : [{ item: { kind: 'component', component: index } as MimicItem, declared: component.semantics.aspects.find(entry => entry.aspect === 'position')?.state?.path as string | undefined }]),
-  ...component.semantics.embedded.map(device => ({ item: { kind: 'device', component: index, device: device.id } as MimicItem, declared: device.aspects.find(entry => entry.aspect === 'position')?.state?.path as string | undefined })),
+const valves = graph.components.flatMap((component, index): ReadonlyArray<{ readonly item: EquipmentItem; readonly declared: string | undefined }> => [
+  ...(component.semantics.function === undefined ? [] : [{ item: { kind: 'component', component: index } as EquipmentItem, declared: component.semantics.aspects.find(entry => entry.aspect === 'position')?.state?.path as string | undefined }]),
+  ...component.semantics.embedded.map(device => ({ item: { kind: 'device', component: index, device: device.id } as EquipmentItem, declared: device.aspects.find(entry => entry.aspect === 'position')?.state?.path as string | undefined })),
 ])
 
 describe('a valve reads the position the Plant publishes, or POS ?', () => {

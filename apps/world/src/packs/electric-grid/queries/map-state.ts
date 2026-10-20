@@ -2,6 +2,7 @@ import type { GridModelDefinition } from '../grid-model.ts'
 import { gridIslandFlowModel } from '../runtime/ac-load-flow.ts'
 import type { GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
 import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
+import { gridLoadingBands } from '../loading-bands.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema, type ElectricGridQuery } from './common.ts'
 import { gridMapGeometryFor, type GridMapGeometry } from './map-geometry.ts'
 import { gridMapStateResultSchema, type GridMapStateResult } from './map-schemas.ts'
@@ -64,6 +65,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
       energized: busIsland.map((position, bus) => position === null ? grid.arrays.buses.energized[bus] === 1 ? 1 : 0 : islands[position]!.energized ? 1 : 0),
     },
     branches: { loadingPercent, flowMw, flowModel, closed, tripped, availability },
+    loadingBands: gridLoadingBands(grid.definition.automation.alarms),
     generators: {
       dispatchMw: generatorStates.map(state => Math.round(state.dispatchMw)),
       state: generatorStates.map(state => state.state),

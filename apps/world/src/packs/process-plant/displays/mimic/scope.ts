@@ -1,6 +1,8 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink } from '../../graph/index.ts'
 import { carriersAt, downstreamLinks, linkCarrier, routeLinks, upstreamLinks } from '../../graph/index.ts'
-import { SUGGESTION_COUNT, letters, matchedWords, normalized, words } from '../name-matching.ts'
+import { SUGGESTION_COUNT, matchedWords, normalized, words } from '../../name-matching.ts'
+import { componentDescription, equipmentSuggestions } from '../../equipment/items.ts'
+import { plantCarriers, plantLoops } from '../../equipment/circuits.ts'
 
 // What a mimic draws, resolved from the agent's intent in plant terms. The
 // scope comes from the static Plant graph alone (never from live values), so
@@ -53,13 +55,6 @@ export const MIMIC_REACH_LINKS = 3
 const shortLabelOf = (graph: CompiledPlantGraph, index: number): string => {
   const component = graph.components[index]!
   return component.metadata?.presentation?.shortLabel ?? component.label
-}
-
-/** "sgB (Steam Generator B, SG B)". */
-export const componentDescription = (graph: CompiledPlantGraph, index: number): string => {
-  const component = graph.components[index]!
-  const short = component.metadata?.presentation?.shortLabel
-  return `${component.id} (${component.label}${short === undefined ? '' : `, ${short}`})`
 }
 
 const loopOf = (graph: CompiledPlantGraph, link: CompiledProcessLink): string | undefined =>
@@ -168,41 +163,6 @@ const unconnectedReason = (graph: CompiledPlantGraph, index: number, carriers: R
   if (linked.length === 0) return `${id} is not connected to any equipment in the Plant model, so it cannot be drawn`
   return `${id} is connected to other equipment only by ${[...new Set(linked.map(link => link.kind))].sort().join(', ')} links, which a mimic does not draw`
 }
-
-/** Components whose id, label, short label or tags match the guessed words best. */
-export const equipmentSuggestions = (graph: CompiledPlantGraph, guess: string): ReadonlyArray<string> => {
-  const guessed = words(guess)
-  if (guessed.length === 0) return []
-  const tagsByComponent = new Map<number, string[]>()
-  for (const binding of graph.signalBindings) {
-    if (binding.tagId === undefined || binding.owner.type !== 'component') continue
-    tagsByComponent.set(binding.owner.componentIndex, [...(tagsByComponent.get(binding.owner.componentIndex) ?? []), String(binding.tagId)])
-  }
-  return graph.components
-    .map(component => {
-      const keys = [String(component.id), component.label, component.metadata?.presentation?.shortLabel ?? '', ...(tagsByComponent.get(component.index) ?? [])]
-      const matched = matchedWords(guessed, [...new Set(keys.flatMap(words))])
-      return { component, score: letters(matched) / letters(guessed), substantive: matched.some(word => word.length >= 2) }
-    })
-    .filter(entry => entry.substantive && entry.score >= 0.5)
-    .sort((left, right) => right.score - left.score || String(left.component.id).localeCompare(String(right.component.id)))
-    .slice(0, SUGGESTION_COUNT)
-    .map(entry => {
-      const tags = (tagsByComponent.get(entry.component.index) ?? []).slice(0, 2)
-      return `${componentDescription(graph, entry.component.index)}${tags.length === 0 ? '' : `; tags ${tags.join(', ')}`}`
-    })
-}
-
-/** The carriers of this Plant: its fluid services and its power and signal link kinds. */
-export const plantCarriers = (graph: CompiledPlantGraph): ReadonlyArray<string> =>
-  [...new Set(graph.links.filter(link => link.kind === 'fluidFlow' || link.kind === 'electricalPower').map(linkCarrier))].sort()
-
-export const plantLoops = (graph: CompiledPlantGraph): ReadonlyArray<string> =>
-  [...new Set(graph.components.map(component => component.metadata?.loopId).filter((loop): loop is string => loop !== undefined))]
-    .sort((left, right) => {
-      const ordinal = (loop: string) => graph.components.find(component => component.metadata?.loopId === loop)?.metadata?.ordinal ?? 0
-      return ordinal(left) - ordinal(right) || left.localeCompare(right)
-    })
 
 // "AFW" for auxFeedwater: the guess's letters, in order, from the same first letter; or a shared word.
 export const serviceResembles = (guess: string, candidate: string): boolean => {

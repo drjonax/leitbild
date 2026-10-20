@@ -11,8 +11,8 @@ import {
   type MapCardFrame,
   type MapObjectAnchor,
 } from '../src/ui/map/object-card-anchor.ts'
-import { plantCardView, type PlantCardEnergy } from '../src/ui/process-display/plant-card.ts'
-import { createPlantCardTrends, PLANT_CARD_TREND_MS, type PlantCardHistory } from '../src/ui/process-display/plant-card-trends.ts'
+import { plantCardView, type PlantCardEnergy } from '../src/packs/process-plant/ui/plant-card.ts'
+import { createPlantCardTrends, PLANT_CARD_TREND_MS, type PlantCardHistory } from '../src/packs/process-plant/ui/plant-card-trends.ts'
 import { objectHoverCardHtml } from '../src/ui/map/object-hover-card.ts'
 import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../src/ui/procedures/procedure-run-selectors.ts'
 import { scenarios } from './fixtures/scenarios.ts'

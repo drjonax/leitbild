@@ -3,13 +3,19 @@ import { downstreamLinks, linkCarrier, nextLinks } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
-import { linkFlowBinding } from './mimic/bindings.ts'
+import { linkFlowBinding } from '../equipment/link-flow.ts'
 
 // What the Plant's protection sets going, read from its declared I&C rules:
 // a trip that writes equipment commands is an automatic action (auxiliary
 // feedwater, safety injection, feedwater isolation). Displays lead with what
 // such actions still guard and with what they deliver; nothing here names
 // equipment or signals.
+
+/**
+ * Links an automatic action's delivery is followed from the equipment it
+ * commands: a pump through the header it discharges into, to what that feeds.
+ */
+export const ACTION_REACH_LINKS = 3
 
 /** A trip that commands equipment: each command it writes, on the component it commands, and the value it writes. */
 export interface AutomaticAction {

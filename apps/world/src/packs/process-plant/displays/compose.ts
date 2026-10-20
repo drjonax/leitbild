@@ -1,4 +1,4 @@
-import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from './name-matching.ts'
+import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from '../name-matching.ts'
 import { z } from 'zod'
 import type { EmbeddedViewContent } from '@leitbild/contracts'
 import { recordingSeriesIdFor } from '../../../core/model/index.ts'
@@ -22,7 +22,6 @@ import {
   composedDisplayMaxHeight,
   composedPanelMinimumHeight,
   COMPOSED_DISPLAY_MAX_SAMPLE_PATHS,
-  COMPOSED_DISPLAY_MAX_SUBJECTS,
   COMPOSED_DISPLAY_MAX_TRENDS,
   COMPOSED_TREND_MAX_SIGNALS,
   COMPOSED_TREND_MAX_STRIPS,
@@ -44,24 +43,27 @@ import {
   type DisplayEvidence,
   type DisplayEvidenceKind,
 } from './composition.ts'
-import { displayValue, formatQuantity, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
+import { isPast, marginLimitName, nearestThresholdMargin, thresholdName, trendSpanMs } from './display-text.ts'
+import { displayValue, formatQuantity, offScale, readingDecimals, readingResolution, readingText, RESOLUTION_FRACTION, shownReading, unitLabel, writtenDecimals } from '../quantity-text.ts'
 import { WIDER_RANGE } from './mimic/rows.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gatePaths, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, turnWords, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, groupLabel, mimicScopeDrawing, type MimicCompileResult, type MimicScopeDrawing } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { servesPosition, stateTexts, type StateTexts } from './state-words.ts'
-import { principalCircuits } from './mimic/principal.ts'
-import { equipmentKeyValues, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { overviewScope } from './mimic/principal.ts'
+import { equipmentKeyValues, overviewKeyValues, plantNowOf } from '../ic/key-values.ts'
 import { alarmWatches, annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
-import { operatingPointReading, operatingPointValue } from './operating-point.ts'
-import { commandingActions } from './actuations.ts'
+import { operatingPointReading, operatingPointValue } from '../operating-point.ts'
+import { commandingActions } from '../ic/actuations.ts'
 import { evidenceLines } from './evidence-width.ts'
 import { criterionOfReadings } from './safety-criteria.ts'
 import { compileFaceplate, faceplateEnds } from './faceplate.ts'
 import { faceplateMostLines, type CompiledFaceplate, type FaceplateCondition } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
-import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
+import { MIMIC_REACH_LINKS, itemServices, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
+import { plantCarriers, plantLoops } from '../equipment/circuits.ts'
+import { componentDescription } from '../equipment/items.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import { mimicQuickLookPaths, type MimicQuickLooks } from './mimic/quick-look.ts'
 import {
@@ -69,7 +71,7 @@ import {
   icThresholdsForSignal,
   type ComposedDisplayCombinedRule,
   type ComposedDisplayThreshold,
-} from './ic-thresholds.ts'
+} from '../ic/thresholds.ts'
 
 export interface ComposedDisplayPen {
   readonly ref: string
@@ -636,7 +638,6 @@ const compositionIssues = (composition: ComposedDisplayComposition): ReadonlyArr
     if (kinds.filter(candidate => candidate === kind).length > 1) issues.push({ path: 'panels', message: `use at most one ${kind} panel` })
   }
   if (kinds.every(kind => kind === 'alarms')) issues.push({ path: 'panels', message: 'an alarms panel accompanies signal panels; add a trend, comparison, readouts or mimic panel' })
-  if (composition.subjects === undefined) issues.push({ path: 'subjects', message: `name in subjects the 1-${COMPOSED_DISPLAY_MAX_SUBJECTS} pieces of equipment (id, tag or label) or signals (tag or path) the question is about; every one must be shown` })
   const signals = composition.panels.flatMap(panel => panel.kind === 'alarms' || panel.kind === 'mimic' ? [] : panel.signals)
   // A mimic alone answers an equipment question and names no signals.
   if (signals.length > 0 && !signals.some(signal => signal.role === 'primary')) issues.push({ path: 'panels', message: 'mark at least one signal with role "primary": the signal the operator question is about' })
@@ -896,15 +897,14 @@ const fewerPanels = (besides: ReadonlyArray<number>, fits: (kept: ReadonlyArray<
 }
 
 /**
- * `compose` applies the authoring rules (panel counts, strips, size budget,
- * one panel per signal, a primary signal) that keep new displays lean. `view` re-opens a
- * display already shown in a conversation: it checks only what rendering
- * needs, so a later authoring rule never breaks earlier advice.
+ * A composition compiled under every authoring rule (panel counts, strips,
+ * size budget, one panel per signal, a primary signal, its subjects shown),
+ * as it is composed and every time it is shown again: a display that a later
+ * rule refuses is refused, never drawn under rules it no longer meets.
  */
 export const compileComposedDisplay = (
   system: ProcessPlantRuntimeInstance,
   input: unknown,
-  purpose: 'compose' | 'view',
   /** Series this Run's historian records; trends of other signals start when the view opens. */
   recordedSeriesIds: ReadonlySet<string>,
 ): ComposedDisplayCompileResult => {
@@ -914,7 +914,7 @@ export const compileComposedDisplay = (
   // Authoring issues are reported with the resolution and layout issues, so a
   // single rejection lists every fix; layout needs resolved signals, so it is
   // checked only once every reference resolves.
-  const authoring = purpose === 'compose' ? compositionIssues(composition) : []
+  const authoring = compositionIssues(composition)
   const issues: ComposedDisplayIssue[] = []
   if (composition.plantId !== system.plant.id) {
     issues.push({ path: 'plantId', message: `composition targets ${composition.plantId}, not ${system.plant.id}` })
@@ -972,9 +972,9 @@ export const compileComposedDisplay = (
     if (size?.kind !== 'trend') throw new Error('fitted panels follow the compiled panels')
     return { ...panel, plot: size.plot }
   })
-  const layout = purpose === 'compose' ? layoutIssues(compiled, fit) : []
-  const uncovered = purpose === 'compose' && composition.subjects !== undefined ? subjectIssues(system, composition.subjects, compiled) : []
-  const elsewhere = purpose === 'compose' ? judgedElsewhereIssues(system, composition) : []
+  const layout = layoutIssues(compiled, fit)
+  const uncovered = subjectIssues(system, composition.subjects, compiled)
+  const elsewhere = judgedElsewhereIssues(system, composition)
   if (authoring.length > 0 || layout.length > 0 || uncovered.length > 0 || elsewhere.length > 0) return { ok: false, issues: [...authoring, ...layout, ...uncovered, ...elsewhere] }
   const ruleIds = relatedRuleIds(system, compiled)
   return {
@@ -1395,7 +1395,7 @@ const drawingExtras = (
 
 /**
  * The unit overview World generates for a Plant: its lead values for the
- * mode it is in (protection, delivery and energy, overview-key-values.ts),
+ * mode it is in (protection, delivery and energy, ic/key-values.ts),
  * its principal circuits drawn by the
  * overview profile (principal.ts), and the whole Plant's active alarms. Every
  * part comes from the model; nothing names equipment. It is drawn for the
@@ -1404,7 +1404,7 @@ const drawingExtras = (
 export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, recordedSeriesIds: ReadonlySet<string>, view: OverviewView | null): ComposedDisplayCompileResult => {
   const issues: ComposedDisplayIssue[] = []
   const readouts = leadValues(system, overviewKeyValues(system.plant, plantNow(system)), recordedSeriesIds, issues)
-  const circuits = principalCircuits(system.plant.graph)
+  const circuits = overviewScope(system.plant.graph)
   if (!circuits.ok) return { ok: false, issues: [{ path: 'overview', message: circuits.reason }] }
   if (issues.length > 0) return { ok: false, issues }
   // The tiles at each width their names fit, widest first; the widest must fit, so a narrower one only ever saves height.

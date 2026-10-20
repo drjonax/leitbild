@@ -1,6 +1,7 @@
 import type { ComposedDisplayPen, ComposedEvidenceItem } from './compose.ts'
 import { composedDisplayLayout, evidenceKindWords, type DisplayEvidenceKind } from './composition.ts'
-import { chipName, POSITION_OPEN_ABOVE, readingValueText, RESOLUTION_FRACTION, unitLabel } from './display-text.ts'
+import { chipName } from './display-text.ts'
+import { POSITION_OPEN_ABOVE, readingValueText, RESOLUTION_FRACTION, unitLabel } from '../quantity-text.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
 // How wide a row of values World adds draws, at its widest, so a row that

@@ -14,10 +14,11 @@ import {
   composedDisplayCompositionSchema,
   composedDisplayStateSchema,
   overviewDisplayStateSchema,
-  PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS,
   processDisplayStatePlantId,
-  processDisplayStateSchema,
+  readProcessDisplayState,
+  UNSUPPORTED_DISPLAY_FORMAT,
 } from '../displays/composition.ts'
+import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS, equipmentItemId } from '../equipment/items.ts'
 import {
   compileComposedDisplay,
   composedDisplayLead,
@@ -38,10 +39,10 @@ import {
 } from '../displays/compose.ts'
 import { displayEvidence } from '../displays/evidence.ts'
 import { requirePlant } from './common.ts'
-import { displayValue, simulationClock, valueDigits, writtenDecimals } from '../displays/display-text.ts'
+import { simulationClock } from '../displays/display-text.ts'
+import { displayValue, valueDigits, writtenDecimals } from '../quantity-text.ts'
 import { heldCommands, indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { valueRowReading } from '../displays/mimic/rows.ts'
-import { mimicItemId } from '../displays/mimic/bindings.ts'
 import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
 import { evaluateSafetyFunctions } from '../safety-functions.ts'
 import { safetyFunctionChip, safetyFunctionShows, safetyFunctionStatuses } from '../displays/safety-function-content.ts'
@@ -93,14 +94,15 @@ const modeNow = (system: ProcessPlantRuntimeInstance): PlantModeNow => {
   return mode === null ? null : { id: mode.id, label: mode.label }
 }
 
+// One compile for composing and for showing again; only the refusal's words differ.
 const compiledOrRejected = (
   system: ProcessPlantRuntimeInstance,
   composition: unknown,
-  purpose: 'compose' | 'view',
+  refusal: 'compose' | 'view',
   recordedSeriesIds: ReadonlySet<string>,
 ) => {
-  const result = compileComposedDisplay(system, composition, purpose, recordedSeriesIds)
-  if (!result.ok) return rejectCapabilityInput(purpose === 'compose' ? formatComposedDisplayIssues(result.issues) : formatComposedViewIssues(result.issues))
+  const result = compileComposedDisplay(system, composition, recordedSeriesIds)
+  if (!result.ok) return rejectCapabilityInput(refusal === 'compose' ? formatComposedDisplayIssues(result.issues) : formatComposedViewIssues(result.issues))
   return result.display
 }
 
@@ -156,7 +158,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     }
     // What the Plant's model says bears on the question besides what the agent chose, read as the agent's panels open.
     // What the question is about, as the agent named it: the items an operation display is composed around.
-    const subjects = composedDisplayCompositionSchema.parse(config.request.input).subjects ?? []
+    const subjects = composedDisplayCompositionSchema.parse(config.request.input).subjects
     const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample, recordedSeriesIds, subjects), recordedSeriesIds)
     if (!completed.ok) throw new Error(`evidence World adds must resolve: ${completed.issues.map(issue => issue.message).join('; ')}`)
     // Drawn with what it leads with first, as every later view of it is (leadFirst).
@@ -180,7 +182,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     // does not establish how much Historian data exists within that axis.
     const historyMs = system.runtime.elapsedMs()
     const drawn = mimics.flatMap(mimic => mimic.items.map(item => ({
-      id: mimicItemId(system.plant.graph, item.binding.item),
+      id: equipmentItemId(system.plant.graph, item.binding.item),
       label: item.binding.label,
       state: itemLook(item.binding, now).words || 'no state drawn',
       // The values written beside it, and what they measure: the wider instrument's where a reading is off its span.
@@ -264,16 +266,15 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       simulationClock: simulationClock(Date.parse(simulationTime)),
       shows: [...composedDisplayShows(display, system.runtime.elapsedMs()), ...safetyFunctionShows(evaluateSafetyFunctions(system.plant, system.runtime))],
       equipment: mimics.flatMap(mimic => mimic.items
-        .map(item => ({ id: mimicItemId(system.plant.graph, item.binding.item), label: item.binding.label, state: itemLook(item.binding, now).words || 'no state drawn' }))),
+        .map(item => ({ id: equipmentItemId(system.plant.graph, item.binding.item), label: item.binding.label, state: itemLook(item.binding, now).words || 'no state drawn' }))),
     }
   }
 
   if (config.request.capabilityId === 'world.process-plant.display.view') {
     const payload = displayViewQuerySchema.parse(config.request.input)
     const system = requirePlant(config.plants, payload.plantId)
-    const parsedState = processDisplayStateSchema.safeParse(JSON.parse(payload.state))
-    if (!parsedState.success) return rejectCapabilityInput(`Unsupported display format: ${parsedState.error.message}`)
-    const state = parsedState.data
+    const state = readProcessDisplayState(payload.state)
+    if (state === null) return rejectCapabilityInput(UNSUPPORTED_DISPLAY_FORMAT)
     const statePlantId = processDisplayStatePlantId(state)
     if (statePlantId !== payload.plantId) return rejectCapabilityInput(`Display state targets ${statePlantId}, not ${payload.plantId}`)
     if ('overview' in state) {

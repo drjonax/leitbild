@@ -2,8 +2,8 @@ import type { IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
 import { processPlantElectricalPortsAt } from './electrical-ports.ts'
 import type { PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { VariablePath } from './graph/index.ts'
-import { formatQuantity } from './displays/display-text.ts'
-import { overviewKeyValues, plantNowOf } from './displays/overview-key-values.ts'
+import { formatQuantity } from './quantity-text.ts'
+import { overviewKeyValues, plantNowOf } from './ic/key-values.ts'
 import {
   emptyProcessPlantProjection,
   processPlantField,
@@ -40,7 +40,7 @@ const formatRuntimePerformance = (plant: ProcessPlantRuntimeInstance): string =>
 // A Plant's panel leads with what its unit overview leads with in the mode
 // it is in: what its protection can still trip on, what its automatic actions
 // deliver, the key values of the equipment its rules judge, and of its energy
-// source and sink (overview-key-values.ts). Its summary states the energy its
+// source and sink (ic/key-values.ts). Its summary states the energy its
 // sources put in and its sinks take out. Nothing is picked per model.
 interface RailFieldPlan {
   readonly path: VariablePath

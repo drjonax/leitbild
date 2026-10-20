@@ -9,7 +9,8 @@ import {
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
 import { itemServices, resolveMimicScope, stubText, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
 import { unpresentedKinds } from '../src/packs/process-plant/displays/mimic/presentation.ts'
-import { framingRules, itemBinding, linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { framingRules, itemBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/equipment/link-flow.ts'
 import { declaredPortFlows } from '../src/packs/process-plant/displays/compose.ts'
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:scope', loopCount: 4 }))

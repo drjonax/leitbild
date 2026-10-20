@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { MimicFlowBinding, MimicItemBinding, MimicRangeBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import type { MimicItemBinding, MimicRangeBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import type { LinkFlowBinding } from '../src/packs/process-plant/equipment/link-flow.ts'
 import { commandsHeld, flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { drawnLook, itemRows, itemTreatment, rangeText, rowText, shutdownDemanded } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
@@ -109,7 +110,7 @@ describe('mimic state of one sample', () => {
   })
 
   test('pipes draw direction only where the model solves it', () => {
-    const solved: MimicFlowBinding = { flowPath: 'l.flow' as never, fidelity: 'solved', noFlowBelow: 2 }
+    const solved: LinkFlowBinding = { flowPath: 'l.flow' as never, fidelity: 'solved', noFlowBelow: 2 }
     expect(flowLook(solved, sample({ 'l.flow': 80 }))).toEqual({ look: 'forward', value: 80 })
     expect(flowLook(solved, sample({ 'l.flow': -12 })).look).toBe('reverse')
     expect(flowLook(solved, sample({ 'l.flow': 0.03 })).look).toBe('none')

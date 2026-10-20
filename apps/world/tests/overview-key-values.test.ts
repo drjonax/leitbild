@@ -11,7 +11,7 @@ import {
   type PlantGraphSpec,
   type ProcessVariableLimits,
 } from '../src/packs/process-plant/index.ts'
-import { equipmentKeyValues, isDemand, leadValuesKey, overviewKeyValues, readsAsMeasured, type PlantNow } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { equipmentKeyValues, isDemand, overviewKeyValues, readsAsMeasured, type PlantNow } from '../src/packs/process-plant/ic/key-values.ts'
 import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
@@ -179,7 +179,10 @@ describe('the values equipment opened from the overview leads with', () => {
       mode: processPlantOperatingMode({ system, runtime: run, modes: system.automation.operatingModes })?.id ?? null,
       read: path => run.readVariable(path),
     })
-    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps,core.sourceRangeStartupRateDpm|')
+    const core = (system: typeof plant): ReadonlyArray<number> => [system.graph.componentIndexById.get('core' as never)!]
+    const atPower = now(plant, runtime)
+    expect(atPower.mode).toBe('powerOperation')
+    expect(equipmentKeyValues(plant, core(plant), atPower).slice(0, 2)).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC'] as never)
     const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:equipment-values-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
     const run = createProcessPlantRuntime({ system: tripped })
     const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })
@@ -187,9 +190,10 @@ describe('the values equipment opened from the overview leads with', () => {
       run.tick(1_000)
       protection.evaluate({ runtime: run, elapsedMs: run.elapsedMs(), simulationRunId: 'run-key-values' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
     }
-    expect(leadValuesKey(tripped, now(tripped, run))).toStartWith('hotStandby|')
-    // The reactor trip has acted on both energy ends: their shutdown readings lead their details now.
-    expect(leadValuesKey(tripped, now(tripped, run))).toEndWith('|core,turbine')
+    const afterTrip = now(tripped, run)
+    expect(afterTrip.mode).toBe('hotStandby')
+    // The reactor trip has acted on the core: what says it stopped leads its detail now (rods on bottom, both trip breakers).
+    expect(equipmentKeyValues(tripped, core(tripped), afterTrip).slice(0, 4)).toEqual(['core.rodsOnBottom', 'reactorTripBreakerA.closedState', 'reactorTripBreakerB.closedState', 'core.rodStepsWithdrawn'] as never)
   })
 })
 

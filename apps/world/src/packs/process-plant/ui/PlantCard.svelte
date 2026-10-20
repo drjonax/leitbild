@@ -13,18 +13,18 @@
 
 <script lang="ts">
   import { tick } from 'svelte'
-  import type { SimulationRunId } from '../../core/model/index.ts'
+  import type { SimulationRunId } from '../../../core/model/index.ts'
   import { ChevronRight, ClipboardList, Ellipsis, FileText, GitBranch, Library, MonitorCog, ShieldCheck, Sparkles, X, Zap } from 'lucide-svelte'
-  import StatusDot from '../components/StatusDot.svelte'
+  import StatusDot from '../../../ui/components/StatusDot.svelte'
   import {
     dockObjectCard,
     placeObjectCard,
     type MapCardFrame,
     type ObjectCardPlacement,
     type ScreenRect,
-  } from '../map/object-card-anchor.ts'
-  import { composedDisplayClient } from '../embed/composed-display/composed-display-client.ts'
-  import { sparkline, sparklineText } from '../embed/composed-display/sparkline.ts'
+  } from '../../../ui/map/object-card-anchor.ts'
+  import { composedDisplayClient } from '../../../ui/embed/composed-display/composed-display-client.ts'
+  import { sparkline, sparklineText } from '../../../ui/embed/composed-display/sparkline.ts'
   import type { PlantCardView } from './plant-card.ts'
   import { createPlantCardTrends, PLANT_CARD_TREND_MS, type PlantCardLine } from './plant-card-trends.ts'
 

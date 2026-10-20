@@ -15,7 +15,7 @@ import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { drawnLook, pipeStatesLook, rowText, stubWordText, stubWordTexts } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { processPlantSignalQuality } from '../src/packs/process-plant/signals.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 

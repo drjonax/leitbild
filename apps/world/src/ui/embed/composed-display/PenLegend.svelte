@@ -2,7 +2,7 @@
   import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
-  import { readingText, shownReading, valueText } from '../../../packs/process-plant/displays/display-text.ts'
+  import { readingText, shownReading, valueText } from '../../../packs/process-plant/quantity-text.ts'
   import { WIDER_RANGE } from '../../../packs/process-plant/displays/mimic/rows.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { expectedOfRule, sampledGates } from './panel-presenters.ts'

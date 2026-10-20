@@ -2,7 +2,7 @@ import type { ProcessVariableValue, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
-import { actionOf, firstOutGroupOf, icRuleKind } from '../displays/ic-thresholds.ts'
+import { actionOf, firstOutGroupOf, icRuleKind } from '../ic/thresholds.ts'
 import { compareIcValues, type ControlRule, type OfferedControl } from './controls.ts'
 
 // What a protective pushbutton does to the Plant's protection, read from the

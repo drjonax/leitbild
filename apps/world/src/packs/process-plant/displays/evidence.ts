@@ -3,22 +3,23 @@ import { linkCarrier, nextLinks, previousLinks, type ProcessSignalBinding, type 
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { safetyFunctionSignals } from '../safety-functions.ts'
 import { signalMeasuredOn } from '../signals.ts'
-import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, branchFlows, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
+import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, branchFlows, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from '../ic/actuations.ts'
 import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, COMPOSED_EVIDENCE_MAX_ROWS, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
-import { formatQuantity, isPast, offScale, readingResolution, simulationClock } from './display-text.ts'
+import { isPast, simulationClock } from './display-text.ts'
+import { formatQuantity, offScale, readingResolution } from '../quantity-text.ts'
 import { stopStates } from './faceplate.ts'
-import { icThresholdsForSignal } from './ic-thresholds.ts'
-import { itemBinding, type MimicItem } from './mimic/bindings.ts'
+import { icThresholdsForSignal } from '../ic/thresholds.ts'
+import { itemBinding } from './mimic/bindings.ts'
+import { equipmentItemId, type EquipmentItem } from '../equipment/items.ts'
 import { heldCommands, itemLook, type SampleIndex } from './mimic/evaluate.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
-import { operatingPointValue } from './operating-point.ts'
-import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMeasured } from './overview-key-values.ts'
+import { operatingPointValue } from '../operating-point.ts'
+import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMeasured } from '../ic/key-values.ts'
 import { COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, ratePerMinute, travelText, TREND_HISTORY_LIMIT, type TrendPoint } from './trend-reading.ts'
 import { listedControlsFor } from '../operations/instance-ports.ts'
 import { safetyFunctionCriteria, type SafetyFunctionCriterion } from './safety-criteria.ts'
 import { resolveEquipmentName } from './mimic/scope.ts'
-import { mimicItemId } from './mimic/bindings.ts'
 
 // The evidence a composed display carries besides what the agent chose: what
 // the Plant's model says bears on the question now, added by World and
@@ -107,7 +108,7 @@ export const displayEvidence = (
   sample: EvidenceSample,
   recordedSeriesIds: ReadonlySet<string>,
   /** What the question is about, as the agent named it (signals or equipment): the items an operation display is composed around. */
-  subjects: ReadonlyArray<string> = [],
+  subjects: ReadonlyArray<string>,
 ): ReadonlyArray<DisplayEvidence> => {
   const plant = system.plant
   const graph = plant.graph
@@ -209,10 +210,10 @@ export const displayEvidence = (
     values.set(String(path), heldMs === undefined ? value : { ...value, heldMs })
   }
   // The equipment on a fault path: what does not follow its demand, and what isolates its line.
-  const faults: Array<{ readonly item: MimicItem; readonly label: string }> = []
+  const faults: Array<{ readonly item: EquipmentItem; readonly label: string }> = []
   for (const component of suspects) {
     const semantics = graph.components[component]!.semantics
-    const items: ReadonlyArray<{ readonly item: MimicItem; readonly aspects: typeof semantics.aspects }> = [
+    const items: ReadonlyArray<{ readonly item: EquipmentItem; readonly aspects: typeof semantics.aspects }> = [
       { item: { kind: 'component', component }, aspects: semantics.aspects },
       ...semantics.embedded.map(device => ({ item: { kind: 'device' as const, component, device: device.id }, aspects: device.aspects })),
     ]
@@ -239,14 +240,14 @@ export const displayEvidence = (
    * valve); for a component, the isolating components on its line up- and
    * downstream, through equipment that only passes the flow on.
    */
-  const isolatorsOf = (item: MimicItem): ReadonlyArray<MimicItem> => {
+  const isolatorsOf = (item: EquipmentItem): ReadonlyArray<EquipmentItem> => {
     const host = graph.components[item.component]!
     if (item.kind === 'device') {
       const port = host.semantics.embedded.find(device => device.id === item.device)!.port
       return host.semantics.embedded.filter(device => device.port === port && device.id !== item.device && device.function === 'isolating')
         .map(device => ({ kind: 'device' as const, component: item.component, device: device.id }))
     }
-    const found: MimicItem[] = []
+    const found: EquipmentItem[] = []
     const fluid = (indexes: ReadonlyArray<number> | undefined) => (indexes ?? []).map(at => graph.links[at]!).filter(link => link.kind === 'fluidFlow')
     for (const [start, step, far] of [
       [fluid(graph.outgoingLinksByComponent[item.component]), nextLinks, 'toComponentIndex'],
@@ -267,7 +268,7 @@ export const displayEvidence = (
   }
 
   // Isolation: the device that isolates a fault or relief path, where the drawing does not show it.
-  const deviceKey = (item: MimicItem): string => item.kind === 'device' ? `${item.component}|${item.device}` : `${item.component}|`
+  const deviceKey = (item: EquipmentItem): string => item.kind === 'device' ? `${item.component}|${item.device}` : `${item.component}|`
   const shownDevices = graph.components.flatMap(component => component.semantics.embedded
     .filter(device => device.function === 'relieving' && device.variables.some(variable => shown.has(String(variable))))
     .map(device => ({ item: { kind: 'device' as const, component: component.index, device: device.id }, open: device.aspects.some(aspect => aspect.aspect === 'position' && aspect.state !== undefined && Number(sample(aspect.state.path).value) > 0) })))
@@ -418,7 +419,7 @@ export const displayEvidence = (
   // asks of what that actuation delivers, where its tree judges it (total feed flow into the steam generators the
   // auxiliary feed pumps feed, against the heat sink's minimum).
   const subjectComponents = subjectEquipment(system, subjects)
-  const operated = operatedItems(system, mimics.flatMap(mimic => mimic.items.map(item => mimicItemId(graph, item.binding.item))), subjectComponents)
+  const operated = operatedItems(system, mimics.flatMap(mimic => mimic.items.map(item => equipmentItemId(graph, item.binding.item))), subjectComponents)
   const clockAt = (elapsedMs: number): string => clock(now.simulationMs - (system.runtime.elapsedMs() - elapsedMs))
   const servedBy = (action: AutomaticAction): ReadonlyArray<SafetyFunctionCriterion> => {
     const commanded = actionEquipment(plant, action)

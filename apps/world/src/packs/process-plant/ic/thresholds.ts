@@ -2,8 +2,8 @@ import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcFirstOutGroup, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding, resolveProcessPlantSignalPath } from '../signals.ts'
-import { displayValue, unitLabel } from './display-text.ts'
-import { operatingPointValue } from './operating-point.ts'
+import { displayValue, unitLabel } from '../quantity-text.ts'
+import { operatingPointValue } from '../operating-point.ts'
 
 // Thresholds drawn on composed displays come only from the Plant's configured
 // I&C rules. They are named I&C thresholds, not variable limits: they state
@@ -491,30 +491,5 @@ export const icAlarmRuleIdsForEquipment = (
   return plant.automation.rules
     .filter(rule => rule.enabled && icRuleKind(rule) !== 'control')
     .filter(rule => conditionBindings(plant, rule.condition).some(binding => equipmentKeys(binding).some(key => equipment.has(key))))
-    .map(rule => rule.id)
-}
-
-/**
- * Single-signal alarm and trip rules on one component's signals: they frame
- * its mimic symbol. Combined and voted rules are left out, because they judge
- * several items at once (2-of-4 RCP low flow would frame every pump).
- */
-export const icAlarmRuleIdsForComponent = (
-  plant: CompiledProcessPlant,
-  componentId: string,
-): ReadonlyArray<string> => plant.automation.rules
-  .filter(rule => rule.enabled && icRuleKind(rule) !== 'control' && rule.condition.type === 'comparison')
-  .filter(rule => conditionBindings(plant, rule.condition).some(binding => equipmentKeys(binding).includes(componentId)))
-  .map(rule => rule.id)
-
-/** Single-signal alarm and trip rules on exactly these signals, for a symbol that is one item of a larger component. */
-export const icAlarmRuleIdsForPaths = (
-  plant: CompiledProcessPlant,
-  paths: ReadonlyArray<VariablePath>,
-): ReadonlyArray<string> => {
-  const watched = new Set(paths.map(String))
-  return plant.automation.rules
-    .filter(rule => rule.enabled && icRuleKind(rule) !== 'control' && rule.condition.type === 'comparison')
-    .filter(rule => conditionBindings(plant, rule.condition).some(binding => watched.has(String(binding.path))))
     .map(rule => rule.id)
 }

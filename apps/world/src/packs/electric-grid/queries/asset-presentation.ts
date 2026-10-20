@@ -27,6 +27,7 @@ import {
 } from '../commands/load.ts'
 import { gridResetBranchProtectionCommandKind } from '../commands/protection.ts'
 import type { GridAssetDefinition, GridGeneratorDefinition, GridHvdcLinkDefinition, GridLoadDefinition } from '../grid-model.ts'
+import { gridLoadingBands } from '../loading-bands.ts'
 import { unpoweredHvdcTerminal } from '../runtime/hvdc.ts'
 import type { GridAssetSnapshot, GridBranchState, GridGeneratorState, GridHvdcLinkState, GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
 import { generatorMinimumStableMw } from '../runtime/unit-commitment.ts'
@@ -159,7 +160,8 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     const state = grid.branches.get(asset.id)!
     const definition = asset.definition as typeof grid.definition.model.branches[number]
     subkind = definition.kind
-    tone = state.state === 'tripped' ? 'error' : state.state === 'open' ? 'idle' : state.loadingPercent >= 100 ? 'error' : state.loadingPercent >= 85 || state.availability < 1 ? 'working' : 'ready'
+    const bands = gridLoadingBands(grid.definition.automation.alarms)
+    tone = state.state === 'tripped' ? 'error' : state.state === 'open' ? 'idle' : state.loadingPercent >= bands.overloadPercent ? 'error' : state.loadingPercent >= bands.highPercent || state.availability < 1 ? 'working' : 'ready'
     statusLabel = state.state === 'tripped' ? `Tripped (${state.protection.trip!.element})` : state.state === 'open' ? 'Open' : state.availability < 1 ? `Derated ${Math.round(state.availability * 100)}%` : 'Closed'
     summary = `${Math.round(state.flowMw).toLocaleString()} MW · ${Math.round(state.loadingPercent)}% loaded`
   } else if (asset.kind === 'generator') {

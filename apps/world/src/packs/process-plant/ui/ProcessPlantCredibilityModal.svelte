@@ -1,12 +1,12 @@
 <script lang="ts">
   import { Copy, FileJson2, Image, ShieldCheck, X } from 'lucide-svelte'
-  import type { SimulationRunId } from '../../core/model/index.ts'
+  import type { SimulationRunId } from '../../../core/model/index.ts'
   import {
     listProcessPlantCredibilityEvidence,
     readProcessPlantCredibilityArtifact,
     type ProcessPlantCredibilityArtifact,
     type ProcessPlantCredibilityEvidence,
-  } from './process-display-client.ts'
+  } from '../../../ui/process-display/process-display-client.ts'
 
   interface Props {
     readonly simulationRunId: SimulationRunId

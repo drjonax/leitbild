@@ -1,14 +1,17 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink, VariablePath } from '../../graph/index.ts'
 import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
-import { readingText, unitLabel } from '../display-text.ts'
-import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, stubWordBinding, type MimicItem, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
+import { readingText, unitLabel } from '../../quantity-text.ts'
+import { framingRules, itemBinding, linkPowerBinding, stubWordBinding, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
+import { linkFlowBinding } from '../../equipment/link-flow.ts'
+import { equipmentItemId, type EquipmentItem } from '../../equipment/items.ts'
 import { diagramCandidates, type DiagramCandidates, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramRoom, type PlacedNode } from '../../../../features/displays/diagram/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, stubWordTexts, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
-import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { plantLoops } from '../../equipment/circuits.ts'
 import { fitVessel } from './vessel-fit.ts'
 import { openBridgeDevice, QUICK_LOOK_DOT, reactorVesselBottom, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
@@ -37,7 +40,7 @@ export type MimicCompileResult =
 
 interface PlannedItem {
   readonly id: string
-  readonly item: MimicItem
+  readonly item: EquipmentItem
   readonly binding: MimicItemBinding
   readonly presentation: MimicPresentation
   readonly rows: ReadonlyArray<MimicRow>
@@ -566,9 +569,6 @@ const rowPaths = (row: MimicRow): ReadonlyArray<VariablePath> => {
   ])
 }
 
-const itemIdOf = (graph: CompiledPlantGraph, item: MimicItem): string =>
-  item.kind === 'component' ? String(graph.components[item.component]!.id) : `${graph.components[item.component]!.id}.${item.device}`
-
 const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profile: MimicProfile, scope: MimicScope, planned: Planned, layout: Extract<DiagramLayoutResult, { ok: true }>): CompiledMimic => {
   const graph = plant.graph
   const placed = new Map(layout.nodes.map(node => [node.id, node]))
@@ -654,7 +654,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
   const equipment = items.flatMap(item => {
     const count = item.rows.find((row): row is Extract<MimicRow, { kind: 'count' }> => row.kind === 'count')
     const bindings = count === undefined ? [item.binding] : count.members
-    return bindings.map(binding => ({ id: itemIdOf(graph, binding.item), label: binding.label }))
+    return bindings.map(binding => ({ id: equipmentItemId(graph, binding.item), label: binding.label }))
   })
   return {
     intent,

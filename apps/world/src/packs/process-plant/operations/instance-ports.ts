@@ -1,7 +1,6 @@
 import type { CommandOrigin } from '../../../simulation/protocol.ts'
 import type { CompiledPlantGraph, ProcessSignalTagId, ProcessVariableValue, VariablePath } from '../graph/index.ts'
-import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../displays/composition.ts'
-import type { MimicItem } from '../displays/mimic/bindings.ts'
+import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS, type EquipmentItem } from '../equipment/items.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { evaluateProcessPlantIcCondition, processPlantOperatingMode } from '../runtime/index.ts'
 import { actuationResets, resetRefusal, type ActuationReset, type ResetContext } from './actuation-reset.ts'
@@ -170,7 +169,7 @@ export interface ListedItem {
  * alone may draw the device inside the host's symbol (HMI review of run 26c,
  * g2); one around the host and these draws the line and the device on it.
  */
-const lineEnds = (graph: CompiledPlantGraph, item: MimicItem): { readonly line?: ReadonlyArray<string> } => {
+const lineEnds = (graph: CompiledPlantGraph, item: EquipmentItem): { readonly line?: ReadonlyArray<string> } => {
   if (item.kind === 'component') return {}
   const port = graph.components[item.component]!.semantics.embedded.find(device => device.id === item.device)?.port
   if (port === undefined) return {}
