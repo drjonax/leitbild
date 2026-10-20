@@ -31,6 +31,16 @@ const isMeaningfulObjectUpsert = (previous: OperationalObject | undefined, next:
   return false
 }
 
+/**
+ * The one journal rule (plan v3.1 §2.2, V7): an upsert that creates an object
+ * or changes its lifecycle, status, priority or alerts is durable, whatever
+ * history its Pack asked for. packData churn is not a state change.
+ */
+export const keepsStateChange = (previous: OperationalObject | undefined, next: OperationalObject): boolean =>
+  previous === undefined || previous.lifecycle !== next.lifecycle
+  || previous.operational.status !== next.operational.status || previous.operational.priority !== next.operational.priority
+  || stableJson(previous.alerts) !== stableJson(next.alerts)
+
 export const persistenceDispositionFor = (
   event: SimulationRunEvent,
   previousObject?: OperationalObject,
