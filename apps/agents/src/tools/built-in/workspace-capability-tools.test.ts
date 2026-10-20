@@ -7,7 +7,7 @@ import {
   workspaceResourceReferenceSchema,
   type WorkspaceRoomScope,
 } from '@leitbild/contracts'
-import { createViewPublisherLookup, createWorkspaceCapabilityTools, workspaceCallResultForModel } from './workspace-capability-tools.ts'
+import { createContextPublisherLookup, createViewPublisherLookup, createWorkspaceCapabilityTools, workspaceCallResultForModel } from './workspace-capability-tools.ts'
 import { toolsToDefinitions } from '../../llm/tool-capability.ts'
 
 const workspaceId = newWorkspaceId()
@@ -404,6 +404,41 @@ describe('Workspace progressive-discovery tools', () => {
     expect(await lookup({ kind: 'resource', resource: otherRun }, true)('room')).toEqual([])
     expect(await lookup({ kind: 'workspace' }, false)('room')).toEqual([])
     expect(lookup({ kind: 'workspace' }, true)('missing')).rejects.toThrow('has no valid scope')
+  })
+
+  test('a Room\'s context publishers are the Resources in its Scope whose operation is marked context, read as the Agent', async () => {
+    const contextId = capabilityIdSchema.parse('world.simulation-run.context')
+    const base = catalogFetch([])
+    const invoked: Array<{ path: string; body: Record<string, unknown> }> = []
+    const lookup = (scope: WorkspaceRoomScope) => createContextPublisherLookup({
+      workspaceId, hostBaseUrl: 'https://host.test', getRoomScope: roomId => roomId === 'room' ? scope : undefined,
+      fetchImpl: (async (input, init) => {
+        const request = input instanceof Request ? new Request(input, init) : new Request(String(input), init)
+        const path = new URL(request.url).pathname
+        if (path.endsWith('/invoke')) {
+          invoked.push({ path, body: await request.json() as Record<string, unknown> })
+          return Response.json({ result: { context: { text: 'Run 01 · PAUSED', at: now, clock: 'simulation' } } })
+        }
+        const response = await base(input, init)
+        if (path.endsWith('/capabilities')) {
+          const body = await response.json() as { capabilities: unknown[] }
+          body.capabilities.push({ id: contextId, moduleId, kind: 'query', scope: { kind: 'resource', resourceType: run.type }, title: 'context', description: 'Run context.', risk: 'read', idempotent: true, publishes: ['context'], inputSchema: { type: 'object' }, outputSchema: { type: 'object' } })
+          return Response.json(body)
+        }
+        if (path.endsWith('/resources')) {
+          const body = await response.json() as { resources: Array<{ ref: typeof run; capabilityIds: string[] }> }
+          for (const resource of body.resources) if (resource.ref.type === run.type) resource.capabilityIds.push(contextId)
+          return Response.json(body)
+        }
+        return response
+      }) as typeof fetch,
+    })
+    expect(await lookup({ kind: 'workspace' }).publishers('room')).toEqual([{ operationId: contextId, resource: run }, { operationId: contextId, resource: otherRun }])
+    expect(await lookup({ kind: 'resource', resource: otherRun }).publishers('room')).toEqual([{ operationId: contextId, resource: otherRun }])
+    expect(await lookup({ kind: 'resource', resource: family }).publishers('room')).toEqual([])
+    const read = await lookup({ kind: 'workspace' }).read({ operationId: contextId, resource: run }, { id: 'agent-1', name: 'Assistant' })
+    expect(read).toEqual({ ok: true, context: { text: 'Run 01 · PAUSED', at: now, clock: 'simulation' } })
+    expect(invoked[0]).toEqual({ path: `/api/workspaces/${workspaceId}/capabilities/${contextId}/invoke`, body: { resource: run, input: {}, actor: { kind: 'ai', id: 'agent-1', displayName: 'Assistant' } } })
   })
 
   test('essential discovery and action semantics reach the actual native model schema', () => {
