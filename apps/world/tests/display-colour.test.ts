@@ -1,13 +1,23 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { alertSeveritySchema, alertStateSchema, priorityLevels, type AlertSeverity, type Priority } from '../src/core/model/alerts.ts'
-import { deltaE, parseColour, readReservedSets, reservedColourNames } from '../scripts/displays/reserved-colour-distance.ts'
+import { getAlertBadgeComponent, getAlertColorTokens } from '@oicl/openbridge-webcomponents/dist/alert-severity.js'
+import { AlertType } from '@oicl/openbridge-webcomponents/dist/types.js'
+import { alertSeveritySchema, alertStateSchema, priorityLevels, type AlertSeverity, type AlertState, type Priority } from '../src/core/model/alerts.ts'
+import type { ObjectId, PackId } from '../src/core/model/ids.ts'
+import type { IsoTimestamp } from '../src/core/model/time.ts'
+import type { PackObjectPresentation, PackObjectStatusTone } from '../src/core/packs/protocol.ts'
+import { alertRows, type AlertObject, type AlertPresentation } from '../src/features/displays/alerts/rows.ts'
+import { alertStrip } from '../src/features/displays/alerts/strip.ts'
+import { severityStyle, severityTable } from '../src/ui/displays/severity.ts'
+import {
+  deltaE, openBridgeCssPath, paletteTokens, palettes, parseColour, readReservedSets, reservedColourNames, resolveToken, tokenName, type Palette,
+} from '../scripts/displays/reserved-colour-distance.ts'
 
 // T04a (plan v3.1 §2.7, Appendix F; gate G1): the colour rules a World-drawn
 // display keeps. Each rule is checked against a planted violation that must
-// fail. The parts that read the severity table (ui/displays/severity.ts) and
-// the alert read model (features/displays/alerts/) land with those files.
+// fail. The strip's own drawing (ui/displays, S3) is held to the same rules
+// by the World-drawn-colour lint below and lands with its own render checks.
 
 const src = join(import.meta.dir, '../src')
 
@@ -117,5 +127,127 @@ describe('T04a: an alert\'s priority agrees with its severity (core/model/alerts
     const result = alertStateSchema.safeParse({ ...record, severity: 'critical', priority: 'caution' })
     expect(result.success).toBe(false)
     expect(result.error?.issues.map(issue => issue.path.join('.'))).toEqual(['priority'])
+  })
+})
+
+describe('T04a: the World severity table matches OpenBridge 2.0.0 in every palette (ui/displays/severity.ts)', () => {
+  const css = readFileSync(openBridgeCssPath, 'utf8')
+  // Plan v3.1 §2.7, channel A: emergency → level-critical magenta, alarm → alarm red, warning → warning orange,
+  // caution → caution yellow, notice → no hue. Written out here, not read from the table.
+  const openBridgeType: Readonly<Record<Exclude<Priority, 'none'>, AlertType | null>> = {
+    emergency: AlertType.LevelCritical, alarm: AlertType.Alarm, warning: AlertType.Warning, caution: AlertType.Caution, notice: null,
+  }
+  const family: Readonly<Record<string, string>> = {
+    [AlertType.LevelCritical]: 'critical', [AlertType.Alarm]: 'alarm', [AlertType.Warning]: 'warning', [AlertType.Caution]: 'caution',
+  }
+  /** The shape of OpenBridge's badge for a type, read from the badge's own SVG: a circle, or a path's straight edges. */
+  const badgeShape = (type: AlertType): string => {
+    const tag = getAlertBadgeComponent(type).replace(/^obi-/, '')
+    const source = readFileSync(join(openBridgeCssPath, `../icons/icon-${tag}.js`), 'utf8')
+    const icon = source.match(/this\.icon = svg`([\s\S]*?)`;/)![1]!
+    if (/<circle\b/.test(icon)) return 'circle'
+    const edges = [...icon.matchAll(/<path d="([^"]+)"/g)].reduce((sum, path) => sum + (path[1]!.match(/[LHV]/g) ?? []).length, 0)
+    return ({ 3: 'triangle', 4: 'square', 6: 'hexagon' } as Readonly<Record<number, string>>)[edges] ?? `${edges} edges`
+  }
+  const openBridgeRgb = (type: AlertType, palette: Palette): string => resolveToken(paletteTokens(css, palette), tokenName(getAlertColorTokens(type).bg))
+
+  test('each priority has OpenBridge\'s family, badge shape and colour per palette; notice has none of them', () => {
+    expect(Object.keys(severityTable).sort()).toEqual(priorityLevels.filter(level => level !== 'none').sort())
+    for (const [priority, type] of Object.entries(openBridgeType) as ReadonlyArray<[Exclude<Priority, 'none'>, AlertType | null]>) {
+      const style = severityTable[priority]
+      if (type === null) {
+        expect({ priority, family: style.family, glyph: style.glyph, rgb: style.rgb }).toEqual({ priority, family: null, glyph: null, rgb: null })
+        continue
+      }
+      expect({ priority, family: style.family as string | null, glyph: style.glyph as string | null }).toEqual({ priority, family: family[type] ?? null, glyph: badgeShape(type) })
+      for (const palette of palettes) {
+        expect({ priority, palette, rgb: parseColour(style.rgb![palette]) }).toEqual({ priority, palette, rgb: parseColour(openBridgeRgb(type, palette)) })
+      }
+    }
+  })
+
+  test('planted: a table one channel off OpenBridge in one palette is caught', () => {
+    const planted = { ...severityTable.alarm.rgb!, dusk: 'rgb(220, 0, 7)' }
+    expect(palettes.filter(palette => deltaE(planted[palette], openBridgeRgb(AlertType.Alarm, palette)) !== 0)).toEqual(['dusk'])
+  })
+})
+
+describe('T04a: an alert without a priority is drawn neutrally, never as emergency (R1)', () => {
+  /** The R1 rule: with no declared priority, no family, no glyph, no colour, and the words say so. */
+  const neutralWithoutPriority = (style: typeof severityStyle): ReadonlyArray<string> => alertSeveritySchema.options.flatMap(severity => {
+    const drawn = style(null, severity)
+    return drawn !== null && drawn.family === null && drawn.glyph === null && drawn.rgb === null && drawn.word.includes('priority not declared') ? [] : [severity]
+  })
+
+  test('every severity without a priority is drawn without hue or glyph, as "priority not declared"', () => {
+    expect(neutralWithoutPriority(severityStyle)).toEqual([])
+  })
+
+  test('a declared priority is drawn as itself, and `none` is not drawn', () => {
+    expect(severityStyle('emergency', 'critical')).toEqual(severityTable.emergency)
+    expect(severityStyle('alarm', 'critical')).toEqual(severityTable.alarm)
+    expect(severityStyle('none', 'info')).toBeNull()
+  })
+
+  test('planted: a style that derives emergency, or alarm, from critical severity is caught', () => {
+    const derivesEmergency: typeof severityStyle = (priority, severity) => severityStyle(priority ?? (severity === 'critical' ? 'emergency' : null), severity)
+    const derivesAlarm: typeof severityStyle = (priority, severity) => severityStyle(priority ?? (severity === 'critical' ? 'alarm' : null), severity)
+    expect(neutralWithoutPriority(derivesEmergency)).toEqual(['critical'])
+    expect(neutralWithoutPriority(derivesAlarm)).toEqual(['critical'])
+  })
+})
+
+describe('T04a: Pack colour and tone never reach the alert read model, and a group is neutral with its worst child\'s badge', () => {
+  const at = '2026-07-12T04:00:00.000Z' as IsoTimestamp
+  const severityOf: Readonly<Record<Priority, AlertSeverity>> = { none: 'info', notice: 'info', caution: 'warning', warning: 'warning', alarm: 'critical', emergency: 'critical' }
+  const alert = (id: string, priority: Priority, facets: Partial<AlertState> = {}): AlertState =>
+    alertStateSchema.parse({ id, kind: 'test', severity: severityOf[priority], message: `${id} message`, raisedAt: at, acknowledged: false, clock: 'simulation', priority, ...facets })
+  const objects: ReadonlyArray<AlertObject> = [
+    { id: 'plant:u2' as ObjectId, packId: 'plant' as PackId, lifecycle: 'active', alerts: [alert('trip', 'alarm', { firstOut: { group: 'rx-trip', rank: 1 } }), alert('sg-lo', 'caution')] },
+    { id: 'grid:no' as ObjectId, packId: 'grid' as PackId, lifecycle: 'active', alerts: [alert('island', 'warning', { subject: { group: 'island-2' } })] },
+  ]
+  /** A Pack's whole presentation, as a host has it: the read model may take only its words. */
+  const presentation = (color: string, tone: PackObjectStatusTone) => (subject: AlertObject): PackObjectPresentation & AlertPresentation => ({
+    label: `Label of ${subject.id}`, categoryId: 'unit', icon: 'factory', color, summary: '', fields: [],
+    status: { tone, label: 'Tripped', indicator: { shape: 'dot' } },
+  })
+  const drawn = (read: typeof alertRows, present: ReturnType<typeof presentation>) => {
+    const rows = read(objects, present)
+    return { rows, strip: alertStrip(rows, { maxRows: 4 }) }
+  }
+  /** Keys that would carry a colour, and values that are one. */
+  const colourCarriers = (value: unknown, path = ''): ReadonlyArray<string> => {
+    if (typeof value === 'string') return /^(#[0-9a-f]{3,8}|rgba?\()/i.test(value) ? [path] : []
+    if (value === null || typeof value !== 'object') return []
+    return Object.entries(value).flatMap(([key, inner]) =>
+      /^(colou?r|tone|rgb|family|fill|stroke)$/i.test(key) ? [`${path}.${key}`] : colourCarriers(inner, `${path}.${key}`))
+  }
+  const ignoresPackColour = (read: typeof alertRows): boolean =>
+    JSON.stringify(drawn(read, presentation('#dc2626', 'error'))) === JSON.stringify(drawn(read, presentation('#0f915f', 'ready')))
+    && colourCarriers(drawn(read, presentation('#dc2626', 'error'))).length === 0
+
+  test('rows and strip are the same whatever the presentation\'s colour and tone, and carry no colour', () => {
+    expect(ignoresPackColour(alertRows)).toBe(true)
+  })
+
+  test('planted: a read model that copies the presentation\'s colour or tone onto its rows is caught', () => {
+    const copiesColour: typeof alertRows = (subjects, present) => alertRows(subjects, present).map(row => ({ ...row, color: (present(subjects[0]!) as { color?: string }).color }) as never)
+    const copiesTone: typeof alertRows = (subjects, present) => alertRows(subjects, present).map(row => ({ ...row, packTone: (present(subjects[0]!) as { status?: { tone: string } }).status?.tone }) as never)
+    expect(ignoresPackColour(copiesColour)).toBe(false)
+    expect(ignoresPackColour(copiesTone)).toBe(false)
+  })
+
+  test('a group has no colour of its own: its badge is its worst child\'s priority, through the severity table', () => {
+    const { strip } = drawn(alertRows, presentation('#dc2626', 'error'))
+    const plant = strip.groups.find(group => group.key === 'plant:u2')!
+    expect(colourCarriers(plant)).toEqual([])
+    expect(plant.worst).toBe('alarm')
+    expect(severityStyle(plant.worst, 'critical')).toEqual(severityTable.alarm)
+    expect(plant.label).toBe('Label of plant:u2')
+  })
+
+  test('planted: a group that carries a colour is caught', () => {
+    expect(colourCarriers({ key: 'plant:u2', label: 'Unit 2', worst: 'alarm', fill: 'rgb(227, 0, 25)' })).toEqual(['.fill'])
+    expect(colourCarriers({ key: 'plant:u2', label: 'Unit 2', worst: 'alarm', badge: { background: '#e30019' } })).toEqual(['.badge.background'])
   })
 })
