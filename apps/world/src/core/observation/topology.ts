@@ -1,8 +1,9 @@
 /**
  * The one topology contract for the `flow` and `network` families (plan v3.1
  * §2.9): a Pack returns a semantic graph, World scopes and lays it out. Nodes
- * are equipment with ports, edges pure connectivity between two ports of one
- * medium; boundaries join other graphs only through Scenario connections.
+ * are equipment with ports, edges pure connectivity between two ports that
+ * carry the edge's medium; boundaries join other graphs only through Scenario
+ * connections.
  */
 import { z } from 'zod'
 import { observableRefSchema, refObjectId } from '../model/alerts.ts'
@@ -36,10 +37,14 @@ export const topologyGraphSchema = z.object({
     id, element: id.optional(), class: topologyNodeClassSchema, kind: z.string().min(1).max(60),
     /** Grid tee labels exceed 120 characters (proto-topology); `shortLabel` is what a drawing fits. */
     label: z.string().min(1).max(300), shortLabel: z.string().min(1).max(24).optional(), rank, group: id.optional(),
-    ports: z.array(z.object({ id, rank, medium: id, direction: z.enum(['in', 'out', 'both']) }).strict()).min(1).max(256),
+    ports: z.array(z.object({
+      id, rank, media: z.array(id).min(1).max(16), direction: z.enum(['in', 'out', 'both']),
+      /** Ports of one circuit connect inside the node; a port in no circuit is a terminal. Reach follows flow only into a port of the circuit it entered by. */
+      circuit: id.optional(),
+    }).strict()).min(1).max(256),
     bindings,
   }).strict()).max(20_000),
-  edges: z.array(z.object({ id, rank, from: end, to: end, medium: id, directed: z.boolean(), bindings }).strict()).max(40_000),
+  edges: z.array(z.object({ id, rank, from: end, to: end, medium: id, directed: z.boolean(), bindings, group: id.optional() }).strict()).max(40_000),
   boundaries: z.array(z.object({ node: id, port: id, externalPortId: id }).strict()).max(256),
 }).strict().superRefine((graph, context) => {
   const issue = (message: string): void => context.addIssue({ code: 'custom', message })
@@ -60,21 +65,22 @@ export const topologyGraphSchema = z.object({
       seen.add(at.id)
     }
   }
-  const ports = new Map<string, string>()
+  const ports = new Map<string, ReadonlyArray<string>>()
   for (const node of graph.nodes) {
     if (node.group !== undefined && !groups.has(node.group)) issue(`node ${node.id} has unknown group ${node.group}`)
     unique(`port of node ${node.id}`, node.ports.map(port => port.id))
     for (const port of node.ports) {
-      if (!media.has(port.medium)) issue(`port ${node.id}.${port.id} has unknown medium ${port.medium}`)
-      ports.set(`${node.id}\u0000${port.id}`, port.medium)
+      for (const medium of port.media) if (!media.has(medium)) issue(`port ${node.id}.${port.id} has unknown medium ${medium}`)
+      ports.set(`${node.id}\u0000${port.id}`, port.media)
     }
   }
   for (const edge of graph.edges) {
     if (!media.has(edge.medium)) issue(`edge ${edge.id} has unknown medium ${edge.medium}`)
+    if (edge.group !== undefined && !groups.has(edge.group)) issue(`edge ${edge.id} has unknown group ${edge.group}`)
     for (const at of [edge.from, edge.to]) {
-      const medium = ports.get(`${at.node}\u0000${at.port}`)
-      if (medium === undefined) issue(`edge ${edge.id} ends at unknown port ${at.node}.${at.port}`)
-      else if (medium !== edge.medium) issue(`edge ${edge.id} carries ${edge.medium} into port ${at.node}.${at.port} of ${medium}`)
+      const carried = ports.get(`${at.node}\u0000${at.port}`)
+      if (carried === undefined) issue(`edge ${edge.id} ends at unknown port ${at.node}.${at.port}`)
+      else if (!carried.includes(edge.medium)) issue(`edge ${edge.id} carries ${edge.medium} into port ${at.node}.${at.port} of ${carried.join(', ')}`)
     }
   }
   for (const boundary of graph.boundaries) {

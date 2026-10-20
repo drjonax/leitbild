@@ -24,7 +24,7 @@ const fixtureGraph = (rename: (id: string) => string = id => id): NetworkGraph =
   const station = (busId: string) => { const substation = busOf.get(busId)!.substationId; return substation === undefined ? {} : { group: rename(`station:${substation}`) } }
   const converters = [...model.branches.filter(link => link.kind === 'transformer'), ...model.hvdcLinks]
   const lines = model.branches.filter(link => link.kind !== 'transformer')
-  const port = (id: string) => ({ id, rank: id, medium: 'ac', direction: 'both' })
+  const port = (id: string) => ({ id, rank: id, media: ['ac'], direction: 'both' })
   const edge = (id: string, from: readonly [string, string], to: readonly [string, string]) =>
     ({ id: rename(id), rank: id, medium: 'ac', directed: false, bindings: [], from: { node: rename(from[0]), port: from[1] }, to: { node: rename(to[0]), port: to[1] } })
   const graph = topologyGraphSchema.parse({
