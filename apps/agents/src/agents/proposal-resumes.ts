@@ -29,6 +29,7 @@ import { PROPOSALS_OPERATION_ID, proposedOperationsOf, type ProposalCardReader, 
 import { asAIAgent } from './shared.ts'
 
 /** Operations of a procedure Run (World); a turn that calls one works a procedure. */
+// Dated exception (P0, 2026-10-20): names a World operation id, against the platform rule that Agents discover Capabilities at runtime, until the swap (plan v3.1 §7), when World's procedure Run says which turns drive it.
 const PROCEDURE_OPERATION_PREFIX = 'world.procedure.'
 
 // An approval resumes the agent within a few seconds; the display window
@@ -102,6 +103,7 @@ const proposalResumeInstruction = (approved: ReadonlyArray<Approved>, answerId: 
     // This turn starts seconds after the decision, before the plant has
     // responded (probe 2026-10-13: power still 5 % and subcriticality red
     // 10 plant seconds after a trip, so the runner held at E-0 step 1).
+    // Dated exception (P0, 2026-10-20): names a World operation id, against the platform rule that Agents discover Capabilities at runtime, until the swap (plan v3.1 §7), when the World proposal vignette carries how to wait.
     + 'The plant may not show its effect yet: where a reading you judge by has not responded, wait in plant seconds '
     + '(world.simulation-run.wait with procedureRunId) before you judge a step or hold on it. '
     + 'Continue the procedure as you would on "continue": read where it stands, say what changed that you did not do, and carry on.'

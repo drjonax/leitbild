@@ -186,6 +186,8 @@ describe('evaluation view-fence guard', () => {
     expect(callLog.length).toBe(2)
     const correction = callLog[1]!.request.messages.at(-1)!.content
     expect(correction).toContain('call_0_0/compose is not a display composed in this turn')
+    // Any Module's operation may compose the display: the guard names none.
+    expect(correction).not.toMatch(/\bworld\.[a-z-]+\./)
     expect(result.decision.response).toEqual({ action: 'respond', content: 'Pressure is holding in its control band.' })
   })
 

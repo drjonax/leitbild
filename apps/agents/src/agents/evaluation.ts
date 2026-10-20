@@ -321,7 +321,7 @@ const viewFenceErrors = (content: string, viewRefs: ReadonlySet<string>): Readon
     if (parsed.kind === 'invalid') { errors.push(`\`${VIEW_FENCE_LANGUAGE}\` block at content line ${fence.startLine}: ${parsed.error}`); continue }
     const ref = viewRefFor(parsed.ref.callId, parsed.ref.key)
     if (!viewRefs.has(ref)) {
-      errors.push(`\`${VIEW_FENCE_LANGUAGE}\` block at content line ${fence.startLine}: ${ref} is not a display composed in this turn. Paste the viewRef returned by world.process-plant.display.compose, or remove the block if no display was composed.`)
+      errors.push(`\`${VIEW_FENCE_LANGUAGE}\` block at content line ${fence.startLine}: ${ref} is not a display composed in this turn. Paste the viewRef the call that composed it returned, or remove the block if no display was composed.`)
     }
   }
   return errors.map(error => ({ cause: 'view-fence', error }))
