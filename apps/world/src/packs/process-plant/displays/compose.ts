@@ -1,4 +1,4 @@
-import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from '../name-matching.ts'
+import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from '../../../core/model/text-search.ts'
 import { z } from 'zod'
 import type { EmbeddedViewContent } from '@leitbild/contracts'
 import { recordingSeriesIdFor } from '../../../core/model/index.ts'
