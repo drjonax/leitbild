@@ -56,7 +56,9 @@ describe('network layout (ELK layered, grid units)', () => {
     expect(overlaps(layout, membersOf(graph))).toEqual([])
     expect(edgesThroughNodes(layout, id => { const edge = graph.edges.find(candidate => candidate.id === id)!; return [edge.from.node, edge.to.node] })).toEqual([])
     expect(report.warmP95Ms).toBeLessThanOrEqual(30)
-  })
+    // The bar is CPU, measured above; the wall-clock timeout only has to outlast 41 layouts on a loaded machine
+    // (Bun's 5 s default failed at load ~10 on the integration branch while the CPU stayed in budget).
+  }, 60_000)
 
   test('grid units: node boxes keep their size, frames hold their members below the label room, routes are orthogonal', async () => {
     const graph = fixtureGraph()
