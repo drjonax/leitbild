@@ -125,9 +125,10 @@ export const composedDisplayCompositionSchema = z.object({
   /**
    * What the question is about: equipment (id, a tag on it, its label) or
    * signals (tag or path). Composing refuses a display that shows any of them
-   * nowhere. Advice composed before subjects existed re-opens without them.
+   * nowhere.
    */
-  subjects: z.array(text(1, 120)).min(1).max(COMPOSED_DISPLAY_MAX_SUBJECTS).optional(),
+  subjects: z.array(text(1, 120), { error: `name in subjects the 1-${COMPOSED_DISPLAY_MAX_SUBJECTS} pieces of equipment (id, tag or label) or signals (tag or path) the question is about; every one must be shown` })
+    .min(1).max(COMPOSED_DISPLAY_MAX_SUBJECTS),
   panels: z.array(composedDisplayPanelSchema).min(1).max(COMPOSED_DISPLAY_MAX_PANELS),
 }).strict()
 export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositionSchema>
@@ -244,6 +245,21 @@ export type DetailDisplayState = z.infer<typeof detailDisplayStateSchema>
 /** What an embedded Process Plant display re-opens: an agent's advice, a Plant's unit overview, or equipment opened from it. */
 export const processDisplayStateSchema = z.union([composedDisplayStateSchema, overviewDisplayStateSchema, detailDisplayStateSchema])
 export type ProcessDisplayState = z.infer<typeof processDisplayStateSchema>
+
+/** Why a saved display state is refused: it is not JSON, or not a form World reads (advice composed before subjects were required). */
+export const UNSUPPORTED_DISPLAY_FORMAT = 'Unsupported display format: World cannot show this saved display; ask for the display again'
+
+/** A saved display state as World reads it; null for one it cannot show (UNSUPPORTED_DISPLAY_FORMAT). */
+export const readProcessDisplayState = (state: string): ProcessDisplayState | null => {
+  let json: unknown
+  try {
+    json = JSON.parse(state)
+  } catch {
+    return null
+  }
+  const parsed = processDisplayStateSchema.safeParse(json)
+  return parsed.success ? parsed.data : null
+}
 
 /** The Plant a display state is about. */
 export const processDisplayStatePlantId = (state: ProcessDisplayState): string =>

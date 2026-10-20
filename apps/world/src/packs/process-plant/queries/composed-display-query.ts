@@ -16,7 +16,8 @@ import {
   overviewDisplayStateSchema,
   PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS,
   processDisplayStatePlantId,
-  processDisplayStateSchema,
+  readProcessDisplayState,
+  UNSUPPORTED_DISPLAY_FORMAT,
 } from '../displays/composition.ts'
 import {
   compileComposedDisplay,
@@ -103,14 +104,15 @@ const modeNow = (system: ProcessPlantRuntimeInstance): PlantModeNow => {
   return mode === null ? null : { id: mode.id, label: mode.label }
 }
 
+// One compile for composing and for showing again; only the refusal's words differ.
 const compiledOrRejected = (
   system: ProcessPlantRuntimeInstance,
   composition: unknown,
-  purpose: 'compose' | 'view',
+  refusal: 'compose' | 'view',
   recordedSeriesIds: ReadonlySet<string>,
 ) => {
-  const result = compileComposedDisplay(system, composition, purpose, recordedSeriesIds)
-  if (!result.ok) return rejectCapabilityInput(purpose === 'compose' ? formatComposedDisplayIssues(result.issues) : formatComposedViewIssues(result.issues))
+  const result = compileComposedDisplay(system, composition, recordedSeriesIds)
+  if (!result.ok) return rejectCapabilityInput(refusal === 'compose' ? formatComposedDisplayIssues(result.issues) : formatComposedViewIssues(result.issues))
   return result.display
 }
 
@@ -166,7 +168,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     }
     // What the Plant's model says bears on the question besides what the agent chose, read as the agent's panels open.
     // What the question is about, as the agent named it: the items an operation display is composed around.
-    const subjects = composedDisplayCompositionSchema.parse(config.request.input).subjects ?? []
+    const subjects = composedDisplayCompositionSchema.parse(config.request.input).subjects
     const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample, recordedSeriesIds, subjects), recordedSeriesIds)
     if (!completed.ok) throw new Error(`evidence World adds must resolve: ${completed.issues.map(issue => issue.message).join('; ')}`)
     // Drawn with what it leads with first, as every later view of it is (leadFirst).
@@ -294,9 +296,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
   if (config.request.capabilityId === 'world.process-plant.display.view') {
     const payload = displayViewQuerySchema.parse(config.request.input)
     const system = requirePlant(config.plants, payload.plantId)
-    const parsedState = processDisplayStateSchema.safeParse(JSON.parse(payload.state))
-    if (!parsedState.success) return rejectCapabilityInput(`Unsupported display format: ${parsedState.error.message}`)
-    const state = parsedState.data
+    const state = readProcessDisplayState(payload.state)
+    if (state === null) return rejectCapabilityInput(UNSUPPORTED_DISPLAY_FORMAT)
     const statePlantId = processDisplayStatePlantId(state)
     if (statePlantId !== payload.plantId) return rejectCapabilityInput(`Display state targets ${statePlantId}, not ${payload.plantId}`)
     if ('overview' in state) {

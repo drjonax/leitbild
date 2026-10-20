@@ -288,7 +288,7 @@ describe('world.process-plant.display.compose', () => {
   })
 
   test('trend captions distinguish axis geometry from retained sample coverage at every Run age', () => {
-    const result = compileComposedDisplay(plant, composition([{ ref: 'PT-455', role: 'primary' }]), 'compose', recordedSeriesIds)
+    const result = compileComposedDisplay(plant, composition([{ ref: 'PT-455', role: 'primary' }]), recordedSeriesIds)
     if (!result.ok) throw new Error('Expected valid trend composition')
     for (const elapsedMs of [0, 3_500, 600_000]) {
       const caption = composedDisplayShows(result.display, elapsedMs)[0]!
@@ -481,7 +481,7 @@ describe('world.process-plant.display.compose', () => {
 
   test('a state readout names its equipment, so two alike states cannot be confused', () => {
     const result = ask('world.process-plant.display.view', { plantId: compiled.id, state: JSON.stringify({
-      composition: { ...composition([{ ref: 'PT-455', role: 'primary' }]), panels: [{ kind: 'readouts', signals: [{ ref: 'BUS-A-ENERGIZED', role: 'primary' }, { ref: 'BUS-B-ENERGIZED', role: 'context' }] }] },
+      composition: { ...composition([{ ref: 'PT-455', role: 'primary' }]), subjects: ['BUS-A-ENERGIZED'], panels: [{ kind: 'readouts', signals: [{ ref: 'BUS-A-ENERGIZED', role: 'primary' }, { ref: 'BUS-B-ENERGIZED', role: 'context' }] }] },
       issuedAt: simulationTime,
       modelDigest: compiled.modelDigest,
     }) }) as { display: { panels: ReadonlyArray<{ kind: string; pens?: ReadonlyArray<{ name: string; described: string }> }> } }
@@ -678,7 +678,7 @@ describe('composed display panels', () => {
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display([
       { kind: 'trend', horizon: '10m', signals: ['PT-455', 'PZR-LVL', 'GEN-MW', 'TAVG', 'SG-A-PRESS'].map((ref, index) => ({ ref, role: index === 0 ? 'primary' : 'context' })) },
     ])))).toContain('a trend stacks at most 4 strips, one per measurement (parallel equipment shares one), but these signals are 5 measurements: [Pressurizer pressure, MPa] PT-455')
-    expect(rejectionOf(() => ask('world.process-plant.display.compose', display([{ kind: 'alarms', scope: 'plant' }]))))
+    expect(rejectionOf(() => ask('world.process-plant.display.compose', { ...display([{ kind: 'alarms', scope: 'plant' }]), subjects: ['PT-455'] })))
       .toContain('an alarms panel accompanies signal panels')
     const six = ['A', 'B', 'C', 'D'].map(loop => ({ ref: `RCP-${loop}-FLOW`, role: 'context' }))
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display([
@@ -763,33 +763,39 @@ describe('world.process-plant.display.view and sample', () => {
     expect(strip.pens[0]!.thresholds.length).toBe(9)
   })
 
-  test('view keeps rendering displays that later authoring rules would reject', () => {
+  test('view refuses advice the authoring rules refuse, as composing it would', () => {
     const repeated = {
-      ...composition([]),
+      ...composition([{ ref: 'SG-B-LVL-NR', role: 'primary' }]),
       panels: [
         { kind: 'trend', horizon: '10m', signals: [{ ref: 'SG-B-LVL-NR', role: 'primary' }] },
         { kind: 'readouts', signals: [{ ref: 'SG-B-LVL-NR', role: 'primary' }] },
       ],
     }
     expect(rejectionOf(() => ask('world.process-plant.display.compose', repeated))).toContain('a readouts adds nothing for it')
-    const state = JSON.stringify({ composition: repeated, issuedAt: simulationTime, modelDigest: compiled.modelDigest })
-    const view = ask('world.process-plant.display.view', { plantId: compiled.id, state }) as { display: { panels: unknown[] } }
-    expect(view.display.panels).toHaveLength(2)
-    // Displays composed before trends stacked their own strips keep rendering.
-    const twoTrends = { ...repeated, panels: [
+    const viewOf = (composed: unknown): string => rejectionOf(() => ask('world.process-plant.display.view', {
+      plantId: compiled.id,
+      state: JSON.stringify({ composition: composed, issuedAt: simulationTime, modelDigest: compiled.modelDigest }),
+    }))
+    const message = viewOf(repeated)
+    expect(message).toStartWith('This display can no longer be shown for the current Plant model')
+    expect(message).toContain('a readouts adds nothing for it')
+    expect(message).not.toContain('call world.process-plant.display.compose')
+    // Two trend panels, as displays were composed before trends stacked their own strips, are refused too.
+    expect(viewOf({ ...repeated, subjects: ['PT-455'], panels: [
       { kind: 'trend', horizon: '10m', signals: [{ ref: 'PT-455', role: 'primary' }] },
       { kind: 'trend', horizon: '10m', signals: [{ ref: 'PZR-LVL', role: 'context' }] },
-    ] }
-    const earlier = ask('world.process-plant.display.view', { plantId: compiled.id, state: JSON.stringify({ composition: twoTrends, issuedAt: simulationTime, modelDigest: compiled.modelDigest }) }) as { display: { panels: unknown[] } }
-    expect(earlier.display.panels).toHaveLength(2)
-    const missing = JSON.stringify({ composition: { ...repeated, panels: [{ kind: 'trend', horizon: '10m', signals: [{ ref: 'NO-SUCH-TAG', role: 'primary' }] }] }, issuedAt: simulationTime, modelDigest: compiled.modelDigest })
-    const message = rejectionOf(() => ask('world.process-plant.display.view', { plantId: compiled.id, state: missing }))
-    expect(message).toStartWith('This display can no longer be shown for the current Plant model')
-    expect(message).not.toContain('call world.process-plant.display.compose')
+    ] })).toContain('use one trend panel')
+    expect(viewOf({ ...repeated, subjects: ['NO-SUCH-TAG'], panels: [{ kind: 'trend', horizon: '10m', signals: [{ ref: 'NO-SUCH-TAG', role: 'primary' }] }] }))
+      .toStartWith('This display can no longer be shown for the current Plant model')
   })
 
   test('view refuses unsupported formats and another Plant', () => {
-    expect(rejectionOf(() => ask('world.process-plant.display.view', { plantId: compiled.id, state: '{"composition":{}}' }))).toContain('Unsupported display format')
+    const unsupported = 'Unsupported display format: World cannot show this saved display; ask for the display again'
+    expect(rejectionOf(() => ask('world.process-plant.display.view', { plantId: compiled.id, state: '{"composition":{}}' }))).toBe(unsupported)
+    // Advice composed before subjects were required, and a state that is not JSON, are refused, never failed on.
+    const { subjects: _subjects, ...beforeSubjects } = JSON.parse(composed.view.state).composition
+    expect(rejectionOf(() => ask('world.process-plant.display.view', { plantId: compiled.id, state: JSON.stringify({ ...JSON.parse(composed.view.state), composition: beforeSubjects }) }))).toBe(unsupported)
+    expect(rejectionOf(() => ask('world.process-plant.display.view', { plantId: compiled.id, state: '{"composition"' }))).toBe(unsupported)
     const foreign = JSON.stringify({ ...JSON.parse(composed.view.state), composition: { ...JSON.parse(composed.view.state).composition, plantId: 'plant:other' } })
     expect(rejectionOf(() => ask('world.process-plant.display.view', { plantId: compiled.id, state: foreign }))).toContain('targets plant:other')
   })

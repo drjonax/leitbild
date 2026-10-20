@@ -22,7 +22,6 @@ import {
   composedDisplayMaxHeight,
   composedPanelMinimumHeight,
   COMPOSED_DISPLAY_MAX_SAMPLE_PATHS,
-  COMPOSED_DISPLAY_MAX_SUBJECTS,
   COMPOSED_DISPLAY_MAX_TRENDS,
   COMPOSED_TREND_MAX_SIGNALS,
   COMPOSED_TREND_MAX_STRIPS,
@@ -650,7 +649,6 @@ const compositionIssues = (composition: ComposedDisplayComposition): ReadonlyArr
     if (kinds.filter(candidate => candidate === kind).length > 1) issues.push({ path: 'panels', message: `use at most one ${kind} panel` })
   }
   if (kinds.every(kind => kind === 'alarms')) issues.push({ path: 'panels', message: 'an alarms panel accompanies signal panels; add a trend, comparison, readouts or mimic panel' })
-  if (composition.subjects === undefined) issues.push({ path: 'subjects', message: `name in subjects the 1-${COMPOSED_DISPLAY_MAX_SUBJECTS} pieces of equipment (id, tag or label) or signals (tag or path) the question is about; every one must be shown` })
   const signals = composition.panels.flatMap(panel => panel.kind === 'alarms' || panel.kind === 'mimic' ? [] : panel.signals)
   // A mimic alone answers an equipment question and names no signals.
   if (signals.length > 0 && !signals.some(signal => signal.role === 'primary')) issues.push({ path: 'panels', message: 'mark at least one signal with role "primary": the signal the operator question is about' })
@@ -910,15 +908,14 @@ const fewerPanels = (besides: ReadonlyArray<number>, fits: (kept: ReadonlyArray<
 }
 
 /**
- * `compose` applies the authoring rules (panel counts, strips, size budget,
- * one panel per signal, a primary signal) that keep new displays lean. `view` re-opens a
- * display already shown in a conversation: it checks only what rendering
- * needs, so a later authoring rule never breaks earlier advice.
+ * A composition compiled under every authoring rule (panel counts, strips,
+ * size budget, one panel per signal, a primary signal, its subjects shown),
+ * as it is composed and every time it is shown again: a display that a later
+ * rule refuses is refused, never drawn under rules it no longer meets.
  */
 export const compileComposedDisplay = (
   system: ProcessPlantRuntimeInstance,
   input: unknown,
-  purpose: 'compose' | 'view',
   /** Series this Run's historian records; trends of other signals start when the view opens. */
   recordedSeriesIds: ReadonlySet<string>,
 ): ComposedDisplayCompileResult => {
@@ -928,7 +925,7 @@ export const compileComposedDisplay = (
   // Authoring issues are reported with the resolution and layout issues, so a
   // single rejection lists every fix; layout needs resolved signals, so it is
   // checked only once every reference resolves.
-  const authoring = purpose === 'compose' ? compositionIssues(composition) : []
+  const authoring = compositionIssues(composition)
   const issues: ComposedDisplayIssue[] = []
   if (composition.plantId !== system.plant.id) {
     issues.push({ path: 'plantId', message: `composition targets ${composition.plantId}, not ${system.plant.id}` })
@@ -986,9 +983,9 @@ export const compileComposedDisplay = (
     if (size?.kind !== 'trend') throw new Error('fitted panels follow the compiled panels')
     return { ...panel, plot: size.plot }
   })
-  const layout = purpose === 'compose' ? layoutIssues(compiled, fit) : []
-  const uncovered = purpose === 'compose' && composition.subjects !== undefined ? subjectIssues(system, composition.subjects, compiled) : []
-  const elsewhere = purpose === 'compose' ? judgedElsewhereIssues(system, composition) : []
+  const layout = layoutIssues(compiled, fit)
+  const uncovered = subjectIssues(system, composition.subjects, compiled)
+  const elsewhere = judgedElsewhereIssues(system, composition)
   if (authoring.length > 0 || layout.length > 0 || uncovered.length > 0 || elsewhere.length > 0) return { ok: false, issues: [...authoring, ...layout, ...uncovered, ...elsewhere] }
   const ruleIds = relatedRuleIds(system, compiled)
   return {

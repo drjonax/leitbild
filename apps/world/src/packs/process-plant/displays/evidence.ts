@@ -107,7 +107,7 @@ export const displayEvidence = (
   sample: EvidenceSample,
   recordedSeriesIds: ReadonlySet<string>,
   /** What the question is about, as the agent named it (signals or equipment): the items an operation display is composed around. */
-  subjects: ReadonlyArray<string> = [],
+  subjects: ReadonlyArray<string>,
 ): ReadonlyArray<DisplayEvidence> => {
   const plant = system.plant
   const graph = plant.graph
