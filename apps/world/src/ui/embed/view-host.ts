@@ -198,7 +198,60 @@ export const createZoomAccumulator = (config: {
   }
 }
 
-/** The view samples only while it can be seen: its tab is visible and its window shows it. */
+export interface ViewportSize {
+  readonly width: number
+  readonly height: number
+}
+
+/**
+ * Whether a page can be seen, as far as it can tell from inside its frame:
+ * its tab is visible, its viewport has room (a frame inside a collapsed or
+ * display:none pane has none), and its root intersects the top-level
+ * viewport (null until the browser has said).
+ */
+export const pageOnScreen = (page: { readonly tabVisible: boolean; readonly viewport: ViewportSize; readonly intersecting: boolean | null }): boolean =>
+  page.tabVisible && page.viewport.width > 0 && page.viewport.height > 0 && page.intersecting !== false
+
+/** The page's visibility (pageOnScreen) and its changes, from the ports a browser page or a test gives. */
+export const createPageVisibility = (ports: {
+  readonly tabVisible: () => boolean
+  readonly onTabVisibility: (changed: () => void) => () => void
+  readonly viewport: () => ViewportSize
+  readonly onResize: (changed: () => void) => () => void
+  /** Reports whether the page's root intersects the top-level viewport, on every change; returns the stop. */
+  readonly observeIntersection: (report: (intersecting: boolean) => void) => () => void
+}) => {
+  let intersecting: boolean | null = null
+  const listeners = new Set<() => void>()
+  const changed = (): void => { for (const listener of [...listeners]) listener() }
+  let stops: Array<() => void> = []
+  return {
+    visible: (): boolean => pageOnScreen({ tabVisible: ports.tabVisible(), viewport: ports.viewport(), intersecting }),
+    /** Calls `listener` whenever the page may have become visible or hidden; returns the stop. */
+    listen: (listener: () => void): (() => void) => {
+      if (listeners.size === 0) {
+        stops = [
+          ports.onTabVisibility(changed),
+          ports.onResize(changed),
+          ports.observeIntersection(next => {
+            intersecting = next
+            changed()
+          }),
+        ]
+      }
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size > 0) return
+        for (const stop of stops) stop()
+        stops = []
+        intersecting = null
+      }
+    },
+  }
+}
+
+/** The view samples only while it can be seen: its page can be seen (pageOnScreen) and its window shows it. */
 export const trackVisibility = (config: {
   readonly host: Pick<ViewHost, 'subscribe'>
   readonly documentVisible: () => boolean
@@ -329,11 +382,26 @@ export const hostDisplayFrame = (config: {
   // Gestures and the room needed go to a display window only; a frame no window
   // presents (a chat answer's inline display) zooms and scrolls as any page.
   const windowStops: Array<() => void> = []
+  // A frame that is not on screen (its tab hidden, or its pane collapsed by the page around it) asks the Run nothing.
+  const page = createPageVisibility({
+    tabVisible: () => document.visibilityState === 'visible',
+    onTabVisibility: changed => listenTo(document, 'visibilitychange', changed),
+    viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+    onResize: changed => listenTo(window, 'resize', changed),
+    observeIntersection: report => {
+      const observer = new IntersectionObserver(entries => {
+        const last = entries.at(-1)
+        if (last !== undefined) report(last.isIntersecting)
+      })
+      observer.observe(document.documentElement)
+      return () => observer.disconnect()
+    },
+  })
   const stops = [
     trackVisibility({
       host,
-      documentVisible: () => document.visibilityState === 'visible',
-      onDocumentVisibility: changed => listenTo(document, 'visibilitychange', changed),
+      documentVisible: page.visible,
+      onDocumentVisibility: page.listen,
       setVisible: config.setVisible,
     }),
     followPresentation({ host, presented: config.presented }),

@@ -12,9 +12,11 @@ import {
   trackViewport,
 } from '../src/ui/embed/display-extent.ts'
 import {
+  createPageVisibility,
   createViewHost,
   createZoomAccumulator,
   followPresentation,
+  pageOnScreen,
   trackVisibility,
   wheelZoomFactor,
   zoomStepOfKey,
@@ -307,6 +309,62 @@ describe('a framed view samples only while it can be seen', () => {
     expect(tracking()).toBe(false)
     page.fromWindow({ type: 'world:display-frame', shown: false, zoom: 1.25 })
     expect(calls).toEqual([true, false, true, false, true])
+  })
+})
+
+describe('a frame knows from inside whether it is on screen', () => {
+  const browserPage = () => {
+    let tabVisible = true
+    let viewport = { width: 1280, height: 800 }
+    let tabChanged: (() => void) | null = null
+    let resized: (() => void) | null = null
+    let report: ((intersecting: boolean) => void) | null = null
+    const visibility = createPageVisibility({
+      tabVisible: () => tabVisible,
+      onTabVisibility: changed => { tabChanged = changed; return () => { tabChanged = null } },
+      viewport: () => viewport,
+      onResize: changed => { resized = changed; return () => { resized = null } },
+      observeIntersection: next => { report = next; return () => { report = null } },
+    })
+    return {
+      visibility,
+      // The Host collapses the World pane with display:none: every frame inside it is left with a zero-size viewport.
+      collapse: () => { viewport = { width: 0, height: 0 }; resized?.() },
+      restore: () => { viewport = { width: 1280, height: 800 }; resized?.() },
+      intersect: (intersecting: boolean) => report?.(intersecting),
+      tab: (visible: boolean) => { tabVisible = visible; tabChanged?.() },
+      observing: () => tabChanged !== null && resized !== null && report !== null,
+    }
+  }
+
+  test('a zero-size or hidden frame is not on screen; one the browser has not judged yet is', () => {
+    expect(pageOnScreen({ tabVisible: true, viewport: { width: 1280, height: 800 }, intersecting: null })).toBe(true)
+    expect(pageOnScreen({ tabVisible: true, viewport: { width: 0, height: 0 }, intersecting: null })).toBe(false)
+    expect(pageOnScreen({ tabVisible: true, viewport: { width: 1280, height: 0 }, intersecting: true })).toBe(false)
+    expect(pageOnScreen({ tabVisible: true, viewport: { width: 1280, height: 800 }, intersecting: false })).toBe(false)
+    expect(pageOnScreen({ tabVisible: false, viewport: { width: 1280, height: 800 }, intersecting: true })).toBe(false)
+  })
+
+  test('a pane collapsed around the frame stops its sampling, and restoring it resumes', () => {
+    const page = framedPage()
+    page.host.listen()
+    const browser = browserPage()
+    const calls: boolean[] = []
+    const stop = trackVisibility({ host: page.host, documentVisible: browser.visibility.visible, onDocumentVisibility: browser.visibility.listen, setVisible: visible => { calls.push(visible) } })
+    expect(calls).toEqual([true])
+    browser.collapse()
+    expect(calls).toEqual([true, false])
+    browser.restore()
+    expect(calls).toEqual([true, false, true])
+    // Scrolled or clipped out of the top-level viewport, as the browser reports it.
+    browser.intersect(false)
+    expect(calls).toEqual([true, false, true, false])
+    browser.intersect(true)
+    browser.tab(false)
+    browser.tab(true)
+    expect(calls).toEqual([true, false, true, false, true, false, true])
+    stop()
+    expect(browser.observing()).toBe(false)
   })
 })
 
