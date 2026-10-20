@@ -1,9 +1,12 @@
 /** T11 (plan v3.1 Appendix F): retrieval recall@8 of
  * world.simulation-run.observables.search (architecture A4) on at least 150
  * pairs, at least 20 per pack, every pack of the integrated fixture. A pair is
- * a person's or agent's words and what they mean: an observable
- * (`objectId#signalId` or its tag), a grid element (or an observable measured
- * on it), or an object. Pairs live in apps/world/tests/fixtures/retrieval/.
+ * a person's or agent's words and what they mean, matched as the pair
+ * declares (lead ruling R23): an observable by its ref `objectId#signalId`
+ * (signalId as the pack declares it: the plant's variable path, the weather's
+ * quantity id), by objectId + its I&C tag, a grid element by its asset id (or
+ * an observable measured on it), or an object. Pairs live in
+ * apps/world/tests/fixtures/retrieval/.
  *
  *   LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/retrieval.ts <absolute-output-dir> [--seconds=240]
  *
@@ -22,8 +25,10 @@ export interface SearchQuery { readonly text: string; readonly pack?: string; re
 /** What a pair means; any one expectation among the top 8 matches is a hit. */
 export type Expected =
   | { readonly kind: 'object'; readonly objectId: string }
-  /** An observable: its ref is `objectId#signal`, or its tag is `signal`. */
-  | { readonly kind: 'signal'; readonly objectId: string; readonly signal: string }
+  /** An observable by its ref, `objectId#signalId`. */
+  | { readonly kind: 'ref'; readonly ref: string }
+  /** An observable of this object carrying this I&C tag. */
+  | { readonly kind: 'tag'; readonly objectId: string; readonly tag: string }
   /** A grid element, or an observable measured on it; with a quantity, only an observable of that quantity (on the object when no element is named). */
   | { readonly kind: 'element'; readonly objectId: string; readonly element?: string; readonly quantity?: string }
 
@@ -57,9 +62,10 @@ export const loadPairs = async (): Promise<ReadonlyArray<RetrievalPair>> =>
   (await Promise.all(PACKS.map(async pack => (await Bun.file(pairFile(pack)).json() as { pairs: ReadonlyArray<RetrievalPair> }).pairs))).flat()
 
 export const hits = (expected: Expected, match: SearchMatch): boolean => {
+  if (expected.kind === 'ref') return match.kind === 'observable' && match.ref === expected.ref
   if (match.objectId !== expected.objectId) return false
   if (expected.kind === 'object') return match.kind === 'object'
-  if (expected.kind === 'signal') return match.kind === 'observable' && (match.ref === `${expected.objectId}#${expected.signal}` || match.tag === expected.signal)
+  if (expected.kind === 'tag') return match.kind === 'observable' && match.tag === expected.tag
   const onElement = expected.element === undefined || match.element?.id === expected.element
   return onElement && (expected.quantity === undefined ? match.kind !== 'object' : match.kind === 'observable' && match.quantity === expected.quantity)
 }
@@ -91,22 +97,30 @@ export const scoreRecall = (pairs: ReadonlyArray<RetrievalPair>, results: Readon
 export interface Known {
   readonly objects: ReadonlySet<string>
   readonly elementExists: (objectId: string, element: string) => boolean
-  readonly signalExists: (objectId: string, signal: string) => boolean
+  readonly signalExists: (objectId: string, signalId: string) => boolean
+  readonly tagExists: (objectId: string, tag: string) => boolean
 }
+
+/** The object a pair's expectation is about (a ref's part before '#'). */
+const subjectOf = (expected: Expected): string => expected.kind === 'ref' ? expected.ref.split('#')[0]! : expected.objectId
 
 /** The expectations no Run object, element or signal answers: a corpus defect, fixed before any score. */
 export const stalePairs = (pairs: ReadonlyArray<RetrievalPair>, known: Known) => pairs.flatMap(pair => {
-  const stale = pair.expect.filter(expected => !known.objects.has(expected.objectId)
-    || (expected.kind === 'signal' && !known.signalExists(expected.objectId, expected.signal))
+  const stale = pair.expect.filter(expected => !known.objects.has(subjectOf(expected))
+    || (expected.kind === 'ref' && !known.signalExists(subjectOf(expected), expected.ref.slice(expected.ref.indexOf('#') + 1)))
+    || (expected.kind === 'tag' && !known.tagExists(expected.objectId, expected.tag))
     || (expected.kind === 'element' && expected.element !== undefined && !known.elementExists(expected.objectId, expected.element)))
   return stale.length === 0 ? [] : [{ query: pair.query.text, stale }]
 })
 
-/** Plant signals by tag or path (every Halden unit runs the reference plant); weather probe quantities by id. */
+/** Signal ids as the packs declare them (R23): a plant's variable path (every Halden unit runs the reference plant), a weather quantity id; and plant I&C tags. */
 export const signalCatalog = (weatherQuantityIds: ReadonlyArray<string>) => {
   const plant = referencePlantCatalog()
-  return (objectId: string, signal: string): boolean => objectId.startsWith('plant:') ? plant.signal(signal) !== undefined
-    : objectId.startsWith('weather') ? weatherQuantityIds.includes(signal) : false
+  return {
+    signalExists: (objectId: string, signalId: string): boolean => objectId.startsWith('plant:') ? plant.signal(signalId)?.path === signalId
+      : objectId.startsWith('weather') ? weatherQuantityIds.includes(signalId) : false,
+    tagExists: (objectId: string, tag: string): boolean => objectId.startsWith('plant:') && plant.signal(tag)?.tagId === tag,
+  }
 }
 
 if (import.meta.main) {
@@ -146,7 +160,7 @@ if (import.meta.main) {
   const { weatherQuantities } = await import('../../apps/world/src/packs/weather/quantities.ts')
   const known: Known = {
     objects: new Set((objects as ReadonlyArray<{ id: string }>).map(object => object.id)),
-    signalExists: signalCatalog(weatherQuantities.map(quantity => quantity.id)),
+    ...signalCatalog(weatherQuantities.map(quantity => quantity.id)),
     elementExists: () => true,
   }
   const pairs = await loadPairs()

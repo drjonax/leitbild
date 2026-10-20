@@ -116,7 +116,7 @@ if (import.meta.main) {
   const list = [...pairs.values()]
   const shaped = list.map((pair): RetrievalPair => ({
     pack: 'process-plant', query: { text: pair.query, objectId: 'plant:halden-2' },
-    expect: [pair.expect.path, ...(pair.expect.tagId === undefined ? [] : [pair.expect.tagId])].map(signal => ({ kind: 'signal' as const, objectId: 'plant:halden-2', signal })),
+    expect: [{ kind: 'ref' as const, ref: `plant:halden-2#${pair.expect.path}` }, ...(pair.expect.tagId === undefined ? [] : [{ kind: 'tag' as const, objectId: 'plant:halden-2', tag: pair.expect.tagId }])],
     form: pair.kind, source: pair.source, review: pair.review,
   }))
   await Bun.write(outPath, JSON.stringify({
