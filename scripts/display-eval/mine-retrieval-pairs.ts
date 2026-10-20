@@ -12,11 +12,14 @@
  *   bun scripts/display-eval/mine-retrieval-pairs.ts <knowledge snapshot.json> <out.json> [<stage-dir>:<stage> ...]
  *
  * Only signals the reference Plant has are kept; a tag it lacks is counted,
- * not paired. */
+ * not paired. Pairs are written in retrieval.ts's shape, scoped to Unit 2,
+ * where they were mined; the plant's pair file holds these and, after them,
+ * the hand-drafted pairs qualified by unit. */
 import { join } from 'node:path'
 import { compileProcessPlant, createPwrReferencePlantDefinition, signalMeasuredOn } from '../../apps/world/src/packs/process-plant/index.ts'
+import type { RetrievalPair } from './retrieval.ts'
 
-export interface RetrievalPair {
+interface MinedPair {
   readonly pack: 'process-plant'
   readonly query: string
   readonly expect: { readonly path: string; readonly tagId?: string; readonly component: string }
@@ -83,9 +86,9 @@ if (import.meta.main) {
   const [snapshotPath, outPath, ...stages] = Bun.argv.slice(2)
   if (!snapshotPath || !outPath) throw new Error('Usage: mine-retrieval-pairs.ts <knowledge snapshot.json> <out.json> [<stage-dir>:<stage> ...]')
   const snapshot = await Bun.file(snapshotPath).json() as { readonly revision: string; readonly documents: ReadonlyArray<{ readonly path: string; readonly content: string }> }
-  const pairs = new Map<string, RetrievalPair>()
+  const pairs = new Map<string, MinedPair>()
   const missing = new Map<string, number>()
-  const add = (pair: RetrievalPair) => { const key = `${pair.query.toLowerCase()}→${pair.expect.path}`; if (!pairs.has(key)) pairs.set(key, pair) }
+  const add = (pair: MinedPair) => { const key = `${pair.query.toLowerCase()}→${pair.expect.path}`; if (!pairs.has(key)) pairs.set(key, pair) }
   for (const document of snapshot.documents.filter(entry => /procedures\//.test(entry.path))) {
     for (const { tag, phrase } of procedurePhrases(document.content)) {
       const signal = resolve(tag)
@@ -111,9 +114,14 @@ if (import.meta.main) {
     }
   }
   const list = [...pairs.values()]
+  const shaped = list.map((pair): RetrievalPair => ({
+    pack: 'process-plant', query: { text: pair.query, objectId: 'plant:halden-2' },
+    expect: [pair.expect.path, ...(pair.expect.tagId === undefined ? [] : [pair.expect.tagId])].map(signal => ({ kind: 'signal' as const, objectId: 'plant:halden-2', signal })),
+    form: pair.kind, source: pair.source, review: pair.review,
+  }))
   await Bun.write(outPath, JSON.stringify({
-    about: 'Retrieval pairs for T11 (observables.search recall@8). Plant only: grid and weather pairs need their observables (P1).',
-    pairs: list,
+    about: 'Mined T11 retrieval pairs for the process plant, scoped to Unit 2 (retrieval.ts shape).',
+    pairs: shaped,
     tagsTheModelLacks: Object.fromEntries([...missing].sort((left, right) => right[1] - left[1])),
   }, null, 1) + '\n')
   const byKind = list.reduce<Record<string, number>>((tally, pair) => ({ ...tally, [pair.kind]: (tally[pair.kind] ?? 0) + 1 }), {})
