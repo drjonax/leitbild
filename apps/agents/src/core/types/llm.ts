@@ -150,6 +150,17 @@ export interface ChatResponse {
   readonly contextMax?: number
   readonly contextSource?: string
   readonly provider?: string
+  readonly billing?: GenerationBilling
+}
+
+// OpenRouter's own record of one generation, as its response reports it: the
+// generation id, the upstream provider that served it and the cost it billed
+// (usage.cost, USD). Written to the per-call log line for evaluation; never
+// stored with a message or execution.
+export interface GenerationBilling {
+  readonly generationId?: string
+  readonly upstreamProvider?: string
+  readonly costUsd?: number
 }
 
 // A single streamed token/delta from the LLM
@@ -180,6 +191,8 @@ export interface StreamChunk {
   readonly provider?: string
   readonly contextMax?: number
   readonly contextSource?: string
+  // Populated on the final done=true chunk when the provider reports it.
+  readonly billing?: GenerationBilling
 }
 
 export interface LLMProvider {

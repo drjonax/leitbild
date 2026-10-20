@@ -1,0 +1,8 @@
+{
+  "workspaceId": "e1f95b48-6bfe-4e8f-8600-33f18608218e",
+  "runId": "run-7a6a0ef8-4c4f-4f32-b46f-da575a976380",
+  "scenarioId": "halden-offsite-power-restoration",
+  "capturedAt": "2026-10-20T15:03:46.469Z",
+  "commit": "bacf7a115",
+  "how": "Started halden-offsite-power-restoration on the local stack (dev:stack at bacf7a115 + 1183390fa), paused, advanced 4 sim-min at realtime (the scenario opens all six switchyard circuits at 2 min), paused; captured after the stack unloaded it."
+}

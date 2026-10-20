@@ -1,0 +1,8 @@
+{
+  "workspaceId": "e1f95b48-6bfe-4e8f-8600-33f18608218e",
+  "runId": "run-076b316b-7b90-45b5-9856-861d19ec9cb3",
+  "scenarioId": "supply-run",
+  "capturedAt": "2026-10-20T15:03:46.486Z",
+  "commit": "bacf7a115",
+  "how": "Started supply-run (Einsatz, open mode) on the local stack (bacf7a115 + 1183390fa), advanced 3 sim-min, sent the recommended unit to each of two open tasks (einsatz.recommend, einsatz.unit.send), advanced 2 more sim-min, paused; captured after the stack unloaded it."
+}
