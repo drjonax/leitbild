@@ -12,14 +12,51 @@ import { roleSeesSchema } from '../model/roles.ts'
 export const clockSchema = z.enum(['simulation', 'wall'])
 export const stampSchema = z.object({ at: z.string().datetime({ offset: true }), clock: clockSchema }).strict()
 
-/** Fixed core quantity kinds; plant `power` and grid `active-power` both map to `electric-power` in this layer. */
-export const quantitySchema = z.enum([
-  'level', 'loading', 'electric-power', 'reactive-power', 'thermal-power', 'thermal-fraction',
-  'pressure', 'pressure-difference', 'temperature', 'temperature-rate', 'frequency', 'flow',
-  'voltage', 'current', 'speed', 'rotational-speed', 'direction-from', 'angle', 'length',
-  'mass', 'volume', 'energy', 'concentration', 'reactivity', 'count-rate', 'dose-rate',
-  'precipitation-rate', 'fraction', 'count', 'duration', 'state',
-])
+/**
+ * Fixed core quantity kinds, each with its allowed unit codes: short ASCII
+ * codes, never display symbols (World renders `degC` as °C); '' is a state or
+ * boolean without a unit. Plant `power` and grid `active-power` both are
+ * `electric-power` here; a signed delta keeps its quantity (a flow change is
+ * a flow). A Pack adds a quantity or code through the core lane.
+ */
+export const quantityUnits = {
+  level: ['%', '1'],
+  loading: ['%', '1'],
+  'electric-power': ['MW', 'kW'],
+  'reactive-power': ['Mvar'],
+  'thermal-power': ['MW', 'kW'],
+  'thermal-fraction': ['%', '1'],
+  pressure: ['MPa', 'Pa'],
+  'pressure-difference': ['MPa', 'Pa'],
+  temperature: ['degC'],
+  'temperature-difference': ['degC'],
+  'temperature-rate': ['degC/s'],
+  frequency: ['Hz'],
+  flow: ['kg/s'],
+  voltage: ['kV', 'V', 'pu'],
+  current: ['A'],
+  speed: ['m/s'],
+  'rotational-speed': ['rpm'],
+  'direction-from': ['deg'],
+  angle: ['deg'],
+  length: ['m'],
+  mass: ['kg'],
+  volume: ['m3'],
+  energy: ['MJ'],
+  'specific-energy': ['kJ/kg'],
+  concentration: ['ppm'],
+  reactivity: ['pcm'],
+  'count-rate': ['cps'],
+  'log-rate': ['DPM'],
+  'dose-rate': ['mSv/h'],
+  'precipitation-rate': ['mm/h'],
+  fraction: ['1', '%'],
+  count: ['1'],
+  duration: ['s'],
+  state: [''],
+} as const satisfies Readonly<Record<string, ReadonlyArray<string>>>
+export type Quantity = keyof typeof quantityUnits
+export const quantitySchema = z.enum(Object.keys(quantityUnits) as [Quantity, ...Quantity[]])
 
 export const thresholdSchema = z.object({
   id: z.string().min(1).max(128),
@@ -50,7 +87,9 @@ export const observableSchema = z.object({
   tag: z.string().min(1).max(64).optional(),
   /** The declared element it is measured on (topology bindings, element classes, alert subjects). */
   element: z.string().min(1).max(200).optional(),
-}).strict()
+}).strict().refine(observable => (quantityUnits[observable.quantity] as ReadonlyArray<string>).includes(observable.unit), {
+  path: ['unit'], message: 'the unit is not a code listed for this quantity',
+})
 
 export const observationSchema = stampSchema.extend({
   ref: observableRefSchema,
