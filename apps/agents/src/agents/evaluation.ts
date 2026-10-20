@@ -17,7 +17,7 @@ import { extractFences } from './fence-extract.ts'
 import { parseMapBody, formatMapErrors } from '../core/render-validators/map-schema.ts'
 import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/render-validators/view-fence.ts'
 import { embeddedViewContentSchema, type EmbeddedViewContent } from '@leitbild/contracts'
-import { answerViewIssues } from './answer-consistency.ts'
+import { answerContradictions } from './answer-consistency.ts'
 import { collectTurnOperations, operationClaimIssues, type TurnOperation } from './operation-claims.ts'
 import { workspaceCallResultForModel } from '../tools/built-in/workspace-capability-tools.ts'
 
@@ -31,8 +31,8 @@ import { workspaceCallResultForModel } from '../tools/built-in/workspace-capabil
 // `evaluation.fence-retry.test.ts` asserts 3 total LLM calls (1 + 2 retries).
 export const MAX_FENCE_RETRIES = 2
 
-// Times the eval loop asks the LLM to make an answer agree with the display
-// it presents (answer-consistency.ts). One: the issues name each fix, and a
+// Times the eval loop asks the LLM to correct a value its display
+// contradicts (answer-consistency.ts). One: the issues name each fix, and a
 // second round would cost another full answer's latency for a model that
 // did not take the first; the corrected answer is still fence-checked.
 export const MAX_CONSISTENCY_CORRECTIONS = 1
@@ -282,10 +282,12 @@ const callLLMOnce = async (
 // up to MAX_FENCE_RETRIES times. Returns the final response content
 // (corrected if a retry succeeded; the last attempt's content if all retries
 // failed — the UI then shows the error in place of the block). Once the
-// fences are valid, an answer that disagrees with the display it presents is
+// fences are valid, an answer citing a value its display contradicts is
 // corrected the same way, at most MAX_CONSISTENCY_CORRECTIONS times. That
 // compares the answer with what the display publishes; it does not certify
 // that free prose is true (two values swapped between named items pass).
+// Softer departures from the display are measured offline, never corrected
+// here (scripts/display-eval/grounding.ts).
 //
 // Mermaid is excluded by design: its parser is browser-only; a server-side
 // validator would only catch trivial cases (oversized, completely wrong
@@ -354,7 +356,7 @@ export const collectViewContents = (into: Map<string, EmbeddedViewContent>, tool
   }
 }
 
-// Where an answer and the display it presents disagree. A view whose Module
+// Values the display an answer presents contradicts. A view whose Module
 // says nothing of what it shows (a unit overview) is not checked: there is
 // nothing to compare the answer with.
 const presentedViewIssues = (content: string, viewContents: ReadonlyMap<string, EmbeddedViewContent>): ReadonlyArray<string> => {
@@ -363,19 +365,19 @@ const presentedViewIssues = (content: string, viewContents: ReadonlyMap<string, 
   const parsed = parseViewFenceBody(fence.body)
   if (parsed.kind === 'invalid') return []
   const view = viewContents.get(viewRefFor(parsed.ref.callId, parsed.ref.key))
-  return view === undefined ? [] : answerViewIssues(content, view)
+  return view === undefined ? [] : answerContradictions(content, view)
 }
 
 const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
-  `The answer and the display it presents disagree, and the operator reads them together:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
-  `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite values and watch items only as the display shows them, or mark one "(not shown)"; ` +
-  'name what the display leads with; give its time span as the display draws it. Keep the assessment and actions.'
+  `The answer cites values the display it presents contradicts, and the operator reads them together:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
+  `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite each value as the display reads it, or mark one from elsewhere "(not shown)". ` +
+  'Keep the assessment and actions.'
 
 // An answer that says done what its turn only proposed (operation-claims.ts),
-// with any disagreement with its display, in one correction.
+// with any value its display contradicts, in one correction.
 const claimCorrection = (claims: ReadonlyArray<string>, viewIssues: ReadonlyArray<string>): string =>
   `The answer says something happened that did not:\n${claims.map(issue => `- ${issue}`).join('\n')}\n\n` +
-  (viewIssues.length === 0 ? '' : `It also disagrees with the display it presents:\n${viewIssues.map(issue => `- ${issue}`).join('\n')}\n\n`) +
+  (viewIssues.length === 0 ? '' : `It also cites values the display it presents contradicts:\n${viewIssues.map(issue => `- ${issue}`).join('\n')}\n\n`) +
   'Re-emit the FULL corrected response, keeping any display block. A proposal is executed only when a person approves it in the display window: ' +
   'say what you proposed and that it awaits their approval, or that World refused it and why. Keep the assessment.'
 
@@ -410,7 +412,7 @@ const correctResponse = async (
         `Your previous response contained one or more invalid fenced blocks:\n\n${validation.errors}\n\n` +
         `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`
     } else {
-      // Valid fences: does the answer agree with the display it presents, and with what its turn did?
+      // Valid fences: does the display the answer presents contradict it, and does it claim what its turn did not do?
       const done = consistencyCorrections === MAX_CONSISTENCY_CORRECTIONS
       const issues = done ? [] : presentedViewIssues(content, viewContents)
       const claims = done ? [] : operationClaimIssues(content, operations)
