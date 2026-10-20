@@ -11,6 +11,8 @@ import { electricGridRecordingProfiles, gridRecordingSeriesCount } from './recor
 import { electricGridPackDataSchema } from './model.ts'
 import { electricGridScenarioSupport } from './scenario.ts'
 import { electricGridPackView } from './ui-pack.ts'
+import { gridObservationDeclarationsQuery } from './observation/declarations.ts'
+import { gridObservationReadQuery } from './observation/read.ts'
 
 export const electricGridPack: WorldPack = {
   ...electricGridPackView,
@@ -51,4 +53,5 @@ export const electricGridPack: WorldPack = {
     return sum + gridRecordingSeriesCount(gridModelCatalogEntry(data.model.ref).assetCounts, profileId)
   }, 0) },
   scenario: electricGridScenarioSupport,
+  observation: { categories: ['electric-grids'], declarations: gridObservationDeclarationsQuery.capability.id, read: gridObservationReadQuery.capability.id },
 }

@@ -176,7 +176,7 @@ describe('electric grid alarms', () => {
     expect(restored.alarms.records.get(overload)!.shelvedUntilElapsedMs).toBe(630_000)
   })
 
-  test('projection counts, the Grid object alert and the AC non-convergence hook come from the records', () => {
+  test('projection counts, the Grid object alerts and the AC non-convergence hook come from the records', () => {
     const run = overloadedCorridor()
     const active = [...run.grid.alarms.records.values()].filter(record => record.active)
     expect(run.grid.projection.activeAlarmCount).toBe(active.length)
@@ -186,10 +186,10 @@ describe('electric grid alarms', () => {
     const object = { id: 'grid:test-corridor', packId: 'electric-grid', revision: 1, operational: { status: 'normal', priority: 'normal' }, alerts: [], timestamps: { createdAt: isoAt(0), updatedAt: isoAt(0) } }
     const packData = { type: 'electric-grid', schemaVersion: 1, model: { ref: 'test' }, operatingPoint: { ref: 'test' }, automation: { ref: 'test' }, electricalPorts: [], projection: run.grid.projection }
     const projected = projectGridObject({ object: { ...object, packData } as never, grid: run.grid, at: isoAt(30_000) })
-    const oldest = active.reduce((first, record) => record.raisedAtElapsedMs < first.raisedAtElapsedMs ? record : first)
-    expect(projected.alerts).toEqual([expect.objectContaining({ severity: 'critical', acknowledged: false, raisedAt: oldest.raisedAt })])
+    // One alert per active record (grid-alert-slot.test.ts covers their facets and lifecycle).
+    expect(projected.alerts.map(alert => [alert.id, alert.raisedAt, alert.acknowledged])).toEqual(active.map(record => [record.id, record.raisedAt, false]))
     lifecycle(run, { alarmIds: active.map(record => record.id), action: 'acknowledge' })
-    expect(projectGridObject({ object: { ...object, packData } as never, grid: run.grid, at: isoAt(30_000) }).alerts[0]!.acknowledged).toBe(true)
+    expect(projectGridObject({ object: { ...object, packData } as never, grid: run.grid, at: isoAt(30_000) }).alerts.every(alert => alert.acknowledged)).toBe(true)
 
     // Every network solution notes its AC load flow, replacing an earlier note (electric-grid-ac-runtime.test.ts
     // raises and clears the alarm on a real non-convergence); the overloaded corridor's converges.

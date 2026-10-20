@@ -101,8 +101,9 @@ const connect = (objects: OperationalObject[] = [], extra: Record<string, unknow
 
 describe('authoritative Weather field', () => {
   test('display formatting stays compact without rounding query data', () => {
-    expect(formatWeatherQuantity(0.3943925115, 'fraction')).toBe('39%')
-    expect(formatWeatherQuantity(-1.950311201, '°C')).toBe('-1.95 °C')
+    expect(formatWeatherQuantity(0.3943925115, '1')).toBe('39%')
+    expect(formatWeatherQuantity(-1.950311201, 'degC')).toBe('-1.95 °C')
+    expect(formatWeatherQuantity(225, 'deg')).toBe('225 ° from north')
     expect(formatWeatherQuantity('freezing_rain', '')).toBe('freezing rain')
   })
   test('authored areas and probes share the live schema and discoverable catalog', () => {

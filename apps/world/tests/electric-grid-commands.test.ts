@@ -467,7 +467,8 @@ describe('electric grid query Capabilities', () => {
       expect(Object.keys(schema.properties ?? {}).length).toBeGreaterThan(0)
       const untyped = untypedObjectPaths(schema)
       expect(untyped).toEqual(capability.id === 'world.electric-grid.catalog.list' ? ['$.properties.operatingPointOverridesSchema'] : [])
-      expect(capability.searchTerms?.length ?? 0).toBeGreaterThanOrEqual(6)
+      // System-audience observation Capabilities never reach a catalog, so nothing searches them.
+      if (capability.audience !== 'system') expect(capability.searchTerms?.length ?? 0).toBeGreaterThanOrEqual(6)
     }
     expect(electricGridQueryCapabilities.map(capability => capability.id)).toContain('world.electric-grid.islands.list')
   })

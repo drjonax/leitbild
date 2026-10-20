@@ -87,7 +87,7 @@ export const electricGridPackView: WorldPackView = {
     version: '1.0.0',
     name: 'Electric Grid',
     description: 'Configurable electrical networks with topology, dispatch, dynamics, protection, and live operating views.',
-    contributions: ['runtime', 'recording', 'reference-data', 'scenario', 'presentation'],
+    contributions: ['runtime', 'recording', 'reference-data', 'scenario', 'presentation', 'observation'],
   }),
   runtime: {
     runtimes: [{ id: electricGridRuntimeId, version: '1.0.0', label: 'Local electric grid runtime', kind: 'local', clock: 'simulation' }],
