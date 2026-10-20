@@ -97,6 +97,8 @@ export interface EvidenceKey {
    * prose. A claim holds when every pattern matches; an absence holds when no affirmative clause matches them all.
    */
   readonly patterns?: ReadonlyArray<string>
+  /** A claim's ranking rule: what its patterns name must come before anything these patterns name, wherever both appear. */
+  readonly then?: ReadonlyArray<string>
 }
 
 export interface Scenario {
@@ -392,6 +394,7 @@ const parseKey = (where: string, value: unknown): EvidenceKey => {
     ...(value.signals === undefined ? {} : { signals: stringList(`${where}.signals`, value.signals) }),
     ...(match === undefined ? {} : { match }),
     ...(value.patterns === undefined ? {} : { patterns: patternList(`${where}.patterns`, value.patterns) }),
+    ...(value.then === undefined ? {} : { then: patternList(`${where}.then`, value.then) }),
   }
 }
 

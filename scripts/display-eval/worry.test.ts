@@ -25,6 +25,15 @@ describe('the worry verdict (G1)', () => {
     expect(broken.keys[1]).toMatchObject({ kind: 'absence', hit: false, clauses: ['SG C level is low as well.'] })
   })
 
+  test('a ranking rule holds when the claim comes before what its then-patterns name, or they are not named', () => {
+    const ranked: EvidenceKey = { ...claim(['SG B', 'runback']), then: ['turbine', 'vibration'] }
+    expect(worryVerdict([ranked], '1. SG B feed runback, level falling.\n2. Turbine vibration high.').pass).toBe(true)
+    expect(worryVerdict([ranked], '1. Turbine vibration high.\n2. SG B feed runback, level falling.').pass).toBe(false)
+    expect(worryVerdict([ranked], 'Turbine vibration is high, and SG B has a feed runback.').pass).toBe(false)
+    expect(worryVerdict([ranked], 'SG B has a feed runback; turbine vibration is high too.').pass).toBe(true)
+    expect(worryVerdict([ranked], 'SG B feed runback.').pass).toBe(true)
+  })
+
   test('view fences are no answer text, and a set without pattern keys never passes', () => {
     expect(worryVerdict(keys, '```leitbild-view\nview SG B feed valve runback\n```').pass).toBe(false)
     const { patterns: _patterns, ...unpatterned } = keys[0]!

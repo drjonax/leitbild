@@ -20,11 +20,23 @@ export interface WorryKeyResult {
 
 export interface WorryVerdict { readonly keys: ReadonlyArray<WorryKeyResult>; readonly pass: boolean }
 
+// Where a claim's patterns first match: the clause whose window (it and the next) matches every pattern, and the
+// offset of the first pattern's match in that window; null when no window does.
+const firstMatch = (clauses: ReadonlyArray<string>, patterns: ReadonlyArray<RegExp>): readonly [number, number] | null => {
+  for (const [index, clause] of clauses.entries()) {
+    const window = `${clause} ${clauses[index + 1] ?? ''}`
+    if (patterns.every(pattern => pattern.test(window))) return [index, window.search(patterns[0]!)]
+  }
+  return null
+}
+const before = (left: readonly [number, number], right: readonly [number, number]): boolean => left[0] < right[0] || (left[0] === right[0] && left[1] < right[1])
+
 /**
  * Scores an answer against a worry scenario's keys. A claim holds when one
  * clause, read with the next (a bullet's label and its text), matches every
- * pattern; an absence holds when no affirmative clause matches them all.
- * Keys without patterns are not this verdict's.
+ * pattern, and, with a ranking rule (`then`), when it comes before anything
+ * the `then` patterns name; an absence holds when no affirmative clause
+ * matches all its patterns. Keys without patterns are not this verdict's.
  */
 export const worryVerdict = (evidence: ReadonlyArray<EvidenceKey>, content: string): WorryVerdict => {
   const clauses = clausesOf(content)
@@ -32,8 +44,10 @@ export const worryVerdict = (evidence: ReadonlyArray<EvidenceKey>, content: stri
     if (key.patterns === undefined || key.kind === 'signal') return []
     const patterns = key.patterns.map(source => new RegExp(source, 'iu'))
     if (key.kind === 'claim') {
-      const at = clauses.findIndex((clause, index) => patterns.every(pattern => pattern.test(`${clause} ${clauses[index + 1] ?? ''}`)))
-      return [{ key: key.key, kind: 'claim', hit: at >= 0, clauses: at < 0 ? [] : clauses.slice(at, at + 2) }]
+      const at = firstMatch(clauses, patterns)
+      const later = key.then === undefined ? null : firstMatch(clauses, key.then.map(source => new RegExp(source, 'iu')))
+      const ranked = at !== null && (later === null || before(at, later))
+      return [{ key: key.key, kind: 'claim', hit: ranked, clauses: at === null ? [] : clauses.slice(at[0], at[0] + 2) }]
     }
     const breaking = clauses.filter(clause => !NOT_AFFIRMED.test(clause) && patterns.every(pattern => pattern.test(clause)))
     return [{ key: key.key, kind: 'absence', hit: breaking.length === 0, clauses: breaking }]
