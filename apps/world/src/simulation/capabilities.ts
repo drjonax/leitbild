@@ -13,6 +13,9 @@ export const defineSimulationCapability = (config: SimulationCapability): Simula
   if (config.kind === 'query' && config.schedulable === true) {
     throw new Error(`Query Capability ${config.id} cannot be scheduled`)
   }
+  if (config.audience === 'system' && config.kind !== 'query') {
+    throw new Error(`System-audience Capability ${config.id} must be a query`)
+  }
   if (config.kind === 'query' && config.buildCommand !== undefined) {
     throw new Error(`Query Capability ${config.id} cannot declare command targets`)
   }

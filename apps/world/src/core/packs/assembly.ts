@@ -1,5 +1,6 @@
 import { capabilityIds,capabilityJsonSchema } from '../../simulation/capabilities.ts'
 import type { PackRuntimeAdapter } from '../../simulation/protocol.ts'
+import { observationShapes, type ObservationCapabilityKind } from '../observation/capabilities.ts'
 import type { WorldPack } from './protocol.ts'
 
 export interface ValidatedWorldAssembly {
@@ -26,6 +27,7 @@ const declaredContributionIds = (pack: WorldPack): ReadonlyArray<string> => [
   ...(pack.targeting ? ['targeting'] : []),
   ...(pack.mapAssignment ? ['map-assignment'] : []),
   ...(pack.interactions ? ['interactions'] : []),
+  ...(pack.observation ? ['observation'] : []),
 ]
 
 /** Refuses a Pack whose descriptor declares other contributions than it makes. */
@@ -45,9 +47,46 @@ const capabilityContract = (capability: PackRuntimeAdapter['capabilities'][numbe
   risk: capability.risk,
   idempotent: capability.idempotent,
   schedulable: capability.schedulable ?? false,
+  audience: capability.audience ?? null,
   inputSchema: capabilityJsonSchema(capability.input),
   outputSchema: capabilityJsonSchema(capability.output),
 })
+
+const sameSchema = (a: Parameters<typeof capabilityJsonSchema>[0], b: Parameters<typeof capabilityJsonSchema>[0]): boolean =>
+  JSON.stringify(capabilityJsonSchema(a)) === JSON.stringify(capabilityJsonSchema(b))
+
+/** Refuses an observation contribution whose categories or Capabilities are not the core's (T25). */
+const assertObservationContribution = (pack: WorldPack, adapters: ReadonlyArray<PackRuntimeAdapter>): void => {
+  const observation = pack.observation
+  const id = pack.descriptor.id
+  const guidance = pack.knowledge?.guidance
+  if (guidance !== undefined && (guidance.trim() === '' || guidance.length > 200 || guidance.includes('\n'))) {
+    throw new Error(`Pack ${id} guidance must be one line of at most 200 characters`)
+  }
+  if (!observation) return
+  const categories = new Set(pack.presentation.categories.map(category => category.id))
+  for (const category of observation.categories) {
+    if (!categories.has(category)) throw new Error(`Pack ${id} declares observations for unknown category ${category}`)
+  }
+  if (adapters.length === 0) throw new Error(`Pack ${id} declares observations without a Pack Runtime`)
+  const named: ReadonlyArray<readonly [ObservationCapabilityKind, string]> = [
+    ['declarations', observation.declarations], ['read', observation.read],
+    ...(observation.topology ? [['topology', observation.topology.capability] as const] : []),
+  ]
+  for (const adapter of adapters) {
+    for (const [kind, capabilityId] of named) {
+      const capability = adapter.capabilities.find(candidate => candidate.id === capabilityId)
+      const shape = observationShapes[kind]
+      if (!capability) throw new Error(`Pack Runtime ${adapter.id} lacks observation ${kind} Capability ${capabilityId}`)
+      if (capability.kind !== 'query' || capability.risk !== 'read' || capability.audience !== 'system' || capability.inspectObjectIds === undefined) {
+        throw new Error(`Observation Capability ${capabilityId} must be a system-audience read query that names the objects it inspects`)
+      }
+      if (!sameSchema(capability.input, shape.input) || !sameSchema(capability.output, shape.output)) {
+        throw new Error(`Observation Capability ${capabilityId} differs from the core ${kind} shape`)
+      }
+    }
+  }
+}
 
 export const validateWorldAssembly = (config: {
   readonly packs: ReadonlyArray<WorldPack>
@@ -120,6 +159,7 @@ export const validateWorldAssembly = (config: {
   })
 
   for (const pack of packs) assertContributionDescriptor(pack)
+  for (const pack of packs) assertObservationContribution(pack, config.runtimeAdapters.filter(adapter => adapter.packId === pack.descriptor.id))
   for (const pack of packs) {
     const scenarioItemTypeIds = Object.keys(pack.scenario?.itemSchemas ?? {}).sort()
     const authoringItemTypeIds = (pack.authoring?.itemTypes ?? []).map(item => item.id).sort()
