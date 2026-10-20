@@ -1,5 +1,4 @@
-import type { AlertSeverity } from '../../core/model/alerts.ts'
-import type { Priority } from '../../core/observation/model.ts'
+import type { AlertSeverity, Priority } from '../../core/model/alerts.ts'
 
 // The one World severity table (plan v3.1 §2.7, V15), shared by the main app
 // and the embed. It imports no OpenBridge: the colours are OpenBridge 2.0.0's

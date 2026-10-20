@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { priorityLevels } from '../src/core/observation/model.ts'
+import { priorityLevels } from '../src/core/model/alerts.ts'
 import { severityStyle, severityTable } from '../src/ui/displays/severity.ts'
 
 // The World severity table's shape and rules (plan v3.1 §2.7, T04a; lead
@@ -53,6 +53,6 @@ describe('severity table', () => {
 
   test('the table imports no OpenBridge, so the main app can draw it (T28)', () => {
     const source = readFileSync(join(import.meta.dir, '../src/ui/displays/severity.ts'), 'utf8')
-    expect([...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(match => match[1])).toEqual(['../../core/model/alerts.ts', '../../core/observation/model.ts'])
+    expect([...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(match => match[1])).toEqual(['../../core/model/alerts.ts'])
   })
 })
