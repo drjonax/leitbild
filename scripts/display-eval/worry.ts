@@ -8,7 +8,7 @@ import { clausesOf } from './operation-checks.ts'
 import type { EvidenceKey } from './scenarios.ts'
 
 // A clause that denies, conditions or looks ahead asserts nothing about the present state (English and Norwegian).
-const NOT_AFFIRMED = /\b(?:not|no|none|never|nothing|neither|nor|without|if|would|could|might|may|unless|risks?|ikke|ingen|intet|uten|hvis|dersom|kan|kunne|ville)\b|n't\b/iu
+const NOT_AFFIRMED = /\b(?:not|no|none|zero|never|nothing|neither|nor|without|if|would|could|might|may|unless|risks?|ikke|ingen|intet|uten|hvis|dersom|kan|kunne|ville)\b|n't\b/iu
 
 export interface WorryKeyResult {
   readonly key: string

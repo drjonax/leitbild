@@ -20,6 +20,7 @@ describe('the worry verdict (G1)', () => {
     expect(worryVerdict(keys, 'SG B feed valve runback to 35 %. SG A, C and D are not low.').pass).toBe(true)
     expect(worryVerdict(keys, 'SG B feed valve runback to 35 %. If it goes on, SG A could fall too.').pass).toBe(true)
     expect(worryVerdict(keys, 'SG B feed valve runback to 35 %. Ingen av SG A, C eller D er lav.').pass).toBe(true)
+    expect(worryVerdict(keys, 'SG B feed valve runback to 35 %. SG A, C and D show zero low-level alarms.').pass).toBe(true)
     const broken = worryVerdict(keys, 'SG B feed valve runback to 35 %. SG C level is low as well.')
     expect(broken.pass).toBe(false)
     expect(broken.keys[1]).toMatchObject({ kind: 'absence', hit: false, clauses: ['SG C level is low as well.'] })
