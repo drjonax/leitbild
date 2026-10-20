@@ -360,6 +360,9 @@ const queryDescriptionById: Readonly<Record<string, string>> = {
   'world.process-plant.display.sample': 'Read current values and hard-range quality for up to 256 exact signal paths, the operating mode the Plant is in where it declares modes, the status of each critical safety function it declares with its tree path in words, and optionally the alarms and trips to annunciate (active ones, and cleared ones not yet acknowledged; not shelved, suppressed or out of service) and the operations on those paths (commands people and AI agents issued, running ramps, proposals), at the current Simulation Run time. Live display views use this for polling.',
 }
 
+// The displays an agent presents with its answer: each result carries an embedded view publication.
+const viewPublishingQueries: ReadonlySet<string> = new Set(['world.process-plant.display.compose', 'world.process-plant.display.overview'])
+
 const processPlantQueryCapabilities = processPlantQueryKinds.map(id => {
   const input = queryInputById[id]
   const output = queryOutputById[id]
@@ -371,6 +374,7 @@ const processPlantQueryCapabilities = processPlantQueryKinds.map(id => {
     description: queryDescriptionById[id] ?? `Read ${titleFor(id)} from the active Process Plant runtime.`,
     input,
     output,
+    ...(viewPublishingQueries.has(id) ? { publishes: ['embedded-view' as const] } : {}),
     ...(['world.process-plant.catalog.list', 'world.process-plant.plants.list', 'world.process-plant.runtime.status'].includes(id)
       ? {}
       : {

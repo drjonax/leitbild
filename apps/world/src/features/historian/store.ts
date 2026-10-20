@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, statfsSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { Database } from 'bun:sqlite'
-import { resolveHistorianLimits, type RunHistorianStatus, type HistorianLimits } from './policy.ts'
+import { relativeDeadband, resolveHistorianLimits, sampleHoldMs, walHeadroomBytes, type HistorianLimitOverrides, type RunHistorianStatus } from './policy.ts'
 import {
   packRuntimeRecordingBatchSchema,
   recordingSeriesQuerySchema,
@@ -148,6 +148,21 @@ const valueFromRow = (row: SampleRow): RecordedSample['value'] => {
   throw new Error(`historian sample ${row.runtime_id}/${row.series_id} has invalid ${row.value_type} storage`)
 }
 
+/** A series' last stored sample: the value its readers hold until the next. */
+interface HeldSample {
+  readonly value: RecordedSample['value']
+  readonly quality: RecordedSample['quality']
+  /** Run time in epoch milliseconds (capture time where the sample has none). */
+  readonly at: number
+}
+
+/** Whether a sample says something its series' last stored sample does not (policy.ts, exception recording). */
+const storesOver = (held: HeldSample | undefined, value: RecordedSample['value'], quality: RecordedSample['quality'], at: number): boolean => {
+  if (held === undefined || quality !== held.quality || at < held.at || at - held.at >= sampleHoldMs) return true
+  if (typeof value === 'number' && typeof held.value === 'number') return Math.abs(value - held.value) > relativeDeadband * Math.max(Math.abs(value), Math.abs(held.value))
+  return value !== held.value
+}
+
 const descriptorFromRow = (row: SeriesRow): RecordingSeriesDescriptor & { readonly runtimeId: string } => ({
   runtimeId: row.runtime_id,
   id: row.series_id,
@@ -159,7 +174,7 @@ const descriptorFromRow = (row: SeriesRow): RecordingSeriesDescriptor & { readon
   ...(row.unit === null ? {} : { unit: row.unit }),
 })
 
-export const createRunHistorian = (path: string, options: { readonly limits?: Partial<HistorianLimits>; readonly now?: () => number; readonly captureAdmission?: () => string | null } = {}): RunHistorian => {
+export const createRunHistorian = (path: string, options: { readonly limits?: HistorianLimitOverrides; readonly now?: () => number; readonly captureAdmission?: () => string | null } = {}): RunHistorian => {
   const limits = resolveHistorianLimits(options.limits)
   const now = options.now ?? Date.now
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -216,17 +231,37 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
   const keyFor = (runtimeId: string, seriesId: string) => JSON.stringify([runtimeId, seriesId])
   for (const row of database.query<SeriesRow, []>('SELECT * FROM recording_series').all()) described.set(keyFor(row.runtime_id, row.series_id), descriptorFromRow(row))
   let sampleCount = database.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM recording_samples').get()!.count
+  // Each series' last stored sample this session, against which the next is judged; empty on open, so each series' first sample stores.
+  const held = new Map<string, HeldSample>()
+  /** Samples offered but not kept (capture refused or failed) and stored samples removed since (evicted or expired); a sample within its series' deadband is not discarded, its held value says it. */
   let discardedSinceOpen = 0
   let lastError: string | null = null
   let lastMaintenanceAt = -Infinity
   let storage = historyStorage(path)
   let storageAllowed = !oversizedAtOpen
   const storageLimitMessage = 'Historian byte/free-space budget reached; capture paused, simulation continues. Retained data remains queryable.'
+  const catchingUpMessage = 'Sample retention maintenance is catching up; capture is paused'
   if (oversizedAtOpen) lastError = storageLimitMessage
   // Large existing histories remain untouched: calculate their bounds once,
   // never build a new multi-million-row index or prune them during Run startup.
   const frozenBounds = oversizedAtOpen ? database.query<{ first: string | null; last: string | null }, []>('SELECT MIN(observed_at) AS first, MAX(observed_at) AS last FROM recording_samples').get() : null
-  const maintenance = (): void => {
+  // Over budget, eviction goes this far below it at once, so one bounded pass
+  // makes room for many batches rather than for the next one.
+  const evictionSlack = Math.min(5_000, Math.ceil(limits.maxSamples / 100))
+  // The pages the database file may use: the sample budget's bytes, enforced
+  // where samples are larger than measured (long strings, long ids).
+  const databaseBudgetBytes = limits.maxBytes - walHeadroomBytes(limits.maxBytes)
+  const usedDatabaseBytes = (): number => {
+    const pages = database.query<{ page_count: number }, []>('PRAGMA page_count').get()!.page_count
+    const free = database.query<{ freelist_count: number }, []>('PRAGMA freelist_count').get()!.freelist_count
+    return (pages - free) * pageSize
+  }
+  const forget = (removed: number): void => {
+    sampleCount -= removed
+    discardedSinceOpen += removed
+  }
+  /** Bounded upkeep: free space, the log, expiry by age, and eviction to make room for `incoming` samples. */
+  const maintenance = (incoming = 0): void => {
     lastMaintenanceAt = now()
     if (oversizedAtOpen) return
     const admissionError = options.captureAdmission?.()
@@ -237,7 +272,7 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
       storage = historyStorage(path)
       // A completed checkpoint can leave a large reusable WAL. Reclaim it only
       // when no reader prevents truncation; SQLite returns busy rather than waiting.
-      if (storage.walBytes > Math.min(4 * 1024 * 1024, limits.maxBytes / 4)) {
+      if (storage.walBytes > Math.min(4 * 1024 * 1024, walHeadroomBytes(limits.maxBytes) / 2)) {
         database.exec('PRAGMA wal_checkpoint(TRUNCATE)')
         storage = historyStorage(path)
       }
@@ -246,14 +281,28 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
       if (!storageAllowed) { lastError = storageLimitMessage; return }
     }
     const expiredBefore = new Date(now() - limits.maxAgeMs).toISOString()
-    const expired = database.query('DELETE FROM recording_samples WHERE sequence IN (SELECT sequence FROM recording_samples WHERE observed_at < ? ORDER BY observed_at, sequence LIMIT 5000)').run(expiredBefore).changes
-    sampleCount -= expired
-    discardedSinceOpen += expired
-    if (sampleCount > limits.maxSamples) {
-      const removed = database.query('DELETE FROM recording_samples WHERE sequence IN (SELECT sequence FROM recording_samples ORDER BY sequence LIMIT ?)').run(Math.min(5000, sampleCount - limits.maxSamples)).changes
-      sampleCount -= removed
-      discardedSinceOpen += removed
-    }
+    const expired = database.query<{ runtime_id: string; series_id: string }, [string]>('DELETE FROM recording_samples WHERE sequence IN (SELECT sequence FROM recording_samples WHERE observed_at < ? ORDER BY observed_at, sequence LIMIT 5000) RETURNING runtime_id, series_id').all(expiredBefore)
+    forget(expired.length)
+    // Expiry by age may take a series' last stored sample: its next sample stores.
+    for (const row of expired) held.delete(keyFor(row.runtime_id, row.series_id))
+    const overBytes = usedDatabaseBytes() > databaseBudgetBytes
+    if (sampleCount + incoming <= limits.maxSamples && !overBytes) return
+    // Fair eviction: the oldest retained samples go first, whichever series
+    // holds them, and never a series' newest (one with no later sample of its
+    // series), the value its readers hold. Every series keeps the same span of
+    // time, the measure its readers' windows ask for: a series that stores
+    // more costs itself more samples, not the others their history.
+    const excess = Math.max(sampleCount + incoming - (limits.maxSamples - evictionSlack), overBytes ? evictionSlack : 0)
+    forget(database.query<unknown, [number]>(`
+      DELETE FROM recording_samples WHERE sequence IN (
+        SELECT oldest.sequence FROM recording_samples AS oldest
+        WHERE EXISTS (
+          SELECT 1 FROM recording_samples AS later INDEXED BY recording_samples_series_time
+          WHERE later.runtime_id = oldest.runtime_id AND later.series_id = oldest.series_id AND later.sequence > oldest.sequence
+        )
+        ORDER BY oldest.observed_at, oldest.sequence LIMIT ?
+      )
+    `).run(Math.min(5_000, excess)).changes)
   }
 
   const insertSeries = database.prepare(`
@@ -268,8 +317,8 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
       value_type, value_number, value_text, value_boolean, quality
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
-  const writeBatch = database.transaction((runtimeId: string, batch: PackRuntimeRecordingBatch): void => {
-    for (const descriptor of batch.descriptors) {
+  const writeBatch = database.transaction((runtimeId: string, descriptors: PackRuntimeRecordingBatch['descriptors'], samples: PackRuntimeRecordingBatch['samples']): void => {
+    for (const descriptor of descriptors) {
       insertSeries.run(
         runtimeId,
         descriptor.id,
@@ -281,7 +330,7 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
         descriptor.unit ?? null,
       )
     }
-    for (const sample of batch.samples) {
+    for (const sample of samples) {
       const value = valueColumns(sample.value)
       insertSample.run(
         runtimeId,
@@ -314,24 +363,38 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
         const descriptor = pending.get(keyFor(runtimeId, sample.seriesId)) ?? described.get(keyFor(runtimeId, sample.seriesId))
         if (!descriptor || typeof sample.value !== descriptor.valueType) throw new Error(`Historian sample does not match its descriptor: ${runtimeId}/${sample.seriesId}`)
       }
+      // Exception recording (policy.ts): only what each series' last stored sample does not already say.
+      const admitted = new Map<string, HeldSample>()
+      const kept = batch.samples.filter(sample => {
+        const key = keyFor(runtimeId, sample.seriesId)
+        const at = Date.parse(sample.simulationTime ?? sample.observedAt)
+        if (!storesOver(admitted.get(key) ?? held.get(key), sample.value, sample.quality, at)) return false
+        admitted.set(key, { value: sample.value, quality: sample.quality, at })
+        return true
+      })
+      let written = false
       try {
-        if (now() - lastMaintenanceAt >= 10_000 || sampleCount + batch.samples.length > limits.maxSamples) maintenance()
+        if (now() - lastMaintenanceAt >= 10_000 || sampleCount + kept.length > limits.maxSamples) maintenance(kept.length)
         if (!storageAllowed || sampleCount > limits.maxSamples) {
-          if (storageAllowed) lastError = 'Sample retention maintenance is catching up; capture is paused'
-          discardedSinceOpen += batch.samples.length
+          if (storageAllowed) lastError = catchingUpMessage
+          discardedSinceOpen += kept.length
           return
         }
-        const samples = batch.samples.map(sample => ({ ...sample, observedAt: new Date(sample.observedAt).toISOString(), ...(sample.simulationTime === undefined ? {} : { simulationTime: new Date(sample.simulationTime).toISOString() }) })) as PackRuntimeRecordingBatch['samples']
-        writeBatch(runtimeId, { ...batch, samples })
-        for (const descriptor of batch.descriptors) described.set(keyFor(runtimeId, descriptor.id), descriptor)
-        sampleCount += samples.length
+        if (kept.length > 0 || batch.descriptors.length > 0) {
+          const samples = kept.map(sample => ({ ...sample, observedAt: new Date(sample.observedAt).toISOString(), ...(sample.simulationTime === undefined ? {} : { simulationTime: new Date(sample.simulationTime).toISOString() }) })) as PackRuntimeRecordingBatch['samples']
+          writeBatch(runtimeId, batch.descriptors, samples)
+          written = true
+          for (const descriptor of batch.descriptors) described.set(keyFor(runtimeId, descriptor.id), descriptor)
+          for (const [key, sample] of admitted) held.set(key, sample)
+          sampleCount += samples.length
+        }
         lastError = null
         if (sampleCount > limits.maxSamples) maintenance()
-        if (sampleCount > limits.maxSamples && lastError === null) lastError = 'Sample retention maintenance is catching up; capture is paused'
+        if (sampleCount > limits.maxSamples && lastError === null) lastError = catchingUpMessage
       } catch (error) {
         // Optional observations must not stop physics or its canonical checkpoint.
         lastError = error instanceof Error ? error.message : String(error)
-        discardedSinceOpen += batch.samples.length
+        if (!written) discardedSinceOpen += kept.length
       }
     },
     listSeries: (): ReadonlyArray<RecordingSeriesDescriptor & { readonly runtimeId: string }> =>
