@@ -11,7 +11,7 @@ import {
 import { overviewDrawingRoom } from '../src/packs/process-plant/displays/compose.ts'
 import { compileMimicScope, planMimicDiagram, type MimicBudget } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
-import { layoutDiagram, verifyDiagram } from '../src/packs/process-plant/displays/mimic/layout/index.ts'
+import { layoutDiagram, verifyDiagram } from '../src/features/displays/diagram/index.ts'
 import type { CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'

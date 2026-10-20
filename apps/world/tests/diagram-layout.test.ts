@@ -12,7 +12,7 @@ import {
   type DiagramProfile,
   type DiagramRoom,
   type DiagramText,
-} from '../src/packs/process-plant/displays/mimic/layout/index.ts'
+} from '../src/features/displays/diagram/index.ts'
 import { costsInReferences } from './cpu-cost.ts'
 
 // Synthetic, Plant-agnostic fixtures: the engine sees only structure.
@@ -383,7 +383,7 @@ describe('diagram layout engine', () => {
   })
 
   test('the engine imports nothing outside itself: it stays Plant-agnostic', () => {
-    const folder = join(import.meta.dir, '../src/packs/process-plant/displays/mimic/layout')
+    const folder = join(import.meta.dir, '../src/features/displays/diagram')
     for (const file of readdirSync(folder).filter(name => name.endsWith('.ts'))) {
       const specifiers = [...readFileSync(join(folder, file), 'utf8').matchAll(/from '([^']+)'/g)].map(match => match[1]!)
       for (const specifier of specifiers) expect(specifier.startsWith('./') || specifier === 'node:crypto').toBe(true)

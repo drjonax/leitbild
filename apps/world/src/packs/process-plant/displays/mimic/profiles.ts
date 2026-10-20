@@ -1,4 +1,4 @@
-import type { DiagramProfile } from './layout/index.ts'
+import type { DiagramProfile } from '../../../../features/displays/diagram/index.ts'
 import { MIMIC_MIN_SCALE } from './mimic-model.ts'
 import { openBridgeDevice } from './text-metrics.ts'
 
