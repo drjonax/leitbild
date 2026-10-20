@@ -6,8 +6,7 @@ import type { PackRuntimeQuery } from '../../../simulation/protocol.ts'
 import type { CompiledPlantGraph, ComponentId } from '../graph/index.ts'
 import { plantGraphToMermaid } from '../graph/index.ts'
 import { processPlantComponentBehaviorSourcePathByKind } from '../runtime/behaviors/index.ts'
-import { principalCircuits } from '../displays/mimic/principal.ts'
-import { plantCarriers, plantLoops } from '../displays/mimic/scope.ts'
+import { principalCircuits, plantCarriers, plantLoops } from '../equipment/circuits.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { rejectCapabilityInput } from '../../../simulation/capability-rejection.ts'
 import { capabilityTargetNotFound, requirePlant, processPlantSearchPaginationShape, paginateProcessPlantSearch } from './common.ts'
@@ -197,7 +196,7 @@ const overviewComponentIdsFor = (system: ProcessPlantRuntimeInstance): ReadonlyS
   if (existing) return existing
   const graph = system.plant.graph
   const circuits = principalCircuits(graph)
-  const ids = new Set<ComponentId>(circuits.ok ? circuits.scope.components.map(index => graph.components[index]!.id) : [])
+  const ids = new Set<ComponentId>(circuits.ok ? circuits.components.map(index => graph.components[index]!.id) : [])
   overviewComponentIdsCache.set(system, ids)
   return ids
 }

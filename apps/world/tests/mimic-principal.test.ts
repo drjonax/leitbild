@@ -7,7 +7,7 @@ import {
   type CompiledPlantGraph,
 } from '../src/packs/process-plant/index.ts'
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
-import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
+import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { stubText } from '../src/packs/process-plant/displays/mimic/scope.ts'
 
 // The overview's circuits come from where energy goes: a heat source's closed
@@ -31,7 +31,7 @@ const tank = (id: string, maxOutletFlowKgPerS: number) => component(id, 'process
 
 const label = (graph: CompiledPlantGraph, index: number): string => String(graph.components[index]!.id)
 const ringsOf = (graph: CompiledPlantGraph) => {
-  const result = principalCircuits(graph)
+  const result = overviewScope(graph)
   if (!result.ok) throw new Error(result.reason)
   return { ...result, labels: result.rings.map(ring => ring.components.map(index => label(graph, index)).sort()) }
 }
@@ -132,7 +132,7 @@ describe('the overview follows the Plant\'s energy, not its names', () => {
       components: [tank('basin', 50), pump('pump', 40), tank('cooler', 50)],
       connections: [pipe('basin-to-pump', 'basin.outlet', 'pump.inlet', 'coolant'), pipe('pump-to-cooler', 'pump.outlet', 'cooler.inlet', 'coolant')],
     }), processPlantComponentRegistry)
-    expect(principalCircuits(skid)).toEqual({ ok: false, reason: 'skid declares no heat source, so it has no energy path to draw' })
+    expect(overviewScope(skid)).toEqual({ ok: false, reason: 'skid declares no heat source, so it has no energy path to draw' })
     const openSource = compilePlantGraph(plantGraph({
       id: 'open-source',
       title: 'Once-through source',
@@ -140,6 +140,6 @@ describe('the overview follows the Plant\'s energy, not its names', () => {
       components: [component('source', 'reactorCore', 'Source', { ...parameters('core'), primaryLoopIds: ['A'] }), tank('drain', 5000)],
       connections: [pipe('source-to-drain', 'source.hotLegA', 'drain.inlet', 'coolant')],
     }), processPlantComponentRegistry)
-    expect(principalCircuits(openSource)).toEqual({ ok: false, reason: 'no heat source of open-source lies on a closed fluid circuit, so it has no circulating energy path to draw' })
+    expect(overviewScope(openSource)).toEqual({ ok: false, reason: 'no heat source of open-source lies on a closed fluid circuit, so it has no circulating energy path to draw' })
   })
 })

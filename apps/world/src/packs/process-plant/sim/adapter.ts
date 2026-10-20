@@ -90,6 +90,10 @@ const processPlantDefinitionsFor = (
   })]
 })
 
+/** Each Plant object's label: it names the unit in its recorded series' titles. */
+const unitLabelsOf = (objects: Iterable<OperationalObject>): ReadonlyMap<string, string> =>
+  new Map([...objects].flatMap(object => object.packId === processPlantPackId ? [[String(object.id), object.label] as const] : []))
+
 const emitPackRuntimeEvents = (
   handlers: ReadonlySet<PackRuntimeEventHandler>,
   events: ReadonlyArray<PackRuntimeEvent>,
@@ -290,7 +294,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
     }
     let recordingPlan = config.recording === undefined
       ? null
-      : createProcessPlantRecordingPlan({ selection: config.recording, plants })
+      : createProcessPlantRecordingPlan({ selection: config.recording, plants, unitLabels: unitLabelsOf(initialObjects) })
     let recordingDescriptorsPending = recordingPlan !== null
     let nextRecordingElapsedMs = recordingPlan?.intervalMs ?? Number.POSITIVE_INFINITY
     // Composed displays say which trended signals have history in this Run.
@@ -391,7 +395,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
     const rebuildRecordingPlan = (): void => {
       recordingPlan = config.recording === undefined || plants.size === 0
         ? null
-        : createProcessPlantRecordingPlan({ selection: config.recording, plants })
+        : createProcessPlantRecordingPlan({ selection: config.recording, plants, unitLabels: unitLabelsOf(objectsById.values()) })
       recordingDescriptorsPending = recordingPlan !== null
       nextRecordingElapsedMs = recordingPlan?.intervalMs ?? Number.POSITIVE_INFINITY
       recordedSeriesIds = recordedSeriesFor(recordingPlan)

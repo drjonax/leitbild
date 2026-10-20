@@ -198,10 +198,9 @@ describe('the unit overview World generates for a Plant', () => {
     for (const loops of [2, 3, 4, 5, 6]) {
       const result = compileOverviewDisplay(plant(loops), new Set(), fullHd)
       if (!result.ok) throw new Error(`${loops} loops: ${result.issues.map(issue => issue.message).join('; ')}`)
-      const { count, forced } = mimicOf(result.display).crossings
-      expect(count).toBeLessThanOrEqual(forced + 2)
+      // Within two of the 2n − 3 crossings the principal circuits' structure forces.
+      expect(mimicOf(result.display).crossings).toBeLessThanOrEqual(2 * loops - 3 + 2)
     }
-    // Five and six loops overflow Full HD, so each searches the least height that draws: seconds under load.
   }, PLANT_HANG_GUARD_MS)
 
   test('on a feedwater runback the failed valve that causes it stands out as abnormal, and nothing else does', () => {

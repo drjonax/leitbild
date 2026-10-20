@@ -548,7 +548,7 @@ describe('electric grid query Capabilities', () => {
   test('summary lists only constrained branches and affected loads and states its thresholds', () => {
     const { grid, send } = harness()
     const normal = query(grid, 'world.electric-grid.grid.summary')
-    expect(normal.thresholds).toEqual({ constrainedBranchLoadingPercent: 70, affectedLoadUnservedMw: 0 })
+    expect(normal.thresholds).toEqual({ constrainedBranchLoadingPercent: 70, overloadLoadingPercent: 100, affectedLoadUnservedMw: 0 })
     expect(normal.affectedLoads).toEqual([])
     expect(normal.affectedLoadCount).toBe(0)
     expect(normal.constrainedBranchCount).toBe([...grid.branches.values()].filter(state => state.state === 'closed' && state.loadingPercent >= 70).length)

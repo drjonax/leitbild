@@ -640,6 +640,7 @@ const runtimeCapabilityDescriptorsFor = (
       idempotent: capability.idempotent,
       ...(capability.kind === 'command' ? { acceptsIdempotencyKey: true as const } : {}),
       ...(capability.schedulable === undefined ? {} : { schedulable: capability.schedulable }),
+      ...(capability.publishes === undefined ? {} : { publishes: [...capability.publishes] }),
       inputSchema: capabilityJsonSchema(capability.input),
       outputSchema: capabilityJsonSchema(capability.output),
     }] }).capabilities[0]!

@@ -1,6 +1,8 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink } from '../../graph/index.ts'
 import { carriersAt, downstreamLinks, linkCarrier, routeLinks, upstreamLinks } from '../../graph/index.ts'
-import { SUGGESTION_COUNT, letters, matchedWords, normalized, words } from '../name-matching.ts'
+import { SUGGESTION_COUNT, matchedWords, normalized, words } from '../../name-matching.ts'
+import { componentDescription, equipmentSuggestions } from '../../equipment/items.ts'
+import { plantCarriers, plantLoops } from '../../equipment/circuits.ts'
 
 // What a mimic draws, resolved from the agent's intent in plant terms. The
 // scope comes from the static Plant graph alone (never from live values), so
@@ -9,7 +11,12 @@ import { SUGGESTION_COUNT, letters, matchedWords, normalized, words } from '../n
 export interface MimicIntent {
   readonly from?: ReadonlyArray<string> | undefined
   readonly to?: ReadonlyArray<string> | undefined
-  /** What feeds these items and where their outflow goes, by every service they carry unless `services` narrows it. */
+  /**
+   * What feeds these items and where their outflow goes: by the services of
+   * each item's process (the fluid it carries; power only for equipment that
+   * carries nothing else), its other services stopping the drawing at it,
+   * unless `services` names what to draw.
+   */
   readonly around?: ReadonlyArray<string> | undefined
   readonly services?: ReadonlyArray<string> | undefined
   readonly loops?: ReadonlyArray<string> | undefined
@@ -48,13 +55,6 @@ export const MIMIC_REACH_LINKS = 3
 const shortLabelOf = (graph: CompiledPlantGraph, index: number): string => {
   const component = graph.components[index]!
   return component.metadata?.presentation?.shortLabel ?? component.label
-}
-
-/** "sgB (Steam Generator B, SG B)". */
-export const componentDescription = (graph: CompiledPlantGraph, index: number): string => {
-  const component = graph.components[index]!
-  const short = component.metadata?.presentation?.shortLabel
-  return `${component.id} (${component.label}${short === undefined ? '' : `, ${short}`})`
 }
 
 const loopOf = (graph: CompiledPlantGraph, link: CompiledProcessLink): string | undefined =>
@@ -164,41 +164,6 @@ const unconnectedReason = (graph: CompiledPlantGraph, index: number, carriers: R
   return `${id} is connected to other equipment only by ${[...new Set(linked.map(link => link.kind))].sort().join(', ')} links, which a mimic does not draw`
 }
 
-/** Components whose id, label, short label or tags match the guessed words best. */
-export const equipmentSuggestions = (graph: CompiledPlantGraph, guess: string): ReadonlyArray<string> => {
-  const guessed = words(guess)
-  if (guessed.length === 0) return []
-  const tagsByComponent = new Map<number, string[]>()
-  for (const binding of graph.signalBindings) {
-    if (binding.tagId === undefined || binding.owner.type !== 'component') continue
-    tagsByComponent.set(binding.owner.componentIndex, [...(tagsByComponent.get(binding.owner.componentIndex) ?? []), String(binding.tagId)])
-  }
-  return graph.components
-    .map(component => {
-      const keys = [String(component.id), component.label, component.metadata?.presentation?.shortLabel ?? '', ...(tagsByComponent.get(component.index) ?? [])]
-      const matched = matchedWords(guessed, [...new Set(keys.flatMap(words))])
-      return { component, score: letters(matched) / letters(guessed), substantive: matched.some(word => word.length >= 2) }
-    })
-    .filter(entry => entry.substantive && entry.score >= 0.5)
-    .sort((left, right) => right.score - left.score || String(left.component.id).localeCompare(String(right.component.id)))
-    .slice(0, SUGGESTION_COUNT)
-    .map(entry => {
-      const tags = (tagsByComponent.get(entry.component.index) ?? []).slice(0, 2)
-      return `${componentDescription(graph, entry.component.index)}${tags.length === 0 ? '' : `; tags ${tags.join(', ')}`}`
-    })
-}
-
-/** The carriers of this Plant: its fluid services and its power and signal link kinds. */
-export const plantCarriers = (graph: CompiledPlantGraph): ReadonlyArray<string> =>
-  [...new Set(graph.links.filter(link => link.kind === 'fluidFlow' || link.kind === 'electricalPower').map(linkCarrier))].sort()
-
-export const plantLoops = (graph: CompiledPlantGraph): ReadonlyArray<string> =>
-  [...new Set(graph.components.map(component => component.metadata?.loopId).filter((loop): loop is string => loop !== undefined))]
-    .sort((left, right) => {
-      const ordinal = (loop: string) => graph.components.find(component => component.metadata?.loopId === loop)?.metadata?.ordinal ?? 0
-      return ordinal(left) - ordinal(right) || left.localeCompare(right)
-    })
-
 // "AFW" for auxFeedwater: the guess's letters, in order, from the same first letter; or a shared word.
 export const serviceResembles = (guess: string, candidate: string): boolean => {
   const letters_ = guess.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -213,6 +178,8 @@ const sorted = (indexes: Iterable<number>): ReadonlyArray<number> => [...new Set
 export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent): MimicScopeResult => {
   const issues: Array<{ readonly field: string; readonly message: string; readonly didYouMean?: ReadonlyArray<string> }> = []
   const names: Array<MimicScope['names'][number]> = []
+  /** What the drawing is about: each end or item named, with the components it names. */
+  const anchors: Array<{ readonly name: string; readonly components: ReadonlyArray<number> }> = []
   const known = plantCarriers(graph)
   const resolveAll = (field: 'from' | 'to' | 'around' | 'exclude', list: ReadonlyArray<string> | undefined): ReadonlyArray<number> => (list ?? []).flatMap((name, index) => {
     const resolved = resolveName(graph, name, field)
@@ -226,6 +193,7 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
       return []
     }
     for (const component of resolved.components) names.push({ name, component, via: resolved.via })
+    if (field !== 'exclude') anchors.push({ name, components: resolved.components })
     return resolved.components
   })
   const from = resolveAll('from', intent.from)
@@ -264,9 +232,18 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
   const listed = (carriers: ReadonlySet<string>) => [...carriers].sort().join(', ') || 'nothing'
   // What equipment does carry, so a wrong service is corrected in one call.
   const carriedBy = (list: ReadonlyArray<number>) => list.map(index => `${graph.components[index]!.id} carries ${listed(new Set([...delivered([index]), ...received([index])]))}`).join('; ')
-  // Around an item, every service it carries: its fluid on both sides and its power supply.
+  // Around an item, the services of its process: the fluid it carries on both sides, or its power where it carries
+  // nothing else (a bus, a diesel). Power beside a process is drawn only where services name it: mixed into the
+  // flow it runs as a tree of its own across the process lines (layout audit, Bad 3 and 8); the drawing stops at
+  // the item where it joins instead.
+  const power = new Set(graph.links.filter(link => link.kind === 'electricalPower').map(linkCarrier))
+  const carriedAt = (index: number): ReadonlySet<string> => new Set([...delivered([index]), ...received([index])])
+  const processOf = (index: number): ReadonlyArray<string> => {
+    const fluid = [...carriedAt(index)].filter(carrier => !power.has(carrier))
+    return fluid.length > 0 ? fluid : [...carriedAt(index)]
+  }
   const carriers: ReadonlySet<string> = intent.services !== undefined ? new Set(intent.services)
-    : around.length > 0 ? new Set([...delivered(around), ...received(around)])
+    : around.length > 0 ? new Set(around.flatMap(processOf))
       : from.length > 0 && to.length > 0 ? shared(delivered(from), received(to))
         : from.length > 0 ? delivered(from) : received(to)
   if (intent.services === undefined && around.length === 0 && (from.length === 0 || to.length === 0) && carriers.size > 1) {
@@ -355,6 +332,30 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
 
   const components = sorted([...inLoops].flatMap(index => [graph.links[index]!.fromComponentIndex, graph.links[index]!.toComponentIndex]))
   const drawn = new Set(components)
+  // Loops narrow a drawing, never past what it is about: each equipment named that the services reach stays in
+  // it (of alike items named in the plural, at least one), or the intent is refused, never drawn without it.
+  const reachedComponents = endsOf(selected)
+  const lost = anchors.filter(anchor => anchor.components.some(component => reachedComponents.has(component)) && !anchor.components.some(component => drawn.has(component)))
+  if (lost.length > 0) {
+    const asked = intent.loops ?? []
+    const loopsAt = (component: number): ReadonlyArray<string> => loops.filter(loop => [...selected].some(index => {
+      const link = graph.links[index]!
+      return (link.fromComponentIndex === component || link.toComponentIndex === component) && loopOf(graph, link) === loop
+    }))
+    return {
+      ok: false,
+      issues: lost.map(anchor => {
+        const at = [...new Set(anchor.components.flatMap(loopsAt))]
+        const what = anchor.components.length === 1 ? ends(anchor.components) : `every one of "${anchor.name}" (${ends(anchor.components)})`
+        return {
+          field: 'loops',
+          message: `${asked.length === 1 ? `loop ${asked[0]} leaves` : `loops ${asked.join(', ')} leave`} out ${what}, which the drawing is about; ${at.length > 0
+            ? `${anchor.components.length === 1 ? 'it lies' : 'they lie'} on ${at.length === 1 ? 'loop' : 'loops'} ${at.join(', ')}: name ${at.length === 1 ? 'that loop' : 'one of those'} too, or drop "loops"`
+            : 'drop "loops"'}`,
+        }
+      }),
+    }
+  }
   // Links among drawn equipment of the drawn services are drawn too (a recirculation line, a cross-tie).
   const links = sorted([...allowed].filter(index => {
     if (inLoops.has(index)) return true
@@ -368,7 +369,10 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
   // part of the question; flow leaving the drawing toward them still is.
   const otherLoop = (link: CompiledProcessLink): boolean => intent.loops !== undefined && loopOf(graph, link) !== undefined && !intent.loops.includes(loopOf(graph, link)!)
   const stubs = drawingStops(graph, components, drawnLinks, carriers, otherLoop)
-  return { ok: true, scope: { components, links, stubs, carriers: [...carriers].sort(), names } }
+  // Around items, each service left out of the drawing stops it at them (a pump's power supply).
+  const leftOut = intent.services === undefined ? new Set(around.flatMap(index => [...carriedAt(index)]).filter(carrier => !carriers.has(carrier))) : new Set<string>()
+  const joins = leftOut.size === 0 ? [] : drawingStops(graph, around.filter(index => drawn.has(index)), drawnLinks, leftOut, () => false)
+  return { ok: true, scope: { components, links, stubs: [...stubs, ...joins], carriers: [...carriers].sort(), names } }
 }
 
 /**

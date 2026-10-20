@@ -76,8 +76,8 @@
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
   import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
-  import PlantCard, { type PlantCardAction } from '../process-display/PlantCard.svelte'
-  import { plantCardView } from '../process-display/plant-card.ts'
+  import PlantCard, { type PlantCardAction } from '../../packs/process-plant/ui/PlantCard.svelte'
+  import { plantCardView } from '../../packs/process-plant/ui/plant-card.ts'
   import { processPlantPackId } from '../../packs/process-plant/model.ts'
   import type { MapCardFrame } from '../map/object-card-anchor.ts'
   import { readRunAssistantOffer, requestRunAssistant } from '../run-assistant-messages.ts'
@@ -768,7 +768,7 @@
   const loadProcessPlantArtifactModal = async (): Promise<void> => {
     if (ProcessPlantArtifactModal) return
     processPlantArtifactModalLoadPromise ??= (async (): Promise<Component> => {
-      const module = await import('../process-display/ProcessPlantArtifactModal.svelte')
+      const module = await import('../../packs/process-plant/ui/ProcessPlantArtifactModal.svelte')
       return module.default
     })()
     try {
@@ -782,7 +782,7 @@
   const loadProcessPlantCatalogModal = async (): Promise<void> => {
     if (ProcessPlantCatalogModal) return
     processPlantCatalogModalLoadPromise ??= (async (): Promise<Component> => {
-      const module = await import('../process-display/ProcessPlantCatalogModal.svelte')
+      const module = await import('../../packs/process-plant/ui/ProcessPlantCatalogModal.svelte')
       return module.default
     })()
     try {
@@ -796,7 +796,7 @@
   const loadProcessPlantCredibilityModal = async (): Promise<void> => {
     if (ProcessPlantCredibilityModal) return
     processPlantCredibilityModalLoadPromise ??= (async (): Promise<Component> => {
-      const module = await import('../process-display/ProcessPlantCredibilityModal.svelte')
+      const module = await import('../../packs/process-plant/ui/ProcessPlantCredibilityModal.svelte')
       return module.default
     })()
     try {

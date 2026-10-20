@@ -16,8 +16,8 @@ import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/sig
 import { processPlantElectricalPortsAt } from '../src/packs/process-plant/electrical-ports.ts'
 import { itemBinding, flapText, framingRules } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { indexSample, itemLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
-import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { icThresholdsForSignal } from '../src/packs/process-plant/ic/thresholds.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { compileMimic } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
@@ -195,8 +195,8 @@ describe('breakers', () => {
     const route = drawn({ from: ['dieselGeneratorA'], to: ['auxFeedwaterPumpMotor'] })
     const lines = route.mimic.pipes.filter(pipe => !route.mimic.stubs.some(stub => pipe.id.startsWith(`${stub.id}.`)))
     expect(lines.map(pipe => pipeStatesLook([pipe.state], route.sample))).toEqual(lines.map(() => 'live'))
-    // Around the pump, the bus's two feeders stop the drawing as one stub: live, as its diesel feeder is.
-    const around = drawn({ around: ['auxFeedwaterPumpMotor'], reach: 1 })
+    // Around the pump with its power, the bus's two feeders stop the drawing as one stub: live, as its diesel feeder is.
+    const around = drawn({ around: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'], reach: 1 })
     const feeders = around.mimic.stubs.find(stub => stub.states.length === 2 && stub.states.every(state => state.kind === 'power'))!
     expect(feeders.states.map(state => pipeStatesLook([state], around.sample)).sort()).toEqual(['dead', 'live'])
     expect(pipeStatesLook(feeders.states, around.sample)).toBe('live')

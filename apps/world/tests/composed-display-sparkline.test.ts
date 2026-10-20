@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import type { ComposedDisplayThreshold } from '../src/packs/process-plant/ic/thresholds.ts'
 import { historyStartX, SPARKLINE_SIZE, sparkline, sparklineText, sparklineWindowText } from '../src/ui/embed/composed-display/sparkline.ts'
 import type { TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { paddedDomain } from '../src/ui/embed/composed-display/trend-geometry.ts'
-import { readingResolution, shownReading } from '../src/packs/process-plant/displays/display-text.ts'
+import { readingResolution, shownReading } from '../src/packs/process-plant/quantity-text.ts'
 
 const now = 1_000_000
 const windowMs = 600_000

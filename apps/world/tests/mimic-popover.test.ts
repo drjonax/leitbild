@@ -3,9 +3,9 @@ import type { SimulationRunId } from '../src/core/model/index.ts'
 import { compileProcessPlant, createProcessPlantRuntime, createPwrReferencePlantDefinition, type VariablePath } from '../src/packs/process-plant/index.ts'
 import type { ComposedDisplayPen } from '../src/packs/process-plant/displays/compose.ts'
 import { mimicQuickLookPaths, QUICK_LOOK_LEADS } from '../src/packs/process-plant/displays/mimic/quick-look.ts'
-import { equipmentKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { equipmentKeyValues } from '../src/packs/process-plant/ic/key-values.ts'
 import { compileMimicScope } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
-import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
+import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { chatMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { QUICK_LOOK_DOT, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample } from '../src/ui/embed/composed-display/composed-display-client.ts'
@@ -173,7 +173,7 @@ describe('the quick look', () => {
   test('each drawn item\'s quick look is the first six of what its detail leads with now', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:quick-looks', loopCount: 4 }))
     const runtime = createProcessPlantRuntime({ system: plant })
-    const principal = principalCircuits(plant.graph)
+    const principal = overviewScope(plant.graph)
     if (!principal.ok) throw new Error(principal.reason)
     const drawn = compileMimicScope(plant, principal.scope, { profile: overviewMimicProfile, maxWidth: 4000, maxHeight: 4000 })
     if (!drawn.ok) throw new Error('not drawn')
@@ -192,7 +192,7 @@ describe('the quick look', () => {
 describe('detail dots on the drawing', () => {
   test('an interactive drawing reserves each item\'s dot after its tag; a chat answer\'s does not', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:dots', loopCount: 4 }))
-    const principal = principalCircuits(plant.graph)
+    const principal = overviewScope(plant.graph)
     if (!principal.ok) throw new Error(principal.reason)
     const drawn = (profile: typeof overviewMimicProfile) => {
       const result = compileMimicScope(plant, principal.scope, { profile, maxWidth: 4000, maxHeight: 4000 })

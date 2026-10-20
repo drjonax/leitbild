@@ -1,7 +1,7 @@
 <script lang="ts">
   import { evidenceCriterionText, type ComposedDisplayPen, type ComposedEvidenceCriterion, type ComposedEvidencePanel, type ComposedEvidenceRow } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout, evidenceKindWords } from '../../../packs/process-plant/displays/composition.ts'
-  import { offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { offScale, positionWord, readingValueText, shownReading, unitLabel } from '../../../packs/process-plant/quantity-text.ts'
   import { readingStateText, trendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { expectedOfRule, sampledGates } from './panel-presenters.ts'

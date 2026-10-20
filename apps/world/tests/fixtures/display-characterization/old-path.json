@@ -1,0 +1,2680 @@
+{
+  "about": "T01 characterization of the old display path (plan v3.1 Appendix F), recorded at bacf7a115 on the 4-loop PWR reference Plant.",
+  "states": {
+    "steady": {
+      "elementActions": [
+        {
+          "mimic": {
+            "around": [
+              "auxFeedwaterValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 55.0 %",
+            "auxFeedwaterTank:level 95.0 %",
+            "auxFeedwaterPumpMotor:stopped",
+            "auxFeedwaterPumpMotorB:stopped",
+            "auxFeedwaterPumpTurbine:stopped",
+            "auxFeedwaterHeader:no flow",
+            "auxFeedwaterValveA:closed"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpMotorB",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-B",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotorB.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpTurbine",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-T",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpTurbine.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterValveA",
+              "offered": [
+                {
+                  "tagId": "AFW-A-CV",
+                  "form": "demand",
+                  "now": {
+                    "demand": 0,
+                    "position": 0
+                  },
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "pressurizer"
+            ],
+            "to": [
+              "pressurizerReliefTank"
+            ],
+            "services": [
+              "primaryRelief"
+            ]
+          },
+          "drawn": [
+            "pressurizer:level 55.0 %",
+            "pressurizerReliefTank:level 72.0 %",
+            "pressurizerReliefHeader:no flow",
+            "pressurizer.blockValve:open",
+            "pressurizer.reliefValve:closed",
+            "pressurizer.safetyValves:closed"
+          ],
+          "items": [
+            {
+              "id": "pressurizer",
+              "offered": [
+                {
+                  "tagId": "PZR-HTR-BU",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "Backup heaters on",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "Backup heaters off",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "pressurizer.heaterPowerMw",
+                  "tagId": "PZR-HTR",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                },
+                {
+                  "path": "pressurizer.sprayFlowKgPerS",
+                  "tagId": "PZR-SPRAY",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "pressurizer.blockValve",
+              "offered": [
+                {
+                  "tagId": "MOV-8000A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.reliefValve",
+              "offered": [
+                {
+                  "tagId": "PORV-456A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.safetyValves",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefHeader",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "dieselGeneratorA"
+            ],
+            "to": [
+              "auxFeedwaterPumpMotor"
+            ],
+            "services": [
+              "electricalPower"
+            ]
+          },
+          "drawn": [
+            "auxFeedwaterPumpMotor:stopped",
+            "safetyBusA:energized",
+            "dieselGeneratorA:stopped",
+            "dieselBreakerA:open"
+          ],
+          "items": [
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "safetyBusA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "dieselGeneratorA",
+              "offered": [
+                {
+                  "tagId": "EDG-A-START",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "dieselBreakerA",
+              "offered": [
+                {
+                  "tagId": "BRK-EDG-A-CLOSED",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "CLOSE",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "dieselBreakerA.tripped",
+                  "reason": {
+                    "kind": "unworded",
+                    "text": "An input of the equipment logic: no operator words are declared for it"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "around": [
+              "mainSteamIsolationValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 55.0 %",
+            "mainSteamIsolationValveA:open",
+            "mainSteamHeader:carrying flow",
+            "turbineStopValve:open",
+            "turbineBypassValve:closed",
+            "turbine:ON LINE",
+            "condenser:level 55.0 %"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "mainSteamIsolationValveA",
+              "offered": [
+                {
+                  "tagId": "MSIV-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "mainSteamIsolationValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mainSteamHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "turbineStopValve",
+              "offered": [
+                {
+                  "tagId": "TURB-STOP",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [
+                        "Reactor trip on turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbineStopValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbineBypassValve",
+              "offered": [],
+              "withheld": [
+                {
+                  "path": "turbineBypassValve.positionFraction",
+                  "tagId": "TURB-BYP",
+                  "reason": {
+                    "kind": "automatic",
+                    "measured": "main-steam-header-to-turbine-bypass-valve.pressureMPa",
+                    "setpoint": 7.6,
+                    "text": "AUTO · Turbine bypass valve inlet pressure held to 7.6 MPa",
+                    "manual": "Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step"
+                  }
+                },
+                {
+                  "path": "turbineBypassValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbine",
+              "offered": [
+                {
+                  "tagId": "TURB-TRIP-MAN",
+                  "form": "pushbutton",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "TRIP TURBINE",
+                      "consequences": [
+                        "Manual turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbine.loadFraction",
+                  "tagId": "TURB-LOAD",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "condenser",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        }
+      ],
+      "resets": [],
+      "chips": {
+        "SG-A-LVL-NR": null,
+        "SG-B-LVL-NR": null,
+        "SG-A-PRESS": null,
+        "PT-455": null,
+        "PZR-LVL": null,
+        "TAVG": null,
+        "NIS-PR-AVG": null,
+        "BUS-A-VOLTAGE": null,
+        "AFW-FLOW": null,
+        "SUB-MARGIN": null
+      },
+      "tagDisplays": {
+        "PT-455": {
+          "status": "resolved",
+          "title": "PT-455: Pressurizer pressure",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "pressurizer"
+              ]
+            }
+          },
+          "kind": "detail",
+          "panels": [
+            "readouts",
+            "mimic",
+            "alarms"
+          ]
+        },
+        "NIS-PR-AVG": {
+          "status": "resolved",
+          "title": "NIS-PR-AVG: Power-range neutron flux",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "core"
+              ]
+            }
+          },
+          "kind": "detail",
+          "panels": [
+            "readouts",
+            "mimic",
+            "alarms"
+          ]
+        },
+        "SG-B-LVL-NR": {
+          "status": "resolved",
+          "title": "SG-B-LVL-NR: Steam generator narrow-range level",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "sgB"
+              ]
+            }
+          },
+          "kind": "detail",
+          "panels": [
+            "readouts",
+            "mimic",
+            "alarms"
+          ]
+        },
+        "AFW-FLOW": {
+          "status": "resolved",
+          "title": "AFW-FLOW: Process header outlet flow",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "auxFeedwaterHeader"
+              ]
+            }
+          },
+          "kind": "detail",
+          "panels": [
+            "readouts",
+            "mimic",
+            "alarms"
+          ]
+        },
+        "MSIV-A-POS": {
+          "status": "resolved",
+          "title": "MSIV-A-POS: Steam valve effective position",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "mainSteamIsolationValveA"
+              ]
+            }
+          },
+          "kind": "detail",
+          "panels": [
+            "readouts",
+            "mimic",
+            "alarms"
+          ]
+        },
+        "TRIP-BKR-A": {
+          "status": "resolved",
+          "title": "TRIP-BKR-A: Breaker close command",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "reactorTripBreakerA"
+              ]
+            }
+          },
+          "refused": "reactorTripBreakerA is not connected to any equipment in the Plant model, so it cannot be drawn"
+        },
+        "DG-A": {
+          "status": "resolved",
+          "title": "DG-A: Diesel running",
+          "state": {
+            "detail": {
+              "plantId": "plant:characterization",
+              "components": [
+                "dieselGeneratorA"
+              ]
+            }
+          },
+          "kind": "detail",
+          "panels": [
+            "readouts",
+            "mimic",
+            "alarms"
+          ]
+        },
+        "SI-SIG": {
+          "status": "missing",
+          "opens": null
+        }
+      }
+    },
+    "loss-main-feedwater+120s": {
+      "elementActions": [
+        {
+          "mimic": {
+            "around": [
+              "auxFeedwaterValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 0.0 %",
+            "auxFeedwaterTank:level 94.7 %",
+            "auxFeedwaterPumpMotor:running",
+            "auxFeedwaterPumpMotorB:running",
+            "auxFeedwaterPumpTurbine:running",
+            "auxFeedwaterHeader:carrying flow",
+            "auxFeedwaterValveA:open"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpMotorB",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-B",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotorB.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpTurbine",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-T",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Turbine-driven auxiliary feedwater start on low-low level in two steam generators"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpTurbine.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterValveA",
+              "offered": [
+                {
+                  "tagId": "AFW-A-CV",
+                  "form": "demand",
+                  "now": {
+                    "demand": 1,
+                    "position": 1
+                  },
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "pressurizer"
+            ],
+            "to": [
+              "pressurizerReliefTank"
+            ],
+            "services": [
+              "primaryRelief"
+            ]
+          },
+          "drawn": [
+            "pressurizer:level 23.6 %",
+            "pressurizerReliefTank:level 72.0 %",
+            "pressurizerReliefHeader:no flow",
+            "pressurizer.blockValve:open",
+            "pressurizer.reliefValve:closed",
+            "pressurizer.safetyValves:closed"
+          ],
+          "items": [
+            {
+              "id": "pressurizer",
+              "offered": [
+                {
+                  "tagId": "PZR-HTR-BU",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "Backup heaters on",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "Backup heaters off",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "pressurizer.heaterPowerMw",
+                  "tagId": "PZR-HTR",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                },
+                {
+                  "path": "pressurizer.sprayFlowKgPerS",
+                  "tagId": "PZR-SPRAY",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "pressurizer.blockValve",
+              "offered": [
+                {
+                  "tagId": "MOV-8000A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.reliefValve",
+              "offered": [
+                {
+                  "tagId": "PORV-456A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.safetyValves",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefHeader",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "dieselGeneratorA"
+            ],
+            "to": [
+              "auxFeedwaterPumpMotor"
+            ],
+            "services": [
+              "electricalPower"
+            ]
+          },
+          "drawn": [
+            "auxFeedwaterPumpMotor:running",
+            "safetyBusA:energized",
+            "dieselGeneratorA:stopped",
+            "dieselBreakerA:open"
+          ],
+          "items": [
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "safetyBusA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "dieselGeneratorA",
+              "offered": [
+                {
+                  "tagId": "EDG-A-START",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "dieselBreakerA",
+              "offered": [
+                {
+                  "tagId": "BRK-EDG-A-CLOSED",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "CLOSE",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "dieselBreakerA.tripped",
+                  "reason": {
+                    "kind": "unworded",
+                    "text": "An input of the equipment logic: no operator words are declared for it"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "around": [
+              "mainSteamIsolationValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 0.0 %",
+            "mainSteamIsolationValveA:open",
+            "mainSteamHeader:carrying flow",
+            "turbineStopValve:closed",
+            "turbineBypassValve:closed",
+            "turbine:OFF LINE",
+            "condenser:level 60.0 %"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "mainSteamIsolationValveA",
+              "offered": [
+                {
+                  "tagId": "MSIV-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "mainSteamIsolationValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mainSteamHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "turbineStopValve",
+              "offered": [
+                {
+                  "tagId": "TURB-STOP",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": "Turbine trip on reactor trip (P-4)"
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [
+                        "Reactor trip on turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbineStopValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbineBypassValve",
+              "offered": [],
+              "withheld": [
+                {
+                  "path": "turbineBypassValve.positionFraction",
+                  "tagId": "TURB-BYP",
+                  "reason": {
+                    "kind": "automatic",
+                    "measured": "main-steam-header-to-turbine-bypass-valve.pressureMPa",
+                    "setpoint": 7.6,
+                    "text": "AUTO · Turbine bypass valve inlet pressure held to 7.6 MPa",
+                    "manual": "Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step"
+                  }
+                },
+                {
+                  "path": "turbineBypassValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbine",
+              "offered": [
+                {
+                  "tagId": "TURB-TRIP-MAN",
+                  "form": "pushbutton",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "TRIP TURBINE",
+                      "consequences": [
+                        "Manual turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbine.loadFraction",
+                  "tagId": "TURB-LOAD",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "condenser",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        }
+      ],
+      "resets": [
+        {
+          "ruleId": "sg-a-level-low-low-afw-actuation",
+          "label": "Steam generator A low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-A-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-a-level-low-low-reactor-trip",
+          "label": "Steam generator A low-low level reactor trip",
+          "offered": false,
+          "reason": "condition still present: SG-A-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-b-level-low-low-afw-actuation",
+          "label": "Steam generator B low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-B-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-b-level-low-low-reactor-trip",
+          "label": "Steam generator B low-low level reactor trip",
+          "offered": false,
+          "reason": "condition still present: SG-B-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-c-level-low-low-afw-actuation",
+          "label": "Steam generator C low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-C-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-c-level-low-low-reactor-trip",
+          "label": "Steam generator C low-low level reactor trip",
+          "offered": false,
+          "reason": "condition still present: SG-C-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-d-level-low-low-afw-actuation",
+          "label": "Steam generator D low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-D-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-d-level-low-low-reactor-trip",
+          "label": "Steam generator D low-low level reactor trip",
+          "offered": false,
+          "reason": "condition still present: SG-D-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-level-low-low-turbine-afw-start",
+          "label": "Turbine-driven auxiliary feedwater start on low-low level in two steam generators",
+          "offered": false,
+          "reason": "condition still present"
+        },
+        {
+          "ruleId": "reactor-trip-turbine-trip",
+          "label": "Turbine trip on reactor trip (P-4)",
+          "offered": false,
+          "reason": "condition still present: TRIP-BKR-A-POS OPEN or TRIP-BKR-B-POS OPEN"
+        },
+        {
+          "ruleId": "reactor-trip-low-tavg-feedwater-isolation",
+          "label": "Feedwater isolation on reactor trip with low Tavg (P-4)",
+          "offered": false,
+          "reason": "condition still present: (TRIP-BKR-A-POS OPEN or TRIP-BKR-B-POS OPEN) and TAVG < 295.6 °C"
+        },
+        {
+          "ruleId": "main-feedwater-pumps-tripped-afw-start",
+          "label": "Auxiliary feedwater start on trip of all main feedwater pumps",
+          "offered": false,
+          "reason": "condition still present: MFW-PUMP-A-RUNNING STOP and MFW-PUMP-B-RUNNING STOP and (UNIT-BUS-A-ENERGIZED LIVE or UNIT-BUS-B-ENERGIZED LIVE)"
+        }
+      ],
+      "chips": {
+        "SG-A-LVL-NR": "LO-LO · AFW START",
+        "SG-B-LVL-NR": "LO-LO · AFW START",
+        "SG-A-PRESS": null,
+        "PT-455": "LO · ALM",
+        "PZR-LVL": null,
+        "TAVG": "LO · FWI",
+        "NIS-PR-AVG": null,
+        "BUS-A-VOLTAGE": null,
+        "AFW-FLOW": null,
+        "SUB-MARGIN": null
+      }
+    },
+    "loss-offsite-power+60s": {
+      "elementActions": [
+        {
+          "mimic": {
+            "around": [
+              "auxFeedwaterValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 15.5 %",
+            "auxFeedwaterTank:level 94.8 %",
+            "auxFeedwaterPumpMotor:running",
+            "auxFeedwaterPumpMotorB:running",
+            "auxFeedwaterPumpTurbine:running",
+            "auxFeedwaterHeader:carrying flow",
+            "auxFeedwaterValveA:open"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpMotorB",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-B",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotorB.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpTurbine",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-T",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Turbine-driven auxiliary feedwater start on low-low level in two steam generators"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpTurbine.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterValveA",
+              "offered": [
+                {
+                  "tagId": "AFW-A-CV",
+                  "form": "demand",
+                  "now": {
+                    "demand": 1,
+                    "position": 1
+                  },
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "pressurizer"
+            ],
+            "to": [
+              "pressurizerReliefTank"
+            ],
+            "services": [
+              "primaryRelief"
+            ]
+          },
+          "drawn": [
+            "pressurizer:level 26.7 %",
+            "pressurizerReliefTank:level 72.0 %",
+            "pressurizerReliefHeader:no flow",
+            "pressurizer.blockValve:open",
+            "pressurizer.reliefValve:closed",
+            "pressurizer.safetyValves:closed"
+          ],
+          "items": [
+            {
+              "id": "pressurizer",
+              "offered": [
+                {
+                  "tagId": "PZR-HTR-BU",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "Backup heaters on",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "Backup heaters off",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "pressurizer.heaterPowerMw",
+                  "tagId": "PZR-HTR",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                },
+                {
+                  "path": "pressurizer.sprayFlowKgPerS",
+                  "tagId": "PZR-SPRAY",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "pressurizer.blockValve",
+              "offered": [
+                {
+                  "tagId": "MOV-8000A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.reliefValve",
+              "offered": [
+                {
+                  "tagId": "PORV-456A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.safetyValves",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefHeader",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "dieselGeneratorA"
+            ],
+            "to": [
+              "auxFeedwaterPumpMotor"
+            ],
+            "services": [
+              "electricalPower"
+            ]
+          },
+          "drawn": [
+            "auxFeedwaterPumpMotor:running",
+            "safetyBusA:energized",
+            "dieselGeneratorA:running",
+            "dieselBreakerA:closed"
+          ],
+          "items": [
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": "Steam generator A low-low level auxiliary feedwater actuation"
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "safetyBusA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "dieselGeneratorA",
+              "offered": [
+                {
+                  "tagId": "EDG-A-START",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "dieselBreakerA",
+              "offered": [
+                {
+                  "tagId": "BRK-EDG-A-CLOSED",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "CLOSE",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "dieselBreakerA.tripped",
+                  "reason": {
+                    "kind": "unworded",
+                    "text": "An input of the equipment logic: no operator words are declared for it"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "around": [
+              "mainSteamIsolationValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 15.5 %",
+            "mainSteamIsolationValveA:open",
+            "mainSteamHeader:carrying flow",
+            "turbineStopValve:closed",
+            "turbineBypassValve:closed",
+            "turbine:OFF LINE",
+            "condenser:level 50.7 %"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "mainSteamIsolationValveA",
+              "offered": [
+                {
+                  "tagId": "MSIV-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "mainSteamIsolationValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mainSteamHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "turbineStopValve",
+              "offered": [
+                {
+                  "tagId": "TURB-STOP",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": "Turbine trip on reactor trip (P-4)"
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [
+                        "Reactor trip on turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbineStopValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbineBypassValve",
+              "offered": [],
+              "withheld": [
+                {
+                  "path": "turbineBypassValve.positionFraction",
+                  "tagId": "TURB-BYP",
+                  "reason": {
+                    "kind": "automatic",
+                    "measured": "main-steam-header-to-turbine-bypass-valve.pressureMPa",
+                    "setpoint": 7.6,
+                    "text": "AUTO · Turbine bypass valve inlet pressure held to 7.6 MPa",
+                    "manual": "Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step"
+                  }
+                },
+                {
+                  "path": "turbineBypassValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbine",
+              "offered": [
+                {
+                  "tagId": "TURB-TRIP-MAN",
+                  "form": "pushbutton",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "TRIP TURBINE",
+                      "consequences": [
+                        "Manual turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbine.loadFraction",
+                  "tagId": "TURB-LOAD",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "condenser",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        }
+      ],
+      "resets": [
+        {
+          "ruleId": "reactor-rcp-breaker-open-trip",
+          "label": "Reactor trip on reactor coolant pump breaker open",
+          "offered": true
+        },
+        {
+          "ruleId": "sg-a-level-low-low-afw-actuation",
+          "label": "Steam generator A low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-A-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-b-level-low-low-afw-actuation",
+          "label": "Steam generator B low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-B-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-c-level-low-low-afw-actuation",
+          "label": "Steam generator C low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-C-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-d-level-low-low-afw-actuation",
+          "label": "Steam generator D low-low level auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: SG-D-LVL-NR < 20 %"
+        },
+        {
+          "ruleId": "sg-level-low-low-turbine-afw-start",
+          "label": "Turbine-driven auxiliary feedwater start on low-low level in two steam generators",
+          "offered": false,
+          "reason": "condition still present"
+        },
+        {
+          "ruleId": "loss-of-offsite-power-afw-actuation",
+          "label": "Loss of offsite power auxiliary feedwater actuation",
+          "offered": false,
+          "reason": "condition still present: UNIT-BUS-A-ENERGIZED DEAD and UNIT-BUS-B-ENERGIZED DEAD"
+        },
+        {
+          "ruleId": "reactor-trip-turbine-trip",
+          "label": "Turbine trip on reactor trip (P-4)",
+          "offered": false,
+          "reason": "condition still present: TRIP-BKR-A-POS OPEN or TRIP-BKR-B-POS OPEN"
+        },
+        {
+          "ruleId": "reactor-trip-low-tavg-feedwater-isolation",
+          "label": "Feedwater isolation on reactor trip with low Tavg (P-4)",
+          "offered": false,
+          "reason": "condition still present: (TRIP-BKR-A-POS OPEN or TRIP-BKR-B-POS OPEN) and TAVG < 295.6 °C"
+        },
+        {
+          "ruleId": "turbine-trip-on-loss-of-load",
+          "label": "Turbine trip on loss of load, grid boundary dead",
+          "offered": true
+        }
+      ],
+      "chips": {
+        "SG-A-LVL-NR": "LO-LO · AFW START",
+        "SG-B-LVL-NR": "LO-LO · AFW START",
+        "SG-A-PRESS": null,
+        "PT-455": "LO · ALM",
+        "PZR-LVL": null,
+        "TAVG": "LO · FWI",
+        "NIS-PR-AVG": null,
+        "BUS-A-VOLTAGE": null,
+        "AFW-FLOW": null,
+        "SUB-MARGIN": null
+      }
+    },
+    "porv-open-35+120s": {
+      "elementActions": [
+        {
+          "mimic": {
+            "around": [
+              "auxFeedwaterValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 54.6 %",
+            "auxFeedwaterTank:level 95.0 %",
+            "auxFeedwaterPumpMotor:stopped",
+            "auxFeedwaterPumpMotorB:stopped",
+            "auxFeedwaterPumpTurbine:stopped",
+            "auxFeedwaterHeader:no flow",
+            "auxFeedwaterValveA:closed"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpMotorB",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-B",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotorB.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterPumpTurbine",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-T",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpTurbine.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "auxFeedwaterHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "auxFeedwaterValveA",
+              "offered": [
+                {
+                  "tagId": "AFW-A-CV",
+                  "form": "demand",
+                  "now": {
+                    "demand": 0,
+                    "position": 0
+                  },
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "pressurizer"
+            ],
+            "to": [
+              "pressurizerReliefTank"
+            ],
+            "services": [
+              "primaryRelief"
+            ]
+          },
+          "drawn": [
+            "pressurizer:level 53.3 %",
+            "pressurizerReliefTank:level 74.5 %",
+            "pressurizerReliefHeader:carrying flow",
+            "pressurizer.blockValve:open",
+            "pressurizer.reliefValve:35 % open; commanded shut disagrees",
+            "pressurizer.safetyValves:closed"
+          ],
+          "items": [
+            {
+              "id": "pressurizer",
+              "offered": [
+                {
+                  "tagId": "PZR-HTR-BU",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "Backup heaters on",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "Backup heaters off",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "pressurizer.heaterPowerMw",
+                  "tagId": "PZR-HTR",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                },
+                {
+                  "path": "pressurizer.sprayFlowKgPerS",
+                  "tagId": "PZR-SPRAY",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "pressurizer.blockValve",
+              "offered": [
+                {
+                  "tagId": "MOV-8000A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.reliefValve",
+              "offered": [
+                {
+                  "tagId": "PORV-456A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "pressurizer.safetyValves",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefTank",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "pressurizerReliefHeader",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "from": [
+              "dieselGeneratorA"
+            ],
+            "to": [
+              "auxFeedwaterPumpMotor"
+            ],
+            "services": [
+              "electricalPower"
+            ]
+          },
+          "drawn": [
+            "auxFeedwaterPumpMotor:stopped",
+            "safetyBusA:energized",
+            "dieselGeneratorA:stopped",
+            "dieselBreakerA:open"
+          ],
+          "items": [
+            {
+              "id": "auxFeedwaterPumpMotor",
+              "offered": [
+                {
+                  "tagId": "AFW-PUMP-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "auxFeedwaterPumpMotor.speedFraction",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "safetyBusA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "dieselGeneratorA",
+              "offered": [
+                {
+                  "tagId": "EDG-A-START",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "START",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "STOP",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": []
+            },
+            {
+              "id": "dieselBreakerA",
+              "offered": [
+                {
+                  "tagId": "BRK-EDG-A-CLOSED",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "CLOSE",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "dieselBreakerA.tripped",
+                  "reason": {
+                    "kind": "unworded",
+                    "text": "An input of the equipment logic: no operator words are declared for it"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mimic": {
+            "around": [
+              "mainSteamIsolationValveA"
+            ]
+          },
+          "drawn": [
+            "sgA:level 54.6 %",
+            "mainSteamIsolationValveA:open",
+            "mainSteamHeader:carrying flow",
+            "turbineStopValve:open",
+            "turbineBypassValve:closed",
+            "turbine:ON LINE",
+            "condenser:level 55.0 %"
+          ],
+          "items": [
+            {
+              "id": "sgA",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "mainSteamIsolationValveA",
+              "offered": [
+                {
+                  "tagId": "MSIV-A",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "mainSteamIsolationValveA.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mainSteamHeader",
+              "offered": [],
+              "withheld": []
+            },
+            {
+              "id": "turbineStopValve",
+              "offered": [
+                {
+                  "tagId": "TURB-STOP",
+                  "form": "twoState",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "OPEN",
+                      "consequences": [],
+                      "heldBy": null
+                    },
+                    {
+                      "word": "SHUT",
+                      "consequences": [
+                        "Reactor trip on turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbineStopValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbineBypassValve",
+              "offered": [],
+              "withheld": [
+                {
+                  "path": "turbineBypassValve.positionFraction",
+                  "tagId": "TURB-BYP",
+                  "reason": {
+                    "kind": "automatic",
+                    "measured": "main-steam-header-to-turbine-bypass-valve.pressureMPa",
+                    "setpoint": 7.6,
+                    "text": "AUTO · Turbine bypass valve inlet pressure held to 7.6 MPa",
+                    "manual": "Manual operation needs an AUTO/MAN mode the model does not have: its controller writes this demand every step"
+                  }
+                },
+                {
+                  "path": "turbineBypassValve.isolationSignal",
+                  "reason": {
+                    "kind": "isolationInput",
+                    "text": "Automatic isolation input: set by the I&C"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "turbine",
+              "offered": [
+                {
+                  "tagId": "TURB-TRIP-MAN",
+                  "form": "pushbutton",
+                  "now": null,
+                  "throttledUnder": [],
+                  "options": [
+                    {
+                      "word": "TRIP TURBINE",
+                      "consequences": [
+                        "Manual turbine trip"
+                      ],
+                      "heldBy": null
+                    }
+                  ]
+                }
+              ],
+              "withheld": [
+                {
+                  "path": "turbine.loadFraction",
+                  "tagId": "TURB-LOAD",
+                  "reason": {
+                    "kind": "demand",
+                    "text": "A demand or set point: not operated from the display"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "condenser",
+              "offered": [],
+              "withheld": []
+            }
+          ]
+        }
+      ],
+      "resets": [],
+      "chips": {
+        "SG-A-LVL-NR": null,
+        "SG-B-LVL-NR": null,
+        "SG-A-PRESS": null,
+        "PT-455": "LO · ALM",
+        "PZR-LVL": null,
+        "TAVG": null,
+        "NIS-PR-AVG": null,
+        "BUS-A-VOLTAGE": null,
+        "AFW-FLOW": null,
+        "SUB-MARGIN": "LO · ALM"
+      }
+    }
+  },
+  "proposalFlow": {
+    "proposeResult": {
+      "ok": true,
+      "word": "SHUT",
+      "consequenceVerb": "shuts off",
+      "mode": "powerOperation"
+    },
+    "afterPropose": [
+      {
+        "item": "mainSteamIsolationValveA",
+        "word": "SHUT",
+        "status": "pending",
+        "origin": "ai",
+        "write": {
+          "path": "mainSteamIsolationValveA.positionFraction",
+          "value": 0
+        },
+        "consequence": "shuts off N kg/s main steam SG A → Steam header (25 % of main steam flow), with the unit in power operation; may actuate: Steam generator A low-low level auxiliary feedwater actuation; Steam generator A low-low level reactor trip; Steam generator A high-high level feedwater isolation and turbine trip; Turbine-driven auxiliary feedwater start on low-low level in two steam generators",
+        "procedureStep": "Isolate the faulted steam generator",
+        "evidence": [
+          "SG-A-LVL-NR"
+        ]
+      }
+    ],
+    "agentApproves": {
+      "ok": false,
+      "reason": "Only a person may approve a proposal"
+    },
+    "personExtends": {
+      "ok": true
+    },
+    "personRejects": {
+      "ok": true
+    },
+    "afterReject": [
+      {
+        "item": "mainSteamIsolationValveA",
+        "word": "SHUT",
+        "status": "rejected",
+        "origin": "ai",
+        "write": {
+          "path": "mainSteamIsolationValveA.positionFraction",
+          "value": 0
+        },
+        "consequence": "shuts off N kg/s main steam SG A → Steam header (25 % of main steam flow), with the unit in power operation; may actuate: Steam generator A low-low level auxiliary feedwater actuation; Steam generator A low-low level reactor trip; Steam generator A high-high level feedwater isolation and turbine trip; Turbine-driven auxiliary feedwater start on low-low level in two steam generators",
+        "procedureStep": "Isolate the faulted steam generator",
+        "evidence": [
+          "SG-A-LVL-NR"
+        ],
+        "closedBy": "actor:human:characterization-operator"
+      }
+    ],
+    "personApproves": {
+      "ok": true
+    },
+    "blockValveAfterTravel": "shut",
+    "log": [
+      {
+        "kind": "approval",
+        "origin": "person",
+        "actor": "actor:human:characterization-operator"
+      }
+    ],
+    "otherWithdraws": {
+      "ok": false,
+      "reason": "Only its proposer withdraws a proposal"
+    },
+    "proposerWithdraws": {
+      "ok": true
+    },
+    "afterWithdraw": [
+      "rejected",
+      "approved",
+      "withdrawn"
+    ],
+    "refusedOffer": {
+      "ok": false,
+      "reason": "Not offered to operators: An RCP start needs seal injection and oil lift, which the model does not have: not started from the display"
+    },
+    "journal": [
+      "process-plant.proposal.recorded",
+      "process-plant.proposal.extended",
+      "process-plant.proposal.rejected",
+      "process-plant.proposal.recorded",
+      "process-plant.proposal.approved",
+      "process-plant.proposal.recorded",
+      "process-plant.proposal.withdrawn"
+    ]
+  },
+  "listings": {
+    "a process display about a Run of this Workspace": {
+      "opens": true
+    },
+    "another Workspace": {
+      "opens": false,
+      "reason": "display request refused: display room/turn/call/key belongs to another Workspace"
+    },
+    "not a World view": {
+      "opens": false,
+      "reason": "display request is invalid: view.envelope.subject.moduleId: An embedded view subject must belong to the publishing Module"
+    },
+    "another view type": {
+      "opens": true,
+      "shown": false,
+      "reason": "it is a electric-grid.display view, which this window does not show"
+    },
+    "not about a Run": {
+      "opens": true,
+      "shown": false,
+      "reason": "it is about a world.scenario, not a Simulation Run"
+    },
+    "too tall": {
+      "opens": false,
+      "reason": "display request is invalid: view.envelope.height: Too big: expected number to be <=960"
+    }
+  }
+}

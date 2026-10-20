@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-  import { displayValue, formatQuantity, limitOrderName, logarithmicSpan, offScale, readingText, shownReading, simulationClock, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { limitOrderName, simulationClock, thresholdFullName } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatQuantity, logarithmicSpan, offScale, readingText, shownReading, unitLabel } from '../../../packs/process-plant/quantity-text.ts'
   import {
     coincidentPens,
     limitInScale,

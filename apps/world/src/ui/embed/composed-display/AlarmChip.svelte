@@ -1,6 +1,6 @@
 <script lang="ts">
   import { chipName } from '../../../packs/process-plant/displays/display-text.ts'
-  import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+  import type { ComposedDisplayThreshold } from '../../../packs/process-plant/ic/thresholds.ts'
   import { alertTypeOf } from './panel-presenters.ts'
 
   /**

@@ -17,6 +17,7 @@ import type { ExecutionCall } from '../core/executions/store.ts'
 import { PROPOSE_OPERATION_ID } from './operation-claims.ts'
 
 /** The operation that reads a Plant's proposals with World's review of the pending ones. */
+// Dated exception (P0, 2026-10-20): names a World operation id, against the platform rule that Agents discover Capabilities at runtime, until the swap (plan v3.1 §7), when the proposal card becomes a World proposal vignette.
 export const PROPOSALS_OPERATION_ID = 'world.process-plant.control.proposals'
 
 /** One propose call of a turn: what it proposed and what World answered. */

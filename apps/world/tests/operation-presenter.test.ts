@@ -13,7 +13,7 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { followAllowanceMs, plantControlsFor, type ItemControls, type PlantControls } from '../src/packs/process-plant/operations/controls.ts'
 import { listedControlsFor, listedResetsFor, proposalPortsFor } from '../src/packs/process-plant/operations/instance-ports.ts'
 import { decideProposal, emptyProposalBook, proposeOperation, reviewProposal, type ProposalPorts } from '../src/packs/process-plant/operations/proposals.ts'

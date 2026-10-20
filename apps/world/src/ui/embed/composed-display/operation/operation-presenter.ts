@@ -1,5 +1,5 @@
 import type { CompiledComposedDisplay } from '../../../../packs/process-plant/displays/compose.ts'
-import { displayValue, formatQuantity } from '../../../../packs/process-plant/displays/display-text.ts'
+import { displayValue, formatQuantity } from '../../../../packs/process-plant/quantity-text.ts'
 import { readingStateText, type TrendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
 import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
 import { demandSetting, followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'

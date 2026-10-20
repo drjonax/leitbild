@@ -12,7 +12,9 @@
 //               to a single-line preview with an animated ellipsis, and
 //               persisted thinking renders as a closed <details>. The
 //               per-message disclosure triangle always lets the user
-//               unfold a specific message even when globally hidden.)
+//               unfold a specific message even when globally hidden.
+//               Collapsed until the user shows it: the reasoning summary
+//               ("Exploring operations scope…") is noise above the answer.)
 //
 // Persisted in localStorage. Applied as a set of classes on document.body
 // (`mh-hide-time`, `mh-hide-duration`, etc.); CSS rules in index.html
@@ -27,11 +29,11 @@ export type MessageHeaderPiece = 'time' | 'duration' | 'context' | 'model' | 'th
 
 export const ALL_PIECES: ReadonlyArray<MessageHeaderPiece> = ['time', 'duration', 'context', 'model', 'thinking']
 
-const ALL: Record<MessageHeaderPiece, true> = { time: true, duration: true, context: true, model: true, thinking: true }
-
 export type MessageHeaderPrefs = Record<MessageHeaderPiece, boolean>
 
-const defaultPrefs = (): MessageHeaderPrefs => ({ ...ALL })
+const DEFAULTS: MessageHeaderPrefs = { time: true, duration: true, context: true, model: true, thinking: false }
+
+const defaultPrefs = (): MessageHeaderPrefs => ({ ...DEFAULTS })
 
 export const readPrefs = (): MessageHeaderPrefs => {
   try {
@@ -39,11 +41,11 @@ export const readPrefs = (): MessageHeaderPrefs => {
     if (!raw) return defaultPrefs()
     const parsed = JSON.parse(raw) as Partial<MessageHeaderPrefs>
     return {
-      time:     typeof parsed.time === 'boolean' ? parsed.time : true,
-      duration: typeof parsed.duration === 'boolean' ? parsed.duration : true,
-      context:  typeof parsed.context === 'boolean' ? parsed.context : true,
-      model:    typeof parsed.model === 'boolean' ? parsed.model : true,
-      thinking: typeof parsed.thinking === 'boolean' ? parsed.thinking : true,
+      time:     typeof parsed.time === 'boolean' ? parsed.time : DEFAULTS.time,
+      duration: typeof parsed.duration === 'boolean' ? parsed.duration : DEFAULTS.duration,
+      context:  typeof parsed.context === 'boolean' ? parsed.context : DEFAULTS.context,
+      model:    typeof parsed.model === 'boolean' ? parsed.model : DEFAULTS.model,
+      thinking: typeof parsed.thinking === 'boolean' ? parsed.thinking : DEFAULTS.thinking,
     }
   } catch { return defaultPrefs() }
 }

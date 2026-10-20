@@ -8,7 +8,7 @@ import {
   createPwrReferencePlantDefinition,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
-import { notMeaningfulNow } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { notMeaningfulNow } from '../src/packs/process-plant/ic/key-values.ts'
 import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 

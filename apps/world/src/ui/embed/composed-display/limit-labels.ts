@@ -1,6 +1,6 @@
 import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
 import { bySeverity, limitAction, limitOrderName, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
-import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+import type { ComposedDisplayThreshold } from '../../../packs/process-plant/ic/thresholds.ts'
 import { gatesHold, limitInForce, type GateStates, type PlantModeNow } from '../../../packs/process-plant/displays/trend-reading.ts'
 
 // Where limit labels go: down a trend's right gutter, or along the head of a

@@ -15,7 +15,7 @@ import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { drawnLook, pipeStatesLook, rowText, stubWordText, stubWordTexts } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
-import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity } from '../src/packs/process-plant/quantity-text.ts'
 import { processPlantSignalQuality } from '../src/packs/process-plant/signals.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
@@ -94,9 +94,9 @@ describe('a power stub says the state of the equipment it names', () => {
     plantRun.run(60)
     plantRun.act('loss-offsite-power')
     plantRun.run(60)
-    // Around the auxiliary feedwater pump, its bus's two feeders stop the drawing as one stub naming both breakers:
-    // the diesel's live, the offsite one dead, though a line of the two is live.
-    const around = drawing({ around: ['auxFeedwaterPumpMotor'], reach: 1 })
+    // Around the auxiliary feedwater pump with its power, its bus's two feeders stop the drawing as one stub naming
+    // both breakers: the diesel's live, the offsite one dead, though a line of the two is live.
+    const around = drawing({ around: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'], reach: 1 })
     const feeders = around.stubs.find(stub => stub.states.length === 2 && stub.states.every(state => state.kind === 'power'))!
     expect(feeders.word?.kind).toBe('equipment')
     expect(stubWordText(feeders.word!, plantRun.sampled(around))).toBe('LIVE 1/2')

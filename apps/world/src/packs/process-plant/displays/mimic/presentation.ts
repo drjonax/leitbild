@@ -1,10 +1,13 @@
 import type { CompiledComponent, CompiledEmbeddedDevice, ComponentKind, EquipmentFunction, StateAspect } from '../../graph/index.ts'
+import { notEquipmentKindIds, notEquipmentReason } from '../../equipment/items.ts'
 
 // How each component kind is drawn, with OpenBridge's own components and
 // icons. This table is the only place the mimic knows component kinds; it
 // names no Plant instance, and the Pack tests check it covers every kind in
-// the component registry. A kind it cannot draw says why, and the mimic
-// rejects drawing it rather than guessing.
+// the component registry. A component that is no item of equipment
+// (equipment/items.ts) is not drawn, for the reason the model gives; a kind
+// the table cannot draw says why, and the mimic rejects drawing it rather
+// than guessing.
 
 /** OpenBridge icon families a device is drawn with; the state picks the variant (on, off, static, open, closed). */
 export type MimicIconFamily =
@@ -46,11 +49,9 @@ const valveIcons: Readonly<Record<EquipmentFunction, MimicIconFamily>> = {
 }
 
 // A valve's icon says what it does: modulating valves show their opening, the others open or shut.
-const valvePresentation = (component: CompiledComponent): MimicPresentation => {
-  const valveFunction = component.semantics.function
-  if (valveFunction === undefined) return { element: 'not-drawn', reason: `valve ${component.id} declares no function` }
-  return { element: 'device', icon: valveIcons[valveFunction], aspect: 'position' }
-}
+// A valve is equipment only where it declares its function (notEquipmentReason), which presentationFor checks first.
+const valvePresentation = (component: CompiledComponent): MimicPresentation =>
+  ({ element: 'device', icon: valveIcons[component.semantics.function!], aspect: 'position' })
 
 const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledComponent) => MimicPresentation)>> = {
   centrifugalPump: { element: 'device', icon: 'pump', aspect: 'running' },
@@ -77,19 +78,14 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   turbineLoadSink: { element: 'device', icon: 'generator', aspect: 'running' },
   inverter: { element: 'device', icon: 'converter', aspect: 'energized' },
   battery: { element: 'device', icon: 'battery', aspect: 'energized' },
-  electricalLoad: { element: 'not-drawn', reason: 'a load is where power ends; it is named where its supply stops' },
-  deltaTProtectionChannel: { element: 'not-drawn', reason: 'an instrument channel moves no fluid; it is read through the values it computes' },
-  rcsInventoryBalance: { element: 'not-drawn', reason: 'an instrument channel moves no fluid; it is read through the values it computes' },
-  atmosphereBoundary: { element: 'not-drawn', reason: 'the atmosphere is where a release leaves the Plant; it is named where each discharge pipe ends' },
-  safetyInjectionBlockLogic: { element: 'not-drawn', reason: 'protection logic moves no fluid; it is read through its permissive and block states' },
-  loadSequencer: { element: 'not-drawn', reason: 'a load sequencer carries no power; it is read through its step' },
-  manualActuation: { element: 'not-drawn', reason: 'a manual actuation pushbutton moves nothing; it is operated where the equipment its rule acts on is drawn' },
 }
 
-/** Kinds the table covers, for the completeness test against the component registry. */
-export const presentedKinds: ReadonlySet<string> = new Set(Object.keys(byKind))
+/** Kinds the table draws or the model says are no equipment, for the completeness test against the component registry. */
+export const presentedKinds: ReadonlySet<string> = new Set([...Object.keys(byKind), ...notEquipmentKindIds])
 
 export const presentationFor = (component: CompiledComponent): MimicPresentation => {
+  const notEquipment = notEquipmentReason(component)
+  if (notEquipment !== undefined) return { element: 'not-drawn', reason: notEquipment }
   const entry = byKind[String(component.kind)]
   if (entry === undefined) return { element: 'not-drawn', reason: `the mimic has no symbol for kind ${component.kind}` }
   return typeof entry === 'function' ? entry(component) : entry

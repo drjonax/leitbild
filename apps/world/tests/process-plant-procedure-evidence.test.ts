@@ -99,7 +99,7 @@ describe('read-only procedure condition evidence', () => {
 
   test('recording preserves a declared range failure instead of marking every sample good', () => {
     const failed = { ...plant, runtime: { ...runtime, readVariableSnapshotHandle: (handle: Parameters<typeof runtime.readVariableSnapshotHandle>[0]) => ({ ...runtime.readVariableSnapshotHandle(handle), ...(String(handle.path) === 'core.powerMw' ? { value: 5000, limits: { hardRange: { min: 0, max: 4000 } } } : {}) }) } }
-    const plan = createProcessPlantRecordingPlan({ selection: { packId: 'process-plant', profileId: 'operations' }, plants: new Map([[compiled.id, failed]]) })
+    const plan = createProcessPlantRecordingPlan({ selection: { packId: 'process-plant', profileId: 'operations' }, plants: new Map([[compiled.id, failed]]), unitLabels: new Map([[compiled.id, 'Test Unit']]) })
     const timestamp = isoTimestampSchema.parse('2026-10-02T10:00:00.000Z')
     const descriptor = plan.descriptors.find(row => row.signalId === 'core.powerMw')!
     const batch = plan.sample({ observedAt: timestamp, simulationTime: timestamp })

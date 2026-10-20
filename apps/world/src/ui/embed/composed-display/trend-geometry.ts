@@ -1,6 +1,7 @@
 // Pure geometry for composed-display trends. Time is Simulation Run time in
 // epoch milliseconds; values are the signal's native unit.
-import { formatValue, trendSpanMs } from '../../../packs/process-plant/displays/display-text.ts'
+import { trendSpanMs } from '../../../packs/process-plant/displays/display-text.ts'
+import { formatValue } from '../../../packs/process-plant/quantity-text.ts'
 import { HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 
 export interface ValueDomain {

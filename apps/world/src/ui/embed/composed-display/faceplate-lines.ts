@@ -9,8 +9,8 @@
 // without a browser; FaceplatePanel draws what it returns.
 import { measuresNow, type ComposedDisplayPen, type ComposedFaceplatePanel } from '../../../packs/process-plant/displays/compose.ts'
 import { faceplateNow, type Faceplate, type FaceplateComparison, type FaceplateCriterion, type FaceplateHead, type FaceplateHeld, type FaceplateLive, type FaceplateRow } from '../../../packs/process-plant/displays/faceplate-live.ts'
-import { displayValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
-import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+import { displayValue, logarithmicSpan, offScale, positionWord, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/quantity-text.ts'
+import type { ComposedDisplayThreshold } from '../../../packs/process-plant/ic/thresholds.ts'
 import { activeThreshold, limitsInForce, rateWindowMs, trendReading, type LimitState, type TrendPoint, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
 import { LEAD_VALUE_SPARKLINE_MS } from '../../../packs/process-plant/displays/composition.ts'
 import type { SafetyFunctionChip } from '../../../packs/process-plant/displays/safety-function-content.ts'

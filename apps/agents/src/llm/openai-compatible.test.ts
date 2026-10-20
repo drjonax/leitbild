@@ -116,6 +116,59 @@ describe('createOpenAICompatibleProvider', () => {
     } finally { fx.stop() }
   })
 
+  test('OpenRouter chat: carries its generation id, upstream provider and billed cost', async () => {
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({
+        id: 'gen-1', provider: 'OpenAI',
+        choices: [{ message: { role: 'assistant', content: 'billed' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2, cost: 0.00042 },
+      }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openrouter', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      const response = await provider.chat({ model: 'openai/gpt-6-sol', messages: [{ role: 'user', content: 'hi' }] })
+      expect(response.billing).toEqual({ generationId: 'gen-1', upstreamProvider: 'OpenAI', costUsd: 0.00042 })
+      expect(response.tokensUsed).toEqual({ prompt: 10, completion: 2 })
+    } finally { fx.stop() }
+  })
+
+  test('billing fields of the wrong type, or from another provider, are left out', async () => {
+    const body = JSON.stringify({
+      id: 'gen-2', provider: 7,
+      choices: [{ message: { role: 'assistant', content: 'x' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, cost: 'free' },
+    })
+    const fx = startFixture(() => ({ status: 200, body }))
+    try {
+      const openRouter = createOpenAICompatibleProvider({ name: 'openrouter', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      expect((await openRouter.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })).billing).toEqual({ generationId: 'gen-2' })
+      const other = createOpenAICompatibleProvider({ name: 'groq', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      expect((await other.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })).billing).toBeUndefined()
+    } finally { fx.stop() }
+  })
+
+  test('OpenRouter stream: the final chunk carries the generation id, upstream and billed cost', async () => {
+    const fx = startFixture(() => ({
+      status: 200, body: '',
+      streamLines: [
+        JSON.stringify({ id: 'gen-3', provider: 'OpenAI', model: 'openai/gpt-6-sol', choices: [{ delta: { content: 'he' } }] }),
+        JSON.stringify({ id: 'gen-3', provider: 'OpenAI', model: 'openai/gpt-6-sol', choices: [{ delta: { content: 'llo' }, finish_reason: 'stop' }] }),
+        JSON.stringify({ id: 'gen-3', provider: 'OpenAI', model: 'openai/gpt-6-sol', choices: [], usage: { prompt_tokens: 20, completion_tokens: 3, cost: 0.0011 } }),
+        '[DONE]',
+      ],
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openrouter', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      const chunks = []
+      for await (const chunk of provider.stream!({ model: 'openai/gpt-6-sol', messages: [{ role: 'user', content: 'hi' }] })) chunks.push(chunk)
+      const final = chunks.at(-1)!
+      expect(final.done).toBe(true)
+      expect(final.billing).toEqual({ generationId: 'gen-3', upstreamProvider: 'OpenAI', costUsd: 0.0011 })
+      expect(final.tokensUsed).toEqual({ prompt: 20, completion: 3 })
+    } finally { fx.stop() }
+  })
+
   test('429 with integer Retry-After → rate_limit error carries retryAfterMs', async () => {
     const fx = startFixture(() => ({
       status: 429,

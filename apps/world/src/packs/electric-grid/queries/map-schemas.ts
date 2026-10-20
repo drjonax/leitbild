@@ -95,6 +95,11 @@ export const gridMapStateResultSchema = z.object({
     tripped: z.array(flag).describe('1 when the branch\'s protection tripped it: open (closed 0) until reset-branch-protection, unlike a branch an operator opened.'),
     availability: z.array(finite).describe('Available fraction of the rating (0.01 resolution).'),
   }).strict(),
+  loadingBands: z.object({
+    attentionPercent: finite.describe('Closed branches loaded at or above this are constrained corridors, below any loading alarm.'),
+    highPercent: finite.describe('The lowest raise loading of the Automation\'s continuous-rating branch loading alarms.'),
+    overloadPercent: finite.describe('The highest raise loading of those alarms: a branch at or above it is overloaded.'),
+  }).strict().describe('How loadingPercent is banded, from the Automation the Grid runs.'),
   generators: z.object({
     dispatchMw: z.array(finite).describe('Active power output (MW, whole).'),
     state: z.array(generatorLifecycleStateSchema),

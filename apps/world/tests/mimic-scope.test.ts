@@ -9,7 +9,8 @@ import {
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
 import { itemServices, resolveMimicScope, stubText, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
 import { unpresentedKinds } from '../src/packs/process-plant/displays/mimic/presentation.ts'
-import { framingRules, itemBinding, linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { framingRules, itemBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/equipment/link-flow.ts'
 import { declaredPortFlows } from '../src/packs/process-plant/displays/compose.ts'
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:scope', loopCount: 4 }))
@@ -78,14 +79,18 @@ describe('mimic scope from the agent\'s intent', () => {
     ])
   })
 
-  test('around an item draws what feeds it and where its outflow goes, in every service it carries', () => {
+  test('around an item draws what feeds it and where its outflow goes in its process, and its power where services name it', () => {
+    // Its suction tank and its discharge header; where its bus feeds it, the drawing stops at it.
     const scope = drawn(graph, { around: ['auxFeedwaterPumpMotor'], reach: 1 })
-    // Its suction tank, its discharge header and its bus; the bus's other loads are a stop, not drawn. They are ten
-    // with the PORV block valve's motor, the pressurizer's backup heater breaker, the load centres and the
-    // component cooling water, service water and fan cooler loads, so the stop names three and counts the rest.
-    expect(scope.labels).toEqual(['AFW header', 'Bus A', 'CST', 'MD AFW A'])
-    expect(scope.carriers).toEqual(['auxFeedwater', 'electricalPower'])
-    expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CCW A, CFC A, CHG A and 7 more')
+    expect(scope.labels).toEqual(['AFW header', 'CST', 'MD AFW A'])
+    expect(scope.carriers).toEqual(['auxFeedwater'])
+    expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('MD AFW A: from Bus A')
+    // With its power named, the bus too; the bus's other loads are a stop, not drawn. They are ten with the PORV
+    // block valve's motor, the pressurizer's backup heater breaker, the load centres and the component cooling
+    // water, service water and fan cooler loads, so the stop names three and counts the rest.
+    const powered = drawn(graph, { around: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'], reach: 1 })
+    expect(powered.labels).toEqual(['AFW header', 'Bus A', 'CST', 'MD AFW A'])
+    expect(powered.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CCW A, CFC A, CHG A and 7 more')
     // Narrowed to its loop, a steam generator draws both sides, its steam line's safety valves and supply to the
     // turbine-driven AFW pump among them, and stops at the shared headers.
     expect(drawn(graph, { around: ['SG B'], loops: ['B'], reach: 1 }).labels).toEqual(['AFW valve B', 'ARV B', 'ATM', 'Core', 'FCV B', 'MSIV B', 'MSSV B', 'RCP B', 'SG B', 'TD AFW steam B'])

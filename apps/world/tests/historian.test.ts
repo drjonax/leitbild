@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { createRunHistorian, type RunHistorian } from '../src/features/historian/store.ts'
+import { historianSampleBudget } from '../src/features/historian/policy.ts'
 import type { IsoTimestamp, RecordingSeriesQuery } from '../src/core/model/index.ts'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -138,11 +139,11 @@ describe('Run Historian', () => {
     try {
       const descriptor = { id: 'series:text', subjectId: 'asset', signalId: 'text', title: 'Text', valueType: 'string' as const }
       const original = createRunHistorian(path, { limits: { minFreeBytes: 0 } })
-      original.record('test', { descriptors: [descriptor], samples: Array.from({ length: 200 }, () => ({ seriesId: descriptor.id, observedAt: at('2026-01-01T00:00:00.000Z'), value: 'x'.repeat(1000), quality: 'good' as const })) })
+      original.record('test', { descriptors: [descriptor], samples: Array.from({ length: 200 }, (_, index) => ({ seriesId: descriptor.id, observedAt: at('2026-01-01T00:00:00.000Z'), value: `${index} ${'x'.repeat(1000)}`, quality: 'good' as const })) })
       original.close()
       expect((await stat(path)).size).toBeGreaterThan(64 * 1024)
       const before = await readFile(path)
-      const limited = createRunHistorian(path, { limits: { maxBytes: 64 * 1024, maxSamples: 1, minFreeBytes: 0 } })
+      const limited = createRunHistorian(path, { limits: { maxBytes: 64 * 1024, minFreeBytes: 0 } })
       try {
         limited.record('test', { descriptors: [], samples: [{ seriesId: descriptor.id, observedAt: at(new Date().toISOString()), value: 'new', quality: 'good' }] })
         expect(limited.status()).toMatchObject({ sampleCount: 200, captureState: 'limited', discardedSinceOpen: 1 })
@@ -163,24 +164,32 @@ describe('Run Historian', () => {
 
   test('retains a bounded recent window and paginates equal times by sequence on either time axis', () => {
     let now = Date.parse('2026-01-01T00:00:10.000Z')
-    const historian = createRunHistorian(':memory:', { limits: { maxSamples: 3, maxAgeMs: 20_000 }, now: () => now })
+    // The smallest byte budget: its sample budget is derived, a hundred-odd samples.
+    const historian = createRunHistorian(':memory:', { limits: { maxBytes: 64 * 1024, maxAgeMs: 20_000 }, now: () => now })
+    const { maxSamples } = historian.status().limits
+    expect(maxSamples).toBe(historianSampleBudget(64 * 1024))
     const observedAt = at('2026-01-01T00:00:10.000Z')
     const simulationTime = at('2026-01-01T10:00:10.000Z')
-    historian.record('test.local', { descriptors: [{ id: 'series:value', subjectId: 'asset', signalId: 'value', title: 'Value', valueType: 'number' }], samples: [1, 2, 3, 4, 5].map(value => ({ seriesId: 'series:value', observedAt, simulationTime, value, quality: 'good' })) })
-    expect(historian.status()).toMatchObject({ sampleCount: 3, discardedSinceOpen: 2 })
+    const offered = maxSamples + 5
+    historian.record('test.local', { descriptors: [{ id: 'series:value', subjectId: 'asset', signalId: 'value', title: 'Value', valueType: 'number' }], samples: [] })
+    for (let first = 1; first <= offered; first += 4) historian.record('test.local', { descriptors: [], samples: Array.from({ length: Math.min(4, offered - first + 1) }, (_, index) => ({ seriesId: 'series:value', observedAt, simulationTime, value: first + index, quality: 'good' as const })) })
+    // Over budget, eviction goes a little below it at once, the oldest first.
+    const retained = historian.status().sampleCount!
+    expect(retained).toBeLessThan(maxSamples)
+    expect(historian.status()).toMatchObject({ discardedSinceOpen: offered - retained, captureState: 'recording' })
+    const firstRetained = offered - retained + 1
     const page = rawPage(historian, { limit: 2, timeAxis: 'simulation', from: '2026-01-01T12:00:00+02:00' })
-    expect(page.samples.map(sample => sample.value)).toEqual([5, 4])
+    expect(page.samples.map(sample => sample.value)).toEqual([offered, offered - 1])
     expect(page.windowSummary).toMatchObject({
-      sampleCount: 3,
-      distinctValueCount: 3,
-      numericMinimum: 3,
-      numericMaximum: 5,
-      numericAverage: 4,
-      firstSample: { value: 3 },
-      lastSample: { value: 5 },
+      sampleCount: retained,
+      distinctValueCount: retained,
+      numericMinimum: firstRetained,
+      numericMaximum: offered,
+      firstSample: { value: firstRetained },
+      lastSample: { value: offered },
     })
     expect(page.hasMore).toBe(true)
-    expect(rawPage(historian, { beforeSequence: page.nextBeforeSequence! }).samples.map(sample => sample.value)).toEqual([3])
+    expect(rawPage(historian, { beforeSequence: firstRetained + 1 }).samples.map(sample => sample.value)).toEqual([firstRetained])
     expect(rawPage(historian, { beforeSequence: 2 }).retentionGap).toBe(true)
     expect(page).toMatchObject({
       retainedFromObservedAt: observedAt,
@@ -193,9 +202,11 @@ describe('Run Historian', () => {
       from: '2026-01-01T09:00:00Z',
       to: '2026-01-01T09:01:00Z',
     })).toMatchObject({ samples: [], retentionGap: true, retainedFromSimulationTime: simulationTime })
+    // Expiry by age takes every sample past it, a series' newest too.
     now += 30_000
-    historian.record('test.local', { descriptors: [], samples: [{ seriesId: 'series:value', observedAt: at(new Date(now).toISOString()), value: 6, quality: 'good' }] })
-    expect(historian.status()).toMatchObject({ sampleCount: 1, discardedSinceOpen: 5 })
+    historian.record('test.local', { descriptors: [], samples: [{ seriesId: 'series:value', observedAt: at(new Date(now).toISOString()), value: offered, quality: 'good' }] })
+    expect(historian.status()).toMatchObject({ sampleCount: 1, discardedSinceOpen: offered })
+    expect(rawPage(historian).samples.map(sample => sample.value)).toEqual([offered])
     historian.close()
   })
   test('persists typed samples, exposes descriptors, and applies bounded filters', () => {

@@ -14,18 +14,25 @@ import { createDeploymentRuntime } from '../core/deployment-runtime.ts'
 import { createAgentsWorkspaceRuntime } from '../workspace-runtime.ts'
 import { makeStubGateway, makeStubSetup, stubProviderConfig } from './__fixtures__/stub-gateway.ts'
 import { displayRequestRoutes } from './routes/display-requests.ts'
-import { DISPLAY_REQUEST_CAUSE, DISPLAY_SKILL, displayRequestPath } from '../core/display-request.ts'
+import { newWorkspaceId } from '@leitbild/contracts'
+import { DISPLAY_REQUEST_CAUSE, displayRequestPath } from '../core/display-request.ts'
+import { serveDisplayHost } from './__fixtures__/display-host.ts'
 import type { RouteContext } from './routes/types.ts'
 import type { ChatRequest, StreamChunk } from '../core/types/llm.ts'
 import type { AIAgent } from '../core/types/agent.ts'
 
 describe('display request wiring', () => {
   let homeDir: string
+  // The Room's Scope reaches an operation the Host's catalog marks as publishing a display.
+  const workspaceId = newWorkspaceId()
+  let host: ReturnType<typeof serveDisplayHost>
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'leitbild-display-request-'))
     process.env.LEITBILD_HOME = homeDir
+    host = serveDisplayHost(workspaceId, { publishes: true })
   })
   afterEach(async () => {
+    host.stop()
     await rm(homeDir, { recursive: true, force: true })
     delete process.env.LEITBILD_HOME
   })
@@ -47,9 +54,9 @@ describe('display request wiring', () => {
       },
     }
     const deployment = createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(gateway) })
-    const system = createAgentsWorkspaceRuntime({ deployment })
+    const system = createAgentsWorkspaceRuntime({ deployment, workspaceId, workspaceHostUrl: host.url })
     const room = system.rooms.createRoom({ name: 'Displays', createdBy: 'test' })
-    const assistant = await system.spawnAIAgent({ name: 'Assistant', model: 'mock-model', persona: 'Answer briefly.', skills: [DISPLAY_SKILL] }) as AIAgent
+    const assistant = await system.spawnAIAgent({ name: 'Assistant', model: 'mock-model', persona: 'Answer briefly.' }) as AIAgent
     const human = await system.spawnHumanAgent({ name: 'Alice' }, () => {})
     await system.addAgentToRoom(assistant.id, room.profile.id, 'test')
     await system.addAgentToRoom(human.id, room.profile.id, 'test')
@@ -99,9 +106,9 @@ describe('display request wiring', () => {
       },
     }
     const deployment = createDeploymentRuntime({ providerConfig: stubProviderConfig, providerSetup: makeStubSetup(gateway) })
-    const system = createAgentsWorkspaceRuntime({ deployment })
+    const system = createAgentsWorkspaceRuntime({ deployment, workspaceId, workspaceHostUrl: host.url })
     const room = system.rooms.createRoom({ name: 'Displays', createdBy: 'test' })
-    const assistant = await system.spawnAIAgent({ name: 'Assistant', model: 'mock-model', persona: 'Answer briefly.', skills: [DISPLAY_SKILL] }) as AIAgent
+    const assistant = await system.spawnAIAgent({ name: 'Assistant', model: 'mock-model', persona: 'Answer briefly.' }) as AIAgent
     const human = await system.spawnHumanAgent({ name: 'Alice' }, () => {})
     await system.addAgentToRoom(assistant.id, room.profile.id, 'test')
     await system.addAgentToRoom(human.id, room.profile.id, 'test')

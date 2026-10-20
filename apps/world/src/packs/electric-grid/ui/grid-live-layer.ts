@@ -20,6 +20,7 @@ import {
   type GridMapStateResult,
 } from '../queries/map-schemas.ts'
 import { gridMapPalette } from './grid-map-palette.ts'
+import { GRID_ATTENTION_LOADING_PERCENT, type GridLoadingBands } from '../loading-bands.ts'
 import { gridNorwayStyle } from './grid-norway-style.ts'
 
 // The Grid's live map layer: branch loading, switching, trips, energisation and flow direction,
@@ -31,21 +32,19 @@ export const gridLiveLayerGroupId = 'electric-grid:live'
 const liveLayerId = 'electric-grid'
 const flowArrowImageId = `${liveLayerId}:flow-arrow`
 
-// Loading bands (% of the derated rating): attention from 70 % (the summary's constrained
-// threshold), high from 90 %, overloaded from 100 %.
-const watchLoadingPercent = 70
-const highLoadingPercent = 90
-const overloadLoadingPercent = 100
+// Loading bands (% of the derated rating), as map.state reads them from the Grid's Automation
+// (loading-bands.ts): attention from the summary's constrained threshold, high from the lowest
+// continuous-rating loading alarm, overloaded from the highest.
 // Feature-state carries a branch's loading band (0 normal, 1 watch, 2 high, 3 overloaded), the
 // steps its paint draws, not the raw percent: a revision then re-sets, and MapLibre re-evaluates,
 // only the branches that change band. The hover card and labels read the exact percent.
 const watchBand = 1
 const highBand = 2
 const overloadBand = 3
-export const gridLoadingBand = (loadingPercent: number): number =>
-  loadingPercent >= overloadLoadingPercent ? overloadBand
-    : loadingPercent >= highLoadingPercent ? highBand
-      : loadingPercent >= watchLoadingPercent ? watchBand
+export const gridLoadingBand = (bands: GridLoadingBands, loadingPercent: number): number =>
+  loadingPercent >= bands.overloadPercent ? overloadBand
+    : loadingPercent >= bands.highPercent ? highBand
+      : loadingPercent >= bands.attentionPercent ? watchBand
         : 0
 // Flow below 5 MW draws no direction arrow: it is within the DC model's rounding of small flows.
 const flowArrowMinimumMw = 5
@@ -480,7 +479,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   geometry.branches.forEach((branch, position) => {
     const closed = result.branches.closed[position] === 1
     const energized = busEnergized(branch.fromBus) && busEnergized(branch.toBus)
-    const loadingBand = gridLoadingBand(result.branches.loadingPercent[position]!)
+    const loadingBand = gridLoadingBand(result.loadingBands, result.branches.loadingPercent[position]!)
     const flow = result.branches.flowMw[position]!
     featureStates.set(refs.branchStart + position, {
       live: true,
@@ -548,9 +547,9 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   const tripped = geometry.branches.flatMap((_branch, position) => result.branches.tripped[position] === 1 && drawn(position) ? [branchLabel(position, 'Tripped', 'alarm')] : [])
   const loaded = geometry.branches
     .map((branch, position) => ({ branch, position, loading: result.branches.loadingPercent[position]! }))
-    .filter(item => result.branches.closed[item.position] === 1 && item.loading >= watchLoadingPercent && drawn(item.position))
+    .filter(item => result.branches.closed[item.position] === 1 && item.loading >= result.loadingBands.attentionPercent && drawn(item.position))
     .sort((left, right) => right.loading - left.loading)
-    .map(item => branchLabel(item.position, `${item.branch.label} ${Math.round(item.loading)} %`, item.loading >= overloadLoadingPercent ? 'alarm' : 'normal'))
+    .map(item => branchLabel(item.position, `${item.branch.label} ${Math.round(item.loading)} %`, item.loading >= result.loadingBands.overloadPercent ? 'alarm' : 'normal'))
   const links = geometry.hvdcLinks.map((link, position) => {
     const linkState = result.hvdcLinks.state[position]!
     const transfer = result.hvdcLinks.transferMw[position]!
@@ -769,10 +768,11 @@ export const gridLiveStateLegend: PackMapLegend = {
   id: 'electric-grid:live-state',
   title: 'Live grid state',
   entries: [
-    { id: 'normal', label: `Loaded below ${watchLoadingPercent} %`, symbol: 'line', color: themed.normal, sizePx: 3 },
-    { id: 'watch', label: `${watchLoadingPercent}–${highLoadingPercent} %`, symbol: 'line', color: themed.watch, sizePx: 3 },
-    { id: 'high', label: `${highLoadingPercent}–${overloadLoadingPercent} %`, symbol: 'line', color: themed.high, sizePx: 3 },
-    { id: 'overload', label: `Overloaded (≥ ${overloadLoadingPercent} %)`, symbol: 'line', color: themed.overload, sizePx: 4 },
+    // The alarm bands come from the Grid's Automation, which a static legend cannot read: it names them, the hover card gives the percent.
+    { id: 'normal', label: `Loaded below ${GRID_ATTENTION_LOADING_PERCENT} %`, symbol: 'line', color: themed.normal, sizePx: 3 },
+    { id: 'watch', label: `${GRID_ATTENTION_LOADING_PERCENT} % to the loading alarm`, symbol: 'line', color: themed.watch, sizePx: 3 },
+    { id: 'high', label: 'Loading alarm', symbol: 'line', color: themed.high, sizePx: 3 },
+    { id: 'overload', label: 'Overloaded (overload alarm)', symbol: 'line', color: themed.overload, sizePx: 4 },
     { id: 'tripped', label: 'Tripped by protection', symbol: 'dashed-line', color: themed.tripped, sizePx: 3 },
     { id: 'open', label: 'Open', symbol: 'line', color: themed.open, sizePx: 3 },
     { id: 'hvdc', label: 'HVDC link in service (grey: blocked, red: tripped)', symbol: 'dashed-line', color: themed.hvdc, sizePx: 3 },

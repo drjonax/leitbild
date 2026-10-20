@@ -1,5 +1,6 @@
 import { followAllowanceMs } from '../../operations/controls.ts'
-import type { MimicFlowBinding, MimicItemBinding, MimicShutdownBinding, MimicStateBinding } from './bindings.ts'
+import type { MimicItemBinding, MimicShutdownBinding, MimicStateBinding } from './bindings.ts'
+import type { LinkFlowBinding } from '../../equipment/link-flow.ts'
 
 // What a drawn item and pipe show for one sample. Pure and shared by the
 // server (the compose result's equipment list) and the embed (the drawing),
@@ -224,7 +225,7 @@ export interface FlowLook {
   readonly value: number | null
 }
 
-export const flowLook = (binding: MimicFlowBinding, index: SampleIndex): FlowLook => {
+export const flowLook = (binding: LinkFlowBinding, index: SampleIndex): FlowLook => {
   if (binding.fidelity === 'unverified') return { look: 'unknown', value: null }
   const value = numberAt(index, binding.flowPath)
   if (value === null) return { look: 'unknown', value: null }

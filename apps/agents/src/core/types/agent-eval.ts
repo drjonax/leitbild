@@ -18,6 +18,12 @@
 // record, and so /api/diagnostics/evals/:traceId can fetch the assembled
 // trace.
 
+// Why a turn's answer was sent back to the model for one more pass
+// (evaluation.ts): the turn had to present a display and presented none; it
+// composed one and did not present it; a display or map block was invalid; the
+// display it presents contradicts a value it cites; it claimed an execution.
+export type CorrectionCause = 'required-view' | 'unpresented-view' | 'view-fence' | 'map-fence' | 'contradiction' | 'claimed-execution'
+
 export type EvalEventCore =
   | { readonly kind: 'chunk'; readonly delta: string }
   | { readonly kind: 'thinking'; readonly delta: string }
@@ -33,6 +39,9 @@ export type EvalEventCore =
   | { readonly kind: 'warning'; readonly message: string }
   | { readonly kind: 'model_fallback'; readonly preferred: string; readonly effective: string; readonly reason: string }
   | { readonly kind: 'eval_completed'; readonly outcome: 'respond' | 'pass' | 'error' | 'cancelled' }
+  // Emitted before every correction pass, with each cause and the issues the
+  // correction names, so every correction turn is logged with why it ran.
+  | { readonly kind: 'correction'; readonly causes: ReadonlyArray<CorrectionCause>; readonly issues: ReadonlyArray<string> }
   // Tool-iteration check-in: the agent's tool loop has used `iterations`
   // calls without finishing. It emits this event and waits for explicit
   // user input. The UI surfaces

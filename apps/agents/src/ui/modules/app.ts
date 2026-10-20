@@ -428,6 +428,10 @@ $roomMessages.listen((allMessages, _old, changedRoomId) => {
   const existingIds = new Set(
     Array.from(messagesDiv.querySelectorAll('[data-msg-id]')).map(el => el.getAttribute('data-msg-id')!)
   )
+  // A Room's first messages arrive after it opened empty (on load, they are
+  // fetched): it opens at the newest one, as a cached Room does.
+  const opening = existingIds.size === 0 && msgs.length > 0
+  const nearBottom = messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 100
   for (const m of msgs) {
     if (!existingIds.has(m.id)) {
       renderMessage({
@@ -446,8 +450,12 @@ $roomMessages.listen((allMessages, _old, changedRoomId) => {
   // Ensure thinking indicators stay at the bottom (after newly appended messages)
   syncThinkingIndicators()
 
-  // Scroll to bottom if near bottom
-  if (messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 100) {
+  // Follow new messages when the reader was at the bottom, and open at the newest.
+  if (opening) {
+    messagesDiv.style.scrollBehavior = 'auto'
+    messagesDiv.scrollTop = messagesDiv.scrollHeight
+    requestAnimationFrame(() => { messagesDiv.style.scrollBehavior = '' })
+  } else if (nearBottom) {
     messagesDiv.scrollTop = messagesDiv.scrollHeight
   }
 

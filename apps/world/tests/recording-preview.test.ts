@@ -32,7 +32,10 @@ test('Halden recording preview uses Pack-owned series selection and sampling cad
     expect(plants.initialSeriesCount).toBe(3208)
     expect(plants.samplesPerSimulationSecond).toBe(3208)
     expect(preview.recording.selections.every(selection => selection.initialSeriesCount !== null)).toBe(true)
-    expect(preview.recording.sampleWindowSimulationSeconds).toBeLessThan(138)
+    // At full sampling, before exception recording: the derived sample budget over the selections' rate (just over three minutes).
+    const rate = preview.recording.selections.reduce((sum, selection) => sum + selection.samplesPerSimulationSecond!, 0)
+    expect(preview.recording.sampleWindowSimulationSeconds).toBe(preview.recording.sampleBudget / rate)
+    expect(preview.recording.sampleWindowSimulationSeconds).toBeLessThan(240)
     const slower = await registry.previewScenario({ ...definition, packs: definition.packs.map(pack => pack.id === 'process-plant' ? { ...pack, recording: { profileId: 'operations', intervalMs: 5000 } } : pack) })
     expect(slower.recording.sampleWindowSimulationSeconds!).toBeGreaterThan(preview.recording.sampleWindowSimulationSeconds! * 4)
   } finally { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) }

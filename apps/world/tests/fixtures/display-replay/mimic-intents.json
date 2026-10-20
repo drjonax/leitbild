@@ -1,0 +1,1815 @@
+{
+ "about": "Every unique mimic intent agents wrote across the display evaluation runs (Leitbild-evaluation-evidence 2026-10-09 … 2026-10-19a), replayed at bacf7a115 on the 4-loop PWR reference Plant.",
+ "budgets": [
+  {
+   "maxWidth": 800,
+   "maxHeight": 624
+  },
+  {
+   "maxWidth": 800,
+   "maxHeight": 744
+  }
+ ],
+ "intents": [
+  {
+   "intent": {
+    "to": [
+     "steam generators"
+    ],
+    "services": [
+     "feedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/show-feed-lineup",
+    "2026-10-10b-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:cfee4acb6fd34de76d59c13e2f715d8bf14731203e4eda2b2ff771591d678a12"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:d0a814d20e509e765664da7e12947f0ca3363240f2c4e12ae0dca4db491773f2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "safetyInjection"
+    ],
+    "loops": [
+     "C"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/si-loop-c",
+    "2026-10-10b-operator-displays/si-loop-c",
+    "2026-10-10c-operator-displays/si-loop-c",
+    "2026-10-11b-operator-displays/si-loop-c",
+    "2026-10-11c-operator-displays/si-loop-c",
+    "2026-10-12a-operator-displays/si-loop-c",
+    "2026-10-12b-operator-displays/si-loop-c",
+    "2026-10-12c-operator-displays/si-loop-c",
+    "2026-10-12d-operator-displays/si-loop-c",
+    "2026-10-13a-operator-displays/si-loop-c",
+    "2026-10-19a-display-audit/si-loop-c",
+    "2026-10-19a-live-probe-data/d1-si-loop-c-si-loop-c#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2256a25dc45b491ebb0d5f802e520f55fff56a738df764f86b1778a9e503222c"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2256a25dc45b491ebb0d5f802e520f55fff56a738df764f86b1778a9e503222c"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater",
+     "electricalPower"
+    ],
+    "loops": [
+     "A"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/afw-pump-around"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2e661adb49afd411ca62b0cfec10fd590b8da8badd9f0ec62c4df5f0f63e66aa"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2e661adb49afd411ca62b0cfec10fd590b8da8badd9f0ec62c4df5f0f63e66aa"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "dieselGeneratorA",
+     "dieselBreakerA",
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/diesel-afw"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:6a901f31b2829e0b8e570be352340e78f242c837f32c2385f874f090ef1143c4"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:23ed68508b7bd94ea7417382d942edb28ae586264cc898f88999e7899c5122cb"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "electricalPower"
+    ],
+    "loops": [
+     "A"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/bus-a-supply",
+    "2026-10-10b-operator-displays/loss-offsite-power"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:5135b9a1469873f421494bd6cfa95af62640b66cf7df2a9689f41bb028fb7c5a"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:5135b9a1469873f421494bd6cfa95af62640b66cf7df2a9689f41bb028fb7c5a"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "motor-driven auxiliary feedwater pump"
+    ],
+    "services": [
+     "electricalPower",
+     "auxFeedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/diesel-afw"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:0f0478b4dad33da2ecc53a7e44b6c818f41d0a79f2245a6e00126a716514d323"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:3fddce46a6ba9c94a6ff2517ad191f206aa8d1f537ae56d97a804758733f5a21"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ],
+    "to": [
+     "Steam Generator A",
+     "Steam Generator B",
+     "Steam Generator C",
+     "Steam Generator D"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/afw-reach"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16b243123d452ba4d3425ff170bee742a7fa65cd3fb1423b18a16551dcd47a7b"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:069a38c8b0fdd9ae7ee6dedda4952f408be5ae1f0690c47c40f5ad16eb9f97f1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "pressurizer"
+    ],
+    "services": [
+     "primaryRelief"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/porv-path",
+    "2026-10-10b-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "motor-driven auxiliary feedwater pump A"
+    ],
+    "services": [
+     "auxFeedwater",
+     "electricalPower"
+    ],
+    "loops": [
+     "A"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/afw-pump-around"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2e661adb49afd411ca62b0cfec10fd590b8da8badd9f0ec62c4df5f0f63e66aa"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2e661adb49afd411ca62b0cfec10fd590b8da8badd9f0ec62c4df5f0f63e66aa"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "sgB"
+    ],
+    "services": [
+     "feedwater"
+    ],
+    "loops": [
+     "B"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/feed-path-b"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "pressurizerReliefTank"
+    ],
+    "services": [
+     "primaryRelief"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "feedwater"
+    ],
+    "loops": [
+     "A",
+     "B",
+     "C",
+     "D"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/loss-main-feedwater",
+    "2026-10-19a-display-audit/show-feed-lineup",
+    "2026-10-19a-live-probe-data/d1-show-feed-lineup-show-feed-lineup#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:cfee4acb6fd34de76d59c13e2f715d8bf14731203e4eda2b2ff771591d678a12"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:d0a814d20e509e765664da7e12947f0ca3363240f2c4e12ae0dca4db491773f2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "pressurizer"
+    ],
+    "to": [
+     "pressurizerReliefTank"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "motor-driven auxiliary feedwater pump A"
+    ],
+    "loops": [
+     "A",
+     "B"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-pump-around"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "reach": 3,
+    "loops": [
+     "A",
+     "B"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-pump-around",
+    "2026-10-10c-operator-displays/afw-pump-around"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "motor-driven auxiliary feedwater pump A"
+    ],
+    "loops": [
+     "A",
+     "B"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-pump-around"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "safetyBusA"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/bus-a-supply",
+    "2026-10-10c-operator-displays/bus-a-supply",
+    "2026-10-11b-operator-displays/bus-a-supply",
+    "2026-10-12a-operator-displays/bus-a-supply",
+    "2026-10-12b-operator-displays/bus-a-supply",
+    "2026-10-12c-operator-displays/bus-a-supply",
+    "2026-10-12d-operator-displays/bus-a-supply"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:32386fc286a2fa279b8d3ecbb7f39f2395197a4dad08ee29e6d59305ada26f98"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:32386fc286a2fa279b8d3ecbb7f39f2395197a4dad08ee29e6d59305ada26f98"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ],
+    "around": [
+     "motor-driven auxiliary feedwater pump"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/diesel-afw"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:6a901f31b2829e0b8e570be352340e78f242c837f32c2385f874f090ef1143c4"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:23ed68508b7bd94ea7417382d942edb28ae586264cc898f88999e7899c5122cb"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "electricalPower"
+    ],
+    "to": [
+     "safetyBusA",
+     "safetyBusB"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/loss-offsite-power",
+    "2026-10-12d-operator-displays/loss-offsite-power",
+    "2026-10-19a-display-audit/loss-offsite-power",
+    "2026-10-19a-live-probe-data/d1-loss-offsite-power-loss-offsite-power#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:735117ac5f1a7796b4a1e3cb05e9e85148d93e8db8bd536397405da7ba5cd880"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:55e5470c0206eb274642e55c279eb349cd7ec8c35a3a7fd1fd35b06d2df0fae1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "electricalPower",
+     "auxFeedwater"
+    ],
+    "loops": [
+     "A"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/diesel-afw"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2e661adb49afd411ca62b0cfec10fd590b8da8badd9f0ec62c4df5f0f63e66aa"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2e661adb49afd411ca62b0cfec10fd590b8da8badd9f0ec62c4df5f0f63e66aa"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "mainFeedwaterPumpA",
+     "mainFeedwaterPumpB"
+    ],
+    "to": [
+     "sgA",
+     "sgB",
+     "sgC",
+     "sgD"
+    ],
+    "services": [
+     "feedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2a80ace7ae12ad4c37e066be6c5655aafbfed13c81ddbe2ae55a430febd21fa7"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:730423543e72c31d56e8374e5968f3297e6e38fd9630a78e24b63faf269ce9cd"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater",
+     "electricalPower"
+    ],
+    "loops": [
+     "A",
+     "B"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-pump-around"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "sgB"
+    ],
+    "services": [
+     "feedwater"
+    ],
+    "loops": [
+     "B"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/feed-path-b",
+    "2026-10-12d-operator-displays/feed-path-b",
+    "2026-10-19a-display-audit/feed-path-b",
+    "2026-10-19a-live-probe-data/a1-feed-path-b#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "auxFeedwaterPumpMotor",
+     "auxFeedwaterPumpMotorB"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/diesel-afw",
+    "2026-10-10c-operator-displays/diesel-afw",
+    "2026-10-11b-operator-displays/diesel-afw",
+    "2026-10-12d-operator-displays/diesel-afw",
+    "2026-10-13a-operator-displays/diesel-afw"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:23b29b90b48d37e0a5f05ab1be052604b16164248b95cbfa2a86c181d5de9f45"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:23b29b90b48d37e0a5f05ab1be052604b16164248b95cbfa2a86c181d5de9f45"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "steam generator B"
+    ],
+    "services": [
+     "feedwater"
+    ],
+    "loops": [
+     "B"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/feed-path-b"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "safetyInjection",
+     "primaryInjection"
+    ],
+    "loops": [
+     "C"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/si-loop-c"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2256a25dc45b491ebb0d5f802e520f55fff56a738df764f86b1778a9e503222c"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2256a25dc45b491ebb0d5f802e520f55fff56a738df764f86b1778a9e503222c"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "safetyBusA",
+     "safetyBusB"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/loss-offsite-power",
+    "2026-10-11b-operator-displays/loss-offsite-power",
+    "2026-10-11c-operator-displays/loss-offsite-power",
+    "2026-10-13a-operator-displays/loss-offsite-power"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:735117ac5f1a7796b4a1e3cb05e9e85148d93e8db8bd536397405da7ba5cd880"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:55e5470c0206eb274642e55c279eb349cd7ec8c35a3a7fd1fd35b06d2df0fae1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "pressurizer"
+    ],
+    "services": [
+     "primaryRelief",
+     "safetyInjection"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/porv-open"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "feedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/show-feed-lineup",
+    "2026-10-10c-operator-displays/show-feed-lineup",
+    "2026-10-11c-operator-displays/show-feed-lineup",
+    "2026-10-12a-operator-displays/show-feed-lineup",
+    "2026-10-13a-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:cfee4acb6fd34de76d59c13e2f715d8bf14731203e4eda2b2ff771591d678a12"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:d0a814d20e509e765664da7e12947f0ca3363240f2c4e12ae0dca4db491773f2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater",
+     "electricalPower"
+    ],
+    "loops": [
+     "A",
+     "B"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-pump-around",
+    "2026-10-19a-live-probe-data/d1-afw-pump-around-afw-pump-around#requested"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:c726386e602ba31c0c89fc2a10e95623b677acd49d957ca90eca8593c8229fa2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "Pressurizer"
+    ],
+    "to": [
+     "Pressurizer Relief Tank"
+    ],
+    "services": [
+     "primaryRelief"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "Main Feedwater Pump A",
+     "Main Feedwater Pump B"
+    ],
+    "to": [
+     "Steam Generator A",
+     "Steam Generator B",
+     "Steam Generator C",
+     "Steam Generator D"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2a80ace7ae12ad4c37e066be6c5655aafbfed13c81ddbe2ae55a430febd21fa7"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:730423543e72c31d56e8374e5968f3297e6e38fd9630a78e24b63faf269ce9cd"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ],
+    "loops": [
+     "A",
+     "B",
+     "C",
+     "D"
+    ],
+    "to": [
+     "sgA",
+     "sgB",
+     "sgC",
+     "sgD"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-reach"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16b243123d452ba4d3425ff170bee742a7fa65cd3fb1423b18a16551dcd47a7b"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:069a38c8b0fdd9ae7ee6dedda4952f408be5ae1f0690c47c40f5ad16eb9f97f1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "sgB"
+    ],
+    "services": [
+     "feedwater"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/feed-path-b",
+    "2026-10-10c-operator-displays/feed-path-b"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:63bfbf4f982b60a9d98fca3999af06193f82cee6ba910c9a766a26812e018570"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "safetyBusA"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "loops": [
+     "A"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/bus-a-supply"
+   ],
+   "outcomes": [
+    {
+     "draws": false,
+     "issues": [
+      "electricalPower has no equipment in loop A and no route into or out of it; it draws only shared equipment, so drop \"loops\""
+     ]
+    },
+    {
+     "draws": false,
+     "issues": [
+      "electricalPower has no equipment in loop A and no route into or out of it; it draws only shared equipment, so drop \"loops\""
+     ]
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ],
+    "to": [
+     "sgA",
+     "sgB",
+     "sgC",
+     "sgD"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/afw-reach"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16b243123d452ba4d3425ff170bee742a7fa65cd3fb1423b18a16551dcd47a7b"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:069a38c8b0fdd9ae7ee6dedda4952f408be5ae1f0690c47c40f5ad16eb9f97f1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ],
+    "loops": [
+     "A",
+     "B",
+     "C",
+     "D"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/loss-main-feedwater",
+    "2026-10-12d-operator-displays/afw-reach",
+    "2026-10-19a-display-audit/afw-reach",
+    "2026-10-19a-live-probe-data/d1-afw-reach-afw-reach#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16b243123d452ba4d3425ff170bee742a7fa65cd3fb1423b18a16551dcd47a7b"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:069a38c8b0fdd9ae7ee6dedda4952f408be5ae1f0690c47c40f5ad16eb9f97f1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "sgB"
+    ],
+    "services": [
+     "feedwater"
+    ],
+    "loops": [
+     "B"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/feed-path-b"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:363d4fcdbe3403d22563a32552e4bc9cb3f5ebabb02fc8f5be11018f83ea2c5f"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:363d4fcdbe3403d22563a32552e4bc9cb3f5ebabb02fc8f5be11018f83ea2c5f"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/diesel-afw",
+    "2026-10-12d-operator-displays/loss-main-feedwater",
+    "2026-10-19a-display-audit/loss-main-feedwater",
+    "2026-10-19a-live-probe-data/c1-loss-main-feedwater-loss-main-feedwater#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16b243123d452ba4d3425ff170bee742a7fa65cd3fb1423b18a16551dcd47a7b"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:069a38c8b0fdd9ae7ee6dedda4952f408be5ae1f0690c47c40f5ad16eb9f97f1"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "electricalPower"
+    ],
+    "loops": [
+     "A"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-10b-operator-displays/bus-a-supply"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:5135b9a1469873f421494bd6cfa95af62640b66cf7df2a9689f41bb028fb7c5a"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:5135b9a1469873f421494bd6cfa95af62640b66cf7df2a9689f41bb028fb7c5a"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "pressurizer"
+    ],
+    "to": [
+     "pressurizerReliefTank"
+    ],
+    "services": [
+     "primaryRelief"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10c-operator-displays/porv-path",
+    "2026-10-11b-operator-displays/porv-path",
+    "2026-10-13a-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "dieselGeneratorA",
+     "dieselGeneratorB"
+    ],
+    "to": [
+     "safetyBusA",
+     "safetyBusB"
+    ],
+    "services": [
+     "electricalPower"
+    ]
+   },
+   "seenIn": [
+    "2026-10-10c-operator-displays/loss-offsite-power",
+    "2026-10-12b-operator-displays/loss-offsite-power"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:49301b92e856aa9c8547ad9c5cce091801e38df399e574152a11040606cefea3"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:49301b92e856aa9c8547ad9c5cce091801e38df399e574152a11040606cefea3"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "feedwater"
+    ],
+    "to": [
+     "sgA",
+     "sgB",
+     "sgC",
+     "sgD"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-11b-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:cfee4acb6fd34de76d59c13e2f715d8bf14731203e4eda2b2ff771591d678a12"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:d0a814d20e509e765664da7e12947f0ca3363240f2c4e12ae0dca4db491773f2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "feedwaterHeader"
+    ],
+    "to": [
+     "sgB"
+    ],
+    "services": [
+     "feedwater"
+    ],
+    "loops": [
+     "B"
+    ]
+   },
+   "seenIn": [
+    "2026-10-11b-operator-displays/feed-path-b",
+    "2026-10-12c-operator-displays/feed-path-b",
+    "2026-10-13a-operator-displays/feed-path-b"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:363d4fcdbe3403d22563a32552e4bc9cb3f5ebabb02fc8f5be11018f83ea2c5f"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:363d4fcdbe3403d22563a32552e4bc9cb3f5ebabb02fc8f5be11018f83ea2c5f"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "pressurizer"
+    ],
+    "to": [
+     "pressurizerReliefTank"
+    ],
+    "services": [
+     "primaryRelief",
+     "primaryRelease"
+    ]
+   },
+   "seenIn": [
+    "2026-10-11c-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "dieselGeneratorA"
+    ],
+    "to": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "electricalPower"
+    ]
+   },
+   "seenIn": [
+    "2026-10-11c-operator-displays/diesel-afw",
+    "2026-10-12c-operator-displays/diesel-afw"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:9b4da4381192aead5d33fec77074afc41af14bee24449d0d9bf7c9dda098e0e5"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:9b4da4381192aead5d33fec77074afc41af14bee24449d0d9bf7c9dda098e0e5"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "sgB"
+    ],
+    "services": [
+     "feedwater",
+     "auxFeedwater"
+    ],
+    "loops": [
+     "B"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-11c-operator-displays/feed-path-b",
+    "2026-10-12a-operator-displays/feed-path-b",
+    "2026-10-12b-operator-displays/feed-path-b"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2cc517cb99a4c3224ab4198afc22574a8e55473e207f43b54cba119d950fc671"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2cc517cb99a4c3224ab4198afc22574a8e55473e207f43b54cba119d950fc671"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "safetyBusA"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-11c-operator-displays/bus-a-supply",
+    "2026-10-13a-operator-displays/bus-a-supply"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:32386fc286a2fa279b8d3ecbb7f39f2395197a4dad08ee29e6d59305ada26f98"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:32386fc286a2fa279b8d3ecbb7f39f2395197a4dad08ee29e6d59305ada26f98"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "dieselGeneratorA",
+     "dieselGeneratorB"
+    ],
+    "to": [
+     "auxFeedwaterPumpMotor",
+     "auxFeedwaterPumpMotorB"
+    ],
+    "services": [
+     "electricalPower"
+    ]
+   },
+   "seenIn": [
+    "2026-10-12a-operator-displays/diesel-afw",
+    "2026-10-12b-operator-displays/diesel-afw",
+    "2026-10-19a-display-audit/diesel-afw",
+    "2026-10-19a-live-probe-data/d1-diesel-afw-diesel-afw#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16daad43c9c9381e70199b4dd12c0f4f8af0fb3849287f835030efffe735e408"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:16daad43c9c9381e70199b4dd12c0f4f8af0fb3849287f835030efffe735e408"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "pressurizer"
+    ],
+    "services": [
+     "primaryRelief",
+     "primaryRelease"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-12a-operator-displays/porv-path",
+    "2026-10-12d-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "PORV-456A"
+    ],
+    "services": [
+     "primaryRelief"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-12a-operator-displays/porv-open"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "feedwater",
+     "auxFeedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-12b-operator-displays/show-feed-lineup",
+    "2026-10-12d-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": false,
+     "issues": [
+      "the drawing needs 818 × 598 px, and this display leaves 800 × 624; it fits with \"loops\":[\"A\",\"B\"], or \"loops\":[\"A\"], or \"loops\":[\"B\"]"
+     ]
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:b2519f64695b4e2548f014f1ec43dfadb864f08680909e737be47bae08bc7eb9"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "pressurizer"
+    ],
+    "services": [
+     "primaryRelief"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-12b-operator-displays/porv-path"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "turbine"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-12c-operator-displays/why-turbine-trip",
+    "2026-10-12d-operator-displays/why-turbine-trip",
+    "2026-10-13a-operator-displays/why-turbine-trip-loop",
+    "2026-10-13a-operator-displays/why-turbine-trip",
+    "2026-10-19a-display-audit/why-turbine-trip-loop",
+    "2026-10-19a-display-audit/why-turbine-trip",
+    "2026-10-19a-live-probe-data/e1-why-turbine-trip-loop-why-turbine-trip-loop#answer",
+    "2026-10-19a-live-probe-data/d1-why-turbine-trip-why-turbine-trip#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:f10fc9ffc513283400ac0099e9d34c251bded7187f55fc54ccdacdb69e9609bb"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:f10fc9ffc513283400ac0099e9d34c251bded7187f55fc54ccdacdb69e9609bb"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "from": [
+     "pressurizer"
+    ],
+    "services": [
+     "primaryRelief"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-12c-operator-displays/porv-path",
+    "2026-10-19a-display-audit/porv-path",
+    "2026-10-19a-live-probe-data/d1-porv-path-porv-path#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fc3bb26784cefa2af5bdeafe20d5c015b5ebfb47a4a4420288353e45f85ae0cc"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "safetyBusA",
+     "safetyBusB"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-12c-operator-displays/loss-offsite-power"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:95617f36f8a0bfd6095aa4dcadb4e37e16ec37c9fefb969b86c079c18622290c"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:95617f36f8a0bfd6095aa4dcadb4e37e16ec37c9fefb969b86c079c18622290c"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "turbine"
+    ],
+    "services": [
+     "electricalPower"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-12c-operator-displays/why-turbine-trip-loop"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:8efbeef586d8d01721832af8f3b90cfeba25465c7d066d34e9858686d1766d2f"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:7d64ad66a748baa7780ec331e04c31ba86f36b0fdec4d128be0ce655ffb39795"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "feedwater"
+    ],
+    "from": [
+     "feedwaterTank"
+    ],
+    "to": [
+     "sgA",
+     "sgB",
+     "sgC",
+     "sgD"
+    ]
+   },
+   "seenIn": [
+    "2026-10-12c-operator-displays/show-feed-lineup"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:cfee4acb6fd34de76d59c13e2f715d8bf14731203e4eda2b2ff771591d678a12"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:d0a814d20e509e765664da7e12947f0ca3363240f2c4e12ae0dca4db491773f2"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterValveA"
+    ],
+    "services": [
+     "auxFeedwater"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-12d-operator-displays/op-afw-throttle"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:6e79a7e9bbbf1dae2fef6555adfe09cc0b81f69d970c5db5543717ee0a59016d"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:6e79a7e9bbbf1dae2fef6555adfe09cc0b81f69d970c5db5543717ee0a59016d"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater"
+    ]
+   },
+   "seenIn": [
+    "2026-10-12d-operator-displays/op-stop-afw-pump"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:6a901f31b2829e0b8e570be352340e78f242c837f32c2385f874f090ef1143c4"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:23ed68508b7bd94ea7417382d942edb28ae586264cc898f88999e7899c5122cb"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "mainSteamIsolationValveA"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-12d-operator-displays/op-open-msiv-at-power",
+    "2026-10-19a-live-probe-data/f1-op-open-msiv-at-power-op-open-msiv-at-power#requested"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2db318a2ecb706d7f3b5438234dff75f28b038a6cb2dcd842a25c6897c925a0c"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2db318a2ecb706d7f3b5438234dff75f28b038a6cb2dcd842a25c6897c925a0c"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "auxFeedwater"
+    ],
+    "loops": [
+     "A",
+     "B"
+    ]
+   },
+   "seenIn": [
+    "2026-10-13a-operator-displays/loss-main-feedwater"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:1231d7697c877220b37681b7e4aa84a743ed382ae1aa7ed02f8778e6b3f40875"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:1231d7697c877220b37681b7e4aa84a743ed382ae1aa7ed02f8778e6b3f40875"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-13a-operator-displays/op-stop-afw-pump",
+    "2026-10-19a-display-audit/op-stop-afw-pump",
+    "2026-10-19a-live-probe-data/f1-op-stop-afw-pump-op-stop-afw-pump#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:6a901f31b2829e0b8e570be352340e78f242c837f32c2385f874f090ef1143c4"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:23ed68508b7bd94ea7417382d942edb28ae586264cc898f88999e7899c5122cb"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterValveA"
+    ],
+    "services": [
+     "auxFeedwater"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-13a-operator-displays/op-afw-throttle",
+    "2026-10-19a-display-audit/op-afw-throttle",
+    "2026-10-19a-live-probe-data/f1h-op-afw-throttle#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fa0d022b1e1107544aea855660b49fef82fc4b8d9842dd399a6688761fcfe954"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:fa0d022b1e1107544aea855660b49fef82fc4b8d9842dd399a6688761fcfe954"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "mainSteamIsolationValveA"
+    ],
+    "services": [
+     "mainSteam"
+    ],
+    "reach": 1
+   },
+   "seenIn": [
+    "2026-10-13a-operator-displays/op-open-msiv-at-power"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2db318a2ecb706d7f3b5438234dff75f28b038a6cb2dcd842a25c6897c925a0c"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:2db318a2ecb706d7f3b5438234dff75f28b038a6cb2dcd842a25c6897c925a0c"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "to": [
+     "safetyBusA"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-19a-live-probe-data/d1-bus-a-supply-bus-a-supply#requested"
+   ],
+   "outcomes": [
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:32386fc286a2fa279b8d3ecbb7f39f2395197a4dad08ee29e6d59305ada26f98"
+    },
+    {
+     "draws": true,
+     "hash": "diagram-8/openbridge-2.0.0/mimic-11:32386fc286a2fa279b8d3ecbb7f39f2395197a4dad08ee29e6d59305ada26f98"
+    }
+   ]
+  },
+  {
+   "intent": {
+    "around": [
+     "auxFeedwaterPumpMotor"
+    ],
+    "services": [
+     "auxFeedwater",
+     "electricalPower"
+    ],
+    "reach": 3
+   },
+   "seenIn": [
+    "2026-10-19a-live-probe-data/d1-afw-pump-around-afw-pump-around#requested"
+   ],
+   "outcomes": [
+    {
+     "draws": false,
+     "issues": [
+      "the drawing needs 820 × 790 px, and this display leaves 800 × 624; it fits with \"reach\":1, or \"loops\":[\"A\",\"B\"], or \"loops\":[\"A\"]"
+     ]
+    },
+    {
+     "draws": false,
+     "issues": [
+      "the drawing needs 820 × 790 px, and this display leaves 800 × 744; it fits with \"reach\":2, or \"reach\":1, or \"loops\":[\"A\",\"B\"]"
+     ]
+    }
+   ]
+  },
+  {
+   "intent": {
+    "services": [
+     "electricalPower"
+    ],
+    "to": [
+     "safetyBusA",
+     "safetyBusB"
+    ],
+    "reach": 2
+   },
+   "seenIn": [
+    "2026-10-19a-live-probe-data/d1-loss-offsite-power-loss-offsite-power#answer"
+   ],
+   "outcomes": [
+    {
+     "draws": false,
+     "issues": [
+      "9 shared symbols outside the loops (at most 8 stay legible at a glance); it fits with \"reach\":1"
+     ]
+    },
+    {
+     "draws": false,
+     "issues": [
+      "9 shared symbols outside the loops (at most 8 stay legible at a glance); it fits with \"reach\":1"
+     ]
+    }
+   ]
+  }
+ ]
+}

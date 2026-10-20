@@ -4,8 +4,9 @@ import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
 import { distinguishingNames, idleText, joinedName, limitLabelParts, limitLabelRanks, limitLines, limitLook, limitSeverity, mergedText, stackLabels, TREND_GUTTER, trendGutter } from '../src/ui/embed/composed-display/limit-labels.ts'
 import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
-import { coincidentMargin, formatQuantity, formatValue, limitKindName, marginLimitName, marginText, marginTextForms, marginTo, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
-import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { coincidentMargin, limitKindName, marginLimitName, marginText, marginTextForms, marginTo, nearestThresholdMargin, simulationClock, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity, formatValue, readingResolution, readingText, shownReading, unitLabel } from '../src/packs/process-plant/quantity-text.ts'
+import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/ic/thresholds.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
 
 /** No on/off state read yet: every gated limit is kept. */
