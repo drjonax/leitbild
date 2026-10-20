@@ -61,10 +61,14 @@ const wordMatches = (guess: string, word: string): boolean => {
 }
 
 /** Guessed words matched one-to-one to a name's words (augmenting paths), so "fw" and "flow" cannot both claim "flow". */
-export const matchedWords = (guessed: ReadonlyArray<string>, nameWords: ReadonlyArray<string>): ReadonlyArray<string> => {
+export const matchedWords = (guessed: ReadonlyArray<string>, nameWords: ReadonlyArray<string>): ReadonlyArray<string> =>
+  matchedWordGroups(guessed, nameWords.map(word => [word]))
+
+/** As matchedWords, where each word of a name has several spellings ("kjolberg", "kjoelberg") and is claimed once. */
+export const matchedWordGroups = (guessed: ReadonlyArray<string>, nameWords: ReadonlyArray<ReadonlyArray<string>>): ReadonlyArray<string> => {
   const owner = new Map<number, number>()
-  const assign = (guess: number, visited: Set<number>): boolean => nameWords.some((word, index) => {
-    if (visited.has(index) || !wordMatches(guessed[guess]!, word)) return false
+  const assign = (guess: number, visited: Set<number>): boolean => nameWords.some((spellings, index) => {
+    if (visited.has(index) || !spellings.some(word => wordMatches(guessed[guess]!, word))) return false
     visited.add(index)
     const current = owner.get(index)
     if (current !== undefined && !assign(current, visited)) return false
