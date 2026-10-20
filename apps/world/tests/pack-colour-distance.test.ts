@@ -9,8 +9,8 @@ import { colourLiterals, palettes, readReservedSets, reservedDistanceFloor, rese
 // OpenBridge 2.0.0's alarm, warning, caution, critical and notification
 // colours. A colour is measured in the palettes it is drawn in (lead ruling
 // R3): an unthemed colour in day, dusk and night, a light-theme colour in day,
-// a dark-theme colour in dusk and night. Known violations outside P1's edits
-// are listed by name and must still fail, so fixing one removes it here.
+// a dark-theme colour in dusk and night. A known violation would be listed by
+// name and must still fail, so fixing one removes it here.
 
 const src = join(import.meta.dir, '../src')
 const sets = readReservedSets()
@@ -34,28 +34,26 @@ const editedFiles = [
 ] as const
 
 /** `path literal` → why it still fails. */
-const knownViolations: Readonly<Record<string, string>> = {
-  'packs/electric-grid/ui-pack.ts #64748b': 'the invalid-data fallback (14.1 to day notification) is p1-network\'s line, not one of the six edits',
-}
+const knownViolations: Readonly<Record<string, string>> = {}
 
 const belowFloor = (path: string, text: string): ReadonlyArray<string> => colourLiterals(path, text)
   .filter(literal => distance(literal.literal, palettes) < reservedDistanceFloor)
   .map(literal => `${path} ${literal.literal}`)
 
 describe('T04b now: the colours P1 moved clear the reserved set', () => {
-  test('every colour in the edited files is ΔE ≥ 15 from the five reserved colours in day, dusk and night, beyond the known violations', () => {
+  test('every colour in the edited files is ΔE ≥ 15 from the five reserved colours in day, dusk and night', () => {
     const failing = [...new Set(editedFiles.flatMap(path => belowFloor(path, readFileSync(join(src, path), 'utf8'))))]
     expect(failing.filter(key => !(key in knownViolations))).toEqual([])
     expect(Object.keys(knownViolations).filter(key => !failing.includes(key))).toEqual([])
   })
 
-  test('grid voltage classes clear the bar in the palettes their theme draws in, beyond the known violations', () => {
+  test('grid voltage classes clear the bar in the palettes their theme draws in', () => {
     const drawnIn: Readonly<Record<'light' | 'dark', ReadonlyArray<Palette>>> = { light: ['day'], dark: ['dusk', 'night'] }
     const failing = gridVoltageClasses.flatMap(entry => (['light', 'dark'] as const)
       .filter(theme => distance(entry.color[theme], drawnIn[theme]) < reservedDistanceFloor)
       .map(theme => `${entry.id} ${theme}`))
-    // 220 kV moved off magenta in P1 (D9); 300 and 132 kV were not among the six edits.
-    expect(failing).toEqual(['kv300 light', 'kv132 light', 'kv132 dark'])
+    // P1 moved 220 kV off magenta (D9) and 300 and 132 kV off critical magenta and notification blue (R24).
+    expect(failing).toEqual([])
   })
 
   test('planted: an alarm-red and a notification-navy literal are caught, a cleared colour is not', () => {

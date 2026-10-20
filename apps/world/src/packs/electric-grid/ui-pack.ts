@@ -51,7 +51,7 @@ const presentationForGrid = (object: OperationalObject): PackObjectPresentation 
     return {
       categoryId: 'electric-grids',
       icon: 'network',
-      color: '#64748b',
+      color: '#6e788c',
       summary: 'Invalid Grid data',
       status: packStatus('error', 'Invalid data'),
       fields: [packField('error', 'Error', 'Invalid electric-grid Pack data')],
