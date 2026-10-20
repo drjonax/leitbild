@@ -5,6 +5,7 @@
   import Icon from './Icon.svelte'
   import { jsonRequest, request } from './api.ts'
   import { catalogDeleteBody, catalogDeleteItem, catalogNoun, createCatalogRemover, type CatalogDeleteItem } from './catalog-delete.ts'
+  import { createRecoverableError } from './recoverable-error.ts'
   import { simulationTimeLabel } from './simulation-time.ts'
 
   interface AccelerationState {
@@ -52,9 +53,11 @@
     readonly onClose: () => void
     readonly refreshResources: () => Promise<void>
     readonly reportError: (message: string) => void
+    /** Takes back an error reported here once its cause is gone, where the page still shows it. */
+    readonly retractError: (message: string) => void
   }
 
-  let { workspaceId, resource, resources, capabilities, onSwitch, onClose, refreshResources, reportError }: Props = $props()
+  let { workspaceId, resource, resources, capabilities, onSwitch, onClose, refreshResources, reportError, retractError }: Props = $props()
   let execution = $state<ExecutionState | null>(null)
   let actionBusy = $state(false)
   let actionError = $state('')
@@ -87,6 +90,8 @@
   let deleteButton = $state<HTMLButtonElement | null>(null)
   /** A 404 asked the Workspace's list once whether this Run still exists; a second one is reported. */
   let goneChecked = false
+  // The Run's clock is read every second: a failed read is reported while it fails and taken back once a read succeeds.
+  const readFailure = createRecoverableError({ report: message => reportError(message), retract: message => retractError(message) })
 
   const capabilityAvailableFor = (candidate: ModuleResourceDescriptor, id: string): boolean =>
     candidate.capabilityIds.includes(id) && capabilities.some(capability => capability.id === id)
@@ -119,6 +124,7 @@
       if (token !== refreshToken) return
       execution = nextExecution.result
       goneChecked = false
+      readFailure.recovered()
     } catch (cause) {
       // While a delete runs, its dialog reports the outcome.
       if (token !== refreshToken || confirmingDelete) return
@@ -128,7 +134,7 @@
         void refreshResources().catch(refreshCause => reportError(refreshCause instanceof Error ? refreshCause.message : String(refreshCause)))
         return
       }
-      reportError(cause instanceof Error ? cause.message : String(cause))
+      readFailure.failed(cause instanceof Error ? cause.message : String(cause))
     }
   }
   const runAction = async (action: () => Promise<void>): Promise<void> => {
