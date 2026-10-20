@@ -18,14 +18,14 @@ describe('T11 hit rules (architecture A4 matches)', () => {
     expect(hits(tag, match({ kind: 'object', objectId: 'plant:halden-2' }))).toBe(false)
   })
 
-  test('a grid element, or an observable measured on it; with a quantity only that observable', () => {
+  test('a grid element by its asset id, or an observable measured on it; a grid quantity by its ref', () => {
     const element = { kind: 'element', objectId: 'grid:g', element: 'branch:b' } as const
     expect(hits(element, match({ kind: 'element', objectId: 'grid:g', element: { id: 'branch:b', class: 'switch' } }))).toBe(true)
-    expect(hits(element, match({ kind: 'observable', objectId: 'grid:g', element: { id: 'branch:b', class: 'switch' }, quantity: 'loading' }))).toBe(true)
+    expect(hits(element, match({ kind: 'observable', objectId: 'grid:g', ref: 'grid:g#branch:b.loading', element: { id: 'branch:b', class: 'switch' } }))).toBe(true)
     expect(hits(element, match({ kind: 'element', objectId: 'grid:g', element: { id: 'branch:c', class: 'switch' } }))).toBe(false)
-    const loading = { ...element, quantity: 'loading' }
+    const loading = { kind: 'ref', ref: 'grid:g#branch:b.loading' } as const
     expect(hits(loading, match({ kind: 'element', objectId: 'grid:g', element: { id: 'branch:b', class: 'switch' } }))).toBe(false)
-    expect(hits({ kind: 'element', objectId: 'grid:g', quantity: 'frequency' }, match({ kind: 'observable', objectId: 'grid:g', quantity: 'frequency' }))).toBe(true)
+    expect(hits(loading, match({ kind: 'observable', objectId: 'grid:g', ref: 'grid:g#branch:b.loading' }))).toBe(true)
     expect(hits({ kind: 'object', objectId: 'unit:1' }, match({ kind: 'object', objectId: 'unit:1' }))).toBe(true)
   })
 

@@ -3,9 +3,10 @@
  * pairs, at least 20 per pack, every pack of the integrated fixture. A pair is
  * a person's or agent's words and what they mean, matched as the pair
  * declares (lead ruling R23): an observable by its ref `objectId#signalId`
- * (signalId as the pack declares it: the plant's variable path, the weather's
- * quantity id), by objectId + its I&C tag, a grid element by its asset id (or
- * an observable measured on it), or an object. Pairs live in
+ * (signalId as the pack declares it: the plant's variable path, the grid's
+ * `<assetId>.<quantity>` or `grid.<name>`, the weather's quantity id), by
+ * objectId + its I&C tag, a grid element by its asset id (or an observable
+ * measured on it), or an object. Pairs live in
  * apps/world/tests/fixtures/retrieval/.
  *
  *   LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/retrieval.ts <absolute-output-dir> [--seconds=240]
@@ -29,8 +30,8 @@ export type Expected =
   | { readonly kind: 'ref'; readonly ref: string }
   /** An observable of this object carrying this I&C tag. */
   | { readonly kind: 'tag'; readonly objectId: string; readonly tag: string }
-  /** A grid element, or an observable measured on it; with a quantity, only an observable of that quantity (on the object when no element is named). */
-  | { readonly kind: 'element'; readonly objectId: string; readonly element?: string; readonly quantity?: string }
+  /** A grid element by its asset id, or an observable measured on it. */
+  | { readonly kind: 'element'; readonly objectId: string; readonly element: string }
 
 export interface RetrievalPair {
   readonly pack: string
@@ -66,8 +67,7 @@ export const hits = (expected: Expected, match: SearchMatch): boolean => {
   if (match.objectId !== expected.objectId) return false
   if (expected.kind === 'object') return match.kind === 'object'
   if (expected.kind === 'tag') return match.kind === 'observable' && match.tag === expected.tag
-  const onElement = expected.element === undefined || match.element?.id === expected.element
-  return onElement && (expected.quantity === undefined ? match.kind !== 'object' : match.kind === 'observable' && match.quantity === expected.quantity)
+  return match.kind !== 'object' && match.element?.id === expected.element
 }
 
 /** Recall@8 per pack and over all pairs, with every miss and what came back instead. */
@@ -109,16 +109,22 @@ export const stalePairs = (pairs: ReadonlyArray<RetrievalPair>, known: Known) =>
   const stale = pair.expect.filter(expected => !known.objects.has(subjectOf(expected))
     || (expected.kind === 'ref' && !known.signalExists(subjectOf(expected), expected.ref.slice(expected.ref.indexOf('#') + 1)))
     || (expected.kind === 'tag' && !known.tagExists(expected.objectId, expected.tag))
-    || (expected.kind === 'element' && expected.element !== undefined && !known.elementExists(expected.objectId, expected.element)))
+    || (expected.kind === 'element' && !known.elementExists(expected.objectId, expected.element)))
   return stale.length === 0 ? [] : [{ query: pair.query.text, stale }]
 })
 
-/** Signal ids as the packs declare them (R23): a plant's variable path (every Halden unit runs the reference plant), a weather quantity id; and plant I&C tags. */
-export const signalCatalog = (weatherQuantityIds: ReadonlyArray<string>) => {
+/**
+ * Signal ids as the packs declare them (R23): a plant's variable path (every Halden unit runs the reference plant), a
+ * weather quantity id, a grid `<assetId>.<quantity>` on an existing asset or a grid-wide `grid.<name>`; and plant I&C tags.
+ */
+export const signalCatalog = (weatherQuantityIds: ReadonlyArray<string>, gridAssetExists: (assetId: string) => boolean = () => true) => {
   const plant = referencePlantCatalog()
+  const gridSignal = (signalId: string): boolean => /^grid\.[a-z-]+$/i.test(signalId)
+    || (/^(.+)\.(loading|flow|voltage|energized|state|dispatch|served|exchange)$/.exec(signalId)?.slice(1, 2).every(gridAssetExists) ?? false)
   return {
     signalExists: (objectId: string, signalId: string): boolean => objectId.startsWith('plant:') ? plant.signal(signalId)?.path === signalId
-      : objectId.startsWith('weather') ? weatherQuantityIds.includes(signalId) : false,
+      : objectId.startsWith('weather') ? weatherQuantityIds.includes(signalId)
+        : objectId.startsWith('grid:') ? gridSignal(signalId) : false,
     tagExists: (objectId: string, tag: string): boolean => objectId.startsWith('plant:') && plant.signal(tag)?.tagId === tag,
   }
 }
@@ -158,19 +164,18 @@ if (import.meta.main) {
   }
   const { objects } = await request(`/api/workspaces/${workspace.id}/world/simulation-runs/${encodeURIComponent(resource.id)}/objects`)
   const { weatherQuantities } = await import('../../apps/world/src/packs/weather/quantities.ts')
+  const pairs = await loadPairs()
+  // The grid assets the corpus names, as elements or inside its own refs, each asked of this Run's Grid.
+  const assets = [...new Set(pairs.flatMap(pair => pair.expect.flatMap(expected => expected.kind === 'element' ? [expected.element]
+    : expected.kind === 'ref' && expected.ref.startsWith('grid:') ? [/#(.+)\.[a-z]+$/.exec(expected.ref)?.[1]].filter(id => id !== undefined && !id.startsWith('grid')) as string[] : [])))]
+  const missing = new Set<string>()
+  for (const assetId of assets) await invoke(workspace.id, 'world.electric-grid.asset.get', { gridId: 'grid:halden-four-unit', assetId }, { resource }).catch(() => missing.add(assetId))
   const known: Known = {
     objects: new Set((objects as ReadonlyArray<{ id: string }>).map(object => object.id)),
-    ...signalCatalog(weatherQuantities.map(quantity => quantity.id)),
-    elementExists: () => true,
+    ...signalCatalog(weatherQuantities.map(quantity => quantity.id), assetId => !missing.has(assetId)),
+    elementExists: (_objectId, element) => !missing.has(element),
   }
-  const pairs = await loadPairs()
-  const elements = [...new Set(pairs.flatMap(pair => pair.expect.flatMap(expected => expected.kind === 'element' && expected.element !== undefined ? [`${expected.objectId} ${expected.element}`] : [])))]
-  const missing = new Set<string>()
-  for (const entry of elements) {
-    const [gridId, assetId] = entry.split(' ') as [string, string]
-    await invoke(workspace.id, 'world.electric-grid.asset.get', { gridId, assetId }, { resource }).catch(() => missing.add(entry))
-  }
-  const stale = stalePairs(pairs, { ...known, elementExists: (objectId, element) => !missing.has(`${objectId} ${element}`) })
+  const stale = stalePairs(pairs, known)
   if (stale.length > 0) {
     await Bun.write(join(directory, 'stale-pairs.json'), JSON.stringify(stale, null, 2))
     throw new Error(`${stale.length} pairs name what this Run does not hold; see stale-pairs.json`)
