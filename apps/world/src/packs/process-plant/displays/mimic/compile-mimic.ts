@@ -58,10 +58,8 @@ type MimicRole = 'device' | 'bar' | 'hub'
 /** A hub is the engine's common node: one its partitions, the loops' lanes, leave and return to. */
 const diagramRole = (role: MimicRole): DiagramNode['role'] => (role === 'hub' ? 'common' : role)
 
-const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number>): DiagramNode['partition'] | undefined => {
-  const key = component.metadata?.loopId
-  return key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
-}
+const laneOf = (key: string | undefined, orders: ReadonlyMap<string, number>): DiagramNode['partition'] | undefined =>
+  key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
 
 const valueRowWidth = (unit: string, fractionDigits: number, integerDigits = 3): number =>
   readoutBlockWidth(integerDigits, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
@@ -316,6 +314,23 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   const drawn = scope.components.filter(index => !notDrawn.has(index))
   const presentations = new Map(drawn.map(index => [index, presentationFor(graph.components[index]!)]))
   const hubs = new Set(drawn.filter(index => presentations.get(index)!.element !== 'bar' && isHub(graph, graph.components[index]!, drawnLinks)))
+  // A valve the model gives no loop is drawn in a loop's lane where
+  // everything it is piped to in this drawing, its stops aside, belongs to
+  // that one loop (a steam generator's safety valve, which vents out of the
+  // drawing). Read from the drawn links alone, never written to the model, so
+  // the Plant model and its digest stay as they are.
+  const declaredLoop = (component: number): string | undefined => graph.components[component]!.metadata?.loopId
+  const inferredLoops = new Map(drawn.flatMap(index => {
+    if (declaredLoop(index) !== undefined || !isValve(presentations.get(index)!)) return []
+    const neighbours = links.flatMap(link => {
+      const at = graph.links[link]!
+      return at.fromComponentIndex === index ? [at.toComponentIndex] : at.toComponentIndex === index ? [at.fromComponentIndex] : []
+    })
+    const loops = new Set(neighbours.map(declaredLoop))
+    const [loop] = loops
+    return loops.size === 1 && loop !== undefined ? [[index, loop] as const] : []
+  }))
+  const loopOf = (component: number): string | undefined => declaredLoop(component) ?? inferredLoops.get(component)
   const labelOf = (component: number) => itemBinding(plant, { kind: 'component', component }, aspectFor(presentations.get(component)!), framed).label
 
   // Parallel equipment the profile groups: same kind, presentation, loop and
@@ -352,7 +367,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
         return [port, [...new Set(out)].sort(), [...new Set(into)].sort(), stops.sort()]
       })
       if (sides.some(side => side === null)) return null
-      return JSON.stringify([component.kind, presentation, component.metadata?.loopId ?? null, sides])
+      return JSON.stringify([component.kind, presentation, loopOf(index) ?? null, sides])
     }
     const bySignature = new Map<string, number[]>()
     for (const index of drawn) {
@@ -398,7 +413,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const ports = [...(usedPorts.get(index) ?? [])].sort()
     const rank = [role, component.kind, component.metadata?.equipmentClass ?? '', component.metadata?.role ?? '', ports.join(','), binding.label].join('|')
     for (const member of group) componentRank.set(member, rank)
-    const lane = laneOf(component, loopOrder)
+    const lane = laneOf(loopOf(index), loopOrder)
     const rows = itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan })
     addItem(
       { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: withSparklines(rows, presentation, profile), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
@@ -436,7 +451,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
         if (!items.has(id)) {
           const presentation = embeddedPresentation(device)
           const binding = itemBinding(plant, { kind: 'device', component: host.index, device: device.id }, 'position', framed)
-          const lane = laneOf(host, loopOrder)
+          const lane = laneOf(loopOf(host.index), loopOrder)
           const marker = profile.valves === 'markers' && isValve(presentation)
           addItem(
             { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands, offSpan: profile.offSpan }), marker, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
@@ -470,7 +485,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     // A power line's far end says under its name whether the equipment it names is live ("from UAT", "LIVE"), its room kept for the longest word.
     const word = stubWordOf(graph, stub)
     const text = stubText(graph, stub, profile.stubLabels)
-    const lane = laneOf(component, loopOrder)
+    const lane = laneOf(loopOf(stub.component), loopOrder)
     nodes.push({
       id,
       rank: `stub|${componentRank.get(stub.component)}|${stub.port}|${stub.direction}`,
