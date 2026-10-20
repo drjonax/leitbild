@@ -2663,12 +2663,14 @@
       "reason": "display request is invalid: view.envelope.subject.moduleId: An embedded view subject must belong to the publishing Module"
     },
     "another view type": {
-      "opens": false,
-      "reason": "display request refused: display room/turn/call/key is a electric-grid.display, not a process display"
+      "opens": true,
+      "shown": false,
+      "reason": "it is a electric-grid.display view, which this window does not show"
     },
     "not about a Run": {
-      "opens": false,
-      "reason": "display request refused: display room/turn/call/key is not about a Simulation Run"
+      "opens": true,
+      "shown": false,
+      "reason": "it is about a world.scenario, not a Simulation Run"
     },
     "too tall": {
       "opens": false,

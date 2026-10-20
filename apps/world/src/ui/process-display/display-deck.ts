@@ -1,5 +1,6 @@
 import type { EmbeddedViewListing } from '@leitbild/contracts'
 import { processDisplayStatePlantId, processDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
+import { listingRefusal } from './display-window-messages.ts'
 import type { DisplayKind } from './display-zoom.ts'
 
 // The displays the one process display window steps through: the unit
@@ -42,6 +43,8 @@ export interface AnswerDeckEntry extends DeckEntryBase {
   readonly otherRun: boolean
   /** False while the conversation does not list it (it left, or was opened before the list caught up). */
   readonly listed: boolean
+  /** Why this window cannot show it (another view type), said in place of its frame; null where it can. */
+  readonly refusal: string | null
 }
 
 export type DeckEntry = OverviewDeckEntry | AnswerDeckEntry
@@ -100,15 +103,17 @@ const overviewEntry = (simulationRunId: string, plant: DeckPlant): OverviewDeckE
 
 export const answerDeckEntry = (simulationRunId: string, listing: EmbeddedViewListing): AnswerDeckEntry => {
   const otherRun = listing.envelope.subject.id !== simulationRunId
+  const refusal = listingRefusal(listing.envelope)
   return {
     source: 'answer',
     key: answerDeckKey(listing.key),
     title: listing.envelope.title,
     caption: `${listing.caption}${otherRun ? OTHER_RUN_SUFFIX : ''}`,
-    kind: parseListingState(listing).kind,
+    kind: refusal === null ? parseListingState(listing).kind : 'advice',
     listing,
     otherRun,
     listed: true,
+    refusal,
   }
 }
 
@@ -327,6 +332,7 @@ const runJoinReason = (join: DeckRunJoin): string | null =>
   join.state === 'joined' ? null : join.state === 'joining' ? 'This Run is still opening' : `This Run could not be opened: ${join.reason}`
 
 export const deckEntryPlant = (entry: DeckEntry, plants: ReadonlyArray<DeckPlant>, join: DeckRunJoin): DeckPlantTarget => {
+  if (entry.source === 'answer' && entry.refusal !== null) return { ok: false, reason: `Not a display this window shows: ${entry.refusal}` }
   if (entry.source === 'answer' && entry.otherRun) return { ok: false, reason: 'Belongs to another Run' }
   const waiting = runJoinReason(join)
   if (waiting !== null) return { ok: false, reason: waiting }

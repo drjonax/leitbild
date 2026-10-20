@@ -161,7 +161,7 @@
       <text class="tag" class:primary={pen.role === 'primary'} x="0" y={y + row / 2} dominant-baseline="middle">{fitted(labelled[index]!)}<title>{labelled[index]!.text} · {pen.label} · {pen.role}{pen.command ? ' · operator or automation demand, not a measured state' : ''}</title></text>
       <line class="track" x1={scaleStart} x2={scaleStart + scaleWidth} y1={y + row / 2} y2={y + row / 2} />
       {#if value !== undefined && domain !== null}
-        <path class="pointer" class:primary={pen.role === 'primary'} class:alarm={inAlarm !== null} d={`M${x(value)} ${y + 4} l5 ${row / 2 - 4} l-5 ${row / 2 - 4} l-5 ${-(row / 2 - 4)} z`} />
+        <path class="pointer" class:primary={pen.role === 'primary'} class:alarm={inAlarm !== null} class:critical={inAlarm?.severity === 'critical'} class:caution={inAlarm !== null && inAlarm.severity !== 'critical' && inAlarm.severity !== 'warning' && inAlarm.severity !== undefined} d={`M${x(value)} ${y + 4} l5 ${row / 2 - 4} l-5 ${row / 2 - 4} l-5 ${-(row / 2 - 4)} z`} />
         <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">{readingText(value, panel.unit, pen.resolution, pen.limits?.instrumentSpan)}{#if inAlarm !== null}<tspan class={`state ${inAlarm.severity ?? 'warning'}${expectedOfRule(inAlarm.ruleId, latest?.alarms ?? [], annunciation) === null ? '' : ' expected'}`} dx="6">{chipName(inAlarm)}</tspan>{/if}<tspan class="sub" dx="6">{reading?.offScale == null ? `${deviation(value)} ${rateText(ratePerMinute(shownPoints(pen), RATE_WINDOW_MS), value, panel.unit, { resolution: pen.resolution })}` : `${reading.offScale} range`}</tspan></text>
       {:else}
         <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">—</text>
@@ -175,25 +175,24 @@
   .comparison { width: 100%; }
   svg { display: block; overflow: visible; }
   .head { fill: var(--element-neutral-color); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-  .head.active-critical { fill: var(--alert-alarm-color); font-weight: 700; }
-  .head.active-warning { fill: var(--alert-warning-color); font-weight: 700; }
-  .head.active-notice, .head.active-info { fill: var(--alert-caution-color); font-weight: 700; }
+  /* An active limit's name: bold and readable (embed.css); the pointer and the line carry its colour. */
+  .head.active-critical, .head.active-warning, .head.active-notice, .head.active-info { fill: var(--display-alert-text); font-weight: 700; }
   .tag { fill: var(--element-neutral-color); font-size: 12px; font-variant-numeric: tabular-nums; }
   .tag.primary { fill: var(--element-active-color); font-weight: 700; }
   .track { stroke: var(--border-divider-color); stroke-width: 2; }
   /* Values stand out by shape and weight; alarm colour only while a rule is active. */
   .pointer { fill: var(--element-neutral-color); }
   .pointer.primary { fill: var(--element-active-color); }
-  .pointer.alarm { stroke: var(--alert-warning-color); stroke-width: 2; }
+  /* An active limit's severity reaches the pointer through the one map (alertTypeOf): alarm, warning or caution. */
+  .pointer.alarm { stroke: var(--display-warning-mark); stroke-width: 2; }
+  .pointer.alarm.critical { stroke: var(--display-alarm-mark); }
+  .pointer.alarm.caution { stroke: var(--display-caution-mark); }
   .value { fill: var(--element-active-color); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .sub { fill: var(--element-neutral-color); font-size: 11px; font-weight: 400; }
-  /* Same meaning as the alarm chip elsewhere: shown only while the rule is active. */
-  .state { font-size: 10.5px; font-weight: 700; }
-  .state.critical { fill: var(--alert-alarm-color); }
-  .state.warning { fill: var(--alert-warning-color); }
-  .state.notice, .state.info { fill: var(--alert-caution-color); }
-  /* Expected after a first-out it followed: faded, as the drawing's frame and the list's row are. */
-  .state.expected { opacity: 0.45; }
+  /* Same meaning as the alarm chip elsewhere: shown only while the rule is active; bold and readable (embed.css), the pointer carries its colour. */
+  .state { font-size: 10.5px; font-weight: 700; fill: var(--display-alert-text); }
+  /* Expected after a first-out it followed: de-emphasised in the neutral text colour, still readable. */
+  .state.expected { fill: var(--element-neutral-color); font-weight: 400; }
   .median { stroke: var(--element-neutral-color); stroke-dasharray: 2 3; }
   .threshold { stroke: var(--element-neutral-color); stroke-width: 1.5; }
   .threshold.qualified { stroke-dasharray: 5 3; }

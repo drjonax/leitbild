@@ -36,6 +36,12 @@ const SERVICE_USER = 'leitbild'
 const BUN_BIN = `${DEPLOY_ROOT}/runtime/bun`
 const PUBLIC_HEALTH_URL = 'https://leitbild.app/health'
 const REQUIRED_BUN_VERSION = '1.4.0'
+/**
+ * The public repository a release must be built from. World's browser bundle
+ * contains AGPL-3.0-only OpenBridge code, whose licence notice names this
+ * repository as its corresponding source (apps/world/src/ui/embed/openbridge-notice.ts).
+ */
+export const PUBLIC_CODE_REPOSITORY = 'https://github.com/michaelhil/leitbild'
 
 interface Options {
   readonly dryRun: boolean
@@ -146,6 +152,90 @@ export const isProductKnowledgePath = (path: string): boolean =>
   || path.startsWith('contexts/')
   || /^apps\/[^/]+\/README\.md$/.test(path)
   || /^packages\/[^/]+\/README\.md$/.test(path)
+
+/** One entry of `git status --porcelain=v1 -z`: its two status letters and its path (the new path of a rename or copy). */
+export interface WorktreeEntry {
+  readonly status: string
+  readonly path: string
+}
+
+export const parsePorcelainZ = (raw: string): ReadonlyArray<WorktreeEntry> => {
+  const fields = raw.split('\0')
+  const entries: WorktreeEntry[] = []
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]!
+    if (field === '') continue
+    if (field.length < 4 || field[2] !== ' ') throw new Error(`Unreadable git status entry: ${JSON.stringify(field)}`)
+    const status = field.slice(0, 2)
+    entries.push({ status, path: field.slice(3) })
+    // A rename or copy names its original path in the next field.
+    if (status.includes('R') || status.includes('C')) index += 1
+  }
+  return entries
+}
+
+/**
+ * What World's browser bundle is built from: World's source (its UI imports
+ * pack display code from all of src), its build configuration and package
+ * manifest, and the lockfile that pins OpenBridge. The bundle contains
+ * AGPL-3.0-only OpenBridge, so it may be built only from committed, public
+ * source: a change here that is not committed would ship without its
+ * corresponding source.
+ */
+export const isWorldBundleInput = (path: string): boolean =>
+  path === 'bun.lock'
+  || path === 'apps/world/package.json'
+  || path === 'apps/world/vite.config.ts'
+  || (path.startsWith('apps/world/src/') && !isDevelopmentOnlyPath(path.slice('apps/world/'.length)))
+
+/** Why World's bundle inputs cannot be deployed as they stand, or null: any of them dirty or untracked. */
+export const worldBundleRefusal = (entries: ReadonlyArray<WorktreeEntry>): string | null => {
+  const changed = entries.filter(entry => isWorldBundleInput(entry.path))
+  if (changed.length === 0) return null
+  return `Refusing to deploy: World's browser bundle contains AGPL-3.0-only OpenBridge and must be built from committed, public source, but these inputs are dirty or untracked: ${changed.map(entry => `${entry.status.trim()} ${entry.path}`).join(', ')}. Commit and push them first.`
+}
+
+/** A Git remote URL in one form, so an SSH and an HTTPS remote of the same repository compare equal. */
+export const normalizedRepositoryUrl = (url: string): string => url.trim()
+  .replace(/^git@([^:]+):/, 'https://$1/')
+  .replace(/^ssh:\/\/git@([^/]+)\//, 'https://$1/')
+  .replace(/\.git$/, '')
+  .replace(/\/$/, '')
+
+/** Why the base commit's source is not public, or null: origin is not the public repository, or no branch of it contains the commit. */
+export const publicSourceRefusal = (input: {
+  readonly publicRepository: string
+  readonly codeRepository: string
+  readonly baseCommit: string
+  /** The branches of origin, as last fetched, that contain the base commit. */
+  readonly containingRefs: ReadonlyArray<string>
+}): string | null => {
+  if (normalizedRepositoryUrl(input.codeRepository) !== normalizedRepositoryUrl(input.publicRepository)) {
+    return `Refusing to deploy: origin is ${input.codeRepository}, not the public repository ${input.publicRepository} that World's AGPL notice names as the corresponding source.`
+  }
+  if (input.containingRefs.length === 0) {
+    return `Refusing to deploy: base commit ${input.baseCommit} is on no branch of the public origin ${input.publicRepository}, so the AGPL corresponding source of World's bundle would not be public. Push it first.`
+  }
+  return null
+}
+
+/**
+ * Refuses a release whose World bundle would ship without public
+ * corresponding source: World bundle inputs dirty or untracked, or a base
+ * commit no branch of the public origin contains (after fetching origin).
+ */
+export const assertPublicWorldSource = async (root: string, publicRepository: string): Promise<{ readonly baseCommit: string; readonly containingRefs: ReadonlyArray<string> }> => {
+  const bundleRefusal = worldBundleRefusal(parsePorcelainZ(await capture(['git', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], root)))
+  if (bundleRefusal !== null) throw new Error(bundleRefusal)
+  const baseCommit = (await capture(['git', 'rev-parse', 'HEAD'], root)).trim()
+  const codeRepository = (await capture(['git', 'remote', 'get-url', 'origin'], root)).trim()
+  await capture(['git', 'fetch', '--quiet', 'origin'], root)
+  const containingRefs = (await capture(['git', 'for-each-ref', `--contains=${baseCommit}`, '--format=%(refname)', 'refs/remotes/origin/'], root))
+    .split('\n').filter(ref => ref !== '' && ref !== 'refs/remotes/origin/HEAD')
+  const sourceRefusal = publicSourceRefusal({ publicRepository, codeRepository, baseCommit, containingRefs })
+  if (sourceRefusal !== null) throw new Error(sourceRefusal)
+  return { baseCommit, containingRefs }
+}
 
 const directoryFiles = async (root: string, child: string): Promise<string[]> => {
   const files: string[] = []
@@ -272,7 +362,8 @@ const createArtifact = async () => {
   const sourceDigest = await digestEntries(entries)
   const dependencyPackagesDigest = await digestEntries(dependencyPackageEntries)
   const createdAt = new Date().toISOString()
-  const baseCommit = (await capture(['git', 'rev-parse', 'HEAD'])).trim()
+  // Checked again as packaged: the checks, tests and builds that ran since must not have changed a World bundle input.
+  const { baseCommit } = await assertPublicWorldSource(WORKSPACE_ROOT, PUBLIC_CODE_REPOSITORY)
   const branch = (await capture(['git', 'branch', '--show-current'])).trim() || '(detached)'
   const worktreeStatus = (await capture(['git', 'status', '--porcelain=v1', '--untracked-files=all'])).split('\n').filter(Boolean)
   const manifest: DeploymentManifest = {
@@ -565,6 +656,8 @@ const confirmMutation = (id: string, yes: boolean): void => {
 const main = async (): Promise<void> => {
   const options = parseDeployArgs(process.argv.slice(2))
   if (Bun.version !== REQUIRED_BUN_VERSION) throw new Error(`Bun ${REQUIRED_BUN_VERSION} required; found ${Bun.version}`)
+  // Before anything is built: a release whose World bundle would lack public corresponding source is refused, a dry run too.
+  await assertPublicWorldSource(WORKSPACE_ROOT, PUBLIC_CODE_REPOSITORY)
   await run('Platform checks', ['bun', 'run', 'check'])
   await run('Platform tests', ['bun', 'run', 'test'])
   await run('Build Leitbild host UI', ['bun', 'run', 'build:ui'], HOST_ROOT)

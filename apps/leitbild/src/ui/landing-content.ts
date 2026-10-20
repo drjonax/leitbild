@@ -25,7 +25,8 @@ export const CREDIT_TEXT = 'Map and grid data © OpenStreetMap contributors (ODb
 export const CREDIT_LINK = { label: 'Credits', href: '/wiki?path=data-credits.md' } as const
 
 export const FOOTER_NOTE = 'Fictional scenarios and reference models. Not operational guidance.'
-export const LICENCE_HREF = 'https://github.com/michaelhil/leitbild/blob/main/LICENSE'
+/** Leitbild's own code is MIT; the plant displays bundle OpenBridge, which is AGPL-3.0-only (NOTICE.md says which parts and where their source is). */
+export const LICENCE_LINK = { label: 'Licences: MIT, AGPL display parts', href: 'https://github.com/michaelhil/leitbild/blob/main/NOTICE.md' } as const
 
 /** Featured demos the hero links to, by `demoKey`. Their copy comes from the catalogue. */
 export const DEMO_KEYS = {

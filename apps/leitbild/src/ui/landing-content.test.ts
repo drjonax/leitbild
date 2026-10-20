@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import {
-  CREDIT_LINK, CREDIT_TEXT, DEMO_KEYS, FACTS, FOOTER_NOTE, HERO_IMAGE_WIDTHS, HERO_SLIDES, LANDING_TITLE, PLAIN_LINE, TAGLINE,
+  CREDIT_LINK, CREDIT_TEXT, DEMO_KEYS, FACTS, FOOTER_NOTE, HERO_IMAGE_WIDTHS, HERO_SLIDES, LANDING_TITLE, LICENCE_LINK, PLAIN_LINE, TAGLINE,
   heroLinkRoute, heroSrcset, slidesToLoad,
 } from './landing-content.ts'
 import { readModalRoute } from './modal-url.ts'
@@ -23,7 +23,7 @@ const bannedIn = (text: string): ReadonlyArray<string> => banned.filter(([, patt
 const words = (text: string): number => text.trim().split(/\s+/).length
 
 const allCopy = [
-  LANDING_TITLE, TAGLINE.map(part => part.text).join(''), PLAIN_LINE, ...FACTS, CREDIT_TEXT, CREDIT_LINK.label, FOOTER_NOTE,
+  LANDING_TITLE, TAGLINE.map(part => part.text).join(''), PLAIN_LINE, ...FACTS, CREDIT_TEXT, CREDIT_LINK.label, LICENCE_LINK.label, FOOTER_NOTE,
   ...HERO_SLIDES.flatMap(slide => [slide.eyebrow, slide.title, slide.blurb, slide.alt, slide.link.label]),
 ]
 
@@ -57,6 +57,11 @@ describe('landing copy', () => {
 
   test('uses path-relative product links (both leitbild.ai and leitbild.app serve)', () => {
     expect(CREDIT_LINK.href).toBe('/wiki?path=data-credits.md')
+  })
+
+  test('names the AGPL parts beside the MIT licence and links the notice that says where their source is', () => {
+    // The plant displays bundle AGPL-3.0-only OpenBridge; "MIT licence" alone was untrue of what the browser receives.
+    expect(LICENCE_LINK).toEqual({ label: 'Licences: MIT, AGPL display parts', href: 'https://github.com/michaelhil/leitbild/blob/main/NOTICE.md' })
   })
 })
 

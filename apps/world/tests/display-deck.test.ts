@@ -302,3 +302,27 @@ describe('a display opened from another', () => {
     expect(parseDisplayFramePresentation({ type: 'world:display-frame', shown: true, zoom: 1, back: '' })).toBeNull()
   })
 })
+
+describe('a listing the window cannot show', () => {
+  const grid = (key: string): EmbeddedViewListing => embeddedViewListingSchema.parse({
+    key,
+    caption: `Answer ${key}`,
+    envelope: {
+      moduleId: 'world',
+      viewType: 'electric-grid.display',
+      subject: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: runId },
+      title: 'Grid around Unit 2',
+      height: 600,
+      state: '{"grid":{}}',
+    },
+  })
+
+  test('stays in the deck with its reason, between the displays the window shows', () => {
+    const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [listing('a'), grid('g'), listing('b')], shown: null })
+    expect(keys(deck)).toEqual([overviewDeckKey(runId, 'unit-a'), overviewDeckKey(runId, 'unit-b'), answerDeckKey('a'), answerDeckKey('g'), answerDeckKey('b')])
+    const entry = deck.find(candidate => candidate.key === answerDeckKey('g'))!
+    expect(entry).toMatchObject({ source: 'answer', refusal: 'it is a electric-grid.display view, which this window does not show' })
+    expect(deck.find(candidate => candidate.key === answerDeckKey('a'))).toMatchObject({ refusal: null })
+    expect(deckEntryPlant(entry, plants, { state: 'joined' })).toEqual({ ok: false, reason: 'Not a display this window shows: it is a electric-grid.display view, which this window does not show' })
+  })
+})

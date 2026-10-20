@@ -15,6 +15,38 @@
    browser's history (Back/Forward) or the window around the frame. */
 :root { overscroll-behavior-x: none; }
 
+/* Alert colour without unreadable text: display-contrast.test.ts holds every
+   text/background pair below at 4.5:1 or more in the day, dusk and night
+   palettes. A chip or flap names an alert state on the alert colour's fill,
+   in OpenBridge's on-colour for that fill, with the alert colour as its border.
+   Words on a panel's own background that say a value is past a limit are
+   neutral text, bold, marked in the alert colour (an underline, a bar), never
+   written in it: caution yellow on the day background reads 1.27:1. */
+:root {
+  --display-alarm-fill: var(--alert-alarm-color);
+  --display-on-alarm: var(--on-alarm-active-color);
+  --display-warning-fill: var(--alert-warning-color);
+  --display-on-warning: var(--on-warning-active-color);
+  --display-caution-fill: var(--alert-caution-color);
+  --display-on-caution: var(--on-caution-active-color);
+  --display-alert-text: var(--element-active-color);
+  /* The mark beside such words: caution's darker outline, so a mark also shows on the day background. */
+  --display-alarm-mark: var(--alert-alarm-color);
+  --display-warning-mark: var(--alert-warning-color);
+  --display-caution-mark: var(--alert-caution-outline-color);
+}
+/* Night keeps dark adaptation: its alert fills are too dark for any text it
+   allows, so its chips are outlined in the alert colour on the panel's own
+   background, their text the palette's own. */
+:root[data-obc-theme="night"] {
+  --display-alarm-fill: var(--container-background-color);
+  --display-on-alarm: var(--element-active-color);
+  --display-warning-fill: var(--container-background-color);
+  --display-on-warning: var(--element-active-color);
+  --display-caution-fill: var(--container-background-color);
+  --display-on-caution: var(--element-active-color);
+}
+
 * { box-sizing: border-box; }
 
 html, body {

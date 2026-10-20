@@ -33,9 +33,10 @@
   .csf { flex: none; font-family: inherit; font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; line-height: 15px; margin: 0; padding: 0 5px; border-radius: 3px; white-space: nowrap; border: 1px solid transparent; background: none; cursor: help; }
   button.csf { cursor: pointer; }
   button.csf:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 1px; }
-  .csf.green { color: var(--alert-running-color); border-color: var(--alert-running-color); }
-  .csf.yellow { background: var(--alert-caution-color); color: var(--container-background-color); }
-  .csf.orange { background: var(--alert-warning-color); color: var(--container-background-color); }
-  .csf.red { background: var(--alert-alarm-color); color: #fff; }
+  /* Status colour as border or fill, text always readable (embed.css): green text read 3.3:1 in dusk. */
+  .csf.green { color: var(--element-active-color); border-color: var(--alert-running-color); }
+  .csf.yellow { background: var(--display-caution-fill); color: var(--display-on-caution); border-color: var(--alert-caution-color); }
+  .csf.orange { background: var(--display-warning-fill); color: var(--display-on-warning); border-color: var(--alert-warning-color); }
+  .csf.red { background: var(--display-alarm-fill); color: var(--display-on-alarm); border-color: var(--alert-alarm-color); }
   .csf.unknown, .csf.not-monitored { color: var(--element-neutral-color); border-color: var(--border-outline-color); border-style: dashed; }
 </style>

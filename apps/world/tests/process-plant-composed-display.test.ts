@@ -1047,9 +1047,10 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     for (const command of commandsForProcessPlantAction({ actionId: 'loss-main-feedwater', parameters: {}, graph: compiled.graph })) lost.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
     for (let second = 0; second < 120; second += 1) step()
     const snapshot = protection.snapshot()
+    const conditions = new Map(snapshot.rules.map(rule => [rule.ruleId, rule.active]))
     const alarms = [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active).map(lifecycle => ({
       id: lifecycle.id, ruleId: lifecycle.ruleId, kind: lifecycle.kind, title: lifecycle.title, severity: lifecycle.severity,
-      active: lifecycle.active, acknowledged: lifecycle.acknowledged, firstOut: lifecycle.firstOut,
+      active: lifecycle.active, acknowledged: lifecycle.acknowledged, latched: lifecycle.latched, conditionActive: conditions.get(lifecycle.ruleId)!, firstOut: lifecycle.firstOut,
       ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }),
     }))
     // The earliest trip of any kind is the AFW start on the feed pumps' trip; the banner names the reactor trip.

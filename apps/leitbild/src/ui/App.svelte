@@ -42,6 +42,7 @@
   import { demosHref, guideHref } from './modal-url.ts'
   import { createWorkspaceAdmin } from './workspace-admin.ts'
   import { errorDiagnostic, plainError, plainErrorText } from './error-text.ts'
+  import { bannerAfterRetract } from './recoverable-error.ts'
   import { createStartRunner, startAnnouncement, type StartState, type StartTarget } from './definition-start.ts'
   import { readFeaturedCatalogue } from './featured-catalogue.ts'
   import { continueItems, featuredStartRevision, openedFromGuide, workspaceDemos, type FeaturedCard } from './workspace-page.ts'
@@ -634,6 +635,7 @@
           onClose={closeWorldRun}
           refreshResources={() => refreshResources(workspace!.id)}
           reportError={message => { error = message }}
+          retractError={message => { error = bannerAfterRetract(error, message) }}
         />
         {#if agentsVisible && selectedRunFamily && !runDeclaresRoles(selectedWorldResource)}
           {@const familyResource = resources.find(resource => resource.ref.type === 'world.run-family' && resource.ref.id === selectedRunFamily.id)}

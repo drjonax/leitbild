@@ -46,9 +46,13 @@ export interface ComposedDisplayAlarm {
   readonly kind: 'alarm' | 'trip'
   readonly title: string
   readonly severity: 'info' | 'notice' | 'warning' | 'critical'
-  /** False once its condition cleared; it stays listed until acknowledged. */
+  /** False once its condition cleared and nothing holds it; it stays listed until acknowledged. */
   readonly active: boolean
   readonly acknowledged: boolean
+  /** Its actuation is sealed in: it stays active after its condition clears, until it is reset. */
+  readonly latched: boolean
+  /** Whether its rule's condition holds now; false for a latched actuation whose condition cleared. */
+  readonly conditionActive: boolean
   readonly firstOut: boolean
   readonly firstActiveElapsedMs?: number
 }

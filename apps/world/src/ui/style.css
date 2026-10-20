@@ -1499,11 +1499,26 @@ body.rail-resizing {
   gap: 6px;
 }
 
-.display-window-popover.more {
+.display-window-popover.more,
+.display-window-popover.instructor {
   right: 6px;
   min-width: 220px;
   display: grid;
   gap: 4px;
+}
+
+/* Apart from the operator's tools and labelled: the instructor's faults are not an operator action. */
+.display-window-instructor {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.display-window-header .display-window-instructor-button {
+  padding: 0 6px;
+  color: var(--text);
 }
 
 .display-window-popover .display-window-menu-item {

@@ -273,6 +273,7 @@ const queryOutputById: Readonly<Record<string, z.ZodType>> = {
       severity: z.enum(['info', 'notice', 'warning', 'critical']),
       active: z.boolean(),
       acknowledged: z.boolean(),
+      latched: z.boolean(), conditionActive: z.boolean(),
       firstOut: z.boolean(),
       firstActiveElapsedMs: z.number().optional(),
     }).strict()).optional(),

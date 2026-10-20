@@ -41,8 +41,8 @@
   th.loop { padding-left: 0; text-align: left; color: var(--element-neutral-color); min-width: 1.5em; }
   .idle { opacity: 0.6; }
   /* A cell an I&C limit acts on takes its colour and weight, as everywhere an alarm shows. */
-  .alert { font-weight: 700; }
-  .alert.alarm { color: var(--alert-alarm-color); }
-  .alert.warning { color: var(--alert-warning-color); }
-  .alert.caution { color: var(--alert-caution-color); }
+  /* A cell in alert: bold, readable text with a bar in its alert colour (embed.css), never written in it. */
+  .alert { font-weight: 700; color: var(--display-alert-text); box-shadow: inset 3px 0 0 var(--display-caution-mark); }
+  .alert.alarm { box-shadow: inset 3px 0 0 var(--display-alarm-mark); }
+  .alert.warning { box-shadow: inset 3px 0 0 var(--display-warning-mark); }
 </style>

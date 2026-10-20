@@ -1,6 +1,7 @@
 import {
   embeddedViewOpenMessageSchema,
   embeddedViewsMessageSchema,
+  type EmbeddedViewEnvelope,
   type EmbeddedViewListing,
   type EmbeddedViewWindowMaximiseMessage,
   type EmbeddedViewWindowReadyMessage,
@@ -8,17 +9,25 @@ import {
 
 // What the Host relays to the World page that shows the process display
 // window: the conversation's current list of displays and requests to open
-// one. Only the Host (this page's parent, same origin) may send them, each is
-// validated with the contract schema, and every listed view must be a World
-// process display about a Run of this page's Workspace.
+// one. Only the Host (this page's parent, same origin) may send them, and each
+// is validated with the contract schema. Listings are judged one by one: a
+// listing about another Workspace is refused on its own, and a view this
+// window cannot show (another view type) is listed with the reason in place of
+// a frame. One such listing never refuses the rest of the list.
 
 // The run page reads these messages before any Pack code loads, so the view
 // type is named here rather than imported with the Pack's display schemas
 // (a test keeps it equal to the Pack's own constant).
 export const PROCESS_DISPLAY_VIEW_TYPE = 'process-plant.display'
 
+/** A listing the window leaves out, and why. */
+export interface RefusedListing {
+  readonly key: string
+  readonly reason: string
+}
+
 export type DisplayWindowHostMessage =
-  | { readonly kind: 'views'; readonly views: ReadonlyArray<EmbeddedViewListing> }
+  | { readonly kind: 'views'; readonly views: ReadonlyArray<EmbeddedViewListing>; readonly refused: ReadonlyArray<RefusedListing> }
   | { readonly kind: 'open'; readonly view: EmbeddedViewListing }
   /** A message of ours that must not be used; the reason is shown, never swallowed. */
   | { readonly kind: 'rejected'; readonly reason: string }
@@ -35,14 +44,23 @@ interface ExpectedSender {
   readonly workspaceId: string
 }
 
-const listingProblem = (listing: EmbeddedViewListing, workspaceId: string): string | null => {
-  const { envelope } = listing
-  if (envelope.subject.workspaceId !== workspaceId) return `display ${listing.key} belongs to another Workspace`
-  if (envelope.moduleId !== 'world') return `display ${listing.key} is not a World view`
-  if (envelope.viewType !== PROCESS_DISPLAY_VIEW_TYPE) return `display ${listing.key} is a ${envelope.viewType}, not a process display`
-  if (envelope.subject.type !== 'world.simulation-run') return `display ${listing.key} is not about a Simulation Run`
-  return null
+/**
+ * Why this window cannot show a view, or null where it can: a plain switch on
+ * the view type. It shows World's process displays about a Simulation Run.
+ */
+export const listingRefusal = (envelope: EmbeddedViewEnvelope): string | null => {
+  switch (envelope.viewType) {
+    case PROCESS_DISPLAY_VIEW_TYPE:
+      if (envelope.moduleId !== 'world') return `it is a ${envelope.viewType} view published by ${envelope.moduleId}, not by World`
+      if (envelope.subject.type !== 'world.simulation-run') return `it is about a ${envelope.subject.type}, not a Simulation Run`
+      return null
+    default:
+      return `it is a ${envelope.viewType} view, which this window does not show`
+  }
 }
+
+const foreignWorkspace = (listing: EmbeddedViewListing, workspaceId: string): string | null =>
+  listing.envelope.subject.workspaceId === workspaceId ? null : `display ${listing.key} belongs to another Workspace`
 
 export const issueText = (issues: ReadonlyArray<{ readonly path: ReadonlyArray<PropertyKey>; readonly message: string }>): string => {
   const issue = issues[0]
@@ -59,13 +77,19 @@ export const readDisplayWindowHostMessage = (event: MessageLike, expected: Expec
   if (type === 'leitbild:views') {
     const parsed = embeddedViewsMessageSchema.safeParse(data)
     if (!parsed.success) return { kind: 'rejected', reason: `display list is invalid: ${issueText(parsed.error.issues)}` }
-    const problem = parsed.data.views.map(view => listingProblem(view, expected.workspaceId)).find(found => found !== null)
-    return problem ? { kind: 'rejected', reason: `display list refused: ${problem}` } : { kind: 'views', views: parsed.data.views }
+    const views: EmbeddedViewListing[] = []
+    const refused: RefusedListing[] = []
+    for (const view of parsed.data.views) {
+      const problem = foreignWorkspace(view, expected.workspaceId)
+      if (problem === null) views.push(view)
+      else refused.push({ key: view.key, reason: problem })
+    }
+    return { kind: 'views', views, refused }
   }
   if (type === 'leitbild:view-open') {
     const parsed = embeddedViewOpenMessageSchema.safeParse(data)
     if (!parsed.success) return { kind: 'rejected', reason: `display request is invalid: ${issueText(parsed.error.issues)}` }
-    const problem = listingProblem(parsed.data.view, expected.workspaceId)
+    const problem = foreignWorkspace(parsed.data.view, expected.workspaceId)
     return problem ? { kind: 'rejected', reason: `display request refused: ${problem}` } : { kind: 'open', view: parsed.data.view }
   }
   return null

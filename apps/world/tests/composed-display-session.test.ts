@@ -5,10 +5,13 @@ import {
   createComposedDisplaySession,
   IDLE_SUSPEND_MS,
   type ComposedDisplaySnapshot,
+  type ScheduleTimer,
 } from '../src/ui/embed/composed-display/composed-display-session.ts'
 
 const runId = 'run-1' as SimulationRunId
 const at = (offsetMs: number): string => new Date(Date.parse('2026-01-01T09:00:00.000Z') + offsetMs).toISOString()
+// The Run started an hour before at(0).
+const elapsedAt = (time: string): number => Date.parse(time) - Date.parse(at(-3_600_000))
 
 const view: ComposedDisplayViewResult = {
   kind: 'advice',
@@ -60,7 +63,8 @@ const fakeClient = (config: {
       const next = config.samples?.shift()
       if (next === undefined) throw new Error('no sample scripted')
       if (next instanceof Error) throw next
-      return { simulationTime: next.time, plantElapsedMs: 0, values: [{ path: 'pressurizer.pressureMPa', value: next.value, quality: 'good' as const }] }
+      // The Plant's clock runs with the Run's: a Run reset takes both back.
+      return { simulationTime: next.time, plantElapsedMs: elapsedAt(next.time), values: [{ path: 'pressurizer.pressureMPa', value: next.value, quality: 'good' as const }] }
     },
   }
   return { client, calls }
@@ -359,6 +363,295 @@ describe('composed display session', () => {
     await controller.poll()
     expect(last().phase.kind).toBe('live')
     expect(calls.filter(call => call === 'sample')).toHaveLength(2)
+    controller.close()
+  })
+})
+
+// A clock the test moves: the session's timers and the fake World's answers both run on it.
+const fakeClock = () => {
+  const wall = { now: 0 }
+  let timers: Array<{ readonly at: number; readonly order: number; readonly run: () => void }> = []
+  let order = 0
+  const schedule: ScheduleTimer = (run, delayMs) => {
+    const timer = { at: wall.now + delayMs, order: order++, run }
+    timers.push(timer)
+    return () => { timers = timers.filter(candidate => candidate !== timer) }
+  }
+  const settle = async (): Promise<void> => { await Bun.sleep(0) }
+  const advance = async (ms: number): Promise<void> => {
+    const end = wall.now + ms
+    for (;;) {
+      await settle()
+      timers.sort((left, right) => left.at - right.at || left.order - right.order)
+      const next = timers[0]
+      if (next === undefined || next.at > end) break
+      timers.shift()
+      wall.now = next.at
+      next.run()
+    }
+    wall.now = end
+    await settle()
+  }
+  /** Resolves after `ms` on this clock. */
+  const after = <T,>(ms: number, value: () => T): Promise<T> => new Promise((resolve, reject) => {
+    schedule(() => { try { resolve(value()) } catch (error) { reject(error) } }, ms)
+  })
+  return { wall, schedule, advance, after, settle }
+}
+
+type Clock = ReturnType<typeof fakeClock>
+
+const pen = (path: string) => ({
+  ref: path, role: 'primary', path, label: path, name: path, described: path, measurement: path, unit: 'MPa', quantity: 'pressure',
+  valueKind: 'number', seriesId: `series:${path}`, recorded: true, command: false, thresholds: [], combinedRules: [],
+})
+
+const generatedView = (kind: 'overview' | 'detail', title: string, paths: ReadonlyArray<string>): ComposedDisplayViewResult => ({
+  kind, plantId: 'plant:1', plantLabel: 'Unit 1', simulationTime: at(0),
+  display: { plantId: 'plant:1', title, advice: null, modelDigest: 'a'.repeat(64), height: 900, panels: [{ kind: 'readouts', sparklineMs: 600_000, pens: paths.map(pen) }] } as unknown as ComposedDisplayViewResult['display'],
+})
+
+/** A World that answers on the fake clock; what it answers can change while the test runs. */
+const slowWorld = (clock: Clock, initial: { readonly view: ComposedDisplayViewResult }) => {
+  const world = {
+    latencyMs: 0,
+    loaded: true,
+    exists: true,
+    mode: 'power' as string,
+    view: initial.view,
+    views: new Map<string, ComposedDisplayViewResult>(),
+    calls: [] as string[],
+    sampleTimes: [] as number[],
+    inFlight: 0,
+    maxInFlight: 0,
+  }
+  let samples = 0
+  const client: ComposedDisplayClient = {
+    presence: async () => {
+      world.calls.push(`presence:${world.loaded ? 'loaded' : 'unloaded'}`)
+      return world.exists ? { title: 'Run', loaded: world.loaded, playback: 'playing', currentSimulationTime: at(0) } : null
+    },
+    loadRun: async () => { world.calls.push('loadRun'); world.loaded = true },
+    view: async (_run, _plant, state) => {
+      world.calls.push(`view:${state}`)
+      return world.views.get(state) ?? world.view
+    },
+    history: async (_run, seriesId) => {
+      world.calls.push(`history:${seriesId}`)
+      return [{ t: Date.parse(at(-60_000)), v: 15 }]
+    },
+    sample: (_run, _plant, paths) => {
+      world.calls.push(`sample:${paths.join(',')}`)
+      world.sampleTimes.push(clock.wall.now)
+      world.inFlight += 1
+      world.maxInFlight = Math.max(world.maxInFlight, world.inFlight)
+      const answer = () => {
+        world.inFlight -= 1
+        const time = at(1_000 * samples++)
+        return {
+          simulationTime: time,
+          plantElapsedMs: elapsedAt(time),
+          mode: { id: world.mode, label: world.mode },
+          values: paths.map(path => ({ path, value: 15.5, quality: 'good' as const })),
+        }
+      }
+      // A quick World answers at once; a slow one after its latency on the fake clock.
+      return world.latencyMs === 0 ? Promise.resolve().then(answer) : clock.after(world.latencyMs, answer)
+    },
+  }
+  return { world, client }
+}
+
+const clocked = (clock: Clock, client: ComposedDisplayClient, options: { readonly suspendWhenIdle?: boolean; readonly size?: () => ViewSize | null } = {}) => {
+  const snapshots: ComposedDisplaySnapshot[] = []
+  const controller = createComposedDisplaySession({
+    runId, plantId: 'plant:1', state: '{}', client,
+    onChange: snapshot => { snapshots.push(snapshot) },
+    suspendWhenIdle: options.suspendWhenIdle ?? false,
+    size: options.size ?? (() => ({ width: 1896, height: 972 })),
+    wallNow: () => clock.wall.now,
+    schedule: clock.schedule,
+  })
+  return { controller, snapshots, last: () => snapshots[snapshots.length - 1]! }
+}
+
+describe('composed display session on a fake clock', () => {
+  test('keeps one sample in flight against a slow World, waits longer after slow answers and returns to 1 Hz', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    world.latencyMs = 5_000
+    const { controller, last } = clocked(clock, client)
+    const started = controller.start()
+    await clock.advance(5_000)
+    await started
+    expect(last().phase.kind).toBe('live')
+    await clock.advance(55_000)
+    // Asked again only once answered: after a 5 s answer it waits 2 s, then 5 s after every further slow answer.
+    expect(world.maxInFlight).toBe(1)
+    expect(world.sampleTimes).toEqual([0, 6_000, 13_000, 23_000, 33_000, 43_000, 53_000])
+    // Polls the view never joins two requests: a poll while one is in flight joins it.
+    void controller.poll()
+    void controller.poll()
+    expect(world.maxInFlight).toBe(1)
+    world.latencyMs = 100
+    await clock.advance(20_000)
+    const recent = world.sampleTimes.filter(time => time >= 70_000)
+    // Quick answers again: one sample a second, the answer time included.
+    expect(recent.slice(1).map((time, index) => time - recent[index]!)).toEqual(recent.slice(1).map(() => 1_000))
+    expect(world.maxInFlight).toBe(1)
+    controller.close()
+  })
+
+  test('a Run that is not loaded is watched with backoff and drawn by itself once someone loads it, never loaded by the display', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    world.loaded = false
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    expect(last().phase.kind).toBe('inactive')
+    await clock.advance(2_000)
+    world.loaded = true
+    await clock.advance(1_000)
+    expect(last().phase.kind).toBe('live')
+    expect(world.calls.slice(0, 4)).toEqual(['presence:unloaded', 'presence:unloaded', 'presence:loaded', 'view:{}'])
+    expect(world.calls).not.toContain('loadRun')
+    controller.close()
+  })
+
+  test('a Run unloaded under a live display stops its samples and resumes them when it is loaded again', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    world.loaded = false
+    await clock.advance(5_000)
+    // The fifth sample's presence read finds the Run unloaded: no sample is asked of it while it is.
+    expect(last().phase.kind).toBe('inactive')
+    const samplesWhileUnloaded = world.calls.filter(call => call.startsWith('sample')).length
+    await clock.advance(30_000)
+    expect(world.calls.filter(call => call.startsWith('sample')).length).toBe(samplesWhileUnloaded)
+    world.loaded = true
+    await clock.advance(10_000)
+    expect(last().phase.kind).toBe('live')
+    expect(world.calls).not.toContain('loadRun')
+    controller.close()
+  })
+
+  test('only the Run\'s own clock going backwards reads as a reset, never the order answers arrive in', async () => {
+    const clock = fakeClock()
+    let elapsed = 10_000
+    const base: ComposedDisplayClient = slowWorld(clock, { view }).client
+    const answers: Array<() => void> = []
+    let requests = 0
+    const client: ComposedDisplayClient = {
+      ...base,
+      sample: async (_run, _plant, paths) => {
+        requests += 1
+        await new Promise<void>(resolve => { answers.push(resolve) })
+        elapsed += 1_000
+        return { simulationTime: at(elapsed), plantElapsedMs: elapsed, values: paths.map(path => ({ path, value: 15.5, quality: 'good' as const })) }
+      },
+    }
+    const { controller, last } = clocked(clock, client, { size: () => null })
+    const started = controller.start({ poll: false })
+    await clock.settle()
+    answers.shift()!()
+    await started
+    // Three polls while one is unanswered are one request.
+    const polls = [controller.poll(), controller.poll(), controller.poll()]
+    await clock.settle()
+    expect(requests).toBe(2)
+    answers.shift()!()
+    await Promise.all(polls)
+    expect(last().resetSinceAdvice).toBe(false)
+    // The Run is reset: its Plant clock starts again.
+    elapsed = 0
+    const after = controller.poll()
+    await clock.settle()
+    answers.shift()!()
+    await after
+    expect(last().resetSinceAdvice).toBe(true)
+    controller.close()
+  })
+
+  test('a generated display is drawn again within two samples of a mode change, with history for the lead values it newly shows', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['core.powerMw', 'pressurizer.pressureMPa']) })
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    await clock.advance(3_000)
+    expect(world.calls.filter(call => call.startsWith('view'))).toHaveLength(1)
+    // The reactor trips: the Plant is in another mode, whose lead values put subcooling first.
+    world.mode = 'hot-standby'
+    world.view = generatedView('overview', 'Unit 1', ['rcs.subcoolingMarginK', 'pressurizer.pressureMPa'])
+    const before = world.calls.length
+    await clock.advance(2_000)
+    const since = world.calls.slice(before)
+    expect(since.filter(call => call.startsWith('view'))).toEqual(['view:{}'])
+    // Only the newly shown lead value reads its history; the others keep theirs.
+    expect(since.filter(call => call.startsWith('history'))).toEqual(['history:series:rcs.subcoolingMarginK'])
+    expect(last().view?.display.panels[0]).toMatchObject({ pens: [{ path: 'rcs.subcoolingMarginK' }, { path: 'pressurizer.pressureMPa' }] })
+    expect([...last().series.keys()].sort()).toEqual(['pressurizer.pressureMPa', 'rcs.subcoolingMarginK'])
+    // The new mode holds: no further redraws.
+    await clock.advance(5_000)
+    expect(world.calls.filter(call => call.startsWith('view'))).toHaveLength(2)
+    controller.close()
+  })
+
+  test('advice keeps its composition when the mode changes', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view })
+    const { controller } = clocked(clock, client, { size: () => null })
+    await controller.start()
+    world.mode = 'hot-standby'
+    await clock.advance(5_000)
+    expect(world.calls.filter(call => call.startsWith('view'))).toHaveLength(1)
+    controller.close()
+  })
+
+  test('a frame not on screen asks the Run nothing; shown again it reads presence first, samples at once and reads what it missed', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    await clock.advance(2_000)
+    controller.setVisible(false)
+    const before = world.calls.length
+    await clock.advance(120_000)
+    expect(world.calls.length).toBe(before)
+    controller.setVisible(true)
+    await clock.settle()
+    expect(world.calls.slice(before)).toEqual(['presence:loaded', 'sample:pressurizer.pressureMPa', 'history:series:pressurizer.pressureMPa'])
+    expect(last().lastSampleWallMs).toBe(122_000)
+    // While it was off screen the Run was unloaded: shown again, it says so and asks no sample, which would load it.
+    controller.setVisible(false)
+    world.loaded = false
+    await clock.advance(60_000)
+    const hidden = world.calls.length
+    controller.setVisible(true)
+    await clock.settle()
+    expect(world.calls.slice(hidden)).toEqual(['presence:unloaded'])
+    expect(last().phase.kind).toBe('inactive')
+    controller.close()
+  })
+
+  test('equipment opened in place is shown only with its own first sample, never with the previous display\'s values', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    world.views.set('detail', generatedView('detail', 'Steam Generator B', ['sgB.levelPercent']))
+    const { controller, snapshots, last } = clocked(clock, client)
+    await controller.start()
+    world.latencyMs = 4_000
+    const opened = controller.open('detail')
+    await clock.advance(2_000)
+    expect(last().view?.display.title).toBe('Unit 1')
+    await clock.advance(4_000)
+    await opened
+    expect(last().view?.display.title).toBe('Steam Generator B')
+    expect(last().latest?.values.map(value => value.path)).toEqual(['sgB.levelPercent'])
+    // No snapshot ever paired the detail with the overview's sample.
+    expect(snapshots.filter(snapshot => snapshot.view?.display.title === 'Steam Generator B' && snapshot.latest?.values.some(value => value.path === 'pressurizer.pressureMPa'))).toEqual([])
+    expect(world.maxInFlight).toBe(1)
     controller.close()
   })
 })

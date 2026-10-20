@@ -3,7 +3,7 @@
  * reason it gives for one it refuses. Per listing, so the facts hold whether
  * a refused listing refuses its whole list (today) or only itself.
  */
-import { readDisplayWindowHostMessage } from '../../src/ui/process-display/display-window-messages.ts'
+import { listingRefusal, readDisplayWindowHostMessage } from '../../src/ui/process-display/display-window-messages.ts'
 
 const workspaceId = '1e828b43-37fc-4437-aa70-302d7f442ceb'
 const parent = { name: 'host' }
@@ -31,5 +31,8 @@ export const LISTINGS: Readonly<Record<string, ReturnType<typeof listing>>> = {
 
 export const observeListings = (): Record<string, unknown> => Object.fromEntries(Object.entries(LISTINGS).map(([name, view]) => {
   const read = readDisplayWindowHostMessage({ origin: expected.origin, source: parent, data: { type: 'leitbild:view-open', view } }, expected)
-  return [name, read === null ? null : read.kind === 'rejected' ? { opens: false, reason: read.reason } : { opens: read.kind === 'open' }]
+  if (read === null || read.kind !== 'open') return [name, read === null ? null : read.kind === 'rejected' ? { opens: false, reason: read.reason } : { opens: false }]
+  // Opened, the window shows a frame, or in its place why it cannot show the listing (a view of another type).
+  const refusal = listingRefusal(read.view.envelope)
+  return [name, refusal === null ? { opens: true } : { opens: true, shown: false, reason: refusal }]
 }))

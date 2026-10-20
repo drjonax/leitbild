@@ -175,7 +175,7 @@
   /* OpenBridge's indicator at a faceplate row's height: its 48 px box overlaps the rows by its padding, its label set as the row's text. */
   obc-status-indicator { display: block; margin: -10px -8px; --global-typography-ui-button-font-size: 12px; --global-typography-ui-button-line-height: 16px; --global-typography-ui-body-font-size: 12px; --global-typography-ui-body-line-height: 16px; }
   .note { flex: 0 1 auto; min-width: 0; font-size: 11px; color: var(--element-neutral-color); }
-  .note.beyond { color: var(--alert-caution-color); font-weight: 600; }
+  .note.beyond { color: var(--display-alert-text); font-weight: 600; text-decoration: underline 2px var(--display-caution-mark); text-underline-offset: 2px; }
   /* A safety function's criterion its reading does not meet: set apart by weight, its chip carries the colour. */
   .note.unmet { font-weight: 600; color: var(--element-active-color); }
   .end { flex: none; margin-left: auto; display: flex; align-items: center; gap: 6px; /* GAP */ }

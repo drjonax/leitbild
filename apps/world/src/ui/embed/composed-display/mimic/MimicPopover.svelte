@@ -162,9 +162,9 @@
   .state { color: var(--element-neutral-color); flex: none; }
   .stale { flex: none; padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; font-size: 11px; line-height: 14px; font-weight: 700; }
   .chip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border-radius: 3px; font-size: 11px; line-height: 15px; font-weight: 600; }
-  .chip.alarm { background: var(--alert-alarm-color); color: var(--on-alarm-active-color); }
-  .chip.warning { background: var(--alert-warning-color); color: var(--on-warning-active-color); }
-  .chip.caution { background: var(--alert-caution-color); color: var(--on-caution-active-color); }
+  .chip.alarm { background: var(--display-alarm-fill); color: var(--display-on-alarm); box-shadow: inset 0 0 0 1px var(--alert-alarm-color); }
+  .chip.warning { background: var(--display-warning-fill); color: var(--display-on-warning); box-shadow: inset 0 0 0 1px var(--alert-warning-color); }
+  .chip.caution { background: var(--display-caution-fill); color: var(--display-on-caution); box-shadow: inset 0 0 0 1px var(--alert-caution-color); }
   /* The pin fits the 24 px header: OpenBridge's icon button at a 24 px target. */
   .note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 11px; line-height: 15px; font-weight: 600; }
   .pin { margin-left: auto; flex: none; height: 24px; --ui-components-button-touch-target-size: 24px; --ui-components-icon-button-visual-target-size: 24px; }
