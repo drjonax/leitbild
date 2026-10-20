@@ -114,8 +114,8 @@ export interface DiagramProfile {
   readonly grid: number
   /** Px per footprint cell. */
   readonly cell: number
-  /** Pipe stroke (outline) width in px, and the corner radius of a bend. */
-  readonly pipe: { readonly outline: number; readonly cornerRadius: number; readonly crossingHalfGap: number }
+  /** Pipe stroke (outline) width, bend corner radius, half a crossing's gap and the clear gap between parallel pipes, in px. */
+  readonly pipe: { readonly outline: number; readonly cornerRadius: number; readonly crossingHalfGap: number; readonly trackGap: number }
   /** Text keeps this far from any other node's alarm frame, flap included. */
   readonly textClearance: number
   /** The alarm frame hugs the button box (symbol plus text stack) at this margin. */

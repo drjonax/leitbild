@@ -118,7 +118,7 @@ export const verifyLayout = (input: VerifyInput): DiagramViolation[] => {
     }
     for (const text of texts) if (rectsOverlap(buffered, text.rect)) push('overlap', name(owner), `pipe overlaps text of ${text.id}`)
   }
-  const spacing = outline + 4
+  const spacing = outline + profile.pipe.trackGap
   // Each segment as its axis (0: horizontal, 1: vertical, -1: neither), the coordinate it lies at, and its extent along it.
   const shapes = segments.map(segment => {
     const axis = isHorizontal(segment) ? 0 : isVertical(segment) ? 1 : -1

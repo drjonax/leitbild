@@ -65,6 +65,7 @@ export const validateProfile = (profile: DiagramProfile): void => {
   if (!(profile.pipe.outline > 0) || !Number.isFinite(profile.pipe.outline)) issues.push('pipe.outline must be positive')
   if (!isSize(profile.pipe.cornerRadius)) issues.push('pipe.cornerRadius must be a size')
   if (!isSize(profile.pipe.crossingHalfGap)) issues.push('pipe.crossingHalfGap must be a size')
+  if (!isSize(profile.pipe.trackGap)) issues.push('pipe.trackGap must be a size')
   for (const key of ['textClearance', 'frameMargin', 'flapHeight', 'flapLabelPadding'] as const) if (!isSize(profile[key])) issues.push(`${key} must be a size`)
   for (const [key, value] of Object.entries(profile.limits)) if (!isCount(value)) issues.push(`limits.${key} must be a count`)
   if (profile.fit.length === 0) issues.push('fit needs at least one rung')

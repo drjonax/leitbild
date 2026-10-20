@@ -101,11 +101,11 @@ export interface MimicProfile {
   readonly sparklines: { readonly width: number; readonly height: number } | null
 }
 
-/** OpenBridge's drawing conventions: its 24 px grid, pipe outline and alarm frame. */
+/** OpenBridge's drawing conventions: its 24 px grid, pipe outline, gap between parallel pipes and alarm frame. */
 const openBridgeDrawing = {
   grid: 24,
   cell: 24,
-  pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5 },
+  pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5, trackGap: 4 },
   textClearance: 9,
   frameMargin: 1,
   flapHeight: openBridgeDevice.flapHeight,
