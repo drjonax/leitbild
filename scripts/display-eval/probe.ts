@@ -34,6 +34,7 @@ import { correctionsIn, type Correction } from './corrections.ts'
 import { callsBetween, logOffset, summariseCalls, type ModelCall } from './billing.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 import { operationChecks } from './operation-checks.ts'
+import { worryVerdict } from './worry.ts'
 
 const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|smoke|near-duplicate|all] [--scenarios=<abs module>#<export>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
 const [stage, directory, ...rest] = Bun.argv.slice(2)
@@ -456,6 +457,7 @@ for (const scenario of chosen) {
     decisiveSignalHits: scoredSignals.filter(result => result.hit === true).length,
     decisivePass: scenario.expect !== 'display' || scoredSignals.length === 0 ? null : fence !== null && scoredSignals.every(result => result.hit === true),
     staleKeyNames: [...new Set(decisive.flatMap(result => result.unknown))],
+    ...(scenario.set === 'worry' ? { worry: answer.type === 'chat' ? worryVerdict(scenario.evidence, answer.content) : null } : {}),
     addedEvidence: display === null ? [] : addedEvidenceUse(display, answer.content),
     prepareWallMs,
     wallMs,
@@ -488,7 +490,7 @@ for (const scenario of chosen) {
     ...(requested === null ? {} : { requestedReply: requested.reply, requestedInterim: requested.interim, requestedCalls: requested.calls }),
   })
   await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
-  console.log(JSON.stringify({ id: fullRow.id, displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
+  console.log(JSON.stringify({ id: fullRow.id, displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, ...('worry' in fullRow ? { worry: fullRow.worry?.pass ?? null } : {}), modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
 }
 
 const { summariseRows } = await import('./report.ts')

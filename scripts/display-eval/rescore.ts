@@ -16,6 +16,7 @@ import { displayEvidenceOf, scoreKey, type KeyResult } from './decisive.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 import { summariseRows, type ProbeRow } from './report.ts'
 import { operationChecks, type ComposeShown } from './operation-checks.ts'
+import { worryVerdict } from './worry.ts'
 
 const viewFence = (content: string): boolean => /```leitbild-view\n(view \S+)\n```/.test(content)
 
@@ -66,6 +67,7 @@ export const rescoreRow = (recorded: Recorded, scenario: EvalScenario, catalog =
     decisiveSignalHits: scored.filter(result => result.hit === true).length,
     decisivePass: scenario.expect !== 'display' || scored.length === 0 ? null : fence && scored.every(result => result.hit === true),
     staleKeyNames: [...new Set(decisive.flatMap(result => result.unknown))],
+    ...(scenario.set === 'worry' ? { worry: recorded.answer.type === 'chat' ? worryVerdict(scenario.evidence, recorded.answer.content) : null } : {}),
   }
 }
 

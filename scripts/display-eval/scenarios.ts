@@ -92,6 +92,11 @@ export interface EvidenceKey {
   readonly signals?: ReadonlyArray<string>
   /** Whether any one of the names carries the key (default) or all of them must. */
   readonly match?: 'any' | 'all'
+  /**
+   * A claim or absence key's pre-registered rule (worry.ts): regex sources, read case-insensitively over the answer's
+   * prose. A claim holds when every pattern matches; an absence holds when no affirmative clause matches them all.
+   */
+  readonly patterns?: ReadonlyArray<string>
 }
 
 export interface Scenario {
@@ -110,7 +115,7 @@ export interface Scenario {
 
 /** A scenario as the harness runs and scores it. */
 export interface EvalScenario extends Scenario {
-  readonly set: 'dev' | 'near-duplicate' | 'holdout'
+  readonly set: 'dev' | 'near-duplicate' | 'holdout' | 'worry'
   readonly flaky: boolean
   readonly evidence: ReadonlyArray<EvidenceKey>
 }
@@ -386,8 +391,14 @@ const parseKey = (where: string, value: unknown): EvidenceKey => {
     use: oneOf(`${where}.use`, value.use, ['P0', 'P1+'] as const)!,
     ...(value.signals === undefined ? {} : { signals: stringList(`${where}.signals`, value.signals) }),
     ...(match === undefined ? {} : { match }),
+    ...(value.patterns === undefined ? {} : { patterns: patternList(`${where}.patterns`, value.patterns) }),
   }
 }
+
+const patternList = (where: string, value: unknown): ReadonlyArray<string> => stringList(where, value).map(source => {
+  try { new RegExp(source, 'iu') } catch (error) { fail(where, `holds an invalid pattern ${JSON.stringify(source)}: ${String(error)}`) }
+  return source
+})
 
 const parseOperation = (where: string, value: unknown): OperationExpectation => {
   if (!isRecord(value)) return fail(where, 'must be an object')
@@ -422,13 +433,15 @@ const parseExternalScenario = (index: number, value: unknown): EvalScenario => {
   if (!isRecord(value)) return fail(where, 'must be an object')
   if (typeof value.id !== 'string' || !/^[a-z0-9-]+$/.test(value.id)) fail(`${where}.id`, 'must be a lower-case id')
   if (typeof value.prompt !== 'string' || value.prompt.length === 0) fail(`${where}.prompt`, 'must be text')
-  const holdout = isRecord(value.holdout) ? value.holdout : fail(`${where}.holdout`, 'is missing')
+  // A hold-out item carries its keys in the author's holdout block; a worry item (G1) in a worry block.
+  const set = isRecord(value.holdout) ? 'holdout' as const : isRecord(value.worry) ? 'worry' as const : fail(where, 'needs a holdout or a worry block with its evidence')
+  const block = (set === 'holdout' ? value.holdout : value.worry) as Record<string, unknown>
   for (const field of ['fault', 'setup', 'advanceMinutes'] as const) if (field in value) fail(`${where}.${field}`, 'belongs under run, which declares the Scenario it acts on')
   if ('followUp' in value) fail(where, 'carries a followUp turn, which this probe does not run')
   const keyPanel = oneOf(`${where}.keyPanel`, value.keyPanel, ['trend', 'comparison', 'readouts', 'alarms', 'mimic'] as const, true)
   const mimic = oneOf(`${where}.mimic`, value.mimic, ['expected', 'avoid'] as const, true)
   const requested = oneOf(`${where}.requested`, value.requested, ['display', 'none'] as const, true)
-  const evidence = Array.isArray(holdout.evidence) ? holdout.evidence.map((key, at) => parseKey(`${where}.holdout.evidence[${at}]`, key)) : fail(`${where}.holdout.evidence`, 'must be a list')
+  const evidence = Array.isArray(block.evidence) ? block.evidence.map((key, at) => parseKey(`${where}.${set}.evidence[${at}]`, key)) : fail(`${where}.${set}.evidence`, 'must be a list')
   return {
     id: value.id as string, prompt: value.prompt as string,
     expect: oneOf(`${where}.expect`, value.expect, ['display', 'none', 'either'] as const)!,
@@ -437,12 +450,12 @@ const parseExternalScenario = (index: number, value: unknown): EvalScenario => {
     ...(mimic === undefined ? {} : { mimic }),
     ...(requested === undefined ? {} : { requested }),
     ...(value.operation === undefined ? {} : { operation: parseOperation(`${where}.operation`, value.operation) }),
-    set: 'holdout', flaky: false, evidence,
+    set, flaky: false, evidence,
   }
 }
 
 /**
- * Hold-out scenarios from an absolute module path and export name. Each
+ * Hold-out or worry scenarios from an absolute module path and export name. Each
  * declares its Run; one with a follow-up turn is refused (this probe asks one
  * question per Room). The module's own keySignals are not read: its evidence
  * keys decide.

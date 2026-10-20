@@ -91,4 +91,12 @@ describe('the parametric probe (plan §6, AG S1-4)', () => {
     await expect(external([{ ...item, run: { ...item.run, setup: [{ operationId: 'world.electric-grid.open-branch' }] } }])).rejects.toThrow('setup[0]')
     await expect(external([{ ...item, operation: { equipment: 'x', named: 'x', tags: ['x'], proposal: 'refused' } }])).rejects.toThrow('plantId')
   })
+
+  test('a worry module carries its keys in a worry block; pattern keys must compile', async () => {
+    const key = { key: 'names the overload', kind: 'claim', rationale: 'r', status: KEY_STATUS, use: 'P1+', patterns: ['overload'] }
+    const { holdout: _holdout, ...bare } = item
+    expect((await external([{ ...bare, worry: { evidence: [key] } }]))[0]).toMatchObject({ set: 'worry', evidence: [{ patterns: ['overload'] }] })
+    await expect(external([bare])).rejects.toThrow('holdout or a worry block')
+    await expect(external([{ ...bare, worry: { evidence: [{ ...key, patterns: ['(unclosed'] }] } }])).rejects.toThrow('invalid pattern')
+  })
 })
