@@ -22,7 +22,7 @@ import {
   issueCommandWithIdempotency,
 } from './command-idempotency.ts'
 import type { EventLog } from './event-log.ts'
-import { persistenceDispositionFor,type SimulationRunEventPersistenceDisposition } from './persistence-policy.ts'
+import { keepsStateChange,persistenceDispositionFor,type SimulationRunEventPersistenceDisposition } from './persistence-policy.ts'
 import {
   createSimulationRunRuntimeMetricsRecorder,
   type SimulationRunRuntimeMetricsSnapshot,
@@ -471,7 +471,10 @@ export const createSimulationRunRuntime = async (config: {
   ): Promise<void> => {
     assertCommitAvailable()
     if (publishedEvents.length === 0) return
-    const simulationRunEvents = declaredSides === undefined ? publishedEvents : withSidedAudiences(publishedEvents, declaredSides)
+    // One simulation time per committed batch, so the journal and notifications carry the same stamp.
+    const simulationTime = runClock.read().currentTime
+    const simulationRunEvents = (declaredSides === undefined ? publishedEvents : withSidedAudiences(publishedEvents, declaredSides))
+      .map(event => ({ ...event, simulationTime }) as SimulationRunEvent)
     if (simulationRunEvents.some(event => event.type === 'object.deleted')) {
       // Validate the complete batch before changing canonical state. This covers
       // UI/API commands, interaction effects and runtime-originated deletions.
@@ -490,9 +493,8 @@ export const createSimulationRunRuntime = async (config: {
       const previousObject = event.type === 'object.upserted' ? state.getObject(event.object.id) : undefined
       try { state.apply(event) }
       catch (error) { await failCommit(error) }
-      const persistence = options?.history
-        ?? options?.historyForEvent?.(event, previousObject, index)
-        ?? persistenceDispositionFor(event, previousObject)
+      const persistence = event.type === 'object.upserted' && keepsStateChange(previousObject, event.object) ? 'durable'
+        : options?.history ?? options?.historyForEvent?.(event, previousObject, index) ?? persistenceDispositionFor(event, previousObject)
       if (persistence === 'durable') {
         eventsToPersist.push(event)
       } else {

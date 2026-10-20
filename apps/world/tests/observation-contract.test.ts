@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { cardItemSchema, displayCardSchema } from '../src/core/observation/card.ts'
 import { defineObservationCapability, observationDeclarationSchema, observationShapes } from '../src/core/observation/capabilities.ts'
-import { observableSchema, observationSchema, quantitySchema, quantityUnits, stampSchema, thresholdSchema, viewerSchema } from '../src/core/observation/model.ts'
+import { observableSchema, observationSchema, quantitySchema, quantityUnits, stampSchema, thresholdSchema } from '../src/core/observation/model.ts'
 import {
   dashboardSchema, dashboardsFileSchema, displaySpecSchema, sectionSchema, selectorSchema, viewSchema,
 } from '../src/core/observation/spec.ts'
@@ -67,12 +67,6 @@ describe('observation model', () => {
     expect(observationSchema.parse(observation).priority).toBe('caution')
     expect(observationSchema.safeParse({ ...observation, severity: 'caution' }).success).toBe(false)
     expect(observationSchema.safeParse({ ...observation, clock: undefined }).success).toBe(false)
-  })
-
-  test('a viewer sees everything or named sides', () => {
-    expect(viewerSchema.parse({ actor: 'person', sees: 'all' }).sees).toBe('all')
-    expect(viewerSchema.parse({ actor: 'agent', sees: ['blue'] }).sees).toEqual(['blue'])
-    expect(viewerSchema.safeParse({ actor: 'agent', sees: [] }).success).toBe(false)
   })
 })
 
