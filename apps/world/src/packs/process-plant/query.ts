@@ -11,6 +11,7 @@ import { answerProcessPlantRuntimeQuery, processPlantRuntimeQueryKinds } from '.
 import { answerProcessPlantSignalQuery, processPlantSignalQueryKinds } from './queries/signal-query.ts'
 import { answerProcessPlantComposedDisplayQuery, processPlantComposedDisplayQueryKinds } from './queries/composed-display-query.ts'
 import { answerProcessPlantVariableQuery, processPlantVariableQueryKinds } from './queries/variable-query.ts'
+import { answerProcessPlantObservationQuery } from './observation/query.ts'
 
 export { processPlantCredibilityEvidenceForGraph } from './queries/credibility-query.ts'
 
@@ -34,6 +35,8 @@ export const answerProcessPlantQuery = (config: {
   readonly simulationTime?: IsoTimestamp
   /** Series the Run's historian records (empty when it records none); required by composed displays. */
   readonly recordedSeriesIds?: ReadonlySet<string>
+  /** The interval the Run samples them at; absent where it records none. */
+  readonly recordingIntervalMs?: number
   /** What the Run's historian holds of them; a composed display reads the recent history of what it trends. */
   readonly recordedHistory?: PackRuntimeRecordedHistory
 }): unknown => answerProcessPlantCatalogQuery(config)
@@ -45,4 +48,8 @@ export const answerProcessPlantQuery = (config: {
   ?? answerProcessPlantControlQuery(config)
   ?? answerProcessPlantRuntimeQuery(config)
   ?? answerProcessPlantComposedDisplayQuery(config)
+  ?? answerProcessPlantObservationQuery({
+    ...config,
+    recording: config.recordedSeriesIds === undefined || config.recordingIntervalMs === undefined ? null : { seriesIds: config.recordedSeriesIds, intervalMs: config.recordingIntervalMs },
+  })
   ?? failure(`Process Plant does not support query Capability: ${config.request.capabilityId}`)

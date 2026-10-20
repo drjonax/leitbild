@@ -742,6 +742,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           objects: objectsById,
           simulationTime: new Date(lastSimulationMs).toISOString() as IsoTimestamp,
           recordedSeriesIds,
+          ...(recordingPlan === null ? {} : { recordingIntervalMs: recordingPlan.intervalMs }),
           ...(config.recordedHistory === undefined ? {} : { recordedHistory: config.recordedHistory }),
         })
       },
