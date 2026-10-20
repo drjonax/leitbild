@@ -41,6 +41,10 @@ export interface RetrievalPair {
   readonly form: 'label' | 'partial' | 'folded' | 'norwegian' | 'qualified' | 'id' | 'category' | 'quantity' | 'procedure-phrase' | 'agent-search'
   readonly source: string
   readonly review: 'AI-mined, pending review' | 'AI-drafted, pending review'
+  /** Lead ruling R34's review, from the query text alone: out of the gate set, with the reason. */
+  readonly removed?: string
+  /** R34: the expectations the query names replace the mined ones, which raw recall still scores. */
+  readonly rekeyed?: { readonly reason: string; readonly was: ReadonlyArray<Expected> }
 }
 
 /** One match as A4 returns it. */
@@ -70,19 +74,24 @@ export const hits = (expected: Expected, match: SearchMatch): boolean => {
   return match.kind !== 'object' && match.element?.id === expected.element
 }
 
-/** Recall@8 per pack and over all pairs, with every miss and what came back instead. */
+/**
+ * Recall@8 per pack and over the reviewed pairs (R34: the gate set, without removed pairs, with re-keyed expectations),
+ * with every miss and what came back instead; raw recall scores every pair with its original expectations.
+ */
 export const scoreRecall = (pairs: ReadonlyArray<RetrievalPair>, results: ReadonlyArray<SearchResult>) => {
-  const rows = pairs.map((pair, index) => {
-    const result = results[index]!
-    const at = result.matches.slice(0, 8).findIndex(match => pair.expect.some(expected => hits(expected, match)))
-    return { pair, rank: at < 0 ? null : at + 1, result }
-  })
+  const rankOf = (expect: ReadonlyArray<Expected>, result: SearchResult) => {
+    const at = result.matches.slice(0, 8).findIndex(match => expect.some(expected => hits(expected, match)))
+    return at < 0 ? null : at + 1
+  }
+  const raw = pairs.map((pair, index) => ({ pair, rank: rankOf(pair.rekeyed?.was ?? pair.expect, results[index]!), result: results[index]! }))
+  const rows = pairs.flatMap((pair, index) => pair.removed === undefined ? [{ pair, rank: rankOf(pair.expect, results[index]!), result: results[index]! }] : [])
   const tally = (subset: typeof rows) => ({ pairs: subset.length, hits: subset.filter(row => row.rank !== null).length, recall: subset.length === 0 ? null : subset.filter(row => row.rank !== null).length / subset.length })
   const byPack = Object.fromEntries(PACKS.map(pack => [pack, tally(rows.filter(row => row.pair.pack === pack))]))
   const all = tally(rows)
   return {
     all,
     byPack,
+    raw: { all: tally(raw), byPack: Object.fromEntries(PACKS.map(pack => [pack, tally(raw.filter(row => row.pair.pack === pack))])) },
     // T11: recall@8 ≥ 0.95 on ≥ 150 pairs, ≥ 20 per pack.
     pass: all.pairs >= 150 && (all.recall ?? 0) >= 0.95 && PACKS.every(pack => byPack[pack]!.pairs >= 20),
     misses: rows.filter(row => row.rank === null).map(({ pair, result }) => ({
@@ -192,5 +201,5 @@ if (import.meta.main) {
   const scored = scoreRecall(pairs, results)
   await Bun.write(join(directory, 'retrieval-results.json'), JSON.stringify({ origin, seconds, runId: resource.id, results }, null, 2))
   await Bun.write(join(directory, 'retrieval-summary.json'), JSON.stringify(scored, null, 2))
-  console.log(JSON.stringify({ all: scored.all, byPack: scored.byPack, pass: scored.pass, misses: scored.misses.length }, null, 2))
+  console.log(JSON.stringify({ all: scored.all, byPack: scored.byPack, pass: scored.pass, misses: scored.misses.length, raw: scored.raw }, null, 2))
 }

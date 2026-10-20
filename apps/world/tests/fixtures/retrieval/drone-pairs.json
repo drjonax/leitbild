@@ -1,5 +1,6 @@
 {
  "about": "T11 retrieval pairs for drones (objects) (plan v3.1 Appendix F: recall@8 ≥ 0.95 on ≥ 150 pairs, ≥ 20 per pack), asked of world.simulation-run.observables.search in the integrated fixture at 240 s (scripts/display-eval/retrieval.ts). Any one expectation among the top 8 matches is a hit.",
+ "review": "Lead ruling R34, rule sha a803c45c0c791b3b813751a7c26363200324d8e66cac9483a3b005740886f61c: removed pairs stay out of the gate set and in raw recall; re-keyed pairs keep their mined expectations under rekeyed.was.",
  "pairs": [
   {"pack":"drone","query":{"text":"Halden fixed-wing search"},"expect":[{"kind":"object","objectId":"drone:halden-search"}],"form":"label","source":"integrated-all-packs fixture at 240 s: presentObject labels and categories, object ids; grid asset catalog","review":"AI-drafted, pending review"},
   {"pack":"drone","query":{"text":"fixed-wing"},"expect":[{"kind":"object","objectId":"drone:halden-search"}],"form":"partial","source":"integrated-all-packs fixture at 240 s: presentObject labels and categories, object ids; grid asset catalog","review":"AI-drafted, pending review"},

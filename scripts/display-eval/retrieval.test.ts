@@ -29,6 +29,16 @@ describe('T11 hit rules (architecture A4 matches)', () => {
     expect(hits({ kind: 'object', objectId: 'unit:1' }, match({ kind: 'object', objectId: 'unit:1' }))).toBe(true)
   })
 
+  test('reviewed recall leaves removed pairs out and scores re-keyed ones by their new expectations; raw scores every pair as mined', () => {
+    const base = { pack: 'drone', form: 'id', source: 's', review: 'AI-drafted, pending review' } as const
+    const pairs: ReadonlyArray<RetrievalPair> = [
+      { ...base, query: { text: 'a' }, expect: [{ kind: 'object', objectId: 'drone:a' }], removed: 'names a condition' },
+      { ...base, query: { text: 'b' }, expect: [{ kind: 'object', objectId: 'drone:b' }], rekeyed: { reason: 'names b', was: [{ kind: 'object', objectId: 'drone:x' }] } },
+    ]
+    const scored = scoreRecall(pairs, [{ matches: [match({ kind: 'object', objectId: 'drone:a' })] }, { matches: [match({ kind: 'object', objectId: 'drone:b' })] }])
+    expect([scored.all, scored.raw.all]).toEqual([{ pairs: 1, hits: 1, recall: 1 }, { pairs: 2, hits: 1, recall: 0.5 }])
+  })
+
   test('recall counts a hit within the top 8 only, per pack and overall, and lists every miss', () => {
     const pair = (pack: string, objectId: string): RetrievalPair => ({ pack, query: { text: objectId }, expect: [{ kind: 'object', objectId }], form: 'id', source: 's', review: 'AI-drafted, pending review' })
     const filler = Array.from({ length: 8 }, (_, index) => match({ kind: 'object', objectId: `other:${index}` }))
@@ -43,8 +53,12 @@ describe('T11 hit rules (architecture A4 matches)', () => {
 })
 
 describe('the T11 corpus', () => {
-  test('at least 150 pairs, at least 20 for every pack of the integrated fixture, each with an expectation', async () => {
-    const pairs = await loadPairs()
+  test('the reviewed set (R34) keeps at least 150 pairs and at least 20 for every pack, each with an expectation', async () => {
+    const all = await loadPairs()
+    // Removed pairs give their reason; re-keyed ones keep the mined expectations that raw recall scores.
+    for (const pair of all) if (pair.removed !== undefined) expect(pair.removed.length).toBeGreaterThan(10)
+    for (const pair of all) if (pair.rekeyed !== undefined) expect([pair.rekeyed.reason.length > 10, pair.rekeyed.was.length > 0]).toEqual([true, true])
+    const pairs = all.filter(pair => pair.removed === undefined)
     expect(pairs.length).toBeGreaterThanOrEqual(150)
     for (const pack of PACKS) expect({ pack, enough: pairs.filter(pair => pair.pack === pack).length >= 20 }).toEqual({ pack, enough: true })
     for (const pair of pairs) expect(pair.expect.length).toBeGreaterThan(0)
