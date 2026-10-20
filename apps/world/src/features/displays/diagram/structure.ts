@@ -1,12 +1,12 @@
-// Nets and lanes of edges. Edges that share a port (other than a bar's) are
+// Nets and partitions of edges. Edges that share a port (other than a bar's) are
 // one hydraulic net: they meet in a tee and may share a routing track.
 import type { Model } from './model.ts'
 
 export interface Structure {
   /** Net per edge, named by its smallest edge index. */
   readonly net: ReadonlyArray<number>
-  /** The lane an edge belongs to: its lane endpoint's lane, or null when shared. */
-  readonly edgeLane: ReadonlyArray<number | null>
+  /** The partition an edge belongs to: its partition endpoint's partition, or null when shared. */
+  readonly edgePartition: ReadonlyArray<number | null>
 }
 
 export const analyseStructure = (model: Model): Structure => {
@@ -37,12 +37,12 @@ export const analyseStructure = (model: Model): Structure => {
     }
   }
   const net = model.edges.map(edge => find(edge.index))
-  const edgeLane = model.edges.map(edge => {
-    const a = model.nodes[edge.from]!.lane
-    const b = model.nodes[edge.to]!.lane
+  const edgePartition = model.edges.map(edge => {
+    const a = model.nodes[edge.from]!.partition
+    const b = model.nodes[edge.to]!.partition
     if (a === null) return b
     if (b === null || a === b) return a
     return null
   })
-  return { net, edgeLane }
+  return { net, edgePartition }
 }

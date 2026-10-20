@@ -115,10 +115,10 @@ const openBridgeDrawing = {
 /** Chat's ladder: stacks move below symbols before optional lines go. */
 const chatFit = [
   { detail: 'full', text: 'right' },
-  { detail: 'full', text: 'lanesBelow' },
+  { detail: 'full', text: 'partitionsBelow' },
   { detail: 'full', text: 'allBelow' },
   { detail: 'required', text: 'right' },
-  { detail: 'required', text: 'lanesBelow' },
+  { detail: 'required', text: 'partitionsBelow' },
   { detail: 'required', text: 'allBelow' },
 ] as const
 
@@ -131,7 +131,7 @@ const overviewFit = [
   { detail: 'full', text: 'right' },
   { detail: 'full', text: 'stubsBelow' },
   { detail: 'required', text: 'stubsBelow' },
-  { detail: 'required', text: 'lanesBelow' },
+  { detail: 'required', text: 'partitionsBelow' },
   { detail: 'required', text: 'allBelow' },
 ] as const
 
@@ -145,7 +145,7 @@ export const chatMimicProfile: MimicProfile = {
   id: 'chat',
   layout: {
     ...openBridgeDrawing,
-    limits: { symbols: 20, symbolsPerLane: 3, sharedSymbols: 8, lanes: 4, crossings: 6, crossingsOverBound: 6, bendsPerEdge: 3 },
+    limits: { symbols: 20, symbolsPerPartition: 3, sharedSymbols: 8, partitions: 4, crossings: 6, crossingsOverBound: 6, bendsPerEdge: 3 },
     fit: chatFit,
   },
   readoutSize: 'small',
@@ -176,7 +176,7 @@ export const overviewMimicProfile: MimicProfile = {
   id: 'overview',
   layout: {
     ...openBridgeDrawing,
-    limits: { symbols: 60, symbolsPerLane: 6, sharedSymbols: 24, lanes: 8, crossings: 40, crossingsOverBound: 2, bendsPerEdge: 3 },
+    limits: { symbols: 60, symbolsPerPartition: 6, sharedSymbols: 24, partitions: 8, crossings: 40, crossingsOverBound: 2, bendsPerEdge: 3 },
     fit: overviewFit,
   },
   readoutSize: 'regular',

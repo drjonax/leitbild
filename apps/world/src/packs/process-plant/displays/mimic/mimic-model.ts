@@ -1,6 +1,6 @@
 import type { VariablePath } from '../../graph/index.ts'
 import type { MimicFlowBinding, MimicItemBinding, MimicStubWord } from './bindings.ts'
-import type { DiagramZone, Face, PlacedNode } from '../../../../features/displays/diagram/index.ts'
+import type { Face, PlacedNode } from '../../../../features/displays/diagram/index.ts'
 import { DIAGRAM_ENGINE_VERSION } from '../../../../features/displays/diagram/index.ts'
 import type { MimicPresentation } from './presentation.ts'
 import type { FlapPart, MimicRow } from './rows.ts'
@@ -117,6 +117,16 @@ export interface MimicDrawnStub {
   readonly word: MimicStubWord | null
 }
 
+/** Where a drawn loop's lane lies: its loop id, its box, and its name. */
+export interface MimicZone {
+  readonly lane: string
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+  readonly label: string
+}
+
 export interface CompiledMimic {
   /** The agent's intent; null for a drawing of a scope World resolved itself (the unit overview's principal circuits). */
   readonly intent: MimicIntent | null
@@ -135,7 +145,7 @@ export interface CompiledMimic {
   readonly pipes: ReadonlyArray<MimicDrawnPipe>
   readonly stubs: ReadonlyArray<MimicDrawnStub>
   /** One zone per drawn loop, named as operators name it ("Loop B"). */
-  readonly zones: ReadonlyArray<DiagramZone & { readonly label: string }>
+  readonly zones: ReadonlyArray<MimicZone>
   /** Every variable the mimic reads, for sampling. */
   readonly paths: ReadonlyArray<VariablePath>
   /** The readings its trends draw over time (MimicItemTrend, row sparklines), whose history a display keeps; empty where it shows none. */

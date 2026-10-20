@@ -1,10 +1,10 @@
 // The diagram engine's entry point. Density limits are checked first, from
 // the graph alone. Then the profile's fit ladder runs from richest to leanest
-// (which text the stacks keep, and where they go: right of symbols, lane stub
-// labels below, below the symbols of lanes, below every symbol). Each rung is
+// (which text the stacks keep, and where they go: right of symbols, partition stub
+// labels below, below the symbols of partitions, below every symbol). Each rung is
 // laid out in both orientations and in each arrangement the graph allows
-// (hubs on either side of the lanes, reaching their items near or from the
-// outer channel, and a hub of one lane its return runs late; cycles whose
+// (common nodes on either side of the partitions, reaching their items near or from the
+// outer channel, and a common node of one partition its return runs late; cycles whose
 // return runs through shared symbols folded or not). None of this depends on
 // the room a drawing is shown in: a graph's candidate drawings are laid out
 // once, rung by rung as a room first needs them, and every room is answered
@@ -25,7 +25,7 @@ import { geometryHash } from './hash.ts'
 import { forcedCrossings } from './bound.ts'
 import { assignLayers, layerNodes, plainLayering, type LayeringOptions } from './layering.ts'
 import { buildModel, validateProfile, validateRoom, type Model } from './model.ts'
-import { orderLayers, type HubSide } from './ordering.ts'
+import { orderLayers, type CommonSide } from './ordering.ts'
 import { keptLines } from './shapes.ts'
 import { analyseStructure } from './structure.ts'
 import { verifyLayout } from './verify.ts'
@@ -35,14 +35,14 @@ export * from './diagram.ts'
 type Reason = Extract<DiagramLayoutResult, { ok: false }>['reasons'][number]
 
 const densityReasons = (model: Model, profile: DiagramProfile): Reason[] => {
-  const symbol = (role: string): boolean => role === 'device' || role === 'hub'
+  const symbol = (role: string): boolean => role === 'device' || role === 'common'
   const symbols = model.nodes.filter(node => symbol(node.role))
-  const perLane = model.lanes.map((_, lane) => symbols.filter(node => node.lane === lane).length)
+  const perPartition = model.partitions.map((_, partition) => symbols.filter(node => node.partition === partition).length)
   const counts: Array<[keyof DiagramProfile['limits'], number]> = [
     ['symbols', symbols.length],
-    ['symbolsPerLane', Math.max(0, ...perLane)],
-    ['sharedSymbols', symbols.filter(node => node.lane === null).length],
-    ['lanes', model.lanes.length],
+    ['symbolsPerPartition', Math.max(0, ...perPartition)],
+    ['sharedSymbols', symbols.filter(node => node.partition === null).length],
+    ['partitions', model.partitions.length],
   ]
   return counts.filter(([limit, count]) => count > profile.limits[limit]).map(([limit, count]) => ({ kind: 'density', limit, count, max: profile.limits[limit] }))
 }
@@ -53,18 +53,18 @@ const ARRANGEMENT_SLACK = 2
 interface Arrangement {
   readonly reversed: ReadonlyArray<boolean>
   readonly layering: LayeringOptions
-  readonly hubSide: HubSide
+  readonly commonSide: CommonSide
   /** Order refined by swaps that cross less, stubs beside their symbols, strands before the axis where ordered there. */
   readonly refine: boolean
 }
 
 /**
- * The arrangements a graph allows, the plain one first: hubs beside lane 0
+ * The arrangements a graph allows, the plain one first: common nodes beside partition 0
  * reaching each item through the channel before it, no fold, no refinement.
- * Then refined ones: with hubs, beside lane 0 or after the last lane, reaching
- * near or from the outer channel, and a hub that serves one lane with return
- * runs also late (beside more lanes, a run straight to the hub crosses the
- * lanes between it and its own); with a return leg through shared symbols,
+ * Then refined ones: with common nodes, beside partition 0 or after the last partition, reaching
+ * near or from the outer channel, and a common node that serves one partition with return
+ * runs also late (beside more partitions, a run straight to the common node crosses the
+ * partitions between it and its own); with a return leg through shared symbols,
  * each also folded, and folded beside its turn where that cuts the leg
  * elsewhere.
  */
@@ -77,18 +77,18 @@ const arrangements = (model: Model): ReadonlyArray<Arrangement> => {
   // Beside its turn only where that draws the cycle shorter than folding it at its turn (or than not folding it).
   const length = (entry: Fold | null): number => Math.max(0, ...layerNodes(model, entry?.reversed ?? reversed, false, entry?.flat))
   const folds = [fold, beside !== null && length(beside) < length(fold) ? beside : null].filter((entry): entry is Fold => entry !== null)
-  const hubs = model.nodes.some(node => node.role === 'hub') && model.lanes.length > 0
-  const returns = model.lanes.length === 1 && model.edges.some(edge => reversed[edge.index] && model.nodes[edge.to]!.role === 'hub')
-  const placements: ReadonlyArray<{ readonly hubSide: HubSide; readonly hubReach: LayeringOptions['hubReach'] }> = hubs
+  const commons = model.nodes.some(node => node.role === 'common') && model.partitions.length > 0
+  const returns = model.partitions.length === 1 && model.edges.some(edge => reversed[edge.index] && model.nodes[edge.to]!.role === 'common')
+  const placements: ReadonlyArray<{ readonly commonSide: CommonSide; readonly commonReach: LayeringOptions['commonReach'] }> = commons
     ? [
-      { hubSide: 'low', hubReach: 'near' }, { hubSide: 'low', hubReach: 'outer' }, { hubSide: 'high', hubReach: 'near' }, { hubSide: 'high', hubReach: 'outer' },
-      ...(returns ? [{ hubSide: 'low', hubReach: 'late' }, { hubSide: 'high', hubReach: 'late' }] as const : []),
+      { commonSide: 'low', commonReach: 'near' }, { commonSide: 'low', commonReach: 'outer' }, { commonSide: 'high', commonReach: 'near' }, { commonSide: 'high', commonReach: 'outer' },
+      ...(returns ? [{ commonSide: 'low', commonReach: 'late' }, { commonSide: 'high', commonReach: 'late' }] as const : []),
     ]
-    : [{ hubSide: 'low', hubReach: 'near' }]
+    : [{ commonSide: 'low', commonReach: 'near' }]
   return [
-    { reversed, layering: plain, hubSide: 'low', refine: false },
-    ...placements.map(({ hubSide, hubReach }) => ({ reversed, layering: { ...plain, hubReach }, hubSide, refine: true })),
-    ...folds.flatMap(fold => placements.map(({ hubSide, hubReach }) => ({ reversed: fold.reversed, layering: { flipped: fold.flipped, folded: fold.folded, flat: fold.flat, hubReach }, hubSide, refine: true }))),
+    { reversed, layering: plain, commonSide: 'low', refine: false },
+    ...placements.map(({ commonSide, commonReach }) => ({ reversed, layering: { ...plain, commonReach }, commonSide, refine: true })),
+    ...folds.flatMap(fold => placements.map(({ commonSide, commonReach }) => ({ reversed: fold.reversed, layering: { flipped: fold.flipped, folded: fold.folded, flat: fold.flat, commonReach }, commonSide, refine: true }))),
   ]
 }
 
@@ -137,7 +137,7 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
   const structure = analyseStructure(model)
   const optional = model.nodes.some(node => keptLines(node, 'required') < node.lines.length)
   const rungs = profile.fit
-    .filter(rung => (optional || rung.detail === 'full') && (model.lanes.length > 0 || rung.text !== 'lanesBelow'))
+    .filter(rung => (optional || rung.detail === 'full') && (model.partitions.length > 0 || rung.text !== 'partitionsBelow'))
     .map(rung => ({ detail: rung.detail, policy: rung.text }))
 
   let prepared: ReadonlyArray<Prepared> | null = null
@@ -166,9 +166,9 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
   const dominates = (a: Candidate, b: Candidate): boolean => a.geometry.width <= b.geometry.width && a.geometry.height <= b.geometry.height
 
   const layOut = (rung: number): void => {
-    prepared ??= arrangements(model).map(({ reversed, layering, hubSide, refine }) => {
+    prepared ??= arrangements(model).map(({ reversed, layering, commonSide, refine }) => {
       const layered = assignLayers(model, structure, reversed, layering)
-      return prepare(model, structure, layered, orderLayers(model, layered, hubSide, refine ? { net: structure.net } : null), layering.flipped, refine)
+      return prepare(model, structure, layered, orderLayers(model, layered, commonSide, refine ? { net: structure.net } : null), layering.flipped, refine)
     })
     if (rung === 0) drawn = prepared.map((_, index) => index)
     const { detail, policy } = rungs[rung]!

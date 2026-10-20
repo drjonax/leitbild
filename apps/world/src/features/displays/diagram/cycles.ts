@@ -1,7 +1,8 @@
 // Cycle breaking: the Eades–Lin–Smyth greedy feedback arc set. Edges that run
 // against the resulting node sequence are reversed for layering and drawn as
-// return runs. When no source or sink is left, a hub goes first: loops are
-// drawn leaving the hub and returning to it, which is the classic loop drawing.
+// return runs. When no source or sink is left, a common node goes first: the
+// partitions are drawn leaving the common node and returning to it, which is
+// the classic loop drawing.
 import { layerNodes } from './layering.ts'
 import type { Model } from './model.ts'
 
@@ -50,15 +51,15 @@ export const breakCycles = (model: Model): ReadonlyArray<boolean> => {
     }
     if (left === 0) break
     let best = -1
-    let bestHub = false
+    let bestCommon = false
     let bestDelta = -Infinity
     for (let node = 0; node < count; node++) {
       if (!remaining[node]) continue
-      const hub = model.nodes[node]!.role === 'hub'
+      const common = model.nodes[node]!.role === 'common'
       const delta = outDegree[node]! - inDegree[node]!
-      if (best < 0 || (hub && !bestHub) || (hub === bestHub && delta > bestDelta)) {
+      if (best < 0 || (common && !bestCommon) || (common === bestCommon && delta > bestDelta)) {
         best = node
-        bestHub = hub
+        bestCommon = common
         bestDelta = delta
       }
     }
@@ -114,7 +115,7 @@ export const foldReturns = (model: Model, reversed: ReadonlyArray<boolean>, laye
     outgoing[edge.from]!.push(edge.index)
     incoming[edge.to]!.push(edge.index)
   }
-  const sharedDevice = (node: number): boolean => model.nodes[node]!.role === 'device' && model.nodes[node]!.lane === null
+  const sharedDevice = (node: number): boolean => model.nodes[node]!.role === 'device' && model.nodes[node]!.partition === null
   const isStub = (node: number): boolean => model.nodes[node]!.role === 'stub'
   const nextReversed = [...reversed]
   const flipped = model.nodes.map(() => false)

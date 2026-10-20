@@ -1,18 +1,18 @@
-// Cross-axis placement. Bands run hubs | shared | lane 0 … lane n | stubs, or
-// with hubs on the high side shared | lanes | stubs | hubs, the hubs after
+// Cross-axis placement. Bands run common nodes | shared | partition 0 … partition n | stubs, or
+// with common nodes on the high side shared | partitions | stubs | common nodes, the common nodes after
 // everything the layers hold.
-// Every lane has the same pitch, and a lane's drawing depends only on its own
-// content and the bands before lane 0: adding lanes after it moves nothing in
-// it. In a lane, the first symbol of every layer sits on the lane's main axis
-// (lanes run straight); further symbols pack after it, and a long edge's
-// dummies share one column. Layers without lane content (pumps under a
+// Every partition has the same pitch, and a partition's drawing depends only on its own
+// content and the bands before partition 0: adding partitions after it moves nothing in
+// it. In a partition, the first symbol of every layer sits on the partition's main axis
+// (partitions run straight); further symbols pack after it, and a long edge's
+// dummies share one column. Layers without partition content (pumps under a
 // header) place items at the median of their neighbours.
 //
 // Spacing: every item has a full reach (including pipes it routes beside
 // itself) and a solid reach (symbol, text, frame). Text keeps the text
 // clearance from other symbols' frames, so solids keep it between them; a
 // pipe only has to stay off everything, so full reaches may touch. The pitch
-// is the widest a lane reaches in any one layer, against the next lane in
+// is the widest a partition reaches in any one layer, against the next partition in
 // that same layer.
 import type { DiagramProfile } from './diagram.ts'
 import { ceilTo, roundTo } from './geometry.ts'
@@ -32,11 +32,11 @@ export interface AcrossInput {
   /** Solid reach (symbol, text, frame); −Infinity for a pipe. */
   readonly leftSolid: ReadonlyArray<number>
   readonly rightSolid: ReadonlyArray<number>
-  /** Refined: a lane's long edge ordered before every symbol of its layers runs before the lane's axis, and strands keep their order. */
+  /** Refined: a partition's long edge ordered before every symbol of its layers runs before the partition's axis, and strands keep their order. */
   readonly refine: boolean
   /** Per node: drawn mirrored (a folded return leg). */
   readonly flipped: ReadonlyArray<boolean>
-  /** Room bars' labels need, kept where the shared items of lane layers are placed in order (refined). */
+  /** Room bars' labels need, kept where the shared items of partition layers are placed in order (refined). */
   readonly room: ReadonlyArray<LabelRoom>
   /** Net per edge: pipes of one net are one pipe up to their tee. */
   readonly net: ReadonlyArray<number>
@@ -58,8 +58,8 @@ interface Edge {
 export interface AcrossPlacement {
   /** Anchor per item; bars are placed later, by their attachments. */
   readonly c: ReadonlyArray<number>
-  /** Lane i's band starts at `laneStart + i × pitch`. */
-  readonly laneStart: number
+  /** Partition i's band starts at `partitionStart + i × pitch`. */
+  readonly partitionStart: number
   readonly pitch: number
   /**
    * Given the attachments, moves one strand that jogs at both ends into an
@@ -75,15 +75,15 @@ const MEDIAN_SWEEPS = 4
 export const placeAcross = (input: AcrossInput): AcrossPlacement => {
   const { model, profile, layering, ordering, left, right, leftSolid, rightSolid, refine, flipped, room, net } = input
   const grid = profile.grid
-  const laneCount = model.lanes.length
+  const partitionCount = model.partitions.length
   const items = layering.items
   const c = new Array<number>(items.length).fill(Number.NaN)
-  const { hub: HUB_BLOCK, shared: SHARED_BLOCK, lane: laneBlock, stub: STUB_BLOCK } = ordering.blocks
-  const high = ordering.hubSide === 'high'
+  const { common: COMMON_BLOCK, shared: SHARED_BLOCK, partition: partitionBlock, stub: STUB_BLOCK } = ordering.blocks
+  const high = ordering.commonSide === 'high'
   const isDummy = (item: number): boolean => items[item]!.node === null
   const isBar = (item: number): boolean => items[item]!.node !== null && model.nodes[items[item]!.node!]!.role === 'bar'
   /** A symbol or stub: what a strand must line up with to jog only once. */
-  const isPlain = (item: number): boolean => !isDummy(item) && !isBar(item) && ordering.block[item] !== HUB_BLOCK
+  const isPlain = (item: number): boolean => !isDummy(item) && !isBar(item) && ordering.block[item] !== COMMON_BLOCK
   const clear = profile.textClearance
   const need = (rightFull: number, rightHard: number, leftFull: number, leftHard: number): number => Math.max(rightFull + leftFull, rightHard + leftHard + clear)
   const separation = (a: number, b: number): number => ceilTo(need(right[a]!, rightSolid[a]!, left[b]!, leftSolid[b]!), grid)
@@ -103,18 +103,18 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
   const origin: Edge = { full: 0, solid: -Infinity }
 
   const inBlock = (layer: ReadonlyArray<number>, block: number): number[] => layer.filter(item => ordering.block[item] === block && !isBar(item))
-  const hasLaneContent = (layer: ReadonlyArray<number>): boolean => layer.some(item => ordering.block[item]! >= laneBlock(0) && ordering.block[item]! < STUB_BLOCK)
+  const hasPartitionContent = (layer: ReadonlyArray<number>): boolean => layer.some(item => ordering.block[item]! >= partitionBlock(0) && ordering.block[item]! < STUB_BLOCK)
 
-  const hubs = ordering.layers.flatMap(layer => inBlock(layer, HUB_BLOCK)).sort((a, b) => items[a]!.node! - items[b]!.node!)
-  const hubBandEnd = high ? origin : pack(hubs, origin)
-  const laneLayers = ordering.layers.filter(hasLaneContent)
-  // Shared items of lane layers pack after the hub band; then each shared
-  // strand (a long lane-less edge's dummies) takes one column through all its
+  const commons = ordering.layers.flatMap(layer => inBlock(layer, COMMON_BLOCK)).sort((a, b) => items[a]!.node! - items[b]!.node!)
+  const commonBandEnd = high ? origin : pack(commons, origin)
+  const partitionLayers = ordering.layers.filter(hasPartitionContent)
+  // Shared items of partition layers pack after the common node band; then each shared
+  // strand (a long partition-less edge's dummies) takes one column through all its
   // layers, after what each of them already holds, so it runs straight. A
   // strand between two symbols lines up with the first of them already placed
   // when that column lies past what its layers hold, so the edge jogs only at
   // its other end.
-  const sharedRuns = ordering.layers.map(layer => (hasLaneContent(layer) ? inBlock(layer, SHARED_BLOCK).filter(item => !isDummy(item)) : []))
+  const sharedRuns = ordering.layers.map(layer => (hasPartitionContent(layer) ? inBlock(layer, SHARED_BLOCK).filter(item => !isDummy(item)) : []))
   const strandsOf = (block: number): Map<number, number[]> => {
     const strands = new Map<number, number[]>()
     items.forEach((item, index) => {
@@ -123,17 +123,17 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     return strands
   }
   const sharedStrands = strandsOf(SHARED_BLOCK)
-  // Shared strands a lane layer places are fixed: free layers keep their column.
+  // Shared strands a partition layer places are fixed: free layers keep their column.
   const fixedColumn = new Map<number, number>()
-  // Refined, the shared items of lane layers keep their order: each strand is one column through its
-  // layers, packed with the symbols by the longest path over each layer's order, from the hub band.
+  // Refined, the shared items of partition layers keep their order: each strand is one column through its
+  // layers, packed with the symbols by the longest path over each layer's order, from the common node band.
   // Neighbouring strands of one net are one pipe up to where they part: they keep no order or distance
   // among themselves, and what follows them clears them all. A strand whose order disagrees between its
   // layers would cross another there: it goes after its layers' items, as unordered. Then, nearest the
-  // hubs first, a strand lines up with a shared symbol at one of its ends where that puts it in line,
+  // common nodes first, a strand lines up with a shared symbol at one of its ends where that puts it in line,
   // widens nothing and keeps the strands lined up before it in line, so the edge jogs only at its other end.
   const placeSharedInOrder = (): void => {
-    const lists = ordering.layers.map(layer => (hasLaneContent(layer) ? inBlock(layer, SHARED_BLOCK) : []))
+    const lists = ordering.layers.map(layer => (hasPartitionContent(layer) ? inBlock(layer, SHARED_BLOCK) : []))
     const unitOf = (item: number): number => (isDummy(item) ? -1 - items[item]!.edge! : item)
     const membersOf = (): Map<number, number[]> => {
       const members = new Map<number, number[]>()
@@ -152,7 +152,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
       while (first > 0 && kin(list[first - 1]!, last)) first--
       return list.slice(first, start)
     }
-    // Units in an order every layer agrees with, nearest the hubs first; or the strand that blocks one.
+    // Units in an order every layer agrees with, nearest the common nodes first; or the strand that blocks one.
     const sequenceOf = (members: ReadonlyMap<number, ReadonlyArray<number>>): { readonly sequence: number[] } | { readonly blocking: number } => {
       const done = new Set<number>()
       const sequence: number[] = []
@@ -164,7 +164,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
         if (next === undefined) {
           // Only a unit in several layers can close a cycle: a strand.
           const blocking = waiting.filter(unit => unit < 0).sort((a, b) => b - a)[0]
-          if (blocking === undefined) throw new Error('shared items of lane layers cannot be ordered')
+          if (blocking === undefined) throw new Error('shared items of partition layers cannot be ordered')
           return { blocking }
         }
         done.add(next)
@@ -184,7 +184,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
       ordered = sequenceOf(members)
     }
     const { sequence } = ordered
-    const floorAt = (item: number): number => ceilTo(need(hubBandEnd.full, hubBandEnd.solid, left[item]!, leftSolid[item]!), grid)
+    const floorAt = (item: number): number => ceilTo(need(commonBandEnd.full, commonBandEnd.solid, left[item]!, leftSolid[item]!), grid)
     const compact = (lining: ReadonlyMap<number, number>): Map<number, number> => {
       const at = new Map<number, number>()
       for (const unit of sequence) {
@@ -201,7 +201,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     const bandOf = (at: ReadonlyMap<number, number>): Edge => lists.flat().reduce((edge, item) => ({
       full: Math.max(edge.full, at.get(unitOf(item))! + right[item]!),
       solid: Math.max(edge.solid, at.get(unitOf(item))! + rightSolid[item]!),
-    }), hubBandEnd)
+    }), commonBandEnd)
     const packed = compact(new Map())
     const band = bandOf(packed)
     const lining = new Map<number, number>()
@@ -237,33 +237,33 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
   }
   if (refine) placeSharedInOrder()
   else {
-    sharedRuns.forEach(run => pack(run, hubBandEnd))
+    sharedRuns.forEach(run => pack(run, commonBandEnd))
     for (const edge of [...sharedStrands.keys()].sort((a, b) => a - b)) {
       const strand = sharedStrands.get(edge)!
-      const inLaneLayers = strand.filter(item => hasLaneContent(ordering.layers[items[item]!.layer]!))
-      if (inLaneLayers.length === 0) continue
+      const inPartitionLayers = strand.filter(item => hasPartitionContent(ordering.layers[items[item]!.layer]!))
+      if (inPartitionLayers.length === 0) continue
       const chain = layering.chains[edge]!
       const ends = [chain.items[0]!, chain.items.at(-1)!]
       const lined = chain.steps.every(step => step === 'next') && ends.every(isPlain) ? ends.map(item => c[item]!).find(Number.isFinite) : undefined
-      const at = Math.max(lined ?? -Infinity, ...inLaneLayers.map(item => {
+      const at = Math.max(lined ?? -Infinity, ...inPartitionLayers.map(item => {
         const run = sharedRuns[items[item]!.layer]!
         const last = run.at(-1)
-        return last === undefined ? ceilTo(need(hubBandEnd.full, hubBandEnd.solid, left[item]!, leftSolid[item]!), grid) : c[last]! + separation(last, item)
+        return last === undefined ? ceilTo(need(commonBandEnd.full, commonBandEnd.solid, left[item]!, leftSolid[item]!), grid) : c[last]! + separation(last, item)
       }))
       for (const item of strand) {
         c[item] = at
         fixedColumn.set(item, at)
       }
-      for (const item of inLaneLayers) sharedRuns[items[item]!.layer]!.push(item)
+      for (const item of inPartitionLayers) sharedRuns[items[item]!.layer]!.push(item)
     }
   }
-  const sharedEnds = sharedRuns.map(run => edgeOf(run, hubBandEnd))
-  const sharedEnd: Edge = { full: Math.max(hubBandEnd.full, ...sharedEnds.map(edge => edge.full)), solid: Math.max(hubBandEnd.solid, ...sharedEnds.map(edge => edge.solid)) }
+  const sharedEnds = sharedRuns.map(run => edgeOf(run, commonBandEnd))
+  const sharedEnd: Edge = { full: Math.max(commonBandEnd.full, ...sharedEnds.map(edge => edge.full)), solid: Math.max(commonBandEnd.solid, ...sharedEnds.map(edge => edge.solid)) }
 
-  // Each lane relative to its own main axis (0).
+  // Each partition relative to its own main axis (0).
   const relative = new Array<number>(items.length).fill(Number.NaN)
-  const lanes = model.lanes.map((_, lane) => {
-    const cells = ordering.layers.map(layer => inBlock(layer, laneBlock(lane)))
+  const partitions = model.partitions.map((_, partition) => {
+    const cells = ordering.layers.map(layer => inBlock(layer, partitionBlock(partition)))
     const placed = cells.map(() => [] as number[])
     const axisTaken = cells.map(() => false)
     const after = (layer: number, item: number): number => {
@@ -318,7 +318,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
         placed[items[item]!.layer]!.push(item)
       }
     }
-    // Per layer: how far the lane reaches, fully and with solids.
+    // Per layer: how far the partition reaches, fully and with solids.
     return placed.map(list => (list.length === 0 ? null : {
       low: Math.min(...list.map(item => relative[item]! - left[item]!)),
       high: Math.max(...list.map(item => relative[item]! + right[item]!)),
@@ -326,37 +326,37 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
       highSolid: Math.max(...list.map(item => relative[item]! + rightSolid[item]!)),
     }))
   })
-  const reach = (lane: number, which: 'low' | 'high' | 'lowSolid' | 'highSolid'): number => {
-    const values = lanes[lane]!.filter(entry => entry !== null).map(entry => entry![which])
+  const reach = (partition: number, which: 'low' | 'high' | 'lowSolid' | 'highSolid'): number => {
+    const values = partitions[partition]!.filter(entry => entry !== null).map(entry => entry![which])
     return which === 'low' || which === 'lowSolid' ? Math.min(0, ...values) : Math.max(0, ...values)
   }
   const pairs: number[] = []
-  for (let lane = 0; lane < laneCount; lane++) {
-    const next = lanes[lane + 1] === undefined ? lane : lane + 1
-    lanes[lane]!.forEach((here, layer) => {
-      const there = lanes[next]![layer]
+  for (let partition = 0; partition < partitionCount; partition++) {
+    const next = partitions[partition + 1] === undefined ? partition : partition + 1
+    partitions[partition]!.forEach((here, layer) => {
+      const there = partitions[next]![layer]
       if (here === null || there === null || there === undefined) return
       pairs.push(need(here.high, here.highSolid, -there.low, -there.lowSolid))
     })
   }
   const pitch = ceilTo(Math.max(grid, ...pairs), grid)
-  const firstAxis = laneCount === 0 ? 0 : ceilTo(need(sharedEnd.full, sharedEnd.solid, -reach(0, 'low'), -reach(0, 'lowSolid')), grid)
+  const firstAxis = partitionCount === 0 ? 0 : ceilTo(need(sharedEnd.full, sharedEnd.solid, -reach(0, 'low'), -reach(0, 'lowSolid')), grid)
   items.forEach((item, index) => {
-    if (item.lane !== null && ordering.block[index] === laneBlock(item.lane)) c[index] = firstAxis + item.lane * pitch + relative[index]!
+    if (item.partition !== null && ordering.block[index] === partitionBlock(item.partition)) c[index] = firstAxis + item.partition * pitch + relative[index]!
   })
-  const bandLow = Math.min(0, ...model.lanes.map((_, lane) => reach(lane, 'low')))
-  const lastAxis = firstAxis + (laneCount - 1) * pitch
-  const lanesEnd: Edge = laneCount === 0 ? sharedEnd : { full: lastAxis + reach(laneCount - 1, 'high'), solid: lastAxis + reach(laneCount - 1, 'highSolid') }
-  for (const layer of laneLayers) pack(inBlock(layer, STUB_BLOCK), lanesEnd)
+  const bandLow = Math.min(0, ...model.partitions.map((_, partition) => reach(partition, 'low')))
+  const lastAxis = firstAxis + (partitionCount - 1) * pitch
+  const partitionsEnd: Edge = partitionCount === 0 ? sharedEnd : { full: lastAxis + reach(partitionCount - 1, 'high'), solid: lastAxis + reach(partitionCount - 1, 'highSolid') }
+  for (const layer of partitionLayers) pack(inBlock(layer, STUB_BLOCK), partitionsEnd)
 
-  // Layers without lane content: medians of neighbours, order kept. A long
+  // Layers without partition content: medians of neighbours, order kept. A long
   // edge's dummies there form a strand that runs in one column. Between two
   // symbols it lines up with one of them (its source, by preference), so the
-  // edge jogs once; a bar meets a strand straight and a hub reaches it along
+  // edge jogs once; a bar meets a strand straight and a common node reaches it along
   // its track, so a strand from or to either needs only its one column.
-  const free = ordering.layers.map(layer => (hasLaneContent(layer) ? [] : layer.filter(item => ordering.block[item] !== HUB_BLOCK && !isBar(item))))
+  const free = ordering.layers.map(layer => (hasPartitionContent(layer) ? [] : layer.filter(item => ordering.block[item] !== COMMON_BLOCK && !isBar(item))))
     .filter(run => run.length > 0)
-  const lowerBound = hubs.length > 0 && !high ? hubBandEnd : null
+  const lowerBound = commons.length > 0 && !high ? commonBandEnd : null
   for (const run of free) pack(run, lowerBound ?? origin)
   for (const [item, at] of fixedColumn) c[item] = at
   const neighbours = items.map(() => [] as number[])
@@ -367,7 +367,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
       neighbours[chain.items[k + 1]!]!.push(chain.items[k]!)
     })
   }
-  // Free strands: shared dummies of a chain that runs layer to layer, none of them fixed by a lane layer.
+  // Free strands: shared dummies of a chain that runs layer to layer, none of them fixed by a partition layer.
   // Refined, a return run that turns at one end counts too: it runs straight from its other end.
   const turnsAt = (edge: number): 'start' | 'end' | null => {
     const steps = layering.chains[edge]!.steps
@@ -380,7 +380,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     .map(([edge, strand]) => {
       const chain = layering.chains[edge]!
       const [start, end] = [chain.items[0]!, chain.items.at(-1)!]
-      // It follows the end that stays put (one a lane layer placed) or, both free, its source.
+      // It follows the end that stays put (one a partition layer placed) or, both free, its source.
       const settled = (item: number): boolean => !free.some(run => run.includes(item))
       const turn = turnsAt(edge)
       const leader = turn === 'end' ? (isPlain(start) ? start : null)
@@ -393,14 +393,14 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     const own = items[item]!.layer
     const positions: number[] = []
     for (const other of neighbours[item]!) {
-      if (ordering.block[other] === HUB_BLOCK) continue
+      if (ordering.block[other] === COMMON_BLOCK) continue
       if (!isBar(other)) {
         if (Number.isFinite(c[other]!)) positions.push(c[other]!)
         continue
       }
       // Through a bar: align with what the bar feeds on its far side.
       for (const far of neighbours[other]!) {
-        if (far !== item && items[far]!.layer !== own && !isBar(far) && ordering.block[far] !== HUB_BLOCK && Number.isFinite(c[far]!)) positions.push(c[far]!)
+        if (far !== item && items[far]!.layer !== own && !isBar(far) && ordering.block[far] !== COMMON_BLOCK && Number.isFinite(c[far]!)) positions.push(c[far]!)
       }
     }
     return positions.sort((a, b) => a - b)
@@ -424,7 +424,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     }
     return result
   }
-  // Refined, a folded leg's symbols and stubs, drawn where no lane reaches, keep within the edge the lanes' layers start at: a leg never widens the drawing.
+  // Refined, a folded leg's symbols and stubs, drawn where no partition reaches, keep within the edge the partitions' layers start at: a leg never widens the drawing.
   const legItem = (item: number): boolean => refine && items[item]!.node !== null && flipped[items[item]!.node!]!
   const floorOf = (item: number): number => {
     const bound = lowerBound ?? (legItem(item) ? origin : null)
@@ -478,7 +478,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
   // Once ports have their slots, a strand that still jogs at both ends (or
   // breaks its column) moves whole into the column of an end's port. The
   // items beside it in each layer it passes make room, keeping their order
-  // and spacing; strands a lane layer fixed, the hub band and the columns a
+  // and spacing; strands a partition layer fixed, the common node band and the columns a
   // bar stack forbids stay as they are. Of the ends that can be reached, the
   // one that moves the least wins.
   const runOf = new Map(free.flatMap(run => run.map((item, index) => [item, { run, index }] as const)))
@@ -506,32 +506,32 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     }
     return moves
   }
-  // Hubs on the high side go after everything else, in every layer; what
+  // Common nodes on the high side go after everything else, in every layer; what
   // connects only to them, alone in its layer (a stub feeding the core), sits
-  // just before them, beside the hub it ends at.
+  // just before them, beside the common node it ends at.
   const freeItems = new Set(free.flat())
   const satellites = high ? items.map((_, index) => index).filter(index => !isDummy(index) && freeItems.has(index)
-    && neighbours[index]!.length > 0 && neighbours[index]!.every(other => ordering.block[other] === HUB_BLOCK)
-    && ordering.layers[items[index]!.layer]!.every(other => other === index || ordering.block[other] === HUB_BLOCK)) : []
-  const placeHighHubs = (): void => {
-    if (!high || hubs.length === 0) return
-    const others = items.map((_, index) => index).filter(index => ordering.block[index] !== HUB_BLOCK && !isBar(index) && !satellites.includes(index) && Number.isFinite(c[index]!))
-    // Outside the last lane's band too, which is drawn as its zone.
-    const lanesBand = laneCount === 0 ? -Infinity : firstAxis + bandLow + laneCount * pitch
-    pack(hubs, {
-      full: Math.max(0, lanesBand, ...others.map(index => c[index]! + right[index]!)),
+    && neighbours[index]!.length > 0 && neighbours[index]!.every(other => ordering.block[other] === COMMON_BLOCK)
+    && ordering.layers[items[index]!.layer]!.every(other => other === index || ordering.block[other] === COMMON_BLOCK)) : []
+  const placeHighCommons = (): void => {
+    if (!high || commons.length === 0) return
+    const others = items.map((_, index) => index).filter(index => ordering.block[index] !== COMMON_BLOCK && !isBar(index) && !satellites.includes(index) && Number.isFinite(c[index]!))
+    // Outside the last partition's band too, which is drawn as its zone.
+    const partitionsBand = partitionCount === 0 ? -Infinity : firstAxis + bandLow + partitionCount * pitch
+    pack(commons, {
+      full: Math.max(0, partitionsBand, ...others.map(index => c[index]! + right[index]!)),
       solid: Math.max(-Infinity, ...others.map(index => c[index]! + rightSolid[index]!)),
     })
-    // A satellite's layer holds nothing else, so it needs room only beside its hub.
-    let next = hubs[0]!
+    // A satellite's layer holds nothing else, so it needs room only beside its common node.
+    let next = commons[0]!
     for (const satellite of [...satellites].reverse()) {
       c[satellite] = c[next]! - separation(satellite, next)
       next = satellite
     }
   }
-  placeHighHubs()
+  placeHighCommons()
 
-  // A folded leg's symbol whose pipe to a strand or to a symbol a lane layer
+  // A folded leg's symbol whose pipe to a strand or to a symbol a partition layer
   // placed jogs moves once into line with it, when its layer has room: the
   // nearest such line wins. Stubs follow their symbol, not the other way.
   const symbols = [...freeItems].filter(item => legItem(item) && isPlain(item) && model.nodes[items[item]!.node!]!.role !== 'stub' && !fixedColumn.has(item)).sort((a, b) => a - b)
@@ -605,7 +605,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     const pins = attached.pin
     if (lineUp(pins) || escape(attached)) {
       budget--
-      placeHighHubs()
+      placeHighCommons()
       return [...c]
     }
     for (const { strand, start, end, edge, turn } of strands) {
@@ -624,10 +624,10 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
       if (best === null) continue
       for (const [item, value] of best.moves) c[item] = value
       budget--
-      placeHighHubs()
+      placeHighCommons()
       return [...c]
     }
     return null
   }
-  return { c: [...c], laneStart: firstAxis + bandLow, pitch, align }
+  return { c: [...c], partitionStart: firstAxis + bandLow, pitch, align }
 }

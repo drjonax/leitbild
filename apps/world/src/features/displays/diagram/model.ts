@@ -1,6 +1,6 @@
 // The validated, canonically ordered form of a DiagramGraph. Every later
 // stage works on indices into these arrays, so no stage can depend on input
-// order, Map iteration order or ids: nodes sort by (lane, rank), ports by
+// order, Map iteration order or ids: nodes sort by (partition, rank), ports by
 // rank, edges by (endpoints, port ranks, rank).
 import type { DiagramGraph, DiagramNode, DiagramProfile, DiagramRoom } from './diagram.ts'
 
@@ -23,11 +23,11 @@ export interface ModelNode {
   readonly height: number
   /** Sorted by rank. */
   readonly ports: ReadonlyArray<ModelPort>
-  /** Index into Model.lanes. */
-  readonly lane: number | null
+  /** Index into Model.partitions. */
+  readonly partition: number | null
   readonly lines: ReadonlyArray<{ readonly width: number; readonly height: number; readonly required: boolean }>
   readonly portInset: number
-  /** A hub's reach past its port tracks at its screen top and bottom (DiagramNode.ends); a grid step where it declares none. */
+  /** A common node's reach past its port tracks at its screen top and bottom (DiagramNode.ends); a grid step where it declares none. */
   readonly ends: { readonly top: number; readonly bottom: number } | null
   readonly frameable: boolean
   /** Widest flap label; 0 when the node has none. */
@@ -48,8 +48,8 @@ export interface ModelEdge {
 export interface Model {
   readonly nodes: ReadonlyArray<ModelNode>
   readonly edges: ReadonlyArray<ModelEdge>
-  /** Lane keys in lane order. */
-  readonly lanes: ReadonlyArray<string>
+  /** Partition keys in partition order. */
+  readonly partitions: ReadonlyArray<string>
 }
 
 /** Locale-independent string order. */
@@ -82,37 +82,37 @@ export const buildModel = (graph: DiagramGraph): Model => {
   const issues: string[] = []
   if (graph.nodes.length === 0) issues.push('a diagram needs at least one node')
 
-  // Lanes: one order per key, one key per order.
-  const laneOrderByKey = new Map<string, number>()
+  // Partitions: one order per key, one key per order.
+  const partitionOrderByKey = new Map<string, number>()
   for (const node of graph.nodes) {
-    if (node.lane === undefined) continue
-    if (node.lane.key.length === 0 || !Number.isInteger(node.lane.order)) issues.push(`node ${node.id} has an invalid lane`)
-    const known = laneOrderByKey.get(node.lane.key)
-    if (known !== undefined && known !== node.lane.order) issues.push(`lane ${node.lane.key} has two orders`)
-    laneOrderByKey.set(node.lane.key, node.lane.order)
+    if (node.partition === undefined) continue
+    if (node.partition.key.length === 0 || !Number.isInteger(node.partition.order)) issues.push(`node ${node.id} has an invalid partition`)
+    const known = partitionOrderByKey.get(node.partition.key)
+    if (known !== undefined && known !== node.partition.order) issues.push(`partition ${node.partition.key} has two orders`)
+    partitionOrderByKey.set(node.partition.key, node.partition.order)
   }
-  const laneEntries = [...laneOrderByKey].sort((a, b) => a[1] - b[1])
-  for (let i = 1; i < laneEntries.length; i++) {
-    if (laneEntries[i]![1] === laneEntries[i - 1]![1]) issues.push(`lanes ${laneEntries[i - 1]![0]} and ${laneEntries[i]![0]} share order ${laneEntries[i]![1]}`)
+  const partitionEntries = [...partitionOrderByKey].sort((a, b) => a[1] - b[1])
+  for (let i = 1; i < partitionEntries.length; i++) {
+    if (partitionEntries[i]![1] === partitionEntries[i - 1]![1]) issues.push(`partitions ${partitionEntries[i - 1]![0]} and ${partitionEntries[i]![0]} share order ${partitionEntries[i]![1]}`)
   }
-  const lanes = laneEntries.map(([key]) => key)
-  const laneIndex = new Map(lanes.map((key, index) => [key, index]))
+  const partitions = partitionEntries.map(([key]) => key)
+  const partitionIndex = new Map(partitions.map((key, index) => [key, index]))
 
-  // Node order: lane-less nodes first, then lane by lane; rank within.
-  const laneOf = (node: DiagramNode): number | null => (node.lane === undefined ? null : laneIndex.get(node.lane.key) ?? null)
+  // Node order: partition-less nodes first, then partition by partition; rank within.
+  const partitionOf = (node: DiagramNode): number | null => (node.partition === undefined ? null : partitionIndex.get(node.partition.key) ?? null)
   const ids = new Set<string>()
   for (const node of graph.nodes) {
     if (ids.has(node.id)) issues.push(`node id ${node.id} is not unique`)
     ids.add(node.id)
-    if (node.role === 'bar' || node.role === 'hub') {
-      if (node.lane !== undefined) issues.push(`${node.role} ${node.id} cannot belong to a lane; it serves lanes`)
+    if (node.role === 'bar' || node.role === 'common') {
+      if (node.partition !== undefined) issues.push(`${node.role} ${node.id} cannot belong to a partition; it serves partitions`)
     }
     if (node.role !== 'bar' && (!Number.isInteger(node.cells.width) || node.cells.width < 1 || !Number.isInteger(node.cells.height) || node.cells.height < 1)) {
       issues.push(`node ${node.id} needs a footprint of whole cells`)
     }
     for (const line of node.text.lines) if (!isSize(line.width) || !(line.height > 0) || !Number.isFinite(line.height)) issues.push(`node ${node.id} has a text line of invalid size`)
     if (!isSize(node.portInset)) issues.push(`node ${node.id} has an invalid port inset`)
-    if (node.ends !== undefined && (node.role !== 'hub' || !isSize(node.ends.top) || !isSize(node.ends.bottom))) issues.push(`node ${node.id} has ends but is not a hub, or they are not sizes`)
+    if (node.ends !== undefined && (node.role !== 'common' || !isSize(node.ends.top) || !isSize(node.ends.bottom))) issues.push(`node ${node.id} has ends but is not a common node, or they are not sizes`)
     if (node.flapWidth !== undefined && (!node.frameable || !isSize(node.flapWidth))) issues.push(`node ${node.id} has a flap width but is not frameable, or the width is invalid`)
     if (node.flapLines !== undefined && (!node.frameable || !Number.isInteger(node.flapLines) || node.flapLines < 1)) issues.push(`node ${node.id} has flap lines but is not frameable, or the count is not a whole number of lines`)
     const portIds = new Set<string>()
@@ -124,11 +124,11 @@ export const buildModel = (graph: DiagramGraph): Model => {
       portRanks.add(port.rank)
     }
   }
-  const sortedNodes = [...graph.nodes].sort((a, b) => ((laneOf(a) ?? -1) - (laneOf(b) ?? -1)) || compareText(a.rank, b.rank))
+  const sortedNodes = [...graph.nodes].sort((a, b) => ((partitionOf(a) ?? -1) - (partitionOf(b) ?? -1)) || compareText(a.rank, b.rank))
   for (let i = 1; i < sortedNodes.length; i++) {
     const a = sortedNodes[i - 1]!
     const b = sortedNodes[i]!
-    if (laneOf(a) === laneOf(b) && a.rank === b.rank) issues.push(`nodes ${a.id} and ${b.id} share rank ${a.rank} in one lane`)
+    if (partitionOf(a) === partitionOf(b) && a.rank === b.rank) issues.push(`nodes ${a.id} and ${b.id} share rank ${a.rank} in one partition`)
   }
   const nodeIndex = new Map(sortedNodes.map((node, index) => [node.id, index]))
   const sortedPorts = sortedNodes.map(node => [...node.ports].sort((a, b) => compareText(a.rank, b.rank)))
@@ -191,7 +191,7 @@ export const buildModel = (graph: DiagramGraph): Model => {
       const use = uses[index]![p]!
       return { id: port.id, rank: port.rank, use: use.has('source') ? 'source' : use.has('target') ? 'target' : 'unused' }
     }),
-    lane: laneOf(node),
+    partition: partitionOf(node),
     lines: node.text.lines,
     portInset: node.portInset,
     ends: node.ends ?? null,
@@ -207,5 +207,5 @@ export const buildModel = (graph: DiagramGraph): Model => {
     to: entry.to,
     toPort: entry.toPort,
   }))
-  return { nodes, edges, lanes }
+  return { nodes, edges, partitions }
 }

@@ -1,7 +1,7 @@
 // Where each edge meets each item across the flow. A symbol's ports take
 // distinct grid slots on their face, in the order of what they connect to
 // (a port only bars feed, toward where the bars reach from);
-// a hub's side face takes the edges at its face; a bar spans the branches it
+// a common node's side face takes the edges at its face; a bar spans the branches it
 // connects, so each branch meets it straight; bars sharing a layer stack in
 // the order that crosses the fewest pipes.
 import type { DiagramProfile } from './diagram.ts'
@@ -68,12 +68,12 @@ export const attach = (input: {
     const edge = model.edges[layering.chains[chain]!.edge]!
     return items[layering.chains[chain]!.items[position]!]!.node === edge.from ? edge.fromPort : edge.toPort
   }
-  // A hub's ports face the lanes: its high face beside lane 0, its low face after the last lane.
-  const hubFace = (node: number): number => ordering.hubSide === 'low' ? box[node]!.c1 - model.nodes[node]!.portInset : box[node]!.c0 + model.nodes[node]!.portInset
+  // A common node's ports face the partitions: its high face beside partition 0, its low face after the last partition.
+  const commonFace = (node: number): number => ordering.commonSide === 'low' ? box[node]!.c1 - model.nodes[node]!.portInset : box[node]!.c0 + model.nodes[node]!.portInset
 
   // Port slots on symbol faces. A port carrying a long edge to another
   // symbol aims at that edge's strand, so the strand runs straight from it
-  // (its short edges jog anyway, and a strand from a bar or hub meets that
+  // (its short edges jog anyway, and a strand from a bar or common node meets that
   // end straight already).
   const slot = model.nodes.map(node => node.ports.map(() => Number.NaN))
   // Where a bar's other attachments are: the bar spans them, so a port it feeds sits on that side of a busy face.
@@ -81,7 +81,7 @@ export const attach = (input: {
   layering.chains.forEach((chain, index) => chain.steps.forEach((step, k) => {
     if (step !== 'next') return
     for (const [own, other] of [[chain.items[k]!, chain.items[k + 1]!], [chain.items[k + 1]!, chain.items[k]!]] as const) {
-      if (role(own) === 'bar' && role(other) !== 'hub') barNeighbours.set(own, [...(barNeighbours.get(own) ?? []), { chain: index, item: other }])
+      if (role(own) === 'bar' && role(other) !== 'common') barNeighbours.set(own, [...(barNeighbours.get(own) ?? []), { chain: index, item: other }])
     }
   }))
   const barSide = (bar: number, chain: number): number | null => {
@@ -93,11 +93,11 @@ export const attach = (input: {
     for (const [position, adjacent] of [[0, 1], [chain.items.length - 1, chain.items.length - 2]] as const) {
       const node = items[chain.items[position]!]!.node!
       const other = chain.items[adjacent]!
-      const target = role(other) === 'bar' ? c[node]! : role(other) === 'hub' ? hubFace(items[other]!.node!) : c[other]!
+      const target = role(other) === 'bar' ? c[node]! : role(other) === 'common' ? commonFace(items[other]!.node!) : c[other]!
       const far = role(chain.items[position === 0 ? chain.items.length - 1 : 0]!)
       const step = chain.steps[position === 0 ? 0 : chain.steps.length - 1]!
       const bar = role(other) === 'bar' ? barSide(other, index) : null
-      wants[node]![portAt(index, position)]!.push({ at: target, strand: role(other) === null && far !== 'bar' && far !== 'hub', turn: step !== 'next' && role(other) !== 'hub', bar })
+      wants[node]![portAt(index, position)]!.push({ at: target, strand: role(other) === null && far !== 'bar' && far !== 'common', turn: step !== 'next' && role(other) !== 'common', bar })
     }
   })
   // Pipes that turn over a face nest: from each side, the farther one turns
@@ -107,7 +107,7 @@ export const attach = (input: {
   const NEST = 1e6
   const nestKey = (node: number, at: number): number => (at < c[node]! ? -NEST + (c[node]! - at) : NEST - (at - c[node]!))
   for (const node of model.nodes) {
-    if (node.role === 'bar' || node.role === 'hub') continue
+    if (node.role === 'bar' || node.role === 'common') continue
     const footprint = box[node.index]!
     const slots: number[] = []
     for (let at = footprint.c0 + grid; at < footprint.c1; at += grid) slots.push(at)
@@ -139,7 +139,7 @@ export const attach = (input: {
     const r = role(item)
     if (r === null) return c[item]!
     if (r === 'bar') return Number.NaN
-    if (r === 'hub') return hubFace(items[item]!.node!)
+    if (r === 'common') return commonFace(items[item]!.node!)
     const node = items[item]!.node!
     const entry = sideEntry(node, portAt(index, position))
     return entry === undefined ? slot[node]![portAt(index, position)]! : c[node]! + entry.riser

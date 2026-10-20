@@ -1,15 +1,16 @@
 // The diagram engine's input and output. The engine lays out any directed
 // flow graph as an orthogonal, P&ID-style drawing on OpenBridge's 24 px grid.
-// It knows nothing about Plants: no component kinds, services, loops or ids
-// have meaning to it. The caller (the process-plant mimic) states structure
-// (footprints, ports, lanes, bars, text) and rules (a DiagramProfile); the
+// It knows nothing about any pack: no kinds, media, partitions or ids have
+// meaning to it. The caller (a pack's topology view, such as the process-plant
+// mimic) states structure (footprints, ports, partitions, common nodes, bars,
+// text) and rules (a DiagramProfile); the
 // engine returns geometry and a verification report, or the reasons a graph
 // cannot be drawn within the budget. The room a drawing is shown in only
 // chooses among the graph's drawings; it never changes one.
 //
 // Determinism: the output is a pure function of the input, the profile, the
 // room and DIAGRAM_ENGINE_VERSION. Every ordering decision breaks ties on structural
-// keys (`rank`, lane `order`), never on ids, so renaming ids changes no
+// keys (`rank`, partition `order`), never on ids, so renaming ids changes no
 // geometry. Input the engine cannot order that way is rejected (it throws).
 
 export const DIAGRAM_ENGINE_VERSION = 8
@@ -37,28 +38,28 @@ export interface DiagramNode {
   /** Opaque to the engine; used only to map the output back. */
   readonly id: string
   /**
-   * Structural sort key that breaks every tie (kind, role in its lane, port
-   * names). Unique per lane: repeated structure may reuse a rank across
-   * lanes, because the lane `order` disambiguates it.
+   * Structural sort key that breaks every tie (kind, role in its partition, port
+   * names). Unique per partition: repeated structure may reuse a rank across
+   * partitions, because the partition `order` disambiguates it.
    */
   readonly rank: string
   /**
    * - `device`: a symbol of `cells` grid cells with ports on its faces;
    * - `bar`: a header or bus drawn as a line spanning what it connects;
-   * - `hub`: a large shared vessel that loops return to (the reactor), drawn
-   *   beside the lanes it serves;
+   * - `common`: a large node the partitions leave and return to (a vessel a
+   *   plant's loops share), drawn beside the partitions it serves;
    * - `stub`: where the drawing stops: an off-sheet end with its own text.
    */
-  readonly role: 'device' | 'bar' | 'hub' | 'stub'
+  readonly role: 'device' | 'bar' | 'common' | 'stub'
   /**
    * Footprint in cells on screen (symbols never rotate): a device is 2×2, a
-   * tank 2×4. Devices, hubs and stubs; ignored for bars. A flow face carrying
+   * tank 2×4. Devices, common nodes and stubs; ignored for bars. A flow face carrying
    * more distinct ports than it has interior grid points grows, so every port
    * gets its own grid slot; the placed box reports the grown size.
    */
   readonly cells: { readonly width: number; readonly height: number }
   /**
-   * A hub only: how far its box reaches past its outermost port tracks, in
+   * A common node only: how far its box reaches past its outermost port tracks, in
    * px, at its top and at its bottom on screen (a vessel's head above its
    * nozzles, its core region and bottom below them), where its ports face
    * sideways; at least a grid step either way.
@@ -70,8 +71,11 @@ export interface DiagramNode {
    */
   readonly portInset: number
   readonly ports: ReadonlyArray<DiagramPort>
-  /** Parallel repeated structure (a loop): nodes of one lane line up in one column or row, lanes in `order`. */
-  readonly lane?: { readonly key: string; readonly order: number }
+  /**
+   * Parallel repeated structure (a plant's loop, a grid's feeder): nodes of one
+   * partition line up in one column or row, partitions in `order`.
+   */
+  readonly partition?: { readonly key: string; readonly order: number }
   readonly text: DiagramText
   /**
    * An alarm frame may be drawn around the node's button box (the symbol and
@@ -123,18 +127,18 @@ export interface DiagramProfile {
   /**
    * The fit ladder, richest first: which text a drawing keeps (`full`, or
    * only each stack's required lines) and where stacks go (right of their
-   * symbols, the same with lane stubs' labels below their ends, below lane
+   * symbols, the same with partition stubs' labels below their ends, below partition
    * symbols, below every symbol). The first rung with a
    * drawing that fits wins; text never shrinks. Rungs a graph cannot use
-   * (no optional lines, no lanes) are skipped.
+   * (no optional lines, no partitions) are skipped.
    */
-  readonly fit: ReadonlyArray<{ readonly detail: 'full' | 'required'; readonly text: 'right' | 'stubsBelow' | 'lanesBelow' | 'allBelow' }>
+  readonly fit: ReadonlyArray<{ readonly detail: 'full' | 'required'; readonly text: 'right' | 'stubsBelow' | 'partitionsBelow' | 'allBelow' }>
   /** Density the HMI standard allows. */
   readonly limits: {
     readonly symbols: number
-    readonly symbolsPerLane: number
+    readonly symbolsPerPartition: number
     readonly sharedSymbols: number
-    readonly lanes: number
+    readonly partitions: number
     /** Crossings in any drawing. */
     readonly crossings: number
     /** Crossings beyond those the graph's structure forces (bound.ts). */
@@ -160,7 +164,7 @@ export interface PlacedNode {
    * the footprint, at a grid position along the face. In-ports face upstream
    * and out-ports downstream, except that in vertical flow a symbol whose text
    * stack sits below it takes its in-ports on its left face (the stack covers
-   * its lower face); each such pipe rises beside the stack and turns in. A hub's ports sit on
+   * its lower face); each such pipe rises beside the stack and turns in. A common node's ports sit on
    * their routing tracks, which may be half-grid. A bar's port is the bar's
    * centre on the side its pipes attach from; each pipe's own tee point on
    * the bar is its polyline's end.
@@ -172,7 +176,7 @@ export interface PlacedNode {
    * last required line when the full text does not fit). A symbol's stack
    * touches it, right of it (centred on its height) or below it (centred on
    * its width); right is preferred, below is used when the drawing is too
-   * large otherwise (lane symbols first, then all). A bar's label sits beyond
+   * large otherwise (partition symbols first, then all). A bar's label sits beyond
    * one of its ends, whichever no pipe passes.
    */
   readonly text: { readonly x: number; readonly y: number; readonly width: number; readonly height: number; readonly side: Face; readonly lines: number } | null
@@ -197,7 +201,7 @@ export interface RoutedEdge {
 }
 
 export interface DiagramZone {
-  readonly lane: string
+  readonly partition: string
   readonly x: number
   readonly y: number
   readonly width: number
@@ -220,7 +224,7 @@ export type DiagramLayoutResult =
     readonly zones: ReadonlyArray<DiagramZone>
     /** A stable hash of the geometry, independent of ids. */
     readonly hash: string
-    /** Crossings drawn (each a gap), and the fewest the graph's structure forces on a lane drawing. */
+    /** Crossings drawn (each a gap), and the fewest the graph's structure forces on a partition drawing. */
     readonly crossings: number
     readonly forcedCrossings: number
   }

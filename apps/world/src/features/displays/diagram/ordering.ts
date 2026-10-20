@@ -1,45 +1,45 @@
-// Order within layers. Blocks are fixed: hubs, shared items, lanes in lane
-// order, then lane-less stubs; or, with hubs on the high side, shared items,
-// lanes, stubs, then hubs. Barycentre sweeps reorder items only inside their
-// block, so lanes always line up and never swap. A lane-less long edge runs in
-// the block of the stub it ends at. Refined, a stub of a shared symbol or hub
-// stays in the block beside it (a hub's beside the other ends of its port, when
+// Order within layers. Blocks are fixed: common nodes, shared items, partitions in partition
+// order, then partition-less stubs; or, with common nodes on the high side, shared items,
+// partitions, stubs, then common nodes. Barycentre sweeps reorder items only inside their
+// block, so partitions always line up and never swap. A partition-less long edge runs in
+// the block of the stub it ends at. Refined, a stub of a shared symbol or common node
+// stays in the block beside it (a common node's beside the other ends of its port, when
 // the port has some), and items of a block then move, alone or with the long
 // edges that are all their pipes, while that crosses fewer pipes, counted in
 // the order: pipes between neighbouring layers, U-turns of return runs at the
-// layer they turn at, hub pipes from the hubs' side, and the nets a hub sends
+// layer they turn at, common node pipes from the common nodes' side, and the nets a common node sends
 // through one channel.
 import type { Layering } from './layering.ts'
 import type { Model } from './model.ts'
 
-/** Which side of the lanes hubs are drawn on: before lane 0 (low) or after the last lane (high). */
-export type HubSide = 'low' | 'high'
+/** Which side of the partitions common nodes are drawn on: before partition 0 (low) or after the last partition (high). */
+export type CommonSide = 'low' | 'high'
 
 export interface Blocks {
-  readonly hub: number
+  readonly common: number
   readonly shared: number
-  readonly lane: (lane: number) => number
+  readonly partition: (partition: number) => number
   readonly stub: number
 }
 
-export const blocksFor = (laneCount: number, hubSide: HubSide): Blocks => hubSide === 'low'
-  ? { hub: 0, shared: 1, lane: lane => 2 + lane, stub: 2 + laneCount }
-  : { shared: 0, lane: lane => 1 + lane, stub: 1 + laneCount, hub: 2 + laneCount }
+export const blocksFor = (partitionCount: number, commonSide: CommonSide): Blocks => commonSide === 'low'
+  ? { common: 0, shared: 1, partition: partition => 2 + partition, stub: 2 + partitionCount }
+  : { shared: 0, partition: partition => 1 + partition, stub: 1 + partitionCount, common: 2 + partitionCount }
 
 export interface Ordering {
   /** Item indices per layer, in cross-axis order. */
   readonly layers: ReadonlyArray<ReadonlyArray<number>>
   readonly block: ReadonlyArray<number>
   readonly blocks: Blocks
-  readonly hubSide: HubSide
+  readonly commonSide: CommonSide
 }
 
 const SWEEPS = 4
 
-export const orderLayers = (model: Model, layering: Layering, hubSide: HubSide, refine: { readonly net: ReadonlyArray<number> } | null = null): Ordering => {
-  const laneCount = model.lanes.length
-  const blocks = blocksFor(laneCount, hubSide)
-  // The node a lane-less stub ends the drawing at: its one neighbour, and whether its pipe shares that port with others.
+export const orderLayers = (model: Model, layering: Layering, commonSide: CommonSide, refine: { readonly net: ReadonlyArray<number> } | null = null): Ordering => {
+  const partitionCount = model.partitions.length
+  const blocks = blocksFor(partitionCount, commonSide)
+  // The node a partition-less stub ends the drawing at: its one neighbour, and whether its pipe shares that port with others.
   const stubOwner = (node: number): { readonly node: number; readonly shared: boolean } | undefined => {
     const edge = model.edges.find(candidate => candidate.from === node || candidate.to === node)
     if (edge === undefined) return undefined
@@ -47,26 +47,26 @@ export const orderLayers = (model: Model, layering: Layering, hubSide: HubSide, 
     const shared = model.edges.some(other => other !== edge && ((other.from === owner && other.fromPort === port) || (other.to === owner && other.toPort === port)))
     return { node: owner, shared }
   }
-  const nodeBlock = (node: number, lane: number | null): number => {
+  const nodeBlock = (node: number, partition: number | null): number => {
     const role = model.nodes[node]!.role
-    if (role === 'hub') return blocks.hub
-    if (role === 'stub' && lane === null) {
+    if (role === 'common') return blocks.common
+    if (role === 'stub' && partition === null) {
       const owner = refine === null ? undefined : stubOwner(node)
       if (owner === undefined) return blocks.stub
-      // Beside its node: a shared symbol's in the shared block, a hub's in the block next to the hub,
-      // unless its port leads on elsewhere: then beside that net's other ends, outside the lanes it would straddle.
-      if (model.nodes[owner.node]!.role !== 'hub') return blocks.shared
-      return hubSide === 'low' || owner.shared ? blocks.shared : blocks.stub
+      // Beside its node: a shared symbol's in the shared block, a common node's in the block next to the common node,
+      // unless its port leads on elsewhere: then beside that net's other ends, outside the partitions it would straddle.
+      if (model.nodes[owner.node]!.role !== 'common') return blocks.shared
+      return commonSide === 'low' || owner.shared ? blocks.shared : blocks.stub
     }
-    return lane === null ? blocks.shared : blocks.lane(lane)
+    return partition === null ? blocks.shared : blocks.partition(partition)
   }
   const block = layering.items.map(item => {
-    if (item.node !== null) return nodeBlock(item.node, item.lane)
-    if (item.lane !== null) return blocks.lane(item.lane)
-    // A lane-less pipe runs in the block of the stub it ends at, beside it.
+    if (item.node !== null) return nodeBlock(item.node, item.partition)
+    if (item.partition !== null) return blocks.partition(item.partition)
+    // A partition-less pipe runs in the block of the stub it ends at, beside it.
     const chain = layering.chains[item.edge!]!
     const ends = [chain.items[0]!, chain.items.at(-1)!].map(end => layering.items[end]!)
-    return ends.some(end => end.node !== null && end.lane === null && model.nodes[end.node]!.role === 'stub' && nodeBlock(end.node, null) === blocks.stub) ? blocks.stub : blocks.shared
+    return ends.some(end => end.node !== null && end.partition === null && model.nodes[end.node]!.role === 'stub' && nodeBlock(end.node, null) === blocks.stub) ? blocks.stub : blocks.shared
   })
   // Structural key: nodes by index, then dummies by edge and layer.
   const compareKey = (a: number, b: number): number => {
@@ -108,8 +108,8 @@ export const orderLayers = (model: Model, layering: Layering, hubSide: HubSide, 
     for (let at = 1; at < layers.length; at++) sweep(at, at - 1)
     for (let at = layers.length - 2; at >= 0; at--) sweep(at, at + 1)
   }
-  if (refine !== null) transpose(model, layering, layers, block, position, hubSide, refine.net)
-  return { layers, block, blocks, hubSide }
+  if (refine !== null) transpose(model, layering, layers, block, position, commonSide, refine.net)
+  return { layers, block, blocks, commonSide }
 }
 
 const MAX_TRANSPOSE_ROUNDS = 12
@@ -118,17 +118,17 @@ const HIGH_SIDE = -2
 
 /** Pieces of pipe in the gap between layer g and g + 1, as the order sees them. */
 type GapPiece =
-  /** Between an item of the layer below the gap (`low`) and one above it (`high`); a hub's side stands in for the hub (`hub`). */
-  | { readonly kind: 'span'; readonly low: number; readonly high: number; readonly net: number; readonly hub?: number }
+  /** Between an item of the layer below the gap (`low`) and one above it (`high`); a common node's side stands in for the common node (`common`). */
+  | { readonly kind: 'span'; readonly low: number; readonly high: number; readonly net: number; readonly common?: number }
   /** A U-turn at the layer below the gap (`low`) or above it (`high`), between two of its items. */
   | { readonly kind: 'turn'; readonly side: 'low' | 'high'; readonly p: number; readonly q: number; readonly net: number }
 
-const transpose = (model: Model, layering: Layering, layers: number[][], block: ReadonlyArray<number>, position: number[], hubSide: HubSide, net: ReadonlyArray<number>): void => {
+const transpose = (model: Model, layering: Layering, layers: number[][], block: ReadonlyArray<number>, position: number[], commonSide: CommonSide, net: ReadonlyArray<number>): void => {
   const items = layering.items
   const role = (item: number) => (items[item]!.node === null ? null : model.nodes[items[item]!.node!]!.role)
-  const isHub = (item: number): boolean => role(item) === 'hub'
+  const isCommon = (item: number): boolean => role(item) === 'common'
   const isBar = (item: number): boolean => role(item) === 'bar'
-  const side = hubSide === 'low' ? LOW_SIDE : HIGH_SIDE
+  const side = commonSide === 'low' ? LOW_SIDE : HIGH_SIDE
   const gapCount = Math.max(0, layering.layerCount - 1)
   const gaps: GapPiece[][] = Array.from({ length: gapCount }, () => [])
   for (const chain of layering.chains) {
@@ -137,9 +137,9 @@ const transpose = (model: Model, layering: Layering, layers: number[][], block: 
       const a = chain.items[k]!
       const b = chain.items[k + 1]!
       if (step === 'next') {
-        // A hub reaches an item from its side, through the gap before the item.
-        if (isHub(a)) { const g = items[b]!.layer - 1; if (g >= 0) gaps[g]!.push({ kind: 'span', low: side, high: b, net: pipe, hub: a }); return }
-        if (isHub(b)) { const g = items[a]!.layer; if (g < gapCount) gaps[g]!.push({ kind: 'span', low: a, high: side, net: pipe, hub: b }); return }
+        // A common node reaches an item from its side, through the gap before the item.
+        if (isCommon(a)) { const g = items[b]!.layer - 1; if (g >= 0) gaps[g]!.push({ kind: 'span', low: side, high: b, net: pipe, common: a }); return }
+        if (isCommon(b)) { const g = items[a]!.layer; if (g < gapCount) gaps[g]!.push({ kind: 'span', low: a, high: side, net: pipe, common: b }); return }
         const g = items[a]!.layer
         if (items[b]!.layer === g + 1 && g < gapCount) gaps[g]!.push({ kind: 'span', low: a, high: b, net: pipe })
         return
@@ -180,23 +180,23 @@ const transpose = (model: Model, layering: Layering, layers: number[][], block: 
     }
     return [...byNode.values()].filter(nets => nets.size > 1).map(nets => [...nets.values()])
   })
-  // Nets a hub sends through one gap run on tracks from its side face to their farthest end. Of two, the
+  // Nets a common node sends through one gap run on tracks from its side face to their farthest end. Of two, the
   // one on the track nearer the far ends' layer has its risers cross the other's track where they lie
-  // within it; the channel takes the cheaper order. Per gap, hub and direction, the far ends of each net.
-  const hubMeetings = gaps.map(pieces => {
-    const byHub = new Map<string, Map<number, number[]>>()
+  // within it; the channel takes the cheaper order. Per gap, common node and direction, the far ends of each net.
+  const commonMeetings = gaps.map(pieces => {
+    const byCommon = new Map<string, Map<number, number[]>>()
     for (const piece of pieces) {
-      if (piece.kind !== 'span' || piece.hub === undefined) continue
+      if (piece.kind !== 'span' || piece.common === undefined) continue
       const outgoing = piece.low === side
-      const key = `${piece.hub}:${outgoing ? 'out' : 'in'}`
-      const nets = byHub.get(key) ?? new Map<number, number[]>()
+      const key = `${piece.common}:${outgoing ? 'out' : 'in'}`
+      const nets = byCommon.get(key) ?? new Map<number, number[]>()
       nets.set(piece.net, [...(nets.get(piece.net) ?? []), outgoing ? piece.high : piece.low])
-      byHub.set(key, nets)
+      byCommon.set(key, nets)
     }
-    return [...byHub.values()].filter(nets => nets.size > 1).map(nets => [...nets.values()])
+    return [...byCommon.values()].filter(nets => nets.size > 1).map(nets => [...nets.values()])
   })
-  const within = (far: number, others: ReadonlyArray<number>): boolean => hubSide === 'low' ? at(far) < Math.max(...others.map(at)) : at(far) > Math.min(...others.map(at))
-  const hubStraddles = (groups: ReadonlyArray<ReadonlyArray<number>>): number => {
+  const within = (far: number, others: ReadonlyArray<number>): boolean => commonSide === 'low' ? at(far) < Math.max(...others.map(at)) : at(far) > Math.min(...others.map(at))
+  const commonStraddles = (groups: ReadonlyArray<ReadonlyArray<number>>): number => {
     let total = 0
     for (let i = 0; i < groups.length; i++) {
       for (let j = i + 1; j < groups.length; j++) {
@@ -225,15 +225,15 @@ const transpose = (model: Model, layering: Layering, layers: number[][], block: 
       chain.steps.forEach((step, k) => {
         if (step !== 'next') return
         const [a, b] = [chain.items[k]!, chain.items[k + 1]!]
-        if (a === bar && !isHub(b)) attached.push(b)
-        if (b === bar && !isHub(a)) attached.push(a)
+        if (a === bar && !isCommon(b)) attached.push(b)
+        if (b === bar && !isCommon(a)) attached.push(a)
       })
       chain.items.forEach((item, k) => {
         if (items[item]!.node !== null || items[item]!.layer !== layer || k === 0 || k === chain.items.length - 1) return
         if (chain.steps[k - 1] !== 'next' || chain.steps[k] !== 'next') return
         const before = chain.items[k - 1]!
         const after = chain.items[k + 1]!
-        passing.push({ low: items[before]!.layer === layer - 1 && !isHub(before) ? before : null, high: items[after]!.layer === layer + 1 && !isHub(after) ? after : null })
+        passing.push({ low: items[before]!.layer === layer - 1 && !isCommon(before) ? before : null, high: items[after]!.layer === layer + 1 && !isCommon(after) ? after : null })
       })
     }
     return { layer, low: attached.filter(item => items[item]!.layer === layer - 1), high: attached.filter(item => items[item]!.layer === layer + 1), passing }
@@ -271,7 +271,7 @@ const transpose = (model: Model, layering: Layering, layers: number[][], block: 
         }
       }
       for (const groups of meetings[g]!) if (groups.some(fars => fars.includes(item))) total += straddles(groups)
-      for (const groups of hubMeetings[g]!) if (groups.some(fars => fars.includes(item))) total += hubStraddles(groups)
+      for (const groups of commonMeetings[g]!) if (groups.some(fars => fars.includes(item))) total += commonStraddles(groups)
     }
     for (const bar of barsNear(item)) total += barCount(bar)
     return total
@@ -279,7 +279,7 @@ const transpose = (model: Model, layering: Layering, layers: number[][], block: 
   const total = (): number => gaps.reduce((sum, pieces, g) => {
     let count = 0
     for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) count += cross(pieces[i]!, pieces[j]!)
-    return sum + count + meetings[g]!.reduce((all, groups) => all + straddles(groups), 0) + hubMeetings[g]!.reduce((all, groups) => all + hubStraddles(groups), 0)
+    return sum + count + meetings[g]!.reduce((all, groups) => all + straddles(groups), 0) + commonMeetings[g]!.reduce((all, groups) => all + commonStraddles(groups), 0)
   }, 0) + bars.reduce((sum, bar) => sum + barCount(bar), 0)
 
   const runOf = (layer: ReadonlyArray<number>, item: number): readonly [number, number] => {
@@ -306,12 +306,12 @@ const transpose = (model: Model, layering: Layering, layers: number[][], block: 
   const units = [
     ...layering.chains.map(chain => {
       const dummies = chain.items.filter(item => items[item]!.node === null)
-      const loose = (end: number): boolean => dummies.length > 0 && role(end) !== 'hub' && role(end) !== 'bar'
+      const loose = (end: number): boolean => dummies.length > 0 && role(end) !== 'common' && role(end) !== 'bar'
         && degree[items[end]!.node!] === 1 && dummies.every(item => block[item] === block[end])
       const [start, end] = [chain.items[0]!, chain.items.at(-1)!]
       return [...(loose(start) ? [start] : []), ...dummies, ...(loose(end) ? [end] : [])]
     }).filter(unit => unit.length >= 2),
-    ...layering.items.map((_, item) => item).filter(item => role(item) !== null && role(item) !== 'stub' && role(item) !== 'hub' && role(item) !== 'bar' && stubsOf(item).length > 0)
+    ...layering.items.map((_, item) => item).filter(item => role(item) !== null && role(item) !== 'stub' && role(item) !== 'common' && role(item) !== 'bar' && stubsOf(item).length > 0)
       .map(item => [item, ...stubsOf(item)]),
   ]
   const strandMoves = (): boolean => {

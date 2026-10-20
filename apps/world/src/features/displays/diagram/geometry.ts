@@ -1,5 +1,5 @@
 // Grid arithmetic and the two orientations. Layout runs in abstract axes: `f`
-// along the flow (downstream increases) and `c` across it (lane order
+// along the flow (downstream increases) and `c` across it (partition order
 // increases). Only the last step maps them to screen x/y.
 import type { Face } from './diagram.ts'
 

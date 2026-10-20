@@ -44,14 +44,21 @@ interface PlannedItem {
   /** A device's flap lines under OpenBridge's own (MimicDrawnItem.flapLines). */
   readonly flapLines: ReadonlyArray<FlapPart>
   readonly marker: boolean
-  readonly role: DiagramNode['role']
+  readonly role: MimicRole
   readonly rank: string
-  readonly lane?: DiagramNode['lane']
+  /** Its loop's lane: the engine's partition. */
+  readonly lane?: DiagramNode['partition']
   /** The Plant components it stands for: a group's members, or a bundled device's host. */
   readonly components: ReadonlyArray<number>
 }
 
-const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number>): DiagramNode['lane'] | undefined => {
+/** How the mimic draws an item: a symbol, a bar (a header or bus), or the hub its loops leave and return to (isHub). */
+type MimicRole = 'device' | 'bar' | 'hub'
+
+/** A hub is the engine's common node: one its partitions, the loops' lanes, leave and return to. */
+const diagramRole = (role: MimicRole): DiagramNode['role'] => (role === 'hub' ? 'common' : role)
+
+const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number>): DiagramNode['partition'] | undefined => {
   const key = component.metadata?.loopId
   return key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
 }
@@ -278,10 +285,10 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     nodes.push({
       id: planned.id,
       rank: planned.rank,
-      role: planned.role,
+      role: diagramRole(planned.role),
       ...footprintOf(planned),
       ports,
-      ...(planned.lane === undefined ? {} : { lane: planned.lane }),
+      ...(planned.lane === undefined ? {} : { partition: planned.lane }),
       text: {
         lines: [
           // Every item carries its tag, a marker too: a valve's place on a loop does not say which valve it is
@@ -365,7 +372,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     if ((representative.get(index) ?? index) !== index) continue
     const component = graph.components[index]!
     const presentation = presentations.get(index)!
-    const role: DiagramNode['role'] = presentation.element === 'bar' ? 'bar' : hubs.has(index) ? 'hub' : 'device'
+    const role: MimicRole = presentation.element === 'bar' ? 'bar' : hubs.has(index) ? 'hub' : 'device'
     const group = members.get(index) ?? [index]
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
     // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
@@ -471,7 +478,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       cells: { width: 1, height: 1 },
       portInset: 0,
       ports: [{ id: 'end', direction: stub.direction === 'out' ? 'in' : 'out', rank: 'end' }],
-      ...(lane === undefined ? {} : { lane }),
+      ...(lane === undefined ? {} : { partition: lane }),
       text: { lines: [
         { width: measure('tag', text, text), height: openBridgeDevice.tagLine, required: true },
         ...(word === null ? [] : [{ width: Math.max(...stubWordTexts(word).map(shown => measure('tag', shown, text))), height: openBridgeDevice.tagLine, required: true }]),
@@ -647,7 +654,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     items,
     pipes: [...pipes, ...stubPipes],
     stubs: stubs.map(({ edge: _edge, ...stub }) => stub),
-    zones: layout.zones.map(zone => ({ ...zone, label: `Loop ${zone.lane}` })),
+    zones: layout.zones.map(zone => ({ lane: zone.partition, x: zone.x, y: zone.y, width: zone.width, height: zone.height, label: `Loop ${zone.partition}` })),
     paths,
     trendPaths: [...new Set(items.flatMap(trendPathsOf))],
     summary: {
@@ -670,7 +677,7 @@ const closestSize = (reasons: Extract<DiagramLayoutResult, { ok: false }>['reaso
 
 const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, room: DiagramRoom): string => result.reasons.filter(reason => reason.kind !== 'size' || reason === closestSize(result.reasons, room)).map(reason => {
   if (reason.kind === 'density') {
-    const what = { symbols: 'symbols', symbolsPerLane: 'symbols in one loop', sharedSymbols: 'shared symbols outside the loops', lanes: 'loops', crossings: 'crossing pipes', crossingsOverBound: 'crossing pipes', bendsPerEdge: 'bends in one pipe' }[reason.limit]
+    const what = { symbols: 'symbols', symbolsPerPartition: 'symbols in one loop', sharedSymbols: 'shared symbols outside the loops', partitions: 'loops', crossings: 'crossing pipes', crossingsOverBound: 'crossing pipes', bendsPerEdge: 'bends in one pipe' }[reason.limit]
     return `${reason.count} ${what} (at most ${reason.max} stay legible at a glance)`
   }
   if (reason.kind === 'size') return `the drawing needs ${reason.width} × ${reason.height} px, and this display leaves ${room.maxWidth} × ${room.maxHeight}`
