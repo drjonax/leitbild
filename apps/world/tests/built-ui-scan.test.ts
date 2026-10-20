@@ -22,5 +22,6 @@ describe('built World UI', () => {
     const files = await builtFiles()
     expect(files.some(file => file.name.endsWith('.js'))).toBe(true)
     expect(files.flatMap(file => ['elkjs', 'Kiel University', 'org.eclipse.elk', 'Cannot construct an ELK'].filter(mark => file.text.includes(mark)).map(mark => `${file.name}: ${mark}`))).toEqual([])
-  }, 300_000)
+    // A whole World UI build takes about 3.5 s on a quiet machine; the wall-clock timeout is sized for a loaded one.
+  }, 120_000)
 })
