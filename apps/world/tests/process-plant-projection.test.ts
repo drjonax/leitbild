@@ -89,7 +89,7 @@ describe('a Plant\'s projection, which colours it on the map', () => {
     expect(projectionOf(silenced)).toMatchObject({ statusTone: 'ready', statusLabel: 'Normal', activeAlarmCount: 0, activeTripCount: 0 })
     expect(projectionOf(silenced).highestSeverity).toBeUndefined()
     expect(silenced.operational.status).toBe('normal')
-    expect(presented(silenced).color).toBe('#22845d')
+    expect(presented(silenced).color).toBe('#0f915f')
 
     const annunciated = projectedProcessPlantUnit({
       object: unit,
@@ -100,14 +100,14 @@ describe('a Plant\'s projection, which colours it on the map', () => {
       simulationTime: at,
     })
     expect(projectionOf(annunciated)).toMatchObject({ statusTone: 'working', highestSeverity: 'warning', activeAlarmCount: 1, activeTripCount: 0 })
-    expect(presented(annunciated).color).toBe('#c77d13')
+    expect(presented(annunciated).color).toBe('#0f915f')
   })
 
   test('draws a Plant whose runtime is pending grey, not green', () => {
     const pending = projectedProcessPlantUnit({ object: unit, plant: undefined, at, simulationTime: at })
     expect(projectionOf(pending).statusTone).toBe('idle')
     const presentation = presented(pending)
-    expect(presentation.color).toBe('#667085')
+    expect(presentation.color).toBe('#6e788c')
     expect(presentation.status?.tone).toBe('idle')
   })
 
