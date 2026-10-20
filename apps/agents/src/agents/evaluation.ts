@@ -376,8 +376,10 @@ const presentedViewIssues = (content: string, viewContents: ReadonlyMap<string, 
   return view === undefined ? [] : answerContradictions(content, view)
 }
 
+// The opening words stay as before the soft checks moved offline, so that
+// evaluation reads the cause of a correction the same way on either side.
 const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
-  `The answer cites values the display it presents contradicts, and the operator reads them together:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
+  `The answer and the display it presents disagree, and the operator reads them together:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
   `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite each value as the display reads it, or mark one from elsewhere "(not shown)". ` +
   'Keep the assessment and actions.'
 
@@ -385,7 +387,7 @@ const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
 // with any value its display contradicts, in one correction.
 const claimCorrection = (claims: ReadonlyArray<string>, viewIssues: ReadonlyArray<string>): string =>
   `The answer says something happened that did not:\n${claims.map(issue => `- ${issue}`).join('\n')}\n\n` +
-  (viewIssues.length === 0 ? '' : `It also cites values the display it presents contradicts:\n${viewIssues.map(issue => `- ${issue}`).join('\n')}\n\n`) +
+  (viewIssues.length === 0 ? '' : `It also disagrees with the display it presents:\n${viewIssues.map(issue => `- ${issue}`).join('\n')}\n\n`) +
   'Re-emit the FULL corrected response, keeping any display block. A proposal is executed only when a person approves it in the display window: ' +
   'say what you proposed and that it awaits their approval, or that World refused it and why. Keep the assessment.'
 
