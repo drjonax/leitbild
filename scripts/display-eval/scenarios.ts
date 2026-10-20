@@ -3,12 +3,55 @@
  * runnable but out of the set; the pre-named flaky scenarios, reported apart;
  * and each scenario's decisive evidence.
  *
+ * Every scenario declares its Run (plan §6, AG S1-4): the Scenario it starts
+ * from and the setup steps on its copy. The 31 here all ask about Unit 2 of
+ * halden-power-complex, as the P0 probe did; p0-requests.json holds what the
+ * P0 probe sent for each, and a test keeps them equal (E0/E1 comparability).
+ *
  * Every decisive-evidence key is AI-drafted and pending the subject expert the
  * owner names (D2). Signal keys are scored automatically (decisive.ts); claim
  * and absence keys wait for a calibrated judge and are recorded, not scored.
  *
  * The hold-out set is private and lives outside this repository; probe.ts
  * loads it from a path at run time (loadScenarioModule). */
+
+/** A pack-qualified invocation on the scenario's Run copy: a Capability of the Run and its input. */
+export interface SetupStep {
+  readonly operationId: string
+  readonly input: Record<string, unknown>
+}
+
+/**
+ * The Run a scenario asks about. The probe starts `scenario` once per stage
+ * (paused), copies that Run for the scenario, invokes `setup` on the copy in
+ * order and then plays `advanceMinutes`. A step the Run refuses is the
+ * scenario's defect, not the answer's: it is recorded and not scored.
+ */
+export interface ScenarioRun {
+  /** A bundled Scenario Definition id, or `fixture:<name>`: a repository Scenario fixture the probe saves in its own Workspace (fixturePath). */
+  readonly scenario: string
+  readonly setup: ReadonlyArray<SetupStep>
+  /** Simulated minutes played after the setup, so the situation has developed. */
+  readonly advanceMinutes?: number
+  /** Maximum pace (the default), or realtime for a Run that cannot or must not fast-forward. */
+  readonly pace?: 'maximum' | 'realtime'
+}
+
+/** Where a `fixture:<name>` Scenario's source lives: beside the World tests, never in the product catalog. */
+export const fixturePath = (scenario: string): string | null => {
+  const name = /^fixture:([a-z0-9-]+)$/.exec(scenario)?.[1]
+  return name === undefined ? null : new URL(`../../apps/world/tests/fixtures/scenarios/${name}.scenario.json`, import.meta.url).pathname
+}
+
+export const plantAction = (plantId: string, actionId: string, parameters: Record<string, unknown> = {}): SetupStep =>
+  ({ operationId: 'world.process-plant.action.invoke', input: { plantId, actionId, parameters } })
+
+/** What the probe sends on a scenario's Run copy, in order: the setup steps, then the advance (a realtime play is no request). */
+export const runRequests = (run: ScenarioRun): ReadonlyArray<SetupStep> => [
+  ...run.setup,
+  ...(run.advanceMinutes === undefined || run.pace === 'realtime' ? [] : [{ operationId: 'world.simulation-run.execution.advance', input: { minutes: run.advanceMinutes, onComplete: 'pause' } }]),
+]
+
 /**
  * An operation the prompt asks for. An AI agent only proposes; a person
  * decides (control.decide), which the probe never does. `proposal` says what
@@ -16,6 +59,8 @@
  * because the Plant refuses it, or either, provided the Plant accepted it.
  */
 export interface OperationExpectation {
+  /** The Plant the operation is on. */
+  readonly plantId: string
   /** The component the operation concerns: the first segment of a proposal's write path. */
   readonly equipment: string
   /** Its own command and position tags, so a display around it is recognised by tag as well as by id. */
@@ -54,9 +99,7 @@ export interface Scenario {
   readonly prompt: string
   /** Whether the answer should show a display; 'either' is not judged. */
   readonly expect: 'display' | 'none' | 'either'
-  readonly fault?: { readonly actionId: string; readonly parameters?: Record<string, unknown> }
-  /** Simulated minutes played after the fault, so the situation has developed. */
-  readonly advanceMinutes?: number
+  readonly run: ScenarioRun
   readonly keyPanel?: 'trend' | 'comparison' | 'readouts' | 'alarms' | 'mimic'
   /** Whether an equipment mimic is expected, to be avoided, or either is fine. */
   readonly mimic?: 'expected' | 'avoid'
@@ -76,6 +119,14 @@ const signal = (key: string, signals: ReadonlyArray<string>, rationale: string, 
   ({ key, kind: 'signal', signals, match, rationale, status: KEY_STATUS, use: 'P0' })
 const claim = (key: string, rationale: string): EvidenceKey => ({ key, kind: 'claim', rationale, status: KEY_STATUS, use: 'P0' })
 const absence = (key: string, rationale: string): EvidenceKey => ({ key, kind: 'absence', rationale, status: KEY_STATUS, use: 'P0' })
+
+/** The Run every scenario here asks about: Unit 2 of halden-power-complex, after a Plant action on it and minutes at maximum pace. */
+const UNIT_2 = 'plant:halden-2'
+const unit2 = (advanceMinutes?: number, actionId?: string, parameters?: Record<string, unknown>): ScenarioRun => ({
+  scenario: 'halden-power-complex',
+  setup: actionId === undefined ? [] : [plantAction(UNIT_2, actionId, parameters)],
+  ...(advanceMinutes === undefined ? {} : { advanceMinutes }),
+})
 
 const SG_LEVELS_NR = ['SG-A-LVL-NR', 'SG-B-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR']
 const SG_LEVELS = [...SG_LEVELS_NR, 'SG-A-LVL-WR', 'SG-B-LVL-WR', 'SG-C-LVL-WR', 'SG-D-LVL-WR']
@@ -105,7 +156,7 @@ export const NEAR_DUPLICATES: Readonly<Record<string, { readonly of: string; rea
 }
 
 const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<EvidenceKey> }> = [
-  { id: 'sg-b-runback', fault: { actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, advanceMinutes: 3, expect: 'display',
+  { id: 'sg-b-runback', run: unit2(3, 'steam-generator-b-feedwater-runback', { positionPercent: 35 }), expect: 'display',
     prompt: 'Unit 2: SG B level looks off. What is going on and what should I watch?',
     evidence: [
       signal('SG B level', ['SG-B-LVL-NR', 'SG-B-LVL-WR'], 'The level the question is about, over time.'),
@@ -113,7 +164,7 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('another SG level as counter-evidence', ['SG-A-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'], 'Shows the upset is SG B only.'),
       claim('names the SG B feed (valve B runback) as the cause', 'A diagnosis, not only a reading.'),
     ] },
-  { id: 'porv-open', fault: { actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, advanceMinutes: 2, expect: 'display',
+  { id: 'porv-open', run: unit2(2, 'pressurizer-relief-open', { positionPercent: 35 }), expect: 'display',
     prompt: 'Unit 2 pressurizer pressure is dropping. What is happening and is it getting worse?',
     evidence: [
       signal('pressurizer pressure', ['PT-455'], 'The value the question is about, trended for "getting worse".'),
@@ -121,7 +172,7 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('pressurizer level', ['PZR-LVL'], 'Inventory leaving with the steam.'),
       claim('says whether the fall continues, from the record', '"Is it getting worse" needs the trend read, not assumed.'),
     ] },
-  { id: 'sg-a-tube-leak', fault: { actionId: 'steam-generator-tube-leak-a', parameters: { leakPercent: 1.2 } }, advanceMinutes: 3, expect: 'display',
+  { id: 'sg-a-tube-leak', run: unit2(3, 'steam-generator-tube-leak-a', { leakPercent: 1.2 }), expect: 'display',
     prompt: 'We have secondary radiation indications on Unit 2. Assess the situation.',
     evidence: [
       signal('SG A N-16 radiation', ['SG-A-N16'], 'The indication itself, on the leaking generator.'),
@@ -129,21 +180,21 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('primary inventory: pressurizer level or pressure', ['PZR-LVL', 'PT-455'], 'Whether the leak drains the primary.'),
       claim('identifies a tube leak in SG A', 'The assessment asked for.'),
     ] },
-  { id: 'loss-main-feedwater', fault: { actionId: 'loss-main-feedwater' }, advanceMinutes: 2, expect: 'display',
+  { id: 'loss-main-feedwater', run: unit2(2, 'loss-main-feedwater'), expect: 'display',
     prompt: 'Unit 2 lost main feedwater. What should I monitor right now?',
     evidence: [
       signal('SG levels', SG_LEVELS, 'The heat sink inventory falling without feed.'),
       signal('auxiliary feedwater flow', ['AFW-FLOW', 'AFW-A-FLOW', 'AFW-B-FLOW', 'AFW-C-FLOW', 'AFW-D-FLOW'], 'What replaces main feed.'),
       claim('names the heat sink (SG level and AFW flow) as what to watch', 'The monitoring priority.'),
     ] },
-  { id: 'rcp-trip', fault: { actionId: 'trip-reactor-coolant-pumps' }, advanceMinutes: 1, expect: 'display',
+  { id: 'rcp-trip', run: unit2(1, 'trip-reactor-coolant-pumps'), expect: 'display',
     prompt: 'All reactor coolant pumps tripped on Unit 2. Is core cooling holding?',
     evidence: [
       signal('core cooling: subcooling margin or core exit temperature', ['SUB-MARGIN', 'CET-AVG'], 'The core-cooling criterion itself.'),
       signal('loop flow or RCP state', ['RCP-A-FLOW', 'RCP-B-FLOW', 'RCP-C-FLOW', 'RCP-D-FLOW', 'RCP-A-RUNNING', 'RCP-B-RUNNING', 'RCP-C-RUNNING', 'RCP-D-RUNNING'], 'Forced flow is gone; natural circulation must carry the heat.'),
       claim('answers whether core cooling holds, from margin or temperature', 'A verdict on the question.'),
     ] },
-  { id: 'turbine-trip', fault: { actionId: 'turbine-trip' }, advanceMinutes: 1, expect: 'display',
+  { id: 'turbine-trip', run: unit2(1, 'turbine-trip'), expect: 'display',
     prompt: 'Unit 2 turbine tripped. What do I need to watch over the next minutes?',
     evidence: [
       signal('reactor trip and power', REACTOR_TRIP, 'Above P-9 a turbine trip trips the reactor.'),
@@ -151,61 +202,61 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('primary temperature or pressure', ['TAVG', 'PT-455'], 'The primary follows the lost load.'),
       signal('SG levels or AFW flow', [...SG_LEVELS_NR, 'AFW-FLOW'], 'Level shrinks after the trip.'),
     ] },
-  { id: 'loss-offsite-power', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'display',
+  { id: 'loss-offsite-power', run: unit2(1, 'loss-offsite-power'), expect: 'display',
     prompt: 'Unit 2 lost offsite power. What is the state of its electrical supply and what should I watch?',
     evidence: [
       signal('safety buses', SAFETY_BUSES, 'Whether the safety buses carry power.'),
       signal('emergency diesels', ['EDG-A-RUN', 'EDG-B-RUN', 'EDG-A-KW', 'EDG-B-KW'], 'What now supplies them.'),
       signal('offsite source', ['GRID-AVAIL', 'GRID-VOLTAGE', 'BRK-OFFSITE-A-POS', 'BRK-OFFSITE-B-POS'], 'The lost source.'),
     ] },
-  { id: 'feed-path-b', fault: { actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, advanceMinutes: 3, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'feed-path-b', run: unit2(3, 'steam-generator-b-feedwater-runback', { positionPercent: 35 }), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'Is the problem on Unit 2 in the feedwater path to SG B? Show me where.',
     evidence: [
       signal('feedwater control valve B', ['MFW-B-CV-POS', 'MFW-B-CV'], 'Where in the path the problem sits.'),
       signal('SG B level', ['SG-B-LVL-NR', 'SG-B-LVL-WR'], 'The effect at the end of the path.'),
       claim('points to feed valve B as the place', '"Show me where" asks for a location.'),
     ] },
-  { id: 'afw-reach', fault: { actionId: 'loss-main-feedwater' }, advanceMinutes: 2, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'afw-reach', run: unit2(2, 'loss-main-feedwater'), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'Unit 2 lost main feedwater. Is auxiliary feedwater reaching all four steam generators?',
     evidence: [
       signal('AFW to each SG: valve positions or branch flows', ['AFW-A-CV-POS', 'AFW-B-CV-POS', 'AFW-C-CV-POS', 'AFW-D-CV-POS', 'AFW-A-FLOW', 'AFW-B-FLOW', 'AFW-C-FLOW', 'AFW-D-FLOW', 'sgA.feedwaterFlowKgPerS', 'sgB.feedwaterFlowKgPerS', 'sgC.feedwaterFlowKgPerS', 'sgD.feedwaterFlowKgPerS'], '"All four" needs each branch.'),
       signal('total AFW flow', ['AFW-FLOW'], 'Whether AFW runs at all.'),
       claim('answers for each of the four SGs', 'The question is per generator.'),
     ] },
-  { id: 'show-feed-lineup', advanceMinutes: 1, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'show-feed-lineup', run: unit2(1), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'Show me the Unit 2 feedwater line-up to the steam generators.',
     evidence: [
       signal('main feedwater pumps', ['MFW-PUMP-A-RUNNING', 'MFW-PUMP-B-RUNNING', 'MFW-PUMP-A-RUN', 'MFW-PUMP-B-RUN'], 'The sources of the line-up.'),
       signal('feedwater control valves', ['MFW-A-CV-POS', 'MFW-B-CV-POS', 'MFW-C-CV-POS', 'MFW-D-CV-POS'], 'The path to each generator.'),
     ] },
-  { id: 'diesel-afw', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'diesel-afw', run: unit2(1, 'loss-offsite-power'), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'Unit 2 lost offsite power. Is the diesel feeding the motor-driven auxiliary feedwater pump?',
     evidence: [
       signal('emergency diesel running', ['EDG-A-RUN', 'EDG-B-RUN', 'EDG-A-KW', 'EDG-B-KW'], 'The source asked about.'),
       signal('safety bus energised', SAFETY_BUSES, 'The link between diesel and pump.'),
       signal('motor-driven AFW pump running', ['AFW-PUMP-A-RUNNING', 'AFW-PUMP-B-RUNNING'], 'The load asked about.'),
     ] },
-  { id: 'bus-a-supply', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'bus-a-supply', run: unit2(1, 'loss-offsite-power'), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'What is supplying safety bus A on Unit 2 right now?',
     evidence: [
       signal('safety bus A', ['BUS-A-ENERGIZED', 'BUS-A-VOLTAGE'], 'The bus asked about.'),
       signal('diesel A as the supply', ['EDG-A-RUN', 'EDG-A-KW', 'BRK-EDG-A-POS'], 'What supplies it after the loss of offsite power.'),
       signal('offsite source, out', ['GRID-AVAIL', 'BRK-OFFSITE-A-POS'], 'Why it is not the normal supply.'),
     ] },
-  { id: 'porv-path', fault: { actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, advanceMinutes: 2, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'porv-path', run: unit2(2, 'pressurizer-relief-open', { positionPercent: 35 }), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'Where is the coolant leaving the Unit 2 pressurizer going, and is the relief valve shut?',
     evidence: [
       signal('PORV position', ['PORV-456A-POS', 'PORV-456A', 'PORV-456A-ACOUSTIC'], '"Is the relief valve shut" asks for its position.'),
       signal('where it goes: relief tank', ['PRT-LVL', 'PRT-PRESS', 'PRT-TEMP', 'PORV-456A-TEMP'], 'The destination of the flow.'),
       absence('no claim that the relief valve is shut while it stands open', 'The fault holds it at 35 %.'),
     ] },
-  { id: 'si-loop-c', advanceMinutes: 1, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'si-loop-c', run: unit2(1), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'Show me the safety injection lineup to loop C on Unit 2.',
     evidence: [
       signal('safety injection pumps', ['SI-PUMP-A-RUNNING', 'SI-PUMP-B-RUNNING', 'SI-PUMP-A', 'SI-PUMP-B'], 'The sources of the line-up.'),
       signal('injection flow', ['SI-FLOW'], 'Whether anything is injected (none at power).'),
     ] },
-  { id: 'afw-pump-around', fault: { actionId: 'loss-main-feedwater' }, advanceMinutes: 2, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
+  { id: 'afw-pump-around', run: unit2(2, 'loss-main-feedwater'), expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'On Unit 2, what does motor-driven auxiliary feedwater pump A take its water and power from, and where does its flow go?',
     evidence: [
       signal('pump A running', ['AFW-PUMP-A-RUNNING', 'AFW-PUMP-A'], 'The pump asked about.'),
@@ -213,7 +264,7 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('its water: the AFW (condensate storage) tank', ['CST-LVL'], '"Water from" asks for the source tank.'),
       signal('its flow: the AFW header or valves', ['AFW-FLOW', 'AFW-A-CV-POS', 'AFW-B-CV-POS', 'AFW-C-CV-POS', 'AFW-D-CV-POS'], '"Where its flow goes".'),
     ] },
-  { id: 'e0-immediate', fault: { actionId: 'turbine-trip' }, advanceMinutes: 1, expect: 'display',
+  { id: 'e0-immediate', run: unit2(1, 'turbine-trip'), expect: 'display',
     prompt: 'Unit 2 turbine just tripped. Verify the E-0 immediate actions.',
     evidence: [
       signal('reactor trip: breakers open or rods on bottom', ['TRIP-BKR-A-POS', 'TRIP-BKR-B-POS', 'ROD-BOTTOM'], 'E-0 step 1.'),
@@ -222,7 +273,7 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('safety buses energised', SAFETY_BUSES, 'E-0 step 3.'),
       claim('states whether safety injection is actuated or required', 'E-0 step 4.'),
     ] },
-  { id: 'why-turbine-trip', fault: { actionId: 'turbine-trip' }, advanceMinutes: 1, expect: 'display',
+  { id: 'why-turbine-trip', run: unit2(1, 'turbine-trip'), expect: 'display',
     prompt: 'Why did the Unit 2 turbine trip?',
     evidence: [
       signal('turbine stop valves', ['TURB-STOP-POS', 'TURB-STOP'], 'That it tripped, and when.'),
@@ -230,47 +281,47 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       signal('generator and load', ['GEN-BKR', 'GEN-MW', 'TURB-IMP-LOAD'], 'What the trip took away.'),
       claim('names the cause from the record, not a guess', '"Why" asks for a cause.'),
     ] },
-  { id: 'why-turbine-trip-loop', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'display',
+  { id: 'why-turbine-trip-loop', run: unit2(1, 'loss-offsite-power'), expect: 'display',
     prompt: 'Why did the Unit 2 turbine trip?',
     evidence: [
       signal('offsite grid lost', ['GRID-AVAIL', 'GRID-HZ', 'GRID-VOLTAGE'], 'The cause after a loss of offsite power.'),
       signal('generator breaker and stop valves', ['GEN-BKR', 'TURB-STOP-POS'], 'The trip itself.'),
     ] },
-  { id: 'core-cooling-rcp', fault: { actionId: 'trip-reactor-coolant-pumps' }, advanceMinutes: 3, expect: 'display',
+  { id: 'core-cooling-rcp', run: unit2(3, 'trip-reactor-coolant-pumps'), expect: 'display',
     prompt: 'All reactor coolant pumps tripped on Unit 2. Is core cooling adequate now?',
     evidence: [
       signal('core cooling: subcooling margin or core exit temperature', ['SUB-MARGIN', 'CET-AVG'], 'The criterion.'),
       signal('loop delta-T or hot-leg temperature', ['TDI-411', 'TE-411-HOT', 'TE-421-HOT', 'TE-431-HOT', 'TE-441-HOT'], 'Natural circulation shows in loop temperatures.'),
     ] },
-  { id: 'grid-connected', fault: { actionId: 'loss-offsite-power' }, advanceMinutes: 1, expect: 'none', requested: 'display',
+  { id: 'grid-connected', run: unit2(1, 'loss-offsite-power'), expect: 'none', requested: 'display',
     prompt: 'Is Unit 2 still connected to the grid?',
     evidence: [signal('generator breaker or grid availability', ['GEN-BKR', 'GRID-AVAIL', 'GRID-HZ', 'GRID-VOLTAGE'], 'The state asked about.')] },
-  { id: 'single-state', advanceMinutes: 1, expect: 'none', mimic: 'avoid', requested: 'display',
+  { id: 'single-state', run: unit2(1), expect: 'none', mimic: 'avoid', requested: 'display',
     prompt: 'Is main feedwater pump A on Unit 2 running?',
     evidence: [signal('MFW pump A state', ['MFW-PUMP-A-RUNNING', 'MFW-PUMP-A-RUN'], 'The state asked about; in words.')] },
-  { id: 'power-stable', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
+  { id: 'power-stable', run: unit2(1), expect: 'display', mimic: 'avoid',
     prompt: 'Is reactor power on Unit 2 stable over the last few minutes?',
     // Reactor power, not electrical output: GEN-MW was a key before and counted a generator trend as reactor power.
     evidence: [signal('reactor power', ['NIS-PR-AVG', 'core.powerRangePercent', 'core.powerMw'], 'The value asked about, over time.')] },
-  { id: 'compare-sg-levels', advanceMinutes: 1, expect: 'display', keyPanel: 'comparison', mimic: 'avoid',
+  { id: 'compare-sg-levels', run: unit2(1), expect: 'display', keyPanel: 'comparison', mimic: 'avoid',
     prompt: 'Compare the four steam generator levels on Unit 2.',
     evidence: [signal('all four SG narrow-range levels', SG_LEVELS_NR, 'A comparison needs all four.', 'all')] },
-  { id: 'show-tavg', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
+  { id: 'show-tavg', run: unit2(1), expect: 'display', mimic: 'avoid',
     prompt: 'Show me Unit 2 average coolant temperature over the last 10 minutes.',
     evidence: [signal('average coolant temperature', ['TAVG'], 'The value asked for.')] },
-  { id: 'single-value', advanceMinutes: 1, expect: 'none', requested: 'display', prompt: 'What is the current pressurizer pressure on Unit 2?',
+  { id: 'single-value', run: unit2(1), expect: 'none', requested: 'display', prompt: 'What is the current pressurizer pressure on Unit 2?',
     evidence: [signal('pressurizer pressure', ['PT-455'], 'The value asked for; in words.')] },
-  { id: 'explanation', expect: 'none', prompt: 'Briefly explain what the pressurizer spray does in this model.',
+  { id: 'explanation', run: unit2(), expect: 'none', prompt: 'Briefly explain what the pressurizer spray does in this model.',
     evidence: [claim('explains spray: condensing steam to lower pressure', 'A conceptual answer in words.')] },
-  { id: 'text-only', advanceMinutes: 1, expect: 'none', requested: 'display', prompt: 'Give me Unit 2 status in one sentence, text only please.',
+  { id: 'text-only', run: unit2(1), expect: 'none', requested: 'display', prompt: 'Give me Unit 2 status in one sentence, text only please.',
     evidence: [] },
-  { id: 'product-question', expect: 'none', requested: 'none', prompt: 'What is a reference design in Leitbild?',
+  { id: 'product-question', run: unit2(), expect: 'none', requested: 'none', prompt: 'What is a reference design in Leitbild?',
     evidence: [] },
   // Equipment operation (v0.5.0): the agent proposes, a person approves in the display window; the probe never decides.
   // After the trip with AFW running, ES-0.1 throttles AFW: a setting between the valve's ends is accepted under the actuation.
-  { id: 'op-afw-throttle', fault: { actionId: 'loss-main-feedwater' }, advanceMinutes: 3, expect: 'display',
+  { id: 'op-afw-throttle', run: unit2(3, 'loss-main-feedwater'), expect: 'display',
     prompt: 'Unit 2: AFW is running after the trip and SG levels are recovering. Throttle AFW valve A to about 40 % as ES-0.1 directs.',
-    operation: { equipment: 'auxFeedwaterValveA', tags: ['AFW-A-CV', 'AFW-A-CV-POS'], proposal: 'expected', value: 'between-ends',
+    operation: { plantId: UNIT_2, equipment: 'auxFeedwaterValveA', tags: ['AFW-A-CV', 'AFW-A-CV-POS'], proposal: 'expected', value: 'between-ends',
       named: 'AFW-A-CV|AFW[- ]valve[- ]A|(?:auxiliary feedwater|AFW) (?:control )?valve A' },
     evidence: [
       signal('AFW valve A', ['AFW-A-CV', 'AFW-A-CV-POS', 'AFW-A-FLOW'], 'The equipment operated.'),
@@ -278,16 +329,16 @@ const scenarios: ReadonlyArray<Scenario & { readonly evidence: ReadonlyArray<Evi
       claim('says the throttle is proposed and awaits approval', 'An agent proposes; a person decides.'),
     ] },
   // The AFW actuation started the pump and holds it: the Plant refuses stopping it until the actuation is reset.
-  { id: 'op-stop-afw-pump', fault: { actionId: 'loss-main-feedwater' }, advanceMinutes: 3, expect: 'either',
+  { id: 'op-stop-afw-pump', run: unit2(3, 'loss-main-feedwater'), expect: 'either',
     prompt: 'Stop the motor-driven AFW pump A on Unit 2.',
-    operation: { equipment: 'auxFeedwaterPumpMotor', tags: ['AFW-PUMP-A', 'AFW-PUMP-A-RUNNING'], proposal: 'refused',
+    operation: { plantId: UNIT_2, equipment: 'auxFeedwaterPumpMotor', tags: ['AFW-PUMP-A', 'AFW-PUMP-A-RUNNING'], proposal: 'refused',
       named: 'AFW-PUMP-A|(?:AFW|auxiliary feedwater) pump A|motor-driven (?:AFW |auxiliary feedwater )?pump|MDAFW' },
     evidence: [claim('explains the AFW START actuation holds the pump', 'Why the stop is refused.')] },
   // At power: a proposal stands only if the Plant accepts it, and is correct only if the answer warns that shutting an
   // MSIV trips or upsets the unit, or cites a consequence the control lists (run 26c scored a warning-less one correct).
-  { id: 'op-open-msiv-at-power', advanceMinutes: 1, expect: 'either',
+  { id: 'op-open-msiv-at-power', run: unit2(1), expect: 'either',
     prompt: 'Shut MSIV A on Unit 2.',
-    operation: { equipment: 'mainSteamIsolationValveA', tags: ['MSIV-A', 'MSIV-A-POS'], proposal: 'either', value: 0,
+    operation: { plantId: UNIT_2, equipment: 'mainSteamIsolationValveA', tags: ['MSIV-A', 'MSIV-A-POS'], proposal: 'either', value: 0,
       named: 'MSIV[- ]?A|main steam isolation valve A', warns: true },
     evidence: [claim('warns that shutting an MSIV at power trips or upsets the unit', 'The consequence of the operation.')] },
 ]
@@ -340,14 +391,29 @@ const parseKey = (where: string, value: unknown): EvidenceKey => {
 
 const parseOperation = (where: string, value: unknown): OperationExpectation => {
   if (!isRecord(value)) return fail(where, 'must be an object')
-  if (typeof value.equipment !== 'string' || typeof value.named !== 'string') fail(where, 'needs equipment and named')
+  if (typeof value.plantId !== 'string' || typeof value.equipment !== 'string' || typeof value.named !== 'string') fail(where, 'needs plantId, equipment and named')
   if (value.value !== undefined && value.value !== 'between-ends' && typeof value.value !== 'number') fail(`${where}.value`, 'must be between-ends or a number')
   if (value.warns !== undefined && value.warns !== true) fail(`${where}.warns`, 'must be true when present')
   return {
-    equipment: value.equipment as string, named: value.named as string, tags: stringList(`${where}.tags`, value.tags),
+    plantId: value.plantId as string, equipment: value.equipment as string, named: value.named as string, tags: stringList(`${where}.tags`, value.tags),
     proposal: oneOf(`${where}.proposal`, value.proposal, ['expected', 'refused', 'either'] as const)!,
     ...(value.value === undefined ? {} : { value: value.value as 'between-ends' | number }),
     ...(value.warns === true ? { warns: true as const } : {}),
+  }
+}
+
+const parseRun = (where: string, value: unknown): ScenarioRun => {
+  if (!isRecord(value)) return fail(where, 'must declare the Scenario and setup steps of its Run')
+  if (typeof value.scenario !== 'string' || !/^(?:fixture:)?[a-z0-9-]+$/.test(value.scenario)) fail(`${where}.scenario`, 'must be a Scenario id or fixture:<name>')
+  const setup = Array.isArray(value.setup) ? value.setup.map((step, at): SetupStep => isRecord(step) && typeof step.operationId === 'string' && isRecord(step.input)
+    ? { operationId: step.operationId, input: step.input }
+    : fail(`${where}.setup[${at}]`, 'needs an operationId and an input object')) : fail(`${where}.setup`, 'must be a list (empty when nothing is done)')
+  if (value.advanceMinutes !== undefined && (typeof value.advanceMinutes !== 'number' || value.advanceMinutes <= 0)) fail(`${where}.advanceMinutes`, 'must be positive')
+  const pace = oneOf(`${where}.pace`, value.pace, ['maximum', 'realtime'] as const, true)
+  return {
+    scenario: value.scenario as string, setup,
+    ...(value.advanceMinutes === undefined ? {} : { advanceMinutes: value.advanceMinutes as number }),
+    ...(pace === undefined ? {} : { pace }),
   }
 }
 
@@ -357,12 +423,8 @@ const parseExternalScenario = (index: number, value: unknown): EvalScenario => {
   if (typeof value.id !== 'string' || !/^[a-z0-9-]+$/.test(value.id)) fail(`${where}.id`, 'must be a lower-case id')
   if (typeof value.prompt !== 'string' || value.prompt.length === 0) fail(`${where}.prompt`, 'must be text')
   const holdout = isRecord(value.holdout) ? value.holdout : fail(`${where}.holdout`, 'is missing')
-  if (holdout.runnableToday !== true) fail(`${where}.holdout.runnableToday`, 'must be true: today\'s probe cannot run this scenario as written')
-  if ('setup' in value || 'followUp' in value) fail(where, 'carries setup or followUp, which today\'s probe does not run')
-  const fault = value.fault === undefined ? undefined : isRecord(value.fault) && typeof value.fault.actionId === 'string'
-    ? { actionId: value.fault.actionId, ...(isRecord(value.fault.parameters) ? { parameters: value.fault.parameters } : {}) }
-    : fail(`${where}.fault`, 'needs an actionId')
-  if (value.advanceMinutes !== undefined && (typeof value.advanceMinutes !== 'number' || value.advanceMinutes <= 0)) fail(`${where}.advanceMinutes`, 'must be positive')
+  for (const field of ['fault', 'setup', 'advanceMinutes'] as const) if (field in value) fail(`${where}.${field}`, 'belongs under run, which declares the Scenario it acts on')
+  if ('followUp' in value) fail(where, 'carries a followUp turn, which this probe does not run')
   const keyPanel = oneOf(`${where}.keyPanel`, value.keyPanel, ['trend', 'comparison', 'readouts', 'alarms', 'mimic'] as const, true)
   const mimic = oneOf(`${where}.mimic`, value.mimic, ['expected', 'avoid'] as const, true)
   const requested = oneOf(`${where}.requested`, value.requested, ['display', 'none'] as const, true)
@@ -370,8 +432,7 @@ const parseExternalScenario = (index: number, value: unknown): EvalScenario => {
   return {
     id: value.id as string, prompt: value.prompt as string,
     expect: oneOf(`${where}.expect`, value.expect, ['display', 'none', 'either'] as const)!,
-    ...(fault === undefined ? {} : { fault }),
-    ...(value.advanceMinutes === undefined ? {} : { advanceMinutes: value.advanceMinutes as number }),
+    run: parseRun(`${where}.run`, value.run),
     ...(keyPanel === undefined ? {} : { keyPanel }),
     ...(mimic === undefined ? {} : { mimic }),
     ...(requested === undefined ? {} : { requested }),
@@ -381,9 +442,10 @@ const parseExternalScenario = (index: number, value: unknown): EvalScenario => {
 }
 
 /**
- * Hold-out scenarios from an absolute module path and export name. Only
- * scenarios today's probe runs as written are accepted (`runnableToday`); the
- * module's own keySignals are not read: its evidence keys decide.
+ * Hold-out scenarios from an absolute module path and export name. Each
+ * declares its Run; one with a follow-up turn is refused (this probe asks one
+ * question per Room). The module's own keySignals are not read: its evidence
+ * keys decide.
  */
 export const loadScenarioModule = async (path: string, exportName: string): Promise<ReadonlyArray<EvalScenario>> => {
   const loaded = (await import(path) as Record<string, unknown>)[exportName]
