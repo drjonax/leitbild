@@ -37,14 +37,22 @@ const resolve = (name: string) => {
 
 // Words that end the phrase naming a tag, read backwards from the «tag».
 const BOUNDARY = /(?:[.:;,()\[\]→]|\bAND\b|\bOR\b|\band\b|\bor\b|\bif\b|\bwith\b|\bfrom\b|\bto\b|\bat\b|\bon\b|»|—|-{2,}|\/)/
-const FILLER = /^(?:the|a|an|its|each|any|all|both|check|verify|confirm|monitor|read|observe|record|is|are|reads?|of)$/i
-const TRAILING = /^(?:using|via|by|in|for|of|the|per|as|indicated|shown|reading|value)$/i
+const FILLER = /^(?:the|a|an|its|each|any|all|both|check|verify|confirm|monitor|read|observe|record|compare|is|are|reads?|of)$/i
+const TRAILING = /^(?:using|via|by|in|for|of|the|per|as|against|indicated|shown|reading|value)$/i
 
 /** The words naming each «tag» in a procedure text. */
 export const procedurePhrases = (text: string): ReadonlyArray<{ readonly tag: string; readonly phrase: string }> => {
   const found: Array<{ tag: string; phrase: string }> = []
   for (const line of text.split('\n')) {
+    let previous: { readonly end: number; readonly phrase: string } | null = null
     for (const match of line.matchAll(/«([A-Z0-9][A-Z0-9-]+)»/g)) {
+      // A tag listed after another ("«TRIP-BKR-A» AND «TRIP-BKR-B»", "«BUS-A» / «BUS-B»") shares its words.
+      const between = previous === null ? null : line.slice(previous.end, match.index)
+      if (previous !== null && between !== null && /^(?:\s|,|\/|AND|OR|and|or)*$/.test(between)) {
+        found.push({ tag: match[1]!, phrase: previous.phrase })
+        previous = { end: match.index! + match[0].length, phrase: previous.phrase }
+        continue
+      }
       const before = line.slice(0, match.index)
       const words = before.split(/\s+/).filter(Boolean)
       const kept: string[] = []
@@ -59,11 +67,13 @@ export const procedurePhrases = (text: string): ReadonlyArray<{ readonly tag: st
       }
       while (kept.length > 0 && FILLER.test(kept[0]!)) kept.shift()
       while (kept.length > 0 && TRAILING.test(kept.at(-1)!)) kept.pop()
-      const phrase = kept.join(' ').replace(/[*_`"]/g, '').trim()
+      const phrase = kept.join(' ').replace(/[*_`"]/g, '').replace(/^[^A-Za-z]+/, '').trim()
       // A phrase that names another tag-like token (Tcold before a hot-leg tag) is ambiguous: left out.
       // A lone lower-case word ("lowest", "turbine-driven") names no signal on its own.
       const lone = !phrase.includes(' ') && phrase === phrase.toLowerCase()
-      if (phrase.length >= 4 && /[a-z]/.test(phrase) && !lone && !/\b[A-Z]{2,}-[A-Z0-9]/.test(phrase)) found.push({ tag: match[1]!, phrase })
+      const usable = phrase.length >= 4 && /[a-z]/.test(phrase) && !lone && !/\b[A-Z]{2,}-[A-Z0-9]/.test(phrase)
+      if (usable) found.push({ tag: match[1]!, phrase })
+      previous = usable ? { end: match.index! + match[0].length, phrase } : null
     }
   }
   return found
