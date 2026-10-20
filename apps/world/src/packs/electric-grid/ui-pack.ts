@@ -61,7 +61,8 @@ const presentationForGrid = (object: OperationalObject): PackObjectPresentation 
   return {
     categoryId: 'electric-grids',
     icon: 'network',
-    color: projection.statusTone === 'error' ? '#dc2626' : projection.statusTone === 'working' ? '#d97706' : '#0f766e',
+    // One identity colour: the status word and indicator carry the tone; alert hues are kept for alerts (plan v3.1 §2.7, D9).
+    color: '#00878c',
     summary: projection.summary,
     status: packStatus(projection.statusTone, projection.statusLabel),
     fields: [

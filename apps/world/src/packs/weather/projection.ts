@@ -13,7 +13,9 @@ import { frameAt, weatherInfluenceEllipsePolygon } from './influence.ts'
 import { sampleWeather, type WeatherField } from './cell-field.ts'
 import { weatherPresentationSeverityForState } from './conditions.ts'
 
-const colors = { normal: '#16834f', notice: '#2563eb', adverse: '#d97706', hazard: '#dc2626' }
+// One weather colour; a cell's severity is its fill strength (magnitude), never an alert hue (plan v3.1 §2.7).
+const weatherColor = '#4669ff'
+const cellOpacity = { normal: 0, notice: 0.07, adverse: 0.13, hazard: 0.22 }
 export const projectWeatherFieldForMap = (
   field: WeatherField,
   viewport: GeoJsonPolygon,
@@ -33,9 +35,9 @@ export const projectWeatherFieldForMap = (
         categoryId: 'weather',
         layerId: 'weather',
         geometry: hexCellBoundary(id),
-        color: '#64748b',
+        color: '#6e788c',
         opacity: 0,
-        lineColor: '#64748b',
+        lineColor: '#6e788c',
         lineOpacity: 0.1,
         lineWidth: 0.4,
         sortKey: -10,
@@ -55,14 +57,13 @@ export const projectWeatherFieldForMap = (
       cells.set(parent, Math.max(cells.get(parent) ?? 0, rank))
     }
     for (const [id, rank] of cells) {
-      const color = colors[ranks[rank]!]
       features.push({
         id: 'weather-cell:' + id,
         categoryId: 'weather',
         layerId: 'weather',
         geometry: hexCellBoundary(id),
-        color,
-        opacity: 0.12,
+        color: weatherColor,
+        opacity: cellOpacity[ranks[rank]!],
         lineOpacity: 0.2,
         lineWidth: 0.4,
         sortKey: 0,
@@ -83,7 +84,7 @@ export const projectWeatherFieldForMap = (
         geometry,
         anchorPoint: point,
         symbol: { icon: 'cloud-rain', tone: 'working', opacity: 0.9, size: 0.82 },
-        color: '#38bdf8',
+        color: '#0fcdfa',
         opacity: 0.06,
         lineOpacity: 0.4,
         lineWidth: 1.4,

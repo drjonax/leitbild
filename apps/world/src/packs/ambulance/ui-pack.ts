@@ -5,7 +5,8 @@ import { appendStopCommandKind, assignCommandKind } from './commands.ts'
 import { activeAssignmentStop, ambulanceDataOf, ambulancePackId, appendHandoverEligibility, appendPickupEligibility, assignmentWarnings, dispatchEligibility, incidentPackDataSchema, patientObjects, patientPackDataSchema, responseUnitPackDataSchema, unitPatients } from './model.ts'
 import { ambulanceSimRuntimeId } from './sim/constants.ts'
 
-const urgencyColor = { acute: '#dc4444', urgent: '#d49327', ordinary: '#3c8cab' }
+// Urgency is a word and a sort order, never a colour: alert hues are kept for alerts (plan v3.1 §2.7, D9).
+const incidentColor = '#3c8cab'
 const labelFor = (id: string, objects: ReadonlyArray<OperationalObject>) => objects.find(object => object.id === id)?.label ?? id
 const join = (values: ReadonlyArray<string>) => values.length ? values.join(', ') : 'None configured'
 const coLocatedWithSubject = (object: OperationalObject, subjectId: string | undefined, objects: ReadonlyArray<OperationalObject>): boolean => {
@@ -105,8 +106,8 @@ const assignmentMapFeatures = (objects: ReadonlyArray<OperationalObject>): Reado
   for (let index = data.assignment.activeStopIndex; index < data.assignment.stops.length; index += 1) {
     const stop = data.assignment.stops[index]!
     const to = geoPointFromLonLat(...stop.route.geometry.coordinates.at(-1)!)
-    result.push({ id: `ambulance-plan-link:${object.id}:${index}`, categoryId: 'ambulances', geometry: { type: 'LineString', coordinates: [from.coordinates, to.coordinates] }, color: '#2675d8', lineColor: '#2675d8', lineOpacity: 0.42, lineWidth: 1.5, summary: `${object.label} assignment link`, sortKey: 22 })
-    if (index > data.assignment.activeStopIndex) result.push({ id: `ambulance-plan-route:${object.id}:${index}`, categoryId: 'ambulances', geometry: stop.route.geometry, color: '#2675d8', lineColor: '#2675d8', lineOpacity: 0.82, lineWidth: 3, summary: `${object.label} planned route`, sortKey: 24 })
+    result.push({ id: `ambulance-plan-link:${object.id}:${index}`, categoryId: 'ambulances', geometry: { type: 'LineString', coordinates: [from.coordinates, to.coordinates] }, color: '#0078f0', lineColor: '#0078f0', lineOpacity: 0.42, lineWidth: 1.5, summary: `${object.label} assignment link`, sortKey: 22 })
+    if (index > data.assignment.activeStopIndex) result.push({ id: `ambulance-plan-route:${object.id}:${index}`, categoryId: 'ambulances', geometry: stop.route.geometry, color: '#0078f0', lineColor: '#0078f0', lineOpacity: 0.82, lineWidth: 3, summary: `${object.label} planned route`, sortKey: 24 })
     from = to
   }
   return result
@@ -115,7 +116,7 @@ const assignmentMapFeatures = (objects: ReadonlyArray<OperationalObject>): Reado
 export const presentAmbulanceObject = (object: OperationalObject, objects: ReadonlyArray<OperationalObject>): PackObjectPresentation => {
   const data = ambulanceDataOf(object)
   if (data.type === 'response-unit') return {
-    categoryId: data.unitKind === 'helicopter' ? 'helicopters' : 'ambulances', icon: data.unitKind === 'helicopter' ? 'helicopter' : 'ambulance', color: data.unitKind === 'helicopter' ? '#6750a4' : '#22845d',
+    categoryId: data.unitKind === 'helicopter' ? 'helicopters' : 'ambulances', icon: data.unitKind === 'helicopter' ? 'helicopter' : 'ambulance', color: data.unitKind === 'helicopter' ? '#643c9b' : '#0f915f',
     summary: data.assignment?.phase ?? (data.crewReady ? 'Available' : 'Crew unavailable'),
     status: packStatus(data.assignment ? 'working' : data.crewReady ? 'ready' : 'error', data.assignment?.phase ?? (data.crewReady ? 'Available' : 'Out of service')),
     fields: [
@@ -136,7 +137,7 @@ export const presentAmbulanceObject = (object: OperationalObject, objects: Reado
     const patients = patientObjects(objects).filter(patient => patientPackDataSchema.parse(patient.packData).incidentId === object.id)
     const active = patients.filter(patient => patientPackDataSchema.parse(patient.packData).disposition === 'active').length
     return {
-      categoryId: 'incidents', icon: 'triangle-alert', color: urgencyColor[data.dispatchUrgency],
+      categoryId: 'incidents', icon: 'triangle-alert', color: incidentColor,
       summary: data.summary, status: packStatus(data.closedAtMs !== undefined ? 'idle' : data.firstArrivalAtMs !== undefined ? 'working' : 'error', data.closedAtMs !== undefined ? 'Resolved' : data.firstArrivalAtMs !== undefined ? 'Response arrived' : 'Awaiting first response'),
       mapIconVisible: !coLocatedWithSubject(object, data.subjectObjectId, objects), muted: data.closedAtMs !== undefined, noteworthyUpdates: true,
       fields: [packField('urgency', 'Dispatch urgency', data.dispatchUrgency), packField('patients', 'Active / all patients', active + ' / ' + patients.length),
@@ -147,7 +148,7 @@ export const presentAmbulanceObject = (object: OperationalObject, objects: Reado
     }
   }
   if (data.type === 'patient') return {
-    categoryId: 'patients', icon: 'plus', color: urgencyColor[data.assessedUrgency], summary: data.summary,
+    categoryId: 'patients', icon: 'plus', color: incidentColor, summary: data.summary,
     status: packStatus(data.disposition === 'active' ? 'working' : 'idle', data.disposition === 'active' ? data.holder.kind : data.disposition),
     mapIconVisible: false, muted: data.disposition !== 'active', noteworthyUpdates: true,
     fields: [packField('urgency', 'Assessed urgency', data.assessedUrgency), packField('needs', 'Required capabilities', join(data.needs)), packField('incident', 'Incident', labelFor(data.incidentId, objects)), packField('holder', 'Currently with', labelFor(data.holder.id, objects)), ...(data.dispositionReason ? [packField('reason', 'Disposition reason', data.dispositionReason)] : [])],
@@ -160,7 +161,7 @@ export const presentAmbulanceObject = (object: OperationalObject, objects: Reado
     return stop.kind === 'handover' && stop.targetId === object.id
   }).length
   return {
-    categoryId: 'care-sites', icon: 'plus', color: '#3479ac', summary: data.accepting ? 'Accepting: ' + data.acceptedUrgencies.join(', ') : 'Not accepting arrivals',
+    categoryId: 'care-sites', icon: 'plus', color: '#2d82b9', summary: data.accepting ? 'Accepting: ' + data.acceptedUrgencies.join(', ') : 'Not accepting arrivals',
     status: packStatus(!data.accepting ? 'error' : serving >= data.handoverSlots ? 'working' : 'ready', !data.accepting ? 'Closed to arrivals' : `${serving}/${data.handoverSlots} handover slots occupied`),
     mapIconVisible: !coLocatedWithSubject(object, data.subjectObjectId, objects), noteworthyUpdates: true,
     fields: [packField('capabilities', 'Capabilities', join(data.capabilities)), packField('urgencies', 'Accepted urgency', data.acceptedUrgencies.join(', ')), packField('slots', 'Handover slots', String(data.handoverSlots)), packField('duration', 'Configured handover', data.handoverSeconds + ' s'), ...(data.subjectObjectId ? [packField('subject', 'At asset', labelFor(data.subjectObjectId, objects))] : [])],

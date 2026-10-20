@@ -96,34 +96,11 @@ const pixelMatches = (line: string): ReadonlyArray<{ readonly kind: string; read
 const pixelConstants = (file: string): ReadonlyArray<string> => readFileSync(file, 'utf8').split('\n')
   .flatMap((line, index) => pixelMatches(line).map(({ kind, text }) => `${relative(src, file)}:${index + 1} ${kind}: ${text}`))
 
-/**
- * Pixel constants the relocated layout engine carries today, each until it
- * comes from the caller's DiagramProfile. Keyed by file, line text and match,
- * so a moved line still matches and a changed one does not.
- */
-const pixelExceptions: ReadonlyArray<{ readonly file: string; readonly match: string; readonly until: string; readonly why: string }> = [
-  {
-    file: 'features/displays/diagram/channels.ts',
-    match: 'profile.pipe.outline + 4',
-    until: 'P1 (plan v3.1 §2.5 layout): a track gap in DiagramProfile.pipe',
-    why: 'half-pitch tracks need the pipe outline plus OpenBridge\'s 4 px gap between parallel pipes',
-  },
-  {
-    file: 'features/displays/diagram/verify.ts',
-    match: 'outline + 4',
-    until: 'P1 (plan v3.1 §2.5 layout): the same DiagramProfile.pipe track gap',
-    why: 'the verifier checks parallel pipes keep the outline plus the same 4 px gap apart',
-  },
-]
-
-const excepted = (offence: string): boolean => pixelExceptions.some(exception => offence.startsWith(`${exception.file}:`) && offence.endsWith(`: ${exception.match}`))
-
 describe('display boundaries (plan v3.1 §2.10)', () => {
   test('scan the trees the rules name; every exception names a file present, or one that lands later', () => {
     expect(sourcesUnder('features/displays').map(file => relative(src, file))).toContain('features/displays/diagram/channels.ts')
     expect(sourcesUnder('features').map(file => relative(src, file))).toContain('features/procedures/pack-observations.ts')
     expect(Object.entries(packImportExceptions).filter(([file, exception]) => exception.landsWith === undefined && !existsSync(join(src, file))).map(([file]) => file)).toEqual([])
-    expect(pixelExceptions.filter(exception => !existsSync(join(src, exception.file))).map(exception => exception.file)).toEqual([])
   })
 
   test('1. features/displays imports no Pack', () => {
@@ -138,11 +115,8 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
     expect(offendersIn(sourcesUnder('ui/displays'))).toEqual([])
   })
 
-  test('4. features/displays holds no pixel constants beyond its dated exceptions', () => {
-    const offences = sourcesUnder('features/displays').flatMap(pixelConstants)
-    expect(offences.filter(offence => !excepted(offence))).toEqual([])
-    // Every exception still matches code, so a fixed one is removed from the list.
-    expect(pixelExceptions.filter(exception => !offences.some(offence => offence.startsWith(`${exception.file}:`) && offence.endsWith(`: ${exception.match}`))).map(exception => exception.file)).toEqual([])
+  test('4. features/displays holds no pixel constants', () => {
+    expect(sourcesUnder('features/displays').flatMap(pixelConstants)).toEqual([])
   })
 
   test('the pixel rule catches what it names', () => {
@@ -155,6 +129,8 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
     expect(probe('const pad = profile.frameMargin + 3')).toEqual(['profile.frameMargin + 3'])
     expect(probe('const half = profile.grid / 2')).toEqual([])
     expect(probe('if (gap < 12) return')).toEqual(['gap < 12'])
+    expect(probe('const spacing = outline + 4')).toEqual(['outline + 4'])
+    expect(probe('const spacing = outline + profile.pipe.trackGap')).toEqual([])
     expect(probe('// a 24 px grid: profile.grid + 24')).toEqual([])
   })
 })
