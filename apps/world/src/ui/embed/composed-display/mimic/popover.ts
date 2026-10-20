@@ -80,9 +80,8 @@ export const popoverPlacement = (item: Box, popover: { readonly width: number; r
 
 // --- Pinned overlays --------------------------------------------------------
 
-/** A quick-look row's height, and the shared time axis line under the rows, in a popover's own px (vessel-design §C). */
+/** A quick-look row's height, in a popover's own px (vessel-design §C). */
 export const QUICK_LOOK_ROW = 28
-export const QUICK_LOOK_AXIS = 18
 /** A popover's width, and the widths an overlay is resized between: only its trends take the difference; text never shrinks. */
 export const POPOVER_WIDTH = 340
 export const OVERLAY_WIDTH = { min: 280, max: 520 } as const

@@ -62,7 +62,6 @@ export const composedDisplayTrendPanelSchema = z.object({
   horizon: composedDisplayHorizonSchema,
   signals: z.array(composedDisplaySignalSchema).min(1).max(COMPOSED_TREND_SCHEMA_MAX_SIGNALS),
 }).strict()
-export type ComposedDisplayTrendPanel = z.infer<typeof composedDisplayTrendPanelSchema>
 
 /** Parallel signals of one unit side by side, e.g. the four loops. */
 export const composedDisplayComparisonPanelSchema = z.object({
@@ -210,13 +209,11 @@ export const composedDisplayStateSchema = z.object({
   const mimics = state.composition.panels.filter(panel => panel.kind === 'mimic').length
   if ((state.drawings?.length ?? 0) !== mimics) ctx.addIssue({ code: 'custom', path: ['drawings'], message: `a display with ${mimics} mimic panels stores ${mimics} drawing hashes` })
 })
-export type ComposedDisplayState = z.infer<typeof composedDisplayStateSchema>
 
 /** A unit overview World generates for a Plant; it holds no advice, so it never goes stale against one. */
 export const overviewDisplayStateSchema = z.object({
   overview: z.object({ plantId: idSchema }).strict(),
 }).strict()
-export type OverviewDisplayState = z.infer<typeof overviewDisplayStateSchema>
 
 /** The most components one detail opens: a drawn symbol stands for one, or for a group of parallel equipment. */
 export const PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS = 8
@@ -240,7 +237,6 @@ export const detailDisplayStateSchema = z.object({
     components: z.array(idSchema).min(1).max(PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS),
   }).strict(),
 }).strict()
-export type DetailDisplayState = z.infer<typeof detailDisplayStateSchema>
 
 /** What an embedded Process Plant display re-opens: an agent's advice, a Plant's unit overview, or equipment opened from it. */
 export const processDisplayStateSchema = z.union([composedDisplayStateSchema, overviewDisplayStateSchema, detailDisplayStateSchema])

@@ -175,12 +175,6 @@ export const positionWord = (fraction: number): 'SHUT' | 'OPEN' | null =>
 export const valueText = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined, position: boolean): string =>
   (position ? positionWord(value) : null) ?? readingText(value, unit, resolution, span)
 
-/** "below range" or "above range" for a reading at an end of its span; empty otherwise. */
-export const offScaleText = (value: number, span: NumericSpan | undefined): string => {
-  const end = offScale(value, span)
-  return end === null ? '' : `${end} range`
-}
-
 /**
  * A limit's step from normal on its side, as every display names it: LO
  * or HI for the first, LO-LO or HI-HI beyond it, then LO-3, LO-4 (HI-3,

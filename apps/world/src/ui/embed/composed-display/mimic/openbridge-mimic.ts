@@ -11,7 +11,6 @@ import '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-excha
 import '@oicl/openbridge-webcomponents/dist/automation/valve-analoge-two-way-icon/valve-analog-two-way-icon.js'
 import '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readout-block.js'
 import '@oicl/openbridge-webcomponents/dist/components/alert-frame/alert-frame.js'
-import '@oicl/openbridge-webcomponents/dist/components/toggletip/toggletip.js'
 import '@oicl/openbridge-webcomponents/dist/components/icon-button/icon-button.js'
 // The detail dot's magnifying glass, and a popover's pin, handle and resize corner.
 import '@oicl/openbridge-webcomponents/dist/icons/icon-search.js'

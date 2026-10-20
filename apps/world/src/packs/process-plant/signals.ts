@@ -135,5 +135,3 @@ export const processPlantSignalQuality = (
   }
   return { status: 'good' }
 }
-
-export const tagIdForLookup = (value: string): ProcessSignalTagId => processSignalTagIdSchema.parse(value)

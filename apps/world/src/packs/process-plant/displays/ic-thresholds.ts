@@ -493,28 +493,3 @@ export const icAlarmRuleIdsForEquipment = (
     .filter(rule => conditionBindings(plant, rule.condition).some(binding => equipmentKeys(binding).some(key => equipment.has(key))))
     .map(rule => rule.id)
 }
-
-/**
- * Single-signal alarm and trip rules on one component's signals: they frame
- * its mimic symbol. Combined and voted rules are left out, because they judge
- * several items at once (2-of-4 RCP low flow would frame every pump).
- */
-export const icAlarmRuleIdsForComponent = (
-  plant: CompiledProcessPlant,
-  componentId: string,
-): ReadonlyArray<string> => plant.automation.rules
-  .filter(rule => rule.enabled && icRuleKind(rule) !== 'control' && rule.condition.type === 'comparison')
-  .filter(rule => conditionBindings(plant, rule.condition).some(binding => equipmentKeys(binding).includes(componentId)))
-  .map(rule => rule.id)
-
-/** Single-signal alarm and trip rules on exactly these signals, for a symbol that is one item of a larger component. */
-export const icAlarmRuleIdsForPaths = (
-  plant: CompiledProcessPlant,
-  paths: ReadonlyArray<VariablePath>,
-): ReadonlyArray<string> => {
-  const watched = new Set(paths.map(String))
-  return plant.automation.rules
-    .filter(rule => rule.enabled && icRuleKind(rule) !== 'control' && rule.condition.type === 'comparison')
-    .filter(rule => conditionBindings(plant, rule.condition).some(binding => watched.has(String(binding.path))))
-    .map(rule => rule.id)
-}
