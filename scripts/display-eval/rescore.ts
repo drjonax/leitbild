@@ -58,7 +58,10 @@ if (import.meta.main) {
   const catalog = referencePlantCatalog()
   const rows: ProbeRow[] = []
   const needsRun: string[] = []
-  for (const { id } of recordedRows) {
+  for (const recordedRow of recordedRows) {
+    const { id } = recordedRow
+    // A refused setup never reached the agent: there is nothing to re-score.
+    if (recordedRow.answerType === 'setup-refused') { rows.push(recordedRow); continue }
     const scenario = pool.find(entry => entry.id === id)
     if (scenario === undefined) { needsRun.push(`${id} (no longer in the set)`); continue }
     const recorded = await Bun.file(join(directory, `${stage}-${id}.json`)).json() as Recorded

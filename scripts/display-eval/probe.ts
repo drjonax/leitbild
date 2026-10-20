@@ -458,7 +458,19 @@ for (const scenario of chosen) {
   const copy = await invoke(workspaceId, 'world.simulation-run.copy', { name: `Display probe · ${stage} · ${scenario.id}` }, { resource: seed.resource })
   const resource = copy.createdResources?.find((entry: { type: string }) => entry.type === 'world.simulation-run') ?? copy.result?.resource
   if (!resource) throw new Error('Copy did not return a Simulation Run reference')
-  if (scenario.fault) await invoke(workspaceId, 'world.process-plant.action.invoke', { plantId, actionId: scenario.fault.actionId, parameters: scenario.fault.parameters ?? {} }, { resource })
+  if (scenario.fault) {
+    // A fault the Plant refuses in this state is the scenario's defect, not the answer's: it is recorded and not scored.
+    const refused = await invoke(workspaceId, 'world.process-plant.action.invoke', { plantId, actionId: scenario.fault.actionId, parameters: scenario.fault.parameters ?? {} }, { resource })
+      .then(() => null, (error: unknown) => String(error).slice(0, 600))
+    if (refused !== null) {
+      const row = { id: scenario.id, set: scenario.set, flaky: scenario.flaky, expect: scenario.expect, answerType: 'setup-refused', setupError: refused, runId: resource.id }
+      rows.push(row)
+      await save(`${stage}-${scenario.id}`, { scenario, row })
+      await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+      console.log(JSON.stringify({ id: scenario.id, setupRefused: refused }))
+      continue
+    }
+  }
   const advanceStarted = Date.now()
   if (scenario.advanceMinutes !== undefined) await advance(resource, scenario.advanceMinutes)
   const advanceWallMs = Date.now() - advanceStarted

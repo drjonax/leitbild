@@ -48,7 +48,10 @@ const count = <T>(items: ReadonlyArray<T>, key: (item: T) => string): Record<str
   items.reduce<Record<string, number>>((tally, item) => { const name = key(item); tally[name] = (tally[name] ?? 0) + 1; return tally }, {})
 
 /** Gate metrics of one stage (plan v3.1 §5.5 G0 and the E0 brief). */
-export const summariseRows = (rows: ReadonlyArray<ProbeRow>) => {
+export const summariseRows = (recorded: ReadonlyArray<ProbeRow>) => {
+  // A scenario whose fault the Plant refused never reached the agent: it is listed, not scored.
+  const setupRefused = recorded.filter(row => row.answerType === 'setup-refused').map(row => row.id)
+  const rows = recorded.filter(row => row.answerType !== 'setup-refused')
   const answered = rows.filter(row => row.answerType === 'chat')
   const expectDisplay = rows.filter(row => row.expect === 'display')
   const expectNone = rows.filter(row => row.expect === 'none')
@@ -62,6 +65,7 @@ export const summariseRows = (rows: ReadonlyArray<ProbeRow>) => {
   const operated = rows.filter(row => row.operationCorrect !== undefined)
   return {
     scenarios: rows.length,
+    setupRefused,
     answered: answered.length,
     notAnswered: rows.filter(row => row.answerType !== 'chat').map(row => `${row.id}: ${row.answerType}`),
     displayRecall: wilson(expectDisplay.filter(row => row.displayed).length, expectDisplay.length),
