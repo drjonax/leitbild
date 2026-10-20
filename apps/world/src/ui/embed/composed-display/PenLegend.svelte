@@ -104,7 +104,8 @@
   .rate { overflow: hidden; text-overflow: ellipsis; }
   /* The wider instrument's reading in the rate's place is a value: read as one. */
   .rate.wider { font-size: 12px; font-weight: 600; color: var(--element-active-color); }
-  .beyond { color: var(--alert-caution-color); font-weight: 600; }
+  /* Past a limit: bold, readable text marked in caution's colour (embed.css), never written in it. */
+  .beyond { color: var(--display-alert-text); font-weight: 600; text-decoration: underline 2px var(--display-caution-mark); text-underline-offset: 2px; }
   /* The trend's off-span comb (TrendPanel), beside the words that say so. */
   .comb-key { flex: none; }
   .comb-key line { stroke: var(--element-neutral-color); stroke-width: 1; stroke-opacity: 0.8; }

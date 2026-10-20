@@ -10,14 +10,15 @@
   let { threshold, compact = false, expected = null }: { threshold: ComposedDisplayThreshold; compact?: boolean; expected?: string | null } = $props()
 </script>
 
-<!-- Shown only while the threshold's I&C rule is active in a mode it acts in; colour and text both carry the state, in the words its alarm row uses ("LO-LO · RX TRIP", "L LO & F LO · ALM"); faded where it is expected after a first-out, as the drawing's frame and the list's row are. -->
+<!-- Shown only while the threshold's I&C rule is active in a mode it acts in; colour and text both carry the state, in the words its alarm row uses ("LO-LO · RX TRIP", "L LO & F LO · ALM"); outlined and dashed where it is expected after a first-out, its text as readable as any. -->
 <span class={`chip ${alertTypeOf(threshold.severity ?? 'warning')}`} class:expected={expected !== null} title={`${chipName(threshold)}: ${threshold.label}${expected === null ? '' : ` · expected after ${expected}`}`}>{chipName(threshold, compact)}</span>
 
 <style>
-  .chip { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; padding: 0 5px; border-radius: 3px; white-space: nowrap; color: var(--container-background-color); }
-  /* Severity reaches colour through one map (alertTypeOf) for chips, alarm rows, tiles and the drawing. */
-  .chip.alarm { background: var(--alert-alarm-color); color: #fff; }
-  .chip.warning { background: var(--alert-warning-color); }
-  .chip.caution { background: var(--alert-caution-color); }
-  .chip.expected { opacity: 0.45; }
+  .chip { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; padding: 0 4px; border: 1px solid; border-radius: 3px; white-space: nowrap; }
+  /* Severity reaches colour through one map (alertTypeOf) for chips, alarm rows, tiles and the drawing; text on a fill in its on-colour (embed.css). */
+  .chip.alarm { background: var(--display-alarm-fill); color: var(--display-on-alarm); border-color: var(--alert-alarm-color); }
+  .chip.warning { background: var(--display-warning-fill); color: var(--display-on-warning); border-color: var(--alert-warning-color); }
+  .chip.caution { background: var(--display-caution-fill); color: var(--display-on-caution); border-color: var(--alert-caution-color); }
+  /* Expected after a first-out: outlined and dashed in its alert colour, never faded below readable contrast. */
+  .chip.expected { background: none; color: var(--display-alert-text); border-style: dashed; }
 </style>

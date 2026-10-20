@@ -131,7 +131,7 @@
   .name { flex: none; }
   .item { flex: none; display: inline-flex; align-items: baseline; gap: 4px; }
   .value { font-size: 13px; font-weight: 700; color: var(--element-active-color); }
-  .value.beyond, .state.beyond { color: var(--alert-caution-color); }
+  .value.beyond, .state.beyond { color: var(--display-alert-text); text-decoration: underline 2px var(--display-caution-mark); text-underline-offset: 2px; }
   /* A reading at an end of its instrument's span is no value: drawn as low integrity. */
   .value.offspan { font-weight: 400; font-style: italic; }
   .demand { padding: 0 4px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -139,5 +139,5 @@
   .note { min-width: 0; font-size: 11px; color: var(--element-neutral-color); overflow: hidden; text-overflow: ellipsis; }
   /* What a critical safety function asks of the row's values: neutral while met, set apart by weight where not. */
   .criterion { flex: none; font-size: 11px; color: var(--element-neutral-color); }
-  .criterion.unmet { color: var(--alert-caution-color); font-weight: 600; }
+  .criterion.unmet { color: var(--display-alert-text); font-weight: 600; text-decoration: underline 2px var(--display-caution-mark); text-underline-offset: 2px; }
 </style>
