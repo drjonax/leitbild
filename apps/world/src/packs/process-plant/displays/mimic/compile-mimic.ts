@@ -3,7 +3,7 @@ import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { readingText, unitLabel } from '../display-text.ts'
 import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, stubWordBinding, type MimicItem, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
-import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
+import { diagramCandidates, type DiagramCandidates, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramRoom, type PlacedNode } from './layout/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
@@ -34,9 +34,6 @@ export interface MimicIssue {
 export type MimicCompileResult =
   | { readonly ok: true; readonly mimic: CompiledMimic }
   | { readonly ok: false; readonly issues: ReadonlyArray<MimicIssue> }
-
-/** The HMI rules the layout enforces: the display's profile in the room it leaves. */
-const profileFor = (budget: MimicBudget): DiagramProfile => ({ ...budget.profile.layout, maxWidth: budget.maxWidth, maxHeight: budget.maxHeight })
 
 interface PlannedItem {
   readonly id: string
@@ -665,18 +662,18 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
 }
 
 // Each orientation the layout tries reports its own size; the closest fit says how far off the drawing is.
-const closestSize = (reasons: Extract<DiagramLayoutResult, { ok: false }>['reasons'], budget: MimicBudget) => {
-  const overflow = (reason: { readonly width: number; readonly height: number }) => Math.max(reason.width / budget.maxWidth, reason.height / budget.maxHeight)
+const closestSize = (reasons: Extract<DiagramLayoutResult, { ok: false }>['reasons'], room: DiagramRoom) => {
+  const overflow = (reason: { readonly width: number; readonly height: number }) => Math.max(reason.width / room.maxWidth, reason.height / room.maxHeight)
   const sizes = reasons.filter(reason => reason.kind === 'size')
   return sizes.length === 0 ? undefined : sizes.reduce((best, reason) => overflow(reason) < overflow(best) ? reason : best)
 }
 
-const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, budget: MimicBudget): string => result.reasons.filter(reason => reason.kind !== 'size' || reason === closestSize(result.reasons, budget)).map(reason => {
+const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, room: DiagramRoom): string => result.reasons.filter(reason => reason.kind !== 'size' || reason === closestSize(result.reasons, room)).map(reason => {
   if (reason.kind === 'density') {
     const what = { symbols: 'symbols', symbolsPerLane: 'symbols in one loop', sharedSymbols: 'shared symbols outside the loops', lanes: 'loops', crossings: 'crossing pipes', crossingsOverBound: 'crossing pipes', bendsPerEdge: 'bends in one pipe' }[reason.limit]
     return `${reason.count} ${what} (at most ${reason.max} stay legible at a glance)`
   }
-  if (reason.kind === 'size') return `the drawing needs ${reason.width} × ${reason.height} px, and this display leaves ${budget.maxWidth} × ${budget.maxHeight}`
+  if (reason.kind === 'size') return `the drawing needs ${reason.width} × ${reason.height} px, and this display leaves ${room.maxWidth} × ${room.maxHeight}`
   return `the layout could not be verified (${reason.violations.slice(0, 2).map(violation => `${violation.rule}: ${violation.detail}`).join('; ')})`
 }).filter((reason, index, all) => all.indexOf(reason) === index).join('; ')
 
@@ -688,23 +685,86 @@ export const planMimicDiagram = (plant: CompiledProcessPlant, scope: MimicScope,
   return planned.issues.length > 0 ? { ok: false, issues: planned.issues } : { ok: true, graph: planned.graph }
 }
 
-const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scope: MimicScope, budget: MimicBudget): Attempted => {
-  // Each badge reservation the profile allows, the roomiest first, until the drawing fits.
-  let attempted: Attempted | undefined
-  for (const badges of budget.profile.badges) {
-    const planned = plan(plant, scope, budget.profile, badges)
-    if (planned.issues.length > 0) return { ok: false, issues: planned.issues }
-    // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
-    if (planned.graph.nodes.length === 0) {
-      const reasons = scope.components.map(index => presentationFor(plant.graph.components[index]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
-      return { ok: false, issues: [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }] }
-    }
-    const layout = layoutDiagram(planned.graph, profileFor(budget))
-    if (layout.ok) return { ok: true, mimic: assemble(plant, intent, budget.profile, scope, planned, layout) }
-    attempted = { ok: false, layout }
-  }
-  return attempted!
+/**
+ * A scope planned under a profile, for each badge reservation it allows with
+ * the candidate drawings of its diagram (diagramCandidates): drawn for any
+ * room without planning or laying it out again. Reservations are planned,
+ * and rungs laid out, only as a room first needs them.
+ */
+interface ScopeDrawing {
+  /** The roomiest badge reservation that fits the room, the drawing carrying `intent` as its identity. */
+  readonly draw: (intent: MimicIntent | null, room: DiagramRoom) => Attempted
+  /** The least room height it draws in at a width; null where it draws at no height there. */
+  readonly leastHeight: (maxWidth: number) => number | null
 }
+
+const planScope = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): ScopeDrawing => {
+  const reservations: Array<{ readonly planned: Planned; readonly candidates: DiagramCandidates } | { readonly issues: ReadonlyArray<MimicIssue> }> = []
+  // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
+  const notDrawable = (): ReadonlyArray<MimicIssue> => {
+    const reasons = scope.components.map(component => presentationFor(plant.graph.components[component]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
+    return [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }]
+  }
+  const reservation = (index: number) => {
+    const known = reservations[index]
+    if (known !== undefined) return known
+    const planned = plan(plant, scope, profile, profile.badges[index]!)
+    const entry = planned.issues.length > 0 ? { issues: planned.issues }
+      : planned.graph.nodes.length === 0 ? { issues: notDrawable() }
+        : { planned, candidates: diagramCandidates(planned.graph, profile.layout) }
+    reservations[index] = entry
+    return entry
+  }
+  const draw = (intent: MimicIntent | null, room: DiagramRoom): Attempted => {
+    // Each badge reservation the profile allows, the roomiest first, until the drawing fits.
+    let attempted: Attempted | undefined
+    for (const index of profile.badges.keys()) {
+      const entry = reservation(index)
+      if ('issues' in entry) return { ok: false, issues: entry.issues }
+      const layout = entry.candidates.layout(room)
+      if (layout.ok) return { ok: true, mimic: assemble(plant, intent, profile, scope, entry.planned, layout) }
+      attempted = { ok: false, layout }
+    }
+    return attempted!
+  }
+  const leastHeight = (maxWidth: number): number | null => {
+    let least: number | null = null
+    for (const index of profile.badges.keys()) {
+      const entry = reservation(index)
+      if ('issues' in entry) break
+      const height = entry.candidates.leastHeight(maxWidth)
+      if (height !== null) least = least === null ? height : Math.min(least, height)
+    }
+    return least
+  }
+  return { draw, leastHeight }
+}
+
+/** Scopes drawn per Plant and profile, the one drawn longest ago evicted first: an overview, the details opened from it, chat's retries. */
+const SCOPE_DRAWINGS = 96
+const scopeDrawings = new WeakMap<CompiledProcessPlant, WeakMap<MimicProfile, Map<string, ScopeDrawing>>>()
+
+/** A scope's drawing under a profile, planned and laid out once whatever rooms it is drawn for. */
+const scopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): ScopeDrawing => {
+  const byProfile = scopeDrawings.get(plant) ?? new WeakMap<MimicProfile, Map<string, ScopeDrawing>>()
+  scopeDrawings.set(plant, byProfile)
+  const drawings = byProfile.get(profile) ?? new Map<string, ScopeDrawing>()
+  byProfile.set(profile, drawings)
+  const key = JSON.stringify(scope)
+  const known = drawings.get(key)
+  if (known !== undefined) {
+    drawings.delete(key)
+    drawings.set(key, known)
+    return known
+  }
+  const created = planScope(plant, scope, profile)
+  if (drawings.size >= SCOPE_DRAWINGS) drawings.delete(drawings.keys().next().value!)
+  drawings.set(key, created)
+  return created
+}
+
+const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scope: MimicScope, budget: MimicBudget): Attempted =>
+  scopeDrawing(plant, scope, budget.profile).draw(intent, budget)
 
 /**
  * An intent drawn with its parallel supplies (withParallelSupplies), the most
@@ -772,11 +832,26 @@ export const compileMimic = (plant: CompiledProcessPlant, intent: MimicIntent, b
 
 /**
  * World's own path: a scope it resolved itself (the unit overview's principal
- * circuits), drawn by the budget's profile, or refused with why it does not
- * fit. The drawing's identity carries no intent.
+ * circuits, the surroundings of equipment opened from it), drawn by a
+ * profile for any room the display leaves it, or refused with why it does
+ * not fit there; and the least height it draws in at a width. The drawing's
+ * identity carries no intent.
  */
-export const compileMimicScope = (plant: CompiledProcessPlant, scope: MimicScope, budget: MimicBudget): MimicCompileResult => {
-  const result = compileScope(plant, null, scope, budget)
-  if (result.ok || 'issues' in result) return result as MimicCompileResult
-  return { ok: false, issues: [{ field: '(mimic)', message: layoutReasons(result.layout, budget) }] }
+export interface MimicScopeDrawing {
+  readonly draw: (room: DiagramRoom) => MimicCompileResult
+  readonly leastHeight: (maxWidth: number) => number | null
 }
+
+export const mimicScopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): MimicScopeDrawing => {
+  const drawing = scopeDrawing(plant, scope, profile)
+  const draw = (room: DiagramRoom): MimicCompileResult => {
+    const result = drawing.draw(null, room)
+    if (result.ok || 'issues' in result) return result as MimicCompileResult
+    return { ok: false, issues: [{ field: '(mimic)', message: layoutReasons(result.layout, room) }] }
+  }
+  return { draw, leastHeight: drawing.leastHeight }
+}
+
+/** World's own path for one room (mimicScopeDrawing). */
+export const compileMimicScope = (plant: CompiledProcessPlant, scope: MimicScope, budget: MimicBudget): MimicCompileResult =>
+  mimicScopeDrawing(plant, scope, budget.profile).draw(budget)

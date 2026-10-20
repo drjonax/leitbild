@@ -5,23 +5,26 @@
 // laid out in both orientations and in each arrangement the graph allows
 // (hubs on either side of the lanes, reaching their items near or from the
 // outer channel, and a hub of one lane its return runs late; cycles whose
-// return runs through shared symbols folded or not), and the first rung with
-// an attempt that verifies, keeps within the crossing limits and fits the box
-// wins; within it, fewer crossings, then the earlier arrangement (the plain
-// one first), then the better fit. The crossing limits are absolute and
-// relative to the crossings the graph's structure forces (bound.ts). Without
-// one, the result says why: density (crossings, when every attempt crosses
-// too often, verified or not), the smallest size per orientation, or the
-// verifier's findings. Nothing is truncated silently.
-import { runAttempt, prepare, type AttemptGeometry } from './attempt.ts'
+// return runs through shared symbols folded or not). None of this depends on
+// the room a drawing is shown in: a graph's candidate drawings are laid out
+// once, rung by rung as a room first needs them, and every room is answered
+// from them. For a room, the first rung with a candidate that verifies,
+// keeps within the crossing limits and fits wins; within it, fewer
+// crossings, then the earlier arrangement (the plain one first), then the
+// better fit. The crossing limits are absolute and relative to the crossings
+// the graph's structure forces (bound.ts). Without one, the result says why:
+// density (crossings, when every attempt crosses too often, verified or
+// not), the smallest size per orientation, or the verifier's findings.
+// Nothing is truncated silently.
+import { runAttempt, prepare, type AttemptGeometry, type Prepared } from './attempt.ts'
 import { breakCycles, foldReturns, type Fold } from './cycles.ts'
 import { findCrossings, drawingSegments, gapsByEdge } from './crossings.ts'
-import type { DiagramGraph, DiagramLayoutResult, DiagramProfile, DiagramViolation, RoutedEdge } from './diagram.ts'
-import { ORIENTATIONS } from './geometry.ts'
+import type { DiagramGraph, DiagramLayoutResult, DiagramProfile, DiagramRoom, DiagramViolation, RoutedEdge } from './diagram.ts'
+import { ORIENTATIONS, type Orientation } from './geometry.ts'
 import { geometryHash } from './hash.ts'
 import { forcedCrossings } from './bound.ts'
 import { assignLayers, layerNodes, plainLayering, type LayeringOptions } from './layering.ts'
-import { buildModel, validateProfile, type Model } from './model.ts'
+import { buildModel, validateProfile, validateRoom, type Model } from './model.ts'
 import { orderLayers, type HubSide } from './ordering.ts'
 import { keptLines } from './shapes.ts'
 import { analyseStructure } from './structure.ts'
@@ -30,17 +33,6 @@ import { verifyLayout } from './verify.ts'
 export * from './diagram.ts'
 
 type Reason = Extract<DiagramLayoutResult, { ok: false }>['reasons'][number]
-
-interface Judged {
-  /** Index of the arrangement it was drawn in. */
-  readonly arrangement: number
-  readonly geometry: AttemptGeometry
-  readonly edges: ReadonlyArray<RoutedEdge>
-  readonly crossings: number
-  /** The verifier's findings, computed when first asked for. */
-  readonly violations: () => ReadonlyArray<DiagramViolation>
-  readonly fits: boolean
-}
 
 const densityReasons = (model: Model, profile: DiagramProfile): Reason[] => {
   const symbol = (role: string): boolean => role === 'device' || role === 'hub'
@@ -54,24 +46,6 @@ const densityReasons = (model: Model, profile: DiagramProfile): Reason[] => {
   ]
   return counts.filter(([limit, count]) => count > profile.limits[limit]).map(([limit, count]) => ({ kind: 'density', limit, count, max: profile.limits[limit] }))
 }
-
-const judge = (model: Model, net: ReadonlyArray<number>, profile: DiagramProfile, arrangement: number, geometry: AttemptGeometry): Judged => {
-  const bare: RoutedEdge[] = model.edges.map((edge, e) => ({ id: edge.id, points: geometry.paths[e]!, gaps: [] }))
-  const crossings = findCrossings(drawingSegments(model, net, geometry.nodes, bare))
-  const gaps = gapsByEdge(model.edges.length, crossings, bare)
-  const edges = bare.map((edge, e) => ({ ...edge, gaps: gaps[e]! }))
-  let violations: ReadonlyArray<DiagramViolation> | null = null
-  return {
-    arrangement,
-    geometry,
-    edges,
-    crossings: crossings.length,
-    violations: () => (violations ??= verifyLayout({ model, net, profile, width: geometry.width, height: geometry.height, nodes: geometry.nodes, edges })),
-    fits: geometry.width <= profile.maxWidth && geometry.height <= profile.maxHeight,
-  }
-}
-
-const overflow = (profile: DiagramProfile, judged: Judged): number => Math.max(judged.geometry.width / profile.maxWidth, judged.geometry.height / profile.maxHeight)
 
 /** How far over the crossing limit an arrangement's first drawings may be and still be drawn at the leaner rungs. */
 const ARRANGEMENT_SLACK = 2
@@ -118,71 +92,173 @@ const arrangements = (model: Model): ReadonlyArray<Arrangement> => {
   ]
 }
 
-export const layoutDiagram = (graph: DiagramGraph, profile: DiagramProfile): DiagramLayoutResult => {
+/** A drawing that verifies within the crossing limits: what a room may be answered with. */
+interface Candidate {
+  /** Index of the arrangement it was drawn in. */
+  readonly arrangement: number
+  readonly geometry: AttemptGeometry
+  readonly edges: ReadonlyArray<RoutedEdge>
+  readonly crossings: number
+  /** Its geometry hash, computed when first drawn. */
+  readonly hash: () => string
+}
+
+/**
+ * A graph's drawings under a profile, independent of any room: the
+ * candidates of each rung of the fit ladder, laid out when a room first
+ * needs that rung, and what a refusal reports.
+ */
+export interface DiagramCandidates {
+  /** The drawing for a room, exactly as the fit ladder chooses it there; or why none fits. */
+  readonly layout: (room: DiagramRoom) => DiagramLayoutResult
+  /**
+   * The least height of a drawing no wider than `maxWidth`: the least room
+   * height a drawing fits at that width. Null where no drawing is that narrow.
+   */
+  readonly leastHeight: (maxWidth: number) => number | null
+}
+
+export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile): DiagramCandidates => {
   validateProfile(profile)
   const model = buildModel(graph)
   const density = densityReasons(model, profile)
-  if (density.length > 0) return { ok: false, reasons: density }
+  if (density.length > 0) {
+    const refusal: DiagramLayoutResult = { ok: false, reasons: density }
+    const layout = (room: DiagramRoom): DiagramLayoutResult => {
+      validateRoom(room)
+      return refusal
+    }
+    return { layout, leastHeight: () => null }
+  }
 
   const forced = forcedCrossings(model)
   const allowed = Math.min(profile.limits.crossings, forced + profile.limits.crossingsOverBound)
   const crossingLimit = allowed === profile.limits.crossings ? 'crossings' as const : 'crossingsOverBound' as const
   const structure = analyseStructure(model)
-  const prepared = arrangements(model).map(({ reversed, layering, hubSide, refine }) => {
-    const layered = assignLayers(model, structure, reversed, layering)
-    return prepare(model, structure, layered, orderLayers(model, layered, hubSide, refine ? { net: structure.net } : null), layering.flipped, refine)
-  })
   const optional = model.nodes.some(node => keptLines(node, 'required') < node.lines.length)
   const rungs = profile.fit
     .filter(rung => (optional || rung.detail === 'full') && (model.lanes.length > 0 || rung.text !== 'lanesBelow'))
     .map(rung => ({ detail: rung.detail, policy: rung.text }))
-  const attempts: Judged[] = []
+
+  let prepared: ReadonlyArray<Prepared> | null = null
   // Arrangements far over the crossing limit in the first rung are not drawn again (the plain one always is).
-  let drawn = prepared.map((_, index) => index)
-  for (const [rung, { detail, policy }] of rungs.entries()) {
-    const round = drawn.flatMap(index => ORIENTATIONS.map(orientation => judge(model, structure.net, profile, index, runAttempt(prepared[index]!, profile, orientation, detail, policy))))
-    attempts.push(...round)
+  let drawn: ReadonlyArray<number> = []
+  /** Per rung laid out: its candidates, in the order the rung's attempts were drawn. */
+  const laidOut: Array<ReadonlyArray<Candidate>> = []
+  /** Every candidate kept so far, for dropping later ones no room can choose. */
+  const kept: Candidate[] = []
+  /** Verified within the limits, by orientation: the sizes a refusal reports. */
+  const sizes: Array<{ readonly orientation: Orientation; readonly width: number; readonly height: number }> = []
+  let verifiedWithin = false
+  let fewestVerified = Infinity
+  let fewestAny = Infinity
+  let fewestViolations: ReadonlyArray<DiagramViolation> | null = null
+
+  const judge = (arrangement: number, geometry: AttemptGeometry) => {
+    const bare: RoutedEdge[] = model.edges.map((edge, e) => ({ id: edge.id, points: geometry.paths[e]!, gaps: [] }))
+    const crossings = findCrossings(drawingSegments(model, structure.net, geometry.nodes, bare))
+    const gaps = gapsByEdge(model.edges.length, crossings, bare)
+    const edges = bare.map((edge, e) => ({ ...edge, gaps: gaps[e]! }))
+    return { arrangement, geometry, edges, crossings: crossings.length }
+  }
+  const verify = (judged: ReturnType<typeof judge>): ReadonlyArray<DiagramViolation> =>
+    verifyLayout({ model, net: structure.net, profile, width: judged.geometry.width, height: judged.geometry.height, nodes: judged.geometry.nodes, edges: judged.edges })
+  const dominates = (a: Candidate, b: Candidate): boolean => a.geometry.width <= b.geometry.width && a.geometry.height <= b.geometry.height
+
+  const layOut = (rung: number): void => {
+    prepared ??= arrangements(model).map(({ reversed, layering, hubSide, refine }) => {
+      const layered = assignLayers(model, structure, reversed, layering)
+      return prepare(model, structure, layered, orderLayers(model, layered, hubSide, refine ? { net: structure.net } : null), layering.flipped, refine)
+    })
+    if (rung === 0) drawn = prepared.map((_, index) => index)
+    const { detail, policy } = rungs[rung]!
+    const round = drawn.flatMap(index => ORIENTATIONS.map(orientation => judge(index, runAttempt(prepared![index]!, profile, orientation, detail, policy))))
     if (rung === 0) drawn = drawn.filter(index => index === 0 || Math.min(...round.filter(judged => judged.arrangement === index).map(judged => judged.crossings)) <= allowed + ARRANGEMENT_SLACK)
-    const best = round
-      .filter(judged => judged.crossings <= allowed && judged.fits)
-      .sort((a, b) => (a.crossings - b.crossings) || (a.arrangement - b.arrangement) || (overflow(profile, a) - overflow(profile, b)))
-      .find(judged => judged.violations().length === 0)
-    if (best === undefined) continue
-    const { geometry, edges } = best
-    return {
-      ok: true,
-      width: geometry.width,
-      height: geometry.height,
-      nodes: geometry.nodes,
-      edges,
-      zones: geometry.zones,
-      hash: geometryHash(model, geometry.width, geometry.height, geometry.nodes, edges, geometry.zones),
-      crossings: best.crossings,
-      forcedCrossings: forced,
+    // Every drawing within the limits is verified. One over them matters only to a refusal, and only while no
+    // drawing within them has verified: then the fewest crossings verified, or the fewest findings, say why.
+    const checked = round.map(judged => ({ judged, violations: judged.crossings <= allowed ? verify(judged) : null }))
+    verifiedWithin ||= checked.some(entry => entry.violations?.length === 0)
+    for (const entry of checked) {
+      fewestAny = Math.min(fewestAny, entry.judged.crossings)
+      const violations = entry.violations ?? (verifiedWithin ? null : verify(entry.judged))
+      if (violations === null) continue
+      if (violations.length === 0) fewestVerified = Math.min(fewestVerified, entry.judged.crossings)
+      // The first, in the order the attempts were drawn, with the fewest findings.
+      if (fewestViolations === null || violations.length < fewestViolations.length) fewestViolations = violations
     }
+    const verified = checked.filter(entry => entry.violations?.length === 0).map(entry => entry.judged)
+    for (const judged of verified) sizes.push({ orientation: judged.geometry.orientation, width: judged.geometry.width, height: judged.geometry.height })
+    // A candidate no room can choose is dropped: one that a candidate of an earlier rung, or of an earlier
+    // crossing count or arrangement in this rung, fits wherever it fits.
+    const earlier = (a: Candidate, b: Candidate): boolean => (a.crossings - b.crossings || a.arrangement - b.arrangement) < 0
+    const candidates: Candidate[] = verified.map(judged => {
+      let hash: string | null = null
+      return { ...judged, hash: () => (hash ??= geometryHash(model, judged.geometry.width, judged.geometry.height, judged.geometry.nodes, judged.edges, judged.geometry.zones)) }
+    })
+    const chosen = candidates.filter(candidate => !kept.some(other => dominates(other, candidate)) && !candidates.some(other => earlier(other, candidate) && dominates(other, candidate)))
+    kept.push(...chosen)
+    laidOut.push(chosen)
+    // Every rung is laid out: what they were laid out from is no longer needed.
+    if (laidOut.length === rungs.length) prepared = null
   }
 
-  // Too many crossings in every attempt, verified or not, is the reason to
-  // give: no drawing of this graph would be accepted whatever else is wrong.
-  const verified = attempts.filter(judged => judged.violations().length === 0)
-  const fewestCrossings = Math.min(...(verified.length > 0 ? verified : attempts).map(judged => judged.crossings))
-  if (fewestCrossings > allowed) {
-    return { ok: false, reasons: [{ kind: 'density', limit: crossingLimit, count: fewestCrossings, max: allowed }] }
+  const fits = (candidate: Candidate, room: DiagramRoom): boolean => candidate.geometry.width <= room.maxWidth && candidate.geometry.height <= room.maxHeight
+  const overflow = (size: { readonly width: number; readonly height: number }, room: DiagramRoom): number => Math.max(size.width / room.maxWidth, size.height / room.maxHeight)
+  const layOutAll = (): void => {
+    while (laidOut.length < rungs.length) layOut(laidOut.length)
   }
-  if (verified.length === 0) {
-    const fewest = [...attempts].sort((a, b) => a.violations().length - b.violations().length)[0]!
-    return { ok: false, reasons: [{ kind: 'unverifiable', violations: fewest.violations() }] }
+
+  const layout = (room: DiagramRoom): DiagramLayoutResult => {
+    validateRoom(room)
+    for (let rung = 0; rung < rungs.length; rung += 1) {
+      if (laidOut.length <= rung) layOut(rung)
+      const best = laidOut[rung]!
+        .filter(candidate => fits(candidate, room))
+        .sort((a, b) => (a.crossings - b.crossings) || (a.arrangement - b.arrangement) || (overflow(a.geometry, room) - overflow(b.geometry, room)))[0]
+      if (best === undefined) continue
+      const { geometry, edges } = best
+      return {
+        ok: true,
+        width: geometry.width,
+        height: geometry.height,
+        nodes: geometry.nodes,
+        edges,
+        zones: geometry.zones,
+        hash: best.hash(),
+        crossings: best.crossings,
+        forcedCrossings: forced,
+      }
+    }
+
+    // Too many crossings in every attempt, verified or not, is the reason to
+    // give: no drawing of this graph would be accepted whatever else is wrong.
+    const fewestCrossings = Number.isFinite(fewestVerified) ? fewestVerified : fewestAny
+    if (fewestCrossings > allowed) {
+      return { ok: false, reasons: [{ kind: 'density', limit: crossingLimit, count: fewestCrossings, max: allowed }] }
+    }
+    if (!Number.isFinite(fewestVerified)) return { ok: false, reasons: [{ kind: 'unverifiable', violations: fewestViolations ?? [] }] }
+    // Per orientation, the drawing that comes closest to the box.
+    const reasons: Reason[] = ORIENTATIONS.flatMap(orientation => {
+      const smallest = sizes
+        .filter(size => size.orientation === orientation)
+        .sort((a, b) => (overflow(a, room) - overflow(b, room)) || (a.width * a.height - b.width * b.height))[0]
+      return smallest === undefined ? [] : [{ kind: 'size' as const, width: smallest.width, height: smallest.height }]
+    })
+    return { ok: false, reasons }
   }
-  const withinCrossings = verified.filter(judged => judged.crossings <= allowed)
-  // Per orientation, the drawing that comes closest to the box.
-  const reasons: Reason[] = ORIENTATIONS.flatMap(orientation => {
-    const smallest = withinCrossings
-      .filter(judged => judged.geometry.orientation === orientation)
-      .sort((a, b) => (overflow(profile, a) - overflow(profile, b)) || (a.geometry.width * a.geometry.height - b.geometry.width * b.geometry.height))[0]
-    return smallest === undefined ? [] : [{ kind: 'size' as const, width: smallest.geometry.width, height: smallest.geometry.height }]
-  })
-  return { ok: false, reasons }
+
+  const leastHeight = (maxWidth: number): number | null => {
+    layOutAll()
+    const heights = kept.filter(candidate => candidate.geometry.width <= maxWidth).map(candidate => candidate.geometry.height)
+    return heights.length === 0 ? null : Math.min(...heights)
+  }
+
+  return { layout, leastHeight }
 }
+
+/** One graph drawn for one room: `diagramCandidates` asked once. */
+export const layoutDiagram = (graph: DiagramGraph, profile: DiagramProfile, room: DiagramRoom): DiagramLayoutResult =>
+  diagramCandidates(graph, profile).layout(room)
 
 /** Runs the verifier on a result of `layoutDiagram` for the same graph and profile. */
 export const verifyDiagram = (graph: DiagramGraph, profile: DiagramProfile, result: Extract<DiagramLayoutResult, { ok: true }>): DiagramViolation[] => {

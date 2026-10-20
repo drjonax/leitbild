@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  diagramCandidates,
   layoutDiagram,
   verifyDiagram,
   type DiagramEdge,
@@ -9,6 +10,7 @@ import {
   type DiagramLayoutResult,
   type DiagramNode,
   type DiagramProfile,
+  type DiagramRoom,
   type DiagramText,
 } from '../src/packs/process-plant/displays/mimic/layout/index.ts'
 import { costsInReferences } from './cpu-cost.ts'
@@ -128,8 +130,9 @@ const combined = (lanes: number): DiagramGraph => ({
   ],
 })
 
-// OpenBridge on its 24 px grid; the box is generous so every fixture fits.
-const profile: DiagramProfile = {
+// OpenBridge on its 24 px grid, and a room so generous every fixture fits.
+type Drawn = DiagramProfile & DiagramRoom
+const profile: Drawn = {
   grid: 24,
   cell: 24,
   pipe: { outline: 6, cornerRadius: 8, crossingHalfGap: 5 },
@@ -146,8 +149,9 @@ const profile: DiagramProfile = {
   ],
 }
 
-const accepted = (graph: DiagramGraph, using: DiagramProfile = profile): Extract<DiagramLayoutResult, { ok: true }> => {
-  const result = layoutDiagram(graph, using)
+const draw = (graph: DiagramGraph, using: Drawn): DiagramLayoutResult => layoutDiagram(graph, using, using)
+const accepted = (graph: DiagramGraph, using: Drawn = profile): Extract<DiagramLayoutResult, { ok: true }> => {
+  const result = draw(graph, using)
   if (!result.ok) throw new Error(`layout refused: ${JSON.stringify(result.reasons)}`)
   return result
 }
@@ -204,7 +208,7 @@ describe('diagram layout engine', () => {
     test(`${name}: accepted, verified clean, deterministic and id-free`, () => {
       const result = accepted(graph)
       expect(verifyDiagram(graph, profile, result)).toEqual([])
-      for (let run = 0; run < 50; run++) expect(layoutDiagram(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
+      for (let run = 0; run < 50; run++) expect(draw(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
       for (const seed of [1, 2, 3]) expect(accepted(scramble(graph, seed)).hash).toBe(result.hash)
     })
   }
@@ -304,6 +308,21 @@ describe('diagram layout engine', () => {
     expect(verifyDiagram(headerFanOut(6), budget, fanOut)).toEqual([])
   })
 
+  test("a graph's candidates answer every room as a layout for that room alone does, and say the least height at each width", () => {
+    for (const graph of [hubLoops(4), headerFanOut(6), combined(3)]) {
+      const candidates = diagramCandidates(graph, profile)
+      const rooms = [300, 450, 600, 800, 1200].flatMap(maxWidth => [200, 400, 624, 900].map(maxHeight => ({ maxWidth, maxHeight })))
+      for (const room of rooms) {
+        const answered = candidates.layout(room)
+        expect(answered).toEqual(layoutDiagram(graph, profile, room))
+        // A room draws exactly when it is at least as tall as the least height at its width.
+        const least = candidates.leastHeight(room.maxWidth)
+        expect(answered.ok).toBe(least !== null && least <= room.maxHeight)
+        if (least !== null) expect(candidates.layout({ maxWidth: room.maxWidth, maxHeight: least }).ok).toBe(true)
+      }
+    }
+  })
+
   test('when the full text does not fit, optional trailing lines go, and the result says how many show', () => {
     // Left to right the stacks sit below their symbols, so dropping a line saves height.
     const result = accepted(chain(), { ...profile, maxWidth: 470, maxHeight: 150 })
@@ -334,7 +353,7 @@ describe('diagram layout engine', () => {
   })
 
   test('too many symbols or too wide a drawing is refused with explicit reasons', () => {
-    const crowded = layoutDiagram(combined(4), { ...profile, limits: { ...profile.limits, symbols: 12, symbolsPerLane: 2 } })
+    const crowded = draw(combined(4), { ...profile, limits: { ...profile.limits, symbols: 12, symbolsPerLane: 2 } })
     expect(crowded).toEqual({
       ok: false,
       reasons: [
@@ -342,11 +361,11 @@ describe('diagram layout engine', () => {
         { kind: 'density', limit: 'symbolsPerLane', count: 3, max: 2 },
       ],
     })
-    const tangled = layoutDiagram(combined(4), { ...profile, limits: { ...profile.limits, crossings: 2 } })
+    const tangled = draw(combined(4), { ...profile, limits: { ...profile.limits, crossings: 2 } })
     expect(tangled).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'crossings', count: 4, max: 2 }] })
-    const lanes = layoutDiagram(hubLoops(6), { ...profile, limits: { ...profile.limits, lanes: 4 } })
+    const lanes = draw(hubLoops(6), { ...profile, limits: { ...profile.limits, lanes: 4 } })
     expect(lanes).toEqual({ ok: false, reasons: [{ kind: 'density', limit: 'lanes', count: 6, max: 4 }] })
-    const narrow = layoutDiagram(hubLoops(6), { ...profile, maxWidth: 400, maxHeight: 300 })
+    const narrow = draw(hubLoops(6), { ...profile, maxWidth: 400, maxHeight: 300 })
     expect(narrow.ok).toBe(false)
     if (narrow.ok) return
     expect(narrow.reasons.length).toBe(2)
@@ -358,9 +377,9 @@ describe('diagram layout engine', () => {
 
   test('input the engine cannot order by structure is rejected', () => {
     const twins: DiagramGraph = { nodes: [pump('a', 'same'), pump('b', 'same')], edges: [edge('e', 'line', 'a:out', 'b:in')] }
-    expect(() => layoutDiagram(twins, profile)).toThrow(/share rank/)
+    expect(() => draw(twins, profile)).toThrow(/share rank/)
     const backwards: DiagramGraph = { nodes: [pump('a', 'a'), pump('b', 'b')], edges: [edge('e', 'line', 'a:in', 'b:in')] }
-    expect(() => layoutDiagram(backwards, profile)).toThrow(/leaves through in-port/)
+    expect(() => draw(backwards, profile)).toThrow(/leaves through in-port/)
   })
 
   test('the engine imports nothing outside itself: it stays Plant-agnostic', () => {
@@ -380,7 +399,7 @@ describe('diagram layout engine', () => {
     const largest = dense()
     expect([largest.nodes.length, largest.edges.length]).toEqual([40, 60])
     const graphs = [...fixtures.map(([, graph]) => graph), largest]
-    const costs = costsInReferences(graphs.map(graph => () => layoutDiagram(graph, profile)), 5)
+    const costs = costsInReferences(graphs.map(graph => () => draw(graph, profile)), 5)
     expect(Math.max(...costs)).toBeLessThan(4)
   }, 120_000)
 })
@@ -499,7 +518,7 @@ describe('long edges, stubs and shared hub ports', () => {
       const result = accepted(graph)
       expect(verifyDiagram(graph, profile, result)).toEqual([])
       for (const routed of result.edges) expect(bendsOf(routed.points)).toBeLessThanOrEqual(3)
-      expect(layoutDiagram(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
+      expect(draw(graph, profile)).toMatchObject({ ok: true, hash: result.hash })
       for (const seed of [1, 2]) expect(accepted(scramble(graph, seed)).hash).toBe(result.hash)
     })
   }
@@ -618,7 +637,7 @@ describe('crossings the structure forces', () => {
     // A lane drawing keeps shared symbols on one side of the lanes, so it crosses more than the bound here.
     const lenient = { ...roomy, limits: { ...roomy.limits, crossingsOverBound: 40 } }
     for (const [lanes, forced] of [[3, 1], [4, 2], [6, 6]] as const) {
-      const result = layoutDiagram(threeSources(lanes), lenient)
+      const result = draw(threeSources(lanes), lenient)
       if (!result.ok) throw new Error(JSON.stringify(result.reasons))
       expect(result.forcedCrossings).toBe(forced)
       expect(result.crossings).toBeGreaterThanOrEqual(forced)
@@ -628,8 +647,8 @@ describe('crossings the structure forces', () => {
   test('a hub reaching every lane across a ladder of two headers is forced across it 2n − 4 times; a train closing the ladder adds one', () => {
     // Two lanes are a ladder of one cycle: the hub reaches both from outside it, unless the train closes it there too.
     for (const lanes of [2, 3, 4, 6]) {
-      const open = layoutDiagram(ladder(lanes, false), roomy)
-      const closed = layoutDiagram(ladder(lanes, true), roomy)
+      const open = draw(ladder(lanes, false), roomy)
+      const closed = draw(ladder(lanes, true), roomy)
       if (!open.ok || !closed.ok) throw new Error('refused')
       expect(open.forcedCrossings).toBe(2 * lanes - 4)
       expect(closed.forcedCrossings).toBe(2 * lanes - 3)
@@ -671,7 +690,7 @@ describe('crossings the structure forces', () => {
 
   test('a limit relative to the bound refuses a drawing that crosses more than it allows, naming the limit', () => {
     const strict = { ...profile, maxWidth: 4000, maxHeight: 4000, limits: { ...profile.limits, symbols: 60, symbolsPerLane: 6, crossings: 40, crossingsOverBound: 0 } }
-    const result = layoutDiagram(threeSources(6), strict)
+    const result = draw(threeSources(6), strict)
     if (result.ok) expect(result.crossings).toBe(result.forcedCrossings)
     else expect(result.reasons).toEqual([expect.objectContaining({ kind: 'density', limit: 'crossingsOverBound', max: 6 })])
   })

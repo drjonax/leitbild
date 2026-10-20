@@ -14,7 +14,7 @@ export interface MimicProfile {
   /** Names the profile in refusals and in the drawing's identity. */
   readonly id: string
   /** The layout engine's rules: grid, pipes, alarm frames, density and the fit ladder. */
-  readonly layout: Omit<DiagramProfile, 'maxWidth' | 'maxHeight'>
+  readonly layout: DiagramProfile
   /**
    * OpenBridge's readout stack size beside a device symbol: `small` rows set
    * text at 11.5 px, `regular` rows at 16 px. Vessel stacks, tags and stub

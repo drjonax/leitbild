@@ -4,10 +4,11 @@
 // have meaning to it. The caller (the process-plant mimic) states structure
 // (footprints, ports, lanes, bars, text) and rules (a DiagramProfile); the
 // engine returns geometry and a verification report, or the reasons a graph
-// cannot be drawn within the budget.
+// cannot be drawn within the budget. The room a drawing is shown in only
+// chooses among the graph's drawings; it never changes one.
 //
-// Determinism: the output is a pure function of the input, the profile and
-// DIAGRAM_ENGINE_VERSION. Every ordering decision breaks ties on structural
+// Determinism: the output is a pure function of the input, the profile, the
+// room and DIAGRAM_ENGINE_VERSION. Every ordering decision breaks ties on structural
 // keys (`rank`, lane `order`), never on ids, so renaming ids changes no
 // geometry. Input the engine cannot order that way is rejected (it throws).
 
@@ -119,9 +120,6 @@ export interface DiagramProfile {
   readonly flapHeight: number
   /** The frame is as wide as the flap label plus this padding when that exceeds the button box. */
   readonly flapLabelPadding: number
-  /** Largest drawing the caller can show. */
-  readonly maxWidth: number
-  readonly maxHeight: number
   /**
    * The fit ladder, richest first: which text a drawing keeps (`full`, or
    * only each stack's required lines) and where stacks go (right of their
@@ -143,6 +141,12 @@ export interface DiagramProfile {
     readonly crossingsOverBound: number
     readonly bendsPerEdge: number
   }
+}
+
+/** The room a caller shows a drawing in: the largest drawing it can show. Nothing but the choice among a graph's drawings depends on it. */
+export interface DiagramRoom {
+  readonly maxWidth: number
+  readonly maxHeight: number
 }
 
 export interface PlacedNode {

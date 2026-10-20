@@ -23,10 +23,7 @@ import {
   composedDisplayLead,
   leadFirst,
   compileDetailDisplay,
-  detailLeadKey,
-  overviewLeadKey,
   compileOverviewDisplay,
-  type CompiledComposedDisplay,
   type OverviewView,
   composedDisplayContent,
   shownQuantity,
@@ -76,13 +73,6 @@ export const displaySampleQuerySchema = z.object({
   /** What people and AI agents did on these paths, the ramps running on them and the proposals for them. */
   operations: z.boolean().default(false),
 }).strict()
-
-// Generated displays per Plant, by what they show and the view size: windows
-// rarely change size, an operator returns to the same equipment, and
-// resizing recompiles only for sizes not yet drawn. The display used longest
-// ago is evicted first.
-const GENERATED_CACHE_SIZE = 16
-const generatedCache = new WeakMap<ProcessPlantRuntimeInstance, Map<string, CompiledComposedDisplay>>()
 
 /**
  * The alarms and trips a display shows: shelved, suppressed and
@@ -238,32 +228,19 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
 
   // The asset label distinguishes identical units; null when the Plant has no projected asset.
   const plantLabelOf = (plantId: string): string | null => config.objects.get(plantId as ObjectId)?.label ?? null
+  // A generated display is compiled for each view: its drawings are laid out once per scope whatever the view's
+  // size (mimicScopeDrawing), so a resize or a return to the same equipment only chooses among them.
   const generatedOrRejected = (
-    system: ProcessPlantRuntimeInstance,
-    shows: string,
-    view: OverviewView | null,
     compile: () => ReturnType<typeof compileOverviewDisplay>,
     /** What the refusal is about; null where the view names it (equipment opened from an overview says what it opened). */
     refusal: string | null,
   ) => {
-    const key = `${shows}|${view === null ? 'natural' : `${view.width}x${view.height}`}`
-    const displays = generatedCache.get(system) ?? new Map<string, CompiledComposedDisplay>()
-    const cached = displays.get(key)
-    if (cached !== undefined) {
-      // Used last, evicted last: sweeping a display's zoom through many sizes never evicts the size its window shows.
-      displays.delete(key)
-      displays.set(key, cached)
-      return cached
-    }
     const result = compile()
     if (!result.ok) return rejectCapabilityTarget(`${refusal === null ? '' : `${refusal}: `}${result.issues.map(issue => issue.message).join('; ')}`)
-    if (displays.size >= GENERATED_CACHE_SIZE) displays.delete(displays.keys().next().value!)
-    displays.set(key, result.display)
-    generatedCache.set(system, displays)
     return result.display
   }
   const overviewOrRejected = (system: ProcessPlantRuntimeInstance, view: OverviewView | null) =>
-    generatedOrRejected(system, `overview|${overviewLeadKey(system)}`, view, () => compileOverviewDisplay(system, recordedSeriesIds, view), `Process Plant ${system.plant.id} has no unit overview`)
+    generatedOrRejected(() => compileOverviewDisplay(system, recordedSeriesIds, view), `Process Plant ${system.plant.id} has no unit overview`)
 
   if (config.request.capabilityId === 'world.process-plant.display.overview') {
     const payload = displayOverviewQuerySchema.parse(config.request.input)
@@ -307,8 +284,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     if ('detail' in state) {
       if (payload.size === undefined) return rejectCapabilityInput('Equipment opened from an overview is drawn for the view it is shown in: send its size')
       const components = state.detail.components
-      // A detail's lead values follow the Plant's mode at opening: one opened in another mode is compiled again.
-      const display = generatedOrRejected(system, `detail:${components.join(',')}|${detailLeadKey(system)}`, payload.size, () => compileDetailDisplay(system, recordedSeriesIds, components, payload.size!), null)
+      const display = generatedOrRejected(() => compileDetailDisplay(system, recordedSeriesIds, components, payload.size!), null)
       return { kind: 'detail', plantId: display.plantId, plantLabel: plantLabelOf(display.plantId), simulationTime, display }
     }
     const compiled = compiledOrRejected(system, state.composition, 'view', recordedSeriesIds)

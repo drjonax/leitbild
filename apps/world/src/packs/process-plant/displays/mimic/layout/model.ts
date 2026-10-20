@@ -2,7 +2,7 @@
 // stage works on indices into these arrays, so no stage can depend on input
 // order, Map iteration order or ids: nodes sort by (lane, rank), ports by
 // rank, edges by (endpoints, port ranks, rank).
-import type { DiagramGraph, DiagramNode, DiagramProfile } from './diagram.ts'
+import type { DiagramGraph, DiagramNode, DiagramProfile, DiagramRoom } from './diagram.ts'
 
 export type Role = DiagramNode['role']
 
@@ -66,12 +66,16 @@ export const validateProfile = (profile: DiagramProfile): void => {
   if (!isSize(profile.pipe.cornerRadius)) issues.push('pipe.cornerRadius must be a size')
   if (!isSize(profile.pipe.crossingHalfGap)) issues.push('pipe.crossingHalfGap must be a size')
   for (const key of ['textClearance', 'frameMargin', 'flapHeight', 'flapLabelPadding'] as const) if (!isSize(profile[key])) issues.push(`${key} must be a size`)
-  for (const key of ['maxWidth', 'maxHeight'] as const) if (!(profile[key] > 0) || !Number.isFinite(profile[key])) issues.push(`${key} must be positive`)
   for (const [key, value] of Object.entries(profile.limits)) if (!isCount(value)) issues.push(`limits.${key} must be a count`)
   if (profile.fit.length === 0) issues.push('fit needs at least one rung')
   const rungs = profile.fit.map(rung => `${rung.detail}/${rung.text}`)
   if (new Set(rungs).size !== rungs.length) issues.push('fit repeats a rung')
   if (issues.length > 0) throw new Error(`invalid diagram profile: ${issues.join('; ')}`)
+}
+
+export const validateRoom = (room: DiagramRoom): void => {
+  const issues = (['maxWidth', 'maxHeight'] as const).filter(key => !(room[key] > 0) || !Number.isFinite(room[key])).map(key => `${key} must be positive`)
+  if (issues.length > 0) throw new Error(`invalid diagram room: ${issues.join('; ')}`)
 }
 
 export const buildModel = (graph: DiagramGraph): Model => {

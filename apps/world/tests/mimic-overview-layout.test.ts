@@ -140,10 +140,9 @@ describe('the unit overview of the principal circuits', () => {
       // The engine's own verifier, run again on the diagram the overview was drawn from.
       const planned = planMimicDiagram(plant, scopeOf(plant), overviewMimicProfile)
       if (!planned.ok) throw new Error('not planned')
-      const profile = { ...overviewMimicProfile.layout, ...budget }
-      const layout = layoutDiagram(planned.graph, profile)
+      const layout = layoutDiagram(planned.graph, overviewMimicProfile.layout, budget)
       if (!layout.ok) throw new Error(JSON.stringify(layout.reasons))
-      expect(verifyDiagram(planned.graph, profile, layout)).toEqual([])
+      expect(verifyDiagram(planned.graph, overviewMimicProfile.layout, layout)).toEqual([])
       expect(`${mimic.hash}`.endsWith(layout.hash)).toBe(true)
     })
   }
