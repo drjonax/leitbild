@@ -42,7 +42,7 @@
 // provider catalogs and model identity holds unless an operator chose one.
 // ============================================================================
 
-import type { ChatRequest, ChatResponse, LLMProvider, StreamChunk } from '../core/types/llm.ts'
+import type { ChatRequest, ChatResponse, GenerationBilling, LLMProvider, StreamChunk } from '../core/types/llm.ts'
 import type { ProviderRouter, RouterCallOptions } from './router.ts'
 import type { MonitorState } from './provider-monitor.ts'
 import { parsePrefixedModel } from './models/parse-prefix.ts'
@@ -182,14 +182,18 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
     source: LLMSource,
     path: 'chat' | 'stream',
     request: ChatRequest,
-    response: { provider?: string; promptTokens?: number; completionTokens?: number; cacheCreation?: number; cacheRead?: number; cacheMiss?: number; durationMs: number; chunksEmit?: number; toolCalls?: number; contentLen?: number },
+    response: { provider?: string; promptTokens?: number; completionTokens?: number; cacheCreation?: number; cacheRead?: number; cacheMiss?: number; durationMs: number; chunksEmit?: number; toolCalls?: number; contentLen?: number; billing?: GenerationBilling },
   ): void => {
+    // The provider's own generation record, when it reports one (OpenRouter):
+    // what evaluation bills a call at, and which upstream served it.
+    const billing = response.billing === undefined ? '' :
+      ` generation=${response.billing.generationId ?? '?'} upstream=${response.billing.upstreamProvider ?? '?'} cost_usd=${response.billing.costUsd ?? '?'}`
     console.log(
       `[llm] source=${source} path=${path} provider=${response.provider ?? '?'} ` +
       `model=${request.model} content_len=${response.contentLen ?? '?'} tools=${response.toolCalls ?? 0} ` +
       `prompt_tokens=${response.promptTokens ?? '?'} completion_tokens=${response.completionTokens ?? '?'} ` +
       `cache_read=${response.cacheRead ?? '?'} cache_write=${response.cacheCreation ?? '?'} cache_miss=${response.cacheMiss ?? '?'} chunks_emit=${response.chunksEmit ?? '?'} ` +
-      `duration_ms=${response.durationMs}`,
+      `duration_ms=${response.durationMs}${billing}`,
     )
   }
 
@@ -242,6 +246,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
             durationMs,
             contentLen: response.content.length,
             toolCalls: response.toolCalls?.length ?? 0,
+            ...(response.billing ? { billing: response.billing } : {}),
           })
           return { ...response, content: response.content.replace(THINK_BLOCK_RE, '') }
         } catch (err) {
@@ -285,6 +290,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
         let chunkCount = 0, contentLen = 0, toolCallCount = 0
         let promptTokens: number | undefined, completionTokens: number | undefined, cacheCreation: number | undefined, cacheRead: number | undefined, cacheMiss: number | undefined
         let providerName: string | undefined
+        let billing: GenerationBilling | undefined
         let firstChunkSeen = false
         let pendingThinkBuf = ''     // only flushed AFTER strip; tiny since blocks are bounded
 
@@ -324,6 +330,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
                 cacheRead = chunk.tokensUsed?.cacheRead
                 cacheMiss = chunk.tokensUsed?.cacheMiss
                 providerName = chunk.provider
+                billing = chunk.billing
               }
               yield chunk
             }
@@ -332,6 +339,7 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
           logLine(opts.source, 'stream', attemptRequest, {
             provider: providerName, promptTokens, completionTokens, cacheCreation, cacheRead, cacheMiss,
             durationMs, chunksEmit: chunkCount, toolCalls: toolCallCount, contentLen,
+            ...(billing ? { billing } : {}),
           })
           return
         } catch (err) {

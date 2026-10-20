@@ -12,7 +12,7 @@
 // here rather than requiring per-provider subclasses.
 // ============================================================================
 
-import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk, ProviderContinuation } from '../core/types/llm.ts'
+import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk, ProviderContinuation, GenerationBilling } from '../core/types/llm.ts'
 import type { ModelInfo } from '../core/types/model-info.ts'
 import { createHash } from 'node:crypto'
 import type { NativeToolCall } from '../core/types/tool.ts'
@@ -82,6 +82,8 @@ export interface OpenAICompatConfig {
 interface OAIChatResponse {
   id?: string
   model?: string
+  // OpenRouter: the upstream provider that served the generation.
+  provider?: unknown
   choices: ReadonlyArray<{
     message: OAIMessage
     finish_reason?: string
@@ -90,6 +92,8 @@ interface OAIChatResponse {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    // OpenRouter: what it billed for the generation, in USD.
+    cost?: unknown
     // Anthropic-specific. Passed through when present.
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
@@ -108,7 +112,9 @@ interface OAIChatResponse {
 }
 
 interface OAIStreamChunk {
+  id?: unknown
   model?: string
+  provider?: unknown
   choices?: ReadonlyArray<{
     delta?: {
       content?: string
@@ -136,6 +142,7 @@ interface OAIStreamChunk {
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number
+    cost?: unknown
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
     prompt_tokens_details?: {
@@ -178,6 +185,17 @@ interface OAIModelsResponse {
 // <think>...</think> in the content stream, without a dedicated "thinking"
 // field. We pull those out into StreamChunk.thinking to keep leitbild's
 // thinking-indicator UX working.
+// OpenRouter's record of a generation from the fields its response carries.
+// A field of the wrong type is left out, so the log never shows a guess.
+const openRouterBilling = (id: unknown, upstream: unknown, cost: unknown): GenerationBilling | undefined => {
+  const billing: GenerationBilling = {
+    ...(typeof id === 'string' && id.length > 0 ? { generationId: id } : {}),
+    ...(typeof upstream === 'string' && upstream.length > 0 ? { upstreamProvider: upstream } : {}),
+    ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? { costUsd: cost } : {}),
+  }
+  return Object.keys(billing).length === 0 ? undefined : billing
+}
+
 const splitThinkAndContent = (raw: string): { thinking: string; content: string } => {
   let thinking = ''
   let content = ''
@@ -342,6 +360,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       ?? data.usage?.cached_tokens
       ?? data.usage?.total_cached_tokens
     const cacheMiss = data.usage?.prompt_cache_miss_tokens
+    const billing = config.name === 'openrouter' ? openRouterBilling(data.id, data.provider, data.usage?.cost) : undefined
     return {
       content,
       model: data.model || wireRequest.model,
@@ -356,6 +375,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       toolCalls,
       ...(continuation ? { continuation } : {}),
       ...(choice.finish_reason ? { finishReason: choice.finish_reason } : {}),
+      ...(billing ? { billing } : {}),
     }
   }
 
@@ -454,6 +474,9 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     const reasoningDetails: Array<Readonly<Record<string, unknown>>> = []
     let reasoning: string | undefined
     let usageTokens: { prompt: number; completion: number; cacheCreation?: number; cacheRead?: number; cacheMiss?: number } | undefined
+    let generationId: unknown
+    let upstreamProvider: unknown
+    let billedCost: unknown
 
     const emitFinal = (): StreamChunk => {
       const toolCalls: NativeToolCall[] | undefined = finishReason !== 'length' && toolAccum.length
@@ -463,6 +486,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
           }))
         : undefined
       const continuation = finishReason === 'length' ? undefined : continuationFor({ ...wireRequest, model: actualModel }, target.hash, reasoningDetails, reasoning)
+      const billing = config.name === 'openrouter' ? openRouterBilling(generationId, upstreamProvider, billedCost) : undefined
       const chunk: StreamChunk = {
         delta: '', done: true,
         ...(toolCalls ? { toolCalls } : {}),
@@ -471,6 +495,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
         model: actualModel,
         ...(continuation ? { continuation } : {}),
         ...(finishReason ? { finishReason } : {}),
+        ...(billing ? { billing } : {}),
       }
       return chunk
     }
@@ -549,11 +574,14 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
             let parsed: OAIStreamChunk
             try { parsed = JSON.parse(payload) } catch { continue }
             if (typeof parsed.model === 'string' && parsed.model.length > 0) actualModel = parsed.model
+            if (parsed.id !== undefined) generationId = parsed.id
+            if (parsed.provider !== undefined) upstreamProvider = parsed.provider
 
             // Final usage frame (OpenAI with include_usage: true; Groq,
             // Cerebras follow the same convention). The frame carries an
             // empty choices array + a `usage` field.
             if (parsed.usage && (parsed.usage.prompt_tokens !== undefined || parsed.usage.completion_tokens !== undefined)) {
+              billedCost = parsed.usage.cost
               const cacheReadCount = parsed.usage.cache_read_input_tokens
                 ?? parsed.usage.prompt_tokens_details?.cached_tokens
                 ?? parsed.usage.prompt_cache_hit_tokens
