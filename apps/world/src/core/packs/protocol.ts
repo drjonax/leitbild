@@ -44,6 +44,8 @@ export interface PackObjectCategory {
    * objects declares it, so they are not listed twice.
    */
   readonly rail?: false
+  /** The closed list of status words this category's objects show (reserved; supplied with P2's presentation fields). */
+  readonly statusWords?: ReadonlyArray<string>
 }
 
 export interface PackObjectPresentation {
@@ -72,6 +74,12 @@ export interface PackObjectPresentation {
    * hover lists the fields.
    */
   readonly glance?: ReadonlyArray<string>
+  /** Reserved (supplied in P2): sorts, never colours. */
+  readonly urgency?: { readonly order: number; readonly word: string }
+  /** Reserved (supplied in P2): objects this one relates to, both ways. */
+  readonly related?: ReadonlyArray<{ readonly objectId: ObjectId; readonly role: string }>
+  /** Reserved (supplied in P2): since when the status word holds. */
+  readonly since?: { readonly at: IsoTimestamp; readonly clock: 'simulation' | 'wall' }
 }
 
 export interface PackObjectField {
@@ -466,6 +474,21 @@ export interface PackRecordingContribution {
 
 export interface PackKnowledgeContribution {
   readonly wikiRefs: ReadonlyArray<PackWikiRef>
+  /** One line (≤ 200 characters) the Run context shows fenced as this Pack's guidance. */
+  readonly guidance?: string
+}
+
+/**
+ * Data only: which objects declare observations and the ids of this Pack's
+ * system-audience query Capabilities (core/observation/capabilities.ts) that
+ * declare, read and draw them. World reads them as the caller, lazily.
+ */
+export interface PackObservationContribution {
+  /** Presentation categories whose objects declare observations. */
+  readonly categories: ReadonlyArray<string>
+  readonly declarations: string
+  readonly read: string
+  readonly topology?: { readonly family: 'flow' | 'network'; readonly capability: string }
 }
 
 export interface PackReferenceDataContribution {
@@ -514,6 +537,8 @@ export interface PackPresentationContribution {
   /** Keys the layers panel renders for this Pack's map encodings. */
   readonly mapLegends?: ReadonlyArray<PackMapLegend>
   readonly liveMapLayers?: ReadonlyArray<PackLiveMapLayer>
+  /** Credits for licensed data this Pack's `mapFeatures` draw. */
+  readonly mapFeatureAttribution?: string
 }
 
 export interface PackCreationContribution {
@@ -819,6 +844,7 @@ export interface WorldPack extends WorldPackView {
   readonly referenceData?: PackReferenceDataContribution
   readonly scenario?: PackScenarioSupport
   readonly interactions?: PackInteractionContribution
+  readonly observation?: PackObservationContribution
 }
 
 /** What a Pack derives its roles against: the Scenario's sides, empty when it declares none. */

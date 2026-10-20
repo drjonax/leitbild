@@ -1,13 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { Glob } from 'bun'
 import { cardItemSchema, displayCardSchema } from '../src/core/observation/card.ts'
-import {
-  alertWithFacetsSchema, observableSchema, observationSchema, quantitySchema, stampSchema, thresholdSchema, viewerSchema,
-} from '../src/core/observation/model.ts'
+import { defineObservationCapability, observationDeclarationSchema, observationShapes } from '../src/core/observation/capabilities.ts'
+import { observableSchema, observationSchema, quantitySchema, stampSchema, thresholdSchema, viewerSchema } from '../src/core/observation/model.ts'
 import {
   dashboardSchema, dashboardsFileSchema, displaySpecSchema, sectionSchema, selectorSchema, viewSchema,
 } from '../src/core/observation/spec.ts'
-import { alertStateSchema } from '../src/core/model/alerts.ts'
+import { topologyGraphSchema } from '../src/core/observation/topology.ts'
 
 const at = { at: '2026-10-20T08:00:00.000Z', clock: 'simulation' } as const
 const threshold = { id: 'lo-lo', direction: 'low', value: 20, order: 2, effect: 'trip', priority: 'alarm' } as const
@@ -18,7 +16,7 @@ const observable = {
 const spec = { title: 'SG A level', question: 'Is SG A level recovering?', subjects: ['unit-2#SG-A-NR-LVL'], views: [{ kind: 'trend', signals: ['unit-2#SG-A-NR-LVL'] }] }
 const section = { id: 's1', by: 'agent', source: { spec }, composedAt: { ...at, mode: 'Mode 1' } }
 
-describe('observation model draft', () => {
+describe('observation model', () => {
   test('every stamp names its clock and accepts an offset', () => {
     expect(stampSchema.parse({ at: '2026-10-20T10:00:00+02:00', clock: 'wall' }).clock).toBe('wall')
     expect(stampSchema.safeParse({ at: '2026-10-20T08:00:00Z' }).success).toBe(false)
@@ -37,6 +35,14 @@ describe('observation model draft', () => {
     expect(thresholdSchema.safeParse({ ...threshold, colour: '#f00' }).success).toBe(false)
   })
 
+  test('an observable is addressed objectId#signal and may name its tag and element', () => {
+    expect(observableSchema.parse({ ...observable, tag: 'SG-A-NR-LVL', element: 'sg-a' }).tag).toBe('SG-A-NR-LVL')
+    for (const ref of ['SG-A-NR-LVL', '#SG-A', 'unit-2#', 'unit 2#SG-A', 'unit-2#SG A']) {
+      expect(observableSchema.safeParse({ ...observable, ref }).success).toBe(false)
+    }
+    expect(observableSchema.safeParse({ ...observable, tag: 'x'.repeat(65) }).success).toBe(false)
+  })
+
   test('an observable defaults to no thresholds and may be unrecorded', () => {
     expect(observableSchema.parse(observable).thresholds).toEqual([])
     expect(observableSchema.parse({ ...observable, series: null, valueType: 'duration', quantity: 'duration' }).series).toBeNull()
@@ -51,19 +57,6 @@ describe('observation model draft', () => {
     expect(observationSchema.safeParse({ ...observation, clock: undefined }).success).toBe(false)
   })
 
-  test('today\'s alert record parses unchanged and facets stay optional', () => {
-    const record = { id: 'a1', kind: 'sg-level-lo', severity: 'warning', message: 'SG A level low', raisedAt: '2026-10-20T08:00:00.000Z', acknowledged: false }
-    expect(alertStateSchema.parse(record)).toEqual(alertWithFacetsSchema.parse(record))
-    expect(alertWithFacetsSchema.parse({ ...record, priority: 'caution', firstOut: { group: 'rx-trip', rank: 1 }, clock: 'simulation' }).priority).toBe('caution')
-  })
-
-  test('a present priority must agree with the record severity', () => {
-    const record = { id: 'a1', kind: 'trip', severity: 'critical', message: 'Reactor trip', raisedAt: '2026-10-20T08:00:00.000Z', acknowledged: false }
-    expect(alertWithFacetsSchema.safeParse({ ...record, priority: 'emergency' }).success).toBe(true)
-    expect(alertWithFacetsSchema.safeParse({ ...record, priority: 'caution' }).success).toBe(false)
-    expect(alertWithFacetsSchema.safeParse({ ...record, severity: 'info', priority: 'none' }).success).toBe(true)
-  })
-
   test('a viewer sees everything or named sides', () => {
     expect(viewerSchema.parse({ actor: 'person', sees: 'all' }).sees).toBe('all')
     expect(viewerSchema.parse({ actor: 'agent', sees: ['blue'] }).sees).toEqual(['blue'])
@@ -71,7 +64,7 @@ describe('observation model draft', () => {
   })
 })
 
-describe('vignette and dashboard spec draft', () => {
+describe('vignette and dashboard spec', () => {
   test('a values view lists a live collection that excludes closed objects unless asked', () => {
     const view = viewSchema.parse({ kind: 'values', of: { category: 'incident', status: ['open'] }, columns: ['priority', 'age'], count: { by: 'priority' } })
     expect(view.kind === 'values' && view.of?.closed).toBe(false)
@@ -129,7 +122,7 @@ describe('vignette and dashboard spec draft', () => {
   })
 })
 
-describe('card draft', () => {
+describe('card', () => {
   const item = { key: 'k3', label: 'SG A NR level', reading: '31.5 % falling', unit: '%', numbers: [{ value: 31.5, decimals: 1 }], subject: { ref: observable.ref } }
 
   test('items are keyed for citation and carry their numbers', () => {
@@ -154,11 +147,92 @@ describe('card draft', () => {
   })
 })
 
-test('the draft stays unregistered: no World source outside core/observation imports it', async () => {
-  const importers: string[] = []
-  for await (const path of new Glob('src/**/*.{ts,svelte}').scan({ cwd: `${import.meta.dir}/..` })) {
-    if (path.startsWith('src/core/observation/')) continue
-    if ((await Bun.file(`${import.meta.dir}/../${path}`).text()).includes('core/observation/')) importers.push(path)
+describe('observation Capabilities', () => {
+  const declaration = { objectId: 'unit-2', revision: 'digest-1', observables: [observable] }
+
+  test('a declaration holds its own object\'s observables once, elements default to none', () => {
+    expect(observationDeclarationSchema.parse(declaration).elements).toEqual([])
+    expect(observationDeclarationSchema.safeParse({ ...declaration, observables: [observable, observable] }).success).toBe(false)
+    expect(observationDeclarationSchema.safeParse({ ...declaration, objectId: 'unit-3' }).success).toBe(false)
+    const element = { id: 'sg-a', class: 'converter', label: 'Steam generator A' }
+    expect(observationDeclarationSchema.safeParse({ ...declaration, elements: [element, element] }).success).toBe(false)
+  })
+
+  test('declarations answer unchanged for a revision the caller holds', () => {
+    const output = observationShapes.declarations.output
+    expect(output.parse({ declarations: [{ objectId: 'unit-2', revision: 'digest-1', unchanged: true }] }).declarations).toHaveLength(1)
+    expect(output.safeParse({ declarations: [{ objectId: 'unit-2', revision: 'digest-1', unchanged: false }] }).success).toBe(false)
+    const input = observationShapes.declarations.input
+    expect(input.safeParse({ objectIds: [] }).success).toBe(false)
+    expect(input.safeParse({ objectIds: Array.from({ length: 17 }, (_, index) => `o${index}`) }).success).toBe(false)
+    expect(input.parse({ objectIds: ['unit-2'], known: { 'unit-2': 'digest-1' } }).known).toEqual({ 'unit-2': 'digest-1' })
+  })
+
+  test('a read names refs or asks for an object\'s lead, never both', () => {
+    const input = observationShapes.read.input
+    expect(input.safeParse({ refs: ['unit-2#A'] }).success).toBe(true)
+    expect(input.safeParse({ lead: { objectId: 'unit-2', count: 6 } }).success).toBe(true)
+    expect(input.safeParse({ refs: ['unit-2#A'], lead: { objectId: 'unit-2', count: 6 } }).success).toBe(false)
+    expect(input.safeParse({ lead: { objectId: 'unit-2', count: 17 } }).success).toBe(false)
+    expect(input.safeParse({ refs: Array.from({ length: 65 }, (_, index) => `unit-2#s${index}`) }).success).toBe(false)
+  })
+
+  test('each Capability names the objects it inspects, from refs, a lead or an object id', () => {
+    const inspected = (kind: keyof typeof observationShapes, input: unknown): ReadonlyArray<string> => observationShapes[kind].inspectObjectIds(input)
+    expect(inspected('declarations', { objectIds: ['unit-1', 'unit-2'] })).toEqual(['unit-1', 'unit-2'])
+    expect(inspected('read', { refs: ['unit-2#A', 'unit-2#B', 'grid#bus:7/v'] })).toEqual(['unit-2', 'grid'])
+    expect(inspected('read', { lead: { objectId: 'unit-2', count: 6 } })).toEqual(['unit-2'])
+    expect(inspected('topology', { objectId: 'unit-2' })).toEqual(['unit-2'])
+    expect(() => inspected('read', { refs: ['no-object'] })).toThrow()
+  })
+
+  test('a Pack builds its Capability with the system audience and the core shape', () => {
+    const capability = defineObservationCapability('read', { id: 'world.fixture.observation.read', title: 'Read observations', description: 'Reads values.' })
+    expect(capability).toMatchObject({ kind: 'query', risk: 'read', idempotent: true, audience: 'system' })
+    expect(capability.input).toBe(observationShapes.read.input)
+    expect(capability.output).toBe(observationShapes.read.output)
+    expect(() => defineObservationCapability('read', { id: 'fixture.read', title: 'x', description: 'y' })).toThrow()
+  })
+})
+
+describe('topology graph', () => {
+  const port = (id: string, medium = 'water') => ({ id, rank: id, medium, direction: 'both' as const })
+  const node = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, class: 'transfer', kind: 'pipe', label: id, rank: id, ports: [port('a'), port('b')], bindings: [], ...extra,
+  })
+  const graph = {
+    objectId: 'unit-2', revision: 'digest-1', family: 'flow',
+    media: [{ id: 'water', label: 'Feedwater', kind: 'fluid' }],
+    groups: [{ id: 'loop-a', label: 'Loop A', kind: 'loop', lane: { key: 'loop', order: 0 } }],
+    nodes: [node('pump', { class: 'mover', group: 'loop-a', bindings: [{ role: 'flow', ref: 'unit-2#FW-FLOW' }] }), node('sg')],
+    edges: [{ id: 'e1', rank: 'e1', from: { node: 'pump', port: 'b' }, to: { node: 'sg', port: 'a' }, medium: 'water', directed: true, bindings: [] }],
+    boundaries: [{ node: 'sg', port: 'b', externalPortId: 'steam-out' }],
   }
-  expect(importers).toEqual([])
+
+  test('a consistent graph validates', () => {
+    expect(topologyGraphSchema.parse(graph).nodes).toHaveLength(2)
+  })
+
+  test('every reference resolves and media agree along an edge', () => {
+    const issues = (change: Record<string, unknown>) => topologyGraphSchema.safeParse({ ...graph, ...change }).error?.issues.map(issue => issue.message)
+    expect(issues({ nodes: [...graph.nodes, node('pump')] })).toEqual(['duplicate node id'])
+    expect(issues({ nodes: [node('pump', { group: 'loop-z' }), node('sg')] })).toEqual(['node pump has unknown group loop-z'])
+    const steam = { id: 'steam', label: 'Steam', kind: 'steam' }
+    expect(issues({ media: [...graph.media, steam], nodes: [node('pump', { ports: [port('a'), port('b', 'steam')] }), node('sg')] }))
+      .toEqual(['edge e1 carries water into port pump.b of steam'])
+    expect(issues({ edges: [{ ...graph.edges[0], to: { node: 'sg', port: 'z' } }] })).toEqual(['edge e1 ends at unknown port sg.z'])
+    expect(issues({ boundaries: [{ node: 'sg', port: 'z', externalPortId: 'steam-out' }] })).toEqual(['boundary steam-out names unknown port sg.z'])
+    expect(issues({ groups: [...graph.groups, { id: 'g1', label: 'G1', kind: 'k', parent: 'g2' }, { id: 'g2', label: 'G2', kind: 'k', parent: 'g1' }] }))
+      .toEqual(['group g1 is its own ancestor', 'group g2 is its own ancestor'])
+  })
+
+  test('bindings read only the graph\'s own object', () => {
+    const foreign = node('pump', { bindings: [{ role: 'flow', ref: 'unit-3#FW-FLOW' }] })
+    expect(topologyGraphSchema.safeParse({ ...graph, nodes: [foreign, node('sg')] }).error?.issues[0]?.message).toBe('pump binds unit-3#FW-FLOW of another object')
+  })
+
+  test('the topology Capability answers a graph or unchanged', () => {
+    expect(observationShapes.topology.output.safeParse({ objectId: 'unit-2', revision: 'digest-1', unchanged: true }).success).toBe(true)
+    expect(observationShapes.topology.output.safeParse({ ...graph, family: 'tree' }).success).toBe(false)
+  })
 })
