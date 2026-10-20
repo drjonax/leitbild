@@ -67,6 +67,8 @@ export interface ProcessPlantRuntimeCheckpoint {
 export interface ProcessPlantRuntime {
   readonly tick: (elapsedMs: number) => ProcessPlantTickResult
   readonly elapsedMs: () => number
+  /** Plant time ticked in all: the stepped elapsedMs and the remainder short of a step, so Run time minus it is fixed. */
+  readonly advancedMs: () => number
   readonly resolveVariableHandle: (path: VariablePath) => ProcessPlantVariableHandle
   readonly readVariable: (path: VariablePath) => ProcessPlantValue
   readonly readVariableHandle: (handle: ProcessPlantVariableHandle) => ProcessPlantValue

@@ -118,6 +118,7 @@ export const createProcessPlantRuntime = (config: {
       }
     },
     elapsedMs: (): number => clock.elapsedMs,
+    advancedMs: (): number => clock.elapsedMs + clock.remainderMs,
     resolveVariableHandle: (path: VariablePath) => table.resolve(path),
     readVariable: (path: VariablePath): ProcessPlantValue => table.read(path),
     readVariableHandle: (handle) => table.readHandle(handle),

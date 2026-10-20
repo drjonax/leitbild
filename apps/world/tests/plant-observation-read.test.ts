@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { priorityOrder } from '../src/packs/process-plant/ic/alarm-philosophy.ts'
 import type { Observation } from '../src/core/observation/model.ts'
 import type { ObservationPort } from '../src/features/displays/observation/port.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -50,6 +51,7 @@ beforeAll(async () => {
   await plant.runTo(90_000)
   facts.leadTripped = await lead()
   facts.tripped = await readAll()
+  facts.alerts = plant.unit().alerts
 })
 
 afterAll(async () => { await plant.remove() })
@@ -73,6 +75,14 @@ describe('plant observation read (P3)', () => {
     expect(facts.underfrequency.filter((observation: Observation) => observation.timeToAct !== undefined).map((observation: Observation) => [path(observation), observation.timeToAct]))
       .toEqual([['offsiteGrid.frequencyHz', { threshold: 'turbine-trip-on-sustained-low-grid-frequency', seconds: 1791 }]])
     expect(facts.frequencyBack.timeToAct).toBeUndefined()
+  })
+
+  test('T05: a value in caution or worse has its active alert in the unit\'s slot, by its title and priority', () => {
+    const coloured = facts.tripped.filter((observation: Observation) => priorityOrder[observation.priority] >= priorityOrder.caution)
+    expect(coloured.length).toBeGreaterThan(0)
+    for (const observation of coloured) {
+      expect(facts.alerts.some((alert: any) => alert.message === observation.why && alert.priority === observation.priority && alert.returned !== true), path(observation)).toBe(true)
+    }
   })
 
   test('T05: after the trip the diesel running, rods on the bottom and the nuclear instruments below range stay neutral', () => {
