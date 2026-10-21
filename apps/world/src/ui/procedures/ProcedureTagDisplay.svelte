@@ -2,8 +2,7 @@
   import { untrack } from 'svelte'
   import type { EmbeddedViewEnvelope } from '@leitbild/contracts'
   import type { ProcedureTag, SimulationRunId } from '../../core/model/index.ts'
-  import type { PackProcedureContribution, PackProcedureTagDisplay } from '../../core/packs/protocol.ts'
-  import { querySimulationRunCapability } from '../simulation-run-client.ts'
+  import type { PackProcedureContribution } from '../../core/packs/protocol.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import { activeWorkspaceId } from '../workspace-context.ts'
   import { readProcedureTagValue, type ProcedureTagValidation, type ProcedureTagValue } from './procedure-client.ts'
@@ -14,11 +13,12 @@
     procedureTagDisplayPlan,
     procedureTagDisplaySource,
     procedureTagReadingText,
+    readDefaultDisplay,
   } from './procedure-tag-display.ts'
 
-  // A clicked procedure tag: the live process display World draws around the
-  // equipment it is measured on, framed read-only over the procedure, with the
-  // tag's reading above it. Where no display can be drawn, the dialog says why.
+  // A clicked procedure tag: World's live default display of the tag on its
+  // unit, framed read-only over the procedure, with the tag's reading above
+  // it. Where no display can be drawn, the dialog says why.
 
   interface Props {
     readonly simulationRunId: SimulationRunId
@@ -40,7 +40,7 @@
   const READ_EVERY_MS = 2_000
 
   const titleId = $props.id()
-  const plan = $derived(procedureTagDisplayPlan(plantId, validation, provider))
+  const plan = $derived(procedureTagDisplayPlan(plantId, tag.id, validation))
   const declared = $derived(procedureTagDeclared(tag))
 
   let reading = $state<ProcedureTagValue | null>(null)
@@ -60,12 +60,10 @@
 
   const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
-  // Drawn first for the room its frame has: a display the Pack cannot draw is refused with its reason, never framed empty.
-  const draw = async (key: string, display: PackProcedureTagDisplay, size: { readonly width: number; readonly height: number }): Promise<void> => {
+  // Composed first: a display World cannot compose is refused with its reason, never framed empty.
+  const draw = async (key: string, subject: string): Promise<void> => {
     try {
-      const query = display.drawQuery(size)
-      await querySimulationRunCapability(simulationRunId, query.capabilityId, query.input)
-      const envelope = procedureTagDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId, display })
+      const envelope = procedureTagDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId, view: await readDefaultDisplay(simulationRunId, subject) })
       if (!disposed && drawn?.key === key) drawn = { key, phase: { kind: 'shown', envelope, source: procedureTagDisplaySource(envelope) } }
     } catch (error) {
       if (!disposed && drawn?.key === key) drawn = { key, phase: { kind: 'refused', reason: messageOf(error) } }
@@ -75,12 +73,10 @@
   // Draws the display the tag names once its frame is laid out, and again only if the tag comes to name another.
   $effect(() => {
     if (plan.kind !== 'display' || frameBox === null) return
-    const display = plan.display
-    const key = `${display.viewType}\n${display.state}`
+    const key = plan.subject
     if (untrack(() => drawn?.key) === key) return
-    const size = { width: frameBox.clientWidth, height: frameBox.clientHeight }
     drawn = { key, phase: { kind: 'drawing' } }
-    void draw(key, display, size)
+    void draw(key, key)
   })
 
   let readInFlight = false
@@ -193,7 +189,6 @@
       {:else}
         <div class="procedure-tag-display-message">
           <strong>{plan.message}</strong>
-          {#if plan.kind === 'no-display'}<span>{plan.reason}.</span>{/if}
           {#if declared}<span>The procedure declares: {declared}</span>{/if}
           {#if plan.kind !== 'not-in-model'}{@render readingText()}{/if}
         </div>

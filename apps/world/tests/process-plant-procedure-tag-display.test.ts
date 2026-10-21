@@ -11,7 +11,6 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { signalMeasuredOn } from '../src/packs/process-plant/signals.ts'
-import { processPlantPackView } from '../src/packs/process-plant/ui-pack.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -39,7 +38,6 @@ const ask = (capabilityId: string, input: unknown): unknown => answerProcessPlan
   recordedSeriesIds: new Set(),
 })
 const binding = (tagId: string) => graph.signalBindingByTagId.get(tagId as never)!
-const tagDisplay = processPlantPackView.procedures.tagDisplay
 
 describe('the component a signal is measured on', () => {
   test('is the component that owns it, whatever equipment the signal declares', () => {
@@ -76,27 +74,5 @@ describe('procedure tags validated against a Plant', () => {
       ['SI-SIG', undefined],
     ])
     expect(row('SI-SIG')).toEqual({ id: 'SI-SIG', status: 'missing', warnings: [] })
-  })
-
-  test('open the equipment a tag is measured on as a detail display drawn for the view', () => {
-    const display = tagDisplay(system.plant.id, row('PT-455'))!
-    expect(display.viewType).toBe('process-plant.display')
-    expect(display.title).toBe('PT-455: Pressurizer pressure')
-    expect(JSON.parse(display.state)).toEqual({ detail: { plantId: system.plant.id, components: ['pressurizer'] } })
-    const query = display.drawQuery({ width: 1098, height: 690 })
-    expect(query).toEqual({ capabilityId: 'world.process-plant.display.view', input: { plantId: system.plant.id, state: display.state, size: { width: 1098, height: 690 } } })
-    expect(ask(query.capabilityId, query.input)).toMatchObject({ kind: 'detail', plantId: system.plant.id, display: { title: 'Pressurizer' } })
-    const core = tagDisplay(system.plant.id, row('NIS-PR-AVG'))!.drawQuery({ width: 1098, height: 690 })
-    expect(ask(core.capabilityId, core.input)).toMatchObject({ kind: 'detail', display: { title: 'Reactor Core' } })
-  })
-
-  test('refuse, with the model\'s reason, equipment that cannot be drawn', () => {
-    const breaker = tagDisplay(system.plant.id, row('TRIP-BKR-A'))!.drawQuery({ width: 1098, height: 690 })
-    expect(() => ask(breaker.capabilityId, breaker.input))
-      .toThrow('reactorTripBreakerA is not connected to any equipment in the Plant model, so it cannot be drawn')
-  })
-
-  test('name no display for a tag measured on no equipment', () => {
-    expect(tagDisplay(system.plant.id, row('SI-SIG'))).toBeNull()
   })
 })

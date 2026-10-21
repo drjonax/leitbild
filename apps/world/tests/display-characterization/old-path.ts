@@ -32,7 +32,6 @@ import { composedPanelPens, type CompiledComposedDisplay } from '../../src/packs
 import { activeThreshold } from '../../src/packs/process-plant/displays/trend-reading.ts'
 import { chipName } from '../../src/packs/process-plant/displays/display-text.ts'
 import { sampledGates } from '../../src/ui/embed/composed-display/panel-presenters.ts'
-import { processPlantPackView } from '../../src/packs/process-plant/ui-pack.ts'
 import type { PackProcedureTagValidation } from '../../src/core/packs/protocol.ts'
 
 export const PLANT_ID = 'plant:characterization'
@@ -177,10 +176,12 @@ const chips = (ask: ReturnType<typeof askOf>): Record<string, string | null> => 
 const tagDisplays = (ask: ReturnType<typeof askOf>): Record<string, unknown> => {
   const validated = ask<{ readonly tags: ReadonlyArray<PackProcedureTagValidation> }>('world.process-plant.procedure-tags.validate', { plantId: PLANT_ID, tags: PROCEDURE_TAGS.map(id => ({ id })) })
   return Object.fromEntries(validated.tags.map(tag => {
-    const opened = processPlantPackView.procedures.tagDisplay(PLANT_ID, tag)
-    if (opened === null) return [tag.id, { status: tag.status, opens: null }]
-    const query = opened.drawQuery(VIEW_SIZE)
-    const facts = { status: tag.status, title: opened.title, state: JSON.parse(opened.state) }
+    // Today's tag display, as the Plant named it until the swap: the detail around the equipment the tag is measured on.
+    if (tag.measuredOn === undefined) return [tag.id, { status: tag.status, opens: null }]
+    const label = typeof tag.signal?.label === 'string' ? tag.signal.label : null
+    const state = JSON.stringify({ detail: { plantId: PLANT_ID, components: [tag.measuredOn] } })
+    const query = { capabilityId: 'world.process-plant.display.view', input: { plantId: PLANT_ID, state, size: VIEW_SIZE } }
+    const facts = { status: tag.status, title: label === null ? tag.id : `${tag.id}: ${label}`, state: JSON.parse(state) }
     try {
       const view = ask<{ readonly kind: string; readonly display: { readonly panels: ReadonlyArray<{ readonly kind: string }> } }>(query.capabilityId, query.input)
       return [tag.id, { ...facts, kind: view.kind, panels: view.display.panels.map(panel => panel.kind) }]
