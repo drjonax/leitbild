@@ -6,8 +6,11 @@
 // renderer adds no number, limit or colour. Every section keeps to the rows
 // the composer allotted it (VIGNETTE_ROW_PX each), so a frame of fixed height
 // shows it whole.
+import type { AlertState, Priority } from '../../../core/model/alerts.ts'
 import type { Observable, Observation } from '../../../core/observation/model.ts'
+import type { TopologyGraph, TopologyNode } from '../../../core/observation/topology.ts'
 import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
+import type { TopologyLayout } from '../../../features/displays/topology/layout.ts'
 
 /** A declared element an observable is measured on. */
 export interface VignetteElement {
@@ -35,6 +38,39 @@ export type VignetteSection =
   /** Pens drawn together share a strip; at most four strips. */
   | { readonly kind: 'trend'; readonly rows: number; readonly horizonMs: number; readonly strips: ReadonlyArray<ReadonlyArray<VignetteValue>> }
   | { readonly kind: 'alerts'; readonly rows: number; readonly objectIds: ReadonlyArray<string> | 'run' }
+  /** Objects as a table: the core slots present, rows in the sample (sorted and capped by the composer). */
+  | { readonly kind: 'entity'; readonly rows: number; readonly columns: ReadonlyArray<EntityColumn>; readonly near?: { readonly label: string } }
+  /** One object's core slots and telemetry, each on a row. */
+  | { readonly kind: 'slots'; readonly rows: number; readonly objectId: string; readonly slots: ReadonlyArray<{ readonly key: string; readonly label: string; readonly unit: string }> }
+  | { readonly kind: 'map'; readonly rows: number }
+  | {
+    readonly kind: 'topology'; readonly rows: number; readonly family: TopologyGraph['family']
+    /** In grid units (one grid unit is one row); stops are nodes `s<n>` with edges `s<n>.edge`. */
+    readonly layout: TopologyLayout
+    readonly nodes: ReadonlyArray<{ readonly id: string; readonly class: TopologyNode['class'] | 'stop'; readonly label: string; readonly shortLabel?: string; readonly bindings: ReadonlyArray<TopologyBinding> }>
+    readonly edges: ReadonlyArray<{ readonly id: string; readonly mediumKind: TopologyGraph['media'][number]['kind']; readonly bindings: ReadonlyArray<TopologyBinding> }>
+    readonly groups: ReadonlyArray<{ readonly id: string; readonly label: string }>
+    readonly attribution?: string
+  }
+
+/** A binding with its observable's declared unit, so a drawing writes the reading as the card does. */
+export type TopologyBinding = TopologyNode['bindings'][number] & { readonly unit: string }
+
+export type EntityColumn = 'status' | 'urgency' | 'alert' | 'eta' | 'distance' | 'age'
+
+type Stamp = { readonly at: string; readonly clock: 'simulation' | 'wall' }
+
+export interface EntityRow {
+  readonly objectId: string
+  readonly label: string
+  readonly closed?: true
+  readonly status?: { readonly word: string; readonly since?: Stamp }
+  readonly urgency?: string
+  readonly alert?: { readonly priority: Priority | null; readonly severity: AlertState['severity']; readonly message: string }
+  readonly etaS?: number
+  readonly distanceM?: number
+  readonly ageS?: number
+}
 
 export interface VignetteView {
   readonly title: string
@@ -57,4 +93,13 @@ export interface VignetteSample {
   readonly alerts: ReadonlyArray<AlertRow>
   /** Only when history was asked for: each trend pen's recorded points from then until the sample, by series id. */
   readonly series?: Readonly<Record<string, ReadonlyArray<SeriesPoint>>>
+  /** By section index: an entity section's rows and how many more there are. */
+  readonly entities?: Readonly<Record<number, { readonly rows: ReadonlyArray<EntityRow>; readonly more: number }>>
+  /** By object id: a slots section's values. */
+  readonly slots?: Readonly<Record<string, Readonly<Record<string, { readonly value: number | string | boolean | null; readonly since?: Stamp }>>>>
+  /** By section index: what a map section frames ([west, south], [east, north]; null where nothing has a position). */
+  readonly maps?: Readonly<Record<number, {
+    readonly positioned: number; readonly missing: number; readonly within?: string; readonly around?: string
+    readonly bounds: readonly [readonly [number, number], readonly [number, number]] | null
+  }>>
 }
