@@ -16,7 +16,6 @@ import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
-  COMPOSED_DISPLAY_MAX_HEIGHT_PX,
   COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX,
   composedDisplayLayout,
   composedDisplayMaxHeight,
