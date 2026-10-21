@@ -115,7 +115,7 @@ describe('the strip', () => {
       object('a:4', [alert('caution', 'caution')]),
     ], 3)
     const [mixed, quiet] = strip.groups
-    expect(mixed).toMatchObject({ worst: 'caution', counts: { active: 2, unack: 1, standing: 1 }, quiet: false })
+    expect(mixed).toMatchObject({ worst: 'caution', counts: { active: 2, unack: 1, standing: 1, advisory: 0 }, quiet: false })
     expect(mixed!.rows[0]!.alert.id).toBe('caution')
     expect(quiet).toMatchObject({ worst: 'alarm', counts: { active: 1, unack: 0, standing: 1 }, quiet: true, collapsed: true })
     expect(strip.groups.map(group => group.collapsed)).toEqual([false, true, false, true])
@@ -123,6 +123,22 @@ describe('the strip', () => {
     // A summary of standing groups only still says what stands.
     expect(stripOf([object('a:1', [alert('x', 'alarm')]), object('a:2', [alert('q', 'warning', { standing: true })]), object('a:3', [alert('r', 'caution', { standing: true })])], 2).collapsed)
       .toEqual({ groups: 2, worst: 'warning', unack: 0 })
+  })
+
+  test('R43: an advisory never counts as unacknowledged, is counted apart, never takes the row and never stops a caution-only collapse', () => {
+    // Weather advisories do not latch: acknowledged false, gone when their condition clears.
+    const strip = stripOf([
+      object('a:1', [alert('alarm', 'alarm')]),
+      object('weather:probe', [alert('storm', 'alarm', { advisory: true, raisedAt: at(9) }), alert('wind', 'caution')]),
+      object('weather:zone', [alert('fog', 'warning', { advisory: true })]),
+      object('a:4', [alert('w', 'warning')]),
+    ], 3)
+    const [, probe, zone] = strip.groups
+    expect(probe).toMatchObject({ worst: 'caution', counts: { active: 2, unack: 1, standing: 0, advisory: 1 }, quiet: false, collapsed: true })
+    expect(probe!.rows.map(row => row.alert.id)).toEqual(['wind', 'storm'])
+    expect(zone).toMatchObject({ worst: 'warning', counts: { unack: 0, advisory: 1 }, quiet: true, collapsed: true })
+    expect(strip.groups.map(group => group.collapsed)).toEqual([false, true, true, false])
+    expect(strip.collapsed).toEqual({ groups: 2, worst: 'caution', unack: 1 })
   })
 
   test('priority none asks for no attention and is not in the strip', () => {
