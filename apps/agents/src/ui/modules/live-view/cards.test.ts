@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createTurnCardsReader, frozenCard, itemOf } from './cards.ts'
+import { createTurnCardsReader, frozenCard, frozenCardText, itemOf } from './cards.ts'
 
 const at = { at: '2026-01-01T10:16:00.000Z', clock: 'simulation' as const }
 const card = (count: number, more = 0) => ({
@@ -14,6 +14,11 @@ describe('answer cards in the chat', () => {
     expect(shown.lines.map(line => line.text)).toEqual(Array.from({ length: 6 }, (_, index) => `k${index + 1} · Line ${index + 1} · loading · ${90 + index}.0 %`))
     expect(shown.more).toBe(5)
     expect(frozenCard({ ...card(1), at: { at: at.at, clock: 'wall' } }).caption).toBe('FROZEN · 10:16:00')
+  })
+
+  test('assistive technology reads the frozen card apart from the chip\'s action: title, time, lines and how many more', () => {
+    expect(frozenCardText('Loading', frozenCard(card(2, 1)))).toBe('Loading. FROZEN · sim 10:16:00. k1 · Line 1 · loading · 90.0 %. k2 · Line 2 · loading · 91.0 %. +1 more')
+    expect(frozenCardText('Loading', frozenCard(card(1)))).toBe('Loading. FROZEN · sim 10:16:00. k1 · Line 1 · loading · 90.0 %')
   })
 
   test('one read per answer turn, validated; a failed or broken read is kept as a refusal that says why', async () => {

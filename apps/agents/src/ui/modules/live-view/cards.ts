@@ -37,6 +37,10 @@ export const frozenCard = (card: DisplayCard) => ({
   more: Math.max(0, card.items.length - FROZEN_LINES) + card.more,
 })
 
+/** A frozen card as assistive technology reads it, apart from the chip's action: title, time, lines, how many more. */
+export const frozenCardText = (title: string, frozen: ReturnType<typeof frozenCard>): string =>
+  [title, frozen.caption, ...frozen.lines.map(line => line.text), ...(frozen.more > 0 ? [`+${frozen.more} more`] : [])].join('. ')
+
 /** The line a key names on the turn's cards, if any. */
 export const itemOf = (cards: TurnCardList, key: string): DisplayCardItem | undefined => {
   for (const { card } of cards) {
