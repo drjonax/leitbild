@@ -578,9 +578,6 @@
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
   <div class="viewport" bind:clientWidth={columnWidth} style={`height:${Math.ceil(mimic.height * scale)}px`}>
   <div class="drawing" style={`width:${mimic.width}px;height:${mimic.height}px;transform:scale(${scale})`} bind:this={drawing}>
-    {#each mimic.zones as zone (zone.lane)}
-      <div class="zone" style={`left:${zone.x}px;top:${zone.y}px;width:${zone.width}px;height:${zone.height}px`} title={zone.label}></div>
-    {/each}
     <canvas class="pipes" class:dimmed={highlight !== null} bind:this={canvas}></canvas>
     {#if openBridge !== null}
       {@const ob = openBridge}
@@ -778,7 +775,6 @@
   .mimic-panel { display: flex; flex-direction: column; gap: 2px; }
   .viewport { overflow-x: auto; overflow-y: hidden; }
   .drawing { position: relative; transform-origin: 0 0; }
-  .zone { position: absolute; box-sizing: border-box; border: 1px solid var(--border-divider-color, var(--element-neutral-color)); border-radius: 4px; }
   .pipes { position: absolute; left: 0; top: 0; }
   /* OpenBridge positions a point device at its symbol centre; its stack must not wrap. */
   .symbols { position: absolute; inset: 0; white-space: nowrap; --obc-can-hover: 0; }

@@ -111,6 +111,10 @@ describe('plant observation declarations (P2)', () => {
       ['State · MSIV A', 'mainSteamIsolationValveA', 'on=OPEN off=SHUT between=part open'],
       ['State · PORV', 'pressurizer', 'on=OPEN off=SHUT between=part open'],
     ])
+    // Q8: what runs or conducts marks its on state, the one a running or conducting binding reads as on; a valve's position marks none.
+    const active = (path: string) => observable(path).states!.filter(state => state.active === true).map(state => state.value)
+    expect([active('rcpA.state'), active('offsiteBreakerA.state'), active('dieselGeneratorA.state'), active('mainSteamIsolationValveA.state'), active('pressurizer.reliefValve.state')]).toEqual([['on'], ['on'], ['on'], [], []])
+    expect(states.filter(entry => entry.states!.some(state => state.active === true)).length).toBe(states.filter(entry => !entry.states!.some(state => state.value === 'between')).length)
   })
 
   test('D1: each critical safety function declares its status as an enum, the unit\'s, named as crews call it', () => {

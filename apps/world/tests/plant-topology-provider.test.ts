@@ -48,9 +48,12 @@ describe('plant topology provider (P5)', () => {
     // An operated item whose own signal is not published says what it does through its state observable: a breaker's contacts, a pump running.
     expect([bindings('offsiteBreakerA'), bindings('condensatePumpA')]).toEqual([['conducting offsiteBreakerA.state'], ['running condensatePumpA.state']])
     expect(served.edges.find(edge => edge.id === 'rcs-hot-leg-a')?.bindings).toEqual([{ role: 'flow', ref: `${objectId}#rcs-hot-leg-a.flowKgPerS` }])
-    const declared = new Set(plantDeclaration(objectId, plant, null).observables.map(observable => observable.ref))
+    const declared = new Map(plantDeclaration(objectId, plant, null).observables.map(observable => [observable.ref, observable]))
     const refs = [...served.nodes, ...served.edges].flatMap(item => item.bindings.map(binding => binding.ref))
     expect(refs.filter(ref => !declared.has(ref))).toEqual([])
+    // Q8: a running or conducting binding reads a boolean (true is on) or a state reading that marks its on state.
+    const switching = served.nodes.flatMap(entry => entry.bindings.filter(binding => binding.role === 'running' || binding.role === 'conducting')).map(binding => declared.get(binding.ref)!)
+    expect(switching.filter(observable => observable.valueType !== 'boolean' && !observable.states?.some(state => state.active === true)).map(observable => observable.ref)).toEqual([])
     expect(new Set(served.nodes.flatMap(entry => entry.bindings.map(binding => binding.role)))).toEqual(new Set(['level', 'running', 'conducting', 'flow', 'value']))
   })
 

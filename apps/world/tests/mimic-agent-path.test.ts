@@ -51,7 +51,12 @@ describe('one loop drawn alone', () => {
   test('answers to the symbol limit only: a steam generator with everything it feeds and is fed by draws in chat', () => {
     for (const subject of ['sgA', 'sgD']) {
       const mimic = drawn({ around: [subject], reach: 1 })
-      expect(mimic.zones.map(zone => zone.lane)).toEqual([subject.slice(-1)])
+      const scope = resolveMimicIntent(plant, { around: [subject], reach: 1 })
+      if (!scope.ok) throw new Error(`around ${subject} has a scope`)
+      const planned = planMimicDiagram(plant, scope.scoped, chatMimicProfile)
+      if (!planned.ok) throw new Error(`around ${subject} is planned`)
+      // Its loop is the drawing's one lane.
+      expect([...new Set(planned.graph.nodes.flatMap(node => node.partition === undefined ? [] : [node.partition.key]))]).toEqual([subject.slice(-1)])
       expect(mimic.items.filter(item => item.presentation.element !== 'bar').length).toBeGreaterThan(chatMimicProfile.layout.limits.symbolsPerPartition)
     }
   })

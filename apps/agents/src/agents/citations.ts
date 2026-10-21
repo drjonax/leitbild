@@ -63,12 +63,19 @@ const numbersIn = (answer: string, language: Language): ReadonlyArray<Found> => 
 const matches = (found: Found, numbers: ReadonlyArray<CardNumber>): boolean => numbers.some(number =>
   found.decimals <= number.decimals && Math.abs(found.value - number.value) <= 0.5 * 10 ** -found.decimals + 1e-9)
 
-// A card label's name: the number with the word after it, or in parentheses, as a label writes it ("420 kV", "(1)").
+// A card label's name: the number with the word after it, or in parentheses, as a label writes it ("420 kV", "(1)");
+// or the whole token the word before it forms with it, as joined there ("A-21", "Ambulance 21"). The word alone in a
+// label is never enough: "Pump A 75 %" against "Pump A" reads 75 as a value.
 const labelled = (answer: string, labels: ReadonlyArray<string>, found: Found): boolean => {
   const after = /^\s*([\p{L}\d]+)/u.exec(answer.slice(found.index + found.text.length))?.[1]!.toLowerCase() ?? ''
+  const before = /(?<![\p{L}\d])[\p{L}\d]+[ -]$/u.exec(answer.slice(Math.max(0, found.index - 40), found.index))?.[0].toLowerCase()
+  const token = before === undefined ? null : new RegExp(`(?<![\\p{L}\\d])${escaped(`${before}${found.text.toLowerCase()}`)}(?![\\p{L}\\d]|[.,]\\d)`, 'u')
   const parenthesised = answer[found.index - 1] === '(' && answer[found.index + found.text.length] === ')'
-  return labels.some(label => (after !== '' && label.includes(`${found.text.toLowerCase()} ${after}`)) || (parenthesised && label.includes(`(${found.text})`)))
+  return labels.some(label => (after !== '' && label.includes(`${found.text.toLowerCase()} ${after}`)) || (token !== null && token.test(label))
+    || (parenthesised && label.includes(`(${found.text})`)))
 }
+// The characters a unicode pattern must escape; a hyphen outside a class is literal there.
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
 
 /** A cited number that holds by none of the rules, with the keys it answers to and where it stands. */
 export interface CitationFlag {

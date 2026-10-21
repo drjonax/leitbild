@@ -64,6 +64,23 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(flagged('Sylling–Tegneby circuit 1 is at 112.6 % ⟦k2⟧.', line)).toEqual(['1'])
   })
 
+  test('a number is a name when the whole token it forms with the word before it occurs in a card label', () => {
+    const speed = (label: string): ReadonlyArray<CitedItem> => [{ key: 'k3', label, reading: '0.0 m/s', numbers: [{ value: 0, decimals: 1 }] }]
+    // (1) "A-21" as the label writes it names 21; the speed its line contradicts is still flagged.
+    expect(flagged('Unit A-21 runs at 5.0 m/s ⟦k3⟧.', speed('Unit A-21 · Unit A-21 speed'))).toEqual(['5.0'])
+    expect(flagged('Unit A-21 runs at 0.0 m/s ⟦k3⟧.', speed('Unit A-21 · Unit A-21 speed'))).toEqual([])
+    // (2) The word alone in a label is never enough: "Pump A" does not name 75, so 75 against 72 is flagged.
+    const pump: ReadonlyArray<CitedItem> = [{ key: 'k2', label: 'Pump A · speed', reading: '72 %', numbers: [{ value: 72, decimals: 0 }] }]
+    expect(flagged('Pump A 75 % ⟦k2⟧.', pump)).toEqual(['75'])
+    // A token matches whole: "A-21" is not named by a label "A-210" or "ZA-21".
+    expect(flagged('Unit A-21 runs at 0.0 m/s ⟦k3⟧.', speed('Unit A-210 · speed'))).toEqual(['21'])
+    expect(flagged('Unit A-21 runs at 0.0 m/s ⟦k3⟧.', speed('Unit ZA-21 · speed'))).toEqual(['21'])
+    // (3) "Ambulance 21" names 21 through its label.
+    const distance: ReadonlyArray<CitedItem> = [{ key: 'k5', label: 'Ambulance 21 · Distance', reading: '4.2 km', numbers: [{ value: 4.2, decimals: 1 }] }]
+    expect(flagged('Ambulance 21 is 4.2 km away ⟦k5⟧.', distance)).toEqual([])
+    expect(flagged('Ambulance 21 is 6.0 km away ⟦k5⟧.', distance)).toEqual(['6.0'])
+  })
+
   test('every answer is read in English and Norwegian: only a number both readings flag is a contradiction', () => {
     const reserve: ReadonlyArray<CitedItem> = [{ key: 'k4', label: 'Reserve', reading: '2291 MW', numbers: [{ value: 2291, decimals: 0 }] }]
     expect(flagged('A reserve margin of 2,291 MW ⟦k4⟧.', reserve)).toEqual([])
