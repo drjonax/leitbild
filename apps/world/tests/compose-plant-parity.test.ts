@@ -101,7 +101,7 @@ describe('P9: the plant default carries what the Unit Overview carries', () => {
     expect(drawing?.kind === 'topology' && drawing.family).toBe('flow')
     expect(drawing?.kind === 'topology' && drawing.nodes.filter(node => node.class !== 'stop').map(node => node.id).sort()).toEqual([...overview.nodes].sort())
     // Today's overview ceiling: twelve crossings across the loops; no box over another.
-    expect(drawing?.kind === 'topology' && [drawing.layout.width, drawing.layout.height]).toEqual([62, 36])
+    expect(drawing?.kind === 'topology' && [drawing.layout.width, drawing.layout.height]).toEqual([58, 36])
     expect(drawing?.kind === 'topology' && drawing.layout.crossings).toBe(7)
     expect(drawing?.kind === 'topology' && overlaps(drawing.layout)).toEqual([])
     expect(sample.observations.some(observation => observation.ref.includes('#csf.'))).toBe(true)
