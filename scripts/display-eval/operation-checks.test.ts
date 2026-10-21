@@ -42,6 +42,18 @@ describe('operation checks', () => {
     expect(operationChecks(throttle, true, answer, onUnit('plant:halden-3'), [], shown, true, [])).toMatchObject({ standing: 0, falseProposal: true, operationCorrect: false })
   })
 
+  test('a World vignette is around the equipment when a ref names it after the object, or its topology draws it', () => {
+    const throttle: OperationExpectation = { plantId: 'plant:halden-2', equipment: 'auxFeedwaterValveA', tags: ['AFW-A-CV'], proposal: 'expected', value: 'between-ends', named: 'AFW valve A' }
+    const answer = 'I proposed throttling AFW valve A to 40 %; it awaits your approval.'
+    const pending = { entries: [{ plantId: 'plant:halden-2', path: 'auxFeedwaterValveA.position', value: 0.4, status: 'pending' }] }
+    const byRef = [{ subjects: ['plant:halden-2'], signals: ['plant:halden-2#auxFeedwaterValveA.effectivePositionFraction'], mimics: [] }]
+    const drawn = [{ subjects: ['plant:halden-2'], signals: [], mimics: [{ drawn: ['auxFeedwaterHeader', 'auxFeedwaterValveA'] }] }]
+    const elsewhere = [{ subjects: ['plant:halden-2'], signals: ['plant:halden-2#sgA.levelPercent'], mimics: [{ drawn: ['sgA'] }] }]
+    expect(operationChecks(throttle, true, answer, pending, [], byRef, true, []).displayAround).toBe(true)
+    expect(operationChecks(throttle, true, answer, pending, [], drawn, true, []).displayAround).toBe(true)
+    expect(operationChecks(throttle, true, answer, pending, [], elsewhere, true, []).displayAround).toBe(false)
+  })
+
   test('a claim of an execution is found clause by clause, not in a proposal or a refusal', () => {
     expect(executionClaimsIn('I have shut MSIV A.', /MSIV A/)).toHaveLength(1)
     expect(executionClaimsIn('I proposed shutting MSIV A; it awaits your approval.', /MSIV A/)).toEqual([])

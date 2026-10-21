@@ -66,13 +66,18 @@ export const displayEvidenceOf = (record: ComposeRecord): DisplayEvidence => {
   return { agentNames, agentEquipment, shown, added, drawn, panels: panels.map(panel => String(panel.kind)), shownValues }
 }
 
-/** The vignette an accepted world.simulation-run.display.compose call produced: what its state reads and its card shows. */
-export const vignetteEvidenceOf = (record: ComposeRecord): DisplayEvidence => {
+/** The vignette an accepted world.simulation-run.display.compose call produced: what its state reads and its card shows,
+ * and, when its compiled view is given (POST displays/view), the elements its topology draws and the refs bound to
+ * them: a drawn element carries a key measured on it, as a mimic did. */
+export const vignetteEvidenceOf = (record: ComposeRecord, view?: { readonly sections?: ReadonlyArray<any> } | null): DisplayEvidence => {
   const data = record.result?.data ?? {}
   const state = typeof data.view?.state === 'string' ? JSON.parse(data.view.state) : { views: [] }
   const views = (state.views ?? []) as ReadonlyArray<Record<string, any>>
   const items = (data.card?.items ?? []) as ReadonlyArray<Record<string, any>>
-  const refs = new Set<string>([...views.flatMap(view => (view.refs ?? []) as ReadonlyArray<string>), ...items.flatMap(item => typeof item.subject?.ref === 'string' ? [item.subject.ref as string] : [])])
+  const topologies = (view?.sections ?? []).filter(section => section?.kind === 'topology')
+  const bound = topologies.flatMap(section => [...(section.nodes ?? []), ...(section.edges ?? [])].flatMap((entry: any) => (entry.bindings ?? []).flatMap((binding: any) => typeof binding.ref === 'string' ? [binding.ref as string] : [])))
+  const drawn = new Set<string>(topologies.flatMap(section => (section.nodes ?? []).flatMap((node: any) => typeof node.element === 'string' ? [node.element as string] : [])))
+  const refs = new Set<string>([...views.flatMap(view => (view.refs ?? []) as ReadonlyArray<string>), ...items.flatMap(item => typeof item.subject?.ref === 'string' ? [item.subject.ref as string] : []), ...bound])
   const objects = new Set<string>([
     ...views.flatMap(view => [...(Array.isArray(view.objectIds) ? view.objectIds : []), ...(typeof view.objectId === 'string' ? [view.objectId] : []), ...(typeof view.around === 'string' ? [view.around] : [])] as ReadonlyArray<string>),
     ...items.flatMap(item => typeof item.subject?.objectId === 'string' ? [item.subject.objectId as string] : []),
@@ -92,7 +97,9 @@ export const vignetteEvidenceOf = (record: ComposeRecord): DisplayEvidence => {
     const ref = item.subject?.ref
     if (written.length > 0 && typeof ref === 'string') shownValues.set(ref.slice(ref.indexOf('#') + 1), written)
   }
-  return { agentNames, agentEquipment: new Set(), shown, added, drawn: new Set(), panels: views.map(view => String(view.kind)), shownValues, refs, objects }
+  const agentEquipment = new Set<string>()
+  for (const view of record.input?.views ?? []) if (view?.kind === 'topology') for (const field of ['from', 'to', 'around']) for (const name of view?.[field] ?? []) if (typeof name === 'string') agentEquipment.add(name)
+  return { agentNames, agentEquipment, shown, added, drawn, panels: views.map(view => String(view.kind)), shownValues, refs, objects }
 }
 
 export type HitSource = 'agent' | 'world' | 'mimic' | 'answer'

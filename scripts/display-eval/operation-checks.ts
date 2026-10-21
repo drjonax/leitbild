@@ -104,7 +104,8 @@ export const operationChecks = <Attempt,>(
   const text = prose(content)
   const saysProposed = SAYS_PROPOSED.test(text) && SAYS_AWAITING.test(text)
   const mentions = [expectation.equipment, ...expectation.tags]
-  const displayAround = displayed && accepted.some(outcome => mentions.some(name => JSON.stringify([outcome.subjects, outcome.signals, outcome.mimics]).includes(`"${name}`)))
+  // A name as a display carries it: its own string, or after an object's '#' in a ref ("plant:halden-2#auxFeedwaterValveA.…").
+  const displayAround = displayed && accepted.some(outcome => mentions.some(name => { const shown = JSON.stringify([outcome.subjects, outcome.signals, outcome.mimics]); return shown.includes(`"${name}`) || shown.includes(`#${name}`) }))
   // What the control's options list as consequences: the trips they set going, and each consequence line's protection
   // that may actuate and the flow it stops as the line writes it ("378 kg/s"); whether the answer cites any (or a trip at all).
   const lines = controls.flatMap(item => item.offered.flatMap(control => [

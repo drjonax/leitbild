@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { addedEvidenceUse, displayEvidenceOf, keyNames, scoreKey } from './decisive.ts'
+import { addedEvidenceUse, displayEvidenceOf, keyNames, scoreKey, vignetteEvidenceOf } from './decisive.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 import { KEY_STATUS, type EvidenceKey } from './scenarios.ts'
 
@@ -50,6 +50,23 @@ describe('decisive evidence: semantic and mimic-aware', () => {
     expect(keyNames(key('SG-A-LVL-NR, SG-C-LVL-NR or SG-D-LVL-NR as counter-evidence'), catalog)).toEqual(['SG-A-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'])
     expect(keyNames(key('P-14 at 82 % NR named as the limit ahead'), catalog)).toEqual([])
     expect(scoreKey(key('leak', ['SG-A-TUBE-LEAK']), display, '', catalog)).toMatchObject({ hit: false, unknown: ['SG-A-TUBE-LEAK'] })
+  })
+
+  test('a World vignette carries a key by its state refs, its topology bindings, or an element its topology draws', () => {
+    const vignette = {
+      input: { subjects: ['plant:halden-2'], views: [{ kind: 'topology', around: ['feedwaterControlValveB'] }] },
+      result: { success: true, viewRef: 'call_1_0/v', data: {
+        view: { state: JSON.stringify({ views: [{ kind: 'values', refs: ['plant:halden-2#sgB.levelPercent'] }, { kind: 'topology', objectId: 'plant:halden-2', request: { around: ['feedwaterControlValveB'] } }] }) },
+        card: { items: [] },
+      } },
+    }
+    const view = { sections: [{ kind: 'topology', nodes: [{ id: 'n1', element: 'mainFeedwaterPumpA', bindings: [{ ref: 'plant:halden-2#feedwaterControlValveB.effectivePositionFraction' }] }], edges: [] }] }
+    const shown = vignetteEvidenceOf(vignette, view)
+    expect(scoreKey(key('SG B level', ['SG-B-LVL-NR']), shown, '', catalog)).toMatchObject({ hit: true, by: 'world' })
+    expect(scoreKey(key('feed valve B', ['MFW-B-CV-POS']), shown, '', catalog)).toMatchObject({ hit: true })
+    expect(scoreKey(key('MFW pump A running', ['mainFeedwaterPumpA.runningState']), shown, '', catalog)).toMatchObject({ hit: true, by: 'mimic' })
+    // Without the compiled view only the state's refs count.
+    expect(scoreKey(key('feed valve B', ['MFW-B-CV-POS']), vignetteEvidenceOf(vignette), '', catalog).hit).toBe(false)
   })
 
   test('claim and absence keys wait for a judge', () => {
