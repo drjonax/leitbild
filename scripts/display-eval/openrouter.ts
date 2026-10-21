@@ -38,7 +38,7 @@ export const createLedger = (budgetUsd: number) => {
 }
 export type Ledger = ReturnType<typeof createLedger>
 
-export const chat = async (ledger: Ledger, messages: ReadonlyArray<ChatMessage>, tools: ReadonlyArray<ChatTool> = [], maxTokens = 4_000, toolChoice: 'auto' | 'none' = 'auto'): Promise<ChatResult> => {
+export const chat = async (ledger: Ledger, messages: ReadonlyArray<ChatMessage>, tools: ReadonlyArray<ChatTool> = [], maxTokens = 4_000, toolChoice: 'auto' | 'none' = 'auto', seed?: number): Promise<ChatResult> => {
   ledger.check()
   const key = process.env.OPENROUTER_API_KEY?.trim()
   if (!key) throw new Error('OPENROUTER_API_KEY is not set in this process')
@@ -48,6 +48,7 @@ export const chat = async (ledger: Ledger, messages: ReadonlyArray<ChatMessage>,
     body: JSON.stringify({
       model: PINNED.model, messages, max_tokens: maxTokens, reasoning: { effort: PINNED.effort },
       provider: { order: [PINNED.upstream], allow_fallbacks: false },
+      ...(seed === undefined ? {} : { seed }),
       ...(tools.length === 0 ? {} : { tools, tool_choice: toolChoice }),
     }),
     signal: AbortSignal.timeout(180_000),
