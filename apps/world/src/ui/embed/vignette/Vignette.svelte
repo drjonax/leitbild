@@ -97,7 +97,7 @@
             <TrendStrip {pens} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
           {/each}
         {:else if section.kind === 'alerts'}
-          <AlertsSection rows={latest?.alerts ?? []} objectIds={section.objectIds} room={section.rows} {palette} />
+          <AlertsSection rows={latest?.alerts ?? []} objectIds={section.objectIds} room={section.rows} />
         {:else if section.kind === 'entity'}
           <EntityTable {section} rows={latest?.entities[index]?.rows ?? []} more={latest?.entities[index]?.more ?? 0} />
         {:else if section.kind === 'slots'}

@@ -1,17 +1,39 @@
 // A vignette's alerts and its header's worst chip (architecture B), over the
-// shared alert rows (features/displays/alerts/rows.ts) drawn by the strip's
-// AlertList. Worst first; what asks no attention (standing, advisory) last; a
-// row without a priority is shown by its severity word, "priority not
-// declared", and never ranks as a priority (R1).
+// shared alert rows (features/displays/alerts/rows.ts), each drawn with
+// OpenBridge's own alert icon (register #23: the OpenBridge-free twin stays in
+// the main app's strip). Worst first; what asks no attention (standing,
+// advisory) last; a row without a priority is shown by its severity word,
+// "priority not declared", and never ranks as a priority (R1).
 import type { Observation } from '../../../core/observation/model.ts'
-import { priorityRank, worstFirst, type AlertRow } from '../../../features/displays/alerts/rows.ts'
+import { priorityRank, stateWords, worstFirst, type AlertRow } from '../../../features/displays/alerts/rows.ts'
+import { severityStyle } from '../../displays/severity.ts'
 
-/** A line as AlertList draws it (its module type, which a .ts file cannot import from a component). */
 export interface AlertLine {
   readonly row: AlertRow
   readonly heading?: string
   readonly firstOut: boolean
 }
+
+/**
+ * OpenBridge's alert icon for a row (obc-alert-icon): its alert type by the
+ * declared priority (emergency is OpenBridge's critical level), acknowledged
+ * and still active as the record says; a returned alarm is OpenBridge's
+ * rectified icon. Notice has no icon and an undeclared priority none: both
+ * read as their word.
+ */
+export const alertIcon = (row: AlertRow): { readonly type: 'level-critical' | 'alarm' | 'warning' | 'caution'; readonly acknowledged: boolean; readonly active: boolean } | { readonly word: string } => {
+  const type = row.priority === 'emergency' ? 'level-critical' : row.priority === 'alarm' || row.priority === 'warning' || row.priority === 'caution' ? row.priority : null
+  if (type === null) return { word: severityStyle(row.priority, row.alert.severity)?.word ?? 'Notice' }
+  return { type, acknowledged: row.state === 'active-ack', active: row.state !== 'returned-unack' }
+}
+
+/** What a row says after its message: its marks, its state where it is not plain unacknowledged, its time. */
+export const alertDetail = (row: AlertRow): string => [
+  ...(row.alert.standing === true ? ['standing'] : []),
+  ...(row.alert.advisory === true ? ['advisory'] : []),
+  ...(row.state === 'active-unack' ? [] : [stateWords(row)]),
+  row.raised?.clock === 'simulation' ? `${row.raised.at.slice(11, 19)} UTC` : 'time unknown',
+].join(' · ')
 
 /** The rows a section shows within its rows (one is its head), the last saying how many more there are. */
 export const sectionLines = (rows: ReadonlyArray<AlertRow>, objectIds: ReadonlyArray<string> | 'run', room: number): { readonly lines: ReadonlyArray<AlertLine>; readonly more: number } => {

@@ -20,7 +20,7 @@ describe('vignette components', () => {
     const bare = new Set([...loader.matchAll(/^import '@oicl\/openbridge-webcomponents\/dist\/[^']*\/([a-z0-9-]+)\.js'$/gm)].map(match => match[1]!))
     const drawn = new Set(files.flatMap(file => [...readFileSync(join(dir, file), 'utf8').matchAll(/<(ob[ci])-([a-z0-9-]+)/g)].map(match => (match[1] === 'obi' ? `icon-${match[2]}` : match[2]!))))
     expect([...drawn].filter(module => !bare.has(module))).toEqual([])
-    expect([...drawn].sort()).toEqual(['bar-horizontal', 'bus', 'button', 'icon-ai', 'readout-block', 'source', 'status-indicator', 'switch', 'transformer'])
+    expect([...drawn].sort()).toEqual(['alert-icon', 'bar-horizontal', 'bus', 'button', 'icon-ai', 'readout-block', 'source', 'status-indicator', 'switch', 'transformer'])
   })
 
   for (const file of files) {

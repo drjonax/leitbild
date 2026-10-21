@@ -9,6 +9,7 @@ import '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readou
 import '@oicl/openbridge-webcomponents/dist/building-blocks/bar-horizontal/bar-horizontal.js'
 import '@oicl/openbridge-webcomponents/dist/components/status-indicator/status-indicator.js'
 import '@oicl/openbridge-webcomponents/dist/components/button/button.js'
+import '@oicl/openbridge-webcomponents/dist/components/alert-icon/alert-icon.js'
 import '@oicl/openbridge-webcomponents/dist/automation/bus/bus.js'
 import '@oicl/openbridge-webcomponents/dist/automation/switch/switch.js'
 import '@oicl/openbridge-webcomponents/dist/automation/transformer/transformer.js'

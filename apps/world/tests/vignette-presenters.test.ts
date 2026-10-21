@@ -3,7 +3,7 @@ import type { AlertState } from '../src/core/model/alerts.ts'
 import type { ObjectId } from '../src/core/model/ids.ts'
 import type { Observable, Observation } from '../src/core/observation/model.ts'
 import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
-import { sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
+import { alertDetail, alertIcon, sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
@@ -159,6 +159,15 @@ describe('alerts', () => {
     expect(worstChip([], [row('a', 'one', null)])).toEqual({ kind: 'undeclared', severity: 'warning' })
     expect(worstChip([{ priority: 'caution' }], [row('a', 'one', null)])).toEqual({ kind: 'priority', priority: 'caution' })
     expect(worstChip([{ priority: 'notice' }], [])).toBeNull()
+  })
+
+  test('each row takes OpenBridge\'s alert icon by its declared priority and ack state; notice and an undeclared priority read as words', () => {
+    expect(alertIcon(row('a', 'one', 'emergency'))).toEqual({ type: 'level-critical', acknowledged: false, active: true })
+    expect(alertIcon({ ...row('a', 'one', 'warning'), state: 'active-ack' })).toEqual({ type: 'warning', acknowledged: true, active: true })
+    expect(alertIcon({ ...row('a', 'one', 'alarm'), state: 'returned-unack' })).toEqual({ type: 'alarm', acknowledged: false, active: false })
+    expect(alertIcon(row('a', 'one', 'notice'))).toEqual({ word: 'Notice' })
+    expect(alertIcon(row('a', 'one', null))).toEqual({ word: 'Warning · priority not declared' })
+    expect(alertDetail({ ...row('a', 'one', 'caution', { standing: true, acknowledged: true, acknowledgedBy: 'ai' }), state: 'active-ack' })).toBe('standing · acknowledged by Assistant · 10:00:00 UTC')
   })
 
   test('a section shows its objects\' rows worst first within its room, the last line counting the rest', () => {
