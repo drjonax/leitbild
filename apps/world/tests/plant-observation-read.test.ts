@@ -153,6 +153,13 @@ describe('plant observation read (P3)', () => {
     expect(facts.stuck).toMatchObject({ value: 'on', quality: 'good', priority: 'none', why: 'commanded SHUT' })
   })
 
+  test('D3: each rod bank reads the share of its declared travel it stands withdrawn; tripped, every bank is in', () => {
+    const banks = (from: ReadonlyArray<Observation>) => from.filter(observation => /Bank[A-D]StepsWithdrawn\.travel$/.test(path(observation))).map(observation => observation.value)
+    expect(banks(facts.atPower)).toHaveLength(8)
+    expect(banks(facts.atPower).every(value => typeof value === 'number' && value > 0.9 && value <= 1)).toBe(true)
+    expect(banks(facts.tripped)).toEqual(Array(8).fill(0))
+  })
+
   test('P9: the operating mode reads the first declared mode that holds, and changes with the trip', () => {
     const mode = (from: ReadonlyArray<Observation>) => from.find(observation => path(observation) === 'mode')
     expect(mode(facts.atPower)).toMatchObject({ value: 'powerOperation', quality: 'good', priority: 'none' })

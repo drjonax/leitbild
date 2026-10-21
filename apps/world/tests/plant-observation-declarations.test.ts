@@ -28,9 +28,9 @@ const observable = (path: string) => declaration.observables.find(candidate => c
 describe('plant observation declarations (P2)', () => {
   test('T12: every published or recorded signal is declared and parses against core\'s quantity list and unit codes', () => {
     expect(observationDeclarationSchema.parse(declaration)).toEqual(declaration)
-    // 1,102 signals, 45 operated items' states, 6 safety functions and the operating mode.
-    expect(declaration.observables).toHaveLength(1154)
-    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(773)
+    // 1,102 signals, 45 operated items' states, 8 rod banks' travel, 6 safety functions and the operating mode.
+    expect(declaration.observables).toHaveLength(1162)
+    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(781)
     expect(declaration.revision).toBe(`${plant.modelDigest}:1000ms:802`)
   })
 

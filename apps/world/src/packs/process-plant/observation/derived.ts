@@ -63,6 +63,21 @@ export const operatedStateRoles = (plant: CompiledProcessPlant): ReadonlyMap<str
   new Map([...operatedStates(plant)].flatMap(([path, state]) => !state.whole || !switches(state) ? []
     : [[state.element, { role: state.aspect.aspect === 'running' ? 'running' as const : 'conducting' as const, path }] as const]))
 
+/** Each part an item inserts (a rod bank), as the share of its declared travel it stands withdrawn at: what a drawing positions. */
+const insertionParts = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly element: string; readonly source: VariablePath; readonly range: { readonly min: number; readonly max: number }; readonly label: string }> =>
+  new Map(plant.graph.components.flatMap(component => (component.semantics.insertion?.groups.flat() ?? []).map(part => {
+    const path = `${part.path}.travel`
+    if (plant.graph.signalBindingByPath.has(path as VariablePath)) throw new Error(`${path} is a signal of the Plant and the travel of a part it inserts`)
+    return [path, { element: String(component.id), source: part.path, range: part.range, label: `${plant.graph.signalBindingByPath.get(part.path)!.label} travel` }] as const
+  })))
+
+/** The positions a drawing draws an element's parts at, by element: its parts' travel paths. */
+export const insertionPositions = (plant: CompiledProcessPlant): ReadonlyMap<string, ReadonlyArray<string>> => {
+  const byElement = new Map<string, string[]>()
+  for (const [path, part] of insertionParts(plant)) byElement.set(part.element, [...byElement.get(part.element) ?? [], path])
+  return byElement
+}
+
 /** The path a critical safety function's status observable reads at. */
 export const safetyFunctionRef = (id: string): string => `csf.${id}`
 const statuses = ['green', 'yellow', 'orange', 'red', 'unknown', 'not-monitored'] as const
@@ -84,6 +99,9 @@ export const derivedObservables = (objectId: ObjectId, plant: CompiledProcessPla
       states: statuses.map(value => ({ value, label: safetyFunctionStatusWords(value) })), thresholds: [], series: null,
     }
   }),
+  ...[...insertionParts(plant)].map(([path, part]): Observable => ({
+    ref: `${objectId}#${path}`, label: part.label, quantity: 'fraction', unit: '1', valueType: 'number', thresholds: [], series: null, element: part.element,
+  })),
   ...(plant.automation.operatingModes.length === 0 ? [] : [((): Observable => {
     if (plant.automation.operatingModes.some(mode => mode.id === NO_MODE)) throw new Error(`a Plant mode is named ${NO_MODE}, the value that says no declared mode holds`)
     return {
@@ -135,6 +153,12 @@ export const readDerived = (
     const now = endOf(state, read.value, read.unit)
     const why = now === null ? undefined : unfollowed(system, state, now)
     return { value: now, quality: now === null ? 'bad' : 'good', priority: 'none', ...(why === undefined ? {} : { why }) }
+  }
+  const part = insertionParts(system.plant).get(path)
+  if (part !== undefined) {
+    const steps = system.runtime.readVariableSnapshot(part.source).value
+    const value = typeof steps === 'number' && Number.isFinite(steps) ? (steps - part.range.min) / (part.range.max - part.range.min) : null
+    return { value, quality: value === null ? 'bad' : 'good', priority: 'none' }
   }
   if (path === MODE) {
     const mode = processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes: system.plant.automation.operatingModes })

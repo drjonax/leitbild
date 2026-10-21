@@ -7,7 +7,7 @@ import { linkCarrier } from '../graph/index.ts'
 import { plantCarriers, plantLoops, principalCircuits } from '../equipment/circuits.ts'
 import { electricalExternalPortId } from '../electrical-ports.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
-import { operatedStateRoles } from './derived.ts'
+import { insertionPositions, operatedStateRoles } from './derived.ts'
 
 // The Plant as World's `flow` topology (plan v3.1 §2.9, architecture A5):
 // equipment as nodes with the ports its pipes and cables join, each port's
@@ -56,11 +56,6 @@ const aspectRoles = (aspects: ReadonlyArray<CompiledStateAspect>): ReadonlyArray
 
 const nodeBindings = (objectId: ObjectId, graph: CompiledPlantGraph, component: CompiledComponent): Bindings => bound(objectId, graph, [
   ...aspectRoles(component.semantics.aspects),
-  // What it inserts (a core's rods), as the fraction of its travel it reads inserted.
-  ['position', component.semantics.insertion === undefined ? undefined : component.variables.find(variable => {
-    const signal = graph.signalBindingByPath.get(variable.path)
-    return signal?.measurand === 'insertion' && signal.unit === 'fraction' && signal.actuation === undefined
-  })?.path],
   ...component.semantics.keyValues.map(path => ['value', path] as const),
 ])
 
@@ -176,9 +171,13 @@ export const servedPlantTopology = (objectId: ObjectId, plant: CompiledProcessPl
   if (known !== undefined && known.objectId === objectId) return known
   const topology = withDevices(objectId, plant.graph, plantTopology(objectId, plant.graph, plant.modelDigest))
   const roles = operatedStateRoles(plant)
+  const parts = insertionPositions(plant)
   const bound: TopologyGraph = { ...topology, nodes: topology.nodes.map(node => {
     const state = roles.get(node.id)
-    return state === undefined || node.bindings.some(binding => binding.role === state.role) ? node : { ...node, bindings: [...node.bindings, { role: state.role, ref: `${objectId}#${state.path}` }] }
+    // What it inserts (a core's rod banks), each part at the share of its travel it stands withdrawn.
+    const positions = (parts.get(node.id) ?? []).map(path => ({ role: 'position' as const, ref: `${objectId}#${path}` }))
+    const stated = state === undefined || node.bindings.some(binding => binding.role === state.role) ? [] : [{ role: state.role, ref: `${objectId}#${state.path}` }]
+    return stated.length === 0 && positions.length === 0 ? node : { ...node, bindings: [...node.bindings, ...stated, ...positions] }
   }) }
   served.set(plant, bound)
   return bound

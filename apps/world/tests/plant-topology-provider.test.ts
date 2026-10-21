@@ -48,8 +48,9 @@ describe('plant topology provider (P5)', () => {
       valve: ['position mainSteamIsolationValveA.effectivePositionFraction'],
       header: ['flow feedwaterHeader.outletFlowKgPerS'],
     })
-    // A position is a fraction of travel: a valve's opening, the core's rods inserted.
-    expect(bindings('core')).toEqual(['level vessel.collapsedLiquidLevelPercent', 'position core.rodInsertedFraction', 'value core.coreExitTemperatureC'])
+    // A position is a fraction of travel: a valve's opening, each of the core's rod banks withdrawn (D3 ruling 4).
+    expect(bindings('core')).toEqual(['level vessel.collapsedLiquidLevelPercent', 'value core.coreExitTemperatureC',
+      ...['shutdownBankA', 'shutdownBankB', 'shutdownBankC', 'shutdownBankD', 'controlBankA', 'controlBankB', 'controlBankC', 'controlBankD'].map(bank => `position core.${bank}StepsWithdrawn.travel`)])
     const positions = served.nodes.flatMap(entry => entry.bindings.filter(binding => binding.role === 'position').map(binding => declared.get(binding.ref)!))
     expect(positions.length).toBeGreaterThan(20)
     expect(positions.filter(observable => observable.quantity !== 'fraction' || observable.unit !== '1').map(observable => observable.ref)).toEqual([])
