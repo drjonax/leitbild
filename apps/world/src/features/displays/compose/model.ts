@@ -111,13 +111,12 @@ export type VignetteSection =
   | { readonly kind: 'entity'; readonly rows: number; readonly columns: ReadonlyArray<EntityColumn>; readonly near?: { readonly label: string } }
   /**
    * Layout ids: a graph node's or edge's id (a flow edge drawn in segments adds `.n`), a stop `s<n>` and its edge
-   * `s<n>.edge`; every drawn node, stops included, is in `nodes`; `groups` are a network layout's frames (a flow layout draws none).
+   * `s<n>.edge`; every drawn node, stops included, is in `nodes`.
    */
   | {
     readonly kind: 'topology'; readonly rows: number; readonly objectId: string; readonly family: 'flow' | 'network'; readonly layout: TopologyLayout
     readonly nodes: ReadonlyArray<TopologyNodeView>
     readonly edges: ReadonlyArray<{ readonly id: string; readonly mediumKind: TopologyGraph['media'][number]['kind']; readonly bindings: ReadonlyArray<TopologyBinding> }>
-    readonly groups: ReadonlyArray<{ readonly id: string; readonly label: string }>
     readonly attribution?: string
   }
   /** Its counts are the sample's `maps[section]`. */

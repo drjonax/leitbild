@@ -35,7 +35,7 @@ const stationView = (graph: TopologyGraph, hops: number, around = SWITCHYARD): S
 /** About two characters per grid unit, one line of text under a one-unit symbol; a stop names its far ends (test-local; the World renderer measures in P2). */
 const sizing: NetworkSizing = {
   key: 'test', node: node => ({ width: Math.max(2, Math.ceil((node.shortLabel ?? node.label).length / 2)), height: 2 }),
-  stop: stop => ({ width: Math.max(2, Math.ceil(stop.others.length * 6)), height: 1 }), spacing: 1, groupLabel: 1,
+  stop: stop => ({ width: Math.max(2, Math.ceil(stop.others.length * 6)), height: 1 }), spacing: 1,
 }
 
 describe('grid topology for the network family (N3)', () => {
@@ -59,7 +59,7 @@ describe('grid topology for the network family (N3)', () => {
     for (const hops of [1, 2]) {
       const view = stationView(gridTopology(grid), hops, HASLE)
       const layout = await networkLayout(view, sizing)
-      expect(overlaps(layout, group => new Set(view.graph.nodes.filter(node => node.group === group).map(node => node.id)))).toEqual([])
+      expect(overlaps(layout)).toEqual([])
     }
   })
 
@@ -72,8 +72,7 @@ describe('grid topology for the network family (N3)', () => {
       console.log(`T32 Halden ${hops}-hop (${view.nodes.length} nodes in ${stations.size} stations, ${view.edges.length} edges, ${view.stubs.length} stops, ${NETWORK_ENGINE_VERSION}): ${layout.width}×${layout.height} grid, ${layout.crossings} crossings, cold ${report.coldMs.toFixed(1)} ms CPU (first in this test), warm p95 ${report.warmP95Ms.toFixed(1)} ms, median ${report.warmMedianMs.toFixed(1)} ms (quiet ms, ${report.rounds} rounds)`)
       expect(view.roots).toEqual([SWITCHYARD])
       expect(layout.crossings).toBeLessThanOrEqual(2)
-      const members = (group: string) => new Set(view.graph.nodes.filter(node => node.group === group).map(node => node.id))
-      expect(overlaps(layout, members)).toEqual([])
+      expect(overlaps(layout)).toEqual([])
       const endsOf = new Map([...view.graph.edges.map(edge => [edge.id, [edge.from.node, edge.to.node]] as const), ...view.stubs.map((stop, at) => [`s${at}.edge`, [stop.node, `s${at}`]] as const)])
       expect(edgesThroughNodes(layout, id => endsOf.get(id)!)).toEqual([])
       expect(report.warmP95Ms).toBeLessThanOrEqual(30)

@@ -17,8 +17,8 @@ const elkFile = (path: string): string => fileURLToPath(import.meta.resolve(`elk
 export const NETWORK_ENGINE_VERSION = `elkjs ${(JSON.parse(readFileSync(elkFile('package.json'), 'utf8')) as { version: string }).version}`
 
 type Size = { readonly width: number; readonly height: number }
-/** In grid units: a node's and a stop's box with its text (ELK grows it to fit its ports); the room between nodes (layers keep twice it, edges and ports half). `groupLabel` is unused since the layout went flat (Q12) and leaves with TopologyLayout.groups (p2-core). */
-export interface NetworkSizing { readonly key: string; readonly node: (node: TopologyNode) => Size; readonly stop: (stop: ScopedStub) => Size; readonly spacing: number; readonly groupLabel: number }
+/** In grid units: a node's and a stop's box with its text (ELK grows it to fit its ports); the room between nodes (layers keep twice it, edges and ports half). */
+export interface NetworkSizing { readonly key: string; readonly node: (node: TopologyNode) => Size; readonly stop: (stop: ScopedStub) => Size; readonly spacing: number }
 type Box = { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 let engine: InstanceType<typeof ELK> | undefined
 /** ELK's worker script run in this thread: in a scope without `self` (Bun defines it) it exports its in-thread worker. */
@@ -90,5 +90,5 @@ export const networkLayout = async (scoped: ScopedTopology, sizing: NetworkSizin
   const [drawn, { width, height }] = [routed.map((edge, e) => ({ ...edge, gaps: gaps[e]! })), box('root')]
   const hash = createHash('sha256').update(JSON.stringify([NETWORK_ENGINE_VERSION, width, height, placed.map(node => [node.x, node.y, node.width, node.height, Object.values(node.ports)]),
     drawn.map(edge => [edge.points, edge.gaps])])).digest('hex')
-  return { family: 'network', unit: 'grid', width, height, nodes: placed, edges: drawn, groups: [], crossings: crossings.length, hash }
+  return { family: 'network', unit: 'grid', width, height, nodes: placed, edges: drawn, crossings: crossings.length, hash }
 }

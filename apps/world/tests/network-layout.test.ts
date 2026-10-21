@@ -49,11 +49,10 @@ const fixtureScope = (rename: (id: string) => string = id => id): ScopedTopology
   const graph = fixtureGraph(rename)
   return { graph, nodes: graph.nodes.map(node => node.id), edges: graph.edges.map(edge => edge.id), stubs: [], media: ['ac'], roots: [rename(PLANT)], anchors: [[rename(PLANT)]] }
 }
-const membersOf = (graph: TopologyGraph) => (group: string): ReadonlySet<string> => new Set(graph.nodes.filter(node => node.group === group).map(node => node.id))
 /** About two characters per grid unit, one line of text under a one-unit symbol; a stop names its far ends. */
 const sizing: NetworkSizing = {
   key: 'test', node: node => ({ width: Math.max(2, Math.ceil(node.label.length / 2)), height: 2 }),
-  stop: stop => ({ width: Math.max(2, Math.ceil(stop.others.map(other => other.node).join(', ').length / 2)), height: 1 }), spacing: 1, groupLabel: 1,
+  stop: stop => ({ width: Math.max(2, Math.ceil(stop.others.map(other => other.node).join(', ').length / 2)), height: 1 }), spacing: 1,
 }
 
 describe('network layout (ELK layered, grid units)', () => {
@@ -64,7 +63,7 @@ describe('network layout (ELK layered, grid units)', () => {
     const layout = await networkLayout(scoped, sizing)
     console.log(`T32 fixture (${graph.nodes.length} nodes, ${graph.edges.length} edges, ${NETWORK_ENGINE_VERSION}): ${layout.width}×${layout.height} grid, ${layout.crossings} crossings, cold ${report.coldMs.toFixed(1)} ms CPU, warm p95 ${report.warmP95Ms.toFixed(1)} ms, median ${report.warmMedianMs.toFixed(1)} ms (quiet ms, ${report.rounds} rounds)`)
     expect(layout.crossings).toBeLessThanOrEqual(2)
-    expect(overlaps(layout, membersOf(graph))).toEqual([])
+    expect(overlaps(layout)).toEqual([])
     expect(edgesThroughNodes(layout, id => { const edge = graph.edges.find(candidate => candidate.id === id)!; return [edge.from.node, edge.to.node] })).toEqual([])
     expect(report.warmP95Ms).toBeLessThanOrEqual(30)
     // The bar is CPU, measured above; the wall-clock timeout only has to outlast 41 layouts on a loaded machine
@@ -83,7 +82,6 @@ describe('network layout (ELK layered, grid units)', () => {
     }
     // The owner dropped station frames (Q12): labels carry the station name, and the graph's groups lay out no compound.
     expect(graph.groups.length).toBeGreaterThan(0)
-    expect(layout.groups).toEqual([])
     for (const edge of layout.edges) for (const [a, b] of edge.points.slice(1).map((point, i) => [edge.points[i]!, point] as const)) expect(a[0] === b[0] || a[1] === b[1]).toBe(true)
   })
 
@@ -115,7 +113,7 @@ describe('network layout (ELK layered, grid units)', () => {
       const [from, to] = [layout.nodes.find(node => node.id === stop.node)!, layout.nodes.find(node => node.id === `s${at}`)!]
       expect(points[0]![0] >= from.x && points[0]![0] <= from.x + from.width && points.at(-1)![0] >= to.x && points.at(-1)![0] <= to.x + to.width).toBe(true)
     })
-    expect(overlaps(layout, membersOf(scoped.graph))).toEqual([])
+    expect(overlaps(layout)).toEqual([])
   })
 
   test('deterministic, and ids never reach the geometry (spatial constancy)', async () => {

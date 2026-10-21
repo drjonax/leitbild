@@ -32,7 +32,7 @@ const networkSizing = (graph: TopologyGraph): NetworkSizing => ({
   key: 'vignette-network-3',
   node: node => box(node.shortLabel ?? node.label, symbols.has(node.class) ? 3 : 2),
   stop: stop => box(stopLabel(stop.others.map(other => labelOf(graph, other.node))), 1),
-  spacing: 1, groupLabel: 1,
+  spacing: 1,
 })
 
 export type Scoped = { readonly ok: true; readonly scoped: ScopedTopology; readonly reach?: number } | { readonly ok: false; readonly reason: string }
@@ -87,10 +87,6 @@ export const topologySection = (objectId: string, scoped: ScopedTopology, drawin
       ...graph.edges.filter(edge => edges.has(edge.id)).map(edge => ({ id: edge.id, mediumKind: kindOf(edge.medium), bindings: bound(edge.bindings) })),
       ...Object.entries(drawing.stops).map(([id, stop]) => ({ id: `${id}.edge`, mediumKind: kindOf(stop.medium), bindings: [] })),
     ],
-    groups: drawing.layout.groups.flatMap(frame => {
-      const group = graph.groups.find(entry => entry.id === frame.id || entry.lane?.key === frame.id)
-      return group === undefined ? [] : [{ id: frame.id, label: group.label }]
-    }),
     ...(graph.attribution === undefined ? {} : { attribution: graph.attribution }),
   }
 }

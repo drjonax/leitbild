@@ -7,14 +7,10 @@ import type { TopologyLayout } from '../../src/features/displays/topology/layout
 
 interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 const overlap = (a: Box, b: Box): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
-const inside = (inner: Box, outer: Box): boolean => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height
 
-/** Node boxes that overlap another node, or a group frame they are not inside, as `a × b`. */
-export const overlaps = (layout: TopologyLayout, membersOf: (group: string) => ReadonlySet<string>): ReadonlyArray<string> => [
-  ...layout.nodes.flatMap((a, i) => layout.nodes.slice(i + 1).filter(b => overlap(a, b)).map(b => `${a.id} × ${b.id}`)),
-  ...layout.groups.flatMap(group => layout.nodes.filter(node => !membersOf(group.id).has(node.id) && overlap(node, group)).map(node => `${node.id} × ${group.id}`)),
-  ...layout.groups.flatMap((a, i) => layout.groups.slice(i + 1).filter(b => overlap(a, b) && !inside(a, b) && !inside(b, a)).map(b => `${a.id} × ${b.id}`)),
-]
+/** Node boxes that overlap another node, as `a × b`. */
+export const overlaps = (layout: TopologyLayout): ReadonlyArray<string> =>
+  layout.nodes.flatMap((a, i) => layout.nodes.slice(i + 1).filter(b => overlap(a, b)).map(b => `${a.id} × ${b.id}`))
 
 /** Edge segments that pass through the inside of a node box other than the edge's own ends, as `edge × node`. */
 export const edgesThroughNodes = (layout: TopologyLayout, endsOf: (edge: string) => ReadonlyArray<string>): ReadonlyArray<string> => layout.edges.flatMap(edge => {

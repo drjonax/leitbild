@@ -79,8 +79,8 @@ describe('network drawing', () => {
       node('sw-1', 'switch', 18), node('s0', 'stop', 24),
     ]
     const section: Extract<VignetteSection, { kind: 'topology' }> = {
-      kind: 'topology', rows: 4, objectId: 'g', family: 'network', nodes: parts.map(part => part.node), edges: [], groups: [],
-      layout: { family: 'network', unit: 'grid', width: 28, height: 3, crossings: 0, hash: 'h', groups: [], nodes: parts.map(part => part.box),
+      kind: 'topology', rows: 4, objectId: 'g', family: 'network', nodes: parts.map(part => part.node), edges: [],
+      layout: { family: 'network', unit: 'grid', width: 28, height: 3, crossings: 0, hash: 'h', nodes: parts.map(part => part.box),
         edges: [{ id: 'e1', points: [[4, 1], [6, 1]], gaps: [] }, { id: 'e2', points: [[10, 1], [12, 1]], gaps: [] }, { id: 'e3', points: [[16, 1], [24, 1]], gaps: [[20, 1]] }] },
     }
     const reading = (ref: string, value: Observation['value'], priority: Observation['priority'] = 'none'): Observation => ({ ref, at: '2026-01-15T17:00:00.000Z', clock: 'simulation', value, quality: 'good', priority })
@@ -109,7 +109,7 @@ describe('network drawing', () => {
   const sizing: NetworkSizing = {
     key: 'vignette',
     node: node => ({ width: width(node.shortLabel ?? node.label), height: node.class === 'switch' || node.class === 'converter' || node.class === 'source' ? 3 : 2 }),
-    stop: stop => ({ width: width(stop.others.map(other => other.node).join(', ').slice(0, 24)), height: 1 }), spacing: 1, groupLabel: 1,
+    stop: stop => ({ width: width(stop.others.map(other => other.node).join(', ').slice(0, 24)), height: 1 }), spacing: 1,
   }
 
   for (const hops of [1, 2]) {
@@ -125,7 +125,7 @@ describe('network drawing', () => {
           ...scoped.scoped.nodes.map(id => { const node = nodes.get(id)!; return { id, class: node.class, label: node.label, ...(node.shortLabel === undefined ? {} : { shortLabel: node.shortLabel }), bindings: node.bindings.map(binding => ({ ...binding, unit: binding.role === 'flow' ? 'MW' : binding.role === 'loading' ? '%' : '' })) } }),
           ...scoped.scoped.stubs.map((stop, at) => ({ id: `s${at}`, class: 'stop' as const, label: stop.others.map(other => other.node).join(', ').slice(0, 24), bindings: [] })),
         ],
-        edges: [], groups: graph.groups.map(group => ({ id: group.id, label: group.label })), ...(graph.attribution === undefined ? {} : { attribution: graph.attribution }),
+        edges: [], ...(graph.attribution === undefined ? {} : { attribution: graph.attribution }),
       }
       const flowRef = section.nodes.flatMap(node => node.bindings).find(binding => binding.role === 'flow')!.ref
       const observations: Observation[] = [{ ref: flowRef, at: '2026-01-15T17:00:00.000Z', clock: 'simulation', value: 512.4, quality: 'good', priority: 'warning' }]

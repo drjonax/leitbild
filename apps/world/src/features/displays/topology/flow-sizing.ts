@@ -63,6 +63,6 @@ export const flowLayout = (scoped: ScopedTopology, room: { readonly columns: num
     family: 'flow', unit: 'grid', width: Math.ceil(grid(result.width)), height: Math.ceil(grid(result.height)),
     nodes: result.nodes.map(node => ({ id: node.id, ...box(node), ports: Object.fromEntries(Object.entries(node.ports).map(([id, port]) => [id, { x: grid(port.x), y: grid(port.y), face: port.face }])) })),
     edges: result.edges.map(edge => ({ id: edge.id, points: edge.points.map(([x, y]) => [grid(x), grid(y)] as const), gaps: edge.gaps.map(([x, y]) => [grid(x), grid(y)] as const) })),
-    groups: [], crossings: result.crossings, hash: result.hash,
+    crossings: result.crossings, hash: result.hash,
   } }
 }
