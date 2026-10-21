@@ -56,6 +56,26 @@ export const quantityUnits = {
 } as const satisfies Readonly<Record<string, ReadonlyArray<string>>>
 export type Quantity = keyof typeof quantityUnits
 export const quantitySchema = z.enum(Object.keys(quantityUnits) as [Quantity, ...Quantity[]])
+type UnitCode = (typeof quantityUnits)[Quantity][number]
+
+/**
+ * How every display and card writes a number, so a live readout shows exactly
+ * the digits its card cites: decimals by unit code (the table T10 passed
+ * with), else three significant digits; symbols for the codes that have one.
+ */
+export const unitDecimals: Readonly<Partial<Record<UnitCode, number>>> = {
+  MPa: 2, Pa: 0, '%': 1, degC: 1, 'kg/s': 0, MW: 0, kW: 0, Mvar: 0, Hz: 2, kV: 1, V: 0, A: 0, 'm/s': 1, 'mm/h': 1, m: 0, rpm: 0, ppm: 0, 'mSv/h': 3, cps: 0, '1': 2, deg: 0, s: 0,
+}
+export const decimalsFor = (unit: string, value: number): number =>
+  unitDecimals[unit as UnitCode] ?? (value === 0 ? 2 : Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(Math.abs(value))))))
+const unitSymbols: Readonly<Partial<Record<UnitCode, string>>> = { degC: '°C', 'degC/s': '°C/s', deg: '°', m3: 'm³', '1': '' }
+/** A unit code as a reader sees it: degC reads °C; a dimensionless 1 and a state's '' read nothing; any other unit is its own symbol. */
+export const unitSymbol = (unit: string): string => unitSymbols[unit as UnitCode] ?? unit
+/** A number at its decimals, never "-0.0". */
+export const numberText = (value: number, unit: string): string => {
+  const text = value.toFixed(decimalsFor(unit, value))
+  return /^-0(?:\.0+)?$/.test(text) ? text.slice(1) : text
+}
 
 export const thresholdSchema = z.object({
   id: z.string().min(1).max(128),
@@ -86,6 +106,8 @@ export const observableSchema = z.object({
   tag: z.string().min(1).max(64).optional(),
   /** The declared element it is measured on (topology bindings, element classes, alert subjects). */
   element: z.string().min(1).max(200).optional(),
+  /** The Pack's declared lead rank, 1 first; an observation's mode-aware `rank` goes before it. */
+  lead: z.number().int().positive().optional(),
 }).strict().refine(observable => (quantityUnits[observable.quantity] as ReadonlyArray<string>).includes(observable.unit), {
   path: ['unit'], message: 'the unit is not a code listed for this quantity',
 })
@@ -100,6 +122,8 @@ export const observationSchema = stampSchema.extend({
   rank: z.number().int().optional(),
   expected: z.object({ after: z.string().min(1) }).strict().optional(),
   since: stampSchema.optional(),
+  /** The id of the declared threshold of this observable the value is past: the one whose alarm colours it, or would if not expected after. */
+  past: z.string().min(1).max(128).optional(),
   /** Read only, never journalled. */
   timeToAct: z.object({ threshold: z.string().min(1), seconds: z.number().nonnegative() }).strict().optional(),
   why: z.string().max(300).optional(),

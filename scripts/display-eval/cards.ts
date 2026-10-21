@@ -1,20 +1,13 @@
-/** Cards shaped by apps/world/src/core/observation/card.ts, built by the eval
- * harness from P1's real observation reads on a frozen Run (lead ruling R9):
- * each item a key, its declared label, a reading, its unit and every number
- * the reading shows at its typed precision. The production card ships in P2;
- * until then the precision is this harness's table, by unit. */
-import { displayCardSchema } from '../../apps/world/src/core/observation/card.ts'
+/** Cards shaped by the contracts display card, built by the eval harness
+ * from P1's real observation reads on a frozen Run (lead ruling R9): each item
+ * a key, its declared label, a reading, its unit and every number the reading
+ * shows at its typed precision (World's unitDecimals). */
+import { displayCardSchema, type DisplayCard, type DisplayCardItem } from '../../packages/contracts/src/index.ts'
+import { decimalsFor } from '../../apps/world/src/core/observation/model.ts'
 import type { SearchRun } from '../../apps/world/src/features/displays/observation/search.ts'
 
-export type Card = ReturnType<typeof displayCardSchema.parse>
-export type CardItem = Card['items'][number]
-
-/** Decimals a reading shows, by unit; a unit not listed shows three significant digits. */
-const DECIMALS: Readonly<Record<string, number>> = {
-  MPa: 2, kPa: 1, Pa: 0, bar: 2, '%': 1, '°C': 1, degC: 1, K: 1, 'kg/s': 0, 't/h': 0, MW: 0, kW: 0, Mvar: 0, MVA: 0, Hz: 2, mHz: 0,
-  kV: 1, V: 0, A: 0, 'm/s': 1, 'mm/h': 1, m: 0, km: 1, rpm: 0, ppm: 0, 'mSv/h': 3, cps: 0, '1': 2, deg: 0, s: 0, min: 0,
-}
-export const decimalsFor = (unit: string, value: number): number => DECIMALS[unit] ?? (Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2)
+export type Card = DisplayCard
+export type CardItem = DisplayCardItem
 
 const clockOf = (at: string): string => at.slice(11, 19)
 

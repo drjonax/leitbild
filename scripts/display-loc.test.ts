@@ -36,12 +36,13 @@ describe('display LOC counting', () => {
     expect(report.groups.find(group => group.name === 'Host view relay')?.emptyPatterns).toEqual(['apps/leitbild/src/ui/view-relay.ts'])
   })
 
-  test('ceilings fail above the phase limit and the peak checks its ADR split', () => {
-    const report = (total: number, noPredecessorLines = 0): DisplayLocReport => ({ revision: 'r', total, groups: [], noPredecessorLines, files: [] })
+  test('ceilings fail above the phase limit; the peak is one total', () => {
+    const report = (total: number): DisplayLocReport => ({ revision: 'r', total, groups: [], files: [] })
     expect(checkCeiling(report(30_000), 'p0').pass).toBe(true)
     expect(checkCeiling(report(30_001), 'p0').reasons).toEqual(['30001 lines exceed the p0 ceiling of 30000'])
-    expect(checkCeiling(report(37_500, 2_100), 'peak').pass).toBe(false)
-    expect(checkCeiling(report(37_500, 1_600), 'peak').pass).toBe(true)
+    expect(checkCeiling(report(38_000), 'peak').pass).toBe(true)
+    expect(checkCeiling(report(38_001), 'peak').pass).toBe(false)
+    expect(checkCeiling(report(23_000), 'swap').pass).toBe(true)
     expect(checkCeiling(report(22_400), 'end').pass).toBe(false)
   })
 })

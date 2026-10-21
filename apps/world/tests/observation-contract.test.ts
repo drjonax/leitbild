@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { cardItemSchema, displayCardSchema } from '../src/core/observation/card.ts'
 import { defineObservationCapability, observationDeclarationSchema, observationShapes } from '../src/core/observation/capabilities.ts'
-import { observableSchema, observationSchema, quantitySchema, quantityUnits, stampSchema, thresholdSchema } from '../src/core/observation/model.ts'
 import {
-  dashboardSchema, dashboardsFileSchema, displaySpecSchema, sectionSchema, selectorSchema, viewSchema,
-} from '../src/core/observation/spec.ts'
+  decimalsFor, numberText, observableSchema, observationSchema, quantitySchema, quantityUnits, stampSchema, thresholdSchema, unitDecimals, unitSymbol,
+} from '../src/core/observation/model.ts'
+import { displaySpecSchema, selectorSchema, viewSchema } from '../src/core/observation/spec.ts'
 import { topologyGraphSchema } from '../src/core/observation/topology.ts'
 
 const at = { at: '2026-10-20T08:00:00.000Z', clock: 'simulation' } as const
@@ -14,7 +13,6 @@ const observable = {
   series: { seriesId: 's-1', intervalMs: 1000 },
 } as const
 const spec = { title: 'SG A level', question: 'Is SG A level recovering?', subjects: ['unit-2#SG-A-NR-LVL'], views: [{ kind: 'trend', signals: ['unit-2#SG-A-NR-LVL'] }] }
-const section = { id: 's1', by: 'agent', source: { spec }, composedAt: { ...at, mode: 'Mode 1' } }
 
 describe('observation model', () => {
   test('every stamp names its clock and accepts an offset', () => {
@@ -71,19 +69,40 @@ describe('observation model', () => {
     expect(observationSchema.safeParse({ ...observation, severity: 'caution' }).success).toBe(false)
     expect(observationSchema.safeParse({ ...observation, clock: undefined }).success).toBe(false)
   })
-})
 
-describe('vignette and dashboard spec', () => {
-  test('a values view lists a live collection that excludes closed objects unless asked', () => {
-    const view = viewSchema.parse({ kind: 'values', of: { category: 'incident', status: ['open'] }, columns: ['priority', 'age'], count: { by: 'priority' } })
-    expect(view.kind === 'values' && view.of?.closed).toBe(false)
-    expect(selectorSchema.safeParse({ near: 'ambulance-1', within: '5km' }).success).toBe(false)
-    expect(selectorSchema.safeParse({ class: 'line', within: '7km' }).success).toBe(false)
+  test('an observation names the declared threshold it is past; an observable may declare its lead rank', () => {
+    const observation = { ...at, ref: observable.ref, value: 18.2, quality: 'good', priority: 'alarm', past: 'lo-lo' }
+    expect(observationSchema.parse(observation).past).toBe('lo-lo')
+    expect(observationSchema.safeParse({ ...observation, past: '' }).success).toBe(false)
+    expect(observableSchema.parse({ ...observable, lead: 1 }).lead).toBe(1)
+    for (const lead of [0, -1, 1.5]) expect(observableSchema.safeParse({ ...observable, lead }).success).toBe(false)
   })
 
-  test('events default to the last 30 minutes and alerts to related ones', () => {
-    expect(viewSchema.parse({ kind: 'events' })).toEqual({ kind: 'events', since: '30m' })
+  test('a reading\'s decimals come from its unit code; a code not listed shows three significant digits', () => {
+    const codes = new Set<string>(Object.values(quantityUnits).flat())
+    for (const unit of Object.keys(unitDecimals)) expect(codes.has(unit)).toBe(true)
+    expect([decimalsFor('MPa', 15.5), decimalsFor('%', 31.52), decimalsFor('mSv/h', 0.0021), decimalsFor('Hz', 49.95)]).toEqual([2, 1, 3, 2])
+    expect([decimalsFor('pcm', 150), decimalsFor('pcm', 15), decimalsFor('pcm', 1.5), decimalsFor('pu', 0.98), decimalsFor('degC/s', -0.0042), decimalsFor('pcm', 0)]).toEqual([0, 1, 2, 3, 5, 2])
+    expect([numberText(-0.04, '%'), numberText(287.44, 'degC'), numberText(0.98, 'pu'), numberText(3, '1')]).toEqual(['0.0', '287.4', '0.980', '3.00'])
+    expect([unitSymbol('degC'), unitSymbol('m3'), unitSymbol('1'), unitSymbol(''), unitSymbol('MPa')]).toEqual(['°C', 'm³', '', '', 'MPa'])
+  })
+})
+
+describe('vignette spec', () => {
+  test('a values view lists a live collection of one category that excludes closed objects unless asked', () => {
+    const view = viewSchema.parse({ kind: 'values', of: { category: 'incident', status: ['open'], near: 'ambulance-1', within: '5km' } })
+    expect(view.kind === 'values' && view.of?.closed).toBe(false)
+    expect(selectorSchema.safeParse({ near: 'ambulance-1', within: '5km' }).success).toBe(false)
+    expect(selectorSchema.safeParse({ category: 'incident', within: '7km' }).success).toBe(false)
+    expect(selectorSchema.safeParse({ class: 'line' }).success).toBe(false)
+  })
+
+  test('alerts default to related ones; the cut events view, columns, sort and count are refused', () => {
     expect(viewSchema.parse({ kind: 'alerts' })).toEqual({ kind: 'alerts', scope: 'related' })
+    expect(viewSchema.safeParse({ kind: 'events' }).success).toBe(false)
+    for (const extra of [{ columns: ['priority'] }, { sort: 'priority' }, { count: { by: 'priority' } }]) {
+      expect(viewSchema.safeParse({ kind: 'values', of: { category: 'incident' }, ...extra }).success).toBe(false)
+    }
   })
 
   test('no view carries coordinates, colours or numbers', () => {
@@ -105,54 +124,7 @@ describe('vignette and dashboard spec', () => {
     expect(displaySpecSchema.safeParse({ ...spec, subjects: [] }).success).toBe(false)
     expect(displaySpecSchema.safeParse({ ...spec, subjects: Array.from({ length: 7 }, (_, index) => `o${index}`) }).success).toBe(false)
     expect(displaySpecSchema.safeParse({ ...spec, views: Array.from({ length: 5 }, () => ({ kind: 'alerts' })) }).success).toBe(false)
-  })
-
-  test('dashboard sections are stored by value, never as templates', () => {
-    expect(sectionSchema.parse(section).composedAt?.mode).toBe('Mode 1')
-    expect(sectionSchema.parse({ id: 's2', by: 'world', source: { default: 'unit-2' } }).by).toBe('world')
-    expect(sectionSchema.safeParse({ id: 's3', by: 'person', source: { template: 'plant-overview' } }).success).toBe(false)
-  })
-
-  test('a dashboard holds at most eight uniquely named sections', () => {
-    expect(dashboardSchema.parse({ scope: 'run', revision: 3, sections: [section] }).revision).toBe(3)
-    expect(dashboardSchema.safeParse({ scope: 'run', revision: 3, sections: [section, section] }).success).toBe(false)
-    expect(dashboardSchema.safeParse({ scope: { subject: 'unit-2' }, revision: 0, sections: Array.from({ length: 9 }, (_, index) => ({ ...section, id: `s${index}` })) }).success).toBe(false)
-  })
-
-  test('the stored file keeps revision ids and at most twenty removed sections by value', () => {
-    const removed = Array.from({ length: 20 }, (_, index) => ({ revision: index + 1, section: { ...section, id: `r${index}` } }))
-    const entry = {
-      dashboard: { scope: { of: { category: 'incident' } }, revision: 21, sections: [section] },
-      revisions: [{ revision: 21, by: { actor: 'person', id: 'p1' }, at: { ...at, clock: 'wall' }, added: ['s1'], removed: ['r19'] }],
-      removed,
-    }
-    expect(dashboardsFileSchema.parse({ dashboards: [entry] }).dashboards[0]?.removed).toHaveLength(20)
-    expect(dashboardsFileSchema.safeParse({ dashboards: [{ ...entry, removed: [...removed, removed[0]] }] }).success).toBe(false)
-  })
-})
-
-describe('card', () => {
-  const item = { key: 'k3', label: 'SG A NR level', reading: '31.5 % falling', unit: '%', numbers: [{ value: 31.5, decimals: 1 }], subject: { ref: observable.ref } }
-
-  test('items are keyed for citation and carry their numbers', () => {
-    expect(cardItemSchema.parse(item).key).toBe('k3')
-    expect(cardItemSchema.safeParse({ ...item, key: 'x3' }).success).toBe(false)
-    expect(cardItemSchema.safeParse({ ...item, numbers: Array.from({ length: 9 }, () => ({ value: 1, decimals: 0 })) }).success).toBe(false)
-  })
-
-  test('items reserve entity rows, events and map features', () => {
-    expect(cardItemSchema.safeParse({ ...item, subject: { objectId: 'incident-7' } }).success).toBe(true)
-    expect(cardItemSchema.safeParse({ ...item, subject: { eventId: 'e-9', at } }).success).toBe(true)
-    expect(cardItemSchema.safeParse({ ...item, subject: { featureId: 'line-420', attribution: '© OpenStreetMap contributors' } }).success).toBe(true)
-    expect(cardItemSchema.safeParse({ ...item, subject: { lon: 11.3 } }).success).toBe(false)
-  })
-
-  test('a card holds at most 48 unique items and eight adjustments', () => {
-    const card = { at, items: [item], more: 0, adjusted: [{ kind: 'scope', text: 'Reach narrowed to 2 links', lost: 'aux feed', alternatives: ['feed-to-sg'] }] }
-    expect(displayCardSchema.parse(card).items).toHaveLength(1)
-    expect(displayCardSchema.safeParse({ ...card, items: [item, item] }).success).toBe(false)
-    expect(displayCardSchema.safeParse({ ...card, items: Array.from({ length: 49 }, (_, index) => ({ ...item, key: `k${index}` })) }).success).toBe(false)
-    expect(displayCardSchema.safeParse({ ...card, adjusted: [{ kind: 'layout', text: 'x', alternatives: ['y'] }] }).success).toBe(false)
+    expect(displaySpecSchema.parse({ ...spec, views: [] }).views).toEqual([])
   })
 })
 
@@ -246,6 +218,13 @@ describe('topology graph', () => {
     expect(issues({ boundaries: [{ node: 'sg', port: 'z', externalPortId: 'steam-out' }] })).toEqual(['boundary steam-out names unknown port sg.z'])
     expect(issues({ groups: [...graph.groups, { id: 'g1', label: 'G1', kind: 'k', parent: 'g2' }, { id: 'g2', label: 'G2', kind: 'k', parent: 'g1' }] }))
       .toEqual(['group g1 is its own ancestor', 'group g2 is its own ancestor'])
+  })
+
+  test('a node binds what it shows: flow, loading, level, conducting, available, running or a value', () => {
+    for (const role of ['flow', 'loading', 'level', 'conducting', 'available', 'running', 'value']) {
+      expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { bindings: [{ role, ref: 'unit-2#P-RUN' }] }), node('sg')] }).success).toBe(true)
+    }
+    expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { bindings: [{ role: 'colour', ref: 'unit-2#P-RUN' }] }), node('sg')] }).success).toBe(false)
   })
 
   test('bindings read only the graph\'s own object', () => {

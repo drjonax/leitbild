@@ -37,16 +37,13 @@ export const displayScope: ReadonlyArray<ScopeGroup> = [
   },
   { name: 'Agents operator-displays skill', include: ['apps/agents/skills/operator-displays/**'] },
   { name: 'Host view relay', include: ['apps/leitbild/src/ui/view-relay.ts'] },
-  { name: 'Display contracts', include: ['packages/contracts/src/embedded-views.ts', 'packages/contracts/src/embedded-view-route.ts'] },
+  { name: 'Display contracts', include: ['packages/contracts/src/embedded-views.ts', 'packages/contracts/src/embedded-view-route.ts', 'packages/contracts/src/display-card.ts'] },
   { name: 'Display probe script', include: ['scripts/agent-display-probe.ts', 'scripts/display-eval/probe.ts'] },
 ]
 
-/** Phase ceilings in lines (§2.10). P1 is the figure measured at the P1 exit (owner, 20 Oct: the plan's 30k assumed a lower P0 landing); swap and end are unchanged. The peak is split by ADR: old code with its replacements, plus new code with no predecessor. */
-export const ceilings = { p0: 30_000, p1: 32_129, peak: 38_000, swap: 23_000, end: 22_000, p3b: 22_500 } as const
+/** Phase ceilings in lines (§2.10). P1 is the figure measured at the P1 exit (owner, 20 Oct: the plan's 30k assumed a lower P0 landing); swap and end are the owner's (plan v4); the peak total is one sanity guard (P2 ruling Q1). */
+export const ceilings = { p0: 30_000, p1: 32_129, peak: 38_000, swap: 23_000, end: 22_000 } as const
 export type Phase = keyof typeof ceilings
-export const peakSplit = { withPredecessor: 36_000, noPredecessor: 2_000 } as const
-/** Paths of P2 code with no predecessor (dashboard v0, entity floor, collections, events, as-caller, attribution), added by their lanes. */
-export const noPredecessor: ReadonlyArray<string> = []
 
 const countedExtension = /\.(ts|svelte|css|md)$/
 export const isCountedPath = (path: string): boolean => countedExtension.test(path) && !path.includes('.test.')
@@ -66,7 +63,6 @@ export interface DisplayLocReport {
   readonly revision: string
   readonly total: number
   readonly groups: ReadonlyArray<{ readonly name: string; readonly lines: number; readonly files: number; readonly emptyPatterns: ReadonlyArray<string> }>
-  readonly noPredecessorLines: number
   readonly files: ReadonlyArray<{ readonly path: string; readonly lines: number; readonly group: string }>
 }
 
@@ -83,7 +79,6 @@ export const measure = (revision: string, files: ReadonlyArray<SourceFile>, scop
       break
     }
   }
-  const noPredecessorGlobs = noPredecessor.map(pattern => new Glob(pattern))
   const groups = scope.map(group => {
     const members = counted.filter(file => file.group === group.name)
     return {
@@ -97,7 +92,6 @@ export const measure = (revision: string, files: ReadonlyArray<SourceFile>, scop
     revision,
     total: groups.reduce((sum, group) => sum + group.lines, 0),
     groups,
-    noPredecessorLines: counted.filter(file => noPredecessorGlobs.some(glob => glob.match(file.path))).reduce((sum, file) => sum + file.lines, 0),
     files: counted.map(({ path, lines, group }) => ({ path, lines, group })).sort((left, right) => right.lines - left.lines),
   }
 }
@@ -111,13 +105,7 @@ export interface CeilingVerdict {
 
 export const checkCeiling = (report: DisplayLocReport, phase: Phase): CeilingVerdict => {
   const limit = ceilings[phase]
-  const reasons: string[] = []
-  if (report.total > limit) reasons.push(`${report.total} lines exceed the ${phase} ceiling of ${limit}`)
-  if (phase === 'peak') {
-    const withPredecessor = report.total - report.noPredecessorLines
-    if (withPredecessor > peakSplit.withPredecessor) reasons.push(`${withPredecessor} lines of old code and replacements exceed ${peakSplit.withPredecessor}`)
-    if (report.noPredecessorLines > peakSplit.noPredecessor) reasons.push(`${report.noPredecessorLines} lines with no predecessor exceed ${peakSplit.noPredecessor}`)
-  }
+  const reasons = report.total > limit ? [`${report.total} lines exceed the ${phase} ceiling of ${limit}`] : []
   return { phase, limit, pass: reasons.length === 0, reasons }
 }
 
