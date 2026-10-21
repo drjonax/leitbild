@@ -697,11 +697,24 @@ export interface PackElementActionsProps {
   readonly elementId: string
 }
 
+/** What a Pack's display-window tools are mounted with: the Run and the object whose display the window shows. */
+export interface PackWindowToolsProps {
+  readonly runId: SimulationRunId
+  readonly objectId: ObjectId
+  /** Opens a subject's World default (displays/default) after the window's current display; Back returns to it. */
+  readonly openDisplay: (subject: string) => void
+}
+
 export interface PackUiContribution {
   readonly surfacePanels: ReadonlyArray<PackSurfacePanelContribution>
   readonly settingsEditor?: () => Promise<{ readonly default: Component }>
   readonly mapInteraction?: PackMapInteraction
   readonly surfaceLayout?: PackSurfaceLayout
+  /**
+   * Tools the generic display window shows in its header beside a display of this Pack's object (actions, logs,
+   * pending proposals, status): main-app components, so never OpenBridge (that is PackEmbedContribution's).
+   */
+  readonly windowTools?: () => Promise<{ readonly default: Component<PackWindowToolsProps> }>
 }
 
 /** Pack-owned inputs to shared procedure observation queries. The generic UI

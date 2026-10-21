@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import { createActivePackViews } from '../src/core/packs/active-views.ts'
-import { createWorldPackDescriptor, type PackSurfacePanelContribution, type PackUiContribution, type WorldPackView } from '../src/core/packs/protocol.ts'
+import type { Component } from 'svelte'
+import { createWorldPackDescriptor, type PackSurfacePanelContribution, type PackUiContribution, type PackWindowToolsProps, type WorldPackView } from '../src/core/packs/protocol.ts'
 import { assertCameraInteractionContract } from '../src/ui/map/map-camera.ts'
 import { knownUiPackIds, loadUiPack } from '../src/ui/pack-loader.ts'
-import { geoPointFromLonLat, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId } from '../src/core/model/index.ts'
+import { geoPointFromLonLat, type IsoTimestamp, type ObjectId, type OperationalObject, type PackId, type SimulationRunId } from '../src/core/model/index.ts'
 import { groundClicksWanted, mapClickOutcome, targetPreviewsWanted } from '../src/ui/map-target-routing.ts'
 import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, noMapCover, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId } from '../src/ui/surface-panel-interaction.ts'
 
@@ -23,6 +24,23 @@ const viewOf = (id: string, ui?: PackUiContribution): WorldPackView => ({
 })
 
 const allOn = { doubleClickZoom: true, keyboard: true, boxZoom: true }
+
+describe('display-window tools', () => {
+  test('a Pack\'s window tools load lazily, mounted with the Run and the object whose display the window shows', async () => {
+    const mounted: Array<PackWindowToolsProps> = []
+    const tools = ((_anchor: unknown, props: PackWindowToolsProps) => { mounted.push(props) }) as unknown as Component<PackWindowToolsProps>
+    const ui: PackUiContribution = { surfacePanels: [], windowTools: async () => ({ default: tools }) }
+    const view = viewOf('tooled', ui)
+    const loaded = await view.ui?.windowTools?.()
+    expect(loaded?.default).toBe(tools)
+    const opened: string[] = []
+    ;(loaded!.default as unknown as (anchor: unknown, props: PackWindowToolsProps) => void)(null, { runId: 'run-1' as SimulationRunId, objectId: 'unit:one' as ObjectId, openDisplay: subject => opened.push(subject) })
+    expect(mounted.map(({ runId, objectId }) => ({ runId, objectId }))).toEqual([{ runId: 'run-1' as SimulationRunId, objectId: 'unit:one' as ObjectId }])
+    mounted[0]!.openDisplay('unit:one#engine')
+    expect(opened).toEqual(['unit:one#engine'])
+    expect(viewOf('plain', { surfacePanels: [] }).ui?.windowTools).toBeUndefined()
+  })
+})
 
 describe('World surface hooks among the built-in Packs', () => {
   test('no built-in Pack but Einsatz declares a map-target panel, a keymap, map gestures, a layout hint or opt-in targeting, and the others leave camera, rail and targeting as they were', async () => {
