@@ -253,19 +253,34 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       fitted.push({ ...view, rows: 1 + Math.max(1, Math.min(ENTITY_ROWS, count)) + (count > ENTITY_ROWS ? 1 : 0) } as ResolvedView)
     } else if (view.kind === 'topology') {
       const graph = await topologyOf(run, view.objectId)
-      const scoped = graph === null ? null : scopeWithin(graph, view.request)
-      const drawing = scoped?.ok === true ? await drawingOf(scoped.scoped) : null
-      const room = VIGNETTE_MAX_ROWS - FRAME_ROWS - 1
-      // A layout may end on a half grid unit: its rows are the whole units it reaches into.
+      let request = view.request
+      let scoped = graph === null ? null : scopeWithin(graph, request)
+      let drawing = scoped?.ok === true ? await drawingOf(scoped.scoped) : null
+      // Around one item, with no medium named: a neighbourhood beyond the ceilings draws one service at a time, in the
+      // order of the item's own ports, and the card names the services left for another view.
+      const item = request.around?.length === 1 && request.media === undefined ? graph?.nodes.find(node => node.id === request.around![0]) : undefined
+      if (graph !== null && item !== undefined && drawing === null) {
+        const services = [...new Set(item.ports.flatMap(port => port.media))].filter(medium => graph.edges.some(edge => edge.medium === medium && (edge.from.node === item.id || edge.to.node === item.id)))
+        for (const medium of services) {
+          const narrowed = scopeWithin(graph, { ...request, media: [medium] })
+          const drawn = narrowed.ok ? await drawingOf(narrowed.scoped) : null
+          if (!narrowed.ok || drawn === null) continue
+          const name = (id: string): string => graph.media.find(entry => entry.id === id)?.label ?? id
+          countAdjustment(adjusted, { kind: 'scope', text: `drawn for ${name(medium)} only; also: ${services.filter(other => other !== medium).map(name).join(', ')}`.slice(0, 200) })
+          ;[request, scoped, drawing] = [{ ...request, media: [medium] }, narrowed, drawn]
+          break
+        }
+      }
+      // A layout may end on a half grid unit: its rows are the whole units it reaches into (scaled below if the frame is short).
       const rows = drawing === null ? 0 : Math.ceil(drawing.layout.height) + 1
-      if (scoped?.ok !== true || drawing === null || rows > room) {
-        const why = scoped === null ? 'no topology' : !scoped.ok ? scoped.reason : drawing === null ? 'no drawing verifies' : `${rows} rows`
+      if (scoped?.ok !== true || drawing === null) {
+        const why = scoped === null ? 'no topology' : !scoped.ok ? scoped.reason : 'no drawing verifies'
         if (kept.explicit.has(index)) issues.push(unfit(path, `the topology cannot be drawn in one vignette (${why})`))
         else countAdjustment(adjusted, { kind: 'layout', text: `topology not shown (${why})` })
         continue
       }
       if (scoped.reach !== undefined) countAdjustment(adjusted, { kind: 'scope', text: `reach narrowed to ${scoped.reach} links to draw at most 60 nodes` })
-      fitted.push({ ...view, request: { ...view.request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows })
+      fitted.push({ ...view, request: { ...request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows })
     } else {
       // A map's objects beyond 48 are not framed: said, not counted as card items (a map shows none).
       if (view.objectIds !== undefined && view.objectIds.length > MAX_OBJECTS) {
@@ -279,6 +294,15 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   // Rows: alerts and tables give way first, then the frame does not fit and compose refuses.
   const total = (): number => FRAME_ROWS + fitted.reduce((sum, view) => sum + view.rows, 0)
   for (const view of fitted) if (total() > VIGNETTE_MAX_ROWS && (view.kind === 'alerts' || view.kind === 'entity' || view.kind === 'collection')) (view as { rows: number }).rows = Math.min(view.rows, view.kind === 'alerts' ? 3 : 5)
+  // Then a drawing is scaled to the rows left, never below a third of its height or eight rows, and the card says so.
+  for (const view of fitted) {
+    if (total() <= VIGNETTE_MAX_ROWS || view.kind !== 'topology') continue
+    const natural = view.rows
+    const rows = Math.max(8, Math.ceil((natural - 1) / 3) + 1, natural - (total() - VIGNETTE_MAX_ROWS))
+    if (rows >= natural) continue
+    ;(view as { rows: number }).rows = rows
+    countAdjustment(adjusted, { kind: 'layout', text: `drawing scaled to ${Math.round(100 * (rows - 1) / (natural - 1))} % to fit` })
+  }
   if (total() > VIGNETTE_MAX_ROWS) return refuse([unfit('views', `the views need ${total()} rows; one vignette holds ${VIGNETTE_MAX_ROWS}`)])
   const uncovered = subjects.findIndex(subject => !covers(fitted, subject))
   if (fitted.length === 0 || uncovered >= 0) return refuse([unfit(uncovered >= 0 ? `subjects.${uncovered}` : 'views', 'nothing this vignette can show is about this subject')])

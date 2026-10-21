@@ -45,7 +45,8 @@ export const resolvedViewSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('collection'), of: collectionSchema, rows }).strict(),
   z.object({
     kind: z.literal('topology'), objectId: objectIdSchema,
-    request: z.object({ from: nodeIds, to: nodeIds, around: nodeIds, media: nodeIds, groups: nodeIds, reach: z.number().int().min(1).max(4).optional() }).strict(),
+    /** `overview`: the object's declared overview; otherwise a scope by ends or around. */
+    request: z.object({ overview: z.literal(true).optional(), from: nodeIds, to: nodeIds, around: nodeIds, media: nodeIds, groups: nodeIds, reach: z.number().int().min(1).max(4).optional() }).strict(),
     rows,
   }).strict(),
   /** These objects, or a collection's members, or every object within `within` of `around`. */

@@ -21,16 +21,16 @@ const opened = async (subject: Parameters<typeof composeDefault>[1]) => {
 }
 
 describe('an unknown Pack gets vignettes from its declarations alone', () => {
-  test('a declared object: its lead values and its drawing around its first lead element', async () => {
+  test('a declared object: its own states, its lead values and its whole drawing (a graph this small is its own overview)', async () => {
     const { view, sample, card } = await opened('unit:one')
     expect(view.sections.map(section => section.kind)).toEqual(['values', 'topology'])
     const topology = view.sections[1]
     expect(topology?.kind === 'topology' && [topology.family, topology.packId]).toEqual(['flow', 'fixture'])
     expect(topology?.kind === 'topology' && topology.nodes.map(node => [node.id, node.class])).toEqual([['tank', 'store'], ['engine', 'mover']])
     expect(topology?.kind === 'topology' && topology.nodes[1]?.bindings).toEqual([{ role: 'flow', ref: 'unit:one#speed', quantity: 'speed', unit: 'm/s' }])
-    expect(sample.observations.map(observation => observation.ref)).toEqual(['unit:one#speed', 'unit:one#status'])
-    expect(card.items.map(item => [item.label, item.reading])).toEqual([['Unit One · Unit One speed', expect.stringMatching(/^\d+\.\d m\/s$/)], ['Unit One · Unit One status', expect.any(String)]])
-    expect(card.items[0]?.limits).toEqual([{ value: 40, decimals: 1 }])
+    expect(sample.observations.map(observation => observation.ref)).toEqual(['unit:one#status', 'unit:one#speed'])
+    expect(card.items.map(item => [item.label, item.reading])).toEqual([['Unit One · Unit One status', expect.any(String)], ['Unit One · Unit One speed', expect.stringMatching(/^\d+\.\d m\/s$/)]])
+    expect(card.items[1]?.limits).toEqual([{ value: 40, decimals: 1 }])
   })
 
   test('an entity-floor object: its core slots in words, numbers only from the object, and its map focus', async () => {
