@@ -13,6 +13,7 @@ import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-res
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
 import { composeDefault } from '../src/features/displays/compose/compose.ts'
+import { overviewOf } from '../src/features/displays/compose/topology.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { overlaps } from './helpers/network-layout-measure.ts'
 import { principalCircuits } from '../src/packs/process-plant/equipment/circuits.ts'
@@ -75,6 +76,18 @@ const opened = async (subject: string) => {
   expect(JSON.stringify(outcome.state).length).toBeLessThanOrEqual(4_096)
   return { ...outcome, view: await compileVignette(run, outcome.state), sample: await sampleVignette(run, outcome.state) }
 }
+
+describe('P9: the whole-plant drawing', () => {
+  test('the declared overview stops where today\'s Unit Overview stops: no relief or drive-steam line that only ends, every flow into a store kept', async () => {
+    const graph = await run.port.topology(plantId)
+    if ('refused' in graph) throw new Error('the Plant draws no topology')
+    const scoped = overviewOf(graph.overview === undefined ? { ...graph, overview } : graph)!
+    expect(scoped.stubs.map(stub => `${stub.node}.${stub.port} ${stub.direction}`)).toEqual([
+      'core.coldLegA in', 'pressurizer.reliefOutlet out', 'sgA.feedwaterInlet in', 'sgB.feedwaterInlet in', 'sgC.feedwaterInlet in', 'sgD.feedwaterInlet in',
+      'condenser.condensateOutlet out', 'condenser.coolingWater in', 'condenser.coolingWaterOutlet out',
+    ])
+  })
+})
 
 describe('P9: an equipment default carries what the detail display carries', () => {
   test('the reactor core: beyond the ceilings at reach 1, its neighbourhood draws one service at a time, and the card names the others', async () => {

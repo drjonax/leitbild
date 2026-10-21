@@ -39,8 +39,8 @@ export type Scoped = { readonly ok: true; readonly scoped: ScopedTopology; reado
 
 /**
  * Whether flow leaving into these far ends only ends: followed through each node's port circuit, it reaches no drawn
- * node and stops only at terminal nodes, those with no outgoing edge (a relief line to the atmosphere). Such a stop
- * says nothing an overview needs.
+ * node and stops only at terminal nodes, those with no outgoing edge that store nothing (a relief line to the
+ * atmosphere). Such a stop says nothing an overview needs; flow into a store fills something one watches, and stays.
  */
 const endsOutside = (graph: TopologyGraph, drawn: ReadonlySet<string>, others: ReadonlyArray<{ readonly node: string; readonly port: string }>): boolean => {
   const nodes = new Map(graph.nodes.map(node => [node.id, node]))
@@ -54,6 +54,7 @@ const endsOutside = (graph: TopologyGraph, drawn: ReadonlySet<string>, others: R
     if (seen.has(`${node}|${port}`)) continue
     seen.add(`${node}|${port}`)
     const all = leaving.get(node) ?? []
+    if (all.length === 0 && nodes.get(node)?.class === 'store') return false
     const circuit = nodes.get(node)?.ports.find(entry => entry.id === port)?.circuit
     const onward = circuit === undefined ? [] : all.filter(edge => nodes.get(node)?.ports.find(entry => entry.id === edge.from.port)?.circuit === circuit)
     if (onward.length === 0 && all.length > 0) return false
