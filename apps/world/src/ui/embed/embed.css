@@ -29,11 +29,15 @@
   --display-on-warning: var(--on-warning-active-color);
   --display-caution-fill: var(--alert-caution-color);
   --display-on-caution: var(--on-caution-active-color);
+  /* Emergency: OpenBridge's critical magenta. */
+  --display-critical-fill: var(--alert-critical-color);
+  --display-on-critical: var(--on-critical-active-color);
   --display-alert-text: var(--element-active-color);
   /* The mark beside such words: caution's darker outline, so a mark also shows on the day background. */
   --display-alarm-mark: var(--alert-alarm-color);
   --display-warning-mark: var(--alert-warning-color);
   --display-caution-mark: var(--alert-caution-outline-color);
+  --display-critical-mark: var(--alert-critical-color);
 }
 /* Night keeps dark adaptation: its alert fills are too dark for any text it
    allows, so its chips are outlined in the alert colour on the panel's own
@@ -45,6 +49,8 @@
   --display-on-warning: var(--element-active-color);
   --display-caution-fill: var(--container-background-color);
   --display-on-caution: var(--element-active-color);
+  --display-critical-fill: var(--container-background-color);
+  --display-on-critical: var(--element-active-color);
 }
 
 * { box-sizing: border-box; }

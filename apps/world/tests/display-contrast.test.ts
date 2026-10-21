@@ -70,6 +70,9 @@ const TEXT_PAIRS: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
   ['--display-on-alarm', ['--display-alarm-fill']],
   ['--display-on-warning', ['--display-warning-fill']],
   ['--display-on-caution', ['--display-caution-fill']],
+  ['--display-on-critical', ['--display-critical-fill']],
+  // A vignette's filled state word: the panel's background on the active text colour.
+  ['--container-background-color', ['--element-active-color']],
 ]
 
 describe('display text contrast', () => {
