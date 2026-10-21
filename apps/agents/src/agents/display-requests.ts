@@ -40,7 +40,7 @@ const TURN_REFUSAL_CODE: Readonly<Record<TurnRefusal, DisplayRequestRefusalCode>
 export const displayRequestInstruction = (input: { readonly requesterName: string; readonly answer: Message }): string => {
   const { requesterName, answer } = input
   const evidence = answer.toolTrace !== undefined && answer.toolTrace.length > 0
-    ? `, reusing the Run, plant and signal identifiers from that answer's evidence (conversation_read messageId="${answer.id}") rather than searching again`
+    ? `, reusing the Run, object and signal identifiers from that answer's evidence (conversation_read messageId="${answer.id}") rather than searching again`
     : ''
   return [
     `[Display request] ${requesterName} asked you to show your answer below (messageId "${answer.id}") as a live display. `

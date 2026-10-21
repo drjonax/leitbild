@@ -91,7 +91,7 @@ describe('displayRequestInstruction', () => {
       '[Display request] Hilde asked you to show your answer below (messageId "msg-1") as a live display. '
         + 'This request replaces your own judgement of whether a display is needed. '
         + 'Compose the display that best supports this answer, as your skills describe, '
-        + 'reusing the Run, plant and signal identifiers from that answer\'s evidence (conversation_read messageId="msg-1") rather than searching again. '
+        + 'reusing the Run, object and signal identifiers from that answer\'s evidence (conversation_read messageId="msg-1") rather than searching again. '
         + 'Do not repeat the answer: write one or two sentences on what the display shows and what to watch, then end with the leitbild-view block. '
         + 'If the answer concerns nothing a display can show, or two compositions are rejected, say why in one sentence instead.\n'
         + '\n'
