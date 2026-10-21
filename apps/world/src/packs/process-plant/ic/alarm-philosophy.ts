@@ -109,18 +109,29 @@ export const pendingActions = (plant: CompiledProcessPlant, snapshot: ProcessPla
   })
 }
 
+const standingAfter = new WeakMap<CompiledProcessPlant['automation'], number>()
+
 /**
- * How long an acknowledged alarm stands unchanged before it is standing (R27):
- * ten plant minutes is past every transient the reference I&C answers (its
- * automatic actions and the expected consequences of a trip come in within
- * five minutes, expectedAfterReactorTrip), so what still stands then is a
- * known condition the operators live with, not news.
+ * How long an acknowledged alarm stands unchanged before it is standing (R27,
+ * Q7): the longest window in which the Plant's I&C still answers on its own,
+ * as it declares it: the expected consequences of a first-out (each
+ * annunciator's expectedAfter.withinMs) and its confirming delays (a rule's
+ * delay shorter than a named delay). What still stands past it is a known
+ * condition the operators live with, not news. A named delay running down is
+ * a consequence pending, which refuses standing whatever its age.
  */
-export const STANDING_AFTER_MS = 10 * 60_000
+export const standingAfterMs = (plant: CompiledProcessPlant): number => {
+  const known = standingAfter.get(plant.automation) ?? Math.max(0, ...plant.automation.rules.flatMap(rule => [
+    ...(rule.delayMs < NAMED_DELAY_MIN_MS ? [rule.delayMs] : []),
+    ...rule.effects.flatMap(effect => effect.type === 'writeSignal' || effect.annunciator?.expectedAfter === undefined ? [] : [effect.annunciator.expectedAfter.withinMs]),
+  ]))
+  standingAfter.set(plant.automation, known)
+  return known
+}
 
 /**
  * Whether an annunciating alarm is standing (R27): an alarm, never a trip, a
- * first-out or an emergency; acknowledged; standing past STANDING_AFTER_MS
+ * first-out or an emergency; acknowledged; standing past standingAfterMs
  * since it came in; with no consequence pending on what it watches (a named
  * delay running down) and nothing worse come in on the same equipment since
  * its acknowledgement. Any change reverts it.
@@ -131,7 +142,7 @@ export const isStanding = (
   context: { readonly all: ReadonlyArray<ProcessPlantIcLifecycleState>; readonly pending: ReturnType<typeof pendingActions>; readonly elapsedMs: number; readonly priority: Priority },
 ): boolean => {
   if (lifecycle.kind !== 'alarm' || lifecycle.firstOut || context.priority === 'emergency' || !lifecycle.acknowledged) return false
-  if (lifecycle.lastActiveElapsedMs === undefined || context.elapsedMs - lifecycle.lastActiveElapsedMs < STANDING_AFTER_MS) return false
+  if (lifecycle.lastActiveElapsedMs === undefined || context.elapsedMs - lifecycle.lastActiveElapsedMs < standingAfterMs(plant)) return false
   const rule = plant.automation.rules.find(candidate => candidate.id === lifecycle.ruleId)!
   const watches = new Set(ruleWatches(plant, rule))
   if (context.pending.some(pending => ruleWatches(plant, pending.rule).some(path => watches.has(path)))) return false

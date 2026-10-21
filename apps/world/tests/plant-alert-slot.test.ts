@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { alertStateSchema, type AlertState } from '../src/core/model/index.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
-import { isStanding, priorityOrder, STANDING_AFTER_MS } from '../src/packs/process-plant/ic/alarm-philosophy.ts'
+import { isStanding, priorityOrder, standingAfterMs } from '../src/packs/process-plant/ic/alarm-philosophy.ts'
 import { processPlantIcLifecycleStateSchema } from '../src/packs/process-plant/runtime/index.ts'
 import { processPlantRuntimeStateSchema } from '../src/packs/process-plant/sim/runtime-state.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -21,6 +21,7 @@ const facts: Record<string, any> = {}
 const MINUTE = 60_000
 const degraded = 'alarm:offsite-grid-degraded-voltage:offsite-grid-degraded-voltage'
 const find = (alerts: ReadonlyArray<AlertState>, id: string) => alerts.find(alert => alert.id === id)
+const reference = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:standing', loopCount: 4 }))
 
 beforeAll(async () => {
   plant = await createSteadyPlantRun()
@@ -73,10 +74,17 @@ describe('plant alerts in the core slot (P4)', () => {
     }])
   })
 
-  test('R11: an acknowledged alert says who acknowledged it; it is not standing until ten plant minutes after it came in', () => {
+  test('R11: an acknowledged alert says who acknowledged it; it is not standing until the I&C\'s own window has passed', () => {
     expect(find(facts.acknowledged, degraded)).toMatchObject({ acknowledged: true, acknowledgedBy: 'person', raisedAt: '2026-01-01T10:00:11.000Z' })
     expect(find(facts.acknowledged, degraded)!.standing).toBeUndefined()
-    expect(STANDING_AFTER_MS).toBe(10 * MINUTE)
+  })
+
+  test('standing time is the Plant\'s own: its longest expected-consequence window or confirming delay (Q7)', () => {
+    expect(standingAfterMs(reference)).toBe(5 * MINUTE)
+    const withinMs = reference.automation.rules.flatMap(rule => rule.effects.flatMap(effect => effect.type === 'writeSignal' ? [] : [effect.annunciator?.expectedAfter?.withinMs ?? 0]))
+    expect(Math.max(...withinMs)).toBe(5 * MINUTE)
+    const shorter = { ...reference, automation: { ...reference.automation, rules: reference.automation.rules.map(rule => ({ ...rule, effects: rule.effects.map(effect => effect.type === 'writeSignal' || effect.annunciator?.expectedAfter === undefined ? effect : { ...effect, annunciator: { ...effect.annunciator, expectedAfter: { ...effect.annunciator.expectedAfter, withinMs: 30_000 } } }) })) } }
+    expect(standingAfterMs(shorter)).toBe(Math.max(30_000, ...reference.automation.rules.flatMap(rule => (rule.delayMs < MINUTE ? [rule.delayMs] : []))))
   })
 
   test('T14: acknowledged, unchanged and with nothing pending, it stands; a worse entry on the same equipment reverts it', () => {
@@ -86,7 +94,6 @@ describe('plant alerts in the core slot (P4)', () => {
   })
 
   test('T14: a consequence pending on what it watches refuses standing (a named delay running down)', () => {
-    const reference = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:standing', loopCount: 4 }))
     const lifecycle = processPlantIcLifecycleStateSchema.parse({
       id: degraded, ruleId: 'offsite-grid-degraded-voltage', effectId: 'offsite-grid-degraded-voltage', kind: 'alarm', title: 'Offsite grid degraded voltage',
       message: 'm', severity: 'warning', annunciator: { equipmentId: 'offsiteGrid', priority: 'high' }, active: true, acknowledged: true, latched: false,
@@ -95,6 +102,7 @@ describe('plant alerts in the core slot (P4)', () => {
     const context = { all: [lifecycle], elapsedMs: 11 * MINUTE, priority: 'warning' as const }
     const watching = reference.automation.rules.find(rule => rule.id === 'loss-of-offsite-power')!
     expect(isStanding(reference, lifecycle, { ...context, pending: [] })).toBe(true)
+    expect(isStanding(reference, lifecycle, { ...context, elapsedMs: 4 * MINUTE, pending: [] })).toBe(false)
     expect(isStanding(reference, lifecycle, { ...context, pending: [{ rule: watching, leftMs: 60_000 }] })).toBe(false)
     expect(isStanding(reference, { ...lifecycle, kind: 'trip' }, { ...context, pending: [] })).toBe(false)
     expect(isStanding(reference, { ...lifecycle, firstOut: true }, { ...context, pending: [] })).toBe(false)
@@ -126,7 +134,7 @@ describe('plant alerts in the core slot (P4)', () => {
     const distribution = (alerts: ReadonlyArray<AlertState>) => Object.fromEntries(['notice', 'caution', 'warning', 'alarm'].map(priority => [priority, alerts.filter(alert => alert.priority === priority).length]))
     expect(distribution(facts.standing)).toEqual({ notice: 0, caution: 0, warning: 1, alarm: 0 })
     const undeclared = (facts.standing as ReadonlyArray<AlertState>).filter(alert => priorityOrder[alert.priority!] >= priorityOrder.warning && alert.returned !== true
-      && Date.parse('2026-01-01T10:11:30.000Z') - Date.parse(alert.raisedAt) >= STANDING_AFTER_MS && alert.standing !== true)
+      && Date.parse('2026-01-01T10:11:30.000Z') - Date.parse(alert.raisedAt) >= standingAfterMs(reference) && alert.standing !== true)
     expect(undeclared).toEqual([])
     console.log('T36 priority distribution after the trip:', JSON.stringify(distribution(facts.tripped)))
   })
