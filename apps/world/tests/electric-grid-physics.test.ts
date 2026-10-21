@@ -256,7 +256,8 @@ describe('electric grid physics invariants', () => {
     expect(merged.id).toBe(parent.id)
     expect(merged.frequency!.frequencyHz!).toBeCloseTo(expectedHz, 12)
     console.info(`merge: ${separated.map(island => `${island.id} ${island.frequency!.frequencyHz!.toFixed(5)} Hz`).join(' + ')} → ${merged.frequency!.frequencyHz!.toFixed(5)} Hz`)
-  })
+    // Norway-model splits and merges: about 1.3–2 s alone, 21.8 s in a full suite on a loaded machine; the timeout guards hangs, not cost.
+  }, 120_000)
 
   test('LFDD stages latch, shed the lowest priority first, and reconnect only by command', () => {
     const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 132, location: [10 + index * 0.1, 60] as const })
