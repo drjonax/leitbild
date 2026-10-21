@@ -96,7 +96,8 @@ export const observableSchema = z.object({
   quantity: quantitySchema,
   unit: z.string().max(16),
   valueType: z.enum(['number', 'boolean', 'enum', 'text', 'duration', 'instant']),
-  states: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) }).strict()).optional(),
+  /** `active` marks the state(s) a `running` or `conducting` binding reads as on, running or closed; a boolean observable is on when true. */
+  states: z.array(z.object({ value: z.string().min(1), label: z.string().min(1), active: z.literal(true).optional() }).strict()).optional(),
   thresholds: z.array(thresholdSchema).max(12).default([]),
   basis: z.enum(['instrument', 'model', 'command', 'planned']).optional(),
   meaningfulWhile: z.string().max(80).optional(),

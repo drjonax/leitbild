@@ -70,6 +70,12 @@ describe('observation model', () => {
     expect(observationSchema.safeParse({ ...observation, clock: undefined }).success).toBe(false)
   })
 
+  test('a state observable marks what a running or conducting binding reads as on, by flag and never by order', () => {
+    const states = [{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed', active: true }]
+    expect(observableSchema.parse({ ...observable, quantity: 'state', unit: '', valueType: 'enum', states }).states?.find(state => state.active)?.value).toBe('closed')
+    expect(observableSchema.safeParse({ ...observable, quantity: 'state', unit: '', valueType: 'enum', states: [{ value: 'open', label: 'Open', active: false }] }).success).toBe(false)
+  })
+
   test('an observation names the declared threshold it is past; an observable may declare its lead rank', () => {
     const observation = { ...at, ref: observable.ref, value: 18.2, quality: 'good', priority: 'alarm', past: 'lo-lo' }
     expect(observationSchema.parse(observation).past).toBe('lo-lo')
