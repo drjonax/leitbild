@@ -151,8 +151,8 @@
 </div>
 
 <style>
-  /* OpenBridge's elevated surface: the container colour with the toggletip's shadow. */
-  .popover { position: fixed; z-index: 10; transform-origin: 0 0; white-space: normal; box-sizing: border-box; border-radius: 6px; background: var(--container-background-color); box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.3); color: var(--element-active-color); font-family: "Noto Sans", system-ui, sans-serif; }
+  /* OpenBridge's elevated surface: the container colour with its floating shadow, per palette. */
+  .popover { position: fixed; z-index: 10; transform-origin: 0 0; white-space: normal; box-sizing: border-box; border-radius: 6px; background: var(--container-background-color); box-shadow: var(--shadow-floating); color: var(--element-active-color); font-family: "Noto Sans", system-ui, sans-serif; }
   .popover.pinned { z-index: 9; outline: 1px solid var(--border-outline-color); }
   .header { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 0 0 8px; border-bottom: 1px solid var(--border-divider-color); font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; }
   .pinned .header { cursor: move; touch-action: none; padding-left: 2px; }
