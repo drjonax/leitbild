@@ -2,7 +2,7 @@
  * from P1's real observation reads on a frozen Run (lead ruling R9): each item
  * a key, its declared label, a reading, its unit and every number the reading
  * shows at its typed precision (World's unitDecimals). */
-import { displayCardSchema, type DisplayCard, type DisplayCardItem } from '../../packages/contracts/src/index.ts'
+import { DISPLAY_CARD_MAX_TEXT, displayCardSchema, displayCardTextLength, type DisplayCard, type DisplayCardItem } from '../../packages/contracts/src/index.ts'
 import { decimalsFor } from '../../apps/world/src/core/observation/model.ts'
 import type { SearchRun } from '../../apps/world/src/features/displays/observation/search.ts'
 
@@ -33,7 +33,9 @@ const declared = async (run: SearchRun, refs: ReadonlyArray<string>) => {
   return byRef
 }
 
-/** One card over the refs (in order), keys numbered from `firstKey`; refs the Run does not read are left out. */
+/** One card over the refs (in order), keys numbered from `firstKey`; refs the Run does not read are left out, and
+ * items past the contracts' text cap (1,900 characters of lines, Q14) are counted in `more` and stated, as World's
+ * composer does: never cut silently. */
 export const buildCard = async (run: SearchRun, refs: ReadonlyArray<string>, firstKey = 1): Promise<Card> => {
   const labels = await declared(run, refs)
   const read = await run.port.read({ refs: [...refs].slice(0, 48) })
@@ -53,7 +55,14 @@ export const buildCard = async (run: SearchRun, refs: ReadonlyArray<string>, fir
       items.push({ key, label: meta.label, reading: `${word}${since}`.slice(0, 120), numbers: [], subject: { ref } })
     }
   }
-  return displayCardSchema.parse({ at: { at: read.observations[0]?.at ?? new Date().toISOString(), clock: 'simulation' }, items, more: Math.max(0, refs.length - items.length), adjusted: [] })
+  const at = { at: read.observations[0]?.at ?? new Date().toISOString(), clock: 'simulation' as const }
+  const fitted = [...items]
+  const cardOf = (shown: ReadonlyArray<CardItem>) => {
+    const cut = items.length - shown.length
+    return { at, items: shown, more: Math.max(0, refs.length - shown.length), adjusted: cut === 0 ? [] : [{ kind: 'layout' as const, text: `${cut} of ${items.length} items not shown (card limit)` }] }
+  }
+  while (fitted.length > 0 && displayCardTextLength(cardOf(fitted)) > DISPLAY_CARD_MAX_TEXT) fitted.pop()
+  return displayCardSchema.parse(cardOf(fitted))
 }
 
 /** A card as the model reads it in a tool result: one line per item. */
