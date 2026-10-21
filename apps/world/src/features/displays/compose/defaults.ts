@@ -130,7 +130,7 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
       const declared = await declaredRefs(run, lead)
       refs.push(...lead.filter(ref => electricQuantities.has(declared.get(ref)!.observable.quantity)))
     }
-    const unique = [...new Set(refs)].slice(0, 16)
+    const unique = [...new Set(refs)]
     return [
       ...(unique.length > 0 ? [{ kind: 'values', refs: unique } as DraftView] : []),
       ...(hasAlerts(run, ends.map(end => end.objectId)) ? [alertsView(ends.map(end => end.objectId).filter(id => visibleObject(run, id) !== undefined))] : []),

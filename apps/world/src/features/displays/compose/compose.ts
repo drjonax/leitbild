@@ -14,7 +14,7 @@ import { defaultViews, elementRefs, leadRefs, recordedOf, type DraftView } from 
 import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type ComposeIssue, type ResolvedView, type VignetteState } from './model.ts'
 import { isIssue, resolveSubject, subjectObjects, type ComposeRun, type Subject } from './resolve.ts'
 import { drawingOf, scopeWithin, topologyOf } from './topology.ts'
-import { alertsOf, entityRows, groupValues, refsRead, slotsOf, stripsOf } from './view.ts'
+import { alertRowsFor, alertsOf, entityRows, groupValues, refsRead, slotsOf, stripsOf } from './view.ts'
 
 export type ComposeOutcome =
   | { readonly ok: true; readonly state: VignetteState; readonly card: DisplayCard; readonly rows: number }
@@ -177,13 +177,15 @@ const countAdjustment = (adjusted: DisplayCardAdjustment[], adjustment: DisplayC
 /** Completion, fit, card and state: the shared second half of a composed vignette and a World default. */
 const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefined, subjects: ReadonlyArray<Subject>, drafts: ReadonlyArray<DraftView>, kept: Kept): Promise<ComposeOutcome> => {
   const adjusted: DisplayCardAdjustment[] = []
+  /** What the fit leaves out, counted on the card (Q15: never silent). */
+  let dropped = 0
   const views = drafts.map(view => structuredClone(view) as DraftView)
   // Completion: the subjects' alerts at caution or above.
   const subjectIds = [...new Set(subjects.flatMap(subjectObjects))].filter(id => visibleObject(run, id) !== undefined)
   const pressing = subjectIds.flatMap(id => visibleObject(run, id)!.alerts.filter(alert => atLeastCaution(alert.priority)))
   if (pressing.length > 0 && !views.some(view => view.kind === 'alerts')) {
     if (views.length < 4) views.push({ kind: 'alerts', objectIds: subjectIds.filter(id => visibleObject(run, id)!.alerts.length > 0).slice(0, 48) })
-    else countAdjustment(adjusted, { kind: 'layout', text: `${pressing.length} alerts at caution or above not shown` })
+    else { dropped += pressing.length; countAdjustment(adjusted, { kind: 'layout', text: `${pressing.length} alerts at caution or above not shown` }) }
   }
   // Completion: the lead, the shortest time to act among the subjects' lead values, in the first values or trend view.
   const leads = (await Promise.all(subjects.flatMap(subject => subject.kind === 'object' && subject.observed ? [leadRefs(run, subject.objectId)] : []))).flat()
@@ -204,7 +206,7 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
     const named = readable.filter(ref => kept.refs.has(ref))
     if (named.length > cap) { issues.push(unfit(path, `${named.length} named ${what} exceed the ${cap} one view shows`)); return [] }
     const keep = [...named, ...readable.filter(ref => !kept.refs.has(ref))].slice(0, cap)
-    if (readable.length > keep.length) countAdjustment(adjusted, { kind: 'layout', text: `${readable.length - keep.length} ${what} not shown` })
+    if (readable.length > keep.length) { dropped += readable.length - keep.length; countAdjustment(adjusted, { kind: 'layout', text: `${readable.length - keep.length} ${what} not shown` }) }
     return readable.filter(ref => keep.includes(ref))
   }
   for (const [index, view] of views.entries()) {
@@ -220,11 +222,11 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       const inStrips = strips.slice(0, 4).flat().map(value => value.ref)
       if (refs.some(ref => kept.refs.has(ref) && !inStrips.includes(ref))) issues.push(unfit(path, 'the named pens need more than four strips of four'))
       else if (inStrips.length > 0) {
-        if (inStrips.length < refs.length) countAdjustment(adjusted, { kind: 'layout', text: `${refs.length - inStrips.length} pens not shown` })
+        if (inStrips.length < refs.length) { dropped += refs.length - inStrips.length; countAdjustment(adjusted, { kind: 'layout', text: `${refs.length - inStrips.length} pens not shown` }) }
         fitted.push({ ...view, refs: inStrips, rows: strips.slice(0, 4).reduce((sum, strip) => sum + Math.max(3, strip.length), 0) + 1 })
       }
     } else if (view.kind === 'alerts') {
-      fitted.push({ ...view, rows: 1 + Math.min(6, Math.max(1, alertsOf(run, { ...view, rows: 1 }).length)) })
+      fitted.push({ ...view, rows: alertRowsFor(run, { ...view, rows: 1 }) })
     } else if (view.kind === 'slots') {
       const object = visibleObject(run, view.objectId)
       if (object !== undefined) fitted.push({ ...view, rows: Math.max(1, slotsOf(run, object).length) })
@@ -259,25 +261,45 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   const at = run.clock === undefined ? { at: new Date().toISOString(), clock: 'wall' as const } : { at: run.clock.currentTime, clock: 'simulation' as const }
   const state = vignetteStateSchema.parse({ title: title.slice(0, 80), ...(by === undefined ? {} : { by }), at, views: fitted })
   if (JSON.stringify(state).length > MAX_STATE) return refuse([unfit('views', `the vignette names more than its ${MAX_STATE}-character state holds`)])
-  return { ok: true, state, card: await cardOf(run, state, kept, adjusted), rows: total() }
+  return { ok: true, state, card: await cardOf(run, state, kept, adjusted, dropped), rows: total() }
 }
 
-const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, adjusted: ReadonlyArray<DisplayCardAdjustment>): Promise<DisplayCard> => {
+/** The card of a fitted state: every value it reads, the alerts and table rows its rows hold; each one a section leaves out is counted and said. */
+const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted: ReadonlyArray<DisplayCardAdjustment>, dropped: number): Promise<DisplayCard> => {
   const read = await refsRead(run, state)
   const refs = [...new Set([...read.filter(ref => kept.refs.has(ref)), ...read])]
   const [declared, values] = await Promise.all([declaredRefs(run, refs), refs.length === 0 ? null : run.port.read({ refs })])
+  const adjusted = [...fitted]
+  let hidden = dropped
+  const left = (count: number, total: number, what: string): void => {
+    if (count <= 0) return
+    hidden += count
+    countAdjustment(adjusted, { kind: 'layout', text: `${count} of ${total} ${what} not shown` })
+  }
   const items = [
     ...refs.flatMap(ref => declared.has(ref) ? [valueItem(declared.get(ref)!, values?.observations.find(observation => observation.ref === ref))] : []),
-    ...state.views.flatMap(view => view.kind === 'alerts' ? alertsOf(run, view).slice(0, view.rows - 1).map(alertItem) : []),
     ...state.views.flatMap(view => {
-      if (view.kind === 'entity' || view.kind === 'collection') return entityRows(run, view).rows.map(entityItem)
+      if (view.kind !== 'alerts') return []
+      const rows = alertsOf(run, view)
+      left(rows.length - (view.rows - 1), rows.length, 'alerts')
+      return rows.slice(0, view.rows - 1).map(alertItem)
+    }),
+    ...state.views.flatMap(view => {
+      if (view.kind === 'entity' || view.kind === 'collection') {
+        const { rows, more } = entityRows(run, view)
+        const category = view.kind === 'collection' ? run.packs.find(pack => pack.descriptor.id === view.of.packId)?.presentation.categories.find(entry => entry.id === view.of.categoryId)?.label : undefined
+        left(more, rows.length + more, category ?? 'objects')
+        return rows.map(entityItem)
+      }
       const object = view.kind === 'slots' ? visibleObject(run, view.objectId) : undefined
       if (object === undefined) return []
       const slots = slotsOf(run, object)
+      const signals = Object.keys(object.telemetry?.signals ?? {}).length
+      left(signals - slots.filter(slot => slot.key.startsWith('telemetry:')).length, signals, 'telemetry signals')
       return slotItems(object.id, object.label, slots, Object.fromEntries(slots.map(({ key, value, since }) => [key, { value, ...(since === undefined ? {} : { since }) }])))
     }),
   ]
-  return assembleCard(state.at, items, adjusted)
+  return assembleCard(state.at, items, adjusted, hidden)
 }
 
 export const composeVignette = async (run: ComposeRun, spec: DisplaySpec): Promise<ComposeOutcome> => {
