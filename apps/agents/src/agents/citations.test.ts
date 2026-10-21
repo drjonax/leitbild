@@ -48,6 +48,22 @@ describe('citation check (guard v3, pack-neutral naming)', () => {
     expect(flagged('Loading is 12.6 points above full loading ⟦k2⟧.')).toEqual([])
   })
 
+  test('a difference is checked only against two cited values of its own keys, never another item\'s number (E1)', () => {
+    const lines: ReadonlyArray<CitedItem> = [
+      { key: 'k7', label: 'Sylling – Tegneby (1) · loading', reading: '130.9 %', numbers: [{ value: 130.9, decimals: 1 }], limits: [{ value: 100, decimals: 0 }] },
+      { key: 'k8', label: 'Hasle – Rød (1) · loading', reading: '91.3 %', numbers: [{ value: 91.3, decimals: 1 }], limits: [{ value: 100, decimals: 0 }] },
+      { key: 'k15', label: 'Sylling – Tegneby (1) · above-emergency alarm', reading: 'alarm', numbers: [] },
+    ]
+    // E1's two false positives: differences from the unwritten 100 % limit, with the other line's value in the clause.
+    expect(flagged('The closest readings to a branch-loading limit are **Sylling–Tegneby (1)** at 130.9% ⟦k7⟧—already 30.9 percentage points ⟦k7⟧ over—and **Hasle–Rød (1)** at 91.3% ⟦k8⟧, 8.7 points ⟦k8⟧ below.', lines)).toEqual([])
+    expect(flagged('Hasle–Rød (1) is at 91.3% ⟦k8⟧, 8.7 points ⟦k8⟧ below.', lines)).toEqual([])
+    // Two cited values of the same key still check it: right holds, wrong is flagged.
+    expect(flagged('Loading is 130.9 %, or 30.9 percentage points above 100 % ⟦k7⟧.', lines)).toEqual([])
+    expect(flagged('Loading is 130.9 %, or 39.6 percentage points above 100 % ⟦k7⟧.', lines)).toEqual(['39.6'])
+    // A difference whose keys cite one value is unchecked, even beside another line's value.
+    expect(flagged('Sylling–Tegneby (1) at 130.9 % ⟦k7⟧ is 39.6 points ⟦k7⟧ above Hasle–Rød (1) at 91.3 % ⟦k8⟧.', lines)).toEqual([])
+  })
+
   test('names: unit and display words and the card\'s own labels name numbers; pack words do not', () => {
     expect(flagged('Units 1 and 2 read 15.50 MPa ⟦k1⟧.')).toEqual([])
     expect(flagged('Unit 2 ⟦k1⟧ reads 15.50 MPa ⟦k1⟧.')).toEqual([])

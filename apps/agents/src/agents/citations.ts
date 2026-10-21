@@ -10,7 +10,7 @@
 // A number answers to the nearer key group before or after it within its unit
 // (a table cell, else a clause). It holds when it is one of a cited item's
 // numbers at the decimals it is written with, or a declared limit after a
-// limit word, or a difference of two numbers written in its unit. Every answer
+// limit word, or a difference of two values its own keys cite in its unit. Every answer
 // is read both in English ("2,291.5") and Norwegian ("2 291,5"): only a number
 // both readings flag is a contradiction, so the check errs towards silence.
 //
@@ -132,17 +132,21 @@ export const readingFlags = (answer: string, items: ReadonlyMap<string, CitedIte
   })
   const holds = (found: Found, keys: ReadonlyArray<string>) => keys.some(key => matches(found, items.get(key)!.numbers))
     || (LIMIT.test(answer.slice(Math.max(0, found.index - 60), found.index)) && keys.some(key => matches(found, items.get(key)!.limits ?? [])))
+  const held = (entry: typeof entries[number], group: typeof groups[number]): boolean => entry.ends.every(found => holds(found, group.keys))
   const flags: CitationFlag[] = []
   for (const { entry, group } of answered) {
     if (group === undefined || !group.keys.some(key => items.get(key)!.numbers.length > 0 || (items.get(key)!.limits ?? []).length > 0)) continue
-    if (entry.ends.every(found => holds(found, group.keys))) continue
+    if (held(entry, group)) continue
     const found = entry.ends[0]!
-    // A difference holds when it equals the difference of two other numbers of its unit; with fewer it is unchecked.
+    // A difference is checked only against two cited values of its own keys in its unit, and holds when it equals the
+    // difference of a pair of them. A reference that is cited nowhere (an unwritten 100 % limit) is never stood in for by
+    // another item's number: with fewer than two such values the difference is unchecked.
     const derived = entry.ends.length === 1 && (DIFFERENCE_AFTER.test(answer.slice(entry.end)) || DIFFERENCE_BEFORE.test(answer.slice(Math.max(0, found.index - 10), found.index)))
     if (derived) {
-      const others = plain.filter(other => other !== found && unitOf(other.index) === entry.unit)
-      if (others.length < 2) continue
-      if (others.some((a, i) => others.slice(i + 1).some(b => matches(found, [{ value: Math.abs(a.value - b.value), decimals: Math.max(a.decimals, b.decimals, found.decimals) }])))) continue
+      const operands = answered.filter(other => other.entry !== entry && other.entry.unit === entry.unit && other.entry.ends.length === 1
+        && other.group !== undefined && held(other.entry, other.group) && other.group.keys.some(key => group.keys.includes(key))).map(other => other.entry.ends[0]!)
+      if (operands.length < 2) continue
+      if (operands.some((a, i) => operands.slice(i + 1).some(b => matches(found, [{ value: Math.abs(a.value - b.value), decimals: Math.max(a.decimals, b.decimals, found.decimals) }])))) continue
     }
     flags.push({ number: entry.ends.map(end => end.text).join('–'), keys: group.keys, index: entry.start, end: entry.end, derived })
   }
