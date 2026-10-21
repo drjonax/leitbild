@@ -76,6 +76,11 @@ export const numberText = (value: number, unit: string): string => {
   const text = value.toFixed(decimalsFor(unit, value))
   return /^-0(?:\.0+)?$/.test(text) ? text.slice(1) : text
 }
+/** Seconds as a countdown reads them (45 s, 4 min, 2 h), and metres as a distance (850 m, 12.3 km): the number and the unit it is shown in. */
+export const durationParts = (seconds: number): { readonly value: number; readonly unit: 's' | 'min' | 'h' } =>
+  seconds < 90 ? { value: Math.round(seconds), unit: 's' } : seconds < 5_400 ? { value: Math.round(seconds / 60), unit: 'min' } : { value: Math.round(seconds / 3_600), unit: 'h' }
+export const distanceParts = (metres: number): { readonly value: number; readonly unit: 'm' | 'km' } =>
+  metres >= 1_000 ? { value: Number(numberText(metres / 1_000, 'km')), unit: 'km' } : { value: Number(numberText(metres, 'm')), unit: 'm' }
 
 export const thresholdSchema = z.object({
   id: z.string().min(1).max(128),
