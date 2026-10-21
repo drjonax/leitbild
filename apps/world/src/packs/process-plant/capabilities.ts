@@ -479,4 +479,9 @@ export const processPlantCapabilities = [
     title: 'Read observations',
     description: 'World\'s observation layer reads Plant values with their quality and priority, or the values a unit leads with in its mode.',
   }),
+  defineObservationCapability('topology', {
+    id: processPlantObservationCapabilityIds.topology,
+    title: 'Read flow topology',
+    description: 'World\'s observation layer reads a Plant as a flow topology: equipment with its ports and circuits, pipes and cables by service, loops as groups.',
+  }),
 ] as const
