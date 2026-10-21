@@ -3,7 +3,7 @@
  * fixture: p95 ≤ 2k tokens (counted by the pinned model: prompt tokens of the
  * context minus those of an empty message), every asset line with full refs.
  * T09: the replay tier. The model gets the planned skill, the Run context
- * (the pre-fetched `run_context` text) and two tools backed by the frozen Run:
+ * (the text the Agents pre-fetch each turn) and two tools backed by the frozen Run:
  * observables_search (P1's search, as the AI caller) and display_compose, a
  * stand-in for P2's composer that resolves every name with P1's resolveName
  * and returns a card from P1's observation reads. Measured: unknown-name rate,

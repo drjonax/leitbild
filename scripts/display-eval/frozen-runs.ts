@@ -3,8 +3,8 @@
  * the AI is refused in role Runs) and the integrated fixture is started
  * in-process with the production assembly, driven to its declared peak and
  * paused; the Run then answers what the Assistant's tools would ask of it:
- * World's Run context (the text the Agents pre-fetch records as the
- * `run_context` call), observables.search, resolveName and observation reads,
+ * World's Run context (the text the Agents pre-fetch gives the model each
+ * turn, stored nowhere), observables.search, resolveName and observation reads,
  * all as the AI caller. Nothing here calls a model. */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'

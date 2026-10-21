@@ -30,7 +30,7 @@ import type { ToolDefinition, ToolExecutor } from '../core/types/tool.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types/constants.ts'
 import { extractAgentProfile as extractProfile } from './shared.ts'
 import { buildContext, buildSystemSections, estimateTokens, flushIncoming, type BuildContextDeps, type ContextResult } from './context-builder.ts'
-import { RUN_CONTEXT_TOOL, type RunContextFetch, type RunContextFetcher } from './run-context.ts'
+import type { RunContextFetcher } from './run-context.ts'
 import { discoveryMemo } from './discovery-memo.ts'
 import { evaluate, type EvalResult, type OnDecision } from './evaluation.ts'
 import { createConcurrencyManager } from './concurrency.ts'
@@ -350,7 +350,7 @@ export const createAIAgent = (
     evalToolDefs: ReadonlyArray<ToolDefinition> | undefined,
     inReplyTo?: ReadonlyArray<string>,
     requireView?: boolean,
-    runContextCall?: RunContextFetch['call'],
+    capturedContext?: ContextResult,
   ): Promise<EvalResult> => {
     const evalConfig = {
       ...baseConfig,
@@ -413,7 +413,7 @@ export const createAIAgent = (
           executionTurnId: traceId,
           roomId: triggerRoomId,
           agentId,
-          context: contextResult,
+          context: capturedContext ?? contextResult,
           config: evalConfig,
           toolDefinitions: evalToolDefs ?? [],
           focusedSubjects: focusedSubjectsByRoom.get(triggerRoomId) ?? [],
@@ -440,15 +440,6 @@ export const createAIAgent = (
     }
     if (options?.executionGrowth) await options.executionGrowth(4096, begin)
     else await begin() // In-memory tests have no Workspace storage policy.
-    // The turn's Run context read is its first execution call, so a replay reads what the model read (T09).
-    if (runContextCall) {
-      const record = async (): Promise<void> => {
-        store.recordAttempt(traceId, { id: RUN_CONTEXT_TOOL, tool: RUN_CONTEXT_TOOL, arguments: runContextCall.arguments, startedAt: runContextCall.startedAt })
-        store.recordOutcome(traceId, RUN_CONTEXT_TOOL, runContextCall.result)
-      }
-      if (options?.executionGrowth) await options.executionGrowth(JSON.stringify(runContextCall).length + 4096, record)
-      else await record()
-    }
     const interrupted = (): void => {
       try { store.finishTurn(traceId, 'interrupted', 'Generation cancelled; calls without a durable result have unknown outcomes') }
       catch (error) { console.error(`[${config.name}] Could not retain cancellation status:`, error) }
@@ -549,9 +540,12 @@ export const createAIAgent = (
           : undefined
         if (!cm.isEpochCurrent(epoch) || abortController.signal.aborted) return
         const effectiveToolDefs = effectiveToolsForRoom(triggerRoomId)
-        const initialContext = buildContext({
-          ...contextDeps(effectiveModel, effectiveToolDefs, requested?.instruction), ...(runContext === undefined ? {} : { runContext: runContext.text }),
-        }, triggerRoomId)
+        const deps = contextDeps(effectiveModel, effectiveToolDefs, requested?.instruction)
+        const initialContext = buildContext({ ...deps, ...(runContext === undefined ? {} : { runContext }) }, triggerRoomId)
+        // The Run context is not stored (owner, 20 Oct): a comparison record keeps the turn's input without it. That
+        // build counts no metrics twice.
+        const { metricsSink: _counted, ...quiet } = deps
+        const captured = runContext === undefined ? undefined : buildContext(quiet, triggerRoomId)
         // Only prior replay uses the working target. During a tool turn, keep
         // complete new evidence and fit older history to actual known capacity.
         const toolTokens = estimateTokens(JSON.stringify(effectiveToolDefs ?? []))
@@ -599,7 +593,8 @@ export const createAIAgent = (
           }
         }
         const { decision, flushInfo } = await runEvaluate(
-          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, emit, effectiveToolDefs, inReplyTo, requested?.requireView, runContext?.call,
+          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, emit, effectiveToolDefs, inReplyTo, requested?.requireView,
+          captured === undefined ? undefined : { ...captured, tokenBudget: contextResult.tokenBudget },
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
