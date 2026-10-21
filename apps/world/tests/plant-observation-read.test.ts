@@ -135,6 +135,16 @@ describe('plant observation read (P3)', () => {
     expect(read('core.sourceRangeCountRateCps').priority).toBe('none')
   })
 
+  test('past: a coloured value, or one its alarm would colour but for the first-out, names the limit it is past', () => {
+    const coloured = (facts.tripped as ReadonlyArray<Observation>).filter(observation => observation.priority !== 'none' && !path(observation).startsWith('csf.'))
+    expect(coloured.length).toBeGreaterThan(0)
+    expect(coloured.filter(observation => observation.past === undefined || !(limitsOf.get(path(observation)) ?? []).includes(observation.past)).map(path)).toEqual([])
+    const level = facts.tripped.find((observation: Observation) => path(observation) === 'sgA.levelPercent')
+    expect(level.priority).toBe('none')
+    expect(limitsOf.get('sgA.levelPercent')).toContain(level.past)
+    expect((facts.atPower as ReadonlyArray<Observation>).filter(observation => observation.past !== undefined).map(path)).toEqual([])
+  })
+
   test('D1: an operated item reads its state in words, and the command it does not follow', () => {
     const read = (from: ReadonlyArray<Observation>, of: string) => from.find(observation => path(observation) === of)!
     expect(['rcpA.state', 'offsiteBreakerA.state', 'mainSteamIsolationValveA.state'].map(of => [read(facts.atPower, of).value, read(facts.atPower, of).why])).toEqual([['on', undefined], ['on', undefined], ['on', undefined]])

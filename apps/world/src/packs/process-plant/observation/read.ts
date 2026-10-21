@@ -18,9 +18,9 @@ import { readDerived } from './derived.ts'
 // permissive, a gate or a state stays neutral); none where that alarm came in as the expected
 // consequence of a first-out (a steam generator's shrink after a reactor
 // trip); since when a discrete value holds, from the Run's record; the time
-// left where a named delay runs down to one of its limits. An operated item's
-// state and a safety function's status are read in derived.ts. Reads only:
-// nothing here is journalled.
+// left where a named delay runs down to one of its limits; the limit it is
+// past (`past`). An operated item's state and a safety function's status are
+// read in derived.ts. Reads only: nothing here is journalled.
 
 /** How far back a discrete value's last change is looked for in the Run's record. */
 const SINCE_WINDOW_MS = 30 * 60_000
@@ -67,6 +67,9 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
     const colouring = on.find(entry => entry.after === null)
     const expected = colouring === undefined ? on[0] : undefined
     const priority: Priority = colouring?.priority ?? 'none'
+    // The limit of the rule that colours it, or would but for the first-out it came in after, that the value is past.
+    const named = colouring ?? expected
+    const past = named === undefined || reading === null ? undefined : limitsOf(named.lifecycle.ruleId).find(limit => (limit.direction === 'low' ? reading < limit.value : reading > limit.value))
     const due = pending.filter(entry => limitsOf(entry.rule.id).length > 0).sort((left, right) => left.leftMs - right.leftMs)[0]
     const value = typeof variable.value === 'number' && !Number.isFinite(variable.value) ? null : declared.valueType === 'enum' ? String(variable.value) : variable.value
     const since = declared.series !== null && declared.valueType !== 'number' ? sinceOf(context, declared.series.seriesId, variable.value) : undefined
@@ -80,6 +83,7 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
       ...(ranked ? { rank: index + 1 } : {}),
       ...(expected === undefined ? {} : { expected: { after: expected.after!.label } }),
       ...(since === undefined ? {} : { since }),
+      ...(past === undefined ? {} : { past: past.id }),
       ...(due === undefined ? {} : { timeToAct: { threshold: due.rule.id, seconds: due.leftMs / 1_000 } }),
       ...(colouring !== undefined ? { why: colouring.lifecycle.title } : expected !== undefined ? { why: `${expected.lifecycle.title}, expected after ${expected.after!.label}` } : {}),
     }
