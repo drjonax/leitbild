@@ -32,12 +32,17 @@ export const vignetteHeight = (rows: number): number => Math.min(EMBEDDED_VIEW_M
 
 const composedSchema = z.object({ view: embeddedViewPublicationSchema, card: displayCardSchema }).strict()
 
-/** A Run as the composer reads it, as this caller: its objects, Packs and clock, and what the caller may not inspect. */
+/**
+ * A loaded Run as the composer reads it, as this caller: its objects, Packs and clock, the Scenario connections the
+ * Run was loaded with (checked once at load, never re-read per call), and what the caller may not inspect.
+ */
 export const displayRunOf = async (registry: SimulationRunRegistry, runtime: SimulationRunRuntime, actor: Actor, denied: ReadonlySet<string>): Promise<ViewRun> => {
+  // The Run and its Scenario are one load: after a reset or copy reload it, this runtime is not the one loaded.
+  if (registry.get(runtime.id) !== runtime) throw Object.assign(new Error(`Simulation Run ${runtime.id} was reloaded; ask again`), { code: 'simulation_run_closed' })
   const snapshot = runtime.snapshot()
   return {
     objects: snapshot.objects, denied, packs: runtime.packs(), port: runtime.observations(actor), clock: snapshot.clock,
-    connections: (await registry.compiledScenarioForRun(runtime.id)).connections,
+    connections: registry.loadedCompiledScenario(runtime.id).connections,
     series: (seriesId, from, to) => {
       const page = runtime.recordedSamples({ mode: 'raw', seriesId, from, to, timeAxis: 'simulation', limit: 2_000 })
       return page.mode !== 'raw' ? [] : page.samples.flatMap(sample => typeof sample.value === 'number' || typeof sample.value === 'boolean'

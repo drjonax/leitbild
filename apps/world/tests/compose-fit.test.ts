@@ -6,7 +6,7 @@ import type { OperationalObject } from '../src/core/model/index.ts'
 import { observableSchema } from '../src/core/observation/model.ts'
 import { displaySpecSchema } from '../src/core/observation/spec.ts'
 import { assembleCard, valueItem } from '../src/features/displays/compose/card.ts'
-import { composeVignette } from '../src/features/displays/compose/compose.ts'
+import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
 import type { ViewRun } from '../src/features/displays/compose/view.ts'
 import { openRunDefinition } from './fixtures/role-runs.ts'
 import { fixtureComposeRun } from './fixtures/compose-runs.ts'
@@ -32,6 +32,41 @@ const alert = (id: string, priority: 'caution' | 'alarm' | 'notice'): AlertState
   id, kind: 'test', severity: priority === 'alarm' ? 'critical' : priority === 'caution' ? 'warning' : 'info', message: `${id} raised`, raisedAt: '2026-01-01T08:00:01.000Z' as AlertState['raisedAt'], acknowledged: false, priority, clock: 'simulation',
 })
 const withAlerts = (alerts: Record<string, ReadonlyArray<AlertState>>): ReadonlyArray<OperationalObject> => run.objects.map(object => ({ ...object, alerts: alerts[object.id] ?? object.alerts }))
+
+describe('a state names at most 48 objects a view; what that cuts is counted and said (Q15)', () => {
+  const crowded = { ...openRunDefinition, id: 'crowded', title: 'Crowded', packs: [{ id: 'fixture', config: {}, items: [
+    { id: 'site:base', label: 'Base', type: 'site', position: [10.7387, 59.9365] },
+    ...Array.from({ length: 50 }, (_, index) => ({ id: `task:t${index}`, label: `Task ${index}`, type: 'task', position: [10.74 + index / 1000, 59.94], priority: 'high' })),
+  ] }] }
+  let many: Awaited<ReturnType<typeof fixtureComposeRun>>
+  beforeAll(async () => { many = await fixtureComposeRun(crowded) })
+  afterAll(async () => { await many.close() })
+
+  test('a collection of 50 alerted tasks keeps 48 objects\' alerts and counts the other two', async () => {
+    const base = await many.runOf()
+    const crowdedRun = { ...base, objects: base.objects.map(object => object.id.startsWith('task:') ? { ...object, alerts: [alert(`a-${object.id}`, 'caution')] } : object) }
+    const outcome = await composeDefault(crowdedRun, { of: { category: 'tasks', closed: false } })
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    const alerts = outcome.state.views.find(view => view.kind === 'alerts')
+    expect(alerts?.kind === 'alerts' && alerts.objectIds !== 'run' && alerts.objectIds.length).toBe(48)
+    expect(outcome.card.adjusted).toContainEqual({ kind: 'layout', text: '2 alerts of 2 more objects not shown' })
+    // Every task row and every alert is on the card or counted: 50 table rows and 50 alerts.
+    expect(outcome.card.items.length + outcome.card.more).toBe(100)
+  })
+
+  test('an object related to 50 others lists 48 and counts the rest', async () => {
+    const base = await many.runOf()
+    const packs = base.packs.map(pack => ({ ...pack, presentation: { ...pack.presentation, presentObject: (object: OperationalObject, context: Parameters<typeof pack.presentation.presentObject>[1]) =>
+      ({ ...pack.presentation.presentObject(object, context), ...(object.id === 'site:base' ? { related: base.objects.filter(entry => entry.id.startsWith('task:')).map(entry => ({ objectId: entry.id, role: 'served' })) } : {}) }) } }))
+    const outcome = await composeDefault({ ...base, packs, objects: base.objects.map(object => ({ ...object })) }, 'site:base')
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    const entity = outcome.state.views.find(view => view.kind === 'entity')
+    expect(entity?.kind === 'entity' && entity.objectIds.length).toBe(48)
+    expect(outcome.card.adjusted).toContainEqual({ kind: 'layout', text: '2 of 50 related objects not listed' })
+    const rows = outcome.card.items.filter(item => item.subject !== undefined && 'objectId' in item.subject && item.subject.objectId.startsWith('task:'))
+    expect(rows.length + outcome.card.more).toBe(50)
+  })
+})
 
 describe('completion only adds', () => {
   test('the subjects\' alerts at caution or above join as a view; with four views they are counted instead', async () => {

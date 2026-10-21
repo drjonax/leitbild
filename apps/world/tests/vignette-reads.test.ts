@@ -1,6 +1,7 @@
 import { accessContextSchema, newRequestId, newWorkspaceId, type WorkspaceId } from '@leitbild/contracts'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
+import { displayRunOf } from '../src/core/api/display-capabilities.ts'
 import { handleSimulationRunApi } from '../src/core/api/simulation-run-routes.ts'
 import { handleWorldModuleApi } from '../src/core/api/workspace-module-api.ts'
 import { refObjectId } from '../src/core/model/alerts.ts'
@@ -127,6 +128,28 @@ describe('the person routes and the Assistant\'s Capability', () => {
     expect((await route('sample', { refs: ['unit:one#speed'] })).status).toBe(400)
     expect((await route('default', { subject: 'unit:one' }, 'ai')).body.error.code).toBe('display_route_for_people')
     expect((await route('default', { subject: 'fixture' })).body.error.code).toBe('pack_is_not_an_object')
+  })
+
+  test('a display reads the Scenario its Run was loaded with, never the stored file again, and not a reloaded Run\'s', async () => {
+    const registry = workspaces.getLoaded(workspaceId)!.simulationRuns
+    const rereads = { ...registry, compiledScenarioForRun: async () => { throw new Error('read from disk again') } }
+    expect((await displayRunOf(rereads, runtime, { id: 'actor:human:x' as ActorId, label: 'x', role: 'operator' }, new Set())).connections).toEqual([])
+    const copy = await registry.create({ scenarioId: 'open-run' })
+    await registry.close(copy.id)
+    const reloaded = await registry.load(copy.id)
+    await expect(displayRunOf(registry, copy, { id: 'actor:human:x' as ActorId, label: 'x', role: 'operator' }, new Set())).rejects.toThrow('was reloaded')
+    expect((await displayRunOf(registry, reloaded, { id: 'actor:human:x' as ActorId, label: 'x', role: 'operator' }, new Set())).objects.length).toBeGreaterThan(0)
+  })
+
+  test('a display of a Run that is not loaded waits: the route reports it and never loads the Run', async () => {
+    const registry = workspaces.getLoaded(workspaceId)!.simulationRuns
+    const idle = await registry.create({ scenarioId: 'open-run' })
+    const state = (await route('default', { subject: 'unit:one' })).body.result.view.state as string
+    await registry.close(idle.id)
+    const request = new Request(`http://world.test/api/workspaces/${workspaceId}/world/simulation-runs/${encodeURIComponent(idle.id)}/displays/sample`, { method: 'POST', body: JSON.stringify({ state }) })
+    const response = (await handleSimulationRunApi(request, new URL(request.url), { registry, accessContext: access('human'), roleHolders: () => ({}) }))!
+    expect([response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([409, 'simulation_run_not_loaded'])
+    expect(registry.get(idle.id)).toBeUndefined()
   })
 
   test('the Assistant composes through one embedded-view Capability, refused on what it may not inspect', async () => {

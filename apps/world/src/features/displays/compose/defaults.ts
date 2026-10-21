@@ -87,7 +87,7 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
   }
   if (subject.kind === 'object') {
     const object = visibleObject(run, subject.objectId)!
-    const related = (presentedOf(run, object)?.related ?? []).map(entry => entry.objectId).filter(id => visibleObject(run, id) !== undefined).slice(0, 48)
+    const related = (presentedOf(run, object)?.related ?? []).map(entry => entry.objectId).filter(id => visibleObject(run, id) !== undefined)
     return [
       { kind: 'slots', objectId: object.id },
       ...(object.alerts.length > 0 ? [alertsView([object.id])] : []),
@@ -140,7 +140,7 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     && (subject.of.closed || (object.lifecycle !== 'resolved' && object.lifecycle !== 'removed'))).map(object => object.id)
   return [
     { kind: 'collection', of: subject.of },
-    ...(hasAlerts(run, members) ? [alertsView(members.filter(id => visibleObject(run, id)!.alerts.length > 0).slice(0, 48))] : []),
+    ...(hasAlerts(run, members) ? [alertsView(members.filter(id => visibleObject(run, id)!.alerts.length > 0))] : []),
     { kind: 'map', of: subject.of },
   ]
 }

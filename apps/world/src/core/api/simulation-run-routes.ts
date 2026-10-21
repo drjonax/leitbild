@@ -375,7 +375,9 @@ const handleSimulationRunApiInner = async (
   const displayMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/displays\/(view|sample|default)$/)
   if (displayMatch && req.method === 'POST') {
     if (config.accessContext.actor.kind === 'ai') return apiError(403, 'display_route_for_people', 'The display routes serve people; the Assistant composes through world.simulation-run.display.compose')
-    const runtime = await config.registry.load(simulationRunIdSchema.parse(decodeURIComponent(displayMatch[1] ?? '')))
+    // A display never loads a Run: one not loaded is reported, and the display waits for someone to open it.
+    const runtime = config.registry.get(simulationRunIdSchema.parse(decodeURIComponent(displayMatch[1] ?? '')))
+    if (runtime === undefined) return apiError(409, 'simulation_run_not_loaded', 'The Run is not loaded; a display shows it once someone opens it')
     const actor = actorForPerspective(buildSimulationRunActorForAccess(config.accessContext), perspective)
     return (await handleDisplayRoute(displayMatch[2]!, await readJson(req), await displayRunOf(config.registry, runtime, actor, new Set())))!
   }
