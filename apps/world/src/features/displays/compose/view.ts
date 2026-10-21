@@ -54,7 +54,7 @@ export const stripsOf = (values: ReadonlyArray<VignetteValue>): ReadonlyArray<Re
     return Array.from({ length: Math.ceil(pens.length / 4) }, (_, at) => pens.slice(at * 4, at * 4 + 4))
   })
 
-const worstAlert = (object: OperationalObject): AlertRow | undefined => alertRows([object], () => ({ label: object.label, categoryId: '' })).slice().sort(worstFirst)[0]
+const worstAlert = (object: OperationalObject): AlertRow | undefined => contextOrder({ objects: [object] }, alertRows([object], () => ({ label: object.label, categoryId: '' }))).rows[0]
 const positionAge = (run: ComposeRun, object: OperationalObject): number | undefined =>
   object.spatial.position === undefined || run.clock === undefined ? undefined : Math.max(0, (Date.parse(run.clock.currentTime) - Date.parse(object.spatial.position.observedAt)) / 1_000)
 
@@ -163,16 +163,24 @@ export const compileVignette = async (run: ComposeRun, state: VignetteState): Pr
 }
 
 /**
- * Alert rows as the Run context ranks its assets: each object's worst alert first, objects by that priority (advisories
- * and acknowledged alerts count) and then Run order; then every other alert by priority.
+ * Alert rows as the Run context ranks and names them: first each object's worst (its highest priority, the first of
+ * those in the Pack's own order, as its context line names it; advisories and acknowledged alarms count), objects by
+ * that priority then Run order; then each object's first-out where that is another alert; then every other alert by
+ * priority, Run order and the Pack's order. So no object's lead alert sorts behind another's second.
  */
-export const contextOrder = (run: ComposeRun, rows: ReadonlyArray<AlertRow>): ReadonlyArray<AlertRow> => {
+export const contextOrder = (run: Pick<ComposeRun, 'objects'>, rows: ReadonlyArray<AlertRow>): { readonly rows: ReadonlyArray<AlertRow>; readonly leading: number } => {
   const order = new Map(run.objects.map((object, at) => [object.id, at]))
-  const byPriority = [...rows].sort((left, right) => priorityRank(right.priority) - priorityRank(left.priority) || worstFirst(left, right))
-  const heads = new Map<string, AlertRow>()
-  for (const row of byPriority) if (!heads.has(row.objectId)) heads.set(row.objectId, row)
-  const first = [...heads.values()].sort((left, right) => priorityRank(right.priority) - priorityRank(left.priority) || order.get(left.objectId)! - order.get(right.objectId)!)
-  return [...first, ...byPriority.filter(row => heads.get(row.objectId) !== row)]
+  const own = new Map(rows.map((row, at) => [row, at]))
+  const sorted = [...rows].sort((left, right) => priorityRank(right.priority) - priorityRank(left.priority) || order.get(left.objectId)! - order.get(right.objectId)! || own.get(left)! - own.get(right)!)
+  const heads = [...new Set(rows.map(row => row.objectId))].map(objectId => sorted.find(row => row.objectId === objectId)!)
+    .sort((left, right) => sorted.indexOf(left) - sorted.indexOf(right))
+  const firstOuts = heads.flatMap(head => {
+    const firstOut = rows.filter(row => row.objectId === head.objectId && row.alert.firstOut !== undefined)
+      .sort((left, right) => left.alert.firstOut!.rank - right.alert.firstOut!.rank || own.get(left)! - own.get(right)!)[0]
+    return firstOut === undefined || firstOut === head ? [] : [firstOut]
+  })
+  const lead = new Set([...heads, ...firstOuts])
+  return { rows: [...heads, ...firstOuts, ...sorted.filter(row => !lead.has(row))], leading: lead.size }
 }
 
 /** The alert rows an alerts view shows, in the context's order: the Run's (every object the caller may see) or these objects'. */
@@ -181,7 +189,12 @@ export const alertsOf = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'a
   return contextOrder(run, alertRows(objects, object => ({ label: object.label, categoryId: presentedOf(run, object)?.categoryId ?? '' }))
     .filter(row => (view.elements === undefined && view.refs === undefined)
       || (row.alert.subject !== undefined && 'element' in row.alert.subject && view.elements?.includes(row.alert.subject.element) === true)
-      || (row.alert.observable !== undefined && view.refs?.includes(row.alert.observable) === true)))
+      || (row.alert.observable !== undefined && view.refs?.includes(row.alert.observable) === true))).rows
+}
+/** The rows an alerts view needs: a header, then every object's worst and first-out, and at least six alerts where there are. */
+export const alertRowsFor = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): number => {
+  const rows = alertsOf(run, view)
+  return 1 + Math.max(1, Math.min(rows.length, Math.max(6, contextOrder(run, rows).leading)))
 }
 
 /** The refs a state's views read now: its values and trends, and what its drawings bind. */
@@ -229,5 +242,5 @@ export const sampleVignette = async (run: ViewRun, state: VignetteState, history
     return Object.fromEntries([...declared.values()].flatMap(entry => entry.observable.series === null ? []
       : [[entry.observable.series.seriesId, run.series(entry.observable.series.seriesId, new Date(history.fromMs).toISOString(), at.at)] as const]))
   })()
-  return { at, observations, alerts: contextOrder(run, [...alerts.values()]), entities, slots, maps, ...(series === undefined ? {} : { series }) }
+  return { at, observations, alerts: contextOrder(run, [...alerts.values()]).rows, entities, slots, maps, ...(series === undefined ? {} : { series }) }
 }

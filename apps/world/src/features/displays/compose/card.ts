@@ -89,13 +89,18 @@ export const slotItems = (objectId: string, label: string, slots: ReadonlyArray<
   }]
 })
 
-/** Items in order, keyed from `firstKey`; what 48 items or 2,400 characters leave out is counted. */
-export const assembleCard = (at: DisplayCard['at'], items: ReadonlyArray<Item>, adjusted: ReadonlyArray<DisplayCardAdjustment>, firstKey = 1): DisplayCard => {
-  const kept: DisplayCardItem[] = []
-  for (const item of items) {
-    const keyed = { key: `k${firstKey + kept.length}`, ...item }
-    if (kept.length >= DISPLAY_CARD_MAX_ITEMS || displayCardTextLength({ items: [...kept, keyed], adjusted }) > DISPLAY_CARD_MAX_TEXT) break
-    kept.push(keyed)
-  }
-  return displayCardSchema.parse({ at, items: kept, more: items.length - kept.length, adjusted })
+/**
+ * Items in order, keyed from `firstKey`, within 48 items and the card's characters; `hidden` items the views left out
+ * are counted in `more`, and so is any item the card itself trims, with an adjustment that says so.
+ */
+export const assembleCard = (at: DisplayCard['at'], items: ReadonlyArray<Item>, adjusted: ReadonlyArray<DisplayCardAdjustment>, hidden = 0, firstKey = 1): DisplayCard => {
+  const keyed = items.map((item, index): DisplayCardItem => ({ key: `k${firstKey + index}`, ...item }))
+  const fits = (count: number, notes: ReadonlyArray<DisplayCardAdjustment>): boolean => count <= DISPLAY_CARD_MAX_ITEMS
+    && displayCardTextLength({ at, items: keyed.slice(0, count), more: hidden + keyed.length - count, adjusted: notes }) <= DISPLAY_CARD_MAX_TEXT
+  if (fits(keyed.length, adjusted)) return displayCardSchema.parse({ at, items: keyed, more: hidden, adjusted })
+  const trimmed = (count: number): ReadonlyArray<DisplayCardAdjustment> => [...adjusted.slice(0, 7),
+    { kind: 'layout', text: `${keyed.length - count} items left off the card, which holds ${DISPLAY_CARD_MAX_ITEMS} items and ${DISPLAY_CARD_MAX_TEXT} characters` }]
+  let count = Math.min(keyed.length, DISPLAY_CARD_MAX_ITEMS)
+  while (count > 0 && !fits(count, trimmed(count))) count -= 1
+  return displayCardSchema.parse({ at, items: keyed.slice(0, count), more: hidden + keyed.length - count, adjusted: trimmed(count) })
 }

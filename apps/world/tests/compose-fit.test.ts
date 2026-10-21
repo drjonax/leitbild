@@ -84,15 +84,18 @@ describe('fit caps and invariants', () => {
     expect(outcome.ok === false && outcome.issues.map(issue => [issue.path, issue.code])).toEqual([['subjects.0', 'pack_is_not_an_object'], ['subjects.1', 'unknown_name']])
   })
 
-  test('a card holds 48 items and 2,400 characters; what it leaves out is counted', () => {
+  test('a card holds 48 items and 1,900 characters; what it trims is counted and said', () => {
     const at = { at: '2026-01-01T08:00:00.000Z', clock: 'simulation' } as const
     const items = Array.from({ length: 60 }, (_, index) => ({ label: `Item ${index}`, reading: `${index} m/s`, numbers: [{ value: index, decimals: 0 }] }))
-    expect(assembleCard(at, items, []).items).toHaveLength(48)
-    expect(assembleCard(at, items, []).more).toBe(12)
+    const capped = assembleCard(at, items, [])
+    expect([capped.items.length, capped.more]).toEqual([48, 12])
+    expect(capped.adjusted).toEqual([{ kind: 'layout', text: '12 items left off the card, which holds 48 items and 1900 characters' }])
     const long = items.map(item => ({ ...item, label: 'L'.repeat(80), reading: 'R'.repeat(120) }))
-    const card = assembleCard(at, long, [])
+    const card = assembleCard(at, long, [{ kind: 'layout', text: '3 values not shown' }], 3)
     expect(displayCardTextLength(card)).toBeLessThanOrEqual(DISPLAY_CARD_MAX_TEXT)
-    expect(card.items.length + card.more).toBe(60)
+    expect(card.items.length + card.more).toBe(63)
+    expect(card.adjusted.map(adjustment => adjustment.text)).toEqual(['3 values not shown', `${60 - card.items.length} items left off the card, which holds 48 items and 1900 characters`])
+    expect(assembleCard(at, items.slice(0, 3), [], 2)).toMatchObject({ more: 2, adjusted: [] })
   })
 
   test('a count reads whole on the card, as the readout prints it', () => {

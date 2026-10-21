@@ -24,7 +24,7 @@ describe('display card', () => {
     }
   })
 
-  test('a card holds at most 48 unique items, eight adjustments and 2,400 characters', () => {
+  test('a card holds at most 48 unique items, eight adjustments and 1,900 characters', () => {
     const card = { at, items: [item], more: 0, adjusted: [{ kind: 'scope', text: 'Reach narrowed to 2 links', lost: 'aux feed', alternatives: ['feed-to-sg'] }] }
     expect(displayCardSchema.parse(card).items).toHaveLength(1)
     expect(displayCardSchema.safeParse({ ...card, items: [item, item] }).success).toBe(false)
@@ -33,15 +33,16 @@ describe('display card', () => {
     const many = (count: number) => Array.from({ length: count }, (_, index) => ({ key: `k${index}`, label: 'l', reading: 'r', numbers: [] }))
     expect(displayCardSchema.safeParse({ ...card, items: many(48), adjusted: [] }).success).toBe(true)
     expect(displayCardSchema.safeParse({ ...card, items: many(49), adjusted: [] }).success).toBe(false)
-    const long = { ...item, label: 'L'.repeat(80), reading: 'R'.repeat(120) }
-    const fits = Math.floor(DISPLAY_CARD_MAX_TEXT / displayCardTextLength({ items: [{ ...long, key: 'k10' }], adjusted: [] }))
-    expect(displayCardSchema.safeParse({ at, items: Array.from({ length: fits }, (_, index) => ({ ...long, key: `k${10 + index}` })), more: 0, adjusted: [] }).success).toBe(true)
-    expect(displayCardSchema.safeParse({ at, items: Array.from({ length: fits + 1 }, (_, index) => ({ ...long, key: `k${10 + index}` })), more: 0, adjusted: [] }).error?.issues[0]?.message)
-      .toBe('a card shows at most 2400 characters')
+    // 1,900 characters of lines (about 600 tokens): a header and eight 200-character items fit, a ninth does not.
+    const long = Array.from({ length: 9 }, (_, index) => ({ ...item, key: `k${10 + index}`, label: 'L'.repeat(80), reading: 'R'.repeat(120) }))
+    expect(displayCardTextLength({ at, items: long.slice(0, 8), more: 0, adjusted: [] })).toBeLessThanOrEqual(DISPLAY_CARD_MAX_TEXT)
+    expect(displayCardSchema.safeParse({ at, items: long.slice(0, 8), more: 0, adjusted: [] }).success).toBe(true)
+    expect(displayCardSchema.safeParse({ at, items: long, more: 0, adjusted: [] }).error?.issues[0]?.message).toBe('a card shows at most 1900 characters')
   })
 
-  test('the text a reader is shown counts each item line and each adjustment', () => {
-    expect(displayCardTextLength({ items: [displayCardItemSchema.parse(item)], adjusted: [{ text: '2 alerts not shown' }] }))
-      .toBe('k3 · Unit 2 · SG A narrow-range level · 31.5 % · caution'.length + '2 alerts not shown'.length)
+  test('the text a reader is shown counts every line as the Assistant reads it, each with 3 characters of listing', () => {
+    const card = { at, items: [displayCardItemSchema.parse(item)], more: 2, adjusted: [{ kind: 'layout' as const, text: '2 alerts not shown' }] }
+    const lines = [`card at ${at.at} (simulation)`, 'k3 · Unit 2 · SG A narrow-range level · 31.5 % · caution', '+2 more', 'adjusted (layout): 2 alerts not shown']
+    expect(displayCardTextLength(card)).toBe(lines.reduce((sum, line) => sum + line.length + 3, 0))
   })
 })

@@ -42,6 +42,8 @@ beforeAll(async () => {
     compileScenarioDefinition: source => compileScenarioDefinition(source, assembly.packs, { routing }),
     scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(assembly.packs), runtimeAdapters: assembly.runtimeAdapters,
     scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: assembly.packs }),
+    // Runs are read long after their last step while other Runs play: none may close as idle.
+    idleRuntimeCloseTimer: () => () => {},
   })
   const runtime = await registry.create({ scenarioId: integrated.id })
   await runtime.setClock({ paused: true })
@@ -117,6 +119,48 @@ describe('a run-wide alerts view', () => {
     expect(displaySpecSchema.safeParse({ title: 't', question: 'q', subjects: [], views: [{ kind: 'alerts' }] }).error?.issues[0]?.message).toBe('name 1 to 6 subjects; only a run-wide alerts view (scope run) needs none')
     const hidden = (await drawn({ ...run, denied: new Set(['grid:halden-four-unit']) })).sample
     expect(hidden.alerts.some(row => row.objectId === 'grid:halden-four-unit')).toBe(false)
+  })
+})
+
+describe('no card drops a row silently (Q15)', () => {
+  test('xp7: the open requests of supply-run at 22 min are all counted: 12 rows on the card, the rest in `more` and said', async () => {
+    const supply = await runOf('supply-run', 22 * 60)
+    const of = { category: 'einsatz-tasks', status: ['open'], closed: false }
+    const outcome = await composeVignette(supply, displaySpecSchema.parse({ title: 'Open supply requests', question: 'Which are open?', subjects: [{ of }], views: [{ kind: 'values', of }] }))
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    const open = (await sampleVignette(supply, outcome.state)).entities[0]!
+    const total = open.rows.length + open.more
+    expect(total).toBeGreaterThan(12)
+    const rows = outcome.card.items.filter(item => item.subject !== undefined && 'objectId' in item.subject && !('alertId' in item.subject))
+    expect(rows.length + outcome.card.more).toBe(total)
+    expect(outcome.card.adjusted).toContainEqual({ kind: 'layout', text: `${total - rows.length} of ${total} Tasks not shown` })
+  })
+
+  test('a run-wide alerts card leads with every object\'s worst alert, the reactor trip first out, and counts the rest', async () => {
+    // E1 gate-b at 4 min: two Tegneby circuits open, ice on the ground, Unit 2's turbine tripped at 1 min.
+    const runtime = await registry.create({ scenarioId: integrated.id })
+    await runtime.setClock({ paused: true })
+    const start = Date.parse(runtime.snapshot().clock!.currentTime)
+    const play = (seconds: number) => runtime.runMaximumPace(new Date(start + seconds * 1_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+    const invoke = async (capabilityId: string, input: unknown) => {
+      const outcome = await runtime.invokeCapability(person, { capabilityId, input })
+      if (outcome.kind === 'command' && !outcome.result.ok) throw new Error(JSON.stringify(outcome.result))
+    }
+    for (const assetId of ['branch:osm-1022cbf125eebbb4', 'branch:osm-50a77b48767677b0']) await invoke('world.electric-grid.open-branch', { gridId: 'grid:halden-four-unit', assetId })
+    await invoke('world.weather.intervene-ground', { area: { type: 'Polygon', coordinates: [[[11.2, 59.0], [11.65, 59.0], [11.65, 59.3], [11.2, 59.3], [11.2, 59.0]]] }, surface: { ice: 0.85 } })
+    await play(60)
+    await invoke('world.process-plant.action.invoke', { plantId: 'plant:halden-2', actionId: 'turbine-trip', parameters: {} })
+    await play(240)
+    const gate = await displayRunOf(registry, runtime, person, new Set())
+    const outcome = await composeVignette(gate, displaySpecSchema.parse({ title: 'Run-wide alerts', question: 'What needs attention?', subjects: [], views: [{ kind: 'alerts', scope: 'run' }] }))
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    const alerted = new Set(gate.objects.filter(object => alertRows([object], () => ({ label: '', categoryId: '' })).length > 0).map(object => object.id))
+    const heads = outcome.card.items.slice(0, alerted.size).map(item => item.subject !== undefined && 'objectId' in item.subject ? item.subject.objectId : '')
+    expect(new Set(heads)).toEqual(alerted)
+    expect(outcome.card.items[0]).toMatchObject({ label: 'Halden Unit 2', reading: 'alarm · Reactor trip on turbine trip · first out' })
+    const total = alertRows(gate.objects, () => ({ label: '', categoryId: '' })).length
+    expect(outcome.card.items.length + outcome.card.more).toBe(total)
+    expect(outcome.card.adjusted).toEqual([{ kind: 'layout', text: `${outcome.card.more} of ${total} alerts not shown` }])
   })
 })
 
