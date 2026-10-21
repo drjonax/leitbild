@@ -1,5 +1,5 @@
-import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink, VariablePath } from '../../graph/index.ts'
-import type { TopologyEdge, TopologyNode } from '../../../../core/observation/topology.ts'
+import type { CompiledPlantGraph, CompiledProcessLink, VariablePath } from '../../graph/index.ts'
+import type { TopologyNode } from '../../../../core/observation/topology.ts'
 import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { readingText, unitLabel } from '../../quantity-text.ts'
