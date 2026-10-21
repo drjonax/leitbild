@@ -50,25 +50,17 @@ const quantityOf = (binding: ProcessSignalBinding): Observable['quantity'] => {
 
 const nameOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
 
-/** Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's ends, by short name. */
 /**
- * What crews call a reading, where the name is the standard one for that very
- * signal (R37): the core-exit thermocouples' average (CET), the mean coolant
- * temperature and each protection loop's average (Tavg), the power-range
- * nuclear instruments, which the board and the procedures read as reactor
- * power, and a loop's measured temperature where it leaves the heat source
- * (Thot) or the transfer's primary side (Tcold). Words a search finds it by,
- * written into its label; never an alias.
+ * What crews call a reading (R37): the name its equipment's presentation
+ * declares for it (CET, Tavg, reactor power), or a loop's measured
+ * temperature where it leaves the heat source (Thot) or the transfer's
+ * primary side (Tcold). Words a search finds it by, written into its label;
+ * never an alias.
  */
-const standardNames: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  reactorCore: { coreExitTemperatureC: 'CET', powerRangePercent: 'reactor power' },
-  reactorVessel: { meanPrimaryCoolantTemperatureC: 'Tavg' },
-  deltaTProtectionChannel: { averageTemperatureC: 'Tavg' },
-}
 const operatorName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string | undefined => {
   const graph = plant.graph
   const local = String(binding.path).slice(String(binding.path).indexOf('.') + 1)
-  if (binding.owner.type === 'component') return standardNames[graph.components[binding.owner.componentIndex]!.kind]?.[local]
+  if (binding.owner.type === 'component') return graph.components[binding.owner.componentIndex]!.metadata?.presentation?.names?.[local]
   if (binding.quantity !== 'temperature' || !binding.published) return undefined
   const link = graph.links[binding.owner.linkIndex]!
   const from = graph.components[link.fromComponentIndex]!
@@ -77,6 +69,7 @@ const operatorName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding
     : from.semantics.energy.some(role => role.role === 'transfer' && role.from === circuit) ? 'Tcold' : undefined
 }
 
+/** Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's ends, by short name. */
 const labelOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string => {
   const graph = plant.graph
   const name = operatorName(plant, binding)

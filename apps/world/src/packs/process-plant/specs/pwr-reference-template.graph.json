@@ -275,6 +275,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "Core",
+          "names": { "coreExitTemperatureC": "CET", "powerRangePercent": "reactor power" },
           "states": {
             "sourceRangeEnergized": { "on": "Source-range HV on", "off": "Source-range HV off" },
             "aboveP6": { "on": "Above P-6", "off": "Below P-6" },
@@ -369,7 +370,8 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "RV"
+          "shortLabel": "RV",
+          "names": { "meanPrimaryCoolantTemperatureC": "Tavg" }
         }
       }
     },
@@ -4870,6 +4872,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel A",
+          "names": { "averageTemperatureC": "Tavg" },
           "states": {
             "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
           }
@@ -4952,6 +4955,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel B",
+          "names": { "averageTemperatureC": "Tavg" },
           "states": {
             "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
           }
@@ -5034,6 +5038,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel C",
+          "names": { "averageTemperatureC": "Tavg" },
           "states": {
             "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
           }
@@ -5116,6 +5121,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel D",
+          "names": { "averageTemperatureC": "Tavg" },
           "states": {
             "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
           }
@@ -5198,6 +5204,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel E",
+          "names": { "averageTemperatureC": "Tavg" },
           "states": {
             "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
           }
@@ -5280,6 +5287,7 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel F",
+          "names": { "averageTemperatureC": "Tavg" },
           "states": {
             "forcedFlow": { "on": "Forced flow", "off": "No forced flow" }
           }
