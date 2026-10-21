@@ -27,23 +27,31 @@ export const openBridgeNotice = (packages: ReadonlyArray<OpenBridgePackage>): st
 interface NoticeChunk {
   readonly type: 'chunk'
   readonly moduleIds: ReadonlyArray<string>
-  readonly viteMetadata?: { readonly importedCss: ReadonlySet<string> }
+  readonly viteMetadata?: { readonly importedCss: Set<string> }
 }
 
 interface NoticeAsset {
   readonly type: 'asset'
-  source: string | Uint8Array
+  readonly names: ReadonlyArray<string>
+  readonly originalFileNames: ReadonlyArray<string>
+  readonly source: string | Uint8Array
 }
 
-/** The stylesheets Vite emitted for chunks with OpenBridge code. */
-const openBridgeStylesheets = (bundle: Readonly<Record<string, NoticeChunk | NoticeAsset | { readonly type: string }>>): ReadonlySet<string> =>
-  new Set(Object.values(bundle).flatMap(output => output.type === 'chunk' && (output as NoticeChunk).moduleIds.some(fromOpenBridge)
-    ? [...((output as NoticeChunk).viteMetadata?.importedCss ?? [])]
-    : []))
+/** The chunks with OpenBridge code. */
+const openBridgeChunks = (bundle: Readonly<Record<string, NoticeChunk | NoticeAsset | { readonly type: string }>>): ReadonlyArray<NoticeChunk> =>
+  Object.values(bundle).flatMap(output => output.type === 'chunk' && (output as NoticeChunk).moduleIds.some(fromOpenBridge) ? [output as NoticeChunk] : [])
 
 /**
  * Adds the notice to every emitted script with OpenBridge code (as its
  * post-minification banner) and to the stylesheets those scripts import.
+ *
+ * World serves its built files immutable, so each one's name must follow its
+ * final bytes. A script's hash takes the notice in (augmentChunkHash). A
+ * stylesheet is named by its hash before the notice heads it, so it is emitted
+ * again, headed, under the name its final bytes hash to, and its chunk names
+ * that one: the page that links it and the chunks that preload it are written
+ * after this, and every chunk that preloads it imports the OpenBridge chunk,
+ * whose hash the notice is in.
  */
 export const openBridgeLicenceNotice = (packages: ReadonlyArray<OpenBridgePackage>): Plugin => {
   const notice = openBridgeNotice(packages)
@@ -53,12 +61,30 @@ export const openBridgeLicenceNotice = (packages: ReadonlyArray<OpenBridgePackag
       ...options,
       postBanner: chunk => (chunk.moduleIds.some(fromOpenBridge) ? notice : ''),
     }),
+    augmentChunkHash: chunk => (chunk.moduleIds.some(fromOpenBridge) ? notice : undefined),
     generateBundle(_options, bundle) {
-      for (const fileName of openBridgeStylesheets(bundle as never)) {
-        const asset = bundle[fileName]
-        if (asset?.type !== 'asset') throw new Error(`OpenBridge stylesheet ${fileName} is not in the bundle`)
-        const source = typeof asset.source === 'string' ? asset.source : new TextDecoder().decode(asset.source)
-        asset.source = `${notice}\n${source}`
+      const renamed = new Map<string, string>()
+      for (const chunk of openBridgeChunks(bundle as never)) {
+        const importedCss = chunk.viteMetadata?.importedCss
+        if (importedCss === undefined) continue
+        for (const fileName of [...importedCss]) {
+          const named = renamed.get(fileName) ?? (() => {
+            const asset = bundle[fileName] as NoticeAsset | NoticeChunk | undefined
+            if (asset?.type !== 'asset') throw new Error(`OpenBridge stylesheet ${fileName} is not in the bundle`)
+            const source = typeof asset.source === 'string' ? asset.source : new TextDecoder().decode(asset.source)
+            delete bundle[fileName]
+            const headed = this.getFileName(this.emitFile({
+              type: 'asset',
+              ...(asset.names[0] === undefined ? {} : { name: asset.names[0] }),
+              ...(asset.originalFileNames[0] === undefined ? {} : { originalFileName: asset.originalFileNames[0] }),
+              source: `${notice}\n${source}`,
+            }))
+            renamed.set(fileName, headed)
+            return headed
+          })()
+          importedCss.delete(fileName)
+          importedCss.add(named)
+        }
       }
     },
   }

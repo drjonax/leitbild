@@ -99,6 +99,33 @@ export const recordedHistoryOf = (historian: Pick<RunHistorian, 'seriesWindow'>,
 
 const currentSchema = 1
 
+/**
+ * The most samples an eviction pass removes beyond what its batch needs to fit
+ * the budget (createRunHistorian evict). On a mature four-unit Halden file
+ * (633k samples, about 200 stored a second) one pass of 5,000 every 25 s held
+ * the event loop 110-480 ms; passes of at most 500 run with most batches, 3 ms
+ * at the median and 71 ms at most, measured on a loaded machine.
+ */
+export const EVICTION_PASS = 500
+
+/**
+ * How many samples an eviction pass removes: what a batch of `incoming`
+ * needs to fit the budget, and otherwise at most EVICTION_PASS towards the
+ * slack kept below it (a file over its page budget, a slack's worth). At
+ * most 5,000 at once; a batch still too large waits for upkeep to catch up.
+ */
+export const evictionCount = (store: {
+  readonly sampleCount: number
+  readonly incoming: number
+  readonly maxSamples: number
+  readonly slack: number
+  readonly overBytes: boolean
+}): number => {
+  const needed = store.sampleCount + store.incoming - store.maxSamples
+  const towardsSlack = Math.max(store.sampleCount + store.incoming - (store.maxSamples - store.slack), store.overBytes ? store.slack : 0)
+  return Math.min(5_000, Math.max(needed, Math.min(EVICTION_PASS, towardsSlack)))
+}
+
 const historyStorage = (path: string) => {
   const bytes = (file: string) => {
     if (path === ':memory:') return 0
@@ -245,9 +272,11 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Hi
   // Large existing histories remain untouched: calculate their bounds once,
   // never build a new multi-million-row index or prune them during Run startup.
   const frozenBounds = oversizedAtOpen ? database.query<{ first: string | null; last: string | null }, []>('SELECT MIN(observed_at) AS first, MAX(observed_at) AS last FROM recording_samples').get() : null
-  // Over budget, eviction goes this far below it at once, so one bounded pass
-  // makes room for many batches rather than for the next one.
+  // Eviction keeps the store this far below its budget, so a burst of samples
+  // (every series' heartbeat falls due together) lands in room already made.
   const evictionSlack = Math.min(5_000, Math.ceil(limits.maxSamples / 100))
+  // The file was over its page budget at the last eviction: each batch evicts until it is within it again.
+  let overBytesAtEviction = false
   // The pages the database file may use: the sample budget's bytes, enforced
   // where samples are larger than measured (long strings, long ids).
   const databaseBudgetBytes = limits.maxBytes - walHeadroomBytes(limits.maxBytes)
@@ -285,24 +314,33 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Hi
     forget(expired.length)
     // Expiry by age may take a series' last stored sample: its next sample stores.
     for (const row of expired) held.delete(keyFor(row.runtime_id, row.series_id))
-    const overBytes = usedDatabaseBytes() > databaseBudgetBytes
-    if (sampleCount + incoming <= limits.maxSamples && !overBytes) return
-    // Fair eviction: the oldest retained samples go first, whichever series
-    // holds them, and never a series' newest (one with no later sample of its
-    // series), the value its readers hold. Every series keeps the same span of
-    // time, the measure its readers' windows ask for: a series that stores
-    // more costs itself more samples, not the others their history.
-    const excess = Math.max(sampleCount + incoming - (limits.maxSamples - evictionSlack), overBytes ? evictionSlack : 0)
-    forget(database.query<unknown, [number]>(`
-      DELETE FROM recording_samples WHERE sequence IN (
-        SELECT oldest.sequence FROM recording_samples AS oldest
-        WHERE EXISTS (
-          SELECT 1 FROM recording_samples AS later INDEXED BY recording_samples_series_time
-          WHERE later.runtime_id = oldest.runtime_id AND later.series_id = oldest.series_id AND later.sequence > oldest.sequence
-        )
-        ORDER BY oldest.observed_at, oldest.sequence LIMIT ?
+    evict(incoming)
+  }
+  const evictOldest = database.query<unknown, [number]>(`
+    DELETE FROM recording_samples WHERE sequence IN (
+      SELECT oldest.sequence FROM recording_samples AS oldest
+      WHERE EXISTS (
+        SELECT 1 FROM recording_samples AS later INDEXED BY recording_samples_series_time
+        WHERE later.runtime_id = oldest.runtime_id AND later.series_id = oldest.series_id AND later.sequence > oldest.sequence
       )
-    `).run(Math.min(5_000, excess)).changes)
+      ORDER BY oldest.observed_at, oldest.sequence LIMIT ?
+    )
+  `)
+  /**
+   * Fair eviction: the oldest retained samples go first, whichever series
+   * holds them, and never a series' newest (one with no later sample of its
+   * series), the value its readers hold. Every series keeps the same span of
+   * time, the measure its readers' windows ask for: a series that stores
+   * more costs itself more samples, not the others their history.
+   *
+   * A pass removes what `incoming` needs to fit the budget, and otherwise at
+   * most EVICTION_PASS samples towards the slack below it (evictionCount), so
+   * the Run's event loop is held briefly and the next batch carries on.
+   */
+  const evict = (incoming: number): void => {
+    overBytesAtEviction = usedDatabaseBytes() > databaseBudgetBytes
+    const count = evictionCount({ sampleCount, incoming, maxSamples: limits.maxSamples, slack: evictionSlack, overBytes: overBytesAtEviction })
+    if (count > 0) forget(evictOldest.run(count).changes)
   }
 
   const insertSeries = database.prepare(`
@@ -375,6 +413,7 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Hi
       let written = false
       try {
         if (now() - lastMaintenanceAt >= 10_000 || sampleCount + kept.length > limits.maxSamples) maintenance(kept.length)
+        else if (storageAllowed && !oversizedAtOpen && (overBytesAtEviction || sampleCount + kept.length > limits.maxSamples - evictionSlack)) evict(kept.length)
         if (!storageAllowed || sampleCount > limits.maxSamples) {
           if (storageAllowed) lastError = catchingUpMessage
           discardedSinceOpen += kept.length
@@ -407,24 +446,27 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Hi
       const query = recordingSeriesQuerySchema.parse(input)
       const selectionPredicates: string[] = []
       const selectionValues: Array<string | number> = []
-      for (const [column, value] of [
+      // Both sample indexes lead with runtime_id. A read that names its series
+      // (by id, subject or signal) takes the (runtime_id, series_id) pairs that
+      // match from the series catalog and reaches each pair's samples through
+      // recording_samples_series_time, so none of the statements below scans
+      // the samples table. Every stored sample belongs to a described series
+      // (record), so these are the rows the names select.
+      const named = ([
         ['runtime_id', query.runtimeId],
         ['series_id', query.seriesId],
-      ] as const) {
-        if (value === undefined) continue
-        selectionPredicates.push(`${column} = ?`)
-        selectionValues.push(value)
-      }
-      if (query.subjectId !== undefined || query.signalId !== undefined) {
-        selectionPredicates.push(`EXISTS (
-          SELECT 1 FROM recording_series series
-          WHERE series.runtime_id = recording_samples.runtime_id
-            AND series.series_id = recording_samples.series_id
-            ${query.subjectId === undefined ? '' : 'AND series.subject_id = ?'}
-            ${query.signalId === undefined ? '' : 'AND series.signal_id = ?'}
+        ['subject_id', query.subjectId],
+        ['signal_id', query.signalId],
+      ] as const).flatMap(([column, value]) => value === undefined ? [] : [{ column, value }])
+      if (query.seriesId !== undefined || query.subjectId !== undefined || query.signalId !== undefined) {
+        selectionPredicates.push(`(runtime_id, series_id) IN (
+          SELECT runtime_id, series_id FROM recording_series
+          WHERE ${named.map(({ column }) => `${column} = ?`).join(' AND ')}
         )`)
-        if (query.subjectId !== undefined) selectionValues.push(query.subjectId)
-        if (query.signalId !== undefined) selectionValues.push(query.signalId)
+        selectionValues.push(...named.map(({ value }) => value))
+      } else if (query.runtimeId !== undefined) {
+        selectionPredicates.push('runtime_id = ?')
+        selectionValues.push(query.runtimeId)
       }
       const predicates = [...selectionPredicates]
       const values = [...selectionValues]

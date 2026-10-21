@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
+import { extname, join, relative } from 'node:path'
 import { build, type Rolldown } from 'vite'
 import { embedDrawnTags } from './openbridge-elements.ts'
 
@@ -60,4 +62,21 @@ describe('built World UI', () => {
     expect(chunks.length).toBeGreaterThan(0)
     expect(chunks.flatMap(chunk => chunk.moduleIds.filter(id => id.includes('/@oicl/')).map(id => `${chunk.fileName}: ${id.slice(id.indexOf('/@oicl/') + 1)}`))).toEqual([])
   }, 120_000)
+
+  // World serves everything under assets/world as immutable (server.ts staticCacheControl):
+  // the build names each file there by its content hash, and its only other files are the two pages.
+  test('names every file it builds under assets/world by its content hash, and builds nothing else but the two pages', async () => {
+    const names = (await builtFiles()).map(file => file.name)
+    expect(names).toContain('index.html')
+    expect(names).toContain('embed.html')
+    expect(names.filter(name => name !== 'index.html' && name !== 'embed.html' && !/^assets\/world\/[^/]+-[A-Za-z0-9_-]{8}\.[a-z0-9]+$/.test(name))).toEqual([])
+  }, 120_000)
+
+  test('names every public file it copies, unhashed, into assets/world by the hash of its own bytes', () => {
+    const publicDir = join(root, 'src', 'ui', 'public')
+    const files = readdirSync(publicDir, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile())
+      .map(entry => relative(publicDir, join(entry.parentPath, entry.name))).filter(file => file.startsWith('assets/world/'))
+    expect(files.length).toBeGreaterThan(0)
+    expect(files.filter(file => !file.endsWith(`.${createHash('sha256').update(readFileSync(join(publicDir, file))).digest('hex').slice(0, 8)}${extname(file)}`))).toEqual([])
+  })
 })

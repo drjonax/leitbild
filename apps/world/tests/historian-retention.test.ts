@@ -13,7 +13,7 @@ import {
   storedSampleBytes,
   walHeadroomBytes,
 } from '../src/features/historian/policy.ts'
-import { createRunHistorian, type RunHistorian } from '../src/features/historian/store.ts'
+import { createRunHistorian, EVICTION_PASS, evictionCount, type RunHistorian } from '../src/features/historian/store.ts'
 import { HOLD_GAP_MS } from '../src/packs/process-plant/displays/trend-reading.ts'
 
 const t0 = Date.parse('2026-01-01T10:00:00.000Z')
@@ -183,7 +183,9 @@ describe('Run Historian retention', () => {
       for (let second = 1; second <= 30; second += 1) insert.run('level', iso(t0 + second * 1_000), iso(t0 + second * 1_000), 'number', second <= 10 ? 50 : second, null)
       earlier.close()
 
-      const opened = () => createRunHistorian(path, { limits: { maxBytes: 1024 * 1024, minFreeBytes: 0 }, now: () => t0 + 31_000 })
+      // Upkeep follows the Run's clock, which moves with the samples it records.
+      let now = t0 + 31_000
+      const opened = () => createRunHistorian(path, { limits: { maxBytes: 1024 * 1024, minFreeBytes: 0 }, now: () => now })
       const historian = opened()
       try {
         expect(historian.status()).toMatchObject({ seriesCount: 2, sampleCount: 31, captureState: 'recording' })
@@ -192,7 +194,10 @@ describe('Run Historian retention', () => {
         // It keeps recording, under the budget its bytes afford, the oldest first but never a series' newest.
         const { maxSamples } = historian.status().limits
         const last = 30 + maxSamples + 10
-        for (let first = 31; first <= last; first += 20) historian.record('rt', { descriptors: [], samples: Array.from({ length: Math.min(20, last - first + 1) }, (_, index) => sample('level', first + index, t0 + (first + index) * 1_000)) })
+        for (let first = 31; first <= last; first += 20) {
+          now = t0 + (first + 20) * 1_000
+          historian.record('rt', { descriptors: [], samples: Array.from({ length: Math.min(20, last - first + 1) }, (_, index) => sample('level', first + index, t0 + (first + index) * 1_000)) })
+        }
         const status = historian.status()
         expect(status).toMatchObject({ captureState: 'recording', lastError: null })
         expect(status.sampleCount!).toBeLessThanOrEqual(maxSamples)
@@ -211,6 +216,51 @@ describe('Run Historian retention', () => {
       const reopened = opened()
       try { expect(reopened.status().captureState).toBe('recording') } finally { reopened.close() }
     })
+  })
+
+  test('an eviction pass makes room for its batch, and otherwise removes at most EVICTION_PASS samples towards the slack', () => {
+    const halden = { maxSamples: 633_429, slack: 5_000, overBytes: false }
+    // Below the slack's mark nothing goes; past it, a pass at a time; a batch that would cross the budget takes what it needs.
+    expect(evictionCount({ ...halden, sampleCount: 600_000, incoming: 200 })).toBeLessThanOrEqual(0)
+    expect(evictionCount({ ...halden, sampleCount: 628_429, incoming: 200 })).toBe(200)
+    expect(evictionCount({ ...halden, sampleCount: 631_000, incoming: 2_000 })).toBe(EVICTION_PASS)
+    expect(evictionCount({ ...halden, sampleCount: 633_000, incoming: 2_000 })).toBe(1_571)
+    expect(evictionCount({ ...halden, sampleCount: 633_429, incoming: 20_000 })).toBe(5_000)
+    // Over its page budget, a pass takes a slack's worth, a pass at a time.
+    expect(evictionCount({ ...halden, sampleCount: 100_000, incoming: 200, overBytes: true })).toBe(EVICTION_PASS)
+    expect(evictionCount({ maxSamples: 1_962, slack: 20, overBytes: true, sampleCount: 100, incoming: 5 })).toBe(20)
+  })
+
+  test('evicts ahead of the budget with each batch, settling the slack below it at the rate samples arrive, never above it', () => {
+    let now = t0
+    const historian = createRunHistorian(':memory:', { now: () => now, limits: { maxBytes: 4 * 1024 * 1024, minFreeBytes: 0 } })
+    try {
+      const series = Array.from({ length: 1_000 }, (_, index) => `s:${index}`)
+      const { maxSamples } = historian.status().limits
+      const slack = Math.min(5_000, Math.ceil(maxSamples / 100))
+      historian.record('rt', { descriptors: series.map(numberSeries), samples: [] })
+      // Every sample says something new, so each stores: a second of `width` series a batch, a second apart.
+      let second = 0
+      const record = (width: number): void => {
+        const before = historian.status()
+        now = t0 + second * 1_000
+        historian.record('rt', { descriptors: [], samples: series.slice(0, width).map((id, index) => sample(id, second * 10 + index / 1_000, now)) })
+        second += 1
+        const after = historian.status()
+        expect(after.sampleCount!).toBeLessThanOrEqual(maxSamples)
+        expect(after.discardedSinceOpen - before.discardedSinceOpen).toBe(Math.max(0, evictionCount({ sampleCount: before.sampleCount!, incoming: width, maxSamples, slack, overBytes: false })))
+      }
+      // Batches smaller than a pass settle the slack below the budget.
+      while (second < 2 * Math.ceil(maxSamples / 300)) record(300)
+      expect(historian.status().sampleCount).toBe(maxSamples - slack)
+      // A batch larger than a pass takes the room it needs, and the next ones restore the slack.
+      record(1_000)
+      expect(historian.status().sampleCount).toBe(maxSamples)
+      for (let batch = 0; batch < 10; batch += 1) record(300)
+      const status = historian.status()
+      expect(status.sampleCount).toBe(maxSamples - slack)
+      expect(status).toMatchObject({ captureState: 'recording', lastError: null })
+    } finally { historian.close() }
   })
 
   test('samples heavier than budgeted are evicted by the pages they use, so capture continues within the byte budget', async () => {
