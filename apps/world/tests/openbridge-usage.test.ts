@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { definedIn, embedDrawnTags, embedRunning, openBridgeRoot } from './openbridge-elements.ts'
 
 // Every OpenBridge element property and enum value Leitbild sets exists in the
 // installed OpenBridge's Custom Elements Manifest: the Svelte templates (which
@@ -169,104 +170,24 @@ describe('OpenBridge usage against its Custom Elements Manifest', () => {
   })
 })
 
-// Every OpenBridge element a page draws is defined by a module that page loads.
-// Importing an OpenBridge module defines its elements; an `import type` (or an
-// import of types alone) is erased, so the element stays an empty unknown tag
-// and draws nothing. That is how the steam generators' and the condenser's
-// vessels (obc-heat-exchanger) vanished from every mimic on 20 Oct 2026
-// (08305f825) while every server-side record stayed identical.
-
-/** The OpenBridge module defining each tag, from its `customElement("…")` call. */
-const definedIn = new Map<string, string>()
-for (const path of files(join(openBridge, 'dist'), '.js')) {
-  for (const match of readFileSync(path, 'utf8').matchAll(/customElement\("((?:obc|obi)-[a-z0-9-]+)"\)/g)) definedIn.set(match[1]!, path)
-}
-
-/** The modules an OpenBridge module loads in turn: every import in its built JS runs. */
-const openBridgeImports = (path: string): ReadonlyArray<string> => [...readFileSync(path, 'utf8').matchAll(/(?:^|\n)\s*(?:import|export)\s*(?:[^'"]*?\sfrom\s*)?["']([^"']+)["']/g)]
-  .flatMap(match => {
-    const spec = match[1]!
-    if (spec.startsWith('.')) return [resolve(dirname(path), spec)]
-    if (spec.startsWith('@oicl/openbridge-webcomponents/')) return [join(openBridge, spec.slice('@oicl/openbridge-webcomponents/'.length))]
-    return []
-  })
-
-/** Source without comments, so a tag named in prose is not taken for one drawn. */
-const code = (source: string): string => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
-
-/**
- * The modules a source file loads at run time: value and side-effect imports,
- * re-exports and dynamic imports, but not `import type` nor an import whose
- * every name is a type.
- */
-const runtimeImports = (source: string): ReadonlyArray<string> => [
-  ...[...source.matchAll(/(?:^|\n)\s*import\s+(type\s+)?([^'";]*?)\s+from\s+['"]([^'"]+)['"]/g)]
-    .filter(match => match[1] === undefined && (!/^\{[^}]*\}$/.test(match[2]!.trim()) || match[2]!.trim().slice(1, -1).split(',').map(name => name.trim()).some(name => name !== '' && !/^type\s/.test(name))))
-    .map(match => match[3]!),
-  ...[...source.matchAll(/(?:^|\n)\s*import\s+['"]([^'"]+)['"]/g)].map(match => match[1]!),
-  ...[...source.matchAll(/(?:^|\n)\s*export\s+(?!type\b)[^'";]*?\s+from\s+['"]([^'"]+)['"]/g)].map(match => match[1]!),
-  ...[...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map(match => match[1]!),
-]
-
-const sourceFile = (from: string, spec: string): string | null => {
-  const base = resolve(dirname(from), spec)
-  return [base, `${base}.ts`, join(base, 'index.ts')].find(candidate => existsSync(candidate) && statSync(candidate).isFile()) ?? null
-}
-
-/** Every source file a page's entry reaches at run time, and the OpenBridge modules they load. */
-const loadedBy = (entry: string): { readonly sources: ReadonlyArray<string>; readonly openBridge: ReadonlySet<string> } => {
-  const sources = new Set<string>()
-  const loaded = new Set<string>()
-  const pending = [entry]
-  while (pending.length > 0) {
-    const path = pending.pop()!
-    if (sources.has(path)) continue
-    sources.add(path)
-    for (const spec of runtimeImports(code(readFileSync(path, 'utf8')))) {
-      if (spec.startsWith('@oicl/openbridge-webcomponents/')) loaded.add(join(openBridge, spec.slice('@oicl/openbridge-webcomponents/'.length)))
-      else if (spec.startsWith('.')) {
-        const next = sourceFile(path, spec)
-        if (next !== null && (next.endsWith('.ts') || next.endsWith('.svelte'))) pending.push(next)
-      }
-    }
-  }
-  const closure = new Set<string>()
-  const queue = [...loaded]
-  while (queue.length > 0) {
-    const path = queue.pop()!
-    if (closure.has(path) || !existsSync(path)) continue
-    closure.add(path)
-    queue.push(...openBridgeImports(path))
-  }
-  return { sources: [...sources], openBridge: closure }
-}
-
-/** The OpenBridge tags a source file draws: written as a start tag, or as a whole string (createElement, a glyph's tag). */
-const tagsDrawnIn = (source: string): ReadonlySet<string> => new Set([
-  ...[...source.matchAll(/<((?:obc|obi)-[a-z0-9-]+)[\s/>]/g)].map(match => match[1]!),
-  ...[...source.matchAll(/(['"`])((?:obc|obi)-[a-z0-9-]+)\1/g)].map(match => match[2]!),
-])
-
-// Only the embedded view (src/ui/embed/main.ts) draws OpenBridge elements; the World application draws none.
+// Every OpenBridge element the embedded view draws is defined by a bare import
+// of its module in the loader of the surface that draws it (openbridge-elements.ts).
 describe('OpenBridge elements are defined where they are drawn', () => {
-  test('every OpenBridge element the embedded view draws is defined by a module it loads', () => {
-    const { sources, openBridge: loaded } = loadedBy(join(root, 'src/ui/embed/main.ts'))
-    const problems: string[] = []
-    const drawn = new Set<string>()
-    for (const path of sources) {
-      for (const tag of tagsDrawnIn(code(readFileSync(path, 'utf8')))) {
-        drawn.add(tag)
-        const module = definedIn.get(tag)
-        if (module === undefined) problems.push(`${relative(root, path)} draws <${tag}>, which no OpenBridge module defines`)
-        else if (!loaded.has(module)) problems.push(`${relative(root, path)} draws <${tag}>, but nothing the embedded view loads imports ${relative(openBridge, module)} for more than its types`)
-      }
-    }
+  test('every OpenBridge element the embedded view draws is defined by a bare import in its surface, not by a type or enum import', () => {
+    const problems = embedDrawnTags.flatMap(drawn => {
+      if (drawn.module === null) return [`${drawn.file} draws <${drawn.tag}>, which no OpenBridge module defines`]
+      if (drawn.definedBySurface) return []
+      const how = embedRunning.has(drawn.module) ? 'is loaded only for its types or enums, or from elsewhere' : 'is not loaded at all'
+      return [`${drawn.file} draws <${drawn.tag}>, but ${relative(openBridgeRoot, drawn.module)} ${how}: import it bare in the loader of the surface that draws it`]
+    })
     expect(problems).toEqual([])
-    expect(drawn.size).toBeGreaterThan(30)
+    expect(new Set(embedDrawnTags.map(drawn => drawn.tag)).size).toBeGreaterThan(30)
   })
 
-  test("the mimic's vessels are among the elements the embedded view defines: tanks and the heat exchanger of steam generators and condensers", () => {
-    const { openBridge: loaded } = loadedBy(join(root, 'src/ui/embed/main.ts'))
-    expect(['obc-automation-tank', 'obc-heat-exchanger', 'obi-heatexhanger'].filter(tag => !loaded.has(definedIn.get(tag) ?? ''))).toEqual([])
+  test("the mimic's vessels are among them: tanks and the heat exchanger of steam generators and condensers", () => {
+    const vessels = embedDrawnTags.filter(drawn => drawn.file.endsWith('mimic/openbridge-mimic.ts') && ['obc-automation-tank', 'obc-heat-exchanger'].includes(drawn.tag))
+    expect(vessels.map(drawn => [drawn.tag, drawn.definedBySurface]).sort()).toEqual([['obc-automation-tank', true], ['obc-heat-exchanger', true]])
+    // The heat exchanger's icon is OpenBridge's own: its module imports it.
+    expect(embedRunning.has(definedIn.get('obi-heatexhanger') ?? '')).toBe(true)
   })
 })
