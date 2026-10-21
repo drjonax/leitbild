@@ -12,7 +12,7 @@
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { FROZEN_SPECS, freezeRun, type FrozenRun } from './frozen-runs.ts'
-import { buildCard, cardText, type Card } from './cards.ts'
+import { buildCard, cardLimits, cardText, type Card } from './cards.ts'
 import { chat, createLedger, type ChatMessage, type Ledger } from './openrouter.ts'
 import { REPLAY_SKILL, REPLAY_TOOLS } from './replay.ts'
 import { wilson } from './stats.ts'
@@ -155,6 +155,26 @@ export const CITATION_CASES: ReadonlyArray<CitationCase> = [
   { kind: 'since', language: 'nb', question: 'Siden når har disse tilstandene vart?' },
 ]
 
+/** Round 2 (R40): fresh questions that ask for values, seeds per case, two-card cases only on Runs with two assets. */
+export const CITATION_CASES_R2: ReadonlyArray<CitationCase> = [
+  { kind: 'single', language: 'en', question: 'Report the readings that matter most, each with its value.' },
+  { kind: 'single', language: 'en', question: 'Which readings are furthest from normal, and by how much?' },
+  { kind: 'single', language: 'en', question: 'Summarise this display in three sentences, quoting the values.' },
+  { kind: 'single', language: 'en', question: 'What would you tell the next shift about these values?' },
+  { kind: 'single', language: 'en', question: 'List every reading that is above or below its limit, with the limit.' },
+  { kind: 'single', language: 'en', question: 'Give me the values a supervisor needs from this display.' },
+  { kind: 'single', language: 'nb', question: 'Hvilke verdier er viktigst her? Oppgi verdiene.' },
+  { kind: 'single', language: 'nb', question: 'Er noen av verdiene over eller under grensene sine?' },
+  { kind: 'multi', language: 'en', question: 'Compare the two displays value by value.' },
+  { kind: 'multi', language: 'en', question: 'Which display shows the more serious state? Quote the values.' },
+  { kind: 'multi', language: 'en', question: 'What is the same and what differs between the two displays?' },
+  { kind: 'multi', language: 'en', question: 'Give the two most important values from each display.' },
+  { kind: 'multi', language: 'nb', question: 'Sammenlign de to displayene verdi for verdi.' },
+  { kind: 'since', language: 'en', question: 'When did each state change, and what is it now?' },
+  { kind: 'since', language: 'en', question: 'Which state changed last?' },
+  { kind: 'since', language: 'nb', question: 'Når endret tilstandene seg, og hva er de nå?' },
+]
+
 /** The Runs with observation content (plant, grid or weather): T10 needs numbers on its cards. */
 export const CITATION_RUNS = ['halden-normal-operation', 'halden-offsite-power-restoration', 'halden-power-complex', 'halden-weather-response', 'nordic-frequency-event', 'nordland-corridor-security', 'rogaland-black-start', 'integrated-all-packs']
 
@@ -163,9 +183,11 @@ export const cardsOf = async (frozen: FrozenRun) => {
   const assets = frozen.context.text.split('\n').filter(line => / · lead: /.test(line)).map(line => line.slice(2).split(' · ')[0]!)
   const leadOf = async (objectId: string) => [...(await frozen.searchRun.port.read({ lead: { objectId: objectId as never, count: 8 } })).observations].map(observation => observation.ref)
   const first = assets[0]!
-  const second = assets.find(objectId => objectId !== first) ?? first
+  // The second card: an asset of another pack where there is one, else the next asset; a Run with one asset has none.
+  const packOf = (objectId: string) => frozen.searchRun.objects.find(object => object.id === objectId)?.packId
+  const second = assets.find(objectId => objectId !== first && packOf(objectId) !== packOf(first)) ?? assets.find(objectId => objectId !== first) ?? null
   const single = await buildCard(frozen.searchRun, await leadOf(first), 1)
-  const other = await buildCard(frozen.searchRun, await leadOf(second), single.items.length + 1)
+  const other = second === null ? null : await buildCard(frozen.searchRun, await leadOf(second), single.items.length + 1)
   // States with a `since`: the declared observables of the assets, in context order, whose read carries one, up to 6.
   const withSince: string[] = []
   for (const objectId of assets) {
@@ -177,19 +199,20 @@ export const cardsOf = async (frozen: FrozenRun) => {
     if (withSince.length >= 6) break
   }
   const since = withSince.length === 0 ? null : await buildCard(frozen.searchRun, withSince, 1)
-  return { single, multi: [single, other] as const, since }
+  return { single, multi: other === null ? null : [single, other] as const, since }
 }
 
-export const citationCase = async (cards: ReadonlyArray<Card>, question: string, language: 'en' | 'nb', ledger: Ledger) => {
+export const citationCase = async (frozen: FrozenRun, cards: ReadonlyArray<Card>, question: string, language: 'en' | 'nb', ledger: Ledger, seed?: number) => {
   const messages: ChatMessage[] = [{ role: 'system', content: REPLAY_SKILL }, { role: 'user', content: question }]
   cards.forEach((card, index) => {
     const id = `call_card_${index + 1}`
     messages.push({ role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name: 'display_compose', arguments: JSON.stringify({ title: `Display ${index + 1}`, subjects: [card.items[0]?.subject && 'ref' in card.items[0].subject ? card.items[0].subject.ref.split('#')[0] : 'run'] }) } }] })
     messages.push({ role: 'tool', tool_call_id: id, content: cardText(card) })
   })
-  const result = await chat(ledger, messages, REPLAY_TOOLS, 4_000, 'none')
+  const result = await chat(ledger, messages, REPLAY_TOOLS, 4_000, 'none', seed)
   const answer = result.message.content ?? ''
-  return { answer, costUsd: result.costUsd, score: scoreCitations(answer, cards, language) }
+  const limits = new Map((await Promise.all(cards.map(card => cardLimits(frozen.searchRun, card)))).flatMap(map => [...map]))
+  return { answer, costUsd: result.costUsd, score: scoreCitations(answer, cards, language, limits), limits: Object.fromEntries(limits) }
 }
 
 export const summariseCitations = (rows: ReadonlyArray<{ readonly score: CitationScore }>) => {
@@ -213,22 +236,32 @@ if (import.meta.main) {
   const budget = Number(option('budget'))
   if (!directory || !isAbsolute(directory) || !(budget > 0)) throw new Error('Usage: citations.ts <absolute-out-dir> --budget=<USD> [--runs=<id,…>]')
   const runs = option('runs')?.split(',') ?? CITATION_RUNS
+  // Round 2 (R40): its own questions, a seed per case, and a second pass of the single and two-card questions (seed
+  // + 1000) only if the first leaves fewer than 200 cited numbers (pre-registered).
+  const round = Number(option('round') ?? 1)
+  const cases = round === 2 ? CITATION_CASES_R2 : CITATION_CASES
   const ledger = createLedger(budget)
   await mkdir(join(directory, 'data'), { recursive: true })
   const rows: Array<Record<string, any>> = []
-  for (const spec of FROZEN_SPECS.filter(entry => runs.includes(entry.id))) {
+  const citedSoFar = () => rows.reduce((sum, row) => sum + (row.score?.v2.cited ?? 0), 0)
+  for (const pass of round === 2 ? [0, 1] : [0]) {
+    if (pass === 1 && citedSoFar() >= 200) break
+    for (const spec of FROZEN_SPECS.filter(entry => runs.includes(entry.id))) {
     const frozen = await freezeRun(spec, join(directory, 'data'))
     try {
       const cards = await cardsOf(frozen)
-      for (const [index, testCase] of CITATION_CASES.entries()) {
-        const given = testCase.kind === 'single' ? [cards.single] : testCase.kind === 'multi' ? [...cards.multi] : cards.since === null ? null : [cards.since]
-        if (given === null) { rows.push({ run: spec.id, case: index, ...testCase, skipped: 'no observed state with a since in this Run' }); continue }
-        const result = await citationCase(given, testCase.question, testCase.language, ledger)
-        rows.push({ run: spec.id, case: index, ...testCase, ...result, cards: given })
+      for (const [index, testCase] of cases.entries()) {
+        if (pass === 1 && testCase.kind === 'since') continue
+        const given = testCase.kind === 'single' ? [cards.single] : testCase.kind === 'multi' ? (cards.multi === null ? null : [...cards.multi]) : cards.since === null ? null : [cards.since]
+        if (given === null) { rows.push({ run: spec.id, case: index, pass, ...testCase, skipped: testCase.kind === 'multi' ? 'one asset in this Run' : 'no observed state with a since in this Run' }); continue }
+        const seed = round === 2 ? 40_000 + pass * 1_000 + FROZEN_SPECS.indexOf(spec) * 50 + index : undefined
+        const result = await citationCase(frozen, given, testCase.question, testCase.language, ledger, seed)
+        rows.push({ run: spec.id, case: index, pass, seed, ...testCase, ...result, cards: given })
         console.log(JSON.stringify({ run: spec.id, case: index, kind: testCase.kind, language: testCase.language, exact: result.score.exact, malformed: result.score.malformed, flagged: result.score.flagged.length, keyed: `${result.score.keyedDisplayed}/${result.score.displayedNumbers}`, costUsd: result.costUsd }))
         await Bun.write(join(directory, 't10-rows.jsonl'), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
       }
     } finally { await frozen.close() }
+    }
   }
   const scored = rows.filter(row => row.score !== undefined) as Array<{ score: CitationScore; kind: string; language: string }>
   const summary = {
