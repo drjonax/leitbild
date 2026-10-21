@@ -58,6 +58,29 @@ describe('T10: the guard and the citation measures', () => {
     expect(scoreCitations('Ertsmyra 420 kV: Sylling–Tegneby (1) is at 112.6 % ⟦k2⟧.', [named], 'en', limits).v2).toMatchObject({ namesSkipped: 2, flagged: [] })
   })
 
+  test('guard v3: a key before or after its number in its cell or clause; ordinals and row numbers are names; derived differences', () => {
+    const limits = new Map([['k2', [{ value: 100, decimals: 0 }]]])
+    const score = (answer: string) => scoreCitations(answer, [card], 'en', limits)
+    // Keys before their numbers: v2 reads 15.5 against the next clause key and flags it; v3 does not.
+    const leading = score('Pressure ⟦k1⟧ is 15.5 MPa, and loading ⟦k2⟧ is 112.6 %.')
+    expect(leading.v2.flagged.map(flag => flag.number)).toEqual(['15.5'])
+    expect(leading.v3).toMatchObject({ cited: 2, flagged: [], displayed: 2, keyed: 2, keyedAfter: 0 })
+    // The nearer eligible group wins; a group a number before it already answers to is no key for the next number.
+    expect(score('Pressure ⟦k1⟧ is 15.5 MPa while loading is 112.6 % ⟦k2⟧.').v3).toMatchObject({ cited: 2, flagged: [], keyedAfter: 1 })
+    expect(score('Pressure is 15.5 MPa ⟦k1⟧ and loading 112.6 %.').v3).toMatchObject({ cited: 1, flagged: [], displayed: 2, keyed: 1 })
+    // In a table the unit is the cell: a key in the label cell cites nothing, a row number is a name.
+    const table = score('| Reading | Value |\n|---|---|\n| Pressure ⟦k1⟧ | 15.50 MPa |\n| 1 | Loading 112.6 % ⟦k2⟧ |')
+    expect(table.v2.flagged.map(flag => flag.number)).toEqual(['1'])
+    expect(table.v3).toMatchObject({ cited: 1, namesSkipped: 1, flagged: [], displayed: 2, keyed: 1 })
+    expect(score('Display 2 shows loading at 112.6 % ⟦k2⟧.').v3).toMatchObject({ cited: 1, namesSkipped: 1, flagged: [] })
+    // A derived difference holds when its unit shows both values, is flagged when it differs, and is unchecked without them.
+    expect(score('Loading is 112.6 %, or 12.6 percentage points above 100 % ⟦k2⟧.').v3).toMatchObject({ derivedChecked: 1, derivedUnchecked: [], flagged: [] })
+    expect(score('Loading is 112.6 %, or 15.6 percentage points above 100 % ⟦k2⟧.').v3.flagged).toMatchObject([{ number: '15.6', derived: true }])
+    expect(score('Loading is 12.6 points above full loading ⟦k2⟧.').v3).toMatchObject({ derivedChecked: 0, flagged: [], derivedUnchecked: [{ number: '12.6' }] })
+    // A contradiction is still flagged.
+    expect(score('Pressure is 16.2 MPa ⟦k1⟧.').v3.flagged).toMatchObject([{ number: '16.2', derived: false }])
+  })
+
   test('thousands groups read as one number: commas in English, spaces in Norwegian', () => {
     const big: Card = { ...card, items: [{ key: 'k4', label: 'Reserve', reading: '2291 MW', unit: 'MW', numbers: [{ value: 2291, decimals: 0 }] }] }
     expect(scoreCitations('A reserve margin of 2,291 MW ⟦k4⟧.', [big]).flagged).toEqual([])
