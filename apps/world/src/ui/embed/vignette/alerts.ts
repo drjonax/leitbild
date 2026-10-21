@@ -1,11 +1,12 @@
 // A vignette's alerts and its header's worst chip (architecture B), over the
 // shared alert rows (features/displays/alerts/rows.ts), each drawn with
 // OpenBridge's own alert icon (register #23: the OpenBridge-free twin stays in
-// the main app's strip). Worst first; what asks no attention (standing,
-// advisory) last; a row without a priority is shown by its severity word,
+// the main app's strip). Rows keep the sample's order, which ranks them as the
+// Run context does; a row without a priority is shown by its severity word,
 // "priority not declared", and never ranks as a priority (R1).
 import type { Observation } from '../../../core/observation/model.ts'
-import { priorityRank, stateWords, worstFirst, type AlertRow } from '../../../features/displays/alerts/rows.ts'
+import type { VignetteSection } from '../../../features/displays/compose/model.ts'
+import { priorityRank, stateWords, type AlertRow } from '../../../features/displays/alerts/rows.ts'
 import { severityStyle } from '../../displays/severity.ts'
 
 export interface AlertLine {
@@ -35,9 +36,20 @@ export const alertDetail = (row: AlertRow): string => [
   row.raised?.clock === 'simulation' ? `${row.raised.at.slice(11, 19)} UTC` : 'time unknown',
 ].join(' · ')
 
-/** The rows a section shows within its rows (one is its head), the last saying how many more there are. */
-export const sectionLines = (rows: ReadonlyArray<AlertRow>, objectIds: ReadonlyArray<string> | 'run', room: number): { readonly lines: ReadonlyArray<AlertLine>; readonly more: number } => {
-  const own = (objectIds === 'run' ? [...rows] : rows.filter(row => objectIds.includes(row.objectId))).sort(worstFirst)
+type AlertsSection = Pick<Extract<VignetteSection, { kind: 'alerts' }>, 'objectIds' | 'elements' | 'refs'>
+
+/** Whether a row belongs to a section: one of its objects (any in the Run), and where it names elements or observables, on one of them. */
+const inSection = (section: AlertsSection) => (row: AlertRow): boolean => {
+  if (section.objectIds !== 'run' && !section.objectIds.includes(row.objectId)) return false
+  if (section.elements === undefined && section.refs === undefined) return true
+  const subject = row.alert.subject
+  const element = subject !== undefined && 'element' in subject ? subject.element : undefined
+  return (element !== undefined && (section.elements ?? []).includes(element)) || (row.alert.observable !== undefined && (section.refs ?? []).includes(row.alert.observable))
+}
+
+/** The rows a section shows within its rows (one is its head), in the sample's order, the last saying how many more there are. */
+export const sectionLines = (rows: ReadonlyArray<AlertRow>, section: AlertsSection, room: number): { readonly lines: ReadonlyArray<AlertLine>; readonly more: number } => {
+  const own = rows.filter(inSection(section))
   const several = new Set(own.map(row => row.objectId)).size > 1
   const shown = own.length <= room ? own : own.slice(0, Math.max(0, room - 1))
   return {

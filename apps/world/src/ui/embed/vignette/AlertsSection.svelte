@@ -1,26 +1,28 @@
 <script lang="ts">
   import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
+  import type { VignetteSection } from '../../../features/displays/compose/model.ts'
   import { alertDetail, alertIcon, sectionLines } from './alerts.ts'
 
   // A vignette's alerts (architecture B): the shared alert rows of its
-  // objects, or of the whole Run, worst first, one row each, with
+  // objects, or of the whole Run, in the sample's order, one row each, with
   // OpenBridge's alert icon at its own tempo (an unacknowledged alarm flashes,
   // as IEC asks; OpenBridge 2.0.0's `fixed` tempo draws nothing for an
   // unacknowledged or returned alarm, measured); what does not fit its rows is
   // counted on the last.
-  let { rows, objectIds, room }: {
+  let { rows, section, room }: {
     rows: ReadonlyArray<AlertRow>
-    objectIds: ReadonlyArray<string> | 'run'
+    /** Its objects (or the whole Run), and the elements or observables it narrows to. */
+    section: Pick<Extract<VignetteSection, { kind: 'alerts' }>, 'objectIds' | 'elements' | 'refs'>
     /** The section's rows: one for its head, the rest for lines. */
     room: number
   } = $props()
 
-  const shown = $derived(sectionLines(rows, objectIds, Math.max(1, room - 1)))
+  const shown = $derived(sectionLines(rows, section, Math.max(1, room - 1)))
   const count = $derived(shown.lines.length + shown.more)
 </script>
 
 <section class="alerts" aria-label="Alerts">
-  <h2>{objectIds === 'run' ? 'Alerts in the Run' : 'Alerts'} · {count === 0 ? 'none' : count}</h2>
+  <h2>{section.objectIds === 'run' ? 'Alerts in the Run' : 'Alerts'} · {count === 0 ? 'none' : count}</h2>
   <ul>
     {#each shown.lines as line (line.row.key)}
       {@const icon = alertIcon(line.row)}

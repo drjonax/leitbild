@@ -172,12 +172,22 @@ describe('alerts', () => {
     expect(alertDetail({ ...row('a', 'one', 'caution', { standing: true, acknowledged: true, acknowledgedBy: 'ai' }), state: 'active-ack' })).toBe('standing · acknowledged by Assistant · 10:00:00 UTC')
   })
 
-  test('a section shows its objects\' rows worst first within its room, the last line counting the rest', () => {
-    const rows = [row('c', 'one', 'caution'), row('a', 'two', 'alarm'), row('w', 'one', 'warning'), row('x', 'three', 'alarm')]
-    const own = sectionLines(rows, ['one', 'two'], 5)
+  test('a section keeps the sample\'s order (the Run context\'s ranking), its objects only, within its room, the last line counting the rest', () => {
+    const rows = [row('a', 'two', 'alarm'), row('w', 'one', 'warning'), row('c', 'one', 'caution'), row('x', 'three', 'alarm')]
+    const own = sectionLines(rows, { objectIds: ['one', 'two'] }, 5)
     expect(own.lines.map(line => [line.row.alert.id, line.heading])).toEqual([['a', 'two'], ['w', 'one'], ['c', 'one']])
-    const tight = sectionLines(rows, 'run', 2)
-    expect([tight.lines.map(line => line.row.alert.id), tight.more]).toEqual([['x'], 3])
-    expect(sectionLines([row('a', 'one', 'alarm', { firstOut: { group: 'g', rank: 1 } })], ['one'], 3).lines[0]).toMatchObject({ firstOut: true })
+    const tight = sectionLines(rows, { objectIds: 'run' }, 2)
+    expect([tight.lines.map(line => line.row.alert.id), tight.more]).toEqual([['a'], 3])
+    expect(sectionLines([row('a', 'one', 'alarm', { firstOut: { group: 'g', rank: 1 } })], { objectIds: ['one'] }, 3).lines[0]).toMatchObject({ firstOut: true })
+  })
+
+  test('a section narrowed to elements or observables shows only the alerts on them', () => {
+    const rows = [
+      row('on-pump', 'one', 'warning', { subject: { element: 'pump-a' } }), row('on-level', 'one', 'alarm', { observable: 'one#level' }),
+      row('elsewhere', 'one', 'caution', { subject: { element: 'pump-b' } }), row('other-object', 'two', 'alarm', { subject: { element: 'pump-a' } }),
+    ]
+    expect(sectionLines(rows, { objectIds: ['one'], elements: ['pump-a'] }, 5).lines.map(line => line.row.alert.id)).toEqual(['on-pump'])
+    expect(sectionLines(rows, { objectIds: ['one'], refs: ['one#level'] }, 5).lines.map(line => line.row.alert.id)).toEqual(['on-level'])
+    expect(sectionLines(rows, { objectIds: ['one'], elements: ['pump-a'], refs: ['one#level'] }, 5).lines.map(line => line.row.alert.id)).toEqual(['on-pump', 'on-level'])
   })
 })
