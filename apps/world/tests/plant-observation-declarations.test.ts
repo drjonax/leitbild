@@ -12,7 +12,8 @@ import { guardPlantTests } from './plant-hang-guard.ts'
 guardPlantTests()
 
 // P2: what the four-loop reference Plant declares to World's observation
-// layer (T12 plant; R23, R25, R26, R28, R29).
+// layer (T12 plant; R23, R25, R26, R28, R29), and what it derives beside its
+// signals (P2 D1): each operated item's state, each safety function's status.
 
 const objectId = 'plant:halden-2' as ObjectId
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: objectId, loopCount: 4 }))
@@ -27,8 +28,9 @@ const observable = (path: string) => declaration.observables.find(candidate => c
 describe('plant observation declarations (P2)', () => {
   test('T12: every published or recorded signal is declared and parses against core\'s quantity list and unit codes', () => {
     expect(observationDeclarationSchema.parse(declaration)).toEqual(declaration)
-    expect(declaration.observables).toHaveLength(1102)
-    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(721)
+    // 1,102 signals, 45 operated items' states and 6 safety functions.
+    expect(declaration.observables).toHaveLength(1153)
+    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(772)
     expect(declaration.revision).toBe(`${plant.modelDigest}:1000ms:802`)
   })
 
@@ -93,7 +95,29 @@ describe('plant observation declarations (P2)', () => {
     expect(observable('pressurizer-relief-to-tank.flowKgPerS')).toMatchObject({ element: 'pressurizer-relief-to-tank' })
     expect(observable('pressurizer-relief-to-tank.flowKgPerS').tag).toBeUndefined()
     const elements = new Set(declaration.elements.map(element => element.id))
-    expect(declaration.observables.filter(entry => !elements.has(entry.element!)).map(entry => entry.ref)).toEqual([])
+    // A safety function is the unit's, measured on no equipment.
+    expect(declaration.observables.filter(entry => entry.element === undefined).map(entry => entry.ref)).toEqual(plant.automation.safetyFunctions.map(entry => `${objectId}#csf.${entry.id}`))
+    expect(declaration.observables.filter(entry => entry.element !== undefined && !elements.has(entry.element)).map(entry => entry.ref)).toEqual([])
+  })
+
+  test('D1: each item a person operates declares its state as an enum in the words its controls use', () => {
+    const states = declaration.observables.filter(entry => entry.ref.endsWith('.state'))
+    expect(states).toHaveLength(45)
+    expect(states.every(entry => entry.valueType === 'enum' && entry.quantity === 'state' && entry.series === null && entry.thresholds.length === 0)).toBe(true)
+    const words = (path: string) => [observable(path).label, observable(path).element, observable(path).states!.map(state => `${state.value}=${state.label}`).join(' ')]
+    expect([words('rcpA.state'), words('offsiteBreakerA.state'), words('mainSteamIsolationValveA.state'), words('pressurizer.reliefValve.state')]).toEqual([
+      ['State · RCP A', 'rcpA', 'on=RUN off=STOP'],
+      ['State · Offsite BKR A', 'offsiteBreakerA', 'on=CLOSED off=OPEN'],
+      ['State · MSIV A', 'mainSteamIsolationValveA', 'on=OPEN off=SHUT between=part open'],
+      ['State · PORV', 'pressurizer', 'on=OPEN off=SHUT between=part open'],
+    ])
+  })
+
+  test('D1: each critical safety function declares its status as an enum, the unit\'s, named as crews call it', () => {
+    expect(observable('csf.heat-sink')).toEqual({
+      ref: `${objectId}#csf.heat-sink`, label: 'Heat sink (CSF)', shortLabel: 'HEAT SINK', quantity: 'state', unit: '', valueType: 'enum', thresholds: [], series: null,
+      states: ['green=GREEN', 'yellow=YELLOW', 'orange=ORANGE', 'red=RED', 'unknown=UNKNOWN', 'not-monitored=NOT JUDGED'].map(entry => ({ value: entry.split('=')[0]!, label: entry.split('=')[1]! })),
+    })
   })
 
   test('limits are projected from the I&C rules: a moved limit moves, a removed rule is gone (mutation)', () => {
@@ -133,6 +157,7 @@ describe('plant observation declarations (P2)', () => {
     const narrowed = ask({ objectIds: [objectId], elementIds: ['pressurizer'] }).declarations[0]
     expect(narrowed.elements.map((element: { id: string }) => element.id)).toEqual(['pressurizer'])
     expect(narrowed.observables.every((entry: { element: string }) => entry.element === 'pressurizer')).toBe(true)
+    expect(narrowed.observables.filter((entry: { ref: string }) => entry.ref.endsWith('.state')).map((entry: { ref: string }) => entry.ref)).toEqual([`${objectId}#pressurizer.blockValve.state`, `${objectId}#pressurizer.reliefValve.state`])
     expect(() => ask({ objectIds: ['plant:nowhere'] })).toThrow('No Process Plant plant:nowhere in this Run')
   })
 })

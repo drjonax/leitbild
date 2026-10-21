@@ -6,6 +6,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
 import { icThresholdsForSignal, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
+import { derivedObservables } from './derived.ts'
 
 // What a Plant declares to World's observation layer (plan v3.1 §2.2, A1):
 // every signal it publishes and every signal the Run records, addressed
@@ -175,7 +176,7 @@ export const declarationRevision = (plant: CompiledProcessPlant, recording: Plan
 
 const declarationCache = new WeakMap<CompiledProcessPlant, Map<string, ObservationDeclaration>>()
 
-/** The Plant's declaration: its equipment and lines as elements, and its observables; only those on `elementIds` where named. */
+/** The Plant's declaration: its equipment and lines as elements, and its observables (its signals, then those derived.ts reads); only those on `elementIds` where named. */
 export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant, recording: PlantRecording, elementIds?: ReadonlyArray<string>): ObservationDeclaration => {
   const revision = declarationRevision(plant, recording)
   const known = declarationCache.get(plant) ?? new Map<string, ObservationDeclaration>()
@@ -185,7 +186,10 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
     const declaration: ObservationDeclaration = {
       objectId,
       revision,
-      observables: graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
+      observables: [
+        ...graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
+        ...derivedObservables(objectId, plant),
+      ],
       elements: [
         ...graph.components.map(component => ({
           id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),

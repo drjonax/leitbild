@@ -6,7 +6,9 @@ import { annunciating, colours, expectedAfterGroup, pendingActions, plantAlarmPr
 import { overviewCandidates, overviewKeyValues, plantNowOf } from '../ic/key-values.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantSignalQuality } from '../signals.ts'
+import { evaluateSafetyFunctions, type SafetyFunctionEvaluation } from '../safety-functions.ts'
 import { declaredObservable, type PlantRecording } from './declarations.ts'
+import { readDerived } from './derived.ts'
 
 // A Plant's values as World reads them (plan v3.1 §2.2): the value and its
 // quality now; its priority, the worst alarm or trip annunciating whose
@@ -16,7 +18,8 @@ import { declaredObservable, type PlantRecording } from './declarations.ts'
 // permissive, a gate or a state stays neutral); none where that alarm came in as the expected
 // consequence of a first-out (a steam generator's shrink after a reactor
 // trip); since when a discrete value holds, from the Run's record; the time
-// left where a named delay runs down to one of its limits. Reads only:
+// left where a named delay runs down to one of its limits. An operated item's
+// state and a safety function's status are read in derived.ts. Reads only:
 // nothing here is journalled.
 
 /** How far back a discrete value's last change is looked for in the Run's record. */
@@ -48,10 +51,13 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
   const alarms = snapshot === undefined ? [] : annunciating(snapshot)
   const all = snapshot === undefined ? [] : [...snapshot.alarms, ...snapshot.trips]
   const pending = snapshot === undefined ? [] : pendingActions(plant, snapshot, system.runtime.elapsedMs())
+  let judged: ReadonlyArray<SafetyFunctionEvaluation> | undefined
+  const safetyFunctions = () => judged ??= evaluateSafetyFunctions(plant, system.runtime)
   return paths.map((path, index) => {
     const declared = declaredObservable(context.objectId, plant, recording, path)
     if (declared === null) return null
-    const binding = plant.graph.signalBindingByPath.get(path as VariablePath)!
+    const binding = plant.graph.signalBindingByPath.get(path as VariablePath)
+    if (binding === undefined) return { ref: declared.ref, ...readDerived(system, path, safetyFunctions), at: context.simulationTime, clock: 'simulation', ...(ranked ? { rank: index + 1 } : {}) }
     const variable = system.runtime.readVariableSnapshot(binding.path)
     const limitsOf = (ruleId: string) => declared.thresholds.filter(threshold => threshold.id === ruleId || threshold.id.startsWith(`${ruleId}#`))
     const reading = typeof variable.value === 'number' ? variable.value : null

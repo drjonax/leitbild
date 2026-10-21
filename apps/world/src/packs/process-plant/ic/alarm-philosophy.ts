@@ -33,6 +33,9 @@ export const plantAlarmPriority = (severity: ProcessPlantIcSeverity, annunciator
   return 'notice'
 }
 
+/** A challenged critical safety function's priority (Q7): a yellow path a caution, orange a warning, red an alarm. */
+export const challengePriority: Readonly<Partial<Record<string, 'caution' | 'warning' | 'alarm'>>> = { yellow: 'caution', orange: 'warning', red: 'alarm' }
+
 export const priorityOrder: Readonly<Record<Priority, number>> = { none: 0, notice: 1, caution: 2, warning: 3, alarm: 4, emergency: 5 }
 
 /** The alarms and trips that annunciate now: active, and neither shelved, suppressed nor out of service. */

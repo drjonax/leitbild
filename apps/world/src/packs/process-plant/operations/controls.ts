@@ -181,6 +181,17 @@ const aspectWords = (aspect: CompiledStateAspect, equipmentFunction: EquipmentFu
         : aspect.aspect === 'position' && (equipmentFunction === 'isolating' || equipmentFunction === 'relieving') ? valveWords
           : null
 
+/**
+ * The two words an aspect's state reads in, as its controls' options name
+ * them (ControlOption.state): its equipment's declared words, else the
+ * aspect's own, a modulating valve's OPEN and SHUT at the ends of its travel;
+ * null for an aspect with no two states.
+ */
+export const aspectStateWords = (graph: CompiledPlantGraph, aspect: CompiledStateAspect, equipmentFunction: EquipmentFunction | undefined): { readonly on: string; readonly off: string } | null => {
+  const words = aspectWords(aspect, equipmentFunction) ?? (aspect.aspect === 'position' ? valveWords : null)
+  return (aspect.state === undefined ? undefined : stateWordsOf(graph, aspect.state.path)) ?? (words === null ? null : { on: words.on.state, off: words.off.state })
+}
+
 // The values a two-state command writes: true and false, or a position's full span.
 const twoStateValues = (binding: ProcessSignalBinding): { readonly on: ProcessVariableValue; readonly off: ProcessVariableValue } | null =>
   binding.quantity === 'boolean' ? { on: true, off: false }
