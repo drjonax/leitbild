@@ -64,8 +64,6 @@ const wordsOf = (text: string, kind: 'name' | 'alias' | 'tag' | 'shared'): Reado
 /** A short label or tag also as one word, so "TDAFW" finds "TD AFW". */
 const joined = (...texts: ReadonlyArray<string | undefined>): ReadonlyArray<EntryWord> => texts.flatMap(text => text === undefined || indexWords(text).length < 2 ? []
   : [{ spellings: [...new Set(indexWords(text).reduce((all, word) => all.flatMap(prefix => word.map(spelling => prefix + spelling)), ['']))], own: true, name: false, abbreviates: false }])
-/** A quantity's words: its id's, and the plain word people use for it. */
-const quantityWords = (quantity: string): string => ({ state: 'state status', 'dose-rate': 'dose rate radiation' } as Readonly<Record<string, string>>)[quantity] ?? quantity
 
 /** Each object's Pack, presentation category and status word: words only, never its summary or fields (one number, one source). */
 export const presentObjects = (packs: ReadonlyArray<WorldPack>, objects: ReadonlyArray<OperationalObject>) => {
@@ -97,7 +95,7 @@ const entriesOf = (declaration: ObservationDeclaration, object: OperationalObjec
       // its object's, which equal matches claim last. Signal ids are keys only: their words are a Pack's naming, not names.
       words: [...wordsOf(`${observable.label} ${observable.shortLabel ?? ''}`, 'name'),
         ...wordsOf(`${elements.get(observable.element ?? '')?.label ?? ''} ${elements.get(observable.element ?? '')?.shortLabel ?? ''}`, 'name'),
-        ...wordsOf(quantityWords(observable.quantity), 'alias'), ...wordsOf(observable.tag ?? '', 'tag'),
+        ...wordsOf(observable.quantity, 'alias'), ...wordsOf(observable.tag ?? '', 'tag'),
         ...joined(observable.shortLabel, elements.get(observable.element ?? '')?.shortLabel, observable.tag), ...shared],
       names: [observable.label, ...(observable.tag === undefined ? [] : [observable.tag])],
     })),
