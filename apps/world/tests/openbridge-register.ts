@@ -59,13 +59,14 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     draws: 'The reactor core as its vessel: head, flange, body, bottom, nozzle collars, the level as its fill and the rod banks by inserted length.',
     sites: [
       { file: 'ui/embed/composed-display/mimic/VesselSymbol.svelte', mark: 'class="vessel"', drawn: 'svg' },
-      { file: 'ui/embed/composed-display/mimic/vessel-symbol.ts', mark: 'export const vesselGeometry', drawn: 'code' },
+      { file: 'ui/embed/vignette/vessel-symbol.ts', mark: 'export const vesselGeometry', drawn: 'code' },
+      { file: 'ui/embed/vignette/Vessel.svelte', mark: 'class="vessel"', drawn: 'svg' },
     ],
     standsInFor: 'none',
     reason: 'A',
     evidence: 'OpenBridge 2.0.0 has no reactor symbol. Filled and framed in the tokens of obc-automation-tank\'s regular scheme; geometry is a tested pure function (mimic-vessel-symbol, mimic-vessel-fit).',
     decision: { owner: 'approved', ref: 'D-19 (12 Oct): the one exception to OpenBridge components' },
-    ends: 'swap',
+    ends: 'kept',
   },
   {
     id: 'tank-fill-trace',
@@ -133,12 +134,15 @@ export const customShapes: ReadonlyArray<CustomShape> = [
   {
     id: 'bus-and-header-straights',
     draws: 'Process and steam headers and electrical buses as connector-diagram\'s large straight segments.',
-    sites: [{ file: 'ui/embed/composed-display/mimic/MimicPanel.svelte', mark: "kind: 'straight', connectionId: item.id", drawn: 'code' }],
+    sites: [
+      { file: 'ui/embed/composed-display/mimic/MimicPanel.svelte', mark: "kind: 'straight', connectionId: item.id", drawn: 'code' },
+      { file: 'ui/embed/vignette/flow-symbols.ts', mark: "kind: 'straight', connectionId: node.id", drawn: 'code' },
+    ],
     standsInFor: ['obc-bus'],
-    reason: null,
-    evidence: 'Drawn by OpenBridge\'s own pipe renderer, but OpenBridge 2.0.0 has obc-bus for an electrical bus; no component for a process header. No reason on record.',
+    reason: 'A',
+    evidence: 'Drawn by OpenBridge\'s own pipe renderer, but OpenBridge 2.0.0 has obc-bus for an electrical bus; no component for a process header (A). The old renderer drew its buses so too, with no reason on record; the vignette draws only its headers so, its buses as obc-bus.',
     decision: APPROVED,
-    ends: 'swap',
+    ends: 'kept',
   },
   {
     id: 'flap-lines',
@@ -290,6 +294,7 @@ export const surfaces: ReadonlyArray<Surface> = [
   { file: 'ui/embed/composed-display/mimic/MimicPanel.svelte', mark: 'use:keyGlyph', paints: 'connector-diagram' },
   { file: 'ui/embed/composed-display/mimic/openbridge-mimic.ts', mark: "canvas.getContext('2d')", paints: 'connector-diagram' },
   { file: 'ui/embed/vignette/NetworkTopology.svelte', mark: 'use:lines', paints: 'connector-diagram' },
+  { file: 'ui/embed/vignette/FlowTopology.svelte', mark: 'use:lines', paints: 'connector-diagram' },
   { file: 'ui/embed/vignette/lines.ts', mark: "canvas.getContext('2d')", paints: 'connector-diagram' },
   { file: 'ui/embed/composed-display/text-measure.ts', mark: "createElement('canvas')", paints: 'nothing: measures text' },
 ]

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fitVessel, VESSEL_ASPECT } from '../src/packs/process-plant/displays/mimic/vessel-fit.ts'
 import { openBridgeDevice } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
-import { vesselGeometry } from '../src/ui/embed/composed-display/mimic/vessel-symbol.ts'
+import { vesselGeometry } from '../src/ui/embed/vignette/vessel-symbol.ts'
 
 // A reactor vessel keeps a vessel's proportions in whatever box the layout
 // gives it (HMI verify 44: a 264 x 96 saucer on the SG A detail).

@@ -5,14 +5,15 @@
   // OpenBridge's status indicator: active where it reads "on", inactive
   // otherwise, at its observation's priority where that is caution or worse.
   // An unknown state is a dashed "?" box, the one thing the indicator cannot
-  // say (it has no unknown status; register entry in the lane notes).
-  let { look, label }: { look: ReadingLook; label?: string } = $props()
+  // say (it has no unknown status; register entry in the lane notes). As a
+  // header chip it is as narrow as its name and word.
+  let { look, label, chip = false }: { look: ReadingLook; label?: string; chip?: boolean } = $props()
 
   /** The indicator has no emergency status: alarm is its worst (measured gap, lane notes). */
   const STATUS: Readonly<Record<AlertTone, string>> = { caution: 'caution', warning: 'warning', alarm: 'alarm', critical: 'alarm' }
 </script>
 
-<span class="state" class:cell={label === undefined} title={look.title}>
+<span class="state" class:cell={label === undefined} class:chip title={look.title}>
   {#if label !== undefined}<span class="label">{label}</span>{/if}
   {#if look.fill === 'unknown'}
     <span class="unknown">{look.text}</span>
@@ -30,4 +31,7 @@
   .unknown { flex: none; padding: 0 6px; line-height: 18px; border: 1px dashed var(--border-outline-color); border-radius: 3px; color: var(--element-neutral-color); }
   .note { flex: none; color: var(--element-neutral-color); }
   .cell { justify-content: flex-end; }
+  /* A header chip: its name and word side by side, as narrow as they are. */
+  .chip { flex: 0 1 auto; }
+  .chip .label { flex: 0 1 auto; }
 </style>

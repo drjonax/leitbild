@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { openBridgeDevice } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import type { MimicRow } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { insertedFraction, ROD_SHOWN, vesselGeometry } from '../src/ui/embed/composed-display/mimic/vessel-symbol.ts'
+import { insertedFraction, ROD_SHOWN, vesselGeometry } from '../src/ui/embed/vignette/vessel-symbol.ts'
 import { fillTracePath, programMark, stripReading } from '../src/ui/embed/composed-display/mimic/vessel-trends.ts'
 
 // The reactor vessel's geometry and the vessels' traces, as the embed draws

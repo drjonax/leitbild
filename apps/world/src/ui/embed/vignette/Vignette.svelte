@@ -7,17 +7,10 @@
   import { worstChip } from './alerts.ts'
   import { clockText, underTitle } from './format.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
-  import { slotLook } from './collection.ts'
   import { toneOf, valueLook } from './readout.ts'
   import { createVignetteSession, sampleStale, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
-  import AlertsSection from './AlertsSection.svelte'
-  import EntityTable from './EntityTable.svelte'
-  import GroupedValues from './GroupedValues.svelte'
-  import MapFocus from './MapFocus.svelte'
-  import NetworkTopology from './NetworkTopology.svelte'
-  import Readout from './Readout.svelte'
+  import Sections from './Sections.svelte'
   import StateWord from './StateWord.svelte'
-  import TrendStrip from './TrendStrip.svelte'
   import './openbridge.ts'
 
   // A vignette's frame (architecture B): its title, the "Assistant" mark where
@@ -32,9 +25,10 @@
   let palette = $state<Palette>(readPalette())
   let wallNow = $state(Date.now())
 
+  const runId = $derived(simulationRunIdSchema.parse(envelope.subject.id))
   runOnMount(() => {
     const session = createVignetteSession({
-      runId: simulationRunIdSchema.parse(envelope.subject.id),
+      runId,
       state: envelope.state,
       routes: vignetteRoutes,
       onChange: next => { snapshot = next },
@@ -57,8 +51,6 @@
 
   const view = $derived(snapshot.view)
   const latest = $derived(snapshot.latest)
-  const observations = $derived(latest?.observations ?? [])
-  const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.at.at))
   const worst = $derived(latest === undefined ? null : worstChip(latest.observations, latest.alerts))
   const footer = $derived.by((): { readonly word: 'LIVE' | 'PAUSED' | 'FROZEN'; readonly why?: string } => {
     const stale = sampleStale(snapshot, wallNow)
@@ -79,6 +71,13 @@
     {/if}
   </header>
 
+  {#if view?.chips !== undefined}
+    <!-- The object's own states (its safety functions, its mode), one row under the title. -->
+    <div class="chips">
+      {#each view.chips as chip (chip.ref)}<StateWord look={valueLook(chip, latest?.observations ?? [], chip.ref)} label={underTitle(chip.label, view.title)} chip />{/each}
+    </div>
+  {/if}
+
   {#if view === undefined}
     <p class="status">
       {#if snapshot.phase === 'missing'}This Run no longer exists.
@@ -87,37 +86,7 @@
       {:else}Connecting to the Run…{/if}
     </p>
   {:else}
-    {#each view.sections as section, index (index)}
-      <div class="section" style:height={`${section.rows * VIGNETTE_ROW_PX}px`}>
-        {#if section.kind === 'values'}
-          {#each section.values as value (value.ref)}
-            {@const look = valueLook(value, observations, value.ref)}
-            {#if look.kind === 'state'}<StateWord {look} label={underTitle(value.label, view.title)} />{:else}<Readout {look} label={underTitle(value.label, view.title)} />{/if}
-          {/each}
-        {:else if section.kind === 'grouped'}
-          <GroupedValues {section} {observations} />
-        {:else if section.kind === 'trend'}
-          {#each section.strips as pens, strip (strip)}
-            <TrendStrip {pens} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
-          {/each}
-        {:else if section.kind === 'alerts'}
-          <AlertsSection rows={latest?.alerts ?? []} {section} room={section.rows} />
-        {:else if section.kind === 'entity'}
-          <EntityTable {section} rows={latest?.entities[index]?.rows ?? []} more={latest?.entities[index]?.more ?? 0} />
-        {:else if section.kind === 'slots'}
-          {#each section.slots as slot (slot.key)}
-            <!-- Core slots and telemetry carry no observation priority: they read neutral. -->
-            {@const look = slotLook(slot, latest?.slots[section.objectId]?.[slot.key])}
-            {#if look.kind === 'state'}<StateWord {look} label={underTitle(slot.label, view.title)} />{:else}<Readout {look} label={underTitle(slot.label, view.title)} />{/if}
-          {/each}
-        {:else if section.kind === 'map'}
-          <MapFocus frame={latest?.maps[index]} />
-        {:else}
-          <!-- Network and, until their symbols land, flow topologies: the layout's boxes and lines. -->
-          <NetworkTopology {section} {observations} {palette} />
-        {/if}
-      </div>
-    {/each}
+    <Sections {view} {snapshot} {palette} frozen={footer.word === 'FROZEN'} {runId} />
   {/if}
 
   <footer title={footer.why}>
@@ -129,7 +98,7 @@
 
 <style>
   .vignette { --muted: var(--element-neutral-color); --text: var(--element-active-color); padding: 0 8px; font-size: 13px; }
-  header, footer { display: flex; align-items: center; gap: 8px; height: var(--row); min-width: 0; white-space: nowrap; }
+  header, footer, .chips { display: flex; align-items: center; gap: 8px; height: var(--row); min-width: 0; white-space: nowrap; }
   h1 { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
   .ai { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--element-neutral-color); }
   .ai obi-ai { width: 16px; height: 16px; }
@@ -139,10 +108,10 @@
   .chip.warning { background: var(--display-warning-fill); color: var(--display-on-warning); border-color: var(--alert-warning-color); }
   .chip.alarm { background: var(--display-alarm-fill); color: var(--display-on-alarm); border-color: var(--alert-alarm-color); }
   .chip.critical { background: var(--display-critical-fill); color: var(--display-on-critical); border-color: var(--alert-critical-color); }
-  .section { overflow: hidden; }
   .status { margin: 0; padding: 4px 0; color: var(--element-neutral-color); }
   footer { font-size: 12px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; }
   .clock { font-weight: 700; letter-spacing: 0.04em; color: var(--element-active-color); }
   .clock.frozen { color: var(--element-neutral-color); }
+  .chips { gap: 12px; overflow: hidden; }
   .why { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 </style>
