@@ -73,13 +73,6 @@ export const downstreamLinks = (graph: CompiledPlantGraph, from: ReadonlyArray<n
 export const upstreamLinks = (graph: CompiledPlantGraph, to: ReadonlyArray<number>, carriers: ReadonlySet<string>, depth?: number): ReadonlySet<number> =>
   reach(to.flatMap(index => linksOf(graph, graph.incomingLinksByComponent[index], carriers)), link => previousLinks(graph, link, carriers), depth)
 
-/** Every link on a route from any of `from` to any of `to`: downstream of one and upstream of the other, all parallel branches kept. */
-export const routeLinks = (graph: CompiledPlantGraph, from: ReadonlyArray<number>, to: ReadonlyArray<number>, carriers: ReadonlySet<string>): ReadonlySet<number> => {
-  const downstream = downstreamLinks(graph, from, carriers)
-  const upstream = upstreamLinks(graph, to, carriers)
-  return new Set([...downstream].filter(index => upstream.has(index)))
-}
-
 /** The carriers a component's links use on one side (what it receives, or what it delivers). */
 export const carriersAt = (graph: CompiledPlantGraph, componentIndex: number, side: 'in' | 'out'): ReadonlyArray<string> =>
   [...new Set((side === 'in' ? graph.incomingLinksByComponent[componentIndex] : graph.outgoingLinksByComponent[componentIndex])!

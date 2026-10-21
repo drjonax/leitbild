@@ -13,7 +13,7 @@ import { icThresholdsForSignal } from '../ic/thresholds.ts'
 import { itemBinding } from './mimic/bindings.ts'
 import { equipmentItemId, type EquipmentItem } from '../equipment/items.ts'
 import { heldCommands, itemLook, type SampleIndex } from './mimic/evaluate.ts'
-import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
+import { TOPOLOGY_REACH } from '../../../features/displays/topology/scope.ts'
 import { operatingPointValue } from '../operating-point.ts'
 import { isDemand, overviewCandidates, overviewKeyValues, plantNowOf, readsAsMeasured } from '../ic/key-values.ts'
 import { COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, ratePerMinute, travelText, TREND_HISTORY_LIMIT, type TrendPoint } from './trend-reading.ts'
@@ -255,7 +255,7 @@ export const displayEvidence = (
     ] as const) {
       for (const first of start) {
         let link = first
-        for (let steps = 0; steps < MIMIC_REACH_LINKS; steps += 1) {
+        for (let steps = 0; steps < TOPOLOGY_REACH; steps += 1) {
           const next = graph.components[link[far]]!
           if (next.semantics.function === 'isolating') found.push({ kind: 'component', component: next.index })
           const onward = step(graph, link, new Set([linkCarrier(link)]))
@@ -342,17 +342,17 @@ export const displayEvidence = (
   }
   // What a header sends to each destination, read together.
   const toEach = (header: number | undefined): { readonly paths: ReadonlyArray<VariablePath>; readonly destinations: ReadonlyArray<number>; readonly to: string } | null => {
-    const branches = header === undefined ? [] : branchFlows(plant, header, MIMIC_REACH_LINKS)
+    const branches = header === undefined ? [] : branchFlows(plant, header, TOPOLOGY_REACH)
     return branches.length === 0 ? null : { paths: branches.map(branch => branch.path), destinations: branches.map(branch => branch.destination), to: joined(branches.map(branch => shortLabel(system, branch.destination))) }
   }
   // Each flow an action delivers to one destination, by the destination: a criterion of the feed into each reads it instead.
   const deliveredTo = new Map<string, number>()
   for (const action of bearing) {
     if (!actsIn(action.rule, mode) || !(now.activeRuleIds.has(action.rule.id) || ahead.has(action.rule.id))) continue
-    const flows = actionFlows(plant, action, MIMIC_REACH_LINKS)
+    const flows = actionFlows(plant, action, TOPOLOGY_REACH)
     const commanded = actionEquipment(plant, action)
     // The equipment its flows reach: the shown equipment it feeds, within a mimic's reach of what it commands.
-    const fed = [...shownEquipment].filter(component => commanded.some(source => source === component || feeds(plant, source, component, MIMIC_REACH_LINKS)))
+    const fed = [...shownEquipment].filter(component => commanded.some(source => source === component || feeds(plant, source, component, TOPOLOGY_REACH)))
     const judgesShown = judging(action)
     if (!judgesShown && fed.length === 0) continue
     // Named as the I&C names the action ("Safety injection on low pressurizer pressure").
@@ -426,7 +426,7 @@ export const displayEvidence = (
     return safetyFunctionCriteria(plant).filter(criterion => criterion.paths.every(path => {
       const binding = graph.signalBindingByPath.get(path)
       return binding !== undefined && binding.quantity === 'flowRate' && binding.owner.type === 'component'
-        && commanded.some(source => feeds(plant, source, (binding.owner as { readonly componentIndex: number }).componentIndex, MIMIC_REACH_LINKS))
+        && commanded.some(source => feeds(plant, source, (binding.owner as { readonly componentIndex: number }).componentIndex, TOPOLOGY_REACH))
     }))
   }
   // A criterion's row reads every value it judges together, against it, even one a panel shows: its total is the point.
@@ -473,7 +473,7 @@ export const displayEvidence = (
   // What the display is about: the equipment its question names, and its primary signals'; all it shows where it names none.
   const primaryPens = pens.filter(pen => pen.role === 'primary')
   const focus = new Set([...subjectComponents, ...primaryPens.map(pen => measuredOn(pen.path))])
-  const aboutHeat = [...(focus.size === 0 ? shownEquipment : focus)].some(component => takers.some(taker => taker.index === component || feeds(plant, component, taker.index, MIMIC_REACH_LINKS)))
+  const aboutHeat = [...(focus.size === 0 ? shownEquipment : focus)].some(component => takers.some(taker => taker.index === component || feeds(plant, component, taker.index, TOPOLOGY_REACH)))
     || (focus.size === 0 ? pens : primaryPens).some(pen => programReadings.has(String(pen.path)))
   if (reactorTrips.length > 0 && aboutHeat) {
     const taken = new Set(takers.map(taker => taker.index))
@@ -580,7 +580,7 @@ export const displayEvidence = (
       if (item.binding.state?.aspect !== 'running') continue
       for (const id of item.components) {
         const component = graph.componentIndexById.get(id as never)!
-        for (const path of throughputDownstream(plant, component, MIMIC_REACH_LINKS)) add(path, 'flow', `the flow ${item.binding.label} feeds`)
+        for (const path of throughputDownstream(plant, component, TOPOLOGY_REACH)) add(path, 'flow', `the flow ${item.binding.label} feeds`)
       }
     }
   }

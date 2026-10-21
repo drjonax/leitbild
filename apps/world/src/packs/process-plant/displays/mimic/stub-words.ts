@@ -1,7 +1,7 @@
 import type { CompiledComponent, CompiledPlantGraph } from '../../graph/index.ts'
 import { words } from '../../../../core/model/text-search.ts'
 import { groupStem } from '../../equipment/names.ts'
-import type { MimicStub } from './scope.ts'
+import type { ScopedStub } from '../../../../features/displays/topology/scope.ts'
 
 // What the old mimic writes where a drawing stops and where a lone pipe
 // enters a hub: the Plant's words for its ports and far ends, until the swap
@@ -52,9 +52,12 @@ export const loneReachedPort = (graph: CompiledPlantGraph, component: CompiledCo
  * far end keeps its full name ("from AFW valve A"). A list of names too long
  * to read is grouped too, and what still does not fit is counted ("and 2 more").
  */
-export const stubText = (graph: CompiledPlantGraph, stub: MimicStub, style: 'names' | 'groups' = 'names'): string => {
+export const stubText = (graph: CompiledPlantGraph, stub: Pick<ScopedStub, 'direction' | 'others'>, style: 'names' | 'groups' = 'names'): string => {
   const byComponent = new Map<number, string[]>()
-  for (const other of stub.others) byComponent.set(other.component, [...(byComponent.get(other.component) ?? []), other.port])
+  for (const other of stub.others) {
+    const component = graph.componentIndexById.get(other.node as never)!
+    byComponent.set(component, [...(byComponent.get(component) ?? []), other.port])
+  }
   const parts = [...byComponent].map(([component, ports]) => {
     const label = shortLabelOf(graph, component)
     return { label, named: alikePorts(graph, graph.components[component]!, ports[0]!).length > 1 ? `${label} ${ports.map(portName).join(', ')}` : label }

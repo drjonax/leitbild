@@ -3,7 +3,7 @@ import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/p
 import { compileMimic, planMimicDiagram, type MimicCompileResult } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
-import { resolveMimicScope } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import { resolveMimicIntent } from '../src/packs/process-plant/displays/mimic/intent.ts'
 import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
@@ -59,9 +59,9 @@ describe('one loop drawn alone', () => {
 
 describe('a valve the model gives no loop', () => {
   test("is drawn in its steam generator's lane, read from the drawing alone", () => {
-    const scope = resolveMimicScope(plant.graph, { services: ['mainSteam'] })
+    const scope = resolveMimicIntent(plant, { services: ['mainSteam'] })
     if (!scope.ok) throw new Error('mainSteam has a scope')
-    const planned = planMimicDiagram(plant, scope.scope, chatMimicProfile)
+    const planned = planMimicDiagram(plant, scope.scoped, chatMimicProfile)
     if (!planned.ok) throw new Error('mainSteam is planned')
     const partitionOf = (id: string) => planned.graph.nodes.find(node => node.id === `c${plant.graph.componentIndexById.get(id as never)}`)?.partition?.key
     for (const loop of ['A', 'B', 'C', 'D']) {
