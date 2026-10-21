@@ -77,7 +77,7 @@ describe('control surface selectors', () => {
 
     expect(placementCursorFor(weatherCreateType, fixtureViews)).toEqual({
       icon: 'cloud-rain',
-      color: '#2563eb',
+      color: '#4669ff',
     })
     expect(placementCursorFor(null, fixtureViews)).toBeNull()
 
