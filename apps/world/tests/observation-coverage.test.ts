@@ -9,6 +9,7 @@ import type { ObservationDeclaration } from '../src/core/observation/capabilitie
 import { observableSchema, quantityUnits } from '../src/core/observation/model.ts'
 import { scenarioAuthoringCatalogFor } from '../src/core/scenarios/authoring.ts'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
+import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import { observationProviderFor } from '../src/features/displays/observation/port.ts'
@@ -21,18 +22,20 @@ guardPlantTests()
 // T12, core half (plan v3.1 §2.2, Appendix F; rulings R25, R26): every declaring Pack names its observables with the
 // core quantities and unit codes; labels are unique within each object, "<object label> · <label>" is unique per Run,
 // and so are object labels; plant `power` and grid `active-power` meet as `electric-power`. Measured on the two
-// four-unit Halden Scenarios: the power complex (with weather) and the loss of offsite power.
+// four-unit Halden Scenarios, the power complex (with weather) and the loss of offsite power, and on the integrated
+// fixture of every Pack.
 
 const routing = createDirectRoutingAdapter()
 const assembly = createWorldApplicationAssembly({ routing })
+const integrated = scenarioDefinitionSchema.parse(await Bun.file(new URL('./fixtures/scenarios/integrated-all-packs.scenario.json', import.meta.url)).json())
 const cleanups: Array<() => Promise<void>> = []
 afterAll(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
 describe('T12: observation coverage on the four-unit Halden', () => {
-  for (const [scenarioId, packs] of [['halden-power-complex', ['process-plant', 'electric-grid', 'weather']], ['halden-offsite-power-restoration', ['process-plant', 'electric-grid']]] as const) test(`${scenarioId}: core quantities and codes, unique labels, one electric power`, async () => {
+  for (const [scenarioId, packs] of [['halden-power-complex', ['process-plant', 'electric-grid', 'weather']], ['halden-offsite-power-restoration', ['process-plant', 'electric-grid']], [integrated.id, ['process-plant', 'electric-grid', 'weather']]] as const) test(`${scenarioId}: core quantities and codes, unique labels, one electric power`, async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-coverage-'))
     const registry = createSimulationRunRegistry({
-      dataDir, workspaceId: newWorkspaceId(), scenarioDefinitions: builtinScenarioDefinitions,
+      dataDir, workspaceId: newWorkspaceId(), scenarioDefinitions: [...builtinScenarioDefinitions, integrated],
       compileScenarioDefinition: source => compileScenarioDefinition(source, assembly.packs, { routing }),
       scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(assembly.packs), runtimeAdapters: assembly.runtimeAdapters,
       scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: assembly.packs }),
