@@ -180,6 +180,8 @@ describe('fit caps and invariants', () => {
     expect(text.length).toBeLessThanOrEqual(4_096)
     expect(text).not.toMatch(/"value"|"limits"|"colou?r"|coordinates/)
     expect(outcome.state.by).toBe('assistant')
-    expect(outcome.rows).toBe(2 + outcome.state.views.reduce((sum, view) => sum + view.rows, 0))
+    // A chat vignette stacks its views under the frame and, for whole objects, a row of their own states' chips.
+    expect(outcome.state.chips).toEqual(['unit:u1#status', 'unit:u2#status'])
+    expect(outcome.rows).toBe(2 + 1 + outcome.state.views.reduce((sum, view) => sum + view.rows, 0))
   })
 })

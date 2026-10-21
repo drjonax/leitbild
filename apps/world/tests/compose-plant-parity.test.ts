@@ -24,10 +24,11 @@ import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
 
-// P9 (swap plan): on four-loop Halden, an equipment default carries what today's detail display carries (its flow
-// neighbourhood, readings, related alarms, the element its actions open on), within the card's limits with every cut
-// stated. The whole-plant default's case joins once p2-plant declares the overview and the window frame is settled; until
-// p2-plant declares it, this test declares the Plant's principal circuits (equipment/circuits.ts) as the overview.
+// P9 (swap plan): on four-loop Halden, a whole-plant default carries what today's Unit Overview carries (its own states,
+// the reactor trip and its first-out, lead values with trends, the whole-plant flow drawing, alarms) and an equipment
+// default what today's detail display carries (its flow neighbourhood, readings, related alarms, the element its actions
+// open on), each within the card's limits with every cut stated. Until p2-plant declares the overview in its topology,
+// this test declares the Plant's principal circuits (equipment/circuits.ts) as the overview.
 
 const routing = createDirectRoutingAdapter()
 const assembly = createWorldApplicationAssembly({ routing })
@@ -76,6 +77,37 @@ const opened = async (subject: string) => {
   expect(JSON.stringify(outcome.state).length).toBeLessThanOrEqual(4_096)
   return { ...outcome, view: await compileVignette(run, outcome.state), sample: await sampleVignette(run, outcome.state) }
 }
+
+describe('P9: the plant default carries what the Unit Overview carries', () => {
+  test('its own states as chips under the title, its lead values with trends, its alarms with the trip first out, and the whole-plant drawing beside them (Q20)', async () => {
+    const { state, view, card, sample } = await opened(plantId)
+    expect(state.views.map(entry => entry.kind)).toEqual(['values', 'trend', 'alerts', 'topology'])
+    const [declaration] = await run.port.declarations([plantId])
+    if (declaration === undefined || 'refused' in declaration) throw new Error('the Plant declares nothing')
+    const own = declaration.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref)
+    expect(own.filter(ref => ref.includes('#csf.'))).toHaveLength(6)
+    expect(state.chips).toEqual(own)
+    expect(view.chips?.map(value => value.ref)).toEqual(own)
+    const values = state.views[0]
+    expect(values?.kind === 'values' && values.refs.length > 0 && values.refs.every(ref => !own.includes(ref))).toBe(true)
+    expect(card.items.slice(0, own.length).map(item => item.subject)).toEqual(own.map(ref => ({ ref })))
+    // A window stands the drawing beside a column of the other views: rows count as the taller of the two, within 40.
+    expect(state.beside).toBe(true)
+    expect(view.beside).toBe(true)
+    const trend = view.sections[1]
+    expect(trend?.kind === 'trend' && trend.strips.flat().length).toBeGreaterThan(0)
+    expect(card.items.some(item => item.reading.includes('Reactor trip') && item.reading.includes('first out'))).toBe(true)
+    const drawing = view.sections.find(section => section.kind === 'topology')
+    expect(drawing?.kind === 'topology' && drawing.family).toBe('flow')
+    expect(drawing?.kind === 'topology' && drawing.nodes.filter(node => node.class !== 'stop').map(node => node.id).sort()).toEqual([...overview.nodes].sort())
+    // Today's overview ceiling: twelve crossings across the loops; no box over another.
+    expect(drawing?.kind === 'topology' && [drawing.layout.width, drawing.layout.height]).toEqual([62, 36])
+    expect(drawing?.kind === 'topology' && drawing.layout.crossings).toBe(7)
+    expect(drawing?.kind === 'topology' && overlaps(drawing.layout)).toEqual([])
+    expect(sample.observations.some(observation => observation.ref.includes('#csf.'))).toBe(true)
+    console.log(`plant default: rows ${state.views.map(entry => `${entry.kind} ${entry.rows}`).join(', ')}; drawing ${drawing?.kind === 'topology' ? `${drawing.layout.width}×${drawing.layout.height}, ${drawing.layout.crossings} crossings` : '-'}; card ${card.items.length} items + ${card.more}; ${card.adjusted.map(entry => entry.text).join('; ')}`)
+  })
+})
 
 describe('P9: the whole-plant drawing', () => {
   test('the declared overview stops where today\'s Unit Overview stops: no relief or drive-steam line that only ends, every flow into a store kept', async () => {

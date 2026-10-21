@@ -10,11 +10,11 @@ import type { ObjectId } from '../../../core/model/index.ts'
 import type { DisplaySpec, View } from '../../../core/observation/spec.ts'
 import { alertItem, assembleCard, entityItem, slotItems, valueItem } from './card.ts'
 import { declarationOf, declaredRefs, same, valueOf, visibleObject } from './declared.ts'
-import { defaultViews, elementRefs, leadRefs, recordedOf, type DraftView } from './defaults.ts'
+import { defaultViews, elementRefs, leadRefs, ownStates, recordedOf, type DraftView } from './defaults.ts'
 import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type ComposeIssue, type ResolvedView, type VignetteState } from './model.ts'
 import { isIssue, resolveSubject, subjectObjects, type ComposeRun, type Subject } from './resolve.ts'
 import { drawingOf, scopeWithin, topologyOf } from './topology.ts'
-import { alertRowsFor, alertsOf, entityRows, groupValues, refsRead, slotsOf, stripsOf } from './view.ts'
+import { alertRowsFor, alertsOf, entityRows, groupValues, readsOf, refsRead, slotsOf, stripsOf } from './view.ts'
 
 export type ComposeOutcome =
   | { readonly ok: true; readonly state: VignetteState; readonly card: DisplayCard; readonly rows: number }
@@ -177,7 +177,9 @@ const atLeastCaution = (priority: string | undefined): boolean => priority !== u
 const countAdjustment = (adjusted: DisplayCardAdjustment[], adjustment: DisplayCardAdjustment): void => { if (adjusted.length < MAX_ADJUSTMENTS) adjusted.push(adjustment) }
 
 /** Completion, fit, card and state: the shared second half of a composed vignette and a World default. */
-const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefined, subjects: ReadonlyArray<Subject>, drafts: ReadonlyArray<DraftView>, kept: Kept): Promise<ComposeOutcome> => {
+/** Where a vignette is shown: a chat answer stacks its views in 40 rows; a window may stand a tall drawing beside them (Q20). */
+type Frame = 'chat' | 'window'
+const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefined, subjects: ReadonlyArray<Subject>, drafts: ReadonlyArray<DraftView>, kept: Kept, frame: Frame, chipped: ReadonlyArray<string> = []): Promise<ComposeOutcome> => {
   const adjusted: DisplayCardAdjustment[] = []
   /** What the fit leaves out, counted on the card (Q15: never silent). */
   let dropped = 0
@@ -200,6 +202,8 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   // Fit: each view within its caps, rows allotted; what it cannot keep is named, never silently dropped.
   const issues: ComposeIssue[] = []
   const fitted: ResolvedView[] = []
+  /** The fitted views that draw a flow topology. */
+  const flows = new Set<ResolvedView>()
   const declared = await declaredRefs(run, views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs : []))
   const trim = (path: string, refs: ReadonlyArray<string>, cap: number, what: string): ReadonlyArray<string> => {
     const readable = refs.filter(ref => declared.has(ref))
@@ -280,7 +284,9 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
         continue
       }
       if (scoped.reach !== undefined) countAdjustment(adjusted, { kind: 'scope', text: `reach narrowed to ${scoped.reach} links to draw at most 60 nodes` })
-      fitted.push({ ...view, request: { ...request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows })
+      const drawn: ResolvedView = { ...view, request: { ...request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows }
+      if (graph!.family === 'flow') flows.add(drawn)
+      fitted.push(drawn)
     } else {
       // A map's objects beyond 48 are not framed: said, not counted as card items (a map shows none).
       if (view.objectIds !== undefined && view.objectIds.length > MAX_OBJECTS) {
@@ -292,13 +298,22 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   }
   if (issues.length > 0) return refuse(issues)
   // Rows: alerts and tables give way first, then the frame does not fit and compose refuses.
-  const total = (): number => FRAME_ROWS + fitted.reduce((sum, view) => sum + view.rows, 0)
+  // The chips: the object's own states the caller can read, in declared order, one row under the title.
+  const readableChips = await declaredRefs(run, chipped)
+  const chips = chipped.filter(ref => readableChips.has(ref))
+  const stacked = (): number => fitted.reduce((sum, view) => sum + view.rows, 0)
+  // In a window, a flow drawing taller than the stack leaves stands beside a column of every other view (Q20).
+  const left = fitted.find(view => view.kind === 'topology' && flows.has(view))
+  const sideBySide = (): number => Math.max(left?.rows ?? 0, fitted.reduce((sum, view) => sum + (view === left ? 0 : view.rows), 0))
+  const beside = frame === 'window' && left !== undefined && FRAME_ROWS + (chips.length > 0 ? 1 : 0) + stacked() > VIGNETTE_MAX_ROWS
+  const total = (): number => FRAME_ROWS + (chips.length > 0 ? 1 : 0) + (beside ? sideBySide() : stacked())
   for (const view of fitted) if (total() > VIGNETTE_MAX_ROWS && (view.kind === 'alerts' || view.kind === 'entity' || view.kind === 'collection')) (view as { rows: number }).rows = Math.min(view.rows, view.kind === 'alerts' ? 3 : 5)
   // Then a drawing is scaled to the rows left, never below a third of its height or eight rows, and the card says so.
   for (const view of fitted) {
     if (total() <= VIGNETTE_MAX_ROWS || view.kind !== 'topology') continue
     const natural = view.rows
     const rows = Math.max(8, Math.ceil((natural - 1) / 3) + 1, natural - (total() - VIGNETTE_MAX_ROWS))
+    if (beside && view === left && fitted.reduce((sum, other) => sum + (other === left ? 0 : other.rows), 0) + FRAME_ROWS + (chips.length > 0 ? 1 : 0) > VIGNETTE_MAX_ROWS) continue
     if (rows >= natural) continue
     ;(view as { rows: number }).rows = rows
     countAdjustment(adjusted, { kind: 'layout', text: `drawing scaled to ${Math.round(100 * (rows - 1) / (natural - 1))} % to fit` })
@@ -308,16 +323,20 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   if (fitted.length === 0 || uncovered >= 0) return refuse([unfit(uncovered >= 0 ? `subjects.${uncovered}` : 'views', 'nothing this vignette can show is about this subject')])
 
   const at = run.clock === undefined ? { at: new Date().toISOString(), clock: 'wall' as const } : { at: run.clock.currentTime, clock: 'simulation' as const }
-  const state = vignetteStateSchema.parse({ title: title.slice(0, 80), ...(by === undefined ? {} : { by }), at, views: fitted })
+  const state = vignetteStateSchema.parse({ title: title.slice(0, 80), ...(by === undefined ? {} : { by }), at, ...(chips.length === 0 ? {} : { chips }), ...(beside ? { beside: true } : {}), views: fitted })
   if (JSON.stringify(state).length > MAX_STATE) return refuse([unfit('views', `the vignette names more than its ${MAX_STATE}-character state holds`)])
   return { ok: true, state, card: await cardOf(run, state, kept, adjusted, dropped), rows: total() }
 }
 
 /** The card of a fitted state: every value it reads, the alerts and table rows its rows hold; each one a section leaves out is counted and said. */
 const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted: ReadonlyArray<DisplayCardAdjustment>, dropped: number): Promise<DisplayCard> => {
+  // Named values first, then the chips' and the views' own values; what a drawing binds comes after the alerts and tables.
   const read = await refsRead(run, state)
-  const refs = [...new Set([...read.filter(ref => kept.refs.has(ref)), ...read])]
-  const [declared, values] = await Promise.all([declaredRefs(run, refs), refs.length === 0 ? null : run.port.read({ refs })])
+  const own = readsOf(state).refs
+  const refs = [...new Set([...read.filter(ref => kept.refs.has(ref)), ...own])].filter(ref => read.includes(ref))
+  const bound = read.filter(ref => !refs.includes(ref))
+  const [declared, values] = await Promise.all([declaredRefs(run, read), read.length === 0 ? null : run.port.read({ refs: read })])
+  const valueItems = (list: ReadonlyArray<string>) => list.flatMap(ref => declared.has(ref) ? [valueItem(declared.get(ref)!, values?.observations.find(observation => observation.ref === ref))] : [])
   const adjusted = [...fitted]
   let hidden = dropped
   const left = (count: number, total: number, what: string): void => {
@@ -326,7 +345,7 @@ const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted:
     countAdjustment(adjusted, { kind: 'layout', text: `${count} of ${total} ${what} not shown` })
   }
   const items = [
-    ...refs.flatMap(ref => declared.has(ref) ? [valueItem(declared.get(ref)!, values?.observations.find(observation => observation.ref === ref))] : []),
+    ...valueItems(refs),
     ...state.views.flatMap(view => {
       if (view.kind !== 'alerts') return []
       const rows = alertsOf(run, view)
@@ -347,6 +366,7 @@ const cardOf = async (run: ComposeRun, state: VignetteState, kept: Kept, fitted:
       left(signals - slots.filter(slot => slot.key.startsWith('telemetry:')).length, signals, 'telemetry signals')
       return slotItems(object.id, object.label, slots, Object.fromEntries(slots.map(({ key, value, since }) => [key, { value, ...(since === undefined ? {} : { since }) }])))
     }),
+    ...valueItems(bound),
   ]
   return assembleCard(state.at, items, adjusted, hidden)
 }
@@ -361,14 +381,14 @@ export const composeVignette = async (run: ComposeRun, spec: DisplaySpec): Promi
   }
   if (issues.length > 0) return refuse(issues)
   const kept: Kept = { refs: new Set(subjects.flatMap(subject => subject.kind === 'observable' ? [subject.ref] : [])), explicit: new Set() }
-  if (spec.views.length === 0) return finish(run, spec.title, 'assistant', subjects, mergeDefaults(await Promise.all(subjects.map(subject => defaultViews(run, subject)))), kept)
+  if (spec.views.length === 0) return finish(run, spec.title, 'assistant', subjects, mergeDefaults(await Promise.all(subjects.map(subject => defaultViews(run, subject)))), kept, 'chat', await chipsOf(run, subjects))
   const views: DraftView[] = []
   for (const [index, view] of spec.views.entries()) {
     const resolved = await resolveView(run, view, `views.${index}`, subjects, kept)
     if (isIssue(resolved)) issues.push(resolved)
     else { if (view.kind === 'topology' && (view.from ?? view.to ?? view.around ?? view.media) !== undefined) kept.explicit.add(views.length); views.push(resolved) }
   }
-  return issues.length > 0 ? refuse(issues) : finish(run, spec.title, 'assistant', subjects, views, kept)
+  return issues.length > 0 ? refuse(issues) : finish(run, spec.title, 'assistant', subjects, views, kept, 'chat')
 }
 
 /** A subject's World default: what a person opens from the map, a procedure tag or the display window. */
@@ -376,8 +396,12 @@ export const composeDefault = async (run: ComposeRun, name: string | Extract<Dis
   const subject = await resolveSubject(run, name, 'subject')
   if (isIssue(subject)) return refuse([subject])
   const kept: Kept = { refs: new Set(subject.kind === 'observable' ? [subject.ref] : []), explicit: new Set() }
-  return finish(run, await titleOf(run, subject), undefined, [subject], await defaultViews(run, subject), kept)
+  return finish(run, await titleOf(run, subject), undefined, [subject], await defaultViews(run, subject), kept, 'window', await chipsOf(run, [subject]))
 }
+
+/** A whole-object default's chips: each declared object's own states, at most eight. */
+const chipsOf = async (run: ComposeRun, subjects: ReadonlyArray<Subject>): Promise<ReadonlyArray<string>> =>
+  (await Promise.all(subjects.flatMap(subject => subject.kind === 'object' && subject.observed ? [ownStates(run, subject.objectId)] : []))).flat().slice(0, 8)
 
 /** A default's title from what is declared or presented: never a word World adds. */
 const titleOf = async (run: ComposeRun, subject: Subject): Promise<string> => {

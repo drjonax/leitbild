@@ -27,7 +27,7 @@ type SlotValue = VignetteSample['slots'][string][string]
 
 /** What a state reads: refs of its values and trends, the objects of its other views (topology adds its binding refs once scoped). */
 export const readsOf = (state: VignetteState): { readonly refs: ReadonlyArray<string>; readonly objectIds: ReadonlyArray<string> } => ({
-  refs: [...new Set(state.views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs : []))],
+  refs: [...new Set([...state.chips ?? [], ...state.views.flatMap(view => view.kind === 'values' || view.kind === 'trend' ? view.refs : [])])],
   objectIds: [...new Set(state.views.flatMap(view => view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
     : view.kind === 'entity' ? view.objectIds : view.kind === 'alerts' && view.objectIds !== 'run' ? view.objectIds
       : view.kind === 'map' ? [...view.objectIds ?? [], ...view.around === undefined ? [] : [view.around]] : []))],
@@ -159,7 +159,8 @@ export const compileVignette = async (run: ComposeRun, state: VignetteState): Pr
       }
     } else sections.push({ kind: 'map', rows: view.rows })
   }
-  return { title: state.title, ...(state.by === undefined ? {} : { by: state.by }), sections }
+  const chips = values(state.chips ?? [])
+  return { title: state.title, ...(state.by === undefined ? {} : { by: state.by }), ...(chips.length === 0 ? {} : { chips }), ...(state.beside === undefined ? {} : { beside: true }), sections }
 }
 
 /**

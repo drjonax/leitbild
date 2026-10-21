@@ -60,7 +60,9 @@ describe('T06: the view and the sample read only what the state names', () => {
     expect([...asked.objects].filter(id => !allowedObjects.has(id))).toEqual([])
     expect(view.sections.map(section => section.kind)).toContain('topology')
     expect(sample.observations.map(observation => observation.ref).every(ref => allowedRefs.has(ref))).toBe(true)
-    expect(Object.keys(sample.series ?? {})).toHaveLength(1)
+    // History is read for exactly the trend's recorded pens.
+    const pens = view.sections.flatMap(section => section.kind === 'trend' ? section.strips.flat() : [])
+    expect(Object.keys(sample.series ?? {}).sort()).toEqual(pens.flatMap(pen => pen.series === null ? [] : [pen.series.seriesId]).sort())
   })
 
   test('a forged state naming what the caller may not inspect shows none of it and never asks for it', async () => {

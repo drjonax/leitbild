@@ -64,6 +64,10 @@ export const vignetteStateSchema = z.object({
   by: z.literal('assistant').optional(),
   /** When it was composed: a frozen card's time. */
   at: z.object({ at: z.string().datetime({ offset: true }), clock: z.enum(['simulation', 'wall']) }).strict(),
+  /** A whole object's own states (safety-function statuses, an operating mode) in declared order: one row of chips under the title. */
+  chips: z.array(observableRefSchema).min(1).max(8).optional(),
+  /** A drawing taller than the stack leaves stands beside a column of the other views (a window frame, Q20). */
+  beside: z.literal(true).optional(),
   views: z.array(resolvedViewSchema).min(1).max(4),
 }).strict()
 export type VignetteState = z.output<typeof vignetteStateSchema>
@@ -124,7 +128,13 @@ export type VignetteSection =
   /** Its counts are the sample's `maps[section]`. */
   | { readonly kind: 'map'; readonly rows: number }
 
-export interface VignetteView { readonly title: string; readonly by?: 'assistant'; readonly sections: ReadonlyArray<VignetteSection> }
+/**
+ * `chips`: the object's own states, one row under the title. `beside` (window vignettes only): the first flow topology
+ * section stands on the left at its own width, every other section in a column to its right; rows count as the taller.
+ */
+export interface VignetteView {
+  readonly title: string; readonly by?: 'assistant'; readonly chips?: ReadonlyArray<VignetteValue>; readonly beside?: true; readonly sections: ReadonlyArray<VignetteSection>
+}
 
 /** A recorded point: Run time in epoch ms and the value then. */
 export interface SeriesPoint { readonly t: number; readonly v: number }

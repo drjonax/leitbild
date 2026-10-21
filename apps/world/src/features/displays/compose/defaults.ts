@@ -40,6 +40,10 @@ export const elementRefs = async (run: ComposeRun, objectId: ObjectId, elementId
   return (await byRank(run, declaration?.observables.filter(observable => observable.element === elementId).map(observable => observable.ref) ?? [])).slice(0, count)
 }
 
+/** An object's own states: declared on it, not on an element (an operating mode, safety-function statuses); a whole-object default heads with them. */
+export const ownStates = async (run: ComposeRun, objectId: ObjectId): Promise<ReadonlyArray<string>> =>
+  (await declarationOf(run, objectId))?.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref).slice(0, 8) ?? []
+
 export const recordedOf = async (run: ComposeRun, refs: ReadonlyArray<string>, count: number): Promise<ReadonlyArray<string>> => {
   const declared = await declaredRefs(run, refs)
   return refs.filter(ref => declared.get(ref)?.observable.series != null).slice(0, count)
@@ -77,9 +81,8 @@ const electricQuantities: ReadonlySet<Quantity> = new Set(['electric-power', 'fr
 export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<ReadonlyArray<DraftView>> => {
   if (subject.kind === 'object' && subject.observed) {
     const object = visibleObject(run, subject.objectId)!
-    // The object's own states (declared on it, not on an element: an operating mode, safety-function statuses) lead its values.
-    const states = (await declarationOf(run, subject.objectId))?.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref).slice(0, 8) ?? []
-    const lead = [...new Set([...states, ...await leadRefs(run, subject.objectId)])]
+    const own = new Set(await ownStates(run, subject.objectId))
+    const lead = (await leadRefs(run, subject.objectId)).filter(ref => !own.has(ref))
     const trend = await recordedOf(run, lead, 4)
     return [
       ...(lead.length > 0 ? [{ kind: 'values', refs: [...lead] } as DraftView] : []),
