@@ -27,6 +27,7 @@ import type { Actor } from '../../src/core/simulation-runs/actors.ts'
 import { createSimulationRunRegistry } from '../../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../../src/core/simulation-runs/runtime.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from '../helpers.ts'
+import { citedMargin } from '../../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
 
 const operator: Actor = { id: 'actor:human:characterization-operator' as ActorId, label: 'Characterization operator', role: 'operator' }
 const supervisor: Actor = { id: 'actor:human:characterization-supervisor' as ActorId, label: 'Characterization supervisor', role: 'operator' }
@@ -73,6 +74,9 @@ export const observeProposalFlow = async (): Promise<Record<string, unknown>> =>
 
     const msiv = await propose({ tagId: 'MSIV-A', value: 0, reason: 'Isolate steam generator A', procedureStep: 'Isolate the faulted steam generator', evidence: ['SG-A-LVL-NR'] })
     const afterPropose = await sampleProposals()
+    // The cited reading as its approval card shows it: its margin to the nearest protection limit (numbers shaped).
+    const cited = await query(run, operator, 'world.process-plant.signals.read', { plantId, signals: [{ tagId: 'SG-A-LVL-NR' }], observed: true })
+    const citedMargins = cited.signals.map((signal: any) => citedMargin({ value: signal.variable.value, unit: signal.observed.unit, quantity: signal.observed.quantity, thresholds: signal.observed.thresholds, ...(signal.observed.observation?.past === undefined ? {} : { past: signal.observed.observation.past }), ratePerMinute: null })?.text.replace(/\d+(?:\.\d+)?/g, 'N') ?? null)
     const agentApproves = decisionOf(await command(run, agent, 'world.process-plant.control.decide', { plantId, proposalId: msiv.commandId, decision: 'approve' }))
     const personExtends = decisionOf(await command(run, supervisor, 'world.process-plant.control.decide', { plantId, proposalId: msiv.commandId, decision: 'extend' }))
     const personRejects = decisionOf(await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: msiv.commandId, decision: 'reject', reason: 'Not at power' }))
@@ -90,6 +94,7 @@ export const observeProposalFlow = async (): Promise<Record<string, unknown>> =>
     const refusedOffer = decisionOf(await propose({ tagId: 'RCP-A-RUN', value: true, reason: 'Restart the pump', evidence: ['PT-455'] }))
 
     return {
+      citedMargins,
       proposeResult: { ok: msiv.ok, word: msiv.word ?? null, consequenceVerb: msiv.consequence?.verb ?? null, mode: msiv.consequence?.mode?.id ?? null },
       afterPropose,
       agentApproves,

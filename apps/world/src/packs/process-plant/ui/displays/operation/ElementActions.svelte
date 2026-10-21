@@ -1,12 +1,14 @@
 <script lang="ts">
+  import { recordingSeriesIdFor } from '../../../../../core/model/index.ts'
   import type { PackElementActionsProps } from '../../../../../core/packs/protocol.ts'
+  import { appendPoint, HOLD_GAP_MS, readHistory, sparkline, sparklineText, type TrendPoint } from '../../plant-card-sparkline.ts'
   import type { ProcessVariableValue, VariablePath } from '../../../graph/index.ts'
   import type { ProcessPlantProposal, ProposalReview } from '../../../operations/proposals.ts'
   import { runOnMount } from '../../../../../ui/svelte-lifecycle.svelte.ts'
   import ControlSection from './ControlSection.svelte'
   import ProposalSection from './ProposalSection.svelte'
   import { operationClient, type OperationOutcome, type PlantRead } from './operation-client.ts'
-  import { itemControlView, operationNow, proposalCard, shownProposal, type ListedItem, type ListedReset, type OperationNow } from './operation-presenter.ts'
+  import { citedMargin, itemControlView, operationNow, proposalCard, ratePerMinute, shownProposal, type CitedReading, type ListedItem, type ListedReset, type OperationNow } from './operation-presenter.ts'
 
   // The Plant's actions on one element, in a display's element pop-over (the
   // embed contribution ui/embed.ts): the item of equipment the element is (a
@@ -60,7 +62,8 @@
       const holding = listed.resets.filter(reset => reset.items.includes(elementId))
       const own = held.proposals.map(heldEntry => heldEntry.proposal).filter(proposal => proposal.item === elementId)
       const paths = pathsOf(entry, holding, own)
-      read = paths.length === 0 ? null : await client.read(runId, objectId, paths)
+      read = paths.length === 0 ? null : await client.read(runId, objectId, paths, own.length > 0)
+      if (read !== null) extendHistories(read, [...new Set(own.flatMap(proposal => proposal.evidence.map(evidence => String(evidence.path))))])
       item = entry
       resets = holding
       proposals = own
@@ -72,6 +75,26 @@
       reading = false
     }
   }
+  // The readings a proposal cites: what the Run's historian holds of their last ten minutes, read once, then each read's value.
+  const TREND_MS = 10 * 60_000
+  const SPARK = { width: 72, height: 18 } as const
+  let histories = $state.raw<ReadonlyMap<string, ReadonlyArray<TrendPoint>>>(new Map())
+  const extendHistories = (latest: PlantRead, cited: ReadonlyArray<string>): void => {
+    const at = Date.parse(latest.sample.simulationTime)
+    const next = new Map(histories)
+    for (const path of cited) {
+      const value = latest.sample.values.find(entry => entry.path === path)?.value
+      const known = next.get(path)
+      if (known === undefined) {
+        void readHistory(runId, recordingSeriesIdFor(objectId, path), { from: at - TREND_MS - HOLD_GAP_MS, to: at }).then(
+          recorded => { histories = new Map(histories).set(path, [...recorded, ...(histories.get(path) ?? []).filter(point => point.t > (recorded.at(-1)?.t ?? -Infinity))]) },
+          error => { failure = `The history of ${path} cannot be read: ${messageOf(error)}` },
+        )
+      }
+      if (typeof value === 'number') next.set(path, appendPoint(next.get(path) ?? [], { t: at, v: value }, at - TREND_MS))
+    }
+    histories = next
+  }
   runOnMount(() => {
     void refresh()
     const timer = setInterval(() => { void refresh() }, READ_EVERY_MS)
@@ -81,6 +104,21 @@
   const stale = $derived(failure !== null)
   const now = $derived.by((): OperationNow | null => read === null ? null : operationNow(read.sample, read.units))
   const proposal = $derived(now === null ? undefined : shownProposal(elementId, proposals, now))
+  // Each cited reading's margin to its limits and its last ten minutes, by tag (World's ranking, never the proposer's urgency).
+  const cited = $derived.by((): ReadonlyMap<string, CitedReading> => {
+    if (proposal === undefined || read === null || now === null) return new Map()
+    const at = Date.parse(read.sample.simulationTime)
+    return new Map(proposal.evidence.map(evidence => {
+      const path = String(evidence.path)
+      const points = histories.get(path) ?? []
+      const observed = read!.observed.get(path)
+      const line = sparkline(points, at, TREND_MS, SPARK)
+      return [String(evidence.tagId), {
+        margin: observed === undefined || observed === null ? null : citedMargin({ value: now!.read(evidence.path), unit: observed.unit, quantity: observed.quantity, thresholds: observed.thresholds, ...(observed.observation?.past === undefined ? {} : { past: observed.observation.past }), ratePerMinute: ratePerMinute(points) }),
+        line: line === null || observed === undefined || observed === null ? null : { ...line, text: sparklineText(line, TREND_MS, observed.unit) },
+      }] as const
+    }))
+  })
   const shown = $derived(item !== null && (item.offered.length > 0 || item.withheld.length > 0 || resets.length > 0))
 
   const validate = (write: Write) => client.validate(runId, objectId, write)
@@ -95,6 +133,8 @@
   {#if proposal !== undefined}
     <ProposalSection
       card={proposalCard(proposal, reviews.get(proposal.id) ?? null, item, now)}
+      {cited}
+      spark={SPARK}
       {stale}
       approve={() => decide(proposal, 'approve')}
       reject={reason => decide(proposal, 'reject', reason)}

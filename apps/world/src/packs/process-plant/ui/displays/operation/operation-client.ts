@@ -3,6 +3,7 @@ import type { ProcessVariableValue, VariablePath } from '../../../graph/index.ts
 import type { ListedItem, ListedReset } from '../../../operations/instance-ports.ts'
 import type { OperationRecord, ResetRecord } from '../../../operations/plant-operations.ts'
 import type { ProcessPlantProposal, ProposalDecision, ProposalReview } from '../../../operations/proposals.ts'
+import type { Observable, Observation } from '../../../../../core/observation/model.ts'
 import { invokeSimulationRunCapability, querySimulationRunCapability } from '../../../../../ui/simulation-run-client.ts'
 
 // The operation capabilities the Plant's panels use, each through the Run's
@@ -27,12 +28,22 @@ export interface HeldProposals {
   readonly proposals: ReadonlyArray<{ readonly proposal: ProcessPlantProposal; readonly review?: ProposalReview }>
 }
 
+/** A signal as World observes it: its unit code and quantity, declared limits, and observation now. */
+export interface ObservedSignal {
+  readonly unit: string
+  readonly quantity: Observable['quantity']
+  readonly thresholds: Observable['thresholds']
+  readonly observation: Observation | null
+}
+
 /** The Plant on some signals now (signals.read with its operations): their values and units, and what people and AI agents did on them. */
 export interface PlantRead {
   readonly sample: { readonly simulationTime: string; readonly plantElapsedMs: number; readonly values: ReadonlyArray<{ readonly path: string; readonly value: ProcessVariableValue }> }
   readonly units: ReadonlyMap<string, string>
   readonly log: ReadonlyArray<OperationRecord>
   readonly resets: ReadonlyArray<ResetRecord>
+  /** Where asked: each signal's observation and declared limits, by path; null for one the Plant does not declare. */
+  readonly observed: ReadonlyMap<string, ObservedSignal | null>
 }
 
 export interface OperationClient {
@@ -49,7 +60,7 @@ export interface OperationClient {
   /** The Plant's proposals, pending ones with World's review now (control.proposals). */
   readonly proposals: (runId: SimulationRunId, plantId: string) => Promise<HeldProposals>
   /** The signals' values and units now, with the commands and resets on them (signals.read). */
-  readonly read: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<string>) => Promise<PlantRead>
+  readonly read: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<string>, observed?: boolean) => Promise<PlantRead>
 }
 
 /**
@@ -79,16 +90,20 @@ export const operationClient: OperationClient = {
   decide: (runId, plantId, proposalId, decision, reason) =>
     commandOutcome(runId, 'world.process-plant.control.decide', { plantId, proposalId, decision, ...(reason === null ? {} : { reason }) }),
   proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }, timed()),
-  read: async (runId, plantId, paths) => {
+  read: async (runId, plantId, paths, observed = false) => {
     const read = await querySimulationRunCapability<{
-      readonly operations: Omit<PlantRead, 'sample' | 'units'> & { readonly simulationTime: string; readonly plantElapsedMs: number }
-      readonly signals: ReadonlyArray<{ readonly signal: { readonly path: string }; readonly variable: { readonly value: ProcessVariableValue; readonly unit: string } }>
-    }>(runId, 'world.process-plant.signals.read', { plantId, signals: paths.map(path => ({ path })), operations: true }, timed())
+      readonly operations: Pick<PlantRead, 'log' | 'resets'> & { readonly simulationTime: string; readonly plantElapsedMs: number }
+      readonly signals: ReadonlyArray<{
+        readonly signal: { readonly path: string }; readonly variable: { readonly value: ProcessVariableValue; readonly unit: string }
+        readonly observed?: ObservedSignal | null
+      }>
+    }>(runId, 'world.process-plant.signals.read', { plantId, signals: paths.map(path => ({ path })), operations: true, ...(observed ? { observed } : {}) }, timed())
     return {
       sample: { simulationTime: read.operations.simulationTime, plantElapsedMs: read.operations.plantElapsedMs, values: read.signals.map(entry => ({ path: entry.signal.path, value: entry.variable.value })) },
       units: new Map(read.signals.map(entry => [entry.signal.path, entry.variable.unit])),
       log: read.operations.log,
       resets: read.operations.resets,
+      observed: new Map(read.signals.flatMap(entry => entry.observed === undefined ? [] : [[entry.signal.path, entry.observed] as const])),
     }
   },
 }

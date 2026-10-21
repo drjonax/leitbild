@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { idSchema, matchesLiteralSearch, type IsoTimestamp } from '../../../core/model/index.ts'
+import { idSchema, matchesLiteralSearch, type IsoTimestamp, type ObjectId } from '../../../core/model/index.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import type { PackRuntimeQuery } from '../../../simulation/protocol.ts'
 import { processQuantitySchema, processSignalTagIdSchema, variableDisciplineSchema } from '../graph/index.ts'
@@ -14,6 +14,8 @@ import {
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { paginateProcessPlantSearch, processPlantSearchPaginationShape, requirePlant } from './common.ts'
 import { requestedSignalValueView, resolveRequestedSignalUnit } from './signal-units.ts'
+import { declaredObservable } from '../observation/declarations.ts'
+import { readPlant } from '../observation/read.ts'
 
 /** The commands issued on these signals and the resets of actuations that held them, at the Run and plant time read at. */
 const operationsOn = (config: { readonly simulationTime?: IsoTimestamp }, system: ProcessPlantRuntimeInstance, paths: ReadonlySet<string>) => {
@@ -38,6 +40,7 @@ export const signalsReadQuerySchema = z.object({
     requestedUnit: z.string().trim().min(1).max(128).optional().describe('Optional presentation unit. Raw variable and quality remain unchanged; unsupported conversion returns the actual value/unit with an explicit unavailable reason.'),
   })).min(1),
   operations: z.literal(true).optional().describe('Adds the commands issued on these signals and the resets of actuations that held them, with the Run and plant time read at.'),
+  observed: z.literal(true).optional().describe('Adds each signal\'s observation as World reads it (priority, the limit it is past) and its declared limits.'),
 }).strict()
 
 export const signalsSearchQuerySchema = z.object({
@@ -189,10 +192,15 @@ export const answerProcessPlantSignalQuery = (config: {
       signals: payload.signals.map((signal, index) => {
         const binding = bindings[index]!
         const variable = system.runtime.readVariableSnapshot(binding.path)
+        const declared = payload.observed === undefined ? undefined : declaredObservable(payload.plantId as ObjectId, system.plant, null, String(binding.path))
         return {
           signal: processPlantSignalView(binding),
           variable,
           quality: processPlantSignalQuality(variable),
+          ...(declared === undefined ? {} : { observed: declared === null ? null : {
+            unit: declared.unit, quantity: declared.quantity, thresholds: declared.thresholds,
+            observation: readPlant({ objectId: payload.plantId as ObjectId, system, recording: null, simulationTime: config.simulationTime ?? rejectCapabilityTarget('signals.read with observed needs the Run time the Plants stand at'), history: undefined }, [String(binding.path)])[0],
+          } }),
           ...(signal.requestedUnit === undefined ? {} : {
             valueView: requestedSignalValueView({ unit: binding.unit, quantity: binding.quantity, value: variable.value }, signal.requestedUnit),
           }),

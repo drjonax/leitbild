@@ -3,20 +3,25 @@
   import '@oicl/openbridge-webcomponents/dist/components/slide-button/slide-button.js'
   import '@oicl/openbridge-webcomponents/dist/components/text-input-field/text-input-field.js'
   import { listen } from './listen.ts'
-  import { STALE_CONTROLS, type ProposalCard } from './operation-presenter.ts'
+  import { STALE_CONTROLS, type CitedReading, type ProposalCard } from './operation-presenter.ts'
 
   // A proposal's approval card, first in its item's popover while pending
   // (plan §4.4, QA-9): the exact command World stored, from → to, who
   // proposed it and why in their own quoted words, what the I&C says of it
-  // now (neutral, no tick), each cited reading then → now, the expected
-  // response and whether it can be undone, and the fixed expiry with one explicit extension. Approve and
+  // now (neutral, no tick), each cited reading then → now with its margin to
+  // its limits and its last minutes, the expected response and whether it
+  // can be undone, and the fixed expiry with one explicit extension. Approve and
   // Reject carry equal weight and neither takes focus; Approve names verb, tag
   // and label, and is a slide where the command sets a trip going.
 
   type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string }
 
-  let { card, stale = false, approve, reject, extend, useAsDraft }: {
+  let { card, cited = new Map(), spark, stale = false, approve, reject, extend, useAsDraft }: {
     card: ProposalCard
+    /** Each cited reading's margin to its limits and its recent line, by tag. */
+    cited?: ReadonlyMap<string, CitedReading>
+    /** The size each cited reading's line is drawn at. */
+    spark?: { readonly width: number; readonly height: number }
     /** The page's samples are stale: no decision is offered on old values (STALE_CONTROLS). */
     stale?: boolean
     approve: () => Promise<Outcome>
@@ -64,9 +69,18 @@
   {#if card.changed}<p class="changed">Plant changed since proposed</p>{/if}
   <ul class="evidence" aria-label="Cited readings">
     {#each card.evidence as entry (entry.tagId)}
+      {@const reading = cited.get(entry.tagId)}
       <li>
         <span class="tag">{entry.tagId}</span>
         <span class="values" class:changed={entry.changed}>{entry.then}{#if entry.changed} → {entry.now}{/if}</span>
+        {#if reading?.line && spark}
+          <svg class="spark" width={spark.width} height={spark.height} role="img" aria-label="{entry.tagId}, {reading.line.text}">
+            <title>{reading.line.text}</title>
+            <path d={reading.line.path} />
+            {#if reading.line.end}<circle cx={reading.line.end.x} cy={reading.line.end.y} r="2" />{/if}
+          </svg>
+        {/if}
+        {#if reading?.margin}<span class="margin">{reading.margin.text}</span>{/if}
       </li>
     {/each}
   </ul>
@@ -119,7 +133,7 @@
   .approve-what { font-weight: 600; color: var(--element-active-color); }
   p { margin: 0; }
   .action { font-weight: 700; color: var(--element-active-color); }
-  .change, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }
+  .change, .margin, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }
   /* World's consequence line: what approving it stops or isolates now, read before Approve. */
   .consequence-line { color: var(--element-active-color); }
   /* What it may set going stands out, on its own line (C2a). */
@@ -135,6 +149,8 @@
   .tag { font-weight: 600; min-width: 96px; }
   .values { font-variant-numeric: tabular-nums; }
   .values.changed { font-weight: 600; }
+  .spark path { fill: none; stroke: var(--element-active-color); stroke-width: 1.5; }
+  .spark circle { fill: var(--element-active-color); }
   /* Equal weight: the same variant and width, neither focused first (QA-9). */
   .decisions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .secondary { display: flex; gap: 6px; }

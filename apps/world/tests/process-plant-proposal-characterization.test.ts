@@ -7,7 +7,7 @@ import type { ActorId, CommandResult, IsoTimestamp } from '../src/core/model/ind
 import type { Actor } from '../src/core/simulation-runs/actors.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
-import { operationNow, proposalCard, type ProposalCard } from '../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
+import { citedMargin, operationNow, proposalCard, type ProposalCard } from '../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
 import { testScenarioDefinitions } from './fixtures/scenarios.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -109,6 +109,17 @@ const observe = async (): Promise<Facts> => {
       return Object.fromEntries(held.proposals.map((entry: any) =>
         [entry.proposal.id, proposalCard(entry.proposal, entry.review ?? null, listed.items.find((item: any) => item.id === entry.proposal.item), now)]))
     }
+    // Each cited reading's margin to its limits as the card shows it (signals.read with observed), numbers shaped.
+    const margins = async (): Promise<Readonly<Record<string, ReadonlyArray<string | null>>>> => {
+      const held = await invoke(operator, 'world.process-plant.control.proposals', {})
+      return Object.fromEntries(await Promise.all(held.proposals.map(async (entry: any) => {
+        const read = await invoke(operator, 'world.process-plant.signals.read', { signals: entry.proposal.evidence.map((cited: any) => ({ path: cited.path })), observed: true })
+        return [entry.proposal.id, read.signals.map((signal: any) => {
+          const margin = signal.observed === null ? null : citedMargin({ value: signal.variable.value, unit: signal.observed.unit, quantity: signal.observed.quantity, thresholds: signal.observed.thresholds, ...(signal.observed.observation?.past === undefined ? {} : { past: signal.observed.observation.past }), ratePerMinute: null })
+          return margin === null ? null : `${entry.proposal.evidence.find((cited: any) => cited.path === signal.signal.path).tagId}: ${shape(margin.text)}`
+        })] as const
+      })))
+    }
     // Plant times count from the first proposal: a new Run plays until it is paused, so the Plant may have stepped once by then.
     let firstProposedAt = 0
     const expiries = async () => Object.fromEntries((await invoke(operator, 'world.process-plant.control.proposals', {})).proposals.map((entry: any) => [entry.proposal.id, entry.proposal.expiresAtElapsedMs - firstProposedAt]))
@@ -120,6 +131,7 @@ const observe = async (): Promise<Facts> => {
     firstProposedAt = (await invoke(operator, 'world.process-plant.control.proposals', {})).proposals.find((entry: any) => entry.proposal.id === block).proposal.proposedAtElapsedMs
     const expiresAsRecorded = await expiries()
     const proposed = await cards()
+    const proposedMargins = await margins()
     const agentDecides = { approve: await decide(agent, block, 'approve'), reject: await decide(agent, block, 'reject', 'Not now'), extend: await decide(agent, block, 'extend') }
     const extensions = [await decide(operator, msiv, 'extend'), await decide(operator, msiv, 'extend')]
     const extended = await cards()
@@ -178,7 +190,7 @@ const observe = async (): Promise<Facts> => {
     const byName = <T>(entries: Readonly<Record<string, T>>): Readonly<Record<string, T>> => Object.fromEntries(Object.entries(entries).map(([id, value]) => [name(id), value]))
     return {
       expiresAsRecorded: byName(expiresAsRecorded), expiresAfterReads: byName(expiresAfterReads),
-      proposed: byName(proposed), agentDecides, extensions: extensions.map(named), extended: byName(extended), rejection, paused: byName(paused),
+      proposed: byName(proposed), proposedMargins: byName(proposedMargins), agentDecides, extensions: extensions.map(named), extended: byName(extended), rejection, paused: byName(paused),
       atTwo: byName(atTwo), atThree: byName(atThree), pastPlantTime: byName(pastPlantTime), pastWallFloor: byName(pastWallFloor), approveLapsed: named(approveLapsed),
       modeBefore, trip, modeAfter, beforeTrip: byName(beforeTrip), afterTrip: byName(afterTrip),
       acknowledgements, alarmAfter: { acknowledged: alarmAfter.acknowledged, phase: alarmAfter.phase },
@@ -231,6 +243,14 @@ describe('proposal characterization on the old path', () => {
     expect(cardFacts(facts.proposed.msiv)).toMatchObject({ action: 'SHUT MSIV-A MSIV A', evidence: ['SG-A-LVL-NR N % → N %'], consequence: MSIV_CONSEQUENCE })
     // A start takes nothing away: no consequence line.
     expect(cardFacts(facts.proposed.pump)).toMatchObject({ action: 'START CHG-PUMP-B CHG B', from: 'STOP', to: 'RUN', consequence: null, expected: 'CHG-PUMP-B CHG B reads RUN at once' })
+  })
+
+  test('each cited reading shows its margin to the nearest protection limit, in the shared number format and limit words (D3 ruling 1)', () => {
+    expect(facts.proposedMargins).toEqual({
+      block: ['PT-455: N MPa below HI N MPa · ALM'],
+      msiv: ['SG-A-LVL-NR: N % above LO N % · ALM'],
+      pump: ['PT-455: N MPa below HI N MPa · ALM'],
+    })
   })
 
   test('only a person approves, rejects or extends; a person rejects with a reason', () => {

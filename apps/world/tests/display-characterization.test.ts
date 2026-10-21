@@ -22,7 +22,10 @@ describe('T01 old display path: element actions, resets, chips and procedure tag
 
 describe('T01 old display path: an operation proposal end to end', () => {
   test('propose, shown on the display, agent may not decide, extend, reject, approve and execute, withdraw', async () => {
-    expect(await observeProposalFlow()).toEqual(record.proposalFlow)
+    const { citedMargins, ...flow } = await observeProposalFlow()
+    expect(flow).toEqual(record.proposalFlow)
+    // The cited reading shows its margin to its nearest protection limit (D3 ruling 1).
+    expect(citedMargins).toEqual(['N % above LO N % · ALM'])
   })
 })
 
