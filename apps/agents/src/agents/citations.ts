@@ -18,15 +18,11 @@
 // is on no card of the turn gets a visible chip in the answer instead.
 // ============================================================================
 
+import type { DisplayCardItem } from '@leitbild/contracts'
+
 /** What the check reads of a card item, keyed as the answer cites it. */
-export interface CitedItem {
-  readonly key: string
-  readonly label: string
-  readonly reading: string
-  readonly numbers: ReadonlyArray<CardNumber>
-  readonly limits?: ReadonlyArray<CardNumber>
-}
-type CardNumber = { readonly value: number; readonly decimals: number }
+export type CitedItem = Pick<DisplayCardItem, 'key' | 'label' | 'reading' | 'numbers' | 'limits'>
+type CardNumber = DisplayCardItem['numbers'][number]
 export type Language = 'en' | 'nb'
 
 const KEY = /⟦k(\d+)⟧/g

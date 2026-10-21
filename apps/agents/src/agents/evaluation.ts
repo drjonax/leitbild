@@ -18,6 +18,8 @@ import { parseMapBody, formatMapErrors } from '../core/render-validators/map-sch
 import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/render-validators/view-fence.ts'
 import { embeddedViewContentSchema, type EmbeddedViewContent } from '@leitbild/contracts'
 import { answerContradictions } from './answer-consistency.ts'
+import { createTurnCards, type TurnCards } from './answer-cards.ts'
+import { citationIssues } from './citations.ts'
 import { collectTurnOperations, operationClaimIssues, type TurnOperation } from './operation-claims.ts'
 import { workspaceCallResultForModel } from '../tools/built-in/workspace-capability-tools.ts'
 
@@ -31,8 +33,8 @@ import { workspaceCallResultForModel } from '../tools/built-in/workspace-capabil
 // `evaluation.fence-retry.test.ts` asserts 3 total LLM calls (1 + 2 retries).
 export const MAX_FENCE_RETRIES = 2
 
-// Times the eval loop asks the LLM to correct a value its display
-// contradicts (answer-consistency.ts). One: the issues name each fix, and a
+// Times the eval loop asks the LLM to correct a value its display or its
+// card lines contradict (answer-consistency.ts, citations.ts). One: the issues name each fix, and a
 // second round would cost another full answer's latency for a model that
 // did not take the first; the corrected answer is still fence-checked.
 export const MAX_CONSISTENCY_CORRECTIONS = 1
@@ -101,10 +103,11 @@ export const formatToolDataForLLM = (data: unknown): string => {
   }
 }
 
-// What the model reads of a tool result. Checks of the answer read the raw
-// result, never this text (workspaceCallResultForModel says what it leaves out).
-const formatToolResult = (tool: string, raw: ToolResult): string => {
-  const result = tool === 'workspace_call' ? workspaceCallResultForModel(raw) : raw
+// What the model reads of a tool result, once per result: a card in it takes
+// the turn's next keys. Checks of the answer read the raw result or the turn's
+// cards, never this text (workspaceCallResultForModel says what it leaves out).
+const formatToolResult = (tool: string, raw: ToolResult, cards: TurnCards): string => {
+  const result = tool === 'workspace_call' ? workspaceCallResultForModel(raw, cards) : raw
   return result.success
     ? formatToolDataForLLM(result.data)
     : JSON.stringify({ success: false, error: result.error ?? 'Tool failed', ...(result.data === undefined ? {} : { details: result.data }) })
@@ -282,7 +285,8 @@ const callLLMOnce = async (
 // up to MAX_FENCE_RETRIES times. Returns the final response content
 // (corrected if a retry succeeded; the last attempt's content if all retries
 // failed — the UI then shows the error in place of the block). Once the
-// fences are valid, an answer citing a value its display contradicts is
+// fences are valid, an answer citing a value its display or the card line
+// its key names contradicts (citations.ts) is
 // corrected the same way, at most MAX_CONSISTENCY_CORRECTIONS times. That
 // compares the answer with what the display publishes; it does not certify
 // that free prose is true (two values swapped between named items pass).
@@ -383,6 +387,12 @@ const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
   `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite each value as the display reads it, or mark one from elsewhere "(not shown)". ` +
   'Keep the assessment and actions.'
 
+// Numbers the card lines their keys cite contradict (citations.ts).
+const citationCorrection = (issues: ReadonlyArray<string>): string =>
+  `The answer cites numbers its card lines do not show:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
+  'Re-emit the FULL corrected response, keeping any display block. Give each value as its line reads it, with its key right after it; ' +
+  'a number from elsewhere carries no key. Keep the assessment and actions.'
+
 // An answer that says done what its turn only proposed (operation-claims.ts),
 // with any value its display contradicts, in one correction.
 const claimCorrection = (claims: ReadonlyArray<string>, viewIssues: ReadonlyArray<string>): string =>
@@ -395,6 +405,7 @@ const correctResponse = async (
   initialContent: string,
   viewRefs: ReadonlySet<string>,
   viewContents: ReadonlyMap<string, EmbeddedViewContent>,
+  cards: TurnCards,
   operations: ReadonlyArray<TurnOperation>,
   context: Array<ChatRequest['messages'][number]>,
   config: AIAgentConfig,
@@ -423,9 +434,11 @@ const correctResponse = async (
         `Your previous response contained one or more invalid fenced blocks:\n\n${fenceErrors.map(entry => entry.error).join('\n\n')}\n\n` +
         `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`
     } else {
-      // Valid fences: does the display the answer presents contradict it, and does it claim what its turn did not do?
+      // Valid fences: do the display it presents or the card lines it cites contradict the answer, and does it claim what its turn did not do?
       const done = consistencyCorrections === MAX_CONSISTENCY_CORRECTIONS
-      const issues = done ? [] : presentedViewIssues(content, viewContents)
+      const viewIssues = done ? [] : presentedViewIssues(content, viewContents)
+      const cited = done ? [] : citationIssues(content, cards.items()).contradictions.map(contradiction => contradiction.issue)
+      const issues = [...viewIssues, ...cited]
       const claims = done ? [] : operationClaimIssues(content, operations)
       if (issues.length === 0 && claims.length === 0) return content
       consistencyCorrections++
@@ -433,7 +446,7 @@ const correctResponse = async (
         ...claims.map(issue => ({ cause: 'claimed-execution' as const, issue })),
         ...issues.map(issue => ({ cause: 'contradiction' as const, issue })),
       ]))
-      correction = claims.length > 0 ? claimCorrection(claims, issues) : consistencyCorrection(issues)
+      correction = claims.length > 0 ? claimCorrection(claims, issues) : viewIssues.length > 0 ? consistencyCorrection(issues) : citationCorrection(cited)
     }
     // Append the response + a precise correction prompt. The next LLM call
     // will see (a) what it just emitted, (b) why it must change,
@@ -524,6 +537,8 @@ export const evaluate = async (
   // round of the agent's own; they do not count against its iteration limit.
   let insistRounds = 0
   const viewContents = new Map<string, EmbeddedViewContent>()
+  // The cards this turn's results carried, re-keyed as the model read them.
+  const turnCards = createTurnCards()
   // What this turn's workspace calls issued: an answer may not say done what it only proposed.
   const turnOperations: TurnOperation[] = []
   let lastGenerationQuery: GenerationQuery | undefined
@@ -654,6 +669,7 @@ export const evaluate = async (
         // the turn is cancelled now; posted lines stay.
         for (const result of results) for (const line of result.progress ?? []) onProgress?.(line)
         signal?.throwIfAborted()
+        const serializedResults: string[] = []
         for (let i = 0; i < results.length; i++) {
           const call = calls[i]
           const result = results[i]
@@ -664,7 +680,8 @@ export const evaluate = async (
           const operationOutcomes = operationOutcomesFor(call.tool, result)
           const traceSuccess = result.success && (operationOutcomes?.every(outcome => outcome.success) ?? true)
           onEvent?.({ kind: 'tool_result', tool: call.tool, callId: call.callId ?? String(i), success: traceSuccess, preview: traceSuccess ? undefined : result.error ?? 'One or more requested operations failed' })
-          const serializedResult = formatToolResult(call.tool, result)
+          const serializedResult = formatToolResult(call.tool, result, turnCards)
+          serializedResults[i] = serializedResult
           toolTrace.push({
             tool: call.tool,
             ...traceArguments(call.tool, call.arguments),
@@ -683,7 +700,7 @@ export const evaluate = async (
           const call = calls[i]
           const result = results[i]
           if (!call || !result) continue
-          toolMessages.push({ role: 'tool', toolCallId: wireCalls[i]!.id, name: call.tool, content: formatToolResult(call.tool, result) })
+          toolMessages.push({ role: 'tool', toolCallId: wireCalls[i]!.id, name: call.tool, content: serializedResults[i]! })
         }
         const systemTokens = Math.ceil((contextResult.systemBlocks?.map(block=>block.text).join('\n\n').length ?? 0)/4)
         const fit = fitToolEvidence(context, assistantToolMessage, toolMessages, contextResult.tokenBudget, systemTokens, turnStart)
@@ -745,6 +762,7 @@ export const evaluate = async (
         content,
         viewRefs,
         viewContents,
+        turnCards,
         turnOperations,
         context,
         config,

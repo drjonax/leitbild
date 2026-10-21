@@ -458,6 +458,75 @@ describe('evaluation answer-display consistency', () => {
   })
 })
 
+describe('evaluation card citations', () => {
+  const at = { at: '2026-01-01T10:16:00.000Z', clock: 'simulation' }
+  const loading = { at, more: 0, adjusted: [], items: [
+    { key: 'k1', label: 'Line A · loading', reading: '91.3 %', unit: '%', numbers: [{ value: 91.3, decimals: 1 }] },
+    { key: 'k2', label: 'Line B · loading', reading: '92.2 %', unit: '%', numbers: [{ value: 92.2, decimals: 1 }] },
+  ] }
+  const reserve = { at, more: 0, adjusted: [], items: [{ key: 'k1', label: 'Grid · reserve margin', reading: '2291 MW', unit: 'MW', numbers: [{ value: 2291, decimals: 0 }] }] }
+  // Two tool rounds, each a compose whose result carries one card, then the scripted answers.
+  const run = async (answers: ReadonlyArray<string>, cards: ReadonlyArray<unknown> = [loading, reserve]) => {
+    const scripted = [
+      ...cards.map((_, index) => ({ content: '', toolCalls: [{ id: `w${index}`, function: { name: 'workspace_call', arguments: { calls: [] } } }] })),
+      ...answers.map(content => ({ content })),
+    ]
+    let index = 0
+    let round = 0
+    const calls: ChatRequest[] = []
+    const events: unknown[] = []
+    const provider: LLMProvider = {
+      models: async () => [],
+      chat: async request => { calls.push(request); return { ...mkResponse(''), ...scripted[index++]! } },
+    }
+    const executor = async () => {
+      const card = cards[round++]
+      return [{ success: true, data: { results: [{ key: 'compose', operationId: 'world.simulation-run.display.compose', success: true, data: { card } }] } }]
+    }
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+      onEvent: event => { if (event.kind === 'correction') events.push(event) },
+    })
+    return { calls, result, events }
+  }
+
+  test('a further card of the turn reaches the model re-keyed, and an answer citing both lines as they read costs nothing', async () => {
+    const answer = 'Line A is at 91.3 % ⟦k1⟧ and the reserve margin at 2,291 MW ⟦k3⟧.'
+    const { calls, result } = await run([answer])
+    expect(calls).toHaveLength(3)
+    const toolText = calls[2]!.messages.filter(message => message.role === 'tool').map(message => message.content).join('\n')
+    expect(toolText).toContain('k2 · Line B · loading · 92.2 %')
+    expect(toolText).toContain('k3 · Grid · reserve margin · 2291 MW')
+    expect(result.decision.response).toEqual({ action: 'respond', content: answer })
+  })
+
+  test('a number its line contradicts is corrected once, naming what the line reads', async () => {
+    const wrong = 'The reserve margin is 2,391 MW ⟦k3⟧.'
+    const right = 'The reserve margin is 2,291 MW ⟦k3⟧.'
+    const { calls, result, events } = await run([wrong, right])
+    expect(calls).toHaveLength(4)
+    const correction = calls[3]!.messages.at(-1)!.content
+    expect(correction).toContain('- 2,391 is cited with ⟦k3⟧, but k3 reads "2291 MW" (Grid · reserve margin).')
+    expect(correction).toContain('with its key right after it')
+    expect(events).toEqual([{ kind: 'correction', causes: ['contradiction'], issues: ['2,391 is cited with ⟦k3⟧, but k3 reads "2291 MW" (Grid · reserve margin).'] }])
+    expect(result.decision.response).toEqual({ action: 'respond', content: right })
+  })
+
+  test('a key on no card costs no correction turn; a second contradiction is posted as it is', async () => {
+    const unknown = 'Line A is at 91.3 % ⟦k9⟧.'
+    expect((await run([unknown])).calls).toHaveLength(3)
+    const wrong = 'Line B is at 95.0 % ⟦k2⟧.'
+    const { calls, result } = await run([wrong, wrong])
+    expect(calls).toHaveLength(4)
+    expect(result.decision.response).toEqual({ action: 'respond', content: wrong })
+  })
+
+  test('a card that breaks the contract fails the turn loudly', async () => {
+    const { result } = await run(['Fine.'], [{ items: 'none' }])
+    expect(result.decision.response.action).toBe('error')
+  })
+})
+
 describe('evaluation operation claims', () => {
   // Demo beat 4: the turn proposes shutting MOV-8000A; only a person executes it.
   const proposeInput = { plantId: 'plant:halden-1', tagId: 'MOV-8000A', value: 0, reason: 'PORV-456A does not follow its SHUT demand', evidence: ['PT-455'] }
