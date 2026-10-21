@@ -135,7 +135,16 @@ const DIFFERENCE_BEFORE = /\b(?:by|med)\s*$/i
 
 /** Guard v3 (R41): units are table cells or clauses; a number answers to the nearer eligible key group before or after
  * it; display and row ordinals are names; a derived difference is checked only when its unit shows both values. */
-const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyMap<string, Card['items'][number]>, limits: ReadonlyMap<string, Card['items'][number]['numbers']>, naming: 'v3' | 'neutral' = 'v3'): CitationScore['v3'] => {
+// The shipped guard's whole-token label clause (lead ruling 21 Oct; apps/agents citations.ts): a number is a name when
+// the token the word before it forms with it, as joined in the answer ("A-21", "Ambulance 21"), occurs in a card label.
+const wholeToken = (answer: string, items: ReadonlyMap<string, Card['items'][number]>, found: Found): boolean => {
+  const before = /(?<![\p{L}\d])[\p{L}\d]+[ -]$/u.exec(answer.slice(Math.max(0, found.index - 40), found.index))?.[0].toLowerCase()
+  if (before === undefined) return false
+  const token = new RegExp(`(?<![\\p{L}\\d])${`${before}${found.text.toLowerCase()}`.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(?![\\p{L}\\d]|[.,]\\d)`, 'u')
+  return [...items.values()].some(item => token.test(item.label.toLowerCase()))
+}
+
+const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyMap<string, Card['items'][number]>, limits: ReadonlyMap<string, Card['items'][number]['numbers']>, naming: 'v3' | 'neutral' | 'production' = 'v3'): CitationScore['v3'] => {
   // Rule 1: unit boundaries are clause ends and, in a table row, the cell bars.
   const bounds = [...answer.matchAll(CLAUSE_END)].map(match => match.index!)
   const rowNumbers = new Set<number>()
@@ -153,6 +162,7 @@ const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyM
   bounds.sort((a, b) => a - b)
   const unitOf = (index: number) => bounds.filter(bound => bound < index).length
   const named = (found: Found) => (naming === 'v3' ? NAMING : NAMING_NEUTRAL).test(answer.slice(Math.max(0, found.index - 30), found.index)) || labelled(answer, items, found)
+    || (naming === 'production' && wholeToken(answer, items, found))
     || NAMING_V3.test(answer.slice(Math.max(0, found.index - 30), found.index)) || rowNumbers.has(found.index)
   const plain = numbers.filter(found => !named(found))
   // Ranges (v2 rule 4) are one entry with two ends.
@@ -209,6 +219,12 @@ const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyM
     keyedAfter: shown.filter(side => side === 'after').length,
   }
 }
+
+/** The shipped guard's reading of one answer in one language (E1 production T10): guard v3 with neutral naming and the
+ * whole-token label clause, so its cited numbers are the production guard's denominator; its flags must equal
+ * apps/agents readingFlags (checked per answer). */
+export const productionReading = (answer: string, items: ReadonlyArray<Card['items'][number]>, language: 'en' | 'nb', limits: ReadonlyMap<string, Card['items'][number]['numbers']>): CitationScore['v3'] =>
+  guardV3(answer, numbersIn(answer, language), new Map(items.map(item => [item.key, item])), limits, 'production')
 
 /** Scores one answer against the cards it was given. */
 export const scoreCitations = (answer: string, cards: ReadonlyArray<Card>, language: 'en' | 'nb' = 'en', limits: ReadonlyMap<string, Card['items'][number]['numbers']> = new Map()): CitationScore => {

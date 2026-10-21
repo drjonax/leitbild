@@ -21,6 +21,8 @@ import { builtinScenarioDefinitions } from '../../apps/world/src/scenarios/defin
 import { createDirectRoutingAdapter } from '../../apps/world/src/routing/direct-adapter.ts'
 import { assembleRunContext } from '../../apps/world/src/features/displays/context/run-context.ts'
 import type { SearchRun } from '../../apps/world/src/features/displays/observation/search.ts'
+import { displayRunOf } from '../../apps/world/src/core/api/display-capabilities.ts'
+import type { ViewRun } from '../../apps/world/src/features/displays/compose/view.ts'
 import { fixturePath, type SetupStep } from './scenarios.ts'
 
 /** An open Scenario at its peak: the most the Assistant must take in, after the Scenario's main events. */
@@ -67,6 +69,8 @@ export interface FrozenRun {
   readonly context: { readonly text: string; readonly at: string; readonly clock: 'simulation' | 'wall' }
   /** What search and resolveName read, as the AI caller. */
   readonly searchRun: SearchRun
+  /** The Run as World's composer reads it for the AI caller (display.compose; E1 production T10). */
+  readonly displayRun: ViewRun
   readonly close: () => Promise<void>
 }
 
@@ -107,8 +111,9 @@ export const freezeRun = async (spec: FrozenSpec, dataRoot: string): Promise<Fro
   const port = run.observations(replayAgent)
   const searchRun: SearchRun = { objects: snapshot.objects, denied: new Set(), packs: run.packs(), port }
   const context = await assembleRunContext({ title: (await registry.summary(run.id)).title, objects: snapshot.objects, denied: new Set(), clock: snapshot.clock, packs: run.packs(), port })
+  const displayRun = await displayRunOf(registry, run, replayAgent, new Set())
   return {
-    spec, runId: run.id, at: snapshot.clock!.currentTime, context, searchRun,
+    spec, runId: run.id, at: snapshot.clock!.currentTime, context, searchRun, displayRun,
     close: async () => { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) },
   }
 }
