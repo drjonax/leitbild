@@ -52,4 +52,6 @@
   .tick.emergency { stroke: var(--alert-critical-color); }
   .marker { fill: var(--element-active-color); stroke: var(--container-background-color); }
   .cell { justify-content: flex-end; }
+  /* A phone keeps the label, the chip and the value; the countdown and the bar give way. */
+  @media (max-width: 479px) { .note, .bar { display: none; } }
 </style>

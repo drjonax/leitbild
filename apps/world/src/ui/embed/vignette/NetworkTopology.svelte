@@ -21,8 +21,7 @@
       <g class={`node ${node.tone ?? ''}`} class:off={node.conducting === false}>
         <title>{node.title}{node.reading === null ? '' : ` · ${node.reading}`}</title>
         {#if node.shape === 'bar'}
-          {#if node.width >= node.height}<line class="bar" x1={node.x} x2={node.x + node.width} y1={node.y + node.height - 4} y2={node.y + node.height - 4} />
-          {:else}<line class="bar" x1={node.x + node.width / 2} x2={node.x + node.width / 2} y1={node.y} y2={node.y + node.height} />{/if}
+          {#if node.bar !== null}<line class="bar" x1={node.bar.x1} x2={node.bar.x2} y1={node.bar.y1} y2={node.bar.y2} />{/if}
           <text x={node.x + 2} y={node.y + 14}>{node.name}</text>
         {:else if node.shape === 'switch'}
           <rect class="switch" class:closed={node.conducting === true} x={node.x + node.width / 2 - 6} y={node.y + 4} width="12" height="12" />

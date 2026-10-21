@@ -9,7 +9,7 @@
   let { section, rows, more }: { section: Extract<VignetteSection, { kind: 'entity' }>; rows: ReadonlyArray<EntityRow>; more: number } = $props()
 </script>
 
-<table class="entities">
+<div class="scroll"><table class="entities" style:min-width={`${(section.columns.length + 1) * 88}px`}>
   <thead><tr><th scope="col">Object</th>{#each section.columns as column (column)}<th scope="col">{columnHead(column, section.near)}</th>{/each}</tr></thead>
   <tbody>
     {#each rows as row (row.objectId)}
@@ -24,9 +24,11 @@
     {#if rows.length === 0}<tr><td class="none" colspan={section.columns.length + 1}>None in this Run now</td></tr>{/if}
     {#if more > 0}<tr><td class="none" colspan={section.columns.length + 1}>+{more} more</td></tr>{/if}
   </tbody>
-</table>
+</table></div>
 
 <style>
+  /* Too narrow for its columns (a phone), the table scrolls sideways rather than cutting every cell. */
+  .scroll { overflow-x: auto; }
   .entities { width: 100%; border-collapse: collapse; table-layout: fixed; }
   th, td { height: var(--row); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; font-weight: 400; }
   thead th { color: var(--element-neutral-color); font-size: 12px; }

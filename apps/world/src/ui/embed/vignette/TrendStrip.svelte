@@ -22,6 +22,13 @@
   let width = $state(0)
   let height = $state(0)
   const drawing = $derived(width > 0 && height > 0 && Number.isFinite(now) ? stripDrawing({ pens, series, observations, now, horizonMs, width, height }) : null)
+  // A narrow plot names every second or third time, always "now", so no two names touch.
+  const AXIS_LABEL_PX = 56
+  const times = $derived.by(() => {
+    const ticks = drawing?.times ?? []
+    const every = Math.max(1, Math.ceil(AXIS_LABEL_PX / (width / Math.max(1, ticks.length - 1))))
+    return ticks.filter((_, index) => (ticks.length - 1 - index) % every === 0)
+  })
 </script>
 
 <div class="strip" style:--plot-rows={rows}>
@@ -31,7 +38,7 @@
     {:else}
       <svg {width} {height} role="img" aria-label={pens.map(pen => pen.label).join(', ')}>
         {#each drawing.values as tick (tick.label)}<line class="grid" x1="0" x2={width} y1={tick.y} y2={tick.y} /><text class="tick" x="2" y={tick.y - 2}>{tick.label}</text>{/each}
-        {#each drawing.limits as limit (limit.id)}<line class={`limit ${limit.priority}`} x1="0" x2={width} y1={limit.y} y2={limit.y} /><text class="tick" x={width - 2} y={limit.y - 2} text-anchor="end">{limit.label}</text>{/each}
+        {#each drawing.limits as limit (limit.id)}<line class={`limit ${limit.priority}`} x1="0" x2={width} y1={limit.y} y2={limit.y}><title>{limit.label}</title></line>{#if limit.labelY !== null}<text class="tick" x={width - 2} y={limit.labelY} text-anchor="end">{limit.label}</text>{/if}{/each}
         {#each drawing.beyond as limit (limit.id)}<text class="tick" x={width - 2} y={limit.edge === 'top' ? 12 : height - 3} text-anchor="end">{limit.edge === 'top' ? '▲' : '▼'} {limit.label}</text>{/each}
         {#each drawing.pens as pen (pen.ref)}<path class={`pen ${pen.tone ?? ''}`} d={pen.path} stroke-dasharray={pen.dash === '' ? undefined : pen.dash} />{/each}
       </svg>
@@ -48,7 +55,7 @@
     {/each}
   </ul>
   {#if axis}
-    <div class="axis">{#each drawing?.times ?? [] as tick (tick.label)}<span style:left={`${tick.x}px`}>{tick.label}</span>{/each}</div>
+    <div class="axis">{#each times as tick (tick.label)}<span style:left={`${tick.x}px`} style:transform={tick.x < AXIS_LABEL_PX / 2 ? 'none' : tick.x > width - AXIS_LABEL_PX / 2 ? 'translateX(-100%)' : 'translateX(-50%)'}>{tick.label}</span>{/each}</div>
   {/if}
 </div>
 
@@ -76,7 +83,5 @@
   .now { flex: none; font-variant-numeric: tabular-nums; }
   .now.caution, .now.warning, .now.alarm, .now.critical { font-weight: 700; color: var(--display-alert-text); }
   .axis { position: relative; height: var(--row); color: var(--element-neutral-color); font-size: 12px; }
-  .axis span { position: absolute; top: 4px; transform: translateX(-50%); white-space: nowrap; }
-  .axis span:first-child { transform: none; }
-  .axis span:last-child { transform: translateX(-100%); }
+  .axis span { position: absolute; top: 4px; white-space: nowrap; }
 </style>

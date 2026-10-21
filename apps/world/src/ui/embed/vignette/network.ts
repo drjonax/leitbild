@@ -20,6 +20,8 @@ const GAP_PX = 4
 export interface DrawnNode {
   readonly id: string
   readonly shape: 'bar' | 'switch' | 'box' | 'stop'
+  /** A bar's line: along the edge ends that meet it (a bus with its feeders on one face is a bar on that face). */
+  readonly bar: { readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number } | null
   readonly x: number
   readonly y: number
   readonly width: number
@@ -66,6 +68,20 @@ export const gappedPath = (points: ReadonlyArray<Point>, gaps: ReadonlyArray<Poi
   return commands.join(' ')
 }
 
+/** A bar through the edge ends that meet its box, along whichever way they spread most; across the box's middle where none do. */
+export const barLine = (box: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }, ends: ReadonlyArray<Point>): NonNullable<DrawnNode['bar']> => {
+  const near = ends.filter(([x, y]) => x >= box.x - 1 && x <= box.x + box.width + 1 && y >= box.y - 1 && y <= box.y + box.height + 1)
+  if (near.length === 0) return box.width >= box.height
+    ? { x1: box.x, y1: box.y + box.height / 2, x2: box.x + box.width, y2: box.y + box.height / 2 }
+    : { x1: box.x + box.width / 2, y1: box.y, x2: box.x + box.width / 2, y2: box.y + box.height }
+  const xs = near.map(([x]) => x)
+  const ys = near.map(([, y]) => y)
+  const mean = (values: ReadonlyArray<number>): number => values.reduce((sum, value) => sum + value, 0) / values.length
+  return Math.max(...ys) - Math.min(...ys) > Math.max(...xs) - Math.min(...xs)
+    ? { x1: mean(xs), y1: Math.min(...ys) - GAP_PX, x2: mean(xs), y2: Math.max(...ys) + GAP_PX }
+    : { x1: Math.min(...xs) - GAP_PX, y1: mean(ys), x2: Math.max(...xs) + GAP_PX, y2: mean(ys) }
+}
+
 const READING_ROLES: ReadonlyArray<Binding['role']> = ['loading', 'flow', 'level', 'value', 'running']
 
 /** The observation a binding reads, if the sample holds it. */
@@ -74,6 +90,7 @@ const read = (binding: Binding, observations: ReadonlyArray<Observation>): Obser
 export const networkDrawing = (section: Topology, observations: ReadonlyArray<Observation>): NetworkDrawing => {
   const px = (grid: number): number => grid * VIGNETTE_ROW_PX
   const byId = new Map(section.nodes.map(node => [node.id, node]))
+  const ends = section.layout.edges.flatMap(edge => [edge.points[0], edge.points.at(-1)].flatMap(point => (point === undefined ? [] : [[px(point[0]), px(point[1])] as const])))
   const groups = new Map(section.groups.map(group => [group.id, group.label]))
   return {
     width: px(section.layout.width),
@@ -90,13 +107,12 @@ export const networkDrawing = (section: Topology, observations: ReadonlyArray<Ob
       const worst = bound.map(entry => toneOf(entry.observation?.priority)).filter(tone => tone !== null)
       const shape = node.class === 'stop' ? 'stop' : node.class === 'bus' ? 'bar' : node.class === 'switch' ? 'switch' : 'box'
       const width = px(box.width)
+      const drawn = { x: px(box.x), y: px(box.y), width, height: px(box.height) }
       return [{
         id: node.id,
         shape,
-        x: px(box.x),
-        y: px(box.y),
-        width,
-        height: px(box.height),
+        bar: shape === 'bar' ? barLine(drawn, ends) : null,
+        ...drawn,
         name: fitName(node.shortLabel ?? node.label, width - 6),
         title: node.label,
         reading: reading === null ? null : `${reading.text}${reading.unit === '' ? '' : ` ${reading.unit}`}`,

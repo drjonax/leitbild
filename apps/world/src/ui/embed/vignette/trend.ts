@@ -109,7 +109,7 @@ export const PEN_DASHES: ReadonlyArray<string> = ['', '6 3', '2 3', '8 3 2 3']
 export interface StripDrawing {
   readonly pens: ReadonlyArray<{ readonly ref: string; readonly path: string; readonly dash: string; readonly tone: AlertTone | null }>
   /** Shared limits within the scale, as lines; those beyond it named at the edge they lie past. */
-  readonly limits: ReadonlyArray<{ readonly id: string; readonly y: number; readonly label: string; readonly priority: Threshold['priority'] }>
+  readonly limits: ReadonlyArray<{ readonly id: string; readonly y: number; readonly label: string; readonly labelY: number | null; readonly priority: Threshold['priority'] }>
   readonly beyond: ReadonlyArray<{ readonly id: string; readonly edge: 'top' | 'bottom'; readonly label: string }>
   readonly values: ReadonlyArray<{ readonly y: number; readonly label: string }>
   readonly times: ReadonlyArray<{ readonly x: number; readonly label: string }>
@@ -117,6 +117,22 @@ export interface StripDrawing {
 
 // The plot keeps its lines this far from its top and bottom edges.
 const INSET = 4
+// A limit's name sits just above its line, or just below where the name above would touch it; a third that would touch either is left to the line's title.
+const LABEL_PX = 13
+
+/** Where each limit line's name goes, top down, so no two touch; null where neither side of its line has room. */
+export const limitLabelYs = (ys: ReadonlyArray<number>): ReadonlyArray<number | null> => {
+  const order = ys.map((y, index) => ({ y, index })).sort((left, right) => left.y - right.y)
+  const placed: Array<number | null> = ys.map(() => null)
+  let last = -Infinity
+  for (const { y, index } of order) {
+    const spot = [y - 2, y + LABEL_PX - 1].find(candidate => candidate - last >= LABEL_PX && candidate >= LABEL_PX - 2)
+    if (spot === undefined) continue
+    placed[index] = spot
+    last = spot
+  }
+  return placed
+}
 
 /** A strip as drawn over its window ending now; null while none of its pens has a value in the window. */
 export const stripDrawing = (input: {
@@ -140,6 +156,8 @@ export const stripDrawing = (input: {
   const y = (v: number): number => INSET + (1 - (v - domain.min) / (domain.max - domain.min)) * (input.height - 2 * INSET)
   const name = (limit: Threshold): string => `${orderWord(limit)} ${numberText(limit.value, unit)}`
   const inside = (limit: Threshold): boolean => limit.value >= domain.min && limit.value <= domain.max
+  const lines = limits.filter(inside)
+  const labelYs = limitLabelYs(lines.map(limit => y(limit.value)))
   return {
     pens: input.pens.map((pen, index) => ({
       ref: pen.ref,
@@ -147,7 +165,7 @@ export const stripDrawing = (input: {
       dash: PEN_DASHES[index % PEN_DASHES.length]!,
       tone: toneOf(input.observations.find(observation => observation.ref === pen.ref)?.priority),
     })),
-    limits: limits.filter(inside).map(limit => ({ id: limit.id, y: y(limit.value), label: name(limit), priority: limit.priority })),
+    limits: lines.map((limit, index) => ({ id: limit.id, y: y(limit.value), label: name(limit), labelY: labelYs[index]!, priority: limit.priority })),
     beyond: limits.filter(limit => !inside(limit)).map(limit => ({ id: limit.id, edge: limit.value > domain.max ? 'top' as const : 'bottom' as const, label: name(limit) })),
     values: valueTicks(domain).map(tick => ({ y: y(tick.value), label: tick.label })),
     times: timeTicks(input.now, input.horizonMs).map(tick => ({ x: x(tick.t), label: tick.label })),
