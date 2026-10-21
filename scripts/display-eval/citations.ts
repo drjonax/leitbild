@@ -21,7 +21,7 @@ import { wilson } from './stats.ts'
 
 const EXACT = /⟦k(\d+)⟧/g
 // Key-like marks that are not the exact token.
-const MALFORMED = /\[\[?k\d+\]?\]|\(k\d+\)|⟦\s+k\d+|k\d+\s+⟧|⟦K\d+⟧|【k\d+】|\{k\d+\}|⟦k\d+(?:\s*[,;]\s*k?\d+)+⟧/g
+const MALFORMED = /\[\[?k\d+\]?\]|\(k\d+\)|⟦\s+k\d+|k\d+\s+⟧|⟦K\d+⟧|【k\d+】|\{k\d+\}|⟦k\d+(?:\s*[,;]\s*k?\d+)+⟧|⟦k\d+\s*[–—-]\s*k?\d+⟧/g
 // Clock times, dates, refs and ids are no values: masked before numbers are read.
 const TIMES = /\b\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b|[\w.@-]+:[\w.@:-]+(?:#[\w.@:-]+)?/g
 // A number may carry its unit ("15.5MPa"); a letter or digit before it makes it part of a word. Thousands are grouped

@@ -32,6 +32,8 @@ describe('T10: the guard and the citation measures', () => {
   test('malformed key marks and unknown keys are counted; Norwegian decimal commas read as decimals', () => {
     const score = scoreCitations('Trykket er 15,5 MPa [k1] og belastningen 112,6 % ⟦k2⟧, se også ⟦k9⟧.', [card], 'nb')
     expect(score).toMatchObject({ exact: 2, malformed: 1, unknownKeys: ['k9'], flagged: [] })
+    // A key range is no key.
+    expect(scoreCitations('All eight lines tripped ⟦k1–k8⟧.', [card])).toMatchObject({ exact: 0, malformed: 1 })
   })
 
   test('the cluster variant matches a number against any key of the cluster after it, and skips numbers in names', () => {
