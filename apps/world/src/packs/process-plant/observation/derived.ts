@@ -18,6 +18,8 @@ import { safetyFunctionText, type SafetyFunctionEvaluation } from '../safety-fun
 
 interface OperatedState {
   readonly element: string
+  /** Whether the item is its element itself, not a device the element bundles (the pressurizer's PORV). */
+  readonly whole: boolean
   readonly label: string
   readonly aspect: CompiledStateAspect
   readonly words: { readonly on: string; readonly off: string }
@@ -45,11 +47,16 @@ const operatedStates = (plant: CompiledProcessPlant): ReadonlyMap<string, Operat
     const path = `${item.id}.state`
     if (graph.signalBindingByPath.has(path as VariablePath)) throw new Error(`${path} is a signal of the Plant and the state of an item it operates`)
     const rated = Math.max(0, ...component.semantics.ratedOutflow.map(rating => rating.flowKgPerS))
-    return [[path, { element: String(component.id), label: `State · ${item.label}`, aspect, words, numeric: graph.signalBindingByPath.get(aspect.state!.path)?.quantity !== 'boolean', noFlowBelow: rated * NO_FLOW_FRACTION }] as const]
+    return [[path, { element: String(component.id), whole: device === undefined, label: `State · ${item.label}`, aspect, words, numeric: graph.signalBindingByPath.get(aspect.state!.path)?.quantity !== 'boolean', noFlowBelow: rated * NO_FLOW_FRACTION }] as const]
   }))
   operated.set(plant, states)
   return states
 })()
+
+/** What each operated element's state says on a drawing, by element: it runs, or it conducts (contacts closed, a supply live); a valve's position is a value. */
+export const operatedStateRoles = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly role: 'running' | 'conducting'; readonly path: string }> =>
+  new Map([...operatedStates(plant)].flatMap(([path, state]) => !state.whole || (state.aspect.aspect === 'position' && state.numeric) ? []
+    : [[state.element, { role: state.aspect.aspect === 'running' ? 'running' as const : 'conducting' as const, path }] as const]))
 
 /** The path a critical safety function's status observable reads at. */
 export const safetyFunctionRef = (id: string): string => `csf.${id}`
