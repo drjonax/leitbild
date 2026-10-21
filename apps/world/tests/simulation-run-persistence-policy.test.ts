@@ -392,37 +392,52 @@ describe('simulation run persistence policy', () => {
     await runtime.close()
   })
 
-  // The journal rule (plan v3.1 §2.2, V7) overrides a Pack's snapshot-only history for a state change only.
-  test('journals a snapshot-only runtime upsert that changes status, priority, lifecycle or alerts, and nothing else', async () => {
+  test('keeps explicitly snapshot-only runtime object upserts out of history even when meaning changes', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-test-'))
     const eventLogPath = join(dataDir, 'events.jsonl')
-    const runtimeConnection = createControlledRuntimeConnection(makeObject({ packData: { frequencyHz: 50 } }))
+    const initialObject = makeObject({
+      packData: {
+        type: 'test-system',
+        schemaVersion: 1,
+        frequencyHz: 50,
+      },
+    })
+    const runtimeConnection = createControlledRuntimeConnection(initialObject)
     const runtime = await createSimulationRunRuntime({
       id: simulationRunId,
       scenario: testScenario,
       runtimeConnection: runtimeConnection.connection,
       eventLog: createJsonlEventLog(eventLogPath),
-      snapshotStore: createSimulationRunSnapshotStore({ simulationRunId, path: join(dataDir, 'snapshot.json') }),
+      snapshotStore: createSimulationRunSnapshotStore({
+        simulationRunId,
+        path: join(dataDir, 'snapshot.json'),
+      }),
     })
-    const alert = { id: 'a1', kind: 'frequency', severity: 'warning' as const, message: 'Frequency low', raisedAt: nowIso(), acknowledged: false }
-    const steps: ReadonlyArray<readonly [OperationalObject, boolean]> = [
-      [makeObject({ revision: 1, packData: { frequencyHz: 49.9 } }), false],
-      [makeObject({ revision: 2, status: 'constrained', packData: { frequencyHz: 49.8 } }), true],
-      [makeObject({ revision: 3, status: 'constrained', point: geoPointFromLonLat(10.71, 59.91), packData: { frequencyHz: 49.7 } }), false],
-      [{ ...makeObject({ revision: 4, status: 'constrained' }), alerts: [alert] }, true],
-      [{ ...makeObject({ revision: 5, status: 'constrained' }), alerts: [alert] }, false],
-      [{ ...makeObject({ revision: 6, status: 'constrained' }), alerts: [{ ...alert, acknowledged: true }] }, true],
-      [{ ...makeObject({ revision: 7, status: 'constrained' }), operational: { status: 'constrained', priority: 'high', mode: 'simulated' } }, true],
-      [{ ...makeObject({ revision: 8, status: 'constrained' }), lifecycle: 'resolved', operational: { status: 'constrained', priority: 'high', mode: 'simulated' } }, true],
-    ]
-    let durable = 0
-    for (const [object, journalled] of steps) {
-      runtimeConnection.emit([{ type: 'object.upserted', object, at: nowIso(), history: 'snapshot-only', provenance: object.provenance }])
-      await waitFor(async () => runtime.snapshot().objects.find(candidate => candidate.id === objectId)?.revision === object.revision, `revision ${object.revision}`)
-      if (journalled) durable += 1
-      expect([object.revision, runtime.events().length]).toEqual([object.revision, durable])
-    }
-    expect((await readEventLog(eventLogPath)).map(event => event.type === 'object.upserted' ? event.object.revision : -1)).toEqual([2, 4, 6, 7, 8])
+
+    const projectedObject = makeObject({
+      status: 'constrained',
+      revision: 1,
+      packData: {
+        type: 'test-system',
+        schemaVersion: 1,
+        frequencyHz: 49.82,
+      },
+    })
+    runtimeConnection.emit([{
+      type: 'object.upserted',
+      object: projectedObject,
+      at: nowIso(),
+      history: 'snapshot-only',
+      provenance: projectedObject.provenance,
+    }])
+    await waitFor(
+      async () => runtime.snapshot().objects.find(object => object.id === objectId)?.revision === projectedObject.revision,
+      'explicit projected runtime update',
+    )
+
+    expect(runtime.snapshot().objects.find(object => object.id === objectId)?.operational.status).toBe('constrained')
+    expect(runtime.events()).toHaveLength(0)
+    expect(await readEventLog(eventLogPath)).toHaveLength(0)
     await runtime.close()
   })
 

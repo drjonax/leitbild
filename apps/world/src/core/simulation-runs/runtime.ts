@@ -22,7 +22,7 @@ import {
   issueCommandWithIdempotency,
 } from './command-idempotency.ts'
 import type { EventLog } from './event-log.ts'
-import { keepsStateChange,persistenceDispositionFor,type SimulationRunEventPersistenceDisposition } from './persistence-policy.ts'
+import { persistenceDispositionFor,type SimulationRunEventPersistenceDisposition } from './persistence-policy.ts'
 import {
   createSimulationRunRuntimeMetricsRecorder,
   type SimulationRunRuntimeMetricsSnapshot,
@@ -495,8 +495,9 @@ export const createSimulationRunRuntime = async (config: {
       const previousObject = event.type === 'object.upserted' ? state.getObject(event.object.id) : undefined
       try { state.apply(event) }
       catch (error) { await failCommit(error) }
-      const persistence = event.type === 'object.upserted' && keepsStateChange(previousObject, event.object) ? 'durable'
-        : options?.history ?? options?.historyForEvent?.(event, previousObject, index) ?? persistenceDispositionFor(event, previousObject)
+      const persistence = options?.history
+        ?? options?.historyForEvent?.(event, previousObject, index)
+        ?? persistenceDispositionFor(event, previousObject)
       if (persistence === 'durable') {
         eventsToPersist.push(event)
       } else {
