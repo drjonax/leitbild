@@ -21,11 +21,11 @@ const clockOf = (at: string): string => at.slice(11, 19)
 /** Labels, units and states of every observable of the objects the refs name, from their declarations. */
 const declared = async (run: SearchRun, refs: ReadonlyArray<string>) => {
   const objectIds = [...new Set(refs.map(ref => ref.slice(0, ref.indexOf('#'))))]
-  const byRef = new Map<string, { label: string; unit: string; states?: ReadonlyArray<{ value: string; label: string }> }>()
+  const byRef = new Map<string, { label: string; unit: string; states?: ReadonlyArray<{ value: string; label: string }>; thresholds: ReadonlyArray<number> }>()
   const add = (declaration: Awaited<ReturnType<SearchRun['port']['declarations']>>[number]) => {
     if ('refused' in declaration) return
     const objectLabel = run.objects.find(object => object.id === declaration.objectId)?.label ?? declaration.objectId
-    for (const observable of declaration.observables) byRef.set(observable.ref, { label: `${objectLabel} · ${observable.label}`.slice(0, 80), unit: observable.unit, ...(observable.states === undefined ? {} : { states: observable.states }) })
+    for (const observable of declaration.observables) byRef.set(observable.ref, { label: `${objectLabel} · ${observable.label}`.slice(0, 80), unit: observable.unit, thresholds: observable.thresholds.map(threshold => threshold.value), ...(observable.states === undefined ? {} : { states: observable.states }) })
   }
   const base = await run.port.declarations(objectIds as never)
   base.forEach(add)
@@ -70,3 +70,13 @@ export const cardText = (card: Card): string => [
   ...(card.more > 0 ? [`+${card.more} more`] : []),
   ...card.adjusted.map(adjustment => `adjusted (${adjustment.kind}): ${adjustment.text}`),
 ].join('\n')
+
+/** Each card item's declared threshold values at the item's typed precision (guard v2, rule 5), by key. */
+export const cardLimits = async (run: SearchRun, card: Card): Promise<ReadonlyMap<string, CardItem['numbers']>> => {
+  const refs = card.items.flatMap(item => item.subject !== undefined && 'ref' in item.subject ? [item.subject.ref] : [])
+  const labels = await declared(run, refs)
+  return new Map(card.items.flatMap(item => {
+    const meta = item.subject !== undefined && 'ref' in item.subject ? labels.get(item.subject.ref) : undefined
+    return meta === undefined ? [] : [[item.key, meta.thresholds.map(value => ({ value, decimals: decimalsFor(meta.unit, value) }))] as const]
+  }))
+}

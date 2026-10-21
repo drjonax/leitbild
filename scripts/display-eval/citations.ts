@@ -56,19 +56,55 @@ export interface CitationScore {
   /** Numbers right before a key. */
   readonly keyedNumbers: number
   readonly flagged: ReadonlyArray<{ readonly key: string; readonly number: string; readonly item: string; readonly at: string }>
-  /**
-   * A design variant for P2's guard, reported beside the specified one: a number followed by a cluster of keys
-   * ("130.9 % and 0 MW ⟦k2⟧ ⟦k3⟧") may match any item of the cluster, and a number inside an object's name ("Unit 2")
-   * is no value.
-   */
-  readonly flaggedCluster: ReadonlyArray<{ readonly keys: ReadonlyArray<string>; readonly number: string }>
+  /** Guard v2 revision 2 (R40; spec sha 9601acb4…, $SP/p1/eval/guard-v2/spec.md): cited numbers, and its flags. */
+  readonly v2: { readonly cited: number; readonly namesSkipped: number; readonly flagged: ReadonlyArray<{ readonly keys: ReadonlyArray<string>; readonly number: string; readonly at: string }> }
 }
 
-// A number that names an object or a part ("Unit 2", "enhet 3", "SG 4", "circuit 2") is no value.
-const NAMING = /(?:unit|units|enhet|enhetene|blokk|reaktor|loop|sløyfe|sg|circuit|krets|train|tog|halden)[\s-]*$/i
+// Rule 6a: a number after a naming word, directly or through a list of named numbers ("Units 1 and 2"), names a part.
+const NAMING = /\b(?:unit|units|enhet|enheter|enhetene|blokk|blokkene|reaktor|loop|sg|circuit|krets|train|pump|halden)[\s-]*(?:\d+\s*(?:,|and|og|&)\s*)*$/i
+// Rule 5: limit words; a number within three words after one may match a threshold.
+const LIMIT = /\b(?:limit|limits|rating|rated|threshold|setpoint|trip|alarm|above|below|over|under|exceeds?|grense|grensen|grenseverdi\w*|merkeverdi\w*|alarmgrense\w*)\b(?:\W+\S+){0,3}\W*$/i
+// Rule 1: a key group, exact keys only (a range ⟦k1–k8⟧ is none).
+const GROUP = /⟦k\d+⟧(?:\s*(?:,|and|og|\/)?\s*⟦k\d+⟧)*/g
+// Clauses end at ; ! ? a line break, or a full stop that is not a decimal point.
+const CLAUSE_END = /[;!?\n]|\.(?!\d)/g
+
+/** Guard v2 (R40): key groups, any key of the group, ranges by both ends, limits after a limit word, names skipped. */
+const guardV2 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyMap<string, Card['items'][number]>, limits: ReadonlyMap<string, Card['items'][number]['numbers']>): CitationScore['v2'] => {
+  const ends = [...answer.matchAll(CLAUSE_END)].map(match => match.index!)
+  const clauseEnd = (index: number) => ends.find(end => end >= index) ?? answer.length
+  const groups = [...answer.matchAll(GROUP)].map(match => ({ index: match.index!, keys: [...match[0].matchAll(/⟦k(\d+)⟧/g)].map(key => `k${key[1]}`) }))
+  let namesSkipped = 0
+  const labels = [...items.values()].map(item => item.label.toLowerCase())
+  // Rule 6b: the number with the word after it, or in parentheses, as a card label writes it.
+  const inLabel = (found: Found): boolean => {
+    const after = /^\s*([\p{L}\d]+)/u.exec(answer.slice(found.index + found.text.length))?.[1]!.toLowerCase() ?? ''
+    const parenthesised = answer[found.index - 1] === '(' && answer[found.index + found.text.length] === ')'
+    return labels.some(label => (after !== '' && label.includes(`${found.text.toLowerCase()} ${after}`)) || (parenthesised && label.includes(`(${found.text})`)))
+  }
+  const cited: Array<{ readonly ends: ReadonlyArray<Found>; readonly keys: ReadonlyArray<string> }> = []
+  for (let index = 0; index < numbers.length; index++) {
+    const found = numbers[index]!
+    if (NAMING.test(answer.slice(Math.max(0, found.index - 30), found.index)) || inLabel(found)) { namesSkipped += 1; continue }
+    // Rule 4: "a–b", "a - b", "a to b", "a til b" is one cited number with two ends.
+    const next = numbers[index + 1]
+    const between = next === undefined ? '' : answer.slice(found.index + found.text.length, next.index)
+    const range = next !== undefined && /^\s*(?:%\s*)?(?:[–—-]|to|til)\s*$/.test(between)
+    const last = range ? next! : found
+    const group = groups.find(entry => entry.index > last.index && entry.index <= clauseEnd(last.index + last.text.length))
+    if (range) index += 1
+    if (group === undefined) continue
+    cited.push({ ends: range ? [found, next!] : [found], keys: group.keys.filter(key => items.has(key)) })
+  }
+  const holds = (found: Found, keys: ReadonlyArray<string>) => keys.some(key => matchesItem(found, items.get(key)!.numbers))
+    || (LIMIT.test(answer.slice(Math.max(0, found.index - 60), found.index)) && keys.some(key => matchesItem(found, limits.get(key) ?? [])))
+  const flagged = cited.filter(entry => entry.keys.some(key => items.get(key)!.numbers.length > 0 || (limits.get(key) ?? []).length > 0) && !entry.ends.every(found => holds(found, entry.keys)))
+    .map(entry => ({ keys: entry.keys, number: entry.ends.map(found => found.text).join('–'), at: answer.slice(Math.max(0, entry.ends[0]!.index - 40), entry.ends[0]!.index + 50) }))
+  return { cited: cited.length, namesSkipped, flagged }
+}
 
 /** Scores one answer against the cards it was given. */
-export const scoreCitations = (answer: string, cards: ReadonlyArray<Card>, language: 'en' | 'nb' = 'en'): CitationScore => {
+export const scoreCitations = (answer: string, cards: ReadonlyArray<Card>, language: 'en' | 'nb' = 'en', limits: ReadonlyMap<string, Card['items'][number]['numbers']> = new Map()): CitationScore => {
   const items = new Map(cards.flatMap(card => card.items).map(item => [item.key, item]))
   const exact = [...answer.matchAll(EXACT)]
   const unknownKeys = exact.map(match => `k${match[1]}`).filter(key => !items.has(key))
@@ -87,14 +123,8 @@ export const scoreCitations = (answer: string, cards: ReadonlyArray<Card>, langu
     const item = items.get(key)
     return item !== undefined && item.numbers.length > 0 && !matchesItem(found, item.numbers)
   }).map(({ found, key }) => ({ key, number: found.text, item: items.get(key)!.reading, at: answer.slice(Math.max(0, found.index - 40), found.index + 40) }))
-  const flaggedCluster = numbers.flatMap(found => {
-    const keys = clusterAfter(found).filter(key => items.has(key))
-    if (keys.length === 0 || NAMING.test(answer.slice(Math.max(0, found.index - 12), found.index))) return []
-    const numbered = keys.filter(key => items.get(key)!.numbers.length > 0)
-    return numbered.length === 0 || numbered.some(key => matchesItem(found, items.get(key)!.numbers)) ? [] : [{ keys, number: found.text }]
-  })
   return {
-    flaggedCluster,
+    v2: guardV2(answer, numbers, items, limits),
     exact: exact.length,
     malformed: [...answer.matchAll(MALFORMED)].length,
     unknownKeys,
@@ -170,7 +200,9 @@ export const summariseCitations = (rows: ReadonlyArray<{ readonly score: Citatio
     exactToken: wilson(sum(score => score.exact), sum(score => score.exact + score.malformed)),
     keyUse: wilson(sum(score => score.keyedDisplayed), sum(score => score.displayedNumbers)),
     flaggedByGuard: wilson(flagged, sum(score => score.keyedNumbers)),
-    flaggedByClusterGuard: wilson(sum(score => score.flaggedCluster.length), sum(score => score.keyedNumbers)),
+    v2Cited: sum(score => score.v2.cited),
+    flaggedByGuardV2: wilson(sum(score => score.v2.flagged.length), sum(score => score.v2.cited)),
+    namesSkippedV2: sum(score => score.v2.namesSkipped),
     unknownKeys: sum(score => score.unknownKeys.length),
   }
 }
