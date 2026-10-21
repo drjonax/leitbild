@@ -2,7 +2,7 @@ import type { OperationalObject } from '../../../core/model/index.ts'
 import { procedureIdSchema, type ProcedureId } from '../../../core/model/procedures.ts'
 import { formatQuantity } from '../quantity-text.ts'
 import { safetyFunctionStatusWords } from '../safety-functions.ts'
-import type { TrendPoint } from '../displays/trend-reading.ts'
+import type { TrendPoint } from './plant-card-sparkline.ts'
 import {
   emptyProcessPlantProjection,
   processPlantUnitPackDataSchema,

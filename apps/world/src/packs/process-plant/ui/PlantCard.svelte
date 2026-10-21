@@ -23,8 +23,7 @@
     type ObjectCardPlacement,
     type ScreenRect,
   } from '../../../ui/map/object-card-anchor.ts'
-  import { composedDisplayClient } from '../../../ui/embed/composed-display/composed-display-client.ts'
-  import { sparkline, sparklineText } from '../../../ui/embed/composed-display/sparkline.ts'
+  import { readHistory, sparkline, sparklineText } from './plant-card-sparkline.ts'
   import type { PlantCardView } from './plant-card.ts'
   import { createPlantCardTrends, PLANT_CARD_TREND_MS, type PlantCardLine } from './plant-card-trends.ts'
 
@@ -83,7 +82,7 @@
   })
 
   // The energy lines: their history once per unit, then the readings the projection brings (plant-card-trends.ts).
-  const trends = createPlantCardTrends({ history: composedDisplayClient.history })
+  const trends = createPlantCardTrends({ history: readHistory })
   let lines = $state.raw<ReadonlyMap<string, PlantCardLine>>(new Map())
   $effect(() => {
     const unsubscribe = trends.subscribe(() => { lines = trends.lines() })
@@ -100,9 +99,8 @@
   const drawn = (path: string, now: number | undefined, unit: string) => {
     const line = lines.get(path)
     if (line?.kind !== 'line' || now === undefined) return null
-    const geometry = sparkline({ points: line.points, now, windowMs: PLANT_CARD_TREND_MS, size: sparkSize, limit: null, resolution: null })
-    if (geometry.path === '') return null
-    return { geometry, text: sparklineText({ recorded: true, windowMs: PLANT_CARD_TREND_MS, unit, resolution: null, line: geometry, historyMissing: false, historyError: undefined }) }
+    const geometry = sparkline(line.points, now, PLANT_CARD_TREND_MS, sparkSize)
+    return geometry === null ? null : { geometry, text: sparklineText(geometry, PLANT_CARD_TREND_MS, unit) }
   }
   const noLine = (path: string): string | undefined => {
     const line = lines.get(path)
