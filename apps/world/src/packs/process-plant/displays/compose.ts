@@ -61,8 +61,11 @@ import { criterionOfReadings } from './safety-criteria.ts'
 import { compileFaceplate, faceplateEnds } from './faceplate.ts'
 import { faceplateMostLines, type CompiledFaceplate, type FaceplateCondition } from './faceplate-live.ts'
 import { shorterSignalNames } from './signal-names.ts'
-import { MIMIC_REACH_LINKS, itemServices, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
-import { plantCarriers, plantLoops } from '../equipment/circuits.ts'
+import { TOPOLOGY_REACH, withOtherMediaStopped } from '../../../features/displays/topology/scope.ts'
+import { resolveMimicIntent } from './mimic/intent.ts'
+import { portName } from './mimic/stub-words.ts'
+import { resolveEquipmentName, serviceResembles } from '../equipment/names.ts'
+import { itemServices, plantCarriers, plantLoops } from '../equipment/circuits.ts'
 import { componentDescription } from '../equipment/items.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import { mimicQuickLookPaths, type MimicQuickLooks } from './mimic/quick-look.ts'
@@ -443,7 +446,7 @@ const sharedPortFlow = (graph: CompiledPlantGraph, binding: ProcessSignalBinding
   // Upstream through what only passes the flow on (one line in, one out), to where the line branches.
   const carriers = new Set([linkCarrier(link)])
   let source = link
-  for (let step = 0; step < MIMIC_REACH_LINKS; step += 1) {
+  for (let step = 0; step < TOPOLOGY_REACH; step += 1) {
     const before = previousLinks(graph, source, carriers)
     const out = (graph.outgoingLinksByComponent[source.fromComponentIndex] ?? []).filter(index => carriers.has(linkCarrier(graph.links[index]!)))
     if (before.length !== 1 || out.length !== 1) break
@@ -1404,7 +1407,7 @@ const drawingExtras = (
 export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, recordedSeriesIds: ReadonlySet<string>, view: OverviewView | null): ComposedDisplayCompileResult => {
   const issues: ComposedDisplayIssue[] = []
   const readouts = leadValues(system, overviewKeyValues(system.plant, plantNow(system)), recordedSeriesIds, issues)
-  const circuits = overviewScope(system.plant.graph)
+  const circuits = overviewScope(system.plant.graph, { objectId: system.plant.id, revision: system.plant.modelDigest })
   if (!circuits.ok) return { ok: false, issues: [{ path: 'overview', message: circuits.reason }] }
   if (issues.length > 0) return { ok: false, issues }
   // The tiles at each width their names fit, widest first; the widest must fit, so a narrower one only ever saves height.
@@ -1540,20 +1543,20 @@ export const compileDetailDisplay = (
   if (issues.length > 0) return { ok: false, issues }
   const loops = [...new Set(components.map(index => graph.components[index]!.metadata?.loopId))]
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}
-  const reaches = Array.from({ length: MIMIC_REACH_LINKS }, (_, step) => MIMIC_REACH_LINKS - step)
+  const reaches = Array.from({ length: TOPOLOGY_REACH }, (_, step) => TOPOLOGY_REACH - step)
   const panels = [{ readouts: readouts?.pens.length ?? 0, annunciators: 0, tileWidth: composedDisplayLayout.annunciatorTile.widths[0] }]
   // Every service it carries first, its power supply too (around alone draws its process only).
   const services = itemServices(graph, components)
-  const whole = reaches.map(reach => resolveMimicScope(graph, { around: componentIds, ...narrowed, services, reach }))
+  const whole = reaches.map(reach => resolveMimicIntent(system.plant, { around: componentIds, ...narrowed, services, reach }))
   const unresolved = whole.find(scope => !scope.ok)
   if (unresolved !== undefined && !unresolved.ok) return { ok: false, issues: unresolved.issues.map(issue => ({ path: 'detail', message: issue.message })) }
   // Where every service at once does not draw legibly, one at a time, the
   // equipment's own first; its other services stop at it.
   const oneService = services.length < 2 ? [] : services.flatMap(service => reaches.flatMap(reach => {
-    const scope = resolveMimicScope(graph, { around: componentIds, ...narrowed, services: [service], reach })
-    return scope.ok ? [withOtherServicesStopped(graph, scope.scope, components, services)] : []
+    const scope = resolveMimicIntent(system.plant, { around: componentIds, ...narrowed, services: [service], reach })
+    return scope.ok ? [withOtherMediaStopped(scope.scoped, componentIds, services)] : []
   }))
-  const scopes = [...whole.flatMap(scope => scope.ok ? [scope.scope] : []), ...oneService]
+  const scopes = [...whole.flatMap(scope => scope.ok ? [scope.scoped] : []), ...oneService]
   const drawings = scopes.map(scope => mimicScopeDrawing(system.plant, scope, detailMimicProfile))
   // The drawing first, as it is drawn without a faceplate: a faceplate never changes what a detail draws.
   const fitted = fitGenerated(view, panels, drawings)

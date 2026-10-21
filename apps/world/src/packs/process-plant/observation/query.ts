@@ -6,11 +6,13 @@ import type { PackRuntimeQuery, PackRuntimeRecordedHistory } from '../../../simu
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { declarationRevision, plantDeclaration, type PlantRecording } from './declarations.ts'
 import { leadPaths, readPlant } from './read.ts'
+import { plantTopology } from './topology.ts'
 
 /** The Plant's observation Capabilities (WorldPack.observation): World core defines their shapes. */
 export const processPlantObservationCapabilityIds = {
   declarations: 'world.process-plant.observation.declarations',
   read: 'world.process-plant.observation.read',
+  topology: 'world.process-plant.observation.topology',
 } as const
 
 export const answerProcessPlantObservationQuery = (config: {
@@ -30,6 +32,11 @@ export const answerProcessPlantObservationQuery = (config: {
         return input.known?.[objectId] === revision ? { objectId, revision, unchanged: true as const } : plantDeclaration(objectId, plant, config.recording, input.elementIds)
       }),
     }
+  }
+  if (config.request.capabilityId === processPlantObservationCapabilityIds.topology) {
+    const input = observationShapes.topology.input.parse(config.request.input)
+    const plant = plantOf(input.objectId).plant
+    return input.known === plant.modelDigest ? { objectId: input.objectId, revision: plant.modelDigest, unchanged: true as const } : plantTopology(input.objectId, plant.graph, plant.modelDigest)
   }
   if (config.request.capabilityId !== processPlantObservationCapabilityIds.read) return undefined
   const simulationTime = config.simulationTime ?? rejectCapabilityTarget('Process Plant values are read at the Run time the Plants stand at, which this runtime has not been given')

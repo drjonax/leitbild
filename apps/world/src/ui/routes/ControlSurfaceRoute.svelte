@@ -320,6 +320,8 @@
   const railVisible = $derived(railConfig !== null)
   const footerVisible = true
   const guidanceOverlayVisible = true
+  // The briefing card's bottom edge, as it last measured itself: the alarm strip starts below it while it shows.
+  let guidanceBottom = $state(0)
   let categoryMapVisibility = $state<Record<string, boolean>>({})
   const surfacePanels = $derived(activePack?.surfacePanels ?? [])
   const surfacePanelLaunchers = $derived(surfacePanels.map(panel => ({ id: panel.id, label: panel.label, open: surfacePanelOpen[panel.id] ?? panel.defaultOpen })))
@@ -2246,7 +2248,7 @@
         </section>
       {/if}
       {#if activePack}
-        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} coverRight={mapCameraPadding.right} />
+        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} clear={{ left: mapCameraPadding.left, right: mapCameraPadding.right, top: guidanceOverlayVisible && scenarioState?.guidance ? guidanceBottom : 0 }} />
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if runRoles && heldRoleIds}
@@ -2271,6 +2273,7 @@
 
     {#if guidanceOverlayVisible && scenarioState?.guidance}
     <ScenarioGuidance
+      bind:bottom={guidanceBottom}
       guidance={scenarioState.guidance}
       close={() => {
         if (!scenarioState) return
