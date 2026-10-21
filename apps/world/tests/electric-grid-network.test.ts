@@ -212,7 +212,8 @@ describe('electric-grid sparse network core', () => {
     definition.model.branches.forEach((branch, index) => { if (index % 9 === 4) grid.branches.get(branch.id)!.state = 'open' })
     check()
     expect(grid.diagnostics.topologyRebuildCount).toBe(2)
-  })
+    // Two dense Norway solves: about 1.5 s alone, 8.7 s in a full suite on a loaded machine; the timeout guards hangs, not cost.
+  }, 120_000)
 
   test('closes KCL at every bus to 1e-9 MW; the reference bus absorbs no component mismatch', () => {
     const definition = norwayDefinition()
