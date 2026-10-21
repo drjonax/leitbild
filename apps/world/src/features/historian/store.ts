@@ -407,24 +407,27 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Hi
       const query = recordingSeriesQuerySchema.parse(input)
       const selectionPredicates: string[] = []
       const selectionValues: Array<string | number> = []
-      for (const [column, value] of [
+      // Both sample indexes lead with runtime_id. A read that names its series
+      // (by id, subject or signal) takes the (runtime_id, series_id) pairs that
+      // match from the series catalog and reaches each pair's samples through
+      // recording_samples_series_time, so none of the statements below scans
+      // the samples table. Every stored sample belongs to a described series
+      // (record), so these are the rows the names select.
+      const named = ([
         ['runtime_id', query.runtimeId],
         ['series_id', query.seriesId],
-      ] as const) {
-        if (value === undefined) continue
-        selectionPredicates.push(`${column} = ?`)
-        selectionValues.push(value)
-      }
-      if (query.subjectId !== undefined || query.signalId !== undefined) {
-        selectionPredicates.push(`EXISTS (
-          SELECT 1 FROM recording_series series
-          WHERE series.runtime_id = recording_samples.runtime_id
-            AND series.series_id = recording_samples.series_id
-            ${query.subjectId === undefined ? '' : 'AND series.subject_id = ?'}
-            ${query.signalId === undefined ? '' : 'AND series.signal_id = ?'}
+        ['subject_id', query.subjectId],
+        ['signal_id', query.signalId],
+      ] as const).flatMap(([column, value]) => value === undefined ? [] : [{ column, value }])
+      if (query.seriesId !== undefined || query.subjectId !== undefined || query.signalId !== undefined) {
+        selectionPredicates.push(`(runtime_id, series_id) IN (
+          SELECT runtime_id, series_id FROM recording_series
+          WHERE ${named.map(({ column }) => `${column} = ?`).join(' AND ')}
         )`)
-        if (query.subjectId !== undefined) selectionValues.push(query.subjectId)
-        if (query.signalId !== undefined) selectionValues.push(query.signalId)
+        selectionValues.push(...named.map(({ value }) => value))
+      } else if (query.runtimeId !== undefined) {
+        selectionPredicates.push('runtime_id = ?')
+        selectionValues.push(query.runtimeId)
       }
       const predicates = [...selectionPredicates]
       const values = [...selectionValues]
