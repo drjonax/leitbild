@@ -365,7 +365,7 @@ const catalogPath = (workspacePath: string, kind: 'capabilities' | 'definitions'
  * reads as its lines, re-keyed into the turn's keys (answer-cards.ts), so
  * call this once per result. The rest of the result stays. Every check reads
  * the raw result, the turn's cards or the execution store, never this text:
- * the view fence, citation and answer-consistency checks (evaluation.ts),
+ * the view fence and citation checks (evaluation.ts),
  * what a turn did (operation-claims.ts), proposal cards and the display window.
  */
 export const workspaceCallResultForModel = (result: ToolResult, cards: TurnCards): ToolResult => {

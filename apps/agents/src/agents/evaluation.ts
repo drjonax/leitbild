@@ -16,8 +16,6 @@ import { classifyLLMError } from './error-classify.ts'
 import { extractFences } from './fence-extract.ts'
 import { parseMapBody, formatMapErrors } from '../core/render-validators/map-schema.ts'
 import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/render-validators/view-fence.ts'
-import { embeddedViewContentSchema, type EmbeddedViewContent } from '@leitbild/contracts'
-import { answerContradictions } from './answer-consistency.ts'
 import { createTurnCards, type TurnCards } from './answer-cards.ts'
 import { citationIssues } from './citations.ts'
 import { collectTurnOperations, operationClaimIssues, type TurnOperation } from './operation-claims.ts'
@@ -33,8 +31,8 @@ import { workspaceCallResultForModel } from '../tools/built-in/workspace-capabil
 // `evaluation.fence-retry.test.ts` asserts 3 total LLM calls (1 + 2 retries).
 export const MAX_FENCE_RETRIES = 2
 
-// Times the eval loop asks the LLM to correct a value its display or its
-// card lines contradict (answer-consistency.ts, citations.ts). One: the issues name each fix, and a
+// Times the eval loop asks the LLM to correct a number the card lines its keys
+// cite contradict (citations.ts). One: the issues name each fix, and a
 // second round would cost another full answer's latency for a model that
 // did not take the first; the corrected answer is still fence-checked.
 export const MAX_CONSISTENCY_CORRECTIONS = 1
@@ -285,13 +283,10 @@ const callLLMOnce = async (
 // up to MAX_FENCE_RETRIES times. Returns the final response content
 // (corrected if a retry succeeded; the last attempt's content if all retries
 // failed — the UI then shows the error in place of the block). Once the
-// fences are valid, an answer citing a value its display or the card line
-// its key names contradicts (citations.ts) is
-// corrected the same way, at most MAX_CONSISTENCY_CORRECTIONS times. That
-// compares the answer with what the display publishes; it does not certify
-// that free prose is true (two values swapped between named items pass).
-// Softer departures from the display are measured offline, never corrected
-// here (scripts/display-eval/grounding.ts).
+// fences are valid, an answer citing a number the card line its key names
+// contradicts (citations.ts) is corrected the same way, at most
+// MAX_CONSISTENCY_CORRECTIONS times. That compares the answer with the cards
+// its turn read; it does not certify that free prose is true.
 //
 // Mermaid is excluded by design: its parser is browser-only; a server-side
 // validator would only catch trivial cases (oversized, completely wrong
@@ -354,39 +349,6 @@ export const collectViewRefs = (into: Set<string>, tool: string, result: ToolRes
   }
 }
 
-/** What the Modules said each view composed in this turn shows, by viewRef. */
-export const collectViewContents = (into: Map<string, EmbeddedViewContent>, tool: string, result: ToolResult): void => {
-  if (tool !== 'workspace_call' || !result.success) return
-  const entries = (result.data as { results?: unknown } | undefined)?.results
-  if (!Array.isArray(entries)) return
-  for (const entry of entries) {
-    const { viewRef, data } = (entry ?? {}) as { viewRef?: unknown; data?: unknown }
-    if (typeof viewRef !== 'string' || typeof data !== 'object' || data === null || !('viewContent' in data)) continue
-    // A Module that publishes content must publish it valid: a broken
-    // contract fails the turn loudly rather than skipping the check.
-    into.set(viewRef, embeddedViewContentSchema.parse((data as { viewContent: unknown }).viewContent))
-  }
-}
-
-// Values the display an answer presents contradicts. A view whose Module
-// says nothing of what it shows (a unit overview) is not checked: there is
-// nothing to compare the answer with.
-const presentedViewIssues = (content: string, viewContents: ReadonlyMap<string, EmbeddedViewContent>): ReadonlyArray<string> => {
-  const fence = extractFences(content, [VIEW_FENCE_LANGUAGE])[0]
-  if (fence === undefined) return []
-  const parsed = parseViewFenceBody(fence.body)
-  if (parsed.kind === 'invalid') return []
-  const view = viewContents.get(viewRefFor(parsed.ref.callId, parsed.ref.key))
-  return view === undefined ? [] : answerContradictions(content, view)
-}
-
-// The opening words stay as before the soft checks moved offline, so that
-// evaluation reads the cause of a correction the same way on either side.
-const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
-  `The answer and the display it presents disagree, and the operator reads them together:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
-  `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite each value as the display reads it, or mark one from elsewhere "(not shown)". ` +
-  'Keep the assessment and actions.'
-
 // Numbers the card lines their keys cite contradict (citations.ts).
 const citationCorrection = (issues: ReadonlyArray<string>): string =>
   `The answer cites numbers its card lines do not show:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
@@ -394,17 +356,16 @@ const citationCorrection = (issues: ReadonlyArray<string>): string =>
   'a number from elsewhere carries no key. Keep the assessment and actions.'
 
 // An answer that says done what its turn only proposed (operation-claims.ts),
-// with any value its display contradicts, in one correction.
-const claimCorrection = (claims: ReadonlyArray<string>, viewIssues: ReadonlyArray<string>): string =>
+// with any number its card lines contradict, in one correction.
+const claimCorrection = (claims: ReadonlyArray<string>, cited: ReadonlyArray<string>): string =>
   `The answer says something happened that did not:\n${claims.map(issue => `- ${issue}`).join('\n')}\n\n` +
-  (viewIssues.length === 0 ? '' : `It also disagrees with the display it presents:\n${viewIssues.map(issue => `- ${issue}`).join('\n')}\n\n`) +
+  (cited.length === 0 ? '' : `It also cites numbers its card lines do not show:\n${cited.map(issue => `- ${issue}`).join('\n')}\n\n`) +
   'Re-emit the FULL corrected response, keeping any display block. A proposal is executed only when a person approves it in the display window: ' +
   'say what you proposed and that it awaits their approval, or that World refused it and why. Keep the assessment.'
 
 const correctResponse = async (
   initialContent: string,
   viewRefs: ReadonlySet<string>,
-  viewContents: ReadonlyMap<string, EmbeddedViewContent>,
   cards: TurnCards,
   operations: ReadonlyArray<TurnOperation>,
   context: Array<ChatRequest['messages'][number]>,
@@ -434,11 +395,9 @@ const correctResponse = async (
         `Your previous response contained one or more invalid fenced blocks:\n\n${fenceErrors.map(entry => entry.error).join('\n\n')}\n\n` +
         `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`
     } else {
-      // Valid fences: do the display it presents or the card lines it cites contradict the answer, and does it claim what its turn did not do?
+      // Valid fences: do the card lines it cites contradict the answer, and does it claim what its turn did not do?
       const done = consistencyCorrections === MAX_CONSISTENCY_CORRECTIONS
-      const viewIssues = done ? [] : presentedViewIssues(content, viewContents)
-      const cited = done ? [] : citationIssues(content, cards.items()).contradictions.map(contradiction => contradiction.issue)
-      const issues = [...viewIssues, ...cited]
+      const issues = done ? [] : citationIssues(content, cards.items()).contradictions.map(contradiction => contradiction.issue)
       const claims = done ? [] : operationClaimIssues(content, operations)
       if (issues.length === 0 && claims.length === 0) return content
       consistencyCorrections++
@@ -446,7 +405,7 @@ const correctResponse = async (
         ...claims.map(issue => ({ cause: 'claimed-execution' as const, issue })),
         ...issues.map(issue => ({ cause: 'contradiction' as const, issue })),
       ]))
-      correction = claims.length > 0 ? claimCorrection(claims, issues) : viewIssues.length > 0 ? consistencyCorrection(issues) : citationCorrection(cited)
+      correction = claims.length > 0 ? claimCorrection(claims, issues) : citationCorrection(issues)
     }
     // Append the response + a precise correction prompt. The next LLM call
     // will see (a) what it just emitted, (b) why it must change,
@@ -536,7 +495,6 @@ export const evaluate = async (
   // Rounds spent insisting on a view call the model again without a tool
   // round of the agent's own; they do not count against its iteration limit.
   let insistRounds = 0
-  const viewContents = new Map<string, EmbeddedViewContent>()
   // The cards this turn's results carried, re-keyed as the model read them.
   const turnCards = createTurnCards()
   // What this turn's workspace calls issued: an answer may not say done what it only proposed.
@@ -675,7 +633,6 @@ export const evaluate = async (
           const result = results[i]
           if (!call || !result) continue
           collectViewRefs(viewRefs, call.tool, result)
-          collectViewContents(viewContents, call.tool, result)
           collectTurnOperations(turnOperations, call.tool, call.arguments, result)
           const operationOutcomes = operationOutcomesFor(call.tool, result)
           const traceSuccess = result.success && (operationOutcomes?.every(outcome => outcome.success) ?? true)
@@ -761,7 +718,6 @@ export const evaluate = async (
       const finalContent = await correctResponse(
         content,
         viewRefs,
-        viewContents,
         turnCards,
         turnOperations,
         context,
