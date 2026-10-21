@@ -18,7 +18,7 @@ import type { ScopedTopology } from './scope.ts'
 
 /** The renderer's grid pitch and its text lines (16 high, about 8 a character), in the engine's units; a reading takes up to ten characters ("15.51 MPa"). */
 const GRID = 24
-const LINE = { height: 16, perCharacter: 8 }
+const LINE = { height: 16, perCharacter: 8, pad: 8 }
 const READING_CHARACTERS = 10
 /** The vessel's head and flange above its first nozzle, and its bottom below its last. */
 const VESSEL_ENDS = { top: 2 * GRID, bottom: GRID }
@@ -42,9 +42,9 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   const classOf = new Map(graph.nodes.map(node => [node.id, node.class]))
   const leaving = new Set(graph.edges.map(edge => edge.from.node))
   const label = (node: TopologyNode): string => node.shortLabel ?? node.label
-  const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter), height: LINE.height, required })
+  const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter + LINE.pad), height: LINE.height, required })
   return {
-    key: 'vignette-flow-3',
+    key: 'vignette-flow-4',
     visible: () => true,
     silent: edge => ['sink', 'boundary'].includes(classOf.get(edge.to.node) ?? '') && !leaving.has(edge.to.node),
     bar: node => node.class === 'bus' || isHeader(node),
