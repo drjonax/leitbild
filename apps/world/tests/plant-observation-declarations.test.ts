@@ -28,9 +28,9 @@ const observable = (path: string) => declaration.observables.find(candidate => c
 describe('plant observation declarations (P2)', () => {
   test('T12: every published or recorded signal is declared and parses against core\'s quantity list and unit codes', () => {
     expect(observationDeclarationSchema.parse(declaration)).toEqual(declaration)
-    // 1,102 signals, 45 operated items' states and 6 safety functions.
-    expect(declaration.observables).toHaveLength(1153)
-    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(772)
+    // 1,102 signals, 45 operated items' states, 6 safety functions and the operating mode.
+    expect(declaration.observables).toHaveLength(1154)
+    expect(plantDeclaration(objectId, plant, null).observables).toHaveLength(773)
     expect(declaration.revision).toBe(`${plant.modelDigest}:1000ms:802`)
   })
 
@@ -95,8 +95,8 @@ describe('plant observation declarations (P2)', () => {
     expect(observable('pressurizer-relief-to-tank.flowKgPerS')).toMatchObject({ element: 'pressurizer-relief-to-tank' })
     expect(observable('pressurizer-relief-to-tank.flowKgPerS').tag).toBeUndefined()
     const elements = new Set(declaration.elements.map(element => element.id))
-    // A safety function is the unit's, measured on no equipment.
-    expect(declaration.observables.filter(entry => entry.element === undefined).map(entry => entry.ref)).toEqual(plant.automation.safetyFunctions.map(entry => `${objectId}#csf.${entry.id}`))
+    // A safety function and the operating mode are the unit's, measured on no equipment.
+    expect(declaration.observables.filter(entry => entry.element === undefined).map(entry => entry.ref)).toEqual([...plant.automation.safetyFunctions.map(entry => `${objectId}#csf.${entry.id}`), `${objectId}#mode`])
     expect(declaration.observables.filter(entry => entry.element !== undefined && !elements.has(entry.element)).map(entry => entry.ref)).toEqual([])
   })
 
@@ -115,6 +115,14 @@ describe('plant observation declarations (P2)', () => {
     const active = (path: string) => observable(path).states!.filter(state => state.active === true).map(state => state.value)
     expect([active('rcpA.state'), active('offsiteBreakerA.state'), active('dieselGeneratorA.state'), active('mainSteamIsolationValveA.state'), active('pressurizer.reliefValve.state')]).toEqual([['on'], ['on'], ['on'], [], []])
     expect(states.filter(entry => entry.states!.some(state => state.active === true)).length).toBe(states.filter(entry => !entry.states!.some(state => state.value === 'between')).length)
+  })
+
+  test('P9: the operating mode is the unit\'s state, an enum of its declared modes and the word for none holding', () => {
+    expect(observable('mode')).toEqual({
+      ref: `${objectId}#mode`, label: 'Operating mode', quantity: 'state', unit: '', valueType: 'enum', thresholds: [], series: null,
+      states: [...plant.automation.operatingModes.map(mode => ({ value: mode.id, label: mode.label })), { value: 'none', label: 'No declared mode holds' }],
+    })
+    expect(observable('mode').states!.map(state => state.label)).toEqual(['Power operation', 'Startup', 'Hot standby', 'Hot shutdown', 'Cold shutdown', 'No declared mode holds'])
   })
 
   test('D1: each critical safety function declares its status as an enum, the unit\'s, named as crews call it', () => {

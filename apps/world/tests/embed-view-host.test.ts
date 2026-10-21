@@ -167,27 +167,6 @@ describe('a view framed by the display window', () => {
     expect(parseDisplayFrameMessage({ type: 'world:display-map', bounds, extra: 1 })).toBeNull()
   })
 
-  test('tells its window the pending proposals it reads, once per change and only when a window presents it; a malformed list is refused', () => {
-    // QA-10: the window's chip lists what the operated display reads with its samples; the window installs no poller.
-    const entry = { id: 'cmd-propose-1', item: 'pressurizer.blockValve', opens: [['pressurizer'], ['pressurizer', 'pressurizerReliefHeader']], action: 'SHUT MOV-8000A PORV block', proposer: 'AI' as const, minutes: null, text: 'SHUT MOV-8000A PORV block · no cited reading heads for a limit · expires 10:03:43' }
-    const unframed = framedPage()
-    unframed.host.reportProposals([entry])
-    expect(unframed.posted).toEqual([])
-    const page = presented()
-    page.host.reportProposals([entry])
-    page.host.reportProposals([entry])
-    page.host.reportProposals([])
-    expect(page.posted.map(post => post.message)).toEqual([
-      { type: 'world:display-proposals', entries: [entry] },
-      { type: 'world:display-proposals', entries: [] },
-    ])
-    for (const { message } of page.posted) expect(parseDisplayFrameMessage(JSON.parse(JSON.stringify(message)))).toEqual(message as DisplayFrameMessage)
-    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, opens: [] }] })).toBeNull()
-    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, opens: [[]] }] })).toBeNull()
-    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, proposer: 'someone' }] })).toBeNull()
-    expect(parseDisplayFrameMessage({ type: 'world:display-proposals', entries: [{ ...entry, extra: 1 }] })).toBeNull()
-  })
-
   test('inline in a chat answer whose page relays to the Workspace\'s window, it asks that page to open the display there', () => {
     const page = framedPage()
     const opened: Array<string | null> = []

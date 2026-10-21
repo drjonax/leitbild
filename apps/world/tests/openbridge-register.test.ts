@@ -120,8 +120,9 @@ const unlistedInternals = (sources: Sources, listed: ReadonlyArray<Internal>): R
   return [...parts, ...shadowReads, ...properties]
 })
 
-const displays = sourcesUnder('ui/embed', 'ui/displays')
-const embed = new Map([...displays].filter(([file]) => file.startsWith('ui/embed/')))
+// A Pack's display panels the embed loads (packs/<pack>/ui/embed.ts) are embed sources as well.
+const displays = sourcesUnder('ui/embed', 'ui/displays', 'packs/process-plant/ui/displays')
+const embed = new Map([...displays].filter(([file]) => file.startsWith('ui/embed/') || file.startsWith('packs/')))
 const sites = drawingSites(displays)
 const registered = registeredSites(customShapes, surfaces)
 

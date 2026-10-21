@@ -308,7 +308,7 @@ export interface Internal {
 
 const part = (name: string): Internal => ({
   kind: 'part', name, element: 'obc-button',
-  used: { file: 'ui/embed/composed-display/operation/ControlSection.svelte', mark: `.execute::part(${name})` },
+  used: { file: 'packs/process-plant/ui/displays/operation/ControlSection.svelte', mark: `.execute::part(${name})` },
   defined: { file: 'dist/components/button/button.js', mark: `part="${name}"` },
   why: 'An execute button\'s label wraps onto a second line instead of being cut.',
 })

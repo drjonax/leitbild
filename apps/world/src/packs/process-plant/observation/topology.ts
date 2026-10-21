@@ -1,9 +1,10 @@
 import type { ObjectId } from '../../../core/model/index.ts'
 import type { TopologyGraph } from '../../../core/observation/topology.ts'
 import { words } from '../../../core/model/text-search.ts'
-import type { CompiledComponent, CompiledPlantGraph, ComponentId, StateAspect, VariablePath } from '../graph/index.ts'
+import type { CompiledComponent, CompiledPlantGraph, CompiledStateAspect, ComponentId, StateAspect, VariablePath } from '../graph/index.ts'
+import { equipmentItemLabel } from '../equipment/items.ts'
 import { linkCarrier } from '../graph/index.ts'
-import { plantCarriers, plantLoops } from '../equipment/circuits.ts'
+import { plantCarriers, plantLoops, principalCircuits } from '../equipment/circuits.ts'
 import { electricalExternalPortId } from '../electrical-ports.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { operatedStateRoles } from './derived.ts'
@@ -19,7 +20,9 @@ import { operatedStateRoles } from './derived.ts'
 // state: a store's level, a mover running, a breaker's contacts or a supply
 // live (conducting), what passes a header, a valve's position and the values
 // its kind reads first (value); a pipe's flow, a cable live. A grid source
-// with an external port is the boundary a Scenario connection joins.
+// with an external port is the boundary a Scenario connection joins. The
+// overview is the principal circuits (equipment/circuits.ts), as the unit
+// overview has always drawn them; World adds where the drawing stops.
 
 const classOf = (component: CompiledComponent): TopologyGraph['nodes'][number]['class'] => {
   const energy = component.semantics.energy.map(role => role.role)
@@ -38,18 +41,28 @@ const bound = (objectId: ObjectId, graph: CompiledPlantGraph, roles: ReadonlyArr
   roles.flatMap(([role, path], index) => path === undefined || graph.signalBindingByPath.get(path)?.published !== true
     || roles.slice(0, index).some(([other, at]) => other === role && at === path) ? [] : [{ role, ref: `${objectId}#${path}` }])
 
-const nodeBindings = (objectId: ObjectId, graph: CompiledPlantGraph, component: CompiledComponent): Bindings => {
-  const state = (aspect: StateAspect) => component.semantics.aspects.find(candidate => candidate.aspect === aspect)?.state
+/** What an item's state aspects drive: its level, running, contacts or supply (conducting), what passes it, a valve's opening (position). */
+const aspectRoles = (aspects: ReadonlyArray<CompiledStateAspect>): ReadonlyArray<readonly [Bindings[number]['role'], VariablePath | undefined]> => {
+  const state = (aspect: StateAspect) => aspects.find(candidate => candidate.aspect === aspect)?.state
   const [position, running, energized] = [state('position'), state('running'), state('energized')]
-  return bound(objectId, graph, [
+  return [
     ['level', state('level')?.path],
     ['running', running?.reading === 'true' ? running.path : undefined],
     ['conducting', position?.reading === 'closedWhileTrue' ? position.path : position === undefined && energized?.reading === 'true' ? energized.path : undefined],
     ['flow', state('throughput')?.path],
-    ['value', position?.reading === 'value' ? position.path : undefined],
-    ...component.semantics.keyValues.map(path => ['value', path] as const),
-  ])
+    ['position', position?.reading === 'value' ? position.path : undefined],
+  ]
 }
+
+const nodeBindings = (objectId: ObjectId, graph: CompiledPlantGraph, component: CompiledComponent): Bindings => bound(objectId, graph, [
+  ...aspectRoles(component.semantics.aspects),
+  // What it inserts (a core's rods), as the fraction of its travel it reads inserted.
+  ['position', component.semantics.insertion === undefined ? undefined : component.variables.find(variable => {
+    const signal = graph.signalBindingByPath.get(variable.path)
+    return signal?.measurand === 'insertion' && signal.unit === 'fraction' && signal.actuation === undefined
+  })?.path],
+  ...component.semantics.keyValues.map(path => ['value', path] as const),
+])
 
 const graphs = new WeakMap<CompiledPlantGraph, TopologyGraph>()
 
@@ -100,25 +113,68 @@ export const plantTopology = (objectId: ObjectId, graph: CompiledPlantGraph, rev
     })),
     boundaries: [],
   }
-  const withBoundaries: TopologyGraph = { ...topology, boundaries: topology.nodes.flatMap(node => {
-    const externalPortId = electricalExternalPortId(graph.components[graph.componentIndexById.get(node.id as ComponentId)!]!)
-    return externalPortId === undefined ? [] : node.ports.map(port => ({ node: node.id, port: port.id, externalPortId }))
-  }) }
+  const principal = principalCircuits(graph)
+  const withBoundaries: TopologyGraph = {
+    ...topology,
+    boundaries: topology.nodes.flatMap(node => {
+      const externalPortId = electricalExternalPortId(graph.components[graph.componentIndexById.get(node.id as ComponentId)!]!)
+      return externalPortId === undefined ? [] : node.ports.map(port => ({ node: node.id, port: port.id, externalPortId }))
+    }),
+    ...(!principal.ok ? {} : { overview: { nodes: principal.components.map(index => String(graph.components[index]!.id)), edges: principal.links.map(index => String(graph.links[index]!.id)) } }),
+  }
   graphs.set(graph, withBoundaries)
   return withBoundaries
+}
+
+/**
+ * Each device a component bundles (a pressurizer's PORV and its block valve)
+ * as a switch on the line its port feeds, from the component outward in the
+ * order the component declares them, named as the equipment item it is
+ * (equipment/items.ts): a person reaches and operates it as its own element.
+ */
+const withDevices = (objectId: ObjectId, graph: CompiledPlantGraph, topology: TopologyGraph): TopologyGraph => {
+  const nodes = [...topology.nodes]
+  let edges = [...topology.edges]
+  for (const component of graph.components) {
+    const host = topology.nodes.find(node => node.id === String(component.id))
+    for (const port of host?.ports ?? []) {
+      const devices = component.semantics.embedded.filter(device => String(device.port) === port.id)
+      if (host === undefined || devices.length === 0) continue
+      const outward = port.direction !== 'in'
+      const chain = (outward ? devices : [...devices].reverse()).map(device => {
+        const id = `${component.id}.${device.id}`
+        const label = equipmentItemLabel(component, device)
+        const ports = (['in', 'out'] as const).map(direction => ({ id: direction, rank: direction, media: port.media, direction, circuit: 'through' }))
+        return { id, class: 'switch' as const, kind: device.function, label, ...(label.length <= 24 ? { shortLabel: label } : {}), rank: `${host.rank}|${device.id}`, ...(host.group === undefined ? {} : { group: host.group }), ports, bindings: bound(objectId, graph, aspectRoles(device.aspects)) }
+      })
+      nodes.push(...chain)
+      const media = [...new Set(edges.filter(edge => (outward ? edge.from : edge.to).node === host.id && (outward ? edge.from : edge.to).port === port.id).map(edge => edge.medium))]
+      // The line now leaves (or enters) at the far device; the component and its devices join in a row, one edge per medium.
+      edges = edges.map(edge => outward && edge.from.node === host.id && edge.from.port === port.id ? { ...edge, from: { node: chain.at(-1)!.id, port: 'out' } }
+        : !outward && edge.to.node === host.id && edge.to.port === port.id ? { ...edge, to: { node: chain[0]!.id, port: 'in' } } : edge)
+      const joins = chain.map((node, at) => outward
+        ? [at === 0 ? { node: host.id, port: port.id } : { node: chain[at - 1]!.id, port: 'out' }, { node: node.id, port: 'in' }] as const
+        : [{ node: node.id, port: 'out' }, at === chain.length - 1 ? { node: host.id, port: port.id } : { node: chain[at + 1]!.id, port: 'in' }] as const)
+      for (const [from, to] of joins) {
+        for (const medium of media) edges.push({ id: `${from.node}>${to.node}:${medium}`, rank: `${medium}|${from.node}>${to.node}`, from, to, medium, directed: true, bindings: [], ...(host.group === undefined ? {} : { group: host.group }) })
+      }
+    }
+  }
+  return { ...topology, nodes, edges }
 }
 
 const served = new WeakMap<CompiledProcessPlant, TopologyGraph>()
 
 /**
- * The topology the Plant serves World: its graph's, with each item a person
- * operates bound to its state observable (derived.ts) where no published
- * signal says it runs or conducts (a breaker's contacts, a condensate pump).
+ * The topology the Plant serves World: its graph's, with the devices its
+ * equipment bundles drawn on their lines, and each item a person operates
+ * bound to its state observable (derived.ts) where no published signal says
+ * it runs or conducts (a breaker's contacts, a condensate pump).
  */
 export const servedPlantTopology = (objectId: ObjectId, plant: CompiledProcessPlant): TopologyGraph => {
   const known = served.get(plant)
   if (known !== undefined && known.objectId === objectId) return known
-  const topology = plantTopology(objectId, plant.graph, plant.modelDigest)
+  const topology = withDevices(objectId, plant.graph, plantTopology(objectId, plant.graph, plant.modelDigest))
   const roles = operatedStateRoles(plant)
   const bound: TopologyGraph = { ...topology, nodes: topology.nodes.map(node => {
     const state = roles.get(node.id)

@@ -1,8 +1,8 @@
 /**
  * T01: an operation proposal end to end at the Capability boundary of a Run,
- * as the display window sees it: an AI agent proposes, the display's sample
- * carries the proposal, the agent may not decide, a person rejects, extends
- * or approves, the proposer withdraws. Read as plain facts (ids and times
+ * as the Plant's element panel sees it (P5): an AI agent proposes, the
+ * Plant's proposals carry it (control.proposals), the agent may not decide, a
+ * person rejects, extends or approves, the proposer withdraws. Read as plain facts (ids and times
  * left out), so the new display path can be held to the same flow.
  *
  * The `test-plant` fixture trips itself about 2 s into plant time (SG A
@@ -68,7 +68,7 @@ export const observeProposalFlow = async (): Promise<Record<string, unknown>> =>
     const run = await registry.create({ scenarioId: 'test-plant' })
     await run.setClock({ paused: true })
     const plantId = run.snapshot().objects.find(object => object.packId === 'process-plant')!.id
-    const sampleProposals = async () => ((await query(run, operator, 'world.process-plant.display.sample', { plantId, paths: ['pressurizer.blockValvePositionFraction', 'mainSteamIsolationValveA.positionFraction'], operations: true })).operations.proposals as ReadonlyArray<any>).map(shown)
+    const sampleProposals = async () => ((await query(run, operator, 'world.process-plant.control.proposals', { plantId })).proposals as ReadonlyArray<any>).map(entry => shown(entry.proposal))
     const propose = (input: Record<string, unknown>) => command(run, agent, 'world.process-plant.control.propose', { plantId, ...input })
 
     const msiv = await propose({ tagId: 'MSIV-A', value: 0, reason: 'Isolate steam generator A', procedureStep: 'Isolate the faulted steam generator', evidence: ['SG-A-LVL-NR'] })
@@ -82,7 +82,7 @@ export const observeProposalFlow = async (): Promise<Record<string, unknown>> =>
     const personApproves = decisionOf(await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: block.commandId, decision: 'approve' }))
     const startedAt = Date.parse(run.snapshot().clock!.currentTime)
     await run.runMaximumPace(new Date(startedAt + 13_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
-    const sample = await query(run, operator, 'world.process-plant.display.sample', { plantId, paths: ['pressurizer.blockValveEffectivePositionFraction', 'pressurizer.blockValvePositionFraction'], operations: true })
+    const sample = await query(run, operator, 'world.process-plant.signals.read', { plantId, signals: [{ path: 'pressurizer.blockValveEffectivePositionFraction' }, { path: 'pressurizer.blockValvePositionFraction' }], operations: true })
 
     const again = await propose({ tagId: 'MSIV-A', value: 0, reason: 'Isolate steam generator A', evidence: ['SG-A-LVL-NR'] })
     const otherWithdraws = decisionOf(await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: again.commandId, decision: 'withdraw' }))
@@ -97,7 +97,7 @@ export const observeProposalFlow = async (): Promise<Record<string, unknown>> =>
       personRejects,
       afterReject,
       personApproves,
-      blockValveAfterTravel: Number(sample.values[0].value) <= 0.05 ? 'shut' : `open at ${sample.values[0].value}`,
+      blockValveAfterTravel: Number(sample.signals[0].variable.value) <= 0.05 ? 'shut' : `open at ${sample.signals[0].variable.value}`,
       log: (sample.operations.log as ReadonlyArray<any>).map(entry => ({ kind: entry.kind, origin: entry.origin, actor: entry.actorId })),
       otherWithdraws,
       proposerWithdraws,

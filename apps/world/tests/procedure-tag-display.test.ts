@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { embeddedViewFragment, workspaceIdSchema } from '@leitbild/contracts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
-import type { PackProcedureContribution, PackProcedureTagDisplay } from '../src/core/packs/protocol.ts'
-import { processPlantPackView } from '../src/packs/process-plant/ui-pack.ts'
 import type { ProcedureTagValidation, ProcedureTagValue } from '../src/ui/procedures/procedure-client.ts'
 import {
   procedureTagBindingLine,
@@ -15,7 +13,6 @@ import {
 
 const workspaceId = workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111')
 const runId = 'run-test' as SimulationRunId
-const provider = processPlantPackView.procedures
 const resolved: ProcedureTagValidation = {
   id: 'PT-455',
   status: 'resolved-with-warnings',
@@ -26,46 +23,29 @@ const resolved: ProcedureTagValidation = {
 
 describe("a clicked procedure tag's display", () => {
   test('says a tag the unit model lacks, or one not yet checked, is not drawn', () => {
-    expect(procedureTagDisplayPlan('plant:a', { id: 'SI-SIG', status: 'missing', warnings: [] }, provider))
+    expect(procedureTagDisplayPlan('plant:a', 'SI-SIG', { id: 'SI-SIG', status: 'missing', warnings: [] }))
       .toEqual({ kind: 'not-in-model', message: "Not in this unit's plant model" })
-    expect(procedureTagDisplayPlan('plant:a', undefined, provider))
+    expect(procedureTagDisplayPlan('plant:a', 'PT-455', undefined))
       .toEqual({ kind: 'unchecked', message: "Not checked against this unit's plant model" })
   })
 
-  test('says why no display can be drawn where the Pack names none', () => {
-    const { tagDisplay: _drawn, ...drawsNone } = provider
-    expect(procedureTagDisplayPlan('plant:a', resolved, drawsNone as PackProcedureContribution))
-      .toEqual({ kind: 'no-display', message: 'No process display can be drawn for this tag', reason: "this unit's Pack draws no process displays" })
-    const { measuredOn: _equipment, ...unplaced } = resolved
-    expect(procedureTagDisplayPlan('plant:a', unplaced, provider))
-      .toEqual({ kind: 'no-display', message: 'No process display can be drawn for this tag', reason: 'the model names no equipment it is measured on' })
+  test("draws World's default display of the tag on its unit (P4)", () => {
+    expect(procedureTagDisplayPlan('plant:a', 'PT-455', resolved)).toEqual({ kind: 'display', subject: 'plant:a#PT-455' })
   })
 
-  test("draws the Pack's display of the equipment the tag is measured on", () => {
-    const plan = procedureTagDisplayPlan('plant:a', resolved, provider)
-    if (plan.kind !== 'display') throw new Error(`expected a display, not ${plan.kind}`)
-    expect(plan.display.title).toBe('PT-455: Pressurizer pressure')
-    expect(JSON.parse(plan.display.state)).toEqual({ detail: { plantId: 'plant:a', components: ['pressurizer'] } })
-  })
-
-  test('frames the display as a read-only embedded view of the Run, at the tallest height a view takes', () => {
-    const display: PackProcedureTagDisplay = {
-      viewType: 'process-plant.display',
-      title: 'PT-455: Pressurizer pressure',
-      state: '{"detail":{"plantId":"plant:a","components":["pressurizer"]}}',
-      drawQuery: () => { throw new Error('not drawn here') },
-    }
-    const envelope = procedureTagDisplayEnvelope({ workspaceId, simulationRunId: runId, display })
+  test('frames the composed view as a read-only embedded view of the Run, at the height World gave it', () => {
+    const view = { viewType: 'display.vignette', title: 'PT-455', height: 480, state: '{"title":"PT-455"}' }
+    const envelope = procedureTagDisplayEnvelope({ workspaceId, simulationRunId: runId, view })
     expect(JSON.parse(JSON.stringify(envelope))).toEqual({
       moduleId: 'world',
       subject: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: runId },
-      viewType: 'process-plant.display',
-      title: 'PT-455: Pressurizer pressure',
-      height: 960,
-      state: display.state,
+      viewType: 'display.vignette',
+      title: 'PT-455',
+      height: 480,
+      state: view.state,
     })
-    expect(procedureTagDisplaySource(envelope)).toBe(`/workspaces/${workspaceId}/world/embed/process-plant.display${embeddedViewFragment(envelope)}`)
-    expect(() => procedureTagDisplayEnvelope({ workspaceId, simulationRunId: runId, display: { ...display, title: 'x'.repeat(121) } })).toThrow()
+    expect(procedureTagDisplaySource(envelope)).toBe(`/workspaces/${workspaceId}/world/embed/display.vignette${embeddedViewFragment(envelope)}`)
+    expect(() => procedureTagDisplayEnvelope({ workspaceId, simulationRunId: runId, view: { ...view, title: 'x'.repeat(121) } })).toThrow()
   })
 
   test("writes the tag's binding and every warning on it in one line", () => {

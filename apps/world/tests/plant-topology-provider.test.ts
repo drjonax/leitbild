@@ -3,6 +3,8 @@ import type { ObjectId } from '../src/core/model/index.ts'
 import { topologyGraphSchema } from '../src/core/observation/topology.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { processPlantElectricalPortDefinitions } from '../src/packs/process-plant/electrical-ports.ts'
+import { principalCircuits } from '../src/packs/process-plant/equipment/circuits.ts'
+import { plantControlsFor } from '../src/packs/process-plant/operations/controls.ts'
 import { plantDeclaration } from '../src/packs/process-plant/observation/declarations.ts'
 import { plantTopology, servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -36,25 +38,59 @@ describe('plant topology provider (P5)', () => {
   })
 
   test('D1: nodes and lines are bound to what the Plant publishes, each binding a declared observable of the Plant', () => {
+    const declared = new Map(plantDeclaration(objectId, plant, null).observables.map(observable => [observable.ref, observable]))
     expect({
       pressurizer: bindings('pressurizer'), rcp: bindings('rcpA'), bus: bindings('safetyBusA'), valve: bindings('mainSteamIsolationValveA'), header: bindings('feedwaterHeader'),
     }).toEqual({
       pressurizer: ['level pressurizer.levelPercent', 'value pressurizer.pressureMPa', 'value pressurizer.levelPercent'],
       rcp: ['running rcpA.runningState'],
       bus: ['conducting safetyBusA.energized', 'value safetyBusA.voltageKv'],
-      valve: ['value mainSteamIsolationValveA.effectivePositionFraction'],
+      valve: ['position mainSteamIsolationValveA.effectivePositionFraction'],
       header: ['flow feedwaterHeader.outletFlowKgPerS'],
     })
+    // A position is a fraction of travel: a valve's opening, the core's rods inserted.
+    expect(bindings('core')).toEqual(['level vessel.collapsedLiquidLevelPercent', 'position core.rodInsertedFraction', 'value core.coreExitTemperatureC'])
+    const positions = served.nodes.flatMap(entry => entry.bindings.filter(binding => binding.role === 'position').map(binding => declared.get(binding.ref)!))
+    expect(positions.length).toBeGreaterThan(20)
+    expect(positions.filter(observable => observable.quantity !== 'fraction' || observable.unit !== '1').map(observable => observable.ref)).toEqual([])
     // An operated item whose own signal is not published says what it does through its state observable: a breaker's contacts, a pump running.
     expect([bindings('offsiteBreakerA'), bindings('condensatePumpA')]).toEqual([['conducting offsiteBreakerA.state'], ['running condensatePumpA.state']])
     expect(served.edges.find(edge => edge.id === 'rcs-hot-leg-a')?.bindings).toEqual([{ role: 'flow', ref: `${objectId}#rcs-hot-leg-a.flowKgPerS` }])
-    const declared = new Map(plantDeclaration(objectId, plant, null).observables.map(observable => [observable.ref, observable]))
     const refs = [...served.nodes, ...served.edges].flatMap(item => item.bindings.map(binding => binding.ref))
     expect(refs.filter(ref => !declared.has(ref))).toEqual([])
     // Q8: a running or conducting binding reads a boolean (true is on) or a state reading that marks its on state.
     const switching = served.nodes.flatMap(entry => entry.bindings.filter(binding => binding.role === 'running' || binding.role === 'conducting')).map(binding => declared.get(binding.ref)!)
     expect(switching.filter(observable => observable.valueType !== 'boolean' && !observable.states?.some(state => state.active === true)).map(observable => observable.ref)).toEqual([])
-    expect(new Set(served.nodes.flatMap(entry => entry.bindings.map(binding => binding.role)))).toEqual(new Set(['level', 'running', 'conducting', 'flow', 'value']))
+    expect(new Set(served.nodes.flatMap(entry => entry.bindings.map(binding => binding.role)))).toEqual(new Set(['level', 'running', 'conducting', 'flow', 'position', 'value']))
+  })
+
+  test('B3: a device its equipment bundles is a switch on the line its port feeds, the item a person operates (the PORV on the relief line)', () => {
+    const relief = (from: string) => served.edges.filter(edge => edge.from.node === from).map(edge => `${edge.from.node}.${edge.from.port} -> ${edge.to.node}.${edge.to.port}`)
+    expect([...relief('pressurizer').filter(edge => !edge.startsWith('pressurizer.surgeLine')), ...relief('pressurizer.blockValve'), ...relief('pressurizer.reliefValve'), ...relief('pressurizer.safetyValves')]).toEqual([
+      'pressurizer.reliefOutlet -> pressurizer.blockValve.in',
+      'pressurizer.safetyOutlet -> pressurizer.safetyValves.in',
+      'pressurizer.blockValve.out -> pressurizer.reliefValve.in',
+      'pressurizer.reliefValve.out -> pressurizerReliefHeader.inletA',
+      'pressurizer.safetyValves.out -> pressurizerReliefHeader.inletA',
+    ])
+    const porv = served.nodes.find(entry => entry.id === 'pressurizer.reliefValve')!
+    expect(porv).toMatchObject({ class: 'switch', label: 'PORV', shortLabel: 'PORV' })
+    expect(porv.element).toBeUndefined()
+    expect(bindings('pressurizer.reliefValve')).toEqual(['flow pressurizer.reliefFlowKgPerS', 'position pressurizer.reliefValveEffectivePositionFraction'])
+    // Each is the item controls.list names, so the pop-over's element actions operate it.
+    const items = new Set(plantControlsFor(plant).items.map(item => item.id))
+    expect(served.nodes.filter(entry => entry.id.includes('.')).every(entry => items.has(entry.id))).toBe(true)
+    // The drawing the old path keeps (plantTopology) has none of them.
+    expect(graph.nodes.some(entry => entry.id.includes('.'))).toBe(false)
+  })
+
+  test('P9: the overview is the principal circuits, as the unit overview draws them: 29 equipment and the 42 lines among them on four loops', () => {
+    const principal = principalCircuits(plant.graph)
+    if (!principal.ok) throw new Error(principal.reason)
+    expect(served.overview).toEqual({ nodes: principal.components.map(index => String(plant.graph.components[index]!.id)), edges: principal.links.map(index => String(plant.graph.links[index]!.id)) })
+    expect([served.overview!.nodes.length, served.overview!.edges.length]).toEqual([29, 42])
+    expect(served.overview!.nodes).toEqual(expect.arrayContaining(['core', 'pressurizer', 'sgA', 'rcpA', 'turbine', 'condenser']))
+    expect(served.overview!.nodes).not.toContain('chargingPump')
   })
 
   test('D1: the grid source is the boundary a Scenario connection joins, by the port id the Plant\'s electrical ports name', () => {
@@ -100,7 +136,8 @@ describe('plant topology provider (P5)', () => {
     expect('refused' in served).toBe(false)
     if ('refused' in served) return
     expect(served).toMatchObject({ objectId: run.plantId, family: 'flow', boundaries: [{ node: 'offsiteGrid', port: 'outlet', externalPortId: 'grid-420kv' }] })
-    expect(served.nodes).toHaveLength(graph.nodes.length)
+    // The drawing's equipment and the devices it bundles, drawn on their lines.
+    expect(served.nodes).toHaveLength(graph.nodes.length + plant.graph.components.reduce((count, component) => count + component.semantics.embedded.length, 0))
     expect(await port.topology(run.plantId)).toEqual(served)
     // Every binding reads, as the caller, at the Run's time: the drawing has live state.
     const refs = [...new Set([...served.nodes, ...served.edges].flatMap(item => item.bindings.map(binding => binding.ref)))]

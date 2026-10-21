@@ -1,14 +1,14 @@
-import type { SimulationRunId } from '../../../../core/model/index.ts'
-import type { ProcessUnit, ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
-import type { ListedItem, ListedReset } from '../../../../packs/process-plant/operations/instance-ports.ts'
-import type { ProposalListEntry } from './operation-presenter.ts'
-import type { ProcessPlantProposal, ProposalDecision, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
-import { invokeSimulationRunCapability, querySimulationRunCapability } from '../../../simulation-run-client.ts'
+import type { SimulationRunId } from '../../../../../core/model/index.ts'
+import type { ProcessVariableValue, VariablePath } from '../../../graph/index.ts'
+import type { ListedItem, ListedReset } from '../../../operations/instance-ports.ts'
+import type { OperationRecord, ResetRecord } from '../../../operations/plant-operations.ts'
+import type { ProcessPlantProposal, ProposalDecision, ProposalReview } from '../../../operations/proposals.ts'
+import { invokeSimulationRunCapability, querySimulationRunCapability } from '../../../../../ui/simulation-run-client.ts'
 
-// The operation capabilities a display in the process display window uses,
-// each through the Run's one capability endpoint as the screen's own actor:
-// a person's command goes through the one validated queued write path, and
-// a decision on a proposal through World's propose/decide book.
+// The operation capabilities the Plant's panels use, each through the Run's
+// one capability endpoint as the screen's own actor: a person's command goes
+// through the one validated queued write path, and a decision on a proposal
+// through World's propose/decide book.
 
 export type OperationWrite = { readonly path: VariablePath; readonly value: ProcessVariableValue }
 export type OperationCheck = { readonly accepted: true } | { readonly accepted: false; readonly reason: string }
@@ -27,6 +27,14 @@ export interface HeldProposals {
   readonly proposals: ReadonlyArray<{ readonly proposal: ProcessPlantProposal; readonly review?: ProposalReview }>
 }
 
+/** The Plant on some signals now (signals.read with its operations): their values and units, and what people and AI agents did on them. */
+export interface PlantRead {
+  readonly sample: { readonly simulationTime: string; readonly plantElapsedMs: number; readonly values: ReadonlyArray<{ readonly path: string; readonly value: ProcessVariableValue }> }
+  readonly units: ReadonlyMap<string, string>
+  readonly log: ReadonlyArray<OperationRecord>
+  readonly resets: ReadonlyArray<ResetRecord>
+}
+
 export interface OperationClient {
   /** Each named drawn item's controls where they stand now, or every item's (controls.list). */
   readonly controls: (runId: SimulationRunId, plantId: string, items: ReadonlyArray<string> | null) => Promise<ListedControls>
@@ -40,8 +48,8 @@ export interface OperationClient {
   readonly decide: (runId: SimulationRunId, plantId: string, proposalId: string, decision: ProposalDecision, reason: string | null) => Promise<OperationOutcome>
   /** The Plant's proposals, pending ones with World's review now (control.proposals). */
   readonly proposals: (runId: SimulationRunId, plantId: string) => Promise<HeldProposals>
-  /** The units of signals, to write their values as a display does (signals.resolve). */
-  readonly units: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<VariablePath>) => Promise<ReadonlyMap<VariablePath, ProcessUnit>>
+  /** The signals' values and units now, with the commands and resets on them (signals.read). */
+  readonly read: (runId: SimulationRunId, plantId: string, paths: ReadonlyArray<string>) => Promise<PlantRead>
 }
 
 /**
@@ -71,34 +79,16 @@ export const operationClient: OperationClient = {
   decide: (runId, plantId, proposalId, decision, reason) =>
     commandOutcome(runId, 'world.process-plant.control.decide', { plantId, proposalId, decision, ...(reason === null ? {} : { reason }) }),
   proposals: (runId, plantId) => querySimulationRunCapability<HeldProposals>(runId, 'world.process-plant.control.proposals', { plantId }, timed()),
-  units: async (runId, plantId, paths) => {
-    if (paths.length === 0) return new Map()
-    const resolved = await querySimulationRunCapability<{ readonly signals: ReadonlyArray<{ readonly path: VariablePath; readonly unit: ProcessUnit }> }>(runId, 'world.process-plant.signals.resolve', { plantId, signals: paths.map(path => ({ path })) }, timed())
-    return new Map(resolved.signals.map(signal => [signal.path, signal.unit]))
+  read: async (runId, plantId, paths) => {
+    const read = await querySimulationRunCapability<{
+      readonly operations: Omit<PlantRead, 'sample' | 'units'> & { readonly simulationTime: string; readonly plantElapsedMs: number }
+      readonly signals: ReadonlyArray<{ readonly signal: { readonly path: string }; readonly variable: { readonly value: ProcessVariableValue; readonly unit: string } }>
+    }>(runId, 'world.process-plant.signals.read', { plantId, signals: paths.map(path => ({ path })), operations: true }, timed())
+    return {
+      sample: { simulationTime: read.operations.simulationTime, plantElapsedMs: read.operations.plantElapsedMs, values: read.signals.map(entry => ({ path: entry.signal.path, value: entry.variable.value })) },
+      units: new Map(read.signals.map(entry => [entry.signal.path, entry.variable.unit])),
+      log: read.operations.log,
+      resets: read.operations.resets,
+    }
   },
-}
-
-/**
- * A display operated in the process display window: the Run and Plant its
- * controls act on, the client they act through, and how it tells its display
- * the paths its controls write and read (sampled with the rest). In a chat
- * the same display is read-only: its items carry the operation state they are
- * in (a pending proposal, a protection actuation holding them, a command
- * travelling), and nothing is offered.
- */
-export interface DisplayOperation {
-  readonly runId: SimulationRunId
-  readonly plantId: string
-  readonly client: OperationClient
-  /** In a chat: badges only, no PROPOSAL or CONTROL section, no proposal pinned or reported. */
-  readonly readOnly: boolean
-  readonly sampled: (paths: ReadonlyArray<string>) => void
-  /** Tells the display window the Plant's pending proposals, most time-critical first, for its toolbar's chip. */
-  readonly proposals: (entries: ReadonlyArray<ProposalListEntry>) => void
-  /**
-   * Names each time the window shows a display opened on equipment (an item's
-   * detail, or an answer's display around it): each time, a pending
-   * proposal's popover opens pinned on its item. Null for the unit overview.
-   */
-  readonly review: string | null
 }

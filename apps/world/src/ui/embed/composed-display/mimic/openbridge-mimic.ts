@@ -88,7 +88,15 @@ import mimicFontUrl from 'virtual:openbridge-mimic-font'
 import { renderSegments, themeFromCss, type Segment, type ThemeVars } from '@oicl/connector-diagram'
 import type { MimicIconFamily } from '../../../../packs/process-plant/displays/mimic/presentation.ts'
 import type { ItemLook } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-import type { ItemBadges } from '../operation/operation-presenter.ts'
+/** What a symbol carries for operation (plan §4.3, QA-8/QA-10); no drawing is given any since the operation UI moved to the Plant's element panel (D2), and the renderer goes at the swap (D3). */
+export interface ItemBadges {
+  readonly progress: { readonly mode: 'determinate'; readonly value: number } | { readonly mode: 'static' } | null
+  readonly attribution: { readonly text: 'OP' | 'AI' | 'OP·AI'; readonly title: string } | null
+  readonly proposal: { readonly text: 'AI ?' | 'OP ?'; readonly title: string } | null
+  readonly interlock: { readonly title: string } | null
+  readonly commandLocked: { readonly title: string } | null
+  readonly throttled: { readonly text: string; readonly title: string } | null
+}
 import { deviceBadgeCorners } from './badge-room.ts'
 
 /** The text widths the server reserved were measured in OpenBridge's Noto Sans, so the mimic loads its glyphs (mimic-font.ts). */

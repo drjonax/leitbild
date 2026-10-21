@@ -203,6 +203,10 @@ export const safetyFunctionText = (evaluation: SafetyFunctionEvaluation): string
   evaluation.status === 'unknown' ? `${evaluation.label}: ${evaluation.path.at(-1)?.question ?? 'whether it is judged now'} cannot be answered`
     : `${evaluation.label}${evaluation.procedure === undefined ? '' : ` (${evaluation.procedure})`}: ${evaluation.meaning}`
 
+/** A status as a status board says it: "GREEN", "NOT JUDGED". */
+export const safetyFunctionStatusWords = (status: SafetyFunctionStatus): string =>
+  status === 'not-monitored' ? 'NOT JUDGED' : status.toUpperCase()
+
 /** Every critical safety function the Plant declares, judged now, in declaration order. */
 export const evaluateSafetyFunctions = (system: CompiledProcessPlant, runtime: ProcessPlantRuntime): ReadonlyArray<SafetyFunctionEvaluation> =>
   system.automation.safetyFunctions.map(safetyFunction => evaluateSafetyFunction({ system, runtime, safetyFunction }))

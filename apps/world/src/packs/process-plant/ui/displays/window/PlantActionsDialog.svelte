@@ -1,10 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { Play, X } from 'lucide-svelte'
-  import type { SimulationRunId } from '../../core/model/index.ts'
-  import { runOnMount } from '../svelte-lifecycle.svelte.ts'
-  import { readProcessPlantCatalog, type ProcessPlantActionCatalogEntry } from './process-display-client.ts'
-  import type { DeckPlant } from './display-deck.ts'
+  import type { SimulationRunId } from '../../../../../core/model/index.ts'
+  import { runOnMount } from '../../../../../ui/svelte-lifecycle.svelte.ts'
+  import { readProcessPlantCatalog, type ProcessPlantActionCatalogEntry } from '../../../../../ui/process-display/process-display-client.ts'
+  import type { WindowPlant } from './window-operations.ts'
 
   // The instructor's actions on one Plant: the Pack's scenario and fault
   // catalogue (a turbine trip, a stuck valve, a tube leak), each applied
@@ -15,9 +15,9 @@
 
   interface Props {
     readonly simulationRunId: SimulationRunId
-    readonly plant: DeckPlant
+    readonly plant: WindowPlant
     readonly runningActionId: string | null
-    readonly run: (plant: DeckPlant, action: ProcessPlantActionCatalogEntry, parameters: Readonly<Record<string, number>>) => void
+    readonly run: (plant: WindowPlant, action: ProcessPlantActionCatalogEntry, parameters: Readonly<Record<string, number>>) => void
     readonly close: () => void
   }
 

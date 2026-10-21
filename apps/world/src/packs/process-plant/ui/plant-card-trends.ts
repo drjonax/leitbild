@@ -1,5 +1,5 @@
 import { recordingSeriesIdFor, type SimulationRunId } from '../../../core/model/index.ts'
-import { appendPoint, HOLD_GAP_MS, type TrendPoint } from '../displays/trend-reading.ts'
+import { appendPoint, HOLD_GAP_MS, type TrendPoint } from './plant-card-sparkline.ts'
 import type { PlantCardEnergy } from './plant-card.ts'
 
 /**

@@ -1,45 +1,54 @@
-import { EMBEDDED_VIEW_MAX_HEIGHT, embeddedViewEnvelopeSchema, embeddedViewFragment, embeddedViewPath, type EmbeddedViewEnvelope } from '@leitbild/contracts'
+import { embeddedViewEnvelopeSchema, embeddedViewFragment, embeddedViewPath, type EmbeddedViewEnvelope } from '@leitbild/contracts'
 import type { ProcedureTag, SimulationRunId } from '../../core/model/index.ts'
-import type { PackProcedureContribution, PackProcedureTagDisplay } from '../../core/packs/protocol.ts'
+import { workspaceApiPath } from '../workspace-context.ts'
 import type { ProcedureTagValidation, ProcedureTagValue } from './procedure-client.ts'
 
 // What a clicked procedure tag's dialog shows, decided before anything is
-// drawn: a tag the unit's model does not hold, or one its Pack names no
-// equipment for, says so; otherwise the Pack's display is drawn first and
-// shown only where it can be.
+// drawn: a tag the unit's model does not hold says so; otherwise World's
+// default display of the tag on the unit (displays/default for
+// `<unit>#<tag>`) is drawn first and shown only where it can be.
 
 export type ProcedureTagDisplayPlan =
   | { readonly kind: 'unchecked'; readonly message: string }
   | { readonly kind: 'not-in-model'; readonly message: string }
-  | { readonly kind: 'no-display'; readonly message: string; readonly reason: string }
-  | { readonly kind: 'display'; readonly display: PackProcedureTagDisplay }
+  | { readonly kind: 'display'; readonly subject: string }
 
-export const procedureTagDisplayPlan = (
-  scopeId: string,
-  validation: ProcedureTagValidation | undefined,
-  provider: PackProcedureContribution,
-): ProcedureTagDisplayPlan => {
+export const procedureTagDisplayPlan = (scopeId: string, tagId: string, validation: ProcedureTagValidation | undefined): ProcedureTagDisplayPlan => {
   if (validation === undefined) return { kind: 'unchecked', message: "Not checked against this unit's plant model" }
   if (validation.status === 'missing') return { kind: 'not-in-model', message: "Not in this unit's plant model" }
-  const noDisplay = 'No process display can be drawn for this tag'
-  if (provider.tagDisplay === undefined) return { kind: 'no-display', message: noDisplay, reason: "this unit's Pack draws no process displays" }
-  const display = provider.tagDisplay(scopeId, validation)
-  if (display === null) return { kind: 'no-display', message: noDisplay, reason: 'the model names no equipment it is measured on' }
-  return { kind: 'display', display }
+  return { kind: 'display', subject: `${scopeId}#${tagId}` }
+}
+
+/** What World composes as a subject's default display: the embedded view to frame. */
+export interface ProcedureTagView {
+  readonly viewType: string
+  readonly title: string
+  readonly height: number
+  readonly state: string
+}
+
+/** World's default display of a subject, as the person reads it (POST displays/default); a refusal throws with World's words. */
+export const readDefaultDisplay = async (simulationRunId: SimulationRunId, subject: string): Promise<ProcedureTagView> => {
+  const response = await fetch(workspaceApiPath(`/simulation-runs/${encodeURIComponent(simulationRunId)}/displays/default`), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject }),
+  })
+  const body = await response.json() as { readonly result?: { readonly view: ProcedureTagView }; readonly error?: { readonly message?: string } }
+  if (!response.ok || body.result === undefined) throw new Error(body.error?.message ?? `World answered HTTP ${response.status}`)
+  return body.result.view
 }
 
 /** The display's embedded view, framed read-only: the Run is its subject, as for a display shown below an agent's answer. */
 export const procedureTagDisplayEnvelope = (config: {
   readonly workspaceId: string
   readonly simulationRunId: SimulationRunId
-  readonly display: PackProcedureTagDisplay
+  readonly view: ProcedureTagView
 }): EmbeddedViewEnvelope => embeddedViewEnvelopeSchema.parse({
   moduleId: 'world',
   subject: { workspaceId: config.workspaceId, moduleId: 'world', type: 'world.simulation-run', id: config.simulationRunId },
-  viewType: config.display.viewType,
-  title: config.display.title,
-  height: EMBEDDED_VIEW_MAX_HEIGHT,
-  state: config.display.state,
+  viewType: config.view.viewType,
+  title: config.view.title,
+  height: config.view.height,
+  state: config.view.state,
 })
 
 export const procedureTagDisplaySource = (envelope: EmbeddedViewEnvelope): string =>

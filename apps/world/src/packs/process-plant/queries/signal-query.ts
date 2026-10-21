@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { idSchema, matchesLiteralSearch } from '../../../core/model/index.ts'
+import { idSchema, matchesLiteralSearch, type IsoTimestamp } from '../../../core/model/index.ts'
+import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import type { PackRuntimeQuery } from '../../../simulation/protocol.ts'
 import { processQuantitySchema, processSignalTagIdSchema, variableDisciplineSchema } from '../graph/index.ts'
 import {
@@ -14,6 +15,18 @@ import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { paginateProcessPlantSearch, processPlantSearchPaginationShape, requirePlant } from './common.ts'
 import { requestedSignalValueView, resolveRequestedSignalUnit } from './signal-units.ts'
 
+/** The commands issued on these signals and the resets of actuations that held them, at the Run and plant time read at. */
+const operationsOn = (config: { readonly simulationTime?: IsoTimestamp }, system: ProcessPlantRuntimeInstance, paths: ReadonlySet<string>) => {
+  if (system.operations === undefined) return rejectCapabilityTarget(`Process Plant ${system.plant.id} keeps no operations record`)
+  if (config.simulationTime === undefined) throw new Error('signals.read with operations requires the Simulation Run time of the answering runtime')
+  return {
+    simulationTime: config.simulationTime,
+    plantElapsedMs: system.runtime.elapsedMs(),
+    log: system.operations.log().filter(record => paths.has(String(record.path))),
+    resets: system.operations.resets().filter(record => record.holds.some(path => paths.has(String(path)))),
+  }
+}
+
 export const signalsResolveQuerySchema = z.object({
   plantId: idSchema,
   signals: z.array(processPlantSignalReferenceSchema).min(1),
@@ -24,6 +37,7 @@ export const signalsReadQuerySchema = z.object({
   signals: z.array(processPlantSignalReferenceSchema.safeExtend({
     requestedUnit: z.string().trim().min(1).max(128).optional().describe('Optional presentation unit. Raw variable and quality remain unchanged; unsupported conversion returns the actual value/unit with an explicit unavailable reason.'),
   })).min(1),
+  operations: z.literal(true).optional().describe('Adds the commands issued on these signals and the resets of actuations that held them, with the Run and plant time read at.'),
 }).strict()
 
 export const signalsSearchQuerySchema = z.object({
@@ -145,6 +159,8 @@ const matchesSignalSearch = (
 export const answerProcessPlantSignalQuery = (config: {
   readonly request: PackRuntimeQuery
   readonly plants: ReadonlyMap<string, ProcessPlantRuntimeInstance>
+  /** The Run time the Plants stand at; a read with its operations names it. */
+  readonly simulationTime?: IsoTimestamp
 }): unknown | undefined => {
   if (!processPlantSignalQueryKinds.some(kind => kind === config.request.capabilityId)) return undefined
   if (config.request.capabilityId === 'world.process-plant.procedure-tags.validate') {
@@ -166,10 +182,12 @@ export const answerProcessPlantSignalQuery = (config: {
   if (config.request.capabilityId === 'world.process-plant.signals.read') {
     const payload = signalsReadQuerySchema.parse(config.request.input)
     const system = requirePlant(config.plants, payload.plantId)
+    const bindings = payload.signals.map(signal => resolveProcessPlantSignalBinding(system.plant.graph, signal))
     return {
       plantId: payload.plantId,
-      signals: payload.signals.map(signal => {
-        const binding = resolveProcessPlantSignalBinding(system.plant.graph, signal)
+      ...(payload.operations === undefined ? {} : { operations: operationsOn(config, system, new Set(bindings.map(binding => String(binding.path)))) }),
+      signals: payload.signals.map((signal, index) => {
+        const binding = bindings[index]!
         const variable = system.runtime.readVariableSnapshot(binding.path)
         return {
           signal: processPlantSignalView(binding),

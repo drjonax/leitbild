@@ -6,14 +6,16 @@ import { challengePriority } from '../ic/alarm-philosophy.ts'
 import { aspectStateWords, followAllowanceMs, plantControlsFor } from '../operations/controls.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { safetyFunctionText, type SafetyFunctionEvaluation } from '../safety-functions.ts'
+import { processPlantOperatingMode } from '../runtime/index.ts'
+import { safetyFunctionStatusWords, safetyFunctionText, type SafetyFunctionEvaluation } from '../safety-functions.ts'
 
 // What a Plant declares beside its signals (plan v4 D1): each item a person
 // operates, its state as one word, in the words its controls use ("RUN",
 // "SHUT", "ON LINE"), with the command it does not follow where it does not;
-// and each critical safety function's status, the procedure its colour sends
-// operators to and what its tree's path ends in. Neither is a signal of its
-// own: `<item>.state` and `csf.<function>` are read here from the signals
+// each critical safety function's status, the procedure its colour sends
+// operators to and what its tree's path ends in; and the unit's operating
+// mode, the first declared mode that holds. None is a signal of its own:
+// `<item>.state`, `csf.<function>` and `mode` are read here from the signals
 // they rest on.
 
 interface OperatedState {
@@ -63,7 +65,10 @@ export const operatedStateRoles = (plant: CompiledProcessPlant): ReadonlyMap<str
 
 /** The path a critical safety function's status observable reads at. */
 export const safetyFunctionRef = (id: string): string => `csf.${id}`
-const csfWords = { green: 'GREEN', yellow: 'YELLOW', orange: 'ORANGE', red: 'RED', unknown: 'UNKNOWN', 'not-monitored': 'NOT JUDGED' } as const
+const statuses = ['green', 'yellow', 'orange', 'red', 'unknown', 'not-monitored'] as const
+/** The path the unit's operating mode reads at, and its value while no declared mode holds. */
+const MODE = 'mode'
+const NO_MODE = 'none'
 
 /** The state and safety-function observables of a Plant. */
 export const derivedObservables = (objectId: ObjectId, plant: CompiledProcessPlant): ReadonlyArray<Observable> => [
@@ -76,9 +81,16 @@ export const derivedObservables = (objectId: ObjectId, plant: CompiledProcessPla
     if (plant.graph.signalBindingByPath.has(safetyFunctionRef(safetyFunction.id) as VariablePath)) throw new Error(`${safetyFunctionRef(safetyFunction.id)} is a signal of the Plant and a safety function`)
     return {
       ref: `${objectId}#${safetyFunctionRef(safetyFunction.id)}`, label: `${safetyFunction.label} (CSF)`, shortLabel: safetyFunction.shortLabel, quantity: 'state', unit: '', valueType: 'enum',
-      states: Object.entries(csfWords).map(([value, label]) => ({ value, label })), thresholds: [], series: null,
+      states: statuses.map(value => ({ value, label: safetyFunctionStatusWords(value) })), thresholds: [], series: null,
     }
   }),
+  ...(plant.automation.operatingModes.length === 0 ? [] : [((): Observable => {
+    if (plant.automation.operatingModes.some(mode => mode.id === NO_MODE)) throw new Error(`a Plant mode is named ${NO_MODE}, the value that says no declared mode holds`)
+    return {
+      ref: `${objectId}#${MODE}`, label: 'Operating mode', quantity: 'state', unit: '', valueType: 'enum', thresholds: [], series: null,
+      states: [...plant.automation.operatingModes.map(mode => ({ value: mode.id, label: mode.label })), { value: NO_MODE, label: 'No declared mode holds' }],
+    }
+  })()]),
 ]
 
 /** Where a state signal or a command to it stands: at its on or off end, or between. */
@@ -124,8 +136,12 @@ export const readDerived = (
     const why = now === null ? undefined : unfollowed(system, state, now)
     return { value: now, quality: now === null ? 'bad' : 'good', priority: 'none', ...(why === undefined ? {} : { why }) }
   }
+  if (path === MODE) {
+    const mode = processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes: system.plant.automation.operatingModes })
+    return { value: mode?.id ?? NO_MODE, quality: 'good', priority: 'none' }
+  }
   const evaluation = safetyFunctions().find(candidate => safetyFunctionRef(candidate.id) === path)
-  if (evaluation === undefined) throw new Error(`${path} is neither an operated item's state nor a safety function of the Plant`)
+  if (evaluation === undefined) throw new Error(`${path} is neither an operated item's state, a safety function nor the mode of the Plant`)
   const priority: Priority = challengePriority[evaluation.status] ?? 'none'
   return { value: evaluation.status, quality: evaluation.status === 'unknown' ? 'uncertain' : 'good', priority, why: safetyFunctionText(evaluation) }
 }

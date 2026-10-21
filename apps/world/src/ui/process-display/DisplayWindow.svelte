@@ -21,7 +21,12 @@
   import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
   import { detailDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
   import { composedDisplayClient } from '../embed/composed-display/composed-display-client.ts'
-  import { drawsOwnSymbol, type ProposalListEntry } from '../embed/composed-display/operation/operation-presenter.ts'
+  import type { CompiledComposedDisplay } from '../../packs/process-plant/displays/compose.ts'
+  import OperationsLogDialog from '../../packs/process-plant/ui/displays/window/OperationsLogDialog.svelte'
+  import PlantActionsDialog from '../../packs/process-plant/ui/displays/window/PlantActionsDialog.svelte'
+  import ProposalsChip from '../../packs/process-plant/ui/displays/window/ProposalsChip.svelte'
+  import { readPendingProposals } from '../../packs/process-plant/ui/displays/window/window-operations.ts'
+  import type { ProposalListEntry } from '../../packs/process-plant/ui/displays/operation/operation-presenter.ts'
   import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameOpen, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
   import { openedListing } from '../embed/opened-display.ts'
   import { zoomStepOfKey } from '../embed/view-host.ts'
@@ -36,9 +41,6 @@
     type FloatingWindowDragMode,
   } from '../window-bounds.ts'
   import DisplayFrame from './DisplayFrame.svelte'
-  import OperationsLogDialog from './OperationsLogDialog.svelte'
-  import PlantActionsDialog from './PlantActionsDialog.svelte'
-  import ProposalsChip from './ProposalsChip.svelte'
   import {
     acknowledgeShown,
     buildDisplayDeck,
@@ -656,11 +658,35 @@
 
   // --- Proposals and the operations log --------------------------------------
 
-  // The pending proposals on the shown display's Plant (QA-10), as the operated display reads them with its own samples
-  // and reports them: the window installs no poller. The chip lists the shown display's, and is absent while none waits.
-  let proposalsByFrame = $state.raw<ReadonlyMap<string, ReadonlyArray<ProposalListEntry>>>(new Map())
-  const proposalEntries = $derived(current === null ? [] : proposalsByFrame.get(current.key) ?? [])
-  const frameProposals = (key: string, entries: ReadonlyArray<ProposalListEntry>): void => { proposalsByFrame = withValue(proposalsByFrame, key, entries) }
+  // The pending proposals on the shown display's Plant (QA-10), read every two seconds while it shows a Plant's display.
+  // The chip lists them, and is absent while none waits; a read that fails says so and keeps the last list.
+  let proposalEntries = $state.raw<ReadonlyArray<ProposalListEntry>>([])
+  const PROPOSALS_EVERY_MS = 2_000
+  const proposalsPlant = $derived(plantTarget.ok ? plantTarget.plant.plantId : null)
+  $effect(() => {
+    const plantId = proposalsPlant
+    proposalEntries = []
+    if (plantId === null) return
+    let reading = false
+    const read = async (): Promise<void> => {
+      if (reading) return
+      reading = true
+      try {
+        proposalEntries = await readPendingProposals(runId, plantId)
+      } catch (err) {
+        notice = `Pending proposals cannot be read: ${errorText(err)}`
+      } finally {
+        reading = false
+      }
+    }
+    void read()
+    const timer = setInterval(() => { void read() }, PROPOSALS_EVERY_MS)
+    return () => clearInterval(timer)
+  })
+  /** Whether a drawing draws an item on a symbol of its own (by the ids controls.list names it by). */
+  const drawsOwnSymbol = (display: Pick<CompiledComposedDisplay, 'panels'>, itemId: string): boolean =>
+    display.panels.some(panel => panel.kind === 'mimic' && panel.mimic.items.some(item =>
+      (item.binding.item.kind === 'device' ? [`${item.components[0]}.${item.binding.item.device}`] : item.components).includes(itemId)))
 
   // A proposal opens, after the shown display, a detail that draws its item on its own symbol, which pins the proposal's
   // popover on it as it opens (HMI review of run 26c, g2): the first of the details its entry names that World draws so
@@ -1041,7 +1067,6 @@
           onOpen={frameOpen}
           onBack={frameBack}
           onMap={bounds => focusMap({ kind: 'bounds', bounds })}
-          onProposals={frameProposals}
         />
       {/each}
       {#if current === null}
