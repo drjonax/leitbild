@@ -5,7 +5,7 @@ import type { Observable, Observation } from '../src/core/observation/model.ts'
 import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
 import { sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { quantityText } from '../src/ui/embed/vignette/format.ts'
-import type { VignetteValue } from '../src/ui/embed/vignette/model.ts'
+import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
 import { appendPoint, limitLabelYs, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
 

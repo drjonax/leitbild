@@ -88,9 +88,6 @@ export interface ReadingLook {
   readonly title: string
 }
 
-/** A declared state; `active` marks the states that read "on" (ruling Q8). STAND-IN type until A2's schema carries the flag. */
-type StateEntry = NonNullable<Observable['states']>[number] & { readonly active?: true }
-
 /**
  * Whether a state reads "on" (ruling Q8): a boolean true, or a value whose
  * declared state says `active`; never inferred from the order of the states.
@@ -98,7 +95,7 @@ type StateEntry = NonNullable<Observable['states']>[number] & { readonly active?
  */
 export const activeState = (value: Observation['value'] | undefined, states: Observable['states']): boolean | null => {
   if (typeof value === 'boolean') return value
-  const entries = (states ?? []) as ReadonlyArray<StateEntry>
+  const entries = states ?? []
   if (typeof value !== 'string' || !entries.some(entry => entry.active === true)) return null
   return entries.find(entry => entry.value === value)?.active === true
 }

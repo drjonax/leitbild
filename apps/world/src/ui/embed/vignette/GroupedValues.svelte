@@ -1,6 +1,6 @@
 <script lang="ts">
   import { unitSymbol, type Observation } from '../../../core/observation/model.ts'
-  import type { VignetteSection } from './model.ts'
+  import type { VignetteSection } from '../../../features/displays/compose/model.ts'
   import { valueLook } from './readout.ts'
   import Readout from './Readout.svelte'
   import StateWord from './StateWord.svelte'

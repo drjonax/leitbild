@@ -6,7 +6,7 @@
 // about again until someone loads it.
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import { workspaceApiPath } from '../../workspace-context.ts'
-import type { SeriesPoint, VignetteSample, VignetteView } from './model.ts'
+import type { SeriesPoint, VignetteSample, VignetteView } from '../../../features/displays/compose/model.ts'
 import { appendPoint } from './trend.ts'
 
 export interface RunPresence {
@@ -194,6 +194,6 @@ export const vignetteRoutes: VignetteRoutes = {
     const body = await read<{ readonly loaded: boolean; readonly execution: { readonly currentSimulationTime: string } }>(response, 'Run status')
     return { loaded: body.loaded, at: body.execution.currentSimulationTime }
   },
-  view: (runId, state) => post(runId, '/displays/view', { state }, 'Drawing the display'),
-  sample: (runId, state, history) => post(runId, '/displays/sample', { state, ...(history === undefined ? {} : { history }) }, 'Reading the display'),
+  view: async (runId, state) => (await post<{ readonly view: VignetteView }>(runId, '/displays/view', { state }, 'Drawing the display')).view,
+  sample: async (runId, state, history) => (await post<{ readonly sample: VignetteSample }>(runId, '/displays/sample', { state, ...(history === undefined ? {} : { history }) }, 'Reading the display')).sample,
 }

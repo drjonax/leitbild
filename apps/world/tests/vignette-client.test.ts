@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { SimulationRunId } from '../src/core/model/ids.ts'
-import type { VignetteSample, VignetteView } from '../src/ui/embed/vignette/model.ts'
+import type { VignetteSample, VignetteView } from '../src/features/displays/compose/model.ts'
 import { createVignetteSession, GAP_MS, INACTIVE_RETRY_MS, SAMPLE_INTERVAL_MS, type RunPresence, type VignetteSnapshot } from '../src/ui/embed/vignette/vignette-client.ts'
 
 // The vignette's link to its Run (architecture B1): presence before anything,
@@ -24,7 +24,7 @@ const harness = (presence: (at: string) => RunPresence | null) => {
   const sample = (history?: { readonly fromMs: number }): VignetteSample => ({
     at: { at: new Date(runMs).toISOString(), clock: 'simulation', paused: false },
     observations: [{ ref: 'unit-1#level', at: new Date(runMs).toISOString(), clock: 'simulation', value: 40 + (runMs % 10_000) / 1_000, quality: 'good', priority: 'none' }],
-    alerts: [],
+    alerts: [], entities: {}, slots: {}, maps: {},
     ...(history === undefined ? {} : { series: { 'unit-1.level': [{ t: history.fromMs + 1_000, v: 30 }] } }),
   })
   const session = createVignetteSession({

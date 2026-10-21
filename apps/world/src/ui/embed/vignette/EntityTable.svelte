@@ -1,6 +1,6 @@
 <script lang="ts">
   import { columnHead, entityCell } from './collection.ts'
-  import type { EntityRow, VignetteSection } from './model.ts'
+  import type { EntityRow, VignetteSection } from '../../../features/displays/compose/model.ts'
 
   // Objects as a table (architecture B2): a column per core slot present,
   // rows as the composer sorted them (urgency, worst alert, Run order), the

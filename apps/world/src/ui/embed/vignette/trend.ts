@@ -4,7 +4,7 @@
 // declares that threshold at one value; pens are told apart by dash, never
 // by hue (colour is kept for alerts).
 import { decimalsFor, numberText, type Observable, type Observation } from '../../../core/observation/model.ts'
-import type { SeriesPoint, VignetteValue } from './model.ts'
+import type { SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
 import { orderWord, toneOf, type AlertTone } from './readout.ts'
 
 type Threshold = Observable['thresholds'][number]

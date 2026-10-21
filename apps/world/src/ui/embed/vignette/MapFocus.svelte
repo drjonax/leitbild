@@ -2,7 +2,7 @@
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
   import { embeddedDisplayFrame, type DisplayOpening } from '../view-host.ts'
   import { mapCaption } from './collection.ts'
-  import type { VignetteSample } from './model.ts'
+  import type { VignetteSample } from '../../../features/displays/compose/model.ts'
 
   // Where the vignette's objects are (architecture B2): what the frame holds
   // and how many have no position, and "Show on map", which asks the display

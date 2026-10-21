@@ -8,9 +8,10 @@ import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts
 import { gridTopology } from '../src/packs/electric-grid/observation/topology.ts'
 import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
-import { distanceText, entityCell, mapCaption } from '../src/ui/embed/vignette/collection.ts'
+import { entityCell, mapCaption, slotLook } from '../src/ui/embed/vignette/collection.ts'
+import { distanceText } from '../src/ui/embed/vignette/format.ts'
 import { VIGNETTE_ROW_PX } from '../src/ui/embed/vignette/grid.ts'
-import type { EntityRow, VignetteSection } from '../src/ui/embed/vignette/model.ts'
+import type { EntityRow, VignetteSection } from '../src/features/displays/compose/model.ts'
 import { barLine, CHAR_PX, fitName, networkDrawing, stub } from '../src/ui/embed/vignette/network.ts'
 
 // The vignette's objects and networks (architecture B2): entity cells, the map
@@ -33,9 +34,16 @@ describe('entity table and map focus', () => {
     expect([distanceText(640), distanceText(23_456)]).toEqual(['640 m', '23.5 km'])
   })
 
+  test('slots write a duration and a distance in the units the card writes them in', () => {
+    expect([slotLook({ key: 'eta', label: 'ETA', unit: 's' }, { value: 250 }), slotLook({ key: 'remaining', label: 'Remaining', unit: 'm' }, { value: 4_280 })].map(look => [look.text, look.unit, look.decimals]))
+      .toEqual([['4', 'min', 0], ['4.28', 'km', 2]])
+    expect(slotLook({ key: 'fuel', label: 'Fuel', unit: '%' }, { value: 41.24 })).toMatchObject({ text: '41.2', unit: '%', tone: null })
+    expect(slotLook({ key: 'status', label: 'Status', unit: '' }, { value: 'en route' })).toMatchObject({ kind: 'state', text: 'en route' })
+  })
+
   test('the map section says what it frames and how many have no position', () => {
-    expect(mapCaption({ positioned: 3, missing: 1, within: '5 km', around: 'Halden', bounds: [[11, 59], [11.5, 59.2]] })).toBe('3 with a position within 5 km of Halden · 1 without')
-    expect(mapCaption({ positioned: 0, missing: 2, bounds: null })).toBe('0 with a position · 2 without')
+    expect(mapCaption({ positioned: 3, missing: 1, within: '5 km', around: 'Halden', bounds: [[11, 59], [11.5, 59.2]], extentM: 4_200 })).toBe('3 with a position within 5 km of Halden · 1 without')
+    expect(mapCaption({ positioned: 0, missing: 2, bounds: null, extentM: null })).toBe('0 with a position · 2 without')
     expect(mapCaption(undefined)).toBe('Reading positions…')
   })
 })
@@ -71,7 +79,7 @@ describe('network drawing', () => {
       node('sw-1', 'switch', 18), node('s0', 'stop', 24),
     ]
     const section: Extract<VignetteSection, { kind: 'topology' }> = {
-      kind: 'topology', rows: 4, family: 'network', nodes: parts.map(part => part.node), edges: [], groups: [],
+      kind: 'topology', rows: 4, objectId: 'g', family: 'network', nodes: parts.map(part => part.node), edges: [], groups: [],
       layout: { family: 'network', unit: 'grid', width: 28, height: 3, crossings: 0, hash: 'h', groups: [], nodes: parts.map(part => part.box),
         edges: [{ id: 'e1', points: [[4, 1], [6, 1]], gaps: [] }, { id: 'e2', points: [[10, 1], [12, 1]], gaps: [] }, { id: 'e3', points: [[16, 1], [24, 1]], gaps: [[20, 1]] }] },
     }
@@ -112,7 +120,7 @@ describe('network drawing', () => {
       const layout = await networkLayout(scoped.scoped, sizing)
       const nodes = new Map(graph.nodes.map(node => [node.id, node]))
       const section: Extract<VignetteSection, { kind: 'topology' }> = {
-        kind: 'topology', rows: layout.height + 1, family: 'network', layout,
+        kind: 'topology', rows: layout.height + 1, objectId: graph.objectId, family: 'network', layout,
         nodes: [
           ...scoped.scoped.nodes.map(id => { const node = nodes.get(id)!; return { id, class: node.class, label: node.label, ...(node.shortLabel === undefined ? {} : { shortLabel: node.shortLabel }), bindings: node.bindings.map(binding => ({ ...binding, unit: binding.role === 'flow' ? 'MW' : binding.role === 'loading' ? '%' : '' })) } }),
           ...scoped.scoped.stubs.map((stop, at) => ({ id: `s${at}`, class: 'stop' as const, label: stop.others.map(other => other.node).join(', ').slice(0, 24), bindings: [] })),

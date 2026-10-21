@@ -1,10 +1,10 @@
 // Objects as a vignette shows them (architecture B2): a table of the core
 // slots present, and a map section's caption. Urgency sorts and reads as a
 // code, never as a colour; only an alert's own priority colours its cell.
-import { numberText } from '../../../core/observation/model.ts'
-import { clockText, durationText } from './format.ts'
-import type { EntityColumn, EntityRow, VignetteSample } from './model.ts'
-import { toneOf, type AlertTone } from './readout.ts'
+import { distanceParts, durationParts } from '../../../core/observation/model.ts'
+import { clockText, distanceText, durationText } from './format.ts'
+import type { EntityColumn, EntityRow, SlotDeclaration, VignetteSample } from '../../../features/displays/compose/model.ts'
+import { readingLook, toneOf, type AlertTone, type ReadingLook } from './readout.ts'
 
 export const columnHead = (column: EntityColumn, near: { readonly label: string } | undefined): string =>
   column === 'status' ? 'Status' : column === 'urgency' ? 'Urgency' : column === 'alert' ? 'Worst alert' : column === 'eta' ? 'ETA'
@@ -18,9 +18,6 @@ export interface EntityCell {
   readonly title?: string
 }
 
-/** A distance as a table reads it: metres under a kilometre, else kilometres. */
-export const distanceText = (metres: number): string => (metres < 1_000 ? `${numberText(metres, 'm')} m` : `${numberText(metres / 1_000, 'km')} km`)
-
 const empty: EntityCell = { text: '—', boxed: false, tone: null }
 
 export const entityCell = (row: EntityRow, column: EntityColumn): EntityCell => {
@@ -30,6 +27,14 @@ export const entityCell = (row: EntityRow, column: EntityColumn): EntityCell => 
   if (column === 'eta') return row.etaS === undefined ? empty : { text: durationText(row.etaS), boxed: false, tone: null }
   if (column === 'distance') return row.distanceM === undefined ? empty : { text: distanceText(row.distanceM), boxed: false, tone: null }
   return row.ageS === undefined ? empty : { text: `${durationText(row.ageS)} ago`, boxed: false, tone: null }
+}
+
+/** A slot's look: a duration (unit s) and a distance (unit m) in the units the card writes them in; any other reading as it is. */
+export const slotLook = (slot: SlotDeclaration, read: VignetteSample['slots'][string][string] | undefined): ReadingLook => {
+  const value = read?.value
+  const parts = typeof value !== 'number' ? null : slot.unit === 's' ? durationParts(value) : slot.unit === 'm' ? distanceParts(value) : null
+  const look = readingLook(slot.label, typeof value === 'number' ? 'number' : 'enum', undefined, { value: parts?.value ?? value, unit: parts?.unit ?? slot.unit, thresholds: [], ...(read?.since === undefined ? {} : { since: read.since }) })
+  return parts === null ? look : { ...look, text: String(parts.value), decimals: (String(parts.value).split('.')[1] ?? '').length, unit: parts.unit }
 }
 
 type MapFrame = NonNullable<VignetteSample['maps']>[number]

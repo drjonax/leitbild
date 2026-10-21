@@ -5,7 +5,7 @@
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
   import { embeddedDisplayFrame } from '../view-host.ts'
   import { paintLines } from './lines.ts'
-  import type { VignetteSection } from './model.ts'
+  import type { VignetteSection } from '../../../features/displays/compose/model.ts'
   import { networkDrawing } from './network.ts'
   import type { AlertTone } from './readout.ts'
 

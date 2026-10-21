@@ -7,7 +7,8 @@
   import { worstChip } from './alerts.ts'
   import { clockText } from './format.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
-  import { readingLook, toneOf, valueLook } from './readout.ts'
+  import { slotLook } from './collection.ts'
+  import { toneOf, valueLook } from './readout.ts'
   import { createVignetteSession, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
   import AlertsSection from './AlertsSection.svelte'
   import EntityTable from './EntityTable.svelte'
@@ -98,16 +99,15 @@
         {:else if section.kind === 'alerts'}
           <AlertsSection rows={latest?.alerts ?? []} objectIds={section.objectIds} room={section.rows} {palette} />
         {:else if section.kind === 'entity'}
-          <EntityTable {section} rows={latest?.entities?.[index]?.rows ?? []} more={latest?.entities?.[index]?.more ?? 0} />
+          <EntityTable {section} rows={latest?.entities[index]?.rows ?? []} more={latest?.entities[index]?.more ?? 0} />
         {:else if section.kind === 'slots'}
           {#each section.slots as slot (slot.key)}
-            {@const read = latest?.slots?.[section.objectId]?.[slot.key]}
             <!-- Core slots and telemetry carry no observation priority: they read neutral. -->
-            {@const look = readingLook(slot.label, typeof read?.value === 'number' ? 'number' : 'enum', undefined, { value: read?.value, unit: slot.unit, thresholds: [], ...(read?.since === undefined ? {} : { since: read.since }) })}
+            {@const look = slotLook(slot, latest?.slots[section.objectId]?.[slot.key])}
             {#if look.kind === 'state'}<StateWord {look} label={slot.label} />{:else}<Readout {look} label={slot.label} />{/if}
           {/each}
         {:else if section.kind === 'map'}
-          <MapFocus frame={latest?.maps?.[index]} />
+          <MapFocus frame={latest?.maps[index]} />
         {:else}
           <!-- Network and, until their symbols land, flow topologies: the layout's boxes and lines. -->
           <NetworkTopology {section} {observations} {palette} />
@@ -118,7 +118,7 @@
 
   <footer title={footer.why}>
     <span class={`clock ${footer.word.toLowerCase()}`}>{footer.word}</span>
-    {#if latest !== undefined}<span>sim {clockText(latest.at.at)}</span>{/if}
+    {#if latest !== undefined}<span>{latest.at.clock === 'simulation' ? 'sim' : 'wall'} {clockText(latest.at.at)}</span>{/if}
     {#if footer.why !== undefined}<span class="why">{footer.why}</span>{/if}
   </footer>
 </article>

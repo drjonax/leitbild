@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Observation } from '../../../core/observation/model.ts'
-  import type { SeriesPoint, VignetteValue } from './model.ts'
+  import type { SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
   import { valueLook } from './readout.ts'
   import { stripDrawing } from './trend.ts'
 
