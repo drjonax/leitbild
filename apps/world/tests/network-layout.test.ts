@@ -1,15 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { topologyGraphSchema } from '../src/core/observation/topology.ts'
-import { NETWORK_ENGINE_VERSION, networkLayout, type NetworkGraph, type NetworkSizing } from '../src/features/displays/topology/network.ts'
+import { topologyGraphSchema, type TopologyGraph } from '../src/core/observation/topology.ts'
+import { NETWORK_ENGINE_VERSION, networkLayout, type NetworkSizing } from '../src/features/displays/topology/network.ts'
+import { scopeTopology, type ScopedTopology } from '../src/features/displays/topology/scope.ts'
 import { edgesThroughNodes, measureCpu, overlaps } from './helpers/network-layout-measure.ts'
 
 // The `network` family's ELK adapter on a stub graph from the Grid Model v2
 // fixture, validated against the topology contract: buses are nodes grouped by
 // station, lines undirected edges between bus ports, the transformer and the
-// HVDC link two-port converters. Station grouping and sizing are test-local; the
-// grid's own provider (N3) and the World renderer's sizing replace them.
+// HVDC link two-port converters, drawn whole (a scope of every node) or as the
+// generic scope draws it. Station grouping and sizing are test-local; the grid's
+// own provider (N3) and the World renderer's sizing replace them.
 interface Link { readonly id: string; readonly kind?: string; readonly label: string; readonly fromBusId: string; readonly toBusId: string }
 interface FixtureModel {
   readonly buses: ReadonlyArray<{ readonly id: string; readonly kind: string; readonly label: string; readonly substationId?: string }>
@@ -19,12 +21,12 @@ interface FixtureModel {
 const model = JSON.parse(readFileSync(join(import.meta.dir, 'fixtures/grid-model-v2.fixture.json'), 'utf8')) as FixtureModel
 const PLANT = 'bus:curated-test-plant-switchyard@420'
 
-const fixtureGraph = (rename: (id: string) => string = id => id): NetworkGraph => {
+const fixtureGraph = (rename: (id: string) => string = id => id): TopologyGraph => {
   const busOf = new Map(model.buses.map(bus => [bus.id, bus]))
   const station = (busId: string) => { const substation = busOf.get(busId)!.substationId; return substation === undefined ? {} : { group: rename(`station:${substation}`) } }
   const converters = [...model.branches.filter(link => link.kind === 'transformer'), ...model.hvdcLinks]
   const lines = model.branches.filter(link => link.kind !== 'transformer')
-  const port = (id: string) => ({ id, rank: id, media: ['ac'], direction: 'both' })
+  const port = (id: string) => ({ id, rank: id, media: ['ac'], direction: 'both', circuit: 'through' })
   const edge = (id: string, from: readonly [string, string], to: readonly [string, string]) =>
     ({ id: rename(id), rank: id, medium: 'ac', directed: false, bindings: [], from: { node: rename(from[0]), port: from[1] }, to: { node: rename(to[0]), port: to[1] } })
   const graph = topologyGraphSchema.parse({
@@ -40,17 +42,26 @@ const fixtureGraph = (rename: (id: string) => string = id => id): NetworkGraph =
       ...converters.flatMap(link => [edge(`${link.id}:a`, [link.fromBusId, 'bus'], [link.id, 'a']), edge(`${link.id}:b`, [link.id, 'b'], [link.toBusId, 'bus'])]),
     ],
   })
-  return { ...graph, roots: [rename(PLANT)] }
+  return graph
 }
-const membersOf = (graph: NetworkGraph) => (group: string): ReadonlySet<string> => new Set(graph.nodes.filter(node => node.group === group).map(node => node.id))
-/** About two characters per grid unit, one line of text under a one-unit symbol. */
-const sizing: NetworkSizing = { key: 'test', node: node => ({ width: Math.max(2, Math.ceil(node.label.length / 2)), height: 2 }), spacing: 1, groupLabel: 1 }
+/** Every node and edge of the fixture, drawn around the plant switchyard. */
+const fixtureScope = (rename: (id: string) => string = id => id): ScopedTopology => {
+  const graph = fixtureGraph(rename)
+  return { graph, nodes: graph.nodes.map(node => node.id), edges: graph.edges.map(edge => edge.id), stubs: [], media: ['ac'], roots: [rename(PLANT)], anchors: [[rename(PLANT)]] }
+}
+const membersOf = (graph: TopologyGraph) => (group: string): ReadonlySet<string> => new Set(graph.nodes.filter(node => node.group === group).map(node => node.id))
+/** About two characters per grid unit, one line of text under a one-unit symbol; a stop names its far ends. */
+const sizing: NetworkSizing = {
+  key: 'test', node: node => ({ width: Math.max(2, Math.ceil(node.label.length / 2)), height: 2 }),
+  stop: stop => ({ width: Math.max(2, Math.ceil(stop.others.map(other => other.node).join(', ').length / 2)), height: 1 }), spacing: 1, groupLabel: 1,
+}
 
 describe('network layout (ELK layered, grid units)', () => {
   test('T32 harness on the fixture: ≤ 2 crossings, 0 overlaps, warm p95 CPU ≤ 30 ms; cold reported', async () => {
-    const graph = fixtureGraph()
-    const report = await measureCpu(() => networkLayout(graph, sizing), 40)
-    const layout = await networkLayout(graph, sizing)
+    const scoped = fixtureScope()
+    const { graph } = scoped
+    const report = await measureCpu(() => networkLayout(scoped, sizing), 40)
+    const layout = await networkLayout(scoped, sizing)
     console.log(`T32 fixture (${graph.nodes.length} nodes, ${graph.edges.length} edges, ${NETWORK_ENGINE_VERSION}): ${layout.width}×${layout.height} grid, ${layout.crossings} crossings, cold ${report.coldMs.toFixed(1)} ms CPU, warm p95 ${report.warmP95Ms.toFixed(1)} ms, median ${report.warmMedianMs.toFixed(1)} ms (quiet ms, ${report.rounds} rounds)`)
     expect(layout.crossings).toBeLessThanOrEqual(2)
     expect(overlaps(layout, membersOf(graph))).toEqual([])
@@ -61,8 +72,9 @@ describe('network layout (ELK layered, grid units)', () => {
   }, 60_000)
 
   test('grid units: node boxes keep their size, frames hold their members below the label room, routes are orthogonal', async () => {
-    const graph = fixtureGraph()
-    const layout = await networkLayout(graph, sizing)
+    const scoped = fixtureScope()
+    const { graph } = scoped
+    const layout = await networkLayout(scoped, sizing)
     expect(layout).toMatchObject({ family: 'network', unit: 'grid' })
     for (const node of graph.nodes) {
       const placed = layout.nodes.find(candidate => candidate.id === node.id)!
@@ -76,8 +88,9 @@ describe('network layout (ELK layered, grid units)', () => {
   })
 
   test('each edge runs from its `from` end to its `to` end; undirected edges grow away from the roots', async () => {
-    const graph = fixtureGraph()
-    const layout = await networkLayout(graph, sizing)
+    const scoped = fixtureScope()
+    const { graph } = scoped
+    const layout = await networkLayout(scoped, sizing)
     const node = (id: string) => layout.nodes.find(candidate => candidate.id === id)!
     const on = (point: readonly [number, number], id: string) => { const at = node(id); return point[0] >= at.x && point[0] <= at.x + at.width && point[1] >= at.y && point[1] <= at.y + at.height }
     for (const edge of graph.edges) {
@@ -90,10 +103,25 @@ describe('network layout (ELK layered, grid units)', () => {
     expect(plant.ports.bus!.face).toBe('right')
   })
 
+  test('a generic scope\'s stops are drawn as nodes beside the node they leave, each with its edge', async () => {
+    const result = scopeTopology(fixtureGraph(), { around: [PLANT], media: ['ac'], reach: 2 })
+    if (!result.ok) throw new Error(`fixture scope refused: ${result.refusal.code}`)
+    const { scoped } = result
+    expect(scoped.stubs.length).toBeGreaterThan(0)
+    const layout = await networkLayout(scoped, sizing)
+    expect(layout.nodes.map(node => node.id).sort()).toEqual([...scoped.nodes, ...scoped.stubs.map((_, at) => `s${at}`)].sort())
+    scoped.stubs.forEach((stop, at) => {
+      const points = layout.edges.find(edge => edge.id === `s${at}.edge`)!.points
+      const [from, to] = [layout.nodes.find(node => node.id === stop.node)!, layout.nodes.find(node => node.id === `s${at}`)!]
+      expect(points[0]![0] >= from.x && points[0]![0] <= from.x + from.width && points.at(-1)![0] >= to.x && points.at(-1)![0] <= to.x + to.width).toBe(true)
+    })
+    expect(overlaps(layout, membersOf(scoped.graph))).toEqual([])
+  })
+
   test('deterministic, and ids never reach the geometry (spatial constancy)', async () => {
-    const first = await networkLayout(fixtureGraph(), sizing)
-    expect((await networkLayout(fixtureGraph(), sizing)).hash).toBe(first.hash)
-    expect((await networkLayout(fixtureGraph(id => `renamed.${id.split('').reverse().join('')}`), sizing)).hash).toBe(first.hash)
+    const first = await networkLayout(fixtureScope(), sizing)
+    expect((await networkLayout(fixtureScope(), sizing)).hash).toBe(first.hash)
+    expect((await networkLayout(fixtureScope(id => `renamed.${id.split('').reverse().join('')}`), sizing)).hash).toBe(first.hash)
     expect(first.hash).toMatch(/^[0-9a-f]{64}$/)
   })
 })

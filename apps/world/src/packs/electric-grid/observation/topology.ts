@@ -14,7 +14,8 @@ const graphs = new WeakMap<GridRuntimeInstance['definition'], TopologyGraph>()
 export const gridTopology = (grid: GridRuntimeInstance): TopologyGraph => graphs.get(grid.definition) ?? (() => {
   const { gridId, model, index, definitionDigest } = grid.definition
   const medium = (busId: string): string => `ac-${index.busById.get(busId)!.nominalKv}`
-  const port = (id: string, busId: string) => ({ id, rank: id, media: [medium(busId)], direction: 'both' as const })
+  /** A bus's one port and a two-ended item's two ports are one circuit each: power passes through them. */
+  const port = (id: string, busId: string) => ({ id, rank: id, media: [medium(busId)], direction: 'both' as const, circuit: 'through' })
   const bind = (role: Node['bindings'][number]['role'], id: string, key: string) => ({ role, ref: `${gridId}#${gridSignalId('', id, key)}` })
   const at = (prefix: string, position: number): string => `${prefix}${String(position).padStart(5, '0')}`
   const group = (id: string): { group?: string } => { const station = gridElement(grid, id)?.group; return station === undefined ? {} : { group: station } }
