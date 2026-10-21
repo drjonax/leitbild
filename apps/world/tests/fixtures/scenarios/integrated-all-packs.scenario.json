@@ -1,0 +1,1785 @@
+{
+  "id": "integrated-all-packs",
+  "title": "Halden integrated: all packs (evaluation fixture)",
+  "description": "Evaluation fixture for the display work (plan v3.1 §6, V14), never a product Scenario: the Halden four-unit power complex with its Grid and weather (halden-power-complex), the Halden ambulance and drone exercise (halden-dispatch) and the Einsatz supply run in open mode (supply-run), composed into one Run as proto-universal did on 19 Oct 2026, without situation-monitor, whose live external feeds are national, wall-clock and not reproducible. It adds nothing of its own: each evaluation scenario declares its disturbances as setup steps. Weather is observable context; it does not change Plant or Grid physics.",
+  "objectives": [
+    "Evaluation only: give the Assistant and the displays one Run in which every World pack is present and active at once."
+  ],
+  "connections": [
+    {
+      "id": "halden-unit-1-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-1",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-1-420kv"
+      }
+    },
+    {
+      "id": "halden-unit-2-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-2",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-2-420kv"
+      }
+    },
+    {
+      "id": "halden-unit-3-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-3",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-3-420kv"
+      }
+    },
+    {
+      "id": "halden-unit-4-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-4",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-4-420kv"
+      }
+    }
+  ],
+  "world": {
+    "startsAt": "2026-01-01T10:00:00.000Z",
+    "environment": {
+      "city": "Halden"
+    }
+  },
+  "view": {
+    "map": {
+      "center": [
+        11.48,
+        59.08
+      ],
+      "zoom": 11
+    }
+  },
+  "packs": [
+    {
+      "id": "process-plant",
+      "config": {},
+      "items": [
+        {
+          "type": "plant",
+          "id": "plant:halden-1",
+          "label": "Halden Unit 1",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.47,
+            59.087
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        },
+        {
+          "type": "plant",
+          "id": "plant:halden-2",
+          "label": "Halden Unit 2",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.477,
+            59.085
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        },
+        {
+          "type": "plant",
+          "id": "plant:halden-3",
+          "label": "Halden Unit 3",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.484,
+            59.083
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        },
+        {
+          "type": "plant",
+          "id": "plant:halden-4",
+          "label": "Halden Unit 4",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.491,
+            59.081
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        }
+      ],
+      "recording": {
+        "profileId": "operations"
+      }
+    },
+    {
+      "id": "electric-grid",
+      "config": {},
+      "items": [
+        {
+          "type": "grid",
+          "id": "grid:halden-four-unit",
+          "label": "Norway grid · Halden connection",
+          "location": [
+            11.48,
+            59.08
+          ],
+          "model": {
+            "ref": "electric-grid.halden.four-unit"
+          },
+          "operatingPoint": {
+            "ref": "electric-grid.norway.winter-weekday-peak"
+          },
+          "automation": {
+            "ref": "electric-grid.frequency.nordic-2025"
+          }
+        }
+      ],
+      "recording": {
+        "profileId": "operations"
+      }
+    },
+    {
+      "id": "weather",
+      "config": {
+        "gridResolution": 8,
+        "surface": {
+          "groundTemperatureC": 2,
+          "wetness": 0.1,
+          "standingWater": 0,
+          "snow": 0,
+          "ice": 0,
+          "frost": 0
+        }
+      },
+      "items": [
+        {
+          "type": "weather_area",
+          "id": "weather:halden-complex",
+          "label": "Halden complex weather",
+          "center": [
+            11.48,
+            59.084
+          ],
+          "semiMajorAxisM": 6500,
+          "semiMinorAxisM": 4200,
+          "rotationDeg": 15,
+          "falloff": "uniform",
+          "atmosphere": {
+            "airTemperatureC": 4,
+            "humidity": 0.85,
+            "windSpeedMps": 6,
+            "windDirectionDeg": 250,
+            "visibilityM": 8000,
+            "cloudCover": 0.9,
+            "precipitation": {
+              "type": "rain",
+              "intensityMmPerHour": 12
+            }
+          },
+          "keyframes": [
+            {
+              "atSeconds": 600,
+              "atmosphere": {
+                "airTemperatureC": -6,
+                "windSpeedMps": 12,
+                "visibilityM": 1500,
+                "precipitation": {
+                  "type": "freezing_rain",
+                  "intensityMmPerHour": 8
+                }
+              }
+            },
+            {
+              "atSeconds": 1200,
+              "atmosphere": {
+                "airTemperatureC": 10,
+                "windSpeedMps": 5,
+                "visibilityM": 20000,
+                "cloudCover": 0.2,
+                "precipitation": {
+                  "type": "none",
+                  "intensityMmPerHour": 0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "weather_probe",
+          "id": "weather-probe:halden-complex",
+          "label": "Power complex ground probe",
+          "point": [
+            11.48,
+            59.084
+          ]
+        },
+        {
+          "type": "weather_probe",
+          "id": "weather-probe:halden-north",
+          "label": "Northern background probe",
+          "point": [
+            11.4,
+            59.18
+          ]
+        }
+      ],
+      "recording": {
+        "profileId": "probes",
+        "intervalMs": 5000
+      }
+    },
+    {
+      "id": "ambulance",
+      "config": {
+        "roadWeather": {
+          "enabled": false
+        }
+      },
+      "recording": {
+        "profileId": "operations",
+        "intervalMs": 5000
+      },
+      "items": [
+        {
+          "type": "ambulance",
+          "id": "unit:halden-1",
+          "label": "Halden road unit 1",
+          "position": [
+            11.385,
+            59.127
+          ],
+          "patientCapacity": 1,
+          "capabilities": [
+            "assessment",
+            "trauma"
+          ],
+          "crewReady": true,
+          "mobilizationSeconds": 0,
+          "sceneSeconds": 480
+        },
+        {
+          "type": "ambulance",
+          "id": "unit:halden-2",
+          "label": "Halden road unit 2",
+          "position": [
+            11.414,
+            59.15
+          ],
+          "patientCapacity": 1,
+          "capabilities": [
+            "assessment",
+            "trauma",
+            "pediatric"
+          ],
+          "crewReady": true,
+          "mobilizationSeconds": 0,
+          "sceneSeconds": 480
+        },
+        {
+          "type": "ambulance",
+          "id": "unit:sarpsborg-1",
+          "label": "Sarpsborg road unit 1",
+          "position": [
+            11.11,
+            59.28
+          ],
+          "patientCapacity": 1,
+          "capabilities": [
+            "assessment",
+            "trauma"
+          ],
+          "crewReady": true,
+          "mobilizationSeconds": 60,
+          "sceneSeconds": 600
+        },
+        {
+          "type": "ambulance",
+          "id": "unit:aremark-1",
+          "label": "Aremark road unit 1",
+          "position": [
+            11.67,
+            59.22
+          ],
+          "patientCapacity": 1,
+          "capabilities": [
+            "assessment"
+          ],
+          "crewReady": true,
+          "mobilizationSeconds": 120,
+          "sceneSeconds": 720
+        },
+        {
+          "type": "helicopter",
+          "id": "unit:helo-ostfold",
+          "label": "Østfold medical helicopter",
+          "position": [
+            11.08,
+            59.3
+          ],
+          "patientCapacity": 2,
+          "capabilities": [
+            "assessment",
+            "trauma",
+            "pediatric"
+          ],
+          "crewReady": true,
+          "mobilizationSeconds": 120,
+          "sceneSeconds": 720,
+          "cruiseSpeedMps": 68
+        },
+        {
+          "type": "helicopter",
+          "id": "unit:helo-reserve",
+          "label": "Regional helicopter reserve",
+          "position": [
+            10.88,
+            59.38
+          ],
+          "patientCapacity": 2,
+          "capabilities": [
+            "assessment",
+            "trauma",
+            "burn"
+          ],
+          "crewReady": true,
+          "mobilizationSeconds": 240,
+          "sceneSeconds": 780,
+          "cruiseSpeedMps": 72
+        },
+        {
+          "type": "care-site",
+          "id": "care:kalnes",
+          "label": "Kalnes receiving site — exercise",
+          "position": [
+            11.023,
+            59.322
+          ],
+          "capabilities": [
+            "assessment",
+            "trauma",
+            "pediatric"
+          ],
+          "acceptedUrgencies": [
+            "acute",
+            "urgent",
+            "ordinary"
+          ],
+          "handoverSlots": 2,
+          "handoverSeconds": 900,
+          "accepting": true
+        },
+        {
+          "type": "care-site",
+          "id": "care:halden-triage",
+          "label": "Halden temporary triage centre — exercise",
+          "position": [
+            11.384,
+            59.121
+          ],
+          "capabilities": [
+            "assessment"
+          ],
+          "acceptedUrgencies": [
+            "urgent",
+            "ordinary"
+          ],
+          "handoverSlots": 2,
+          "handoverSeconds": 300,
+          "accepting": true
+        },
+        {
+          "type": "care-site",
+          "id": "care:regional-specialist",
+          "label": "Regional specialist receiving site — exercise",
+          "position": [
+            10.77,
+            59.44
+          ],
+          "capabilities": [
+            "assessment",
+            "trauma",
+            "pediatric",
+            "burn"
+          ],
+          "acceptedUrgencies": [
+            "acute",
+            "urgent"
+          ],
+          "handoverSlots": 1,
+          "handoverSeconds": 1200,
+          "accepting": true
+        },
+        {
+          "type": "incident",
+          "id": "incident:e6-collision",
+          "label": "E6 multi-patient collision",
+          "position": [
+            11.325,
+            59.19
+          ],
+          "dispatchUrgency": "acute",
+          "summary": "Three patients after a synthetic road collision; mixed trauma and pediatric needs create simultaneous unit and destination choices."
+        },
+        {
+          "type": "patient",
+          "id": "patient:e6-a",
+          "label": "E6 patient A",
+          "incidentId": "incident:e6-collision",
+          "assessedUrgency": "acute",
+          "needs": [
+            "trauma"
+          ],
+          "summary": "Time-critical trauma transport need; no physiology or deterioration model."
+        },
+        {
+          "type": "patient",
+          "id": "patient:e6-b",
+          "label": "E6 patient B",
+          "incidentId": "incident:e6-collision",
+          "assessedUrgency": "urgent",
+          "needs": [
+            "trauma"
+          ],
+          "summary": "Urgent trauma assessment and transport need."
+        },
+        {
+          "type": "patient",
+          "id": "patient:e6-c",
+          "label": "E6 pediatric patient",
+          "incidentId": "incident:e6-collision",
+          "assessedUrgency": "urgent",
+          "needs": [
+            "assessment",
+            "pediatric"
+          ],
+          "summary": "Pediatric assessment and transport need."
+        },
+        {
+          "type": "incident",
+          "id": "incident:tistedal-call",
+          "label": "Tistedal assessment call",
+          "position": [
+            11.45,
+            59.125
+          ],
+          "dispatchUrgency": "urgent",
+          "summary": "Competing assessment call with a possible explicit no-transport outcome after operator review."
+        },
+        {
+          "type": "patient",
+          "id": "patient:tistedal",
+          "label": "Tistedal patient",
+          "incidentId": "incident:tistedal-call",
+          "assessedUrgency": "urgent",
+          "needs": [
+            "assessment"
+          ],
+          "summary": "Operational assessment and transport decision; no automated diagnosis."
+        }
+      ]
+    },
+    {
+      "id": "drone",
+      "config": {
+        "maxDrones": 8,
+        "models": []
+      },
+      "items": [
+        {
+          "type": "drone",
+          "id": "drone:halden-search",
+          "label": "Halden fixed-wing search",
+          "position": [
+            11.34,
+            59.2
+          ],
+          "modelId": "incident-response-fixed-wing",
+          "altitudeM": 180,
+          "headingDeg": 210
+        },
+        {
+          "type": "drone",
+          "id": "drone:halden-inspection",
+          "label": "Halden incident quadcopter",
+          "position": [
+            11.445,
+            59.13
+          ],
+          "modelId": "incident-response-quadcopter",
+          "altitudeM": 80,
+          "headingDeg": 150
+        }
+      ]
+    },
+    {
+      "id": "einsatz",
+      "config": {
+        "lexicon": {
+          "workList": "Supply requests",
+          "unitBoard": "Vehicles",
+          "noWork": "No requests waiting",
+          "close": "Close request",
+          "send": "Send",
+          "hold": "Stop",
+          "on-task": "Unloading"
+        },
+        "loadClasses": [
+          {
+            "id": "P1",
+            "label": "Urgent",
+            "code": "P1",
+            "noun": {
+              "one": "pallet",
+              "other": "pallets"
+            }
+          },
+          {
+            "id": "P2",
+            "label": "Routine",
+            "code": "P2",
+            "noun": {
+              "one": "pallet",
+              "other": "pallets"
+            }
+          }
+        ],
+        "unitTypes": [
+          {
+            "id": "depot",
+            "label": "Depot",
+            "icon": "warehouse",
+            "tags": [
+              "logistics"
+            ],
+            "public": true,
+            "components": {}
+          },
+          {
+            "id": "supply-truck",
+            "label": "Supply truck",
+            "icon": "truck",
+            "tags": [
+              "logistics"
+            ],
+            "components": {
+              "mobility": {
+                "mode": "road"
+              },
+              "service": {
+                "provides": [
+                  "supply"
+                ],
+                "onSceneS": 180
+              }
+            },
+            "properties": [
+              {
+                "id": "payloadKg",
+                "label": "Payload",
+                "kind": "number",
+                "unit": "kg",
+                "min": 0,
+                "max": 20000,
+                "default": 1000,
+                "board": true
+              }
+            ],
+            "standingOrders": {
+              "return": {
+                "afterIdleS": 60
+              }
+            }
+          }
+        ],
+        "taskTemplates": [
+          {
+            "id": "supply",
+            "label": "Supply request",
+            "icon": "package",
+            "priorityClass": "P2",
+            "requires": [
+              {
+                "provides": "supply",
+                "count": 1,
+                "label": {
+                  "one": "supply truck",
+                  "other": "supply trucks"
+                },
+                "where": [
+                  {
+                    "property": "payloadKg",
+                    "atLeast": 500
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "bulk",
+            "label": "Bulk request",
+            "icon": "container",
+            "priorityClass": "P1",
+            "requires": [
+              {
+                "provides": "supply",
+                "count": 1,
+                "label": {
+                  "one": "heavy truck",
+                  "other": "heavy trucks"
+                },
+                "where": [
+                  {
+                    "property": "payloadKg",
+                    "atLeast": 1000
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "items": [
+        {
+          "type": "unit",
+          "id": "site:brekke-depot",
+          "label": "Brekke depot",
+          "unitType": "depot",
+          "position": [
+            11.3944,
+            59.1229
+          ]
+        },
+        {
+          "type": "unit",
+          "id": "site:tosterod-depot",
+          "label": "Tosterød depot",
+          "unitType": "depot",
+          "position": [
+            11.3531,
+            59.1439
+          ]
+        },
+        {
+          "type": "unit",
+          "id": "unit:truck-1",
+          "label": "Truck 1",
+          "unitType": "supply-truck",
+          "position": [
+            11.3944,
+            59.1229
+          ],
+          "properties": {
+            "payloadKg": 300
+          }
+        },
+        {
+          "type": "unit",
+          "id": "unit:truck-3",
+          "label": "Truck 3",
+          "unitType": "supply-truck",
+          "position": [
+            11.3531,
+            59.1439
+          ],
+          "properties": {
+            "payloadKg": 800
+          }
+        },
+        {
+          "type": "unit",
+          "id": "unit:truck-4",
+          "label": "Truck 4",
+          "unitType": "supply-truck",
+          "position": [
+            11.3531,
+            59.1439
+          ],
+          "properties": {
+            "payloadKg": 1500
+          }
+        },
+        {
+          "type": "task",
+          "id": "task:field-kitchen",
+          "label": "R-1 Field kitchen",
+          "template": "supply",
+          "position": [
+            11.3381,
+            59.1491
+          ]
+        },
+        {
+          "type": "task",
+          "id": "task:sports-hall-tank",
+          "label": "U-1 Sports hall water tank",
+          "template": "bulk",
+          "position": [
+            11.36,
+            59.142
+          ]
+        }
+      ]
+    }
+  ],
+  "timeline": {
+    "cues": [
+      {
+        "id": "initial-road-response",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 0
+        },
+        "title": "Road units are already responding",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.assign",
+            "input": {
+              "unitId": "unit:halden-1",
+              "incidentId": "incident:e6-collision",
+              "patientIds": [
+                "patient:e6-a"
+              ]
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.append-stop",
+            "input": {
+              "kind": "handover",
+              "unitId": "unit:halden-1",
+              "careSiteId": "care:kalnes",
+              "patientIds": [
+                "patient:e6-a"
+              ]
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.assign",
+            "input": {
+              "unitId": "unit:halden-2",
+              "incidentId": "incident:tistedal-call",
+              "patientIds": [
+                "patient:tistedal"
+              ]
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.append-stop",
+            "input": {
+              "kind": "handover",
+              "unitId": "unit:halden-2",
+              "careSiteId": "care:halden-triage",
+              "patientIds": [
+                "patient:tistedal"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "initial-air-response",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 0
+        },
+        "title": "Medical helicopter committed to two patients",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.assign",
+            "input": {
+              "unitId": "unit:helo-ostfold",
+              "incidentId": "incident:e6-collision",
+              "patientIds": [
+                "patient:e6-b",
+                "patient:e6-c"
+              ]
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.append-stop",
+            "input": {
+              "kind": "handover",
+              "unitId": "unit:helo-ostfold",
+              "careSiteId": "care:kalnes",
+              "patientIds": [
+                "patient:e6-b",
+                "patient:e6-c"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "initial-drone-observations",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 0
+        },
+        "title": "Reconnaissance aircraft report initial incident contacts",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.observe-target",
+            "input": {
+              "droneId": "drone:halden-search",
+              "targetId": "incident:e6-collision",
+              "sensorId": "wide-area-eo"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.observe-target",
+            "input": {
+              "droneId": "drone:halden-inspection",
+              "targetId": "incident:tistedal-call",
+              "sensorId": "incident-eo-ir"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.arm",
+            "input": {
+              "droneId": "drone:halden-search",
+              "armed": true
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.navigate",
+            "input": {
+              "droneId": "drone:halden-search",
+              "target": {
+                "point": {
+                  "type": "Point",
+                  "coordinates": [
+                    11.48,
+                    59.3
+                  ]
+                },
+                "altitudeM": 180,
+                "speedMps": 17
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.arm",
+            "input": {
+              "droneId": "drone:halden-inspection",
+              "armed": true
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.navigate",
+            "input": {
+              "droneId": "drone:halden-inspection",
+              "target": {
+                "point": {
+                  "type": "Point",
+                  "coordinates": [
+                    11.38,
+                    59.16
+                  ]
+                },
+                "altitudeM": 80,
+                "speedMps": 24
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "industrial-release",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 900
+        },
+        "title": "Industrial incident with mixed needs",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "incident",
+                "id": "incident:industrial-release",
+                "label": "Industrial release — exercise",
+                "position": [
+                  11.39,
+                  59.16
+                ],
+                "dispatchUrgency": "acute",
+                "summary": "Two casualties after a synthetic industrial release; specialist burn capacity is distant and limited."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:industrial-a",
+                "label": "Industrial patient A",
+                "incidentId": "incident:industrial-release",
+                "assessedUrgency": "acute",
+                "needs": [
+                  "burn",
+                  "trauma"
+                ],
+                "summary": "Acute burn and trauma transport need in the exercise."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:industrial-b",
+                "label": "Industrial patient B",
+                "incidentId": "incident:industrial-release",
+                "assessedUrgency": "urgent",
+                "needs": [
+                  "assessment"
+                ],
+                "summary": "Urgent exposure assessment; no toxicology model."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.observe-target",
+            "input": {
+              "droneId": "drone:halden-inspection",
+              "targetId": "incident:industrial-release",
+              "sensorId": "incident-eo-ir"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.navigate",
+            "input": {
+              "droneId": "drone:halden-search",
+              "target": {
+                "point": {
+                  "type": "Point",
+                  "coordinates": [
+                    11.7,
+                    59.24
+                  ]
+                },
+                "altitudeM": 180,
+                "speedMps": 17
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "rural-fall",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1800
+        },
+        "title": "Remote rural call",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "incident",
+                "id": "incident:rural-fall",
+                "label": "Aremark rural fall",
+                "position": [
+                  11.7,
+                  59.24
+                ],
+                "dispatchUrgency": "urgent",
+                "summary": "Remote single-patient call that tests local coverage versus rotary-wing response."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:rural-fall",
+                "label": "Aremark patient",
+                "incidentId": "incident:rural-fall",
+                "assessedUrgency": "urgent",
+                "needs": [
+                  "assessment",
+                  "trauma"
+                ],
+                "summary": "Trauma assessment and transport need from a remote location."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.observe-target",
+            "input": {
+              "droneId": "drone:halden-search",
+              "targetId": "incident:rural-fall",
+              "sensorId": "wide-area-eo"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.navigate",
+            "input": {
+              "droneId": "drone:halden-search",
+              "target": {
+                "point": {
+                  "type": "Point",
+                  "coordinates": [
+                    11.37,
+                    59.11
+                  ]
+                },
+                "altitudeM": 180,
+                "speedMps": 17
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "ferry-terminal-event",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 3600
+        },
+        "title": "Ferry terminal multi-casualty event",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "incident",
+                "id": "incident:ferry-terminal",
+                "label": "Ferry terminal crowd incident",
+                "position": [
+                  11.37,
+                  59.11
+                ],
+                "dispatchUrgency": "acute",
+                "summary": "Four casualties with different transport needs create a renewed coverage and destination problem."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:ferry-a",
+                "label": "Ferry patient A",
+                "incidentId": "incident:ferry-terminal",
+                "assessedUrgency": "acute",
+                "needs": [
+                  "trauma"
+                ],
+                "summary": "Acute trauma transport need."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:ferry-b",
+                "label": "Ferry patient B",
+                "incidentId": "incident:ferry-terminal",
+                "assessedUrgency": "urgent",
+                "needs": [
+                  "pediatric",
+                  "assessment"
+                ],
+                "summary": "Pediatric assessment need."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:ferry-c",
+                "label": "Ferry patient C",
+                "incidentId": "incident:ferry-terminal",
+                "assessedUrgency": "urgent",
+                "needs": [
+                  "assessment"
+                ],
+                "summary": "Urgent assessment and possible transport."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:ferry-d",
+                "label": "Ferry patient D",
+                "incidentId": "incident:ferry-terminal",
+                "assessedUrgency": "ordinary",
+                "needs": [
+                  "assessment"
+                ],
+                "summary": "Ordinary-priority assessment need."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.drone.observe-target",
+            "input": {
+              "droneId": "drone:halden-search",
+              "targetId": "incident:ferry-terminal",
+              "sensorId": "wide-area-eo"
+            }
+          }
+        ]
+      },
+      {
+        "id": "specialist-bottleneck",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 5400
+        },
+        "title": "Specialist receiving site pauses admissions",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.set-care-site",
+            "input": {
+              "careSiteId": "care:regional-specialist",
+              "accepting": false
+            }
+          }
+        ]
+      },
+      {
+        "id": "late-evening-demand",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 6600
+        },
+        "title": "Late ordinary-priority demand",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "incident",
+                "id": "incident:late-home-call",
+                "label": "Southern Halden home call",
+                "position": [
+                  11.39,
+                  59.08
+                ],
+                "dispatchUrgency": "ordinary",
+                "summary": "A stable call arrives after sustained demand and tests whether local coverage has recovered."
+              }
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.ambulance.create-item",
+            "input": {
+              "item": {
+                "type": "patient",
+                "id": "patient:late-home",
+                "label": "Southern Halden patient",
+                "incidentId": "incident:late-home-call",
+                "assessedUrgency": "ordinary",
+                "needs": [
+                  "assessment"
+                ],
+                "summary": "Stable assessment and transport decision for the exercise."
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "second-truck",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 120
+        },
+        "title": "A 1,000 kg truck joins at the depot",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.unit.create",
+            "input": {
+              "type": "supply-truck",
+              "label": "Truck 2",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3944,
+                  59.1229
+                ]
+              },
+              "properties": {
+                "payloadKg": 1000
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "shelter-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 150
+        },
+        "title": "The shelter asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-2 Shelter",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.4169,
+                  59.1341
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "pumping-station-bulk",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 180
+        },
+        "title": "The pumping station needs a fuel tank at once",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "bulk",
+              "label": "U-2 Pumping station fuel",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.4019,
+                  59.1289
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "lighter-truck-upgraded",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 180
+        },
+        "title": "The lighter truck is upgraded to 600 kg",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.unit.adjust",
+            "input": {
+              "unitId": "unit:truck-1",
+              "properties": {
+                "payloadKg": 600
+              },
+              "reason": "Second axle fitted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "hired-truck",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 330
+        },
+        "title": "A hired 700 kg truck joins at Brekke depot",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.unit.create",
+            "input": {
+              "type": "supply-truck",
+              "label": "Truck 5",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3944,
+                  59.1229
+                ]
+              },
+              "properties": {
+                "payloadKg": 700
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "ferry-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 360
+        },
+        "title": "The ferry quay asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-3 Ferry quay",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3794,
+                  59.1214
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "church-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 540
+        },
+        "title": "The church hall asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-4 Church hall",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.4094,
+                  59.1244
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "scout-camp-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 660
+        },
+        "title": "The scout camp asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-5 Scout camp",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3456,
+                  59.1476
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "farm-shop-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 660
+        },
+        "title": "The farm shop beside the camp asks too",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-6 Farm shop",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3419,
+                  59.1431
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "clinic-bulk",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 720
+        },
+        "title": "The clinic needs a generator tank at once",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "bulk",
+              "label": "U-3 Clinic generator",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.342,
+                  59.1445
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "care-home-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 810
+        },
+        "title": "The care home asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-7 Care home",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3756,
+                  59.1139
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "library-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 900
+        },
+        "title": "The library asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-8 Library",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3906,
+                  59.1289
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "school-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 960
+        },
+        "title": "The school asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-9 School",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.374,
+                  59.1285
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "harbour-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1050
+        },
+        "title": "The guest harbour asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-10 Guest harbour",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3854,
+                  59.1236
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "marina-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1170
+        },
+        "title": "The marina asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-11 Marina",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3869,
+                  59.1176
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "community-centre-bulk",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1260
+        },
+        "title": "The community centre needs a water tank at once",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "bulk",
+              "label": "U-4 Community centre water tank",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.359,
+                  59.1465
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "youth-club-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1350
+        },
+        "title": "The youth club asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-12 Youth club",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3659,
+                  59.1416
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "allotments-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1470
+        },
+        "title": "The allotments ask for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-13 Allotments",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.3681,
+                  59.1266
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "bus-depot-request",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1620
+        },
+        "title": "The bus depot asks for supplies",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.einsatz.task.create",
+            "input": {
+              "template": "supply",
+              "label": "R-14 Bus depot",
+              "at": {
+                "type": "Point",
+                "coordinates": [
+                  11.4094,
+                  59.1191
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "exercise-end",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 1800
+        },
+        "title": "End of the exercise",
+        "actions": [
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "exercise-end",
+              "title": "End of the exercise",
+              "message": "30 minutes in, the exercise is over. Check the objectives: a heavy truck at every urgent bulk request within 4 minutes, and no request waiting more than 10 minutes for a truck.",
+              "dismissible": true,
+              "tone": "update"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

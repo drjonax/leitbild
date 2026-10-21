@@ -1,7 +1,11 @@
-import { describe, expect, test } from 'bun:test'
-import { allScenarios, devScenarios, FLAKY_SCENARIO_IDS, KEY_STATUS, NEAR_DUPLICATES, smokeScenarios } from './scenarios.ts'
+import { afterAll, describe, expect, test } from 'bun:test'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { allScenarios, devScenarios, FLAKY_SCENARIO_IDS, fixturePath, KEY_STATUS, loadScenarioModule, NEAR_DUPLICATES, runRequests, smokeScenarios } from './scenarios.ts'
 import { keyNames } from './decisive.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
+import p0 from './p0-requests.json'
 
 const catalog = referencePlantCatalog()
 
@@ -44,5 +48,55 @@ describe('display evaluation scenarios', () => {
     for (const scenario of devScenarios.filter(entry => entry.expect === 'display')) {
       expect({ id: scenario.id, signalKeys: scenario.evidence.filter(key => key.kind === 'signal' && key.use === 'P0').length > 0 }).toEqual({ id: scenario.id, signalKeys: true })
     }
+  })
+})
+
+describe('the parametric probe (plan §6, AG S1-4)', () => {
+  test('every P0 item sends what the P0 probe sent: its Scenario, the requests on its copy, the Room focus and the prompt', () => {
+    expect(allScenarios.map(scenario => scenario.id)).toEqual(p0.scenarios.map(entry => entry.id))
+    for (const scenario of allScenarios) {
+      const sent = { id: scenario.id, scenario: scenario.run.scenario, requests: runRequests(scenario.run), focus: 'run', prompt: scenario.prompt,
+        operation: scenario.operation === undefined ? null : { plantId: scenario.operation.plantId, equipment: scenario.operation.equipment } }
+      expect(sent).toEqual(p0.scenarios.find(entry => entry.id === scenario.id)! as never)
+      expect(scenario.run.pace ?? 'maximum').toBe('maximum')
+    }
+  })
+
+  test('a realtime Run sends no advance: its minutes are played, not fast-forwarded', () => {
+    expect(runRequests({ scenario: 'fixture:integrated-all-packs', setup: [], advanceMinutes: 2, pace: 'realtime' })).toEqual([])
+    expect(runRequests({ scenario: 'halden-power-complex', setup: [], advanceMinutes: 2 })).toEqual([{ operationId: 'world.simulation-run.execution.advance', input: { minutes: 2, onComplete: 'pause' } }])
+  })
+
+  test('a fixture Scenario resolves beside the World tests; a bundled id is not a fixture', () => {
+    expect(fixturePath('fixture:integrated-all-packs')).toEndWith('/apps/world/tests/fixtures/scenarios/integrated-all-packs.scenario.json')
+    expect(fixturePath('halden-power-complex')).toBeNull()
+  })
+
+  const directories: string[] = []
+  afterAll(async () => { for (const directory of directories) await rm(directory, { recursive: true, force: true }) })
+  const external = async (items: ReadonlyArray<unknown>) => {
+    const directory = await mkdtemp(join(tmpdir(), 'display-eval-scenarios-'))
+    directories.push(directory)
+    const path = join(directory, 'set.ts')
+    await writeFile(path, `export const items = ${JSON.stringify(items)}\n`)
+    return loadScenarioModule(path, 'items')
+  }
+  const item = { id: 'ext-1', prompt: 'Anything to worry about?', expect: 'either', holdout: { evidence: [] }, run: { scenario: 'halden-power-complex', setup: [], advanceMinutes: 1 } }
+
+  test('a scenario module outside the repository declares each Run; P0-style fields and follow-up turns are refused', async () => {
+    expect((await external([item]))[0]).toMatchObject({ id: 'ext-1', set: 'holdout', run: { scenario: 'halden-power-complex', setup: [], advanceMinutes: 1 } })
+    await expect(external([{ ...item, run: undefined }])).rejects.toThrow('must declare the Scenario')
+    await expect(external([{ ...item, fault: { actionId: 'turbine-trip' } }])).rejects.toThrow('belongs under run')
+    await expect(external([{ ...item, followUp: { prompt: 'And now?' } }])).rejects.toThrow('followUp')
+    await expect(external([{ ...item, run: { ...item.run, setup: [{ operationId: 'world.electric-grid.open-branch' }] } }])).rejects.toThrow('setup[0]')
+    await expect(external([{ ...item, operation: { equipment: 'x', named: 'x', tags: ['x'], proposal: 'refused' } }])).rejects.toThrow('plantId')
+  })
+
+  test('a worry module carries its keys in a worry block; pattern keys must compile', async () => {
+    const key = { key: 'names the overload', kind: 'claim', rationale: 'r', status: KEY_STATUS, use: 'P1+', patterns: ['overload'] }
+    const { holdout: _holdout, ...bare } = item
+    expect((await external([{ ...bare, worry: { evidence: [key] } }]))[0]).toMatchObject({ set: 'worry', evidence: [{ patterns: ['overload'] }] })
+    await expect(external([bare])).rejects.toThrow('holdout or a worry block')
+    await expect(external([{ ...bare, worry: { evidence: [{ ...key, patterns: ['(unclosed'] }] } }])).rejects.toThrow('invalid pattern')
   })
 })

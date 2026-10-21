@@ -4,6 +4,19 @@
  * carries the proposal, the agent may not decide, a person rejects, extends
  * or approves, the proposer withdraws. Read as plain facts (ids and times
  * left out), so the new display path can be held to the same flow.
+ *
+ * The `test-plant` fixture trips itself about 2 s into plant time (SG A
+ * low-low level, p1-plant 20 Oct). The one fact that depends on the unit's
+ * mode, the MSIV proposal and its consequence, is taken at 0 s, in power
+ * operation (the record says so); what is read after the 13 s of travel (the
+ * block valve shut, who may withdraw, the RCP refusal, the journal) are rules
+ * that do not change with the trip. At-power expiry, extension, mode change
+ * and the approval card are characterized on a steady Plant in
+ * process-plant-proposal-characterization.test.ts, so T01 adds no second
+ * steady case. The 13 s are counted from the paused clock after the approval,
+ * so the valve travels exactly 13 s however far the Run played in realtime
+ * before the pause; no recorded fact depends on time since the Scenario
+ * start (p1-plant's c6c0daf3e fixed tests that did).
  */
 import { newWorkspaceId } from '@leitbild/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'

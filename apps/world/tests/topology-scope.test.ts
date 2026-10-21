@@ -86,4 +86,22 @@ describe('generic topology scope', () => {
       { node: 'header', port: 'east', direction: 'out', edges: ['header-east', 'header-west'], others: [{ node: 'valveEast', port: 'in' }, { node: 'valveWest', port: 'in' }] },
     ])
   })
+
+  test('an undirected edge (a grid line) is reached from either end, whatever its declared orientation', () => {
+    const line = (id: string, from: string, to: string, directed: boolean) => ({ ...pipe(id, `${from}.p`, `${to}.p`, 'ac'), directed })
+    const bus = (id: string) => node(id, [{ id: 'p', media: ['ac'], direction: 'both', circuit: 'through' }])
+    const chain = (directed: boolean): TopologyGraph => topologyGraphSchema.parse({
+      objectId: 'grid:chain', revision: '1', family: 'network', media: [{ id: 'ac', label: 'AC', kind: 'electric-ac' }], groups: [],
+      nodes: [bus('north'), bus('middle'), bus('south'), bus('far')],
+      edges: [line('middle-north', 'middle', 'north', directed), line('middle-south', 'middle', 'south', directed), line('far-south', 'far', 'south', directed)],
+      boundaries: [],
+    })
+    const reached = (directed: boolean) => {
+      const result = scopeTopology(chain(directed), { around: ['north'], media: ['ac'], reach: 3 })
+      return result.ok ? result.scoped.nodes : result.refusal
+    }
+    expect(reached(false)).toEqual(['north', 'middle', 'south', 'far'])
+    // Directed, flow follows the declared orientation only: north is where the line ends.
+    expect(reached(true)).toEqual(['north', 'middle'])
+  })
 })

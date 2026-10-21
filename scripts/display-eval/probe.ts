@@ -1,8 +1,9 @@
 /** Evaluation of AI-composed operator displays on the LOCAL stack (plan v3.1
- * §6). Creates only its own Workspace and Runs. Each scenario copies a paused
- * Halden Run, optionally injects a Pack-declared fault on Unit 2, advances
- * simulated time, asks a fresh Assistant Room one question and records what
- * it presented, what every model call cost and why any correction round ran.
+ * §6). Creates only its own Workspace and Runs. Each scenario declares its Run
+ * (scenarios.ts ScenarioRun): the probe copies a paused Run of that Scenario,
+ * invokes the setup steps on the copy, plays simulated time, asks a fresh
+ * Assistant Room one question and records what it presented, what every model
+ * call cost and why any correction round ran.
  *
  *   LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> \
  *   bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<stack dir>/agents.log \
@@ -27,12 +28,13 @@
  */
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { allScenarios, devScenarios, loadScenarioModule, smokeScenarios, type EvalScenario, type OperationExpectation } from './scenarios.ts'
+import { allScenarios, devScenarios, fixturePath, loadScenarioModule, runRequests, smokeScenarios, type EvalScenario, type ScenarioRun } from './scenarios.ts'
 import { displayEvidenceOf, scoreKey, addedEvidenceUse, answerProse, type ComposeRecord, type KeyResult } from './decisive.ts'
 import { correctionsIn, type Correction } from './corrections.ts'
 import { callsBetween, logOffset, summariseCalls, type ModelCall } from './billing.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 import { operationChecks } from './operation-checks.ts'
+import { worryVerdict } from './worry.ts'
 
 const usage = 'Usage: LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/probe.ts <stage> <absolute-output-dir> --agents-log=<path> [--set=dev|smoke|near-duplicate|all] [--scenarios=<abs module>#<export>] [--model=<id>] [--upstream=<name>] [--request-display] [scenario-id ...]'
 const [stage, directory, ...rest] = Bun.argv.slice(2)
@@ -66,7 +68,6 @@ const origin = process.env.LEITBILD_PROBE_ORIGIN
 if (origin === undefined || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(origin).hostname)) {
   throw new Error('LEITBILD_PROBE_ORIGIN must be a loopback local stack; the display evaluation never runs against production')
 }
-const plantId = 'plant:halden-2'
 const catalog = referencePlantCatalog()
 await mkdir(directory, { recursive: true })
 if (await Bun.file(join(directory, `${stage}-summary.json`)).exists()) throw new Error('Stage already exists; choose a new stage name, do not overwrite evidence')
@@ -85,36 +86,66 @@ const actor = { kind: 'human', id: 'display-probe', displayName: 'Display probe'
 const invoke = (workspaceId: string, operationId: string, input: unknown, target: Record<string, unknown> = {}) =>
   request(`/api/workspaces/${workspaceId}/capabilities/${operationId}/invoke`, { ...target, input, actor })
 
-// One paused seed Run per output directory; every scenario works on its own copy.
+// One Workspace and one paused seed Run per Scenario and output directory; every scenario works on its own copy.
 const seedFile = Bun.file(join(directory, 'seed.json'))
-const seed: { workspaceId: string; resource: Record<string, string> } = await seedFile.exists() ? await seedFile.json() : await (async () => {
-  const { workspace } = await request('/api/workspaces', { name: 'Operator display evaluation (local)' })
-  const { definitions } = await request(`/api/workspaces/${workspace.id}/definitions`)
-  const definition = definitions.find((entry: { ref: { id: string } }) => entry.ref.id === 'halden-power-complex')
-  if (!definition) throw new Error('Expected bundled Halden scenario is absent')
-  const launched = await invoke(workspace.id, 'world.scenario.start', {}, { definition: { ...definition.ref, revisionId: definition.currentRevisionId } })
+const seeds: { workspaceId: string; runs: Record<string, Record<string, string>> } = await seedFile.exists() ? await seedFile.json()
+  : { workspaceId: (await request('/api/workspaces', { name: 'Operator display evaluation (local)' })).workspace.id, runs: {} }
+const { workspaceId } = seeds
+const seedOf = async (scenario: string): Promise<Record<string, string>> => {
+  if (seeds.runs[scenario] !== undefined) return seeds.runs[scenario]!
+  // A repository fixture is saved in this Workspace only: it is never a product Scenario.
+  const fixture = fixturePath(scenario)
+  const source = fixture === null ? null : await Bun.file(fixture).json()
+  if (source !== null && `fixture:${source.id}` !== scenario) throw new Error(`${fixture} holds Scenario ${source.id}, not ${scenario}`)
+  if (source !== null) await invoke(workspaceId, 'world.scenario.create', { source })
+  const { definitions } = await request(`/api/workspaces/${workspaceId}/definitions`)
+  const definition = definitions.find((entry: { ref: { id: string } }) => entry.ref.id === (source?.id ?? scenario))
+  if (!definition) throw new Error(`Scenario ${scenario} is absent`)
+  const launched = await invoke(workspaceId, 'world.scenario.start', {}, { definition: { ...definition.ref, revisionId: definition.currentRevisionId } })
   const resource = launched.createdResources?.find((entry: { type: string }) => entry.type === 'world.simulation-run') ?? launched.result?.resource
   if (!resource) throw new Error('Launch did not return a Simulation Run reference')
-  await invoke(workspace.id, 'world.simulation-run.execution.set', { playback: 'paused' }, { resource })
-  const created = { workspaceId: workspace.id as string, resource }
-  await save('seed', created)
-  return created
-})()
-const { workspaceId } = seed
+  await invoke(workspaceId, 'world.simulation-run.execution.set', { playback: 'paused' }, { resource })
+  seeds.runs[scenario] = resource
+  await save('seed', seeds)
+  return resource
+}
 
 const presence = (runId: string) => request(`/api/workspaces/${workspaceId}/world/simulation-runs/${encodeURIComponent(runId)}/presence`)
 
-const advance = async (resource: Record<string, string>, minutes: number): Promise<void> => {
-  const before = Date.parse((await presence(resource.id!)).execution.currentSimulationTime)
-  await invoke(workspaceId, 'world.simulation-run.execution.advance', { minutes, onComplete: 'pause' }, { resource })
-  const target = before + minutes * 60_000
-  const deadline = Date.now() + 300_000 // Probe patience, not a product limit.
+const simulationMs = async (resource: Record<string, string>) => Date.parse((await presence(resource.id!)).execution.currentSimulationTime)
+const ADVANCE = 'world.simulation-run.execution.advance'
+
+/**
+ * Sends the scenario's Run requests (runRequests) on its copy, waiting out an
+ * advance, then plays realtime minutes when the Run declares that pace. Returns
+ * the first refusal: the scenario's defect, recorded and not scored.
+ */
+const prepare = async (resource: Record<string, string>, run: ScenarioRun): Promise<string | null> => {
+  for (const [at, step] of runRequests(run).entries()) {
+    const before = await simulationMs(resource)
+    const refused = await invoke(workspaceId, step.operationId, step.input, { resource }).then(() => null, (error: unknown) => `request ${at} (${step.operationId}): ${String(error).slice(0, 600)}`)
+    if (refused !== null) return refused
+    if (step.operationId === ADVANCE) await reach(resource, before + Number(step.input.minutes) * 60_000, false)
+  }
+  if (run.pace === 'realtime' && run.advanceMinutes !== undefined) {
+    const before = await simulationMs(resource)
+    await invoke(workspaceId, 'world.simulation-run.execution.set', { playback: 'playing', pace: 'realtime' }, { resource })
+    await reach(resource, before + run.advanceMinutes * 60_000, true)
+  }
+  return null
+}
+
+// Waits until the Run stands at or past `target` (pausing it there when it plays in realtime). Probe patience, not a product limit.
+const reach = async (resource: Record<string, string>, target: number, realtime: boolean): Promise<void> => {
+  const deadline = Date.now() + 300_000 + (realtime ? target - await simulationMs(resource) : 0)
   while (Date.now() < deadline) {
     const state = await presence(resource.id!)
-    if (state.execution.playback === 'paused' && Date.parse(state.execution.currentSimulationTime) >= target) return
-    await Bun.sleep(2_000)
+    const at = Date.parse(state.execution.currentSimulationTime)
+    if (realtime && at >= target) { await invoke(workspaceId, 'world.simulation-run.execution.set', { playback: 'paused' }, { resource }); return }
+    if (state.execution.playback === 'paused' && at >= target) return
+    await Bun.sleep(realtime ? 1_000 : 2_000)
   }
-  throw new Error(`Run ${resource.id} did not advance ${minutes} min within the probe deadline`)
+  throw new Error(`Run ${resource.id} did not reach ${new Date(target).toISOString()} within the probe deadline`)
 }
 
 interface ComposeOutcome {
@@ -182,11 +213,14 @@ const proposeAttemptsOf = (operations: ReadonlyArray<TurnOperation>) =>
     ...(result?.success === true ? {} : { error: String(result?.error ?? 'no result').slice(0, 400) }),
   }))
 
-// What World holds after the answer: every proposal the Plant keeps on this Run, read as the probe (a query; the probe never decides).
+// What World holds after the answer: every proposal each Plant of the Run keeps, read as the probe (a query; the probe never decides).
 const readProposals = async (resource: Record<string, string>) => {
-  const { result } = await invoke(workspaceId, 'world.process-plant.control.proposals', { plantId }, { resource })
+  const { objects } = await request(`/api/workspaces/${workspaceId}/world/simulation-runs/${encodeURIComponent(resource.id!)}/objects`)
+  const plants = (objects as ReadonlyArray<{ id: string; packId: string }>).filter(object => object.packId === 'process-plant').map(object => object.id)
+  const read = await Promise.all(plants.map(async plantId => ({ plantId, result: (await invoke(workspaceId, 'world.process-plant.control.proposals', { plantId }, { resource })).result })))
   // A proposal is a write, or an actuation's reset, which has no path or value.
-  const entries = (result.proposals as ReadonlyArray<{ proposal: any; review?: any }>).map(({ proposal, review }) => ({
+  const entries = read.flatMap(({ plantId, result }) => (result.proposals as ReadonlyArray<{ proposal: any; review?: any }>).map(({ proposal, review }) => ({
+    plantId,
     id: proposal.id as string,
     item: proposal.item as string,
     path: (proposal.write?.path ?? null) as string | null,
@@ -200,9 +234,9 @@ const readProposals = async (resource: Record<string, string>) => {
     procedureStep: proposal.procedureStep ?? null,
     evidence: (proposal.evidence as ReadonlyArray<{ tagId: string }>).map(entry => entry.tagId),
     ...(review === undefined ? {} : { permitted: review.permitted as boolean, ...(review.refusal === undefined ? {} : { refusal: review.refusal as string }) }),
-  }))
+  })))
   return {
-    plantElapsedMs: result.plantElapsedMs as number,
+    plantElapsedMs: Object.fromEntries(read.map(({ plantId, result }) => [plantId, result.plantElapsedMs as number])),
     count: entries.length,
     controls: entries.map(entry => entry.path),
     values: entries.map(entry => entry.value),
@@ -217,7 +251,7 @@ const consequenceLine = (line: any): { readonly text: string; readonly mayActuat
 
 // The equipment's controls as a person sees them now: each option's word, the trips it sets going, what it takes away
 // (its consequence line, in option order), and what holds it; and every latched actuation's RESET, offered or why not.
-const readControls = async (resource: Record<string, string>, equipment: string) => {
+const readControls = async (resource: Record<string, string>, plantId: string, equipment: string) => {
   const { result } = await invoke(workspaceId, 'world.process-plant.controls.list', { plantId, items: [equipment] }, { resource })
   const items = (result.items as ReadonlyArray<any>).map(item => ({
     id: item.id,
@@ -349,25 +383,20 @@ const requestDisplay = async (roomId: string, roomPath: string, human: { id: str
 
 const rows: Array<Record<string, unknown>> = []
 for (const scenario of chosen) {
-  const copy = await invoke(workspaceId, 'world.simulation-run.copy', { name: `Display probe · ${stage} · ${scenario.id}` }, { resource: seed.resource })
+  const copy = await invoke(workspaceId, 'world.simulation-run.copy', { name: `Display probe · ${stage} · ${scenario.id}` }, { resource: await seedOf(scenario.run.scenario) })
   const resource = copy.createdResources?.find((entry: { type: string }) => entry.type === 'world.simulation-run') ?? copy.result?.resource
   if (!resource) throw new Error('Copy did not return a Simulation Run reference')
-  if (scenario.fault) {
-    // A fault the Plant refuses in this state is the scenario's defect, not the answer's: it is recorded and not scored.
-    const refused = await invoke(workspaceId, 'world.process-plant.action.invoke', { plantId, actionId: scenario.fault.actionId, parameters: scenario.fault.parameters ?? {} }, { resource })
-      .then(() => null, (error: unknown) => String(error).slice(0, 600))
-    if (refused !== null) {
-      const row = { id: scenario.id, set: scenario.set, flaky: scenario.flaky, expect: scenario.expect, answerType: 'setup-refused', setupError: refused, runId: resource.id }
-      rows.push(row)
-      await save(`${stage}-${scenario.id}`, { scenario, row })
-      await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
-      console.log(JSON.stringify({ id: scenario.id, setupRefused: refused }))
-      continue
-    }
+  const prepareStarted = Date.now()
+  const refused = await prepare(resource, scenario.run)
+  if (refused !== null) {
+    const row = { id: scenario.id, set: scenario.set, flaky: scenario.flaky, expect: scenario.expect, answerType: 'setup-refused', setupError: refused, runId: resource.id }
+    rows.push(row)
+    await save(`${stage}-${scenario.id}`, { scenario, row })
+    await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+    console.log(JSON.stringify({ id: scenario.id, setupRefused: refused }))
+    continue
   }
-  const advanceStarted = Date.now()
-  if (scenario.advanceMinutes !== undefined) await advance(resource, scenario.advanceMinutes)
-  const advanceWallMs = Date.now() - advanceStarted
+  const prepareWallMs = Date.now() - prepareStarted
   const opened = await invoke(workspaceId, 'agents.assistance.open', { scope: { kind: 'resource', resource }, title: `Display probe · ${scenario.id}`, focusedSubjects: [resource] })
   if (opened.result.reused) throw new Error('Probe requires a fresh Room per scenario')
   const roomId = opened.result.resource.id as string
@@ -398,7 +427,7 @@ for (const scenario of chosen) {
   // Every scenario's Run is read for proposals, so one the agent made unasked is on record too.
   const proposals = await readProposals(resource)
   // A listing World refuses is recorded with its reason; the operation is still judged on the answer and the proposals.
-  const controls = scenario.operation === undefined ? null : await readControls(resource, scenario.operation.equipment)
+  const controls = scenario.operation === undefined ? null : await readControls(resource, scenario.operation.plantId, scenario.operation.equipment)
     .then(listed => listed, (error: unknown) => ({ items: [], resets: [], error: String(error).slice(0, 400) }))
   const operation = scenario.operation === undefined || controls === null ? null
     : operationChecks(scenario.operation, answer.type === 'chat', answer.content, proposals, proposeAttemptsOf(operations), accepted, fence !== null, controls.items)
@@ -428,8 +457,9 @@ for (const scenario of chosen) {
     decisiveSignalHits: scoredSignals.filter(result => result.hit === true).length,
     decisivePass: scenario.expect !== 'display' || scoredSignals.length === 0 ? null : fence !== null && scoredSignals.every(result => result.hit === true),
     staleKeyNames: [...new Set(decisive.flatMap(result => result.unknown))],
+    ...(scenario.set === 'worry' ? { worry: answer.type === 'chat' ? worryVerdict(scenario.evidence, answer.content) : null } : {}),
     addedEvidence: display === null ? [] : addedEvidenceUse(display, answer.content),
-    advanceWallMs,
+    prepareWallMs,
     wallMs,
     interimMessages: interim.length,
     answerChars: answer.content.length,
@@ -460,7 +490,7 @@ for (const scenario of chosen) {
     ...(requested === null ? {} : { requestedReply: requested.reply, requestedInterim: requested.interim, requestedCalls: requested.calls }),
   })
   await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
-  console.log(JSON.stringify({ id: fullRow.id, displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
+  console.log(JSON.stringify({ id: fullRow.id, displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, ...('worry' in fullRow ? { worry: fullRow.worry?.pass ?? null } : {}), modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
 }
 
 const { summariseRows } = await import('./report.ts')
