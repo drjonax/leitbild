@@ -18,6 +18,9 @@ import {
   type ObcAutomationButton,
 } from '@oicl/openbridge-webcomponents/dist/automation/automation-button/automation-button.js'
 import { TankOrientation, TankPositioning, TankType, type ObcAutomationTank } from '@oicl/openbridge-webcomponents/dist/automation/automation-tank/automation-tank.js'
+// The steam generators' and condenser's vessel. Nothing but its type is read from it, and a type-only
+// import is erased, so the module that defines the element is imported for that alone (openbridge-usage.test.ts).
+import '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
 import type { ObcHeatExchanger } from '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
 import { SpecialtyTankMedium } from '@oicl/openbridge-webcomponents/dist/automation/specialty-tank/abstract-specialty-tank.js'
 import { LineMedium } from '@oicl/openbridge-webcomponents/dist/automation/index.js'
