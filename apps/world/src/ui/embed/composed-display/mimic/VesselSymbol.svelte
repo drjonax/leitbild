@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { MimicDrawnItem } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
-  import { insertedFraction, vesselGeometry } from './vessel-symbol.ts'
+  import { insertedFraction, vesselGeometry } from '../../vignette/vessel-symbol.ts'
   import type { SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
 
   // A reactor vessel (vessel-symbol.ts) in OpenBridge's instrument tokens:

@@ -9,7 +9,8 @@ import { overviewScope } from '../src/packs/process-plant/displays/mimic/princip
 import { chatMimicProfile, overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { QUICK_LOOK_DOT, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample } from '../src/ui/embed/composed-display/composed-display-client.ts'
-import { keptInWindow, movedOverlay, nextPopover, OVERLAY_WIDTH, popoverPlacement, POPOVER_CLOSED, POPOVER_WIDTH, QUICK_LOOK_ROW, raisedOverlay, resizedOverlay, togglePinned, type PinnedOverlay, type PopoverMode, type PopoverState } from '../src/ui/embed/composed-display/mimic/popover.ts'
+import { keptInWindow, movedOverlay, OVERLAY_WIDTH, QUICK_LOOK_ROW, raisedOverlay, resizedOverlay, togglePinned, type PinnedOverlay } from '../src/ui/embed/composed-display/mimic/popover.ts'
+import { nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_WIDTH, type PopoverMode, type PopoverState } from '../src/ui/embed/vignette/popover.ts'
 import { createMimicQuickLook, type QuickLookState } from '../src/ui/embed/composed-display/mimic/quick-look-source.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 

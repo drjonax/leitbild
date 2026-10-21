@@ -1,13 +1,10 @@
-import type { MimicVesselDrawing } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
-import { openBridgeDevice } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
-
-// A reactor vessel drawn from the model in OpenBridge's tokens (D-2): its
+// A pressure vessel drawn from the model in OpenBridge's tokens (D-2): its
 // head on a flange, its body, its bottom dome, collars where the layout
 // brought its pipes, its level as the fill, and where it heats, its core
 // region with each part it inserts (a rod bank) hanging into it by its
 // inserted length, and what of it stands withdrawn drawn above the region,
 // at least ROD_SHOWN long, so a bank out of the core is seen as out, not
-// missing. Pure geometry in the box's own px; VesselSymbol.svelte
+// missing. Pure geometry in the box's own px; Vessel.svelte
 // draws it. The fill is the level the model reads (a collapsed level over
 // the interior, not a water surface), so nothing marks the core's top as
 // covered or uncovered.
@@ -36,7 +33,16 @@ export interface VesselGeometry {
   } | null
 }
 
-const { dome: DOME, flange: FLANGE, bottomDome: BOTTOM_DOME, coreBand: CORE_BAND } = openBridgeDevice.reactorVessel
+/** The head's dome and flange, the bottom dome, and a core region's least height, in px (register: reactor-vessel). */
+export const VESSEL_SHAPE = { dome: 30, flange: 6, bottomDome: 20, coreBand: 72 } as const
+const { dome: DOME, flange: FLANGE, bottomDome: BOTTOM_DOME, coreBand: CORE_BAND } = VESSEL_SHAPE
+
+/** Where the vessel stands in its box: its span across it, its nozzles in drawing px, and its core region, if any. */
+export interface VesselDrawing {
+  readonly span: { readonly x: number; readonly width: number }
+  readonly nozzles: ReadonlyArray<{ readonly x: number; readonly y: number; readonly face: 'top' | 'right' | 'bottom' | 'left' }>
+  readonly core: 'band' | 'overlap' | null
+}
 /** Overlapping its nozzles, a core region takes at least this share of a tall body, so its rods read at a glance. */
 const CORE_SHARE = 0.55
 /** A collar is this tall across its pipe. */
@@ -58,17 +64,17 @@ export const insertedFraction = (value: number | null, range: { readonly min: nu
 }
 
 export const vesselGeometry = (input: {
-  /** The box's height; the vessel stands across its span of the box (MimicVesselDrawing.span). */
+  /** The box's height; the vessel stands across its span of the box. */
   readonly height: number
   /** The box's place on the drawing: its nozzles are given in drawing px. */
   readonly origin: { readonly x: number; readonly y: number }
-  readonly drawing: MimicVesselDrawing
+  readonly drawing: VesselDrawing
   /** The fill, in percent of the interior; null where it is not known. */
   readonly level: number | null
   /** Each part's inserted fraction (insertedFraction), in its groups. */
   readonly groups: ReadonlyArray<ReadonlyArray<number | null>>
 }): VesselGeometry => {
-  // The vessel stands in its own span of the box (MimicVesselDrawing.span), as wide as that span.
+  // The vessel stands in its own span of the box, as wide as that span.
   const { x: left, width: w } = input.drawing.span
   const h = input.height
   const scale = w / 72

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from '../src/ui/embed/composed-display/mimic/pipe-segments.ts'
+import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from '../src/ui/embed/vignette/pipe-segments.ts'
 
 describe('pipes as OpenBridge connector-diagram segments', () => {
   test('a bend is a radius-8 corner between straights', () => {

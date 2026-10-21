@@ -7,7 +7,7 @@
 // priorities; "on" only from a boolean or a state declared active (ruling Q8).
 import type { Segment } from '@oicl/connector-diagram'
 import type { Observation } from '../../../core/observation/model.ts'
-import { pipeSegments, stubEndSegment } from '../composed-display/mimic/pipe-segments.ts'
+import { pipeSegments, stubEndSegment } from './pipe-segments.ts'
 import { VIGNETTE_ROW_PX } from './grid.ts'
 import type { TopologyBinding, VignetteSection } from '../../../features/displays/compose/model.ts'
 import { activeState, readingLook, toneOf, type AlertTone } from './readout.ts'

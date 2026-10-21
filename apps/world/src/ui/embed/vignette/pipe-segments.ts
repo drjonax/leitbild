@@ -1,5 +1,4 @@
 import { CORNER_RADIUS, OVERLAP_HALF_GAP, type PipeSize, type PipeValue, type Segment } from '@oicl/connector-diagram'
-import type { FlowLook } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
 
 // A routed pipe as OpenBridge connector-diagram segments: straight runs with
 // OpenBridge's rounded corners, a clean gap where another run crosses over, a
@@ -9,8 +8,11 @@ import type { FlowLook } from '../../../../packs/process-plant/displays/mimic/ev
 type Point = readonly [number, number]
 type Direction = 'top' | 'right' | 'bottom' | 'left'
 
+/** How a pipe's flow reads: in its direction or against it, flowing in a direction not known, none, or not known; a power line live or dead. */
+export type PipeLook = 'forward' | 'reverse' | 'flowing' | 'none' | 'unknown' | 'live' | 'dead'
+
 /** Hollow below the no-flow band, dashed when unknown; never `closed`, which would read as a shut pipe. */
-export const pipeValue = (look: FlowLook['look'] | 'live' | 'dead'): PipeValue =>
+export const pipeValue = (look: PipeLook): PipeValue =>
   look === 'none' || look === 'dead' ? 'empty' : look === 'unknown' ? 'closed-dash' : 'open-flow'
 
 const directionOf = (from: Point, to: Point): Direction =>

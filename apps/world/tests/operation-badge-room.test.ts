@@ -11,7 +11,7 @@ import { compileDetailDisplay, compileOverviewDisplay, type OverviewView } from 
 import type { MimicDrawnItem } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { plantControlsFor } from '../src/packs/process-plant/operations/controls.ts'
 import { badgeRoom } from '../src/ui/embed/composed-display/mimic/badge-room.ts'
-import type { Box } from '../src/ui/embed/composed-display/mimic/popover.ts'
+import type { Box } from '../src/ui/embed/vignette/popover.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
 guardPlantTests()

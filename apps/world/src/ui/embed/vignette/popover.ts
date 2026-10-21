@@ -1,0 +1,73 @@
+// The pop-over an interactive drawing opens on one of its items, and where it
+// stands: a press (a click, a tap, Enter or Space) opens the item's pop-over
+// with its actions, and a second press on it closes it; hovering a moment
+// opens a quick look, which never takes over a pop-over a press opened;
+// leaving, Esc or a press outside close either. It never covers the item it
+// is about, and reads at 100 % whatever the display's zoom.
+
+/** How long the pointer rests on a dot before its quick look opens, and how long it may be away before the popover closes. */
+export const POPOVER_INTENT_MS = 300
+
+/** What a popover shows: its quick look (hovered), or everything an item offers, its controls too (pressed, or pinned). */
+export type PopoverMode = 'look' | 'operate'
+
+export type PopoverState =
+  | { readonly kind: 'closed' }
+  | { readonly kind: 'open'; readonly item: string; readonly mode: PopoverMode }
+
+export type PopoverEvent =
+  /** The pointer rested on a dot for POPOVER_INTENT_MS. */
+  | { readonly kind: 'hovered'; readonly item: string }
+  /** The pointer left the dot and the popover for POPOVER_INTENT_MS, while nothing in the popover has focus. */
+  | { readonly kind: 'left' }
+  /** A click, a tap, Enter or Space on a dot. */
+  | { readonly kind: 'pressed'; readonly item: string }
+  /** Esc, or a press outside the dot and the popover. */
+  | { readonly kind: 'dismissed' }
+
+export const POPOVER_CLOSED: PopoverState = { kind: 'closed' }
+
+/**
+ * The next popover state. A press opens an item's popover with its controls,
+ * and a second press on its dot closes it; hovering opens a quick look and
+ * never takes over a popover a press opened; leaving closes either.
+ */
+export const nextPopover = (state: PopoverState, event: PopoverEvent): PopoverState => {
+  if (event.kind === 'dismissed' || event.kind === 'left') return POPOVER_CLOSED
+  if (event.kind === 'hovered') return state.kind === 'open' && state.mode === 'operate' ? state : { kind: 'open', item: event.item, mode: 'look' }
+  if (state.kind === 'open' && state.item === event.item && state.mode === 'operate') return POPOVER_CLOSED
+  return { kind: 'open', item: event.item, mode: 'operate' }
+}
+
+export interface Box {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
+/**
+ * Where a popover goes, in the page's px: beside its item where it fits
+ * (right, then left), else under or over it, so it never covers the item it
+ * is about; clamped inside the page where nothing fits. `scale` is how much
+ * the page is magnified on screen: the popover is drawn at 1/scale, so it
+ * reads at 100 % whatever the display's zoom, and takes that much more room.
+ */
+export const popoverPlacement = (item: Box, popover: { readonly width: number; readonly height: number }, page: { readonly width: number; readonly height: number }, scale: number): { readonly x: number; readonly y: number } => {
+  const width = popover.width / scale
+  const height = popover.height / scale
+  const gap = 8 / scale
+  const clampX = (x: number): number => Math.min(Math.max(0, x), Math.max(0, page.width - width))
+  const clampY = (y: number): number => Math.min(Math.max(0, y), Math.max(0, page.height - height))
+  const candidates = [
+    { x: item.x + item.width + gap, y: clampY(item.y), fits: item.x + item.width + gap + width <= page.width },
+    { x: item.x - gap - width, y: clampY(item.y), fits: item.x - gap - width >= 0 },
+    { x: clampX(item.x), y: item.y + item.height + gap, fits: item.y + item.height + gap + height <= page.height },
+    { x: clampX(item.x), y: item.y - gap - height, fits: item.y - gap - height >= 0 },
+  ]
+  const chosen = candidates.find(candidate => candidate.fits)
+  return chosen === undefined ? { x: clampX(item.x + item.width + gap), y: clampY(item.y) } : { x: chosen.x, y: chosen.y }
+}
+
+/** A popover's width, in its own px. */
+export const POPOVER_WIDTH = 340
