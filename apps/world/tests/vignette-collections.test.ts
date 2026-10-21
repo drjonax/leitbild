@@ -71,15 +71,15 @@ describe('network drawing', () => {
 
   test('each class is drawn by its OpenBridge element; a line element is a line; "on" only where declared (Q8); an open line is empty', () => {
     const states = [{ value: 'closed', label: 'closed', active: true as const }, { value: 'open', label: 'open' }]
-    const node = (id: string, cls: VignetteSection & { kind: 'topology' } extends { nodes: ReadonlyArray<infer N> } ? N extends { class: infer C } ? C : never : never, x: number, bindings: ReadonlyArray<{ role: 'conducting' | 'flow'; ref: string; unit: string; states?: typeof states }> = []) =>
+    const node = (id: string, cls: VignetteSection & { kind: 'topology' } extends { nodes: ReadonlyArray<infer N> } ? N extends { class: infer C } ? C : never : never, x: number, bindings: ReadonlyArray<{ role: 'conducting' | 'flow'; ref: string; quantity: 'state' | 'electric-power'; unit: string; states?: typeof states }> = []) =>
       ({ box: { id, x, y: 0, width: 4, height: 3, ports: {} }, node: { id, class: cls, label: `${id} name`, bindings } })
     const parts = [
-      node('bus-1', 'bus', 0), node('tx-1', 'converter', 6, [{ role: 'conducting', ref: 'g#tx.state', unit: '', states }]),
-      node('line-1', 'transfer', 12, [{ role: 'conducting', ref: 'g#line.state', unit: '', states }, { role: 'flow', ref: 'g#line.flow', unit: 'MW' }]),
+      node('bus-1', 'bus', 0), node('tx-1', 'converter', 6, [{ role: 'conducting', ref: 'g#tx.state', quantity: 'state', unit: '', states }]),
+      node('line-1', 'transfer', 12, [{ role: 'conducting', ref: 'g#line.state', quantity: 'state', unit: '', states }, { role: 'flow', ref: 'g#line.flow', quantity: 'electric-power', unit: 'MW' }]),
       node('sw-1', 'switch', 18), node('s0', 'stop', 24),
     ]
     const section: Extract<VignetteSection, { kind: 'topology' }> = {
-      kind: 'topology', rows: 4, objectId: 'g', family: 'network', nodes: parts.map(part => part.node), edges: [],
+      kind: 'topology', rows: 4, objectId: 'g', packId: 'p', family: 'network', nodes: parts.map(part => part.node), edges: [],
       layout: { family: 'network', unit: 'grid', width: 28, height: 3, crossings: 0, hash: 'h', nodes: parts.map(part => part.box),
         edges: [{ id: 'e1', points: [[4, 1], [6, 1]], gaps: [] }, { id: 'e2', points: [[10, 1], [12, 1]], gaps: [] }, { id: 'e3', points: [[16, 1], [24, 1]], gaps: [[20, 1]] }] },
     }
@@ -120,9 +120,9 @@ describe('network drawing', () => {
       const layout = await networkLayout(scoped.scoped, sizing)
       const nodes = new Map(graph.nodes.map(node => [node.id, node]))
       const section: Extract<VignetteSection, { kind: 'topology' }> = {
-        kind: 'topology', rows: layout.height + 1, objectId: graph.objectId, family: 'network', layout,
+        kind: 'topology', rows: layout.height + 1, objectId: graph.objectId, packId: 'electric-grid', family: 'network', layout,
         nodes: [
-          ...scoped.scoped.nodes.map(id => { const node = nodes.get(id)!; return { id, class: node.class, label: node.label, ...(node.shortLabel === undefined ? {} : { shortLabel: node.shortLabel }), bindings: node.bindings.map(binding => ({ ...binding, unit: binding.role === 'flow' ? 'MW' : binding.role === 'loading' ? '%' : '' })) } }),
+          ...scoped.scoped.nodes.map(id => { const node = nodes.get(id)!; return { id, class: node.class, label: node.label, ...(node.shortLabel === undefined ? {} : { shortLabel: node.shortLabel }), bindings: node.bindings.map(binding => ({ ...binding, ...(binding.role === 'flow' ? { quantity: 'electric-power' as const, unit: 'MW' } : binding.role === 'loading' ? { quantity: 'loading' as const, unit: '%' } : { quantity: 'state' as const, unit: '' }) })) } }),
           ...scoped.scoped.stubs.map((stop, at) => ({ id: `s${at}`, class: 'stop' as const, label: stop.others.map(other => other.node).join(', ').slice(0, 24), bindings: [] })),
         ],
         edges: [], ...(graph.attribution === undefined ? {} : { attribution: graph.attribution }),

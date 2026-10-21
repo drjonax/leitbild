@@ -25,9 +25,9 @@ describe('an unknown Pack gets vignettes from its declarations alone', () => {
     const { view, sample, card } = await opened('unit:one')
     expect(view.sections.map(section => section.kind)).toEqual(['values', 'topology'])
     const topology = view.sections[1]
-    expect(topology?.kind === 'topology' && topology.family).toBe('flow')
+    expect(topology?.kind === 'topology' && [topology.family, topology.packId]).toEqual(['flow', 'fixture'])
     expect(topology?.kind === 'topology' && topology.nodes.map(node => [node.id, node.class])).toEqual([['tank', 'store'], ['engine', 'mover']])
-    expect(topology?.kind === 'topology' && topology.nodes[1]?.bindings).toEqual([{ role: 'flow', ref: 'unit:one#speed', unit: 'm/s' }])
+    expect(topology?.kind === 'topology' && topology.nodes[1]?.bindings).toEqual([{ role: 'flow', ref: 'unit:one#speed', quantity: 'speed', unit: 'm/s' }])
     expect(sample.observations.map(observation => observation.ref)).toEqual(['unit:one#speed', 'unit:one#status'])
     expect(card.items.map(item => [item.label, item.reading])).toEqual([['Unit One · Unit One speed', expect.stringMatching(/^\d+\.\d m\/s$/)], ['Unit One · Unit One status', expect.any(String)]])
     expect(card.items[0]?.limits).toEqual([{ value: 40, decimals: 1 }])

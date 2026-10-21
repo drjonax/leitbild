@@ -90,8 +90,8 @@ export interface EntityRow {
 /** One core slot or telemetry signal of an entity-floor object: World's word for it and its unit code ('' for words). */
 export interface SlotDeclaration { readonly key: string; readonly label: string; readonly unit: string }
 
-/** A binding the caller reads, with its observable's declared unit and states (a state marked `active` reads as on), so a drawing writes the reading as the card does. */
-export type TopologyBinding = TopologyNode['bindings'][number] & Pick<Observable, 'unit' | 'states'>
+/** A binding the caller reads, with its observable's declared quantity, unit and states (a state marked `active` reads as on), so a drawing writes the reading as the card does. */
+export type TopologyBinding = TopologyNode['bindings'][number] & Pick<Observable, 'quantity' | 'unit' | 'states'>
 export interface TopologyNodeView extends Pick<TopologyNode, 'id' | 'label' | 'shortLabel' | 'element'> {
   /** A stop's label names its far ends (at most 24 characters). */
   readonly class: TopologyNode['class'] | 'stop'
@@ -114,7 +114,8 @@ export type VignetteSection =
    * `s<n>.edge`; every drawn node, stops included, is in `nodes`.
    */
   | {
-    readonly kind: 'topology'; readonly rows: number; readonly objectId: string; readonly family: 'flow' | 'network'; readonly layout: TopologyLayout
+    /** `packId` is the object's Pack: the pop-over loads that Pack's element actions. */
+    readonly kind: 'topology'; readonly rows: number; readonly objectId: string; readonly packId: string; readonly family: 'flow' | 'network'; readonly layout: TopologyLayout
     readonly nodes: ReadonlyArray<TopologyNodeView>
     readonly edges: ReadonlyArray<{ readonly id: string; readonly mediumKind: TopologyGraph['media'][number]['kind']; readonly bindings: ReadonlyArray<TopologyBinding> }>
     readonly attribution?: string

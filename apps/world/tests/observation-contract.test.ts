@@ -229,7 +229,7 @@ describe('topology graph', () => {
   })
 
   test('a node binds what it shows: flow, loading, level, conducting, available, running or a value', () => {
-    for (const role of ['flow', 'loading', 'level', 'conducting', 'available', 'running', 'value']) {
+    for (const role of ['flow', 'loading', 'level', 'conducting', 'available', 'running', 'position', 'value']) {
       expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { bindings: [{ role, ref: 'unit-2#P-RUN' }] }), node('sg')] }).success).toBe(true)
     }
     expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { bindings: [{ role: 'colour', ref: 'unit-2#P-RUN' }] }), node('sg')] }).success).toBe(false)
