@@ -3,7 +3,7 @@ import type { TopologyGraph } from '../../../core/observation/topology.ts'
 import { words } from '../../../core/model/text-search.ts'
 import type { CompiledComponent, CompiledPlantGraph, ComponentId, StateAspect, VariablePath } from '../graph/index.ts'
 import { linkCarrier } from '../graph/index.ts'
-import { plantCarriers, plantLoops } from '../equipment/circuits.ts'
+import { plantCarriers, plantLoops, principalCircuits } from '../equipment/circuits.ts'
 import { electricalExternalPortId } from '../electrical-ports.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { operatedStateRoles } from './derived.ts'
@@ -19,7 +19,9 @@ import { operatedStateRoles } from './derived.ts'
 // state: a store's level, a mover running, a breaker's contacts or a supply
 // live (conducting), what passes a header, a valve's position and the values
 // its kind reads first (value); a pipe's flow, a cable live. A grid source
-// with an external port is the boundary a Scenario connection joins.
+// with an external port is the boundary a Scenario connection joins. The
+// overview is the principal circuits (equipment/circuits.ts), as the unit
+// overview has always drawn them; World adds where the drawing stops.
 
 const classOf = (component: CompiledComponent): TopologyGraph['nodes'][number]['class'] => {
   const energy = component.semantics.energy.map(role => role.role)
@@ -100,10 +102,15 @@ export const plantTopology = (objectId: ObjectId, graph: CompiledPlantGraph, rev
     })),
     boundaries: [],
   }
-  const withBoundaries: TopologyGraph = { ...topology, boundaries: topology.nodes.flatMap(node => {
-    const externalPortId = electricalExternalPortId(graph.components[graph.componentIndexById.get(node.id as ComponentId)!]!)
-    return externalPortId === undefined ? [] : node.ports.map(port => ({ node: node.id, port: port.id, externalPortId }))
-  }) }
+  const principal = principalCircuits(graph)
+  const withBoundaries: TopologyGraph = {
+    ...topology,
+    boundaries: topology.nodes.flatMap(node => {
+      const externalPortId = electricalExternalPortId(graph.components[graph.componentIndexById.get(node.id as ComponentId)!]!)
+      return externalPortId === undefined ? [] : node.ports.map(port => ({ node: node.id, port: port.id, externalPortId }))
+    }),
+    ...(!principal.ok ? {} : { overview: { nodes: principal.components.map(index => String(graph.components[index]!.id)), edges: principal.links.map(index => String(graph.links[index]!.id)) } }),
+  }
   graphs.set(graph, withBoundaries)
   return withBoundaries
 }

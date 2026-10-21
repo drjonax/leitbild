@@ -1,7 +1,7 @@
 import type { OperationalObject } from '../../../core/model/index.ts'
 import { procedureIdSchema, type ProcedureId } from '../../../core/model/procedures.ts'
 import { formatQuantity } from '../quantity-text.ts'
-import { safetyFunctionStatusWords } from '../displays/safety-function-content.ts'
+import { safetyFunctionStatusWords } from '../safety-functions.ts'
 import type { TrendPoint } from '../displays/trend-reading.ts'
 import {
   emptyProcessPlantProjection,

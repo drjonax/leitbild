@@ -153,6 +153,12 @@ describe('plant observation read (P3)', () => {
     expect(facts.stuck).toMatchObject({ value: 'on', quality: 'good', priority: 'none', why: 'commanded SHUT' })
   })
 
+  test('P9: the operating mode reads the first declared mode that holds, and changes with the trip', () => {
+    const mode = (from: ReadonlyArray<Observation>) => from.find(observation => path(observation) === 'mode')
+    expect(mode(facts.atPower)).toMatchObject({ value: 'powerOperation', quality: 'good', priority: 'none' })
+    expect(mode(facts.tripped)?.value).not.toBe('powerOperation')
+  })
+
   test('D1: a safety function reads its status with its procedure and where its tree ends; satisfied, it is neutral', () => {
     const read = (of: string) => facts.atPower.find((observation: Observation) => path(observation) === of)
     expect(read('csf.heat-sink')).toMatchObject({ value: 'green', priority: 'none', quality: 'good', why: expect.stringMatching(/^Heat sink: /) })

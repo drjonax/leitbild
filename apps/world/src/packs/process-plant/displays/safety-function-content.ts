@@ -1,6 +1,6 @@
 import type { EmbeddedViewContent } from '@leitbild/contracts'
 import type { CompiledPlantGraph, VariablePath } from '../graph/index.ts'
-import type { SafetyFunctionComparison, SafetyFunctionEvaluation, SafetyFunctionStatus, SafetyFunctionStep } from '../safety-functions.ts'
+import { safetyFunctionStatusWords, type SafetyFunctionComparison, type SafetyFunctionEvaluation, type SafetyFunctionStatus, type SafetyFunctionStep } from '../safety-functions.ts'
 import { signalMeasuredOn } from '../signals.ts'
 import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } from '../quantity-text.ts'
 
@@ -9,9 +9,7 @@ import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } fr
 // same in what the view publishes for an answer to cite. Every word comes
 // from the declared trees and what they read; none names a function itself.
 
-/** A status as a chip and an answer word it: "GREEN", "NOT JUDGED". */
-export const safetyFunctionStatusWords = (status: SafetyFunctionStatus): string =>
-  status === 'not-monitored' ? 'NOT JUDGED' : status.toUpperCase()
+export { safetyFunctionStatusWords }
 
 /** The status with the procedure its colour sends operators to: "YELLOW · FR-H.5". */
 const statusText = (evaluation: SafetyFunctionEvaluation): string =>

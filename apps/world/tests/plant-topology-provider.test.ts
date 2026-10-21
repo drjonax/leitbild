@@ -3,6 +3,7 @@ import type { ObjectId } from '../src/core/model/index.ts'
 import { topologyGraphSchema } from '../src/core/observation/topology.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { processPlantElectricalPortDefinitions } from '../src/packs/process-plant/electrical-ports.ts'
+import { principalCircuits } from '../src/packs/process-plant/equipment/circuits.ts'
 import { plantDeclaration } from '../src/packs/process-plant/observation/declarations.ts'
 import { plantTopology, servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -55,6 +56,15 @@ describe('plant topology provider (P5)', () => {
     const switching = served.nodes.flatMap(entry => entry.bindings.filter(binding => binding.role === 'running' || binding.role === 'conducting')).map(binding => declared.get(binding.ref)!)
     expect(switching.filter(observable => observable.valueType !== 'boolean' && !observable.states?.some(state => state.active === true)).map(observable => observable.ref)).toEqual([])
     expect(new Set(served.nodes.flatMap(entry => entry.bindings.map(binding => binding.role)))).toEqual(new Set(['level', 'running', 'conducting', 'flow', 'value']))
+  })
+
+  test('P9: the overview is the principal circuits, as the unit overview draws them: 29 equipment and the 42 lines among them on four loops', () => {
+    const principal = principalCircuits(plant.graph)
+    if (!principal.ok) throw new Error(principal.reason)
+    expect(served.overview).toEqual({ nodes: principal.components.map(index => String(plant.graph.components[index]!.id)), edges: principal.links.map(index => String(plant.graph.links[index]!.id)) })
+    expect([served.overview!.nodes.length, served.overview!.edges.length]).toEqual([29, 42])
+    expect(served.overview!.nodes).toEqual(expect.arrayContaining(['core', 'pressurizer', 'sgA', 'rcpA', 'turbine', 'condenser']))
+    expect(served.overview!.nodes).not.toContain('chargingPump')
   })
 
   test('D1: the grid source is the boundary a Scenario connection joins, by the port id the Plant\'s electrical ports name', () => {
