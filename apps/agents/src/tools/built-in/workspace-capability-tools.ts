@@ -25,6 +25,7 @@ import {
 } from '@leitbild/contracts'
 import type { Tool, ToolContext, ToolResult } from '../../core/types/tool.ts'
 import { isPeopleCapabilityId } from '../../core/people/people-capability-ids.ts'
+import { cardLines, entryCard, type TurnCards } from '../../agents/answer-cards.ts'
 
 export interface WorkspaceCapabilityToolsDeps {
   readonly workspaceId: WorkspaceId
@@ -360,24 +361,28 @@ const catalogPath = (workspacePath: string, kind: 'capabilities' | 'definitions'
  * is opaque to every embedder (contracts embedded-views.ts), and its completed
  * envelope is execution evidence the display window resolves by viewRef: the
  * model presents a view by reference only, so neither is repeated in its
- * context (a composed display carried its state twice, about 8 KB). The rest
- * of the result (title, what it shows, viewContent) stays. Every check reads
- * the raw result or the execution store, never this text: the view fence and
- * answer-consistency checks (evaluation.ts), what a turn did
- * (operation-claims.ts), proposal cards and the display window.
+ * context (a composed display carried its state twice, about 8 KB). A card
+ * reads as its lines, re-keyed into the turn's keys (answer-cards.ts), so
+ * call this once per result. The rest of the result stays. Every check reads
+ * the raw result, the turn's cards or the execution store, never this text:
+ * the view fence, citation and answer-consistency checks (evaluation.ts),
+ * what a turn did (operation-claims.ts), proposal cards and the display window.
  */
-export const workspaceCallResultForModel = (result: ToolResult): ToolResult => {
+export const workspaceCallResultForModel = (result: ToolResult, cards: TurnCards): ToolResult => {
   if (!result.success) return result
   const { results } = result.data as { readonly results: ReadonlyArray<Readonly<Record<string, unknown>>> }
   return { ...result, data: { results: results.map(entry => {
-    if (!Object.hasOwn(entry, 'embeddedView')) return entry
+    const carried = entryCard(entry)
+    if (!Object.hasOwn(entry, 'embeddedView') && carried === undefined) return entry
     const { embeddedView: _evidence, data, ...rest } = entry
     // An envelope is completed only from a valid publication in data.view (embeddedViewFor).
-    const { view, ...fields } = data as { readonly view: EmbeddedViewPublication } & Readonly<Record<string, unknown>>
-    const { state: _opaque, ...shown } = view
-    return { ...rest, data: { ...fields, view: shown } }
+    const { view, card: _card, ...fields } = data as { readonly view?: EmbeddedViewPublication; readonly card?: unknown } & Readonly<Record<string, unknown>>
+    const shown = view === undefined ? {} : { view: Object.hasOwn(entry, 'embeddedView') ? withoutState(view) : view }
+    return { ...rest, data: { ...fields, ...shown, ...(carried === undefined ? {} : { card: cardLines(cards.add(carried.card)) }) } }
   }) } }
 }
+
+const withoutState = ({ state: _opaque, ...publication }: EmbeddedViewPublication) => publication
 
 // The Workspace's published catalogs, read through the Host. Revalidated on
 // every access: a parsed operation catalog is reused only when the Host

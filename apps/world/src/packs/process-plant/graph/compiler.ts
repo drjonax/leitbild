@@ -505,6 +505,9 @@ const assertNamesUnambiguous = (components: ReadonlyArray<CompiledComponent>, va
       const variable = byPath.get(`${component.id}.${local}`)
       if (variable === undefined || variable.descriptor.quantity !== 'boolean') throw new Error(`component ${component.id} names state words for ${local}, which is not one of its on/off signals`)
     }
+    for (const local of Object.keys(component.metadata?.presentation?.names ?? {})) {
+      if (!byPath.has(`${component.id}.${local}`)) throw new Error(`component ${component.id} names a reading ${local}, which is not one of its variables`)
+    }
   }
 }
 

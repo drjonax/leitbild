@@ -136,6 +136,13 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
     expect(files.flatMap(file => packWords(readFileSync(file, 'utf8')).map(word => `${relative(src, file)}: ${word}`))).toEqual([])
   })
 
+  test('6. the composer and the display Capability import no Pack and name no Pack', () => {
+    const files = [...sourcesUnder('features/displays/compose'), join(src, 'features/displays/topology/flow-sizing.ts'), join(src, 'core/api/display-capabilities.ts')]
+    expect(files.map(file => relative(src, file))).toContain('features/displays/compose/compose.ts')
+    expect(offendersIn(files)).toEqual([])
+    expect(files.flatMap(file => packWords(readFileSync(file, 'utf8')).map(word => `${relative(src, file)}: ${word}`))).toEqual([])
+  })
+
   test('the Pack-word rule catches what it names', () => {
     expect(packWords('const id = \'process-plant\' // the reactor loop')).toEqual(['process-plant', 'reactor', 'loop'])
     expect(packWords('a unit of measure on a 24 px grid; electric-ac and steam media')).toEqual([])

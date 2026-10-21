@@ -76,6 +76,11 @@ export const numberText = (value: number, unit: string): string => {
   const text = value.toFixed(decimalsFor(unit, value))
   return /^-0(?:\.0+)?$/.test(text) ? text.slice(1) : text
 }
+/** Seconds as a countdown reads them (45 s, 4 min, 2 h), and metres as a distance (850 m, 12.3 km): the number and the unit it is shown in. */
+export const durationParts = (seconds: number): { readonly value: number; readonly unit: 's' | 'min' | 'h' } =>
+  seconds < 90 ? { value: Math.round(seconds), unit: 's' } : seconds < 5_400 ? { value: Math.round(seconds / 60), unit: 'min' } : { value: Math.round(seconds / 3_600), unit: 'h' }
+export const distanceParts = (metres: number): { readonly value: number; readonly unit: 'm' | 'km' } =>
+  metres >= 1_000 ? { value: Number(numberText(metres / 1_000, 'km')), unit: 'km' } : { value: Number(numberText(metres, 'm')), unit: 'm' }
 
 export const thresholdSchema = z.object({
   id: z.string().min(1).max(128),
@@ -96,7 +101,8 @@ export const observableSchema = z.object({
   quantity: quantitySchema,
   unit: z.string().max(16),
   valueType: z.enum(['number', 'boolean', 'enum', 'text', 'duration', 'instant']),
-  states: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) }).strict()).optional(),
+  /** `active` marks the state(s) a `running` or `conducting` binding reads as on, running or closed; a boolean observable is on when true. */
+  states: z.array(z.object({ value: z.string().min(1), label: z.string().min(1), active: z.literal(true).optional() }).strict()).optional(),
   thresholds: z.array(thresholdSchema).max(12).default([]),
   basis: z.enum(['instrument', 'model', 'command', 'planned']).optional(),
   meaningfulWhile: z.string().max(80).optional(),

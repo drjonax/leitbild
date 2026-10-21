@@ -22,22 +22,31 @@ export interface ProcessPlantElectricalBoundary {
   readonly port: ElectricalPortDefinition
 }
 
+/** The parameters of a grid source that is the Plant's port to a network a Scenario connection joins; null for any other component. */
+const boundaryParametersOf = (component: CompiledComponent): z.output<typeof boundaryParametersSchema> | null => {
+  if (component.kind !== 'electricalGridSource') return null
+  const parsed = boundaryParametersSchema.safeParse(component.parameters)
+  return parsed.success ? parsed.data : null
+}
+
+/** The external port id a Scenario connection names a grid source by; undefined for any other component. */
+export const electricalExternalPortId = (component: CompiledComponent): string | undefined => boundaryParametersOf(component)?.externalPortId
+
 export const processPlantElectricalBoundaries = (
   plant: CompiledProcessPlant,
 ): ReadonlyArray<ProcessPlantElectricalBoundary> => plant.graph.components.flatMap(component => {
-  if (component.kind !== 'electricalGridSource') return []
-  const parsed = boundaryParametersSchema.safeParse(component.parameters)
-  if (!parsed.success) return []
+  const data = boundaryParametersOf(component)
+  if (data === null) return []
   return [{
     component,
     port: electricalPortDefinitionSchema.parse({
-      id: parsed.data.externalPortId,
+      id: data.externalPortId,
       label: component.label,
       role: 'system',
-      nominalKv: parsed.data.nominalVoltageKv,
-      maximumExportMw: parsed.data.maximumExportMw,
-      maximumImportMw: parsed.data.maximumImportMw,
-      ...(parsed.data.generatorInertiaSeconds === undefined ? {} : { inertiaSeconds: parsed.data.generatorInertiaSeconds }),
+      nominalKv: data.nominalVoltageKv,
+      maximumExportMw: data.maximumExportMw,
+      maximumImportMw: data.maximumImportMw,
+      ...(data.generatorInertiaSeconds === undefined ? {} : { inertiaSeconds: data.generatorInertiaSeconds }),
     }),
   }]
 })

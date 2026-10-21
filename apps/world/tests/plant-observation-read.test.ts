@@ -56,6 +56,12 @@ beforeAll(async () => {
   facts.leadTripped = await lead()
   facts.tripped = await readAll()
   facts.alerts = plant.unit().alerts
+  // MSIV A stuck open by a fault, then commanded shut by the Scenario: it does not follow.
+  await plant.invoke(plantScenario, 'world.process-plant.control.write', { path: 'mainSteamIsolationValveA.positionFailureActive', value: true })
+  await plant.invoke(plantScenario, 'world.process-plant.control.write', { path: 'mainSteamIsolationValveA.failedPositionFraction', value: 1 })
+  await plant.invoke(plantScenario, 'world.process-plant.control.write', { path: 'mainSteamIsolationValveA.positionFraction', value: 0 })
+  await plant.runTo(120_000)
+  facts.stuck = (await port.read({ refs: [`${plant.plantId}#mainSteamIsolationValveA.state`] })).observations[0]
   // A second unit: the turbine tripped at 10:00:10, read a minute on (the eval lane's spot check on Unit 2).
   turbineTripped = await createSteadyPlantRun()
   await turbineTripped.runTo(10_000)
@@ -74,7 +80,8 @@ afterAll(async () => {
 
 /** The alert a value's colour comes from: active, of its priority, under its title, naming one of the value's limits and the value where it names one. */
 const alertFor = (alerts: ReadonlyArray<any>, observation: Observation) => alerts.find(alert => alert.returned !== true && alert.priority === observation.priority
-  && alert.message === observation.why && (limitsOf.get(path(observation)) ?? []).includes(alert.threshold) && (alert.observable === undefined || alert.observable === observation.ref))
+  && alert.message === observation.why && (alert.threshold === undefined ? alert.observable === observation.ref : (limitsOf.get(path(observation)) ?? []).includes(alert.threshold))
+  && (alert.observable === undefined || alert.observable === observation.ref))
 
 describe('plant observation read (P3)', () => {
   test('at power every declared value reads, good and neutral; an undeclared one is unknown', () => {
@@ -126,6 +133,30 @@ describe('plant observation read (P3)', () => {
     expect(read('core.powerRangePercent').priority).toBe('none')
     expect(read('core.powerRangePercent').value).toBeLessThan(2)
     expect(read('core.sourceRangeCountRateCps').priority).toBe('none')
+  })
+
+  test('past: a coloured value, or one its alarm would colour but for the first-out, names the limit it is past', () => {
+    const coloured = (facts.tripped as ReadonlyArray<Observation>).filter(observation => observation.priority !== 'none' && !path(observation).startsWith('csf.'))
+    expect(coloured.length).toBeGreaterThan(0)
+    expect(coloured.filter(observation => observation.past === undefined || !(limitsOf.get(path(observation)) ?? []).includes(observation.past)).map(path)).toEqual([])
+    const level = facts.tripped.find((observation: Observation) => path(observation) === 'sgA.levelPercent')
+    expect(level.priority).toBe('none')
+    expect(limitsOf.get('sgA.levelPercent')).toContain(level.past)
+    expect((facts.atPower as ReadonlyArray<Observation>).filter(observation => observation.past !== undefined).map(path)).toEqual([])
+  })
+
+  test('D1: an operated item reads its state in words, and the command it does not follow', () => {
+    const read = (from: ReadonlyArray<Observation>, of: string) => from.find(observation => path(observation) === of)!
+    expect(['rcpA.state', 'offsiteBreakerA.state', 'mainSteamIsolationValveA.state'].map(of => [read(facts.atPower, of).value, read(facts.atPower, of).why])).toEqual([['on', undefined], ['on', undefined], ['on', undefined]])
+    // Offsite power lost, the reactor coolant pump stops though its command still runs it, and the offsite breaker opens.
+    expect([read(facts.tripped, 'rcpA.state'), read(facts.tripped, 'offsiteBreakerA.state')].map(observation => [observation.value, observation.why ?? null])).toEqual([['off', 'commanded RUN'], ['off', null]])
+    expect(facts.stuck).toMatchObject({ value: 'on', quality: 'good', priority: 'none', why: 'commanded SHUT' })
+  })
+
+  test('D1: a safety function reads its status with its procedure and where its tree ends; satisfied, it is neutral', () => {
+    const read = (of: string) => facts.atPower.find((observation: Observation) => path(observation) === of)
+    expect(read('csf.heat-sink')).toMatchObject({ value: 'green', priority: 'none', quality: 'good', why: expect.stringMatching(/^Heat sink: /) })
+    expect(read('csf.subcriticality')).toMatchObject({ value: 'not-monitored', priority: 'none', why: expect.stringMatching(/^Subcriticality: Judged once a reactor trip is demanded/) })
   })
 
   test('expected.after: an alarm the trip brings in leaves its value neutral and says so', () => {

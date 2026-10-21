@@ -193,6 +193,16 @@ export const evaluateSafetyFunction = (config: {
   return finish({ status: node.status, meaning: node.meaning, ...(node.procedure === undefined ? {} : { procedure: node.procedure }) })
 }
 
+/**
+ * A function's status in words that hold while it stands where it is, with no
+ * live value: its name, the restoration procedure its colour sends operators
+ * to, and what its tree's path ends in; for one that cannot be judged, the
+ * question its path stopped at.
+ */
+export const safetyFunctionText = (evaluation: SafetyFunctionEvaluation): string =>
+  evaluation.status === 'unknown' ? `${evaluation.label}: ${evaluation.path.at(-1)?.question ?? 'whether it is judged now'} cannot be answered`
+    : `${evaluation.label}${evaluation.procedure === undefined ? '' : ` (${evaluation.procedure})`}: ${evaluation.meaning}`
+
 /** Every critical safety function the Plant declares, judged now, in declaration order. */
 export const evaluateSafetyFunctions = (system: CompiledProcessPlant, runtime: ProcessPlantRuntime): ReadonlyArray<SafetyFunctionEvaluation> =>
   system.automation.safetyFunctions.map(safetyFunction => evaluateSafetyFunction({ system, runtime, safetyFunction }))

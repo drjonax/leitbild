@@ -282,6 +282,16 @@ describe('operator names', () => {
     expect(() => compilePlantGraph(worded({ powerMw: { on: 'at power', off: 'shut down' } }), processPlantComponentRegistry)).toThrow('not one of its on/off signals')
   })
 
+  test('operator names name a reading of their own component, as its presentation declares them (R37)', () => {
+    const spec = assemblePwrReferencePlantGraph({ loopCount: 4 })
+    const core = (names: Record<string, string>): PlantGraphSpec => ({
+      ...spec,
+      components: spec.components.map(entry => String(entry.id) === 'core' ? { ...entry, metadata: { ...entry.metadata, presentation: { ...entry.metadata?.presentation, names } } } : entry),
+    })
+    expect(compilePlantGraph(spec, processPlantComponentRegistry).components.find(entry => String(entry.id) === 'core')!.metadata?.presentation?.names).toEqual({ coreExitTemperatureC: 'CET', powerRangePercent: 'reactor power' })
+    expect(() => compilePlantGraph(core({ noSuchReading: 'CET' }), processPlantComponentRegistry)).toThrow('names a reading noSuchReading, which is not one of its variables')
+  })
+
   test('renaming equipment never changes the Plant identity that persisted Runs are bound to', () => {
     const spec = assemblePwrReferencePlantGraph({ loopCount: 4 })
     const renamed: PlantGraphSpec = {

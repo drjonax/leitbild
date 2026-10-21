@@ -26,11 +26,13 @@ export const displayScope: ReadonlyArray<ScopeGroup> = [
   { name: 'World displays UI', include: ['apps/world/src/ui/displays/**'] },
   { name: 'World displays feature', include: ['apps/world/src/features/displays/**'] },
   { name: 'World observation core and alert record', include: ['apps/world/src/core/observation/**', 'apps/world/src/core/model/alerts.ts'] },
+  { name: 'World display Capability and routes', include: ['apps/world/src/core/api/display-capabilities.ts'] },
   {
     name: 'Agents display code',
     include: [
       'apps/agents/src/core/render-validators/view-fence.ts', 'apps/agents/src/core/render-validators/view-envelope.ts',
       'apps/agents/src/core/display-request.ts', 'apps/agents/src/agents/display-requests.ts', 'apps/agents/src/agents/answer-consistency.ts', 'apps/agents/src/agents/answer-reading.ts', 'apps/agents/src/agents/run-context.ts',
+      'apps/agents/src/agents/citations.ts', 'apps/agents/src/agents/answer-cards.ts',
       'apps/agents/src/ui/modules/display-request.ts', 'apps/agents/src/ui/modules/live-view/**',
     ],
   },

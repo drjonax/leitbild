@@ -64,11 +64,19 @@ describe('grid observation declarations (N2)', () => {
     const elements = ['branch:osm-a0269051d0144396', 'generator:aggregate-osm-node-5981385036@132-hydro-run-of-river', 'bus:curated-halden-pwr-switchyard@420', 'unit-1-420kv']
     const declaration = valid(declareGrid(halden, engineering, elements))
     expect(declaration.elements.map(element => element.id)).toEqual(elements)
-    expect(byRef(declaration, 'branch:osm-a0269051d0144396.state')).toMatchObject({ valueType: 'enum', states: [{ value: 'closed' }, { value: 'open' }, { value: 'tripped' }], series: null })
+    // Q8: the state a conducting binding reads as on is marked; every other one reads off.
+    expect(byRef(declaration, 'branch:osm-a0269051d0144396.state')).toMatchObject({ valueType: 'enum', states: [{ value: 'closed', label: 'closed', active: true }, { value: 'open', label: 'open' }, { value: 'tripped', label: 'tripped' }], series: null })
+    expect(byRef(declaration, 'branch:osm-a0269051d0144396.state')!.states!.filter(state => state.active === true).map(state => state.value)).toEqual(['closed'])
     expect(byRef(declaration, 'generator:aggregate-osm-node-5981385036@132-hydro-run-of-river.state')).toMatchObject({ valueType: 'enum', series: null })
     expect(byRef(declaration, 'bus:curated-halden-pwr-switchyard@420.voltage')).toMatchObject({ quantity: 'voltage', unit: 'pu', series: null })
     expect(byRef(declaration, 'unit-1-420kv.exchange')).toMatchObject({ quantity: 'electric-power', unit: 'MW', element: 'unit-1-420kv', series: null })
     expect(byRef(declaration, 'branch:osm-a0269051d0144396.loading')!.series).toEqual({ seriesId: recordingSeriesIdFor('grid:halden-four-unit', 'branch:osm-a0269051d0144396.loading'), intervalMs: 10_000 })
+  })
+
+  test('Q8: an HVDC link conducts while deblocked, the one state its conducting binding reads as on', () => {
+    const link = halden.definition.model.hvdcLinks[0]!
+    const state = byRef(valid(declareGrid(halden, engineering, [link.id])), `${link.id}.state`)!
+    expect(state.states).toEqual([{ value: 'deblocked', label: 'deblocked', active: true }, { value: 'blocked', label: 'blocked' }, { value: 'tripped', label: 'tripped' }])
   })
 
   test('labels are unique within the Grid across its whole catalogue, at most 80 characters (R25)', () => {
@@ -139,6 +147,10 @@ describe('grid observation declarations (N2)', () => {
     expect(refs[alarmed.size]).toBe('grid:test-corridor#grid.frequency')
     expect(lead.observations.map(observation => observation.rank)).toEqual(refs.map((_, index) => index + 1))
     const first = observationShapes.declarations.output.parse(gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'] }, grids)).declarations[0]!
+    // The grid-wide values the lead goes on with are those declaring a lead rank, in its order.
+    const ranked = 'observables' in first ? first.observables.filter(observable => observable.lead !== undefined).sort((left, right) => left.lead! - right.lead!).map(observable => observable.ref) : []
+    expect(ranked.map(ref => ref.split('#')[1])).toEqual(['grid.frequency', 'grid.maximum-branch-loading', 'grid.unserved-load', 'grid.reserve', 'grid.island-count', 'grid.active-alarms'])
+    expect(refs.slice(alarmed.size)).toEqual(ranked.filter(ref => !alarmed.has(ref)).slice(0, refs.length - alarmed.size))
     const again = gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'], known: { 'grid:test-corridor': first.revision } }, grids)
     expect(again).toEqual({ declarations: [{ objectId: 'grid:test-corridor' as never, revision: first.revision, unchanged: true }] })
     expect(() => gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'], elementIds: ['branch:nowhere'] }, grids)).toThrow(/no element branch:nowhere/)

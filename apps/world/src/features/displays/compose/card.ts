@@ -1,0 +1,101 @@
+/**
+ * The card a vignette returns (architecture A5): one keyed item per line,
+ * written as the renderer writes it (one number format, core/observation).
+ * A value reads "<number> <unit>", its priority word at caution or above,
+ * "since hh:mm:ss" for a state and "<effect> in 4 min" from its time to act;
+ * its limits are its declared thresholds. An alert reads "<priority> ·
+ * <message>" with its marks and no numbers; an object its core slots. The
+ * named items come first; what 48 items or 2,400 characters leave out is
+ * counted in `more`.
+ */
+import { DISPLAY_CARD_MAX_ITEMS, DISPLAY_CARD_MAX_TEXT, displayCardSchema, displayCardTextLength, type DisplayCard, type DisplayCardAdjustment, type DisplayCardItem } from '@leitbild/contracts'
+import { priorityLevels } from '../../../core/model/alerts.ts'
+import { decimalsFor, distanceParts, durationParts, numberText, unitSymbol, type Observation } from '../../../core/observation/model.ts'
+import type { AlertRow } from '../alerts/rows.ts'
+import type { Declared } from './declared.ts'
+import type { EntityRow, SlotDeclaration, VignetteSample } from './model.ts'
+
+type Item = Omit<DisplayCardItem, 'key'>
+type Shown = { readonly value: number; readonly decimals: number }
+type Words = { readonly text: string; readonly number: Shown }
+
+const clock = (at: string): string => at.slice(11, 19)
+const shown = (value: number, unit: string): Shown => ({ value: Number(numberText(value, unit)), decimals: decimalsFor(unit, value) })
+const quantity = (value: number, unit: string): string => unitSymbol(unit) === '' ? numberText(value, unit) : `${numberText(value, unit)} ${unitSymbol(unit)}`
+const duration = (seconds: number): Words => { const { value, unit } = durationParts(seconds); return { text: `${value} ${unit}`, number: { value, decimals: 0 } } }
+const distance = (metres: number): Words => { const { value, unit } = distanceParts(metres); return { text: `${numberText(value, unit)} ${unit}`, number: shown(value, unit) } }
+/** A number as a slot of this unit code shows it: seconds as a duration, metres as a distance. */
+const slotWords = (value: number, unit: string): Words => unit === 's' ? duration(value) : unit === 'm' ? distance(value) : { text: quantity(value, unit), number: shown(value, unit) }
+const atLeastCaution = (priority: string | null | undefined): boolean => priority != null && priorityLevels.indexOf(priority as never) >= priorityLevels.indexOf('caution')
+
+export const valueItem = ({ observable, object }: Declared, observation: Observation | undefined): Item => {
+  const label = `${object.label} · ${observable.label}`.slice(0, 80)
+  const value = observation?.value ?? null
+  const numbers: Shown[] = []
+  const word = typeof value === 'number' ? (numbers.push(shown(value, observable.unit)), quantity(value, observable.unit))
+    : value === null ? 'no reading'
+      : observable.states?.find(state => state.value === String(value))?.label ?? (typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value))
+  const threshold = observable.thresholds.find(entry => entry.id === observation?.timeToAct?.threshold)
+  const toAct = observation?.timeToAct === undefined ? undefined : duration(observation.timeToAct.seconds)
+  if (toAct !== undefined) numbers.push(toAct.number)
+  const parts = [word,
+    ...(observation !== undefined && observation.quality !== 'good' ? [observation.quality] : []),
+    ...(atLeastCaution(observation?.priority) ? [observation!.priority] : []),
+    ...(observation?.since !== undefined ? [`since ${clock(observation.since.at)}`] : []),
+    ...(toAct !== undefined ? [`${threshold?.effect ?? 'limit'} in ${toAct.text}`] : [])]
+  const near = typeof value === 'number' ? (limit: number) => Math.abs(limit - value) : () => 0
+  const limits = [...observable.thresholds].sort((left, right) => Number(right.id === observation?.past) - Number(left.id === observation?.past) || near(left.value) - near(right.value))
+    .slice(0, 4).map(entry => shown(entry.value, observable.unit))
+  return {
+    label, reading: parts.join(' · ').slice(0, 120), ...(observable.unit === '' ? {} : { unit: observable.unit }), numbers,
+    ...(limits.length === 0 ? {} : { limits }), ...(observation === undefined ? {} : { priority: observation.priority }), subject: { ref: observable.ref },
+  }
+}
+
+export const alertItem = (row: AlertRow): Item => {
+  const marks = [...(row.alert.firstOut !== undefined ? ['first out'] : []), ...(row.alert.advisory === true ? ['advisory'] : []),
+    ...(row.alert.acknowledged ? ['acknowledged'] : []), ...(row.alert.returned === true ? ['returned'] : [])]
+  return {
+    label: row.objectLabel.slice(0, 80), reading: [row.priority ?? 'priority not declared', row.alert.message, ...marks].join(' · ').slice(0, 120), numbers: [],
+    ...(row.priority === null ? {} : { priority: row.priority }), subject: { objectId: row.objectId, alertId: row.alert.id },
+  }
+}
+
+/** An entity row in words, with the numbers it shows. */
+export const entityItem = (row: EntityRow): Item => {
+  const parts: Array<{ readonly text: string; readonly number?: Shown }> = [
+    ...[row.status?.word, row.urgency].filter((word): word is string => word !== undefined).map(text => ({ text })),
+    ...(row.alert === undefined ? [] : [{ text: `${row.alert.priority ?? `${row.alert.severity} (priority not declared)`} · ${row.alert.message}` }]),
+    ...(row.etaS === undefined ? [] : [(words => ({ text: `ETA ${words.text}`, number: words.number }))(duration(row.etaS))]),
+    ...(row.distanceM === undefined ? [] : [(words => ({ text: `${words.text} away`, number: words.number }))(distance(row.distanceM))]),
+    ...(row.ageS === undefined ? [] : [(words => ({ text: `fix ${words.text} old`, number: words.number }))(duration(row.ageS))]),
+    ...(row.closed === true ? [{ text: 'closed' }] : []),
+  ]
+  return {
+    label: row.label.slice(0, 80), reading: (parts.map(part => part.text).join(' · ') || 'no slots').slice(0, 120),
+    numbers: parts.flatMap(part => part.number === undefined ? [] : [part.number]).slice(0, 8), subject: { objectId: row.objectId },
+  }
+}
+
+/** An entity-floor object's slots, one item each. */
+export const slotItems = (objectId: string, label: string, slots: ReadonlyArray<SlotDeclaration>, values: VignetteSample['slots'][string]): ReadonlyArray<Item> => slots.flatMap(slot => {
+  const value = values[slot.key]?.value
+  if (value === undefined) return []
+  const words = typeof value === 'number' ? slotWords(value, slot.unit) : null
+  const since = values[slot.key]?.since
+  return [{
+    label: `${label} · ${slot.label}`.slice(0, 80), reading: `${words?.text ?? (value === null ? 'no reading' : String(value))}${since === undefined ? '' : ` · since ${clock(since.at)}`}`.slice(0, 120),
+    ...(slot.unit === '' || words === null ? {} : { unit: slot.unit }), numbers: words === null ? [] : [words.number], subject: { objectId },
+  }]
+})
+
+/** Items in order, keyed from `firstKey`; what 48 items or 2,400 characters leave out is counted. */
+export const assembleCard = (at: DisplayCard['at'], items: ReadonlyArray<Item>, adjusted: ReadonlyArray<DisplayCardAdjustment>, firstKey = 1): DisplayCard => {
+  const kept: DisplayCardItem[] = []
+  for (const item of items) {
+    const keyed = { key: `k${firstKey + kept.length}`, ...item }
+    if (kept.length >= DISPLAY_CARD_MAX_ITEMS || displayCardTextLength({ items: [...kept, keyed], adjusted }) > DISPLAY_CARD_MAX_TEXT) break
+    kept.push(keyed)
+  }
+  return displayCardSchema.parse({ at, items: kept, more: items.length - kept.length, adjusted })
+}

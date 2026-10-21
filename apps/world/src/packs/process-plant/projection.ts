@@ -4,7 +4,8 @@ import type { PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { VariablePath } from './graph/index.ts'
 import { formatQuantity } from './quantity-text.ts'
 import { overviewKeyValues, plantNowOf } from './ic/key-values.ts'
-import { annunciating, isStanding, pendingActions, plantAlarmPriority, plantAlertSeverity, ruleLimits, ruleWatches } from './ic/alarm-philosophy.ts'
+import { annunciating, challengePriority, isStanding, pendingActions, plantAlarmPriority, plantAlertSeverity, ruleLimits, ruleWatches } from './ic/alarm-philosophy.ts'
+import { safetyFunctionRef } from './observation/derived.ts'
 import type { CompiledProcessPlant } from './plant-compiler.ts'
 import {
   emptyProcessPlantProjection,
@@ -18,7 +19,7 @@ import {
 import { processPlantOperatingMode, type ProcessPlantIcLifecycleState } from './runtime/index.ts'
 import type { ProcessPlantVariableHandle } from './runtime/variable-table.ts'
 import type { ProcessPlantRuntimeInstance } from './runtime-instance.ts'
-import { evaluateSafetyFunctions, worstSafetyFunction } from './safety-functions.ts'
+import { evaluateSafetyFunctions, safetyFunctionText, worstSafetyFunction, type SafetyFunctionEvaluation } from './safety-functions.ts'
 
 const severityRank: Readonly<Record<ProcessPlantIcLifecycleState['severity'], number>> = {
   info: 1,
@@ -112,8 +113,8 @@ const energyReading = (
 }
 
 // The most challenged critical safety function, where the model declares any.
-const worstSafetyFunctionOf = (plant: ProcessPlantRuntimeInstance): ProcessPlantUnitSafetyFunction | undefined => {
-  const worst = worstSafetyFunction(evaluateSafetyFunctions(plant.plant, plant.runtime))
+const worstSafetyFunctionOf = (evaluations: ReadonlyArray<SafetyFunctionEvaluation>): ProcessPlantUnitSafetyFunction | undefined => {
+  const worst = worstSafetyFunction(evaluations)
   if (worst === undefined) return undefined
   return {
     id: worst.id,
@@ -210,6 +211,31 @@ const alertsOf = (objectId: string, plant: ProcessPlantRuntimeInstance, simulati
   })
 }
 
+/**
+ * One alert per challenged critical safety function (lead ruling Q7): its
+ * path's colour as its priority, its status in words that hold while the
+ * path does (no live value), its function's observable named. Each path is
+ * one occurrence, which keeps the Run time it came in at from the object's
+ * own alerts while the tree ends there. The I&C annunciates no status tree,
+ * so nothing acknowledges one: it reads until the function is no longer
+ * challenged that way.
+ */
+export const safetyFunctionAlerts = (
+  objectId: string,
+  evaluations: ReadonlyArray<SafetyFunctionEvaluation>,
+  previous: ReadonlyArray<AlertState>,
+  simulationTime: IsoTimestamp,
+): ReadonlyArray<AlertState> => evaluations.flatMap(evaluation => {
+  const priority = challengePriority[evaluation.status]
+  if (priority === undefined) return []
+  const id = `csf:${evaluation.id}:${evaluation.path.map(step => step.answer.charAt(0)).join('')}`
+  return [{
+    id, kind: 'safety-function', severity: priority === 'alarm' ? 'critical' : 'warning', message: safetyFunctionText(evaluation),
+    raisedAt: previous.find(alert => alert.id === id)?.raisedAt ?? simulationTime, acknowledged: false,
+    observable: `${objectId}#${safetyFunctionRef(evaluation.id)}`, priority, clock: 'simulation',
+  }]
+})
+
 const statusFor = (
   lifecycles: ReadonlyArray<ProcessPlantIcLifecycleState>,
 ): {
@@ -258,7 +284,8 @@ export const projectedProcessPlantUnit = (config: {
     processPlantField('runtime-performance', 'Runtime', formatRuntimePerformance(plant)),
   ]
   const headline = rail.headline.map(plan => readField(plant, plan))
-  const worst = worstSafetyFunctionOf(plant)
+  const safetyFunctions = evaluateSafetyFunctions(plant.plant, plant.runtime)
+  const worst = worstSafetyFunctionOf(safetyFunctions)
   // The operating mode the unit overview names (composed-display-query.ts).
   const mode = processPlantOperatingMode({ system: plant.plant, runtime: plant.runtime, modes: plant.plant.automation.operatingModes })
   const projection: ProcessPlantUnitProjection = {
@@ -279,7 +306,7 @@ export const projectedProcessPlantUnit = (config: {
   return {
     ...config.object,
     revision: config.object.revision + 1,
-    alerts: [...alertsOf(String(config.object.id), plant, config.simulationTime)],
+    alerts: [...alertsOf(String(config.object.id), plant, config.simulationTime), ...safetyFunctionAlerts(String(config.object.id), safetyFunctions, config.object.alerts, config.simulationTime)],
     operational: {
       ...config.object.operational,
       status: status.tone === 'ready' ? 'normal' : status.tone === 'error' ? 'critical' : 'degraded',

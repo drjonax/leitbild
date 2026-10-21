@@ -25,6 +25,7 @@ import { z } from 'zod'
 import { capabilityJsonSchema, isPublicCapability } from '../../simulation/capabilities.ts'
 import { assembleRunContext } from '../../features/displays/context/run-context.ts'
 import { observablesSearchInputSchema, observablesSearchOutputSchema, searchObservables } from '../../features/displays/observation/search.ts'
+import { displayCapabilities } from './display-capabilities.ts'
 import { isCapabilityRejection } from '../../simulation/capability-rejection.ts'
 import {
   isoTimestampSchema,
@@ -1371,6 +1372,7 @@ const worldCapabilities = createModuleCapabilityRegistry<SimulationRunRegistry, 
       return json({ result: observablesSearchOutputSchema.parse({ results }) })
     },
   },
+  ...displayCapabilities({ runOf: async (registry, invocation) => { const runtime = await registry.load(requireSimulationRunResource(invocation)); return { runtime, actor: buildSimulationRunActorForAccess(invocation.access), denied: deniedInspectionSubjects(runtime, invocation) } } }),
   {
     descriptor: {
       id: 'world.simulation-run.read-object',

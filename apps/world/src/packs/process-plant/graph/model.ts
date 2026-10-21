@@ -299,6 +299,14 @@ export const processGraphPresentationSchema = z.object({
    */
   states: z.record(z.string().min(1), z.object({ on: z.string().min(1).max(40), off: z.string().min(1).max(40) }).strict()).optional(),
   /**
+   * What crews call its readings, by local variable path, where the name is
+   * the standard one for that very signal (R37): the core-exit thermocouples'
+   * average "CET", a mean coolant temperature "Tavg", the power-range flux
+   * the board and the procedures read as "reactor power". Written into the
+   * reading's label, as words a search finds it by; never an alias.
+   */
+  names: z.record(z.string().min(1), z.string().min(1).max(24)).optional(),
+  /**
    * Its pushbuttons, by local variable path: on/off commands that spring back
    * once pressed (an SI block, a manual trip), so an operator presses them
    * rather than switching them on or off. Never the command or isolation

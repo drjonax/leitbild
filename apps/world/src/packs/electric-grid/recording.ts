@@ -66,8 +66,9 @@ const series = (config: {
   value: config.value,
 })
 
+/** The grid-wide signals the Historian records; `lead` ranks what an operator weighs first (1 first) among them. */
 export const gridOperationsSignals = [{
-  signalId: 'grid.frequency', title: 'Frequency (largest-load energised island)', quantity: 'frequency', unit: 'Hz', key: 'frequencyHz',
+  signalId: 'grid.frequency', title: 'Frequency (largest-load energised island)', quantity: 'frequency', unit: 'Hz', key: 'frequencyHz', lead: 1,
 }, {
   signalId: 'grid.frequency.min', title: 'Lowest island frequency', quantity: 'frequency', unit: 'Hz', key: 'frequencyMinHz',
 }, {
@@ -79,13 +80,13 @@ export const gridOperationsSignals = [{
 }, {
   signalId: 'grid.served-load', title: 'Served load', quantity: 'active-power', unit: 'MW', key: 'servedLoadMw',
 }, {
-  signalId: 'grid.unserved-load', title: 'Unserved load', quantity: 'active-power', unit: 'MW', key: 'unservedLoadMw',
+  signalId: 'grid.unserved-load', title: 'Unserved load', quantity: 'active-power', unit: 'MW', key: 'unservedLoadMw', lead: 3,
 }, {
   signalId: 'grid.losses', title: 'Network losses', quantity: 'active-power', unit: 'MW', key: 'lossesMw',
 }, {
-  signalId: 'grid.reserve', title: 'Reserve margin', quantity: 'active-power', unit: 'MW', key: 'reserveMarginMw',
+  signalId: 'grid.reserve', title: 'Reserve margin', quantity: 'active-power', unit: 'MW', key: 'reserveMarginMw', lead: 4,
 }, {
-  signalId: 'grid.maximum-branch-loading', title: 'Maximum branch loading', quantity: 'ratio', unit: '%', key: 'highestBranchLoadingPercent',
+  signalId: 'grid.maximum-branch-loading', title: 'Maximum branch loading', quantity: 'ratio', unit: '%', key: 'highestBranchLoadingPercent', lead: 2,
 }, {
   signalId: 'grid.voltage.min', title: 'Lowest bus voltage (converged islands)', quantity: 'voltage', unit: 'pu', key: 'voltageMinPu',
 }, {
@@ -93,9 +94,9 @@ export const gridOperationsSignals = [{
 }, {
   signalId: 'grid.dc-flow-islands', title: 'Energised islands on DC flows (AC load flow not converged)', quantity: 'count', unit: '1', key: 'notConvergedIslandCount',
 }, {
-  signalId: 'grid.island-count', title: 'Energised islands', quantity: 'count', unit: '1', key: 'activeIslandCount',
+  signalId: 'grid.island-count', title: 'Energised islands', quantity: 'count', unit: '1', key: 'activeIslandCount', lead: 5,
 }, {
-  signalId: 'grid.active-alarms', title: 'Active alarms', quantity: 'count', unit: '1', key: 'activeAlarmCount',
+  signalId: 'grid.active-alarms', title: 'Active alarms', quantity: 'count', unit: '1', key: 'activeAlarmCount', lead: 6,
 }] as const
 const operationsSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => gridOperationsSignals.map(({ key, ...item }) => series({ grid, ...item, value: () => grid.projection[key] }))
 

@@ -9,6 +9,7 @@ import {
 } from '@leitbild/contracts'
 import { createContextPublisherLookup, createViewPublisherLookup, createWorkspaceCapabilityTools, workspaceCallResultForModel } from './workspace-capability-tools.ts'
 import { toolsToDefinitions } from '../../llm/tool-capability.ts'
+import { createTurnCards } from '../../agents/answer-cards.ts'
 
 const workspaceId = newWorkspaceId()
 const moduleId = moduleIdSchema.parse('world')
@@ -510,7 +511,7 @@ describe('Workspace progressive-discovery tools', () => {
       { key: 'refused', operationId: readId, target: { kind: 'resource', ref: otherRun }, input: {} },
     ] }, { ...context, executionCallId: 'call_0_0' })
     const before = JSON.stringify(raw)
-    const shown = workspaceCallResultForModel(raw)
+    const shown = workspaceCallResultForModel(raw, createTurnCards())
     // The raw result, which the execution store and every check read, keeps the view.
     expect(JSON.stringify(raw)).toBe(before)
     expect((raw.data as { results: ReadonlyArray<unknown> }).results[0]).toMatchObject({ embeddedView: { state }, data: { view: { state } } })
@@ -524,7 +525,24 @@ describe('Workspace progressive-discovery tools', () => {
     expect(plain).toBe(rawPlain)
     expect(refused).toBe(rawRefused)
     const failed = { success: false, error: 'invalid_tool_input: Batch keys must be unique', data: { code: 'invalid_tool_input' } }
-    expect(workspaceCallResultForModel(failed)).toBe(failed)
+    expect(workspaceCallResultForModel(failed, createTurnCards())).toBe(failed)
+  })
+
+  test('a card reads as its lines; each further card of the turn is re-keyed from the last key + 1; a broken card fails loudly', () => {
+    const at = { at: '2026-01-01T10:16:00.000Z', clock: 'simulation' as const }
+    const card = (labels: ReadonlyArray<string>) => ({ at, more: 0, adjusted: [], items: labels.map((label, index) => ({ key: `k${index + 1}`, label, reading: `${index + 1}.0 %`, numbers: [{ value: index + 1, decimals: 1 }] })) })
+    const vignette = (key: string, labels: ReadonlyArray<string>) => ({ key, operationId: readId, success: true, data: { view: { viewType: 'display.vignette', title: 'Loading', height: 240, state: '{}' }, card: card(labels) }, embeddedView: {}, viewRef: `call_0_0/${key}` })
+    const cards = createTurnCards()
+    const first = workspaceCallResultForModel({ success: true, data: { results: [vignette('a', ['Line A · loading', 'Line B · loading'])] } }, cards)
+    const second = workspaceCallResultForModel({ success: true, data: { results: [{ key: 'b', operationId: readId, success: true, data: { card: card(['Reserve']) } }] } }, cards)
+    expect((first.data as { results: ReadonlyArray<unknown> }).results[0]).toEqual({
+      key: 'a', operationId: readId, success: true, viewRef: 'call_0_0/a',
+      data: { view: { viewType: 'display.vignette', title: 'Loading', height: 240 }, card: ['card at 2026-01-01T10:16:00.000Z (simulation)', 'k1 · Line A · loading · 1.0 %', 'k2 · Line B · loading · 2.0 %'] },
+    })
+    expect((second.data as { results: ReadonlyArray<{ data: unknown }> }).results[0]!.data).toEqual({ card: ['card at 2026-01-01T10:16:00.000Z (simulation)', 'k3 · Reserve · 1.0 %'] })
+    // The turn's map holds every line by the key the model read it under.
+    expect(cards.items().map(item => `${item.key} ${item.label}`)).toEqual(['k1 Line A · loading', 'k2 Line B · loading', 'k3 Reserve'])
+    expect(() => workspaceCallResultForModel({ success: true, data: { results: [{ key: 'c', operationId: readId, success: true, data: { card: { items: 'none' } } }] } }, cards)).toThrow()
   })
 
   test('a refusal of input that does not match the schema carries the schema, within a bound', async () => {
@@ -616,7 +634,7 @@ describe('Workspace progressive-discovery tools', () => {
     const invoked = requests.filter(request => request.url.includes('/invoke'))
     expect(invoked).toHaveLength(1)
     expect(await invoked[0]!.json()).not.toHaveProperty('say')
-    expect(JSON.stringify(workspaceCallResultForModel(done).data)).not.toContain('BUS-A-EMERG')
+    expect(JSON.stringify(workspaceCallResultForModel(done, createTurnCards()).data)).not.toContain('BUS-A-EMERG')
 
     const refused = await call!.execute({ calls: [{ key: 'step', operationId: writeId, input: { refuse: true }, say: line }] }, context)
     expect(refused).toMatchObject({ success: true, data: { results: [{ success: false, error: expect.stringContaining('simulation_command_rejected') }] } })

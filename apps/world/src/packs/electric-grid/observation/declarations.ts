@@ -19,7 +19,11 @@ import { generatorLifecycleCodes } from '../runtime/state/arrays.ts'
 export type GridReading = Pick<Observation, 'value' | 'quality'>
 export interface GridSignal {
   readonly key: string; readonly label: string; readonly quantity: Quantity; readonly unit: string; readonly states?: ReadonlyArray<string>
+  /** The state a conducting binding reads as on (Q8): a branch closed, an HVDC link deblocked. */
+  readonly active?: string
   readonly recorded?: 'operations' | 'engineering'; readonly bands?: 'frequency' | 'loading'
+  /** The lead rank it declares, 1 first. */
+  readonly lead?: number
   readonly read: (grid: GridRuntimeInstance, id: string) => GridReading
 }
 type ElementClass = 'station' | 'bus' | 'branch' | 'generator' | 'connection-point' | 'hvdc-link' | 'external-system' | 'island'
@@ -42,7 +46,7 @@ export const gridSignals: Readonly<Record<ElementClass, ReadonlyArray<GridSignal
   branch: [
     { key: 'flow', label: 'Flow', ...power, recorded: 'engineering', read: (grid, id) => flowOf(grid, id, 'flowMw') },
     { key: 'loading', label: 'Loading', quantity: 'loading', unit: '%', recorded: 'engineering', bands: 'loading', read: (grid, id) => flowOf(grid, id, 'loadingPercent') },
-    { key: 'state', label: 'State', quantity: 'state', unit: '', states: ['closed', 'open', 'tripped'], read: (grid, id) => reading(grid.branches.get(id)!.state) },
+    { key: 'state', label: 'State', quantity: 'state', unit: '', states: ['closed', 'open', 'tripped'], active: 'closed', read: (grid, id) => reading(grid.branches.get(id)!.state) },
   ],
   generator: [
     { key: 'dispatch', label: 'Dispatch', ...power, recorded: 'engineering', read: (grid, id) => reading(grid.generators.get(id)!.dispatchMw) },
@@ -51,7 +55,7 @@ export const gridSignals: Readonly<Record<ElementClass, ReadonlyArray<GridSignal
   'connection-point': [{ key: 'exchange', label: 'Exchange into the grid', ...power, read: (grid, id) => reading(grid.externalConnections.get(id)?.systemActivePowerMw ?? 0) }],
   'hvdc-link': [
     { key: 'transfer', label: 'Transfer', ...power, read: (grid, id) => reading(grid.hvdcLinks.get(id)!.transferMw) },
-    { key: 'state', label: 'State', quantity: 'state', unit: '', states: ['deblocked', 'blocked', 'tripped'], read: (grid, id) => reading(grid.hvdcLinks.get(id)!.state) },
+    { key: 'state', label: 'State', quantity: 'state', unit: '', states: ['deblocked', 'blocked', 'tripped'], active: 'deblocked', read: (grid, id) => reading(grid.hvdcLinks.get(id)!.state) },
   ],
   island: [
     { key: 'frequency', label: 'Frequency', quantity: 'frequency', unit: 'Hz', recorded: 'operations', bands: 'frequency', read: (grid, id) => reading(islandOf(grid, id)?.frequencyHz) },
@@ -61,7 +65,7 @@ export const gridSignals: Readonly<Record<ElementClass, ReadonlyArray<GridSignal
 const operationsQuantity = { frequency: 'frequency', 'active-power': 'electric-power', ratio: 'loading', voltage: 'voltage', count: 'count' } as const
 /** The grid-wide signals, from the Historian's operations list. */
 export const gridWideSignals: ReadonlyArray<GridSignal & { readonly signalId: string }> = gridOperationsSignals.map(item => ({
-  signalId: item.signalId, key: item.signalId, label: item.title, quantity: operationsQuantity[item.quantity], unit: item.unit, recorded: 'operations',
+  signalId: item.signalId, key: item.signalId, label: item.title, quantity: operationsQuantity[item.quantity], unit: item.unit, recorded: 'operations', ...('lead' in item ? { lead: item.lead } : {}),
   ...(item.quantity === 'frequency' ? { bands: 'frequency' as const } : item.quantity === 'ratio' ? { bands: 'loading' as const } : {}),
   read: grid => reading(grid.projection[item.key]),
 }))
@@ -127,10 +131,11 @@ const observable = (grid: GridRuntimeInstance, recording: ScenarioRecordingSelec
   const interval = recording?.intervalMs ?? electricGridRecordingProfiles.find(profile => profile.id === recording?.profileId)?.defaultIntervalMs
   return {
     ref: `${grid.definition.gridId}#${signalId}`, label, quantity: signal.quantity, unit: signal.unit,
-    valueType: signal.states ? 'enum' : signal.quantity === 'state' ? 'boolean' : 'number', ...(signal.states ? { states: signal.states.map(value => ({ value, label: value })) } : {}),
+    valueType: signal.states ? 'enum' : signal.quantity === 'state' ? 'boolean' : 'number', ...(signal.states ? { states: signal.states.map(value => ({ value, label: value, ...(value === signal.active ? { active: true as const } : {}) })) } : {}),
     thresholds: thresholds(grid, signal, element?.class === 'branch' ? element.id : undefined), basis: 'model',
     series: recorded && recording !== undefined && interval !== undefined ? { seriesId: recordingSeriesIdFor(grid.definition.gridId, signalId), intervalMs: interval } : null,
     ...(element === undefined ? {} : { element: element.id }),
+    ...(signal.lead === undefined ? {} : { lead: signal.lead }),
   }
 }
 

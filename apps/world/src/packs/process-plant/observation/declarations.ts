@@ -6,6 +6,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import { plantAlarmPriority } from '../ic/alarm-philosophy.ts'
 import { isDemand, readsAsMeasured } from '../ic/key-values.ts'
 import { icThresholdsForSignal, type ComposedDisplayThreshold } from '../ic/thresholds.ts'
+import { derivedObservables } from './derived.ts'
 
 // What a Plant declares to World's observation layer (plan v3.1 §2.2, A1):
 // every signal it publishes and every signal the Run records, addressed
@@ -50,25 +51,17 @@ const quantityOf = (binding: ProcessSignalBinding): Observable['quantity'] => {
 
 const nameOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
 
-/** Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's ends, by short name. */
 /**
- * What crews call a reading, where the name is the standard one for that very
- * signal (R37): the core-exit thermocouples' average (CET), the mean coolant
- * temperature and each protection loop's average (Tavg), the power-range
- * nuclear instruments, which the board and the procedures read as reactor
- * power, and a loop's measured temperature where it leaves the heat source
- * (Thot) or the transfer's primary side (Tcold). Words a search finds it by,
- * written into its label; never an alias.
+ * What crews call a reading (R37): the name its equipment's presentation
+ * declares for it (CET, Tavg, reactor power), or a loop's measured
+ * temperature where it leaves the heat source (Thot) or the transfer's
+ * primary side (Tcold). Words a search finds it by, written into its label;
+ * never an alias.
  */
-const standardNames: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  reactorCore: { coreExitTemperatureC: 'CET', powerRangePercent: 'reactor power' },
-  reactorVessel: { meanPrimaryCoolantTemperatureC: 'Tavg' },
-  deltaTProtectionChannel: { averageTemperatureC: 'Tavg' },
-}
 const operatorName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string | undefined => {
   const graph = plant.graph
   const local = String(binding.path).slice(String(binding.path).indexOf('.') + 1)
-  if (binding.owner.type === 'component') return standardNames[graph.components[binding.owner.componentIndex]!.kind]?.[local]
+  if (binding.owner.type === 'component') return graph.components[binding.owner.componentIndex]!.metadata?.presentation?.names?.[local]
   if (binding.quantity !== 'temperature' || !binding.published) return undefined
   const link = graph.links[binding.owner.linkIndex]!
   const from = graph.components[link.fromComponentIndex]!
@@ -77,6 +70,7 @@ const operatorName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding
     : from.semantics.energy.some(role => role.role === 'transfer' && role.from === circuit) ? 'Tcold' : undefined
 }
 
+/** Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's ends, by short name. */
 const labelOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string => {
   const graph = plant.graph
   const name = operatorName(plant, binding)
@@ -182,7 +176,7 @@ export const declarationRevision = (plant: CompiledProcessPlant, recording: Plan
 
 const declarationCache = new WeakMap<CompiledProcessPlant, Map<string, ObservationDeclaration>>()
 
-/** The Plant's declaration: its equipment and lines as elements, and its observables; only those on `elementIds` where named. */
+/** The Plant's declaration: its equipment and lines as elements, and its observables (its signals, then those derived.ts reads); only those on `elementIds` where named. */
 export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant, recording: PlantRecording, elementIds?: ReadonlyArray<string>): ObservationDeclaration => {
   const revision = declarationRevision(plant, recording)
   const known = declarationCache.get(plant) ?? new Map<string, ObservationDeclaration>()
@@ -192,7 +186,10 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
     const declaration: ObservationDeclaration = {
       objectId,
       revision,
-      observables: graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
+      observables: [
+        ...graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
+        ...derivedObservables(objectId, plant),
+      ],
       elements: [
         ...graph.components.map(component => ({
           id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),
