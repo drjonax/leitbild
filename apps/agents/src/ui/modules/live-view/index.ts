@@ -8,7 +8,8 @@
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
 import { apiFetch, currentWorkspaceId } from '../api-client.ts'
 import { $roomMessages, $selectedRoomId } from '../stores.ts'
-import { VIEW_FENCE_LANGUAGE } from '../../../core/render-validators/view-fence.ts'
+import { VIEW_FENCE_LANGUAGE, viewRefFor } from '../../../core/render-validators/view-fence.ts'
+import { createTurnCardsReader, frozenCard } from './cards.ts'
 import { findPostedAnswer, roomViewFences, viewFenceOf, viewListingOf, type ViewFence } from './listing.ts'
 import { createViewResolutionCache, resolveViewReference } from './resolve.ts'
 import { openView } from './open.ts'
@@ -22,7 +23,7 @@ import {
   type ViewHostMessage,
 } from './host-link.ts'
 import { inlineFrameWindows, relayInlineOpens } from './inline.ts'
-import { createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showPreparing, showRefused, showUnhosted, type ChipActions } from './chip.ts'
+import { citeKeys, createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showPreparing, showRefused, showUnhosted, type ChipActions, type ChipCard } from './chip.ts'
 
 // Long enough for a burst of re-renders and resolutions to settle into one
 // list, short enough that a new answer's display reaches the window at once.
@@ -35,6 +36,9 @@ const fetchJson = async (path: string): Promise<{ readonly status: number; reado
   const response = await apiFetch(path)
   return { status: response.status, body: response.status === 200 ? await response.json() : null }
 }
+
+// One read of each answer's cards: the frozen card on its chips and the chips for its keys.
+const turnCards = createTurnCardsReader(fetchJson)
 
 const resolutions = createViewResolutionCache<ViewFence>(fence =>
   resolveViewReference(fence.ref, { roomId: fence.answer.roomId, turnId: fence.answer.turnId, workspaceId: currentWorkspaceId() }, fetchJson))
@@ -95,8 +99,20 @@ const settleChip = async (host: HTMLElement, roomId: string, turnId: string, bod
     return
   }
   const listing = viewListingOf(parsed.fence, resolution.envelope)
-  if (hosted) showAvailable(host, listing, chipActions)
-  else showUnhosted(host, listing, workspaceRoomHref(currentWorkspaceId(), roomId), chipActions)
+  // A vignette's chip shows its card; a display that returned none (a Pack's own) keeps the plain chip.
+  const read = await turnCards(roomId, turnId)
+  const entry = read.kind === 'cards' ? read.cards.find(candidate => candidate.viewRef === viewRefFor(parsed.fence.ref.callId, parsed.fence.ref.key)) : undefined
+  const card: ChipCard | undefined = read.kind === 'refused' ? { refused: read.message } : entry === undefined ? undefined : frozenCard(entry.card)
+  if (hosted) showAvailable(host, listing, chipActions, card)
+  else showUnhosted(host, listing, workspaceRoomHref(currentWorkspaceId(), roomId), chipActions, card)
+}
+
+// Each ⟦k⟧ of a posted answer becomes a chip for the line it cites, from the answer's own turn.
+const renderCitedKeys = async (container: HTMLElement): Promise<void> => {
+  const roomId = container.dataset.viewRoom
+  const turnId = container.dataset.viewTurn
+  if (roomId === undefined || turnId === undefined || container.textContent?.includes('⟦k') !== true) return
+  citeKeys(container, await turnCards(roomId, turnId))
 }
 
 const renderViewBlocks = async (container: HTMLElement): Promise<void> => {
@@ -122,6 +138,7 @@ const renderViewBlocks = async (container: HTMLElement): Promise<void> => {
 }
 
 addPostRenderProcessor('leitbild-view', renderViewBlocks)
+addPostRenderProcessor('leitbild-card-keys', renderCitedKeys)
 
 window.addEventListener('message', event => {
   // An inline display asks for another in the window (C1 E5: a chip or banner label on it): relayed while hosted.
