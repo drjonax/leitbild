@@ -5,7 +5,7 @@
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
   import { hostDisplayFrame } from '../view-host.ts'
   import { worstChip } from './alerts.ts'
-  import { clockText } from './format.ts'
+  import { clockText, underTitle } from './format.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
   import { slotLook } from './collection.ts'
   import { toneOf, valueLook } from './readout.ts'
@@ -88,13 +88,13 @@
         {#if section.kind === 'values'}
           {#each section.values as value (value.ref)}
             {@const look = valueLook(value, observations, value.ref)}
-            {#if look.kind === 'state'}<StateWord {look} label={value.label} />{:else}<Readout {look} label={value.label} />{/if}
+            {#if look.kind === 'state'}<StateWord {look} label={underTitle(value.label, view.title)} />{:else}<Readout {look} label={underTitle(value.label, view.title)} />{/if}
           {/each}
         {:else if section.kind === 'grouped'}
           <GroupedValues {section} {observations} />
         {:else if section.kind === 'trend'}
           {#each section.strips as pens, strip (strip)}
-            <TrendStrip {pens} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
+            <TrendStrip {pens} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
           {/each}
         {:else if section.kind === 'alerts'}
           <AlertsSection rows={latest?.alerts ?? []} objectIds={section.objectIds} room={section.rows} {palette} />
@@ -104,7 +104,7 @@
           {#each section.slots as slot (slot.key)}
             <!-- Core slots and telemetry carry no observation priority: they read neutral. -->
             {@const look = slotLook(slot, latest?.slots[section.objectId]?.[slot.key])}
-            {#if look.kind === 'state'}<StateWord {look} label={slot.label} />{:else}<Readout {look} label={slot.label} />{/if}
+            {#if look.kind === 'state'}<StateWord {look} label={underTitle(slot.label, view.title)} />{:else}<Readout {look} label={underTitle(slot.label, view.title)} />{/if}
           {/each}
         {:else if section.kind === 'map'}
           <MapFocus frame={latest?.maps[index]} />

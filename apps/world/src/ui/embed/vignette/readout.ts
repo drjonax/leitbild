@@ -70,7 +70,7 @@ export interface ReadingLook {
   readonly kind: 'number' | 'state'
   /** The number at its decimals, the state's word, "?" for a bad or absent reading, "—" where none applies. */
   readonly text: string
-  /** The number a readout block shows, with its decimals; null for a state or where there is none (the block then shows `text`). */
+  /** The number a readout block shows: the card's digits read back (never "-0"), with its decimals; null for a state or where there is none (the block then shows `text`). */
   readonly value: number | null
   readonly decimals: number
   readonly unit: string
@@ -120,7 +120,7 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
   return {
     kind: state ? 'state' : 'number',
     text,
-    value: !state && !unknown && quality !== 'not-applicable' && typeof value === 'number' ? value : null,
+    value: !state && !unknown && quality !== 'not-applicable' && typeof value === 'number' ? Number(text) : null,
     decimals: typeof value === 'number' ? decimalsFor(input.unit, value) : 0,
     unit: state || unknown ? '' : unitSymbol(input.unit),
     tone,

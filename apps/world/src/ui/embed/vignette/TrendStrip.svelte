@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Observation } from '../../../core/observation/model.ts'
   import type { SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
+  import { underTitle } from './format.ts'
   import { valueLook } from './readout.ts'
   import { stripDrawing } from './trend.ts'
 
@@ -8,8 +9,10 @@
   // window, told apart by dash; the limits all of them share; beside it a
   // legend row per pen with its value now. The last strip of a trend carries
   // the time axis on the row below it.
-  let { pens, series, observations, now, horizonMs, rows, axis }: {
+  let { pens, title, series, observations, now, horizonMs, rows, axis }: {
     pens: ReadonlyArray<VignetteValue>
+    /** The vignette's title: a pen's name drops the object it names. */
+    title: string
     series: ReadonlyMap<string, ReadonlyArray<SeriesPoint>>
     observations: ReadonlyArray<Observation>
     now: number
@@ -49,7 +52,7 @@
       {@const look = valueLook(pen, observations, pen.ref)}
       <li title={look.title}>
         <svg width="20" height="8" aria-hidden="true"><line class="pen" x1="0" x2="20" y1="4" y2="4" stroke-dasharray={drawing?.pens[index]?.dash || undefined} /></svg>
-        <span class="name">{pen.label}</span>
+        <span class="name">{underTitle(pen.label, title)}</span>
         <span class={`now ${look.tone ?? ''}`}>{look.text}{look.unit === '' ? '' : ` ${look.unit}`}</span>
       </li>
     {/each}

@@ -74,7 +74,8 @@ describe('readout', () => {
   })
 
   test('the readout block gets the number and its decimals, or nothing and the word it shows instead', () => {
-    expect(valueLook(level, [observation(level.ref, 18.04)], level.ref)).toMatchObject({ value: 18.04, decimals: 1, text: '18.0' })
+    expect(valueLook(level, [observation(level.ref, 18.04)], level.ref)).toMatchObject({ value: 18, decimals: 1, text: '18.0' })
+    expect(readingLook('Roll', 'number', undefined, { value: -0.3, unit: 'deg', thresholds: [] })).toMatchObject({ value: 0, text: '0' })
     expect(valueLook(level, [observation(level.ref, 50, { quality: 'bad' })], level.ref)).toMatchObject({ value: null, text: '?' })
   })
 
