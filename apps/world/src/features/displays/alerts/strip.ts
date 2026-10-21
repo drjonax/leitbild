@@ -1,26 +1,26 @@
 import type { Priority } from '../../../core/model/alerts.ts'
-import { groupKey, priorityRank, simulationMs, worstFirst, type AlertRow } from './rows.ts'
+import { asksAttention, groupKey, priorityRank, simulationMs, worstFirst, type AlertRow } from './rows.ts'
 
 // The alarm strip (plan v3.1 §2.7; architecture A6): one row per group, the
 // cap on rows, never on groups. Groups keep the Run's object order, then the
 // subject group id, so they never reorder on a value or alarm change. Alarm,
 // emergency and first-out groups always keep their row; the others fill the
 // rows left, warning before caution, and the rest share one row, "+N groups ·
-// worst · n unack". Standing alarms stay quiet: they never count as
-// unacknowledged attention and never hold a row on their own.
+// worst · n unack". Standing alarms and advisories (R43) stay quiet: they
+// never count as unacknowledged attention and never hold a row on their own.
 
 export interface StripGroup {
   readonly key: string
   readonly label: string
   readonly order: number
-  /** Over the group's alarms that are not standing, or all of them where every one is. */
+  /** Over the group's alerts that ask attention, or all of them where none does. */
   readonly worst: Priority | null
-  readonly counts: { readonly active: number; readonly unack: number; readonly standing: number }
+  readonly counts: { readonly active: number; readonly unack: number; readonly standing: number; readonly advisory: number }
   /** The first-out pinned to the group's row; the earliest where it holds several groups' first-outs. */
   readonly firstOut: AlertRow | null
   /** The row shown first, then worst first. */
   readonly rows: ReadonlyArray<AlertRow>
-  /** Every alarm in it is standing. */
+  /** Nothing in it asks attention: every alert is standing or advisory. */
   readonly quiet: boolean
   readonly collapsed: boolean
 }
@@ -41,7 +41,7 @@ const earliestFirst = (left: AlertRow, right: AlertRow): number =>
 
 const stripGroup = (key: string, order: number, members: ReadonlyArray<AlertRow>): Omit<StripGroup, 'collapsed'> => {
   const firstOut = members.filter(row => row.alert.firstOut?.rank === 1).sort(earliestFirst)[0] ?? null
-  const attention = members.filter(row => row.alert.standing !== true)
+  const attention = members.filter(asksAttention)
   return {
     key,
     label: members[0]!.objectLabel,
@@ -50,7 +50,8 @@ const stripGroup = (key: string, order: number, members: ReadonlyArray<AlertRow>
     counts: {
       active: members.filter(row => row.state !== 'returned-unack').length,
       unack: attention.filter(row => row.state !== 'active-ack').length,
-      standing: members.length - attention.length,
+      standing: members.filter(row => row.alert.standing === true).length,
+      advisory: members.filter(row => row.alert.advisory === true).length,
     },
     firstOut,
     rows: [...(firstOut === null ? [] : [firstOut]), ...members.filter(row => row !== firstOut).sort(worstFirst)],

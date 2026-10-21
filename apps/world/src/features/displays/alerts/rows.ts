@@ -70,9 +70,12 @@ export const priorityRank = (priority: Priority | null): number => priority === 
 /** Simulation time in ms; a wall or absent clock cannot be placed on the Run's axis. */
 export const simulationMs = (row: AlertRow): number | null => row.raised?.clock === 'simulation' ? Date.parse(row.raised.at) : null
 
-/** Worst first (R12): standing last, then by priority, then the latest raised, unknown times after known ones. */
+/** Standing alarms and advisories never ask for attention (R43): they never count as unacknowledged nor hold a row. */
+export const asksAttention = (row: AlertRow): boolean => row.alert.standing !== true && row.alert.advisory !== true
+
+/** Worst first (R12): what asks no attention last, then by priority, then the latest raised, unknown times after known ones. */
 export const worstFirst = (left: AlertRow, right: AlertRow): number =>
-  Number(left.alert.standing === true) - Number(right.alert.standing === true)
+  Number(!asksAttention(left)) - Number(!asksAttention(right))
   || priorityRank(right.priority) - priorityRank(left.priority)
   || (simulationMs(right) ?? -Infinity) - (simulationMs(left) ?? -Infinity)
   || left.key.localeCompare(right.key)

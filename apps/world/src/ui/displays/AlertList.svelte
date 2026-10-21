@@ -47,6 +47,7 @@
       <span>{@render sign(line.row)} {line.row.alert.message}</span>
       {#if (line.moreFirstOuts ?? 0) > 0}<span class="mark">+{line.moreFirstOuts} first out</span>{/if}
       {#if line.row.alert.standing === true}<span class="mark">standing</span>{/if}
+      {#if line.row.alert.advisory === true}<span class="mark">advisory</span>{/if}
       <span class="muted">{line.row.state === 'active-unack' ? '' : `${stateWords(line.row)} · `}{raisedWords(line.row, time)}{line.detail === undefined ? '' : ` · ${line.detail}`}</span>
     </span>
   {/each}
@@ -60,4 +61,6 @@
   svg { width: 12px; height: 12px; vertical-align: -1px; fill: var(--hue); stroke: var(--text); stroke-width: 0.75; stroke-opacity: 0.6; }
   .mark { font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
   .muted { color: var(--muted); }
+  /* A narrow strip (T17, R42): one line per closed group, heading and first-out word first, the rest cut until it opens. */
+  @container alert-strip (max-width: 559px) { :global(details:not([open]) > summary) .line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } }
 </style>
