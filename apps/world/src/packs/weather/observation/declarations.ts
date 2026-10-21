@@ -28,6 +28,7 @@ export const declareWeather = (objectId: string, data: WeatherPackData, recordin
       id: `${rule.severity}-${rule.quantity}`, direction: rule.direction, value: rule.limit, order: order + 1, effect: 'advisory', priority: weatherLevelPriority[rule.severity],
     })),
     series: data.definition.type === 'weather_probe' && intervalMs !== undefined ? { seriesId: recordingSeriesIdFor(objectId, quantity.id), intervalMs } : null,
+    ...(quantity.lead === undefined ? {} : { lead: quantity.lead }),
   }))
   return { objectId: objectId as ObservationDeclaration['objectId'], revision: createHash('sha256').update(JSON.stringify(observables)).digest('hex').slice(0, 32), observables, elements: [] }
 }

@@ -48,8 +48,9 @@ const observe = (grid: GridRuntimeInstance, bySignal: ReadonlyMap<string, Readon
   }
 }
 
-const headline = ['grid.frequency', 'grid.maximum-branch-loading', 'grid.unserved-load', 'grid.reserve', 'grid.island-count', 'grid.active-alarms']
-/** The lead: alarmed values (most urgent, then oldest); each energised island's frequency while the Grid is split; then the headline grid-wide values. */
+/** The grid-wide values by their declared lead rank. */
+const headline = gridWideSignals.filter(signal => signal.lead !== undefined).sort((left, right) => left.lead! - right.lead!).map(signal => signal.signalId)
+/** The lead: alarmed values (most urgent, then oldest); each energised island's frequency while the Grid is split; then the grid-wide values it declares a lead rank for. */
 const lead = (grid: GridRuntimeInstance, bySignal: ReadonlyMap<string, ReadonlyArray<GridAlarmRecord>>, count: number): ReadonlyArray<Observation> => {
   const ordered = [...bySignal].sort(([, a], [, b]) => a[0]!.priority - b[0]!.priority || a[0]!.raisedAtElapsedMs - b[0]!.raisedAtElapsedMs).map(([signalId]) => signalId)
   const islands = grid.projection.activeIslandCount > 1 ? grid.projection.islands.filter(island => island.energized).map(island => gridSignalId('island', island.id, 'frequency')) : []
