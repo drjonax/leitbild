@@ -86,24 +86,36 @@ const sameCircuit = (g: Indexed, node: number, a: string, b: string): boolean =>
   return circuit !== undefined && circuit === g.port(node, b)?.circuit
 }
 
-/** Edges reached from these nodes downstream (or upstream), at most `depth` edges deep: flow leaves a node only by a port of the circuit it entered by. */
+/**
+ * Edges reached from these nodes downstream (or upstream), at most `depth`
+ * edges deep: flow leaves a node only by a port of the circuit it entered by,
+ * and a directed edge only from its `from` end going down (its `to` end going
+ * up); an undirected edge (a grid line) leads from either end to the other.
+ */
 const reachFrom = (g: Indexed, nodes: ReadonlyArray<number>, media: ReadonlySet<string>, direction: 'down' | 'up', depth?: number): ReadonlySet<number> => {
-  const carried = (edge: number) => media.has(g.graph.edges[edge]!.medium)
-  const step = (edge: number): ReadonlyArray<number> => {
-    const at = g.graph.edges[edge]!
-    if (direction === 'down') {
-      const target = g.node.get(at.to.node)!
-      return g.out[target]!.filter(next => carried(next) && ['out', 'both'].includes(g.port(target, g.graph.edges[next]!.from.port)?.direction ?? '') && sameCircuit(g, target, at.to.port, g.graph.edges[next]!.from.port))
+  type Step = { readonly edge: number; readonly end: string; readonly far: { readonly node: string; readonly port: string } }
+  const leaving = (node: number): ReadonlyArray<Step> => {
+    const steps: Step[] = []
+    for (const edge of direction === 'down' ? g.out[node]! : g.into[node]!) {
+      const at = g.graph.edges[edge]!
+      if (media.has(at.medium)) steps.push(direction === 'down' ? { edge, end: at.from.port, far: at.to } : { edge, end: at.to.port, far: at.from })
     }
-    const source = g.node.get(at.from.node)!
-    return g.into[source]!.filter(previous => carried(previous) && ['in', 'both'].includes(g.port(source, g.graph.edges[previous]!.to.port)?.direction ?? '') && sameCircuit(g, source, at.from.port, g.graph.edges[previous]!.to.port))
+    for (const edge of direction === 'down' ? g.into[node]! : g.out[node]!) {
+      const at = g.graph.edges[edge]!
+      if (!at.directed && media.has(at.medium)) steps.push(direction === 'down' ? { edge, end: at.to.port, far: at.from } : { edge, end: at.from.port, far: at.to })
+    }
+    return steps
   }
-  const start = nodes.flatMap(node => (direction === 'down' ? g.out[node]! : g.into[node]!).filter(carried))
-  const seen = new Set(start)
+  const onward = (node: number, port: string): ReadonlyArray<Step> => leaving(node).filter(step => sameCircuit(g, node, port, step.end)
+    && (!g.graph.edges[step.edge]!.directed || [direction === 'down' ? 'out' : 'in', 'both'].includes(g.port(node, step.end)?.direction ?? '')))
+  const start = nodes.flatMap(leaving)
+  const seen = new Set(start.map(step => step.edge))
   let frontier = [...start]
   for (let level = 1; frontier.length > 0 && (depth === undefined || level < depth); level += 1) {
-    const next: number[] = []
-    for (const edge of frontier) for (const candidate of step(edge)) if (!seen.has(candidate)) { seen.add(candidate); next.push(candidate) }
+    const next: Step[] = []
+    for (const step of frontier) {
+      for (const candidate of onward(g.node.get(step.far.node)!, step.far.port)) if (!seen.has(candidate.edge)) { seen.add(candidate.edge); next.push(candidate) }
+    }
     frontier = next
   }
   return seen
