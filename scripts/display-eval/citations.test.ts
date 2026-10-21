@@ -81,6 +81,21 @@ describe('T10: the guard and the citation measures', () => {
     expect(score('Pressure is 16.2 MPa ⟦k1⟧.').v3.flagged).toMatchObject([{ number: '16.2', derived: false }])
   })
 
+  test('guard v3 with pack-neutral naming (E0): language words and card labels name numbers, pack words do not', () => {
+    const limits = new Map([['k2', [{ value: 100, decimals: 0 }]]])
+    const score = (answer: string, cards: ReadonlyArray<Card> = [card]) => scoreCitations(answer, cards, 'en', limits)
+    // Language words keep their names, lists included; display and row words and row numbers as in v3.
+    expect(score('Units 1 and 2 read 15.50 MPa ⟦k1⟧.').v3n).toMatchObject({ cited: 1, namesSkipped: 2, flagged: [] })
+    expect(score('Display 2 shows loading at 112.6 % ⟦k2⟧.').v3n).toMatchObject({ cited: 1, namesSkipped: 1, flagged: [] })
+    // A pack word names nothing: v3 skips "Loop 3", the neutral guard reads 3 as a value and flags it.
+    const loop = score('Loop 3 pressure is 15.50 MPa ⟦k1⟧.')
+    expect(loop.v3).toMatchObject({ cited: 1, namesSkipped: 1, flagged: [] })
+    expect(loop.v3n).toMatchObject({ cited: 2, namesSkipped: 0, flagged: [{ number: '3' }] })
+    // The card's own label names it instead, as written with the word after it or in parentheses.
+    const labelled: Card = { ...card, items: [{ ...card.items[1]!, label: 'Ertsmyra trafostasjon 420 kV · Sylling – Tegneby (1)' }] }
+    expect(score('Ertsmyra 420 kV: Sylling–Tegneby (1) is at 112.6 % ⟦k2⟧.', [labelled]).v3n).toMatchObject({ cited: 1, namesSkipped: 2, flagged: [] })
+  })
+
   test('thousands groups read as one number: commas in English, spaces in Norwegian', () => {
     const big: Card = { ...card, items: [{ key: 'k4', label: 'Reserve', reading: '2291 MW', unit: 'MW', numbers: [{ value: 2291, decimals: 0 }] }] }
     expect(scoreCitations('A reserve margin of 2,291 MW ⟦k4⟧.', [big]).flagged).toEqual([])

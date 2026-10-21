@@ -7,7 +7,8 @@
  * (displayed values retyped with their key), contradictions (upper bound
  * ≤ 2 %), guard false positives ≤ 1 % (every flag is hand-checked).
  *
- * Round 2 (R40) adds guard v2; round 3 (R41) asks with the citation-format line and adds guard v3.
+ * Round 2 (R40) adds guard v2; round 3 (R41) asks with the citation-format line and adds guard v3; P2 E0 adds
+ * guard v3 with pack-neutral naming (v3n), which P2 ships.
  *
  *   OPENROUTER_API_KEY=… bun scripts/display-eval/citations.ts <absolute-out-dir> --budget=<USD> [--runs=<id,…>] [--round=2|3]
  */
@@ -72,10 +73,14 @@ export interface CitationScore {
     readonly keyed: number
     readonly keyedAfter: number
   }
+  /** Guard v3 with pack-neutral naming (P2 E0; spec $SP/p2/eval/e0/spec.md): names from card labels and language words only. */
+  readonly v3n: CitationScore['v3']
 }
 
 // Rule 6a: a number after a naming word, directly or through a list of named numbers ("Units 1 and 2"), names a part.
 const NAMING = /\b(?:unit|units|enhet|enheter|enhetene|blokk|blokkene|reaktor|loop|sg|circuit|krets|train|pump|halden)[\s-]*(?:\d+\s*(?:,|and|og|&)\s*)*$/i
+// E0 neutral rule (a): language words only, the same list form; rule 6a's pack words are dropped.
+const NAMING_NEUTRAL = /\b(?:unit|units|enhet|enheter|enhetene)[\s-]*(?:\d+\s*(?:,|and|og|&)\s*)*$/i
 // Rule 5: limit words; a number within three words after one may match a threshold.
 const LIMIT = /\b(?:limit|limits|rating|rated|threshold|setpoint|trip|alarm|above|below|over|under|exceeds?|grense|grensen|grenseverdi\w*|merkeverdi\w*|alarmgrense\w*)\b(?:\W+\S+){0,3}\W*$/i
 // Rule 1: a key group, exact keys only (a range ⟦k1–k8⟧ is none).
@@ -130,7 +135,7 @@ const DIFFERENCE_BEFORE = /\b(?:by|med)\s*$/i
 
 /** Guard v3 (R41): units are table cells or clauses; a number answers to the nearer eligible key group before or after
  * it; display and row ordinals are names; a derived difference is checked only when its unit shows both values. */
-const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyMap<string, Card['items'][number]>, limits: ReadonlyMap<string, Card['items'][number]['numbers']>): CitationScore['v3'] => {
+const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyMap<string, Card['items'][number]>, limits: ReadonlyMap<string, Card['items'][number]['numbers']>, naming: 'v3' | 'neutral' = 'v3'): CitationScore['v3'] => {
   // Rule 1: unit boundaries are clause ends and, in a table row, the cell bars.
   const bounds = [...answer.matchAll(CLAUSE_END)].map(match => match.index!)
   const rowNumbers = new Set<number>()
@@ -147,7 +152,7 @@ const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyM
   }
   bounds.sort((a, b) => a - b)
   const unitOf = (index: number) => bounds.filter(bound => bound < index).length
-  const named = (found: Found) => NAMING.test(answer.slice(Math.max(0, found.index - 30), found.index)) || labelled(answer, items, found)
+  const named = (found: Found) => (naming === 'v3' ? NAMING : NAMING_NEUTRAL).test(answer.slice(Math.max(0, found.index - 30), found.index)) || labelled(answer, items, found)
     || NAMING_V3.test(answer.slice(Math.max(0, found.index - 30), found.index)) || rowNumbers.has(found.index)
   const plain = numbers.filter(found => !named(found))
   // Ranges (v2 rule 4) are one entry with two ends.
@@ -165,7 +170,7 @@ const guardV3 = (answer: string, numbers: ReadonlyArray<Found>, items: ReadonlyM
   const takenFromBehind = new Set<number>()
   const answered = entries.map(entry => {
     const after = groups.find(group => group.unit === entry.unit && group.index >= entry.end)
-    const lastBefore = groups.findLast(group => group.unit === entry.unit && group.end <= entry.start)
+    const lastBefore = groups.filter(group => group.unit === entry.unit && group.end <= entry.start).at(-1)
     const before = lastBefore !== undefined && !takenFromBehind.has(lastBefore.index)
       && !entries.some(other => other !== entry && other.unit === entry.unit && other.start >= lastBefore.end && other.end <= entry.start) ? lastBefore : undefined
     const side = after !== undefined && (before === undefined || after.index - entry.end <= entry.start - before.end) ? 'after' : before !== undefined ? 'before' : null
@@ -228,6 +233,7 @@ export const scoreCitations = (answer: string, cards: ReadonlyArray<Card>, langu
   return {
     v2: guardV2(answer, numbers, items, limits),
     v3: guardV3(answer, numbers, items, limits),
+    v3n: guardV3(answer, numbers, items, limits, 'neutral'),
     exact: exact.length,
     malformed: [...answer.matchAll(MALFORMED)].length,
     unknownKeys,
@@ -356,6 +362,13 @@ export const summariseCitations = (rows: ReadonlyArray<{ readonly score: Citatio
     derivedUncheckedV3: sum(score => score.v3.derivedUnchecked.length),
     keyUseV3: wilson(sum(score => score.v3.keyed), sum(score => score.v3.displayed)),
     keyUseV3After: wilson(sum(score => score.v3.keyedAfter), sum(score => score.v3.displayed)),
+    v3nCited: sum(score => score.v3n.cited),
+    flaggedByGuardV3n: wilson(sum(score => score.v3n.flagged.length), sum(score => score.v3n.cited)),
+    namesSkippedV3n: sum(score => score.v3n.namesSkipped),
+    derivedCheckedV3n: sum(score => score.v3n.derivedChecked),
+    derivedUncheckedV3n: sum(score => score.v3n.derivedUnchecked.length),
+    keyUseV3n: wilson(sum(score => score.v3n.keyed), sum(score => score.v3n.displayed)),
+    keyUseV3nAfter: wilson(sum(score => score.v3n.keyedAfter), sum(score => score.v3n.displayed)),
     unknownKeys: sum(score => score.unknownKeys.length),
   }
 }
