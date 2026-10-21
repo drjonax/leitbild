@@ -8,7 +8,7 @@
 import type { EmbeddedViewListing } from '@leitbild/contracts'
 import { icon, type IconName } from '../icon.ts'
 import { hideInline, showInline } from './inline.ts'
-import { itemOf, type frozenCard, type TurnCardsRead } from './cards.ts'
+import { frozenCardText, itemOf, type frozenCard, type TurnCardsRead } from './cards.ts'
 
 /** What a chip shows of its vignette's card: the frozen card, or why it cannot. */
 export type ChipCard = ReturnType<typeof frozenCard> | { readonly refused: string }
@@ -36,6 +36,25 @@ const chipCards = new WeakMap<HTMLElement, ChipCard>()
 // The element below a chip that holds its inline display, made on first use.
 const inlineSlots = new WeakMap<HTMLElement, HTMLElement>()
 let inlineSlotSequence = 0
+let cardTextSequence = 0
+
+/**
+ * A chip with a frozen card is named by its action alone; the card's title,
+ * time, lines and "+N" are its description, which the action's label would
+ * otherwise hide from assistive technology. A card that could not be read is
+ * described by why.
+ */
+const nameAndDescribe = (control: HTMLElement, action: string, title: string, card: ChipCard | undefined): void => {
+  if (card === undefined) return
+  const description = document.createElement('span')
+  cardTextSequence += 1
+  description.id = `live-view-card-${cardTextSequence}`
+  description.className = 'sr-only'
+  description.textContent = 'refused' in card ? card.refused : frozenCardText(title, card)
+  control.append(description)
+  if (!('refused' in card)) control.setAttribute('aria-label', action)
+  control.setAttribute('aria-describedby', description.id)
+}
 
 const lines = (title: string, subtitle: string, options: { readonly titleTooltip: boolean; readonly wrapSubtitle: boolean; readonly card?: ChipCard }): HTMLElement => {
   const text = document.createElement('span')
@@ -175,6 +194,7 @@ export const showAvailable = (host: HTMLElement, listing: EmbeddedViewListing, a
   action.className = 'shrink-0 text-xs font-medium text-accent'
   action.textContent = frozen ? 'Open live' : 'Open'
   chip.append(leadingIcon('monitor-cog', 'text-accent'), lines(title, SUBTITLE, { titleTooltip: true, wrapSubtitle: false, ...(card === undefined ? {} : { card }) }), action)
+  nameAndDescribe(chip, 'Open live in the display window', title, card)
   chip.onclick = event => {
     event.stopPropagation()
     actions.open(listing)
@@ -204,6 +224,7 @@ export const showUnhosted = (host: HTMLElement, listing: EmbeddedViewListing, hr
   action.className = 'shrink-0 inline-flex items-center gap-1 text-xs font-medium text-accent'
   action.append('Open workspace', icon('external-link', { size: 14 }))
   chip.append(leadingIcon('monitor-cog', 'text-accent'), lines(title, 'Process displays open in the Leitbild workspace', { titleTooltip: true, wrapSubtitle: false, ...(card === undefined ? {} : { card }) }), action)
+  nameAndDescribe(chip, 'Open live in the workspace', title, card)
   show(host, 'unhosted', offerRow(host, listing, chip, actions))
 }
 
