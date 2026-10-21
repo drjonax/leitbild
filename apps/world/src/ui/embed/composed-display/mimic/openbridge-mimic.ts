@@ -7,7 +7,13 @@
 // are created through OpenBridge's own tag types and properties set with its
 // own enums, so a renamed property or value fails the type check on upgrade
 // (openbridge-usage.test.ts checks the same against its Custom Elements Manifest).
+// Each element's module is also imported bare, for its definition: an import
+// of its enums or its type alone defines it only by accident, and trading an
+// enum for its string, or the import for `import type`, drops the element
+// (openbridge-usage.test.ts).
+import '@oicl/openbridge-webcomponents/dist/automation/automation-badge/automation-badge.js'
 import { ObcAutomationBadgeMode, ObcAutomationBadgeType } from '@oicl/openbridge-webcomponents/dist/automation/automation-badge/automation-badge.js'
+import '@oicl/openbridge-webcomponents/dist/automation/automation-button/automation-button.js'
 import {
   AutomationButtonOrientation,
   AutomationButtonPositioning,
@@ -17,14 +23,15 @@ import {
   CircularProgressMode,
   type ObcAutomationButton,
 } from '@oicl/openbridge-webcomponents/dist/automation/automation-button/automation-button.js'
+import '@oicl/openbridge-webcomponents/dist/automation/automation-tank/automation-tank.js'
 import { TankOrientation, TankPositioning, TankType, type ObcAutomationTank } from '@oicl/openbridge-webcomponents/dist/automation/automation-tank/automation-tank.js'
-// The steam generators' and condenser's vessel. Nothing but its type is read from it, and a type-only
-// import is erased, so the module that defines the element is imported for that alone (openbridge-usage.test.ts).
+// The steam generators' and condenser's vessel.
 import '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
 import type { ObcHeatExchanger } from '@oicl/openbridge-webcomponents/dist/automation/heat-exchanger/heat-exchanger.js'
 import { SpecialtyTankMedium } from '@oicl/openbridge-webcomponents/dist/automation/specialty-tank/abstract-specialty-tank.js'
 import { LineMedium } from '@oicl/openbridge-webcomponents/dist/automation/index.js'
 import '@oicl/openbridge-webcomponents/dist/automation/valve-analoge-two-way-icon/valve-analog-two-way-icon.js'
+import '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readout-block.js'
 import {
   ObcTextboxAlignment,
   ReadoutBlockDataQuality,
@@ -33,7 +40,10 @@ import {
   ReadoutValueType,
   type ObcReadoutBlock,
 } from '@oicl/openbridge-webcomponents/dist/building-blocks/readout-block/readout-block.js'
+import '@oicl/openbridge-webcomponents/dist/components/alert-frame/alert-frame.js'
 import { ObcAlertFrameMode, ObcAlertFrameThickness, ObcAlertFrameType, type ObcAlertFrame } from '@oicl/openbridge-webcomponents/dist/components/alert-frame/alert-frame.js'
+// The readout stack inside each device, whose tag MimicPanel reads.
+import '@oicl/openbridge-webcomponents/dist/components/automation-button-readout-stack/automation-button-readout-stack.js'
 import { AutomationButtonReadoutStackSize, type AutomationButtonReadoutStack } from '@oicl/openbridge-webcomponents/dist/components/automation-button-readout-stack/automation-button-readout-stack.js'
 import '@oicl/openbridge-webcomponents/dist/components/icon-button/icon-button.js'
 import { AlertType } from '@oicl/openbridge-webcomponents/dist/types.js'
