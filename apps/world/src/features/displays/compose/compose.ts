@@ -219,7 +219,7 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       if (refs.some(ref => kept.refs.has(ref) && !inStrips.includes(ref))) issues.push(unfit(path, 'the named pens need more than four strips of four'))
       else if (inStrips.length > 0) {
         if (inStrips.length < refs.length) countAdjustment(adjusted, { kind: 'layout', text: `${refs.length - inStrips.length} pens not shown` })
-        fitted.push({ ...view, refs: inStrips, rows: Math.max(3, inStrips.length) + 1 })
+        fitted.push({ ...view, refs: inStrips, rows: strips.slice(0, 4).reduce((sum, strip) => sum + Math.max(3, strip.length), 0) + 1 })
       }
     } else if (view.kind === 'alerts') {
       fitted.push({ ...view, rows: 1 + Math.min(6, Math.max(1, alertsOf(run, { ...view, rows: 1 }).length)) })
@@ -234,14 +234,16 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       const scoped = graph === null ? null : scopeWithin(graph, view.request)
       const drawing = scoped?.ok === true ? await drawingOf(scoped.scoped) : null
       const room = VIGNETTE_MAX_ROWS - FRAME_ROWS - 1
-      if (scoped?.ok !== true || drawing === null || drawing.layout.height + 1 > room) {
-        const why = scoped === null ? 'no topology' : !scoped.ok ? scoped.reason : drawing === null ? 'no drawing verifies' : `${drawing.layout.height + 1} rows`
+      // A layout may end on a half grid unit: its rows are the whole units it reaches into.
+      const rows = drawing === null ? 0 : Math.ceil(drawing.layout.height) + 1
+      if (scoped?.ok !== true || drawing === null || rows > room) {
+        const why = scoped === null ? 'no topology' : !scoped.ok ? scoped.reason : drawing === null ? 'no drawing verifies' : `${rows} rows`
         if (kept.explicit.has(index)) issues.push(unfit(path, `the topology cannot be drawn in one vignette (${why})`))
         else countAdjustment(adjusted, { kind: 'layout', text: `topology not shown (${why})` })
         continue
       }
       if (scoped.reach !== undefined) countAdjustment(adjusted, { kind: 'scope', text: `reach narrowed to ${scoped.reach} links to draw at most 60 nodes` })
-      fitted.push({ ...view, request: { ...view.request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows: drawing.layout.height + 1 })
+      fitted.push({ ...view, request: { ...view.request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows })
     } else fitted.push({ ...view, rows: 2 })
   }
   if (issues.length > 0) return refuse(issues)

@@ -10,7 +10,7 @@
  */
 import { DISPLAY_CARD_MAX_ITEMS, DISPLAY_CARD_MAX_TEXT, displayCardSchema, displayCardTextLength, type DisplayCard, type DisplayCardAdjustment, type DisplayCardItem } from '@leitbild/contracts'
 import { priorityLevels } from '../../../core/model/alerts.ts'
-import { decimalsFor, distanceParts, durationParts, numberText, unitSymbol, type Observation } from '../../../core/observation/model.ts'
+import { decimalsFor, distanceParts, durationParts, numberText, unitSymbol, type Observation, type Quantity } from '../../../core/observation/model.ts'
 import type { AlertRow } from '../alerts/rows.ts'
 import type { Declared } from './declared.ts'
 import type { EntityRow, SlotDeclaration, VignetteSample } from './model.ts'
@@ -20,8 +20,8 @@ type Shown = { readonly value: number; readonly decimals: number }
 type Words = { readonly text: string; readonly number: Shown }
 
 const clock = (at: string): string => at.slice(11, 19)
-const shown = (value: number, unit: string): Shown => ({ value: Number(numberText(value, unit)), decimals: decimalsFor(unit, value) })
-const quantity = (value: number, unit: string): string => unitSymbol(unit) === '' ? numberText(value, unit) : `${numberText(value, unit)} ${unitSymbol(unit)}`
+const shown = (value: number, unit: string, kind?: Quantity): Shown => ({ value: Number(numberText(value, unit, kind)), decimals: decimalsFor(unit, value, kind) })
+const quantity = (value: number, unit: string, kind?: Quantity): string => unitSymbol(unit) === '' ? numberText(value, unit, kind) : `${numberText(value, unit, kind)} ${unitSymbol(unit)}`
 const duration = (seconds: number): Words => { const { value, unit } = durationParts(seconds); return { text: `${value} ${unit}`, number: { value, decimals: 0 } } }
 const distance = (metres: number): Words => { const { value, unit } = distanceParts(metres); return { text: `${numberText(value, unit)} ${unit}`, number: shown(value, unit) } }
 /** A number as a slot of this unit code shows it: seconds as a duration, metres as a distance. */
@@ -32,7 +32,7 @@ export const valueItem = ({ observable, object }: Declared, observation: Observa
   const label = `${object.label} · ${observable.label}`.slice(0, 80)
   const value = observation?.value ?? null
   const numbers: Shown[] = []
-  const word = typeof value === 'number' ? (numbers.push(shown(value, observable.unit)), quantity(value, observable.unit))
+  const word = typeof value === 'number' ? (numbers.push(shown(value, observable.unit, observable.quantity)), quantity(value, observable.unit, observable.quantity))
     : value === null ? 'no reading'
       : observable.states?.find(state => state.value === String(value))?.label ?? (typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value))
   const threshold = observable.thresholds.find(entry => entry.id === observation?.timeToAct?.threshold)
@@ -45,7 +45,7 @@ export const valueItem = ({ observable, object }: Declared, observation: Observa
     ...(toAct !== undefined ? [`${threshold?.effect ?? 'limit'} in ${toAct.text}`] : [])]
   const near = typeof value === 'number' ? (limit: number) => Math.abs(limit - value) : () => 0
   const limits = [...observable.thresholds].sort((left, right) => Number(right.id === observation?.past) - Number(left.id === observation?.past) || near(left.value) - near(right.value))
-    .slice(0, 4).map(entry => shown(entry.value, observable.unit))
+    .slice(0, 4).map(entry => shown(entry.value, observable.unit, observable.quantity))
   return {
     label, reading: parts.join(' · ').slice(0, 120), ...(observable.unit === '' ? {} : { unit: observable.unit }), numbers,
     ...(limits.length === 0 ? {} : { limits }), ...(observation === undefined ? {} : { priority: observation.priority }), subject: { ref: observable.ref },

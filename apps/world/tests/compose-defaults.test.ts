@@ -6,12 +6,13 @@ import { join } from 'node:path'
 import { createWorldApplicationAssembly } from '../src/app-assembly.ts'
 import { displayRunOf } from '../src/core/api/display-capabilities.ts'
 import type { ActorId, IsoTimestamp, ObjectId } from '../src/core/model/index.ts'
+import { displaySpecSchema } from '../src/core/observation/spec.ts'
 import { scenarioAuthoringCatalogFor } from '../src/core/scenarios/authoring.ts'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
-import { composeDefault } from '../src/features/displays/compose/compose.ts'
+import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
 import { leadRefs } from '../src/features/displays/compose/defaults.ts'
 import type { VignetteSection } from '../src/features/displays/compose/model.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
@@ -77,6 +78,20 @@ describe('World defaults of every subject kind', () => {
     const grid = await opened(run, 'grid:halden-four-unit')
     const drawing = grid.view.sections.find(section => section.kind === 'topology')
     expect(drawing?.kind === 'topology' && [drawing.family, drawing.nodes.length > 0]).toEqual(['network', true])
+  })
+
+  test('a wider network view takes whole rows though its layout ends on a half grid unit', async () => {
+    const [declaration] = await run.port.declarations(['grid:halden-four-unit' as ObjectId])
+    const graph = await run.port.topology('grid:halden-four-unit' as ObjectId)
+    if (declaration === undefined || 'refused' in declaration || 'refused' in graph) throw new Error('the grid declares nothing')
+    const media = graph.media.filter(medium => (medium.level?.value ?? 0) >= 300).map(medium => medium.id)
+    const outcome = await composeVignette(run, displaySpecSchema.parse({ title: 'Switchyard', question: 'What feeds the switchyard?', subjects: ['grid:halden-four-unit'],
+      views: [{ kind: 'topology', around: ['grid:halden-four-unit#bus:curated-halden-pwr-switchyard@420'], media, reach: 4 }] }))
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    const [view] = outcome.state.views
+    expect(view?.kind === 'topology' && Number.isInteger(view.rows)).toBe(true)
+    const drawn = (await compileVignette(run, outcome.state)).sections[0]
+    expect(drawn?.kind === 'topology' && Math.ceil(drawn.layout.height) + 1).toBe(view!.rows)
   })
 
   test('entity-floor objects show their core slots and a map focus (ambulance, drone, Einsatz)', async () => {

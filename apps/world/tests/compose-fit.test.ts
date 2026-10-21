@@ -3,8 +3,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { vignetteHeight } from '../src/core/api/display-capabilities.ts'
 import type { AlertState } from '../src/core/model/alerts.ts'
 import type { OperationalObject } from '../src/core/model/index.ts'
+import { observableSchema } from '../src/core/observation/model.ts'
 import { displaySpecSchema } from '../src/core/observation/spec.ts'
-import { assembleCard } from '../src/features/displays/compose/card.ts'
+import { assembleCard, valueItem } from '../src/features/displays/compose/card.ts'
 import { composeVignette } from '../src/features/displays/compose/compose.ts'
 import type { ViewRun } from '../src/features/displays/compose/view.ts'
 import { openRunDefinition } from './fixtures/role-runs.ts'
@@ -69,7 +70,8 @@ describe('fit caps and invariants', () => {
   test('a named signal without a record refuses a trend; recorded pens fill strips of four', async () => {
     expect(await composeVignette(run, spec(['unit:u1'], [{ kind: 'trend', signals: ['unit:u1#speed'] }]))).toMatchObject({ ok: false, issues: [{ code: 'not_observed', path: 'views.0.signals' }] })
     const outcome = await composeVignette(run, spec(['unit:u1'], [{ kind: 'trend', signals: Array.from({ length: 6 }, (_, index) => `unit:u${index}#status`) }]))
-    expect(outcome.ok && outcome.state.views[0]).toMatchObject({ kind: 'trend', horizon: '10m', rows: 7 })
+    // Six pens of one unit: strips of four and two, each at least three rows, and the axis.
+    expect(outcome.ok && outcome.state.views[0]).toMatchObject({ kind: 'trend', horizon: '10m', rows: 4 + 3 + 1 })
   })
 
   test('a subject no fitted view shows is refused, never dropped', async () => {
@@ -91,6 +93,13 @@ describe('fit caps and invariants', () => {
     const card = assembleCard(at, long, [])
     expect(displayCardTextLength(card)).toBeLessThanOrEqual(DISPLAY_CARD_MAX_TEXT)
     expect(card.items.length + card.more).toBe(60)
+  })
+
+  test('a count reads whole on the card, as the readout prints it', () => {
+    const object = run.objects.find(entry => entry.id === 'unit:u1')!
+    const count = observableSchema.parse({ ref: 'unit:u1#alarms', label: 'Active alarms', quantity: 'count', unit: '1', valueType: 'number', series: null })
+    const item = valueItem({ observable: count, object }, { ref: count.ref, at: '2026-01-01T08:00:00.000Z', clock: 'simulation', value: 3, quality: 'good', priority: 'none' })
+    expect([item.reading, item.numbers]).toEqual(['3', [{ value: 3, decimals: 0 }]])
   })
 
   test('the frame height is the rows on the grid, within what an embedder reserves', () => {

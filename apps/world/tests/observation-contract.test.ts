@@ -91,6 +91,8 @@ describe('observation model', () => {
     expect([decimalsFor('pcm', 150), decimalsFor('pcm', 15), decimalsFor('pcm', 1.5), decimalsFor('pu', 0.98), decimalsFor('degC/s', -0.0042), decimalsFor('pcm', 0)]).toEqual([0, 1, 2, 3, 5, 2])
     expect([numberText(-0.04, '%'), numberText(287.44, 'degC'), numberText(0.98, 'pu'), numberText(3, '1')]).toEqual(['0.0', '287.4', '0.980', '3.00'])
     expect([unitSymbol('degC'), unitSymbol('m3'), unitSymbol('1'), unitSymbol(''), unitSymbol('MPa')]).toEqual(['°C', 'm³', '', '', 'MPa'])
+    // A count is whole whatever its unit code; a fraction of '1' keeps its two decimals.
+    expect([numberText(1, '1', 'count'), numberText(0.85, '1', 'fraction'), decimalsFor('1', 12, 'count')]).toEqual(['1', '0.85', 0])
   })
 })
 
