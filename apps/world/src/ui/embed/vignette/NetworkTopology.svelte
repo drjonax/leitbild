@@ -34,9 +34,6 @@
 
 <div class="network">
   <div class="drawing" style:width={`${drawing.width}px`} style:height={`${drawing.height}px`} role="img" aria-label="Network topology">
-    {#each drawing.groups as group (group.id)}
-      <div class="group" style:left={`${group.x}px`} style:top={`${group.y}px`} style:width={`${group.width}px`} style:height={`${group.height}px`}><span>{group.label}</span></div>
-    {/each}
     <canvas use:lines={{ segments: drawing.segments, width: drawing.width, height: drawing.height, palette, zoom }}></canvas>
     {#each drawing.buses as bus (bus.id)}
       <obc-bus class="placed" size="small" vertical={bus.vertical} label={bus.label} title={bus.title} style:left={`${bus.x}px`} style:top={`${bus.y}px`} style:width={`${bus.width}px`} style:height={`${bus.height}px`}></obc-bus>
@@ -66,8 +63,6 @@
   .drawing { position: relative; }
   canvas { position: absolute; left: 0; top: 0; }
   .placed { position: absolute; }
-  .group { position: absolute; border: 1px solid var(--border-divider-color); border-radius: 4px; }
-  .group span { position: absolute; left: 4px; top: 2px; font-size: 12px; color: var(--element-neutral-color); white-space: nowrap; }
   .text { position: absolute; height: var(--row); line-height: 20px; font-size: 12px; white-space: nowrap; overflow: hidden; }
   .text.below { height: calc(2 * var(--row)); display: flex; flex-direction: column; justify-content: space-between; line-height: 18px; }
   .reading { color: var(--element-neutral-color); font-variant-numeric: tabular-nums; }

@@ -30,8 +30,6 @@ const DEVICES: Readonly<Partial<Record<Topology['nodes'][number]['class'], 'obc-
 export interface NetworkDrawing {
   readonly width: number
   readonly height: number
-  /** A station or other group: a frame with its name (no OpenBridge component draws a group). */
-  readonly groups: ReadonlyArray<Box & { readonly id: string; readonly label: string }>
   /** Lines, line elements, and the caps where the drawing stops: connector-diagram segments. */
   readonly segments: ReadonlyArray<Segment>
   readonly buses: ReadonlyArray<Box & { readonly id: string; readonly vertical: boolean; readonly label: string; readonly title: string }>
@@ -82,7 +80,6 @@ const READING_ROLES: ReadonlyArray<TopologyBinding['role']> = ['loading', 'flow'
 export const networkDrawing = (section: Topology, observations: ReadonlyArray<Observation>): NetworkDrawing => {
   const px = (grid: number): number => grid * VIGNETTE_ROW_PX
   const byId = new Map(section.nodes.map(node => [node.id, node]))
-  const groupLabels = new Map(section.groups.map(group => [group.id, group.label]))
   const read = (binding: TopologyBinding): Observation | undefined => observations.find(observation => observation.ref === binding.ref)
   const conducting = (id: string): boolean | null => {
     const binding = byId.get(id)?.bindings.find(entry => entry.role === 'conducting')
@@ -143,7 +140,6 @@ export const networkDrawing = (section: Topology, observations: ReadonlyArray<Ob
   return {
     width: px(section.layout.width),
     height: px(section.layout.height),
-    groups: section.layout.groups.map(group => ({ id: group.id, x: px(group.x), y: px(group.y), width: px(group.width), height: px(group.height), label: fitName(groupLabels.get(group.id) ?? group.id, px(group.width) - 8) })),
     segments,
     ...drawing,
   }

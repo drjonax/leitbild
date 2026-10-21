@@ -267,16 +267,6 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     decision: APPROVED,
     ends: 'kept',
   },
-  {
-    id: 'grid-station-frames',
-    draws: 'A bordered frame with the station\'s name around the buses, generators and connection points of one station in a network topology.',
-    sites: [{ file: 'ui/embed/vignette/NetworkTopology.svelte', mark: '<div class="group"', drawn: 'html' }],
-    standsInFor: 'none',
-    reason: 'A',
-    evidence: 'OpenBridge 2.0.0 has no group frame; connector-diagram has group boxes only in its editor scene model, and renderSegments draws segments only. The frame is the grid\'s declared station membership (the topology group), laid out by ELK as a container. Measured on the Halden switchyard views: 1-hop at 300 kV and above, 14 nodes and 2 frames of one bus each; 2-hop, 28 nodes and 6 frames, one with two members (a station\'s 300 kV and 420 kV buses); 1-hop at all levels, 15 nodes and 2 frames of one each. A frame around one bus repeats its name; p2-render recommends a frame only around two or more drawn nodes.',
-    decision: 'pending owner approval',
-    ends: 'kept',
-  },
   // The main app (OpenBridge-free by licence).
   {
     id: 'alert-priority-glyphs',
