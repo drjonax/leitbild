@@ -1,0 +1,80 @@
+import { describe, expect, test } from 'bun:test'
+import { citationIssues, readingFlags, type CitedItem } from './citations.ts'
+
+// T10's card (scripts/display-eval/citations.test.ts), with the declared limits on the item as the contracts card carries them.
+const items: ReadonlyArray<CitedItem> = [
+  { key: 'k1', label: 'Unit 2 · Pressurizer pressure', reading: '15.50 MPa', numbers: [{ value: 15.5, decimals: 2 }] },
+  { key: 'k2', label: 'Unit 2 · Hasle loading', reading: '112.55 %', numbers: [{ value: 112.55, decimals: 2 }], limits: [{ value: 100, decimals: 0 }] },
+  { key: 'k3', label: 'Unit 2 · Rods on bottom', reading: 'yes · since 10:02:13', numbers: [] },
+]
+const flagged = (answer: string, cited: ReadonlyArray<CitedItem> = items) => citationIssues(answer, cited).contradictions.map(entry => entry.number)
+
+describe('citation check (guard v3, pack-neutral naming)', () => {
+  test('a number matches its item at the decimals it is written with; fewer decimals that round to it hold', () => {
+    expect(citationIssues('Pressure is 15.5 MPa ⟦k1⟧ and loading 112.6 % ⟦k2⟧.', items)).toEqual({ unknownKeys: [], contradictions: [] })
+  })
+
+  test('a number its key contradicts is named with what the line reads', () => {
+    expect(citationIssues('Pressure is 15.7 MPa ⟦k1⟧.', items).contradictions).toEqual([
+      { number: '15.7', keys: ['k1'], issue: '15.7 is cited with ⟦k1⟧, but k1 reads "15.50 MPa" (Unit 2 · Pressurizer pressure).' },
+    ])
+  })
+
+  test('clock times, refs and ids are no numbers; a state line carries none; unknown keys are listed once', () => {
+    expect(flagged('Rods on bottom since 10:02:13 ⟦k3⟧; plant:halden-2#pressurizer.pressureMPa reads 15.50 MPa ⟦k1⟧.')).toEqual([])
+    expect(citationIssues('Pressure is 15.50 MPa ⟦k1⟧, see ⟦k9⟧ and ⟦k9⟧.', items).unknownKeys).toEqual(['k9'])
+    // A key range is no key group: the number answers to nothing.
+    expect(flagged('All eight lines tripped ⟦k1–k8⟧ at 7 %.')).toEqual([])
+  })
+
+  test('a key before or after its number within its cell or clause; the nearer eligible group wins', () => {
+    expect(flagged('Pressure ⟦k1⟧ is 15.5 MPa, and loading ⟦k2⟧ is 112.6 %.')).toEqual([])
+    expect(flagged('Pressure ⟦k1⟧ is 15.5 MPa while loading is 112.6 % ⟦k2⟧.')).toEqual([])
+    // Grouped keys after a clause: a number holds against any key of its group.
+    expect(flagged('Loading is 112.55 % and pressure 15.50 MPa ⟦k2⟧ ⟦k1⟧.')).toEqual([])
+    expect(flagged('Pressure is 16.2 MPa ⟦k1⟧ ⟦k2⟧.')).toEqual(['16.2'])
+    // In a table the unit is the cell: a key in the label cell cites nothing, a row number is a name.
+    expect(flagged('| Reading | Value |\n|---|---|\n| Pressure ⟦k1⟧ | 15.50 MPa |\n| 1 | Loading 112.6 % ⟦k2⟧ |')).toEqual([])
+  })
+
+  test('ranges hold by both ends; a limit after a limit word may match a declared limit; derived differences', () => {
+    expect(flagged('Pressure and loading span 15.5–112.6 ⟦k1⟧ ⟦k2⟧.')).toEqual([])
+    expect(flagged('Pressure and loading span 15.5–120 ⟦k1⟧ ⟦k2⟧.')).toEqual(['15.5–120'])
+    expect(flagged('Loading is 112.6 %, above its 100 % rating ⟦k2⟧.')).toEqual([])
+    expect(flagged('Loading is 112.6 %, then 100 % ⟦k2⟧.')).toEqual(['100'])
+    expect(flagged('Loading is 112.6 %, or 12.6 percentage points above 100 % ⟦k2⟧.')).toEqual([])
+    expect(flagged('Loading is 112.6 %, or 15.6 percentage points above 100 % ⟦k2⟧.')).toEqual(['15.6'])
+    // Without both values in its clause a difference is unchecked, never flagged.
+    expect(flagged('Loading is 12.6 points above full loading ⟦k2⟧.')).toEqual([])
+  })
+
+  test('names: unit and display words and the card\'s own labels name numbers; pack words do not', () => {
+    expect(flagged('Units 1 and 2 read 15.50 MPa ⟦k1⟧.')).toEqual([])
+    expect(flagged('Unit 2 ⟦k1⟧ reads 15.50 MPa ⟦k1⟧.')).toEqual([])
+    expect(flagged('Display 2 shows loading at 112.6 % ⟦k2⟧.')).toEqual([])
+    // "Loop" is a pack word: 3 is read as a value and flagged against k1 ...
+    expect(flagged('Loop 3 pressure is 15.50 MPa ⟦k1⟧.')).toEqual(['3'])
+    // ... unless the card's label names it, with the word after it or in parentheses as written.
+    const loop: ReadonlyArray<CitedItem> = [{ ...items[0]!, label: 'Loop 3 pressure' }]
+    expect(flagged('Loop 3 pressure is 15.50 MPa ⟦k1⟧.', loop)).toEqual([])
+    const line: ReadonlyArray<CitedItem> = [{ ...items[1]!, label: 'Ertsmyra trafostasjon 420 kV · Sylling – Tegneby (1)' }]
+    expect(flagged('Ertsmyra 420 kV: Sylling–Tegneby (1) is at 112.6 % ⟦k2⟧.', line)).toEqual([])
+    // Known risk (E0): a name written otherwise than its label ("circuit 1" for "(1)") and cited to an item with
+    // numbers is flagged; the correction then asks for the value as the line reads it.
+    expect(flagged('Sylling–Tegneby circuit 1 is at 112.6 % ⟦k2⟧.', line)).toEqual(['1'])
+  })
+
+  test('every answer is read in English and Norwegian: only a number both readings flag is a contradiction', () => {
+    const reserve: ReadonlyArray<CitedItem> = [{ key: 'k4', label: 'Reserve', reading: '2291 MW', numbers: [{ value: 2291, decimals: 0 }] }]
+    expect(flagged('A reserve margin of 2,291 MW ⟦k4⟧.', reserve)).toEqual([])
+    expect(flagged('Reservemarginen er 2 291 MW ⟦k4⟧.', reserve)).toEqual([])
+    expect(flagged('Trykket er 15,5 MPa ⟦k1⟧.')).toEqual([])
+    expect(flagged('A reserve margin of 2,391 MW ⟦k4⟧.', reserve)).toEqual(['2,391'])
+    // The fuller reading names the number.
+    expect(flagged('Trykket er 17,2 MPa ⟦k1⟧.')).toEqual(['17,2'])
+    // One reading alone flags what the other reads as a value: English splits "2 291", Norwegian reads "2,291" as 2.291.
+    const byKey = new Map(reserve.map(item => [item.key, item]))
+    expect(readingFlags('Reservemarginen er 2 291 MW ⟦k4⟧.', byKey, 'en').map(flag => flag.number)).toEqual(['2', '291'])
+    expect(readingFlags('A reserve margin of 2,291 MW ⟦k4⟧.', byKey, 'nb').map(flag => flag.number)).toEqual(['2,291'])
+  })
+})
