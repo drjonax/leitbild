@@ -520,7 +520,9 @@ Action: Inspect «OTHER-STEP».
     },0)
     expect((await read({...series,limit:1})).status).toBe(403)
     expect(runs.leaseSummary(run.id).leasesByKind.api).toBe(0)
-  })
+  // About 2.5–3 s alone (it records a Run's history); a loaded machine needs more wall time, so the bound is sized for
+  // load and measures nothing. The file's other cases take 0.2 s or less alone.
+  }, 60_000)
   test('container admission is bounded without evicting active definition owners', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'world-container-cap-'))
     temporaryDirectories.push(dataDir)
