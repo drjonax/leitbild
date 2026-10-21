@@ -40,8 +40,8 @@ export const displayScope: ReadonlyArray<ScopeGroup> = [
   { name: 'Display probe script', include: ['scripts/agent-display-probe.ts', 'scripts/display-eval/probe.ts'] },
 ]
 
-/** Phase ceilings in lines (§2.10). The peak is split by ADR: old code with its replacements, plus new code with no predecessor. */
-export const ceilings = { p0: 30_000, p1: 30_000, peak: 38_000, swap: 23_000, end: 22_000, p3b: 22_500 } as const
+/** Phase ceilings in lines (§2.10). P1 is the figure measured at the P1 exit (owner, 20 Oct: the plan's 30k assumed a lower P0 landing); swap and end are unchanged. The peak is split by ADR: old code with its replacements, plus new code with no predecessor. */
+export const ceilings = { p0: 30_000, p1: 32_129, peak: 38_000, swap: 23_000, end: 22_000, p3b: 22_500 } as const
 export type Phase = keyof typeof ceilings
 export const peakSplit = { withPredecessor: 36_000, noPredecessor: 2_000 } as const
 /** Paths of P2 code with no predecessor (dashboard v0, entity floor, collections, events, as-caller, attribution), added by their lanes. */
