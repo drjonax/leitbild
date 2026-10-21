@@ -6,7 +6,7 @@ import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
 import { sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/ui/embed/vignette/model.ts'
-import { limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
+import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
 import { appendPoint, limitLabelYs, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
 
 // The vignette renderer's presenters (architecture B1): the limit chip, the
@@ -63,19 +63,27 @@ describe('readout', () => {
     expect(look.note).toBe('trip in 4 min')
   })
 
-  test('the limit bar spans the limits, padded, and reaches the value beyond them', () => {
-    const inside = limitBar(50, level.thresholds)!
-    expect(inside.ticks.map(tick => Number(tick.at.toFixed(3)))).toEqual([0.244, 0.115, 0.885])
-    expect(inside.at).toBeCloseTo(0.5, 3)
+  test('the limit bar (obc-bar-horizontal) spans the limits, padded, reaches the value beyond them, and shows each limit as an advice zone, hinted until passed', () => {
+    expect(limitBar(50, level.thresholds, 'lolo')).toEqual({
+      min: 11, max: 89, value: 50,
+      advices: [{ min: 11, max: 30, type: 'caution', hinted: true }, { min: 11, max: 20, type: 'caution', hinted: false }, { min: 80, max: 89, type: 'caution', hinted: true }],
+    })
     const below = limitBar(0, level.thresholds)!
-    expect(below.at).toBeGreaterThan(0)
-    expect(below.at).toBeLessThan(below.ticks[1]!.at)
+    expect([below.min, below.value]).toEqual([-12, 0])
     expect(limitBar(5, [])).toBeNull()
   })
 
-  test('states: a word from the declaration, filled while true, hollow otherwise, "?" and dashed while unknown, "since" its last change', () => {
+  test('the readout block gets the number and its decimals, or nothing and the word it shows instead', () => {
+    expect(valueLook(level, [observation(level.ref, 18.04)], level.ref)).toMatchObject({ value: 18.04, decimals: 1, text: '18.0' })
+    expect(valueLook(level, [observation(level.ref, 50, { quality: 'bad' })], level.ref)).toMatchObject({ value: null, text: '?' })
+  })
+
+  test('states: a word from the declaration, active only where declared so or true (Q8), "?" while unknown, "since" its last change', () => {
     const states = [{ value: 'open', label: 'open' }, { value: 'closed', label: 'closed' }]
     expect(readingLook('Breaker', 'enum', states, { value: 'closed', unit: '', thresholds: [], since: { at, clock: 'simulation' } })).toMatchObject({ kind: 'state', text: 'closed', fill: 'hollow', note: 'since 10:00:00' })
+    const declared = [{ value: 'open', label: 'open' }, { value: 'closed', label: 'closed', active: true as const }]
+    expect(readingLook('Breaker', 'enum', declared, { value: 'closed', unit: '', thresholds: [] }).fill).toBe('filled')
+    expect([activeState('closed', declared), activeState('open', declared), activeState('closed', states), activeState(false, undefined)]).toEqual([true, false, null, false])
     expect(readingLook('Bus · Energised', 'boolean', undefined, { value: true, unit: '', thresholds: [] })).toMatchObject({ text: 'yes', fill: 'filled' })
     expect(readingLook('Bus · Energised', 'boolean', undefined, { value: null, unit: '', thresholds: [], quality: 'bad' })).toMatchObject({ text: '?', fill: 'unknown' })
   })

@@ -6,9 +6,13 @@
 }
 /* OpenBridge declares Noto Sans, without a fallback, on every element (*).
    These selectors outrank * wherever the stylesheets load. System faces stand
-   in rather than shipping a 600 KB font into every chat view. */
+   in rather than shipping a 600 KB font into every chat view. Components read
+   the family inside their shadow roots through the typography token, resolved
+   at :root before this override applies, so it is re-derived per element too
+   (a vignette's bus label and status words otherwise drew in a serif face). */
 :root, :root * {
   --font-family-main: "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --global-typography-font-family: var(--font-family-main);
 }
 :root.dark { color-scheme: dark; }
 /* A sideways trackpad swipe over a display scrolls the display, never the

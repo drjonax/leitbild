@@ -1,9 +1,10 @@
 // How one value reads (architecture B): a number with its limit bar and the
-// chip of the limit it is past, or a state as a word with a fill. Colour comes
-// only from the observation's own priority; a value without one (an entity's
-// telemetry, a core slot) is neutral, whatever its source calls it.
+// chip of the limit it is past, or a state as a word, in OpenBridge's
+// readout block, bar and status indicator. Colour comes only from the
+// observation's own priority; a value without one (an entity's telemetry, a
+// core slot) is neutral, whatever its source calls it.
 import type { Priority } from '../../../core/model/alerts.ts'
-import { numberText, unitSymbol, type Observable, type Observation } from '../../../core/observation/model.ts'
+import { decimalsFor, numberText, unitSymbol, type Observable, type Observation } from '../../../core/observation/model.ts'
 import { clockText, durationText } from './format.ts'
 
 type Threshold = Observable['thresholds'][number]
@@ -32,44 +33,74 @@ export interface ReadingInput {
 export const orderWord = (threshold: Pick<Threshold, 'direction' | 'order'>): string =>
   Array.from({ length: threshold.order }, () => (threshold.direction === 'low' ? 'LO' : 'HI')).join('-')
 
+/** An `obc-bar-horizontal`: its scale, the value, and each limit as an advice zone beyond it (OpenBridge's LinearAdvice). */
 export interface LimitBar {
-  /** Where the value sits along the bar, 0 to 1. */
-  readonly at: number
-  readonly ticks: ReadonlyArray<{ readonly id: string; readonly at: number; readonly priority: Threshold['priority'] }>
+  readonly min: number
+  readonly max: number
+  readonly value: number
+  /** Hinted until the value is past that limit. */
+  readonly advices: ReadonlyArray<{ readonly min: number; readonly max: number; readonly type: 'caution'; readonly hinted: boolean }>
 }
 
 const BAR_PAD = 0.15
 
 /** The bar spans the limits, padded, and reaches the value only where it lies beyond them; no limits, no bar. */
-export const limitBar = (value: number, thresholds: ReadonlyArray<Threshold>): LimitBar | null => {
+export const limitBar = (value: number, thresholds: ReadonlyArray<Threshold>, past?: string): LimitBar | null => {
   if (thresholds.length === 0) return null
   const limits = thresholds.map(threshold => threshold.value)
   const low = Math.min(value, ...limits)
   const high = Math.max(value, ...limits)
   const span = high > low ? high - low : Math.max(Math.abs(low), 1)
   const min = low - span * BAR_PAD
-  const width = span * (1 + 2 * BAR_PAD)
-  const at = (point: number): number => (point - min) / width
-  return { at: at(value), ticks: thresholds.map(threshold => ({ id: threshold.id, at: at(threshold.value), priority: threshold.priority })) }
+  const max = high + span * BAR_PAD
+  return {
+    min,
+    max,
+    value,
+    advices: thresholds.map(threshold => ({
+      min: threshold.direction === 'high' ? threshold.value : min,
+      max: threshold.direction === 'high' ? max : threshold.value,
+      type: 'caution' as const,
+      hinted: threshold.id !== past,
+    })),
+  }
 }
 
 export interface ReadingLook {
   readonly kind: 'number' | 'state'
   /** The number at its decimals, the state's word, "?" for a bad or absent reading, "—" where none applies. */
   readonly text: string
+  /** The number a readout block shows, with its decimals; null for a state or where there is none (the block then shows `text`). */
+  readonly value: number | null
+  readonly decimals: number
   readonly unit: string
   readonly tone: AlertTone | null
   /** Notice: bold, no hue. */
   readonly emphasis: boolean
   /** Uncertain or stale: drawn faint, its quality in the title. */
   readonly doubtful: boolean
-  /** A state: filled while true, hollow while false or for an enum's word, dashed while unknown. */
+  /** A state: active while true, inactive while false or for an enum's word, unknown (dashed "?") while unknown. */
   readonly fill: 'filled' | 'hollow' | 'unknown'
   /** The limit the value is past: its order word alone in a table cell, with value and consequence on a row. */
   readonly chip: { readonly word: string; readonly text: string; readonly tone: AlertTone | null } | null
   readonly note: string | null
   readonly bar: LimitBar | null
   readonly title: string
+}
+
+/** A declared state; `active` marks the states that read "on" (ruling Q8). STAND-IN type until A2's schema carries the flag. */
+type StateEntry = NonNullable<Observable['states']>[number] & { readonly active?: true }
+
+/**
+ * Whether a state reads "on" (ruling Q8): a boolean true, or a value whose
+ * declared state says `active`; never inferred from the order of the states.
+ * Where no declared state says it, an enum value reads neither (null).
+ */
+export const activeState = (value: Observation['value'] | undefined, states: Observable['states']): boolean | null => {
+  if (typeof value === 'boolean') return value
+  const entries = (states ?? []) as ReadonlyArray<StateEntry>
+  if (typeof value !== 'string' || !entries.some(entry => entry.active === true)) return null
+  return entries.find(entry => entry.value === value)?.active === true
 }
 
 const stateWord = (value: string | boolean, states: Observable['states']): string =>
@@ -92,14 +123,16 @@ export const readingLook = (label: string, valueType: Observable['valueType'], s
   return {
     kind: state ? 'state' : 'number',
     text,
+    value: !state && !unknown && quality !== 'not-applicable' && typeof value === 'number' ? value : null,
+    decimals: typeof value === 'number' ? decimalsFor(input.unit, value) : 0,
     unit: state || unknown ? '' : unitSymbol(input.unit),
     tone,
     emphasis: input.priority === 'notice',
     doubtful: quality === 'uncertain' || quality === 'stale',
-    fill: unknown ? 'unknown' : value === true ? 'filled' : 'hollow',
+    fill: unknown ? 'unknown' : activeState(value, states) === true ? 'filled' : 'hollow',
     chip: passed === undefined ? null : { word: orderWord(passed), text: `${orderWord(passed)} ${numberText(passed.value, input.unit)}${passed.consequence === undefined ? '' : ` · ${passed.consequence}`}`, tone },
     note,
-    bar: typeof value === 'number' && !unknown ? limitBar(value, input.thresholds) : null,
+    bar: typeof value === 'number' && !unknown ? limitBar(value, input.thresholds, input.past) : null,
     title: [label, quality === 'good' ? '' : `quality: ${quality}`, input.why ?? ''].filter(part => part !== '').join(' · '),
   }
 }
