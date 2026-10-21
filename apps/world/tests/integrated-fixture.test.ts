@@ -13,6 +13,7 @@ import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { builtinScenarioDefinitions } from '../src/scenarios/definitions.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
+import { createManualIdleTimer } from './helpers.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -28,9 +29,12 @@ const viewer: Actor = { id: 'actor:human:integrated-fixture' as ActorId, label: 
 const cleanups: Array<() => Promise<void>> = []
 afterAll(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
+// The test drives the Run itself and holds no registry lease, so the registry's 30 s wall-clock idle close would shut it
+// mid-play on a loaded machine (the full suite at 432231069): a manual idle timer that the test never advances.
 const registryOn = (dataDir: string, workspaceId: ReturnType<typeof newWorkspaceId>, fixture: ReturnType<typeof scenarioDefinitionSchema.parse>) => createSimulationRunRegistry({
   dataDir,
   workspaceId,
+  idleRuntimeCloseTimer: createManualIdleTimer().arm,
   scenarioDefinitions: [...builtinScenarioDefinitions, fixture],
   compileScenarioDefinition: source => compileScenarioDefinition(source, assembly.packs, { routing }),
   scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(assembly.packs),
@@ -84,5 +88,6 @@ describe('the integrated all-pack fixture', () => {
     expect(restored.events().length).toBeGreaterThanOrEqual(savedEvents)
     await restored.runMaximumPace(new Date(Date.parse(savedClock) + 2_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
     expect(Date.parse(restored.snapshot().clock!.currentTime)).toBeGreaterThanOrEqual(Date.parse(savedClock) + 2_000)
-  })
+    // About 10 s of CPU on a quiet machine; a loaded suite slows a runnable thread to about 8/load of a core.
+  }, 600_000)
 })
