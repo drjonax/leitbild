@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { COMPOSED_DISPLAY_VIEW_TYPE } from '../src/packs/process-plant/displays/composition.ts'
+import { answerDeckEntry } from '../src/ui/process-display/display-deck.ts'
 import {
   listingRefusal,
   PROCESS_DISPLAY_VIEW_TYPE,
   readDisplayWindowHostMessage,
+  VIGNETTE_VIEW_TYPE,
 } from '../src/ui/process-display/display-window-messages.ts'
 
 const workspaceId = '1e828b43-37fc-4437-aa70-302d7f442ceb'
@@ -58,6 +60,17 @@ describe('display window messages from the Host', () => {
       refused: [{ key: 'room/turn/call/other-workspace', reason: 'display room/turn/call/other-workspace belongs to another Workspace' }],
     })
     expect(readDisplayWindowHostMessage(fromHost({ type: 'leitbild:view-open', view: grid }), expected)).toMatchObject({ kind: 'open', view: { key: 'room/turn/call/grid' } })
+  })
+
+  test('shows World vignettes about a Run (architecture B2): listed, opened and drawn in a frame of their own', () => {
+    const vignette = view({ viewType: VIGNETTE_VIEW_TYPE, title: 'Halden frequency', state: '{"title":"Halden frequency","at":{},"views":[]}' }, 'room/turn/call/vignette')
+    expect(VIGNETTE_VIEW_TYPE).toBe('display.vignette')
+    expect(listingRefusal(vignette.envelope as never)).toBeNull()
+    expect(listingRefusal({ ...vignette.envelope, moduleId: 'agents' } as never)).toBe('it is a display.vignette view published by agents, not by World')
+    expect(listingRefusal({ ...vignette.envelope, subject: { ...vignette.envelope.subject, type: 'world.scenario' } } as never)).toBe('it is about a world.scenario, not a Simulation Run')
+    expect(readDisplayWindowHostMessage(fromHost({ type: 'leitbild:views', views: [view(), vignette] }), expected)).toMatchObject({ kind: 'views', views: [{ key: 'room/turn/call/key' }, { key: 'room/turn/call/vignette' }], refused: [] })
+    // In the deck it is an answer's display like any other, sized by its content.
+    expect(answerDeckEntry('run-1', vignette as never)).toMatchObject({ source: 'answer', title: 'Halden frequency', kind: 'advice', refusal: null, otherRun: false })
   })
 
   test('shows World process displays about a Run and says why it shows nothing else', () => {

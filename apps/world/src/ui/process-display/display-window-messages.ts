@@ -19,6 +19,8 @@ import {
 // type is named here rather than imported with the Pack's display schemas
 // (a test keeps it equal to the Pack's own constant).
 export const PROCESS_DISPLAY_VIEW_TYPE = 'process-plant.display'
+/** World's vignettes, any object of any Pack (ui/embed/vignette). */
+export const VIGNETTE_VIEW_TYPE = 'display.vignette'
 
 /** A listing the window leaves out, and why. */
 export interface RefusedListing {
@@ -46,11 +48,13 @@ interface ExpectedSender {
 
 /**
  * Why this window cannot show a view, or null where it can: a plain switch on
- * the view type. It shows World's process displays about a Simulation Run.
+ * the view type. It shows World's process displays and vignettes about a
+ * Simulation Run.
  */
 export const listingRefusal = (envelope: EmbeddedViewEnvelope): string | null => {
   switch (envelope.viewType) {
     case PROCESS_DISPLAY_VIEW_TYPE:
+    case VIGNETTE_VIEW_TYPE:
       if (envelope.moduleId !== 'world') return `it is a ${envelope.viewType} view published by ${envelope.moduleId}, not by World`
       if (envelope.subject.type !== 'world.simulation-run') return `it is about a ${envelope.subject.type}, not a Simulation Run`
       return null

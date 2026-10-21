@@ -150,6 +150,23 @@ describe('a view framed by the display window', () => {
     expect(page.posted).toEqual([])
   })
 
+  test('asks its window to frame the live map on bounds World computed, only when a window presents it; malformed bounds are refused', () => {
+    // Architecture B2: a vignette's "Show on map"; the window frames the page's live map.
+    const page = framedPage()
+    const bounds = [[10.9, 59.1], [11.5, 59.3]] as const
+    page.host.listen()
+    expect(page.host.showOnMap(bounds)).toBe(false)
+    page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1 })
+    page.posted.length = 0
+    expect(page.host.showOnMap(bounds)).toBe(true)
+    expect(page.posted.map(post => post.message)).toEqual([{ type: 'world:display-map', bounds }])
+    expect(parseDisplayFrameMessage(JSON.parse(JSON.stringify(page.posted[0]!.message)))).toEqual({ type: 'world:display-map', bounds })
+    expect(parseDisplayFrameMessage({ type: 'world:display-map', bounds: [[11.5, 59.1], [10.9, 59.3]] })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-map', bounds: [[10.9, 95], [11.5, 96]] })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-map', bounds: [[10.9, 59.1]] })).toBeNull()
+    expect(parseDisplayFrameMessage({ type: 'world:display-map', bounds, extra: 1 })).toBeNull()
+  })
+
   test('tells its window the pending proposals it reads, once per change and only when a window presents it; a malformed list is refused', () => {
     // QA-10: the window's chip lists what the operated display reads with its samples; the window installs no poller.
     const entry = { id: 'cmd-propose-1', item: 'pressurizer.blockValve', opens: [['pressurizer'], ['pressurizer', 'pressurizerReliefHeader']], action: 'SHUT MOV-8000A PORV block', proposer: 'AI' as const, minutes: null, text: 'SHUT MOV-8000A PORV block · no cited reading heads for a limit · expires 10:03:43' }

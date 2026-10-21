@@ -2320,6 +2320,7 @@
     request={displayWindowRequest}
     procedureSummariesFor={procedureSummariesForObject}
     {openProcedureSystemAt}
+    focusMap={focusMapTarget}
     close={closeDisplayWindow}
   />
 {/if}

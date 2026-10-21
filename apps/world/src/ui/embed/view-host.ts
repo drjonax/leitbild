@@ -9,7 +9,7 @@
 // window (it says so with the contract's view-host message), it asks that
 // page to open a display there.
 import { embeddedViewHostMessageSchema, type EmbeddedViewListing, type EmbeddedViewOpenMessage } from '@leitbild/contracts'
-import { parseDisplayFramePresentation, type DisplayFrameMessage, type DisplayFrameProposalEntry } from './display-frame-protocol.ts'
+import { parseDisplayFramePresentation, type DisplayFrameMap, type DisplayFrameMessage, type DisplayFrameProposalEntry } from './display-frame-protocol.ts'
 import { observeDisplayExtent, type DisplayExtent } from './display-extent.ts'
 
 export interface DisplayPresentation {
@@ -133,6 +133,12 @@ export const createViewHost = (ports: ViewHostPorts) => {
       if (where === 'window') post({ type: 'world:display-open', state: request.state, title: request.title })
       else if (where === 'relay') post({ type: 'leitbild:view-open', view: request.listing() })
       return where !== null
+    },
+    /** Frames the live map on these bounds through the display window; false where no window presents this view. */
+    showOnMap: (bounds: DisplayFrameMap['bounds']): boolean => {
+      if (!presentedByWindow) return false
+      post({ type: 'world:display-map', bounds })
+      return true
     },
     /** Tells the window the pending proposals on the Plant this view operates, when they changed (its toolbar's chip). */
     reportProposals: (entries: ReadonlyArray<DisplayFrameProposalEntry>): void => {

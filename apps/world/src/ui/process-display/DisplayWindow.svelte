@@ -17,6 +17,7 @@
   } from 'lucide-svelte'
   import type { EmbeddedViewEnvelope, EmbeddedViewListing } from '@leitbild/contracts'
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
+  import type { MapFocusTarget } from '../map-runtime/types.ts'
   import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
   import { detailDisplayStateSchema } from '../../packs/process-plant/displays/composition.ts'
   import { composedDisplayClient } from '../embed/composed-display/composed-display-client.ts'
@@ -108,6 +109,8 @@
     readonly request: DisplayWindowRequest
     readonly procedureSummariesFor: (object: OperationalObject) => ProcedureRunSummaryGroup
     readonly openProcedureSystemAt: (object: OperationalObject, summary?: ProcedureRunSummary) => void
+    /** Frames the page's live map (a vignette's "Show on map"). */
+    readonly focusMap: (target: MapFocusTarget) => void
     readonly close: () => void
   }
 
@@ -119,6 +122,7 @@
     request,
     procedureSummariesFor,
     openProcedureSystemAt,
+    focusMap,
     close,
   }: Props = $props()
 
@@ -1036,6 +1040,7 @@
           back={returnTo.get(mounted.entry.key)?.title ?? null}
           onOpen={frameOpen}
           onBack={frameBack}
+          onMap={bounds => focusMap({ kind: 'bounds', bounds })}
           onProposals={frameProposals}
         />
       {/each}

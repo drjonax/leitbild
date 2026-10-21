@@ -56,6 +56,16 @@ export interface DisplayFrameOpen {
   readonly title: string
 }
 
+/**
+ * Frame -> window: frame the live map on these bounds, [west, south] and
+ * [east, north] in degrees (a vignette's "Show on map"; World computed them
+ * from the Run's objects).
+ */
+export interface DisplayFrameMap {
+  readonly type: 'world:display-map'
+  readonly bounds: readonly [readonly [number, number], readonly [number, number]]
+}
+
 /** Frame -> window: Back, to the display this one was opened from. */
 export interface DisplayFrameBack {
   readonly type: 'world:display-back'
@@ -84,7 +94,7 @@ export interface DisplayFrameProposals {
   readonly entries: ReadonlyArray<DisplayFrameProposalEntry>
 }
 
-export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | DisplayFrameZoomRequest | DisplayFrameOpen | DisplayFrameBack | DisplayFrameProposals
+export type DisplayFrameMessage = DisplayFrameReady | DisplayFrameExtent | DisplayFrameZoomRequest | DisplayFrameOpen | DisplayFrameMap | DisplayFrameBack | DisplayFrameProposals
 
 /** The longest state and title an open request carries (a detail's state is far shorter). */
 const OPEN_STATE_MAX = 4_096
@@ -145,6 +155,14 @@ export const parseDisplayFrameMessage = (value: unknown): DisplayFrameMessage | 
   if (value.type === 'world:display-open') {
     if (!hasKeys(value, ['type', 'state', 'title']) || !text(value.state, OPEN_STATE_MAX) || !text(value.title, OPEN_TITLE_MAX)) return null
     return { type: 'world:display-open', state: value.state, title: value.title }
+  }
+  if (value.type === 'world:display-map') {
+    const corner = (point: unknown): point is readonly [number, number] => Array.isArray(point) && point.length === 2
+      && typeof point[0] === 'number' && typeof point[1] === 'number' && Math.abs(point[0]) <= 180 && Math.abs(point[1]) <= 90
+    if (!hasKeys(value, ['type', 'bounds']) || !Array.isArray(value.bounds) || value.bounds.length !== 2) return null
+    const [southWest, northEast] = value.bounds as unknown[]
+    if (!corner(southWest) || !corner(northEast) || southWest[0] > northEast[0] || southWest[1] > northEast[1]) return null
+    return { type: 'world:display-map', bounds: [[southWest[0], southWest[1]], [northEast[0], northEast[1]]] }
   }
   if (value.type === 'world:display-back') return hasKeys(value, ['type']) ? { type: 'world:display-back' } : null
   if (value.type === 'world:display-proposals') {

@@ -4,6 +4,7 @@
   import {
     parseDisplayFrameMessage,
     type DisplayFrameExtent,
+    type DisplayFrameMap,
     type DisplayFrameOpen,
     type DisplayFrameProposalEntry,
     type DisplayFramePresentation,
@@ -48,11 +49,13 @@
     readonly onOpen: (key: string, request: DisplayFrameOpen) => void
     /** The display's Back, to the one it was opened from. */
     readonly onBack: (key: string) => void
+    /** The display asks for the live map to be framed on these bounds. */
+    readonly onMap: (bounds: DisplayFrameMap['bounds']) => void
     /** The pending proposals the operated display reads on its Plant, for the window's chip. */
     readonly onProposals: (key: string, entries: ReadonlyArray<DisplayFrameProposalEntry>) => void
   }
 
-  let { entryKey, envelope, title, shown, zoom, kind, extent, back, onUp, onDown, onExtent, onZoomRequest, onProblem, onOpen, onBack, onProposals }: Props = $props()
+  let { entryKey, envelope, title, shown, zoom, kind, extent, back, onUp, onDown, onExtent, onZoomRequest, onProblem, onOpen, onBack, onMap, onProposals }: Props = $props()
 
   // A frame's page is fixed for its life; a new envelope is a new entry.
   const source = untrack(() => `${embeddedViewPath(envelope)}${embeddedViewFragment(envelope)}`)
@@ -126,6 +129,10 @@
       }
       if (message.type === 'world:display-back') {
         onBack(key)
+        return
+      }
+      if (message.type === 'world:display-map') {
+        onMap(message.bounds)
         return
       }
       if (message.type === 'world:display-proposals') {

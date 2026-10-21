@@ -9,9 +9,6 @@ import { workspaceApiPath } from '../../workspace-context.ts'
 import type { SeriesPoint, VignetteSample, VignetteView } from './model.ts'
 import { appendPoint } from './trend.ts'
 
-/** The view type World publishes vignettes as. */
-export const VIGNETTE_VIEW_TYPE = 'display.vignette'
-
 export interface RunPresence {
   readonly loaded: boolean
   /** The Run's time now. */
