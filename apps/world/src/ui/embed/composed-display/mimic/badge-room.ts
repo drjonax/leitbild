@@ -1,5 +1,5 @@
 import type { MimicDrawnItem } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
-import type { Box } from './popover.ts'
+import type { Box } from '../../vignette/popover.ts'
 
 // Where an operated item's badges stand (plan §4.3, QA-20): inside the box
 // the layout already gave its symbol, so badges never move anything. A

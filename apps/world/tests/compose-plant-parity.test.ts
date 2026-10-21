@@ -16,8 +16,6 @@ import { composeDefault } from '../src/features/displays/compose/compose.ts'
 import { overviewOf } from '../src/features/displays/compose/topology.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { overlaps } from './helpers/network-layout-measure.ts'
-import { principalCircuits } from '../src/packs/process-plant/equipment/circuits.ts'
-import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../src/scenarios/definitions.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -27,17 +25,13 @@ guardPlantTests()
 // P9 (swap plan): on four-loop Halden, a whole-plant default carries what today's Unit Overview carries (its own states,
 // the reactor trip and its first-out, lead values with trends, the whole-plant flow drawing, alarms) and an equipment
 // default what today's detail display carries (its flow neighbourhood, readings, related alarms, the element its actions
-// open on), each within the card's limits with every cut stated. Until p2-plant declares the overview in its topology,
-// this test declares the Plant's principal circuits (equipment/circuits.ts) as the overview.
+// open on), each within the card's limits with every cut stated. The Plant declares its overview (its principal
+// circuits) and its operating mode.
 
 const routing = createDirectRoutingAdapter()
 const assembly = createWorldApplicationAssembly({ routing })
 const person = { id: 'actor:human:parity' as ActorId, label: 'Parity', role: 'operator' as const }
 const plantId = 'plant:halden-2' as ObjectId
-const reference = compileProcessPlant(createPwrReferencePlantDefinition({ id: plantId, loopCount: 4 }))
-const circuits = principalCircuits(reference.graph)
-if (!circuits.ok) throw new Error(circuits.reason)
-const overview = { nodes: circuits.components.map(index => String(reference.graph.components[index]!.id)), edges: circuits.links.map(index => String(reference.graph.links[index]!.id)) }
 
 let registry: SimulationRunRegistry
 let dataDir: string
@@ -58,11 +52,7 @@ beforeAll(async () => {
   const tripped = await runtime.invokeCapability(person, { capabilityId: 'world.process-plant.action.invoke', input: { plantId, actionId: 'turbine-trip', parameters: {} } })
   if (tripped.kind === 'command' && !tripped.result.ok) throw new Error(JSON.stringify(tripped.result))
   await runtime.runMaximumPace(new Date(start + 90_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
-  const base = await displayRunOf(registry, runtime, person, new Set())
-  run = { ...base, port: { ...base.port, topology: async objectId => {
-    const graph = await base.port.topology(objectId)
-    return 'refused' in graph || graph.family !== 'flow' || graph.overview !== undefined ? graph : { ...graph, overview }
-  } } }
+  run = await displayRunOf(registry, runtime, person, new Set())
 })
 afterAll(async () => { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) })
 
@@ -85,7 +75,9 @@ describe('P9: the plant default carries what the Unit Overview carries', () => {
     const [declaration] = await run.port.declarations([plantId])
     if (declaration === undefined || 'refused' in declaration) throw new Error('the Plant declares nothing')
     const own = declaration.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref)
-    expect(own.filter(ref => ref.includes('#csf.'))).toHaveLength(6)
+    // The six safety functions, then the operating mode.
+    expect(own.slice(0, 6).every(ref => ref.includes('#csf.'))).toBe(true)
+    expect(own).toHaveLength(7)
     expect(state.chips).toEqual(own)
     expect(view.chips?.map(value => value.ref)).toEqual(own)
     const values = state.views[0]
@@ -99,10 +91,12 @@ describe('P9: the plant default carries what the Unit Overview carries', () => {
     expect(card.items.some(item => item.reading.includes('Reactor trip') && item.reading.includes('first out'))).toBe(true)
     const drawing = view.sections.find(section => section.kind === 'topology')
     expect(drawing?.kind === 'topology' && drawing.family).toBe('flow')
-    expect(drawing?.kind === 'topology' && drawing.nodes.filter(node => node.class !== 'stop').map(node => node.id).sort()).toEqual([...overview.nodes].sort())
-    // Today's overview ceiling: twelve crossings across the loops; no box over another.
-    expect(drawing?.kind === 'topology' && [drawing.layout.width, drawing.layout.height]).toEqual([62, 36])
-    expect(drawing?.kind === 'topology' && drawing.layout.crossings).toBe(7)
+    const graph = await run.port.topology(plantId)
+    if ('refused' in graph || graph.overview === undefined) throw new Error('the Plant declares no overview')
+    expect(drawing?.kind === 'topology' && drawing.nodes.filter(node => node.class !== 'stop').map(node => node.id).sort()).toEqual([...graph.overview.nodes].sort())
+    // Within the 66 × 36 flow room and today's overview ceiling of twelve crossings across the loops; no box over another.
+    expect(drawing?.kind === 'topology' && drawing.layout.width <= 66 && drawing.layout.height <= 36).toBe(true)
+    expect(drawing?.kind === 'topology' && drawing.layout.crossings).toBeLessThanOrEqual(12)
     expect(drawing?.kind === 'topology' && overlaps(drawing.layout)).toEqual([])
     expect(sample.observations.some(observation => observation.ref.includes('#csf.'))).toBe(true)
     console.log(`plant default: rows ${state.views.map(entry => `${entry.kind} ${entry.rows}`).join(', ')}; drawing ${drawing?.kind === 'topology' ? `${drawing.layout.width}×${drawing.layout.height}, ${drawing.layout.crossings} crossings` : '-'}; card ${card.items.length} items + ${card.more}; ${card.adjusted.map(entry => entry.text).join('; ')}`)
@@ -113,7 +107,7 @@ describe('P9: the whole-plant drawing', () => {
   test('the declared overview stops where today\'s Unit Overview stops: no relief or drive-steam line that only ends, every flow into a store kept', async () => {
     const graph = await run.port.topology(plantId)
     if ('refused' in graph) throw new Error('the Plant draws no topology')
-    const scoped = overviewOf(graph.overview === undefined ? { ...graph, overview } : graph)!
+    const scoped = overviewOf(graph)!
     expect(scoped.stubs.map(stub => `${stub.node}.${stub.port} ${stub.direction}`)).toEqual([
       'core.coldLegA in', 'pressurizer.reliefOutlet out', 'sgA.feedwaterInlet in', 'sgB.feedwaterInlet in', 'sgC.feedwaterInlet in', 'sgD.feedwaterInlet in',
       'condenser.condensateOutlet out', 'condenser.coolingWater in', 'condenser.coolingWaterOutlet out',

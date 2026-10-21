@@ -35,6 +35,8 @@ export const flowProfiles = { lanes: profile(12), lane: profile(4) } as const
 /** A header: a junction whose ports, more than two, are all one circuit. */
 const isHeader = (node: TopologyNode): boolean => node.class === 'junction' && node.ports.length > 2 && new Set(node.ports.map(port => port.circuit ?? port.id)).size === 1
 const TALL: ReadonlySet<string> = new Set(['store'])
+/** A stop names each far end once, however many of its ports the drawing stops at. */
+const farNames = (names: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(names)]
 
 export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   const classOf = new Map(graph.nodes.map(node => [node.id, node.class]))
@@ -42,7 +44,7 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   const label = (node: TopologyNode): string => node.shortLabel ?? node.label
   const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter), height: LINE.height, required })
   return {
-    key: 'vignette-flow-2',
+    key: 'vignette-flow-3',
     visible: () => true,
     silent: edge => ['sink', 'boundary'].includes(classOf.get(edge.to.node) ?? '') && !leaving.has(edge.to.node),
     bar: node => node.class === 'bus' || isHeader(node),
@@ -61,7 +63,7 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
       const cells = vessel || TALL.has(item.node.class) ? { width: 2, height: 4 } : { width: 2, height: 2 }
       return { label: text, node: { cells, portInset: 0, text: { lines }, frameable: false, ...(vessel ? { ends: VESSEL_ENDS } : {}) }, keep: null }
     },
-    stop: stop => ({ lines: [line(stop.others.map(other => label(graph.nodes.find(node => node.id === other.node)!)).join(', ').slice(0, 24).length, true)] }),
+    stop: stop => ({ lines: [line(farNames(stop.others.map(other => label(graph.nodes.find(node => node.id === other.node)!))).join(', ').slice(0, 24).length, true)] }),
   }
 }
 
@@ -80,7 +82,7 @@ export const flowLayout = (scoped: ScopedTopology, room: { readonly columns: num
   const box = <T extends { readonly x: number; readonly y: number; readonly width: number; readonly height: number }>(at: T) => ({ x: grid(at.x), y: grid(at.y), width: grid(at.width), height: grid(at.height) })
   const label = (id: string): string => sizing.label(scoped.graph.nodes.find(node => node.id === id)!)
   const mediumOf = (edge: string): string => scoped.graph.edges.find(entry => entry.id === edge)!.medium
-  const stops = Object.fromEntries([...planned.stops].map(([id, stop]) => [id, { direction: stop.direction, others: stop.others.map(other => label(other.node)), medium: mediumOf(stop.edges[0]!) }]))
+  const stops = Object.fromEntries([...planned.stops].map(([id, stop]) => [id, { direction: stop.direction, others: farNames(stop.others.map(other => label(other.node))), medium: mediumOf(stop.edges[0]!) }]))
   const membersOf = (id: string): ReadonlyArray<string> => planned.items.get(id)?.item.members.map(member => member.id) ?? []
   return { stops, layout: {
     family: 'flow', unit: 'grid', width: Math.ceil(grid(result.width)), height: Math.ceil(grid(result.height)),

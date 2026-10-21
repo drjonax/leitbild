@@ -204,3 +204,7 @@ export const vignetteRoutes: VignetteRoutes = {
   view: async (runId, state) => (await post<{ readonly view: VignetteView }>(runId, '/displays/view', { state }, 'Drawing the display')).view,
   sample: async (runId, state, history) => (await post<{ readonly sample: VignetteSample }>(runId, '/displays/sample', { state, ...(history === undefined ? {} : { history }) }, 'Reading the display')).sample,
 }
+
+/** An element's World default, as the composer gives it: the vignette state its pop-over shows. */
+export const elementDefault = async (runId: SimulationRunId, objectId: string, elementId: string): Promise<string> =>
+  (await post<{ readonly result: { readonly view: { readonly state: string } } }>(runId, '/displays/default', { subject: `${objectId}#${elementId}` }, 'Composing the element\'s display')).result.view.state

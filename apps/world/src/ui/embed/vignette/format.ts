@@ -9,8 +9,15 @@ export const quantityText = (value: number, unit: string): string => {
   return symbol === '' ? numberText(value, unit) : `${numberText(value, unit)} ${symbol}`
 }
 
-/** A label without the object the vignette is titled by: "<object> · <observable>" reads "<observable>" under that title; the whole label stays in the tooltip. */
-export const underTitle = (label: string, title: string): string => (label.startsWith(`${title} · `) ? label.slice(title.length + 3) : label)
+/**
+ * A label without the object the vignette is titled by: "<object> · <observable>" reads "<observable>" under a title
+ * "<object>", or "<object> · <element>"; the whole label stays in the tooltip.
+ */
+export const underTitle = (label: string, title: string): string => {
+  const object = title.split(' · ')[0]!
+  const shown = [title, object].find(prefix => label.startsWith(`${prefix} · `))
+  return shown === undefined ? label : label.slice(shown.length + 3)
+}
 
 /** A Run time as the footer and "since" read it: hh:mm:ss. */
 export const clockText = (at: string | number): string => new Date(at).toISOString().slice(11, 19)

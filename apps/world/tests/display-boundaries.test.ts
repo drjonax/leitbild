@@ -10,7 +10,8 @@ import { dirname, join, relative, resolve } from 'node:path'
 // 4. features/displays holds no pixel constants: the layout engine takes
 //    every size from the caller's DiagramProfile, measured by the client;
 // 5. the vignette renderer (ui/embed/vignette) imports no Pack and names
-//    none: no Pack id and no Pack's own words, in code or comments.
+//    none: no Pack id and no Pack's own words, in code or comments; the
+//    embed reaches Packs only through pack-embed-loader.ts (ruling Q19).
 // A Pack is reached through the Pack registry and protocols in core/packs,
 // which are no Pack import. Exceptions are dated: each says until when it
 // holds, and the swap deletes what they allow.
@@ -134,6 +135,15 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
     expect(files.map(file => relative(src, file))).toContain('ui/embed/vignette/Vignette.svelte')
     expect(offendersIn(files)).toEqual([])
     expect(files.flatMap(file => packWords(readFileSync(file, 'utf8')).map(word => `${relative(src, file)}: ${word}`))).toEqual([])
+  })
+
+  test('5b. the embed reaches a Pack\'s embed contribution only through ui/embed/pack-embed-loader.ts (Q19); the old renderer goes at the swap', () => {
+    const files = sourcesUnder('ui/embed').filter(file => !relative(src, file).startsWith('ui/embed/composed-display/'))
+    // Until the swap (D3) the router still opens the old plant display, whose state the Pack reads.
+    const untilSwap: Readonly<Record<string, ReadonlyArray<string>>> = { 'ui/embed/EmbeddedView.svelte': ['packs/process-plant/displays/composition.ts'] }
+    const offenders = files.flatMap(file => packImports(file).filter(target => !(untilSwap[relative(src, file)] ?? []).includes(target)).map(target => `${relative(src, file)} -> ${target}`))
+    expect(offenders.filter(offender => !offender.startsWith('ui/embed/pack-embed-loader.ts -> '))).toEqual([])
+    expect(packImports(join(src, 'ui/embed/pack-embed-loader.ts')).every(target => /^packs\/[^/]+\/ui\/embed\.ts$/.test(target))).toBe(true)
   })
 
   test('6. the composer and the display Capability import no Pack and name no Pack', () => {
