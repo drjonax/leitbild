@@ -11,7 +11,7 @@ import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { distanceText, entityCell, mapCaption } from '../src/ui/embed/vignette/collection.ts'
 import { VIGNETTE_ROW_PX } from '../src/ui/embed/vignette/grid.ts'
 import type { EntityRow, VignetteSection } from '../src/ui/embed/vignette/model.ts'
-import { CHAR_PX, fitName, gappedPath, networkDrawing } from '../src/ui/embed/vignette/network.ts'
+import { barLine, CHAR_PX, fitName, gappedPath, networkDrawing } from '../src/ui/embed/vignette/network.ts'
 
 // The vignette's objects and networks (architecture B2): entity cells, the map
 // section's words, and the network drawing over the server's ELK layout on the
@@ -44,6 +44,13 @@ describe('network drawing', () => {
   test('an edge breaks around each gap on its segments, and only there', () => {
     expect(gappedPath([[0, 0], [100, 0], [100, 50]], [[40, 0], [100, 30]])).toBe('M0 0 L36 0 M44 0 L100 0 L100 26 M100 34 L100 50')
     expect(gappedPath([[0, 0], [100, 0]], [[50, 10]])).toBe('M0 0 L100 0')
+  })
+
+  test('a bus is a bar along the edge ends that meet it, across its middle where none do', () => {
+    const box = { x: 0, y: 0, width: 168, height: 132 }
+    expect(barLine(box, [[168, 24], [168, 120], [400, 50]])).toEqual({ x1: 168, y1: 20, x2: 168, y2: 124 })
+    expect(barLine({ x: 0, y: 0, width: 192, height: 48 }, [[0, 30], [192, 30]])).toEqual({ x1: -4, y1: 30, x2: 196, y2: 30 })
+    expect(barLine({ x: 0, y: 0, width: 48, height: 96 }, [])).toEqual({ x1: 24, y1: 0, x2: 24, y2: 96 })
   })
 
   test('a name keeps the whole characters that fit its room', () => {

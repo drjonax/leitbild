@@ -7,7 +7,7 @@ import { sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/ui/embed/vignette/model.ts'
 import { limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
-import { appendPoint, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
+import { appendPoint, limitLabelYs, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
 
 // The vignette renderer's presenters (architecture B1): the limit chip, the
 // step-and-hold trace, the limits a strip shares, neutral values without an
@@ -126,6 +126,11 @@ describe('trend strip', () => {
     const steady = drawn([49, 51])
     expect([steady.limits, steady.beyond.map(limit => `${limit.edge} ${limit.label}`)]).toEqual([[], ['bottom LO 30.0', 'bottom LO-LO 20.0', 'top HI 80.0']])
     expect(stripDrawing({ pens: [level], series: new Map(), observations: [], now: 1, horizonMs: 1, width: 1, height: 1 })).toBeNull()
+  })
+
+  test('limit names never touch: above the line, below where the one above is near, else left to the line\'s title', () => {
+    expect(limitLabelYs([10, 15, 60])).toEqual([22, null, 58])
+    expect(limitLabelYs([60, 30])).toEqual([58, 28])
   })
 
   test('time ticks count back from now in round steps', () => {
