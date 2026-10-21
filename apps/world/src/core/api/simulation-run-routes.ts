@@ -10,6 +10,7 @@ import type { SimulationRunRuntime } from '../simulation-runs/runtime.ts'
 import { apiError,json,readJson } from './responses.ts'
 import { runCopyInputSchema } from '../simulation-runs/execution.ts'
 import { recordingSeriesQuerySchema } from '../model/recording.ts'
+import { displayRunOf, handleDisplayRoute } from './display-capabilities.ts'
 
 const defaultOperatorActorId = actorIdSchema.parse('actor:operator')
 
@@ -368,6 +369,15 @@ const handleSimulationRunApiInner = async (
       }
       return apiError(400, 'capability_invocation_failed', reason)
     }
+  }
+
+  // Vignettes for people (architecture A6): open, sample or default one, read as this screen's perspective; never the AI's.
+  const displayMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/displays\/(view|sample|default)$/)
+  if (displayMatch && req.method === 'POST') {
+    if (config.accessContext.actor.kind === 'ai') return apiError(403, 'display_route_for_people', 'The display routes serve people; the Assistant composes through world.simulation-run.display.compose')
+    const runtime = await config.registry.load(simulationRunIdSchema.parse(decodeURIComponent(displayMatch[1] ?? '')))
+    const actor = actorForPerspective(buildSimulationRunActorForAccess(config.accessContext), perspective)
+    return (await handleDisplayRoute(displayMatch[2]!, await readJson(req), await displayRunOf(config.registry, runtime, actor, new Set())))!
   }
 
   const procedureCatalogMatch = pathname.match(/^\/simulation-runs\/([^/]+)\/procedures$/)
