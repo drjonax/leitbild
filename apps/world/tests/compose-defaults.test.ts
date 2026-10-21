@@ -12,6 +12,8 @@ import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { scenarioDefinitionSchema } from '../src/core/scenarios/definition.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
+import { alertRows, priorityRank } from '../src/features/displays/alerts/rows.ts'
+import type { AlertState } from '../src/core/model/alerts.ts'
 import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
 import { leadRefs } from '../src/features/displays/compose/defaults.ts'
 import type { VignetteSection } from '../src/features/displays/compose/model.ts'
@@ -65,6 +67,58 @@ const firstElement = async (objectId: string, cls?: string) => {
   if (declaration === undefined || 'refused' in declaration) throw new Error(`${objectId} declares nothing`)
   return declaration.elements.find(element => cls === undefined || element.class === cls)!.id
 }
+
+const runOf = async (scenarioId: string, seconds: number): Promise<ViewRun> => {
+  const runtime = await registry.create({ scenarioId })
+  await runtime.setClock({ paused: true })
+  await runtime.runMaximumPace(new Date(Date.parse(runtime.snapshot().clock!.currentTime) + seconds * 1_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
+  return displayRunOf(registry, runtime, person, new Set())
+}
+
+describe('a run-wide alerts view', () => {
+  const runWide = (subjects: ReadonlyArray<string>) => displaySpecSchema.parse({ title: 'Run-wide alerts', question: 'Does anything need attention?', subjects, views: [{ kind: 'alerts', scope: 'run' }] })
+  const drawn = async (viewRun: ViewRun, subjects: ReadonlyArray<string> = []) => {
+    const outcome = await composeVignette(viewRun, runWide(subjects))
+    if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+    return { ...outcome, sample: await sampleVignette(viewRun, outcome.state) }
+  }
+
+  test('draws the active alerts of every Pack the caller may see, each object\'s worst first as the Run context ranks them', async () => {
+    // Beside the Runs' own alarms (the grid's), an advisory in force and acknowledged alarms of three more Packs: the
+    // worry answer's case (G1), where an advisory sorted last left weather out of view.
+    const raised = (id: string, priority: 'caution' | 'warning' | 'alarm', facets: Partial<AlertState> = {}): AlertState => ({
+      id, kind: 'test', severity: priority === 'alarm' ? 'critical' : 'warning', message: `${id} raised`, raisedAt: run.clock!.currentTime as AlertState['raisedAt'], acknowledged: false, priority, clock: 'simulation', ...facets,
+    })
+    const extra: Readonly<Record<string, ReadonlyArray<AlertState>>> = {
+      'weather-probe:halden-complex': [raised('fog', 'warning', { advisory: true })],
+      'plant:halden-2': [raised('sg-level', 'caution', { acknowledged: true }), raised('pzr-pressure', 'alarm', { acknowledged: true })],
+      'unit:halden-1': [raised('late', 'caution')],
+    }
+    const busy: ViewRun = { ...run, objects: run.objects.map(object => ({ ...object, alerts: [...object.alerts, ...extra[object.id] ?? []] })) }
+    for (const viewRun of [run, await runOf('halden-normal-operation', 120), busy]) {
+      const open = alertRows(viewRun.objects, object => ({ label: object.label, categoryId: '' }))
+      const { sample, card } = await drawn(viewRun)
+      expect(new Set(sample.alerts.map(row => row.packId))).toEqual(new Set(open.map(row => row.packId)))
+      expect(sample.alerts).toHaveLength(open.length)
+      const objects = new Set(open.map(row => row.objectId)).size
+      const heads = sample.alerts.slice(0, objects)
+      expect(new Set(heads.map(row => row.objectId)).size).toBe(objects)
+      expect(heads.map(row => priorityRank(row.priority))).toEqual(heads.map(row => priorityRank(row.priority)).sort((left, right) => right - left))
+      for (const head of heads) expect(open.filter(row => row.objectId === head.objectId).every(row => priorityRank(row.priority) <= priorityRank(head.priority))).toBe(true)
+      expect(card.items.map(item => item.subject)).toEqual(sample.alerts.slice(0, card.items.length).map(row => ({ objectId: row.objectId, alertId: row.alert.id })))
+      console.log(`run-wide alerts: ${open.length} alerts of ${[...new Set(open.map(row => row.packId))].join(', ')}; heads ${heads.map(row => `${row.packId}:${row.priority}`).join(' ')}`)
+    }
+    const { sample } = await drawn(busy)
+    expect(sample.alerts.slice(0, 3).map(row => [row.objectId, row.alert.id])).toEqual([['plant:halden-2', 'pzr-pressure'], ['weather-probe:halden-complex', 'fog'], ['unit:halden-1', 'late']])
+  })
+
+  test('needs no subject, covers every subject named, and shows nothing of what the caller may not inspect', async () => {
+    expect((await drawn(run, ['plant:halden-1', 'grid:halden-four-unit', 'weather-probe:halden-complex'])).state.views.map(view => view.kind)).toEqual(['alerts'])
+    expect(displaySpecSchema.safeParse({ title: 't', question: 'q', subjects: [], views: [{ kind: 'alerts' }] }).error?.issues[0]?.message).toBe('name 1 to 6 subjects; only a run-wide alerts view (scope run) needs none')
+    const hidden = (await drawn({ ...run, denied: new Set(['grid:halden-four-unit']) })).sample
+    expect(hidden.alerts.some(row => row.objectId === 'grid:halden-four-unit')).toBe(false)
+  })
+})
 
 describe('World defaults of every subject kind', () => {
   test('declared objects lead with their Pack\'s lead values (plant, grid, weather)', async () => {

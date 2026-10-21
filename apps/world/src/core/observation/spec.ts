@@ -32,14 +32,16 @@ export const viewSchema = z.discriminatedUnion('kind', [
 /** An object, element, observable or connection by name, or a live collection. */
 export const subjectSchema = z.union([nameSchema, z.object({ of: selectorSchema }).strict()])
 
-/** No views asks for the World default of each subject. */
+/** No views asks for the World default of each subject. A run-wide alerts view is about the Run: it needs no subject. */
 export const displaySpecSchema = z.object({
   title: z.string().min(1).max(80),
   question: z.string().min(1).max(300),
   need: z.string().min(1).max(300).optional(),
-  subjects: z.array(subjectSchema).min(1).max(6),
+  subjects: z.array(subjectSchema).max(6),
   views: z.array(viewSchema).max(4),
-}).strict()
+}).strict().refine(spec => spec.subjects.length > 0 || spec.views.some(view => view.kind === 'alerts' && view.scope === 'run'), {
+  path: ['subjects'], message: 'name 1 to 6 subjects; only a run-wide alerts view (scope run) needs none',
+})
 
 export type Selector = z.output<typeof selectorSchema>
 export type View = z.output<typeof viewSchema>

@@ -8,7 +8,7 @@ import { refObjectId } from '../../../core/model/alerts.ts'
 import type { OperationalObject } from '../../../core/model/index.ts'
 import { routeDistanceMeters } from '../../../core/model/route.ts'
 import type { Observation } from '../../../core/observation/model.ts'
-import { alertRows, worstFirst, type AlertRow } from '../alerts/rows.ts'
+import { alertRows, priorityRank, worstFirst, type AlertRow } from '../alerts/rows.ts'
 import { declaredRefs, valueOf, visibleObject } from './declared.ts'
 import {
   ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type ResolvedView, type SeriesPoint, type SlotDeclaration, type VignetteSample,
@@ -162,14 +162,26 @@ export const compileVignette = async (run: ComposeRun, state: VignetteState): Pr
   return { title: state.title, ...(state.by === undefined ? {} : { by: state.by }), sections }
 }
 
-/** The alert rows an alerts view shows, worst first. */
+/**
+ * Alert rows as the Run context ranks its assets: each object's worst alert first, objects by that priority (advisories
+ * and acknowledged alerts count) and then Run order; then every other alert by priority.
+ */
+export const contextOrder = (run: ComposeRun, rows: ReadonlyArray<AlertRow>): ReadonlyArray<AlertRow> => {
+  const order = new Map(run.objects.map((object, at) => [object.id, at]))
+  const byPriority = [...rows].sort((left, right) => priorityRank(right.priority) - priorityRank(left.priority) || worstFirst(left, right))
+  const heads = new Map<string, AlertRow>()
+  for (const row of byPriority) if (!heads.has(row.objectId)) heads.set(row.objectId, row)
+  const first = [...heads.values()].sort((left, right) => priorityRank(right.priority) - priorityRank(left.priority) || order.get(left.objectId)! - order.get(right.objectId)!)
+  return [...first, ...byPriority.filter(row => heads.get(row.objectId) !== row)]
+}
+
+/** The alert rows an alerts view shows, in the context's order: the Run's (every object the caller may see) or these objects'. */
 export const alertsOf = (run: ComposeRun, view: Extract<ResolvedView, { kind: 'alerts' }>): ReadonlyArray<AlertRow> => {
   const objects = view.objectIds === 'run' ? run.objects.filter(object => !run.denied.has(object.id)) : view.objectIds.flatMap(id => visibleObject(run, id) ?? [])
-  return alertRows(objects, object => ({ label: object.label, categoryId: presentedOf(run, object)?.categoryId ?? '' }))
+  return contextOrder(run, alertRows(objects, object => ({ label: object.label, categoryId: presentedOf(run, object)?.categoryId ?? '' }))
     .filter(row => (view.elements === undefined && view.refs === undefined)
       || (row.alert.subject !== undefined && 'element' in row.alert.subject && view.elements?.includes(row.alert.subject.element) === true)
-      || (row.alert.observable !== undefined && view.refs?.includes(row.alert.observable) === true))
-    .slice().sort(worstFirst)
+      || (row.alert.observable !== undefined && view.refs?.includes(row.alert.observable) === true)))
 }
 
 /** The refs a state's views read now: its values and trends, and what its drawings bind. */
@@ -217,5 +229,5 @@ export const sampleVignette = async (run: ViewRun, state: VignetteState, history
     return Object.fromEntries([...declared.values()].flatMap(entry => entry.observable.series === null ? []
       : [[entry.observable.series.seriesId, run.series(entry.observable.series.seriesId, new Date(history.fromMs).toISOString(), at.at)] as const]))
   })()
-  return { at, observations, alerts: [...alerts.values()].sort(worstFirst), entities, slots, maps, ...(series === undefined ? {} : { series }) }
+  return { at, observations, alerts: contextOrder(run, [...alerts.values()]), entities, slots, maps, ...(series === undefined ? {} : { series }) }
 }

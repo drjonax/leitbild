@@ -162,6 +162,8 @@ const mergeDefaults = (lists: ReadonlyArray<ReadonlyArray<DraftView>>): Readonly
 }
 
 const covers = (views: ReadonlyArray<ResolvedView>, subject: Subject): boolean => views.some(view => {
+  // The Run's alerts are every subject's alerts too.
+  if (view.kind === 'alerts' && view.objectIds === 'run') return true
   if (subject.kind === 'collection') return (view.kind === 'collection' || view.kind === 'map') && JSON.stringify(view.of) === JSON.stringify(subject.of)
   if (subject.kind === 'observable' && (view.kind === 'values' || view.kind === 'trend')) return view.refs.includes(subject.ref)
   const objects: ReadonlyArray<string> = view.kind === 'values' || view.kind === 'trend' ? view.refs.map(refObjectId) : view.kind === 'slots' || view.kind === 'topology' ? [view.objectId]
