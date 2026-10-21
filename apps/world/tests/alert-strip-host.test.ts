@@ -41,6 +41,10 @@ describe('the main-app alarm strip', () => {
     expect([...packages.entries()].filter(([name]) => name.startsWith('@oicl/'))).toEqual([])
   })
 
+  test('T28: the main app reaches no vignette module, so the vignette renderer and its OpenBridge stay in the embed bundle', () => {
+    expect([...mainGraph().files].map(file => relative(src, file)).filter(file => file.startsWith('ui/embed/vignette/'))).toEqual([])
+  })
+
   test('T24: the strip invokes nothing and offers no acknowledge, shelve or suppress; it states who may acknowledge as the code allows', () => {
     const strip = ['AlertStrip.svelte', 'AlertList.svelte'].map(name => readFileSync(join(src, 'ui/displays', name), 'utf8'))
     for (const source of strip) {

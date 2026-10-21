@@ -8,7 +8,9 @@ import { dirname, join, relative, resolve } from 'node:path'
 // 2. no World feature (features/**) imports a Pack;
 // 3. the display UI (ui/displays) imports no Pack;
 // 4. features/displays holds no pixel constants: the layout engine takes
-//    every size from the caller's DiagramProfile, measured by the client.
+//    every size from the caller's DiagramProfile, measured by the client;
+// 5. the vignette renderer (ui/embed/vignette) imports no Pack and names
+//    none: no Pack id and no Pack's own words, in code or comments.
 // A Pack is reached through the Pack registry and protocols in core/packs,
 // which are no Pack import. Exceptions are dated: each says until when it
 // holds, and the swap deletes what they allow.
@@ -61,6 +63,14 @@ const offendersIn = (files: ReadonlyArray<string>): ReadonlyArray<string> => fil
   const allowed = packImportExceptions[own]?.allows ?? []
   return packImports(file).filter(target => !allowed.includes(target)).map(target => `${own} -> ${target}`)
 })
+
+/** Pack ids and the words that belong to a Pack's own domain (plan v4: no pack ids or pack words in World display code). */
+const PACK_WORDS: ReadonlyArray<string> = [
+  ...readdirSync(packs).filter(name => statSync(join(packs, name)).isDirectory()),
+  'plant', 'reactor', 'reaktor', 'loop', 'pump', 'turbine', 'feedwater', 'halden', 'sg',
+]
+const packWords = (source: string): ReadonlyArray<string> =>
+  [...source.toLowerCase().matchAll(new RegExp(`(?<![\\w-])(${PACK_WORDS.join('|')})(?![\\w-])`, 'g'))].map(match => match[1]!)
 
 /**
  * A pixel constant in features/displays, read narrowly from the code, comments
@@ -117,6 +127,18 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
 
   test('4. features/displays holds no pixel constants', () => {
     expect(sourcesUnder('features/displays').flatMap(pixelConstants)).toEqual([])
+  })
+
+  test('5. ui/embed/vignette imports no Pack and names no Pack', () => {
+    const files = sourcesUnder('ui/embed/vignette')
+    expect(files.map(file => relative(src, file))).toContain('ui/embed/vignette/Vignette.svelte')
+    expect(offendersIn(files)).toEqual([])
+    expect(files.flatMap(file => packWords(readFileSync(file, 'utf8')).map(word => `${relative(src, file)}: ${word}`))).toEqual([])
+  })
+
+  test('the Pack-word rule catches what it names', () => {
+    expect(packWords('const id = \'process-plant\' // the reactor loop')).toEqual(['process-plant', 'reactor', 'loop'])
+    expect(packWords('a unit of measure on a 24 px grid; electric-ac and steam media')).toEqual([])
   })
 
   test('the pixel rule catches what it names', () => {
