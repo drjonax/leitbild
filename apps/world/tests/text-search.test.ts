@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { editDistance, letters, literalSearchTerms, matchedWords, matchesLiteralSearch, normalized, words } from '../src/core/model/index.ts'
+import { assignWords, editDistance, letters, literalSearchTerms, matchedWords, matchesLiteralSearch, normalized, wordMatch, words } from '../src/core/model/index.ts'
 
 describe('literal World discovery search', () => {
   test('is case and punctuation insensitive while requiring every supplied term', () => {
@@ -28,3 +28,25 @@ describe('word matching for near-miss names', () => {
     expect(editDistance('', 'ABC')).toBe(3)
   })
 })
+
+describe('graded word matching for Run-wide search', () => {
+  const word = (spelling: string, abbreviates = false) => ({ spellings: [spelling], abbreviates })
+  test('grades the same word (plurals aside), a prefix and an abbreviation', () => {
+    expect([wordMatch('pressure', word('pressure')), wordMatch('pumps', word('pump')), wordMatch('buses', word('bus'))]).toEqual([3, 3, 3])
+    expect(wordMatch('feed', word('feedwater'))).toBe(2)
+    expect(wordMatch('fw', word('feedwater'))).toBe(1)
+  })
+
+  test('a name\'s word abbreviates a query word only as a tag, beginning it or keeping half its letters', () => {
+    expect(wordMatch('skogssater', word('soa'))).toBe(0)
+    expect(wordMatch('skagerrak', word('sg', true))).toBe(0)
+    expect(wordMatch('pressure', word('per'))).toBe(0)
+    expect([wordMatch('pressure', word('press', true)), wordMatch('position', word('pos', true)), wordMatch('level', word('lvl', true))]).toEqual([1, 1, 1])
+  })
+
+  test('assigns query words one-to-one, exact matches before abbreviations', () => {
+    expect(assignWords(['flow', 'fw'], [word('flow'), word('feedwater')])).toEqual([{ word: 0, quality: 3 }, { word: 1, quality: 1 }])
+    expect(assignWords(['fw', 'flow'], [word('flow')])).toEqual([null, { word: 0, quality: 3 }])
+  })
+})
+

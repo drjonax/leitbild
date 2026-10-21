@@ -152,8 +152,8 @@ const unitTopology = (unit: OperationalObject): TopologyGraph => ({
   objectId: unit.id, revision: observationRevision, family: 'flow',
   media: [{ id: 'fuel', label: 'Fuel', kind: 'fluid' }], groups: [], boundaries: [],
   nodes: [
-    { id: 'tank', element: 'tank', class: 'store', kind: 'tank', label: `${unit.label} tank`, rank: '1', ports: [{ id: 'out', rank: '1', medium: 'fuel', direction: 'out' }], bindings: [] },
-    { id: 'engine', element: 'engine', class: 'mover', kind: 'engine', label: `${unit.label} engine`, rank: '2', ports: [{ id: 'in', rank: '1', medium: 'fuel', direction: 'in' }],
+    { id: 'tank', element: 'tank', class: 'store', kind: 'tank', label: `${unit.label} tank`, rank: '1', ports: [{ id: 'out', rank: '1', media: ['fuel'], direction: 'out' }], bindings: [] },
+    { id: 'engine', element: 'engine', class: 'mover', kind: 'engine', label: `${unit.label} engine`, rank: '2', ports: [{ id: 'in', rank: '1', media: ['fuel'], direction: 'in' }],
       bindings: [{ role: 'flow', ref: `${unit.id}#speed` }] },
   ],
   edges: [{ id: 'feed', rank: '1', from: { node: 'tank', port: 'out' }, to: { node: 'engine', port: 'in' }, medium: 'fuel', directed: true, bindings: [] }],

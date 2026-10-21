@@ -12,13 +12,13 @@
   // first-out and counts its others, which head the group's opened list. It acknowledges,
   // shelves and suppresses nothing. Whether the viewer keeps it folded is that
   // viewer's own convenience, in browser storage.
-  let { objects, categoryOf, theme, belowRoles, coverRight }: {
+  let { objects, categoryOf, theme, belowRoles, clear }: {
     objects: ReadonlyArray<OperationalObject>
     categoryOf: (object: OperationalObject) => string
     theme: 'light' | 'dark'
     belowRoles: boolean
-    /** What open surface panels cover of the map's right edge (their declared map cover), which the strip leaves clear. */
-    coverRight: number
+    /** What the strip keeps clear of: the map covers open surface panels declare on either side, and the briefing card's bottom edge above it. */
+    clear: { readonly left: number; readonly right: number; readonly top: number }
   } = $props()
 
   const foldedKey = 'leitbild.alert-strip.folded'
@@ -52,7 +52,7 @@
 <svelte:window bind:innerHeight bind:innerWidth />
 
 {#if strip.groups.length > 0}
-  <section class="alert-strip" class:below={belowRoles} style:--cover-right={`${coverRight}px`} aria-label="Alarms">
+  <section class="alert-strip" class:below={belowRoles} style:--cover-left={`${clear.left}px`} style:--cover-right={`${clear.right}px`} style:--clear-top={`${clear.top}px`} aria-label="Alarms">
     <header title={rule}>
       <span>Alarms · {strip.groups.length} {strip.groups.length === 1 ? 'group' : 'groups'} · {unack} unacknowledged</span>
       <button type="button" aria-expanded={!folded} onclick={fold}>{folded ? 'Show' : 'Fold'}</button>
@@ -78,9 +78,11 @@
 {/if}
 
 <style>
-  /* Beside the rail, but never narrower than 640 px: a narrow map (the chat open) lends the strip the rail's edge. */
-  .alert-strip { --strip-left: max(12px, min(calc(var(--rail-width, 0px) + 12px), calc(100vw - 652px))); position: fixed; z-index: 16; top: 12px; left: var(--strip-left); box-sizing: border-box; width: min(960px, calc(100vw - var(--strip-left) - var(--cover-right) - 12px)); max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); color: var(--text); font-size: 12px; }
-  .alert-strip.below { top: 52px; }
+  /* Clear of declared covers on both sides and below the briefing card. A narrow map (the chat open) lends the strip
+     the rail's edge, so it keeps 640 px, but never a left cover's: 12 px + cover × 1000 is 12 px only when none. */
+  .alert-strip { --want: calc(var(--rail-width, 0px) + var(--cover-left) + 12px); --edge: calc(100vw - var(--cover-right) - 12px); --strip-left: max(min(var(--want), calc(12px + var(--cover-left) * 1000)), min(var(--want), calc(var(--edge) - 640px)));
+    position: fixed; z-index: 16; top: max(var(--top-min, 12px), calc(var(--clear-top) + 8px)); left: var(--strip-left); box-sizing: border-box; width: min(960px, calc(var(--edge) - var(--strip-left))); max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); color: var(--text); font-size: 12px; }
+  .alert-strip.below { --top-min: 52px; }
   @media (max-width: 599px) { .alert-strip { max-height: 70vh; } }
   header { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 650; }
   header button { min-height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); font-size: 12px; cursor: pointer; }

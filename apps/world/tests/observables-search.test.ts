@@ -4,7 +4,11 @@ import { rm } from 'node:fs/promises'
 import { handleWorldModuleApi } from '../src/core/api/workspace-module-api.ts'
 import { objectIdSchema, type ActorId } from '../src/core/model/index.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
-import { resolveName } from '../src/features/displays/observation/search.ts'
+import { resolveName, searchObservables } from '../src/features/displays/observation/search.ts'
+import type { ObservationDeclaration } from '../src/core/observation/capabilities.ts'
+import type { WorldPack } from '../src/core/packs/protocol.ts'
+import type { ObservationPort } from '../src/features/displays/observation/port.ts'
+import { createFixtureObject } from './fixtures/fixture-pack.ts'
 import type { WorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runtime-registry.ts'
 import { createRoleRunWorkspaces, openRunDefinition } from './fixtures/role-runs.ts'
 
@@ -69,12 +73,16 @@ describe('observables search', () => {
   test('ranks an exact ref or tag, then a qualified name, then all words, then some; ties keep Run order', async () => {
     expect((await top('unit:asgard#status')).matches[0]).toMatchObject({ ref: 'unit:asgard#status', score: 4 })
     expect((await top('SPD', { objectId: 'unit:aeroy' })).matches[0]).toMatchObject({ ref: 'unit:aeroy#speed', score: 4 })
-    expect((await top('unit:kjolberg#SPD')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed', score: 3 })
-    expect((await top('Kjølberg#speed')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed', score: 3 })
+    expect((await top('unit:kjolberg#SPD')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed', score: 3.5 })
+    expect((await top('Kjølberg#speed')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed', score: 3.5 })
+    expect((await top('Åsgård#Åsgård status')).matches[0]).toMatchObject({ ref: 'unit:asgard#status', score: 3 })
     const speeds = (await top('speed')).matches.filter((entry: { kind: string }) => entry.kind === 'observable').map((entry: { ref: string }) => entry.ref)
     expect(speeds).toEqual(['unit:kjolberg#speed', 'unit:asgard#speed', 'unit:aeroy#speed'])
-    const partial = await top('Kjølberg speed odometer')
-    expect(partial.matches[0].score).toBeLessThan(1)
+    // A word nothing in the Run knows is left out; one some entry knows but this one lacks makes a partial match.
+    expect((await top('Kjølberg speed odometer')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed' })
+    expect((await top('Kjølberg speed odometer')).matches[0].score).toBeGreaterThan(2)
+    const partial = (await top('Kjølberg pickup')).matches
+    expect(partial[0].score).toBeLessThan(1)
   })
 
   test('a bare object id lists the object, then its values in the Pack\'s lead order', async () => {
@@ -123,3 +131,57 @@ describe('observables search', () => {
     expect(await resolveName(searchRun, 'unit:kjolberg#odometer')).toEqual([])
   })
 })
+
+// Ranking defects found by the T11 run (lead, p1-network): a short label word stood in for a long query word as its
+// abbreviation ("Søa" for "Skogssäter", "SG" for "Skagerrak"), and an entry's object label inflated its share.
+describe('ranking against a grid and a plant', () => {
+  const at = '2026-01-01T08:00:00.000Z' as never
+  const object = (id: string, label: string, packId: string) => ({ ...createFixtureObject({ type: 'site', id: id as never, label, position: [10, 59] }, { at, objectById: () => undefined }), packId: packId as never })
+  const pack = (id: string) => ({ descriptor: { id, name: id }, presentation: {
+    categories: [{ id: `${id}-objects`, label: `${id} objects`, emptyLabel: 'none', matches: () => true }],
+    presentObject: () => ({ categoryId: `${id}-objects`, icon: 'i', color: '#000', summary: '', fields: [] }),
+  } }) as unknown as WorldPack
+  const observable = (ref: string, label: string, quantity: string, unit: string, element?: string, tag?: string) =>
+    ({ ref, label, quantity, unit, valueType: 'number', thresholds: [], series: null, ...(element ? { element } : {}), ...(tag ? { tag } : {}) })
+  const declarations: Record<string, ObservationDeclaration> = {
+    'grid:test': { objectId: 'grid:test', revision: 'r1', observables: [observable('grid:test#grid.frequency', 'Frequency', 'frequency', 'Hz')], elements: [
+      { id: 'branch:skog', class: 'branch', label: 'Halden - Skogssäter' }, { id: 'gen:soa', class: 'generator', label: 'Søa' }, { id: 'hvdc:sk4', class: 'hvdc', label: 'Skagerrak 4' },
+    ] } as never,
+    'plant:unit-4': { objectId: 'plant:unit-4', revision: 'r1', elements: [
+      { id: 'sgA', class: 'steam-generator', label: 'Steam Generator A', shortLabel: 'SG A' }, { id: 'afwHeader', class: 'processHeader', label: 'Auxiliary Feedwater Header', shortLabel: 'AFW header' },
+      { id: 'afwValveA', class: 'process-valve', label: 'Auxiliary Feedwater Valve A', shortLabel: 'AFW valve A' },
+    ], observables: [
+      observable('plant:unit-4#sgA.heatTransferMw', 'Heat transfer · SG A', 'thermal-power', 'MW', 'sgA'),
+      observable('plant:unit-4#sgA.steamFlowKgPerS', 'Steam production · SG A', 'flow', 'kg/s', 'sgA'),
+      observable('plant:unit-4#sgA.pressureMPa', 'Steam generator pressure · SG A', 'pressure', 'MPa', 'sgA', 'SG-A-PRESS'),
+      observable('plant:unit-4#afwValveA.positionFraction', 'Process valve position demand · AFW valve A', 'fraction', '1', 'afwValveA', 'AFW-A-CV'),
+      observable('plant:unit-4#afwHeader.outletFlowKgPerS', 'Process header outlet flow · AFW header', 'flow', 'kg/s', 'afwHeader', 'AFW-FLOW'),
+    ] } as never,
+  }
+  const port: ObservationPort = {
+    declarations: async objectIds => objectIds.map(objectId => declarations[objectId] ?? { objectId, refused: { code: 'not_observed', message: 'none' } }),
+    read: async () => ({ observations: [], unknown: [], refused: [] }),
+    topology: async objectId => ({ objectId, refused: { code: 'not_observed', message: 'none' } }),
+  }
+  const searchRun = { objects: [object('plant:unit-4', 'Halden Unit 4', 'plant'), object('grid:test', 'Grid', 'grid')], denied: new Set<string>(), packs: [pack('plant'), pack('grid')], port }
+  const first = async (text: string) => (await searchObservables(searchRun, [{ text }]))[0]!.matches[0]
+  // What matched every query word: the false matches the T11 run found were full matches.
+  const full = async (text: string) => (await searchObservables(searchRun, [{ text }]))[0]!.matches.filter(match => match.score >= 2).map(match => match.ref ?? match.element?.id ?? match.objectId)
+
+  test('a short label word is no abbreviation of a long query word', async () => {
+    for (const text of ['Skogssäter', 'Skogssater', 'Halden - Skogssäter']) expect((await first(text))?.element?.id).toBe('branch:skog')
+    expect(await full('Skogssäter')).toEqual(['branch:skog'])
+    expect((await first('Skagerrak 4'))?.element?.id).toBe('hvdc:sk4')
+    expect(await full('Skagerrak 4')).toEqual(['hvdc:sk4'])
+  })
+
+  test('labels, element names and quantity words outrank unit fragments of a signal id', async () => {
+    expect((await first('SG pressure'))?.ref).toBe('plant:unit-4#sgA.pressureMPa')
+    expect(await full('SG pressure')).toEqual(['plant:unit-4#sgA.pressureMPa'])
+    expect((await first('AFW flow'))?.ref).toBe('plant:unit-4#afwHeader.outletFlowKgPerS')
+    expect(await full('AFW flow')).toEqual(['plant:unit-4#afwHeader.outletFlowKgPerS'])
+    // A tag's word abbreviates a query word ("press" for "pressure"), a label's never does.
+    expect((await first('SG A press'))?.ref).toBe('plant:unit-4#sgA.pressureMPa')
+  })
+})
+

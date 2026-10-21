@@ -22,7 +22,7 @@ import type {
 import { displayValue, unitLabel } from '../quantity-text.ts'
 import { actionOf, firstOutGroupOf } from '../ic/thresholds.ts'
 import { presentationFor } from './mimic/presentation.ts'
-import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
+import { TOPOLOGY_REACH } from '../../../features/displays/topology/scope.ts'
 import { equipmentKeyValues, isDemand, readsAsMeasured, type PlantNow } from '../ic/key-values.ts'
 
 // A faceplate: everything about one end of the Plant's energy path (what
@@ -258,7 +258,7 @@ const circuitReach = (plant: CompiledProcessPlant, end: number, port: string): R
   const add = (component: number) => { if (component !== end && !reached.includes(component)) reached.push(component) }
   for (const start of attachedAt(plant, end, port)) {
     let step = start
-    for (let depth = 0; depth < MIMIC_REACH_LINKS; depth += 1) {
+    for (let depth = 0; depth < TOPOLOGY_REACH; depth += 1) {
       const component = graph.components[step.far]!
       add(component.index)
       for (const joining of attachedAt(plant, component.index, step.farPort)) if (joining.far !== end && joining.link.index !== step.link.index) add(joining.far)
@@ -697,7 +697,7 @@ const loopTable = (plant: CompiledProcessPlant, end: number, judged: ReadonlyArr
       const leaving = first.fromComponentIndex === end
       const carriers = new Set([linkCarrier(first)])
       let frontier: ReadonlyArray<CompiledProcessLink> = [first]
-      for (let depth = 0; depth < MIMIC_REACH_LINKS && frontier.length > 0; depth += 1) {
+      for (let depth = 0; depth < TOPOLOGY_REACH && frontier.length > 0; depth += 1) {
         const found = frontier.flatMap(readingsOf)
         if (found.length > 0) {
           for (const binding of found) {

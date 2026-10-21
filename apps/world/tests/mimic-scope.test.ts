@@ -7,7 +7,10 @@ import {
   type CompiledPlantGraph,
 } from '../src/packs/process-plant/index.ts'
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
-import { itemServices, resolveMimicScope, stubText, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import { resolveMimicIntent } from '../src/packs/process-plant/displays/mimic/intent.ts'
+import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
+import { itemServices } from '../src/packs/process-plant/equipment/circuits.ts'
+import { stubText } from '../src/packs/process-plant/displays/mimic/stub-words.ts'
 import { unpresentedKinds } from '../src/packs/process-plant/displays/mimic/presentation.ts'
 import { framingRules, itemBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/equipment/link-flow.ts'
@@ -17,13 +20,20 @@ const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant
 const graph = plant.graph
 const label = (graph: CompiledPlantGraph, index: number) => graph.components[index]!.metadata?.presentation?.shortLabel ?? String(graph.components[index]!.id)
 
+// The scope World's topology draws for the intent, read back in the graph's component indexes.
+const resolved = (graph: CompiledPlantGraph, intent: MimicIntent) => resolveMimicIntent({ id: 'plant:scope-test', graph, modelDigest: String(graph.specId) }, intent)
 const drawn = (graph: CompiledPlantGraph, intent: MimicIntent) => {
-  const result = resolveMimicScope(graph, intent)
+  const result = resolved(graph, intent)
   if (!result.ok) throw new Error(JSON.stringify(result.issues))
-  return { ...result.scope, labels: result.scope.components.map(index => label(graph, index)).sort() }
+  const index = (node: string) => graph.componentIndexById.get(node as never)!
+  const components = result.scoped.nodes.map(index)
+  return {
+    components, carriers: result.scoped.media, names: result.names.map(name => ({ ...name, component: index(name.node) })),
+    stubs: result.scoped.stubs.map(stub => ({ ...stub, component: index(stub.node) })), labels: components.map(at => label(graph, at)).sort(),
+  }
 }
 const rejection = (graph: CompiledPlantGraph, intent: MimicIntent) => {
-  const result = resolveMimicScope(graph, intent)
+  const result = resolved(graph, intent)
   if (result.ok) throw new Error('expected a rejection')
   return result.issues
 }
@@ -144,7 +154,7 @@ describe('mimic scope from the agent\'s intent', () => {
 
   test('the same intent always draws the same equipment', () => {
     const intent = { to: ['sgB'], services: ['feedwater', 'auxFeedwater'] }
-    expect(JSON.stringify(resolveMimicScope(graph, intent))).toBe(JSON.stringify(resolveMimicScope(graph, intent)))
+    expect(JSON.stringify(drawn(graph, intent))).toBe(JSON.stringify(drawn(graph, intent)))
   })
 })
 
