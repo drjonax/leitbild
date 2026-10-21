@@ -299,7 +299,7 @@ describe('dynamic Resource and Capability discovery', () => {
     expect(moduleCapabilityDescriptorSchema.parse(context).publishes).toEqual(['context'])
     expect(() => moduleCapabilityDescriptorSchema.parse({ ...context, kind: 'command' })).toThrow('published by a query')
     expect(() => moduleCapabilityDescriptorSchema.parse({ ...context, scope: { kind: 'workspace' } })).toThrow('published by a query')
-    const published = { context: { text: 'Halden · PAUSED', at: '2026-10-20T08:00:00.000Z', clock: 'simulation' } }
+    const published = { context: { text: 'Halden · PAUSED', at: '2026-10-20T08:00:00.000Z', clock: 'simulation' as const } }
     expect(publishedContextSchema.parse(published)).toEqual(published)
     expect(publishedContextSchema.safeParse({ context: { ...published.context, text: 'x'.repeat(8_001) } }).success).toBe(false)
     expect(publishedContextSchema.safeParse({ context: { ...published.context, clock: 'local' } }).success).toBe(false)
