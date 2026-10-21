@@ -90,8 +90,8 @@ export interface EntityRow {
 /** One core slot or telemetry signal of an entity-floor object: World's word for it and its unit code ('' for words). */
 export interface SlotDeclaration { readonly key: string; readonly label: string; readonly unit: string }
 
-/** A binding the caller reads, with its observable's declared unit, so a drawing writes the reading as the card does. */
-export type TopologyBinding = TopologyNode['bindings'][number] & { readonly unit: string }
+/** A binding the caller reads, with its observable's declared unit and states (a state marked `active` reads as on), so a drawing writes the reading as the card does. */
+export type TopologyBinding = TopologyNode['bindings'][number] & Pick<Observable, 'unit' | 'states'>
 export interface TopologyNodeView extends Pick<TopologyNode, 'id' | 'label' | 'shortLabel' | 'element'> {
   /** A stop's label names its far ends (at most 24 characters). */
   readonly class: TopologyNode['class'] | 'stop'

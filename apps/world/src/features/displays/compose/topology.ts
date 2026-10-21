@@ -5,6 +5,7 @@
  * kept across vignettes by the graph's revision and scope.
  */
 import type { ObjectId } from '../../../core/model/index.ts'
+import type { Observable } from '../../../core/observation/model.ts'
 import type { TopologyGraph } from '../../../core/observation/topology.ts'
 import { drawingCache, drawingKey } from '../topology/cache.ts'
 import { flowLayout, type DrawnStops } from '../topology/flow-sizing.ts'
@@ -24,11 +25,12 @@ const labelOf = (graph: TopologyGraph, id: string): string => {
 }
 /** A stop's label: the names of what lies beyond, at most 24 characters. */
 export const stopLabel = (names: ReadonlyArray<string>): string => names.join(', ').slice(0, 24)
-/** Boxes that keep every drawn name whole at the renderer's 12 text (about 7 a character, 6 of padding, 24 a grid unit): a name and one reading. */
+/** Boxes that keep every drawn name whole at the renderer's 12 text (about 7 a character, 6 of padding, 24 a grid unit); a symbol (two units) stands over its name. */
 const box = (text: string, height: number) => ({ width: Math.max(2, Math.ceil((text.length * 7 + 6) / 24)), height })
+const symbols: ReadonlySet<string> = new Set(['switch', 'converter', 'source'])
 const networkSizing = (graph: TopologyGraph): NetworkSizing => ({
-  key: 'vignette-network-2',
-  node: node => box(node.shortLabel ?? node.label, 2),
+  key: 'vignette-network-3',
+  node: node => box(node.shortLabel ?? node.label, symbols.has(node.class) ? 3 : 2),
   stop: stop => box(stopLabel(stop.others.map(other => labelOf(graph, other.node))), 1),
   spacing: 1, groupLabel: 1,
 })
@@ -64,11 +66,14 @@ export const topologyOf = async (run: SearchRun, objectId: ObjectId): Promise<To
 }
 
 /** What the renderer draws: the layout, every drawn node (stops as `s<n>`, labelled by their far ends) and edge with its medium's kind, and bindings the caller reads, with their declared units. */
-export const topologySection = (objectId: string, scoped: ScopedTopology, drawing: Drawing, rows: number, unitOf: (ref: string) => string | undefined): VignetteSection => {
+export const topologySection = (objectId: string, scoped: ScopedTopology, drawing: Drawing, rows: number, declaredOf: (ref: string) => Pick<Observable, 'unit' | 'states'> | undefined): VignetteSection => {
   const { graph } = scoped
   const [nodes, edges] = [new Set(scoped.nodes), new Set(scoped.edges)]
   const kindOf = (medium: string) => graph.media.find(entry => entry.id === medium)!.kind
-  const bound = (bindings: TopologyGraph['nodes'][number]['bindings']) => bindings.flatMap(binding => { const unit = unitOf(binding.ref); return unit === undefined ? [] : [{ ...binding, unit }] })
+  const bound = (bindings: TopologyGraph['nodes'][number]['bindings']) => bindings.flatMap(binding => {
+    const declared = declaredOf(binding.ref)
+    return declared === undefined ? [] : [{ ...binding, unit: declared.unit, ...(declared.states === undefined ? {} : { states: declared.states }) }]
+  })
   return {
     kind: 'topology', rows, objectId, family: graph.family, layout: drawing.layout,
     nodes: [

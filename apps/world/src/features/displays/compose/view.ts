@@ -155,7 +155,7 @@ export const compileVignette = async (run: ComposeRun, state: VignetteState): Pr
       const drawing = scoped?.ok === true ? await drawingOf(scoped.scoped) : null
       if (scoped?.ok === true && drawing !== null) {
         const units = await declaredRefs(run, bindingRefs(scoped.scoped))
-        sections.push(topologySection(view.objectId, scoped.scoped, drawing, view.rows, ref => units.get(ref)?.observable.unit))
+        sections.push(topologySection(view.objectId, scoped.scoped, drawing, view.rows, ref => units.get(ref)?.observable))
       }
     } else sections.push({ kind: 'map', rows: view.rows })
   }
