@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ObjectId, SimulationRunId } from '../../../../../core/model/index.ts'
+  import type { PackElementActionsProps } from '../../../../../core/packs/protocol.ts'
   import type { ProcessVariableValue, VariablePath } from '../../../graph/index.ts'
   import type { ProcessPlantProposal, ProposalReview } from '../../../operations/proposals.ts'
   import { runOnMount } from '../../../../../ui/svelte-lifecycle.svelte.ts'
@@ -9,7 +9,8 @@
   import { itemControlView, operationNow, proposalCard, shownProposal, type ListedItem, type ListedReset, type OperationNow } from './operation-presenter.ts'
 
   // The Plant's actions on one element, in a display's element pop-over (the
-  // embed contribution ui/embed.ts): the item of equipment the element is, its
+  // embed contribution ui/embed.ts): the item of equipment the element is (a
+  // component, or a device it bundles drawn as its own node), its
   // proposal card while one is pending or just closed, its CONTROL section
   // and the RESETs of the actuations holding it, select-check-execute as the
   // drawing's popover always offered them. World derives what may be operated
@@ -21,7 +22,7 @@
   // cite. A read that fails disables every control and says so, until the
   // next one succeeds.
 
-  let { runId, objectId, elementId }: { readonly runId: SimulationRunId; readonly objectId: ObjectId; readonly elementId: string } = $props()
+  let { runId, objectId, elementId }: PackElementActionsProps = $props()
 
   type Write = { readonly path: VariablePath; readonly value: ProcessVariableValue }
   const READ_EVERY_MS = 1_000
