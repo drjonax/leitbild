@@ -80,6 +80,8 @@ export const withDronePackData = (
   object: OperationalObject,
   data: DronePackData,
   at: IsoTimestamp,
+  /** The Run's simulation time of this pose. */
+  simAt: IsoTimestamp,
   adapterId: AdapterId = droneNativeAdapterId,
 ): OperationalObject => ({
   ...object,
@@ -93,6 +95,7 @@ export const withDronePackData = (
       speedMps: droneHorizontalSpeedMps(data.velocity),
       ...(data.pose.accuracyM === undefined ? {} : { accuracyM: metersSchema.parse(data.pose.accuracyM) }),
       observedAt: data.pose.observedAt,
+      simAt,
       staleAfterMs: data.link.state === 'connected' ? 2_000 : 750,
     },
   },
@@ -198,6 +201,8 @@ export const createScenarioDroneObject = (config: {
   readonly altitudeM: number
   readonly headingDeg: number
   readonly at: IsoTimestamp
+  /** The Run's simulation time of its first pose. */
+  readonly simAt: IsoTimestamp
   readonly swarm?: DroneSwarmMembership
 }): OperationalObject => {
   const data = createDronePackData(config)
@@ -215,6 +220,7 @@ export const createScenarioDroneObject = (config: {
         speedMps: 0,
         accuracyM: metersSchema.parse(1),
         observedAt: config.at,
+        simAt: config.simAt,
         staleAfterMs: 2_000,
       },
       frame: { kind: 'wgs84' },

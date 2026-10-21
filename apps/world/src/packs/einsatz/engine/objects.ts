@@ -228,7 +228,7 @@ export const unitObject = (state: EngineState, record: UnitRecord, motion: Pick<
     lifecycle: record.integrity === 'destroyed' ? 'inactive' : 'active',
     spatial: {
       frame: { kind: 'wgs84' },
-      position: { point: motion.point, observedAt: stamp.at, ...(type.components.mobility === undefined ? {} : { speedMps: travelling ? leg.distanceM / (leg.durationMs / 1_000) * factor : 0 }) },
+      position: { point: motion.point, observedAt: stamp.at, simAt: isoOf(state.timeMs), ...(type.components.mobility === undefined ? {} : { speedMps: travelling ? leg.distanceM / (leg.durationMs / 1_000) * factor : 0 }) },
       ...(route === undefined ? {} : { route }),
     },
     operational: { status: record.phase, mode: 'simulated' },
@@ -246,7 +246,7 @@ export const taskObject = (record: TaskRecord, stamp: ObjectStamp): OperationalO
     ...envelope(id, label, stamp),
     kind: 'incident',
     lifecycle: closed ? 'resolved' : 'active',
-    spatial: { frame: { kind: 'wgs84' }, position: { point: record.point, observedAt: stamp.at } },
+    spatial: { frame: { kind: 'wgs84' }, position: { point: record.point, observedAt: stamp.at, simAt: isoOf(record.createdAtMs) } },
     operational: { status: closed ? 'closed' : 'open', mode: 'simulated' },
     alerts: alertsOf(id, record.alerts),
     packData: data,
