@@ -71,7 +71,7 @@ describe('network layout (ELK layered, grid units)', () => {
     // (Bun's 5 s default failed at load ~10 on the integration branch while the CPU stayed in budget).
   }, 60_000)
 
-  test('grid units: node boxes keep their size, frames hold their members below the label room, routes are orthogonal', async () => {
+  test('grid units: node boxes keep their size, the layout is flat (no group frames, Q12), routes are orthogonal', async () => {
     const scoped = fixtureScope()
     const { graph } = scoped
     const layout = await networkLayout(scoped, sizing)
@@ -80,10 +80,10 @@ describe('network layout (ELK layered, grid units)', () => {
       const placed = layout.nodes.find(candidate => candidate.id === node.id)!
       expect(placed.width).toBeGreaterThanOrEqual(sizing.node(node).width)
       expect(placed.height).toBeGreaterThanOrEqual(sizing.node(node).height)
-      const frame = layout.groups.find(group => group.id === node.group)
-      if (frame !== undefined) expect(placed.x >= frame.x && placed.y >= frame.y + sizing.spacing + sizing.groupLabel && placed.x + placed.width <= frame.x + frame.width && placed.y + placed.height <= frame.y + frame.height).toBe(true)
     }
-    expect(layout.groups.map(group => group.id).sort()).toEqual(graph.groups.map(group => group.id).sort())
+    // The owner dropped station frames (Q12): labels carry the station name, and the graph's groups lay out no compound.
+    expect(graph.groups.length).toBeGreaterThan(0)
+    expect(layout.groups).toEqual([])
     for (const edge of layout.edges) for (const [a, b] of edge.points.slice(1).map((point, i) => [edge.points[i]!, point] as const)) expect(a[0] === b[0] || a[1] === b[1]).toBe(true)
   })
 

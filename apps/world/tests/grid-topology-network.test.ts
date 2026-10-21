@@ -55,7 +55,7 @@ describe('grid topology for the network family (N3)', () => {
     expect(gridObservationTopologyQuery.answer({ objectId: grid.definition.gridId, known: graph.revision }, grids)).toEqual({ objectId: grid.definition.gridId as never, revision: graph.revision, unchanged: true })
   })
 
-  test('views around a bus inside a station frame lay out too (ELK\'s model-order option threw on them), without overlaps', async () => {
+  test('views around a bus inside a station lay out too (ELK\'s model-order option threw on them), without overlaps', async () => {
     for (const hops of [1, 2]) {
       const view = stationView(gridTopology(grid), hops, HASLE)
       const layout = await networkLayout(view, sizing)
