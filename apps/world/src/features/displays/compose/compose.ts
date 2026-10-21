@@ -23,6 +23,8 @@ export type ComposeOutcome =
 const MAX_STATE = 4_096
 const MAX_ADJUSTMENTS = 8
 const ENTITY_ROWS = 12
+/** The most objects a state names in one view. */
+const MAX_OBJECTS = 48
 const refuse = (issues: ReadonlyArray<ComposeIssue>): ComposeOutcome => ({ ok: false, issues })
 const unfit = (path: string, message: string): ComposeIssue => ({ path, code: 'not_fitted', message })
 const notObserved = (path: string, message: string): ComposeIssue => ({ path, code: 'not_observed', message })
@@ -121,7 +123,7 @@ const resolveView = async (run: ComposeRun, view: View, path: string, subjects: 
     if (view.scope === 'run') return { kind: 'alerts', objectIds: 'run' }
     const collection = subjects.find((subject): subject is Extract<Subject, { kind: 'collection' }> => subject.kind === 'collection')
     const members = collection === undefined ? [] : (await defaultViews(run, collection)).flatMap(entry => entry.kind === 'alerts' && entry.objectIds !== 'run' ? entry.objectIds : [])
-    const objectIds = [...new Set([...within, ...members])].filter(id => visibleObject(run, id) !== undefined).slice(0, 48)
+    const objectIds = [...new Set([...within, ...members])].filter(id => visibleObject(run, id) !== undefined)
     return objectIds.length === 0 ? notObserved(path, 'the subjects have no objects to show alerts of') : { kind: 'alerts', objectIds }
   }
   if (view.kind === 'topology') return topologyView(run, view, path, subjects)
@@ -142,7 +144,7 @@ const resolveView = async (run: ComposeRun, view: View, path: string, subjects: 
   const collection = subjects.find((subject): subject is Extract<Subject, { kind: 'collection' }> => subject.kind === 'collection')
   if (collection !== undefined) return { kind: 'map', of: collection.of, ...(view.within === undefined ? {} : { within: view.within }) }
   const placed = within.filter(id => visibleObject(run, id)?.spatial.position !== undefined)
-  return placed.length === 0 ? notObserved(path, 'none of the subjects has a position') : { kind: 'map', objectIds: [...new Set(placed)].slice(0, 48), ...(view.within === undefined ? {} : { within: view.within }) }
+  return placed.length === 0 ? notObserved(path, 'none of the subjects has a position') : { kind: 'map', objectIds: [...new Set(placed)], ...(view.within === undefined ? {} : { within: view.within }) }
 }
 
 /** Defaults of several subjects as one vignette: views of a kind merge; at most four, values first. */
@@ -184,7 +186,7 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
   const subjectIds = [...new Set(subjects.flatMap(subjectObjects))].filter(id => visibleObject(run, id) !== undefined)
   const pressing = subjectIds.flatMap(id => visibleObject(run, id)!.alerts.filter(alert => atLeastCaution(alert.priority)))
   if (pressing.length > 0 && !views.some(view => view.kind === 'alerts')) {
-    if (views.length < 4) views.push({ kind: 'alerts', objectIds: subjectIds.filter(id => visibleObject(run, id)!.alerts.length > 0).slice(0, 48) })
+    if (views.length < 4) views.push({ kind: 'alerts', objectIds: subjectIds.filter(id => visibleObject(run, id)!.alerts.length > 0) })
     else { dropped += pressing.length; countAdjustment(adjusted, { kind: 'layout', text: `${pressing.length} alerts at caution or above not shown` }) }
   }
   // Completion: the lead, the shortest time to act among the subjects' lead values, in the first values or trend view.
@@ -226,11 +228,27 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
         fitted.push({ ...view, refs: inStrips, rows: strips.slice(0, 4).reduce((sum, strip) => sum + Math.max(3, strip.length), 0) + 1 })
       }
     } else if (view.kind === 'alerts') {
-      fitted.push({ ...view, rows: alertRowsFor(run, { ...view, rows: 1 }) })
+      // A state names at most 48 objects: those whose alerts lead in the context's order stay, the rest are counted.
+      let objectIds = view.objectIds
+      if (objectIds !== 'run' && objectIds.length > MAX_OBJECTS) {
+        const leading = [...new Set(alertsOf(run, { ...view, objectIds, rows: 1 }).map(row => row.objectId))]
+        const keep = [...leading, ...objectIds.filter(id => !leading.includes(id))].slice(0, MAX_OBJECTS)
+        const cut = objectIds.filter(id => !keep.includes(id))
+        const lost = alertsOf(run, { ...view, objectIds: cut, rows: 1 }).length
+        dropped += lost
+        countAdjustment(adjusted, { kind: 'layout', text: `${lost} alerts of ${cut.length} more objects not shown` })
+        objectIds = objectIds.filter(id => keep.includes(id))
+      }
+      fitted.push({ ...view, objectIds, rows: alertRowsFor(run, { ...view, objectIds, rows: 1 }) })
     } else if (view.kind === 'slots') {
       const object = visibleObject(run, view.objectId)
       if (object !== undefined) fitted.push({ ...view, rows: Math.max(1, slotsOf(run, object).length) })
     } else if (view.kind === 'entity' || view.kind === 'collection') {
+      if (view.kind === 'entity' && view.objectIds.length > MAX_OBJECTS) {
+        dropped += view.objectIds.length - MAX_OBJECTS
+        countAdjustment(adjusted, { kind: 'layout', text: `${view.objectIds.length - MAX_OBJECTS} of ${view.objectIds.length} related objects not listed` })
+        view.objectIds.splice(MAX_OBJECTS)
+      }
       const count = entityRows(run, { ...view, rows: VIGNETTE_MAX_ROWS } as Extract<ResolvedView, { kind: 'entity' | 'collection' }>).rows.length
       fitted.push({ ...view, rows: 1 + Math.max(1, Math.min(ENTITY_ROWS, count)) + (count > ENTITY_ROWS ? 1 : 0) } as ResolvedView)
     } else if (view.kind === 'topology') {
@@ -248,7 +266,14 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       }
       if (scoped.reach !== undefined) countAdjustment(adjusted, { kind: 'scope', text: `reach narrowed to ${scoped.reach} links to draw at most 60 nodes` })
       fitted.push({ ...view, request: { ...view.request, ...(scoped.reach === undefined ? {} : { reach: scoped.reach }) }, rows })
-    } else fitted.push({ ...view, rows: 2 })
+    } else {
+      // A map's objects beyond 48 are not framed: said, not counted as card items (a map shows none).
+      if (view.objectIds !== undefined && view.objectIds.length > MAX_OBJECTS) {
+        countAdjustment(adjusted, { kind: 'layout', text: `${view.objectIds.length - MAX_OBJECTS} objects beyond ${MAX_OBJECTS} not framed on the map` })
+        view.objectIds.splice(MAX_OBJECTS)
+      }
+      fitted.push({ ...view, rows: 2 })
+    }
   }
   if (issues.length > 0) return refuse(issues)
   // Rows: alerts and tables give way first, then the frame does not fit and compose refuses.
