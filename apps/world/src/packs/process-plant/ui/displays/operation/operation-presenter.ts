@@ -1,30 +1,28 @@
-import type { CompiledComposedDisplay } from '../../../../packs/process-plant/displays/compose.ts'
-import { displayValue, formatQuantity } from '../../../../packs/process-plant/quantity-text.ts'
-import { readingStateText, type TrendReading } from '../../../../packs/process-plant/displays/trend-reading.ts'
-import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
-import { demandSetting, followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../../packs/process-plant/operations/controls.ts'
-import type { RuleStanding } from '../../../../packs/process-plant/operations/control-standing.ts'
-import type { ListedControl, ListedItem, ListedReset } from '../../../../packs/process-plant/operations/instance-ports.ts'
-import type { OperationConsequence } from '../../../../packs/process-plant/operations/consequence.ts'
-import type { PushbuttonRole } from '../../../../packs/process-plant/operations/pushbutton-protection.ts'
-import type { OperationRecord, ResetRecord } from '../../../../packs/process-plant/operations/plant-operations.ts'
-import type { ProcessPlantProposal, ProposalReview } from '../../../../packs/process-plant/operations/proposals.ts'
+import { displayValue, formatQuantity } from '../../../quantity-text.ts'
+import type { ProcessVariableValue, VariablePath } from '../../../graph/index.ts'
+import { demandSetting, followAllowanceMs, type ControlOption, type OfferedControl, type OpposingRule } from '../../../operations/controls.ts'
+import type { RuleStanding } from '../../../operations/control-standing.ts'
+import type { ListedControl, ListedItem, ListedReset } from '../../../operations/instance-ports.ts'
+import type { OperationConsequence } from '../../../operations/consequence.ts'
+import type { PushbuttonRole } from '../../../operations/pushbutton-protection.ts'
+import type { OperationRecord, ResetRecord } from '../../../operations/plant-operations.ts'
+import type { ProcessPlantProposal, ProposalReview } from '../../../operations/proposals.ts'
 
 export type { ListedControl, ListedItem, ListedReset, OperationRecord }
 
-// What the operation parts of a display render, from what World derives
+// What the Plant's operation panels render, from what World derives
 // (operations/controls.ts, control-standing.ts, proposals.ts) and what the
-// latest sample reads: an item's CONTROL section, a proposal's approval card,
-// the window's list of pending proposals, and the badges its symbol carries.
-// Every word comes from the derivation, the I&C config or the proposal book;
-// nothing here names a Plant, equipment or signal. Pure: the components and
-// the mimic renderer only draw what this returns.
+// latest read says: an item's CONTROL section, a proposal's approval card,
+// the window's list of pending proposals and the operations log. Every word
+// comes from the derivation, the I&C config or the proposal book; nothing
+// here names a Plant, equipment or signal. Pure: the components only draw
+// what this returns.
 
 /** A selection not executed within this wall time is cancelled (select-before-operate, plan §4.2). */
 export const SELECTION_TIMEOUT_MS = 30_000
 /** What every control and decision says while the page's samples are stale: it is disabled (HMI review of run 26c). */
 export const STALE_CONTROLS = 'Plant data stale: controls disabled'
-/** How long an operation's attribution stays on its symbol, in plant time (plan §4.3). */
+/** How long a closed proposal stays on its item's panel, in plant time (plan §4.3). */
 export const ATTRIBUTION_MS = 5 * 60_000
 /** A position reads as an option's state within this fraction of its travel. */
 const POSITION_TOLERANCE = 0.05
@@ -43,9 +41,9 @@ export interface OperationNow {
 const plantClock = (ms: number): string => new Date(ms).toISOString().slice(11, 19)
 
 /**
- * The Plant as an operated display's latest sample reads it. `units` are the
- * units of the signals its controls and proposals write and cite (from World's
- * signals.resolve); a value of a signal without one is a fault of the caller.
+ * The Plant as its latest read says it (signals.read with its operations).
+ * `units` are the units of the signals its controls and proposals write and
+ * cite; a value of a signal without one is a fault of the caller.
  */
 export const operationNow = (
   sample: { readonly simulationTime: string; readonly plantElapsedMs: number; readonly values: ReadonlyArray<{ readonly path: string; readonly value: ProcessVariableValue }> },
@@ -474,13 +472,6 @@ const optionState = (option: OptionView, control: ControlView): string =>
 
 // --- Proposals --------------------------------------------------------------
 
-/** A cited reading's limit state as the display reads it: "0.53 MPa above LO-LO 13.8 MPa · RX TRIP", with the projected minutes to it where it heads there. */
-export interface EvidenceMargin {
-  readonly tagId: string
-  readonly text: string
-  readonly minutes: number | null
-}
-
 export interface ProposalCard {
   readonly id: string
   readonly item: string
@@ -501,8 +492,6 @@ export interface ProposalCard {
   readonly evidence: ReadonlyArray<{ readonly tagId: string; readonly then: string; readonly now: string; readonly changed: boolean }>
   /** Some cited reading moved since it was proposed. */
   readonly changed: boolean
-  /** World's ranking: the cited readings' limit states, the soonest first; never the proposer's urgency (QA-9). */
-  readonly margins: ReadonlyArray<EvidenceMargin>
   readonly expected: string
   /** World's consequence line, as the proposal stored it (or its option carries it now); null where World gives none. */
   readonly consequence: ConsequenceView | null
@@ -575,7 +564,6 @@ export const proposalCard = (
   proposal: ProcessPlantProposal,
   review: ProposalReview | null,
   item: ListedItem,
-  margins: ReadonlyArray<EvidenceMargin>,
   now: OperationNow,
 ): ProposalCard => {
   // A cited reading moved where it reads otherwise as the display writes it: a change below its resolution is none.
@@ -598,7 +586,6 @@ export const proposalCard = (
     ...(proposal.procedureStep === undefined ? {} : { procedureStep: proposal.procedureStep }),
     evidence,
     changed,
-    margins: [...margins].sort((left, right) => (left.minutes ?? Infinity) - (right.minutes ?? Infinity)),
     expires: pending ? { at: now.clock(proposal.expiresAtElapsedMs), inMs: Math.max(0, proposal.expiresAtElapsedMs - now.elapsedMs) } : null,
     extendable: pending && !proposal.extended,
     closed: closedText(proposal, now),
@@ -653,18 +640,6 @@ export const proposalCard = (
 }
 
 /**
- * A cited reading's limit state, as the display reads it where it draws the
- * reading with its limits (a lead value's pen): its trend reading's state in
- * words, and its projected minutes to the limit it heads for; 0 past one.
- */
-export const evidenceMargin = (tagId: string, reading: Pick<TrendReading, 'offScale' | 'limit'>, unit: string, resolution: number | null): EvidenceMargin | null => {
-  const text = readingStateText(reading, unit, resolution)
-  if (text === '') return null
-  const limit = reading.limit
-  return { tagId, text, minutes: limit?.kind === 'margin' ? limit.minutes : limit?.kind === 'past' ? 0 : null }
-}
-
-/**
  * The proposal an item's popover shows: its pending one, else the one that
  * closed last within the attribution time, so the person sees what became of
  * it; none otherwise.
@@ -685,8 +660,6 @@ export interface ProposalListEntry {
   readonly opens: ReadonlyArray<ReadonlyArray<string>>
   readonly action: string
   readonly proposer: 'AI' | 'OP'
-  /** World's soonest projected minutes to a limit among its cited readings; null where none heads for one. */
-  readonly minutes: number | null
   readonly text: string
 }
 
@@ -700,130 +673,33 @@ export interface ProposalListEntry {
 export const reviewOpens = (item: Pick<ListedItem, 'components' | 'line'>): ReadonlyArray<ReadonlyArray<string>> =>
   item.line === undefined ? [item.components] : [item.components, [...new Set([...item.components, ...item.line])]]
 
-/** Whether a compiled display draws an item on a symbol of its own (by the ids display.compose and controls.list name it by). */
-export const drawsOwnSymbol = (display: Pick<CompiledComposedDisplay, 'panels'>, itemId: string): boolean =>
-  display.panels.some(panel => panel.kind === 'mimic' && panel.mimic.items.some(item =>
-    (item.binding.item.kind === 'device' ? [`${item.components[0]}.${item.binding.item.device}`] : item.components).includes(itemId)))
-
 /**
- * The window's list of pending proposals (plan §4.3, QA-10): the most
- * time-critical first, by World's projected time to a limit, then the
- * oldest; none, and the chip is absent.
+ * The window's list of pending proposals (plan §4.3, QA-10): the one that
+ * lapses first first, then the oldest; none, and the chip is absent.
  */
 export const pendingProposals = (
   proposals: ReadonlyArray<ProcessPlantProposal>,
   items: ReadonlyArray<ListedItem>,
-  marginsOf: (proposal: ProcessPlantProposal) => ReadonlyArray<EvidenceMargin>,
   now: OperationNow,
 ): ReadonlyArray<ProposalListEntry> => proposals
   .filter(proposal => proposal.status === 'pending')
+  .sort((left, right) => left.expiresAtElapsedMs - right.expiresAtElapsedMs || left.proposedAtElapsedMs - right.proposedAtElapsedMs)
   .map(proposal => {
     const item = items.find(candidate => candidate.id === proposal.item)
     if (item === undefined) throw new Error(`proposal ${proposal.id} names item ${proposal.item}, which offers no controls`)
-    const card = proposalCard(proposal, null, item, marginsOf(proposal), now)
-    const soonest = card.margins[0]
+    const card = proposalCard(proposal, null, item, now)
     return {
-      proposal,
-      entry: {
-        id: proposal.id,
-        item: proposal.item,
-        opens: reviewOpens(item),
-        action: card.action,
-        proposer: proposal.proposer.origin === 'ai' ? 'AI' as const : 'OP' as const,
-        minutes: soonest?.minutes ?? null,
-        text: `${card.action} · ${soonest?.text ?? 'no cited reading heads for a limit'} · expires ${card.expires!.at}`,
-      },
+      id: proposal.id,
+      item: proposal.item,
+      opens: reviewOpens(item),
+      action: card.action,
+      proposer: proposal.proposer.origin === 'ai' ? 'AI' as const : 'OP' as const,
+      text: `${card.action} · expires ${card.expires!.at}`,
     }
   })
-  .sort((left, right) => (left.entry.minutes ?? Infinity) - (right.entry.minutes ?? Infinity) || left.proposal.proposedAtElapsedMs - right.proposal.proposedAtElapsedMs)
-  .map(({ entry }) => entry)
 
 /** The standing actuations past the first that a setting is throttled under: "+3 more actuations". */
 export const moreActuations = (count: number): string => `+${count} more actuation${count === 1 ? '' : 's'}`
-
-// --- Badges -----------------------------------------------------------------
-
-/** What a symbol carries for operation (plan §4.3, QA-8/QA-10): quiet when normal, never an alarm colour. */
-export interface ItemBadges {
-  /** A command from a person or an AI travelling: a determinate ring where the state is a position, a static one otherwise. */
-  readonly progress: { readonly mode: 'determinate'; readonly value: number } | { readonly mode: 'static' } | null
-  /** Who operated it, for 5 plant minutes after: OP, AI, or OP·AI for a person's approval of an AI proposal. */
-  readonly attribution: { readonly text: 'OP' | 'AI' | 'OP·AI'; readonly title: string } | null
-  /** A pending proposal: "AI ?" (or "OP ?" for a person's). */
-  readonly proposal: { readonly text: 'AI ?' | 'OP ?'; readonly title: string } | null
-  /** A protection actuation that stands holds one of its commands. */
-  readonly interlock: { readonly title: string } | null
-  /** Another actor's command travels on it. */
-  readonly commandLocked: { readonly title: string } | null
-  /** A person sets its demand between the ends a standing actuation drove it to: "Throttled under <label>" (+n more), each in full in `title`. */
-  readonly throttled: { readonly text: string; readonly title: string } | null
-}
-
-const byWhom = (record: OperationRecord, proposals: ReadonlyArray<ProcessPlantProposal>): { readonly text: 'OP' | 'AI' | 'OP·AI'; readonly words: string } => {
-  if (record.origin === 'ai') return { text: 'AI', words: 'by an AI agent' }
-  const proposed = record.kind === 'approval' && record.proposalId !== undefined ? proposals.find(proposal => proposal.id === record.proposalId) : undefined
-  return proposed?.proposer.origin === 'ai'
-    ? { text: 'OP·AI', words: 'by an operator, proposed by an AI agent' }
-    : { text: 'OP', words: 'by an operator' }
-}
-
-/** The badges of one item's symbol, from the operations log, the proposal book and the item's controls as they read now. */
-export const itemBadges = (
-  item: ListedItem,
-  input: {
-    readonly operations: ReadonlyArray<OperationRecord>
-    readonly proposals: ReadonlyArray<ProcessPlantProposal>
-    /** The commands this screen issued: one of anyone else's travelling locks the item. */
-    readonly ownCommands: ReadonlySet<string>
-    readonly now: OperationNow
-  },
-): ItemBadges => {
-  const { now } = input
-  const view = itemControlView(item, now)
-  // Only commands from people and AI: the banner and alarms already tell what the I&C did (QA-10).
-  const latest = view.controls.flatMap(control => {
-    const record = input.operations.filter(candidate => candidate.path === control.path && candidate.origin !== 'system')
-      .reduce<OperationRecord | undefined>((last, candidate) => last === undefined || candidate.elapsedMs >= last.elapsedMs ? candidate : last, undefined)
-    if (record === undefined) return []
-    const option = optionOf(control, record.value)
-    return option === undefined ? [] : [{ control, option, record }]
-  })
-  const travelling = latest.filter(({ control, option, record }) => control.form !== 'pushbutton' && control.statePath !== undefined && !option.current
-    && option.travelMs !== null && now.elapsedMs - record.elapsedMs <= followAllowanceMs(option.travelMs))
-  const done = latest.filter(({ control, option, record }) => (control.form === 'pushbutton' || option.current) && now.elapsedMs - record.elapsedMs <= ATTRIBUTION_MS)
-    .sort((left, right) => right.record.elapsedMs - left.record.elapsedMs)
-  const moving = travelling[0]
-  const reading = moving?.control.statePath === undefined ? undefined : now.read(moving.control.statePath)
-  const others = travelling.filter(entry => !input.ownCommands.has(entry.record.commandId))
-  const pending = input.proposals.filter(proposal => proposal.status === 'pending' && proposal.item === item.id)
-  const held = view.controls.flatMap(control => control.options.flatMap(option => option.heldBy === null ? [] : [option.heldBy]))
-  const last = done[0]
-  // A position's travel is told against the span between its options (fully open to shut).
-  const span = moving === undefined ? 0 : (() => {
-    const values = moving.control.options.flatMap(option => typeof option.value === 'number' ? [option.value] : [])
-    return values.length < 2 ? 0 : Math.max(...values) - Math.min(...values)
-  })()
-  return {
-    progress: moving === undefined ? null
-      : typeof reading === 'number' && typeof moving.option.value === 'number' && span > 0
-        ? { mode: 'determinate', value: Math.round(100 * (1 - Math.min(1, Math.abs(moving.option.value - reading) / span))) }
-        : { mode: 'static' },
-    attribution: last === undefined ? null : (() => {
-      const who = byWhom(last.record, input.proposals)
-      return { text: who.text, title: `${last.option.action} ${who.words} at ${now.clock(last.record.elapsedMs)}` }
-    })(),
-    proposal: pending.length === 0 ? null : {
-      text: pending.some(proposal => proposal.proposer.origin === 'ai') ? 'AI ?' : 'OP ?',
-      title: pending.map(proposal => `${proposal.word} proposed by ${proposal.proposer.origin === 'ai' ? 'an AI agent' : 'an operator'} at ${now.clock(proposal.proposedAtElapsedMs)}, expires ${now.clock(proposal.expiresAtElapsedMs)}`).join('\n'),
-    },
-    interlock: held.length === 0 ? null : { title: [...new Set(held)].join('\n') },
-    throttled: (() => {
-      const lines = [...new Set(view.controls.flatMap(control => control.throttled))]
-      return lines.length === 0 ? null : { text: `${lines[0]}${lines.length === 1 ? '' : ` ${moreActuations(lines.length - 1)}`}`, title: lines.join('\n') }
-    })(),
-    commandLocked: others.length === 0 ? null : { title: others.map(({ option, record }) => `${option.action}: ${record.origin === 'ai' ? 'an AI agent' : 'another operator'}'s command travels since ${now.clock(record.elapsedMs)}`).join('\n') },
-  }
-}
 
 // --- Operations log -----------------------------------------------------------
 

@@ -21,7 +21,7 @@
   import { keptInWindow, movedOverlay, nextPopover, popoverPlacement, POPOVER_CLOSED, POPOVER_INTENT_MS, POPOVER_WIDTH, QUICK_LOOK_ORDER, QUICK_LOOK_ROW, raisedOverlay, resizedOverlay, togglePinned, type MimicPopoverContext, type MimicPopoverSection, type PinnedOverlay, type PopoverEvent, type PopoverMode, type PopoverState } from './popover.ts'
   import type { MimicQuickLookSource } from './quick-look-source.ts'
   import type { MimicQuickLooks } from '../../../../packs/process-plant/displays/mimic/quick-look.ts'
-  import type { ItemBadges } from '../operation/operation-presenter.ts'
+  import type { ItemBadges } from './openbridge-mimic.ts'
   import type { ComposedMimicPanel } from '../../../../packs/process-plant/displays/compose.ts'
   import type { TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import MiniTrace from './MiniTrace.svelte'

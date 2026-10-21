@@ -9,7 +9,7 @@
 // window (it says so with the contract's view-host message), it asks that
 // page to open a display there.
 import { embeddedViewHostMessageSchema, type EmbeddedViewListing, type EmbeddedViewOpenMessage } from '@leitbild/contracts'
-import { parseDisplayFramePresentation, type DisplayFrameMap, type DisplayFrameMessage, type DisplayFrameProposalEntry } from './display-frame-protocol.ts'
+import { parseDisplayFramePresentation, type DisplayFrameMap, type DisplayFrameMessage } from './display-frame-protocol.ts'
 import { observeDisplayExtent, type DisplayExtent } from './display-extent.ts'
 
 export interface DisplayPresentation {
@@ -48,7 +48,6 @@ export const createViewHost = (ports: ViewHostPorts) => {
   let presentedByWindow = false
   let relayed = false
   let reported: string | null = null
-  let reportedProposals: string | null = null
   const subscribers = new Set<(presentation: DisplayPresentation) => void>()
   const onWindow = new Set<() => void>()
   const openingSubscribers = new Set<(opening: DisplayOpening | null) => void>()
@@ -139,14 +138,6 @@ export const createViewHost = (ports: ViewHostPorts) => {
       if (!presentedByWindow) return false
       post({ type: 'world:display-map', bounds })
       return true
-    },
-    /** Tells the window the pending proposals on the Plant this view operates, when they changed (its toolbar's chip). */
-    reportProposals: (entries: ReadonlyArray<DisplayFrameProposalEntry>): void => {
-      if (ports.parent === null || !presentedByWindow) return
-      const key = JSON.stringify(entries)
-      if (key === reportedProposals) return
-      reportedProposals = key
-      post({ type: 'world:display-proposals', entries })
     },
     /** Back to the display the window opened this one from (DisplayPresentation.back). */
     back: (): void => {

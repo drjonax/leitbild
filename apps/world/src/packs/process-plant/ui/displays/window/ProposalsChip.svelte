@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { ProposalListEntry } from '../embed/composed-display/operation/operation-presenter.ts'
+  import type { ProposalListEntry } from '../operation/operation-presenter.ts'
 
   // The display window's pending proposals (plan §4.3, QA-10): one chip in
   // the window's toolbar, beside its position, for every display it shows;
-  // absent when none waits. Its list puts the most time-critical first, by
-  // World's projected time to a limit, then the oldest; each opens its item's
+  // absent when none waits. Its list puts the one that lapses first first,
+  // then the oldest; each opens its item's
   // popover on its own detail, where a person decides. Part of the window's
   // chrome, it is drawn with the window's own buttons, as its "New ›" is.
 
@@ -43,7 +43,7 @@
       onclick={() => { expanded = !expanded }}
     >{label} <span class="count">{entries.length}</span></button>
     {#if expanded}
-      <ul id={listId} class="list" aria-label="Pending proposals, most time-critical first">
+      <ul id={listId} class="list" aria-label="Pending proposals, the one that lapses first first">
         {#each entries as entry (entry.id)}
           <li><button type="button" class="entry" onclick={() => choose(entry)}><span class="who">{entry.proposer} ?</span> {entry.text}</button></li>
         {/each}

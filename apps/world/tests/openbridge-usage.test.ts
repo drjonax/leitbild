@@ -117,7 +117,8 @@ describe('OpenBridge usage against its Custom Elements Manifest', () => {
   test('every OpenBridge element in a Svelte template is set only through properties and enum values it declares', () => {
     const problems: string[] = []
     let checked = 0
-    for (const path of files(join(root, 'src/ui'), '.svelte')) {
+    // The embed's own templates, and a Pack's display panels it loads.
+    for (const path of [...files(join(root, 'src/ui'), '.svelte'), ...files(join(root, 'src/packs'), '.svelte')]) {
       const file = relative(root, path)
       for (const start of startTags(readFileSync(path, 'utf8'))) {
         const api = elements.get(start.tag)

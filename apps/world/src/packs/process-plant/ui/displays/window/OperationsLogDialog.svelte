@@ -1,11 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { X } from 'lucide-svelte'
-  import type { SimulationRunId } from '../../core/model/index.ts'
-  import type { OperationsLogRow } from '../embed/composed-display/operation/operation-presenter.ts'
-  import { runOnMount } from '../svelte-lifecycle.svelte.ts'
-  import type { DeckPlant } from './display-deck.ts'
-  import { readOperationsLog } from './window-operations.ts'
+  import type { SimulationRunId } from '../../../../../core/model/index.ts'
+  import { runOnMount } from '../../../../../ui/svelte-lifecycle.svelte.ts'
+  import type { OperationsLogRow } from '../operation/operation-presenter.ts'
+  import { readOperationsLog, type WindowPlant } from './window-operations.ts'
 
   // The operations log of one Plant (plan §4.3): what people and AI agents
   // did to it and proposed, newest first: time, who, equipment, action, the
@@ -15,7 +14,7 @@
 
   interface Props {
     readonly simulationRunId: SimulationRunId
-    readonly plant: DeckPlant
+    readonly plant: WindowPlant
     readonly close: () => void
   }
 

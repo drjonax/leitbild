@@ -2,29 +2,23 @@
   import '@oicl/openbridge-webcomponents/dist/components/button/button.js'
   import '@oicl/openbridge-webcomponents/dist/components/slide-button/slide-button.js'
   import '@oicl/openbridge-webcomponents/dist/components/text-input-field/text-input-field.js'
-  import type { ComposedDisplayPen } from '../../../../packs/process-plant/displays/compose.ts'
-  import type { TrendPoint } from '../../../../packs/process-plant/displays/trend-reading.ts'
-  import Sparkline from '../Sparkline.svelte'
   import { listen } from './listen.ts'
   import { STALE_CONTROLS, type ProposalCard } from './operation-presenter.ts'
 
   // A proposal's approval card, first in its item's popover while pending
   // (plan §4.4, QA-9): the exact command World stored, from → to, who
   // proposed it and why in their own quoted words, what the I&C says of it
-  // now (neutral, no tick), each cited reading then → now with its history,
-  // World's margins soonest first, the expected response and whether it can
-  // be undone, and the fixed expiry with one explicit extension. Approve and
+  // now (neutral, no tick), each cited reading then → now, the expected
+  // response and whether it can be undone, and the fixed expiry with one explicit extension. Approve and
   // Reject carry equal weight and neither takes focus; Approve names verb, tag
   // and label, and is a slide where the command sets a trip going.
 
   type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string }
 
-  let { card, histories = {}, stale = false, approve, reject, extend, useAsDraft }: {
+  let { card, stale = false, approve, reject, extend, useAsDraft }: {
     card: ProposalCard
     /** The page's samples are stale: no decision is offered on old values (STALE_CONTROLS). */
     stale?: boolean
-    /** Each cited reading's pen and recorded history, where the display has them, for its sparkline. */
-    histories?: Readonly<Record<string, { readonly pen: ComposedDisplayPen; readonly points: ReadonlyArray<TrendPoint>; readonly windowMs: number; readonly now: number }>>
     approve: () => Promise<Outcome>
     reject: (reason: string | null) => Promise<Outcome>
     extend: () => Promise<Outcome>
@@ -70,15 +64,12 @@
   {#if card.changed}<p class="changed">Plant changed since proposed</p>{/if}
   <ul class="evidence" aria-label="Cited readings">
     {#each card.evidence as entry (entry.tagId)}
-      {@const history = histories[entry.tagId]}
       <li>
         <span class="tag">{entry.tagId}</span>
         <span class="values" class:changed={entry.changed}>{entry.then}{#if entry.changed} → {entry.now}{/if}</span>
-        {#if history !== undefined}<Sparkline pen={history.pen} windowMs={history.windowMs} points={history.points} now={history.now} limit={null} inAlarm={null} historyMissing={false} historyError={undefined} />{/if}
       </li>
     {/each}
   </ul>
-  {#each card.margins as margin (margin.tagId)}<p class="margin">{margin.tagId}: {margin.text}</p>{/each}
   {#if card.consequence !== null}<p class="consequence-line">{card.consequence.text}{#if card.consequence.mayActuate !== null}<strong class="may-actuate">{card.consequence.mayActuate}</strong>{/if}</p>{/if}
   <p class="expected">Expected: {card.expected}</p>
   {#each card.consequences as line (line)}<p class="consequence">{line}</p>{/each}
@@ -128,7 +119,7 @@
   .approve-what { font-weight: 600; color: var(--element-active-color); }
   p { margin: 0; }
   .action { font-weight: 700; color: var(--element-active-color); }
-  .change, .margin, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }
+  .change, .expected, .consequence, .opposing, .reversibility, .closed-text { color: var(--element-neutral-color); }
   /* World's consequence line: what approving it stops or isolates now, read before Approve. */
   .consequence-line { color: var(--element-active-color); }
   /* What it may set going stands out, on its own line (C2a). */

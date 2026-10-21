@@ -18,16 +18,12 @@ import { followAllowanceMs, plantControlsFor, type ItemControls, type PlantContr
 import { listedControlsFor, listedResetsFor, proposalPortsFor } from '../src/packs/process-plant/operations/instance-ports.ts'
 import { decideProposal, emptyProposalBook, proposeOperation, reviewProposal, type ProposalPorts } from '../src/packs/process-plant/operations/proposals.ts'
 import { pushbuttonProtection } from '../src/packs/process-plant/operations/pushbutton-protection.ts'
-import { compileDetailDisplay } from '../src/packs/process-plant/displays/compose.ts'
 import {
   actorName,
   ATTRIBUTION_MS,
   commandPhase,
   consequenceView,
   demandOption,
-  drawsOwnSymbol,
-  evidenceMargin,
-  itemBadges,
   itemControlView,
   moreActuations,
   operationNow,
@@ -39,7 +35,7 @@ import {
   type ListedItem,
   type OperationNow,
   type OperationRecord,
-} from '../src/ui/embed/composed-display/operation/operation-presenter.ts'
+} from '../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -231,8 +227,8 @@ describe('feedback while a command executes', () => {
   })
 })
 
-describe('an AI proposal on the stuck-open PORV, from its card to the badges', () => {
-  test('pending: the exact command, who and why, the I&C now, evidence and World\'s ranking; Approve and Reject while it stands', () => {
+describe('an AI proposal on the stuck-open PORV, from its card to the window\'s list', () => {
+  test('pending: the exact command, who and why, the I&C now and its evidence; Approve and Reject while it stands', () => {
     const plant = unit()
     plant.step()
     plant.fault('pressurizer-relief-open', { positionPercent: 20 })
@@ -253,8 +249,7 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     const proposal = proposed.book.proposals[0]!
     const item = plant.listed(plant.itemOffering(blockValve.path))
     expect(proposal.item).toBe(item.id)
-    const margins = [{ tagId: 'PT-455', text: '0.31 MPa above LO-LO 13.8 MPa · RX TRIP', minutes: 3.5 }, { tagId: 'PORV-456A-POS', text: 'no limit in force', minutes: null }]
-    const card = proposalCard(proposal, reviewProposal(proposal, plant.ports), item, margins, plant.now())
+    const card = proposalCard(proposal, reviewProposal(proposal, plant.ports), item, plant.now())
     const target = item.offered.find(entry => entry.control.path === blockValve.path)!.control.target
     expect(card).toMatchObject({
       status: 'pending',
@@ -275,21 +270,19 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
       approve: { label: `Approve: SHUT ${target}`, confirm: 'button', enabled: true },
       closed: null,
     })
-    expect(card.margins.map(margin => margin.tagId)).toEqual(['PT-455', 'PORV-456A-POS'])
     expect(card.evidence.map(entry => [entry.tagId, entry.then])).toEqual([['PORV-456A-POS', '20.0 %'], ['PT-455', expect.stringMatching(/^1\d\.\d+ MPa$/)]])
-    // The window's list and the symbol say a proposal waits for a person.
-    expect(pendingProposals(proposed.book.proposals, [item], () => margins, plant.now()).map(entry => [entry.action, entry.proposer, entry.minutes])).toEqual([[`SHUT ${target}`, 'AI', 3.5]])
-    expect(itemBadges(item, { operations: [], proposals: proposed.book.proposals, ownCommands: new Set(), now: plant.now() }).proposal?.text).toBe('AI ?')
+    // The window's list says a proposal waits for a person, and when it lapses.
+    expect(pendingProposals(proposed.book.proposals, [item], plant.now()).map(entry => [entry.action, entry.proposer, entry.text])).toEqual([[`SHUT ${target}`, 'AI', `SHUT ${target} · expires 10:03:01`]])
     // Thirty seconds on the pressure has fallen: the card says the plant changed, and Approve says so too.
     plant.step(30)
-    const later = proposalCard(proposal, reviewProposal(proposal, plant.ports), plant.listed(plant.itemOffering(blockValve.path)), margins, plant.now())
+    const later = proposalCard(proposal, reviewProposal(proposal, plant.ports), plant.listed(plant.itemOffering(blockValve.path)), plant.now())
     expect(later.changed).toBe(true)
     expect(later.evidence.find(entry => entry.tagId === 'PT-455')!.changed).toBe(true)
     expect(later.approve?.label).toBe(`Approve anyway, plant changed: SHUT ${target}`)
     expect(later.expires?.inMs).toBe(90_000)
   }, PLANT_HANG_GUARD_MS)
 
-  test('approved: the stored write travels with a ring, then the symbol carries OP·AI for five plant minutes', () => {
+  test('approved: its card reads who approved it and offers no decision', () => {
     const plant = unit()
     plant.step()
     plant.fault('pressurizer-relief-open', { positionPercent: 20 })
@@ -302,42 +295,9 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     }, plant.ports)
     const decided = decideProposal(proposed.book, { proposalId: 'cmd-propose-1', decision: 'approve', decider: { actorId: 'op-1', origin: 'person' }, commandId: 'cmd-approve-1', at: at() }, plant.ports)
     expect(decided.execute).toEqual({ path: blockValve.path, value: 0 })
-    plant.runtime.writeCommand({ type: 'setVariable', path: decided.execute!.path, value: decided.execute!.value })
-    const record: OperationRecord = { commandId: 'cmd-approve-1', path: blockValve.path, value: 0, origin: 'person', actorId: 'op-1', elapsedMs: plant.runtime.elapsedMs(), kind: 'approval', proposalId: 'cmd-propose-1' }
-    const badges = () => itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(['cmd-approve-1']), now: plant.now() })
-    // Approved and closed: no pending badge; its card reads who approved it.
-    const closed = proposalCard(decided.book.proposals[0]!, null, plant.listed(plant.itemOffering(blockValve.path)), [], plant.now())
+    const closed = proposalCard(decided.book.proposals[0]!, null, plant.listed(plant.itemOffering(blockValve.path)), plant.now())
     expect([closed.status, closed.closed, closed.approve, closed.expires]).toEqual(['approved', 'Approved by an operator at 10:01:01', null, null])
-    plant.step(4)
-    const travelling = badges()
-    expect(travelling.proposal).toBeNull()
-    expect(travelling.progress).toMatchObject({ mode: 'determinate' })
-    if (travelling.progress?.mode === 'determinate') expect(travelling.progress.value).toBeGreaterThan(20)
-    // The command this screen issued locks nothing for it; one another screen issued does.
-    expect(travelling.commandLocked).toBeNull()
-    expect(itemBadges(plant.listed(plant.itemOffering(blockValve.path)), { operations: [record], proposals: decided.book.proposals, ownCommands: new Set(), now: plant.now() }).commandLocked?.title).toContain('another operator\'s command travels since 10:01:01')
-    plant.step(8)
-    const done = badges()
-    expect(done.progress).toBeNull()
-    expect(done.attribution?.text).toBe('OP·AI')
-    expect(done.attribution?.title).toMatch(/^SHUT MOV-8000A .+ by an operator, proposed by an AI agent at 10:01:01$/)
-    plant.step(ATTRIBUTION_MS / 1_000)
-    expect(badges().attribution).toBeNull()
   }, PLANT_HANG_GUARD_MS)
-
-  test('the I&C\'s own writes carry no ring or badge; a person\'s direct command reads OP, an AI\'s direct command AI', () => {
-    const plant = unit()
-    plant.step()
-    const blockValve = plant.tag('MOV-8000A')
-    plant.runtime.writeCommand({ type: 'setVariable', path: blockValve.path, value: 0 })
-    plant.step(15)
-    const item = plant.listed(plant.itemOffering(blockValve.path))
-    const record = (origin: OperationRecord['origin']): OperationRecord => ({ commandId: `cmd-${origin}`, path: blockValve.path, value: 0, origin, actorId: origin === 'system' ? 'scenario' : `${origin}-1`, elapsedMs: 1_000, kind: 'write' })
-    const badgesFor = (origin: OperationRecord['origin']) => itemBadges(item, { operations: [record(origin)], proposals: [], ownCommands: new Set(), now: plant.now() })
-    expect(badgesFor('system')).toEqual({ progress: null, attribution: null, proposal: null, interlock: null, commandLocked: null, throttled: null })
-    expect(badgesFor('person').attribution?.text).toBe('OP')
-    expect(badgesFor('ai').attribution?.text).toBe('AI')
-  })
 
   test('an operated display reads the Plant from its sample, and shows an item\'s pending proposal, else the one that closed last', () => {
     const now = operationNow({ simulationTime: '2026-10-16T10:01:00.000Z', plantElapsedMs: 60_000, values: [{ path: 'v.position', value: 0.2 }, { path: 'v.open', value: true }] }, new Map([['v.position', 'fraction']]))
@@ -357,14 +317,6 @@ describe('an AI proposal on the stuck-open PORV, from its card to the badges', (
     expect(shownProposal('other', [rejected], now)).toBeUndefined()
     // Closed longer ago than the attribution time, it is no longer shown.
     expect(shownProposal('valve', [expired], { ...now, elapsedMs: 50_000 + ATTRIBUTION_MS + 1 })).toBeUndefined()
-  })
-
-  test('a cited reading\'s margin is its limit state in words, with its projected minutes; past a limit it is first', () => {
-    const threshold = { value: 13.8e6, kind: 'trip', direction: 'low', order: 2, action: 'RX TRIP', ruleId: 'r', severity: 'critical' } as never
-    const margin = { threshold, distance: 0.5e6 } as never
-    expect(evidenceMargin('PT-455', { offScale: null, limit: { kind: 'margin', margin, eta: '≈3 min', minutes: 3 } }, 'Pa', null)?.minutes).toBe(3)
-    expect(evidenceMargin('PT-455', { offScale: null, limit: { kind: 'past', margin, back: null } }, 'Pa', null)?.minutes).toBe(0)
-    expect(evidenceMargin('PT-455', { offScale: null, limit: null }, 'Pa', null)).toBeNull()
   })
 
   test('the operations log lists who did what, the approval chain and what came of it, newest first', () => {
@@ -433,7 +385,7 @@ describe('demand controls and valve positions', () => {
     expect(item.auto[0]?.manual).toContain('AUTO/MAN mode')
   }, PLANT_HANG_GUARD_MS)
 
-  test('a setting between the ends an actuation drove the valve to reads "Throttled under" the actuation, in World\'s label, in its row, on its symbol and in the log', () => {
+  test('a setting between the ends an actuation drove the valve to reads "Throttled under" the actuation, in World\'s label, in its row and in the log', () => {
     const plant = unit()
     plant.step()
     const valve = plant.tag('AFW-A-CV')
@@ -442,11 +394,12 @@ describe('demand controls and valve positions', () => {
     const throttled = { ...listed, offered: listed.offered.map(entry => (entry.control.path === valve.path ? { ...entry, throttledUnder: [under] } : entry)) }
     const control = itemControlView(throttled, plant.now()).controls.find(candidate => candidate.path === valve.path)!
     expect(control.throttled).toEqual(['Throttled under AFW actuation on SG low-low level'])
-    // Under several, the first in full and the rest counted in words (HMI review of run 26c: "actuation+3").
+    // Under several, the row's chip names the first in full and counts the rest in words (HMI review of run 26c: "actuation+3").
     const several = { ...listed, offered: listed.offered.map(entry => (entry.control.path === valve.path ? { ...entry, throttledUnder: [under, { ...under, ruleId: 'b' }, { ...under, ruleId: 'c', label: 'AFW actuation on bus loss' }, { ...under, ruleId: 'd', label: 'AFW actuation manual' }] } : entry)) }
-    expect(itemBadges(several, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled?.text).toBe('Throttled under AFW actuation on SG low-low level +2 more actuations')
+    expect(itemControlView(several, plant.now()).controls.find(candidate => candidate.path === valve.path)!.throttled).toEqual([
+      'Throttled under AFW actuation on SG low-low level', 'Throttled under AFW actuation on SG low-low level', 'Throttled under AFW actuation on bus loss', 'Throttled under AFW actuation manual',
+    ])
     expect([moreActuations(1), moreActuations(3)]).toEqual(['+1 more actuation', '+3 more actuations'])
-    expect(itemBadges(throttled, { operations: [], proposals: [], ownCommands: new Set(), now: plant.now() }).throttled).toEqual({ text: 'Throttled under AFW actuation on SG low-low level', title: 'Throttled under AFW actuation on SG low-low level' })
     const record: OperationRecord = { commandId: 'cmd-throttle', path: valve.path, value: 0.4, origin: 'person', actorId: 'op-1', elapsedMs: 1_000, kind: 'write', throttledUnder: [under] }
     expect(operationsLogRows([record], [], [throttled], plant.now())[0]).toMatchObject({ action: expect.stringMatching(/^OPEN to 40 % AFW-A-CV/), chain: 'direct command · throttled under AFW actuation on SG low-low level' })
   }, PLANT_HANG_GUARD_MS)
@@ -509,18 +462,18 @@ describe('C2a: protection pushbuttons, who acted, consequence lines and the revi
     if (!proposed.ok) throw new Error(proposed.reason)
     const stored = proposed.book.proposals[0]!
     expect(stored.consequence?.verb).toBe('shuts off')
-    expect(proposalCard(stored, null, block, [], plant.now()).consequence).toEqual(consequenceView(stored.consequence))
+    expect(proposalCard(stored, null, block, plant.now()).consequence).toEqual(consequenceView(stored.consequence))
     // A proposal of the state the equipment reads already says so, never "OPEN → OPEN".
     const open = proposeOperation(emptyProposalBook, {
       id: 'cmd-propose-2', plantId: plant.plant.id, write: { path: blockValve.path, value: 1 }, reason: 'Keep the path open', evidence: ['PORV-456A-POS' as never], proposer: { actorId: 'actor:ai:assistant', origin: 'ai' },
       at: { elapsedMs: plant.runtime.elapsedMs(), wallMs: 0 },
     }, plant.ports)
     if (!open.ok) throw new Error(open.reason)
-    expect(proposalCard(open.book.proposals[0]!, null, block, [], plant.now()).already).toBe('Already OPEN: approving it changes nothing')
-    expect(proposalCard(stored, null, block, [], plant.now()).already).toBeNull()
+    expect(proposalCard(open.book.proposals[0]!, null, block, plant.now()).already).toBe('Already OPEN: approving it changes nothing')
+    expect(proposalCard(stored, null, block, plant.now()).already).toBeNull()
   })
 
-  test('a review opens a detail that draws the proposal\'s item on its own symbol: a bundled valve\'s host and the line it sits on, where the host alone has room only for the host', () => {
+  test('a review opens a detail around a bundled valve\'s host, then around the host and the line it sits on', () => {
     const plant = unit()
     plant.step()
     const blockValve = plant.tag('MOV-8000A')
@@ -528,13 +481,6 @@ describe('C2a: protection pushbuttons, who acted, consequence lines and the revi
     const opens = reviewOpens(item)
     expect(opens).toHaveLength(2)
     expect(opens[1]!.slice(0, 1)).toEqual([...opens[0]!])
-    const instance = { plant: plant.plant, runtime: plant.runtime, ramps: createProcessPlantRampRunner({ runtime: plant.runtime }), protection: plant.protection, performance: createProcessPlantRuntimePerformance() }
-    const drawn = (components: ReadonlyArray<string>) => {
-      const result = compileDetailDisplay(instance, new Set(), components, { width: 1920, height: 1000 })
-      if (!result.ok) throw new Error(JSON.stringify(result.issues))
-      return drawsOwnSymbol(result.display, item.id)
-    }
-    expect(opens.map(drawn)).toEqual([false, true])
     // A component's own detail draws it: one detail to open.
     const pump = plant.listed(plant.itemOffering(plant.tag('RCP-A-RUN').path))
     expect(reviewOpens(pump)).toEqual([pump.components])
@@ -578,9 +524,9 @@ describe('C2a: protection pushbuttons, who acted, consequence lines and the revi
     if (!proposed.ok) throw new Error(proposed.reason)
     const proposal = proposed.book.proposals[0]!
     const owner = plant.listed(plant.controls.items.find(entry => entry.id === proposal.item)!)
-    const card = proposalCard(proposal, reviewProposal(proposal, plant.ports), owner, [], plant.now())
+    const card = proposalCard(proposal, reviewProposal(proposal, plant.ports), owner, plant.now())
     expect(card).toMatchObject({ action: trip.word, from: null, to: null, already: null, draftable: false, approve: { label: `Approve: ${trip.word}`, confirm: 'slide', enabled: true }, checked: { permitted: true } })
-    expect(pendingProposals([proposal], [owner], () => [], plant.now())[0]).toMatchObject({ action: trip.word, proposer: 'AI' })
+    expect(pendingProposals([proposal], [owner], plant.now())[0]).toMatchObject({ action: trip.word, proposer: 'AI' })
     const record = { commandId: 'cmd-reset', kind: 'reset' as const, ruleId: trip.ruleId, label: trip.label, holds: [...trip.holds], origin: 'person' as const, actorId: 'actor:operator', elapsedMs: plant.runtime.elapsedMs(), proposalId: proposal.id }
     expect(operationsLogRows([], [proposal], [owner], plant.now(), [record]).find(row => row.key === 'cmd-reset')).toMatchObject({ who: 'Operator', action: trip.word, chain: expect.stringMatching(/^approved an AI agent's proposal of /), result: expect.stringMatching(/^reset; the hold on \d+ commands? it wrote lifted$/) })
   }, PLANT_HANG_GUARD_MS)

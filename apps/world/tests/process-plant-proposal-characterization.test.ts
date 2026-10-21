@@ -7,7 +7,7 @@ import type { ActorId, CommandResult, IsoTimestamp } from '../src/core/model/ind
 import type { Actor } from '../src/core/simulation-runs/actors.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
-import { operationNow, proposalCard, type ProposalCard } from '../src/ui/embed/composed-display/operation/operation-presenter.ts'
+import { operationNow, proposalCard, type ProposalCard } from '../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
 import { testScenarioDefinitions } from './fixtures/scenarios.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
@@ -92,8 +92,8 @@ const observe = async (): Promise<Facts> => {
     const decide = async (actor: Actor, proposalId: string, decision: string, reason?: string) =>
       outcome(await invoke(actor, 'world.process-plant.control.decide', { proposalId, decision, ...(reason === undefined ? {} : { reason }) }))
 
-    // The approval cards, as the display window builds them from what a person reads: control.proposals (each pending
-    // one with World's review now), controls.list, signals.resolve and display.sample.
+    // The approval cards, as the Plant's element panel builds them from what a person reads: control.proposals (each
+    // pending one with World's review now), controls.list, and signals.read with its operations.
     const cards = async (): Promise<Readonly<Record<string, ProposalCard>>> => {
       const held = await invoke(operator, 'world.process-plant.control.proposals', {})
       const listed = await invoke(operator, 'world.process-plant.controls.list', {})
@@ -101,11 +101,13 @@ const observe = async (): Promise<Facts> => {
         ...listed.items.flatMap((item: any) => item.offered.flatMap((entry: any) => [entry.control.path, ...(entry.control.state === undefined ? [] : [entry.control.state])])),
         ...held.proposals.flatMap((entry: any) => entry.proposal.evidence.map((cited: any) => cited.path)),
       ])]
-      const units = await invoke(operator, 'world.process-plant.signals.resolve', { signals: paths.map(path => ({ path })) })
-      const sample = await invoke(operator, 'world.process-plant.display.sample', { paths, operations: true })
-      const now = operationNow(sample, new Map(units.signals.map((signal: any) => [signal.path, signal.unit])))
+      const read = await invoke(operator, 'world.process-plant.signals.read', { signals: paths.map(path => ({ path })), operations: true })
+      const now = operationNow(
+        { simulationTime: read.operations.simulationTime, plantElapsedMs: read.operations.plantElapsedMs, values: read.signals.map((entry: any) => ({ path: entry.signal.path, value: entry.variable.value })) },
+        new Map(read.signals.map((entry: any) => [entry.signal.path, entry.variable.unit])),
+      )
       return Object.fromEntries(held.proposals.map((entry: any) =>
-        [entry.proposal.id, proposalCard(entry.proposal, entry.review ?? null, listed.items.find((item: any) => item.id === entry.proposal.item), [], now)]))
+        [entry.proposal.id, proposalCard(entry.proposal, entry.review ?? null, listed.items.find((item: any) => item.id === entry.proposal.item), now)]))
     }
     // Plant times count from the first proposal: a new Run plays until it is paused, so the Plant may have stepped once by then.
     let firstProposedAt = 0

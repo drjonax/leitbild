@@ -7,8 +7,8 @@
   import '@oicl/openbridge-webcomponents/dist/icons/icon-chevron-right-google.js'
   import '@oicl/openbridge-webcomponents/dist/components/toggle-button-group/toggle-button-group.js'
   import '@oicl/openbridge-webcomponents/dist/components/toggle-button-option/toggle-button-option.js'
-  import type { ProcessVariableValue, VariablePath } from '../../../../packs/process-plant/graph/index.ts'
-  import { runOnMount } from '../../../svelte-lifecycle.svelte.ts'
+  import type { ProcessVariableValue, VariablePath } from '../../../graph/index.ts'
+  import { runOnMount } from '../../../../../ui/svelte-lifecycle.svelte.ts'
   import { listen } from './listen.ts'
   import { commandPhase, moreActuations, optionOf, SELECTION_TIMEOUT_MS, STALE_CONTROLS, type ControlView, type DemandView, type ItemControlView, type OperationNow, type OptionView, type SentCommand } from './operation-presenter.ts'
 
