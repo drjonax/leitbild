@@ -199,7 +199,11 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
         ...graph.links.map(link => {
           const [from, to] = [graph.components[link.fromComponentIndex]!, graph.components[link.toComponentIndex]!]
           const short = `${nameOf(from)} → ${nameOf(to)}`
-          return { id: String(link.id), class: link.kind, label: `${from.label} to ${to.label}`, ...(short.length > 24 ? {} : { shortLabel: short }) }
+          return {
+            id: String(link.id), class: link.kind, label: `${from.label} to ${to.label}`, ...(short.length > 24 ? {} : { shortLabel: short }),
+            // A loop's own line is in its loop, as its readings group (a loop's hot and cold leg).
+            ...(link.metadata?.loopId === undefined ? {} : { group: link.metadata.loopId }),
+          }
         }),
       ],
     }

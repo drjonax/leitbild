@@ -67,8 +67,9 @@ export const readPlant = (context: PlantReadContext, paths: ReadonlyArray<string
     const colouring = on.find(entry => entry.after === null)
     const expected = colouring === undefined ? on[0] : undefined
     const priority: Priority = colouring?.priority ?? 'none'
-    // The limit of the rule that colours it, or would but for the first-out it came in after, that the value is past.
-    const named = colouring ?? expected
+    // The deepest limit an annunciating rule sets on it that the value is past, coloured or expected after a first-out:
+    // the chip names the trip past which it stands (LO-LO), as the drawing did, while its colour stays its alarm's.
+    const named = on[0]
     const past = named === undefined || reading === null ? undefined : limitsOf(named.lifecycle.ruleId).find(limit => (limit.direction === 'low' ? reading < limit.value : reading > limit.value))
     const due = pending.filter(entry => limitsOf(entry.rule.id).length > 0).sort((left, right) => left.leftMs - right.leftMs)[0]
     const value = typeof variable.value === 'number' && !Number.isFinite(variable.value) ? null : declared.valueType === 'enum' ? String(variable.value) : variable.value

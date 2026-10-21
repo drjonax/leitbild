@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { observeOldPath, STATES } from './display-characterization/old-path.ts'
-import { observeProposalFlow } from './display-characterization/proposal-flow.ts'
-import { observeListings } from './display-characterization/listings.ts'
+import { observeProposalFlow } from './display-parity/proposal-flow.ts'
+import { observeListings } from './display-parity/listings.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()

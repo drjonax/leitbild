@@ -5,7 +5,8 @@ import type { ProcedureTagValidation, ProcedureTagValue } from './procedure-clie
 
 // What a clicked procedure tag's dialog shows, decided before anything is
 // drawn: a tag the unit's model does not hold says so; otherwise World's
-// default display of the tag on the unit (displays/default for
+// default display of the signal the tag names on the unit (displays/default
+// for `<unit>#<signal path>`, the exact ref the tag resolved to, else
 // `<unit>#<tag>`) is drawn first and shown only where it can be.
 
 export type ProcedureTagDisplayPlan =
@@ -16,7 +17,8 @@ export type ProcedureTagDisplayPlan =
 export const procedureTagDisplayPlan = (scopeId: string, tagId: string, validation: ProcedureTagValidation | undefined): ProcedureTagDisplayPlan => {
   if (validation === undefined) return { kind: 'unchecked', message: "Not checked against this unit's plant model" }
   if (validation.status === 'missing') return { kind: 'not-in-model', message: "Not in this unit's plant model" }
-  return { kind: 'display', subject: `${scopeId}#${tagId}` }
+  const path = validation.signal?.path
+  return { kind: 'display', subject: `${scopeId}#${typeof path === 'string' ? path : tagId}` }
 }
 
 /** What World composes as a subject's default display: the embedded view to frame. */

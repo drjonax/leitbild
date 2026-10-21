@@ -29,8 +29,10 @@ describe("a clicked procedure tag's display", () => {
       .toEqual({ kind: 'unchecked', message: "Not checked against this unit's plant model" })
   })
 
-  test("draws World's default display of the tag on its unit (P4)", () => {
-    expect(procedureTagDisplayPlan('plant:a', 'PT-455', resolved)).toEqual({ kind: 'display', subject: 'plant:a#PT-455' })
+  test("draws World's default display of the signal the tag names on its unit (P4)", () => {
+    expect(procedureTagDisplayPlan('plant:a', 'PT-455', resolved)).toEqual({ kind: 'display', subject: 'plant:a#pressurizer.pressureMPa' })
+    const { signal: _signal, ...unbound } = resolved
+    expect(procedureTagDisplayPlan('plant:a', 'PT-455', unbound)).toEqual({ kind: 'display', subject: 'plant:a#PT-455' })
   })
 
   test('frames the composed view as a read-only embedded view of the Run, at the height World gave it', () => {
