@@ -13,7 +13,7 @@ const id = z.string().min(1).max(200)
 const rank = z.string().min(1).max(120)
 const end = z.object({ node: id, port: id }).strict()
 const bindings = z.array(z.object({
-  role: z.enum(['flow', 'loading', 'level', 'conducting', 'available', 'value']),
+  role: z.enum(['flow', 'loading', 'level', 'conducting', 'available', 'running', 'value']),
   ref: observableRefSchema,
 }).strict()).max(16)
 

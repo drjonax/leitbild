@@ -1,3 +1,4 @@
+import { priorityLevels } from '@leitbild/contracts'
 import { z } from 'zod'
 import type { ObjectId } from './ids.ts'
 import { isoTimestampSchema } from './time.ts'
@@ -6,11 +7,11 @@ export const alertSeveritySchema = z.enum(['info', 'warning', 'critical'])
 export type AlertSeverity = z.infer<typeof alertSeveritySchema>
 
 /**
- * The one name for the six-level scale, lowest first. Observations, thresholds
- * and alert facets all call it `priority`; the alert record's coarse
- * `severity` (info, warning, critical) keeps its own name and meaning.
+ * The one name for the six-level scale, lowest first (the display card's list).
+ * Observations, thresholds and alert facets all call it `priority`; the alert
+ * record's coarse `severity` (info, warning, critical) keeps its own name and meaning.
  */
-export const priorityLevels = ['none', 'notice', 'caution', 'warning', 'alarm', 'emergency'] as const
+export { priorityLevels }
 export const prioritySchema = z.enum(priorityLevels)
 export type Priority = z.infer<typeof prioritySchema>
 

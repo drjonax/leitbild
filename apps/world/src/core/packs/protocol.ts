@@ -679,9 +679,18 @@ export interface PackSurfaceLayout {
   readonly railCollapsed?: true
 }
 
+/** What a Pack's element-actions panel is mounted with: the element a display's pop-over shows. */
+export interface PackElementActionsProps {
+  readonly objectId: ObjectId
+  /** The declared element id (a topology node's `element`, or its id). */
+  readonly elementId: string
+}
+
 export interface PackUiContribution {
   readonly surfacePanels: ReadonlyArray<PackSurfacePanelContribution>
   readonly settingsEditor?: () => Promise<{ readonly default: Component }>
+  /** The panel a display's element pop-over shows for this Pack's elements (operation, resets); World places it, the Pack implements it. */
+  readonly elementActions?: () => Promise<{ readonly default: Component<PackElementActionsProps> }>
   readonly mapInteraction?: PackMapInteraction
   readonly surfaceLayout?: PackSurfaceLayout
 }
