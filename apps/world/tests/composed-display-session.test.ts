@@ -4,6 +4,9 @@ import type { ComposedDisplayClient, ComposedDisplayViewResult, RunPresence, Vie
 import {
   createComposedDisplaySession,
   IDLE_SUSPEND_MS,
+  SAMPLE_BACKOFF_MS,
+  sampleStale,
+  STALE_AFTER_MS,
   type ComposedDisplaySnapshot,
   type ScheduleTimer,
 } from '../src/ui/embed/composed-display/composed-display-session.ts'
@@ -486,9 +489,9 @@ describe('composed display session on a fake clock', () => {
     await started
     expect(last().phase.kind).toBe('live')
     await clock.advance(55_000)
-    // Asked again only once answered: after a 5 s answer it waits 2 s, then 5 s after every further slow answer.
+    // Asked again only once answered: after a 5 s answer it waits 2 s, then 3 s after every further slow answer.
     expect(world.maxInFlight).toBe(1)
-    expect(world.sampleTimes).toEqual([0, 6_000, 13_000, 23_000, 33_000, 43_000, 53_000])
+    expect(world.sampleTimes).toEqual([0, 6_000, 13_000, 21_000, 29_000, 37_000, 45_000, 53_000])
     // Polls the view never joins two requests: a poll while one is in flight joins it.
     void controller.poll()
     void controller.poll()
@@ -652,6 +655,35 @@ describe('composed display session on a fake clock', () => {
     // No snapshot ever paired the detail with the overview's sample.
     expect(snapshots.filter(snapshot => snapshot.view?.display.title === 'Steam Generator B' && snapshot.latest?.values.some(value => value.path === 'pressurizer.pressureMPa'))).toEqual([])
     expect(world.maxInFlight).toBe(1)
+    controller.close()
+  })
+
+  test('a World that answers slowly reads as live on the longest wait between samples; one that stops answering reads as stale', async () => {
+    // The longest wait between samples leaves an answer of up to 2 s before the display reads stale.
+    expect(SAMPLE_BACKOFF_MS.at(-1)! + 2_000).toBeLessThanOrEqual(STALE_AFTER_MS)
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    // Each answer takes longer than a second: the wait climbs to its longest and stays there.
+    world.latencyMs = 1_900
+    let staleAt: number | null = null
+    for (let step = 0; step < 600 && staleAt === null; step += 1) {
+      await clock.advance(100)
+      if (sampleStale(last(), clock.wall.now)) staleAt = clock.wall.now
+    }
+    expect(staleAt).toBeNull()
+    const recent = world.sampleTimes.slice(-4)
+    expect(recent.slice(1).map((time, index) => time - recent[index]!)).toEqual([4_900, 4_900, 4_900])
+    // The World stops answering (after the request in flight): the display reads stale once its last sample is older than the threshold.
+    world.latencyMs = 600_000
+    for (let step = 0; step < 200 && staleAt === null; step += 1) {
+      await clock.advance(100)
+      if (sampleStale(last(), clock.wall.now)) staleAt = clock.wall.now
+    }
+    const answeredAt = last().lastSampleWallMs!
+    expect(staleAt! - answeredAt).toBeGreaterThan(STALE_AFTER_MS)
+    expect(staleAt! - answeredAt).toBeLessThanOrEqual(STALE_AFTER_MS + 100)
     controller.close()
   })
 })

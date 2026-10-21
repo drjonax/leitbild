@@ -10,7 +10,7 @@
   import { openedListing } from '../opened-display.ts'
   import { embeddedDisplayFrame, hostDisplayFrame, type DisplayOpening } from '../view-host.ts'
   import { composedDisplayClient } from './composed-display-client.ts'
-  import { createComposedDisplaySession, type ComposedDisplaySnapshot } from './composed-display-session.ts'
+  import { createComposedDisplaySession, sampleStale, type ComposedDisplaySnapshot } from './composed-display-session.ts'
   import AlarmsPanel from './AlarmsPanel.svelte'
   import AnnunciatorTiles from './AnnunciatorTiles.svelte'
   import ComparisonPanel from './ComparisonPanel.svelte'
@@ -37,8 +37,6 @@
   const runId = $derived(simulationRunIdSchema.parse(envelope.subject.id))
   const title = $derived(advice?.composition.title ?? (snapshot?.view?.kind === 'detail' ? snapshot.view.display.title : envelope.title))
 
-  // A sample older than this marks the view stale (polling is 1 Hz).
-  const STALE_AFTER_MS = 5_000
   // How long a window must keep its size before an overview is drawn again for it.
   const RELAYOUT_AFTER_MS = 300
 
@@ -274,8 +272,7 @@
   const issuedAt = $derived(advice === null ? null : Date.parse(advice.issuedAt))
   const adviceStale = $derived(advice !== null && (snapshot?.resetSinceAdvice === true || adviceView?.modelChanged === true || adviceView?.drawingChanged === true))
   const now = $derived(Date.parse(snapshot?.latest?.simulationTime ?? view?.simulationTime ?? advice?.issuedAt ?? ''))
-  const stale = $derived(snapshot?.phase.kind === 'live'
-    && (snapshot.sampleError !== null || (snapshot.lastSampleWallMs !== undefined && wallNow - snapshot.lastSampleWallMs > STALE_AFTER_MS)))
+  const stale = $derived(snapshot !== null && sampleStale(snapshot, wallNow))
 
   const stateChip = $derived.by((): { text: string; tone: 'live' | 'quiet' | 'warn' } => {
     const phase = snapshot?.phase.kind ?? 'checking'

@@ -40,10 +40,17 @@ export interface ComposedDisplaySnapshot {
 // Live samples match the operations recording interval. One request is in
 // flight at a time: the next is asked for once the last is answered. A quick
 // answer keeps the 1 Hz rhythm; while answers take longer than a second, or
-// fail, the next request waits longer after each answer (2 s, then 5 s), so a
+// fail, the next request waits longer after each answer (2 s, then 3 s), so a
 // congested World is not asked again before it has answered.
 export const SAMPLE_INTERVAL_MS = 1_000
-export const SAMPLE_BACKOFF_MS: ReadonlyArray<number> = [SAMPLE_INTERVAL_MS, 2_000, 5_000]
+export const SAMPLE_BACKOFF_MS: ReadonlyArray<number> = [SAMPLE_INTERVAL_MS, 2_000, 3_000]
+/**
+ * A display whose last sample is older than this, or failed, is stale: its
+ * drawing shows no values and its controls are disabled. The longest wait
+ * between samples leaves an answer 2 s before it, so a World that answers
+ * slowly reads as live and only one that stops answering reads as stale.
+ */
+export const STALE_AFTER_MS = 5_000
 /** Samples further apart than this in wall time mean the display missed some; it reads the Run's history for them. */
 export const MISSED_SAMPLES_MS = 5 * SAMPLE_INTERVAL_MS
 // Presence is cheap and never loads a Run, but is only needed to notice pause and removal, so it runs less often.
@@ -59,6 +66,10 @@ export const PRESENCE_RETRY_MS: ReadonlyArray<number> = [1_000, 2_000, 5_000, 10
 export const IDLE_SUSPEND_MS = 15 * 60_000
 // Alarm state marks values in alarm on every panel, not only the alarms strip.
 const WITH_ALARMS = true
+
+/** Whether a live display's values are too old to show, at wall time `wallNowMs`. */
+export const sampleStale = (snapshot: ComposedDisplaySnapshot, wallNowMs: number): boolean => snapshot.phase.kind === 'live'
+  && (snapshot.sampleError !== null || (snapshot.lastSampleWallMs !== undefined && wallNowMs - snapshot.lastSampleWallMs > STALE_AFTER_MS))
 
 /** Runs `run` after `delayMs` on the session's clock and returns its cancel; a test passes a fake clock. */
 export type ScheduleTimer = (run: () => void, delayMs: number) => () => void
