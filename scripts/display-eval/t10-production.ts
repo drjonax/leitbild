@@ -104,13 +104,17 @@ export const productionCase = async (frozen: FrozenRun, given: ReadonlyArray<{ o
 }
 
 /** The production guard and the T10 measures of one answer. */
+// A fenced block (the leitbild-view block and its viewRef "call_1_0/v1") is no prose: its digits are no shown values.
+export const proseOnly = (answer: string): string => answer.replace(/```[\s\S]*?(?:```|$)/g, block => block.replace(/[^\n]/g, ' '))
+
 export const scoreProduction = (answer: string, cards: ReadonlyArray<DisplayCard>, language: 'en' | 'nb') => {
   const items = cards.flatMap(card => card.items)
   const limits = new Map(items.map(item => [item.key, item.limits ?? []]))
+  // The shipped guard reads the answer as sent; the measures read its prose (a fence carries no key, so no flag moves).
   const issues = citationIssues(answer, items)
   const shipped = readingFlags(answer, new Map(items.map(item => [item.key, item])), language)
-  const reading = productionReading(answer, items, language, limits)
-  const base = scoreCitations(answer, [...cards], language, limits)
+  const reading = productionReading(proseOnly(answer), items, language, limits)
+  const base = scoreCitations(proseOnly(answer), [...cards], language, limits)
   // The harness reading must flag exactly what the shipped one does, so its cited count is the shipped denominator.
   const agrees = JSON.stringify(shipped.map(flag => flag.number)) === JSON.stringify(reading.flagged.map(flag => flag.number))
   return {
