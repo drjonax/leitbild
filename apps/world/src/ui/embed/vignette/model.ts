@@ -53,8 +53,8 @@ export type VignetteSection =
     readonly attribution?: string
   }
 
-/** A binding with its observable's declared unit, so a drawing writes the reading as the card does. */
-export type TopologyBinding = TopologyNode['bindings'][number] & { readonly unit: string }
+/** A binding with its observable's declared unit and states, so a drawing writes the reading as the card does and reads "on" as declared (Q8). */
+export type TopologyBinding = TopologyNode['bindings'][number] & { readonly unit: string; readonly states?: Observable['states'] }
 
 export type EntityColumn = 'status' | 'urgency' | 'alert' | 'eta' | 'distance' | 'age'
 

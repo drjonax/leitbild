@@ -110,7 +110,7 @@
           <MapFocus frame={latest?.maps?.[index]} />
         {:else}
           <!-- Network and, until their symbols land, flow topologies: the layout's boxes and lines. -->
-          <NetworkTopology {section} {observations} />
+          <NetworkTopology {section} {observations} {palette} />
         {/if}
       </div>
     {/each}

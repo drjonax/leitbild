@@ -11,7 +11,7 @@ import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { distanceText, entityCell, mapCaption } from '../src/ui/embed/vignette/collection.ts'
 import { VIGNETTE_ROW_PX } from '../src/ui/embed/vignette/grid.ts'
 import type { EntityRow, VignetteSection } from '../src/ui/embed/vignette/model.ts'
-import { barLine, CHAR_PX, fitName, gappedPath, networkDrawing } from '../src/ui/embed/vignette/network.ts'
+import { barLine, CHAR_PX, fitName, networkDrawing, stub } from '../src/ui/embed/vignette/network.ts'
 
 // The vignette's objects and networks (architecture B2): entity cells, the map
 // section's words, and the network drawing over the server's ELK layout on the
@@ -41,21 +41,51 @@ describe('entity table and map focus', () => {
 })
 
 describe('network drawing', () => {
-  test('an edge breaks around each gap on its segments, and only there', () => {
-    expect(gappedPath([[0, 0], [100, 0], [100, 50]], [[40, 0], [100, 30]])).toBe('M0 0 L36 0 M44 0 L100 0 L100 26 M100 34 L100 50')
-    expect(gappedPath([[0, 0], [100, 0]], [[50, 10]])).toBe('M0 0 L100 0')
+  test('an edge end reaches a point inside its box straight in, then along', () => {
+    const box = { x: 0, y: 0, width: 96, height: 72 }
+    expect(stub([0, 24], [48, 24], box)).toEqual([[0, 24], [48, 24]])
+    expect(stub([96, 40], [48, 24], box)).toEqual([[96, 40], [48, 40], [48, 24]])
+    expect(stub([30, 0], [48, 24], box)).toEqual([[30, 0], [30, 24], [48, 24]])
   })
 
-  test('a bus is a bar along the edge ends that meet it, across its middle where none do', () => {
+  test('a bus is a bar along the face its feeders meet, across between opposite faces, across its middle otherwise', () => {
     const box = { x: 0, y: 0, width: 168, height: 132 }
-    expect(barLine(box, [[168, 24], [168, 120], [400, 50]])).toEqual({ x1: 168, y1: 20, x2: 168, y2: 124 })
-    expect(barLine({ x: 0, y: 0, width: 192, height: 48 }, [[0, 30], [192, 30]])).toEqual({ x1: -4, y1: 30, x2: 196, y2: 30 })
+    expect(barLine(box, [[168, 24], [168, 120], [400, 50]])).toEqual({ x1: 168, y1: 0, x2: 168, y2: 132 })
+    expect(barLine({ x: 0, y: 0, width: 192, height: 48 }, [[0, 30], [192, 30]])).toEqual({ x1: 0, y1: 30, x2: 192, y2: 30 })
+    expect(barLine({ x: 0, y: 0, width: 96, height: 48 }, [[40, 0], [60, 0]])).toEqual({ x1: 0, y1: 0, x2: 96, y2: 0 })
     expect(barLine({ x: 0, y: 0, width: 48, height: 96 }, [])).toEqual({ x1: 24, y1: 0, x2: 24, y2: 96 })
   })
 
   test('a name keeps the whole characters that fit its room', () => {
     expect(fitName('Halden 420 kV', 13 * CHAR_PX)).toBe('Halden 420 kV')
     expect(fitName('Halden 420 kV', 8 * CHAR_PX)).toBe('Halden …')
+  })
+
+  test('each class is drawn by its OpenBridge element; a line element is a line; "on" only where declared (Q8); an open line is empty', () => {
+    const states = [{ value: 'closed', label: 'closed', active: true as const }, { value: 'open', label: 'open' }]
+    const node = (id: string, cls: VignetteSection & { kind: 'topology' } extends { nodes: ReadonlyArray<infer N> } ? N extends { class: infer C } ? C : never : never, x: number, bindings: ReadonlyArray<{ role: 'conducting' | 'flow'; ref: string; unit: string; states?: typeof states }> = []) =>
+      ({ box: { id, x, y: 0, width: 4, height: 3, ports: {} }, node: { id, class: cls, label: `${id} name`, bindings } })
+    const parts = [
+      node('bus-1', 'bus', 0), node('tx-1', 'converter', 6, [{ role: 'conducting', ref: 'g#tx.state', unit: '', states }]),
+      node('line-1', 'transfer', 12, [{ role: 'conducting', ref: 'g#line.state', unit: '', states }, { role: 'flow', ref: 'g#line.flow', unit: 'MW' }]),
+      node('sw-1', 'switch', 18), node('s0', 'stop', 24),
+    ]
+    const section: Extract<VignetteSection, { kind: 'topology' }> = {
+      kind: 'topology', rows: 4, family: 'network', nodes: parts.map(part => part.node), edges: [], groups: [],
+      layout: { family: 'network', unit: 'grid', width: 28, height: 3, crossings: 0, hash: 'h', groups: [], nodes: parts.map(part => part.box),
+        edges: [{ id: 'e1', points: [[4, 1], [6, 1]], gaps: [] }, { id: 'e2', points: [[10, 1], [12, 1]], gaps: [] }, { id: 'e3', points: [[16, 1], [24, 1]], gaps: [[20, 1]] }] },
+    }
+    const reading = (ref: string, value: Observation['value'], priority: Observation['priority'] = 'none'): Observation => ({ ref, at: '2026-01-15T17:00:00.000Z', clock: 'simulation', value, quality: 'good', priority })
+    const drawing = networkDrawing(section, [reading('g#tx.state', 'closed'), reading('g#line.state', 'open'), reading('g#line.flow', 512.4, 'warning')])
+    // A bus whose name does not fit its bar is an empty obc-bus with its name as text beside it.
+    expect(drawing.buses.map(bus => [bus.id, bus.vertical, bus.label])).toEqual([['bus-1', true, '']])
+    expect(drawing.texts.find(text => text.id === 'bus-1')?.name).toBe('bus-1 name')
+    expect(drawing.devices.map(device => [device.element, device.on, device.x, device.y])).toEqual([['obc-transformer', true, 192, 24], ['obc-switch', false, 480, 24]])
+    expect(drawing.texts.find(text => text.id === 'line-1')).toMatchObject({ name: 'line-1 name', reading: '512 MW', below: true, tone: 'warning' })
+    // The open line, its edges and its own line through its box: OpenBridge's empty line; the gap on e3 splits it; the stop gets an end cap.
+    expect([...new Set(drawing.segments.filter(segment => segment.connectionId.startsWith('line-1') || segment.connectionId === 'e2').map(segment => segment.value))]).toEqual(['empty'])
+    expect(drawing.segments.filter(segment => segment.connectionId === 'e3' && segment.kind === 'straight')).toHaveLength(2)
+    expect(drawing.segments.filter(segment => segment.kind === 'endpoint').map(segment => segment.connectionId)).toEqual(['e3:end'])
   })
 
   const grid = (() => {
@@ -66,10 +96,11 @@ describe('network drawing', () => {
     advanceGrid(instance, 0, '2026-01-15T17:00:00.000Z' as never)
     return instance
   })()
-  /** A name takes its characters at CHAR_PX plus a margin, in whole grid units; a box two units high holds the name and a reading. */
+  /** A name takes its characters at CHAR_PX plus a margin, in whole grid units; a device box is its 2-unit symbol over a row of text. */
   const width = (name: string): number => Math.max(2, Math.ceil((name.length * CHAR_PX + 6) / VIGNETTE_ROW_PX))
   const sizing: NetworkSizing = {
-    key: 'vignette', node: node => ({ width: width(node.shortLabel ?? node.label), height: 2 }),
+    key: 'vignette',
+    node: node => ({ width: width(node.shortLabel ?? node.label), height: node.class === 'switch' || node.class === 'converter' || node.class === 'source' ? 3 : 2 }),
     stop: stop => ({ width: width(stop.others.map(other => other.node).join(', ').slice(0, 24)), height: 1 }), spacing: 1, groupLabel: 1,
   }
 
@@ -92,13 +123,15 @@ describe('network drawing', () => {
       const observations: Observation[] = [{ ref: flowRef, at: '2026-01-15T17:00:00.000Z', clock: 'simulation', value: 512.4, quality: 'good', priority: 'warning' }]
       const drawing = networkDrawing(section, observations)
       expect(layout.crossings).toBeLessThanOrEqual(2)
-      expect(drawing.nodes.filter(node => node.name !== (section.nodes.find(entry => entry.id === node.id)!.shortLabel ?? section.nodes.find(entry => entry.id === node.id)!.label)).map(node => node.id)).toEqual([])
-      const boxes = drawing.nodes.filter(node => node.shape !== 'stop')
+      const named = new Map(section.nodes.map(node => [node.id, node.shortLabel ?? node.label]))
+      expect(drawing.texts.filter(text => text.reading === null && text.name !== named.get(text.id)).map(text => text.id)).toEqual([])
+      expect(drawing.buses.filter(bus => bus.label === '' && !drawing.texts.some(text => text.id === bus.id)).map(bus => bus.id)).toEqual([])
+      const boxes = layout.nodes.filter(box => !box.id.startsWith('s'))
       const overlapping = boxes.flatMap((a, i) => boxes.slice(i + 1).filter(b => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height).map(b => `${a.id} × ${b.id}`))
       expect(overlapping).toEqual([])
       expect(drawing.height).toBe(layout.height * VIGNETTE_ROW_PX)
-      const bound = drawing.nodes.find(node => node.reading === '512 MW')!
-      expect(bound.tone).toBe('warning')
+      expect(drawing.texts.find(text => text.reading === '512 MW')!.tone).toBe('warning')
+      expect(drawing.segments.length).toBeGreaterThan(layout.edges.length)
     })
   }
 })
