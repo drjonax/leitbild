@@ -6,11 +6,10 @@ import { recordingSeriesIdFor, type OperationalObject, type ScenarioRecordingSel
 import { defineObservationCapability, observationShapes, type ObservationDeclaration } from '../../../core/observation/capabilities.ts'
 import type { Observable } from '../../../core/observation/model.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
-import { weatherSeverityLadder } from '../conditions.ts'
+import { weatherLevelPriority, weatherSeverityLadder } from '../conditions.ts'
 import { precipitationTypeSchema, weatherPackDataSchema, type WeatherPackData } from '../model.ts'
 import { weatherQuantities, weatherRecordingProfiles } from '../quantities.ts'
 
-const tickPriority = { notice: 'notice', adverse: 'caution', hazard: 'warning' } as const
 export type WeatherObjects = ReadonlyMap<string, OperationalObject>
 
 /** A weather object's data, or a refusal naming where object ids come from. */
@@ -26,7 +25,7 @@ export const declareWeather = (objectId: string, data: WeatherPackData, recordin
     valueType: quantity.quantity === 'state' ? 'enum' : 'number',
     ...(quantity.quantity === 'state' ? { states: precipitationTypeSchema.options.map(value => ({ value, label: value.replaceAll('_', ' ') })) } : {}),
     thresholds: weatherSeverityLadder.filter(rule => rule.quantity === quantity.id).map((rule, order) => ({
-      id: `${rule.severity}-${rule.quantity}`, direction: rule.direction, value: rule.limit, order: order + 1, effect: 'advisory', priority: tickPriority[rule.severity],
+      id: `${rule.severity}-${rule.quantity}`, direction: rule.direction, value: rule.limit, order: order + 1, effect: 'advisory', priority: weatherLevelPriority[rule.severity],
     })),
     series: data.definition.type === 'weather_probe' && intervalMs !== undefined ? { seriesId: recordingSeriesIdFor(objectId, quantity.id), intervalMs } : null,
   }))
