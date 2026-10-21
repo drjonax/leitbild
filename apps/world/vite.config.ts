@@ -15,9 +15,10 @@ const openBridgePackages = ['@oicl/openbridge-webcomponents', '@oicl/connector-d
   return { name: installed.name, version: installed.version }
 })
 
-export default defineConfig({
+/** World's UI build, its OpenBridge notice naming `packages`; the build is the installed packages' (the default export). */
+export const worldUiConfig = (packages: ReadonlyArray<OpenBridgePackage>) => defineConfig({
   root: 'src/ui',
-  plugins: [svelte(), openBridgeMimicFont(), openBridgeLicenceNotice(openBridgePackages)],
+  plugins: [svelte(), openBridgeMimicFont(), openBridgeLicenceNotice(packages)],
   define: {
     __LEITBILD_VERSION__: JSON.stringify(packageJson.version),
   },
@@ -42,3 +43,5 @@ export default defineConfig({
     },
   },
 })
+
+export default worldUiConfig(openBridgePackages)
