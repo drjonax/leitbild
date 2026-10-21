@@ -10,8 +10,8 @@ import { z } from 'zod'
 export const priorityLevels = ['none', 'notice', 'caution', 'warning', 'alarm', 'emergency'] as const
 
 export const DISPLAY_CARD_MAX_ITEMS = 48
-/** About 600 tokens (T34), as `displayCardTextLength` measures it. */
-export const DISPLAY_CARD_MAX_TEXT = 2_400
+/** About 600 tokens at the 3.2 characters per token card lines run (T34, E1), as `displayCardTextLength` measures them. */
+export const DISPLAY_CARD_MAX_TEXT = 1_900
 
 const shownNumberSchema = z.object({ value: z.number().finite(), decimals: z.number().int().min(0).max(6) }).strict()
 const idSchema = z.string().min(1).max(128)
@@ -45,19 +45,28 @@ export const displayCardAdjustmentSchema = z.object({
 }).strict().refine(adjustment => adjustment.alternatives === undefined || adjustment.lost !== undefined, 'alternatives belong to a lost item')
 export type DisplayCardAdjustment = z.infer<typeof displayCardAdjustmentSchema>
 
-/** The characters a reader is shown: each item as `key · label · reading`, and each adjustment's text. */
+/**
+ * The characters of the lines a reader is shown, as the Assistant reads a card: `card at <at> (<clock>)`, then
+ * `key · label · reading` per item, `+N more`, and `adjusted (kind): text` per adjustment, each line with the 3
+ * characters that list it.
+ */
 export const displayCardTextLength = (card: {
+  readonly at: { readonly at: string; readonly clock: string }
   readonly items: ReadonlyArray<Pick<DisplayCardItem, 'key' | 'label' | 'reading'>>
-  readonly adjusted: ReadonlyArray<Pick<DisplayCardAdjustment, 'text'>>
-}): number =>
-  card.items.reduce((sum, item) => sum + item.key.length + item.label.length + item.reading.length + 6, 0)
-  + card.adjusted.reduce((sum, adjustment) => sum + adjustment.text.length, 0)
+  readonly more: number
+  readonly adjusted: ReadonlyArray<Pick<DisplayCardAdjustment, 'kind' | 'text'>>
+}): number => [
+  `card at ${card.at.at} (${card.at.clock})`,
+  ...card.items.map(item => `${item.key} · ${item.label} · ${item.reading}`),
+  ...(card.more > 0 ? [`+${card.more} more`] : []),
+  ...card.adjusted.map(adjustment => `adjusted (${adjustment.kind}): ${adjustment.text}`),
+].reduce((sum, line) => sum + line.length + 3, 0)
 
 export const displayCardSchema = z.object({
   /** When it was read, on the clock it names. */
   at: z.object({ at: z.string().datetime({ offset: true }), clock: z.enum(['simulation', 'wall']) }).strict(),
   items: z.array(displayCardItemSchema).max(DISPLAY_CARD_MAX_ITEMS),
-  /** Items the display shows that the card leaves out. */
+  /** Items that exist but the card does not show (a cap or a fit left them out, which `adjusted` says): never silent. */
   more: z.number().int().nonnegative(),
   adjusted: z.array(displayCardAdjustmentSchema).max(8),
 }).strict().superRefine((card, ctx) => {
