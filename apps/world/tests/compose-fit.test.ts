@@ -4,6 +4,8 @@ import { vignetteHeight } from '../src/core/api/display-capabilities.ts'
 import type { AlertState } from '../src/core/model/alerts.ts'
 import type { OperationalObject } from '../src/core/model/index.ts'
 import { observableSchema } from '../src/core/observation/model.ts'
+import { topologyGraphSchema } from '../src/core/observation/topology.ts'
+import { overviewOf, scopeWithin } from '../src/features/displays/compose/topology.ts'
 import { displaySpecSchema } from '../src/core/observation/spec.ts'
 import { assembleCard, valueItem } from '../src/features/displays/compose/card.ts'
 import { composeDefault, composeVignette } from '../src/features/displays/compose/compose.ts'
@@ -65,6 +67,33 @@ describe('a state names at most 48 objects a view; what that cuts is counted and
     expect(outcome.card.adjusted).toContainEqual({ kind: 'layout', text: '2 of 50 related objects not listed' })
     const rows = outcome.card.items.filter(item => item.subject !== undefined && 'objectId' in item.subject && item.subject.objectId.startsWith('task:'))
     expect(rows.length + outcome.card.more).toBe(50)
+  })
+})
+
+describe('an object\'s overview', () => {
+  const port = (id: string, direction: 'in' | 'out' | 'both' = 'both') => ({ id, rank: id, media: ['water'], direction })
+  const node = (id: string, cls: string) => ({ id, class: cls, kind: cls, label: id, rank: id, ports: [port('a'), port('b')], bindings: [] })
+  const edge = (id: string, from: string, to: string) => ({ id, rank: id, from: { node: from, port: 'b' }, to: { node: to, port: 'a' }, medium: 'water', directed: true, bindings: [] })
+  const graph = topologyGraphSchema.parse({
+    objectId: 'o', revision: 'r', family: 'flow', media: [{ id: 'water', label: 'Water', kind: 'fluid' }], groups: [], boundaries: [],
+    nodes: [node('heater', 'source'), node('valve', 'switch'), node('tank', 'store'), node('vent', 'sink'), node('drain', 'junction'), node('sump', 'store')],
+    edges: [edge('e1', 'heater', 'valve'), edge('e2', 'valve', 'tank'), edge('e3', 'valve', 'vent'), edge('e4', 'tank', 'drain'), edge('e5', 'drain', 'sump')],
+    overview: { nodes: ['heater', 'valve', 'tank'], edges: ['e1', 'e2'] },
+  })
+
+  test('draws the declared principal equipment, stopped where other flow leaves it, never at flow that ends silently', () => {
+    const scoped = overviewOf(graph)!
+    expect([scoped.nodes, scoped.edges]).toEqual([['heater', 'valve', 'tank'], ['e1', 'e2']])
+    expect(scoped.stubs.map(stub => [stub.node, stub.direction, stub.others.map(other => other.node)])).toEqual([['tank', 'out', ['drain']]])
+    expect(scopeWithin(graph, { overview: true })).toMatchObject({ ok: true })
+  })
+
+  test('without a declaration, a small graph is its own overview and a large one has none', () => {
+    const { overview: _overview, ...undeclared } = graph
+    expect(overviewOf(undeclared)?.nodes).toHaveLength(6)
+    const large = topologyGraphSchema.parse({ ...undeclared, nodes: Array.from({ length: 61 }, (_, index) => node(`n${index}`, 'mover')), edges: [] })
+    expect(overviewOf(large)).toBeNull()
+    expect(scopeWithin(large, { overview: true })).toEqual({ ok: false, reason: 'no overview declared' })
   })
 })
 

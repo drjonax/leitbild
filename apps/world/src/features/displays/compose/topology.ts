@@ -11,13 +11,13 @@ import { drawingCache, drawingKey } from '../topology/cache.ts'
 import { flowLayout, type DrawnStops } from '../topology/flow-sizing.ts'
 import type { TopologyLayout } from '../topology/layout.ts'
 import { networkLayout, type NetworkSizing } from '../topology/network.ts'
-import { scopeTopology, TOPOLOGY_REACH, type ScopedTopology, type TopologyRequest } from '../topology/scope.ts'
+import { drawingStops, scopeTopology, TOPOLOGY_REACH, type ScopedTopology, type TopologyRequest } from '../topology/scope.ts'
 import type { SearchRun } from '../observation/search.ts'
 import type { VignetteSection } from './model.ts'
 
 export const TOPOLOGY_MAX_NODES = 60
-/** The room a drawing gets, in grid units: a vignette's width and its rows below the frame. */
-const ROOM = { columns: 40, rows: 30 }
+/** The room a flow drawing is laid out for, in grid units (lead, 21 Oct: four loops need 60 × 33; a narrower frame scrolls sideways). */
+const ROOM = { columns: 66, rows: 36 }
 
 const labelOf = (graph: TopologyGraph, id: string): string => {
   const node = graph.nodes.find(entry => entry.id === id)
@@ -37,9 +37,57 @@ const networkSizing = (graph: TopologyGraph): NetworkSizing => ({
 
 export type Scoped = { readonly ok: true; readonly scoped: ScopedTopology; readonly reach?: number } | { readonly ok: false; readonly reason: string }
 
+/**
+ * Whether flow leaving into these far ends only ends: followed through each node's port circuit, it reaches no drawn
+ * node and stops only at terminal nodes, those with no outgoing edge (a relief line to the atmosphere). Such a stop
+ * says nothing an overview needs.
+ */
+const endsOutside = (graph: TopologyGraph, drawn: ReadonlySet<string>, others: ReadonlyArray<{ readonly node: string; readonly port: string }>): boolean => {
+  const nodes = new Map(graph.nodes.map(node => [node.id, node]))
+  const leaving = new Map<string, Array<TopologyGraph['edges'][number]>>()
+  for (const edge of graph.edges) leaving.set(edge.from.node, [...leaving.get(edge.from.node) ?? [], edge])
+  const seen = new Set<string>()
+  const queue = [...others]
+  while (queue.length > 0) {
+    const { node, port } = queue.pop()!
+    if (drawn.has(node)) return false
+    if (seen.has(`${node}|${port}`)) continue
+    seen.add(`${node}|${port}`)
+    const all = leaving.get(node) ?? []
+    const circuit = nodes.get(node)?.ports.find(entry => entry.id === port)?.circuit
+    const onward = circuit === undefined ? [] : all.filter(edge => nodes.get(node)?.ports.find(entry => entry.id === edge.from.port)?.circuit === circuit)
+    if (onward.length === 0 && all.length > 0) return false
+    queue.push(...onward.map(edge => edge.to))
+  }
+  return true
+}
+
+/**
+ * An object's overview: the nodes and edges its graph declares as its principal equipment, stopped at every other
+ * non-electric edge of those nodes, except outgoing flow that only ends (endsOutside); a graph that declares none,
+ * whole where it is small enough; else none.
+ */
+export const overviewOf = (graph: TopologyGraph): ScopedTopology | null => {
+  if (graph.overview === undefined) {
+    return graph.nodes.length > TOPOLOGY_MAX_NODES ? null
+      : { graph, nodes: graph.nodes.map(node => node.id), edges: graph.edges.map(edge => edge.id), stubs: [], media: [...new Set(graph.edges.map(edge => edge.medium))].sort(), roots: [], anchors: [] }
+  }
+  const edges = new Set(graph.overview.edges)
+  const drawn = new Set(graph.overview.nodes)
+  const media = new Set(graph.media.filter(medium => medium.kind !== 'electric-ac' && medium.kind !== 'electric-dc').map(medium => medium.id))
+  const stubs = drawingStops(graph, graph.overview.nodes, edges, media).filter(stub => stub.direction === 'in' || !endsOutside(graph, drawn, stub.others))
+  return { graph, nodes: [...graph.overview.nodes], edges: [...graph.overview.edges], stubs, media: [...new Set(graph.edges.filter(edge => edges.has(edge.id)).map(edge => edge.medium))].sort(), roots: [], anchors: [] }
+}
+
+type Request = { readonly overview?: true | undefined } & { readonly [K in keyof TopologyRequest]?: TopologyRequest[K] | undefined }
+
 /** The request's scope within the node cap; a narrowed reach comes back with it. */
-export const scopeWithin = (graph: TopologyGraph, asked: { readonly [K in keyof TopologyRequest]?: TopologyRequest[K] | undefined }): Scoped => {
-  const request = Object.fromEntries(Object.entries(asked).filter(([, value]) => value !== undefined)) as TopologyRequest
+export const scopeWithin = (graph: TopologyGraph, asked: Request): Scoped => {
+  if (asked.overview === true) {
+    const overview = overviewOf(graph)
+    return overview === null ? { ok: false, reason: 'no overview declared' } : { ok: true, scoped: overview }
+  }
+  const request = Object.fromEntries(Object.entries(asked).filter(([key, value]) => value !== undefined && key !== 'overview')) as TopologyRequest
   const oneEnded = !(request.from !== undefined && request.to !== undefined)
   for (let reach = request.reach ?? TOPOLOGY_REACH; reach >= 1; reach -= 1) {
     const result = scopeTopology(graph, { ...request, ...(oneEnded ? { reach } : {}) })

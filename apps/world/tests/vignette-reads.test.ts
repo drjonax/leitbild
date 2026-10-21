@@ -114,12 +114,13 @@ describe('the person routes and the Assistant\'s Capability', () => {
     const opened = await route('default', { subject: 'unit:one' })
     expect(opened.status).toBe(200)
     expect(opened.body.result.view).toMatchObject({ viewType: 'display.vignette', title: 'Unit One' })
-    expect(opened.body.result.card.items[0]).toMatchObject({ key: 'k1', label: 'Unit One · Unit One speed', subject: { ref: 'unit:one#speed' } })
+    // The unit's own state (declared on it, not on its engine) leads its values.
+    expect(opened.body.result.card.items[0]).toMatchObject({ key: 'k1', label: 'Unit One · Unit One status', subject: { ref: 'unit:one#status' } })
     const state = opened.body.result.view.state as string
     const view = await route('view', { state })
     expect(view.body.view.sections.map((section: { kind: string }) => section.kind)).toEqual(['values', 'topology'])
     const sample = await route('sample', { state })
-    expect(sample.body.sample.observations.map((observation: { ref: string }) => observation.ref)).toEqual(['unit:one#speed', 'unit:one#status'])
+    expect(sample.body.sample.observations.map((observation: { ref: string }) => observation.ref)).toEqual(['unit:one#status', 'unit:one#speed'])
     expect(sample.body.sample.at).toMatchObject({ clock: 'simulation', paused: expect.any(Boolean) })
   })
 

@@ -165,13 +165,16 @@ describe('no card drops a row silently (Q15)', () => {
 })
 
 describe('World defaults of every subject kind', () => {
-  test('declared objects lead with their Pack\'s lead values (plant, grid, weather)', async () => {
+  test('declared objects lead with their own states, then their Pack\'s lead values (plant, grid, weather)', async () => {
     for (const objectId of ['plant:halden-1', 'grid:halden-four-unit', 'weather-probe:halden-complex']) {
       const { view, card, sample } = await opened(run, objectId)
       expect(kinds(view.sections)[0]).toBe('values')
       expect(card.items.length).toBeGreaterThan(0)
       expect(sample.observations.length).toBeGreaterThan(0)
-      expect(card.items.slice(0, 2).map(item => item.subject)).toEqual((await leadRefs(run, objectId as ObjectId)).slice(0, 2).map(ref => ({ ref })))
+      const [declaration] = await run.port.declarations([objectId as ObjectId])
+      const own = declaration === undefined || 'refused' in declaration ? [] : declaration.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref)
+      const expected = [...new Set([...own.slice(0, 8), ...await leadRefs(run, objectId as ObjectId)])].slice(0, 2)
+      expect(card.items.slice(0, 2).map(item => item.subject)).toEqual(expected.map(ref => ({ ref })))
     }
     const grid = await opened(run, 'grid:halden-four-unit')
     const drawing = grid.view.sections.find(section => section.kind === 'topology')

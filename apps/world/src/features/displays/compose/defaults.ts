@@ -10,6 +10,7 @@ import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import type { Quantity } from '../../../core/observation/model.ts'
 import type { TopologyGraph } from '../../../core/observation/topology.ts'
 import { declarationOf, declaredRefs, visibleObject } from './declared.ts'
+import { overviewOf } from './topology.ts'
 import type { ResolvedView } from './model.ts'
 import { presentedOf } from './present.ts'
 import type { ComposeRun, Subject } from './resolve.ts'
@@ -59,12 +60,12 @@ const topologyOf = async (run: ComposeRun, objectId: ObjectId): Promise<Topology
 }
 const aroundView = (objectId: ObjectId, node: string | undefined): DraftView[] => node === undefined ? [] : [{ kind: 'topology', objectId, request: { around: [node], reach: 1 } }]
 
-/** A declared object's topology: a flow graph from its sources to its sinks; else around its worst alarm's element, else its first lead element. */
+/** A declared object's topology: a flow graph's overview; else around its worst alarm's element, else its first lead element. */
 const objectTopology = async (run: ComposeRun, object: OperationalObject, lead: ReadonlyArray<string>): Promise<DraftView[]> => {
   const graph = await topologyOf(run, object.id)
   if (graph === null) return []
-  const of = (cls: string) => graph.nodes.filter(node => node.class === cls).map(node => node.id).slice(0, 16)
-  if (graph.family === 'flow' && of('source').length > 0 && of('sink').length > 0) return [{ kind: 'topology', objectId: object.id, request: { from: of('source'), to: of('sink') } }]
+  // A flow object draws its overview (declared, or its whole graph where small).
+  if (graph.family === 'flow' && overviewOf(graph) !== null) return [{ kind: 'topology', objectId: object.id, request: { overview: true } }]
   const alarmed = worst(object.alerts.filter(alert => alert.subject !== undefined && 'element' in alert.subject))
   const declared = await declaredRefs(run, lead)
   const element = alarmed?.subject !== undefined && 'element' in alarmed.subject ? alarmed.subject.element : lead.map(ref => declared.get(ref)?.element?.id).find(id => id !== undefined)
@@ -76,7 +77,9 @@ const electricQuantities: ReadonlySet<Quantity> = new Set(['electric-power', 'fr
 export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<ReadonlyArray<DraftView>> => {
   if (subject.kind === 'object' && subject.observed) {
     const object = visibleObject(run, subject.objectId)!
-    const lead = await leadRefs(run, subject.objectId)
+    // The object's own states (declared on it, not on an element: an operating mode, safety-function statuses) lead its values.
+    const states = (await declarationOf(run, subject.objectId))?.observables.filter(observable => observable.quantity === 'state' && observable.element === undefined).map(observable => observable.ref).slice(0, 8) ?? []
+    const lead = [...new Set([...states, ...await leadRefs(run, subject.objectId)])]
     const trend = await recordedOf(run, lead, 4)
     return [
       ...(lead.length > 0 ? [{ kind: 'values', refs: [...lead] } as DraftView] : []),
