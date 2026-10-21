@@ -53,7 +53,6 @@ const geometry = (mimic: CompiledMimic) => ({
   items: mimic.items.map(item => [item.binding.label, item.presentation, item.box, item.rows.map(row => row.kind), item.binding.frames.map(frame => frame.ruleId)]),
   pipes: mimic.pipes.map(pipe => [pipe.carrier, pipe.points, pipe.state.kind]),
   stubs: mimic.stubs.map(stub => [stub.text, stub.end]),
-  zones: mimic.zones.map(zone => zone.label),
 })
 
 const intents: ReadonlyArray<MimicIntent> = [

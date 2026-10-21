@@ -192,7 +192,7 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
     const earlier = (a: Candidate, b: Candidate): boolean => (a.crossings - b.crossings || a.arrangement - b.arrangement) < 0
     const candidates: Candidate[] = verified.map(judged => {
       let hash: string | null = null
-      return { ...judged, hash: () => (hash ??= geometryHash(model, judged.geometry.width, judged.geometry.height, judged.geometry.nodes, judged.edges, judged.geometry.zones)) }
+      return { ...judged, hash: () => (hash ??= geometryHash(model, judged.geometry.width, judged.geometry.height, judged.geometry.nodes, judged.edges)) }
     })
     const chosen = candidates.filter(candidate => !kept.some(other => dominates(other, candidate)) && !candidates.some(other => earlier(other, candidate) && dominates(other, candidate)))
     kept.push(...chosen)
@@ -222,7 +222,6 @@ export const diagramCandidates = (graph: DiagramGraph, profile: DiagramProfile):
         height: geometry.height,
         nodes: geometry.nodes,
         edges,
-        zones: geometry.zones,
         hash: best.hash(),
         crossings: best.crossings,
       }

@@ -2,7 +2,7 @@
   import type { EmbeddedViewEnvelope } from '@leitbild/contracts'
   import { readProcessDisplayState, UNSUPPORTED_DISPLAY_FORMAT } from '../../packs/process-plant/displays/composition.ts'
   import ComposedDisplayView from './composed-display/ComposedDisplayView.svelte'
-  import { VIGNETTE_VIEW_TYPE } from './vignette/vignette-client.ts'
+  import { VIGNETTE_VIEW_TYPE } from '../process-display/display-window-messages.ts'
   import Vignette from './vignette/Vignette.svelte'
 
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()

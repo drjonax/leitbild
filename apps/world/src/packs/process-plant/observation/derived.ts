@@ -53,9 +53,12 @@ const operatedStates = (plant: CompiledProcessPlant): ReadonlyMap<string, Operat
   return states
 })()
 
+/** Whether a state runs or conducts while on (a pump runs, contacts close, a supply is live); a valve's position is a value, not a switch. */
+const switches = (state: OperatedState): boolean => state.aspect.aspect !== 'position' || !state.numeric
+
 /** What each operated element's state says on a drawing, by element: it runs, or it conducts (contacts closed, a supply live); a valve's position is a value. */
 export const operatedStateRoles = (plant: CompiledProcessPlant): ReadonlyMap<string, { readonly role: 'running' | 'conducting'; readonly path: string }> =>
-  new Map([...operatedStates(plant)].flatMap(([path, state]) => !state.whole || (state.aspect.aspect === 'position' && state.numeric) ? []
+  new Map([...operatedStates(plant)].flatMap(([path, state]) => !state.whole || !switches(state) ? []
     : [[state.element, { role: state.aspect.aspect === 'running' ? 'running' as const : 'conducting' as const, path }] as const]))
 
 /** The path a critical safety function's status observable reads at. */
@@ -66,7 +69,8 @@ const csfWords = { green: 'GREEN', yellow: 'YELLOW', orange: 'ORANGE', red: 'RED
 export const derivedObservables = (objectId: ObjectId, plant: CompiledProcessPlant): ReadonlyArray<Observable> => [
   ...[...operatedStates(plant)].map(([path, state]): Observable => ({
     ref: `${objectId}#${path}`, label: state.label, quantity: 'state', unit: '', valueType: 'enum', thresholds: [], series: null, element: state.element,
-    states: [{ value: 'on', label: state.words.on }, { value: 'off', label: state.words.off }, ...(state.numeric ? [{ value: 'between', label: 'part open' }] : [])],
+    // The on state is the one a running or conducting binding reads as on (Q8).
+    states: [{ value: 'on', label: state.words.on, ...(switches(state) ? { active: true as const } : {}) }, { value: 'off', label: state.words.off }, ...(state.numeric ? [{ value: 'between', label: 'part open' }] : [])],
   })),
   ...plant.automation.safetyFunctions.map((safetyFunction): Observable => {
     if (plant.graph.signalBindingByPath.has(safetyFunctionRef(safetyFunction.id) as VariablePath)) throw new Error(`${safetyFunctionRef(safetyFunction.id)} is a signal of the Plant and a safety function`)

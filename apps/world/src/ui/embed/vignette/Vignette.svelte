@@ -5,12 +5,16 @@
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
   import { hostDisplayFrame } from '../view-host.ts'
   import { worstChip } from './alerts.ts'
-  import { clockText } from './format.ts'
+  import { clockText, underTitle } from './format.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
+  import { slotLook } from './collection.ts'
   import { toneOf, valueLook } from './readout.ts'
   import { createVignetteSession, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
   import AlertsSection from './AlertsSection.svelte'
+  import EntityTable from './EntityTable.svelte'
   import GroupedValues from './GroupedValues.svelte'
+  import MapFocus from './MapFocus.svelte'
+  import NetworkTopology from './NetworkTopology.svelte'
   import Readout from './Readout.svelte'
   import StateWord from './StateWord.svelte'
   import TrendStrip from './TrendStrip.svelte'
@@ -84,16 +88,29 @@
         {#if section.kind === 'values'}
           {#each section.values as value (value.ref)}
             {@const look = valueLook(value, observations, value.ref)}
-            {#if look.kind === 'state'}<StateWord {look} label={value.label} />{:else}<Readout {look} label={value.label} />{/if}
+            {#if look.kind === 'state'}<StateWord {look} label={underTitle(value.label, view.title)} />{:else}<Readout {look} label={underTitle(value.label, view.title)} />{/if}
           {/each}
         {:else if section.kind === 'grouped'}
           <GroupedValues {section} {observations} />
         {:else if section.kind === 'trend'}
           {#each section.strips as pens, strip (strip)}
-            <TrendStrip {pens} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
+            <TrendStrip {pens} title={view.title} series={snapshot.series} {observations} {now} horizonMs={section.horizonMs} rows={Math.max(3, pens.length)} axis={strip === section.strips.length - 1} />
           {/each}
+        {:else if section.kind === 'alerts'}
+          <AlertsSection rows={latest?.alerts ?? []} objectIds={section.objectIds} room={section.rows} />
+        {:else if section.kind === 'entity'}
+          <EntityTable {section} rows={latest?.entities[index]?.rows ?? []} more={latest?.entities[index]?.more ?? 0} />
+        {:else if section.kind === 'slots'}
+          {#each section.slots as slot (slot.key)}
+            <!-- Core slots and telemetry carry no observation priority: they read neutral. -->
+            {@const look = slotLook(slot, latest?.slots[section.objectId]?.[slot.key])}
+            {#if look.kind === 'state'}<StateWord {look} label={underTitle(slot.label, view.title)} />{:else}<Readout {look} label={underTitle(slot.label, view.title)} />{/if}
+          {/each}
+        {:else if section.kind === 'map'}
+          <MapFocus frame={latest?.maps[index]} />
         {:else}
-          <AlertsSection rows={latest?.alerts ?? []} objectIds={section.objectIds} room={section.rows} {palette} />
+          <!-- Network and, until their symbols land, flow topologies: the layout's boxes and lines. -->
+          <NetworkTopology {section} {observations} {palette} />
         {/if}
       </div>
     {/each}
@@ -101,7 +118,7 @@
 
   <footer title={footer.why}>
     <span class={`clock ${footer.word.toLowerCase()}`}>{footer.word}</span>
-    {#if latest !== undefined}<span>sim {clockText(latest.at.at)}</span>{/if}
+    {#if latest !== undefined}<span>{latest.at.clock === 'simulation' ? 'sim' : 'wall'} {clockText(latest.at.at)}</span>{/if}
     {#if footer.why !== undefined}<span class="why">{footer.why}</span>{/if}
   </footer>
 </article>

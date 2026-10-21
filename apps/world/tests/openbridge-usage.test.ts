@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { definedIn, embedDrawnTags, embedRunning, openBridgeRoot } from './openbridge-elements.ts'
 
 // Every OpenBridge element property and enum value Leitbild sets exists in the
 // installed OpenBridge's Custom Elements Manifest: the Svelte templates (which
@@ -166,5 +167,27 @@ describe('OpenBridge usage against its Custom Elements Manifest', () => {
     }
     expect(problems).toEqual([])
     expect(checked).toBeGreaterThan(40)
+  })
+})
+
+// Every OpenBridge element the embedded view draws is defined by a bare import
+// of its module in the loader of the surface that draws it (openbridge-elements.ts).
+describe('OpenBridge elements are defined where they are drawn', () => {
+  test('every OpenBridge element the embedded view draws is defined by a bare import in its surface, not by a type or enum import', () => {
+    const problems = embedDrawnTags.flatMap(drawn => {
+      if (drawn.module === null) return [`${drawn.file} draws <${drawn.tag}>, which no OpenBridge module defines`]
+      if (drawn.definedBySurface) return []
+      const how = embedRunning.has(drawn.module) ? 'is loaded only for its types or enums, or from elsewhere' : 'is not loaded at all'
+      return [`${drawn.file} draws <${drawn.tag}>, but ${relative(openBridgeRoot, drawn.module)} ${how}: import it bare in the loader of the surface that draws it`]
+    })
+    expect(problems).toEqual([])
+    expect(new Set(embedDrawnTags.map(drawn => drawn.tag)).size).toBeGreaterThan(30)
+  })
+
+  test("the mimic's vessels are among them: tanks and the heat exchanger of steam generators and condensers", () => {
+    const vessels = embedDrawnTags.filter(drawn => drawn.file.endsWith('mimic/openbridge-mimic.ts') && ['obc-automation-tank', 'obc-heat-exchanger'].includes(drawn.tag))
+    expect(vessels.map(drawn => [drawn.tag, drawn.definedBySurface]).sort()).toEqual([['obc-automation-tank', true], ['obc-heat-exchanger', true]])
+    // The heat exchanger's icon is OpenBridge's own: its module imports it.
+    expect(embedRunning.has(definedIn.get('obi-heatexhanger') ?? '')).toBe(true)
   })
 })

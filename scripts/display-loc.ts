@@ -26,6 +26,7 @@ export const displayScope: ReadonlyArray<ScopeGroup> = [
   { name: 'World displays UI', include: ['apps/world/src/ui/displays/**'] },
   { name: 'World displays feature', include: ['apps/world/src/features/displays/**'] },
   { name: 'World observation core and alert record', include: ['apps/world/src/core/observation/**', 'apps/world/src/core/model/alerts.ts'] },
+  { name: 'World display Capability and routes', include: ['apps/world/src/core/api/display-capabilities.ts'] },
   {
     name: 'Agents display code',
     include: [

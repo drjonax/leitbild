@@ -59,8 +59,11 @@ describe('Run context', () => {
     const assets = lines.filter(entry => entry.startsWith('- unit:'))
     expect(assets).toHaveLength(8)
     expect(assets.slice(0, 3).map(entry => entry.split(' · ')[0])).toEqual(['- unit:u7', '- unit:u9', '- unit:u10'])
-    expect(assets[0]).toBe('- unit:u7 · Unit 7 · available · alerts 2 (1 unacknowledged; worst alarm) · first out: Message a1 · lead: unit:u7#speed, unit:u7#status')
-    expect(assets[2]).toContain('worst warning (priority not declared)')
+    expect(assets[0]).toBe('- unit:u7 · Unit 7 · available · alerts 2 (1 unacknowledged, worst alarm): Message a1 (first out) · lead: unit:u7#speed, unit:u7#status')
+    expect(assets[2]).toContain('worst warning (priority not declared)): Message a4')
+    // All acknowledged reads as alerts in force, never as handled.
+    expect((await contextFor({ objects: objects => objects.map(object => object.id === 'unit:u7' ? { ...object, alerts: [alert('a2', { acknowledged: true })] } : object) })).text)
+      .toContain('- unit:u7 · Unit 7 · available · alerts 1 (worst warning (priority not declared)): Message a2 ·')
     expect(assets[3]).toBe('- unit:u0 · Unit 0 · available · no alerts · lead: unit:u0#speed, unit:u0#status')
     expect(lines).toContain('- Units (fixture): 3 · available 3')
     expect(lines).toContain('- Tasks (fixture): 2 · open 2')
@@ -108,7 +111,7 @@ describe('Run context', () => {
     expect(lines.every(entry => entry.length <= 400)).toBe(true)
   })
 
-  test('a weather advisory counts apart with its priority and never as unacknowledged, yet ranks its probe first (R42a, R43)', async () => {
+  test('a weather advisory counts apart as in force with its worst message, never as unacknowledged, yet ranks its probe first (R42a, R43, G1)', async () => {
     const probe = createWeatherObject(weatherItemSchema.parse({ pack: 'weather', type: 'weather_probe', id: 'weather-probe:halden', label: 'Halden probe', point: geoPointFromLonLat(11.39, 59.12).coordinates }), at, weatherPackConfigSchema.parse({}), at)
     const state = weatherPackDataSchema.parse(probe.packData).sample.state
     // A hazard: visibility under the hazard rung, so one hazard and one adverse advisory hold.
@@ -119,7 +122,8 @@ describe('Run context', () => {
     const { text } = await assembleRunContext({ title: 'Fog', objects: [calm, { ...probe, alerts: advisories }], denied: new Set(), clock: run.snapshot().clock, packs: [weatherPack], port: port as never })
     const assets = text.split('\n').filter(line => line.startsWith('- weather-probe:'))
     expect(assets[0]).toStartWith('- weather-probe:halden · Halden probe · ')
-    expect(assets[0]).toContain('alerts 2 (0 unacknowledged, 2 advisories (warning); worst warning)')
+    expect(assets[0]).toContain(`· 2 advisories in force (worst warning): ${advisories[0]!.message} ·`)
+    expect(assets[0]).not.toContain('unacknowledged')
     expect(assets[1]).toContain('weather-probe:calm · Calm probe · ')
   })
 })

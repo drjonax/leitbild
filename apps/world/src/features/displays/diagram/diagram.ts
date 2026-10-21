@@ -199,14 +199,6 @@ export interface RoutedEdge {
   readonly gaps: ReadonlyArray<readonly [number, number]>
 }
 
-export interface DiagramZone {
-  readonly partition: string
-  readonly x: number
-  readonly y: number
-  readonly width: number
-  readonly height: number
-}
-
 export interface DiagramViolation {
   readonly rule: 'overlap' | 'textClearance' | 'outsideBox' | 'diagonal' | 'bends' | 'bendSpacing' | 'crossingAtJunction' | 'pipeSpacing' | 'pitch'
   readonly subject: string
@@ -220,7 +212,6 @@ export type DiagramLayoutResult =
     readonly height: number
     readonly nodes: ReadonlyArray<PlacedNode>
     readonly edges: ReadonlyArray<RoutedEdge>
-    readonly zones: ReadonlyArray<DiagramZone>
     /** A stable hash of the geometry, independent of ids. */
     readonly hash: string
     /** Crossings drawn, each a gap. */

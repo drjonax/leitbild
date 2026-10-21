@@ -487,7 +487,6 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     items,
     pipes: [...pipes, ...stubPipes],
     stubs: stubs.map(({ edge: _edge, ...stub }) => stub),
-    zones: layout.zones.map(zone => ({ lane: zone.partition, x: zone.x, y: zone.y, width: zone.width, height: zone.height, label: `Loop ${zone.partition}` })),
     paths,
     trendPaths: [...new Set(items.flatMap(trendPathsOf))],
     summary: {

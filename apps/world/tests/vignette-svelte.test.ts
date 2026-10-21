@@ -15,6 +15,14 @@ describe('vignette components', () => {
     expect(files).toEqual(expect.arrayContaining(['AlertsSection.svelte', 'GroupedValues.svelte', 'Readout.svelte', 'StateWord.svelte', 'TrendStrip.svelte', 'Vignette.svelte']))
   })
 
+  test('every OpenBridge element and icon a vignette draws is defined by a bare import in its one loader (policy §5)', () => {
+    const loader = readFileSync(join(dir, 'openbridge.ts'), 'utf8')
+    const bare = new Set([...loader.matchAll(/^import '@oicl\/openbridge-webcomponents\/dist\/[^']*\/([a-z0-9-]+)\.js'$/gm)].map(match => match[1]!))
+    const drawn = new Set(files.flatMap(file => [...readFileSync(join(dir, file), 'utf8').matchAll(/<(ob[ci])-([a-z0-9-]+)/g)].map(match => (match[1] === 'obi' ? `icon-${match[2]}` : match[2]!))))
+    expect([...drawn].filter(module => !bare.has(module))).toEqual([])
+    expect([...drawn].sort()).toEqual(['alert-icon', 'bar-horizontal', 'bus', 'button', 'icon-ai', 'readout-block', 'source', 'status-indicator', 'switch', 'transformer'])
+  })
+
   for (const file of files) {
     test(`${file} compiles without warnings and without a raw $effect`, () => {
       const source = readFileSync(join(dir, file), 'utf8')

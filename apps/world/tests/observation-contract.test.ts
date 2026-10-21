@@ -70,6 +70,12 @@ describe('observation model', () => {
     expect(observationSchema.safeParse({ ...observation, clock: undefined }).success).toBe(false)
   })
 
+  test('a state observable marks what a running or conducting binding reads as on, by flag and never by order', () => {
+    const states = [{ value: 'open', label: 'Open' }, { value: 'closed', label: 'Closed', active: true }]
+    expect(observableSchema.parse({ ...observable, quantity: 'state', unit: '', valueType: 'enum', states }).states?.find(state => state.active)?.value).toBe('closed')
+    expect(observableSchema.safeParse({ ...observable, quantity: 'state', unit: '', valueType: 'enum', states: [{ value: 'open', label: 'Open', active: false }] }).success).toBe(false)
+  })
+
   test('an observation names the declared threshold it is past; an observable may declare its lead rank', () => {
     const observation = { ...at, ref: observable.ref, value: 18.2, quality: 'good', priority: 'alarm', past: 'lo-lo' }
     expect(observationSchema.parse(observation).past).toBe('lo-lo')
@@ -85,6 +91,8 @@ describe('observation model', () => {
     expect([decimalsFor('pcm', 150), decimalsFor('pcm', 15), decimalsFor('pcm', 1.5), decimalsFor('pu', 0.98), decimalsFor('degC/s', -0.0042), decimalsFor('pcm', 0)]).toEqual([0, 1, 2, 3, 5, 2])
     expect([numberText(-0.04, '%'), numberText(287.44, 'degC'), numberText(0.98, 'pu'), numberText(3, '1')]).toEqual(['0.0', '287.4', '0.980', '3.00'])
     expect([unitSymbol('degC'), unitSymbol('m3'), unitSymbol('1'), unitSymbol(''), unitSymbol('MPa')]).toEqual(['°C', 'm³', '', '', 'MPa'])
+    // A count is whole whatever its unit code; a fraction of '1' keeps its two decimals.
+    expect([numberText(1, '1', 'count'), numberText(0.85, '1', 'fraction'), decimalsFor('1', 12, 'count')]).toEqual(['1', '0.85', 0])
   })
 })
 
