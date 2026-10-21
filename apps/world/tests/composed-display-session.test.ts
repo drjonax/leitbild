@@ -10,6 +10,8 @@ import {
   type ComposedDisplaySnapshot,
   type ScheduleTimer,
 } from '../src/ui/embed/composed-display/composed-display-session.ts'
+import { createKeptSeries, type ReadWindow } from '../src/ui/embed/composed-display/kept-series.ts'
+import { HOLD_GAP_MS } from '../src/packs/process-plant/displays/trend-reading.ts'
 
 const runId = 'run-1' as SimulationRunId
 const at = (offsetMs: number): string => new Date(Date.parse('2026-01-01T09:00:00.000Z') + offsetMs).toISOString()
@@ -130,14 +132,16 @@ describe('composed display session', () => {
     expect(last().phase.kind).toBe('missing')
   })
 
-  test('backfills history, marks signals without recorded history and appends live samples', async () => {
+  test('merges history in as it lands, marks signals without recorded history and appends live samples', async () => {
     const { client } = fakeClient({ presence: { title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }, samples: [{ time: at(0), value: 15.45 }, { time: at(1_000), value: 15.5 }] })
     const { controller, last } = session(client)
     await controller.start({ poll: false })
-    expect([...last().historyMissing]).toEqual(['x.value'])
     expect(last().latest?.values[0]?.value).toBe(15.45)
+    await Bun.sleep(0)
+    expect([...last().historyMissing]).toEqual(['x.value'])
     await controller.poll()
-    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.4, 15.5])
+    // The recorded point, then the first sample the display was drawn with, then the live samples.
+    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.4, 15.45, 15.5])
   })
 
   test('flags a Run reset after the advice and keeps stale values on failure', async () => {
@@ -255,7 +259,7 @@ describe('composed display session', () => {
       loadRun: async () => {},
       view: async (_run, _plant, state) => state === 'detail' ? detail : overview,
       history: async (_run, seriesId, window) => {
-        reads.push(`${seriesId} from ${(window.from - Date.parse(at(0))) / 1000} s`)
+        reads.push(`${seriesId} from ${(window.from - window.to) / 1000} s`)
         if (seriesId === 'series:core.powerMw') throw new Error('Reading history failed with HTTP 503')
         return [{ t: Date.parse(at(-650_000)), v: 15.5 }, { t: Date.parse(at(-60_000)), v: 15.4 }]
       },
@@ -269,14 +273,15 @@ describe('composed display session', () => {
     // From one hold gap (90 s) before the ten-minute window, so the value held at its start is known.
     expect(reads).toEqual(['series:pressurizer.pressureMPa from -690 s', 'series:core.powerMw from -690 s'])
     expect(last().phase.kind).toBe('live')
+    await Bun.sleep(0)
     // A history that cannot be read is said on its row; the line starts with the live samples.
     expect([...last().historyErrors]).toEqual([['core.powerMw', 'Reading history failed with HTTP 503']])
-    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.5, 15.4])
+    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.5, 15.4, 15.45])
     await controller.poll()
     await controller.poll()
     expect(reads).toHaveLength(2)
-    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.5, 15.4, 15.45, 15.45])
-    expect(last().series.get('core.powerMw')!.map(point => point.v)).toEqual([15.45, 15.45])
+    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.5, 15.4, 15.45, 15.45, 15.45])
+    expect(last().series.get('core.powerMw')!.map(point => point.v)).toEqual([15.45, 15.45, 15.45])
     expect(last().series.has('vessel.netInventoryFlowKgPerS')).toBe(false)
     // Equipment opened from it reads its own lead values' history, once.
     await controller.open('detail')
@@ -303,7 +308,7 @@ describe('composed display session', () => {
       loadRun: async () => {},
       view: async () => overview,
       history: async (_run, seriesId, window) => {
-        reads.push(`${seriesId} from ${(window.from - Date.parse(at(0))) / 1000} s`)
+        reads.push(`${seriesId} from ${(window.from - window.to) / 1000} s`)
         return [{ t: Date.parse(at(-650_000)), v: 55 }]
       },
       sample: async (_run, _plant, paths) => ({ simulationTime: at(1_000 * ++samples), plantElapsedMs: 0, values: paths.map(path => ({ path, value: 24.9, quality: 'good' as const })) }),
@@ -312,7 +317,7 @@ describe('composed display session', () => {
     await controller.start({ poll: false })
     expect(reads).toEqual(['series:pressurizer.levelPercent from -690 s'])
     await controller.poll()
-    expect(last().series.get('pressurizer.levelPercent')!.map(point => point.v)).toEqual([55, 24.9])
+    expect(last().series.get('pressurizer.levelPercent')!.map(point => point.v)).toEqual([55, 24.9, 24.9])
     expect(last().series.has('sgA.levelPercent')).toBe(false)
     controller.close()
   })
@@ -424,6 +429,9 @@ const slowWorld = (clock: Clock, initial: { readonly view: ComposedDisplayViewRe
     view: initial.view,
     views: new Map<string, ComposedDisplayViewResult>(),
     calls: [] as string[],
+    /** Each history read's series and window. */
+    reads: [] as Array<{ readonly seriesId: string } & ReadWindow>,
+    historyLatencyMs: 0,
     sampleTimes: [] as number[],
     inFlight: 0,
     maxInFlight: 0,
@@ -439,9 +447,11 @@ const slowWorld = (clock: Clock, initial: { readonly view: ComposedDisplayViewRe
       world.calls.push(`view:${state}`)
       return world.views.get(state) ?? world.view
     },
-    history: async (_run, seriesId) => {
+    history: (_run, seriesId, window) => {
       world.calls.push(`history:${seriesId}`)
-      return [{ t: Date.parse(at(-60_000)), v: 15 }]
+      world.reads.push({ seriesId, ...window })
+      const answer = () => [{ t: Date.parse(at(-60_000)), v: 15 }]
+      return world.historyLatencyMs === 0 ? Promise.resolve().then(answer) : clock.after(world.historyLatencyMs, answer)
     },
     sample: (_run, _plant, paths) => {
       world.calls.push(`sample:${paths.join(',')}`)
@@ -625,6 +635,8 @@ describe('composed display session on a fake clock', () => {
     controller.setVisible(true)
     await clock.settle()
     expect(world.calls.slice(before)).toEqual(['presence:loaded', 'sample:pressurizer.pressureMPa', 'history:series:pressurizer.pressureMPa'])
+    // Only what the Run recorded since the last sample it kept before it was hidden, not its whole window.
+    expect(world.reads.at(-1)).toEqual({ seriesId: 'series:pressurizer.pressureMPa', from: Date.parse(at(2_000)), to: Date.parse(at(3_000)) })
     expect(last().lastSampleWallMs).toBe(122_000)
     // While it was off screen the Run was unloaded: shown again, it says so and asks no sample, which would load it.
     controller.setVisible(false)
@@ -658,6 +670,81 @@ describe('composed display session on a fake clock', () => {
     controller.close()
   })
 
+  test('a display is drawn with its view and first sample while its history is still being read, and the history merged in once it lands', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa']) })
+    world.views.set('detail', generatedView('detail', 'Steam Generator B', ['sgB.levelPercent']))
+    world.historyLatencyMs = 10_000
+    const { controller, last } = clocked(clock, client)
+    // Nothing waits for the history: the display is live before the clock moves.
+    await controller.start()
+    expect(last().phase.kind).toBe('live')
+    expect(world.calls.filter(call => call.startsWith('history'))).toEqual(['history:series:pressurizer.pressureMPa'])
+    expect(last().series.get('pressurizer.pressureMPa')).toEqual([{ t: Date.parse(at(0)), v: 15.5 }])
+    await clock.advance(10_000)
+    // The point recorded a minute before is merged in ahead of the live samples.
+    expect(last().series.get('pressurizer.pressureMPa')![0]).toEqual({ t: Date.parse(at(-60_000)), v: 15 })
+    expect(last().series.get('pressurizer.pressureMPa')!.length).toBeGreaterThan(2)
+    // Equipment opened in place is drawn with its own first sample, before its history is in.
+    await controller.open('detail')
+    expect(last().view?.display.title).toBe('Steam Generator B')
+    expect(last().series.get('sgB.levelPercent')!.map(point => point.v)).toEqual([15.5])
+    await clock.advance(10_000)
+    expect(last().series.get('sgB.levelPercent')![0]).toEqual({ t: Date.parse(at(-60_000)), v: 15 })
+    controller.close()
+  })
+
+  test("a display opened while a poll is in flight is drawn with that poll's answer where it read all the display shows", async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa', 'sgB.levelPercent']) })
+    world.views.set('detail', generatedView('detail', 'Steam Generator B', ['sgB.levelPercent']))
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    world.latencyMs = 2_000
+    // The poll asked at 1 s is answered at 3 s.
+    await clock.advance(1_500)
+    const opened = controller.open('detail')
+    await clock.advance(1_500)
+    await opened
+    expect(last().view?.display.title).toBe('Steam Generator B')
+    // No second request: the poll in flight read the detail's lead value too.
+    expect(world.sampleTimes).toEqual([0, 1_000])
+    expect(last().lastSampleWallMs).toBe(3_000)
+    expect(world.maxInFlight).toBe(1)
+    controller.close()
+  })
+
+  test('Back after a switch reads only what the Run recorded meanwhile, never a whole window again', async () => {
+    const clock = fakeClock()
+    const { world, client } = slowWorld(clock, { view: generatedView('overview', 'Unit 1', ['pressurizer.pressureMPa', 'core.powerMw']) })
+    world.views.set('detail', generatedView('detail', 'Steam Generator B', ['sgB.levelPercent']))
+    const { controller, last } = clocked(clock, client)
+    await controller.start()
+    await clock.advance(3_000)
+    await controller.open('detail')
+    await clock.advance(30_000)
+    // Each lead value read its whole window once, as its display first showed it: a sparkline from one hold gap before.
+    expect(world.reads.map(read => [read.seriesId, (read.to - read.from) / 1_000])).toEqual([
+      ['series:pressurizer.pressureMPa', 690],
+      ['series:core.powerMw', 690],
+      ['series:sgB.levelPercent', 690],
+    ])
+    const before = world.reads.length
+    await controller.open('{}')
+    expect(last().view?.display.title).toBe('Unit 1')
+    await clock.settle()
+    // Back: the overview's lead values read from the last sample they kept before the switch (3 s) to its first sample now.
+    expect(world.reads.slice(before)).toEqual([
+      { seriesId: 'series:pressurizer.pressureMPa', from: Date.parse(at(3_000)), to: Date.parse(at(35_000)) },
+      { seriesId: 'series:core.powerMw', from: Date.parse(at(3_000)), to: Date.parse(at(35_000)) },
+    ])
+    // What they kept from before the switch is drawn: the recorded point and the samples up to the switch.
+    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.t)).toEqual([
+      Date.parse(at(-60_000)), Date.parse(at(0)), Date.parse(at(1_000)), Date.parse(at(2_000)), Date.parse(at(3_000)), Date.parse(at(35_000)),
+    ])
+    controller.close()
+  })
+
   test('a World that answers slowly reads as live on the longest wait between samples; one that stops answering reads as stale', async () => {
     // The longest wait between samples leaves an answer of up to 2 s before the display reads stale.
     expect(SAMPLE_BACKOFF_MS.at(-1)! + 2_000).toBeLessThanOrEqual(STALE_AFTER_MS)
@@ -685,5 +772,28 @@ describe('composed display session on a fake clock', () => {
     expect(staleAt! - answeredAt).toBeGreaterThan(STALE_AFTER_MS)
     expect(staleAt! - answeredAt).toBeLessThanOrEqual(STALE_AFTER_MS + 100)
     controller.close()
+  })
+})
+
+describe('kept series', () => {
+  test('live samples extend a series without reading it again; a missed sample reads from its newest kept point; it keeps its window and one hold gap, then is dropped', async () => {
+    const reads: ReadWindow[] = []
+    const kept = createKeptSeries(async (_series, window) => { reads.push(window); return [] })
+    const shown = (seriesId: string, value: number) => [{ seriesId, horizonMs: 60_000, leadMs: 60_000, value }]
+    for (let t = 0; t <= 300_000; t += 1_000) await Promise.all(kept.take(t, shown('s', t), { missed: false, retry: false }))
+    // One read, of the window as it first showed: a minute of nothing recorded.
+    expect(reads).toEqual([{ from: -60_000, to: 0 }])
+    expect(kept.view('s', undefined)!.missing).toBe(true)
+    const points = kept.view('s', undefined)!.points
+    expect(points[0]!.t).toBe(300_000 - 60_000 - HOLD_GAP_MS)
+    expect(points).toHaveLength(151)
+    // Samples missed: what was recorded since its newest kept point is read, not its window.
+    await Promise.all(kept.take(310_000, shown('s', 310), { missed: true, retry: false }))
+    expect(reads.at(-1)).toEqual({ from: 300_000, to: 310_000 })
+    // Shown no more: dropped once its newest point is older than its window and hold gap.
+    await Promise.all(kept.take(310_000 + 60_000 + HOLD_GAP_MS, shown('other', 1), { missed: false, retry: false }))
+    expect(kept.view('s', undefined)).toBeDefined()
+    await Promise.all(kept.take(310_001 + 60_000 + HOLD_GAP_MS, shown('other', 1), { missed: false, retry: false }))
+    expect(kept.view('s', undefined)).toBeUndefined()
   })
 })
