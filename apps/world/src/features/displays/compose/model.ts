@@ -90,8 +90,8 @@ export interface EntityRow {
 /** One core slot or telemetry signal of an entity-floor object: World's word for it and its unit code ('' for words). */
 export interface SlotDeclaration { readonly key: string; readonly label: string; readonly unit: string }
 
-/** A binding the caller reads, with its observable's declared unit, so a drawing writes the reading as the card does. */
-export type TopologyBinding = TopologyNode['bindings'][number] & { readonly unit: string }
+/** A binding the caller reads, with its observable's declared unit and states (a state marked `active` reads as on), so a drawing writes the reading as the card does. */
+export type TopologyBinding = TopologyNode['bindings'][number] & Pick<Observable, 'unit' | 'states'>
 export interface TopologyNodeView extends Pick<TopologyNode, 'id' | 'label' | 'shortLabel' | 'element'> {
   /** A stop's label names its far ends (at most 24 characters). */
   readonly class: TopologyNode['class'] | 'stop'
@@ -111,7 +111,7 @@ export type VignetteSection =
   | { readonly kind: 'entity'; readonly rows: number; readonly columns: ReadonlyArray<EntityColumn>; readonly near?: { readonly label: string } }
   /**
    * Layout ids: a graph node's or edge's id (a flow edge drawn in segments adds `.n`), a stop `s<n>` and its edge
-   * `s<n>.edge`; every drawn node, stops included, is in `nodes`; `groups` are the layout's frames or lanes.
+   * `s<n>.edge`; every drawn node, stops included, is in `nodes`; `groups` are a network layout's frames (a flow layout draws none).
    */
   | {
     readonly kind: 'topology'; readonly rows: number; readonly objectId: string; readonly family: 'flow' | 'network'; readonly layout: TopologyLayout

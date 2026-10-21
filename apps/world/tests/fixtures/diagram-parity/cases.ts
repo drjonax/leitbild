@@ -45,7 +45,6 @@ const geometryOf = (mimic: CompiledMimic): unknown => [
   mimic.items.map(item => [item.id, item.box, item.orientation, item.text, item.frame, item.vessel ?? null]),
   mimic.pipes.map(pipe => [pipe.id, pipe.points, pipe.gaps]),
   mimic.stubs.map(stub => [stub.id, stub.end, stub.textBox]),
-  mimic.zones,
 ]
 
 const drawn = (mimic: CompiledMimic, output: unknown): string =>

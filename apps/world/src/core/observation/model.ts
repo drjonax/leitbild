@@ -66,14 +66,16 @@ type UnitCode = (typeof quantityUnits)[Quantity][number]
 export const unitDecimals: Readonly<Partial<Record<UnitCode, number>>> = {
   MPa: 2, Pa: 0, '%': 1, degC: 1, 'kg/s': 0, MW: 0, kW: 0, Mvar: 0, Hz: 2, kV: 1, V: 0, A: 0, 'm/s': 1, 'mm/h': 1, m: 0, rpm: 0, ppm: 0, 'mSv/h': 3, cps: 0, '1': 2, deg: 0, s: 0,
 }
-export const decimalsFor = (unit: string, value: number): number =>
-  unitDecimals[unit as UnitCode] ?? (value === 0 ? 2 : Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(Math.abs(value))))))
+/** Quantities whose every value is whole, whatever their unit code: a count of '1' reads 3, not 3.00. */
+export const quantityDecimals: Readonly<Partial<Record<Quantity, number>>> = { count: 0 }
+export const decimalsFor = (unit: string, value: number, quantity?: Quantity): number =>
+  (quantity === undefined ? undefined : quantityDecimals[quantity]) ?? unitDecimals[unit as UnitCode] ?? (value === 0 ? 2 : Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(Math.abs(value))))))
 const unitSymbols: Readonly<Partial<Record<UnitCode, string>>> = { degC: '°C', 'degC/s': '°C/s', deg: '°', m3: 'm³', '1': '' }
 /** A unit code as a reader sees it: degC reads °C; a dimensionless 1 and a state's '' read nothing; any other unit is its own symbol. */
 export const unitSymbol = (unit: string): string => unitSymbols[unit as UnitCode] ?? unit
 /** A number at its decimals, never "-0.0". */
-export const numberText = (value: number, unit: string): string => {
-  const text = value.toFixed(decimalsFor(unit, value))
+export const numberText = (value: number, unit: string, quantity?: Quantity): string => {
+  const text = value.toFixed(decimalsFor(unit, value, quantity))
   return /^-0(?:\.0+)?$/.test(text) ? text.slice(1) : text
 }
 /** Seconds as a countdown reads them (45 s, 4 min, 2 h), and metres as a distance (850 m, 12.3 km): the number and the unit it is shown in. */
