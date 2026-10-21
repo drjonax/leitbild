@@ -128,9 +128,7 @@ describe('Einsatz detection', () => {
       expect(object.audience).toEqual([blue])
       expect(object.kind).toBe('observation')
       expect(Object.keys(object.spatial).sort()).toEqual(['frame', 'position'])
-      expect(Object.keys(object.spatial.position!).sort()).toEqual(['observedAt', 'point', 'simAt'])
-      // The fix's simulation time is the sighting's own time: no more than the side already sees.
-      expect(object.spatial.position!.simAt).toBe(object.spatial.position!.observedAt)
+      expect(Object.keys(object.spatial.position!).sort()).toEqual(['observedAt', 'point'])
       expect(object.provenance).toEqual({ source: 'simulator' })
       expect(object.alerts).toEqual([])
       expect(object.tasking).toBeUndefined()

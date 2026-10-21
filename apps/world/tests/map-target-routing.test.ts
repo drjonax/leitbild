@@ -282,7 +282,6 @@ describe('Drone targeting is unchanged', () => {
       altitudeM: 40,
       headingDeg: 0,
       at,
-      simAt: at,
     })
     const target = objectOf('t1', 'fixture', 'other')
     const views = createActivePackViews([dronePackView, viewOf('fixture')])

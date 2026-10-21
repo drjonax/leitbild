@@ -207,7 +207,7 @@ export const createLocalWeatherPackRuntimeAdapter = (): PackRuntimeAdapter => ({
           ...object,
           alerts: [...alerts],
           revision: object.revision + 1,
-          spatial: { ...object.spatial, position: { point, observedAt: nowIso(), simAt: field.at, staleAfterMs: 600000 } },
+          spatial: { ...object.spatial, position: { point, observedAt: nowIso(), staleAfterMs: 600000 } },
           timestamps: { ...object.timestamps, updatedAt: nowIso() },
           packData: { ...data, sample },
         }

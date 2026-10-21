@@ -43,7 +43,7 @@ export const createAmbulanceItem = (raw: AmbulanceItem, context: ItemConstructio
     id: item.id,
     kind: item.type === 'ambulance' || item.type === 'helicopter' ? 'mobile_entity' : item.type === 'care-site' ? 'facility' : item.type,
     packId: ambulancePackId as OperationalObject['packId'], label: item.label, lifecycle: 'active', revision: 0,
-    spatial: { frame: { kind: 'wgs84' }, ...(point ? { position: { point, observedAt: context.at, simAt: new Date(context.simulationTimeMs).toISOString() as IsoTimestamp, ...(item.type === 'ambulance' || item.type === 'helicopter' ? { speedMps: 0 } : {}) } } : {}) },
+    spatial: { frame: { kind: 'wgs84' }, ...(point ? { position: { point, observedAt: context.at, ...(item.type === 'ambulance' || item.type === 'helicopter' ? { speedMps: 0 } : {}) } } : {}) },
     operational: { status: item.type === 'ambulance' || item.type === 'helicopter' ? item.crewReady ? 'available' : 'out-of-service' : item.type === 'incident' ? 'open' : item.type === 'patient' ? 'awaiting-response' : item.accepting ? 'accepting' : 'not-accepting', mode: 'simulated' },
     alerts: [], provenance: { source: 'simulator', adapterId: ambulanceSimAdapterId, externalId: item.id },
     timestamps: { createdAt: context.at, updatedAt: context.at }, packData: data,

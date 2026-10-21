@@ -303,7 +303,7 @@ export const createDroneNativePackRuntimeAdapter = (): PackRuntimeAdapter => ({
       history: 'record' | 'snapshot-only',
       command?: CommandEnvelope,
     ): OperationalObject => {
-      const next = withDronePackData(object, data, at, new Date(currentSimulationMs()).toISOString() as IsoTimestamp)
+      const next = withDronePackData(object, data, at)
       setRuntimeDrone(next, data)
       emitObjectUpsert(next, at, history, command)
       return next
@@ -407,7 +407,7 @@ export const createDroneNativePackRuntimeAdapter = (): PackRuntimeAdapter => ({
         updateObject(object, next, at, 'snapshot-only', input.command)
         return
       }
-      const updated = withDronePackData(object, next, at, new Date(currentSimulationMs()).toISOString() as IsoTimestamp)
+      const updated = withDronePackData(object, next, at)
       setRuntimeDrone(updated, next)
     }
 
@@ -427,7 +427,6 @@ export const createDroneNativePackRuntimeAdapter = (): PackRuntimeAdapter => ({
           altitudeM: payload.altitudeM,
           headingDeg: payload.headingDeg,
           at: createdAt,
-          simAt: new Date(currentSimulationMs()).toISOString() as IsoTimestamp,
         })
         const record = upsertRuntimeObject(object)
         if (!record) throw new Error(`created object is not a valid native drone: ${object.id}`)

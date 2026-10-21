@@ -1,4 +1,4 @@
-import type { CommandEnvelope, CommandResult, GeoJsonPoint, IsoTimestamp, ObjectId, OperationalObject, RouteImpact, SimulationRunEvent, SimulationRunId } from '../../../core/model/index.ts'
+import type { CommandEnvelope, CommandResult, GeoJsonPoint, ObjectId, OperationalObject, RouteImpact, SimulationRunEvent, SimulationRunId } from '../../../core/model/index.ts'
 import { geoPointFromLonLat, meters, nowIso, routeDistanceMeters } from '../../../core/model/index.ts'
 import type { RoutingAdapter } from '../../../routing/protocol.ts'
 import type { PackRuntimeEvent, PackRuntimeSnapshot } from '../../../simulation/protocol.ts'
@@ -158,7 +158,7 @@ export const createAmbulanceSimEngine = (config: {
         const leg = assignment?.leg
         const factor = speedFactor(object)
         const active = assignment && moving(assignment)
-        spatial = { ...rest, position: { point: position, observedAt: at, simAt: new Date(time).toISOString() as IsoTimestamp, speedMps: active && leg && leg.durationMs > 0 ? leg.distanceM / (leg.durationMs / 1000) * factor : 0 }, ...(leg ? { route: { planned: leg.geometry, source: 'simulator' as const, ...(factor > 0 ? { etaSeconds: (leg.durationMs - leg.progressMs) / 1000 / factor } : {}), progress: { segmentIndex: routePosition(leg, leg.progressMs).segmentIndex, remainingDistanceM: meters(leg.distanceM * (leg.durationMs === 0 ? 0 : 1 - leg.progressMs / leg.durationMs)), updatedAt: at }, ...(object.spatial.route?.impacts ? { impacts: object.spatial.route.impacts } : {}) } } : {}) }
+        spatial = { ...rest, position: { point: position, observedAt: at, speedMps: active && leg && leg.durationMs > 0 ? leg.distanceM / (leg.durationMs / 1000) * factor : 0 }, ...(leg ? { route: { planned: leg.geometry, source: 'simulator' as const, ...(factor > 0 ? { etaSeconds: (leg.durationMs - leg.progressMs) / 1000 / factor } : {}), progress: { segmentIndex: routePosition(leg, leg.progressMs).segmentIndex, remainingDistanceM: meters(leg.distanceM * (leg.durationMs === 0 ? 0 : 1 - leg.progressMs / leg.durationMs)), updatedAt: at }, ...(object.spatial.route?.impacts ? { impacts: object.spatial.route.impacts } : {}) } } : {}) }
         const stop = assignment ? activeAssignmentStop(assignment) : undefined
         if (stop && stop.kind !== 'return-base') tasking = { currentTaskId: stop.targetId }
       } else if (data.type === 'incident') status = data.closedAtMs === undefined ? data.firstArrivalAtMs === undefined ? 'open' : 'responding' : 'resolved'

@@ -473,10 +473,7 @@ export const createSimulationRunRuntime = async (config: {
   ): Promise<void> => {
     assertCommitAvailable()
     if (publishedEvents.length === 0) return
-    // One simulation time per committed batch, so the journal and notifications carry the same stamp.
-    const simulationTime = runClock.read().currentTime
-    const simulationRunEvents = (declaredSides === undefined ? publishedEvents : withSidedAudiences(publishedEvents, declaredSides))
-      .map(event => ({ ...event, simulationTime }) as SimulationRunEvent)
+    const simulationRunEvents = declaredSides === undefined ? publishedEvents : withSidedAudiences(publishedEvents, declaredSides)
     if (simulationRunEvents.some(event => event.type === 'object.deleted')) {
       // Validate the complete batch before changing canonical state. This covers
       // UI/API commands, interaction effects and runtime-originated deletions.
