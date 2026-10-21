@@ -25,9 +25,10 @@ const grid = (() => {
 })()
 const SWITCHYARD = 'bus:curated-halden-pwr-switchyard@420'
 
-/** The k-station-hop view around the switchyard, as the generic scope draws it. */
-const stationView = (graph: TopologyGraph, hops: number): ScopedTopology => {
-  const result = scopeTopology(graph, { around: [SWITCHYARD], media: graph.media.filter(medium => (medium.level?.value ?? 0) >= 300).map(medium => medium.id), reach: 2 * hops })
+const HASLE = 'bus:osm-way-60495669@420'
+/** The k-station-hop view around a bus (the switchyard unless named), as the generic scope draws it. */
+const stationView = (graph: TopologyGraph, hops: number, around = SWITCHYARD): ScopedTopology => {
+  const result = scopeTopology(graph, { around: [around], media: graph.media.filter(medium => (medium.level?.value ?? 0) >= 300).map(medium => medium.id), reach: 2 * hops })
   if (!result.ok) throw new Error(`the scope refused the ${hops}-hop view: ${result.refusal.code}`)
   return result.scoped
 }
@@ -52,6 +53,14 @@ describe('grid topology for the network family (N3)', () => {
     const grids = new Map([[grid.definition.gridId, grid]])
     const graph = gridObservationTopologyQuery.answer({ objectId: grid.definition.gridId }, grids) as TopologyGraph
     expect(gridObservationTopologyQuery.answer({ objectId: grid.definition.gridId, known: graph.revision }, grids)).toEqual({ objectId: grid.definition.gridId as never, revision: graph.revision, unchanged: true })
+  })
+
+  test('views around a bus inside a station frame lay out too (ELK\'s model-order option threw on them), without overlaps', async () => {
+    for (const hops of [1, 2]) {
+      const view = stationView(gridTopology(grid), hops, HASLE)
+      const layout = await networkLayout(view, sizing)
+      expect(overlaps(layout, group => new Set(view.graph.nodes.filter(node => node.group === group).map(node => node.id)))).toEqual([])
+    }
   })
 
   for (const hops of [1, 2]) {

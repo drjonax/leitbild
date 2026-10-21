@@ -31,7 +31,7 @@ const elk = (): InstanceType<typeof ELK> => engine ??= (() => {
 })()
 const options = (s: number): Record<string, string> => ({
   'elk.algorithm': 'layered', 'elk.direction': 'RIGHT', 'elk.edgeRouting': 'ORTHOGONAL', 'elk.hierarchyHandling': 'INCLUDE_CHILDREN', 'elk.randomSeed': '1',
-  'elk.json.shapeCoords': 'ROOT', 'elk.json.edgeCoords': 'ROOT', 'elk.layered.considerModelOrder.strategy': 'PREFER_EDGES', 'elk.padding': '[top=0,left=0,bottom=0,right=0]',
+  'elk.json.shapeCoords': 'ROOT', 'elk.json.edgeCoords': 'ROOT', 'elk.layered.thoroughness': '4', 'elk.padding': '[top=0,left=0,bottom=0,right=0]',
   'elk.spacing.nodeNode': `${s}`, 'elk.layered.spacing.nodeNodeBetweenLayers': `${2 * s}`, 'elk.spacing.componentComponent': `${2 * s}`,
   ...Object.fromEntries(['portPort', 'edgeEdge', 'edgeNode', 'edgeEdgeBetweenLayers', 'edgeNodeBetweenLayers'].map(key => [`elk.${key.endsWith('Layers') ? 'layered.' : ''}spacing.${key}`, `${s / 2}`])),
 })
