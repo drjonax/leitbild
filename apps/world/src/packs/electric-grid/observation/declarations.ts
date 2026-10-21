@@ -20,6 +20,8 @@ export type GridReading = Pick<Observation, 'value' | 'quality'>
 export interface GridSignal {
   readonly key: string; readonly label: string; readonly quantity: Quantity; readonly unit: string; readonly states?: ReadonlyArray<string>
   readonly recorded?: 'operations' | 'engineering'; readonly bands?: 'frequency' | 'loading'
+  /** The lead rank it declares, 1 first. */
+  readonly lead?: number
   readonly read: (grid: GridRuntimeInstance, id: string) => GridReading
 }
 type ElementClass = 'station' | 'bus' | 'branch' | 'generator' | 'connection-point' | 'hvdc-link' | 'external-system' | 'island'
@@ -61,7 +63,7 @@ export const gridSignals: Readonly<Record<ElementClass, ReadonlyArray<GridSignal
 const operationsQuantity = { frequency: 'frequency', 'active-power': 'electric-power', ratio: 'loading', voltage: 'voltage', count: 'count' } as const
 /** The grid-wide signals, from the Historian's operations list. */
 export const gridWideSignals: ReadonlyArray<GridSignal & { readonly signalId: string }> = gridOperationsSignals.map(item => ({
-  signalId: item.signalId, key: item.signalId, label: item.title, quantity: operationsQuantity[item.quantity], unit: item.unit, recorded: 'operations',
+  signalId: item.signalId, key: item.signalId, label: item.title, quantity: operationsQuantity[item.quantity], unit: item.unit, recorded: 'operations', ...('lead' in item ? { lead: item.lead } : {}),
   ...(item.quantity === 'frequency' ? { bands: 'frequency' as const } : item.quantity === 'ratio' ? { bands: 'loading' as const } : {}),
   read: grid => reading(grid.projection[item.key]),
 }))
@@ -131,6 +133,7 @@ const observable = (grid: GridRuntimeInstance, recording: ScenarioRecordingSelec
     thresholds: thresholds(grid, signal, element?.class === 'branch' ? element.id : undefined), basis: 'model',
     series: recorded && recording !== undefined && interval !== undefined ? { seriesId: recordingSeriesIdFor(grid.definition.gridId, signalId), intervalMs: interval } : null,
     ...(element === undefined ? {} : { element: element.id }),
+    ...(signal.lead === undefined ? {} : { lead: signal.lead }),
   }
 }
 

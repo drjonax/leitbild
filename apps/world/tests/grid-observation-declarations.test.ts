@@ -139,6 +139,10 @@ describe('grid observation declarations (N2)', () => {
     expect(refs[alarmed.size]).toBe('grid:test-corridor#grid.frequency')
     expect(lead.observations.map(observation => observation.rank)).toEqual(refs.map((_, index) => index + 1))
     const first = observationShapes.declarations.output.parse(gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'] }, grids)).declarations[0]!
+    // The grid-wide values the lead goes on with are those declaring a lead rank, in its order.
+    const ranked = 'observables' in first ? first.observables.filter(observable => observable.lead !== undefined).sort((left, right) => left.lead! - right.lead!).map(observable => observable.ref) : []
+    expect(ranked.map(ref => ref.split('#')[1])).toEqual(['grid.frequency', 'grid.maximum-branch-loading', 'grid.unserved-load', 'grid.reserve', 'grid.island-count', 'grid.active-alarms'])
+    expect(refs.slice(alarmed.size)).toEqual(ranked.filter(ref => !alarmed.has(ref)).slice(0, refs.length - alarmed.size))
     const again = gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'], known: { 'grid:test-corridor': first.revision } }, grids)
     expect(again).toEqual({ declarations: [{ objectId: 'grid:test-corridor' as never, revision: first.revision, unchanged: true }] })
     expect(() => gridObservationDeclarationsQuery.answer({ objectIds: ['grid:test-corridor'], elementIds: ['branch:nowhere'] }, grids)).toThrow(/no element branch:nowhere/)

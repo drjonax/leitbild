@@ -8,21 +8,26 @@ export const formatWeatherQuantity = (value: number | string, unit: string): str
   return `${Number(value.toFixed(2))} ${unit === 'degC' ? '°C' : unit === 'deg' ? '° from north' : unit}`.trim()
 }
 
-/** One list feeds discovery, object inspection, observation declarations and optional probe recordings; units are core unit codes. */
+/**
+ * One list feeds discovery, object inspection, observation declarations and optional probe recordings; units are core
+ * unit codes. `lead` ranks what an operator weighs first (1 first): visibility and wind, then precipitation, air
+ * temperature and the ground's ice and snow.
+ */
 export const weatherQuantities: ReadonlyArray<{
   id: string
   title: string
   quantity: Quantity
   unit: string
   value: (state: WeatherState) => number | string
+  lead?: number
 }> = [
-  { id: 'airTemperatureC', title: 'Air temperature', quantity: 'temperature', unit: 'degC', value: (s) => s.atmosphere.airTemperatureC },
+  { id: 'airTemperatureC', title: 'Air temperature', quantity: 'temperature', unit: 'degC', value: (s) => s.atmosphere.airTemperatureC, lead: 4 },
   { id: 'humidity', title: 'Humidity', quantity: 'fraction', unit: '1', value: (s) => s.atmosphere.humidity },
-  { id: 'windSpeedMps', title: 'Wind speed', quantity: 'speed', unit: 'm/s', value: (s) => s.atmosphere.windSpeedMps },
+  { id: 'windSpeedMps', title: 'Wind speed', quantity: 'speed', unit: 'm/s', value: (s) => s.atmosphere.windSpeedMps, lead: 2 },
   { id: 'windDirectionDeg', title: 'Wind direction', quantity: 'direction-from', unit: 'deg', value: (s) => s.atmosphere.windDirectionDeg },
-  { id: 'visibilityM', title: 'Visibility', quantity: 'length', unit: 'm', value: (s) => s.atmosphere.visibilityM },
+  { id: 'visibilityM', title: 'Visibility', quantity: 'length', unit: 'm', value: (s) => s.atmosphere.visibilityM, lead: 1 },
   { id: 'cloudCover', title: 'Cloud cover', quantity: 'fraction', unit: '1', value: (s) => s.atmosphere.cloudCover },
-  { id: 'precipitationType', title: 'Precipitation', quantity: 'state', unit: '', value: (s) => s.atmosphere.precipitation.type },
+  { id: 'precipitationType', title: 'Precipitation', quantity: 'state', unit: '', value: (s) => s.atmosphere.precipitation.type, lead: 3 },
   { id: 'intensityMmPerHour', title: 'Precipitation rate', quantity: 'precipitation-rate', unit: 'mm/h', value: (s) => s.atmosphere.precipitation.intensityMmPerHour },
   { id: 'groundTemperatureC', title: 'Ground temperature', quantity: 'temperature', unit: 'degC', value: (s) => s.surface.groundTemperatureC },
   ...(['wetness', 'standingWater', 'snow', 'ice', 'frost'] as const).map((id) => ({
@@ -31,6 +36,7 @@ export const weatherQuantities: ReadonlyArray<{
     quantity: 'fraction' as const,
     unit: '1',
     value: (s: WeatherState) => s.surface[id],
+    ...(id === 'ice' ? { lead: 5 } : id === 'snow' ? { lead: 6 } : {}),
   })),
 ]
 export const weatherRecordingProfiles = [

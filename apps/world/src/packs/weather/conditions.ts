@@ -88,12 +88,12 @@ export const weatherPresentationSeverityForState = (state: WeatherState): Weathe
 }
 
 /**
- * The advisory priority of a ladder level. A hazard (ice over 0.55, visibility under 800 m, wind over 25 m/s)
- * endangers outdoor work and traffic now and wants prompt attention: a warning. Adverse ground or visibility wants
- * awareness: a caution. Neither is an alarm, as no operator action controls the weather; notice-level wetness is
- * routine weather and raises nothing.
+ * The priority of a ladder level, the one table its advisory alert and its threshold tick read. A hazard (ice over
+ * 0.55, visibility under 800 m, wind over 25 m/s) endangers outdoor work and traffic now and wants prompt attention: a
+ * warning. Adverse ground or visibility wants awareness: a caution. Neither is an alarm, as no operator action
+ * controls the weather; notice-level wetness is routine weather: its tick is a notice and it raises no advisory.
  */
-const advisoryPriority = { adverse: 'caution', hazard: 'warning' } as const
+export const weatherLevelPriority = { notice: 'notice', adverse: 'caution', hazard: 'warning' } as const
 
 /**
  * One advisory alert per ladder condition that holds (R42, R43): it names the condition and the probe or area, never
@@ -105,7 +105,7 @@ export const weatherAdvisories = (object: Pick<OperationalObject, 'id' | 'label'
     if (rule.severity === 'notice' || !weatherRulePasses(rule, quantity.value(state))) return []
     const [id, condition] = [`${object.id}:advisory:${rule.severity}-${rule.quantity}`, `${rule.severity}-${rule.quantity}`]
     return [{
-      id, kind: 'weather_advisory', severity: 'warning', priority: advisoryPriority[rule.severity], advisory: true, acknowledged: false,
+      id, kind: 'weather_advisory', severity: 'warning', priority: weatherLevelPriority[rule.severity], advisory: true, acknowledged: false,
       message: `${quantity.title} ${rule.direction} (${rule.severity}): ${object.label}`, clock: 'simulation',
       raisedAt: object.alerts.find((alert) => alert.id === id)?.raisedAt ?? at, observable: `${object.id}#${rule.quantity}`, threshold: condition,
     } as const]

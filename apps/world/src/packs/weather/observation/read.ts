@@ -6,8 +6,8 @@ import type { Observation } from '../../../core/observation/model.ts'
 import { weatherQuantities } from '../quantities.ts'
 import { weatherObjectData, type WeatherObjects } from './declarations.ts'
 
-/** Lead order after the advised values: what an operator weighs first. */
-const leadOrder = ['visibilityM', 'windSpeedMps', 'precipitationType', 'airTemperatureC', 'ice', 'snow']
+/** The values after the advised ones, by their declared lead rank. */
+const leadOrder = weatherQuantities.filter(quantity => quantity.lead !== undefined).sort((left, right) => left.lead! - right.lead!).map(quantity => quantity.id)
 
 const observe = (objects: WeatherObjects, objectId: string, quantityId: string, rank?: number): Observation | undefined => {
   const quantity = weatherQuantities.find(candidate => candidate.id === quantityId)
