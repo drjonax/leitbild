@@ -5,7 +5,24 @@ import type { Face, PlacedNode } from '../../../../features/displays/diagram/ind
 import { DIAGRAM_ENGINE_VERSION } from '../../../../features/displays/diagram/index.ts'
 import type { MimicPresentation } from './presentation.ts'
 import type { FlapPart, MimicRow } from './rows.ts'
-import type { MimicIntent } from './scope.ts'
+
+/** What an agent asks a mimic to draw, in plant terms: ends, items to draw around, services, loops, exclusions, reach. */
+export interface MimicIntent {
+  readonly from?: ReadonlyArray<string> | undefined
+  readonly to?: ReadonlyArray<string> | undefined
+  /**
+   * What feeds these items and where their outflow goes: by the services of
+   * each item's process (the fluid it carries; power only for equipment that
+   * carries nothing else), its other services stopping the drawing at it,
+   * unless `services` names what to draw.
+   */
+  readonly around?: ReadonlyArray<string> | undefined
+  readonly services?: ReadonlyArray<string> | undefined
+  readonly loops?: ReadonlyArray<string> | undefined
+  readonly exclude?: ReadonlyArray<string> | undefined
+  /** Links a one-ended or around intent follows; MIMIC_REACH_LINKS unless a display narrows it to fit. */
+  readonly reach?: number | undefined
+}
 
 // A generated equipment mimic: World resolves the agent's intent to part of
 // the Plant graph, draws each component with the OpenBridge component its kind

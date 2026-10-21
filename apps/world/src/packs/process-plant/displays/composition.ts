@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { idSchema, isoTimestampSchema } from '../../../core/model/index.ts'
 import { variablePathSchema } from '../graph/index.ts'
-import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
+import { TOPOLOGY_REACH } from '../../../features/displays/topology/scope.ts'
 import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS } from '../equipment/items.ts'
 
 // An AI-composed display states WHAT the operator should see and WHY. The
@@ -102,7 +102,7 @@ export const composedDisplayMimicPanelSchema = z.object({
   loops: z.array(text(1, 16)).min(1).max(6).optional(),
   exclude: z.array(equipmentName).min(1).max(6).optional(),
   /** How many links a one-ended or around drawing follows from its items; a smaller reach draws a closer neighbourhood. */
-  reach: z.number().int().min(1).max(MIMIC_REACH_LINKS).optional(),
+  reach: z.number().int().min(1).max(TOPOLOGY_REACH).optional(),
 }).strict()
 
 export const composedDisplayPanelSchema = z.discriminatedUnion('kind', [

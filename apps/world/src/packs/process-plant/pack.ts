@@ -155,7 +155,12 @@ export const processPlantPack: WorldPack = {
     }, 0),
   },
   knowledge: { wikiRefs: [{ name: 'Process plant knowledge', url: '/wiki?path=world%2Fpacks%2Fprocess-plant%2Findex.md' }] },
-  observation: { categories: ['process-plants'], declarations: processPlantObservationCapabilityIds.declarations, read: processPlantObservationCapabilityIds.read },
+  observation: {
+    categories: ['process-plants'],
+    declarations: processPlantObservationCapabilityIds.declarations,
+    read: processPlantObservationCapabilityIds.read,
+    topology: { family: 'flow', capability: processPlantObservationCapabilityIds.topology },
+  },
   scenario: {
     itemSchemas: { plant: processPlantScenarioItemSchema },
     expandItem: (spec, context) => {

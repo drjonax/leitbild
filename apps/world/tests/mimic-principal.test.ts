@@ -8,7 +8,7 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { component, connect, plantGraph } from '../src/packs/process-plant/graph/builder.ts'
 import { overviewScope } from '../src/packs/process-plant/displays/mimic/principal.ts'
-import { stubText } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import { stubText } from '../src/packs/process-plant/displays/mimic/stub-words.ts'
 
 // The overview's circuits come from where energy goes: a heat source's closed
 // circuit, then each closed circuit a transfer feeds. Plants here are built
@@ -90,7 +90,7 @@ describe('the overview follows the Plant\'s energy, not its names', () => {
       expect(result.labels[0]!.filter(id => id.startsWith('sg'))).toHaveLength(loopCount)
       expect(result.onceThrough.map(entry => `${label(graph, entry.component)}.${entry.circuit}`)).toEqual(['condenser.cooling'])
       // Safety and auxiliary services join the drawing as stubs.
-      expect(result.scope.stubs.filter(stub => label(graph, stub.component).startsWith('sg')).map(stub => stubText(graph, stub))).toHaveLength(loopCount)
+      expect(result.scope.stubs.filter(stub => label(graph, graph.componentIndexById.get(stub.node as never)!).startsWith('sg')).map(stub => stubText(graph, stub))).toHaveLength(loopCount)
     }
   })
 
@@ -110,7 +110,7 @@ describe('the overview follows the Plant\'s energy, not its names', () => {
     const graph = intermediatePlant('closed')
     const result = ringsOf(graph)
     expect(result.labels[0]).not.toContain('makeupTank')
-    expect(result.scope.stubs.map(stub => `${label(graph, stub.component)} ${stubText(graph, stub)}`).sort()).toEqual([
+    expect(result.scope.stubs.map(stub => `${label(graph, graph.componentIndexById.get(stub.node as never)!)} ${stubText(graph, stub)}`).sort()).toEqual([
       'primaryPump to Letdown',
       'source from makeupPump',
     ])
@@ -121,7 +121,7 @@ describe('the overview follows the Plant\'s energy, not its names', () => {
     const result = ringsOf(graph)
     expect(result.rings).toHaveLength(3)
     expect(result.onceThrough.map(entry => `${label(graph, entry.component)}.${entry.circuit}`)).toEqual(['cooler.cooling'])
-    expect(result.scope.stubs.filter(stub => label(graph, stub.component) === 'cooler').map(stub => stubText(graph, stub)).sort()).toEqual(['from basinPump', 'to outfall'])
+    expect(result.scope.stubs.filter(stub => label(graph, graph.componentIndexById.get(stub.node as never)!) === 'cooler').map(stub => stubText(graph, stub)).sort()).toEqual(['from basinPump', 'to outfall'])
   })
 
   test('a Plant without a heat source, or whose source heats flow that never returns, is refused with the reason', () => {

@@ -3,7 +3,7 @@
 // main thread's, in references timed beside each call (cpu-cost.ts), scaled to
 // quiet milliseconds; ELK runs on the main thread, so its time is all there.
 import { referenceComputation, referenceQuietMs, threadCpuMs } from '../cpu-cost.ts'
-import type { TopologyLayout } from '../../src/features/displays/topology/network.ts'
+import type { TopologyLayout } from '../../src/features/displays/topology/layout.ts'
 
 interface Box { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 const overlap = (a: Box, b: Box): boolean => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height

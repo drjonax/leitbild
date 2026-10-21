@@ -9,6 +9,7 @@ import ELK, { type ElkNode, type ElkPort } from 'elkjs/lib/elk-api.js'
 import type { TopologyGraph, TopologyNode } from '../../../core/observation/topology.ts'
 import { findCrossings, gapsByEdge, type Segment } from '../diagram/crossings.ts'
 import type { Face, RoutedEdge } from '../diagram/diagram.ts'
+import type { TopologyLayout } from './layout.ts'
 
 const elkFile = (path: string): string => fileURLToPath(import.meta.resolve(`elkjs/${path}`))
 /** The installed elkjs, for layout cache keys. */
@@ -19,13 +20,6 @@ export type NetworkGraph = Pick<TopologyGraph, 'nodes' | 'edges' | 'groups'> & {
 /** In grid units: a node's box with its text (ELK grows it to fit its ports); the room between nodes and inside group frames (layers keep twice it, edges and ports half); a group label's room on top. */
 export interface NetworkSizing { readonly key: string; readonly node: (node: TopologyNode) => { readonly width: number; readonly height: number }; readonly spacing: number; readonly groupLabel: number }
 type Box = { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
-export interface TopologyLayout {
-  readonly family: 'flow' | 'network'; readonly unit: 'grid'; readonly width: number; readonly height: number
-  /** A port is drawn where its first edge in rank order meets it; edges run from `from` to `to`, however laid out. */
-  readonly nodes: ReadonlyArray<Box & { readonly id: string; readonly ports: Readonly<Record<string, { readonly x: number; readonly y: number; readonly face: Face }>> }>
-  readonly edges: ReadonlyArray<RoutedEdge>; readonly groups: ReadonlyArray<Box & { readonly id: string }>
-  readonly crossings: number; readonly hash: string; readonly attribution?: string
-}
 let engine: InstanceType<typeof ELK> | undefined
 /** ELK's worker script run in this thread: in a scope without `self` (Bun defines it) it exports its in-thread worker. */
 const elk = (): InstanceType<typeof ELK> => engine ??= (() => {

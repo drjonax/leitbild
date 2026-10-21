@@ -1,25 +1,31 @@
 import type { CompiledComponent, CompiledPlantGraph, CompiledProcessLink, VariablePath } from '../../graph/index.ts'
+import type { TopologyEdge, TopologyNode } from '../../../../core/observation/topology.ts'
 import { linkCarrier } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { readingText, unitLabel } from '../../quantity-text.ts'
 import { framingRules, itemBinding, linkPowerBinding, stubWordBinding, type MimicItemBinding, type MimicStubWord } from './bindings.ts'
 import { linkFlowBinding } from '../../equipment/link-flow.ts'
 import { equipmentItemId, type EquipmentItem } from '../../equipment/items.ts'
-import { diagramCandidates, type DiagramCandidates, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramRoom, type PlacedNode } from '../../../../features/displays/diagram/index.ts'
-import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'
+import { diagramCandidates, type DiagramCandidates, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramRoom, type PlacedNode } from '../../../../features/displays/diagram/index.ts'
+import { flowPlan, type FlowItem, type FlowPlan, type FlowRole, type FlowSizing, type FlowStop } from '../../../../features/displays/topology/flow.ts'
+import { drawingCache, drawingKey } from '../../../../features/displays/topology/cache.ts'
+import { TOPOLOGY_REACH, withLeavesStopped, withParallelSupplies, type ScopedTopology } from '../../../../features/displays/topology/scope.ts'
+import { resolveMimicIntent, type MimicIssue } from './intent.ts'
+import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicIntent, type MimicItemTrend, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, stubWordTexts, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
-import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { loneReachedPort, stubText } from './stub-words.ts'
 import { plantLoops } from '../../equipment/circuits.ts'
 import { fitVessel } from './vessel-fit.ts'
 import { openBridgeDevice, QUICK_LOOK_DOT, reactorVesselBottom, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
-// Intent (or a scope World resolved itself) → items with their bindings → a
-// diagram sized in OpenBridge px → the layout engine → a compiled mimic.
-// Every step reads the Plant's declared semantics; no step knows the
-// reference model. The profile decides how much each item says: readout
-// size, valves as markers, parallel equipment as one symbol.
+// Intent (or a scope World resolved itself) → World's topology scope and flow
+// drawing, sized here in OpenBridge px with each item's bindings and rows
+// (the P1 bridge: FlowSizing) → the layout engine → a compiled mimic. Every
+// step reads the Plant's declared semantics; no step knows the reference
+// model. The profile decides how much each item says: readout size, valves as
+// markers, parallel equipment as one symbol.
 
 /** The profile a display draws by, and the room it leaves the drawing. */
 export interface MimicBudget {
@@ -28,18 +34,12 @@ export interface MimicBudget {
   readonly maxHeight: number
 }
 
-export interface MimicIssue {
-  readonly field: string
-  readonly message: string
-  readonly didYouMean?: ReadonlyArray<string>
-}
-
 export type MimicCompileResult =
   | { readonly ok: true; readonly mimic: CompiledMimic }
   | { readonly ok: false; readonly issues: ReadonlyArray<MimicIssue> }
 
+/** What the bridge keeps of a drawn item for the compiled mimic. */
 interface PlannedItem {
-  readonly id: string
   readonly item: EquipmentItem
   readonly binding: MimicItemBinding
   readonly presentation: MimicPresentation
@@ -47,22 +47,10 @@ interface PlannedItem {
   /** A device's flap lines under OpenBridge's own (MimicDrawnItem.flapLines). */
   readonly flapLines: ReadonlyArray<FlapPart>
   readonly marker: boolean
-  readonly role: MimicRole
-  readonly rank: string
-  /** Its loop's lane: the engine's partition. */
-  readonly lane?: DiagramNode['partition']
+  readonly role: FlowRole
   /** The Plant components it stands for: a group's members, or a bundled device's host. */
   readonly components: ReadonlyArray<number>
 }
-
-/** How the mimic draws an item: a symbol, a bar (a header or bus), or the hub its loops leave and return to (isHub). */
-type MimicRole = 'device' | 'bar' | 'hub'
-
-/** A hub is the engine's common node: one its partitions, the loops' lanes, leave and return to. */
-const diagramRole = (role: MimicRole): DiagramNode['role'] => (role === 'hub' ? 'common' : role)
-
-const laneOf = (key: string | undefined, orders: ReadonlyMap<string, number>): DiagramNode['partition'] | undefined =>
-  key === undefined || !orders.has(key) ? undefined : { key, order: orders.get(key)! }
 
 const valueRowWidth = (unit: string, fractionDigits: number, integerDigits = 3): number =>
   readoutBlockWidth(integerDigits, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
@@ -133,25 +121,6 @@ const aspectFor = (presentation: MimicPresentation) =>
     : presentation.element === 'tank' || presentation.element === 'heat-exchanger' || presentation.element === 'vessel' ? presentation.aspect
       : null
 
-// A vessel loops return to (the reactor) is a hub: it takes links from two or
-// more drawn loops on both sides, or a drawn loop leaves it and returns to it.
-// Drawn beside the lanes, each loop's return run reaches its side face.
-const isHub = (graph: CompiledPlantGraph, component: CompiledComponent, drawnLinks: ReadonlySet<number>): boolean => {
-  const loopsOf = (indexes: ReadonlyArray<number> | undefined, side: 'from' | 'to') => new Set((indexes ?? [])
-    .filter(index => drawnLinks.has(index))
-    .map(index => graph.components[side === 'from' ? graph.links[index]!.fromComponentIndex : graph.links[index]!.toComponentIndex]!.metadata?.loopId)
-    .filter((loop): loop is string => loop !== undefined))
-  const returning = loopsOf(graph.incomingLinksByComponent[component.index], 'from')
-  const leaving = loopsOf(graph.outgoingLinksByComponent[component.index], 'to')
-  return component.metadata?.loopId === undefined
-    && ((returning.size >= 2 && leaving.size >= 2) || [...returning].some(loop => leaving.has(loop)))
-}
-
-const portDirection = (component: CompiledComponent, port: string): 'in' | 'out' | 'both' => {
-  const direction = component.ports[port]?.direction
-  return direction === 'bidirectional' ? 'both' : direction === 'out' ? 'out' : 'in'
-}
-
 /**
  * "MFW A/B" for MFW A and MFW B: the words their labels share in front, then
  * what tells each apart; labels sharing no leading word are joined whole.
@@ -206,46 +175,33 @@ const flapPlan = (
 const OPENBRIDGE_GRID = 24
 const FRAME_MARGIN = 1
 
-interface Planned {
-  readonly graph: DiagramGraph
-  readonly items: ReadonlyMap<string, PlannedItem>
-  /** Per edge, the Plant link it draws and the links of grouped members it stands for too. */
-  readonly edgeLinks: ReadonlyMap<string, { readonly link: number; readonly parallel: ReadonlyArray<number> }>
-  readonly stubs: ReadonlyMap<string, MimicStub>
+/** A drawing's sizing with the measuring issues it met. */
+interface Sizing {
+  readonly sizing: FlowSizing<PlannedItem>
   readonly issues: ReadonlyArray<MimicIssue>
 }
 
-const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile, badges: BadgeReservation = profile.badges[0]!): Planned => {
+/**
+ * How the old renderer sizes and words World's flow drawing of the Plant
+ * (FlowSizing): what the mimic does not draw, which relief lines vent out of
+ * the Plant, bars, which valves take their loop's lane, which equipment the
+ * profile groups, the devices a component bundles on a port, each item's
+ * binding, rows and flap, measured in OpenBridge px.
+ */
+const mimicSizing = (plant: CompiledProcessPlant, profile: MimicProfile, badges: BadgeReservation): Sizing => {
   const graph = plant.graph
   const framed = framingRules(plant)
   const issues: MimicIssue[] = []
-  const loopOrder = new Map(plantLoops(graph).map((loop, order) => [loop, order]))
-  const drawnLinks = new Set(scope.links)
-
-  // Equipment the mimic cannot draw ends the drawing like any other stop.
-  const notDrawn = new Set(scope.components.filter(index => presentationFor(graph.components[index]!).element === 'not-drawn'))
-  const links = scope.links.filter(index => !notDrawn.has(graph.links[index]!.fromComponentIndex) && !notDrawn.has(graph.links[index]!.toComponentIndex))
-  // A relief valve venting out of the Plant (into equipment not drawn that takes the flow no further, the atmosphere) ends the drawing itself.
-  const ventsOutOfPlant = (link: CompiledProcessLink): boolean => graph.components[link.fromComponentIndex]!.semantics.function === 'relieving'
-    && notDrawn.has(link.toComponentIndex) && (graph.outgoingLinksByComponent[link.toComponentIndex] ?? []).length === 0
-  const extraStubs: MimicStub[] = scope.links.flatMap((index): MimicStub[] => {
-    const link = graph.links[index]!
-    if (ventsOutOfPlant(link)) return []
-    if (notDrawn.has(link.toComponentIndex) && !notDrawn.has(link.fromComponentIndex)) return [{ component: link.fromComponentIndex, port: String(link.fromPortName), direction: 'out' as const, links: [index], others: [{ component: link.toComponentIndex, port: String(link.toPortName) }] }]
-    if (notDrawn.has(link.fromComponentIndex) && !notDrawn.has(link.toComponentIndex)) return [{ component: link.toComponentIndex, port: String(link.toPortName), direction: 'in' as const, links: [index], others: [{ component: link.fromComponentIndex, port: String(link.fromPortName) }] }]
-    return []
-  })
-  const farLabel = (component: number): string => graph.components[component]!.metadata?.presentation?.shortLabel ?? graph.components[component]!.label
-  // Equipment the mimic does not draw has no ends to stop at: what else flows into it (the atmosphere many vents discharge to) is not this drawing's.
-  const scopeStubs = [...scope.stubs.filter(stub => !notDrawn.has(stub.component)), ...extraStubs]
-
-  const items = new Map<string, PlannedItem>()
-  const nodes: DiagramNode[] = []
-  const edges: DiagramEdge[] = []
-  const edgeLinks = new Map<string, { link: number; parallel: number[] }>()
-  const stubs = new Map<string, MimicStub>()
-  const componentRank = new Map<number, string>()
-
+  const indexOf = (node: TopologyNode): number => graph.componentIndexById.get(node.id as never)!
+  const presentations = new Map<string, MimicPresentation>()
+  const presentationOf = (node: TopologyNode): MimicPresentation => {
+    const known = presentations.get(node.id)
+    if (known !== undefined) return known
+    const made = presentationFor(graph.components[indexOf(node)]!)
+    presentations.set(node.id, made)
+    return made
+  }
+  const linkIndex = new Map(graph.links.map(link => [String(link.id), link.index]))
   const measure = (style: OpenBridgeTextStyle, text: string, owner: string): number => {
     const missing = unmeasurable(style, text)
     if (missing.length > 0) {
@@ -254,7 +210,6 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     }
     return textWidth(style, text)
   }
-
   // A reactor vessel is as wide as its profile draws it. As a hub it keeps room past its nozzles for its head above
   // them and its bottom, and where it heats, its core region, below them (MimicVesselDrawing); one a pipe enters at
   // an end is as tall as all of them.
@@ -270,246 +225,98 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       ? { cells: { width: 2, height: 4 }, portInset: openBridgeDevice.vessel.inset }
       : { cells: { width: 2, height: 2 }, portInset: 0 }
   }
-
-  const addItem = (unflapped: Omit<PlannedItem, 'flapLines'>, ports: DiagramNode['ports']): void => {
+  // An item with its flap: a frame's flap names its most severe active alarm whole, what it watches and what the
+  // I&C does there, and the item counts its other alarms ("+2 alarms"): no drawing drops the action or leaves a count
+  // unexplained (HMI review of run 23: "LO-LO +2" on a detail, "LO-LO · AFW START +2" on the overview).
+  const sized = (unflapped: Omit<PlannedItem, 'flapLines'>) => {
     const presentation = unflapped.presentation
     const vessel = isVessel(presentation) || unflapped.role === 'hub'
     // An interactive drawing's tag line also holds the item's detail dot.
     const tag = measure('tag', unflapped.binding.label, unflapped.binding.label) + (profile.quickLooks ? QUICK_LOOK_DOT.gap + QUICK_LOOK_DOT.size : 0)
-    // A frame's flap names its most severe active alarm whole, what it watches and what the I&C does there,
-    // and the item counts its other alarms ("+2 alarms"): no drawing drops the action or leaves a count
-    // unexplained (HMI review of run 23: "LO-LO +2" on a detail, "LO-LO · AFW START +2" on the overview).
     const flap = flapPlan(unflapped, vessel, tag, measure, badges)
-    const planned = { ...unflapped, rows: [...unflapped.rows, ...flap.rows], flapLines: flap.lines }
-    items.set(planned.id, planned)
+    const planned: PlannedItem = { ...unflapped, rows: [...unflapped.rows, ...flap.rows], flapLines: flap.lines }
     for (const row of planned.rows) for (const { style, text } of rowTexts(row)) measure(style, text, planned.binding.label)
-    nodes.push({
-      id: planned.id,
-      rank: planned.rank,
-      role: diagramRole(planned.role),
-      ...footprintOf(planned),
-      ports,
-      ...(planned.lane === undefined ? {} : { partition: planned.lane }),
-      text: {
-        lines: [
-          // Every item carries its tag, a marker too: a valve's place on a loop does not say which valve it is
-          // (run 22 QA: unlabelled feed regulating and main steam isolation valves on the overview).
-          { width: tag, height: openBridgeDevice.tagLine, required: true },
-          ...planned.rows.map(row => ({ ...rowSize(row, isDevice(presentation), profile.readoutSize), required: row.required })),
-        ],
+    return {
+      label: planned.binding.label,
+      keep: planned,
+      node: {
+        ...footprintOf(planned),
+        text: {
+          lines: [
+            // Every item carries its tag, a marker too: a valve's place on a loop does not say which valve it is
+            // (run 22 QA: unlabelled feed regulating and main steam isolation valves on the overview).
+            { width: tag, height: openBridgeDevice.tagLine, required: true },
+            ...planned.rows.map(row => ({ ...rowSize(row, isDevice(presentation), profile.readoutSize), required: row.required })),
+          ],
+        },
+        frameable: planned.binding.frames.length > 0,
+        ...(planned.binding.frames.length === 0 ? {} : { flapWidth: flap.width, flapLines: 1 + flap.lines.length }),
       },
-      frameable: planned.binding.frames.length > 0,
-      ...(planned.binding.frames.length === 0 ? {} : { flapWidth: flap.width, flapLines: 1 + flap.lines.length }),
-    })
-  }
-
-  // Ports each drawn component uses, from its drawn links and stubs.
-  const usedPorts = new Map<number, Set<string>>()
-  const usePort = (component: number, port: string) => usedPorts.set(component, new Set([...(usedPorts.get(component) ?? []), port]))
-  for (const index of links) {
-    usePort(graph.links[index]!.fromComponentIndex, String(graph.links[index]!.fromPortName))
-    usePort(graph.links[index]!.toComponentIndex, String(graph.links[index]!.toPortName))
-  }
-  // Ports drawn pipes reach, before stubs: a hub a lone pipe reaches at one of its alike ports names it.
-  const piped = new Map([...usedPorts].map(([component, ports]) => [component, new Set(ports)]))
-  for (const stub of scopeStubs) usePort(stub.component, stub.port)
-
-  const drawn = scope.components.filter(index => !notDrawn.has(index))
-  const presentations = new Map(drawn.map(index => [index, presentationFor(graph.components[index]!)]))
-  const hubs = new Set(drawn.filter(index => presentations.get(index)!.element !== 'bar' && isHub(graph, graph.components[index]!, drawnLinks)))
-  // A valve the model gives no loop is drawn in a loop's lane where
-  // everything it is piped to in this drawing, its stops aside, belongs to
-  // that one loop (a steam generator's safety valve, which vents out of the
-  // drawing). Read from the drawn links alone, never written to the model, so
-  // the Plant model and its digest stay as they are.
-  const declaredLoop = (component: number): string | undefined => graph.components[component]!.metadata?.loopId
-  const inferredLoops = new Map(drawn.flatMap(index => {
-    if (declaredLoop(index) !== undefined || !isValve(presentations.get(index)!)) return []
-    const neighbours = links.flatMap(link => {
-      const at = graph.links[link]!
-      return at.fromComponentIndex === index ? [at.toComponentIndex] : at.toComponentIndex === index ? [at.fromComponentIndex] : []
-    })
-    const loops = new Set(neighbours.map(declaredLoop))
-    const [loop] = loops
-    return loops.size === 1 && loop !== undefined ? [[index, loop] as const] : []
-  }))
-  const loopOf = (component: number): string | undefined => declaredLoop(component) ?? inferredLoops.get(component)
-  const labelOf = (component: number) => itemBinding(plant, { kind: 'component', component }, aspectFor(presentations.get(component)!), framed).label
-
-  // Parallel equipment the profile groups: same kind, presentation, loop and
-  // ports, and on each port the same far ends (alike ports of a header count
-  // as one) and the same stops. Members are ordered by label.
-  const representative = new Map<number, number>()
-  const members = new Map<number, ReadonlyArray<number>>()
-  if (profile.parallel === 'grouped') {
-    const farKey = (component: number, port: string): string => {
-      const far = graph.components[component]!
-      return presentations.get(component)?.element === 'bar' ? `${far.index}|${far.ports[port]?.circuit ?? port}` : `${far.index}|${port}`
-    }
-    const signature = (index: number): string | null => {
-      const component = graph.components[index]!
-      const presentation = presentations.get(index)!
-      const aspect = aspectFor(presentation)
-      if (presentation.element === 'bar' || hubs.has(index) || aspect === null || COUNT_WORDS[aspect] === undefined) return null
-      const ports = [...(usedPorts.get(index) ?? [])].sort()
-      if (component.semantics.embedded.some(device => ports.includes(String(device.port)))) return null
-      const sides = ports.map(port => {
-        const out = links.filter(link => graph.links[link]!.fromComponentIndex === index && String(graph.links[link]!.fromPortName) === port)
-          .map(link => graph.links[link]!).map(link => farKey(link.toComponentIndex, String(link.toPortName)))
-        const into = links.filter(link => graph.links[link]!.toComponentIndex === index && String(graph.links[link]!.toPortName) === port)
-          .map(link => graph.links[link]!).map(link => farKey(link.fromComponentIndex, String(link.fromPortName)))
-        const embeddedFar = links.some(link => {
-          const at = graph.links[link]!
-          const far = at.fromComponentIndex === index ? graph.components[at.toComponentIndex]! : at.toComponentIndex === index ? graph.components[at.fromComponentIndex]! : null
-          const farPort = at.fromComponentIndex === index ? String(at.toPortName) : String(at.fromPortName)
-          return far !== null && (at.fromComponentIndex === index || at.toComponentIndex === index) && far.semantics.embedded.some(device => String(device.port) === farPort)
-        })
-        if (embeddedFar) return null
-        const stops = scopeStubs.filter(stub => stub.component === index && stub.port === port)
-          .map(stub => `${stub.direction}:${stub.others.map(other => `${other.component}|${other.port}`).join(',')}`)
-        return [port, [...new Set(out)].sort(), [...new Set(into)].sort(), stops.sort()]
-      })
-      if (sides.some(side => side === null)) return null
-      return JSON.stringify([component.kind, presentation, loopOf(index) ?? null, sides])
-    }
-    const bySignature = new Map<string, number[]>()
-    for (const index of drawn) {
-      const key = signature(index)
-      if (key !== null) bySignature.set(key, [...(bySignature.get(key) ?? []), index])
-    }
-    for (const group of bySignature.values()) {
-      if (group.length < 2) continue
-      const ordered = [...group].sort((a, b) => labelOf(a).localeCompare(labelOf(b)) || a - b)
-      for (const index of ordered) representative.set(index, ordered[0]!)
-      members.set(ordered[0]!, ordered)
     }
   }
-  const nodeOf = (component: number): string => `c${representative.get(component) ?? component}`
-
-  for (const index of drawn) {
-    if ((representative.get(index) ?? index) !== index) continue
+  const componentItem = (item: FlowItem) => {
+    const index = indexOf(item.node)
     const component = graph.components[index]!
-    const presentation = presentations.get(index)!
-    const role: MimicRole = presentation.element === 'bar' ? 'bar' : hubs.has(index) ? 'hub' : 'device'
-    const group = members.get(index) ?? [index]
+    const presentation = presentationOf(item.node)
+    const group = item.members.map(indexOf)
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
-    // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
-    // A header's ports are only where branches join; its stubs name the rest.
-    // A hub a lone pipe enters at one of its alike ports ("cold leg C" of the
-    // core's four) is that pipe's destination: its label names the port and it
-    // writes none of its own values, so no value reads as the port's ("Core ·
-    // cold leg C" beside the core's 339 °C read as the cold leg's temperature).
-    const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, piped.get(index) ?? new Set(), usedPorts.get(index) ?? new Set()) : null
+    // A group's own state is its members' (rows.ts drawnLook); it shows no member's values. A hub a lone pipe enters
+    // at one of its alike ports ("cold leg C" of the core's four) is that pipe's destination: its label names the
+    // port and it writes none of its own values, so no value reads as the port's ("Core · cold leg C" beside the
+    // core's 339 °C read as the cold leg's temperature).
+    const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, item.piped, new Set(item.ports)) : null
     const binding: MimicItemBinding = group.length === 1
       ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}`, values: [], ranges: [] })
-      : {
-          item: bindings[0]!.item,
-          label: groupLabel(bindings.map(member => member.label)),
-          state: null,
-          values: [],
-          ranges: [],
-          shutdown: [],
-          limits: [],
-          frames: bindings.flatMap(member => member.frames),
-        }
+      : { item: bindings[0]!.item, label: groupLabel(bindings.map(member => member.label)), state: null, values: [], ranges: [], shutdown: [], limits: [], frames: bindings.flatMap(member => member.frames) }
     const marker = profile.valves === 'markers' && isValve(presentation) && group.length === 1
-    const ports = [...(usedPorts.get(index) ?? [])].sort()
-    const rank = [role, component.kind, component.metadata?.equipmentClass ?? '', component.metadata?.role ?? '', ports.join(','), binding.label].join('|')
-    for (const member of group) componentRank.set(member, rank)
-    const lane = laneOf(loopOf(index), loopOrder)
     const rows = itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan })
-    addItem(
-      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: withSparklines(rows, presentation, profile), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
-      ports.map(port => ({ id: port, direction: portDirection(component, port), rank: port })),
-    )
+    return sized({ item: { kind: 'component', component: index }, binding, presentation, rows: withSparklines(rows, presentation, profile), marker, role: item.role, components: group })
   }
-
-  // A drawn link becomes a chain of edges through the devices its host bundles
-  // on that port. Links of grouped members that join the same two drawn ends
-  // (alike header ports counting as one) are one pipe, drawn as the link of
-  // the member first by label, whatever order the Plant lists them in.
-  const drawnEnds = new Map<string, string>()
-  const linkKey = (index: number): string => {
-    const link = graph.links[index]!
-    return `${farLabel(link.fromComponentIndex)}|${link.fromPortName}|${farLabel(link.toComponentIndex)}|${link.toPortName}`
+  const deviceItem = (item: FlowItem) => {
+    const host = indexOf(item.node)
+    const device = graph.components[host]!.semantics.embedded.find(candidate => candidate.id === item.device)!
+    const presentation = embeddedPresentation(device)
+    const binding = itemBinding(plant, { kind: 'device', component: host, device: device.id }, 'position', framed)
+    const marker = profile.valves === 'markers' && isValve(presentation)
+    return sized({ item: { kind: 'device', component: host, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands, offSpan: profile.offSpan }), marker, role: 'device', components: [host] })
   }
-  for (const index of [...links].sort((a, b) => linkKey(a).localeCompare(linkKey(b)) || a - b)) {
-    const link = graph.links[index]!
-    const from = graph.components[link.fromComponentIndex]!
-    const to = graph.components[link.toComponentIndex]!
-    const endKey = (component: CompiledComponent, port: string) => presentations.get(component.index)?.element === 'bar' ? `${nodeOf(component.index)}|${component.ports[port]?.circuit ?? port}` : `${nodeOf(component.index)}|${port}`
-    const ends = `${endKey(from, String(link.fromPortName))}>${endKey(to, String(link.toPortName))}`
-    const grouped = representative.has(from.index) || representative.has(to.index)
-    const known = grouped ? drawnEnds.get(ends) : undefined
-    if (known !== undefined) {
-      edgeLinks.get(known)!.parallel.push(index)
-      continue
-    }
-    const devicesOn = (component: CompiledComponent, port: string) => component.semantics.embedded.filter(device => String(device.port) === port)
-    const chain: Array<{ readonly node: string; readonly inPort: string; readonly outPort: string }> = [
-      { node: nodeOf(from.index), inPort: '', outPort: String(link.fromPortName) },
-      ...[...devicesOn(from, String(link.fromPortName)), ...devicesOn(to, String(link.toPortName))].map(device => {
-        const host = devicesOn(from, String(link.fromPortName)).includes(device) ? from : to
-        const id = `c${host.index}:${device.id}`
-        if (!items.has(id)) {
-          const presentation = embeddedPresentation(device)
-          const binding = itemBinding(plant, { kind: 'device', component: host.index, device: device.id }, 'position', framed)
-          const lane = laneOf(loopOf(host.index), loopOrder)
-          const marker = profile.valves === 'markers' && isValve(presentation)
-          addItem(
-            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands, offSpan: profile.offSpan }), marker, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
-            [{ id: 'in', direction: 'in', rank: 'in' }, { id: 'out', direction: 'out', rank: 'out' }],
-          )
-        }
-        return { node: id, inPort: 'in', outPort: 'out' }
-      }),
-      { node: nodeOf(to.index), inPort: String(link.toPortName), outPort: '' },
-    ]
-    chain.slice(1).forEach((step, at) => {
-      const previous = chain[at]!
-      const id = `l${index}.${at}`
-      edgeLinks.set(id, { link: index, parallel: [] })
-      if (at === 0 && grouped) drawnEnds.set(ends, id)
-      edges.push({ id, rank: `${linkCarrier(link)}|${componentRank.get(from.index)}|${link.fromPortName}|${componentRank.get(to.index)}|${link.toPortName}|${at}`, from: { node: previous.node, port: previous.outPort }, to: { node: step.node, port: step.inPort } })
-    })
-  }
-
-  // A grouped member's stops are its group's: one stub for all, carrying every member's links.
-  const groupedStubs = scopeStubs.reduce((list, stub) => {
-    const owner = representative.get(stub.component) ?? stub.component
-    const same = list.find(other => other.component === owner && other.port === stub.port && other.direction === stub.direction)
-    if (same === undefined) return [...list, { ...stub, component: owner }]
-    return list.map(other => (other === same ? { ...other, links: [...other.links, ...stub.links] } : other))
-  }, [] as MimicStub[])
-  groupedStubs.forEach((stub, at) => {
-    const id = `s${at}`
-    stubs.set(id, stub)
+  const sizing: FlowSizing<PlannedItem> = {
+    key: profile.id,
+    // Equipment the mimic cannot draw ends the drawing like any other stop.
+    visible: node => presentationOf(node).element !== 'not-drawn',
+    // A relief valve venting out of the Plant (into equipment not drawn that takes the flow no further, the atmosphere) ends the drawing itself.
+    silent: edge => {
+      const link = graph.links[linkIndex.get(edge.id)!]!
+      return graph.components[link.fromComponentIndex]!.semantics.function === 'relieving' && (graph.outgoingLinksByComponent[link.toComponentIndex] ?? []).length === 0
+    },
+    bar: node => presentationOf(node).element === 'bar',
+    // A valve the model gives no loop is drawn in a loop's lane where everything it is piped to in this drawing
+    // belongs to that one loop (a steam generator's safety valve); read from the drawing alone, never written to the model.
+    infersLane: node => isValve(presentationOf(node)),
+    ...(profile.parallel !== 'grouped' ? {} : {
+      // Parallel equipment the profile groups: same kind and presentation, whose state words count members.
+      groupKey: (node: TopologyNode) => {
+        const presentation = presentationOf(node)
+        const aspect = aspectFor(presentation)
+        return aspect === null || COUNT_WORDS[aspect] === undefined ? null : JSON.stringify([node.kind, presentation])
+      },
+    }),
+    chain: (node, port) => graph.components[indexOf(node)]!.semantics.embedded.filter(device => String(device.port) === port).map(device => device.id),
+    itemId: (node, device) => (device === undefined ? `c${indexOf(node)}` : `c${indexOf(node)}:${device}`),
+    edgeId: edge => `l${linkIndex.get(edge.id)!}`,
+    label: node => itemBinding(plant, { kind: 'component', component: indexOf(node) }, aspectFor(presentationOf(node)), framed).label,
+    item: item => (item.device === undefined ? componentItem(item) : deviceItem(item)),
     // A power line's far end says under its name whether the equipment it names is live ("from UAT", "LIVE"), its room kept for the longest word.
-    const word = stubWordOf(graph, stub)
-    const text = stubText(graph, stub, profile.stubLabels)
-    const lane = laneOf(loopOf(stub.component), loopOrder)
-    nodes.push({
-      id,
-      rank: `stub|${componentRank.get(stub.component)}|${stub.port}|${stub.direction}`,
-      role: 'stub',
-      cells: { width: 1, height: 1 },
-      portInset: 0,
-      ports: [{ id: 'end', direction: stub.direction === 'out' ? 'in' : 'out', rank: 'end' }],
-      ...(lane === undefined ? {} : { partition: lane }),
-      text: { lines: [
+    stop: stop => {
+      const word = stubWordOf(graph, stop)
+      const text = stubText(graph, stop, profile.stubLabels)
+      return { lines: [
         { width: measure('tag', text, text), height: openBridgeDevice.tagLine, required: true },
         ...(word === null ? [] : [{ width: Math.max(...stubWordTexts(word).map(shown => measure('tag', shown, text))), height: openBridgeDevice.tagLine, required: true }]),
-      ] },
-      frameable: false,
-    })
-    const edge = { id: `${id}.edge`, rank: `stub|${componentRank.get(stub.component)}|${stub.port}|${stub.direction}` }
-    edgeLinks.set(edge.id, { link: stub.links[0]!, parallel: stub.links.slice(1) })
-    edges.push(stub.direction === 'out'
-      ? { ...edge, from: { node: nodeOf(stub.component), port: stub.port }, to: { node: id, port: 'end' } }
-      : { ...edge, from: { node: id, port: 'end' }, to: { node: nodeOf(stub.component), port: stub.port } })
-  })
-
-  return { graph: { nodes, edges }, items, edgeLinks, stubs, issues }
+      ] }
+    },
+  }
+  return { sizing, issues }
 }
 
 /** Where a reactor vessel's core region stands (MimicVesselDrawing): as its profile draws it where it is the energy's source; null for any other. */
@@ -543,8 +350,18 @@ const trendPathsOf = (item: Pick<MimicDrawnItem, 'rows' | 'trend'>): ReadonlyArr
 ]
 
 /** A power stub's word, about the far ends it names (stubWordBinding); null where its lines carry fluid. */
-const stubWordOf = (graph: CompiledPlantGraph, stub: MimicStub): MimicStubWord | null =>
-  linkCarrier(graph.links[stub.links[0]!]!) !== 'electricalPower' ? null : stubWordBinding(graph, stub.others.map(other => other.component), stub.links)
+const linkIndexes = new WeakMap<CompiledPlantGraph, ReadonlyMap<string, number>>()
+/** A topology edge's Plant link: the edge's id is the link's. */
+const linkOf = (graph: CompiledPlantGraph, edge: string): CompiledProcessLink => {
+  const known = linkIndexes.get(graph) ?? new Map(graph.links.map(link => [String(link.id), link.index]))
+  linkIndexes.set(graph, known)
+  return graph.links[known.get(edge)!]!
+}
+
+const stubWordOf = (graph: CompiledPlantGraph, stop: FlowStop): MimicStubWord | null => {
+  const links = stop.edges.map(edge => linkOf(graph, edge).index)
+  return linkCarrier(graph.links[links[0]!]!) !== 'electricalPower' ? null : stubWordBinding(graph, stop.others.map(other => graph.componentIndexById.get(other.node as never)!), links)
+}
 
 const pipeState = (graph: CompiledPlantGraph, link: CompiledProcessLink, parallel: ReadonlyArray<number>): MimicPipeState =>
   link.kind === 'electricalPower'
@@ -569,11 +386,12 @@ const rowPaths = (row: MimicRow): ReadonlyArray<VariablePath> => {
   ])
 }
 
-const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profile: MimicProfile, scope: MimicScope, planned: Planned, layout: Extract<DiagramLayoutResult, { ok: true }>): CompiledMimic => {
+const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profile: MimicProfile, scoped: ScopedTopology, planned: FlowPlan<PlannedItem>, layout: Extract<DiagramLayoutResult, { ok: true }>): CompiledMimic => {
   const graph = plant.graph
   const placed = new Map(layout.nodes.map(node => [node.id, node]))
+  const kept = [...planned.items].map(([id, entry]) => ({ id, ...entry.keep }))
   // A reactor vessel stands in its box as a vessel does (vessel-fit.ts); a pipe reaching its box beside it continues to it.
-  const vesselFits = new Map([...planned.items.values()].filter(item => item.presentation.element === 'vessel').map(item => {
+  const vesselFits = new Map(kept.filter(item => item.presentation.element === 'vessel').map(item => {
     const node = placed.get(item.id)!
     return [item.id, fitVessel({ x: node.x, y: node.y, width: node.width, height: node.height }, Object.values(node.ports), node.text?.side ?? null)] as const
   }))
@@ -584,7 +402,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     const last = continued(points.at(-1)!)
     return [...(first === undefined ? [] : [...first.points].reverse()), ...points, ...(last === undefined ? [] : last.points)]
   }
-  const items: MimicDrawnItem[] = [...planned.items.values()].map(item => {
+  const items: MimicDrawnItem[] = kept.map(item => {
     const node = placed.get(item.id)!
     // A stack's first line is the tag; the rows that fit follow it.
     const rows = item.rows.slice(0, Math.max(0, (node.text?.lines ?? 1) - 1))
@@ -606,14 +424,16 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       ...(trend === null ? {} : { trend }),
     }
   })
-  const linkOf = (edgeId: string) => planned.edgeLinks.get(edgeId)!
+  const drawnOf = (edgeId: string) => {
+    const { edge, parallel } = planned.edges.get(edgeId)!
+    return { link: linkOf(graph, edge), parallel: parallel.map(other => linkOf(graph, other).index) }
+  }
   const pipes = layout.edges.filter(edge => !edge.id.startsWith('s')).map(edge => {
-    const { link: index, parallel } = linkOf(edge.id)
-    const link = graph.links[index]!
+    const { link, parallel } = drawnOf(edge.id)
     return { id: edge.id, linkId: String(link.id), carrier: linkCarrier(link), points: toVessels(edge.points), gaps: edge.gaps, state: pipeState(graph, link, parallel) }
   })
   const stubEdges = new Map(layout.edges.filter(edge => edge.id.startsWith('s')).map(edge => [edge.id.slice(0, edge.id.indexOf('.')), edge]))
-  const stubs = [...planned.stubs].map(([id, stub]) => {
+  const stubs = [...planned.stops].map(([id, stub]) => {
     const edge = stubEdges.get(id)!
     const node = placed.get(id)!
     const end = node.ports.end!
@@ -623,15 +443,14 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       end: { x: end.x, y: end.y, face: end.face },
       text: stubText(graph, stub, profile.stubLabels),
       textBox: node.text,
-      states: stub.links.map(index => pipeState(graph, graph.links[index]!, [])),
+      states: stub.edges.map(edge => pipeState(graph, linkOf(graph, edge), [])),
       word: stubWordOf(graph, stub),
       edge,
     }
   })
   // A stub's pipe is drawn with the other pipes, styled by its first link (a grouped stub's links share one port).
   const stubPipes = stubs.map(stub => {
-    const { link: index, parallel } = linkOf(stub.edge.id)
-    const link = graph.links[index]!
+    const { link, parallel } = drawnOf(stub.edge.id)
     return { id: stub.edge.id, linkId: String(link.id), carrier: linkCarrier(link), points: toVessels(stub.edge.points), gaps: stub.edge.gaps, state: pipeState(graph, link, parallel) }
   })
   const paths = [...new Set([
@@ -673,8 +492,8 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
     trendPaths: [...new Set(items.flatMap(trendPathsOf))],
     summary: {
       equipment,
-      stops: stubs.map(stub => `${graph.components[planned.stubs.get(stub.id)!.component]!.metadata?.presentation?.shortLabel ?? graph.components[planned.stubs.get(stub.id)!.component]!.id} ${stub.text}`),
-      carriers: scope.carriers,
+      stops: stubs.map(stub => `${planned.stops.get(stub.id)!.node.shortLabel ?? planned.stops.get(stub.id)!.node.id} ${stub.text}`),
+      carriers: scoped.media,
       unverifiedFlows: [...new Set(pipes.filter(pipe => pipe.state.kind === 'fluid' && pipe.state.flow.fidelity === 'unverified').map(pipe => pipe.linkId))],
       unmeasuredStates: items.filter(item => item.binding.state?.aspect === 'position' && item.binding.state.state === undefined).map(item => item.binding.label),
     },
@@ -701,9 +520,10 @@ const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, room
 type Attempted = MimicCompileResult | { readonly ok: false; readonly layout: Extract<DiagramLayoutResult, { ok: false }> }
 
 /** The diagram a scope is drawn from under a profile and its roomiest badge reservation, before layout: what the engine sees (for verifying a drawing independently). */
-export const planMimicDiagram = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): { readonly ok: true; readonly graph: DiagramGraph } | { readonly ok: false; readonly issues: ReadonlyArray<MimicIssue> } => {
-  const planned = plan(plant, scope, profile)
-  return planned.issues.length > 0 ? { ok: false, issues: planned.issues } : { ok: true, graph: planned.graph }
+export const planMimicDiagram = (plant: CompiledProcessPlant, scoped: ScopedTopology, profile: MimicProfile): { readonly ok: true; readonly graph: DiagramGraph } | { readonly ok: false; readonly issues: ReadonlyArray<MimicIssue> } => {
+  const { sizing, issues } = mimicSizing(plant, profile, profile.badges[0]!)
+  const planned = flowPlan(scoped, sizing)
+  return issues.length > 0 ? { ok: false, issues } : { ok: true, graph: planned.graph }
 }
 
 /**
@@ -719,18 +539,19 @@ interface ScopeDrawing {
   readonly leastHeight: (maxWidth: number) => number | null
 }
 
-const planScope = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): ScopeDrawing => {
-  const reservations: Array<{ readonly planned: Planned; readonly candidates: DiagramCandidates } | { readonly issues: ReadonlyArray<MimicIssue> }> = []
+const planScope = (plant: CompiledProcessPlant, scoped: ScopedTopology, profile: MimicProfile): ScopeDrawing => {
+  const reservations: Array<{ readonly planned: FlowPlan<PlannedItem>; readonly candidates: DiagramCandidates } | { readonly issues: ReadonlyArray<MimicIssue> }> = []
   // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
   const notDrawable = (): ReadonlyArray<MimicIssue> => {
-    const reasons = scope.components.map(component => presentationFor(plant.graph.components[component]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
+    const reasons = scoped.nodes.map(node => presentationFor(plant.graph.components[plant.graph.componentIndexById.get(node as never)!]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
     return [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }]
   }
   const reservation = (index: number) => {
     const known = reservations[index]
     if (known !== undefined) return known
-    const planned = plan(plant, scope, profile, profile.badges[index]!)
-    const entry = planned.issues.length > 0 ? { issues: planned.issues }
+    const { sizing, issues } = mimicSizing(plant, profile, profile.badges[index]!)
+    const planned = flowPlan(scoped, sizing)
+    const entry = issues.length > 0 ? { issues }
       : planned.graph.nodes.length === 0 ? { issues: notDrawable() }
         : { planned, candidates: diagramCandidates(planned.graph, profile.layout) }
     reservations[index] = entry
@@ -743,7 +564,7 @@ const planScope = (plant: CompiledProcessPlant, scope: MimicScope, profile: Mimi
       const entry = reservation(index)
       if ('issues' in entry) return { ok: false, issues: entry.issues }
       const layout = entry.candidates.layout(room)
-      if (layout.ok) return { ok: true, mimic: assemble(plant, intent, profile, scope, entry.planned, layout) }
+      if (layout.ok) return { ok: true, mimic: assemble(plant, intent, profile, scoped, entry.planned, layout) }
       attempted = { ok: false, layout }
     }
     return attempted!
@@ -763,29 +584,17 @@ const planScope = (plant: CompiledProcessPlant, scope: MimicScope, profile: Mimi
 
 /** Scopes drawn per Plant and profile, the one drawn longest ago evicted first: an overview, the details opened from it, chat's retries. */
 const SCOPE_DRAWINGS = 96
-const scopeDrawings = new WeakMap<CompiledProcessPlant, WeakMap<MimicProfile, Map<string, ScopeDrawing>>>()
+const scopeDrawings = new WeakMap<CompiledProcessPlant, ReturnType<typeof drawingCache<ScopeDrawing>>>()
 
 /** A scope's drawing under a profile, planned and laid out once whatever rooms it is drawn for. */
-const scopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): ScopeDrawing => {
-  const byProfile = scopeDrawings.get(plant) ?? new WeakMap<MimicProfile, Map<string, ScopeDrawing>>()
-  scopeDrawings.set(plant, byProfile)
-  const drawings = byProfile.get(profile) ?? new Map<string, ScopeDrawing>()
-  byProfile.set(profile, drawings)
-  const key = JSON.stringify(scope)
-  const known = drawings.get(key)
-  if (known !== undefined) {
-    drawings.delete(key)
-    drawings.set(key, known)
-    return known
-  }
-  const created = planScope(plant, scope, profile)
-  if (drawings.size >= SCOPE_DRAWINGS) drawings.delete(drawings.keys().next().value!)
-  drawings.set(key, created)
-  return created
+const scopeDrawing = (plant: CompiledProcessPlant, scoped: ScopedTopology, profile: MimicProfile): ScopeDrawing => {
+  const drawings = scopeDrawings.get(plant) ?? drawingCache<ScopeDrawing>(SCOPE_DRAWINGS)
+  scopeDrawings.set(plant, drawings)
+  return drawings.get(drawingKey(scoped, profile.id), () => planScope(plant, scoped, profile))
 }
 
-const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scope: MimicScope, budget: MimicBudget): Attempted =>
-  scopeDrawing(plant, scope, budget.profile).draw(intent, budget)
+const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scoped: ScopedTopology, budget: MimicBudget): Attempted =>
+  scopeDrawing(plant, scoped, budget.profile).draw(intent, budget)
 
 /**
  * An intent drawn with its parallel supplies (withParallelSupplies), the most
@@ -795,21 +604,21 @@ const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, s
  * injection to loop C without accumulator C). The auxiliary feed beside the
  * main feed to all four steam generators draws legibly neither way. Where
  * the drawing as asked is still too much to read, its leaves are named on a
- * stub instead (withLeavesStubbed).
+ * stub instead (withLeavesStopped).
  */
 const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget: MimicBudget): Attempted => {
-  const resolved = resolveMimicScope(plant.graph, intent)
+  const resolved = resolveMimicIntent(plant, intent)
   if (!resolved.ok) return { ok: false, issues: resolved.issues }
-  const scopes = [withParallelSupplies(plant.graph, resolved.scope, 'drawn'), withParallelSupplies(plant.graph, resolved.scope, 'stubbed')]
-    .filter((scope): scope is MimicScope => scope !== null)
-  for (const scope of scopes) {
-    const supplied = compileScope(plant, intent, scope, budget)
+  const scopes = [withParallelSupplies(resolved.scoped, 'drawn'), withParallelSupplies(resolved.scoped, 'stopped')]
+    .filter((scoped): scoped is ScopedTopology => scoped !== null)
+  for (const scoped of scopes) {
+    const supplied = compileScope(plant, intent, scoped, budget)
     if (supplied.ok) return supplied
   }
-  const asked = compileScope(plant, intent, resolved.scope, budget)
+  const asked = compileScope(plant, intent, resolved.scoped, budget)
   if (asked.ok || 'issues' in asked) return asked
   // Too much to read at a glance: leaves that carry nothing further are named on a stub instead (evaluation run 24: both safety buses with their sequenced loads).
-  const leaner = withLeavesStubbed(plant.graph, resolved.scope)
+  const leaner = withLeavesStopped(resolved.scoped)
   if (leaner === null) return asked
   const stubbed = compileScope(plant, intent, leaner, budget)
   return stubbed.ok ? stubbed : asked
@@ -817,22 +626,22 @@ const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget:
 
 // Narrower intents that draw part of the same question; each is compiled, and only those that fit are offered.
 // None leaves out what the question is about: a loop set keeps the loop of each item named (of alike items
-// named in the plural, one), as resolveMimicScope requires of every intent.
+// named in the plural, one), as the scope requires of every intent.
 const narrower = (plant: CompiledProcessPlant, intent: MimicIntent): ReadonlyArray<MimicIntent> => {
-  const resolved = resolveMimicScope(plant.graph, intent)
+  const resolved = resolveMimicIntent(plant, intent)
   if (!resolved.ok) return []
-  const loopOfComponent = (index: number): string | undefined => plant.graph.components[index]!.metadata?.loopId
+  const loopOf = new Map(resolved.scoped.graph.nodes.map(node => [node.id, node.group]))
   const named = [...(intent.from ?? []), ...(intent.to ?? []), ...(intent.around ?? [])]
-    .map(name => resolved.scope.names.filter(entry => entry.name === name).flatMap(entry => loopOfComponent(entry.component) ?? []))
+    .map(name => resolved.names.filter(entry => entry.name === name).flatMap(entry => loopOf.get(entry.node) ?? []))
   const keepsNamed = (loops: ReadonlyArray<string>): boolean => named.every(theirs => theirs.length === 0 || theirs.some(loop => loops.includes(loop)))
-  const drawnLoops = plantLoops(plant.graph).filter(loop => resolved.scope.components.some(index => loopOfComponent(index) === loop))
+  const drawnLoops = plantLoops(plant.graph).filter(loop => resolved.scoped.nodes.some(node => loopOf.get(node) === loop))
   const loopSets = (intent.loops === undefined && drawnLoops.length > 1
     ? [drawnLoops.slice(0, 2), ...drawnLoops.map(loop => [loop])]
     : intent.loops !== undefined && intent.loops.length > 1 ? intent.loops.map(loop => [loop]) : []).filter(keepsNamed)
   const serviceSets = (intent.services ?? []).length > 1 ? intent.services!.map(service => [service]) : []
   // A drawing from one end or around its items can stop closer to them; around, that keeps it centred on what was asked about.
   const oneEnded = (intent.from === undefined) !== (intent.to === undefined) || intent.around !== undefined
-  const reaches = oneEnded ? Array.from({ length: (intent.reach ?? MIMIC_REACH_LINKS) - 1 }, (_, step) => (intent.reach ?? MIMIC_REACH_LINKS) - 1 - step).map(reach => ({ ...intent, reach })) : []
+  const reaches = oneEnded ? Array.from({ length: (intent.reach ?? TOPOLOGY_REACH) - 1 }, (_, step) => (intent.reach ?? TOPOLOGY_REACH) - 1 - step).map(reach => ({ ...intent, reach })) : []
   const narrowed = [
     ...loopSets.map(loops => ({ ...intent, loops })),
     ...serviceSets.map(services => ({ ...intent, services })),
@@ -869,8 +678,8 @@ export interface MimicScopeDrawing {
   readonly leastHeight: (maxWidth: number) => number | null
 }
 
-export const mimicScopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): MimicScopeDrawing => {
-  const drawing = scopeDrawing(plant, scope, profile)
+export const mimicScopeDrawing = (plant: CompiledProcessPlant, scoped: ScopedTopology, profile: MimicProfile): MimicScopeDrawing => {
+  const drawing = scopeDrawing(plant, scoped, profile)
   const draw = (room: DiagramRoom): MimicCompileResult => {
     const result = drawing.draw(null, room)
     if (result.ok || 'issues' in result) return result as MimicCompileResult
@@ -880,5 +689,5 @@ export const mimicScopeDrawing = (plant: CompiledProcessPlant, scope: MimicScope
 }
 
 /** World's own path for one room (mimicScopeDrawing). */
-export const compileMimicScope = (plant: CompiledProcessPlant, scope: MimicScope, budget: MimicBudget): MimicCompileResult =>
-  mimicScopeDrawing(plant, scope, budget.profile).draw(budget)
+export const compileMimicScope = (plant: CompiledProcessPlant, scoped: ScopedTopology, budget: MimicBudget): MimicCompileResult =>
+  mimicScopeDrawing(plant, scoped, budget.profile).draw(budget)

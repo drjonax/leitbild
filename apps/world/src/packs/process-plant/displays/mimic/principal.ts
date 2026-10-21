@@ -1,8 +1,10 @@
+import type { ObjectId } from '../../../../core/model/index.ts'
+import { drawingStops, type ScopedTopology } from '../../../../features/displays/topology/scope.ts'
 import type { CompiledPlantGraph } from '../../graph/index.ts'
 import { linkCarrier } from '../../graph/index.ts'
 import { pumpDriveSteamPorts } from '../../graph/pump-component-definitions.ts'
 import { principalCircuits, type PrincipalRing } from '../../equipment/circuits.ts'
-import { drawingStops, type MimicScope } from './scope.ts'
+import { plantTopology } from '../../observation/topology.ts'
 
 // A unit overview draws the Plant's principal circuits (equipment/circuits.ts).
 // Their auxiliary links (charging, a residual-heat train) and the heat handed
@@ -20,12 +22,12 @@ export type OverviewScopeResult =
     readonly rings: ReadonlyArray<PrincipalRing>
     /** Transfers into flow that does not return: drawn as the stubs where heat leaves the overview. */
     readonly onceThrough: ReadonlyArray<{ readonly component: number; readonly circuit: string }>
-    readonly scope: MimicScope
+    readonly scope: ScopedTopology
   }
   | { readonly ok: false; readonly reason: string }
 
-/** What a unit overview draws: the principal circuits, and where the drawing stops. */
-export const overviewScope = (graph: CompiledPlantGraph): OverviewScopeResult => {
+/** What a unit overview draws: the principal circuits, and where the drawing stops; its topology named as the object and revision given (a graph's spec id where none is). */
+export const overviewScope = (graph: CompiledPlantGraph, identity: { readonly objectId: string; readonly revision: string } = { objectId: String(graph.specId), revision: String(graph.specId) }): OverviewScopeResult => {
   const circuits = principalCircuits(graph)
   if (!circuits.ok) return circuits
   // The drawing stops at every other fluid link of its equipment: where auxiliary and safety services join or leave it.
@@ -38,12 +40,16 @@ export const overviewScope = (graph: CompiledPlantGraph): OverviewScopeResult =>
     const outlets = graph.outgoingLinksByComponent[component] ?? []
     return outlets.length > 0 && outlets.every(index => String(graph.links[index]!.toPortName) === pumpDriveSteamPorts.inlet)
   }
-  const stubs = drawingStops(graph, circuits.components, new Set(circuits.links), fluidCarriers, () => false)
-    .filter(stub => !stub.others.every(other => ventsOutOfPlant(other.component) || suppliesDriveTurbine(other.component)))
+  const topology = plantTopology(identity.objectId as ObjectId, graph, identity.revision)
+  const nodes = circuits.components.map(index => String(graph.components[index]!.id))
+  const edges = circuits.links.map(index => String(graph.links[index]!.id))
+  const indexOf = (node: string): number => graph.componentIndexById.get(node as never)!
+  const stubs = drawingStops(topology, nodes, new Set(edges), fluidCarriers)
+    .filter(stub => !stub.others.every(other => ventsOutOfPlant(indexOf(other.node)) || suppliesDriveTurbine(indexOf(other.node))))
   return {
     ok: true,
     rings: circuits.rings,
     onceThrough: circuits.onceThrough,
-    scope: { components: circuits.components, links: circuits.links, stubs, carriers: circuits.carriers, names: [] },
+    scope: { graph: topology, nodes, edges, stubs, media: circuits.carriers, roots: [], anchors: [] },
   }
 }

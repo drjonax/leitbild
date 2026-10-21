@@ -16,7 +16,7 @@ import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { itemRowTexts } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
+import type { MimicIntent } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { plantCarriers, plantLoops } from '../src/packs/process-plant/equipment/circuits.ts'
 import { carriersAt } from '../src/packs/process-plant/graph/index.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
