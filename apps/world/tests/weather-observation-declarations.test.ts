@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { geoPointFromLonLat, recordingSeriesIdFor, type IsoTimestamp, type OperationalObject } from '../src/core/model/index.ts'
 import { observationShapes, type ObservationDeclaration } from '../src/core/observation/capabilities.ts'
-import { weatherPresentationSeverityForState, weatherSeverityLadder } from '../src/packs/weather/conditions.ts'
+import { weatherAdvisories, weatherPresentationSeverityForState, weatherSeverityLadder } from '../src/packs/weather/conditions.ts'
 import { weatherItemSchema, weatherPackConfigSchema, weatherPackDataSchema } from '../src/packs/weather/model.ts'
 import { weatherObservationDeclarations } from '../src/packs/weather/observation/declarations.ts'
 import { weatherObservationRead } from '../src/packs/weather/observation/read.ts'
@@ -14,10 +14,11 @@ const point = geoPointFromLonLat(10.7522, 59.9139).coordinates
 const settings = weatherPackConfigSchema.parse({})
 const probe = createWeatherObject(weatherItemSchema.parse({ pack: 'weather', type: 'weather_probe', id: 'weather-probe:oslo', label: 'Oslo probe', point }), at, settings, at)
 const area = createWeatherObject(weatherItemSchema.parse({ pack: 'weather', type: 'weather_area', id: 'weather:front', label: 'Front', center: point, semiMajorAxisM: 1500, semiMinorAxisM: 1500 }), at, settings, at)
-/** The probe in fog: visibility 500 m is past both visibility rules. */
+/** The probe in fog: visibility 500 m is past both visibility rules, and its advisories are raised as the projection raises them. */
 const foggy = (object: OperationalObject): OperationalObject => {
   const data = weatherPackDataSchema.parse(object.packData)
-  return { ...object, packData: { ...data, sample: { ...data.sample, state: { ...data.sample.state, atmosphere: { ...data.sample.state.atmosphere, visibilityM: 500 } } } } }
+  const state = { ...data.sample.state, atmosphere: { ...data.sample.state.atmosphere, visibilityM: 500 } }
+  return { ...object, alerts: [...weatherAdvisories(object, state, at)], packData: { ...data, sample: { ...data.sample, state } } }
 }
 const objects = new Map([[probe.id, foggy(probe)], [area.id, area]])
 const declare = (objectId: string, recording = { packId: 'weather', profileId: 'probes' }) =>
@@ -58,15 +59,21 @@ describe('weather observation declarations (N5)', () => {
     expect(weatherPresentationSeverityForState(state)).toBe('hazard')
   })
 
-  test('read: values at the sample time, `notice` past a rule (weather raises no alert), unknown refs listed, lead past-rule first', () => {
+  test('read: values at the sample time, coloured only by an active advisory (T05), unknown refs listed, lead advised first', () => {
     const answer = observationShapes.read.output.parse(weatherObservationRead.answer({ refs: [`${probe.id}#visibilityM`, `${probe.id}#airTemperatureC`, `${area.id}#visibilityM`, `${probe.id}#nothing`] }, objects))
     expect(answer.observations.map(observation => [observation.ref, observation.value, observation.priority])).toEqual([
-      [`${probe.id}#visibilityM`, 500, 'notice'],
+      [`${probe.id}#visibilityM`, 500, 'warning'],
       [`${probe.id}#airTemperatureC`, weatherPackDataSchema.parse(probe.packData).sample.state.atmosphere.airTemperatureC, 'none'],
       [`${area.id}#visibilityM`, weatherPackDataSchema.parse(area.packData).sample.state.atmosphere.visibilityM, 'none'],
     ])
     expect(answer.observations.every(observation => observation.clock === 'simulation' && observation.quality === 'good')).toBe(true)
     expect(answer.unknown).toEqual([`${probe.id}#nothing`])
+    // T05: every coloured value has a matching active advisory of that priority, and every advisory colours its value.
+    const all = observationShapes.read.output.parse(weatherObservationRead.answer({ refs: [...objects.keys()].flatMap(id => declare(id).observables.map(observable => observable.ref)) }, objects)).observations
+    const advisories = [...objects.values()].flatMap(object => object.alerts)
+    expect(advisories.length).toBeGreaterThan(0)
+    expect(all.filter(observation => observation.priority !== 'none').map(observation => [observation.ref, observation.priority]))
+      .toEqual([...new Set(advisories.map(alert => alert.observable!))].map(ref => [ref, advisories.some(alert => alert.observable === ref && alert.priority === 'warning') ? 'warning' : 'caution']))
     const lead = observationShapes.read.output.parse(weatherObservationRead.answer({ lead: { objectId: probe.id, count: 3 } }, objects))
     expect(lead.observations.map(observation => [observation.ref.split('#')[1], observation.rank])).toEqual([['visibilityM', 1], ['windSpeedMps', 2], ['precipitationType', 3]])
     expect(() => weatherObservationRead.answer({ lead: { objectId: 'weather-probe:nowhere', count: 3 } }, objects)).toThrow(/No weather probe or area/)
