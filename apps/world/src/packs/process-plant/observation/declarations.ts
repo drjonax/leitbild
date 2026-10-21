@@ -51,14 +51,51 @@ const quantityOf = (binding: ProcessSignalBinding): Observable['quantity'] => {
 const nameOf = (component: CompiledComponent): string => component.metadata?.presentation?.shortLabel ?? component.label
 
 /** Unique within the unit and at most 80 characters: the signal's label with the equipment it belongs to, or the line's ends, by short name. */
+/**
+ * What crews call a reading, where the name is the standard one for that very
+ * signal (R37): the core-exit thermocouples' average (CET), the mean coolant
+ * temperature and each protection loop's average (Tavg), the power-range
+ * nuclear instruments, which the board and the procedures read as reactor
+ * power, and a loop's measured temperature where it leaves the heat source
+ * (Thot) or the transfer's primary side (Tcold). Words a search finds it by,
+ * written into its label; never an alias.
+ */
+const standardNames: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  reactorCore: { coreExitTemperatureC: 'CET', powerRangePercent: 'reactor power' },
+  reactorVessel: { meanPrimaryCoolantTemperatureC: 'Tavg' },
+  deltaTProtectionChannel: { averageTemperatureC: 'Tavg' },
+}
+const operatorName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string | undefined => {
+  const graph = plant.graph
+  const local = String(binding.path).slice(String(binding.path).indexOf('.') + 1)
+  if (binding.owner.type === 'component') return standardNames[graph.components[binding.owner.componentIndex]!.kind]?.[local]
+  if (binding.quantity !== 'temperature' || !binding.published) return undefined
+  const link = graph.links[binding.owner.linkIndex]!
+  const from = graph.components[link.fromComponentIndex]!
+  const circuit = from.ports[String(link.fromPortName)]?.circuit
+  return from.semantics.energy.some(role => role.role === 'source' && role.circuit === circuit) ? 'Thot'
+    : from.semantics.energy.some(role => role.role === 'transfer' && role.from === circuit) ? 'Tcold' : undefined
+}
+
 const labelOf = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string => {
   const graph = plant.graph
+  const name = operatorName(plant, binding)
+  const reads = name === undefined ? binding.label : `${binding.label} (${name})`
   if (binding.owner.type === 'link') {
     const link = graph.links[binding.owner.linkIndex]!
-    return `${binding.label} · ${nameOf(graph.components[link.fromComponentIndex]!)} → ${nameOf(graph.components[link.toComponentIndex]!)}`
+    return `${reads} · ${nameOf(graph.components[link.fromComponentIndex]!)} → ${nameOf(graph.components[link.toComponentIndex]!)}`
   }
   const component = graph.components[binding.owner.componentIndex]!
-  return binding.label.toLowerCase().includes(component.label.toLowerCase()) ? binding.label : `${binding.label} · ${nameOf(component)}`
+  return binding.label.toLowerCase().includes(component.label.toLowerCase()) ? reads : `${reads} · ${nameOf(component)}`
+}
+
+/** A bus a diesel generator feeds, directly or through its breaker, is the unit's emergency bus: crews name it so (R37). */
+const elementLabel = (plant: CompiledProcessPlant, component: CompiledComponent): string => {
+  const graph = plant.graph
+  const feeders = (index: number) => (graph.incomingLinksByComponent[index] ?? []).map(link => graph.links[link]!.fromComponentIndex)
+  const dieselBacked = component.kind === 'electricalBus' && feeders(component.index)
+    .some(feeder => graph.components[feeder]!.kind === 'dieselGenerator' || feeders(feeder).some(source => graph.components[source]!.kind === 'dieselGenerator'))
+  return dieselBacked ? `${component.label} (emergency bus)` : component.label
 }
 
 /**
@@ -158,7 +195,7 @@ export const plantDeclaration = (objectId: ObjectId, plant: CompiledProcessPlant
       observables: graph.signalBindings.filter(binding => declares(plant, recording, binding)).map(binding => observableOf(objectId, plant, recording, binding)),
       elements: [
         ...graph.components.map(component => ({
-          id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: component.label,
+          id: String(component.id), class: component.metadata?.equipmentClass ?? component.kind, label: elementLabel(plant, component),
           ...(component.metadata?.presentation?.shortLabel === undefined ? {} : { shortLabel: component.metadata.presentation.shortLabel }),
           ...(component.metadata?.loopId === undefined ? {} : { group: component.metadata.loopId }),
         })),

@@ -43,6 +43,21 @@ describe('plant observation declarations (P2)', () => {
       .toEqual(['Pressurizer pressure', 'Speed · RCP A', 'Pressurizer relief flow · PZR → Relief header'])
   })
 
+  test('R37: the standard operator name joins the label of the very signal it names, and the diesel-backed buses are the emergency buses', () => {
+    expect(['core.coreExitTemperatureC', 'core.powerRangePercent', 'vessel.meanPrimaryCoolantTemperatureC', 'deltaTChannelA.averageTemperatureC', 'rcs-hot-leg-a.temperatureC', 'rcs-cold-leg-a.temperatureC'].map(path => observable(path).label)).toEqual([
+      'Core-exit temperature (CET) · Core',
+      'Power-range neutron flux (reactor power) · Core',
+      'Mean primary coolant temperature (Tavg) · RV',
+      'Loop average temperature (Tavg) · dT channel A',
+      'RCS hot leg A temperature (Thot) · Core → SG A',
+      'RCS cold leg A temperature (Tcold) · SG A → RCP A',
+    ])
+    expect(declaration.observables.filter(entry => /\((CET|Tavg|Thot|Tcold|reactor power)\)/.test(entry.label))).toHaveLength(15)
+    // Pressurizer pressure keeps its own name: the model reads each loop's hot- and cold-leg pressures too, so "RCS pressure" would mislead.
+    expect(observable('pressurizer.pressureMPa').label).toBe('Pressurizer pressure')
+    expect(declaration.elements.filter(element => element.label.includes('emergency bus')).map(element => element.id)).toEqual(['safetyBusA', 'safetyBusB'])
+  })
+
   test('T12: each Plant quantity maps to a physical kind by what the variable measures (R26, R28)', () => {
     const kind = (path: string) => [observable(path).quantity, observable(path).unit]
     expect({

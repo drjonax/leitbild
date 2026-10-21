@@ -70,6 +70,7 @@ export const droneScenarioSupport: PackScenarioSupport = {
       altitudeM: spec.altitudeM,
       headingDeg: spec.headingDeg,
       at: context.at,
+      simAt: context.at,
       ...(spec.swarm === undefined ? {} : { swarm: spec.swarm }),
     })] }
   },
