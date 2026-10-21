@@ -47,6 +47,8 @@ describe('T13: position fixes carry simulation time', () => {
         expect(Date.parse(simAt!)).toBeGreaterThanOrEqual(scenarioStart)
         expect(Date.parse(simAt!)).toBeLessThanOrEqual(clock + maximumPaceStepMs)
       }
-    })
+    // Each case plays 30 s at maximum pace, about 1 s of CPU alone; a loaded machine (the batch full suite beside other
+    // lanes) needs more wall time, so the bound is sized for load and measures nothing.
+    }, 60_000)
   }
 })

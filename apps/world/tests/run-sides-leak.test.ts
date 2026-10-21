@@ -297,7 +297,9 @@ describe('the wire oracle on a sided fixture Run', () => {
         const data = track.packData as { readonly tier: string; readonly identity?: unknown }
         tiers.add(`${side}:${data.tier}`)
         expect({ id: track.id, audience: track.audience, provenance: track.provenance, alerts: track.alerts }).toEqual({ id: track.id, audience: [side], provenance: { source: 'simulator' }, alerts: [] })
-        expect([track.id, Object.keys(track.spatial).sort(), Object.keys(track.spatial.position ?? {}).sort()]).toEqual([track.id, ['frame', 'position'], ['observedAt', 'point']])
+        expect([track.id, Object.keys(track.spatial).sort(), Object.keys(track.spatial.position ?? {}).sort()]).toEqual([track.id, ['frame', 'position'], ['observedAt', 'point', 'simAt']])
+        // The fix's simulation time (C7) is the sighting's own time: no truth beyond what the side observed.
+        expect([track.id, track.spatial.position?.simAt]).toEqual([track.id, track.spatial.position?.observedAt])
         expect([track.id, ['tasking', 'telemetry', 'context'].filter(key => key in track)]).toEqual([track.id, []])
         expect([track.id, Object.keys(track.packData as object).filter(key => !['type', 'tier', 'fix', 'identity'].includes(key))]).toEqual([track.id, []])
         // A contact names no type, side or colour of what it follows.
