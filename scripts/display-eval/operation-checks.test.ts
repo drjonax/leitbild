@@ -22,15 +22,24 @@ describe('a refused operation is explained by meaning, not by one plant\'s words
 })
 
 describe('operation checks', () => {
-  const stop: OperationExpectation = { equipment: 'auxFeedwaterPumpMotor', tags: ['AFW-PUMP-A'], proposal: 'refused', named: 'AFW-PUMP-A|AFW pump A' }
+  const stop: OperationExpectation = { plantId: 'plant:halden-2', equipment: 'auxFeedwaterPumpMotor', tags: ['AFW-PUMP-A'], proposal: 'refused', named: 'AFW-PUMP-A|AFW pump A' }
   const none = { entries: [] }
 
   test('a refused operation with no proposal standing and its reason given is correct; any proposal is false', () => {
     const explained = 'Stopping AFW pump A is refused while the AFW START actuation holds it at RUN.'
     expect(operationChecks(stop, true, explained, none, [], [], false, []).operationCorrect).toBe(true)
     expect(operationChecks(stop, true, 'OK.', none, [], [], false, []).operationCorrect).toBe(false)
-    const proposed = { entries: [{ path: 'auxFeedwaterPumpMotor.running', value: false, status: 'pending' }] }
+    const proposed = { entries: [{ plantId: 'plant:halden-2', path: 'auxFeedwaterPumpMotor.running', value: false, status: 'pending' }] }
     expect(operationChecks(stop, true, explained, proposed, [], [], false, [])).toMatchObject({ falseProposal: true, operationCorrect: false })
+  })
+
+  test('a proposal stands only on the expected Plant: the same equipment on another unit is a false proposal', () => {
+    const throttle: OperationExpectation = { plantId: 'plant:halden-2', equipment: 'auxFeedwaterValveA', tags: ['AFW-A-CV'], proposal: 'expected', value: 'between-ends', named: 'AFW valve A' }
+    const shown = [{ subjects: ['auxFeedwaterValveA'], signals: [], mimics: [] }]
+    const answer = 'I proposed throttling AFW valve A to 40 %; it awaits your approval.'
+    const onUnit = (plantId: string) => ({ entries: [{ plantId, path: 'auxFeedwaterValveA.position', value: 0.4, status: 'pending' }] })
+    expect(operationChecks(throttle, true, answer, onUnit('plant:halden-2'), [], shown, true, [])).toMatchObject({ standing: 1, falseProposal: false, operationCorrect: true })
+    expect(operationChecks(throttle, true, answer, onUnit('plant:halden-3'), [], shown, true, [])).toMatchObject({ standing: 0, falseProposal: true, operationCorrect: false })
   })
 
   test('a claim of an execution is found clause by clause, not in a proposal or a refusal', () => {

@@ -1,7 +1,7 @@
 /** Re-scores a recorded probe stage with corrected decisive-evidence keys,
  * from the transcripts the probe saved, with no model call. A scenario whose
- * prompt, fault, advance or expectation changed is not re-scored: it needs a
- * new run, and is listed as such.
+ * prompt, Run (Scenario, setup, advance, pace) or expectation changed is not
+ * re-scored: it needs a new run, and is listed as such.
  *
  *   bun scripts/display-eval/rescore.ts <absolute-stage-dir> <stage> [--scenarios=<abs module>#<export>]
  *
@@ -11,17 +11,18 @@
  *
  * Writes <stage>-rescored-rows.jsonl beside the stage and prints its summary. */
 import { join } from 'node:path'
-import { devScenarios, loadScenarioModule, type EvalScenario } from './scenarios.ts'
+import { devScenarios, loadScenarioModule, runRequests, type EvalScenario } from './scenarios.ts'
 import { displayEvidenceOf, scoreKey, type KeyResult } from './decisive.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
 import { summariseRows, type ProbeRow } from './report.ts'
 import { operationChecks, type ComposeShown } from './operation-checks.ts'
+import { worryVerdict } from './worry.ts'
 
 const viewFence = (content: string): boolean => /```leitbild-view\n(view \S+)\n```/.test(content)
 
 /** What decides whether a recorded run still answers a scenario as written. */
-const runShape = (scenario: Pick<EvalScenario, 'prompt' | 'fault' | 'advanceMinutes' | 'expect' | 'operation'>): string =>
-  JSON.stringify([scenario.prompt, scenario.fault ?? null, scenario.advanceMinutes ?? null, scenario.expect, scenario.operation ?? null])
+const runShape = (scenario: Pick<EvalScenario, 'prompt' | 'run' | 'expect' | 'operation'>): string =>
+  JSON.stringify([scenario.prompt, scenario.run.scenario, runRequests(scenario.run), scenario.run.pace ?? 'maximum', scenario.run.advanceMinutes ?? null, scenario.expect, scenario.operation ?? null])
 
 export interface Recorded {
   readonly scenario: EvalScenario
@@ -66,6 +67,7 @@ export const rescoreRow = (recorded: Recorded, scenario: EvalScenario, catalog =
     decisiveSignalHits: scored.filter(result => result.hit === true).length,
     decisivePass: scenario.expect !== 'display' || scored.length === 0 ? null : fence && scored.every(result => result.hit === true),
     staleKeyNames: [...new Set(decisive.flatMap(result => result.unknown))],
+    ...(scenario.set === 'worry' ? { worry: recorded.answer.type === 'chat' ? worryVerdict(scenario.evidence, recorded.answer.content) : null } : {}),
   }
 }
 
@@ -90,7 +92,7 @@ if (import.meta.main) {
     if (scenario === undefined) { needsRun.push(`${id} (no longer in the set)`); continue }
     const recorded = await Bun.file(join(directory, `${stage}-${id}.json`)).json() as Recorded
     const row = rescoreRow(recorded, scenario, catalog)
-    if (row === null) needsRun.push(`${id} (prompt, fault, advance, expectation or operation changed)`)
+    if (row === null) needsRun.push(`${id} (prompt, Run, expectation or operation changed)`)
     else rows.push(row)
   }
   const added = pool.filter(scenario => !recordedRows.some(row => row.id === scenario.id)).map(scenario => `${scenario.id} (not recorded)`)

@@ -40,6 +40,8 @@ export interface ProbeRow {
   readonly corrections: ReadonlyArray<{ readonly cause: string; readonly detail: ReadonlyArray<string> }> | null
   readonly correctionRounds: number | null
   readonly operationCorrect?: boolean | null
+  /** A worry scenario's verdict (worry.ts); null when the reply was no answer. */
+  readonly worry?: { readonly pass: boolean } | null
   readonly requested?: { readonly displayed: boolean; readonly correct: boolean | null; readonly costUsd: number; readonly modelCalls: number | null; readonly wallMs: number }
 }
 
@@ -63,6 +65,7 @@ export const summariseRows = (recorded: ReadonlyArray<ProbeRow>) => {
   const evidence = rows.flatMap(row => row.addedEvidence)
   const requested = rows.flatMap(row => row.requested === undefined ? [] : [row.requested])
   const operated = rows.filter(row => row.operationCorrect !== undefined)
+  const worried = rows.filter(row => row.worry !== undefined)
   return {
     scenarios: rows.length,
     setupRefused,
@@ -107,6 +110,8 @@ export const summariseRows = (recorded: ReadonlyArray<ProbeRow>) => {
       correct: wilson(requested.filter(entry => entry.correct === true).length, requested.filter(entry => entry.correct !== null).length),
     },
     operations: { scenarios: operated.length, correct: operated.filter(row => row.operationCorrect === true).length, judged: operated.filter(row => row.operationCorrect !== null).length },
+    // G1 counts runs, not majorities: four scenarios × k=3 must pass at least 11 of 12 times. A reply that is no answer needs a re-run.
+    ...(worried.length === 0 ? {} : { worry: { runs: worried.length, passed: worried.filter(row => row.worry?.pass === true).length, unanswered: worried.filter(row => row.worry === null).map(row => row.id) } }),
     flaky: rows.filter(row => row.flaky).map(row => ({ id: row.id, correct: row.correct, decisivePass: row.decisivePass })),
   }
 }
