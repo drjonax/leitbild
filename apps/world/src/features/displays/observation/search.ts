@@ -7,7 +7,7 @@
  * anything: when nothing matches fully, each Pack offers its nearest names.
  */
 import { z } from 'zod'
-import { refObjectId } from '../../../core/model/alerts.ts'
+import { observableRefSchema, refObjectId } from '../../../core/model/alerts.ts'
 import type { ObjectId, OperationalObject } from '../../../core/model/index.ts'
 import { assignWords, editDistance, normalized, SUGGESTION_COUNT, type IndexedWord } from '../../../core/model/text-search.ts'
 import type { ObservationDeclaration } from '../../../core/observation/capabilities.ts'
@@ -240,9 +240,10 @@ const suggestionsFor = (entries: ReadonlyArray<Entry>, text: string) => {
 }
 
 /**
- * A name as compose will resolve it (P2): a qualified `objectId#tag-or-label`
- * or a ref resolves to its ref; a bare object id to its observables in the
- * Pack's current lead order. Unknown or refused names resolve to none.
+ * A name as compose will resolve it (P2): an exact ref its Pack reads, or a
+ * qualified `objectId#tag-or-label`, resolves to its ref; a bare object id to
+ * its observables in the Pack's current lead order. Unknown or refused names
+ * resolve to none.
  */
 export const resolveName = async (run: SearchRun, text: string, within?: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
   const object = run.objects.find(candidate => key(candidate.id) === key(text) && !run.denied.has(candidate.id) && (within === undefined || within.includes(candidate.id)))
@@ -251,7 +252,10 @@ export const resolveName = async (run: SearchRun, text: string, within?: Readonl
     return [...read.observations].sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity)).map(observation => observation.ref)
   }
   const objectId = text.includes('#') ? refObjectId(text) : undefined
-  const [result] = await searchObservables(run, [{ text, ...(objectId !== undefined && run.objects.some(candidate => candidate.id === objectId) ? { objectId } : {}) }])
+  const reachable = objectId !== undefined && run.objects.some(candidate => candidate.id === objectId) && !run.denied.has(objectId) && (within === undefined || within.includes(objectId))
+  // An exact ref resolves to itself wherever its Pack reads it, values declared only on request (a grid element's) included.
+  if (reachable && observableRefSchema.safeParse(text).success && (await run.port.read({ refs: [text] })).observations.some(observation => observation.ref === text)) return [text]
+  const [result] = await searchObservables(run, [{ text, ...(reachable ? { objectId } : {}) }])
   const exact = result?.matches.filter(match => match.ref !== undefined && match.score >= 3 && (within === undefined || within.includes(match.objectId))) ?? []
   return exact.slice(0, 1).map(match => match.ref!)
 }
