@@ -4,7 +4,7 @@ import { placeAcross, type LabelRoom } from './across.ts'
 import { placeAlong, type LayerExtent } from './along.ts'
 import { attach } from './attach.ts'
 import { planChannels, trackKey } from './channels.ts'
-import type { DiagramProfile, DiagramZone, Face, PlacedNode } from './diagram.ts'
+import type { DiagramProfile, Face, PlacedNode } from './diagram.ts'
 import { axisFace, ceilTo, floorTo, screenFace, toScreen, toScreenRect, translateRect, type AxisBox, type AxisFace, type Orientation, type Point, type Rect } from './geometry.ts'
 import type { Layering } from './layering.ts'
 import type { Model } from './model.ts'
@@ -52,7 +52,6 @@ export interface AttemptGeometry {
   readonly height: number
   readonly nodes: ReadonlyArray<PlacedNode>
   readonly paths: ReadonlyArray<ReadonlyArray<Point>>
-  readonly zones: ReadonlyArray<DiagramZone>
 }
 
 export const prepare = (model: Model, structure: Structure, layering: Layering, ordering: Ordering, flipped: ReadonlyArray<boolean>, refine: boolean): Prepared => {
@@ -305,11 +304,11 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
       if (before === undefined || text === null) continue
       blocked.push({ before, after: first.item, gap: ceilTo((c[first.item]! - first.pin) + grid / 2 + outline + (text.box.c1 - text.box.c0) + outline / 2 + 1, grid) })
     }
-    return { across, attached, plan, along, trackF, commonPorts, box, barSide, blocked }
+    return { attached, plan, along, trackF, commonPorts, box, barSide, blocked }
   }
   const first = place([])
   const second = first.blocked.length === 0 ? null : place(first.blocked)
-  const { across, attached, plan, along, trackF, commonPorts, box, barSide } = second !== null && second.blocked.length < first.blocked.length ? second : first
+  const { attached, plan, along, trackF, commonPorts, box, barSide } = second !== null && second.blocked.length < first.blocked.length ? second : first
   for (const [bar, end] of barSide) side[bar] = end
   const dressed = model.nodes.map(node => dressNode(node.index, box[node.index]!))
 
@@ -383,17 +382,6 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     return list
   })
 
-  // Partition zones: the partition's band across, its items' reach along.
-  const zoneBoxes: Array<{ partition: number; box: AxisBox }> = model.partitions.map((_, partition) => {
-    const reach = items.flatMap(item => {
-      if (item.partition !== partition) return []
-      if (item.node === null) return [along.axis[item.layer]!]
-      return [dressed[item.node]!.reserve.f0, dressed[item.node]!.reserve.f1]
-    })
-    const c0 = across.partitionStart + partition * across.pitch
-    return { partition, box: { f0: Math.min(...reach), f1: Math.max(...reach), c0, c1: c0 + across.pitch } }
-  })
-
   // To screen, then translate by whole grid steps so the drawing starts at the origin.
   const rect = (b: AxisBox): Rect => toScreenRect(orientation, b)
   const screenPaths = paths.map(path => path.map(([f, cc]) => toScreen(orientation, f, cc)))
@@ -419,13 +407,5 @@ export const runAttempt = (prepared: Prepared, profile: DiagramProfile, orientat
     const text = d.text === null ? null : { ...translateRect(rect(d.text.box), dx, dy), side: d.text.side, lines: d.text.lines }
     return { id: node.id, x: r.x, y: r.y, width: r.width, height: r.height, ports: portRecord, text, frame: d.frame === null ? null : translateRect(rect(d.frame), dx, dy) }
   })
-  const zones: DiagramZone[] = zoneBoxes.map(({ partition, box: zoneBox }) => {
-    const r = translateRect(rect(zoneBox), dx, dy)
-    const x0 = Math.max(0, r.x)
-    const y0 = Math.max(0, r.y)
-    const x1 = Math.min(width, r.x + r.width)
-    const y1 = Math.min(height, r.y + r.height)
-    return { partition: model.partitions[partition]!, x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) }
-  })
-  return { orientation, detail, policy, width, height, nodes, paths: screenPaths.map(path => path.map(move)), zones }
+  return { orientation, detail, policy, width, height, nodes, paths: screenPaths.map(path => path.map(move)) }
 }

@@ -58,9 +58,6 @@ interface Edge {
 export interface AcrossPlacement {
   /** Anchor per item; bars are placed later, by their attachments. */
   readonly c: ReadonlyArray<number>
-  /** Partition i's band starts at `partitionStart + i × pitch`. */
-  readonly partitionStart: number
-  readonly pitch: number
   /**
    * Given the attachments, moves one strand that jogs at both ends into an
    * end's column, or one item whose pipe to a bar crosses another bar of its
@@ -516,7 +513,7 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
   const placeHighCommons = (): void => {
     if (!high || commons.length === 0) return
     const others = items.map((_, index) => index).filter(index => ordering.block[index] !== COMMON_BLOCK && !isBar(index) && !satellites.includes(index) && Number.isFinite(c[index]!))
-    // Outside the last partition's band too, which is drawn as its zone.
+    // Outside the last partition's band too.
     const partitionsBand = partitionCount === 0 ? -Infinity : firstAxis + bandLow + partitionCount * pitch
     pack(commons, {
       full: Math.max(0, partitionsBand, ...others.map(index => c[index]! + right[index]!)),
@@ -629,5 +626,5 @@ export const placeAcross = (input: AcrossInput): AcrossPlacement => {
     }
     return null
   }
-  return { c: [...c], partitionStart: firstAxis + bandLow, pitch, align }
+  return { c: [...c], align }
 }

@@ -250,7 +250,6 @@ describe('diagram layout engine', () => {
     const partition0 = (result: Extract<DiagramLayoutResult, { ok: true }>) => ({
       nodes: result.nodes.filter(n => n.id === 'vessel-0' || n.id === 'pump-0'),
       edges: result.edges.filter(e => e.id.endsWith('-0')),
-      zone: result.zones[0],
     })
     const base = accepted(commonLoops(4), wide)
     const common = base.nodes.find(n => n.id === 'common')!
