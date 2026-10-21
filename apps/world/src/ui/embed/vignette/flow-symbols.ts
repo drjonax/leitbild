@@ -7,11 +7,14 @@
 // (the lanes' hub), the registered vessel shape (vessel-symbol.ts).
 // Bindings drive what each draws: a level fills a tank or the vessel, running
 // and conducting turn a device on (ruling Q8), a position opens a valve and
-// inserts the vessel's parts, a flow fills its pipe and points its chevron. A
+// inserts the vessel's parts, a flow fills its pipe and points its chevron.
+// An item takes OpenBridge's alert frame at the worst priority of its bound
+// readings and of the active alerts on its element the sample carries. A
 // reading that is missing, bad or stale, or a frozen sample, reads as
 // unknown: a static device or tank, a dashed pipe; never as off or empty.
 import type { Segment } from '@oicl/connector-diagram'
 import type { Observation } from '../../../core/observation/model.ts'
+import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
 import type { TopologyBinding, VignetteSection } from '../../../features/displays/compose/model.ts'
 import { groupName, readingRefs } from '../../../features/displays/topology/layout.ts'
 import { VIGNETTE_ROW_PX } from './grid.ts'
@@ -84,7 +87,7 @@ export interface FlowDrawing {
   readonly texts: ReadonlyArray<{ readonly id: string; readonly element: string | null; readonly x: number; readonly y: number; readonly width: number; readonly lines: ReadonlyArray<string>; readonly tone: AlertTone | null; readonly title: string }>
 }
 
-export const flowDrawing = (section: Topology, observations: ReadonlyArray<Observation>, frozen: boolean): FlowDrawing => {
+export const flowDrawing = (section: Topology, observations: ReadonlyArray<Observation>, alerts: ReadonlyArray<AlertRow>, frozen: boolean): FlowDrawing => {
   const px = (grid: number): number => grid * VIGNETTE_ROW_PX
   const byId = new Map(section.nodes.map(node => [node.id, node]))
   const viewEdges = new Map(section.edges.map(edge => [edge.id, edge]))
@@ -108,8 +111,15 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
     const on = switching === undefined ? null : activeState(usable(switching)?.value, switching.states)
     return on === null ? { kind: 'unknown' } : { kind: on ? 'on' : 'off' }
   }
+  // Active alerts of the drawn object by the element they are on.
+  const alerted = new Map<string, Array<AlertRow['priority']>>()
+  for (const row of alerts) {
+    const subject = row.alert.subject
+    if (row.objectId !== section.objectId || row.state === 'returned-unack' || subject === undefined || !('element' in subject)) continue
+    alerted.set(subject.element, [...alerted.get(subject.element) ?? [], row.priority])
+  }
   const toneAt = (nodes: ReadonlyArray<NodeView>): AlertTone | null => {
-    const tones = nodes.flatMap(node => node.bindings.map(binding => toneOf(observed.get(binding.ref)?.priority)))
+    const tones = nodes.flatMap(node => [...node.bindings.map(binding => toneOf(observed.get(binding.ref)?.priority)), ...(alerted.get(node.element ?? node.id) ?? []).map(priority => toneOf(priority ?? undefined))])
     return (['critical', 'alarm', 'warning', 'caution'] as const).find(level => tones.includes(level)) ?? null
   }
 

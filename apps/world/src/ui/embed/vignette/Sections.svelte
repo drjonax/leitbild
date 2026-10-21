@@ -65,7 +65,7 @@
       {:else if section.kind === 'map'}
         <MapFocus frame={latest?.maps[index]} />
       {:else if section.family === 'flow'}
-        <FlowTopology {section} {observations} {palette} {frozen} {runId} />
+        <FlowTopology {section} {observations} alerts={latest?.alerts ?? []} {palette} {frozen} {runId} />
       {:else}
         <NetworkTopology {section} {observations} {palette} />
       {/if}

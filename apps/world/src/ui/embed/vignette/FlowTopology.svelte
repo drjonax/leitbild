@@ -2,6 +2,7 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { SimulationRunId } from '../../../core/model/index.ts'
   import type { Observation } from '../../../core/observation/model.ts'
+  import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
   import type { VignetteSection } from '../../../features/displays/compose/model.ts'
   import type { Palette } from '../../displays/severity.ts'
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
@@ -22,16 +23,17 @@
   // it is wider than its frame. Each item is a button: a press (or Enter or
   // Space) opens its pop-over, the element's default with its Pack's actions;
   // a second press, Esc or a press outside closes it.
-  let { section, observations, palette, frozen, runId }: {
+  let { section, observations, alerts, palette, frozen, runId }: {
     section: Extract<VignetteSection, { kind: 'topology' }>
     observations: ReadonlyArray<Observation>
+    alerts: ReadonlyArray<AlertRow>
     palette: Palette
     /** The sample is frozen: everything reads as unknown. */
     frozen: boolean
     runId: SimulationRunId
   } = $props()
 
-  const drawing = $derived(flowDrawing(section, observations, frozen))
+  const drawing = $derived(flowDrawing(section, observations, alerts, frozen))
   let zoom = $state(1)
   runOnMount(() => embeddedDisplayFrame().subscribe(presentation => { zoom = presentation.zoom }))
 
