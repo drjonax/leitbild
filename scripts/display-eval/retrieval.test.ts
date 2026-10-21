@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { weatherQuantities } from '../../apps/world/src/packs/weather/quantities.ts'
 import { fixturePath } from './scenarios.ts'
-import { hits, loadPairs, PACKS, scoreRecall, signalCatalog, stalePairs, type RetrievalPair, type SearchMatch } from './retrieval.ts'
+import { hits, keyerHit, loadPairs, PACKS, scoreRecall, signalCatalog, stalePairs, type RetrievalPair, type SearchMatch } from './retrieval.ts'
 
 const match = (fields: Partial<SearchMatch> & Pick<SearchMatch, 'kind' | 'objectId'>): SearchMatch => ({ label: 'x', pack: 'p', score: 1, ...fields })
 
@@ -49,6 +49,14 @@ describe('T11 hit rules (architecture A4 matches)', () => {
     expect(scored.byPack.drone).toEqual({ pairs: 2, hits: 1, recall: 0.5 })
     expect(scored.misses).toHaveLength(1)
     expect(scored.pass).toBe(false)
+  })
+})
+
+describe('T11 with the keyer\'s sets (R37b)', () => {
+  test('an accept entry is a ref, an object, or an element answered by any signal of it on the pair\'s unit', () => {
+    const element = match({ kind: 'observable', objectId: 'plant:halden-2', ref: 'plant:halden-2#sgB.levelPercent', element: { id: 'sgB', class: 'store' } })
+    expect([keyerHit(['plant:halden-2#sgB.levelPercent'], 'plant:halden-2', element), keyerHit(['sgB'], 'plant:halden-2', element), keyerHit(['sgB'], 'plant:halden-3', element), keyerHit(['plant:halden-2'], 'plant:halden-2', element)]).toEqual([true, true, false, false])
+    expect(keyerHit(['plant:halden-2'], 'plant:halden-2', match({ kind: 'object', objectId: 'plant:halden-2' }))).toBe(true)
   })
 })
 

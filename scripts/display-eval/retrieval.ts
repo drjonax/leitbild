@@ -9,7 +9,7 @@
  * measured on it), or an object. Pairs live in
  * apps/world/tests/fixtures/retrieval/.
  *
- *   LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/retrieval.ts <absolute-output-dir> [--seconds=240]
+ *   LEITBILD_PROBE_ORIGIN=http://127.0.0.1:<port> bun scripts/display-eval/retrieval.ts <absolute-output-dir> [--seconds=240] [--keys=<keyer sets>]
  *
  * Runs on a loopback local stack only: saves the integrated fixture in its own
  * Workspace, plays it `--seconds` at maximum pace (the Einsatz cues create
@@ -100,6 +100,38 @@ export const scoreRecall = (pairs: ReadonlyArray<RetrievalPair>, results: Readon
       got: result.matches.slice(0, 3).map(match => `${match.kind} ${match.ref ?? match.element?.id ?? match.objectId} "${match.label}"`),
     })),
   }
+}
+
+/**
+ * Lead ruling R37(b): an independent keyer's acceptable-target sets for the plant pairs, by index in the plant pair
+ * file. An entry with '#' is a ref; plant:halden-N the object; any other id an element, answered by any of its
+ * signals on the pair's unit.
+ */
+export type KeyerSets = Readonly<Record<string, { readonly accept: ReadonlyArray<string> }>>
+
+const unitOf = (pair: RetrievalPair): string => {
+  const first = (pair.rekeyed?.was ?? pair.expect)[0]!
+  return first.kind === 'ref' ? first.ref.split('#')[0]! : first.objectId
+}
+export const keyerHit = (accept: ReadonlyArray<string>, unit: string, match: SearchMatch): boolean => accept.some(entry => entry.includes('#')
+  ? match.ref === entry
+  : /^plant:halden-\d+$/.test(entry) ? match.kind === 'object' && match.objectId === entry : match.objectId === unit && match.element?.id === entry)
+
+/** Reviewed recall with the keyer's sets standing in for the plant pairs' own expectations (other packs unchanged). */
+export const scoreWithKeyer = (pairs: ReadonlyArray<RetrievalPair>, results: ReadonlyArray<SearchResult>, keys: KeyerSets) => {
+  let plantIndex = -1
+  const rows = pairs.flatMap((pair, index) => {
+    if (pair.pack === 'process-plant') plantIndex += 1
+    if (pair.removed !== undefined) return []
+    const top = results[index]!.matches.slice(0, 8)
+    const keyed = pair.pack === 'process-plant' ? keys[String(plantIndex)] : undefined
+    if (pair.pack === 'process-plant' && keyed === undefined) throw new Error(`no keyer set for plant pair ${plantIndex} "${pair.query.text}"`)
+    const hit = keyed === undefined ? top.some(match => pair.expect.some(expected => hits(expected, match))) : top.some(match => keyerHit(keyed.accept, unitOf(pair), match))
+    return [{ pack: pair.pack, query: pair.query.text, hit }]
+  })
+  const tally = (subset: typeof rows) => ({ pairs: subset.length, hits: subset.filter(row => row.hit).length, recall: subset.length === 0 ? null : subset.filter(row => row.hit).length / subset.length })
+  const all = tally(rows)
+  return { all, byPack: Object.fromEntries(PACKS.map(pack => [pack, tally(rows.filter(row => row.pack === pack))])), pass: (all.recall ?? 0) >= 0.95, misses: rows.filter(row => !row.hit).map(row => `${row.pack}: ${row.query}`) }
 }
 
 /** What exists in the Run the pairs are asked in, to find stale pairs before scoring. */
@@ -199,7 +231,9 @@ if (import.meta.main) {
     }
   }
   const scored = scoreRecall(pairs, results)
+  const keysPath = rest.find(argument => argument.startsWith('--keys='))?.slice('--keys='.length)
+  const keyer = keysPath === undefined ? null : scoreWithKeyer(pairs, results, await Bun.file(keysPath).json() as KeyerSets)
   await Bun.write(join(directory, 'retrieval-results.json'), JSON.stringify({ origin, seconds, runId: resource.id, results }, null, 2))
-  await Bun.write(join(directory, 'retrieval-summary.json'), JSON.stringify(scored, null, 2))
-  console.log(JSON.stringify({ all: scored.all, byPack: scored.byPack, pass: scored.pass, misses: scored.misses.length, raw: scored.raw }, null, 2))
+  await Bun.write(join(directory, 'retrieval-summary.json'), JSON.stringify({ ...scored, ...(keyer === null ? {} : { keyer }) }, null, 2))
+  console.log(JSON.stringify({ all: scored.all, byPack: scored.byPack, pass: scored.pass, misses: scored.misses.length, raw: scored.raw, ...(keyer === null ? {} : { keyer: { ...keyer, misses: keyer.misses.length } }) }, null, 2))
 }
