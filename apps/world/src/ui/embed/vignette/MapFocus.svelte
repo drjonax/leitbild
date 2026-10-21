@@ -17,13 +17,15 @@
 
 <div class="map-focus">
   <p>{mapCaption(frame)}</p>
-  <button type="button" disabled={!usable} title={opening === 'window' ? (frame?.bounds == null ? 'Nothing here has a position' : 'Frame the live map on these') : 'Open this display in the display window to frame the map'}
-    onclick={() => { if (frame?.bounds != null) embeddedDisplayFrame().showOnMap(frame.bounds) }}>Show on map</button>
+  <!-- An obc-button is a button: the native button inside it takes Enter and Space. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <obc-button variant="normal" disabled={!usable} title={opening === 'window' ? (frame?.bounds == null ? 'Nothing here has a position' : 'Frame the live map on these') : 'Open this display in the display window to frame the map'}
+    onclick={() => { if (frame?.bounds != null) embeddedDisplayFrame().showOnMap(frame.bounds) }}>Show on map</obc-button>
 </div>
 
 <style>
-  .map-focus p { margin: 0; height: var(--row); line-height: var(--row); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  button { height: 20px; margin-top: 2px; padding: 0 10px; font: inherit; font-size: 12px; border: 1px solid var(--border-outline-color); border-radius: 4px; background: var(--container-section-color); color: var(--element-active-color); cursor: pointer; }
-  button:disabled { cursor: default; color: var(--element-neutral-color); }
-  button:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 1px; }
+  /* OpenBridge's button is 48 px tall at its smallest size (measured): it takes both rows, the words beside it. */
+  .map-focus { display: flex; align-items: center; gap: 8px; height: calc(2 * var(--row)); }
+  .map-focus p { flex: 1 1 0; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  obc-button { flex: none; }
 </style>
