@@ -49,6 +49,9 @@ export interface CustomShape {
   readonly ends: Ends
 }
 
+/** The owner's ruling Q11 (21 Oct 2026): every recommendation in the register approved as listed. */
+const APPROVED = { owner: 'approved', ref: 'Q11 (21 Oct): approved as recommended' } as const
+
 export const customShapes: ReadonlyArray<CustomShape> = [
   // The old renderer: deleted at the swap (P2 architecture §D).
   {
@@ -71,7 +74,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-automation-tank'],
     reason: 'C',
     evidence: 'OpenBridge\'s tank graph (chartMode, chartData) crops its chart in a compact tank: recorded in MimicPanel.svelte and on the wiki (design decisions, traces on vessels). The measurement itself is not on record.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -81,7 +84,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-graph-mini'],
     reason: 'A',
     evidence: 'obc-graph-mini takes data, minY, maxY and chart only: it cannot break its line where nothing was recorded or start where history starts (wiki design-system page).',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -91,7 +94,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-line-graph', 'obc-area-graph', 'obc-gauge-trend', 'obc-graph-mini'],
     reason: 'A',
     evidence: 'None of OpenBridge 2.0.0\'s line, area, gauge-trend or mini graphs draws limit lines, off-span marks or a break where nothing was recorded (wiki display decision log, corrections).',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -104,7 +107,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: 'none',
     reason: 'A',
     evidence: 'It keys marks only the custom trend draws (trend-panel).',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -114,7 +117,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-bar-horizontal'],
     reason: 'A',
     evidence: 'Wiki design-system page: no component draws several loops against shared, named limits; obc-bar-horizontal draws one value with its own zones. Grouped values replace it at the swap.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -124,18 +127,8 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-graph-mini'],
     reason: 'A',
     evidence: 'obc-graph-mini cannot break its line where nothing was recorded or mark a limit (wiki design-system page).',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
-  },
-  {
-    id: 'loop-zones',
-    draws: 'A bordered frame around each loop\'s lane on the plant mimic.',
-    sites: [{ file: 'ui/embed/composed-display/mimic/MimicPanel.svelte', mark: 'class="zone"', drawn: 'html' }],
-    standsInFor: 'none',
-    reason: null,
-    evidence: 'No function: nothing but the geometry hash reads the zones (fix-mimic-vessels, round 2).',
-    decision: { owner: 'removed', ref: 'owner, 21 Oct: remove the loop frames if they serve no purpose' },
-    ends: 'P0 fix',
   },
   {
     id: 'bus-and-header-straights',
@@ -144,7 +137,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-bus'],
     reason: null,
     evidence: 'Drawn by OpenBridge\'s own pipe renderer, but OpenBridge 2.0.0 has obc-bus for an electrical bus; no component for a process header. No reason on record.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -154,7 +147,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-alert-frame'],
     reason: 'A',
     evidence: 'obc-alert-frame 2.0.0 has one label slot, so its flap holds one line; these lines extend the frame (a second layer) rather than replace it.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -167,7 +160,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: 'none',
     reason: null,
     evidence: 'No reason on record. obc-alert-frame means alert severity (D-32); no OpenBridge element was checked for command mismatch.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -177,7 +170,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-alert-frame'],
     reason: null,
     evidence: 'No reason on record. It keys the faded obc-alert-frame the drawing draws.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -187,7 +180,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-automation-button-readout-stack'],
     reason: null,
     evidence: 'OpenBridge\'s readout stack is its own element, drawn inside obc-automation-button. No reason on record for a stack of its own beside other symbols; widths come from OpenBridge\'s text metrics.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -197,7 +190,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-toggletip'],
     reason: 'A',
     evidence: 'obc-toggletip 2.0.0 has a title, a description, a content slot and two action buttons; it cannot be pinned, dragged, resized or drawn at 1/zoom, which the overlay does.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -207,7 +200,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-alert-subsystem-counter'],
     reason: null,
     evidence: 'obc-alert-subsystem-counter has a label and slotted count badges; whether it holds the action words and the filter was never measured. No reason on record.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -217,7 +210,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-alert-list'],
     reason: null,
     evidence: 'No reason on record. The vignette\'s alerts section replaces it at the swap.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -227,7 +220,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: 'none',
     reason: null,
     evidence: 'Chips are allowed, but these colour status-tree states with alert tokens and --alert-running-color, against D-32. From the swap a challenged function raises an alert (ruling Q7).',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -237,7 +230,7 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obi-check-google'],
     reason: null,
     evidence: 'No reason on record; OpenBridge has check icons.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   {
@@ -247,31 +240,18 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-button', 'obi-close-google'],
     reason: null,
     evidence: 'No reason on record; OpenBridge has buttons and a close icon.',
-    decision: 'pending owner approval',
+    decision: APPROVED,
     ends: 'swap',
   },
   // The vignette renderer (P2).
   {
-    id: 'vignette-readout',
-    draws: 'A number on a vignette row as plain text, and its 64×10 limit bar: a track, a tick per limit in its alert colour, a marker at the value.',
-    sites: [
-      { file: 'ui/embed/vignette/Readout.svelte', mark: 'class="bar"', drawn: 'svg' },
-      { file: 'ui/embed/vignette/Readout.svelte', mark: 'class={`value ${look.tone', drawn: 'html' },
-    ],
-    standsInFor: ['obc-readout-block', 'obc-bar-horizontal'],
-    reason: null,
-    evidence: 'No reason on record. The faceplate it replaces draws the same with obc-readout-block and obc-bar-horizontal (FaceplateLine.svelte); p2-render is moving it to them.',
-    decision: 'pending owner approval',
-    ends: 'M1',
-  },
-  {
     id: 'vignette-state-word',
-    draws: 'A state word in a box: filled while true, hollow while false or for an enum\'s word, dashed with "?" while unknown.',
-    sites: [{ file: 'ui/embed/vignette/StateWord.svelte', mark: 'class={`word ${look.fill}', drawn: 'html' }],
+    draws: 'An unknown state\'s word: a dashed box with "?". A known state is OpenBridge\'s obc-status-indicator.',
+    sites: [{ file: 'ui/embed/vignette/StateWord.svelte', mark: '<span class="unknown">', drawn: 'html' }],
     standsInFor: ['obc-status-indicator'],
     reason: 'A',
-    evidence: 'obc-status-indicator 2.0.0\'s statuses are active, inactive, caution, warning, alarm and running: none says unknown, which channel D draws dashed with "?" (plan §2.7).',
-    decision: 'pending owner approval',
+    evidence: 'obc-status-indicator 2.0.0\'s statuses are active, inactive, caution, warning, alarm and running: none says unknown, which channel D draws dashed with "?" (plan §2.7). It extends the indicator rather than replace it.',
+    decision: APPROVED,
     ends: 'kept',
   },
   {
@@ -284,18 +264,28 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     standsInFor: ['obc-line-graph', 'obc-graph-mini'],
     reason: 'A',
     evidence: 'As trend-panel: no OpenBridge graph draws named limits, off-span marks or a break where nothing was recorded.',
+    decision: APPROVED,
+    ends: 'kept',
+  },
+  {
+    id: 'grid-station-frames',
+    draws: 'A bordered frame with the station\'s name around the buses, generators and connection points of one station in a network topology.',
+    sites: [{ file: 'ui/embed/vignette/NetworkTopology.svelte', mark: '<div class="group"', drawn: 'html' }],
+    standsInFor: 'none',
+    reason: 'A',
+    evidence: 'OpenBridge 2.0.0 has no group frame; connector-diagram has group boxes only in its editor scene model, and renderSegments draws segments only. The frame is the grid\'s declared station membership (the topology group), laid out by ELK as a container. Measured on the Halden switchyard views: 1-hop at 300 kV and above, 14 nodes and 2 frames of one bus each; 2-hop, 28 nodes and 6 frames, one with two members (a station\'s 300 kV and 420 kV buses); 1-hop at all levels, 15 nodes and 2 frames of one each. A frame around one bus repeats its name; p2-render recommends a frame only around two or more drawn nodes.',
     decision: 'pending owner approval',
     ends: 'kept',
   },
   // The main app (OpenBridge-free by licence).
   {
     id: 'alert-priority-glyphs',
-    draws: 'The alarm strip\'s priority glyphs and colours: hexagon, triangle, circle and square, from the severity table; also drawn in the embed by the vignette\'s alerts section.',
+    draws: 'The main app\'s alarm strip priority glyphs and colours: hexagon, triangle, circle and square, from the severity table. The embed draws OpenBridge\'s obc-alert-icon instead.',
     sites: [{ file: 'ui/displays/AlertList.svelte', mark: 'viewBox="0 0 12 12"', drawn: 'svg' }],
     standsInFor: ['obi-critical-badge', 'obi-alarm-badge', 'obi-warning-badge', 'obi-caution-badge'],
     reason: 'B',
-    evidence: 'The main app loads no OpenBridge (D-03, D-41; T28). Drawn independently, copying no OpenBridge path data; equal to OpenBridge\'s badge shape class and alert colour per palette (T04a). The vignette reuses it so one primitive serves both hosts (plan §2.7 V15).',
-    decision: 'pending owner approval',
+    evidence: 'The main app loads no OpenBridge (D-03, D-41; T28). Drawn independently, copying no OpenBridge path data; equal to OpenBridge\'s badge shape class and alert colour per palette (T04a). Since 0fdf1122d the vignette\'s alerts section draws obc-alert-icon (Q11).',
+    decision: APPROVED,
     ends: 'kept',
   },
 ]
@@ -309,6 +299,8 @@ export const surfaces: ReadonlyArray<Surface> = [
   { file: 'ui/embed/composed-display/mimic/MimicPanel.svelte', mark: 'class="pipes"', paints: 'connector-diagram' },
   { file: 'ui/embed/composed-display/mimic/MimicPanel.svelte', mark: 'use:keyGlyph', paints: 'connector-diagram' },
   { file: 'ui/embed/composed-display/mimic/openbridge-mimic.ts', mark: "canvas.getContext('2d')", paints: 'connector-diagram' },
+  { file: 'ui/embed/vignette/NetworkTopology.svelte', mark: 'use:lines', paints: 'connector-diagram' },
+  { file: 'ui/embed/vignette/lines.ts', mark: "canvas.getContext('2d')", paints: 'connector-diagram' },
   { file: 'ui/embed/composed-display/text-measure.ts', mark: "createElement('canvas')", paints: 'nothing: measures text' },
 ]
 
@@ -336,6 +328,7 @@ const property = (name: string, element: Internal['element'], used: Site, define
 })
 
 const mimic = 'ui/embed/composed-display/mimic/MimicPanel.svelte'
+const indicatorType = ['--global-typography-ui-button-font-size', '--global-typography-ui-button-line-height', '--global-typography-ui-body-font-size', '--global-typography-ui-body-line-height']
 
 export const internals: ReadonlyArray<Internal> = [
   part('wrapper'),
@@ -357,10 +350,14 @@ export const internals: ReadonlyArray<Internal> = [
     'dist/automation/automation-button/automation-button.css.js', 'A read-only drawing shows no hover look.'),
   ...['--automation-components-badge-new-size', '--automation-components-badge-new-icon-size', '--automation-components-badge-new-icon-size-flat'].map(name =>
     property(name, 'obc-automation-badge', { file: mimic, mark: `${name}:` }, 'dist/automation/automation-badge/automation-badge.css.js', 'The key\'s badges at the key\'s line height.')),
-  ...['--global-typography-ui-button-font-size', '--global-typography-ui-button-line-height', '--global-typography-ui-body-font-size', '--global-typography-ui-body-line-height'].map(name =>
+  ...indicatorType.map(name =>
     property(name, 'obc-status-indicator', { file: 'ui/embed/composed-display/FaceplateLine.svelte', mark: `${name}:` }, 'dist/components/status-indicator/status-indicator.css.js', 'The indicator\'s label at a faceplate row\'s 12/16 px.')),
+  ...indicatorType.map(name =>
+    property(name, 'obc-status-indicator', { file: 'ui/embed/vignette/StateWord.svelte', mark: `${name}:` }, 'dist/components/status-indicator/status-indicator.css.js', 'The indicator\'s word at a vignette row\'s 13/16 px.')),
   ...['--ui-components-button-touch-target-size', '--ui-components-icon-button-visual-target-size'].map(name =>
     property(name, 'obc-icon-button', { file: 'ui/embed/composed-display/mimic/MimicPopover.svelte', mark: `${name}:` }, 'dist/components/icon-button/icon-button.css.js', 'The pin fits the popover\'s 24 px header.')),
   property('--font-family-main', 'every element', { file: 'ui/embed/embed.css', mark: '--font-family-main:' },
     'dist/openbridge.css', 'System faces stand in for Noto Sans, which OpenBridge declares without a fallback; only a mimic loads the font.'),
+  property('--global-typography-font-family', 'every element', { file: 'ui/embed/embed.css', mark: '--global-typography-font-family:' },
+    'dist/components/status-indicator/status-indicator.css.js', 'Components read the family in their shadow roots through this token; re-derived per element so they take the same system faces.'),
 ]

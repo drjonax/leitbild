@@ -25,7 +25,7 @@ const withoutComments = (source: string): string => source
 
 type Sources = ReadonlyMap<string, string>
 
-/** The embed's sources (relative to src, as written), and the ui/displays files it imports, which it draws too. */
+/** The embed's sources (relative to src, as written), and the ui/displays files it imports. */
 const embedSources = (): Sources => {
   const embed = filesUnder(join(src, 'ui/embed')).filter(file => /\.(svelte|ts|css)$/.test(file) && !file.endsWith('.test.ts'))
   const reached = new Set(embed)
@@ -142,7 +142,7 @@ const palettes = new Map(embedPalettes.map(palette => [palette, openBridgeTokens
 
 describe('OpenBridge tokens in the embed', () => {
   test('every token the embed reads resolves, in day and dusk, to its own definition or to OpenBridge\'s', () => {
-    expect([...sources.keys()]).toContain('ui/displays/AlertList.svelte')
+    expect([...sources.keys()]).toContain('ui/displays/severity.ts')
     expect(palettes.get('dusk')!.has('--alert-alarm-color')).toBe(true)
     expect(unresolvedTokens(sources, palettes)).toEqual([])
   })
