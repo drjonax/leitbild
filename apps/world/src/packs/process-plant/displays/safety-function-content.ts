@@ -1,6 +1,5 @@
 import type { EmbeddedViewContent } from '@leitbild/contracts'
 import type { CompiledPlantGraph, VariablePath } from '../graph/index.ts'
-import type { ProcessPlantIcComparisonOperator } from '../runtime/index.ts'
 import type { SafetyFunctionComparison, SafetyFunctionEvaluation, SafetyFunctionStatus, SafetyFunctionStep } from '../safety-functions.ts'
 import { signalMeasuredOn } from '../signals.ts'
 import { displayValue, formatValue, unitLabel, valueDigits, writtenDecimals } from '../quantity-text.ts'
@@ -17,8 +16,6 @@ export const safetyFunctionStatusWords = (status: SafetyFunctionStatus): string 
 /** The status with the procedure its colour sends operators to: "YELLOW · FR-H.5". */
 const statusText = (evaluation: SafetyFunctionEvaluation): string =>
   `${safetyFunctionStatusWords(evaluation.status)}${evaluation.procedure === undefined ? '' : ` · ${evaluation.procedure}`}`
-
-const OPERATORS: Readonly<Record<ProcessPlantIcComparisonOperator, string>> = { '<': '<', '<=': '≤', '>': '>', '>=': '≥', '==': '=', '!=': '≠' }
 
 const quantityText = (value: number | boolean, unit: string): string => {
   if (typeof value === 'boolean') return value ? 'on' : 'off'
