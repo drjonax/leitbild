@@ -27,6 +27,7 @@ import {
   type WeatherField,
 } from '../cell-field.ts'
 import { weatherCommandSchemas } from '../commands.ts'
+import { weatherAdvisories } from '../conditions.ts'
 import { frameAt } from '../influence.ts'
 import { weatherItemSchema,weatherPackConfigSchema,weatherPackDataSchema } from '../model.ts'
 import { weatherQuantities,weatherRecordingProfiles } from '../quantities.ts'
@@ -200,9 +201,11 @@ export const createLocalWeatherPackRuntimeAdapter = (): PackRuntimeAdapter => ({
               ).center
         const point = geoPointFromLonLat(...coordinates)
         const sample = sampleWeather(field, point)
-        if (JSON.stringify(data.sample) === JSON.stringify(sample) && !recordIds.has(object.id)) continue
+        const alerts = weatherAdvisories(object, sample.state, field.at)
+        if (JSON.stringify(data.sample) === JSON.stringify(sample) && JSON.stringify(object.alerts) === JSON.stringify(alerts) && !recordIds.has(object.id)) continue
         const updated: OperationalObject = {
           ...object,
+          alerts: [...alerts],
           revision: object.revision + 1,
           spatial: { ...object.spatial, position: { point, observedAt: nowIso(), simAt: field.at, staleAfterMs: 600000 } },
           timestamps: { ...object.timestamps, updatedAt: nowIso() },

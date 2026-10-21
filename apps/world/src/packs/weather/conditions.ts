@@ -1,4 +1,5 @@
-import type { IsoTimestamp } from '../../core/model/index.ts'
+import type { AlertState } from '../../core/model/alerts.ts'
+import type { IsoTimestamp, OperationalObject } from '../../core/model/index.ts'
 import type { WeatherState, WeatherSurface, WeatherAtmosphere } from './model.ts'
 import { weatherQuantities } from './quantities.ts'
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value))
@@ -85,3 +86,27 @@ export const weatherPresentationSeverityForState = (state: WeatherState): Weathe
     weatherSeverityLadder.some((rule) => rule.severity === severity && weatherRulePasses(rule, value(rule.quantity)))
   return reached('hazard') ? 'hazard' : reached('adverse') ? 'adverse' : state.atmosphere.precipitation.type !== 'none' || reached('notice') ? 'notice' : 'normal'
 }
+
+/**
+ * The advisory priority of a ladder level. A hazard (ice over 0.55, visibility under 800 m, wind over 25 m/s)
+ * endangers outdoor work and traffic now and wants prompt attention: a warning. Adverse ground or visibility wants
+ * awareness: a caution. Neither is an alarm, as no operator action controls the weather; notice-level wetness is
+ * routine weather and raises nothing.
+ */
+const advisoryPriority = { adverse: 'caution', hazard: 'warning' } as const
+
+/**
+ * One advisory alert per ladder condition that holds (R42, R43): it names the condition and the probe or area, never
+ * a live value; it keeps the simulation time it was first raised at while it holds, and is gone when it clears.
+ */
+export const weatherAdvisories = (object: Pick<OperationalObject, 'id' | 'label' | 'alerts'>, state: WeatherState, at: IsoTimestamp): ReadonlyArray<AlertState> =>
+  weatherSeverityLadder.flatMap((rule) => {
+    const quantity = weatherQuantities.find((candidate) => candidate.id === rule.quantity)!
+    if (rule.severity === 'notice' || !weatherRulePasses(rule, quantity.value(state))) return []
+    const [id, condition] = [`${object.id}:advisory:${rule.severity}-${rule.quantity}`, `${rule.severity}-${rule.quantity}`]
+    return [{
+      id, kind: 'weather_advisory', severity: 'warning', priority: advisoryPriority[rule.severity], advisory: true, acknowledged: false,
+      message: `${quantity.title} ${rule.direction} (${rule.severity}): ${object.label}`, clock: 'simulation',
+      raisedAt: object.alerts.find((alert) => alert.id === id)?.raisedAt ?? at, observable: `${object.id}#${rule.quantity}`, threshold: condition,
+    } as const]
+  })
