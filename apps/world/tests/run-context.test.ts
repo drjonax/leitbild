@@ -6,6 +6,11 @@ import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.t
 import { assembleRunContext } from '../src/features/displays/context/run-context.ts'
 import { createFixtureObject, fixturePack } from './fixtures/fixture-pack.ts'
 import { createRoleRunRegistry, openRunDefinition } from './fixtures/role-runs.ts'
+import { geoPointFromLonLat } from '../src/core/model/index.ts'
+import { weatherAdvisories } from '../src/packs/weather/conditions.ts'
+import { weatherItemSchema, weatherPackConfigSchema, weatherPackDataSchema } from '../src/packs/weather/model.ts'
+import { weatherPack } from '../src/packs/weather/pack.ts'
+import { createWeatherObject } from '../src/packs/weather/scenario.ts'
 
 // The Run context (plan v3.1 §2.4, architecture A4): its line rules and caps, the count of what AI restrictions hide,
 // and one number, one source: nothing from a presentation summary or field reaches it.
@@ -102,4 +107,20 @@ describe('Run context', () => {
     expect(lines.find(entry => entry.startsWith('+'))).toMatch(/^\+\d+ more categories/)
     expect(lines.every(entry => entry.length <= 400)).toBe(true)
   })
+
+  test('a weather advisory counts apart with its priority and never as unacknowledged, yet ranks its probe first (R42a, R43)', async () => {
+    const probe = createWeatherObject(weatherItemSchema.parse({ pack: 'weather', type: 'weather_probe', id: 'weather-probe:halden', label: 'Halden probe', point: geoPointFromLonLat(11.39, 59.12).coordinates }), at, weatherPackConfigSchema.parse({}), at)
+    const state = weatherPackDataSchema.parse(probe.packData).sample.state
+    // A hazard: visibility under the hazard rung, so one hazard and one adverse advisory hold.
+    const advisories = weatherAdvisories(probe, { ...state, atmosphere: { ...state.atmosphere, visibilityM: 500 } }, at)
+    expect(advisories.map(alert => [alert.advisory, alert.acknowledged, alert.priority])).toEqual([[true, false, 'warning'], [true, false, 'caution']])
+    const calm = { ...probe, id: 'weather-probe:calm' as never, label: 'Calm probe' }
+    const port = { declarations: async () => [], read: async () => ({ observations: [], unknown: [], refused: [] }), topology: async () => { throw new Error('unused') } }
+    const { text } = await assembleRunContext({ title: 'Fog', objects: [calm, { ...probe, alerts: advisories }], denied: new Set(), clock: run.snapshot().clock, packs: [weatherPack], port: port as never })
+    const assets = text.split('\n').filter(line => line.startsWith('- weather-probe:'))
+    expect(assets[0]).toStartWith('- weather-probe:halden · Halden probe · ')
+    expect(assets[0]).toContain('alerts 2 (0 unacknowledged, 2 advisories (warning); worst warning)')
+    expect(assets[1]).toContain('weather-probe:calm · Calm probe · ')
+  })
 })
+

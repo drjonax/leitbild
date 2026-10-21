@@ -61,15 +61,18 @@ export const assembleRunContext = async (run: {
     : `${run.title} · simulation time ${run.clock.currentTime} · ${run.clock.paused ? 'PAUSED' : 'LIVE'}`
   const assets = byWorst(visible.filter(object => observed(object) !== undefined)).slice(0, maxAssets)
   const assetLines = await Promise.all(assets.map(async object => {
-    const unacknowledged = object.alerts.filter(alert => !alert.acknowledged && alert.standing !== true).length
+    // An advisory never asks attention (R43): it counts apart, with the worst priority it carries; ranking still weighs it.
+    const advisories = object.alerts.filter(alert => alert.advisory === true)
+    const unacknowledged = object.alerts.filter(alert => !alert.acknowledged && alert.standing !== true && alert.advisory !== true).length
     const standing = object.alerts.filter(alert => alert.standing === true).length
     const worst = worstOf(object)
+    const advised = advisories.length === 0 ? '' : `, ${advisories.length} ${advisories.length === 1 ? 'advisory' : 'advisories'} (${worstWord(worstOf({ ...object, alerts: advisories })!)})`
     const firstOut = [...object.alerts].filter(alert => alert.firstOut !== undefined).sort((left, right) => left.firstOut!.rank - right.firstOut!.rank)[0]
     const lead = await run.port.read({ lead: { objectId: object.id, count: 6 } })
     const refs = [...lead.observations].sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity)).map(observation => observation.ref)
     return fitted([
       `- ${object.id} · ${object.label} · ${statusOf(object)}`,
-      object.alerts.length === 0 ? 'no alerts' : `alerts ${object.alerts.length} (${unacknowledged} unacknowledged${standing > 0 ? `, ${standing} standing` : ''}; worst ${worstWord(worst!)})`,
+      object.alerts.length === 0 ? 'no alerts' : `alerts ${object.alerts.length} (${unacknowledged} unacknowledged${standing > 0 ? `, ${standing} standing` : ''}${advised}; worst ${worstWord(worst!)})`,
       ...(firstOut ? [`first out: ${firstOut.message}`] : []),
     ], lead.refused.length > 0 ? [] : refs, (kept, dropped) => lead.refused.length > 0 ? `lead values refused: ${lead.refused[0]!.refused.code}`
       : kept.length + dropped === 0 ? 'lead: none declared' : `lead: ${[...kept, ...(dropped > 0 ? [`+${dropped} refs`] : [])].join(', ')}`)
