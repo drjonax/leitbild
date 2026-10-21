@@ -9,7 +9,7 @@
   import { VIGNETTE_ROW_PX } from './grid.ts'
   import { slotLook } from './collection.ts'
   import { toneOf, valueLook } from './readout.ts'
-  import { createVignetteSession, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
+  import { createVignetteSession, sampleStale, vignetteRoutes, type VignetteSnapshot } from './vignette-client.ts'
   import AlertsSection from './AlertsSection.svelte'
   import EntityTable from './EntityTable.svelte'
   import GroupedValues from './GroupedValues.svelte'
@@ -30,6 +30,7 @@
   let snapshot = $state.raw<VignetteSnapshot>({ phase: 'connecting', series: new Map(), sampleError: null })
   const readPalette = (): Palette => (document.documentElement.dataset.obcTheme as Palette | undefined) ?? 'day'
   let palette = $state<Palette>(readPalette())
+  let wallNow = $state(Date.now())
 
   runOnMount(() => {
     const session = createVignetteSession({
@@ -46,10 +47,12 @@
       presented: () => {},
     })
     session.start()
+    // Staleness is judged on the wall clock, so it shows even while no sample arrives.
+    const tick = setInterval(() => { wallNow = Date.now() }, 1_000)
     // The embedding page's theme choice changes the palette live (main.ts).
     const theme = new MutationObserver(() => { palette = readPalette() })
     theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-obc-theme'] })
-    return () => { theme.disconnect(); unhost(); session.close() }
+    return () => { clearInterval(tick); theme.disconnect(); unhost(); session.close() }
   })
 
   const view = $derived(snapshot.view)
@@ -58,8 +61,9 @@
   const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.at.at))
   const worst = $derived(latest === undefined ? null : worstChip(latest.observations, latest.alerts))
   const footer = $derived.by((): { readonly word: 'LIVE' | 'PAUSED' | 'FROZEN'; readonly why?: string } => {
-    if (snapshot.phase === 'live' && snapshot.sampleError === null) return { word: latest?.at.paused === true ? 'PAUSED' : 'LIVE' }
-    const why = snapshot.sampleError ?? (snapshot.phase === 'inactive' ? 'the Run is not loaded' : snapshot.phase === 'missing' ? 'the Run no longer exists' : undefined)
+    const stale = sampleStale(snapshot, wallNow)
+    if (snapshot.phase === 'live' && !stale) return { word: latest?.at.paused === true ? 'PAUSED' : 'LIVE' }
+    const why = snapshot.sampleError ?? (stale ? 'no answer from the Run for over 5 s' : snapshot.phase === 'inactive' ? 'the Run is not loaded' : snapshot.phase === 'missing' ? 'the Run no longer exists' : undefined)
     return why === undefined ? { word: 'FROZEN' } : { word: 'FROZEN', why }
   })
 </script>

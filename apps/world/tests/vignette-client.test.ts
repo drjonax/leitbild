@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { SimulationRunId } from '../src/core/model/ids.ts'
 import type { VignetteSample, VignetteView } from '../src/features/displays/compose/model.ts'
-import { createVignetteSession, GAP_MS, INACTIVE_RETRY_MS, SAMPLE_INTERVAL_MS, type RunPresence, type VignetteSnapshot } from '../src/ui/embed/vignette/vignette-client.ts'
+import { createVignetteSession, GAP_MS, INACTIVE_RETRY_MS, SAMPLE_BACKOFF_MS, SAMPLE_INTERVAL_MS, sampleStale, STALE_AFTER_MS, type RunPresence, type VignetteSnapshot } from '../src/ui/embed/vignette/vignette-client.ts'
 
 // The vignette's link to its Run (architecture B1): presence before anything,
 // never loading a Run; the view once; history with the first sample only, and
@@ -20,6 +20,10 @@ const harness = (presence: (at: string) => RunPresence | null) => {
   let runMs = Date.parse('2026-10-21T10:00:00.000Z')
   const timers: Array<{ at: number; run: () => void; cancelled: boolean }> = []
   const calls: string[] = []
+  /** How long the Run takes to answer a sample, on the fake clock. */
+  let latencyMs = 0
+  const later = <T>(value: () => T): Promise<T> => latencyMs === 0 ? Promise.resolve(value())
+    : new Promise(resolve => { timers.push({ at: wall + latencyMs, run: () => resolve(value()), cancelled: false }) })
   const snapshots: VignetteSnapshot[] = []
   const sample = (history?: { readonly fromMs: number }): VignetteSample => ({
     at: { at: new Date(runMs).toISOString(), clock: 'simulation', paused: false },
@@ -33,7 +37,7 @@ const harness = (presence: (at: string) => RunPresence | null) => {
     routes: {
       presence: async () => { calls.push('presence'); return presence(new Date(runMs).toISOString()) },
       view: async () => { calls.push('view'); return view },
-      sample: async (_runId, _state, history) => { calls.push(history === undefined ? 'sample' : `history ${runMs - history.fromMs}`); return sample(history) },
+      sample: async (_runId, _state, history) => { calls.push(history === undefined ? 'sample' : `history ${runMs - history.fromMs}`); return later(() => sample(history)) },
     },
     onChange: snapshot => { snapshots.push(snapshot) },
     wallNow: () => wall,
@@ -59,7 +63,10 @@ const harness = (presence: (at: string) => RunPresence | null) => {
     runMs += end - wall
     wall = end
   }
-  return { session, calls, snapshots, settle, advance, pending: () => timers.filter(timer => !timer.cancelled).length, last: () => snapshots.at(-1)! }
+  return {
+    session, calls, snapshots, settle, advance, pending: () => timers.filter(timer => !timer.cancelled).length, last: () => snapshots.at(-1)!,
+    wall: () => wall, answerIn: (ms: number) => { latencyMs = ms },
+  }
 }
 
 const loaded = (at: string): RunPresence => ({ loaded: true, at })
@@ -105,6 +112,38 @@ describe('vignette session', () => {
     await run.advance(INACTIVE_RETRY_MS)
     expect(run.calls.slice(2)).toEqual(['presence', 'view', 'history 600000'])
     expect(run.last().phase).toBe('live')
+    run.session.close()
+  })
+
+  /** Steps the fake clock 100 ms at a time until the vignette reads stale, at most `steps` times; the wall time it did, or null. */
+  const staleWithin = async (run: ReturnType<typeof harness>, steps: number): Promise<number | null> => {
+    for (let step = 0; step < steps; step += 1) {
+      await run.advance(100)
+      if (sampleStale(run.last(), run.wall())) return run.wall()
+    }
+    return null
+  }
+
+  test('a Run that answers every sample in 1.9 s reads as live for a minute: the longest wait leaves room for it', async () => {
+    expect(SAMPLE_BACKOFF_MS.at(-1)! + 2_000).toBeLessThanOrEqual(STALE_AFTER_MS)
+    const run = harness(loaded)
+    run.session.start()
+    await run.settle()
+    run.answerIn(1_900)
+    expect(await staleWithin(run, 600)).toBeNull()
+    run.session.close()
+  })
+
+  test('a Run that stops answering reads as stale once its last sample is 5 s old', async () => {
+    const run = harness(loaded)
+    run.session.start()
+    await run.settle()
+    await run.advance(3 * SAMPLE_INTERVAL_MS)
+    run.answerIn(600_000)
+    const staleAt = await staleWithin(run, 200)
+    const answeredAt = run.last().lastSampleWallMs!
+    expect(staleAt! - answeredAt).toBeGreaterThan(STALE_AFTER_MS)
+    expect(staleAt! - answeredAt).toBeLessThanOrEqual(STALE_AFTER_MS + 100)
     run.session.close()
   })
 

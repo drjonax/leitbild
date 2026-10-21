@@ -33,11 +33,18 @@ export interface VignetteSnapshot {
   readonly series: ReadonlyMap<string, ReadonlyArray<SeriesPoint>>
   /** The last sample's failure; null once one succeeds again. */
   readonly sampleError: string | null
+  /** Wall time of the last sample answered. */
+  readonly lastSampleWallMs?: number
 }
 
 export const SAMPLE_INTERVAL_MS = 1_000
-/** After a slow or failed answer the next request waits longer: 2 s, then 5 s. */
-export const SAMPLE_BACKOFF_MS: ReadonlyArray<number> = [SAMPLE_INTERVAL_MS, 2_000, 5_000]
+/** After a slow or failed answer the next request waits longer: 2 s, then 3 s, which leaves an answer of up to 2 s before the vignette reads stale. */
+export const SAMPLE_BACKOFF_MS: ReadonlyArray<number> = [SAMPLE_INTERVAL_MS, 2_000, 3_000]
+/** A live vignette whose last sample is older than this, or failed, is stale: its footer says FROZEN. */
+export const STALE_AFTER_MS = 5_000
+/** Whether a live vignette's values are too old to show as live, at wall time `wallNowMs`. */
+export const sampleStale = (snapshot: VignetteSnapshot, wallNowMs: number): boolean => snapshot.phase === 'live'
+  && (snapshot.sampleError !== null || (snapshot.lastSampleWallMs !== undefined && wallNowMs - snapshot.lastSampleWallMs > STALE_AFTER_MS))
 /** Samples further apart than this missed some: the next one reads the history again. */
 export const GAP_MS = 5_000
 export const PRESENCE_EVERY_SAMPLES = 5
@@ -103,7 +110,7 @@ export const createVignetteSession = (config: {
       const value = sample.observations.find(observation => observation.ref === pen.ref)?.value
       series.set(pen.ref, typeof value === 'number' ? appendPoint(recorded, { t: at, v: value }, at - pen.horizonMs) : recorded)
     }
-    update({ phase: 'live', view, latest: sample, series, sampleError: null })
+    update({ phase: 'live', view, latest: sample, series, sampleError: null, lastSampleWallMs: wallNow() })
   }
 
   const sampleOnce = async (view: VignetteView, known: RunPresence | undefined): Promise<void> => {
