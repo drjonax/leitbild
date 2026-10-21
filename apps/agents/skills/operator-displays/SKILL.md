@@ -1,6 +1,6 @@
 ---
 name: operator-displays
-description: Composes one small live vignette (values, trend, alerts, topology, map) for an answer about a Simulation Run. Use when the next decision depends on how values move, how near they are to limits, what runs or flows where, or where things are, or when asked to show, trend, compare or watch.
+description: Composes one small live vignette (values, trend, alerts, topology, map) for an answer about a Simulation Run. Use when the next decision depends on how values move, how near they are to limits, what runs or flows where, or where things are, or when asked to show, trend, compare or watch. Skip when a sentence answers.
 allowed-tools: [workspace_explore, workspace_call]
 ---
 

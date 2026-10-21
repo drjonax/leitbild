@@ -7,9 +7,9 @@ import assistantRoom from './leitbild-assistant.room.json'
 // Skills are injected in full into every prompt of the agents that select
 // them, so their size is an attention budget, not just a storage detail.
 // The display skill's budget is 700 tokens as injected ("[name] description"
-// line and body), held as characters at 3.3 per token, the measured ratio of
-// its citation-format line (38 tokens, 126 characters).
-const OPERATOR_DISPLAYS_INJECTED_MAX_CHARS = 2_310
+// line and body); 2,340 characters are about 560 tokens at the measured 4.18
+// characters per token (lead, 21 Oct).
+const OPERATOR_DISPLAYS_INJECTED_MAX_CHARS = 2_340
 const CITATION_FORMAT_LINE = 'Put each key right after the number it supports (91.3 % ⟦k2⟧); one key per number; no keys in table headers; no key ranges.'
 // The assistance skill's body as v0.5.0 shipped it: a new rule tightens
 // existing wording rather than growing every prompt.
@@ -25,6 +25,8 @@ describe('Leitbild Assistant skills', () => {
     for (const name of assistantRoom.room.agents[0]!.skills) expect(store.get(name)).toBeDefined()
     const displays = store.get('operator-displays')!
     expect(displays.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX_CHARS)
+    // Keeps displays out of answers a sentence settles (the false-positive measure).
+    expect(displays.description).toEndWith('Skip when a sentence answers.')
     expect(`[${displays.name}] ${displays.description}\n${displays.body}`.length).toBeLessThanOrEqual(OPERATOR_DISPLAYS_INJECTED_MAX_CHARS)
     expect(displays.body).toContain('world.simulation-run.display.compose')
     expect(displays.body).toContain('world.simulation-run.observables.search')
