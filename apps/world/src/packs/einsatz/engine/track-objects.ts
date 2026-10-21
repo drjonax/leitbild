@@ -40,7 +40,7 @@ export const trackObject = (record: TrackRecord, sighting: Sighting, stamp: Trac
     ...envelope(id, label, stamp),
     kind: 'observation',
     lifecycle: record.tier === 'destroyed' ? 'inactive' : 'active',
-    spatial: { frame: { kind: 'wgs84' }, position: { point: sighting.point, observedAt: isoOf(sighting.observedAtMs) } },
+    spatial: { frame: { kind: 'wgs84' }, position: { point: sighting.point, observedAt: isoOf(sighting.observedAtMs), simAt: isoOf(sighting.observedAtMs) } },
     operational: { status: record.tier, mode: 'simulated' },
     alerts: [],
     packData: data,

@@ -379,5 +379,5 @@ export const stepDroneObject = (input: {
     },
   })
 
-  return withDronePackData(object, updatedData, at)
+  return withDronePackData(object, updatedData, at, new Date(nowMs).toISOString() as IsoTimestamp)
 }

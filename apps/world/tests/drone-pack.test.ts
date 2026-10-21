@@ -102,6 +102,7 @@ const drone = (config: {
     altitudeM: config.altitudeM ?? 40,
     headingDeg: config.headingDeg ?? 0,
     at,
+    simAt: at,
   })
 }
 
@@ -634,6 +635,7 @@ describe('drone pack native runtime', () => {
           inputExpiresAt: at,
         },
       },
+      at,
       at,
     )
     const contactTarget = { ...genericTarget({ id: 'incident:visible' }), kind: 'incident' as const }
