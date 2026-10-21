@@ -8,6 +8,7 @@
   import type { VignetteSection } from '../../../features/displays/compose/model.ts'
   import { networkDrawing } from './network.ts'
   import type { AlertTone } from './readout.ts'
+  import './openbridge.ts'
 
   // A network topology (architecture B2) in OpenBridge: lines, crossings and
   // end caps through connector-diagram on a canvas; obc-bus, obc-switch,

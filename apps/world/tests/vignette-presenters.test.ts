@@ -76,6 +76,8 @@ describe('readout', () => {
   test('the readout block gets the number and its decimals, or nothing and the word it shows instead', () => {
     expect(valueLook(level, [observation(level.ref, 18.04)], level.ref)).toMatchObject({ value: 18, decimals: 1, text: '18.0' })
     expect(readingLook('Roll', 'number', undefined, { value: -0.3, unit: 'deg', thresholds: [] })).toMatchObject({ value: 0, text: '0' })
+    // A count reads whole, as the card writes it.
+    expect(readingLook('Energised islands', 'number', undefined, { value: 1, unit: '1', quantity: 'count', thresholds: [] })).toMatchObject({ text: '1', decimals: 0 })
     expect(valueLook(level, [observation(level.ref, 50, { quality: 'bad' })], level.ref)).toMatchObject({ value: null, text: '?' })
   })
 

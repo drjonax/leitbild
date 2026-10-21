@@ -48,8 +48,7 @@ beforeAll(async () => {
 afterAll(async () => { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) })
 
 describe('T32 on the real compose path', () => {
-  // The 2-hop view waits for the composer's whole-row fix (half-grid ELK heights gave fractional rows; p2-core).
-  for (const hops of [1]) {
+  for (const hops of [1, 2]) {
     test(`the Halden ${hops}-hop network vignette: ≤ 2 crossings, no overlaps, names whole, warm p95 compile CPU ≤ 30 ms`, async () => {
       const graph = await run.port.topology(GRID)
       if ('refused' in graph) throw new Error(graph.refused.message)

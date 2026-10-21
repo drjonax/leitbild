@@ -6,7 +6,7 @@
 // Names and readings are text. Colour comes only from the bound observations'
 // priorities; "on" only from a boolean or a state declared active (ruling Q8).
 import type { Segment } from '@oicl/connector-diagram'
-import type { Observable, Observation } from '../../../core/observation/model.ts'
+import type { Observation } from '../../../core/observation/model.ts'
 import { pipeSegments, stubEndSegment } from '../composed-display/mimic/pipe-segments.ts'
 import { VIGNETTE_ROW_PX } from './grid.ts'
 import type { TopologyBinding, VignetteSection } from '../../../features/displays/compose/model.ts'
@@ -77,9 +77,6 @@ export const stub = (end: Point, to: Point, box: Box): ReadonlyArray<Point> => {
   return sideways ? [end, [to[0], end[1]], to] : [end, [end[0], to[1]], to]
 }
 
-/** STAND-IN until p2-core's c5d2b6cad (bindings carry their observable's states) reaches the integration branch. */
-const statesOf = (binding: TopologyBinding): Observable['states'] => (binding as TopologyBinding & Partial<Pick<Observable, 'states'>>).states
-
 const READING_ROLES: ReadonlyArray<TopologyBinding['role']> = ['loading', 'flow', 'level', 'value']
 
 export const networkDrawing = (section: Topology, observations: ReadonlyArray<Observation>): NetworkDrawing => {
@@ -89,7 +86,7 @@ export const networkDrawing = (section: Topology, observations: ReadonlyArray<Ob
   const read = (binding: TopologyBinding): Observation | undefined => observations.find(observation => observation.ref === binding.ref)
   const conducting = (id: string): boolean | null => {
     const binding = byId.get(id)?.bindings.find(entry => entry.role === 'conducting')
-    return binding === undefined ? null : activeState(read(binding)?.value, statesOf(binding))
+    return binding === undefined ? null : activeState(read(binding)?.value, binding.states)
   }
   const edges = section.layout.edges.map(edge => ({ ...edge, points: edge.points.map(([x, y]) => [px(x), px(y)] as const), gaps: edge.gaps.map(([x, y]) => [px(x), px(y)] as const) }))
   const ends = edges.flatMap(edge => [edge.points[0]!, edge.points.at(-1)!])

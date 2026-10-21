@@ -148,13 +148,13 @@ export const stripDrawing = (input: {
   const shown = input.pens.flatMap(pen => (input.series.get(pen.ref) ?? []).filter((point, index, points) =>
     point.t <= window.end && (points[index + 1]?.t ?? window.end) >= window.start).map(point => point.v))
   if (shown.length === 0) return null
-  const unit = input.pens[0]!.unit
+  const { unit, quantity } = input.pens[0]!
   const seen = { min: Math.min(...shown), max: Math.max(...shown) }
   const limits = sharedLimits(input.pens)
-  const domain = stripDomain(seen, limits.map(limit => limit.value), decimalsFor(unit, (seen.min + seen.max) / 2))
+  const domain = stripDomain(seen, limits.map(limit => limit.value), decimalsFor(unit, (seen.min + seen.max) / 2, quantity))
   const x = (t: number): number => ((t - window.start) / input.horizonMs) * input.width
   const y = (v: number): number => INSET + (1 - (v - domain.min) / (domain.max - domain.min)) * (input.height - 2 * INSET)
-  const name = (limit: Threshold): string => `${orderWord(limit)} ${numberText(limit.value, unit)}`
+  const name = (limit: Threshold): string => `${orderWord(limit)} ${numberText(limit.value, unit, quantity)}`
   const inside = (limit: Threshold): boolean => limit.value >= domain.min && limit.value <= domain.max
   const lines = limits.filter(inside)
   const labelYs = limitLabelYs(lines.map(limit => y(limit.value)))
