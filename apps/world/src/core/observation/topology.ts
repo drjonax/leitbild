@@ -46,6 +46,8 @@ export const topologyGraphSchema = z.object({
   }).strict()).max(20_000),
   edges: z.array(z.object({ id, rank, from: end, to: end, medium: id, directed: z.boolean(), bindings, group: id.optional() }).strict()).max(40_000),
   boundaries: z.array(z.object({ node: id, port: id, externalPortId: id }).strict()).max(256),
+  /** What the object's overview draws, as its Pack judges its principal equipment: these nodes and the edges among them; World adds where the drawing stops. */
+  overview: z.object({ nodes: z.array(id).min(1).max(60), edges: z.array(id).max(240) }).strict().optional(),
 }).strict().superRefine((graph, context) => {
   const issue = (message: string): void => context.addIssue({ code: 'custom', message })
   const unique = (kind: string, ids: ReadonlyArray<string>): void => {
@@ -81,6 +83,16 @@ export const topologyGraphSchema = z.object({
       const carried = ports.get(`${at.node}\u0000${at.port}`)
       if (carried === undefined) issue(`edge ${edge.id} ends at unknown port ${at.node}.${at.port}`)
       else if (!carried.includes(edge.medium)) issue(`edge ${edge.id} carries ${edge.medium} into port ${at.node}.${at.port} of ${carried.join(', ')}`)
+    }
+  }
+  if (graph.overview !== undefined) {
+    const nodes = new Set(graph.nodes.map(node => node.id))
+    const drawn = new Set(graph.overview.nodes)
+    for (const node of graph.overview.nodes) if (!nodes.has(node)) issue(`the overview names unknown node ${node}`)
+    for (const id of graph.overview.edges) {
+      const edge = graph.edges.find(entry => entry.id === id)
+      if (edge === undefined) issue(`the overview names unknown edge ${id}`)
+      else if (!drawn.has(edge.from.node) || !drawn.has(edge.to.node)) issue(`the overview edge ${id} ends outside the overview's nodes`)
     }
   }
   for (const boundary of graph.boundaries) {

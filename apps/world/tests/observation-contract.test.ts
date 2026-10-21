@@ -235,6 +235,14 @@ describe('topology graph', () => {
     expect(topologyGraphSchema.safeParse({ ...graph, nodes: [node('pump', { bindings: [{ role: 'colour', ref: 'unit-2#P-RUN' }] }), node('sg')] }).success).toBe(false)
   })
 
+  test('a graph may declare its overview: nodes and the edges among them, each one it has', () => {
+    expect(topologyGraphSchema.parse({ ...graph, overview: { nodes: ['pump', 'sg'], edges: ['e1'] } }).overview?.edges).toEqual(['e1'])
+    const issues = (overview: unknown) => topologyGraphSchema.safeParse({ ...graph, overview }).error?.issues.map(issue => issue.message)
+    expect(issues({ nodes: ['pump', 'tank'], edges: [] })).toEqual(['the overview names unknown node tank'])
+    expect(issues({ nodes: ['pump'], edges: ['e1'] })).toEqual(['the overview edge e1 ends outside the overview\'s nodes'])
+    expect(issues({ nodes: [], edges: [] })).toHaveLength(1)
+  })
+
   test('bindings read only the graph\'s own object', () => {
     const foreign = node('pump', { bindings: [{ role: 'flow', ref: 'unit-3#FW-FLOW' }] })
     expect(topologyGraphSchema.safeParse({ ...graph, nodes: [foreign, node('sg')] }).error?.issues[0]?.message).toBe('pump binds unit-3#FW-FLOW of another object')
