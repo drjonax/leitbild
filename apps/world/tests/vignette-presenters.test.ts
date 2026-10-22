@@ -125,7 +125,7 @@ describe('trend strip', () => {
     expect(reached.max).toBeLessThan(100)
   })
 
-  test('the drawing names limits beyond its scale at the edge they lie past, and colours a pen only by its observation', () => {
+  test('the drawing names the limit nearest each edge beyond its scale, and colours a pen only by its observation', () => {
     const pens = [level, { ...level, ref: 'unit-1#level-b', thresholds: level.thresholds.map(limit => (limit.id === 'hi' ? { ...limit, value: 80 } : limit)) }]
     const drawn = (values: ReadonlyArray<number>) => stripDrawing({
       pens, series: new Map([[level.ref, values.map((v, index) => ({ t: index * 1_000, v }))], ['unit-1#level-b', [{ t: 0, v: values[0]! }]]]),
@@ -135,13 +135,18 @@ describe('trend strip', () => {
     expect(wide.pens.map(pen => [pen.dash, pen.tone])).toEqual([['', null], ['6 3', 'caution']])
     expect([wide.limits.map(limit => limit.label), wide.beyond]).toEqual([['LO 30.0', 'LO-LO 20.0', 'HI 80.0'], []])
     const steady = drawn([49, 51])
-    expect([steady.limits, steady.beyond.map(limit => `${limit.edge} ${limit.label}`)]).toEqual([[], ['bottom LO 30.0', 'bottom LO-LO 20.0', 'top HI 80.0']])
+    expect([steady.limits, steady.beyond.map(limit => `${limit.edge} ${limit.label}`)]).toEqual([[], ['top HI 80.0', 'bottom LO 30.0']])
     expect(stripDrawing({ pens: [level], series: new Map(), observations: [], now: 1, horizonMs: 1, width: 1, height: 1 })).toBeNull()
   })
 
   test('limit names never touch: above the line, below where the one above is near, else left to the line\'s title', () => {
-    expect(limitLabelYs([10, 15, 60])).toEqual([22, null, 58])
-    expect(limitLabelYs([60, 30])).toEqual([58, 28])
+    const free = { height: 72, top: false, bottom: false }
+    expect(limitLabelYs([10, 15, 60], free)).toEqual([22, null, 58])
+    expect(limitLabelYs([60, 30], free)).toEqual([58, 28])
+    // Never past the strip's bottom, nor onto the names of limits beyond the scale at its edges.
+    expect(limitLabelYs([69], free)).toEqual([67])
+    expect(limitLabelYs([69], { ...free, bottom: true })).toEqual([null])
+    expect(limitLabelYs([5, 30], { ...free, top: true })).toEqual([null, 28])
   })
 
   test('time ticks count back from now in round steps', () => {

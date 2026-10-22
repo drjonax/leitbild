@@ -120,13 +120,21 @@ const INSET = 4
 // A limit's name sits just above its line, or just below where the name above would touch it; a third that would touch either is left to the line's title.
 const LABEL_PX = 13
 
-/** Where each limit line's name goes, top down, so no two touch; null where neither side of its line has room. */
-export const limitLabelYs = (ys: ReadonlyArray<number>): ReadonlyArray<number | null> => {
+/** Where a strip names the nearest limit beyond its scale, at its top and at its bottom edge (TrendStrip.svelte). */
+export const BEYOND_TOP_Y = 12
+export const BEYOND_BOTTOM_INSET = 3
+
+/**
+ * Where each limit line's name goes, top down, so no two touch, none leaves the strip, and none touches the name of
+ * a limit beyond the scale at either edge; null where neither side of its line has room.
+ */
+export const limitLabelYs = (ys: ReadonlyArray<number>, room: { readonly height: number; readonly top: boolean; readonly bottom: boolean }): ReadonlyArray<number | null> => {
   const order = ys.map((y, index) => ({ y, index })).sort((left, right) => left.y - right.y)
   const placed: Array<number | null> = ys.map(() => null)
-  let last = -Infinity
+  let last = room.top ? BEYOND_TOP_Y : -Infinity
+  const lowest = room.bottom ? room.height - BEYOND_BOTTOM_INSET - LABEL_PX : room.height - 2
   for (const { y, index } of order) {
-    const spot = [y - 2, y + LABEL_PX - 1].find(candidate => candidate - last >= LABEL_PX && candidate >= LABEL_PX - 2)
+    const spot = [y - 2, y + LABEL_PX - 1].find(candidate => candidate - last >= LABEL_PX && candidate >= LABEL_PX - 2 && candidate <= lowest)
     if (spot === undefined) continue
     placed[index] = spot
     last = spot
@@ -157,7 +165,12 @@ export const stripDrawing = (input: {
   const name = (limit: Threshold): string => `${orderWord(limit)} ${numberText(limit.value, unit, quantity)}`
   const inside = (limit: Threshold): boolean => limit.value >= domain.min && limit.value <= domain.max
   const lines = limits.filter(inside)
-  const labelYs = limitLabelYs(lines.map(limit => y(limit.value)))
+  // Beyond the scale, each edge names the limit nearest it: the one the value would meet next.
+  const beyond = [
+    ...limits.filter(limit => limit.value > domain.max).sort((left, right) => left.value - right.value).slice(0, 1).map(limit => ({ limit, edge: 'top' as const })),
+    ...limits.filter(limit => limit.value < domain.min).sort((left, right) => right.value - left.value).slice(0, 1).map(limit => ({ limit, edge: 'bottom' as const })),
+  ]
+  const labelYs = limitLabelYs(lines.map(limit => y(limit.value)), { height: input.height, top: beyond.some(entry => entry.edge === 'top'), bottom: beyond.some(entry => entry.edge === 'bottom') })
   return {
     pens: input.pens.map((pen, index) => ({
       ref: pen.ref,
@@ -166,7 +179,7 @@ export const stripDrawing = (input: {
       tone: toneOf(input.observations.find(observation => observation.ref === pen.ref)?.priority),
     })),
     limits: lines.map((limit, index) => ({ id: limit.id, y: y(limit.value), label: name(limit), labelY: labelYs[index]!, priority: limit.priority })),
-    beyond: limits.filter(limit => !inside(limit)).map(limit => ({ id: limit.id, edge: limit.value > domain.max ? 'top' as const : 'bottom' as const, label: name(limit) })),
+    beyond: beyond.map(({ limit, edge }) => ({ id: limit.id, edge, label: name(limit) })),
     values: valueTicks(domain).map(tick => ({ y: y(tick.value), label: tick.label })),
     times: timeTicks(input.now, input.horizonMs).map(tick => ({ x: x(tick.t), label: tick.label })),
   }

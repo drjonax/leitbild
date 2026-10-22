@@ -13,7 +13,9 @@ import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-res
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
 import { composeDefault } from '../src/features/displays/compose/compose.ts'
-import { overviewOf } from '../src/features/displays/compose/topology.ts'
+import { FLOW_ROOM, overviewOf, scopeWithin, topologyOf } from '../src/features/displays/compose/topology.ts'
+import { resolveSubject } from '../src/features/displays/compose/resolve.ts'
+import { visibleObject } from '../src/features/displays/compose/declared.ts'
 import { compileVignette, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { overlaps } from './helpers/network-layout-measure.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
@@ -94,8 +96,8 @@ describe('P9: the plant default carries what the Unit Overview carries', () => {
     const graph = await run.port.topology(plantId)
     if ('refused' in graph || graph.overview === undefined) throw new Error('the Plant declares no overview')
     expect(drawing?.kind === 'topology' && drawing.nodes.filter(node => node.class !== 'stop').map(node => node.id).sort()).toEqual([...graph.overview.nodes].sort())
-    // Within the 66 × 36 flow room and today's overview ceiling of twelve crossings across the loops; no box over another.
-    expect(drawing?.kind === 'topology' && drawing.layout.width <= 66 && drawing.layout.height <= 36).toBe(true)
+    // Within the flow room and today's overview ceiling of twelve crossings across the loops; no box over another.
+    expect(drawing?.kind === 'topology' && drawing.layout.width <= FLOW_ROOM.columns && drawing.layout.height <= FLOW_ROOM.rows).toBe(true)
     expect(drawing?.kind === 'topology' && drawing.layout.crossings).toBeLessThanOrEqual(12)
     expect(drawing?.kind === 'topology' && overlaps(drawing.layout)).toEqual([])
     expect(sample.observations.some(observation => observation.ref.includes('#csf.'))).toBe(true)
@@ -131,11 +133,69 @@ describe('P9: an equipment default carries what the detail display carries', () 
     const readings = state.views.find(entry => entry.kind === 'values')
     expect(readings?.kind === 'values' && readings.refs.every(ref => ref.startsWith(`${plantId}#`))).toBe(true)
     const drawing = view.sections.find(section => section.kind === 'topology')
-    expect(drawing?.kind === 'topology' && drawing.layout.crossings).toBeLessThanOrEqual(12)
-    expect(drawing?.kind === 'topology' && overlaps(drawing.layout)).toEqual([])
-    expect(drawing?.kind === 'topology' && drawing.nodes.some(node => node.element === 'sgA')).toBe(true)
+    if (drawing?.kind !== 'topology') throw new Error('no drawing')
+    expect(drawing.layout.width <= FLOW_ROOM.columns && drawing.layout.height <= FLOW_ROOM.rows).toBe(true)
+    expect(drawing.layout.crossings).toBeLessThanOrEqual(12)
+    expect(overlaps(drawing.layout)).toEqual([])
+    expect(drawing.nodes.some(node => node.element === 'sgA')).toBe(true)
+    // Today's detail reach: every service of its loop out to three links, so the feed path questions see the AFW
+    // pumps and the CST, the main feedwater pumps, the turbine and the condenser.
+    const drawn = drawing.nodes.map(node => node.id)
+    expect(drawn).toEqual(expect.arrayContaining(['auxFeedwaterTank', 'auxFeedwaterPumpMotor', 'auxFeedwaterPumpMotorB', 'auxFeedwaterPumpTurbine', 'mainFeedwaterPumpA', 'mainFeedwaterPumpB', 'turbine', 'condenser']))
+    const topology = state.views.find(entry => entry.kind === 'topology')
+    expect(topology?.kind === 'topology' && topology.request).toMatchObject({ around: ['sgA'], groups: ['A'], reach: 3 })
+    // Its own alerts first, then the unit's first-outs, the reactor trip among them, within the section's rows.
     const alerts = state.views.find(entry => entry.kind === 'alerts')
-    if (alerts !== undefined) expect(alerts.kind === 'alerts' && alerts.elements).toEqual(['sgA'])
-    console.log(`SG A default: rows ${state.views.map(entry => `${entry.kind} ${entry.rows}`).join(', ')}; card ${card.items.length} items + ${card.more}; ${card.adjusted.map(entry => entry.text).join('; ')}`)
+    expect(alerts?.kind === 'alerts' && { elements: alerts.elements, lead: alerts.lead }).toEqual({ elements: ['sgA'], lead: true })
+    const listed = card.items.filter(item => item.subject !== undefined && 'alertId' in item.subject).map(item => item.reading)
+    expect(listed.length).toBeLessThanOrEqual(alerts!.rows - 1)
+    const own = listed.findIndex(reading => !reading.includes('Steam generator A'))
+    expect(own).toBeGreaterThan(0)
+    expect(listed.slice(own).some(reading => reading.includes('Reactor trip') && reading.includes('first out'))).toBe(true)
+    console.log(`SG A default: rows ${state.views.map(entry => `${entry.kind} ${entry.rows}`).join(', ')}; ${drawing.layout.width} x ${drawing.layout.height}, ${drawing.layout.crossings} crossings; card ${card.items.length} items + ${card.more}; ${card.adjusted.map(entry => entry.text).join('; ')}`)
+  })
+
+  test('a block valve between the drawn pressurizer and its drawn PORV is drawn, not named at a stop on each side', async () => {
+    const graph = (await topologyOf(run, plantId))!
+    const scoped = scopeWithin(graph, { around: ['pressurizerReliefHeader'], reach: 1 })
+    if (!scoped.ok) throw new Error(scoped.reason)
+    expect(scoped.scoped.nodes).toEqual(expect.arrayContaining(['pressurizer', 'pressurizer.blockValve', 'pressurizer.reliefValve']))
+    const named = scoped.scoped.stubs.flatMap(stub => stub.others.map(other => other.node))
+    expect(named.filter((node, at) => named.indexOf(node) !== at)).toEqual([])
+  })
+
+  test('a pump between two drawn process nodes is drawn whatever feeds its motor, so no drawing names it at a stop on each side', async () => {
+    const pumps = ['mainFeedwaterPumpA', 'mainFeedwaterPumpB', 'auxFeedwaterPumpMotor', 'auxFeedwaterPumpMotorB', 'chargingPump', 'chargingPumpB',
+      'safetyInjectionPumpA', 'safetyInjectionPumpB', 'rhrPumpA', 'rhrPumpB', 'containmentSprayPumpA', 'containmentSprayPumpB']
+    const graph = (await topologyOf(run, plantId))!
+    const twice: string[] = []
+    for (const pump of pumps) {
+      const { state } = await opened(`${plantId}#${pump}`)
+      const view = state.views.find(entry => entry.kind === 'topology')
+      if (view?.kind !== 'topology') throw new Error(`${pump}: no drawing`)
+      const scoped = scopeWithin(graph, view.request)
+      if (!scoped.ok) throw new Error(scoped.reason)
+      // Each stop names its far ends once; a node at two stops is named twice.
+      const named = scoped.scoped.stubs.flatMap(stub => [...new Set(stub.others.map(other => other.node))])
+      twice.push(...pumps.filter(other => named.filter(node => node === other).length > 1).map(other => `${pump}: ${other}`))
+    }
+    // Charging pump A takes boric acid at its inlet too, from a valve CHG B's drawing does not reach: a link in the medium
+    // that joins it to the drawing leads elsewhere, so by the rule it stays a stop at the tank and at the core.
+    expect(twice).toEqual(['chargingPumpB: chargingPump'])
+  })
+
+  test('objectId#label names a device its topology draws before any observable search: the PORV, not a tag that abbreviates it', async () => {
+    expect(await resolveSubject(run, `${plantId}#PORV`, 'subject')).toEqual({ kind: 'element', objectId: plantId, elementId: 'pressurizer.reliefValve' })
+    expect(await resolveSubject(run, `${plantId}#PORV block`, 'subject')).toEqual({ kind: 'element', objectId: plantId, elementId: 'pressurizer.blockValve' })
+    // A declared element still resolves as itself, and a tag names its observable.
+    expect(await resolveSubject(run, `${plantId}#SG A`, 'subject')).toEqual({ kind: 'element', objectId: plantId, elementId: 'sgA' })
+    expect(await resolveSubject(run, `${plantId}#PORV-456A`, 'subject')).toEqual({ kind: 'observable', objectId: plantId, ref: `${plantId}#pressurizer.reliefValvePositionFraction` })
+    const { state, view } = await opened(`${plantId}#PORV`)
+    expect(view.title).toBe(`${visibleObject(run, plantId)!.label} · PORV`)
+    // Its readings are what its node binds (it declares no observables of its own): its position and its flow.
+    const readings = state.views.find(entry => entry.kind === 'values')
+    expect(readings?.kind === 'values' && readings.refs).toContain(`${plantId}#pressurizer.reliefValveEffectivePositionFraction`)
+    const drawing = view.sections.find(section => section.kind === 'topology')
+    expect(drawing?.kind === 'topology' && drawing.nodes.map(node => node.id)).toContain('pressurizer.reliefValve')
   })
 })

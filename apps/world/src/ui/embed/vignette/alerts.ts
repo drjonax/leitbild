@@ -6,7 +6,7 @@
 // "priority not declared", and never ranks as a priority (R1).
 import type { Observation } from '../../../core/observation/model.ts'
 import type { VignetteSection } from '../../../features/displays/compose/model.ts'
-import { priorityRank, stateWords, type AlertRow } from '../../../features/displays/alerts/rows.ts'
+import { leadsObject, priorityRank, stateWords, type AlertRow } from '../../../features/displays/alerts/rows.ts'
 import { severityStyle } from '../../displays/severity.ts'
 
 export interface AlertLine {
@@ -36,12 +36,12 @@ export const alertDetail = (row: AlertRow): string => [
   row.raised?.clock === 'simulation' ? `${row.raised.at.slice(11, 19)} UTC` : 'time unknown',
 ].join(' · ')
 
-type AlertsSection = Pick<Extract<VignetteSection, { kind: 'alerts' }>, 'objectIds' | 'elements' | 'refs'>
+type AlertsSection = Pick<Extract<VignetteSection, { kind: 'alerts' }>, 'objectIds' | 'elements' | 'refs' | 'lead'>
 
-/** Whether a row belongs to a section: one of its objects (any in the Run), and where it names elements or observables, on one of them. */
+/** Whether a row belongs to a section: one of its objects (any in the Run), and where it names elements or observables, on one of them or, with `lead`, one of its objects' lead alerts. */
 const inSection = (section: AlertsSection) => (row: AlertRow): boolean => {
   if (section.objectIds !== 'run' && !section.objectIds.includes(row.objectId)) return false
-  if (section.elements === undefined && section.refs === undefined) return true
+  if ((section.elements === undefined && section.refs === undefined) || (section.lead === true && leadsObject(row.alert))) return true
   const subject = row.alert.subject
   const element = subject !== undefined && 'element' in subject ? subject.element : undefined
   return (element !== undefined && (section.elements ?? []).includes(element)) || (row.alert.observable !== undefined && (section.refs ?? []).includes(row.alert.observable))

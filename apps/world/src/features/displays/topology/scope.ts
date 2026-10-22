@@ -20,6 +20,8 @@ export interface TopologyRequest {
   readonly reach?: number
   /** What the drawing is about, as named (several nodes for alike items named together): groups never narrow it to none of one. Default: each node of from, to and around alone. */
   readonly anchors?: ReadonlyArray<ReadonlyArray<string>>
+  /** Draw a node joined to drawn nodes from two sides or more, by every scoped edge it has in the media that join it to them, rather than stop at it from each side (a vignette's drawing). */
+  readonly between?: true
 }
 
 /** Where a drawing stops: edges of a drawn node to nodes not drawn, one stop per port circuit and direction. */
@@ -250,7 +252,22 @@ export const scopeTopology = (graph: TopologyGraph, request: TopologyRequest): S
   if (inGroups.size === 0) {
     return { ok: false, refusal: { code: 'groups-empty', media: [...media], reached: ordered.filter(group => [...selected].some(edge => groupOf(g, edge) === group)) } }
   }
-  const nodes = sorted([...inGroups].flatMap(edge => ends(g, edge)))
+  const inScope = (edge: number): boolean => allowed.has(edge) && (groups === undefined || groupOf(g, edge) === undefined || groups.has(groupOf(g, edge)!))
+  const reachedDrawn = new Set([...inGroups].flatMap(edge => ends(g, edge)))
+  // Asked, a node joined to drawn nodes from two sides or more is drawn too, where every scoped edge it has in the
+  // media it joins them by joins drawn nodes: stopping at it from each side would name it twice (a block valve between a
+  // drawn vessel and its drawn relief valve; a pump between two drawn process nodes, whatever feeds its motor). Its
+  // edges in other media stop the drawing at it, or are left out, as any drawn node's are.
+  const edgesAt = (node: number): ReadonlyArray<number> => [...g.out[node]!, ...g.into[node]!].filter(inScope)
+  const joinsDrawn = (node: number) => (edge: number): boolean => ends(g, edge).every(end => end === node || reachedDrawn.has(end))
+  const isBetween = (node: number): boolean => {
+    const joining = new Set(edgesAt(node).filter(joinsDrawn(node)).map(edge => graph.edges[edge]!.medium))
+    const inJoining = edgesAt(node).filter(edge => joining.has(graph.edges[edge]!.medium))
+    return inJoining.length >= 2 && inJoining.every(joinsDrawn(node))
+  }
+  const between = request.between !== true ? [] : [...new Set([...reachedDrawn].flatMap(node => edgesAt(node).flatMap(edge => ends(g, edge))))]
+    .filter(node => !reachedDrawn.has(node) && isBetween(node))
+  const nodes = sorted([...reachedDrawn, ...between])
   const drawn = new Set(nodes)
   const reachedNodes = endsOf(selected)
   const lost = anchors.flatMap((anchor, index) => anchor.some(node => reachedNodes.has(node)) && !anchor.some(node => drawn.has(node))
@@ -277,4 +294,11 @@ export const scopeTopology = (graph: TopologyGraph, request: TopologyRequest): S
       roots: ids([...from, ...around]), anchors: anchors.map(ids),
     },
   }
+}
+
+/** A scope narrowed to some media, with a stop at the given nodes for every other medium they carry, so what it leaves out still shows where it joins. */
+export const withOtherMediaStopped = (scoped: ScopedTopology, nodes: ReadonlyArray<string>, media: ReadonlyArray<string>): ScopedTopology => {
+  const others = new Set(media.filter(medium => !scoped.media.includes(medium)))
+  const stops = drawingStops(scoped.graph, nodes.filter(node => scoped.nodes.includes(node)), new Set(scoped.edges), others)
+  return { ...scoped, stubs: [...scoped.stubs, ...stops] }
 }

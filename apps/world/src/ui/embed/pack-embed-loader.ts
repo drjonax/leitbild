@@ -5,7 +5,9 @@
 // PackEmbedContribution. The vignette itself names none.
 import type { PackEmbedContribution } from '../../core/packs/protocol.ts'
 
-const embedLoaders: Readonly<Record<string, () => Promise<{ readonly default: PackEmbedContribution }>>> = {}
+const embedLoaders: Readonly<Record<string, () => Promise<{ readonly default: PackEmbedContribution }>>> = {
+  'process-plant': () => import('../../packs/process-plant/ui/embed.ts'),
+}
 
 /** A Pack's embed contribution; null for a Pack that contributes none. */
 export const loadEmbedPack = async (packId: string): Promise<PackEmbedContribution | null> =>

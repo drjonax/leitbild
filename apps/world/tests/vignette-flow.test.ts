@@ -8,7 +8,6 @@ import { overviewOf } from '../src/features/displays/compose/topology.ts'
 import { flowLayout } from '../src/features/displays/topology/flow-sizing.ts'
 import { groupName, type TopologyLayout } from '../src/features/displays/topology/layout.ts'
 import { scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
-import { principalCircuits } from '../src/packs/process-plant/equipment/circuits.ts'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import { flowDrawing, glyphOf, symbolOf } from '../src/ui/embed/vignette/flow-symbols.ts'
@@ -57,14 +56,12 @@ describe('flow layout', () => {
     return flowLayout(scoped.scoped, ROOM)
   }
 
-  test('the whole Plant\'s overview at two to four loops: within the overview\'s twelve crossings, no overlap, in its room', () => {
+  test('the whole Plant\'s declared overview at two to four loops: within the overview\'s twelve crossings, no overlap, in its room', () => {
     for (const loops of [2, 3, 4]) {
       const model = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:overview', loopCount: loops }))
-      // Until p2-plant declares it, the overview is the principal circuits the unit overview has always drawn.
-      const circuits = principalCircuits(model.graph)
-      if (!circuits.ok) throw new Error(circuits.reason)
       const served = servedPlantTopology('plant:overview' as never, model)
-      const scoped = overviewOf({ ...served, overview: { nodes: circuits.components.map(index => String(model.graph.components[index]!.id)), edges: circuits.links.map(index => String(model.graph.links[index]!.id)) } })!
+      expect(served.overview).toBeDefined()
+      const scoped = overviewOf(served)!
       const drawn = flowLayout(scoped, ROOM)!
       expect(drawn.layout.crossings).toBeLessThanOrEqual(12)
       expect(overlapping(drawn.layout)).toEqual([])
@@ -81,7 +78,7 @@ describe('flow layout', () => {
     }
   })
 
-  test('T01\'s reference mimics draw the same ids out of the topology, the relief path with the pressurizer\'s own valves', () => {
+  test('T01\'s reference mimics draw the same ids out of the topology, the pressurizer\'s relief valves on its relief path included', () => {
     const record = JSON.parse(readFileSync(join(import.meta.dir, 'fixtures/display-characterization/old-path.json'), 'utf8')) as { readonly states: { readonly steady: { readonly elementActions: ReadonlyArray<{ readonly drawn: ReadonlyArray<string> }> } } }
     const recorded = record.states.steady.elementActions.map(entry => entry.drawn.map(drawn => drawn.split(':')[0]!).sort())
     const requests: ReadonlyArray<TopologyRequest> = [
@@ -162,26 +159,48 @@ describe('flow symbols', () => {
   })
 
   test('bindings drive the drawing: a level fills the tank, a group counts its running members, a position opens the valve, a flow fills its pipe', () => {
-    const drawing = flowDrawing(section, live, false)
+    const drawing = flowDrawing(section, live, [], false)
     expect(drawing.vessels).toMatchObject([{ id: 'tank', kind: 'tank', level: 62, unknown: false }])
     expect(drawing.devices.map(device => [device.id, device.on, device.unknown, device.glyph])).toEqual([
       ['mover', true, false, { tag: 'obi-pump-on-horizontal' }],
       ['valve', true, false, { tag: 'obc-valve-analog-two-way-icon', value: 40 }],
     ])
-    expect(drawing.texts.map(text => text.lines)).toEqual([['Tank', '62.0 %'], [groupName(['Mover A', 'Mover B']), 'RUN 1/2']])
+    expect(drawing.texts.map(text => text.lines.map(line => line.text))).toEqual([['Tank', '62.0 %'], [groupName(['Mover A', 'Mover B']), 'RUN 1/2']])
     const pipes = drawing.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0')
     expect(pipes.every(segment => segment.value === 'open-flow')).toBe(true)
     expect(pipes.some(segment => segment.kind === 'direction')).toBe(true)
     expect(drawing.segments.some(segment => segment.kind === 'endpoint')).toBe(true)
   })
 
+  test('a lone item writes its state in its observable\'s declared words and, on a line of its own, the command it does not follow; unknown reads "?"', () => {
+    const lone: Topology = {
+      ...section,
+      layout: { ...section.layout, nodes: section.layout.nodes.map(node => (node.id === 'mover' ? { id: 'mover', x: 5, y: 2, width: 2, height: 2, ports: node.ports, text: { x: 7, y: 2, width: 4, height: 2, lines: 3, side: 'right' as const } } : node)) },
+      nodes: section.nodes.map(node => (node.id === 'mover' ? { ...node, bindings: [{ role: 'running' as const, ref: 'unit:x#runA', quantity: 'state' as const, unit: '', states: [{ value: 'on', label: 'RUN', active: true as const }, { value: 'off', label: 'STOP' }] }] } : node)),
+    }
+    const words = (observations: ReadonlyArray<Observation>) => flowDrawing(lone, observations, [], false).texts.find(text => text.id === 'mover')!.lines.map(line => `${line.kind}:${line.text}`)
+    expect(words([{ ...observation('unit:x#runA', 'off'), why: 'commanded RUN' }])).toEqual(['name:Mover A', 'word:STOP', 'command:commanded RUN'])
+    expect(words([observation('unit:x#runA', 'on')])).toEqual(['name:Mover A', 'word:RUN'])
+    expect(words([observation('unit:x#runA', 'on', 'bad')])).toEqual(['name:Mover A', 'word:?'])
+  })
+
+  test('an active alert on an item\'s element frames it at its priority; a returned one, or one on another object, does not', () => {
+    const row = (objectId: string, element: string, priority: 'alarm' | 'caution', state: 'active-unack' | 'returned-unack') => ({
+      key: `${objectId}|a`, objectId, objectLabel: 'Unit', packId: 'fixture', categoryId: 'unit', group: { objectId }, priority, state, raised: null,
+      alert: { id: 'a', kind: 'alarm', severity: priority === 'alarm' ? 'critical' : 'warning', message: 'm', raisedAt: at, acknowledged: false, priority, subject: { element } },
+    }) as never
+    const drawing = flowDrawing(section, live, [row('unit:x', 'valve', 'alarm', 'active-unack'), row('unit:x', 'tank', 'caution', 'returned-unack'), row('unit:y', 'mover', 'alarm', 'active-unack')], false)
+    expect(drawing.devices.map(device => [device.id, device.tone])).toEqual([['mover', null], ['valve', 'alarm']])
+    expect(drawing.vessels[0]!.tone).toBeNull()
+  })
+
   test('missing, bad or stale readings and a frozen sample read as unknown, never as off or empty', () => {
-    const stale = flowDrawing(section, [observation('unit:x#level', 62, 'stale'), observation('unit:x#runA', true, 'bad'), observation('unit:x#flowA', 0)], false)
+    const stale = flowDrawing(section, [observation('unit:x#level', 62, 'stale'), observation('unit:x#runA', true, 'bad'), observation('unit:x#flowA', 0)], [], false)
     expect(stale.vessels[0]).toMatchObject({ level: null, unknown: true })
     expect(stale.devices.map(device => [device.id, device.unknown])).toEqual([['mover', true], ['valve', true]])
-    expect(stale.texts[1]!.lines[1]).toBe('RUN ?/2')
+    expect(stale.texts[1]!.lines[1]!.text).toBe('RUN ?/2')
     expect(stale.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'empty')).toBe(true)
-    const frozen = flowDrawing(section, live, true)
+    const frozen = flowDrawing(section, live, [], true)
     expect(frozen.devices.every(device => device.unknown)).toBe(true)
     expect(frozen.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'closed-dash')).toBe(true)
   })

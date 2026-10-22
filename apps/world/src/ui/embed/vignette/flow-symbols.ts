@@ -7,13 +7,16 @@
 // (the lanes' hub), the registered vessel shape (vessel-symbol.ts).
 // Bindings drive what each draws: a level fills a tank or the vessel, running
 // and conducting turn a device on (ruling Q8), a position opens a valve and
-// inserts the vessel's parts, a flow fills its pipe and points its chevron. A
+// inserts the vessel's parts, a flow fills its pipe and points its chevron.
+// An item takes OpenBridge's alert frame at the worst priority of its bound
+// readings and of the active alerts on its element the sample carries. A
 // reading that is missing, bad or stale, or a frozen sample, reads as
 // unknown: a static device or tank, a dashed pipe; never as off or empty.
 import type { Segment } from '@oicl/connector-diagram'
 import type { Observation } from '../../../core/observation/model.ts'
+import type { AlertRow } from '../../../features/displays/alerts/rows.ts'
 import type { TopologyBinding, VignetteSection } from '../../../features/displays/compose/model.ts'
-import { groupName, readingRefs } from '../../../features/displays/topology/layout.ts'
+import { groupName, itemText } from '../../../features/displays/topology/layout.ts'
 import { VIGNETTE_ROW_PX } from './grid.ts'
 import { chevronSegment, pipeSegments, pipeValue, stubEndSegment, type PipeLook } from './pipe-segments.ts'
 import { stub } from './network.ts'
@@ -65,6 +68,9 @@ export const glyphOf = (symbol: FlowSymbol, state: DeviceState, vertical: boolea
   }
 }
 
+/** A line of an item's text: its name, its state word (or a group's count), the command it does not follow, a reading. */
+export interface FlowLine { readonly text: string; readonly kind: 'name' | 'word' | 'command' | 'reading' }
+
 const DEVICES: ReadonlySet<FlowSymbol> = new Set(['mover', 'generator', 'valve', 'breaker', 'transformer', 'source'])
 /** A text line of the stacks the engine kept (flow-sizing.ts). */
 export const FLOW_LINE_PX = 16
@@ -81,10 +87,10 @@ export interface FlowDrawing {
   /** A tank's or the vessel's level in percent, null where not known; a vessel's parts each inserted 0..1, null where not known. */
   readonly vessels: ReadonlyArray<Box & { readonly id: string; readonly element: string; readonly kind: 'tank' | 'exchanger' | 'vessel'; readonly level: number | null; readonly unknown: boolean; readonly tone: AlertTone | null; readonly title: string; readonly drawing?: VesselDrawing; readonly parts?: ReadonlyArray<number | null> }>
   readonly buses: ReadonlyArray<Box & { readonly id: string; readonly vertical: boolean; readonly title: string }>
-  readonly texts: ReadonlyArray<{ readonly id: string; readonly element: string | null; readonly x: number; readonly y: number; readonly width: number; readonly lines: ReadonlyArray<string>; readonly tone: AlertTone | null; readonly title: string }>
+  readonly texts: ReadonlyArray<{ readonly id: string; readonly element: string | null; readonly x: number; readonly y: number; readonly width: number; readonly lines: ReadonlyArray<FlowLine>; readonly tone: AlertTone | null; readonly title: string }>
 }
 
-export const flowDrawing = (section: Topology, observations: ReadonlyArray<Observation>, frozen: boolean): FlowDrawing => {
+export const flowDrawing = (section: Topology, observations: ReadonlyArray<Observation>, alerts: ReadonlyArray<AlertRow>, frozen: boolean): FlowDrawing => {
   const px = (grid: number): number => grid * VIGNETTE_ROW_PX
   const byId = new Map(section.nodes.map(node => [node.id, node]))
   const viewEdges = new Map(section.edges.map(edge => [edge.id, edge]))
@@ -108,8 +114,15 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
     const on = switching === undefined ? null : activeState(usable(switching)?.value, switching.states)
     return on === null ? { kind: 'unknown' } : { kind: on ? 'on' : 'off' }
   }
+  // Active alerts of the drawn object by the element they are on.
+  const alerted = new Map<string, Array<AlertRow['priority']>>()
+  for (const row of alerts) {
+    const subject = row.alert.subject
+    if (row.objectId !== section.objectId || row.state === 'returned-unack' || subject === undefined || !('element' in subject)) continue
+    alerted.set(subject.element, [...alerted.get(subject.element) ?? [], row.priority])
+  }
   const toneAt = (nodes: ReadonlyArray<NodeView>): AlertTone | null => {
-    const tones = nodes.flatMap(node => node.bindings.map(binding => toneOf(observed.get(binding.ref)?.priority)))
+    const tones = nodes.flatMap(node => [...node.bindings.map(binding => toneOf(observed.get(binding.ref)?.priority)), ...(alerted.get(node.element ?? node.id) ?? []).map(priority => toneOf(priority ?? undefined))])
     return (['critical', 'alarm', 'warning', 'caution'] as const).find(level => tones.includes(level)) ?? null
   }
 
@@ -159,19 +172,31 @@ export const flowDrawing = (section: Topology, observations: ReadonlyArray<Obser
     const tone = toneAt(members)
     const element = view.element ?? view.id
     const name = members.length > 1 ? groupName(members.map(member => member.shortLabel ?? member.label)) : view.shortLabel ?? view.label
-    // A group says how many of its members run (or conduct); a lone item its readings.
+    // A group says how many of its members run (or conduct); a lone item its state word in the words its observable
+    // declares, the command it does not follow (the observation's why), and its readings: the lines the layout kept
+    // room for, in their order, an empty one left out.
     const counted = members.length > 1 ? members.map(stateOf) : []
     const role = members[0]!.bindings.some(binding => binding.role === 'running') ? 'RUN' : 'ON'
-    const lines = members.length > 1
-      ? [name, counted.some(state => state.kind === 'unknown') ? `${role} ?/${members.length}` : `${role} ${counted.filter(state => state.kind === 'on').length}/${members.length}`]
-      : [name, ...readingRefs(view.bindings).map(ref => {
-        const binding = view.bindings.find(entry => entry.ref === ref)!
-        const look = readingLook(view.label, 'number', binding.states, observedInput({ unit: binding.unit, quantity: binding.quantity, thresholds: [] }, usable(binding) ?? undefined))
-        return look.unit === '' ? look.text : `${look.text} ${look.unit}`
-      })]
-    const title = [view.label, ...lines.slice(1)].join(' · ')
+    const readingOf = (binding: TopologyBinding, valueType: 'number' | 'enum') => readingLook(view.label, valueType, binding.states, observedInput({ unit: binding.unit, quantity: binding.quantity, thresholds: [] }, usable(binding) ?? undefined))
+    const written = itemText(view.bindings)
+    const stateBinding = view.bindings.find(binding => binding.ref === written.state)
+    const sized: ReadonlyArray<FlowLine> = members.length > 1
+      ? [{ text: name, kind: 'name' }, { text: counted.some(state => state.kind === 'unknown') ? `${role} ?/${members.length}` : `${role} ${counted.filter(state => state.kind === 'on').length}/${members.length}`, kind: 'word' }]
+      : [
+        { text: name, kind: 'name' },
+        ...(written.state === null ? [] : [
+          { text: stateBinding?.states === undefined ? '' : readingOf(stateBinding, 'enum').text, kind: 'word' as const },
+          { text: stateBinding === undefined ? '' : usable(stateBinding)?.why ?? '', kind: 'command' as const },
+        ]),
+        ...written.readings.map(ref => {
+          const look = readingOf(view.bindings.find(entry => entry.ref === ref)!, 'number')
+          return { text: look.unit === '' ? look.text : `${look.text} ${look.unit}`, kind: 'reading' as const }
+        }),
+      ]
+    const lines = sized.filter(line => line.text !== '')
+    const title = [view.label, ...lines.slice(1).map(line => line.text)].join(' · ')
     if (node.text !== undefined) {
-      const shown = lines.slice(0, Math.max(1, node.text.lines))
+      const shown = sized.slice(0, Math.max(1, node.text.lines)).filter(line => line.text !== '')
       drawing.texts.push({ id: node.id, element: view.class === 'stop' ? null : element, x: px(node.text.x), y: px(node.text.y), width: px(node.text.width), lines: shown, tone, title })
     }
     const state: DeviceState = members.length > 1
