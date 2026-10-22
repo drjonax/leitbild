@@ -20,6 +20,8 @@ export interface TopologyRequest {
   readonly reach?: number
   /** What the drawing is about, as named (several nodes for alike items named together): groups never narrow it to none of one. Default: each node of from, to and around alone. */
   readonly anchors?: ReadonlyArray<ReadonlyArray<string>>
+  /** Draw a node every scoped edge of which joins drawn nodes, from two sides or more, rather than stop at it from each side (a vignette's drawing). */
+  readonly between?: true
 }
 
 /** Where a drawing stops: edges of a drawn node to nodes not drawn, one stop per port circuit and direction. */
@@ -250,7 +252,14 @@ export const scopeTopology = (graph: TopologyGraph, request: TopologyRequest): S
   if (inGroups.size === 0) {
     return { ok: false, refusal: { code: 'groups-empty', media: [...media], reached: ordered.filter(group => [...selected].some(edge => groupOf(g, edge) === group)) } }
   }
-  const nodes = sorted([...inGroups].flatMap(edge => ends(g, edge)))
+  const inScope = (edge: number): boolean => allowed.has(edge) && (groups === undefined || groupOf(g, edge) === undefined || groups.has(groupOf(g, edge)!))
+  const reachedDrawn = new Set([...inGroups].flatMap(edge => ends(g, edge)))
+  // Asked, a node every scoped edge of which joins drawn nodes, from two sides or more, is drawn too: stopping at it
+  // from each side would name it twice (a block valve between a drawn vessel and its drawn relief valve).
+  const edgesAt = (node: number): ReadonlyArray<number> => [...g.out[node]!, ...g.into[node]!].filter(inScope)
+  const between = request.between !== true ? [] : [...new Set([...reachedDrawn].flatMap(node => edgesAt(node).flatMap(edge => ends(g, edge))))]
+    .filter(node => !reachedDrawn.has(node) && edgesAt(node).length >= 2 && edgesAt(node).every(edge => ends(g, edge).every(end => end === node || reachedDrawn.has(end))))
+  const nodes = sorted([...reachedDrawn, ...between])
   const drawn = new Set(nodes)
   const reachedNodes = endsOf(selected)
   const lost = anchors.flatMap((anchor, index) => anchor.some(node => reachedNodes.has(node)) && !anchor.some(node => drawn.has(node))

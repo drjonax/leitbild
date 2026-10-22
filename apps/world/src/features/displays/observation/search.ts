@@ -123,7 +123,8 @@ const claimsOf = (entry: Entry, words: ReadonlyArray<string>, initials: Readonly
 
 /**
  * Match class first: 4 an exact ref, signal id, tag or id; 3 (3.5 by its exact
- * tag or signal id) a qualified objectId#tag-or-label; 2 to 3 every known
+ * tag or signal id; up to 3.4 by how whole its words are and how much of the
+ * name they cover) a qualified objectId#tag-or-label; 2 to 3 every known
  * query word matched; under 1 some. A query word no entry knows is left out.
  * Within every-word matches: exact before prefix before abbreviation, query
  * words that hit the entry's own words before its object's shared label, the
@@ -138,7 +139,15 @@ const scored = (entry: Entry, text: string, words: ReadonlyArray<string>, claims
     const [left, right] = [text.slice(0, hash), text.slice(hash + 1)]
     const objectNamed = key(left) === key(entry.objectId) || allOf(queryWords(left), objectWords(entry.objectId))
     const exactly = (entry.tag !== undefined && key(entry.tag) === key(right)) || (entry.ref !== undefined && key(entry.ref.slice(entry.ref.indexOf('#') + 1)) === key(right))
-    if (objectNamed && (exactly || allOf(queryWords(right), entry.words.filter(word => word.own)))) return exactly ? 3.5 : 3
+    if (objectNamed && exactly) return 3.5
+    // Within qualified names: whole words before prefixes before abbreviations ("#PORV" names the PORV, not a tag
+    // "PR"), then the share of the entry's name they cover.
+    const own = entry.words.filter(word => word.own)
+    const named = queryWords(right).length === 0 ? [] : assignWords(queryWords(right), own)
+    if (objectNamed && named.length > 0 && named.every(claim => claim !== null)) {
+      const quality = named.reduce((sum, claim) => sum + claim!.quality, 0) / (3 * named.length)
+      return 3 + 0.3 * quality + 0.1 * Math.min(1, nameLetters(named.map(claim => own[claim!.word]!)) / Math.max(1, nameLetters(own)))
+    }
   }
   const total = weights.reduce((sum, weight) => sum + weight, 0)
   const matched = claims?.flatMap((claim, at) => claim === null || weights[at] === 0 ? [] : [{ ...claim, weight: weights[at]! }]) ?? []

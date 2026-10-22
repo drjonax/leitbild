@@ -13,6 +13,7 @@ import { declarationOf, declaredRefs, same, valueOf, visibleObject } from './dec
 import { defaultViews, elementRefs, leadRefs, ownStates, recordedOf, type DraftView } from './defaults.ts'
 import { FRAME_ROWS, VIGNETTE_MAX_ROWS, vignetteStateSchema, type ComposeIssue, type ResolvedView, type VignetteState } from './model.ts'
 import { isIssue, resolveSubject, subjectObjects, type ComposeRun, type Subject } from './resolve.ts'
+import { TOPOLOGY_REACH } from '../topology/scope.ts'
 import { drawingOf, scopeWithin, topologyOf } from './topology.ts'
 import { alertRowsFor, alertsOf, entityRows, groupValues, readsOf, refsRead, slotsOf, stripsOf } from './view.ts'
 
@@ -260,18 +261,24 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
       let request = view.request
       let scoped = graph === null ? null : scopeWithin(graph, request)
       let drawing = scoped?.ok === true ? await drawingOf(scoped.scoped) : null
-      // Around one item, with no medium named: a neighbourhood beyond the ceilings draws one service at a time, in the
-      // order of the item's own ports, and the card names the services left for another view.
+      // Around one item, with no medium named: as today's detail does, every service the item carries out to the
+      // furthest reach that fits the ceilings (a default tries this first); else one service at a time, in the order
+      // of the item's own ports, the others stopped at it, and the card names them.
       const item = request.around?.length === 1 && request.media === undefined ? graph?.nodes.find(node => node.id === request.around![0]) : undefined
-      if (graph !== null && item !== undefined && drawing === null) {
+      if (graph !== null && item !== undefined && (drawing === null || !kept.explicit.has(index))) {
         const services = [...new Set(item.ports.flatMap(port => port.media))].filter(medium => graph.edges.some(edge => edge.medium === medium && (edge.from.node === item.id || edge.to.node === item.id)))
-        for (const medium of services) {
-          const narrowed = scopeWithin(graph, { ...request, media: [medium] })
+        const name = (id: string): string => graph.media.find(entry => entry.id === id)?.label ?? id
+        const reaches = Array.from({ length: TOPOLOGY_REACH }, (_, step) => TOPOLOGY_REACH - step)
+        const ladder = [...reaches.map(reach => ({ media: services, reach })), ...services.flatMap(medium => reaches.map(reach => ({ media: [medium], reach })))]
+        for (const step of ladder) {
+          const asked = { ...request, media: [...step.media], reach: step.reach }
+          const narrowed = scopeWithin(graph, asked)
           const drawn = narrowed.ok ? await drawingOf(narrowed.scoped) : null
           if (!narrowed.ok || drawn === null) continue
-          const name = (id: string): string => graph.media.find(entry => entry.id === id)?.label ?? id
-          countAdjustment(adjusted, { kind: 'scope', text: `drawn for ${name(medium)} only; also: ${services.filter(other => other !== medium).map(name).join(', ')}`.slice(0, 200) })
-          ;[request, scoped, drawing] = [{ ...request, media: [medium] }, narrowed, drawn]
+          if (step.media.length < services.length) countAdjustment(adjusted, { kind: 'scope', text: `drawn for ${name(step.media[0]!)} only; also: ${services.filter(other => other !== step.media[0]).map(name).join(', ')}`.slice(0, 200) })
+          const reach = narrowed.reach ?? step.reach
+          if (reach < TOPOLOGY_REACH) countAdjustment(adjusted, { kind: 'scope', text: `drawn ${reach} ${reach === 1 ? 'link' : 'links'} out to fit` })
+          ;[request, scoped, drawing] = [{ ...asked, reach }, { ok: true, scoped: narrowed.scoped }, drawn]
           break
         }
       }
@@ -410,8 +417,10 @@ const titleOf = async (run: ComposeRun, subject: Subject): Promise<string> => {
   const object = visibleObject(run, subject.objectId)!
   if (subject.kind === 'observable') return (await declaredRefs(run, [subject.ref])).get(subject.ref)?.observable.label ?? object.label
   if (subject.kind === 'element') {
-    const element = (await declarationOf(run, subject.objectId))?.elements.find(entry => entry.id === subject.elementId)
-    return element === undefined ? object.label : `${object.label} · ${element.label}`
+    // A declared element by its label; a device that is only a topology node by the node's.
+    const label = (await declarationOf(run, subject.objectId))?.elements.find(entry => entry.id === subject.elementId)?.label
+      ?? (await topologyOf(run, subject.objectId))?.nodes.find(node => node.id === subject.elementId)?.label
+    return label === undefined ? object.label : `${object.label} · ${label}`
   }
   return object.label
 }

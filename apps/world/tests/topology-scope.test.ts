@@ -104,4 +104,35 @@ describe('generic topology scope', () => {
     // Directed, flow follows the declared orientation only: north is where the line ends.
     expect(reached(true)).toEqual(['north', 'middle'])
   })
+
+  test('asked (a vignette), a node every scoped edge of which joins drawn nodes is drawn, not named at a stop on each side', () => {
+    // A vessel relieves through a block valve and a relief valve, and through its safety valves, into a header and a
+    // tank. Around the header one link out, the relief and safety valves are drawn and the vessel is too (where that
+    // flow starts); the block valve between the vessel and the relief valve is not reached.
+    const relief: TopologyGraph = topologyGraphSchema.parse({
+      objectId: 'site:relief', revision: '1', family: 'flow', media: [{ id: 'water', label: 'Water', kind: 'fluid' }, { id: 'power', label: 'Power', kind: 'electric-ac' }], groups: [],
+      nodes: [
+        node('vessel', [water('relief', 'out'), water('safety', 'out')]), node('block', [water('in', 'in'), water('out', 'out'), { id: 'motor', media: ['power'], direction: 'in' }]),
+        node('reliefValve', [water('in', 'in'), water('out', 'out')]), node('safetyValve', [water('in', 'in'), water('out', 'out')]),
+        node('header', [water('in', 'in'), water('out', 'out')]), node('tank', [water('in', 'in')]), node('bus', [{ id: 'feed', media: ['power'], direction: 'out' }]),
+      ],
+      edges: [
+        pipe('vessel-block', 'vessel.relief', 'block.in'), pipe('block-relief', 'block.out', 'reliefValve.in'), pipe('vessel-safety', 'vessel.safety', 'safetyValve.in'),
+        pipe('relief-header', 'reliefValve.out', 'header.in'), pipe('safety-header', 'safetyValve.out', 'header.in'), pipe('header-tank', 'header.out', 'tank.in'),
+        pipe('bus-block', 'bus.feed', 'block.motor', 'power'),
+      ],
+      boundaries: [],
+    })
+    const scoped = (request: TopologyRequest) => {
+      const result = scopeTopology(relief, request)
+      if (!result.ok) throw new Error(JSON.stringify(result.refusal))
+      return { nodes: result.scoped.nodes, named: result.scoped.stubs.flatMap(stub => stub.others.map(other => other.node)) }
+    }
+    // Not asked (today's mimic): the drawing stops at the block valve from the vessel and from the relief valve.
+    expect(scoped({ around: ['header'], reach: 1 })).toEqual({ nodes: ['vessel', 'reliefValve', 'safetyValve', 'header', 'tank'], named: ['block', 'block'] })
+    // Asked: it is drawn with its two links, and nothing is named twice.
+    expect(scoped({ around: ['header'], reach: 1, between: true })).toEqual({ nodes: ['vessel', 'block', 'reliefValve', 'safetyValve', 'header', 'tank'], named: [] })
+    // Where one of its scoped links joins a node not drawn (its motor's supply, power named), it stays a stop.
+    expect(scoped({ around: ['header'], reach: 1, media: ['water', 'power'], between: true }).nodes).not.toContain('block')
+  })
 })
