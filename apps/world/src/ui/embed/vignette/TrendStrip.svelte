@@ -3,7 +3,7 @@
   import type { SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
   import { underTitle } from './format.ts'
   import { valueLook } from './readout.ts'
-  import { stripDrawing } from './trend.ts'
+  import { BEYOND_BOTTOM_INSET, BEYOND_TOP_Y, stripDrawing } from './trend.ts'
 
   // One trend strip (architecture B): its pens step-and-hold over the trend's
   // window, told apart by dash; the limits all of them share; beside it a
@@ -42,7 +42,7 @@
       <svg {width} {height} role="img" aria-label={pens.map(pen => pen.label).join(', ')}>
         {#each drawing.values as tick (tick.label)}<line class="grid" x1="0" x2={width} y1={tick.y} y2={tick.y} /><text class="tick" x="2" y={tick.y - 2}>{tick.label}</text>{/each}
         {#each drawing.limits as limit (limit.id)}<line class={`limit ${limit.priority}`} x1="0" x2={width} y1={limit.y} y2={limit.y}><title>{limit.label}</title></line>{#if limit.labelY !== null}<text class="tick" x={width - 2} y={limit.labelY} text-anchor="end">{limit.label}</text>{/if}{/each}
-        {#each drawing.beyond as limit (limit.id)}<text class="tick" x={width - 2} y={limit.edge === 'top' ? 12 : height - 3} text-anchor="end">{limit.edge === 'top' ? '▲' : '▼'} {limit.label}</text>{/each}
+        {#each drawing.beyond as limit (limit.id)}<text class="tick" x={width - 2} y={limit.edge === 'top' ? BEYOND_TOP_Y : height - BEYOND_BOTTOM_INSET} text-anchor="end">{limit.edge === 'top' ? '▲' : '▼'} {limit.label}</text>{/each}
         {#each drawing.pens as pen (pen.ref)}<path class={`pen ${pen.tone ?? ''}`} d={pen.path} stroke-dasharray={pen.dash === '' ? undefined : pen.dash} />{/each}
       </svg>
     {/if}

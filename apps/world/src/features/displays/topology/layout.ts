@@ -24,8 +24,15 @@ export interface TopologyLayout {
 /** The roles a flow item writes as readings under its name, at most two, one per observable. */
 export const READING_ROLES: ReadonlyArray<TopologyNode['bindings'][number]['role']> = ['level', 'value', 'flow', 'loading']
 export const MAX_READINGS = 2
-export const readingRefs = (bindings: ReadonlyArray<Pick<TopologyNode['bindings'][number], 'role' | 'ref'>>): ReadonlyArray<string> =>
-  [...new Set(READING_ROLES.flatMap(role => bindings.filter(binding => binding.role === role).map(binding => binding.ref)))].slice(0, MAX_READINGS)
+type Bound = Pick<TopologyNode['bindings'][number], 'role' | 'ref'>
+/**
+ * What a flow item writes under its name: the word of its state (its running or conducting binding, in the words
+ * its observable declares) with, on a line of its own, the command it does not follow; then its readings.
+ */
+export const itemText = (bindings: ReadonlyArray<Bound>): { readonly state: string | null; readonly readings: ReadonlyArray<string> } => {
+  const state = bindings.find(binding => binding.role === 'running' || binding.role === 'conducting')?.ref ?? null
+  return { state, readings: [...new Set(READING_ROLES.flatMap(role => bindings.filter(binding => binding.role === role && binding.ref !== state).map(binding => binding.ref)))].slice(0, MAX_READINGS) }
+}
 
 /** "MFW A/B" for MFW A and MFW B: the words their names share in front, then what tells each apart; names sharing no leading word are joined whole. */
 export const groupName = (names: ReadonlyArray<string>): string => {
