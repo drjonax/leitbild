@@ -40,6 +40,8 @@ const runOf = async (scenarioId: string, seconds = 5): Promise<SimulationRunRunt
       compileScenarioDefinition: source => compileScenarioDefinition(source, assembly.packs, { routing }),
       scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(assembly.packs), runtimeAdapters: assembly.runtimeAdapters,
       scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: assembly.packs }),
+      // An unleased test Run is never closed as idle: under load a read came after the 30 s idle close.
+      idleRuntimeCloseTimer: () => () => {},
     })
     cleanups.push(async () => { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) })
   }
