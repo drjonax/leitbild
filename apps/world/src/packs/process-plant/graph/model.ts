@@ -442,6 +442,13 @@ const variableDescriptorBaseSchema = z.object({
    * bus's spare power. Displays tag it SIM wherever they show it.
    */
   simulatorOnly: z.literal(true).optional(),
+  /**
+   * A value that exists only because a fault is injected (a leak's flow, a
+   * steam generator's tube leak flow): the model's truth about the fault,
+   * which no person or AI agent reads, as no control room measures it; they
+   * infer the fault from its symptoms (signals.ts isInjectedFault).
+   */
+  faultTruth: z.literal(true).optional(),
 })
 export const variableDescriptorSchema = variableDescriptorBaseSchema.superRefine(validateQuantityUnit)
 export type VariableDescriptor = z.infer<typeof variableDescriptorSchema>
@@ -642,6 +649,8 @@ export interface ProcessSignalBinding {
   readonly measurand?: RatioMeasurand
   /** A value only the simulator computes (variableDescriptorBaseSchema.simulatorOnly). */
   readonly simulatorOnly?: true
+  /** A value that exists only because a fault is injected (variableDescriptorBaseSchema.faultTruth). */
+  readonly faultTruth?: true
   readonly published: boolean
   readonly owner:
     | { readonly type: 'component'; readonly componentIndex: number }

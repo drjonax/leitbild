@@ -67,13 +67,15 @@ const fluidLinkContracts: Readonly<Record<FluidSolverModel, FluidLinkContract>> 
 }
 
 // What link variables are, declared once with the contracts rather than per link.
-const linkVariableSemantics: Readonly<Record<string, { readonly actuation?: VariableActuation; readonly measurand?: RatioMeasurand }>> = {
+const linkVariableSemantics: Readonly<Record<string, { readonly actuation?: VariableActuation; readonly measurand?: RatioMeasurand; readonly faultTruth?: true }>> = {
   'leak.areaFraction': { actuation: 'faultInjection', measurand: 'leak' },
+  // A line's leak flow exists only while a leak is injected on it.
+  leakFlowKgPerS: { faultTruth: true },
   qualityFraction: { measurand: 'quality' },
   voidFraction: { measurand: 'void' },
 }
 
-export const linkVariableSemanticsFor = (path: LocalVariablePath | string): { readonly actuation?: VariableActuation; readonly measurand?: RatioMeasurand } =>
+export const linkVariableSemanticsFor = (path: LocalVariablePath | string): { readonly actuation?: VariableActuation; readonly measurand?: RatioMeasurand; readonly faultTruth?: true } =>
   linkVariableSemantics[String(path)] ?? {}
 
 const localVariablePathsFor = (link: CompiledProcessLink): ReadonlySet<string> =>

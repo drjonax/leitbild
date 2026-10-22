@@ -32,8 +32,11 @@ const snapshotsFor = (
   system: ProcessPlantRuntimeInstance,
   paths: ReadonlyArray<VariablePath>,
 ): ReadonlyArray<ProcessPlantVariableSnapshot> => paths.map(path => {
-  if (isInjectedFault(system.plant.graph.signalBindingByPath.get(path) ?? {})) {
-    return rejectCapabilityTarget(`${path} is a fault the scenario injects, not a reading: no person or AI agent reads it`)
+  const binding = system.plant.graph.signalBindingByPath.get(path)
+  if (binding !== undefined && isInjectedFault(binding)) {
+    return rejectCapabilityTarget(binding.faultTruth === true
+      ? `${path} is the model's truth about an injected fault, not a reading: no person or AI agent reads it`
+      : `${path} is a fault the scenario injects, not a reading: no person or AI agent reads it`)
   }
   try {
     return system.runtime.readVariableSnapshot(path)

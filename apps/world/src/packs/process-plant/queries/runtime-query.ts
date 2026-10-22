@@ -102,9 +102,12 @@ export const answerProcessPlantRuntimeQuery = (config: {
   if (config.request.capabilityId === 'world.process-plant.transient.diagnostics') {
     const payload = plantQuerySchema.parse(config.request.input)
     const plant = requirePlant(config.plants, payload.plantId)
+    // The primary boundary's leak flow and the tube leak flow are the model's truth about an injected fault, which no
+    // person or AI agent reads (signals.ts isInjectedFault): the diagnostics leave them out.
+    const { leakFlowKgPerS: _leak, tubeLeakFlowKgPerS: _tubeLeak, ...primary } = plant.runtime.pwrTransientDiagnostics().primary
     return {
       plantId: payload.plantId,
-      diagnostics: plant.runtime.pwrTransientDiagnostics(),
+      diagnostics: { ...plant.runtime.pwrTransientDiagnostics(), primary },
       ic: icSummaryFor(plant),
     }
   }

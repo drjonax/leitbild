@@ -1,6 +1,7 @@
 import type { CommandOrigin } from '../../../simulation/protocol.ts'
 import type { ProcessSignalTagId, ProcessVariableValue, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import { isInjectedFault } from '../signals.ts'
 import { evaluateProcessPlantIcCondition, processPlantOperatingMode } from '../runtime/index.ts'
 import { actuationResets, resetRefusal, type ActuationReset, type ResetContext } from './actuation-reset.ts'
 import { actuationHold, throttledUnder, validateOperatorWrite } from './command-guard.ts'
@@ -99,9 +100,10 @@ export const proposalPortsFor = (instance: ProcessPlantRuntimeInstance, origin: 
   },
   reading: (tagId: ProcessSignalTagId) => {
     const binding = instance.plant.graph.signalBindingByTagId.get(tagId)
-    return binding?.published === true
-      ? { ok: true, path: binding.path, value: instance.runtime.readVariable(binding.path) }
-      : { ok: false, reason: `${tagId} is no reading this Plant publishes` }
+    if (binding?.published !== true) return { ok: false, reason: `${tagId} is no reading this Plant publishes` }
+    // A proposal cites only what a person reads: never an injected fault or the model's truth about one.
+    if (isInjectedFault(binding)) return { ok: false, reason: `${tagId} is an injected fault, not a reading: no person or AI agent cites it` }
+    return { ok: true, path: binding.path, value: instance.runtime.readVariable(binding.path) }
   },
   // A reset is reviewed on the first drawn item whose controls its actuation holds.
   resettable: ruleId => {
