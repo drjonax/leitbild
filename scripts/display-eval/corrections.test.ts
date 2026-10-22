@@ -33,6 +33,11 @@ describe('correction causes from a generation query', () => {
     expect(correctionsIn([question, draft, requestTurn, tool, draft, consistency])).toEqual([{ cause: 'consistency', detail: ['watch'] }])
   })
 
+  test('a card-key citation correction is read as its own cause, with each issue', () => {
+    const cited = { role: 'user', content: 'The answer cites numbers its card lines do not show:\n- 9.0 is cited with ⟦k13⟧, but k13 reads "-1.0 degC" (Halden complex weather · Air temperature).\n\nRe-emit the FULL corrected response' }
+    expect(correctionsIn([question, draft, cited])).toEqual([{ cause: 'citation', detail: ['9.0 is cited with ⟦k13⟧, but k13 reads "-1.0 degC" (Halden complex weather · Air temperature).'] }])
+  })
+
   test('a turn without corrections has none; a context without its question fails loudly', () => {
     expect(correctionsIn([question, tool, draft])).toEqual([])
     expect(() => correctionsIn([tool, draft])).toThrow('[NEW]')

@@ -5,7 +5,7 @@
  * the ones evaluation.ts writes at bacf7a115; an unknown one is reported as
  * "other" with its opening words, never dropped. */
 
-export type CorrectionCause = 'fence' | 'consistency' | 'claim' | 'required-view' | 'other'
+export type CorrectionCause = 'fence' | 'consistency' | 'citation' | 'claim' | 'required-view' | 'other'
 
 export interface Correction {
   readonly cause: CorrectionCause
@@ -16,6 +16,8 @@ export interface Correction {
 const PREFIXES: ReadonlyArray<readonly [string, CorrectionCause]> = [
   ['Your previous response contained one or more invalid fenced blocks', 'fence'],
   ['The answer and the display it presents disagree', 'consistency'],
+  // P2 C1: card-key citations a card line contradicts (agents/citations.ts via evaluation.ts citationCorrection).
+  ['The answer cites numbers its card lines do not show', 'citation'],
   ['The answer says something happened that did not', 'claim'],
   ['The reader asked for a live display, and this response presents none', 'required-view'],
 ]
@@ -50,6 +52,7 @@ const classify = (text: string): Correction => {
   const detail = cause === 'fence' ? FENCE_DETAILS.filter(([pattern]) => pattern.test(text)).map(([, name]) => name)
     : cause === 'consistency' || cause === 'claim'
       ? bullets.map(bullet => CONSISTENCY_DETAILS.find(([pattern]) => pattern.test(bullet))?.[1] ?? (cause === 'claim' ? 'execution-claim' : 'unclassified'))
+      : cause === 'citation' ? bullets.map(bullet => bullet.slice(0, 160))
       : cause === 'other' ? [text.slice(0, 160)] : []
   return { cause, detail }
 }

@@ -29,7 +29,7 @@
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { allScenarios, devScenarios, fixturePath, loadScenarioModule, runRequests, smokeScenarios, type EvalScenario, type ScenarioRun } from './scenarios.ts'
-import { displayEvidenceOf, scoreKey, addedEvidenceUse, answerProse, type ComposeRecord, type KeyResult } from './decisive.ts'
+import { vignetteEvidenceOf, scoreKey, addedEvidenceUse, answerProse, type ComposeRecord, type KeyResult } from './decisive.ts'
 import { correctionsIn, type Correction } from './corrections.ts'
 import { callsBetween, logOffset, summariseCalls, type ModelCall } from './billing.ts'
 import { referencePlantCatalog } from './plant-catalog.ts'
@@ -148,6 +148,9 @@ const reach = async (resource: Record<string, string>, target: number, realtime:
   throw new Error(`Run ${resource.id} did not reach ${new Date(target).toISOString()} within the probe deadline`)
 }
 
+/** The display Capability: World's vignette composer (the swap deleted the Plant's composer). */
+const WORLD_COMPOSE = 'world.simulation-run.display.compose'
+
 interface ComposeOutcome {
   readonly accepted: boolean
   readonly panels: ReadonlyArray<string>
@@ -156,12 +159,9 @@ interface ComposeOutcome {
   readonly subjects: ReadonlyArray<string>
   readonly record: ComposeRecord
   readonly error?: string
+  /** A World vignette's compiled view, fetched when it draws a topology. */
+  readonly view?: any
 }
-
-// An accepted result names each signal's resolved tag and path, so a signal
-// counts whether the agent referred to it by tag or by path.
-const resolvedNames = (result: any): ReadonlyArray<string> =>
-  (result?.data?.signals ?? []).flatMap((signal: { ref: string; tagId?: string; path: string }) => [signal.ref, signal.path, ...(signal.tagId === undefined ? [] : [signal.tagId])])
 
 /** One operation a workspace_call of the turn issued, with its batch result. */
 interface TurnOperation { readonly operationId: string; readonly input: any; readonly result: any }
@@ -182,18 +182,30 @@ const turnOperations = async (roomId: string, turnId: string): Promise<ReadonlyA
 }
 
 // Exact compose inputs and outcomes. Full refusal texts are kept: a cut refusal hides its class.
+// A vignette's compiled view (POST displays/view, as a person opens it) for each accepted World compose that draws a
+// topology: which elements it draws, so a key on a drawn element counts and an operation's equipment is "around".
+const withDrawings = async (resource: Record<string, string>, outcomes: ReadonlyArray<ComposeOutcome>): Promise<ReadonlyArray<ComposeOutcome>> => Promise.all(outcomes.map(async outcome => {
+  const state = outcome.record.result?.data?.view?.state
+  if (!outcome.accepted || typeof state !== 'string' || !(JSON.parse(state).views ?? []).some((view: { kind: string }) => view.kind === 'topology')) return outcome
+  const view = await request(`/api/workspaces/${workspaceId}/world/simulation-runs/${encodeURIComponent(resource.id!)}/displays/view`, { state })
+    .then(body => body.view, (error: unknown) => ({ error: String(error).slice(0, 300) }))
+  const drawn = (view?.sections ?? []).filter((section: any) => section.kind === 'topology').flatMap((section: any) => section.nodes.flatMap((node: any) => typeof node.element === 'string' ? [node.element] : []))
+  return { ...outcome, mimics: [{ drawn }], view, record: { ...outcome.record, drawn } }
+}))
+
 const composeOutcomesOf = (operations: ReadonlyArray<TurnOperation>): ReadonlyArray<ComposeOutcome> =>
-  operations.filter(operation => operation.operationId === 'world.process-plant.display.compose').map(({ input, result }) => {
-    const panels = (input?.panels ?? []) as ReadonlyArray<{ kind: string; signals?: ReadonlyArray<{ ref: string }> }>
+  operations.filter(operation => operation.operationId === WORLD_COMPOSE).map(({ input, result }) => {
+    const accepted = result?.success === true && typeof result.viewRef === 'string'
+    const record = { input, result }
+    const evidence = accepted ? vignetteEvidenceOf(record) : null
     return {
-      accepted: result?.success === true && typeof result.viewRef === 'string',
-      panels: panels.map(panel => panel.kind),
-      // What each mimic was asked to draw, so the intent the agent chose (route, one end, around, services) is on record.
-      mimics: panels.filter(panel => panel.kind === 'mimic').map(({ kind: _kind, ...intent }) => intent),
-      subjects: (input?.subjects ?? []) as ReadonlyArray<string>,
-      signals: result?.success === true ? resolvedNames(result) : panels.flatMap(panel => (panel.signals ?? []).map(signal => signal.ref)),
-      record: { input, result },
-      ...(result?.success === true ? {} : { error: String(result?.error ?? 'no result') }),
+      accepted,
+      panels: evidence?.panels ?? ((input?.views ?? []) as ReadonlyArray<{ kind: string }>).map(view => view.kind),
+      mimics: [],
+      subjects: ((input?.subjects ?? []) as ReadonlyArray<unknown>).map(subject => typeof subject === 'string' ? subject : JSON.stringify(subject)),
+      signals: evidence === null ? [] : [...evidence.refs ?? []],
+      record,
+      ...(accepted ? {} : { error: String(result?.error ?? 'no result') }),
     }
   })
 
@@ -358,9 +370,12 @@ const requestDisplay = async (roomId: string, roomPath: string, human: { id: str
   await Bun.sleep(1_500) // the last [llm] line lands after the reply is posted
   const costs = await turnCosts(roomId, reply, await callsBetween(agentsLog, offset, await logOffset(agentsLog)))
   const composes = reply.generationTraceId ? composeOutcomesOf(await turnOperations(roomId, reply.generationTraceId)) : []
+  const cards = reply.generationTraceId ? (await request(`/api/workspaces/${workspaceId}/agents/rooms/${roomId}/executions/${reply.generationTraceId}/cards`)).cards : []
   return {
     reply,
     interim,
+    cards,
+    composes: composes.map(outcome => outcome.record),
     row: {
       queued: accepted.queued,
       type: reply.type,
@@ -416,10 +431,12 @@ for (const scenario of chosen) {
   const costs = await turnCosts(roomId, answer, answerCalls)
   const fence = viewFence(answer.content)
   const operations = answer.generationTraceId ? await turnOperations(roomId, answer.generationTraceId) : []
-  const composes = composeOutcomesOf(operations)
+  const composes = await withDrawings(resource, composeOutcomesOf(operations))
   const accepted = composes.filter(outcome => outcome.accepted)
   const presented = fence === null ? null : accepted.at(-1) ?? null
-  const display = presented === null ? null : displayEvidenceOf(presented.record)
+  const display = presented === null ? null : vignetteEvidenceOf(presented.record, presented.view)
+  // The turn's cards as its answer cites them (re-keyed in dispatch order), for the citation measures (T10, T34).
+  const cards = answer.generationTraceId ? (await request(`/api/workspaces/${workspaceId}/agents/rooms/${roomId}/executions/${answer.generationTraceId}/cards`)).cards : []
   const decisive: ReadonlyArray<KeyResult> = scenario.evidence.map(key => key.use === 'P0'
     ? scoreKey(key, display, answer.content, catalog)
     : { key: key.key, kind: key.kind, use: key.use, hit: null, hits: [], unknown: [] })
@@ -440,6 +457,7 @@ for (const scenario of chosen) {
     displayed: fence !== null,
     correct: scenario.expect === 'either' ? null : (fence !== null) === (scenario.expect === 'display'),
     composeCalls: composes.length,
+    cardItems: (cards as ReadonlyArray<{ card: { items: ReadonlyArray<unknown> } }>).reduce((sum, entry) => sum + entry.card.items.length, 0),
     firstComposeAccepted: composes.length === 0 ? null : composes[0]!.accepted,
     // A refusal names fixes known to fit; the owner counts a display the agent fixes on its next call as valid.
     validWithinTwo: composes.length === 0 ? null : composes.slice(0, 2).some(outcome => outcome.accepted),
@@ -485,9 +503,9 @@ for (const scenario of chosen) {
   }
   rows.push(fullRow)
   await save(`${stage}-${scenario.id}`, {
-    scenario, row: fullRow, answer, interim, calls: answerCalls, composes: composes.map(outcome => outcome.record), proposals,
+    scenario, row: fullRow, answer, interim, calls: answerCalls, composes: composes.map(outcome => outcome.record), cards, proposals,
     ...(operation === null ? {} : { operation, controls }),
-    ...(requested === null ? {} : { requestedReply: requested.reply, requestedInterim: requested.interim, requestedCalls: requested.calls }),
+    ...(requested === null ? {} : { requestedReply: requested.reply, requestedInterim: requested.interim, requestedCalls: requested.calls, requestedCards: requested.cards, requestedComposes: requested.composes }),
   })
   await Bun.write(join(directory, `${stage}-rows.jsonl`), rows.map(entry => JSON.stringify(entry)).join('\n') + '\n')
   console.log(JSON.stringify({ id: fullRow.id, displayed: fullRow.displayed, correct: fullRow.correct, decisive: `${fullRow.decisiveSignalHits}/${fullRow.decisiveSignalKeys}`, ...('worry' in fullRow ? { worry: fullRow.worry?.pass ?? null } : {}), modelCalls: fullRow.modelCalls, corrections: fullRow.correctionRounds, wallMs, costUsd: fullRow.costUsd, pin: fullRow.pinViolations }))
