@@ -4,9 +4,12 @@
 // the main app's strip). Rows keep the sample's order, which ranks them as the
 // Run context does; a row without a priority is shown by its severity word,
 // "priority not declared", and never ranks as a priority (R1).
+// Nothing here can acknowledge an alert yet (W2.7), so no icon flashes: each
+// is drawn steady, and the word UNACK carries the state (register deviation
+// alert-icon-steady-unacknowledged).
 import type { Observation } from '../../../core/observation/model.ts'
 import type { VignetteSection } from '../../../features/displays/compose/model.ts'
-import { leadsObject, priorityRank, stateWords, type AlertRow } from '../../../features/displays/alerts/rows.ts'
+import { asksAttention, leadsObject, priorityRank, stateWords, type AlertRow } from '../../../features/displays/alerts/rows.ts'
 import { severityStyle } from '../../displays/severity.ts'
 
 export interface AlertLine {
@@ -17,22 +20,55 @@ export interface AlertLine {
 
 /**
  * OpenBridge's alert icon for a row (obc-alert-icon): its alert type by the
- * declared priority (emergency is OpenBridge's critical level), acknowledged
- * and still active as the record says; a returned alarm is OpenBridge's
+ * declared priority (emergency is OpenBridge's critical level), drawn steady
+ * in OpenBridge's acknowledged form whatever the record says, since nothing
+ * here acknowledges (OpenBridge 2.0.0 flashes every unacknowledged icon and
+ * has no steady unacknowledged form); a returned alarm is its steady
  * rectified icon. Notice has no icon and an undeclared priority none: both
  * read as their word.
  */
-export const alertIcon = (row: AlertRow): { readonly type: 'level-critical' | 'alarm' | 'warning' | 'caution'; readonly acknowledged: boolean; readonly active: boolean } | { readonly word: string } => {
+export const alertIcon = (row: AlertRow): { readonly type: 'level-critical' | 'alarm' | 'warning' | 'caution'; readonly acknowledged: true; readonly active: boolean } | { readonly word: string } => {
   const type = row.priority === 'emergency' ? 'level-critical' : row.priority === 'alarm' || row.priority === 'warning' || row.priority === 'caution' ? row.priority : null
   if (type === null) return { word: severityStyle(row.priority, row.alert.severity)?.word ?? 'Notice' }
-  return { type, acknowledged: row.state === 'active-ack', active: row.state !== 'returned-unack' }
+  return { type, acknowledged: true, active: row.state !== 'returned-unack' }
 }
 
-/** What a row says after its message: its marks, its state where it is not plain unacknowledged, its time. */
+/** The word an unacknowledged alert's row and its section's count carry, its steady icon not saying so. */
+export const UNACK_WORD = 'UNACK'
+
+/** Whether a row is unacknowledged and asks for attention: standing alarms and advisories never count as unacknowledged (R43). */
+export const unacknowledged = (row: AlertRow): boolean => row.state !== 'active-ack' && asksAttention(row)
+
+/**
+ * The most of a label that fits where `fits` says: the whole of it, else its first whole words with "…" (a trailing
+ * comma or colon left out), and only where its first word alone does not fit, that word cut with "…". A row's message
+ * gives way so, never its marks, its state or its time (plan §2 rule 2). Fewer words never take more room, so the
+ * words are found by halving.
+ */
+export const wordsThatFit = (text: string, fits: (shown: string) => boolean): string => {
+  if (fits(text)) return text
+  const words = text.split(' ')
+  const cut = (shown: string): string => `${shown.replace(/[\s,;:·]+$/, '')}…`
+  const most = (count: number, shown: (kept: number) => string): number => {
+    let [low, high] = [0, count]
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2)
+      if (fits(shown(mid))) low = mid
+      else high = mid - 1
+    }
+    return low
+  }
+  const kept = most(words.length - 1, count => cut(words.slice(0, count).join(' ')))
+  if (kept > 0) return cut(words.slice(0, kept).join(' '))
+  const first = words[0]!
+  return cut(first.slice(0, most(first.length - 1, count => cut(first.slice(0, count)))))
+}
+
+/** What a row says after its message: its marks, its state where the word UNACK does not say it, its time. */
 export const alertDetail = (row: AlertRow): string => [
   ...(row.alert.standing === true ? ['standing'] : []),
   ...(row.alert.advisory === true ? ['advisory'] : []),
-  ...(row.state === 'active-unack' ? [] : [stateWords(row)]),
+  ...(unacknowledged(row) ? (row.state === 'returned-unack' ? ['returned'] : []) : row.state === 'active-unack' ? [] : [stateWords(row)]),
   row.raised?.clock === 'simulation' ? `${row.raised.at.slice(11, 19)} UTC` : 'time unknown',
 ].join(' · ')
 
@@ -47,14 +83,20 @@ const inSection = (section: AlertsSection) => (row: AlertRow): boolean => {
   return (element !== undefined && (section.elements ?? []).includes(element)) || (row.alert.observable !== undefined && (section.refs ?? []).includes(row.alert.observable))
 }
 
-/** The rows a section shows within its rows (one is its head), in the sample's order, the last saying how many more there are. */
-export const sectionLines = (rows: ReadonlyArray<AlertRow>, section: AlertsSection, room: number): { readonly lines: ReadonlyArray<AlertLine>; readonly more: number } => {
+/**
+ * The rows a section shows within its rows (one is its head), in the sample's order, the last saying how many more
+ * there are; and how many of all and of those not shown are unacknowledged.
+ */
+export const sectionLines = (rows: ReadonlyArray<AlertRow>, section: AlertsSection, room: number): {
+  readonly lines: ReadonlyArray<AlertLine>; readonly more: number; readonly unacknowledged: { readonly all: number; readonly more: number }
+} => {
   const own = rows.filter(inSection(section))
   const several = new Set(own.map(row => row.objectId)).size > 1
   const shown = own.length <= room ? own : own.slice(0, Math.max(0, room - 1))
   return {
     lines: shown.map(row => ({ row, firstOut: row.alert.firstOut?.rank === 1, ...(several ? { heading: row.objectLabel } : {}) })),
     more: own.length - shown.length,
+    unacknowledged: { all: own.filter(unacknowledged).length, more: own.slice(shown.length).filter(unacknowledged).length },
   }
 }
 

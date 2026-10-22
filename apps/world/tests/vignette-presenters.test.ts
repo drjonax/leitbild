@@ -5,11 +5,12 @@ import type { AlertState } from '../src/core/model/alerts.ts'
 import type { ObjectId } from '../src/core/model/ids.ts'
 import type { Observable, Observation } from '../src/core/observation/model.ts'
 import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
-import { alertDetail, alertIcon, sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
+import { alertDetail, alertIcon, sectionLines, UNACK_WORD, unacknowledged, wordsThatFit, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { provenanceMark, quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
 import { appendPoint, limitLabelYs, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
+import { recordedHoldMs } from '../src/features/historian/policy.ts'
 
 // The vignette renderer's presenters (architecture B1): the limit chip, the
 // step-and-hold trace, the limits a strip shares, neutral values without an
@@ -117,6 +118,34 @@ describe('trend strip', () => {
     expect(stepPath([{ t: 0, v: 10 }, { t: 6_000, v: 20 }], x, y, window, 3_000)).toBe('M0.0 90.0 L30.0 90.0 M60.0 80.0 L90.0 80.0')
   })
 
+  test('the Historian\'s hold, served with the record: a steady value it stores 30 to 88 s apart draws as one piece over ten minutes; a silence past the hold breaks it', () => {
+    const now = 600_000
+    const drawn = (points: ReadonlyArray<{ t: number; v: number }>) => stripDrawing({ pens: [level], series: new Map([[level.ref, { holdMs: recordedHoldMs, points }]]), observations: [], now, horizonMs: 600_000, width: 600, height: 72 })!
+    const pieces = (path: string): number => path.match(/M/g)?.length ?? 0
+    // The heartbeat's stored samples of a steady value, with the longest gap measured on Halden (88 s), and the live point now.
+    const steady = [0, 30_000, 118_000, 150_000, 210_000, 298_000, 330_000, 390_000, 450_000, 538_000, 570_000, 600_000].map(t => ({ t, v: 50 }))
+    expect(pieces(drawn(steady).pens[0]!.path)).toBe(1)
+    expect(drawn(steady).unrecorded).toBeNull()
+    // Nothing stored for 150 s (the Run was not recording): the trace holds 90 s, then breaks until the next sample.
+    const gap = [...steady.filter(point => point.t <= 330_000), ...steady.filter(point => point.t >= 480_000)]
+    expect(pieces(drawn(gap).pens[0]!.path)).toBe(2)
+    expect(drawn(gap).pens[0]!.path).toContain('L420.0')
+    // The guess this replaces, three recording intervals of 5 s, broke the same steady record into pieces.
+    expect(pieces(stepPath(steady, t => t / 1_000, () => 0, { start: 0, end: now }, 15_000))).toBeGreaterThan(2)
+  })
+
+  test('the time before the record starts is hatched; a value held into the window\'s start leaves nothing hatched', () => {
+    const drawn = (points: ReadonlyArray<{ t: number; v: number }>) => stripDrawing({ pens: [level], series: new Map([[level.ref, { holdMs: recordedHoldMs, points }]]), observations: [], now: 600_000, horizonMs: 600_000, width: 600, height: 72 })!
+    // A Run that started 90 s ago: hatched up to its first sample, and the trace starts there.
+    const young = drawn([{ t: 510_000, v: 50 }, { t: 540_000, v: 50 }, { t: 600_000, v: 50 }])
+    expect(young.unrecorded).toEqual({ width: 510 })
+    expect(young.pens[0]!.path.startsWith('M510.0')).toBe(true)
+    // Its sample 40 s before the window holds into its start: nothing to hatch.
+    expect(drawn([{ t: -40_000, v: 50 }, { t: 30_000, v: 50 }]).unrecorded).toBeNull()
+    // One 100 s before holds only 90: what lies between is not recorded.
+    expect(drawn([{ t: -100_000, v: 50 }, { t: 100_000, v: 50 }]).unrecorded).toEqual({ width: 100 })
+  })
+
   test('a live point keeps the window and the one point before it', () => {
     expect(appendPoint([{ t: 0, v: 1 }, { t: 5, v: 2 }, { t: 9, v: 3 }], { t: 12, v: 4 }, 7)).toEqual([{ t: 5, v: 2 }, { t: 9, v: 3 }, { t: 12, v: 4 }])
   })
@@ -139,7 +168,7 @@ describe('trend strip', () => {
   test('the drawing names the limit nearest each edge beyond its scale, and colours a pen only by its observation', () => {
     const pens = [level, { ...level, ref: 'unit-1#level-b', thresholds: level.thresholds.map(limit => (limit.id === 'hi' ? { ...limit, value: 80 } : limit)) }]
     const drawn = (values: ReadonlyArray<number>) => stripDrawing({
-      pens, series: new Map([[level.ref, values.map((v, index) => ({ t: index * 1_000, v }))], ['unit-1#level-b', [{ t: 0, v: values[0]! }]]]),
+      pens, series: new Map([[level.ref, { holdMs: 90_000, points: values.map((v, index) => ({ t: index * 1_000, v })) }], ['unit-1#level-b', { holdMs: 90_000, points: [{ t: 0, v: values[0]! }] }]]),
       observations: [observation('unit-1#level-b', values[0]!, { priority: 'caution' })], now: 10_000, horizonMs: 10_000, width: 100, height: 72,
     })!
     const wide = drawn([35, 50])
@@ -179,13 +208,57 @@ describe('alerts', () => {
     expect(worstChip([{ priority: 'notice' }], [])).toBeNull()
   })
 
-  test('each row takes OpenBridge\'s alert icon by its declared priority and ack state; notice and an undeclared priority read as words', () => {
-    expect(alertIcon(row('a', 'one', 'emergency'))).toEqual({ type: 'level-critical', acknowledged: false, active: true })
+  test('each row takes OpenBridge\'s alert icon by its declared priority, drawn steady: acknowledged, or rectified once returned; notice and an undeclared priority read as words', () => {
+    // Nothing in a vignette acknowledges (W2.7): an unacknowledged icon would flash for ever (UX audit H11).
+    expect(alertIcon(row('a', 'one', 'emergency'))).toEqual({ type: 'level-critical', acknowledged: true, active: true })
     expect(alertIcon({ ...row('a', 'one', 'warning'), state: 'active-ack' })).toEqual({ type: 'warning', acknowledged: true, active: true })
-    expect(alertIcon({ ...row('a', 'one', 'alarm'), state: 'returned-unack' })).toEqual({ type: 'alarm', acknowledged: false, active: false })
+    expect(alertIcon({ ...row('a', 'one', 'alarm'), state: 'returned-unack' })).toEqual({ type: 'alarm', acknowledged: true, active: false })
     expect(alertIcon(row('a', 'one', 'notice'))).toEqual({ word: 'Notice' })
     expect(alertIcon(row('a', 'one', null))).toEqual({ word: 'Warning · priority not declared' })
     expect(alertDetail({ ...row('a', 'one', 'caution', { standing: true, acknowledged: true, acknowledgedBy: 'ai' }), state: 'active-ack' })).toBe('standing · acknowledged by Assistant · 10:00:00 UTC')
+  })
+
+  test('the word UNACK carries what the steady icon does not: on each unacknowledged row and in the section\'s counts; standing alarms and advisories never count (R43)', () => {
+    const rows = [
+      row('a', 'one', 'alarm'), { ...row('r', 'one', 'warning'), state: 'returned-unack' as const }, { ...row('k', 'one', 'alarm', { acknowledged: true }), state: 'active-ack' as const },
+      row('s', 'one', 'caution', { standing: true }), row('x', 'one', 'warning'),
+    ]
+    expect(rows.map(entry => [entry.alert.id, unacknowledged(entry), alertDetail(entry)])).toEqual([
+      ['a', true, '10:00:00 UTC'], ['r', true, 'returned · 10:00:00 UTC'], ['k', false, 'acknowledged · 10:00:00 UTC'], ['s', false, 'standing · 10:00:00 UTC'], ['x', true, '10:00:00 UTC'],
+    ])
+    expect(UNACK_WORD).toBe('UNACK')
+    expect(sectionLines(rows, { objectIds: ['one'] }, 5).unacknowledged).toEqual({ all: 3, more: 0 })
+    expect(sectionLines(rows, { objectIds: ['one'] }, 3)).toMatchObject({ more: 3, unacknowledged: { all: 3, more: 1 } })
+  })
+
+  test('a row\'s message gives way by whole words before any ellipsis, a lone word too long cut last; what fits stays whole', () => {
+    const within = (characters: number) => (shown: string): boolean => shown.length <= characters
+    const message = 'Steam generator A low-low level'
+    expect(wordsThatFit(message, within(40))).toBe(message)
+    expect(wordsThatFit(message, within(18))).toBe('Steam generator A…')
+    expect(wordsThatFit(message, within(17))).toBe('Steam generator…')
+    // A comma before the cut is left out with the words after it.
+    expect(wordsThatFit('Feedwater isolation on reactor trip, low Tavg', within(37))).toBe('Feedwater isolation on reactor trip…')
+    expect(wordsThatFit('Feedwater isolation', within(5))).toBe('Feed…')
+    expect(wordsThatFit('Feedwater', within(0))).toBe('…')
+    // It tries whole words first, and cuts within the first word only after every whole-word start failed.
+    const tried: string[] = []
+    expect(wordsThatFit(message, shown => { tried.push(shown); return shown.length <= 4 })).toBe('Ste…')
+    const wholeWords = (shown: string): boolean => shown === message || (message.startsWith(shown.slice(0, -1)) && message[shown.length - 1] === ' ')
+    const inFirstWord = (shown: string): boolean => shown.length - 1 < 'Steam'.length
+    expect(tried.filter(shown => !wholeWords(shown) && !inFirstWord(shown))).toEqual([])
+    expect(tried.slice(tried.findIndex(inFirstWord)).filter(wholeWords)).toEqual([])
+  })
+
+  test('in an alert row only the message gives way: the icon, UNACK, a FIRST OUT mark, a heading, the state and the time never shrink', () => {
+    const source = readFileSync(join(import.meta.dir, '../src/ui/embed/vignette/AlertsSection.svelte'), 'utf8')
+    const rule = (selector: string): string => source.match(new RegExp(`\\n\\s*${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule('.message')).toContain('flex: 1 1 0;')
+    expect(rule('.message')).toContain('min-width: 0;')
+    expect(rule('.detail')).toContain('flex: none;')
+    expect(rule('.icon')).toContain('flex: none;')
+    expect(source).toMatch(/strong, \.mark, \.unack \{ flex: none; \}/)
+    expect(source).toContain('use:fitted={line.row.alert.message}')
   })
 
   test('a section keeps the sample\'s order (the Run context\'s ranking), its objects only, within its room, the last line counting the rest', () => {

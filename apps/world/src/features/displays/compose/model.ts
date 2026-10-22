@@ -149,6 +149,8 @@ export interface VignetteView {
 
 /** A recorded point: Run time in epoch ms and the value then. */
 export interface SeriesPoint { readonly t: number; readonly v: number }
+/** A series' recorded points, Run time ascending, and how long a reader holds each until the next: the Historian's hold (historian/policy.ts recordedHoldMs). */
+export interface RecordedSeries { readonly holdMs: number; readonly points: ReadonlyArray<SeriesPoint> }
 
 export interface VignetteSample {
   readonly at: Stamp & { readonly paused: boolean }
@@ -164,8 +166,8 @@ export interface VignetteSample {
     readonly positioned: number; readonly missing: number; readonly within?: string; readonly around?: string
     readonly bounds: readonly [readonly [number, number], readonly [number, number]] | null; readonly extentM: number | null
   }>>
-  /** Only when history was asked for: each trend pen's recorded points from then until the sample, by series id. */
-  readonly series?: Readonly<Record<string, ReadonlyArray<SeriesPoint>>>
+  /** Only when history was asked for: each trend pen's record from then (and up to its hold before) until the sample, by series id. */
+  readonly series?: Readonly<Record<string, RecordedSeries>>
   /** By the index of each values view holding a lead request: its values now, at most its rows (named ones first). */
   readonly leads?: Readonly<Record<number, ReadonlyArray<VignetteValue>>>
 }

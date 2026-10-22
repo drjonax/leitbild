@@ -16,15 +16,22 @@
 import { layoutDiagram, type DiagramProfile } from '../diagram/index.ts'
 import type { TopologyGraph, TopologyNode } from '../../../core/observation/topology.ts'
 import { flowPlan, type FlowSizing } from './flow.ts'
-import { groupName, itemText, type TopologyLayout } from './layout.ts'
+import { groupName, itemText, readingWord, type TopologyLayout } from './layout.ts'
 import type { ScopedTopology } from './scope.ts'
 
-/** The renderer's grid pitch and its text lines (16 high, about 8 a character), in the engine's units; a reading takes up to ten characters ("15.51 MPa"). */
+/**
+ * The renderer's grid pitch and its text lines (16 high, about 8 a character), in the engine's units; a reading's
+ * value takes up to ten characters ("15.51 MPa"). A level's reading is written after its word (layout.ts
+ * readingWord) and reads its percent of span, by which it fills its vessel: at most seven characters ("LVL 100.0 %").
+ * A level's room of word and ten characters would leave the four-loop overview no room for any reading.
+ */
 const GRID = 24
-const LINE = { height: 16, perCharacter: 8 }
-const READING_CHARACTERS = 10
-/** A state word ("ON LINE", "part open"), or in its place the command the item does not follow ("CMD RUN"). */
-const STATE_CHARACTERS = 9
+export const FLOW_TEXT_LINE = { height: 16, perCharacter: 8 } as const
+export const READING_CHARACTERS = 10
+const LEVEL_VALUE_CHARACTERS = '100.0 %'.length
+const readingCharacters = (word: string | null): number => (word === null ? READING_CHARACTERS : word.length + 1 + LEVEL_VALUE_CHARACTERS)
+/** A state word ("ON LINE", "part open"), or in its place the command the item does not follow ("CMD RUN", "CMD CLOSED"). */
+export const STATE_CHARACTERS = 10
 /** The vessel's head and flange above its first nozzle, and its bottom below its last. */
 const VESSEL_ENDS = { top: 2 * GRID, bottom: GRID }
 
@@ -57,9 +64,9 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   for (const edge of graph.edges) for (const end of [edge.from.node, edge.to.node]) lines.set(end, (lines.get(end) ?? 0) + 1)
   const leaving = new Set(graph.edges.map(edge => edge.from.node))
   const label = (node: TopologyNode): string => node.shortLabel ?? node.label
-  const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter), height: LINE.height, required })
+  const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * FLOW_TEXT_LINE.perCharacter), height: FLOW_TEXT_LINE.height, required })
   return {
-    key: 'vignette-flow-9',
+    key: 'vignette-flow-10',
     visible: () => true,
     silent: edge => ['sink', 'boundary'].includes(classOf.get(edge.to.node) ?? '') && !leaving.has(edge.to.node),
     bar: node => (node.class === 'bus' && (lines.get(node.id) ?? 0) > 2) || isHeader(node),
@@ -77,7 +84,7 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
       const written = itemText(item.node.bindings)
       const lines = [line(text.length, true), ...(grouped ? [line(7, true)] : [
         ...(written.state === null ? [] : [line(STATE_CHARACTERS, true)]),
-        ...written.readings.map(() => line(READING_CHARACTERS, false)),
+        ...written.readings.map(ref => line(readingCharacters(readingWord(item.node.bindings, ref)), false)),
       ])]
       const vessel = item.role === 'hub'
       const cells = vessel || TALL.has(item.node.class) ? { width: 2, height: 4 } : { width: 2, height: 2 }

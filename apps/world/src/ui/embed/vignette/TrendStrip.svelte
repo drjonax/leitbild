@@ -1,19 +1,20 @@
 <script lang="ts">
   import type { Observation } from '../../../core/observation/model.ts'
-  import type { SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
+  import type { RecordedSeries, VignetteValue } from '../../../features/displays/compose/model.ts'
   import { underTitle } from './format.ts'
   import { valueLook } from './readout.ts'
   import { BEYOND_BOTTOM_INSET, BEYOND_TOP_Y, stripDrawing } from './trend.ts'
 
   // One trend strip (architecture B): its pens step-and-hold over the trend's
-  // window, told apart by dash; the limits all of them share; beside it a
-  // legend row per pen with its value now. The last strip of a trend carries
-  // the time axis on the row below it.
+  // window for the hold served with their record, told apart by dash; the
+  // time before the record starts hatched; the limits all of them share;
+  // beside it a legend row per pen with its value now. The last strip of a
+  // trend carries the time axis on the row below it.
   let { pens, title, series, observations, now, horizonMs, rows, axis }: {
     pens: ReadonlyArray<VignetteValue>
     /** The vignette's title: a pen's name drops the object it names. */
     title: string
-    series: ReadonlyMap<string, ReadonlyArray<SeriesPoint>>
+    series: ReadonlyMap<string, RecordedSeries>
     observations: ReadonlyArray<Observation>
     now: number
     horizonMs: number
@@ -22,6 +23,8 @@
     axis: boolean
   } = $props()
 
+  const id = $props.id()
+  const hatch = `unrecorded-${id}`
   let width = $state(0)
   let height = $state(0)
   const drawing = $derived(width > 0 && height > 0 && Number.isFinite(now) ? stripDrawing({ pens, series, observations, now, horizonMs, width, height }) : null)
@@ -40,6 +43,11 @@
       <p class="empty">No recorded values in this window yet</p>
     {:else}
       <svg {width} {height} role="img" aria-label={pens.map(pen => pen.label).join(', ')}>
+        {#if drawing.unrecorded !== null}
+          <!-- Before the record starts nothing is known: hatched, never drawn as if a value held. -->
+          <defs><pattern id={hatch} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="hatch" x1="0" y1="0" x2="0" y2="6" /></pattern></defs>
+          <rect class="unrecorded" x="0" y="0" width={drawing.unrecorded.width} {height} fill={`url(#${hatch})`}><title>No record yet</title></rect>
+        {/if}
         {#each drawing.values as tick (tick.label)}<line class="grid" x1="0" x2={width} y1={tick.y} y2={tick.y} />{/each}
         {#each drawing.limits as limit (limit.id)}<line class={`limit ${limit.priority}`} x1="0" x2={width} y1={limit.y} y2={limit.y}><title>{limit.label}</title></line>{/each}
         <!-- Names over the lines, each on its halo. -->
@@ -71,6 +79,7 @@
   svg { display: block; overflow: visible; }
   .empty { margin: 0; padding: 4px 6px; color: var(--element-neutral-color); }
   .grid { stroke: var(--border-divider-color); stroke-width: 1; }
+  .hatch { stroke: var(--border-divider-color); stroke-width: 1; }
   /* A halo in the strip's own background keeps a name legible where limit lines and traces run through it. */
   .tick { fill: var(--element-neutral-color); font-size: 12px; paint-order: stroke; stroke: var(--container-section-color); stroke-width: 3px; stroke-linejoin: round; }
   .limit { stroke: var(--element-neutral-color); stroke-width: 1; stroke-dasharray: 4 3; }

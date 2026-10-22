@@ -12,15 +12,15 @@ import { alertRows, leadsObject, priorityRank, worstFirst, type AlertRow } from 
 import { declaredRefs, valueOf, visibleObject, type Declared } from './declared.ts'
 import { leadNow } from './defaults.ts'
 import {
-  ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type ResolvedView, type SeriesPoint, type SlotDeclaration, type VignetteSample,
+  ENTITY_COLUMNS, horizonMs, type Collection, type EntityRow, type RecordedSeries, type ResolvedView, type SlotDeclaration, type VignetteSample,
   type VignetteSection, type VignetteState, type VignetteValue, type VignetteView,
 } from './model.ts'
 import { presentedOf } from './present.ts'
 import type { ComposeRun } from './resolve.ts'
 import { bindingRefs, drawingOf, scopeWithin, topologyOf, topologySection } from './topology.ts'
 
-/** A Run's recorded points of one series, Run time ascending, between two instants. */
-export type SeriesPort = (seriesId: string, from: string, to: string) => ReadonlyArray<SeriesPoint>
+/** A Run's record of one series between two instants and up to its hold before them (the value held into `from`), Run time ascending, with that hold. */
+export type SeriesPort = (seriesId: string, from: string, to: string) => RecordedSeries
 export interface ViewRun extends ComposeRun { readonly series: SeriesPort }
 
 const distanceBands = { '1km': 1_000, '5km': 5_000, '20km': 20_000, '50km': 50_000, '150km': 150_000 } as const

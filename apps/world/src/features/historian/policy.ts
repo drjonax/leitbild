@@ -51,8 +51,8 @@ export const historianSampleBudget = (maxBytes: number): number => Math.floor((m
  * minute where the source itself sends an unchanged value only once a minute
  * (the process-plant operations profile, which then restarts that minute on a
  * value inside the deadband). 30 s + 60 s keeps every gap within the 90 s a
- * step-and-hold reader draws a held value across (trend-reading HOLD_GAP_MS),
- * so every window of two minutes holds samples. Measured on Halden: the
+ * step-and-hold reader draws a held value across (`recordedHoldMs`), so
+ * every window of two minutes holds samples. Measured on Halden: the
  * longest gap in the last 30 minutes was 88 s (97 s with a 60 s hold), at a
  * cost of 149 rather than 141 stored samples per second.
  *
@@ -68,6 +68,16 @@ export const historianSampleBudget = (maxBytes: number): number => Math.floor((m
  */
 export const sampleHoldMs = 30_000
 export const relativeDeadband = 1e-5
+
+/**
+ * The longest a recording series goes without a stored sample: the heartbeat
+ * and the minute its source may stay silent. A reader holds a stored value
+ * until the next one, across a silence up to this long and no longer: a
+ * longer one is a gap in the record (nothing was offered, the Run was not
+ * recording). It is served with the samples a display draws, so no reader
+ * guesses it from a recording interval.
+ */
+export const recordedHoldMs = sampleHoldMs + 60_000
 
 const baseLimits = { maxAgeMs: 7 * 86_400_000, maxBytes: 256 * 1024 * 1024, minFreeBytes: 1024 * 1024 * 1024 }
 

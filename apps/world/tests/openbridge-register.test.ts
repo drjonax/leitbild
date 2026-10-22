@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { customShapes, internals, surfaces, type CustomShape, type Internal, type Surface } from './openbridge-register.ts'
+import { customShapes, deviations, internals, surfaces, type CustomShape, type Deviation, type Internal, type Surface } from './openbridge-register.ts'
 
 // The OpenBridge policy's register (§2, §5; apps/world/AGENTS.md): every SVG
 // and drawing canvas an operator display draws, in the embed and in the main
 // app's displays, is a registered custom shape or a surface OpenBridge paints;
-// no entry names a shape that is no longer drawn; and the embed reaches into
-// OpenBridge (shadow roots, CSS parts, its custom properties) only where the
-// register lists it. Each rule is checked against a planted violation.
+// no entry names a shape that is no longer drawn; each deviation still
+// stands where it says; and the embed reaches into OpenBridge (shadow roots,
+// CSS parts, its custom properties) only where the register lists it. Each
+// rule is checked against a planted violation.
 
 const src = join(import.meta.dir, '../src')
 const openBridge = join(import.meta.dir, '../node_modules/@oicl/openbridge-webcomponents')
@@ -88,6 +89,16 @@ const manifestTags = new Set((JSON.parse(readFileSync(join(openBridge, 'custom-e
   .modules.flatMap(module => (module.declarations ?? []).flatMap(declaration => declaration.tagName === undefined ? [] : [declaration.tagName])))
 const isOpenBridgeElement = (tag: string): boolean => tag.startsWith('obi-') ? existsSync(join(openBridge, `dist/icons/icon-${tag.slice(4)}.js`)) : manifestTags.has(tag)
 
+/** Deviations whose site no longer holds its mark, that name no OpenBridge element, or that end with no plan item or stand on no evidence. */
+const deviationBreaks = (listed: ReadonlyArray<Deviation>, sources: Sources): ReadonlyArray<string> => [
+  ...listed.filter((deviation, index) => listed.findIndex(other => other.id === deviation.id) !== index).map(deviation => `${deviation.id}: listed twice`),
+  ...listed.flatMap(deviation => [
+    ...deviation.sites.flatMap(site => (sources.get(site.file)?.includes(site.mark) === true ? [] : [`${deviation.id}: ${site.file} no longer holds "${site.mark}"`])),
+    ...(isOpenBridgeElement(deviation.component) ? [] : [`${deviation.id}: ${deviation.component} is not an OpenBridge element`]),
+    ...(deviation.until.trim() === '' || deviation.evidence.trim() === '' ? [`${deviation.id}: no end or no evidence`] : []),
+  ]),
+]
+
 /** The register's own rules: a reasonless or removed shape is not kept; a twin lives in ui/displays; named components exist. */
 const ruleBreaks = (shapes: ReadonlyArray<CustomShape>): ReadonlyArray<string> => [
   ...shapes.filter((shape, index) => shapes.findIndex(other => other.id === shape.id) !== index).map(shape => `${shape.id}: listed twice`),
@@ -142,12 +153,17 @@ describe('the OpenBridge custom-shape register', () => {
     expect(ruleBreaks(customShapes)).toEqual([])
   })
 
+  test('each deviation still stands where it says, on an OpenBridge element, until a named plan item', () => {
+    expect(deviations.length).toBeGreaterThan(0)
+    expect(deviationBreaks(deviations, embed)).toEqual([])
+  })
+
   test('the embed uses shadow roots, CSS parts and OpenBridge custom properties only where the register lists them', () => {
     expect(openBridgeProperties.has('--obc-can-hover')).toBe(true)
     expect(unlistedInternals(embed, internals)).toEqual([])
   })
 
-  test('planted: a new SVG, a vanished shape, a reasonless keeper, a misplaced twin and an unlisted part are each caught', () => {
+  test('planted: a new SVG, a vanished shape, a reasonless keeper, a misplaced twin, an unlisted part and a stale deviation are each caught', () => {
     const planted: Sources = new Map([
       ['ui/embed/vignette/Planted.svelte', '<div>\n  <svg class="gauge" width={w}><path d="M0 0" /></svg>\n  <canvas bind:this={c}></canvas>\n</div>\n<style>\n  .knob::part(handle) { color: red; }\n  .row { --ui-components-button-touch-target-size: 24px; }\n</style>'],
       ['ui/embed/vignette/painter.ts', "const context = canvas.getContext('2d')"],
@@ -167,5 +183,9 @@ describe('the OpenBridge custom-shape register', () => {
       'ui/embed/vignette/Planted.svelte: ::part(handle)', 'ui/embed/vignette/Planted.svelte: sets --ui-components-button-touch-target-size',
     ])
     expect(unlistedInternals(new Map([['ui/embed/x.ts', "host.shadowRoot?.querySelector('.label')"]]), internals)).toEqual(["ui/embed/x.ts: shadowRoot?.querySelector('.label')"])
+    const steady = { ...deviations[0]!, id: 'steady', sites: [{ file: 'ui/embed/vignette/Planted.svelte', mark: 'acknowledged={true}' }], component: 'obc-not-an-element' as const, until: '' }
+    expect(deviationBreaks([steady], planted)).toEqual([
+      'steady: ui/embed/vignette/Planted.svelte no longer holds "acknowledged={true}"', 'steady: obc-not-an-element is not an OpenBridge element', 'steady: no end or no evidence',
+    ])
   })
 })

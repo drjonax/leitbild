@@ -3,7 +3,9 @@
 // draws itself where an OpenBridge component could carry the meaning, with
 // its reason, evidence, decision and the phase it ends in. The wiki's
 // design-system page mirrors it. A new entry needs the owner's approval, as
-// D-19 did; a shape goes once OpenBridge carries its meaning.
+// D-19 did; a shape goes once OpenBridge carries its meaning. Deviations are
+// listed too: an OpenBridge component drawn in a state other than the
+// record's, until the plan item that ends it.
 //
 // openbridge-register.test.ts holds every SVG and drawing canvas in
 // src/ui/embed and src/ui/displays to an entry or a surface here, every entry
@@ -103,14 +105,14 @@ export const customShapes: ReadonlyArray<CustomShape> = [
   },
   {
     id: 'vignette-trend-strip',
-    draws: 'A vignette\'s trend strip: step-and-hold pens told apart by dash, shared limits with their names, ▲ ▼ for limits beyond the scale, and the legend\'s pen swatches.',
+    draws: 'A vignette\'s trend strip: step-and-hold pens told apart by dash, each value held for the Historian\'s hold served with its record, the time before the record starts hatched, shared limits with their names, ▲ ▼ for limits beyond the scale, and the legend\'s pen swatches.',
     sites: [
       { file: 'ui/embed/vignette/TrendStrip.svelte', mark: 'aria-label={pens.map', drawn: 'svg' },
       { file: 'ui/embed/vignette/TrendStrip.svelte', mark: '<svg width="20" height="8"', drawn: 'svg' },
     ],
     standsInFor: ['obc-line-graph', 'obc-graph-mini'],
     reason: 'A',
-    evidence: 'As trend-panel: no OpenBridge graph draws named limits, off-span marks or a break where nothing was recorded.',
+    evidence: 'As trend-panel: no OpenBridge graph draws named limits, off-span marks, a break where nothing was recorded or the time before the record starts.',
     decision: APPROVED,
     ends: 'kept',
   },
@@ -124,6 +126,39 @@ export const customShapes: ReadonlyArray<CustomShape> = [
     evidence: 'The main app loads no OpenBridge (D-03, D-41; T28). Drawn independently, copying no OpenBridge path data; equal to OpenBridge\'s badge shape class and alert colour per palette (T04a). Since 0fdf1122d the vignette\'s alerts section draws obc-alert-icon (Q11).',
     decision: APPROVED,
     ends: 'kept',
+  },
+]
+
+/**
+ * An OpenBridge component drawn, through its manifest, in a state other than the one the record says, for a stated
+ * time: what it does and where, the reason and evidence, the decision, and the plan item it ends with.
+ */
+export interface Deviation {
+  readonly id: string
+  readonly does: string
+  /** Where it is done (code marks; comments do not count). */
+  readonly sites: ReadonlyArray<Site>
+  readonly component: OpenBridgeTag
+  readonly reason: string
+  readonly evidence: string
+  readonly decision: { readonly owner: 'approved'; readonly ref: string }
+  /** The plan item that ends it. */
+  readonly until: string
+}
+
+export const deviations: ReadonlyArray<Deviation> = [
+  {
+    id: 'alert-icon-steady-unacknowledged',
+    does: 'Draws every alert icon in the vignette (its alerts sections in the window, in pop-overs and in chat) in OpenBridge\'s acknowledged form, a returned one rectified, so none flashes; an unacknowledged row and its section\'s counts carry the word UNACK.',
+    sites: [
+      { file: 'ui/embed/vignette/alerts.ts', mark: 'return { type, acknowledged: true, active:' },
+      { file: 'ui/embed/vignette/AlertsSection.svelte', mark: '<span class="unack">{UNACK_WORD}</span>' },
+    ],
+    component: 'obc-alert-icon',
+    reason: 'No one can acknowledge in a vignette until W2.7 (D-B1), and a flash asks for acknowledgement (EEMUA 191, ISA-18.2): every unacknowledged icon flashed for ever, 29 on a tripped unit (UX audit H11, F18). OpenBridge 2.0.0 draws no steady unacknowledged icon, so the word carries the state (red team C6).',
+    evidence: 'obc-alert-icon 2.0.0 (dist/components/alert-icon/alert-icon.js): resolvedFlashingSpeed is fixed only when acknowledged, and at the fixed tempo render() draws nothing for an unacknowledged alarm. Measured on Run A at 04:05 (paused): the five icons on screen changed pixels between shots 300 ms apart.',
+    decision: { owner: 'approved', ref: 'Plan v5 W0.9, approved 22 Oct: a deviation until W2.7' },
+    until: 'W2.7',
   },
 ]
 

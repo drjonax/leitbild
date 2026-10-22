@@ -153,8 +153,8 @@ describe('plant observation read (P3)', () => {
     const read = (from: ReadonlyArray<Observation>, of: string) => from.find(observation => path(observation) === of)!
     expect(['rcpA.state', 'offsiteBreakerA.state', 'mainSteamIsolationValveA.state'].map(of => [read(facts.atPower, of).value, read(facts.atPower, of).why])).toEqual([['on', undefined], ['on', undefined], ['on', undefined]])
     // Offsite power lost, the reactor coolant pump stops though its command still runs it, and the offsite breaker opens.
-    expect([read(facts.tripped, 'rcpA.state'), read(facts.tripped, 'offsiteBreakerA.state')].map(observation => [observation.value, observation.why ?? null])).toEqual([['off', 'commanded RUN'], ['off', null]])
-    expect(facts.stuck).toMatchObject({ value: 'on', quality: 'good', priority: 'none', why: 'commanded SHUT' })
+    expect([read(facts.tripped, 'rcpA.state'), read(facts.tripped, 'offsiteBreakerA.state')].map(observation => [observation.value, observation.why ?? null])).toEqual([['off', 'CMD RUN'], ['off', null]])
+    expect(facts.stuck).toMatchObject({ value: 'on', quality: 'good', priority: 'none', why: 'CMD SHUT' })
   })
 
   test('D3: each rod bank reads the share of its declared range it stands inserted: at power each is nearly out, tripped each is fully in', () => {

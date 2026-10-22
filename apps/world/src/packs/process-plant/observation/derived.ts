@@ -149,6 +149,9 @@ const endOf = (state: ItemState, value: unknown, unit: string | undefined): 'on'
   return (state.aspect.state?.reading === 'flow' ? value !== 0 && Math.abs(value) >= state.noFlowBelow : value > 0) ? 'on' : 'off'
 }
 
+/** How a command an item does not follow is written: "CMD RUN", as the Plant's control panel writes a demand ("CMD 40 %"), in the room a drawing keeps for the state word it stands in for. */
+export const commandNotFollowed = (word: string): string => `CMD ${word}`
+
 /**
  * The command an item does not follow: it demands the other end, and has
  * stood longer than the equipment's declared travel and its margin since a
@@ -164,7 +167,7 @@ const unfollowed = (system: ProcessPlantRuntimeInstance, state: ItemState, now: 
   const issued = system.operations?.log().filter(record => record.path === command && record.value === read.value).at(-1)
   const heldMs = issued === undefined ? undefined : system.runtime.elapsedMs() - issued.elapsedMs
   const allowance = followAllowanceMs(1_000 * (wanted === 'off' ? travel.offS : travel.onS))
-  return heldMs !== undefined && heldMs <= allowance ? undefined : `commanded ${wanted === 'between' ? 'part open' : state.words[wanted]}`
+  return heldMs !== undefined && heldMs <= allowance ? undefined : commandNotFollowed(wanted === 'between' ? 'part open' : state.words[wanted])
 }
 
 /** A derived observable's reading now, by the path it is declared at (never a signal's). */
