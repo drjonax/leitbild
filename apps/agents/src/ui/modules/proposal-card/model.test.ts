@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { workspaceResourceReferenceSchema } from '@leitbild/contracts'
 import type { ProposalCard, WorldProposal } from '../../../agents/proposal-cards.ts'
 import { actorName, proposalCardView, proposedInTurn } from './model.ts'
 
@@ -6,12 +7,13 @@ import { actorName, proposalCardView, proposedInTurn } from './model.ts'
 // MOV-8000A; the card follows World's status until a person decides.
 
 const proposed = { callId: 'call_1_0', key: 'propose', plantId: 'plant:halden-1', target: 'MOV-8000A', value: 0, reason: 'isolate', evidence: ['PT-455'] }
+const run = workspaceResourceReferenceSchema.parse({ workspaceId: '1e828b43-37fc-4437-aa70-302d7f442ceb', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' })
 const proposal = (status: WorldProposal['status'], closed?: WorldProposal['closed']): WorldProposal => ({
   id: 'command:p1', item: 'pressurizer.blockValve', word: 'SHUT', status, proposer: { actorId: 'actor:ai:agent-7', origin: 'ai' }, expiresAtElapsedMs: 165_000,
   ...(closed === undefined ? {} : { closed }),
 })
 const recorded = (status: WorldProposal['status'], closed?: WorldProposal['closed'], review?: Extract<ProposalCard['outcome'], { kind: 'recorded' }>['review']): ProposalCard =>
-  ({ ...proposed, outcome: { kind: 'recorded', proposalId: 'command:p1', plantElapsedMs: 60_000, proposal: proposal(status, closed), ...(review === undefined ? {} : { review }) } })
+  ({ ...proposed, outcome: { kind: 'recorded', proposalId: 'command:p1', resource: run, plantElapsedMs: 60_000, proposal: proposal(status, closed), ...(review === undefined ? {} : { review }) } })
 
 describe('an answer\'s proposal card', () => {
   test('a pending proposal awaits a person in the display window, with World\'s check and how the plant moved', () => {
@@ -23,6 +25,8 @@ describe('an answer\'s proposal card', () => {
       status: 'Awaiting a person\'s approval in the display window',
       review: 'I&C allows it now · plant changed since proposed',
       live: true,
+      // Review opens the element's own default on the Run it was proposed on, where its pop-over carries the proposal (Q23).
+      reviewAt: { resource: run, subject: 'plant:halden-1#pressurizer.blockValve', title: 'Review: SHUT MOV-8000A' },
     })
     expect(proposalCardView(recorded('pending', undefined, { permitted: false, refusal: 'Interlock: bus A dead', evidence: [], changed: false }), 'Shift advisor').review)
       .toBe('I&C does not allow it now: Interlock: bus A dead')

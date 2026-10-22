@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { embeddedViewOpenMessageSchema, embeddedViewsMessageSchema, newWorkspaceId, type EmbeddedViewListing, type EmbeddedViewsMessage } from '@leitbild/contracts'
+import { embeddedViewOpenMessageSchema, embeddedViewSubjectOpenMessageSchema, embeddedViewsMessageSchema, newWorkspaceId, workspaceResourceReferenceSchema, type EmbeddedViewListing, type EmbeddedViewsMessage } from '@leitbild/contracts'
 import {
   createViewListPublisher,
   createViewListSync,
@@ -7,6 +7,7 @@ import {
   inlineOpenRequest,
   isViewHostAnnouncement,
   viewOpenMessage,
+  viewSubjectOpenMessage,
   workspaceRoomHref,
 } from './host-link.ts'
 import type { ViewFence } from './listing.ts'
@@ -56,6 +57,13 @@ describe('messages Agents builds for the Host', () => {
 
   test('an open request carries the whole listing and passes the contract', () => {
     expect(embeddedViewOpenMessageSchema.parse(viewOpenMessage(listing('room-1/tr_1/call_1_0/a')))).toEqual({ type: 'leitbild:view-open', view: listing('room-1/tr_1/call_1_0/a') })
+  })
+
+  test('a proposal\'s review asks for its element\'s default on its Run, and passes the contract (Q23)', () => {
+    const run = workspaceResourceReferenceSchema.parse({ workspaceId, moduleId: 'world', type: 'world.simulation-run', id: 'run-1' })
+    const message = viewSubjectOpenMessage(run, 'plant:halden-2#auxFeedwaterValveA', 'Review: THROTTLE to 40 % AFW-A-CV')
+    expect(embeddedViewSubjectOpenMessageSchema.parse(message)).toEqual({ type: 'leitbild:view-subject-open', resource: run, subject: 'plant:halden-2#auxFeedwaterValveA', title: 'Review: THROTTLE to 40 % AFW-A-CV' })
+    expect(() => viewSubjectOpenMessage(run, 'plant:halden-2', 'Review')).toThrow()
   })
 
   test('outside the Host a display links to the Workspace page with this room, never a Run', () => {

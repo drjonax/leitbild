@@ -1,12 +1,14 @@
 import {
   embeddedViewHostMessageSchema,
   embeddedViewOpenMessageSchema,
+  embeddedViewSubjectOpenMessageSchema,
   embeddedViewsMessageSchema,
   embeddedViewWindowMaximiseMessageSchema,
   embeddedViewWindowReadyMessageSchema,
   type EmbeddedViewHostMessage,
   type EmbeddedViewListing,
   type EmbeddedViewOpenMessage,
+  type EmbeddedViewSubjectOpenMessage,
   type EmbeddedViewsMessage,
   type WorkspaceResourceReference,
 } from '@leitbild/contracts'
@@ -14,7 +16,8 @@ import type { ZodError } from 'zod'
 
 // The Host relays the one process display window's messages between the
 // Agents frame, which lists the displays its answers composed and asks for one
-// to be opened, and the World frame, whose page shows the window. The relay is
+// to be opened (or a subject's default display, as a proposal card does), and
+// the World frame, whose page shows the window. The relay is
 // the only validator on that path: every message is parsed with its contract
 // schema and must name this page's Workspace, and every refusal is reported
 // where the operator sees it. It keeps only the latest list, whether the World
@@ -44,6 +47,9 @@ export const firstIssue = (error: ZodError): string => {
   return issue.path.length === 0 ? issue.message : `${issue.path.map(String).join('.')}: ${issue.message}`
 }
 
+/** What opens the window: a listed view, or a subject's default display (Q23). */
+type WindowOpen = EmbeddedViewOpenMessage | EmbeddedViewSubjectOpenMessage
+
 export const createViewRelay = (config: {
   /** The Workspace this page shows; a view of any other Workspace is refused. */
   readonly workspaceId: () => string
@@ -54,7 +60,7 @@ export const createViewRelay = (config: {
    * an agent may just have started it) and the shown room's scope contain it.
    */
   readonly runRefusal: (run: WorkspaceResourceReference) => Promise<string | null>
-  readonly postToWorld: (message: EmbeddedViewsMessage | EmbeddedViewOpenMessage) => void
+  readonly postToWorld: (message: EmbeddedViewsMessage | WindowOpen) => void
   readonly postToAgents: (message: EmbeddedViewHostMessage) => void
   /** Brings a collapsed World pane back beside the chat. */
   readonly showWorld: () => void
@@ -71,7 +77,7 @@ export const createViewRelay = (config: {
   // Whether the current World document said it listens.
   let worldListening = false
   // The one open that waits for a World document to listen; a later open replaces it.
-  let pending: { readonly view: EmbeddedViewListing; readonly cancel: () => void } | null = null
+  let pending: { readonly open: WindowOpen; readonly cancel: () => void } | null = null
   // Counts opens, so a Run check still running for an earlier one does nothing.
   let openSequence = 0
 
@@ -86,13 +92,13 @@ export const createViewRelay = (config: {
     pending = null
   }
 
-  const keepPending = (view: EmbeddedViewListing): void => {
+  const keepPending = (open: WindowOpen): void => {
     dropPending()
     const cancel = config.startTimer(PENDING_VIEW_OPEN_MS, () => {
       pending = null
       config.reportError(`Display could not be opened: the World page did not answer within ${PENDING_VIEW_OPEN_MS / 1_000} s`)
     })
-    pending = { view, cancel }
+    pending = { open, cancel }
   }
 
   const forgetViews = (): void => {
@@ -117,35 +123,47 @@ export const createViewRelay = (config: {
     if (!parsed.success) return config.reportError(`Display could not be opened: ${firstIssue(parsed.error)}`)
     const view = parsed.data.view
     if (foreign(view)) return config.reportError('Display could not be opened: it belongs to another Workspace')
-    const sequence = ++openSequence
-    if (config.worldPane() === 'absent') return void openBesideChat(view, sequence)
-    deliver(view)
+    open(openMessage(view), view.envelope.subject)
   }
 
-  const deliver = (view: EmbeddedViewListing): void => {
+  // A subject's default display (a proposal's element) is relayed exactly as an open: the same Workspace and Run checks, the same refusals.
+  const receiveSubjectOpen = (data: unknown): void => {
+    const parsed = embeddedViewSubjectOpenMessageSchema.safeParse(data)
+    if (!parsed.success) return config.reportError(`Display could not be opened: ${firstIssue(parsed.error)}`)
+    if (parsed.data.resource.workspaceId !== config.workspaceId()) return config.reportError('Display could not be opened: it belongs to another Workspace')
+    open(parsed.data, parsed.data.resource)
+  }
+
+  const open = (message: WindowOpen, run: WorkspaceResourceReference): void => {
+    const sequence = ++openSequence
+    if (config.worldPane() === 'absent') return void openBesideChat(message, run, sequence)
+    deliver(message)
+  }
+
+  const deliver = (message: WindowOpen): void => {
     // A shown World pane keeps its Run: the window shows a display of another Run as it is.
     if (config.worldPane() === 'collapsed') config.showWorld()
-    if (!worldListening) return keepPending(view)
+    if (!worldListening) return keepPending(message)
     dropPending()
-    config.postToWorld(openMessage(view))
+    config.postToWorld(message)
   }
 
   // Chat only: open the display's Run beside the chat, then show the display
   // once its World page listens. A Run that may not be opened there is refused
   // visibly, never opened in a way that closes the chat.
-  const openBesideChat = async (view: EmbeddedViewListing, sequence: number): Promise<void> => {
+  const openBesideChat = async (message: WindowOpen, run: WorkspaceResourceReference, sequence: number): Promise<void> => {
     let refusal: string | null
     try {
-      refusal = await config.runRefusal(view.envelope.subject)
+      refusal = await config.runRefusal(run)
     } catch (error) {
       refusal = `Display could not be opened: ${error instanceof Error ? error.message : String(error)}`
     }
     if (sequence !== openSequence) return
     if (refusal !== null) return config.reportError(refusal)
     // A World pane opened meanwhile shows the display as any open would.
-    if (config.worldPane() !== 'absent') return deliver(view)
-    keepPending(view)
-    config.openRun(view.envelope.subject.id)
+    if (config.worldPane() !== 'absent') return deliver(message)
+    keepPending(message)
+    config.openRun(run.id)
   }
 
   const receiveReady = (data: unknown): void => {
@@ -154,9 +172,9 @@ export const createViewRelay = (config: {
     worldListening = true
     config.postToWorld(viewsMessage())
     if (pending === null) return
-    const { view } = pending
+    const { open: waiting } = pending
     dropPending()
-    config.postToWorld(openMessage(view))
+    config.postToWorld(waiting)
   }
 
   const receiveMaximise = (data: unknown): void => {
@@ -172,6 +190,7 @@ export const createViewRelay = (config: {
       if (type === null) return
       if (type === 'leitbild:views') return receiveViews(data)
       if (type === 'leitbild:view-open') return receiveOpen(data)
+      if (type === 'leitbild:view-subject-open') return receiveSubjectOpen(data)
       config.reportError(`Display message refused: the Agents page does not send ${type}`)
     },
     /** A message whose source is the World frame's window. */

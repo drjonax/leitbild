@@ -196,6 +196,49 @@ describe('process display relay', () => {
     expect(other.state.world.at(-1)).toEqual(open(listing('a', 'run-2')))
   })
 
+  // Q23: a subject's default display (a proposal's element) is relayed exactly as an open.
+  const subjectOpen = (runId = 'run-1', inWorkspace: string = workspaceId, subject = 'plant:halden-2#auxFeedwaterValveA') =>
+    ({ type: 'leitbild:view-subject-open', resource: runRef(runId, inWorkspace), subject, title: 'Review: THROTTLE to 40 % AFW-A-CV' })
+
+  test('relays a subject open to a listening World as freshly parsed plain data, and keeps it pending otherwise', () => {
+    const { relay, state, liveTimers } = harness()
+    relay.fromWorld(ready)
+    const received = subjectOpen()
+    relay.fromAgents(received)
+    expect(state.world.at(-1)).toEqual(received)
+    expect(state.world.at(-1)).not.toBe(received)
+    relay.worldFrameUnloaded()
+    relay.fromAgents(subjectOpen())
+    expect(liveTimers()).toHaveLength(1)
+    relay.fromWorld(ready)
+    expect(state.world.slice(-2)).toEqual([views(), subjectOpen()])
+    expect(state.errors).toEqual([])
+  })
+
+  test('refuses a subject open about another Workspace, or with no item named, and says why', () => {
+    const { relay, state } = harness()
+    relay.fromWorld(ready)
+    relay.fromAgents(subjectOpen('run-1', newWorkspaceId()))
+    relay.fromAgents(subjectOpen('run-1', workspaceId, 'plant:halden-2'))
+    expect(state.world).toEqual([views()])
+    expect(state.errors).toEqual(['Display could not be opened: it belongs to another Workspace', 'Display could not be opened: subject: A subject is <objectId>#<item>'])
+  })
+
+  test('without a World pane opens the subject\'s Run beside the chat, and never one this Workspace does not list', async () => {
+    const opened = harness({ pane: 'absent', runs: ['run-2'] })
+    opened.relay.fromAgents(subjectOpen('run-2'))
+    await settle()
+    expect(opened.state.openedRuns).toEqual(['run-2'])
+    opened.relay.fromWorld(ready)
+    expect(opened.state.world.at(-1)).toEqual(subjectOpen('run-2'))
+
+    const refused = harness({ pane: 'absent', runs: ['run-1'] })
+    refused.relay.fromAgents(subjectOpen('missing'))
+    await settle()
+    expect(refused.state.openedRuns).toEqual([])
+    expect(refused.state.errors).toEqual(['The display\'s Run is not in this Workspace'])
+  })
+
   test('refuses invalid or foreign messages visibly and keeps the previous list', () => {
     const { relay, state } = harness({ runs: ['run-1'] })
     relay.fromWorld(ready)

@@ -6,6 +6,7 @@ import {
   embeddedViewPublicationSchema,
   parseEmbeddedViewFragment,
   embeddedViewOpenMessageSchema,
+  embeddedViewSubjectOpenMessageSchema,
   embeddedViewsMessageSchema,
   embeddedViewWindowMaximiseMessageSchema,
   EMBEDDED_VIEW_LISTING_MAX,
@@ -80,6 +81,18 @@ describe('embedded view window messages', () => {
     expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', view: { ...listing, envelope: { ...envelope, height: 9_999 } } }).success).toBe(false)
     expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', view: { ...listing, url: 'https://evil.example' } }).success).toBe(false)
     expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', key: listing.key }).success).toBe(false)
+  })
+
+  test('open a subject\'s default display: an object of the Resource and an item of it, strictly (Q23)', () => {
+    const run = { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }
+    const open = { type: 'leitbild:view-subject-open' as const, resource: run, subject: 'plant:halden-2#auxFeedwaterValveA', title: 'Review: THROTTLE to 40 % AFW-A-CV' }
+    expect(JSON.parse(JSON.stringify(embeddedViewSubjectOpenMessageSchema.parse(open)))).toEqual(open)
+    for (const subject of ['plant:halden-2', '#auxFeedwaterValveA', 'plant:halden-2#', 'plant:halden-2#a#b', 'plant:halden-2#aux valve']) {
+      expect(embeddedViewSubjectOpenMessageSchema.safeParse({ ...open, subject }).success).toBe(false)
+    }
+    expect(embeddedViewSubjectOpenMessageSchema.safeParse({ ...open, resource: { ...run, type: 'agents.room' } }).success).toBe(false)
+    expect(embeddedViewSubjectOpenMessageSchema.safeParse({ ...open, view: listing }).success).toBe(false)
+    expect(embeddedViewSubjectOpenMessageSchema.safeParse({ ...open, title: '' }).success).toBe(false)
   })
 
   test('maximise names the wanted state', () => {

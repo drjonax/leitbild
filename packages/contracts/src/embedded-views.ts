@@ -78,6 +78,20 @@ export const embeddedViewOpenMessageSchema = z.object({
 }).strict()
 export type EmbeddedViewOpenMessage = z.infer<typeof embeddedViewOpenMessageSchema>
 
+/**
+ * Asks for the window to show the default display of one subject of a
+ * Resource (a proposal's element: `<objectId>#<item>`), which the Module whose
+ * page shows the window composes, after the display it shows, with Back
+ * (ruling Q23). The Host relays it exactly as an open.
+ */
+export const embeddedViewSubjectOpenMessageSchema = z.object({
+  type: z.literal('leitbild:view-subject-open'),
+  resource: workspaceResourceReferenceSchema,
+  subject: z.string().min(3).max(400).regex(/^[^#\s]+#[^#\s]+$/, 'A subject is <objectId>#<item>'),
+  title: z.string().min(1).max(120),
+}).strict()
+export type EmbeddedViewSubjectOpenMessage = z.infer<typeof embeddedViewSubjectOpenMessageSchema>
+
 /** Host -> Module UI on frame load: views listed or opened from this frame reach a window. */
 export const embeddedViewHostMessageSchema = z.object({
   type: z.literal('leitbild:view-host'),

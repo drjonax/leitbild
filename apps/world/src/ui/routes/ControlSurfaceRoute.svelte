@@ -1966,6 +1966,10 @@
         if (message.refused.length > 0) status = `Process display window: ${message.refused.map(refused => refused.reason).join('; ')}`
         return
       }
+      if (message.kind === 'subject-open') {
+        requestDisplayWindow({ kind: 'subject', runId: message.runId, subject: message.subject, title: message.title }, false)
+        return
+      }
       requestDisplayWindow({ kind: 'listing', listing: message.view }, false)
     }
     // The Host answers the ready message below with whether the Run offers its Assistant room.

@@ -2,8 +2,9 @@
 // stands (agents/proposal-cards.ts): the action and its target, who proposed
 // it, and its status in World's words, never the agent's prose. A person
 // approves only in the display window, so the card offers no Approve; it
-// offers the display the answer composed, where the proposal waits. Pure:
-// no DOM, no network.
+// offers the default display of the proposal's element on its Run, where the
+// element's pop-over carries the proposal (Q23). Pure: no DOM, no network.
+import type { WorkspaceResourceReference } from '@leitbild/contracts'
 import type { ProposalCard } from '../../../agents/proposal-cards.ts'
 import { PROPOSE_OPERATION_ID } from '../../../agents/operation-claims.ts'
 import type { UIMessage } from '../render/render-types.ts'
@@ -27,6 +28,8 @@ export interface ProposalCardView {
   readonly review?: string
   /** Still awaiting a person: its status is read again until it closes. */
   readonly live: boolean
+  /** A pending proposal's review: its element's default display on the Run it was proposed on (`<plantId>#<item>`). */
+  readonly reviewAt?: { readonly resource: WorkspaceResourceReference; readonly subject: string; readonly title: string }
 }
 
 /** A person or agent as an actor id names them: "actor:human:hilde" → "hilde". */
@@ -56,7 +59,8 @@ export const proposalCardView = (card: ProposalCard, proposerName: string): Prop
       const allowed = review === undefined ? undefined : review.permitted ? 'I&C allows it now' : `I&C does not allow it now: ${review.refusal ?? 'no reason given'}`
       const changed = review?.changed === true ? 'plant changed since proposed' : undefined
       const words = [allowed, changed].filter((part): part is string => part !== undefined)
-      return { ...base, tone: 'pending', status: 'Awaiting a person\'s approval in the display window', ...(words.length === 0 ? {} : { review: words.join(' · ') }), live: true }
+      const reviewAt = { resource: outcome.resource, subject: `${card.plantId}#${proposal.item}`, title: `Review: ${base.action}`.slice(0, 120) }
+      return { ...base, tone: 'pending', status: 'Awaiting a person\'s approval in the display window', ...(words.length === 0 ? {} : { review: words.join(' · ') }), live: true, reviewAt }
     }
     case 'approved': return { ...base, tone: 'executed', status: `Approved${by} · executed`, live: false }
     case 'rejected': return { ...base, tone: 'closed', status: `Rejected${by}${why}`, live: false }

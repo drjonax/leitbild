@@ -67,6 +67,18 @@ describe('display window messages from the Host', () => {
     expect(answerDeckEntry('run-1', vignette as never)).toMatchObject({ source: 'answer', title: 'Halden frequency', kind: 'advice', refusal: null, otherRun: false })
   })
 
+  test('opens a subject\'s default display on a Run of this Workspace, and refuses one of another Workspace or about no Run (Q23)', () => {
+    const run = { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }
+    const subjectOpen = (resource: Record<string, unknown>, subject = 'plant:halden-2#auxFeedwaterValveA') => fromHost({ type: 'leitbild:view-subject-open', resource, subject, title: 'Review: THROTTLE to 40 % AFW-A-CV' })
+    expect(readDisplayWindowHostMessage(subjectOpen(run), expected)).toEqual({ kind: 'subject-open', runId: 'run-1', subject: 'plant:halden-2#auxFeedwaterValveA', title: 'Review: THROTTLE to 40 % AFW-A-CV' })
+    expect(readDisplayWindowHostMessage(subjectOpen({ ...run, workspaceId: 'f1b1e5a8-9a43-4d4e-9d3a-1a7c4b1e2f00' }), expected))
+      .toEqual({ kind: 'rejected', reason: 'display request refused: plant:halden-2#auxFeedwaterValveA belongs to another Workspace' })
+    expect(readDisplayWindowHostMessage(subjectOpen({ ...run, type: 'world.scenario', id: 'halden' }), expected))
+      .toEqual({ kind: 'rejected', reason: 'display request refused: plant:halden-2#auxFeedwaterValveA is on a world.scenario, not a Simulation Run' })
+    expect(readDisplayWindowHostMessage(subjectOpen(run, 'plant:halden-2'), expected)).toMatchObject({ kind: 'rejected', reason: expect.stringContaining('A subject is <objectId>#<item>') })
+    expect(readDisplayWindowHostMessage({ ...subjectOpen(run), origin: 'https://elsewhere.test' }, expected)).toBeNull()
+  })
+
   test('shows nothing but vignettes, and says so: the plant\'s own process display went at the swap', () => {
     const envelope = view().envelope
     expect(listingRefusal({ ...envelope, viewType: 'electric-grid.display' } as never)).toBe('it is a electric-grid.display view, which this window does not show')

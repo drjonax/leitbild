@@ -3,11 +3,20 @@
 // one with the contract schemas, relays it to the window and reports a
 // rejection itself. Agents frames no World page. Pure apart from injected
 // timers and posting, so it is tested without a DOM.
-import { embeddedViewOpenMessageSchema, type EmbeddedViewHostMessage, type EmbeddedViewListing, type EmbeddedViewOpenMessage, type EmbeddedViewsMessage } from '@leitbild/contracts'
+import {
+  embeddedViewOpenMessageSchema,
+  embeddedViewSubjectOpenMessageSchema,
+  type EmbeddedViewHostMessage,
+  type EmbeddedViewListing,
+  type EmbeddedViewOpenMessage,
+  type EmbeddedViewSubjectOpenMessage,
+  type EmbeddedViewsMessage,
+  type WorkspaceResourceReference,
+} from '@leitbild/contracts'
 import { viewListings, type ResolvedViewFence, type ViewFence } from './listing.ts'
 import type { ViewResolution } from './resolve.ts'
 
-export type ViewHostMessage = EmbeddedViewsMessage | EmbeddedViewOpenMessage
+export type ViewHostMessage = EmbeddedViewsMessage | EmbeddedViewOpenMessage | EmbeddedViewSubjectOpenMessage
 
 export interface ViewHostEvent {
   readonly origin: string
@@ -35,6 +44,10 @@ export const isViewHostAnnouncement = (event: ViewHostEvent, page: ViewHostPage)
 }
 
 export const viewOpenMessage = (view: EmbeddedViewListing): EmbeddedViewOpenMessage => ({ type: 'leitbild:view-open', view })
+
+/** Asks the window for one subject's default display on its Run (a proposal's element, `<objectId>#<item>`), with Back to what it shows (Q23). */
+export const viewSubjectOpenMessage = (resource: WorkspaceResourceReference, subject: string, title: string): EmbeddedViewSubjectOpenMessage =>
+  embeddedViewSubjectOpenMessageSchema.parse({ type: 'leitbild:view-subject-open', resource, subject, title })
 
 /**
  * A display framed inline in an answer asks for another to be opened in the

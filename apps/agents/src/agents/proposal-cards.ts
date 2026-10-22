@@ -129,7 +129,8 @@ export type WorldReview = z.infer<typeof worldReviewSchema>
 export interface ProposalCard extends Omit<ProposedOperation, 'outcome'> {
   readonly outcome:
     | { readonly kind: 'refused'; readonly reason: string }
-    | { readonly kind: 'recorded'; readonly proposalId: string; readonly plantElapsedMs: number; readonly proposal: WorldProposal; readonly review?: WorldReview }
+    /** `resource`: the Run it was proposed on, where a person reviews it (the window opens its element's default there). */
+    | { readonly kind: 'recorded'; readonly proposalId: string; readonly resource: WorkspaceResourceReference; readonly plantElapsedMs: number; readonly proposal: WorldProposal; readonly review?: WorldReview }
     | { readonly kind: 'unreadable'; readonly proposalId: string; readonly reason: string }
 }
 
@@ -175,7 +176,7 @@ export const createProposalCardReader = (deps: ProposalCardReaderDeps) => {
         if (!read.ok) return { ...proposed, outcome: { kind: 'unreadable', proposalId: outcome.proposalId, reason: read.reason } }
         const found = read.result.proposals.find(entry => entry.proposal.id === outcome.proposalId)
         if (found === undefined) return { ...proposed, outcome: { kind: 'unreadable', proposalId: outcome.proposalId, reason: 'the Plant no longer keeps this proposal' } }
-        return { ...proposed, outcome: { kind: 'recorded', proposalId: outcome.proposalId, plantElapsedMs: read.result.plantElapsedMs, proposal: found.proposal, ...(found.review === undefined ? {} : { review: found.review }) } }
+        return { ...proposed, outcome: { kind: 'recorded', proposalId: outcome.proposalId, resource: outcome.resource, plantElapsedMs: read.result.plantElapsedMs, proposal: found.proposal, ...(found.review === undefined ? {} : { review: found.review }) } }
       })
     },
   }

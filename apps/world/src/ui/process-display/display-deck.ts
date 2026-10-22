@@ -377,10 +377,11 @@ export const backFrom = (returns: DeckReturns, deck: ReadonlyArray<DeckEntry>, k
   return { to: deck.find(entry => entry.key === target.key) ?? target, returns: rest }
 }
 
-/** Opening the window: on an asset's display (rail) or on a listed display (chat). */
+/** Opening the window: on an asset's display (rail), on a listed display (chat), or on a subject's default (a proposal's element, Q23). */
 export type DisplayWindowTarget =
   | { readonly kind: 'asset'; readonly objectId: string }
   | { readonly kind: 'listing'; readonly listing: EmbeddedViewListing }
+  | { readonly kind: 'subject'; readonly runId: string; readonly subject: string; readonly title: string }
 
 export interface DisplayWindowRequest {
   /** Distinguishes repeated requests for the same target. */
@@ -394,7 +395,7 @@ export interface DisplayWindowRequest {
 export const requestedDeckEntry = (
   deck: ReadonlyArray<DeckEntry>,
   simulationRunId: string,
-  target: DisplayWindowTarget,
+  target: Exclude<DisplayWindowTarget, { readonly kind: 'subject' }>,
 ): DeckEntry | null => {
   if (target.kind === 'asset') {
     return deck.find(entry => entry.source === 'asset' && entry.asset.objectId === target.objectId) ?? null

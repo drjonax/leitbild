@@ -1,5 +1,6 @@
 import {
   embeddedViewOpenMessageSchema,
+  embeddedViewSubjectOpenMessageSchema,
   embeddedViewsMessageSchema,
   type EmbeddedViewEnvelope,
   type EmbeddedViewListing,
@@ -8,8 +9,9 @@ import {
 } from '@leitbild/contracts'
 
 // What the Host relays to the World page that shows the process display
-// window: the conversation's current list of displays and requests to open
-// one. Only the Host (this page's parent, same origin) may send them, and each
+// window: the conversation's current list of displays, requests to open one,
+// and requests to open a subject's default display (a proposal's element,
+// Q23), which the window composes on the Run named. Only the Host (this page's parent, same origin) may send them, and each
 // is validated with the contract schema. Listings are judged one by one: a
 // listing about another Workspace is refused on its own, and a view this
 // window cannot show (another view type) is listed with the reason in place of
@@ -27,6 +29,8 @@ export interface RefusedListing {
 export type DisplayWindowHostMessage =
   | { readonly kind: 'views'; readonly views: ReadonlyArray<EmbeddedViewListing>; readonly refused: ReadonlyArray<RefusedListing> }
   | { readonly kind: 'open'; readonly view: EmbeddedViewListing }
+  /** A subject's default display on a Run of this Workspace: `<objectId>#<item>`. */
+  | { readonly kind: 'subject-open'; readonly runId: string; readonly subject: string; readonly title: string }
   /** A message of ours that must not be used; the reason is shown, never swallowed. */
   | { readonly kind: 'rejected'; readonly reason: string }
 
@@ -89,6 +93,14 @@ export const readDisplayWindowHostMessage = (event: MessageLike, expected: Expec
     if (!parsed.success) return { kind: 'rejected', reason: `display request is invalid: ${issueText(parsed.error.issues)}` }
     const problem = foreignWorkspace(parsed.data.view, expected.workspaceId)
     return problem ? { kind: 'rejected', reason: `display request refused: ${problem}` } : { kind: 'open', view: parsed.data.view }
+  }
+  if (type === 'leitbild:view-subject-open') {
+    const parsed = embeddedViewSubjectOpenMessageSchema.safeParse(data)
+    if (!parsed.success) return { kind: 'rejected', reason: `display request is invalid: ${issueText(parsed.error.issues)}` }
+    const { resource, subject, title } = parsed.data
+    if (resource.workspaceId !== expected.workspaceId) return { kind: 'rejected', reason: `display request refused: ${subject} belongs to another Workspace` }
+    if (resource.type !== 'world.simulation-run') return { kind: 'rejected', reason: `display request refused: ${subject} is on a ${resource.type}, not a Simulation Run` }
+    return { kind: 'subject-open', runId: resource.id, subject, title }
   }
   return null
 }

@@ -426,19 +426,23 @@
     openAfter(from.entry, listing)
   }
 
-  // A Pack's tools open a subject's World default after the shown display (a proposal's item): Back returns to it.
-  const openDefaultAfter = async (subject: string): Promise<void> => {
+  // A subject's World default (a proposal's element), on this Run or the one chat names: composed for the person, shown
+  // after the shown display with Back to it, or on its own where the window shows none yet.
+  const openDefaultAfter = async (subject: string, on: { readonly runId: string; readonly title?: string } = { runId }): Promise<void> => {
     const from = current
-    if (from === null) return
     let listing: EmbeddedViewListing
     try {
-      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId: runId, view: await readDefaultDisplay(runId, subject) })
-      listing = openedListing({ key: from.key, title: from.title, envelope }, { state: envelope.state, title: envelope.title })
+      const envelope = defaultDisplayEnvelope({ workspaceId: activeWorkspaceId(), simulationRunId: on.runId as SimulationRunId, view: await readDefaultDisplay(on.runId as SimulationRunId, subject) })
+      const opened = { state: envelope.state, title: on.title ?? envelope.title }
+      listing = openedListing({ key: from?.key ?? `subject:${on.runId}`, title: from?.title ?? opened.title, envelope }, opened)
     } catch (err) {
-      if (!disposed) notice = `${subject} cannot be opened: ${errorText(err)}`
+      if (!disposed) notice = `${on.title ?? subject} cannot be opened: ${errorText(err)}`
       return
     }
-    if (!disposed) openAfter(from, listing)
+    if (disposed) return
+    if (from !== null) return openAfter(from, listing)
+    const entry = requestedDeckEntry(deck, runId, { kind: 'listing', listing })
+    if (entry !== null) showEntry(entry)
   }
 
   const frameBack = (key: string): void => {
@@ -498,6 +502,11 @@
   const applyRequest = (next: DisplayWindowRequest): void => {
     if (next.sequence === appliedRequest) return
     appliedRequest = next.sequence
+    if (next.target.kind === 'subject') {
+      void openDefaultAfter(next.target.subject, { runId: next.target.runId, title: next.target.title })
+      if (next.focus) void focusWindow()
+      return
+    }
     const entry = requestedDeckEntry(deck, runId, next.target)
     // A display chat opens that the window does not list (equipment named on an answer's display) returns to what it showed.
     if (entry !== null && entry.source === 'answer' && !entry.listed && current !== null) returnTo = openedAfter(returnTo, entry, current)

@@ -83,7 +83,7 @@ describe('where World says a proposal stands', () => {
       body: { resource: run, input: { plantId: 'plant:halden-1' }, actor: { kind: 'ai', id: 'agent-7', displayName: 'Shift advisor' } },
     }])
     expect(cards.map(card => card.outcome)).toEqual([
-      { kind: 'recorded', proposalId: 'command:p1', plantElapsedMs: 70_000, proposal: expect.objectContaining({ status: 'approved', word: 'SHUT', closed: { atElapsedMs: 65_000, actorId: 'actor:human:hilde', commandId: 'command:d1' } }) },
+      { kind: 'recorded', proposalId: 'command:p1', resource: run, plantElapsedMs: 70_000, proposal: expect.objectContaining({ status: 'approved', word: 'SHUT', closed: { atElapsedMs: 65_000, actorId: 'actor:human:hilde', commandId: 'command:d1' } }) },
       { kind: 'refused', reason: 'Not offered to operators: An RCP start needs seal injection and oil lift' },
     ])
   })
