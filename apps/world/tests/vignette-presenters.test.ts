@@ -5,7 +5,7 @@ import type { AlertState } from '../src/core/model/alerts.ts'
 import type { ObjectId } from '../src/core/model/ids.ts'
 import type { Observable, Observation } from '../src/core/observation/model.ts'
 import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
-import { alertDetail, alertIcon, sectionLines, UNACK_WORD, unacknowledged, worstChip } from '../src/ui/embed/vignette/alerts.ts'
+import { alertDetail, alertIcon, sectionLines, UNACK_WORD, unacknowledged, wordsThatFit, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { provenanceMark, quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
@@ -228,6 +228,36 @@ describe('alerts', () => {
     expect(UNACK_WORD).toBe('UNACK')
     expect(sectionLines(rows, { objectIds: ['one'] }, 5).unacknowledged).toEqual({ all: 3, more: 0 })
     expect(sectionLines(rows, { objectIds: ['one'] }, 3)).toMatchObject({ more: 3, unacknowledged: { all: 3, more: 1 } })
+  })
+
+  test('a row\'s message gives way by whole words before any ellipsis, a lone word too long cut last; what fits stays whole', () => {
+    const within = (characters: number) => (shown: string): boolean => shown.length <= characters
+    const message = 'Steam generator A low-low level'
+    expect(wordsThatFit(message, within(40))).toBe(message)
+    expect(wordsThatFit(message, within(18))).toBe('Steam generator A…')
+    expect(wordsThatFit(message, within(17))).toBe('Steam generator…')
+    // A comma before the cut is left out with the words after it.
+    expect(wordsThatFit('Feedwater isolation on reactor trip, low Tavg', within(37))).toBe('Feedwater isolation on reactor trip…')
+    expect(wordsThatFit('Feedwater isolation', within(5))).toBe('Feed…')
+    expect(wordsThatFit('Feedwater', within(0))).toBe('…')
+    // It tries whole words first, and cuts within the first word only after every whole-word start failed.
+    const tried: string[] = []
+    expect(wordsThatFit(message, shown => { tried.push(shown); return shown.length <= 4 })).toBe('Ste…')
+    const wholeWords = (shown: string): boolean => shown === message || (message.startsWith(shown.slice(0, -1)) && message[shown.length - 1] === ' ')
+    const inFirstWord = (shown: string): boolean => shown.length - 1 < 'Steam'.length
+    expect(tried.filter(shown => !wholeWords(shown) && !inFirstWord(shown))).toEqual([])
+    expect(tried.slice(tried.findIndex(inFirstWord)).filter(wholeWords)).toEqual([])
+  })
+
+  test('in an alert row only the message gives way: the icon, UNACK, a FIRST OUT mark, a heading, the state and the time never shrink', () => {
+    const source = readFileSync(join(import.meta.dir, '../src/ui/embed/vignette/AlertsSection.svelte'), 'utf8')
+    const rule = (selector: string): string => source.match(new RegExp(`\\n\\s*${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule('.message')).toContain('flex: 1 1 0;')
+    expect(rule('.message')).toContain('min-width: 0;')
+    expect(rule('.detail')).toContain('flex: none;')
+    expect(rule('.icon')).toContain('flex: none;')
+    expect(source).toMatch(/strong, \.mark, \.unack \{ flex: none; \}/)
+    expect(source).toContain('use:fitted={line.row.alert.message}')
   })
 
   test('a section keeps the sample\'s order (the Run context\'s ranking), its objects only, within its room, the last line counting the rest', () => {

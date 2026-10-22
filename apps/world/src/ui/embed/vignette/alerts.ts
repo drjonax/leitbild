@@ -39,6 +39,31 @@ export const UNACK_WORD = 'UNACK'
 /** Whether a row is unacknowledged and asks for attention: standing alarms and advisories never count as unacknowledged (R43). */
 export const unacknowledged = (row: AlertRow): boolean => row.state !== 'active-ack' && asksAttention(row)
 
+/**
+ * The most of a label that fits where `fits` says: the whole of it, else its first whole words with "…" (a trailing
+ * comma or colon left out), and only where its first word alone does not fit, that word cut with "…". A row's message
+ * gives way so, never its marks, its state or its time (plan §2 rule 2). Fewer words never take more room, so the
+ * words are found by halving.
+ */
+export const wordsThatFit = (text: string, fits: (shown: string) => boolean): string => {
+  if (fits(text)) return text
+  const words = text.split(' ')
+  const cut = (shown: string): string => `${shown.replace(/[\s,;:·]+$/, '')}…`
+  const most = (count: number, shown: (kept: number) => string): number => {
+    let [low, high] = [0, count]
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2)
+      if (fits(shown(mid))) low = mid
+      else high = mid - 1
+    }
+    return low
+  }
+  const kept = most(words.length - 1, count => cut(words.slice(0, count).join(' ')))
+  if (kept > 0) return cut(words.slice(0, kept).join(' '))
+  const first = words[0]!
+  return cut(first.slice(0, most(first.length - 1, count => cut(first.slice(0, count)))))
+}
+
 /** What a row says after its message: its marks, its state where the word UNACK does not say it, its time. */
 export const alertDetail = (row: AlertRow): string => [
   ...(row.alert.standing === true ? ['standing'] : []),
