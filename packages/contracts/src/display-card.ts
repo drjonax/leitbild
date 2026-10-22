@@ -13,7 +13,8 @@ export const DISPLAY_CARD_MAX_ITEMS = 48
 /** About 600 tokens at the 3.2 characters per token card lines run (T34, E1), as `displayCardTextLength` measures them. */
 export const DISPLAY_CARD_MAX_TEXT = 1_900
 
-const shownNumberSchema = z.object({ value: z.number().finite(), decimals: z.number().int().min(0).max(6) }).strict()
+/** A number as its line writes it: at most six decimals, or a reading over decades (4.4×10⁻⁸) to its mantissa's at its power of ten. */
+const shownNumberSchema = z.object({ value: z.number().finite(), decimals: z.number().int().min(0).max(330) }).strict()
 const idSchema = z.string().min(1).max(128)
 
 export const displayCardItemSchema = z.object({

@@ -169,6 +169,14 @@ describe('fit caps and invariants', () => {
     expect([item.reading, item.numbers]).toEqual(['3', [{ value: 3, decimals: 0 }]])
   })
 
+  test('a current read over decades reads on the card as the readout prints it, 4.4×10⁻⁸ A, with the number it writes (docs audit)', () => {
+    const object = run.objects.find(entry => entry.id === 'unit:u1')!
+    const current = observableSchema.parse({ ref: 'unit:u1#irCurrent', label: 'Intermediate range current', quantity: 'current', unit: 'A', valueType: 'number', series: null })
+    const item = valueItem({ observable: current, object }, { ref: current.ref, at: '2026-01-01T08:00:00.000Z', clock: 'simulation', value: 4.43e-8, quality: 'good', priority: 'none' })
+    expect([item.reading, item.numbers]).toEqual(['4.4×10⁻⁸ A', [{ value: 4.4e-8, decimals: 9 }]])
+    expect(assembleCard({ at: '2026-01-01T08:00:00.000Z', clock: 'simulation' }, [item], []).items[0]!.reading).toBe('4.4×10⁻⁸ A')
+  })
+
   test('the frame height is the rows on the grid, within what an embedder reserves', () => {
     expect([vignetteHeight(2), vignetteHeight(10), vignetteHeight(40), vignetteHeight(41)]).toEqual([120, 240, 960, 960])
   })

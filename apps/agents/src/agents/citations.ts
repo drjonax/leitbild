@@ -31,10 +31,17 @@ const KEY = /⟦k(\d+)⟧/g
 const TIMES = /\b\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b|[\w.@-]+:[\w.@:-]+(?:#[\w.@:-]+)?/g
 // A number may carry its unit ("15.5MPa"); a letter or digit before it makes it part of a word. Thousands are grouped
 // by commas in English ("2,291") and by spaces in Norwegian ("2 291"), whose decimal mark is the comma ("15,5").
+// A reading over decades carries its power of ten as a card writes it ("4.4×10⁻⁸"), or as typed ("4.4×10^-8").
 const NUMBER: Readonly<Record<Language, RegExp>> = {
-  en: /(?<![\p{L}\d.,])[-−]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d:,])|(?<![\p{L}\d.,])[-−]?\d+(?:\.\d+)?(?![\d:])/gu,
-  nb: /(?<![\p{L}\d.,])[-−]?\d{1,3}(?:[   ]\d{3})+(?:,\d+)?(?![\d:])|(?<![\p{L}\d.,])[-−]?\d+(?:[.,]\d+)?(?![\d:])/gu,
+  en: /(?<![\p{L}\d.,])[-−]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d:,])|(?<![\p{L}\d.,])[-−]?\d+(?:\.\d+)?(?:\s?[×x·]\s?10(?:[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\^[-−]?\d+))?(?![\d:])/gu,
+  nb: /(?<![\p{L}\d.,])[-−]?\d{1,3}(?:[   ]\d{3})+(?:,\d+)?(?![\d:])|(?<![\p{L}\d.,])[-−]?\d+(?:[.,]\d+)?(?:\s?[×x·]\s?10(?:[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\^[-−]?\d+))?(?![\d:])/gu,
 }
+const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹'
+const DECADE = /\s?[×x·]\s?10(?:([⁻⁺]?)([⁰¹²³⁴⁵⁶⁷⁸⁹]+)|\^([-−]?\d+))$/u
+/** A decade's power of ten: "⁻⁸" or "^-8" reads -8. */
+const powerOf = (decade: RegExpExecArray): number => decade[2] !== undefined
+  ? (decade[1] === '⁻' ? -1 : 1) * Number([...decade[2]].map(digit => SUPERSCRIPT_DIGITS.indexOf(digit)).join(''))
+  : Number(decade[3]!.replace('−', '-'))
 // Names: a number after a language word, directly or through a list of named numbers ("Units 1 and 2"), or after a
 // display or row word names a part, not a value.
 const UNIT_WORD = /\b(?:unit|units|enhet|enheter|enhetene)[\s-]*(?:\d+\s*(?:,|and|og|&)\s*)*$/i
@@ -54,15 +61,20 @@ interface Found { readonly text: string; readonly value: number; readonly decima
 const numbersIn = (answer: string, language: Language): ReadonlyArray<Found> => {
   const masked = answer.replace(TIMES, match => ' '.repeat(match.length)).replace(KEY, match => ' '.repeat(match.length))
   return [...masked.matchAll(NUMBER[language])].map(match => {
-    const plain = match[0].replace('−', '-')
+    // A reading over decades: its mantissa's decimals at its power of ten (4.4×10⁻⁸ is 0.000000044, nine decimals).
+    const decade = DECADE.exec(match[0])
+    const plain = (decade === null ? match[0] : match[0].slice(0, decade.index)).replace('−', '-')
     const text = language === 'en' ? plain.replaceAll(',', '') : plain.replace(/[   ]/g, '').replace(',', '.')
-    return { text: match[0], value: Number(text), decimals: text.includes('.') ? text.split('.')[1]!.length : 0, index: match.index! }
+    const decimals = text.includes('.') ? text.split('.')[1]!.length : 0
+    if (decade === null) return { text: match[0], value: Number(text), decimals, index: match.index! }
+    const power = powerOf(decade)
+    return { text: match[0], value: Number(`${text}e${power}`), decimals: Math.max(0, decimals - power), index: match.index! }
   })
 }
 
 /** Whether a number written with d decimals is one of these rounded to d (never more digits than the item shows). */
 const matches = (found: Found, numbers: ReadonlyArray<CardNumber>): boolean => numbers.some(number =>
-  found.decimals <= number.decimals && Math.abs(found.value - number.value) <= 0.5 * 10 ** -found.decimals + 1e-9)
+  found.decimals <= number.decimals && Math.abs(found.value - number.value) <= 0.5 * 10 ** -found.decimals * (1 + 1e-6))
 
 // A card label's name: the number with the word after it, or in parentheses, as a label writes it ("420 kV", "(1)");
 // or the whole token the word before it forms with it, as joined there ("A-21", "Ambulance 21"). The word alone in a

@@ -10,7 +10,7 @@
  */
 import { DISPLAY_CARD_MAX_ITEMS, DISPLAY_CARD_MAX_TEXT, displayCardSchema, displayCardTextLength, type DisplayCard, type DisplayCardAdjustment, type DisplayCardItem } from '@leitbild/contracts'
 import { priorityLevels } from '../../../core/model/alerts.ts'
-import { decimalsFor, distanceParts, durationParts, numberText, unitSymbol, type Observation, type Quantity } from '../../../core/observation/model.ts'
+import { distanceParts, durationParts, numberShown, numberText, unitSymbol, type Observation, type Quantity } from '../../../core/observation/model.ts'
 import type { AlertRow } from '../alerts/rows.ts'
 import type { Declared } from './declared.ts'
 import type { EntityRow, SlotDeclaration, VignetteSample } from './model.ts'
@@ -20,7 +20,7 @@ type Shown = { readonly value: number; readonly decimals: number }
 type Words = { readonly text: string; readonly number: Shown }
 
 const clock = (at: string): string => at.slice(11, 19)
-const shown = (value: number, unit: string, kind?: Quantity): Shown => ({ value: Number(numberText(value, unit, kind)), decimals: decimalsFor(unit, value, kind) })
+const shown = (value: number, unit: string, kind?: Quantity): Shown => numberShown(value, unit, kind)
 const quantity = (value: number, unit: string, kind?: Quantity): string => unitSymbol(unit) === '' ? numberText(value, unit, kind) : `${numberText(value, unit, kind)} ${unitSymbol(unit)}`
 const duration = (seconds: number): Words => { const { value, unit } = durationParts(seconds); return { text: `${value} ${unit}`, number: { value, decimals: 0 } } }
 const distance = (metres: number): Words => { const { value, unit } = distanceParts(metres); return { text: `${numberText(value, unit)} ${unit}`, number: shown(value, unit) } }
