@@ -1017,7 +1017,7 @@ body.rail-resizing {
   overflow: hidden;
 }
 
-/* Beside the rail, but never narrower than 320 px: on a narrow pane the card lends itself the rail's edge, as the alarm strip does. */
+/* Beside the rail, but never narrower than 320 px: on a narrow pane the card lends itself the rail's edge. */
 .scenario-guidance {
   --guidance-left: max(12px, min(calc(var(--rail-width, 360px) + 18px), calc(100vw - 338px)));
   position: fixed;

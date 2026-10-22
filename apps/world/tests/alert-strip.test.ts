@@ -4,7 +4,10 @@ import type { ObjectId, PackId } from '../src/core/model/ids.ts'
 import type { IsoTimestamp } from '../src/core/model/time.ts'
 import { annunciatorTiles } from '../src/features/displays/alerts/annunciator.ts'
 import { alertRows, raisedWords, stateWords, type AlertObject } from '../src/features/displays/alerts/rows.ts'
-import { alertStrip, type AlertStrip } from '../src/features/displays/alerts/strip.ts'
+import { alertStrip, alertStripSpan, type AlertStrip } from '../src/features/displays/alerts/strip.ts'
+import { defaultRailWidth, maxRailWidth } from '../src/ui/rail-state.ts'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // The alert read model and the strip's rules (plan v3.1 §2.7, architecture
 // A6, lead rulings R1, R11, R12, R21), on synthetic alert records with the
@@ -207,4 +210,43 @@ describe('the strip over 200 random transitions', () => {
       expect(firstOuts).toBeGreaterThan(0)
     })
   }
+})
+
+describe('where the strip lies', () => {
+  // At 1440×900 with the chat open the World pane is the Host's default share, 56 % of the width beside its 10 px
+  // handle: 801 px, which left the map beside the default rail 441 px. The strip once kept 640 px by starting over
+  // the rail's edge (at 149 px), so it covered each unit's row buttons (Open process display) until folded.
+  const desk = { paneWidth: (1440 - 10) * 0.56, railWidth: defaultRailWidth, coverLeft: 0, coverRight: 0 }
+
+  test('at 1440×900 with the chat open it starts beside the rail, never over it, as wide as the map leaves', () => {
+    const span = alertStripSpan(desk)
+    expect(span.left).toBe(defaultRailWidth + 12)
+    expect(span.width).toBeCloseTo(desk.paneWidth - 12 - span.left, 6)
+    expect(span.width).toBeGreaterThan(400)
+    // However wide the operator drags the rail, or whatever covers the map on either side.
+    for (const railWidth of [0, defaultRailWidth, maxRailWidth]) {
+      for (const [coverLeft, coverRight] of [[0, 0], [0, 320], [280, 0], [280, 320]] as const) {
+        const placed = alertStripSpan({ ...desk, railWidth, coverLeft, coverRight })
+        expect(placed.left).toBeGreaterThanOrEqual(railWidth + coverLeft + 12)
+        // Where rail and covers leave the map no room, the strip has none either: it never takes the rail's.
+        expect(placed.width).toBe(Math.max(0, Math.min(960, desk.paneWidth - coverRight - 12 - placed.left)))
+        if (placed.width > 0) expect(placed.left + placed.width).toBeLessThanOrEqual(desk.paneWidth - coverRight - 12 + 1e-9)
+      }
+    }
+  })
+
+  test('with the chat closed it keeps 960 px; with no rail it starts 12 px in', () => {
+    expect(alertStripSpan({ ...desk, paneWidth: 1440 })).toEqual({ left: defaultRailWidth + 12, width: 960 })
+    expect(alertStripSpan({ ...desk, railWidth: 0 })).toEqual({ left: 12, width: desk.paneWidth - 24 })
+  })
+
+  test('the strip takes its left and width from alertStripSpan and the rail\'s width from the route', () => {
+    const strip = readFileSync(join(import.meta.dir, '../src/ui/displays/AlertStrip.svelte'), 'utf8')
+    expect(strip).toContain('style:left={`${span.left}px`} style:width={`${span.width}px`}')
+    expect(strip).not.toContain('--rail-width')
+    expect(strip.slice(strip.indexOf('<style>'))).not.toMatch(/(^|[\s;{])(left|width):/)
+    const route = readFileSync(join(import.meta.dir, '../src/ui/routes/ControlSurfaceRoute.svelte'), 'utf8')
+    expect(route).toContain('railWidth={railVisible ? railLayout.width : 0}')
+    expect(route).toContain('style={`--rail-width: ${railVisible ? railLayout.width : 0}px`}')
+  })
 })

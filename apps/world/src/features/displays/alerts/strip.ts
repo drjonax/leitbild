@@ -94,3 +94,25 @@ export const alertStrip = (rows: ReadonlyArray<AlertRow>, policy: { readonly max
     },
   }
 }
+
+/** The World pane's widths, in CSS pixels, that place the strip across it. */
+export interface StripLayout {
+  readonly paneWidth: number
+  /** The control rail's width, 0 where it is collapsed or absent. */
+  readonly railWidth: number
+  /** What open surface panels declare as their map cover on either side. */
+  readonly coverLeft: number
+  readonly coverRight: number
+}
+
+/**
+ * Where the strip lies across the World pane: 12 px beside the rail and clear
+ * of the map covers on both sides, up to 960 px, never narrower than the map
+ * leaves it. It never lies over the rail, so each unit's row (Open process
+ * display, procedures) stays usable while the strip is open; a narrow strip
+ * keeps each group to one line (AlertList).
+ */
+export const alertStripSpan = (layout: StripLayout): { readonly left: number; readonly width: number } => {
+  const left = layout.railWidth + layout.coverLeft + 12
+  return { left, width: Math.max(0, Math.min(960, layout.paneWidth - layout.coverRight - 12 - left)) }
+}

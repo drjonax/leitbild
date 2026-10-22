@@ -2254,7 +2254,7 @@
         </section>
       {/if}
       {#if activePack}
-        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} clear={{ left: mapCameraPadding.left, right: mapCameraPadding.right, top: guidanceOverlayVisible && scenarioState?.guidance ? guidanceBottom : 0 }} />
+        <AlertStrip {objects} categoryOf={object => presentationFor(object).categoryId} {theme} belowRoles={Boolean(runRoles && heldRoleIds)} railWidth={railVisible ? railLayout.width : 0} clear={{ left: mapCameraPadding.left, right: mapCameraPadding.right, top: guidanceOverlayVisible && scenarioState?.guidance ? guidanceBottom : 0 }} />
       {/if}
       <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if runRoles && heldRoleIds}

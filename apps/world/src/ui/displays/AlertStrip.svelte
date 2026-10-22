@@ -2,7 +2,7 @@
   import type { OperationalObject } from '../../core/model/object.ts'
   import { annunciatorTiles } from '../../features/displays/alerts/annunciator.ts'
   import { alertRows, type AlertRow } from '../../features/displays/alerts/rows.ts'
-  import { alertStrip, type StripGroup } from '../../features/displays/alerts/strip.ts'
+  import { alertStrip, alertStripSpan, type StripGroup } from '../../features/displays/alerts/strip.ts'
   import AlertList, { type AlertLine } from './AlertList.svelte'
   import { severityStyle } from './severity.ts'
 
@@ -12,11 +12,13 @@
   // first-out and counts its others, which head the group's opened list. It acknowledges,
   // shelves and suppresses nothing. Whether the viewer keeps it folded is that
   // viewer's own convenience, in browser storage.
-  let { objects, categoryOf, theme, belowRoles, clear }: {
+  let { objects, categoryOf, theme, belowRoles, railWidth, clear }: {
     objects: ReadonlyArray<OperationalObject>
     categoryOf: (object: OperationalObject) => string
     theme: 'light' | 'dark'
     belowRoles: boolean
+    /** The control rail's width, 0 where it is collapsed or absent: the strip lies beside it, never over it. */
+    railWidth: number
     /** What the strip keeps clear of: the map covers open surface panels declare on either side, and the briefing card's bottom edge above it. */
     clear: { readonly left: number; readonly right: number; readonly top: number }
   } = $props()
@@ -30,6 +32,8 @@
   }
 
   let innerHeight = $state(800)
+  let innerWidth = $state(1280)
+  const span = $derived(alertStripSpan({ paneWidth: innerWidth, railWidth, coverLeft: clear.left, coverRight: clear.right }))
   const palette = $derived(theme === 'dark' ? 'dusk' : 'day')
   const rows = $derived(alertRows(objects, object => ({ label: object.label, categoryId: categoryOf(object) })))
   // The rows the frame's share of the height holds (T17: ≤ 30 % on a desk), less the header; a narrow strip keeps each
@@ -48,10 +52,10 @@
   const rule = 'Read-only: acknowledge, shelve and suppress where each alarm is raised. The Assistant may acknowledge alarms where a Pack lets it; a row says "acknowledged by Assistant" where its Pack records who acknowledged.'
 </script>
 
-<svelte:window bind:innerHeight />
+<svelte:window bind:innerHeight bind:innerWidth />
 
 {#if strip.groups.length > 0}
-  <section class="alert-strip" class:below={belowRoles} style:--cover-left={`${clear.left}px`} style:--cover-right={`${clear.right}px`} style:--clear-top={`${clear.top}px`} aria-label="Alarms">
+  <section class="alert-strip" class:below={belowRoles} style:left={`${span.left}px`} style:width={`${span.width}px`} style:--clear-top={`${clear.top}px`} aria-label="Alarms">
     <header title={rule}>
       <span>Alarms · {strip.groups.length} {strip.groups.length === 1 ? 'group' : 'groups'} · {unack} unacknowledged</span>
       <button type="button" aria-expanded={!folded} onclick={fold}>{folded ? 'Show' : 'Fold'}</button>
@@ -77,11 +81,9 @@
 {/if}
 
 <style>
-  /* Clear of declared covers on both sides and below the briefing card, but never below half the pane and never past
-     its bottom. A narrow map (the chat open) lends the strip the rail's edge, so it keeps 640 px, but never a left
-     cover's: 12 px + cover × 1000 is 12 px only when none. */
-  .alert-strip { --want: calc(var(--rail-width, 0px) + var(--cover-left) + 12px); --edge: calc(100vw - var(--cover-right) - 12px); --strip-left: max(min(var(--want), calc(12px + var(--cover-left) * 1000)), min(var(--want), calc(var(--edge) - 640px)));
-    --strip-top: min(max(var(--top-min, 12px), calc(var(--clear-top) + 8px)), 50vh); position: fixed; z-index: 16; top: var(--strip-top); left: var(--strip-left); box-sizing: border-box; width: min(960px, calc(var(--edge) - var(--strip-left))); max-height: min(50vh, calc(100vh - var(--strip-top) - 12px)); overflow-y: auto; container: alert-strip / inline-size; display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); color: var(--text); font-size: 12px; }
+  /* Beside the rail and clear of declared covers on both sides (alertStripSpan: left and width), below the briefing
+     card, but never below half the pane and never past its bottom. */
+  .alert-strip { --strip-top: min(max(var(--top-min, 12px), calc(var(--clear-top) + 8px)), 50vh); position: fixed; z-index: 16; top: var(--strip-top); box-sizing: border-box; max-height: min(50vh, calc(100vh - var(--strip-top) - 12px)); overflow-y: auto; container: alert-strip / inline-size; display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); color: var(--text); font-size: 12px; }
   .alert-strip.below { --top-min: 52px; }
   @media (max-width: 599px) { .alert-strip { max-height: min(70vh, calc(100vh - var(--strip-top) - 12px)); } }
   header { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 650; }
