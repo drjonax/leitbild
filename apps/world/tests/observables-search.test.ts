@@ -75,7 +75,8 @@ describe('observables search', () => {
     expect((await top('SPD', { objectId: 'unit:aeroy' })).matches[0]).toMatchObject({ ref: 'unit:aeroy#speed', score: 4 })
     expect((await top('unit:kjolberg#SPD')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed', score: 3.5 })
     expect((await top('Kjølberg#speed')).matches[0]).toMatchObject({ ref: 'unit:kjolberg#speed', score: 3.5 })
-    expect((await top('Åsgård#Åsgård status')).matches[0]).toMatchObject({ ref: 'unit:asgard#status', score: 3 })
+    // A qualified label: 3, up to 3.4 where its words are whole and name all of the entry (here they do).
+    expect((await top('Åsgård#Åsgård status')).matches[0]).toMatchObject({ ref: 'unit:asgard#status', score: 3.4 })
     const speeds = (await top('speed')).matches.filter((entry: { kind: string }) => entry.kind === 'observable').map((entry: { ref: string }) => entry.ref)
     expect(speeds).toEqual(['unit:kjolberg#speed', 'unit:asgard#speed', 'unit:aeroy#speed'])
     // A word nothing in the Run knows is left out; one some entry knows but this one lacks makes a partial match.
@@ -150,7 +151,10 @@ describe('ranking against a grid and a plant', () => {
     'plant:unit-4': { objectId: 'plant:unit-4', revision: 'r1', elements: [
       { id: 'sgA', class: 'steam-generator', label: 'Steam Generator A', shortLabel: 'SG A' }, { id: 'afwHeader', class: 'processHeader', label: 'Auxiliary Feedwater Header', shortLabel: 'AFW header' },
       { id: 'afwValveA', class: 'process-valve', label: 'Auxiliary Feedwater Valve A', shortLabel: 'AFW valve A' },
+      { id: 'core', class: 'reactor-core', label: 'Reactor Core' }, { id: 'pzr', class: 'pressurizer', label: 'Pressurizer', shortLabel: 'PZR' },
     ], observables: [
+      observable('plant:unit-4#core.powerRangePercent', 'Power range neutron flux', 'fraction', '%', 'core', 'NI-41-PR'),
+      observable('plant:unit-4#pzr.reliefValve.state', 'State · PORV', 'state', '', 'pzr'),
       observable('plant:unit-4#sgA.heatTransferMw', 'Heat transfer · SG A', 'thermal-power', 'MW', 'sgA'),
       observable('plant:unit-4#sgA.steamFlowKgPerS', 'Steam production · SG A', 'flow', 'kg/s', 'sgA'),
       observable('plant:unit-4#sgA.pressureMPa', 'Steam generator pressure · SG A', 'pressure', 'MPa', 'sgA', 'SG-A-PRESS'),
@@ -182,6 +186,13 @@ describe('ranking against a grid and a plant', () => {
     expect(await full('AFW flow')).toEqual(['plant:unit-4#afwHeader.outletFlowKgPerS'])
     // A tag's word abbreviates a query word ("press" for "pressure"), a label's never does.
     expect((await first('SG A press'))?.ref).toBe('plant:unit-4#sgA.pressureMPa')
+  })
+
+  test('a qualified name ranks the entries its words name whole before one a tag word abbreviates (gallery review: "#PORV")', async () => {
+    const [result] = await searchObservables(searchRun, [{ text: 'plant:unit-4#PORV' }])
+    expect(result!.matches.map(match => match.ref).slice(0, 2)).toEqual(['plant:unit-4#pzr.reliefValve.state', 'plant:unit-4#core.powerRangePercent'])
+    expect(result!.matches[0]!.score).toBeGreaterThan(result!.matches[1]!.score)
+    expect(await resolveName(searchRun, 'plant:unit-4#PORV')).toEqual(['plant:unit-4#pzr.reliefValve.state'])
   })
 })
 
