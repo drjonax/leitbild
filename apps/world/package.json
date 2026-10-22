@@ -9,7 +9,7 @@
     "start": "bun run build:ui && bun run src/index.ts",
     "dev": "bun run build:ui && bun --watch src/index.ts",
     "build:ui": "vite build",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && svelte-check --tsconfig tsconfig.json --fail-on-warnings",
     "maps:download": "bun run scripts/maps/download-osm.ts",
     "maps:fonts": "bun run scripts/maps/install-map-fonts.ts",
     "maps:build": "bun run scripts/maps/build-vector-tiles.ts",
@@ -68,6 +68,7 @@
     "@oicl/connector-diagram": "1.0.0",
     "@oicl/openbridge-webcomponents": "2.0.0",
     "@types/bun": "1.4.0",
+    "svelte-check": "^4.7.7",
     "typescript": "^6.0.3"
   },
   "engines": {
