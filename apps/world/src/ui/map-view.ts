@@ -7,6 +7,10 @@ export interface MapView {
   /** Degrees clockwise from north up. */
   readonly bearing: number
 }
+/** Where a panel or display asks the map camera to go: a point to centre on, or [south-west, north-east] corners to fit. */
+export type MapFocusTarget =
+  | { readonly kind: 'point'; readonly center: readonly [number, number] }
+  | { readonly kind: 'bounds'; readonly bounds: readonly [readonly [number, number], readonly [number, number]] }
 export const readMapView = (map: MapLibreMap): MapView => {
   const area = map.getBounds(), point = map.getCenter()
   const wrap = (value: number) => ((value + 180) % 360 + 360) % 360 - 180

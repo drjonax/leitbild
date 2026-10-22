@@ -4,8 +4,7 @@ import type { PackMapTarget, PackSurfacePanelContribution, PackTargetContext, Pa
 import type { PanelKey } from './keys/panel-key.ts'
 import type { MapCover, PanelRoleSet } from './surface-panel-contract.ts'
 import type { CameraInteraction } from './map/map-camera.ts'
-import type { MapFocusTarget } from './map-runtime/types.ts'
-import type { MapView } from './map-view.ts'
+import type { MapFocusTarget, MapView } from './map-view.ts'
 
 /**
  * What a mounted surface panel lends the World surface. A panel connects

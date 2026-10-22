@@ -1,6 +1,6 @@
 <script lang="ts">
   import { packDataChangedSchema } from '../../core/packs/protocol.ts'
-  import type { MapView } from '../map-view.ts'
+  import type { MapFocusTarget, MapView } from '../map-view.ts'
   import type { EmbeddedViewListing } from '@leitbild/contracts'
   import type { Component } from 'svelte'
   import { tick, untrack } from 'svelte'
@@ -115,7 +115,7 @@
   } from '../startup.ts'
   import { runtimeDiagnosticDetails } from '../map-runtime/map-diagnostics.ts'
   import { mapPerformanceDiagnostics } from '../map-runtime/map-performance-diagnostics.ts'
-  import type { MapFocusRequest, MapFocusTarget, MapRuntimeDiagnosticsSnapshot } from '../map-runtime/types.ts'
+  import type { MapFocusRequest, MapRuntimeDiagnosticsSnapshot } from '../map-runtime/types.ts'
   import {
     browserDiagnostics,
     clearCapabilityQueryDiagnostics,

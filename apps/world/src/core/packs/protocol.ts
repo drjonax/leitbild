@@ -3,6 +3,8 @@ import type { Component } from 'svelte'
 import { z } from 'zod'
 import type { DatasetConfig,DatasetId } from '../../reference-data/types.ts'
 import type { RoutingAdapter } from '../../routing/protocol.ts'
+import type { MapView } from '../../ui/map-view.ts'
+import type { SurfacePanelProps } from '../../ui/surface-panel-interaction.ts'
 import type { GeoJsonPoint,GeoJsonPolygon,InteractionHandler,IsoTimestamp,MapLayerId,ObjectId,OperationalObject,ProcedureTag,RecordingProfileDescriptor,RunViewer,ScenarioRole,ScenarioSide,SimulationRunId } from '../model/index.ts'
 import { geoJsonPointSchema,geoJsonPolygonSchema,isoTimestampSchema } from '../model/index.ts'
 import { geoJsonGeometrySchema, type GeoJsonGeometry } from '../model/geo.ts'
@@ -650,7 +652,8 @@ export interface PackSurfacePanelContribution {
   readonly id: string
   readonly label: string
   readonly defaultOpen: boolean
-  readonly load: () => Promise<{ readonly default: Component }>
+  /** The panel, mounted with the props the World surface passes to every surface panel. */
+  readonly load: () => Promise<{ readonly default: Component<SurfacePanelProps> }>
   /**
    * Opt-in: while this panel is open, every map target click for a controller
    * of the panel's own Pack goes to the `onMapTarget` it connects, and the
@@ -705,9 +708,21 @@ export interface PackWindowToolsProps {
   readonly openDisplay: (subject: string) => void
 }
 
+/** What a Pack's settings editor is mounted with in the Scenario Builder: its Pack Selection's configuration. */
+export interface PackSettingsEditorProps {
+  /** The Pack Selection's configuration as authored; the editor parses it with its own schema. */
+  readonly config: unknown
+  readonly workspaceId: string
+  /** The builder map's centre, [longitude, latitude]. */
+  readonly center: readonly [number, number]
+  readonly mapView: MapView | null
+  /** Replaces the Pack Selection's configuration. */
+  readonly onchange: (value: Record<string, unknown>) => void
+}
+
 export interface PackUiContribution {
   readonly surfacePanels: ReadonlyArray<PackSurfacePanelContribution>
-  readonly settingsEditor?: () => Promise<{ readonly default: Component }>
+  readonly settingsEditor?: () => Promise<{ readonly default: Component<PackSettingsEditorProps> }>
   readonly mapInteraction?: PackMapInteraction
   readonly surfaceLayout?: PackSurfaceLayout
   /**

@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { Component } from 'svelte'
+  import type { PackSettingsEditorProps } from '../core/packs/protocol.ts'
   import { loadUiPack } from './pack-loader.ts'
-  import type { MapView } from './map-view.ts'
-  const { packId, config, workspaceId, center, mapView, onchange }: { packId: string; config: unknown; workspaceId: string; center: readonly [number, number]; mapView: MapView | null; onchange: (value: Record<string, unknown>) => void } = $props()
-  let Editor = $state<Component<any> | null>(null)
+  const { packId, config, workspaceId, center, mapView, onchange }: PackSettingsEditorProps & { packId: string } = $props()
+  let Editor = $state<Component<PackSettingsEditorProps> | null>(null)
   let error = $state('')
   $effect(() => {
     const id = packId

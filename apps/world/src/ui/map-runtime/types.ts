@@ -5,6 +5,7 @@ import type { PackMapFeature, PackObjectPresentation, PackObjectStatusTone } fro
 import type { MapPerformanceDiagnosticsSnapshot } from './map-performance-diagnostics.ts'
 import type { SymbolAtlas } from './symbol-kit.ts'
 import type { CameraInteraction } from '../map/map-camera.ts'
+import type { MapFocusTarget } from '../map-view.ts'
 
 export type RenderPhase =
   | 'base'
@@ -25,10 +26,6 @@ export type RenderFamily =
 export type ColorRgba = readonly [number, number, number, number]
 export type Position2 = readonly [number, number]
 export type Position3 = readonly [number, number, number]
-
-export type MapFocusTarget =
-  | { readonly kind: 'point'; readonly center: Position2 }
-  | { readonly kind: 'bounds'; readonly bounds: readonly [Position2, Position2] }
 
 export interface MapFocusRequest {
   readonly revision: number
