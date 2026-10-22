@@ -3,6 +3,7 @@
   import type { VignetteSection, VignetteView } from '../../../features/displays/compose/model.ts'
   import type { Palette } from '../../displays/severity.ts'
   import { slotLook } from './collection.ts'
+  import type { OpenedFrom } from './popover.ts'
   import { underTitle } from './format.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
   import { valueLook } from './readout.ts'
@@ -22,12 +23,14 @@
   // flow drawing beside a column of the others; or in an element's pop-over
   // (ElementPopover.svelte), which leaves out its topologies: it stands beside
   // the drawing it opened from.
-  let { view, snapshot, palette, frozen, runId, drawings = true }: {
+  let { view, snapshot, palette, frozen, runId, from, drawings = true }: {
     view: VignetteView
     snapshot: VignetteSnapshot
     palette: Palette
     frozen: boolean
     runId: SimulationRunId
+    /** The display these sections stand in, as an element's pop-over names it when it opens the element elsewhere. */
+    from: OpenedFrom
     drawings?: boolean
   } = $props()
 
@@ -65,7 +68,7 @@
       {:else if section.kind === 'map'}
         <MapFocus frame={latest?.maps[index]} />
       {:else if section.family === 'flow'}
-        <FlowTopology {section} {observations} alerts={latest?.alerts ?? []} {palette} {frozen} {runId} />
+        <FlowTopology {section} {observations} alerts={latest?.alerts ?? []} {palette} {frozen} {runId} {from} />
       {:else}
         <NetworkTopology {section} {observations} {palette} />
       {/if}

@@ -11,7 +11,7 @@
   import { FLOW_LINE_PX, flowDrawing } from './flow-symbols.ts'
   import { drawingScale } from './network.ts'
   import { paintLines } from './lines.ts'
-  import { nextPopover, POPOVER_CLOSED, type PopoverState } from './popover.ts'
+  import { nextPopover, POPOVER_CLOSED, type OpenedFrom, type PopoverState } from './popover.ts'
   import type { AlertTone } from './readout.ts'
   import { VIGNETTE_ROW_PX } from './grid.ts'
   import Vessel from './Vessel.svelte'
@@ -26,7 +26,7 @@
   // rows are fewer than its height (a chat column). Each item is a button: a
   // press (or Enter or Space) opens its pop-over (ElementPopover.svelte); a
   // second press, Esc or a press outside closes it.
-  let { section, observations, alerts, palette, frozen, runId }: {
+  let { section, observations, alerts, palette, frozen, runId, from }: {
     section: Extract<VignetteSection, { kind: 'topology' }>
     observations: ReadonlyArray<Observation>
     alerts: ReadonlyArray<AlertRow>
@@ -34,6 +34,8 @@
     /** The sample is frozen: everything reads as unknown. */
     frozen: boolean
     runId: SimulationRunId
+    /** The display this drawing stands in (ElementPopover.svelte). */
+    from: OpenedFrom
   } = $props()
 
   const drawing = $derived(flowDrawing(section, observations, alerts, frozen))
@@ -112,7 +114,7 @@
   </div>
   <!-- Outside the drawing: a scaled drawing's transform would otherwise hold the pop-over's fixed place. -->
   {#if open !== undefined && opener !== null}
-    <ElementPopover {runId} objectId={section.objectId} packId={section.packId} elementId={open.element} name={texts.get(open.id)?.lines[0]?.text ?? open.title} anchor={opener} text={drawingElement?.querySelector<HTMLElement>(`[data-item="${CSS.escape(open.id)}"]`) ?? null} {zoom} {palette} onclose={close} />
+    <ElementPopover {runId} {from} objectId={section.objectId} packId={section.packId} elementId={open.element} name={texts.get(open.id)?.lines[0]?.text ?? open.title} anchor={opener} text={drawingElement?.querySelector<HTMLElement>(`[data-item="${CSS.escape(open.id)}"]`) ?? null} {zoom} {palette} onclose={close} />
   {/if}
 </div>
 {#if section.attribution !== undefined}<p class="attribution">{section.attribution}</p>{/if}
