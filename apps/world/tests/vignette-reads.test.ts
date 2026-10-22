@@ -13,7 +13,8 @@ import { composeVignette } from '../src/features/displays/compose/compose.ts'
 import { vignetteStateSchema, type VignetteState } from '../src/features/displays/compose/model.ts'
 import { compileVignette, readsOf, refsRead, sampleVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import type { ObservationPort } from '../src/features/displays/observation/port.ts'
-import { fixtureComposeRun } from './fixtures/compose-runs.ts'
+import { recordedHoldMs } from '../src/features/historian/policy.ts'
+import { fixtureComposeRun, person } from './fixtures/compose-runs.ts'
 import { createRoleRunWorkspaces, openRunDefinition } from './fixtures/role-runs.ts'
 
 // T06 for vignettes (architecture A5): the view and sample read only what the state names (readsOf, plus what its
@@ -63,6 +64,25 @@ describe('T06: the view and the sample read only what the state names', () => {
     // History is read for exactly the trend's recorded pens.
     const pens = view.sections.flatMap(section => section.kind === 'trend' ? section.strips.flat() : [])
     expect(Object.keys(sample.series ?? {}).sort()).toEqual(pens.flatMap(pen => pen.series === null ? [] : [pen.series.seriesId]).sort())
+  })
+
+  test('a trend\'s record is read from one hold before its window, so the value held into its start is drawn, and is served with that hold', async () => {
+    const run = await fixture.runOf()
+    const state = await composed(run, ['unit:one'], [{ kind: 'trend', signals: ['unit:one#status'] }])
+    const sample = await sampleVignette(run, state, { fromMs: 0 })
+    expect(Object.values(sample.series ?? {}).map(series => series.holdMs)).toEqual([recordedHoldMs])
+    // The port over the Historian: asked from 00:10, it reads from 00:08:30, newest first, and serves the points oldest first.
+    const queries: Array<Record<string, unknown>> = []
+    const at = (time: string) => ({ simulationTime: `2026-01-01T${time}.000Z`, observedAt: `2026-01-01T${time}.000Z` })
+    const runtime = {
+      id: 'run-stub', snapshot: () => ({ objects: [], clock: undefined }), packs: () => [], observations: () => run.port,
+      recordedSamples: (query: Record<string, unknown>) => { queries.push(query); return { mode: 'raw', samples: [{ ...at('00:11:00'), value: 2 }, { ...at('00:09:20'), value: 1 }] } },
+    }
+    const stubbed = await displayRunOf({ get: () => runtime, loadedCompiledScenario: () => ({ connections: [] }) } as never, runtime as never, person, new Set())
+    expect(stubbed.series('series:x', '2026-01-01T00:10:00.000Z', '2026-01-01T00:20:00.000Z')).toEqual({
+      holdMs: recordedHoldMs, points: [{ t: Date.parse('2026-01-01T00:09:20.000Z'), v: 1 }, { t: Date.parse('2026-01-01T00:11:00.000Z'), v: 2 }],
+    })
+    expect(queries).toMatchObject([{ seriesId: 'series:x', from: '2026-01-01T00:08:30.000Z', to: '2026-01-01T00:20:00.000Z', timeAxis: 'simulation' }])
   })
 
   test('a forged state naming what the caller may not inspect shows none of it and never asks for it', async () => {

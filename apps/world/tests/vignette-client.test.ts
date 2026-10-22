@@ -7,13 +7,10 @@ import { createVignetteSession, GAP_MS, INACTIVE_RETRY_MS, SAMPLE_BACKOFF_MS, SA
 // never loading a Run; the view once; history with the first sample only, and
 // again after a gap; one sample a second while shown, none while hidden.
 
-const view: VignetteView = {
-  title: 'Level',
-  sections: [{
-    kind: 'trend', rows: 4, horizonMs: 600_000,
-    strips: [[{ ref: 'unit-1#level', label: 'Unit 1 · Level', quantity: 'level', unit: '%', valueType: 'number', thresholds: [], series: { seriesId: 'unit-1.level', intervalMs: 1_000 } }]],
-  }],
-}
+type Pen = Extract<VignetteView['sections'][number], { kind: 'trend' }>['strips'][number][number]
+const levelPen: Pen = { ref: 'unit-1#level', label: 'Unit 1 · Level', quantity: 'level', unit: '%', valueType: 'number', thresholds: [], series: { seriesId: 'unit-1.level', intervalMs: 1_000 } }
+const trendOf = (pens: ReadonlyArray<Pen>): VignetteView => ({ title: 'Level', sections: [{ kind: 'trend', rows: 4, horizonMs: 600_000, strips: [pens] }] })
+const view = trendOf([levelPen])
 
 const harness = (presence: (at: string) => RunPresence | null) => {
   let wall = 0
@@ -31,7 +28,7 @@ const harness = (presence: (at: string) => RunPresence | null) => {
     at: { at: new Date(runMs).toISOString(), clock: 'simulation', paused: false },
     observations: [{ ref: 'unit-1#level', at: new Date(runMs).toISOString(), clock: 'simulation', value: 40 + (runMs % 10_000) / 1_000, quality, priority: 'none' }],
     alerts: [], entities: {}, slots: {}, maps: {},
-    ...(history === undefined ? {} : { series: { 'unit-1.level': [{ t: history.fromMs + 1_000, v: 30 }] } }),
+    ...(history === undefined ? {} : { series: { 'unit-1.level': { holdMs: 90_000, points: [{ t: history.fromMs + 1_000, v: 30 }] } } }),
   })
   const session = createVignetteSession({
     runId: 'run-1' as SimulationRunId,
@@ -80,10 +77,13 @@ describe('vignette session', () => {
     await run.settle()
     expect(run.calls).toEqual(['presence', 'view', 'history 600000'])
     expect(run.last().phase).toBe('live')
-    expect(run.last().series.get('unit-1#level')?.length).toBe(2)
+    // The record keeps the hold the Run served it with.
+    expect(run.last().series.get('unit-1#level')).toMatchObject({ holdMs: 90_000 })
+    expect(run.last().series.get('unit-1#level')?.points.length).toBe(2)
     await run.advance(3 * SAMPLE_INTERVAL_MS)
     expect(run.calls.slice(3)).toEqual(['sample', 'sample', 'sample'])
-    expect(run.last().series.get('unit-1#level')?.length).toBe(5)
+    expect(run.last().series.get('unit-1#level')?.points.length).toBe(5)
+    expect(run.last().series.get('unit-1#level')?.holdMs).toBe(90_000)
     run.session.close()
   })
 
@@ -154,7 +154,7 @@ describe('vignette session', () => {
     run.session.start()
     await run.settle()
     await run.advance(3_000)
-    const points = () => run.last().series.get('unit-1#level')?.length ?? 0
+    const points = () => run.last().series.get('unit-1#level')?.points.length ?? 0
     const before = points()
     run.readsAs('not-applicable')
     await run.advance(3_000)
@@ -166,6 +166,28 @@ describe('vignette session', () => {
     await run.advance(2_000)
     expect(points()).toBeGreaterThan(before)
     run.session.close()
+  })
+
+  test('a pen whose record the Run did not serve draws nothing, its live readings included: its hold is never guessed', async () => {
+    const withFlow = trendOf([levelPen, { ...levelPen, ref: 'unit-1#flow', label: 'Unit 1 · Flow', quantity: 'flow', unit: 'kg/s', series: { seriesId: 'unit-1.flow', intervalMs: 1_000 } }])
+    const at = '2026-10-21T10:00:00.000Z'
+    const snapshots: VignetteSnapshot[] = []
+    const session = createVignetteSession({
+      runId: 'run-1' as SimulationRunId, state: '{"title":"Level"}', onChange: snapshot => { snapshots.push(snapshot) }, wallNow: () => 0, schedule: () => () => {},
+      routes: {
+        presence: async () => loaded(at),
+        view: async () => withFlow,
+        sample: async (_runId, _state, history) => ({
+          at: { at, clock: 'simulation', paused: false }, alerts: [], entities: {}, slots: {}, maps: {},
+          observations: ['unit-1#level', 'unit-1#flow'].map(ref => ({ ref, at, clock: 'simulation' as const, value: 50, quality: 'good' as const, priority: 'none' as const })),
+          ...(history === undefined ? {} : { series: { 'unit-1.level': { holdMs: 90_000, points: [] } } }),
+        }),
+      },
+    })
+    session.start()
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve()
+    expect([...snapshots.at(-1)!.series.keys()]).toEqual(['unit-1#level'])
+    session.close()
   })
 
   test('a Run that is gone stops the vignette', async () => {

@@ -10,6 +10,7 @@ import { provenanceMark, quantityText } from '../src/ui/embed/vignette/format.ts
 import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
 import { appendPoint, limitLabelYs, sharedLimits, stepPath, stripDrawing, stripDomain, timeTicks } from '../src/ui/embed/vignette/trend.ts'
+import { recordedHoldMs } from '../src/features/historian/policy.ts'
 
 // The vignette renderer's presenters (architecture B1): the limit chip, the
 // step-and-hold trace, the limits a strip shares, neutral values without an
@@ -116,6 +117,34 @@ describe('trend strip', () => {
     expect(stepPath([{ t: 0, v: 10 }, { t: 6_000, v: 20 }], x, y, window, 3_000)).toBe('M0.0 90.0 L30.0 90.0 M60.0 80.0 L90.0 80.0')
   })
 
+  test('the Historian\'s hold, served with the record: a steady value it stores 30 to 88 s apart draws as one piece over ten minutes; a silence past the hold breaks it', () => {
+    const now = 600_000
+    const drawn = (points: ReadonlyArray<{ t: number; v: number }>) => stripDrawing({ pens: [level], series: new Map([[level.ref, { holdMs: recordedHoldMs, points }]]), observations: [], now, horizonMs: 600_000, width: 600, height: 72 })!
+    const pieces = (path: string): number => path.match(/M/g)?.length ?? 0
+    // The heartbeat's stored samples of a steady value, with the longest gap measured on Halden (88 s), and the live point now.
+    const steady = [0, 30_000, 118_000, 150_000, 210_000, 298_000, 330_000, 390_000, 450_000, 538_000, 570_000, 600_000].map(t => ({ t, v: 50 }))
+    expect(pieces(drawn(steady).pens[0]!.path)).toBe(1)
+    expect(drawn(steady).unrecorded).toBeNull()
+    // Nothing stored for 150 s (the Run was not recording): the trace holds 90 s, then breaks until the next sample.
+    const gap = [...steady.filter(point => point.t <= 330_000), ...steady.filter(point => point.t >= 480_000)]
+    expect(pieces(drawn(gap).pens[0]!.path)).toBe(2)
+    expect(drawn(gap).pens[0]!.path).toContain('L420.0')
+    // The guess this replaces, three recording intervals of 5 s, broke the same steady record into pieces.
+    expect(pieces(stepPath(steady, t => t / 1_000, () => 0, { start: 0, end: now }, 15_000))).toBeGreaterThan(2)
+  })
+
+  test('the time before the record starts is hatched; a value held into the window\'s start leaves nothing hatched', () => {
+    const drawn = (points: ReadonlyArray<{ t: number; v: number }>) => stripDrawing({ pens: [level], series: new Map([[level.ref, { holdMs: recordedHoldMs, points }]]), observations: [], now: 600_000, horizonMs: 600_000, width: 600, height: 72 })!
+    // A Run that started 90 s ago: hatched up to its first sample, and the trace starts there.
+    const young = drawn([{ t: 510_000, v: 50 }, { t: 540_000, v: 50 }, { t: 600_000, v: 50 }])
+    expect(young.unrecorded).toEqual({ width: 510 })
+    expect(young.pens[0]!.path.startsWith('M510.0')).toBe(true)
+    // Its sample 40 s before the window holds into its start: nothing to hatch.
+    expect(drawn([{ t: -40_000, v: 50 }, { t: 30_000, v: 50 }]).unrecorded).toBeNull()
+    // One 100 s before holds only 90: what lies between is not recorded.
+    expect(drawn([{ t: -100_000, v: 50 }, { t: 100_000, v: 50 }]).unrecorded).toEqual({ width: 100 })
+  })
+
   test('a live point keeps the window and the one point before it', () => {
     expect(appendPoint([{ t: 0, v: 1 }, { t: 5, v: 2 }, { t: 9, v: 3 }], { t: 12, v: 4 }, 7)).toEqual([{ t: 5, v: 2 }, { t: 9, v: 3 }, { t: 12, v: 4 }])
   })
@@ -138,7 +167,7 @@ describe('trend strip', () => {
   test('the drawing names the limit nearest each edge beyond its scale, and colours a pen only by its observation', () => {
     const pens = [level, { ...level, ref: 'unit-1#level-b', thresholds: level.thresholds.map(limit => (limit.id === 'hi' ? { ...limit, value: 80 } : limit)) }]
     const drawn = (values: ReadonlyArray<number>) => stripDrawing({
-      pens, series: new Map([[level.ref, values.map((v, index) => ({ t: index * 1_000, v }))], ['unit-1#level-b', [{ t: 0, v: values[0]! }]]]),
+      pens, series: new Map([[level.ref, { holdMs: 90_000, points: values.map((v, index) => ({ t: index * 1_000, v })) }], ['unit-1#level-b', { holdMs: 90_000, points: [{ t: 0, v: values[0]! }] }]]),
       observations: [observation('unit-1#level-b', values[0]!, { priority: 'caution' })], now: 10_000, horizonMs: 10_000, width: 100, height: 72,
     })!
     const wide = drawn([35, 50])

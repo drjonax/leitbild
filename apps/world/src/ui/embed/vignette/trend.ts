@@ -1,29 +1,31 @@
 // Trend strip geometry (architecture B): recorded points drawn step-and-hold,
-// a value holding until the next one and broken where the record has a gap,
-// so missing data shows. A strip names a limit only where every pen on it
-// declares that threshold at one value; pens are told apart by dash, never
-// by hue (colour is kept for alerts).
+// a value holding until the next one for as long as the Historian's hold
+// served with its record, and broken where the record is silent for longer,
+// so missing data shows; the time before the record starts is hatched. A
+// strip names a limit only where every pen on it declares that threshold at
+// one value; pens are told apart by dash, never by hue (colour is kept for
+// alerts).
 import { decimalsFor, numberText, type Observable, type Observation } from '../../../core/observation/model.ts'
-import type { SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
+import type { RecordedSeries, SeriesPoint, VignetteValue } from '../../../features/displays/compose/model.ts'
 import { orderWord, toneOf, type AlertTone } from './readout.ts'
 
 type Threshold = Observable['thresholds'][number]
-
-/** A recorded value holds for this many of its recording intervals; a longer silence is a gap. */
-export const HOLD_INTERVALS = 3
 
 export interface Window {
   readonly start: number
   readonly end: number
 }
 
-/** Step-and-hold SVG path: each point holds until the next, until `window.end` at most, and breaks after the hold gap. */
+/** Where a point's value ends: at the next point, at its hold, or at the window's end, whichever comes first. */
+const heldUntil = (points: ReadonlyArray<SeriesPoint>, index: number, end: number, holdMs: number): number => Math.min(points[index + 1]?.t ?? end, points[index]!.t + holdMs, end)
+
+/** Step-and-hold SVG path: each point holds until the next, until `window.end` at most, and breaks where the next comes after its hold. */
 export const stepPath = (points: ReadonlyArray<SeriesPoint>, x: (t: number) => number, y: (v: number) => number, window: Window, holdMs: number): string => {
   const commands: string[] = []
   let open = false
   points.forEach((point, index) => {
     const next = points[index + 1]
-    const holdEnd = Math.min(next?.t ?? window.end, point.t + holdMs, window.end)
+    const holdEnd = heldUntil(points, index, window.end, holdMs)
     if (holdEnd < window.start || point.t > window.end) { open = false; return }
     const level = y(point.v).toFixed(1)
     commands.push(`${open ? 'L' : 'M'}${x(Math.max(point.t, window.start)).toFixed(1)} ${level}`, `L${x(holdEnd).toFixed(1)} ${level}`)
@@ -113,6 +115,8 @@ export interface StripDrawing {
   readonly beyond: ReadonlyArray<{ readonly id: string; readonly edge: 'top' | 'bottom'; readonly label: string }>
   readonly values: ReadonlyArray<{ readonly y: number; readonly label: string }>
   readonly times: ReadonlyArray<{ readonly x: number; readonly label: string }>
+  /** The window's time before any pen's record starts, from its left edge: hatched, "no record yet"; null where a record reaches its start. */
+  readonly unrecorded: { readonly width: number } | null
 }
 
 // The plot keeps its lines this far from its top and bottom edges.
@@ -145,7 +149,8 @@ export const limitLabelYs = (ys: ReadonlyArray<number>, room: { readonly height:
 /** A strip as drawn over its window ending now; null while none of its pens has a value in the window. */
 export const stripDrawing = (input: {
   readonly pens: ReadonlyArray<VignetteValue>
-  readonly series: ReadonlyMap<string, ReadonlyArray<SeriesPoint>>
+  /** Each pen's record by ref, with its hold. */
+  readonly series: ReadonlyMap<string, RecordedSeries>
   readonly observations: ReadonlyArray<Pick<Observation, 'ref' | 'priority'>>
   readonly now: number
   readonly horizonMs: number
@@ -153,9 +158,14 @@ export const stripDrawing = (input: {
   readonly height: number
 }): StripDrawing | null => {
   const window = { start: input.now - input.horizonMs, end: input.now }
-  const shown = input.pens.flatMap(pen => (input.series.get(pen.ref) ?? []).filter((point, index, points) =>
-    point.t <= window.end && (points[index + 1]?.t ?? window.end) >= window.start).map(point => point.v))
+  // What each pen draws: every point whose value holds into the window.
+  const held = input.pens.map(pen => {
+    const recorded = input.series.get(pen.ref)
+    return recorded === undefined ? [] : recorded.points.filter((point, index, points) => point.t <= window.end && heldUntil(points, index, window.end, recorded.holdMs) >= window.start)
+  })
+  const shown = held.flat().map(point => point.v)
   if (shown.length === 0) return null
+  const recordStart = Math.max(window.start, Math.min(...held.flatMap(points => (points.length === 0 ? [] : [points[0]!.t]))))
   const { unit, quantity } = input.pens[0]!
   const seen = { min: Math.min(...shown), max: Math.max(...shown) }
   const limits = sharedLimits(input.pens)
@@ -172,15 +182,19 @@ export const stripDrawing = (input: {
   ]
   const labelYs = limitLabelYs(lines.map(limit => y(limit.value)), { height: input.height, top: beyond.some(entry => entry.edge === 'top'), bottom: beyond.some(entry => entry.edge === 'bottom') })
   return {
-    pens: input.pens.map((pen, index) => ({
-      ref: pen.ref,
-      path: pen.series === null ? '' : stepPath(input.series.get(pen.ref) ?? [], x, y, window, HOLD_INTERVALS * pen.series.intervalMs),
-      dash: PEN_DASHES[index % PEN_DASHES.length]!,
-      tone: toneOf(input.observations.find(observation => observation.ref === pen.ref)?.priority),
-    })),
+    pens: input.pens.map((pen, index) => {
+      const recorded = input.series.get(pen.ref)
+      return {
+        ref: pen.ref,
+        path: recorded === undefined ? '' : stepPath(recorded.points, x, y, window, recorded.holdMs),
+        dash: PEN_DASHES[index % PEN_DASHES.length]!,
+        tone: toneOf(input.observations.find(observation => observation.ref === pen.ref)?.priority),
+      }
+    }),
     limits: lines.map((limit, index) => ({ id: limit.id, y: y(limit.value), label: name(limit), labelY: labelYs[index]!, priority: limit.priority })),
     beyond: beyond.map(({ limit, edge }) => ({ id: limit.id, edge, label: name(limit) })),
     values: valueTicks(domain).map(tick => ({ y: y(tick.value), label: tick.label })),
     times: timeTicks(input.now, input.horizonMs).map(tick => ({ x: x(tick.t), label: tick.label })),
+    unrecorded: recordStart > window.start ? { width: x(recordStart) } : null,
   }
 }

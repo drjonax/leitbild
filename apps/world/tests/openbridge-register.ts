@@ -103,14 +103,14 @@ export const customShapes: ReadonlyArray<CustomShape> = [
   },
   {
     id: 'vignette-trend-strip',
-    draws: 'A vignette\'s trend strip: step-and-hold pens told apart by dash, shared limits with their names, ▲ ▼ for limits beyond the scale, and the legend\'s pen swatches.',
+    draws: 'A vignette\'s trend strip: step-and-hold pens told apart by dash, each value held for the Historian\'s hold served with its record, the time before the record starts hatched, shared limits with their names, ▲ ▼ for limits beyond the scale, and the legend\'s pen swatches.',
     sites: [
       { file: 'ui/embed/vignette/TrendStrip.svelte', mark: 'aria-label={pens.map', drawn: 'svg' },
       { file: 'ui/embed/vignette/TrendStrip.svelte', mark: '<svg width="20" height="8"', drawn: 'svg' },
     ],
     standsInFor: ['obc-line-graph', 'obc-graph-mini'],
     reason: 'A',
-    evidence: 'As trend-panel: no OpenBridge graph draws named limits, off-span marks or a break where nothing was recorded.',
+    evidence: 'As trend-panel: no OpenBridge graph draws named limits, off-span marks, a break where nothing was recorded or the time before the record starts.',
     decision: APPROVED,
     ends: 'kept',
   },
