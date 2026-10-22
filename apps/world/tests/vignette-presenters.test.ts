@@ -5,7 +5,7 @@ import type { AlertState } from '../src/core/model/alerts.ts'
 import type { ObjectId } from '../src/core/model/ids.ts'
 import type { Observable, Observation } from '../src/core/observation/model.ts'
 import type { AlertRow } from '../src/features/displays/alerts/rows.ts'
-import { alertDetail, alertIcon, sectionLines, worstChip } from '../src/ui/embed/vignette/alerts.ts'
+import { alertDetail, alertIcon, sectionLines, UNACK_WORD, unacknowledged, worstChip } from '../src/ui/embed/vignette/alerts.ts'
 import { provenanceMark, quantityText } from '../src/ui/embed/vignette/format.ts'
 import type { VignetteValue } from '../src/features/displays/compose/model.ts'
 import { activeState, limitBar, orderWord, readingLook, valueLook } from '../src/ui/embed/vignette/readout.ts'
@@ -207,13 +207,27 @@ describe('alerts', () => {
     expect(worstChip([{ priority: 'notice' }], [])).toBeNull()
   })
 
-  test('each row takes OpenBridge\'s alert icon by its declared priority and ack state; notice and an undeclared priority read as words', () => {
-    expect(alertIcon(row('a', 'one', 'emergency'))).toEqual({ type: 'level-critical', acknowledged: false, active: true })
+  test('each row takes OpenBridge\'s alert icon by its declared priority, drawn steady: acknowledged, or rectified once returned; notice and an undeclared priority read as words', () => {
+    // Nothing in a vignette acknowledges (W2.7): an unacknowledged icon would flash for ever (UX audit H11).
+    expect(alertIcon(row('a', 'one', 'emergency'))).toEqual({ type: 'level-critical', acknowledged: true, active: true })
     expect(alertIcon({ ...row('a', 'one', 'warning'), state: 'active-ack' })).toEqual({ type: 'warning', acknowledged: true, active: true })
-    expect(alertIcon({ ...row('a', 'one', 'alarm'), state: 'returned-unack' })).toEqual({ type: 'alarm', acknowledged: false, active: false })
+    expect(alertIcon({ ...row('a', 'one', 'alarm'), state: 'returned-unack' })).toEqual({ type: 'alarm', acknowledged: true, active: false })
     expect(alertIcon(row('a', 'one', 'notice'))).toEqual({ word: 'Notice' })
     expect(alertIcon(row('a', 'one', null))).toEqual({ word: 'Warning · priority not declared' })
     expect(alertDetail({ ...row('a', 'one', 'caution', { standing: true, acknowledged: true, acknowledgedBy: 'ai' }), state: 'active-ack' })).toBe('standing · acknowledged by Assistant · 10:00:00 UTC')
+  })
+
+  test('the word UNACK carries what the steady icon does not: on each unacknowledged row and in the section\'s counts; standing alarms and advisories never count (R43)', () => {
+    const rows = [
+      row('a', 'one', 'alarm'), { ...row('r', 'one', 'warning'), state: 'returned-unack' as const }, { ...row('k', 'one', 'alarm', { acknowledged: true }), state: 'active-ack' as const },
+      row('s', 'one', 'caution', { standing: true }), row('x', 'one', 'warning'),
+    ]
+    expect(rows.map(entry => [entry.alert.id, unacknowledged(entry), alertDetail(entry)])).toEqual([
+      ['a', true, '10:00:00 UTC'], ['r', true, 'returned · 10:00:00 UTC'], ['k', false, 'acknowledged · 10:00:00 UTC'], ['s', false, 'standing · 10:00:00 UTC'], ['x', true, '10:00:00 UTC'],
+    ])
+    expect(UNACK_WORD).toBe('UNACK')
+    expect(sectionLines(rows, { objectIds: ['one'] }, 5).unacknowledged).toEqual({ all: 3, more: 0 })
+    expect(sectionLines(rows, { objectIds: ['one'] }, 3)).toMatchObject({ more: 3, unacknowledged: { all: 3, more: 1 } })
   })
 
   test('a section keeps the sample\'s order (the Run context\'s ranking), its objects only, within its room, the last line counting the rest', () => {
