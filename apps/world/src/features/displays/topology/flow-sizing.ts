@@ -1,15 +1,16 @@
 // A flow drawing's sizing from the topology contract alone (architecture A6,
-// audit B11): a bus, and a header (a junction whose ports, more than two, are
-// one circuit), draw as bars; a switch takes its neighbours' lane; alike nodes
-// group by kind; flow into a sink or boundary that leads nowhere ends without
-// a stop; nothing is chained in line, and drawing ids are the graph's node and
-// edge ids. A store or transfer stands two cells by four, as OpenBridge's tank
-// and heat exchanger do, and the lanes' hub as the vessel it is drawn as, its
-// head above its nozzles. Each item writes its name and under it its state
-// word, the command it does not follow and, where there is room, its readings
-// (layout.ts itemText); a group writes how many of its members run. The ceilings are today's displays': a drawing across lanes
-// keeps the unit overview's twelve crossings, one within a lane an equipment
-// detail's four. The layout comes back in grid units.
+// audit B11): a bus that joins more than two lines, and a header (a junction
+// whose ports, more than two, are one circuit), draw as bars; a switch takes
+// its neighbours' lane; alike nodes group by kind; flow into a sink or
+// boundary that leads nowhere ends without a stop; nothing is chained in line,
+// and drawing ids are the graph's node and edge ids. A store stands two cells
+// by four, as OpenBridge's tank does, and the lanes' hub as the vessel it is
+// drawn as, its head above its nozzles. Each item writes its name and under
+// it its state word, the command it does not follow and, where there is room,
+// its readings (layout.ts itemText); a group writes how many of its members
+// run. The ceilings are today's displays': a drawing across lanes keeps the
+// unit overview's twelve crossings, one within a lane an equipment detail's
+// four. The layout comes back in grid units.
 import { layoutDiagram, type DiagramProfile } from '../diagram/index.ts'
 import type { TopologyGraph, TopologyNode } from '../../../core/observation/topology.ts'
 import { flowPlan, type FlowSizing } from './flow.ts'
@@ -43,14 +44,17 @@ const farNames = (names: ReadonlyArray<string>): ReadonlyArray<string> => [...ne
 
 export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   const classOf = new Map(graph.nodes.map(node => [node.id, node.class]))
+  // A bus joins more than two lines; one with fewer (a battery, an inverter, a load at the end of a line) is an item on its line.
+  const lines = new Map<string, number>()
+  for (const edge of graph.edges) for (const end of [edge.from.node, edge.to.node]) lines.set(end, (lines.get(end) ?? 0) + 1)
   const leaving = new Set(graph.edges.map(edge => edge.from.node))
   const label = (node: TopologyNode): string => node.shortLabel ?? node.label
   const line = (characters: number, required: boolean) => ({ width: Math.max(GRID, characters * LINE.perCharacter), height: LINE.height, required })
   return {
-    key: 'vignette-flow-6',
+    key: 'vignette-flow-7',
     visible: () => true,
     silent: edge => ['sink', 'boundary'].includes(classOf.get(edge.to.node) ?? '') && !leaving.has(edge.to.node),
-    bar: node => node.class === 'bus' || isHeader(node),
+    bar: node => (node.class === 'bus' && (lines.get(node.id) ?? 0) > 2) || isHeader(node),
     infersLane: node => node.class === 'switch',
     groupKey: node => node.kind,
     chain: () => [],
@@ -74,6 +78,13 @@ export const flowSizing = (graph: TopologyGraph): FlowSizing<null> => {
   }
 }
 
+/** Two bars joined only to each other have nowhere to stand (the engine refuses them): such a scope draws nothing. */
+const barsOnlyJoinBars = (graph: ReturnType<typeof flowPlan>['graph']): boolean => {
+  const bars = new Set(graph.nodes.filter(node => node.role === 'bar').map(node => node.id))
+  const neighbours = (id: string): ReadonlyArray<string> => graph.edges.flatMap(edge => (edge.from.node === id ? [edge.to.node] : edge.to.node === id ? [edge.from.node] : []))
+  return graph.edges.some(edge => bars.has(edge.from.node) && bars.has(edge.to.node) && [edge.from.node, edge.to.node].every(bar => neighbours(bar).every(other => bars.has(other))))
+}
+
 /** Where a drawing stops, by its layout id: the labels of what lies beyond. */
 export type DrawnStops = Readonly<Record<string, { readonly direction: 'in' | 'out'; readonly others: ReadonlyArray<string>; readonly medium: string }>>
 
@@ -81,7 +92,7 @@ export type DrawnStops = Readonly<Record<string, { readonly direction: 'in' | 'o
 export const flowLayout = (scoped: ScopedTopology, room: { readonly columns: number; readonly rows: number }): { readonly layout: TopologyLayout; readonly stops: DrawnStops } | null => {
   const sizing = flowSizing(scoped.graph)
   const planned = flowPlan(scoped, sizing)
-  if (planned.graph.nodes.length === 0) return null
+  if (planned.graph.nodes.length === 0 || barsOnlyJoinBars(planned.graph)) return null
   const lanes = new Set(planned.graph.nodes.flatMap(node => (node.partition === undefined ? [] : [node.partition.key]))).size
   const result = layoutDiagram(planned.graph, lanes > 1 ? flowProfiles.lanes : flowProfiles.lane, { maxWidth: room.columns * GRID, maxHeight: room.rows * GRID })
   if (!result.ok) return null
