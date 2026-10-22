@@ -68,6 +68,7 @@
     procedureStepDisplayName,
     procedureStepHoverLabel,
     type ProcedureRunSummary,
+    type ProcedureRunSummaryGroup,
     type ProcedureRunVisualState,
   } from './procedure-run-selectors.ts'
   import {
@@ -85,12 +86,12 @@
     readonly unitStatus?: PackObjectStatusPresentation
     readonly unitContexts?: ReadonlyArray<ProcedureUnitContext>
     readonly session: ProcedureSession
-    readonly initialProcedureId?: ProcedureId
+    readonly initialProcedureId?: ProcedureId | undefined
     readonly windowOffsetIndex?: number
     /** Raised by the route when this unit's procedures are opened again: focus this window (and its requested procedure). */
     readonly focusRequest?: number
     /** The Run an AI agent last started on this unit, a new object per start: shown without raising or focusing this window. */
-    readonly aiStart?: { readonly runId: ProcedureRunId }
+    readonly aiStart?: { readonly runId: ProcedureRunId } | undefined
     readonly selectUnit: (objectId: ObjectId) => void
     /** Opens a display in the Workspace's process display window, where it can be operated. */
     readonly openDisplay?: (listing: EmbeddedViewListing) => void
@@ -403,10 +404,7 @@
     readonly sourceId?: string; readonly sourceRevision?: string; readonly sourcePath?: string
   } = {}) => session.readDocument(documentRequest(procedureId, sourceConfig))
 
-  const unitProcedureSummariesFor = (unit: ProcedureUnitContext): {
-    readonly active: ReadonlyArray<ProcedureRunSummary>
-    readonly completed: ReadonlyArray<ProcedureRunSummary>
-  } =>
+  const unitProcedureSummariesFor = (unit: ProcedureUnitContext): ProcedureRunSummaryGroup =>
     procedureRunSummariesForScope(runs, procedureScopeFor(unit), runDocuments)
 
   const statusForUnit = (unit: ProcedureUnitContext): PackObjectStatusPresentation =>

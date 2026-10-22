@@ -31,9 +31,9 @@
     readonly provider: PackProcedureContribution
     readonly close: () => void
     /** Opens the shown display in the Workspace's display window, where one is offered. */
-    readonly openInDisplayWindow?: (envelope: EmbeddedViewEnvelope) => void
+    readonly openInDisplayWindow?: ((envelope: EmbeddedViewEnvelope) => void) | undefined
     /** Opens a view the display asks for (its pop-over's "Open in the display window") in that window, as given. */
-    readonly openView?: (view: EmbeddedViewListing) => void
+    readonly openView?: ((view: EmbeddedViewListing) => void) | undefined
   }
 
   let { simulationRunId, plantId, unitLabel, tag, validation, provider, close, openInDisplayWindow, openView }: Props = $props()

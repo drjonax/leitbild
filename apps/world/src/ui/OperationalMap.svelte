@@ -70,7 +70,7 @@
     readonly placementPoints: ReadonlyArray<GeoJsonPoint>
     readonly theme: ThemeMode
     readonly mapConfig: StartingMapView
-    readonly clock?: SimulationClockState
+    readonly clock?: SimulationClockState | undefined
     readonly routeRevision: number
     readonly debugMapInput?: boolean
     readonly highlightedObjectIds?: ReadonlyArray<string>
@@ -138,9 +138,9 @@
      */
     readonly targetPicking?: boolean
     /** Reported only when given: a click on open ground, neither an object nor a Pack feature. */
-    readonly onGroundSelected?: (point: GeoJsonPoint) => void
+    readonly onGroundSelected?: ((point: GeoJsonPoint) => void) | undefined
     /** The order preview a hovered object's card shows, when the selected controller's Pack describes targets. */
-    readonly targetPreviewFor?: (object: OperationalObject) => PackTargetPreview | null
+    readonly targetPreviewFor?: ((object: OperationalObject) => PackTargetPreview | null) | undefined
     /**
      * Objects a click opens a card for: a mouse click or hover anywhere on
      * their coloured disk is theirs on every surface, not only while the
@@ -569,7 +569,7 @@
     const padding = { top: cameraPadding.top, right: cameraPadding.right, bottom: cameraPadding.bottom, left: cameraPadding.left }
     const container = current.getContainer()
     current.jumpTo({
-      center: mapConfig.center.coordinates,
+      center: [mapConfig.center.coordinates[0], mapConfig.center.coordinates[1]],
       zoom: startingZoomFor(mapConfig.zoom, { width: container.clientWidth, height: container.clientHeight }, padding),
       padding,
     })

@@ -11,6 +11,7 @@
     SimulationRunId,
     ObjectId,
     ProcedureDocument,
+    ProcedureId,
     ProcedureRunId,
     ProcedureRunScope,
     ProcedureRunState,
@@ -56,7 +57,8 @@
   import { startupScenarioSource } from '../app/startup-scenario.ts'
   import { loadActivePackViews } from '../pack-loader.ts'
   import { groundClicksWanted, previewObjectTarget, routeGroundClick, routeObjectClick, targetPickingWanted, targetPreviewsWanted, type MapClickContext, type MapClickRoute, type MapTargetPanel } from '../map-target-routing.ts'
-  import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapCover, type MapPrompt, type SurfacePanelInteraction } from '../surface-panel-interaction.ts'
+  import { assertMapCover, assertPanelInteraction, cameraPaddingFor, mapCameraInteractionFor, openPanelDeclaring, railStartsCollapsed, startingControllerId, surfacePanelPackId, type MapPrompt, type SurfacePanelInteraction, type SurfacePanelProps } from '../surface-panel-interaction.ts'
+  import type { MapCover } from '../surface-panel-contract.ts'
   import PanelKeyRouter from '../keys/PanelKeyRouter.svelte'
   import type { PanelKey } from '../keys/panel-key.ts'
   import {
@@ -174,7 +176,7 @@
   // Clocks the Run publishes always apply; an execution read's only if none arrived since it was asked for.
   const clockOrder = createWorldClockOrder()
   let scenarioDefinition = $state<CompiledScenario | null>(null)
-  let selectedControllerId = $state<string | null>(null)
+  let selectedControllerId = $state<ObjectId | null>(null)
   let status = $state('Starting')
   let mapWarnings = $state('')
   let commandFeedback = $state.raw<CommandFeedback>(emptyCommandFeedback)
@@ -207,17 +209,28 @@
   let startupStatusModalOpen = $state(false)
   let settingsModalOpen = $state(false)
   let executionState = $state<RunExecutionState | null>(null)
-  let OperationalMap = $state<Component | null>(null)
-  let CreateObjectModal = $state<Component | null>(null)
-  let SettingsModal = $state<Component | null>(null)
-  let DisplayWindow = $state<Component | null>(null)
-  let surfacePanelComponents = $state<Record<string, Component>>({})
-  let ProcedureSystemModal = $state<Component | null>(null)
-  let ProcessPlantArtifactModal = $state<Component | null>(null)
-  let ProcessPlantCatalogModal = $state<Component | null>(null)
-  let ProcessPlantCredibilityModal = $state<Component | null>(null)
-  let DroneControlModal = $state<Component | null>(null)
-  let DroneProfileEditorModal = $state<Component | null>(null)
+  // The types of the components loaded on demand: a type query loads nothing.
+  type OperationalMapComponent = typeof import('../OperationalMap.svelte').default
+  type CreateObjectModalComponent = typeof import('../CreateObjectModal.svelte').default
+  type SettingsModalComponent = typeof import('../SettingsModal.svelte').default
+  type DisplayWindowComponent = typeof import('../process-display/DisplayWindow.svelte').default
+  type ProcedureSystemModalComponent = typeof import('../procedures/ProcedureSystemModal.svelte').default
+  type ProcessPlantArtifactModalComponent = typeof import('../../packs/process-plant/ui/ProcessPlantArtifactModal.svelte').default
+  type ProcessPlantCatalogModalComponent = typeof import('../../packs/process-plant/ui/ProcessPlantCatalogModal.svelte').default
+  type ProcessPlantCredibilityModalComponent = typeof import('../../packs/process-plant/ui/ProcessPlantCredibilityModal.svelte').default
+  type DroneControlModalComponent = typeof import('../drone/DroneControlModal.svelte').default
+  type DroneProfileEditorModalComponent = typeof import('../drone/DroneProfileEditorModal.svelte').default
+  let OperationalMap = $state<OperationalMapComponent | null>(null)
+  let CreateObjectModal = $state<CreateObjectModalComponent | null>(null)
+  let SettingsModal = $state<SettingsModalComponent | null>(null)
+  let DisplayWindow = $state<DisplayWindowComponent | null>(null)
+  let surfacePanelComponents = $state<Record<string, Component<SurfacePanelProps>>>({})
+  let ProcedureSystemModal = $state<ProcedureSystemModalComponent | null>(null)
+  let ProcessPlantArtifactModal = $state<ProcessPlantArtifactModalComponent | null>(null)
+  let ProcessPlantCatalogModal = $state<ProcessPlantCatalogModalComponent | null>(null)
+  let ProcessPlantCredibilityModal = $state<ProcessPlantCredibilityModalComponent | null>(null)
+  let DroneControlModal = $state<DroneControlModalComponent | null>(null)
+  let DroneProfileEditorModal = $state<DroneProfileEditorModalComponent | null>(null)
   // The one process display window. The Host relays the conversation's
   // displays and requests to open one; both are kept here from the start, so
   // nothing is lost while the window's code or the Run is still loading. The
@@ -254,17 +267,17 @@
   let theme = $state<ThemeMode>('light')
   let weatherLayerVisible = $state(true)
   let surfaceLoadGeneration = 0
-  let operationalMapLoadPromise: Promise<Component> | null = null
-  let displayWindowLoadPromise: Promise<Component> | null = null
-  const surfacePanelLoadPromises = new Map<string, Promise<Component>>()
+  let operationalMapLoadPromise: Promise<OperationalMapComponent> | null = null
+  let displayWindowLoadPromise: Promise<DisplayWindowComponent> | null = null
+  const surfacePanelLoadPromises = new Map<string, Promise<Component<SurfacePanelProps>>>()
   let surfacePanelOpen = $state<Record<string, boolean>>({})
   let appliedSurfacePanelKey = ''
-  let procedureSystemModalLoadPromise: Promise<Component> | null = null
-  let processPlantArtifactModalLoadPromise: Promise<Component> | null = null
-  let processPlantCatalogModalLoadPromise: Promise<Component> | null = null
-  let processPlantCredibilityModalLoadPromise: Promise<Component> | null = null
-  let droneControlModalLoadPromise: Promise<Component> | null = null
-  let droneProfileEditorModalLoadPromise: Promise<Component> | null = null
+  let procedureSystemModalLoadPromise: Promise<ProcedureSystemModalComponent> | null = null
+  let processPlantArtifactModalLoadPromise: Promise<ProcessPlantArtifactModalComponent> | null = null
+  let processPlantCatalogModalLoadPromise: Promise<ProcessPlantCatalogModalComponent> | null = null
+  let processPlantCredibilityModalLoadPromise: Promise<ProcessPlantCredibilityModalComponent> | null = null
+  let droneControlModalLoadPromise: Promise<DroneControlModalComponent> | null = null
+  let droneProfileEditorModalLoadPromise: Promise<DroneProfileEditorModalComponent> | null = null
   let pendingRealtimeSimulationRunId = $state<SimulationRunId | null>(null)
   let postReadyPreloadStarted = false
   let startupAutoDismissTimer: number | null = null
@@ -361,7 +374,10 @@
     return step?.status === 'failed' ? { state: 'failed', reason: step.error ?? `${step.label} failed` } : { state: 'joining' }
   })
   const richOperationalUiReady = $derived(!mapVisible || mapReady || mapStartupFailed)
-  const mapAssignmentController = $derived(mapAssignment ? objects.find(object => object.id === mapAssignment.controllerId) ?? null : null)
+  const mapAssignmentController = $derived.by(() => {
+    const controllerId = mapAssignment?.controllerId
+    return controllerId === undefined ? null : objects.find(object => object.id === controllerId) ?? null
+  })
   const mapAssignmentContribution = $derived(mapAssignmentController && activePack ? activePack.packForObject(mapAssignmentController).mapAssignment ?? null : null)
   const mapAssignmentAnchor = $derived(mapAssignmentController && mapAssignmentContribution && mapAssignment
     ? mapAssignmentContribution.anchorFor(mapAssignmentController, mapAssignment.mode, targetContext)
@@ -508,12 +524,15 @@
   }
 
   const presentationComposer = createPackPresentationComposer({
-    getContext: () => ({
-      pack: activePack,
-      objects,
-      currentTime: currentPackTime(),
-      ...(seenRoleIds === null ? {} : { seenRoleIds }),
-    }),
+    getContext: () => {
+      const currentTime = currentPackTime()
+      return {
+        pack: activePack,
+        objects,
+        ...(currentTime === undefined ? {} : { currentTime }),
+        ...(seenRoleIds === null ? {} : { seenRoleIds }),
+      }
+    },
   })
 
   const presentationFor = (
@@ -682,9 +701,9 @@
     })
   }
 
-  const loadOperationalMap = async (): Promise<Component> => {
+  const loadOperationalMap = async (): Promise<OperationalMapComponent> => {
     if (OperationalMap) return OperationalMap
-    operationalMapLoadPromise ??= (async (): Promise<Component> => {
+    operationalMapLoadPromise ??= (async (): Promise<OperationalMapComponent> => {
       const module = await import('../OperationalMap.svelte')
       return module.default
     })()
@@ -725,7 +744,7 @@
 
   const loadDisplayWindow = async (): Promise<void> => {
     if (DisplayWindow) return
-    displayWindowLoadPromise ??= (async (): Promise<Component> => {
+    displayWindowLoadPromise ??= (async (): Promise<DisplayWindowComponent> => {
       const module = await import('../process-display/DisplayWindow.svelte')
       return module.default
     })()
@@ -757,7 +776,7 @@
 
   const loadProcedureSystemModal = async (): Promise<void> => {
     if (ProcedureSystemModal) return
-    procedureSystemModalLoadPromise ??= (async (): Promise<Component> => {
+    procedureSystemModalLoadPromise ??= (async (): Promise<ProcedureSystemModalComponent> => {
       const module = await import('../procedures/ProcedureSystemModal.svelte')
       return module.default
     })()
@@ -771,7 +790,7 @@
 
   const loadProcessPlantArtifactModal = async (): Promise<void> => {
     if (ProcessPlantArtifactModal) return
-    processPlantArtifactModalLoadPromise ??= (async (): Promise<Component> => {
+    processPlantArtifactModalLoadPromise ??= (async (): Promise<ProcessPlantArtifactModalComponent> => {
       const module = await import('../../packs/process-plant/ui/ProcessPlantArtifactModal.svelte')
       return module.default
     })()
@@ -785,7 +804,7 @@
 
   const loadProcessPlantCatalogModal = async (): Promise<void> => {
     if (ProcessPlantCatalogModal) return
-    processPlantCatalogModalLoadPromise ??= (async (): Promise<Component> => {
+    processPlantCatalogModalLoadPromise ??= (async (): Promise<ProcessPlantCatalogModalComponent> => {
       const module = await import('../../packs/process-plant/ui/ProcessPlantCatalogModal.svelte')
       return module.default
     })()
@@ -799,7 +818,7 @@
 
   const loadProcessPlantCredibilityModal = async (): Promise<void> => {
     if (ProcessPlantCredibilityModal) return
-    processPlantCredibilityModalLoadPromise ??= (async (): Promise<Component> => {
+    processPlantCredibilityModalLoadPromise ??= (async (): Promise<ProcessPlantCredibilityModalComponent> => {
       const module = await import('../../packs/process-plant/ui/ProcessPlantCredibilityModal.svelte')
       return module.default
     })()
@@ -813,7 +832,7 @@
 
   const loadDroneControlModal = async (): Promise<void> => {
     if (DroneControlModal) return
-    droneControlModalLoadPromise ??= (async (): Promise<Component> => {
+    droneControlModalLoadPromise ??= (async (): Promise<DroneControlModalComponent> => {
       const module = await import('../drone/DroneControlModal.svelte')
       return module.default
     })()
@@ -827,7 +846,7 @@
 
   const loadDroneProfileEditorModal = async (): Promise<void> => {
     if (DroneProfileEditorModal) return
-    droneProfileEditorModalLoadPromise ??= (async (): Promise<Component> => {
+    droneProfileEditorModalLoadPromise ??= (async (): Promise<DroneProfileEditorModalComponent> => {
       const module = await import('../drone/DroneProfileEditorModal.svelte')
       return module.default
     })()
@@ -1068,7 +1087,7 @@
   const procedureUnitContexts = $derived(objects.flatMap(object => {
     const provider = activePack?.packForObject(object).procedures
     const plantId = provider?.scopeIdForObject(object) ?? null
-    return plantId === null
+    return provider === undefined || plantId === null
       ? []
       : [{
           plantId,
@@ -2145,7 +2164,7 @@
     {/if}
 
     <main class="surface-main" class:map-region={mapVisible}>
-      {#if mapVisible && OperationalMap}
+      {#if effectiveMapConfig && OperationalMap}
         <OperationalMap
           {objects}
           {selectedControllerId}
