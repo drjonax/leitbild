@@ -3,6 +3,7 @@ import { embeddedViewFragment, workspaceIdSchema } from '@leitbild/contracts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import type { ProcedureTagValidation, ProcedureTagValue } from '../src/ui/procedures/procedure-client.ts'
 import {
+  createTagFrameHost,
   procedureTagBindingLine,
   procedureTagDeclared,
   procedureTagDisplayPlan,
@@ -80,4 +81,46 @@ describe("a clicked procedure tag's display", () => {
 test('a two-state reading names what it says; a number keeps its value and unit', () => {
   expect(procedureTagReadingText({ label: 'Reactor trip breaker A closed', value: false, formatted: 'false boolean' })).toBe('Reactor trip breaker A closed: no')
   expect(procedureTagReadingText({ label: 'Pressurizer pressure', value: 15.5, formatted: '15.500 MPa' })).toBe('15.500 MPa')
+})
+
+describe('the tag dialog hosts its frame as the chat page does', () => {
+  const frame = { name: 'tag frame' }
+  const origin = 'https://leitbild.test'
+  const view = {
+    key: 'tag/PT-455/opened', caption: 'From PT-455',
+    envelope: { moduleId: 'world', subject: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: runId }, viewType: 'display.vignette', title: 'Pressurizer', height: 480, state: '{"title":"Pressurizer"}' },
+  }
+  const host = () => {
+    const posted: Array<{ readonly to: unknown; readonly message: unknown }> = []
+    const opened: unknown[] = []
+    const frameHost = createTagFrameHost({ origin, frame: () => frame, post: (to, message) => { posted.push({ to, message }) }, open: listing => { opened.push(listing) } })
+    return { frameHost, posted, opened }
+  }
+
+  test('answers its frame\'s ready with the Host announcement alone, never a display window\'s presentation', () => {
+    const { frameHost, posted } = host()
+    frameHost.receive({ origin, source: frame, data: { type: 'world:display-frame-ready' } })
+    expect(posted).toEqual([{ to: frame, message: { type: 'leitbild:view-host' } }])
+    expect(posted.some(entry => (entry.message as { type: string }).type === 'world:display-frame')).toBe(false)
+  })
+
+  test('opens a view its frame asks for, as given', () => {
+    const { frameHost, opened } = host()
+    frameHost.receive({ origin, source: frame, data: { type: 'leitbild:view-open', view } })
+    expect(opened).toEqual([view])
+    frameHost.receive({ origin, source: frame, data: { type: 'leitbild:view-open', view: { ...view, envelope: { ...view.envelope, height: 9_999 } } } })
+    expect(opened).toHaveLength(1)
+  })
+
+  test('ignores every other window and origin', () => {
+    const { frameHost, posted, opened } = host()
+    for (const event of [
+      { origin, source: { name: 'another frame' }, data: { type: 'leitbild:view-open', view } },
+      { origin: 'https://elsewhere.test', source: frame, data: { type: 'leitbild:view-open', view } },
+      { origin, source: { name: 'another frame' }, data: { type: 'world:display-frame-ready' } },
+    ]) frameHost.receive(event)
+    expect([posted, opened]).toEqual([[], []])
+    const unloaded = createTagFrameHost({ origin, frame: () => null, post: () => { throw new Error('posted') }, open: () => { throw new Error('opened') } })
+    unloaded.receive({ origin, source: null, data: { type: 'world:display-frame-ready' } })
+  })
 })

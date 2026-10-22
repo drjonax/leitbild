@@ -1,4 +1,12 @@
-import { embeddedViewFragment, embeddedViewPath, type EmbeddedViewEnvelope } from '@leitbild/contracts'
+import {
+  embeddedViewFragment,
+  embeddedViewHostMessageSchema,
+  embeddedViewOpenMessageSchema,
+  embeddedViewPath,
+  type EmbeddedViewEnvelope,
+  type EmbeddedViewHostMessage,
+  type EmbeddedViewListing,
+} from '@leitbild/contracts'
 import type { ProcedureTag } from '../../core/model/index.ts'
 import type { ProcedureTagValidation, ProcedureTagValue } from './procedure-client.ts'
 
@@ -22,6 +30,33 @@ export const procedureTagDisplayPlan = (scopeId: string, tagId: string, validati
 
 export const procedureTagDisplaySource = (envelope: EmbeddedViewEnvelope): string =>
   `${embeddedViewPath(envelope)}${embeddedViewFragment(envelope)}`
+
+/**
+ * The tag dialog hosts its frame as the chat page hosts an answer's display:
+ * a frame that says it is ready hears that this page relays what it opens
+ * (leitbild:view-host), never a display window's presentation, so it shows no
+ * Pack controls; a view it asks to open goes to the Workspace's display
+ * window as given. Only this page's frame, on this origin, is heard.
+ */
+export const createTagFrameHost = (config: {
+  readonly origin: string
+  /** The frame's window; null before the frame loads. */
+  readonly frame: () => unknown
+  readonly post: (frame: unknown, message: EmbeddedViewHostMessage) => void
+  readonly open: (view: EmbeddedViewListing) => void
+}) => ({
+  receive: (event: { readonly origin: string; readonly source: unknown; readonly data: unknown }): void => {
+    const frame = config.frame()
+    if (frame === null || event.source !== frame || event.origin !== config.origin) return
+    const data = event.data
+    if (typeof data === 'object' && data !== null && (data as { readonly type?: unknown }).type === 'world:display-frame-ready') {
+      config.post(frame, embeddedViewHostMessageSchema.parse({ type: 'leitbild:view-host' }))
+      return
+    }
+    const opened = embeddedViewOpenMessageSchema.safeParse(data)
+    if (opened.success) config.open(opened.data.view)
+  },
+})
 
 /** How the tag is bound, in one line: the signal it reads, and every warning the binding or the reading carries. */
 export const procedureTagBindingLine = (

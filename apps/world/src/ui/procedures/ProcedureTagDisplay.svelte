@@ -1,12 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import type { EmbeddedViewEnvelope } from '@leitbild/contracts'
+  import type { EmbeddedViewEnvelope, EmbeddedViewListing } from '@leitbild/contracts'
   import type { ProcedureTag, SimulationRunId } from '../../core/model/index.ts'
   import type { PackProcedureContribution } from '../../core/packs/protocol.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import { activeWorkspaceId } from '../workspace-context.ts'
   import { readProcedureTagValue, type ProcedureTagValidation, type ProcedureTagValue } from './procedure-client.ts'
   import {
+    createTagFrameHost,
     procedureTagBindingLine,
     procedureTagDeclared,
     procedureTagDisplayPlan,
@@ -31,9 +32,11 @@
     readonly close: () => void
     /** Opens the shown display in the Workspace's display window, where one is offered. */
     readonly openInDisplayWindow?: (envelope: EmbeddedViewEnvelope) => void
+    /** Opens a view the display asks for (its pop-over's "Open in the display window") in that window, as given. */
+    readonly openView?: (view: EmbeddedViewListing) => void
   }
 
-  let { simulationRunId, plantId, unitLabel, tag, validation, provider, close, openInDisplayWindow }: Props = $props()
+  let { simulationRunId, plantId, unitLabel, tag, validation, provider, close, openInDisplayWindow, openView }: Props = $props()
 
   // How often the header reads the tag while the dialog is open.
   const READ_EVERY_MS = 2_000
@@ -55,6 +58,14 @@
 
   let dialog = $state<HTMLElement | null>(null)
   let frameBox = $state<HTMLElement | null>(null)
+  let frame = $state<HTMLIFrameElement | null>(null)
+  // The frame learns that this page relays what it opens; what it asks to open goes to the display window.
+  const frameHost = createTagFrameHost({
+    origin: location.origin,
+    frame: () => frame?.contentWindow ?? null,
+    post: (target, message) => { (target as Window).postMessage(message, location.origin) },
+    open: view => { openView?.(view) },
+  })
   let disposed = false
 
   const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
@@ -103,9 +114,12 @@
     dialog?.focus()
     void read()
     const timer = setInterval(() => { void read() }, READ_EVERY_MS)
+    const receive = (event: MessageEvent): void => frameHost.receive(event)
+    window.addEventListener('message', receive)
     return () => {
       disposed = true
       clearInterval(timer)
+      window.removeEventListener('message', receive)
       if (opener?.isConnected) opener.focus()
     }
   })
@@ -174,8 +188,9 @@
       {:else if plan.kind === 'display'}
         <div class="procedure-tag-display-frame" bind:this={frameBox}>
           {#if drawn?.phase.kind === 'shown'}
-            <!-- Read-only: no display window presents it, so it neither operates the Plant nor opens displays elsewhere. -->
+            <!-- No display window presents it, so it shows no Pack controls; this dialog relays what it opens (its pop-over's "Open in the display window") to the Workspace's display window. -->
             <iframe
+              bind:this={frame}
               src={drawn.phase.source}
               title={drawn.phase.envelope.title}
               allow="camera 'none'; microphone 'none'; geolocation 'none'; display-capture 'none'"

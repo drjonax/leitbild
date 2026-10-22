@@ -1854,6 +1854,7 @@
             provider={currentProvider}
             close={closeTag}
             openInDisplayWindow={openDisplay === undefined ? undefined : (envelope) => { if (openTagId) openDisplay(tagDisplayListing(openTagId, envelope)) }}
+            openView={openDisplay}
           />
         {/key}
       {/if}
