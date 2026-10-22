@@ -168,7 +168,11 @@ describe('a vignette answer card with real Modules', () => {
     const firstCard = JSON.parse(requests[1]!.messages.at(-1)!.content) as { results: Array<{ data: { card: string[] } }> }
     const firstKeys = firstCard.results[0]!.data.card.slice(1).filter(text => /^k\d+ · /.test(text)).length
     expect(firstKeys).toBeGreaterThan(0)
-    expect(line).toStartWith(`k${firstKeys + 1} · Unit A-21 · `)
+    // The second card's first line takes the next key; its speed line is one of its lines (the unit's own state may lead).
+    const secondCard = JSON.parse(requests[2]!.messages.at(-1)!.content) as { results: Array<{ data: { card: string[] } }> }
+    expect(secondCard.results[0]!.data.card.slice(1).find(text => /^k\d+ · /.test(text))).toStartWith(`k${firstKeys + 1} · Unit A-21 · `)
+    expect(line).toMatch(/^k\d+ · Unit A-21 · /)
+    expect(Number(/^k(\d+)/.exec(line)![1])).toBeGreaterThan(firstKeys)
     // One correction for the contradicted number, then the answer as the line reads it.
     expect(requests).toHaveLength(4)
     const key = line.split(' · ')[0]!
