@@ -152,7 +152,8 @@ describe('OpenBridge tokens in the embed', () => {
   })
 
   test('every OpenBridge internal the register lists still exists in the installed package', () => {
-    expect(internals.length).toBeGreaterThan(10)
+    // Since the old renderer went (D3): the execute button's parts, the status indicator's type and the embed's family.
+    expect(internals.length).toBeGreaterThan(5)
     expect(missingInternals(internals, openBridge)).toEqual([])
   })
 

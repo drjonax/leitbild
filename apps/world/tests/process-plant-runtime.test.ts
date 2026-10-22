@@ -162,18 +162,18 @@ const displayAlarmIdsFor = (input: {
       performance: createProcessPlantRuntimePerformance(),
     },
   ]])
-  // What a live display shows: the active alarms and trips one sample reads.
+  // What a live display shows: the active alarms and trips alarms.status reads.
   const response = answerProcessPlantQuery({
     request: {
-      capabilityId: 'world.process-plant.display.sample',
-      input: { plantId: input.system.id, paths: ['core.powerMw'], alarms: true },
+      capabilityId: 'world.process-plant.alarms.status',
+      input: { plantId: input.system.id },
     },
     plants,
     objects: new Map(),
     simulationTime: '2026-01-01T10:00:00.000Z' as IsoTimestamp,
     recordedSeriesIds: new Set(),
-  }) as { readonly alarms: ReadonlyArray<{ readonly id: string }> }
-  return response.alarms.map(alarm => alarm.id).sort()
+  }) as { readonly alarms: ReadonlyArray<{ readonly id: string }>; readonly trips: ReadonlyArray<{ readonly id: string }> }
+  return [...response.alarms, ...response.trips].map(alarm => alarm.id).sort()
 }
 
 const fluidVariable = (input: {

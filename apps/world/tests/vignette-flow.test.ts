@@ -81,7 +81,7 @@ describe('flow layout', () => {
     }
   })
 
-  test('T01\'s reference mimics draw the same ids out of the topology; the relief path waits for the pressurizer\'s own valves', () => {
+  test('T01\'s reference mimics draw the same ids out of the topology, the relief path with the pressurizer\'s own valves', () => {
     const record = JSON.parse(readFileSync(join(import.meta.dir, 'fixtures/display-characterization/old-path.json'), 'utf8')) as { readonly states: { readonly steady: { readonly elementActions: ReadonlyArray<{ readonly drawn: ReadonlyArray<string> }> } } }
     const recorded = record.states.steady.elementActions.map(entry => entry.drawn.map(drawn => drawn.split(':')[0]!).sort())
     const requests: ReadonlyArray<TopologyRequest> = [
@@ -95,7 +95,7 @@ describe('flow layout', () => {
       expect(entry.layout.crossings).toBeLessThanOrEqual(4)
       expect(overlapping(entry.layout)).toEqual([])
     }
-    expect(drawn.map(entry => drawnIds(entry.layout))).toEqual(recorded.map((ids, at) => (at === 1 ? ids.filter(id => !id.startsWith('pressurizer.')) : ids)))
+    expect(drawn.map(entry => drawnIds(entry.layout))).toEqual(recorded)
   })
 })
 

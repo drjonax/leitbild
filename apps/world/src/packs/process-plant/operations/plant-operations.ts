@@ -1,12 +1,10 @@
 import { z } from 'zod'
-import { processVariableValueSchema, variablePathSchema, type VariablePath } from '../graph/index.ts'
-import type { ProcessPlantRamp } from '../runtime/index.ts'
+import { processVariableValueSchema, variablePathSchema } from '../graph/index.ts'
 import {
   expireProposals,
   operationOriginSchema,
   processPlantProposalSchema,
   supersedeByCommand,
-  type ProcessPlantProposal,
   type ProcessPlantProposalBook,
   type ProposalClock,
   type ProposalTransition,
@@ -15,8 +13,8 @@ import {
 // What people and AI agents did to a Plant, and what they propose: the
 // commands they issued that it accepted (who, when, what it wrote, and the
 // proposal an approval executed), and its proposal book. This is the Pack's
-// runtime-private index for displays (badges, the operations log view, the
-// popover's PROPOSAL section); the Run's durable events stay the record. It
+// runtime-private index for displays (the operations log view, the element
+// pop-over's PROPOSAL section); the Run's durable events stay the record. It
 // persists with the Plant's runtime state as an optional field, written only
 // while it holds something (plan-final O-D4): a state without it has none.
 
@@ -121,22 +119,3 @@ export const createPlantOperations = (restored?: PlantOperationsState): PlantOpe
       : { log: [...log], proposals: [...book.proposals], ...(resets.length === 0 ? {} : { resets: [...resets] }) },
   }
 }
-
-/** What a display that draws these paths shows of operation: their logged commands, running ramps and proposals, and the resets of actuations that wrote them. */
-export interface OperationsSample {
-  readonly log: ReadonlyArray<OperationRecord>
-  readonly ramps: ReadonlyArray<ProcessPlantRamp>
-  readonly proposals: ReadonlyArray<ProcessPlantProposal>
-  readonly resets: ReadonlyArray<ResetRecord>
-}
-
-export const operationsSampleFor = (
-  operations: PlantOperations,
-  ramps: ReadonlyArray<ProcessPlantRamp>,
-  paths: ReadonlySet<VariablePath>,
-): OperationsSample => ({
-  log: operations.log().filter(record => paths.has(record.path)),
-  ramps: ramps.filter(ramp => paths.has(ramp.path)),
-  proposals: operations.book().proposals.filter(proposal => proposal.write !== undefined ? paths.has(proposal.write.path) : proposal.reset!.holds.some(path => paths.has(path))),
-  resets: operations.resets().filter(record => record.holds.some(path => paths.has(path))),
-})

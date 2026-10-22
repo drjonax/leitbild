@@ -7,9 +7,11 @@ import type { ActorId, CommandResult, IsoTimestamp } from '../src/core/model/ind
 import type { Actor } from '../src/core/simulation-runs/actors.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
-import { citedMargin, operationNow, proposalCard, type ProposalCard } from '../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
+import { citedMargin } from '../src/packs/process-plant/ui/displays/operation/cited-reading.ts'
+import { operationNow, proposalCard, type ProposalCard } from '../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
 import { testScenarioDefinitions } from './fixtures/scenarios.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
+import { processPlantUnitPackDataSchema } from '../src/packs/process-plant/model.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -87,6 +89,8 @@ const observe = async (): Promise<Facts> => {
     const runTo = (offsetMs: number) => run.runMaximumPace(new Date(start + offsetMs).toISOString() as IsoTimestamp, { shouldStop: () => false })
     const invoke = async (actor: Actor, capabilityId: string, input: Record<string, unknown>): Promise<any> => (await run.invokeCapability(actor, { capabilityId, input: { plantId, ...input } })).result
     const outcome = (result: CommandResult) => result.ok ? 'accepted' : result.reason
+    // The unit's operating mode, as its object's projection names it.
+    const modeNow = (): string | null => processPlantUnitPackDataSchema.parse(run.snapshot().objects.find(object => object.id === plantId)!.packData).projection?.modeLabel ?? null
     const propose = (tagId: string, value: number | boolean, reason: string, evidence: string) =>
       invoke(agent, 'world.process-plant.control.propose', { tagId, value, reason, evidence: [evidence] }) as Promise<CommandResult & { readonly commandId: string }>
     const decide = async (actor: Actor, proposalId: string, decision: string, reason?: string) =>
@@ -159,11 +163,11 @@ const observe = async (): Promise<Facts> => {
 
     // 10:05:06: a proposal at power, then a person trips the turbine and the unit leaves power operation.
     const isolate = (await propose('MSIV-A', 0, 'Isolate steam generator A', 'SG-A-LVL-NR')).commandId
-    const modeBefore = (await invoke(operator, 'world.process-plant.display.sample', { paths: ['mainSteamIsolationValveA.positionFraction'] })).mode
+    const modeBefore = modeNow()
     const beforeTrip = await cards()
     const trip = outcome(await invoke(operator, 'world.process-plant.action.invoke', { actionId: 'turbine-trip', parameters: {} }))
     await runTo(5 * MINUTE + 16_000)
-    const modeAfter = (await invoke(operator, 'world.process-plant.display.sample', { paths: ['mainSteamIsolationValveA.positionFraction'] })).mode
+    const modeAfter = modeNow()
     const afterTrip = await cards()
 
     // An alarm the trip raised: the AI agent may not acknowledge it on this propose-only Plant; a person may.
@@ -178,7 +182,7 @@ const observe = async (): Promise<Facts> => {
     // A person approves the proposal made before the trip: the stored write, checked against the Plant now.
     const approval = await decide(operator, isolate, 'approve')
     const approved = await cards()
-    const operations = (await invoke(operator, 'world.process-plant.display.sample', { paths: ['mainSteamIsolationValveA.positionFraction'], operations: true })).operations
+    const operations = (await invoke(operator, 'world.process-plant.signals.read', { signals: [{ path: 'mainSteamIsolationValveA.positionFraction' }], operations: true })).operations
 
     await registry.shutdown()
     const files = await filesUnder(dataDir)
@@ -288,7 +292,7 @@ describe('proposal characterization on the old path', () => {
   })
 
   test('a mode change voids nothing: the proposal stands with its consequence as proposed, and approval checks the Plant now', () => {
-    expect([facts.modeBefore.id, facts.trip, facts.modeAfter.id]).toEqual(['powerOperation', 'accepted', 'hotStandby'])
+    expect([facts.modeBefore, facts.trip, facts.modeAfter]).toEqual(['Power operation', 'accepted', 'Hot standby'])
     expect(cardFacts(facts.beforeTrip.isolate)).toMatchObject({ ...pending({ at: '10:07:06', inMs: 120_000 }, 'SHUT MSIV-A MSIV A'), consequence: MSIV_CONSEQUENCE })
     expect(cardFacts(facts.afterTrip.isolate)).toMatchObject({
       ...pending({ at: '10:07:06', inMs: 110_000 }, 'SHUT MSIV-A MSIV A'), consequence: MSIV_CONSEQUENCE, checked: { permitted: true, text: 'I&C allows this command now' },

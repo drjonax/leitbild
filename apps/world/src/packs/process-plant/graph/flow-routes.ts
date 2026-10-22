@@ -72,8 +72,3 @@ export const downstreamLinks = (graph: CompiledPlantGraph, from: ReadonlyArray<n
 /** Links entering the components, followed upstream; at most `depth` links when given. */
 export const upstreamLinks = (graph: CompiledPlantGraph, to: ReadonlyArray<number>, carriers: ReadonlySet<string>, depth?: number): ReadonlySet<number> =>
   reach(to.flatMap(index => linksOf(graph, graph.incomingLinksByComponent[index], carriers)), link => previousLinks(graph, link, carriers), depth)
-
-/** The carriers a component's links use on one side (what it receives, or what it delivers). */
-export const carriersAt = (graph: CompiledPlantGraph, componentIndex: number, side: 'in' | 'out'): ReadonlyArray<string> =>
-  [...new Set((side === 'in' ? graph.incomingLinksByComponent[componentIndex] : graph.outgoingLinksByComponent[componentIndex])!
-    .map(index => linkCarrier(graph.links[index]!)))].sort()

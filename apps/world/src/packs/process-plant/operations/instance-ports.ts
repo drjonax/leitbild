@@ -1,6 +1,5 @@
 import type { CommandOrigin } from '../../../simulation/protocol.ts'
-import type { CompiledPlantGraph, ProcessSignalTagId, ProcessVariableValue, VariablePath } from '../graph/index.ts'
-import { PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS, type EquipmentItem } from '../equipment/items.ts'
+import type { ProcessSignalTagId, ProcessVariableValue, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { evaluateProcessPlantIcCondition, processPlantOperatingMode } from '../runtime/index.ts'
 import { actuationResets, resetRefusal, type ActuationReset, type ResetContext } from './actuation-reset.ts'
@@ -155,30 +154,8 @@ export interface ListedItem {
   readonly label: string
   /** Where a valve stands now: the value its popover shows (ItemControls.position). */
   readonly position?: { readonly path: VariablePath; readonly value: number }
-  /** The component whose detail draws the item around it: the item itself, or the one that bundles it (a detail display's state names it). */
-  readonly components: ReadonlyArray<string>
-  /** A bundled device: the components at the far ends of the line it sits on (lineEnds), for a detail that draws it on its own symbol. */
-  readonly line?: ReadonlyArray<string>
   readonly offered: ReadonlyArray<ListedControl>
   readonly withheld: ReadonlyArray<WithheldControl>
-}
-
-/**
- * A device its host bundles (a pressurizer's relief or block valve): the
- * components at the far ends of the line it sits on. A detail around its host
- * alone may draw the device inside the host's symbol (HMI review of run 26c,
- * g2); one around the host and these draws the line and the device on it.
- */
-const lineEnds = (graph: CompiledPlantGraph, item: EquipmentItem): { readonly line?: ReadonlyArray<string> } => {
-  if (item.kind === 'component') return {}
-  const port = graph.components[item.component]!.semantics.embedded.find(device => device.id === item.device)?.port
-  if (port === undefined) return {}
-  const ends = [
-    ...(graph.outgoingLinksByComponent[item.component] ?? []).map(index => graph.links[index]!).filter(link => link.fromPortName === port).map(link => link.toComponentIndex),
-    ...(graph.incomingLinksByComponent[item.component] ?? []).map(index => graph.links[index]!).filter(link => link.toPortName === port).map(link => link.fromComponentIndex),
-  ]
-  const line = [...new Set(ends.filter(index => index !== item.component).map(index => String(graph.components[index]!.id)))].slice(0, PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS - 1)
-  return line.length === 0 ? {} : { line }
 }
 
 /** The Plant's drawn items with their controls where they stand now; only the named items where ids are given, in the derivation's order. */
@@ -202,8 +179,6 @@ export const listedControlsFor = (instance: ProcessPlantRuntimeInstance, itemIds
       id: entry.id,
       label: entry.label,
       ...(entry.position === undefined ? {} : { position: { path: entry.position, value: numberAt(entry.position) } }),
-      components: [String(instance.plant.graph.components[entry.item.component]!.id)],
-      ...lineEnds(instance.plant.graph, entry.item),
       offered: entry.offered.map(control => {
         const travel = control.options.flatMap(option => option.travelMs === null ? [] : [option.travelMs])
         const demand = control.demand === undefined ? undefined : numberAt(control.path)

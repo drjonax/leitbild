@@ -48,10 +48,13 @@ const send = async (connection: PackRuntimeConnection, kind: string, payload: un
     payload,
     issuedAt: '2026-01-01T09:00:00.000Z' as IsoTimestamp,
   } satisfies CommandEnvelope, origin === undefined ? {} : { origin })
-const sample = async (connection: PackRuntimeConnection, paths: ReadonlyArray<string>) =>
-  await connection.invokeQuery({ capabilityId: 'world.process-plant.display.sample', input: { plantId, paths, operations: true } }) as {
-    readonly operations: { readonly log: ReadonlyArray<OperationRecord>; readonly ramps: ReadonlyArray<{ readonly path: string; readonly target: number }>; readonly proposals: ReadonlyArray<unknown>; readonly resets: ReadonlyArray<unknown> }
+/** The operations signals.read serves with the paths a display reads: the commands issued on them and the resets of actuations that held them. */
+const sample = async (connection: PackRuntimeConnection, paths: ReadonlyArray<string>) => {
+  const read = await connection.invokeQuery({ capabilityId: 'world.process-plant.signals.read', input: { plantId, signals: paths.map(path => ({ path })), operations: true } }) as {
+    readonly operations: { readonly log: ReadonlyArray<OperationRecord>; readonly resets: ReadonlyArray<unknown> }
   }
+  return { operations: { log: read.operations.log, resets: read.operations.resets } }
+}
 
 describe('the operations record', () => {
   test('logs people\'s and AI agents\' accepted commands, newest last, keeping the last 64', () => {
@@ -81,7 +84,7 @@ describe('the operations record', () => {
 })
 
 describe('on a Plant\'s Pack connection', () => {
-  test('a person\'s write and an operator ramp are served to displays drawing those paths, and persist and restore', async () => {
+  test('a person\'s write and an operator ramp are served with the paths they wrote, and persist and restore', async () => {
     const store = memoryStore()
     const clock = pausedClock()
     const first = await createLocalProcessPlantPackRuntimeAdapter().connect({ simulationRunId, scenario, runtimeStateStore: store, runClock: clock })
@@ -97,9 +100,8 @@ describe('on a Plant\'s Pack connection', () => {
         ['chargingPumpB.running', true, 'person', 'write'],
         ['rcpA.speedFraction', 0.95, 'person', 'ramp'],
       ])
-      expect(served.operations.ramps.map(ramp => [ramp.path, ramp.target])).toEqual([['rcpA.speedFraction', 0.95]])
-      // A display that does not draw a path is not served its operations.
-      expect((await sample(first, ['pressurizer.pressureMPa'])).operations).toEqual({ log: [], ramps: [], proposals: [], resets: [] })
+      // A read of other paths is not served their operations.
+      expect((await sample(first, ['pressurizer.pressureMPa'])).operations).toEqual({ log: [], resets: [] })
       await first.checkpoint!()
     } finally {
       await first.close()
@@ -126,7 +128,7 @@ describe('on a Plant\'s Pack connection', () => {
     expect('operations' in saved.plants[0]!).toBe(false)
     const restored = await createLocalProcessPlantPackRuntimeAdapter().connect({ simulationRunId, scenario, runtimeStateStore: store, runClock: pausedClock() })
     try {
-      expect((await sample(restored, ['chargingPumpB.running'])).operations).toEqual({ log: [], ramps: [], proposals: [], resets: [] })
+      expect((await sample(restored, ['chargingPumpB.running'])).operations).toEqual({ log: [], resets: [] })
     } finally {
       await restored.close()
     }

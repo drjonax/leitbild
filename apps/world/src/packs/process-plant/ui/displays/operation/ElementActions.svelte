@@ -8,7 +8,8 @@
   import ControlSection from './ControlSection.svelte'
   import ProposalSection from './ProposalSection.svelte'
   import { operationClient, type OperationOutcome, type PlantRead } from './operation-client.ts'
-  import { citedMargin, itemControlView, operationNow, proposalCard, ratePerMinute, shownProposal, type CitedReading, type ListedItem, type ListedReset, type OperationNow } from './operation-presenter.ts'
+  import { citedMargin, ratePerMinute, type CitedReading } from './cited-reading.ts'
+  import { itemControlView, operationNow, proposalCard, shownProposal, type ListedItem, type ListedReset, type OperationNow } from './operation-presenter.ts'
 
   // The Plant's actions on one element, in a display's element pop-over (the
   // embed contribution ui/embed.ts): the item of equipment the element is (a

@@ -14,7 +14,7 @@ import {
   walHeadroomBytes,
 } from '../src/features/historian/policy.ts'
 import { createRunHistorian, EVICTION_PASS, evictionCount, type RunHistorian } from '../src/features/historian/store.ts'
-import { HOLD_GAP_MS } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { HOLD_GAP_MS } from '../src/packs/process-plant/ui/plant-card-sparkline.ts'
 
 const t0 = Date.parse('2026-01-01T10:00:00.000Z')
 const iso = (ms: number): IsoTimestamp => new Date(ms).toISOString() as IsoTimestamp

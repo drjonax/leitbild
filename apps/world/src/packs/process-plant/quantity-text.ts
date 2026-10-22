@@ -87,15 +87,6 @@ interface NumericSpan {
 /** A reading's resolution is this share of the scale it reads over (readingResolution). */
 export const RESOLUTION_FRACTION = 0.001
 
-/**
- * A reading as a display shows it: a magnitude below the signal's resolution
- * is no reading at all, so it shows as 0 rather than as the tail of a decay
- * or solver noise ("0.0000098 MW" for a tripped generator, "−3e-12 kg/s" for
- * no leak).
- */
-export const shownReading = (value: number, resolution: number | null): number =>
-  resolution !== null && Math.abs(value) < resolution ? 0 : value
-
 /** Precision follows magnitude, never finer than the resolution (in display units) a reading is shown in. */
 export const valueDigits = (value: number, resolution: number | null = null): number => {
   const magnitude = Math.abs(value)
@@ -120,9 +111,6 @@ export const formatQuantity = (value: number, unit: string, resolution: number |
   return `${formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))}${label === '' ? '' : ` ${label}`}`
 }
 
-/** The decimals a number written as declared carries, as a limit's label or a span's end writes it: 14.8 → 1, 20 → 0. */
-export const writtenDecimals = (value: number): number => (String(Number(value.toPrecision(12))).split('.')[1] ?? '').length
-
 /** Where a reading sits at an end of the span its instrument declares: its indication says only that the quantity is there or beyond. */
 export const offScale = (value: number, span: NumericSpan | undefined): 'below' | 'above' | null =>
   span === undefined ? null : value <= span.min ? 'below' : value >= span.max ? 'above' : null
@@ -143,21 +131,13 @@ export const readingValueText = (value: number, unit: string, resolution: number
   return formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))
 }
 
-/** How many decimals a reading's value cell writes it with (readingValueText); null where it writes powers of ten. */
-export const readingDecimals = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined): number | null => {
-  const end = offScale(value, span)
-  if (end !== null) return writtenDecimals(displayValue(end === 'below' ? span!.min : span!.max, unit))
-  if (logarithmicSpan(span)) return null
-  return valueDigits(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))
-}
-
 /** A reading as its value cell shows it: "<0 %" at the bottom of its span, ">100 %" at the top, else the value. */
 export const readingText = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined): string => {
   const label = unitLabel(unit)
   return `${readingValueText(value, unit, resolution, span)}${label === '' ? '' : ` ${label}`}`
 }
 
-/** A valve reads SHUT below and OPEN above these fractions of its travel, between them its opening, as its drawing words it (mimic/evaluate.ts). */
+/** A valve reads SHUT below and OPEN above these fractions of its travel, between them its opening, as its state reads it (observation/derived.ts). */
 export const POSITION_SHUT_BELOW = 0.05
 export const POSITION_OPEN_ABOVE = 0.95
 

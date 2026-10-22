@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { topologyGraphSchema, type TopologyGraph } from '../src/core/observation/topology.ts'
-import { drawingStops, scopeTopology, withLeavesStopped, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
+import { drawingStops, scopeTopology, type TopologyRequest } from '../src/features/displays/topology/scope.ts'
 
 // World's generic topology scope on a graph no pack draws (architecture A5):
 // a small water works with two laned branches, a two-circuit heat exchanger
-// and a powered pump. The plant's equivalence over every recorded intent is
-// T02's (diagram-parity, mimic-row-identity); this holds the rules alone.
+// and a powered pump.
 
 type Port = { readonly id: string; readonly media: ReadonlyArray<string>; readonly direction: 'in' | 'out' | 'both'; readonly circuit?: string }
 const node = (id: string, ports: ReadonlyArray<Port>, group?: string) => ({
@@ -78,10 +77,7 @@ describe('generic topology scope', () => {
     expect(scopeTopology(graph, { from: ['pump'] })).toEqual({ ok: true, scoped: expect.objectContaining({ media: ['water'] }) })
   })
 
-  test('a leaf stops where it joins; a stop over alike ports of one circuit names every far end', () => {
-    const power = drawn({ from: ['bus'], media: ['power'] })
-    expect(withLeavesStopped(power)).toMatchObject({ nodes: ['bus'], edges: [], stubs: [{ node: 'bus', port: 'feed', direction: 'out', edges: ['bus-pump'], others: [{ node: 'pump', port: 'supply' }] }] })
-    expect(withLeavesStopped(drawn({ from: ['pump'] }))).toBeNull()
+  test('a stop over alike ports of one circuit names every far end', () => {
     expect(drawingStops(graph, ['header'], new Set(['pump-header']), new Set(['water']))).toEqual([
       { node: 'header', port: 'east', direction: 'out', edges: ['header-east', 'header-west'], others: [{ node: 'valveEast', port: 'in' }, { node: 'valveWest', port: 'in' }] },
     ])

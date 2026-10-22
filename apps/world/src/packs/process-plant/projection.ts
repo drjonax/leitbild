@@ -286,7 +286,7 @@ export const projectedProcessPlantUnit = (config: {
   const headline = rail.headline.map(plan => readField(plant, plan))
   const safetyFunctions = evaluateSafetyFunctions(plant.plant, plant.runtime)
   const worst = worstSafetyFunctionOf(safetyFunctions)
-  // The operating mode the unit overview names (composed-display-query.ts).
+  // The operating mode, as the unit's mode observable reads it (observation/derived.ts).
   const mode = processPlantOperatingMode({ system: plant.plant, runtime: plant.runtime, modes: plant.plant.automation.operatingModes })
   const projection: ProcessPlantUnitProjection = {
     schemaVersion: 1,

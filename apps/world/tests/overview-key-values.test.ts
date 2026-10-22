@@ -12,7 +12,6 @@ import {
   type ProcessVariableLimits,
 } from '../src/packs/process-plant/index.ts'
 import { equipmentKeyValues, isDemand, overviewKeyValues, readsAsMeasured, type PlantNow } from '../src/packs/process-plant/ic/key-values.ts'
-import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -335,28 +334,6 @@ describe('what equipment leads with after its trip, and beside its program', () 
     expect(leads[leads.indexOf('core.referenceAverageTemperatureC' as never) - 1]).toBe('vessel.meanPrimaryCoolantTemperatureC' as never)
     const pressurizer = equipmentKeyValues(plant, [plant.graph.componentIndexById.get('pressurizer' as never)!], atPower)
     expect(pressurizer[pressurizer.indexOf('pressurizer.levelProgramPercent' as never) - 1]).toBe('pressurizer.levelPercent' as never)
-  })
-})
-
-describe('the annunciator systems an overview summarises its alarms by', () => {
-  const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:annunciators', loopCount: 4 }))
-
-  test('are the systems the I&C config declares, in its order, each with the rules that name it', () => {
-    const result = annunciatorSystems(plant, 134)
-    if (!result.ok) throw new Error(result.issues.join('; '))
-    const systems = result.systems
-    expect(systems.map(system => system.name)).toEqual(['Reactor protection', 'Reactor coolant system', 'Steam generators', 'Safety injection', 'Containment', 'Electrical', 'Feedwater', 'Balance of plant', 'Main steam'])
-    // A name too wide for a tile at its least width shows by its declared short label, never cut.
-    expect(systems.map(system => system.label)).toEqual(['Reactor protection', 'RCS', 'Steam generators', 'Safety injection', 'Containment', 'Electrical', 'Feedwater', 'Balance of plant', 'Main steam'])
-    // Every alarm and trip of the reference Plant is annunciated on exactly one system.
-    const annunciated = systems.flatMap(system => system.ruleIds)
-    expect(new Set(annunciated).size).toBe(annunciated.length)
-    expect(annunciated.length).toBe(plant.automation.rules.filter(rule => rule.enabled && rule.effects.some(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter')).length)
-  })
-
-  test('a declared name that fits no tile, with no short label that does, is refused', () => {
-    const long = { ...plant, automation: { ...plant.automation, annunciatorSystems: [{ id: 'turbineGeneratorAndAuxiliaries', label: 'Turbine generator and auxiliaries' }] } }
-    expect(annunciatorSystems(long, 134)).toEqual({ ok: false, issues: ['annunciator system turbineGeneratorAndAuxiliaries: neither "Turbine generator and auxiliaries" nor its short label (none declared) fits a tile 118 px wide; declare a short label that does'] })
   })
 })
 

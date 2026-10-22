@@ -2,7 +2,6 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { defineConfig } from 'vite'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { openBridgeMimicFont } from './src/ui/embed/composed-display/mimic/mimic-font.ts'
 import { openBridgeLicenceNotice, type OpenBridgePackage } from './src/ui/embed/openbridge-notice.ts'
 
 const packageJson = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
@@ -18,7 +17,7 @@ const openBridgePackages = ['@oicl/openbridge-webcomponents', '@oicl/connector-d
 /** World's UI build, its OpenBridge notice naming `packages`; the build is the installed packages' (the default export). */
 export const worldUiConfig = (packages: ReadonlyArray<OpenBridgePackage>) => defineConfig({
   root: 'src/ui',
-  plugins: [svelte(), openBridgeMimicFont(), openBridgeLicenceNotice(packages)],
+  plugins: [svelte(), openBridgeLicenceNotice(packages)],
   define: {
     __LEITBILD_VERSION__: JSON.stringify(packageJson.version),
   },

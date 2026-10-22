@@ -91,9 +91,9 @@ describe('an AI agent proposes, a person approves', () => {
       // The block valve strokes shut within its travel and margin; the log names the approval.
       const startedAt = Date.parse(run.snapshot().clock!.currentTime)
       await run.runMaximumPace(new Date(startedAt + 13_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
-      const sample = await query<{ readonly values: ReadonlyArray<{ readonly path: string; readonly value: number }>; readonly operations: { readonly log: ReadonlyArray<{ readonly kind: string; readonly proposalId?: string; readonly origin: string; readonly actorId: string }> } }>(
-        run, operator, 'world.process-plant.display.sample', { plantId, paths: ['pressurizer.blockValveEffectivePositionFraction', 'pressurizer.blockValvePositionFraction'], operations: true })
-      expect(sample.values[0]!.value).toBeLessThanOrEqual(0.05)
+      const sample = await query<{ readonly signals: ReadonlyArray<{ readonly variable: { readonly value: number } }>; readonly operations: { readonly log: ReadonlyArray<{ readonly kind: string; readonly proposalId?: string; readonly origin: string; readonly actorId: string }> } }>(
+        run, operator, 'world.process-plant.signals.read', { plantId, signals: [{ path: 'pressurizer.blockValveEffectivePositionFraction' }, { path: 'pressurizer.blockValvePositionFraction' }], operations: true })
+      expect(sample.signals[0]!.variable.value).toBeLessThanOrEqual(0.05)
       expect(sample.operations.log).toEqual([expect.objectContaining({ kind: 'approval', proposalId: proposed.commandId, origin: 'person', actorId: operator.id })])
     })
   })
@@ -114,8 +114,6 @@ describe('an AI agent proposes, a person approves', () => {
     await withRun(async (run, plantId) => {
       const listed = await query<{ readonly items: ReadonlyArray<ListedItem> }>(run, agent, 'world.process-plant.controls.list', { plantId, items: ['pressurizer.blockValve', 'core'] })
       expect(listed.items.map(item => item.id)).toEqual(['core', 'pressurizer.blockValve'])
-      // Each names the component its own detail draws around: a bundled device's, the one that bundles it.
-      expect(listed.items.map(item => item.components)).toEqual([['core'], ['pressurizer']])
       const [block] = listed.items.find(item => item.id === 'pressurizer.blockValve')!.offered
       expect(block).toMatchObject({ control: { tagId: 'MOV-8000A', form: 'twoState' }, travelMs: 10_000 })
       expect(block!.standing.length).toBe(block!.control.options.length)
@@ -192,7 +190,7 @@ describe('a throttle under a standing actuation', () => {
       expect(throttled.throttledUnder!.length).toBeGreaterThan(0)
       expect(throttled.throttledUnder!.every(rule => rule.action === 'AFW START' && rule.label !== rule.ruleId)).toBe(true)
       const sample = await query<{ readonly operations: { readonly log: ReadonlyArray<{ readonly kind: string; readonly throttledUnder?: ReadonlyArray<{ readonly ruleId: string; readonly label: string }> }> } }>(
-        run, operator, 'world.process-plant.display.sample', { plantId, paths: [throttled.control.path, throttled.control.state!], operations: true })
+        run, operator, 'world.process-plant.signals.read', { plantId, signals: [{ path: throttled.control.path }, { path: throttled.control.state! }], operations: true })
       expect(sample.operations.log).toEqual([expect.objectContaining({ kind: 'approval', throttledUnder: throttled.throttledUnder })])
       // It holds: nothing rewrites the demand after the actuation's edge.
       await run.runMaximumPace(new Date(approvedAt + 13_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
@@ -246,7 +244,7 @@ describe('an actuation reset', () => {
       const approved = await command(run, operator, 'world.process-plant.control.decide', { plantId, proposalId: proposed.commandId, decision: 'approve' })
       expect(approved.ok).toBe(true)
       expect((await resets()).some(reset => reset.ruleId === 'reactor-manual-trip')).toBe(false)
-      const sample = await query<{ readonly operations: { readonly resets: ReadonlyArray<unknown> } }>(run, operator, 'world.process-plant.display.sample', { plantId, paths: [manual.holds[0]!], operations: true })
+      const sample = await query<{ readonly operations: { readonly resets: ReadonlyArray<unknown> } }>(run, operator, 'world.process-plant.signals.read', { plantId, signals: [{ path: manual.holds[0]! }], operations: true })
       expect(sample.operations.resets).toEqual([expect.objectContaining({ kind: 'reset', ruleId: 'reactor-manual-trip', origin: 'person', actorId: operator.id, proposalId: proposed.commandId, commandId: approved.commandId })])
     })
   })

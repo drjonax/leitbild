@@ -9,7 +9,7 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { notMeaningfulNow } from '../src/packs/process-plant/ic/key-values.ts'
-import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
+import { aspectStateWords } from '../src/packs/process-plant/operations/controls.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -67,7 +67,8 @@ describe('turbine-generator signals', () => {
   test('publish the load demand, the generator breaker in on-line words and grid availability, all tagged', () => {
     for (const tagId of ['TURB-LOAD', 'GEN-BKR', 'GRID-AVAIL', 'GRID-HZ', 'TURB-IMP-LOAD', 'TURB-SPEED']) expect(binding(tagId).published).toBe(true)
     expect(String(binding('GEN-BKR').path)).toBe('turbine.outputBreakerClosed')
-    expect(stateTexts(plant.graph, binding('GEN-BKR'))).toEqual({ on: 'ON LINE · Turbine', off: 'OFF LINE · Turbine' })
+    const turbine = plant.graph.components.find(component => String(component.id) === 'turbine')!
+    expect(aspectStateWords(plant.graph, turbine.semantics.aspects.find(aspect => aspect.state?.path === binding('GEN-BKR').path)!, turbine.semantics.function)).toEqual({ on: 'ON LINE', off: 'OFF LINE' })
   })
 
   test('grid frequency reads within its 49 to 51 Hz normal band and only while the grid is energized, by the same path the RfG relays read', () => {

@@ -301,7 +301,7 @@ Action: Test-only handover.
     expect((await read({ ...identity, mode: 'full', componentId: 'core' })).status).toBe(400)
   })
 
-  test('rejects unknown display selectors as domain errors and accepts discovered selectors after recovery', async () => {
+  test('rejects an unknown Plant selector as a domain error and accepts a discovered one after recovery', async () => {
     const registry = await createRegistry()
     const workspaceId = newWorkspaceId()
     await provision(registry, workspaceId)
@@ -313,16 +313,15 @@ Action: Test-only handover.
         body: JSON.stringify({ workspaceId, capabilityId, resource: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: run.id }, input, access }),
       })
     const plantId = 'plant:halden-a1'
-    // The unit overview is generated from the Plant, so the only selector is the Plant itself.
-    const guessedPlant = await read('world.process-plant.display.overview', { plantId: 'plant:guessed' })
+    // A Plant's alarms are read by the Plant itself, the only selector.
+    const guessedPlant = await read('world.process-plant.alarms.status', { plantId: 'plant:guessed' })
     expect(guessedPlant.status).toBe(404)
     expect(guessedPlant.body!.error).toMatchObject({ code: 'capability_target_not_found', message: expect.stringContaining(`Live Plants: ${plantId}`) })
     expect(run.health().every(health => health.state === 'ready' && health.failureCount === 0 && health.lastFailure === undefined)).toBe(true)
-    expect((await read('world.process-plant.display.overview', { plantId, unexpected: true })).status).toBe(400)
-    const overview = await read('world.process-plant.display.overview', { plantId })
-    expect(overview.status).toBe(200)
-    expect(overview.body!.result).toHaveProperty('plantId', plantId)
-    expect(overview.body!.result).toHaveProperty('view.viewType', 'process-plant.display')
+    expect((await read('world.process-plant.alarms.status', { plantId, unexpected: true })).status).toBe(400)
+    const alarms = await read('world.process-plant.alarms.status', { plantId })
+    expect(alarms.status).toBe(200)
+    expect(alarms.body!.result).toHaveProperty('plantId', plantId)
   })
 
   test('procedure reads select canonical evidence without duplicating Markdown or changing the UI document', async () => {
@@ -748,7 +747,7 @@ Action: Inspect «OTHER-STEP».
     )
     // The displays an agent presents with its answer declare it; Agents gate "Show display" on the marker, not on an id.
     expect(moduleCapabilityCollectionSchema.parse(capabilities.body).capabilities.filter(item => item.publishes?.includes('embedded-view')).map(item => String(item.id)).sort())
-      .toEqual(['world.process-plant.display.compose', 'world.process-plant.display.overview', 'world.simulation-run.display.compose'])
+      .toEqual(['world.simulation-run.display.compose'])
     const definitions = await call(registry, `/internal/workspaces/${workspaceId}/definitions`)
     const parsedDefinitions = moduleDefinitionCollectionSchema.parse(definitions.body)
     const scenario = parsedDefinitions.definitions.find(definition => definition.ref.id === 'test-response')!

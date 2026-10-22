@@ -1,6 +1,5 @@
 import type { CompiledComponent, CompiledPlantGraph } from '../graph/index.ts'
-import { linkCarrier } from '../graph/index.ts'
-import { SUGGESTION_COUNT, matchedWords, normalized, words } from '../../../core/model/text-search.ts'
+import { SUGGESTION_COUNT, normalized } from '../../../core/model/text-search.ts'
 import { componentDescription, equipmentSuggestions } from './items.ts'
 
 // Equipment as people name it in a drawing's intent: by its id, a tag
@@ -69,9 +68,6 @@ export const resolveName = (
   return { error: `unknown equipment "${name}"; name one component per entry: its id, a tag measured on it, its label or its short label`, didYouMean: equipmentSuggestions(graph, name) }
 }
 
-/** Equipment by one name, as a mimic resolves it (resolveName): the components it names, or why it names none. */
-export const resolveEquipmentName = (graph: CompiledPlantGraph, name: string): ReturnType<typeof resolveName> => resolveName(graph, name, 'around')
-
 // A device the model bundles inside a component (a pressurizer's relief valve)
 // has a label of its own but is not a component: it is drawn on its host's
 // line, so a name for it is answered with the host and that line's ends.
@@ -99,23 +95,4 @@ const bundledDeviceMessage = (graph: CompiledPlantGraph, name: string, bundled: 
   const upstream = farIds(graph.incomingLinksByComponent[host], 'from')
   const line = downstream.length > 0 ? `from ${hostId} to ${downstream.join(', ')}` : upstream.length > 0 ? `from ${upstream.join(', ')} to ${hostId}` : undefined
   return `${what}; name ${hostId} instead${line === undefined ? '' : ` (${line} draws that line with it)`}`
-}
-
-// Links a mimic can draw: pipes and power. Equipment with none (a spare valve,
-// a breaker the model leaves unwired) has nothing to draw.
-export const unconnectedReason = (graph: CompiledPlantGraph, index: number, carriers: ReadonlyArray<string>): string | undefined => {
-  const linked = [...(graph.incomingLinksByComponent[index] ?? []), ...(graph.outgoingLinksByComponent[index] ?? [])].map(link => graph.links[link]!)
-  if (linked.some(link => carriers.includes(linkCarrier(link)))) return undefined
-  const id = String(graph.components[index]!.id)
-  if (linked.length === 0) return `${id} is not connected to any equipment in the Plant model, so it cannot be drawn`
-  return `${id} is connected to other equipment only by ${[...new Set(linked.map(link => link.kind))].sort().join(', ')} links, which a mimic does not draw`
-}
-
-// "AFW" for auxFeedwater: the guess's letters, in order, from the same first letter; or a shared word.
-export const serviceResembles = (guess: string, candidate: string): boolean => {
-  const letters_ = guess.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const target = candidate.toLowerCase()
-  let at = 0
-  for (const letter of target) if (letter === letters_[at]) at += 1
-  return (letters_.length >= 2 && letters_[0] === target[0] && at === letters_.length) || matchedWords(words(guess), words(candidate)).length > 0
 }

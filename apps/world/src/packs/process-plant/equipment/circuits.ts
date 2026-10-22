@@ -10,7 +10,7 @@ import { linkCarrier, ratedFlowForLink } from '../graph/index.ts'
 // different nodes. Within a circuit, links rated an order of magnitude below
 // its largest flow are auxiliary (charging, a residual-heat train), not part
 // of it. Heat handed to once-through flow (a condenser's cooling water) leaves
-// the principal circuits. A unit overview draws them (displays/mimic/principal.ts).
+// the principal circuits. A unit's overview draws them (observation/topology.ts).
 
 /** A link rated below this fraction of its circuit's largest rated flow is auxiliary to the circuit. */
 export const AUXILIARY_FLOW_FRACTION = 0.1
@@ -199,29 +199,3 @@ export const plantLoops = (graph: CompiledPlantGraph): ReadonlyArray<string> =>
       const ordinal = (loop: string) => graph.components.find(component => component.metadata?.loopId === loop)?.metadata?.ordinal ?? 0
       return ordinal(left) - ordinal(right) || left.localeCompare(right)
     })
-
-/**
- * The services items carry, the ones they do their work in first: those on a
- * port circuit their energy role names (a core's coolant), then by how many
- * of their links each takes. What a drawing narrowed to one service starts
- * with, since every service at once may not draw legibly.
- */
-export const itemServices = (graph: CompiledPlantGraph, items: ReadonlyArray<number>): ReadonlyArray<string> => {
-  const known = new Set(plantCarriers(graph))
-  const tally = new Map<string, { links: number; energy: boolean }>()
-  for (const item of items) {
-    const component = graph.components[item]!
-    const circuits = new Set(component.semantics.energy.flatMap(role => role.role === 'transfer' ? [role.from, role.to] : [role.circuit]))
-    for (const [side, indexes] of [['from', graph.outgoingLinksByComponent[item]], ['to', graph.incomingLinksByComponent[item]]] as const) {
-      for (const index of indexes ?? []) {
-        const link = graph.links[index]!
-        const carrier = linkCarrier(link)
-        if (!known.has(carrier)) continue
-        const circuit = component.ports[String(side === 'from' ? link.fromPortName : link.toPortName)]?.circuit
-        const entry = tally.get(carrier) ?? { links: 0, energy: false }
-        tally.set(carrier, { links: entry.links + 1, energy: entry.energy || (circuit !== undefined && circuits.has(circuit)) })
-      }
-    }
-  }
-  return [...tally].sort(([leftName, left], [rightName, right]) => Number(right.energy) - Number(left.energy) || right.links - left.links || leftName.localeCompare(rightName)).map(([name]) => name)
-}

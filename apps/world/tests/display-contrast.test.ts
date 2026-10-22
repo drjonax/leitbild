@@ -94,25 +94,15 @@ describe('display text contrast', () => {
   })
 })
 
-// Files the lead has frozen until Codex's Synopticon merge (plan D3); each still writes text in a raw alert colour
-// and moves to the display tokens once D3 is settled (p0-client notes).
-const FROZEN_UNTIL_D3 = new Set([
-  'ComposedDisplayView.svelte',
-  'ReadoutsPanel.svelte',
-  'TrendPanel.svelte',
-  'mimic/MimicPanel.svelte',
-])
-
 const svelteFiles = (directory: string): ReadonlyArray<string> => readdirSync(directory).flatMap(name => {
   const path = join(directory, name)
   return statSync(path).isDirectory() ? svelteFiles(path) : name.endsWith('.svelte') ? [path] : []
 })
 
 test('display text is never written in a raw alert colour or plain white: it goes through the display tokens', () => {
-  const directory = join(root, 'src/ui/embed/composed-display')
+  const directory = join(root, 'src/ui/embed')
   const offending = svelteFiles(directory).flatMap(path => {
     const file = relative(directory, path)
-    if (FROZEN_UNTIL_D3.has(file)) return []
     const style = readFileSync(path, 'utf8').match(/<style>([\s\S]*)<\/style>/)?.[1] ?? ''
     return [...style.matchAll(/(?:^|[;{\s])color:\s*(var\(--alert-[\w-]+\)|#fff\b|#ffffff\b|white\b)/g)].map(match => `${file}: color: ${match[1]}`)
   })

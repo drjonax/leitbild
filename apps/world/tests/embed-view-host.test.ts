@@ -172,7 +172,7 @@ describe('a view framed by the display window', () => {
     const opened: Array<string | null> = []
     page.host.subscribeOpening(where => { opened.push(where) })
     page.host.listen()
-    const listing = { key: 'opened:1', caption: 'From SG B low-low', envelope: { moduleId: 'world', subject: { workspaceId: 'ws', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }, viewType: 'process-plant.display', title: 'Reactor Core', height: 600, state: '{}' } } as unknown as EmbeddedViewListing
+    const listing = { key: 'opened:1', caption: 'From SG B low-low', envelope: { moduleId: 'world', subject: { workspaceId: 'ws', moduleId: 'world', type: 'world.simulation-run', id: 'run-1' }, viewType: 'display.vignette', title: 'Reactor Core', height: 600, state: '{}' } } as unknown as EmbeddedViewListing
     const request = { state: '{}', title: 'Reactor Core', listing: () => listing }
     expect(page.host.openDisplay(request)).toBe(false)
     page.fromWindow({ type: 'leitbild:view-host' })

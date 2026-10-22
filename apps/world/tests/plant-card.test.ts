@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { recordingSeriesIdFor, type IsoTimestamp, type OperationalObject, type SimulationRunId } from '../src/core/model/index.ts'
-import { HOLD_GAP_MS, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { HOLD_GAP_MS, type TrendPoint } from '../src/packs/process-plant/ui/plant-card-sparkline.ts'
 import { processPlantUnitPackDataSchema, type ProcessPlantUnitProjection, type ProcessPlantUnitSafetyFunction } from '../src/packs/process-plant/model.ts'
 import type { OperationalPointFeature } from '../src/ui/map-runtime/types.ts'
 import {

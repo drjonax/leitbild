@@ -27,7 +27,7 @@ import type { Actor } from '../../src/core/simulation-runs/actors.ts'
 import { createSimulationRunRegistry } from '../../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../../src/core/simulation-runs/runtime.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from '../helpers.ts'
-import { citedMargin } from '../../src/packs/process-plant/ui/displays/operation/operation-presenter.ts'
+import { citedMargin } from '../../src/packs/process-plant/ui/displays/operation/cited-reading.ts'
 
 const operator: Actor = { id: 'actor:human:characterization-operator' as ActorId, label: 'Characterization operator', role: 'operator' }
 const supervisor: Actor = { id: 'actor:human:characterization-supervisor' as ActorId, label: 'Characterization supervisor', role: 'operator' }

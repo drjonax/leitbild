@@ -9,7 +9,6 @@ import { answerProcessPlantCredibilityQuery, processPlantCredibilityQueryKinds }
 import { answerProcessPlantGraphQuery, processPlantGraphQueryKinds } from './queries/graph-query.ts'
 import { answerProcessPlantRuntimeQuery, processPlantRuntimeQueryKinds } from './queries/runtime-query.ts'
 import { answerProcessPlantSignalQuery, processPlantSignalQueryKinds } from './queries/signal-query.ts'
-import { answerProcessPlantComposedDisplayQuery, processPlantComposedDisplayQueryKinds } from './queries/composed-display-query.ts'
 import { answerProcessPlantVariableQuery, processPlantVariableQueryKinds } from './queries/variable-query.ts'
 import { answerProcessPlantObservationQuery } from './observation/query.ts'
 
@@ -24,7 +23,6 @@ export const processPlantQueryKinds = [
   ...processPlantControlQueryKinds,
   ...processPlantRuntimeQueryKinds,
   ...processPlantIcQueryKinds,
-  ...processPlantComposedDisplayQueryKinds,
 ] as const
 
 export const answerProcessPlantQuery = (config: {
@@ -33,11 +31,11 @@ export const answerProcessPlantQuery = (config: {
   readonly objects: ReadonlyMap<ObjectId, Pick<OperationalObject, 'id' | 'label'>>
   /** Simulation Run time the Plants have been advanced to; required by time-stamped views. */
   readonly simulationTime?: IsoTimestamp
-  /** Series the Run's historian records (empty when it records none); required by composed displays. */
+  /** Series the Run's historian records (empty when it records none): what its observations declare as recorded. */
   readonly recordedSeriesIds?: ReadonlySet<string>
   /** The interval the Run samples them at; absent where it records none. */
   readonly recordingIntervalMs?: number
-  /** What the Run's historian holds of them; a composed display reads the recent history of what it trends. */
+  /** What the Run's historian holds of them, which observations read their history from. */
   readonly recordedHistory?: PackRuntimeRecordedHistory
 }): unknown => answerProcessPlantCatalogQuery(config)
   ?? answerProcessPlantCredibilityQuery(config)
@@ -47,7 +45,6 @@ export const answerProcessPlantQuery = (config: {
   ?? answerProcessPlantSignalQuery(config)
   ?? answerProcessPlantControlQuery(config)
   ?? answerProcessPlantRuntimeQuery(config)
-  ?? answerProcessPlantComposedDisplayQuery(config)
   ?? answerProcessPlantObservationQuery({
     ...config,
     recording: config.recordedSeriesIds === undefined || config.recordingIntervalMs === undefined ? null : { seriesIds: config.recordedSeriesIds, intervalMs: config.recordingIntervalMs },

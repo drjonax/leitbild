@@ -128,7 +128,8 @@ const registered = registeredSites(customShapes, surfaces)
 
 describe('the OpenBridge custom-shape register', () => {
   test('every SVG and drawing canvas in the embed and ui/displays is one register entry\'s or one surface\'s', () => {
-    expect(sites.length).toBeGreaterThan(15)
+    // The vignette's own SVGs and canvases since the old renderer went (D3): the scan finds them.
+    expect(sites.length).toBeGreaterThan(5)
     expect(unregistered(sites, registered)).toEqual([])
   })
 

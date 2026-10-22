@@ -45,19 +45,7 @@ interface PackImportException {
   readonly landsWith?: string
 }
 
-const packImportExceptions: Readonly<Record<string, PackImportException>> = {
-  'features/study-views/read-profile.ts': {
-    allows: [
-      'packs/process-plant/displays/composition.ts',
-      'packs/process-plant/queries/composed-display-query.ts',
-      'packs/process-plant/displays/compose.ts',
-      'packs/process-plant/displays/trend-reading.ts',
-    ],
-    until: 'the swap (plan v3.1 §2.10, §7): its study kind becomes a display spec by value',
-    why: 'Synopticon\'s study views read the plant display state and sample schemas',
-    landsWith: 'Synopticon (D3)',
-  },
-}
+const packImportExceptions: Readonly<Record<string, PackImportException>> = {}
 
 const offendersIn = (files: ReadonlyArray<string>): ReadonlyArray<string> => files.flatMap(file => {
   const own = relative(src, file)
@@ -137,11 +125,9 @@ describe('display boundaries (plan v3.1 §2.10)', () => {
     expect(files.flatMap(file => packWords(readFileSync(file, 'utf8')).map(word => `${relative(src, file)}: ${word}`))).toEqual([])
   })
 
-  test('5b. the embed reaches a Pack\'s embed contribution only through ui/embed/pack-embed-loader.ts (Q19); the old renderer goes at the swap', () => {
-    const files = sourcesUnder('ui/embed').filter(file => !relative(src, file).startsWith('ui/embed/composed-display/'))
-    // Until the swap (D3) the router still opens the old plant display, whose state the Pack reads.
-    const untilSwap: Readonly<Record<string, ReadonlyArray<string>>> = { 'ui/embed/EmbeddedView.svelte': ['packs/process-plant/displays/composition.ts'] }
-    const offenders = files.flatMap(file => packImports(file).filter(target => !(untilSwap[relative(src, file)] ?? []).includes(target)).map(target => `${relative(src, file)} -> ${target}`))
+  test('5b. the embed reaches a Pack\'s embed contribution only through ui/embed/pack-embed-loader.ts (Q19)', () => {
+    const files = sourcesUnder('ui/embed')
+    const offenders = files.flatMap(file => packImports(file).map(target => `${relative(src, file)} -> ${target}`))
     expect(offenders.filter(offender => !offender.startsWith('ui/embed/pack-embed-loader.ts -> '))).toEqual([])
     expect(packImports(join(src, 'ui/embed/pack-embed-loader.ts')).every(target => /^packs\/[^/]+\/ui\/embed\.ts$/.test(target))).toBe(true)
   })

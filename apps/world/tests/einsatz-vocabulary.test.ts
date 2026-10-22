@@ -12,12 +12,11 @@ const worldRoot = join(import.meta.dir, '..')
 const scopeRoots: ReadonlyArray<string> = ['src/packs/einsatz']
 /**
  * JSON (scenario data and the icon catalogue), the walkthrough observations
- * written against a Definition in its own words, built UI output and Process
- * Plant display code, where the word names a vessel.
+ * written against a Definition in its own words, and built UI output.
  */
 const exempt = (path: string): boolean => path.endsWith('.json')
   || (path.startsWith('src/packs/einsatz/fixtures/') && path.endsWith('.md'))
-  || path.startsWith('src/ui/dist/') || path.startsWith('src/ui/embed/composed-display/')
+  || path.startsWith('src/ui/dist/')
 
 const demoWord = /^(?:ambulances?|patients?|hospitals?|police|firefighting|firefighters?|paramedics?|recces?|tanks?|armou?r(?:ed)?|casualt(?:y|ies)|ems|triage|helicopters?|patrol|trucks?|lorr(?:y|ies)|kitchens?|shelters?)$/
 /** "fire" alone is mechanism vocabulary; only the sequence names an asset. */

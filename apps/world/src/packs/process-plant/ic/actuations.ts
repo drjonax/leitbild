@@ -47,14 +47,6 @@ export const automaticActions = (plant: CompiledProcessPlant): ReadonlyMap<strin
   return actions
 }
 
-/**
- * The automatic actions that command any of these components: the trips that
- * moved what a display shows (every turbine trip, manual, on loss of load or
- * on a reactor trip, shuts the turbine's stop valve and rejects its load).
- */
-export const commandingActions = (plant: CompiledProcessPlant, components: ReadonlySet<number>): ReadonlyArray<AutomaticAction> =>
-  [...automaticActions(plant).values()].filter(action => action.writes.some(write => components.has(write.component)))
-
 /** As the I&C runs: a rule declared for some modes acts only while the Plant is in one of them. */
 export const actsIn = (rule: ProcessPlantIcRule, mode: string | null): boolean =>
   rule.modes === undefined || (mode !== null && rule.modes.includes(mode))
@@ -76,7 +68,7 @@ export const conditionBindings = (plant: CompiledProcessPlant, condition: Proces
 /**
  * The flow a component's outflow becomes: the throughput of the nearest
  * equipment downstream that declares one (the header a pump discharges
- * into), within the reach a mimic follows.
+ * into), within the given reach.
  */
 export const throughputDownstream = (plant: CompiledProcessPlant, component: number, reach: number): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
@@ -204,16 +196,6 @@ export const actionFlows = (plant: CompiledProcessPlant, action: AutomaticAction
   }
   return [...flows].map(([path, effect]) => ({ path, effect }))
 }
-
-/**
- * The equipment an action runs or moves: the components whose declared run
- * or position command it writes (pumps it starts, valves it opens or shuts),
- * or whose isolation input it sets (feed valves it isolates), not other
- * commands it writes (rod insertion).
- */
-export const actionEquipment = (plant: CompiledProcessPlant, action: AutomaticAction): ReadonlyArray<number> => [...new Set(action.writes
-  .filter(write => writeEffect(plant, write) !== null)
-  .map(write => write.component))]
 
 /**
  * The states that say an action moved what it commands: for each run or

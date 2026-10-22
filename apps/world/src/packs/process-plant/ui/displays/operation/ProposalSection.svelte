@@ -3,7 +3,8 @@
   import '@oicl/openbridge-webcomponents/dist/components/slide-button/slide-button.js'
   import '@oicl/openbridge-webcomponents/dist/components/text-input-field/text-input-field.js'
   import { listen } from './listen.ts'
-  import { STALE_CONTROLS, type CitedReading, type ProposalCard } from './operation-presenter.ts'
+  import type { CitedReading } from './cited-reading.ts'
+  import { STALE_CONTROLS, type ProposalCard } from './operation-presenter.ts'
 
   // A proposal's approval card, first in its item's popover while pending
   // (plan §4.4, QA-9): the exact command World stored, from → to, who

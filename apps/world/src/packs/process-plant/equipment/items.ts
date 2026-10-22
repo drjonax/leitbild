@@ -67,9 +67,6 @@ const notEquipmentKinds: Readonly<Record<string, string>> = {
   manualActuation: 'a manual actuation pushbutton moves nothing; it is operated where the equipment its rule acts on is drawn',
 }
 
-/** The kinds notEquipmentReason names by kind alone, for the drawing's completeness check against the component registry. */
-export const notEquipmentKindIds: ReadonlySet<string> = new Set(Object.keys(notEquipmentKinds))
-
 /**
  * Why a component is no item of equipment, undefined for one that is: its
  * kind is a load, an instrument channel, logic or a boundary; or it is a valve
@@ -81,6 +78,3 @@ export const notEquipmentReason = (component: CompiledComponent): string | undef
   const valve = String(component.kind) === 'processValve' || String(component.kind) === 'steamValve'
   return valve && component.semantics.function === undefined ? `valve ${component.id} declares no function` : undefined
 }
-
-/** The most components one detail of equipment opens: an item and the far ends of the line it sits on, or a group of parallel equipment. */
-export const PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS = 8

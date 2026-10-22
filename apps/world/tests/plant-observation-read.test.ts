@@ -40,7 +40,7 @@ beforeAll(async () => {
   await plant.runTo(10_000)
   facts.leadAtPower = await lead()
   facts.atPower = await readAll()
-  facts.atPowerPlant = { mode: (await plant.invoke(plantOperator, 'world.process-plant.display.sample', { paths: ['core.powerRangePercent'] })).mode, alarms: (await plant.invoke(plantOperator, 'world.process-plant.alarms.status', {})).summary }
+  facts.atPowerPlant = { mode: (await port.read({ refs: [`${plant.plantId}#mode`] })).observations[0]?.value, alarms: (await plant.invoke(plantOperator, 'world.process-plant.alarms.status', {})).summary }
   facts.undeclared = await port.read({ refs: [`${plant.plantId}#core.noSuchSignal`] })
   // The grid's frequency held at 48.8 Hz: the 30-minute underfrequency turbine trip runs down.
   const frequency = `${plant.plantId}#offsiteGrid.frequencyHz`

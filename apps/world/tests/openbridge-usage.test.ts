@@ -139,36 +139,6 @@ describe('OpenBridge usage against its Custom Elements Manifest', () => {
     expect(problems).toEqual([])
     expect(checked).toBeGreaterThan(40)
   })
-
-  test("the mimic's element recipes set only properties and enum members OpenBridge declares", () => {
-    const source = readFileSync(join(root, 'src/ui/embed/composed-display/mimic/openbridge-mimic.ts'), 'utf8')
-    const constants = new Map([...source.matchAll(/const (\w+) = '(obc-[a-z0-9-]+)'/g)].map(match => [match[1]!, match[2]!]))
-    // Which element each variable holds: created by tag, found by tag, or a parameter of an OpenBridge class type.
-    const tagOf = new Map<string, string>([
-      ...[...source.matchAll(/const (\w+) = document\.createElement\('(obc-[a-z0-9-]+)'\)/g)].map(match => [match[1]!, match[2]!] as const),
-      ...[...source.matchAll(/const (\w+) = \w+\.querySelector\((\w+)\)/g)].flatMap(match => constants.has(match[2]!) ? [[match[1]!, constants.get(match[2]!)!] as const] : []),
-      ...[...source.matchAll(/\b(\w+): (Obc\w+)\b/g)].flatMap(match => tagOfClass.has(match[2]!) ? [[match[1]!, tagOfClass.get(match[2]!)!] as const] : []),
-    ])
-    const problems: string[] = []
-    let checked = 0
-    for (const match of source.matchAll(/\b(\w+)\.(\w+) = ([^\n]+)/g)) {
-      const tag = tagOf.get(match[1]!)
-      if (tag === undefined) continue
-      const [, variable, property, value] = match as unknown as [string, string, string, string]
-      if (property === 'slot' || property === 'textContent' || property === 'dataset') continue
-      checked += 1
-      const api = elements.get(tag)!
-      if (!api.fields.has(property)) { problems.push(`${variable} (<${tag}>).${property} is not a public OpenBridge property`); continue }
-      for (const member of value.matchAll(/\b([A-Z]\w+)\.(\w+)\b/g)) {
-        const declared = enums.get(member[1]!)
-        if (declared === undefined) continue
-        if (!declared.has(member[2]!)) problems.push(`${variable}.${property}: ${member[1]}.${member[2]} is not a member of OpenBridge's ${member[1]}`)
-        if (api.fields.get(property)?.trim() !== member[1]) problems.push(`${variable}.${property} is declared ${api.fields.get(property)}, set from ${member[1]}`)
-      }
-    }
-    expect(problems).toEqual([])
-    expect(checked).toBeGreaterThan(40)
-  })
 })
 
 // Every OpenBridge element the embedded view draws is defined by a bare import
@@ -182,13 +152,7 @@ describe('OpenBridge elements are defined where they are drawn', () => {
       return [`${drawn.file} draws <${drawn.tag}>, but ${relative(openBridgeRoot, drawn.module)} ${how}: import it bare in the loader of the surface that draws it`]
     })
     expect(problems).toEqual([])
-    expect(new Set(embedDrawnTags.map(drawn => drawn.tag)).size).toBeGreaterThan(30)
-  })
-
-  test("the mimic's vessels are among them: tanks and the heat exchanger of steam generators and condensers", () => {
-    const vessels = embedDrawnTags.filter(drawn => drawn.file.endsWith('mimic/openbridge-mimic.ts') && ['obc-automation-tank', 'obc-heat-exchanger'].includes(drawn.tag))
-    expect(vessels.map(drawn => [drawn.tag, drawn.definedBySurface]).sort()).toEqual([['obc-automation-tank', true], ['obc-heat-exchanger', true]])
-    // The heat exchanger's icon is OpenBridge's own: its module imports it.
-    expect(embedRunning.has(definedIn.get('obi-heatexhanger') ?? '')).toBe(true)
+    // The vignette and the Plant's operating panel draw 18 elements since the old renderer went (D3): the scan finds them.
+    expect(new Set(embedDrawnTags.map(drawn => drawn.tag)).size).toBeGreaterThan(15)
   })
 })
