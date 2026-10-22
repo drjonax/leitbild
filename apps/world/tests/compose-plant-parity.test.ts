@@ -164,6 +164,26 @@ describe('P9: an equipment default carries what the detail display carries', () 
     expect(named.filter((node, at) => named.indexOf(node) !== at)).toEqual([])
   })
 
+  test('a pump between two drawn process nodes is drawn whatever feeds its motor, so no drawing names it at a stop on each side', async () => {
+    const pumps = ['mainFeedwaterPumpA', 'mainFeedwaterPumpB', 'auxFeedwaterPumpMotor', 'auxFeedwaterPumpMotorB', 'chargingPump', 'chargingPumpB',
+      'safetyInjectionPumpA', 'safetyInjectionPumpB', 'rhrPumpA', 'rhrPumpB', 'containmentSprayPumpA', 'containmentSprayPumpB']
+    const graph = (await topologyOf(run, plantId))!
+    const twice: string[] = []
+    for (const pump of pumps) {
+      const { state } = await opened(`${plantId}#${pump}`)
+      const view = state.views.find(entry => entry.kind === 'topology')
+      if (view?.kind !== 'topology') throw new Error(`${pump}: no drawing`)
+      const scoped = scopeWithin(graph, view.request)
+      if (!scoped.ok) throw new Error(scoped.reason)
+      // Each stop names its far ends once; a node at two stops is named twice.
+      const named = scoped.scoped.stubs.flatMap(stub => [...new Set(stub.others.map(other => other.node))])
+      twice.push(...pumps.filter(other => named.filter(node => node === other).length > 1).map(other => `${pump}: ${other}`))
+    }
+    // Charging pump A takes boric acid at its inlet too, from a valve CHG B's drawing does not reach: a link in the medium
+    // that joins it to the drawing leads elsewhere, so by the rule it stays a stop at the tank and at the core.
+    expect(twice).toEqual(['chargingPumpB: chargingPump'])
+  })
+
   test('objectId#label names a device its topology draws before any observable search: the PORV, not a tag that abbreviates it', async () => {
     expect(await resolveSubject(run, `${plantId}#PORV`, 'subject')).toEqual({ kind: 'element', objectId: plantId, elementId: 'pressurizer.reliefValve' })
     expect(await resolveSubject(run, `${plantId}#PORV block`, 'subject')).toEqual({ kind: 'element', objectId: plantId, elementId: 'pressurizer.blockValve' })
