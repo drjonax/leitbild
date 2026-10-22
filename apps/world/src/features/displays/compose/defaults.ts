@@ -112,7 +112,8 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
     return [
       ...(lead.length > 0 ? [{ kind: 'values', refs: [...lead] } as DraftView] : []),
       ...(trend.length > 0 ? [{ kind: 'trend', refs: [...trend], horizon: '10m' } as DraftView] : []),
-      ...(object.alerts.length > 0 ? [alertsView([object.id])] : []),
+      // Always its alerts, "none" while it has none: a default opened before an upset shows the upset's alerts as they come.
+      alertsView([object.id]),
       ...await objectTopology(run, object, lead),
     ]
   }

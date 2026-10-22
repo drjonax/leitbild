@@ -188,6 +188,9 @@ const atLeastCaution = (priority: string | undefined): boolean => priority !== u
 const countAdjustment = (adjusted: DisplayCardAdjustment[], adjustment: DisplayCardAdjustment): void => { if (adjusted.length < MAX_ADJUSTMENTS) adjusted.push(adjustment) }
 
 /** Completion, fit, card and state: the shared second half of a composed vignette and a World default. */
+/** The alert lines a World default's own alerts view keeps though none are raised yet, so an upset's first alerts show as they come. */
+const WATCHED_ALERT_LINES = 4
+
 /** Where a vignette is shown: a chat answer stacks its views in 40 rows; a window may stand a tall drawing beside them (Q20). */
 type Frame = 'chat' | 'window'
 const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefined, subjects: ReadonlyArray<Subject>, drafts: ReadonlyArray<DraftView>, kept: Kept, frame: Frame, chipped: ReadonlyArray<string> = []): Promise<ComposeOutcome> => {
@@ -254,7 +257,10 @@ const finish = async (run: ComposeRun, title: string, by: 'assistant' | undefine
         countAdjustment(adjusted, { kind: 'layout', text: `${lost} alerts of ${cut.length} more objects not shown` })
         objectIds = objectIds.filter(id => keep.includes(id))
       }
-      fitted.push({ ...view, objectIds, rows: alertRowsFor(run, { ...view, objectIds, rows: 1 }) })
+      const needed = alertRowsFor(run, { ...view, objectIds, rows: 1 })
+      // A World default is watched: its object's alerts keep room for the first of those still to come.
+      const watched = frame === 'window' && view.elements === undefined && view.refs === undefined
+      fitted.push({ ...view, objectIds, rows: watched ? Math.max(1 + WATCHED_ALERT_LINES, needed) : needed })
     } else if (view.kind === 'slots') {
       const object = visibleObject(run, view.objectId)
       if (object !== undefined) fitted.push({ ...view, rows: Math.max(1, slotsOf(run, object).length) })

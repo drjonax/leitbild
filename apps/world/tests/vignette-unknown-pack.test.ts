@@ -21,10 +21,10 @@ const opened = async (subject: Parameters<typeof composeDefault>[1]) => {
 }
 
 describe('an unknown Pack gets vignettes from its declarations alone', () => {
-  test('a declared object: its own states, its lead values and its whole drawing (a graph this small is its own overview)', async () => {
+  test('a declared object: its own states, its lead values, its alerts (none yet) and its whole drawing (a graph this small is its own overview)', async () => {
     const { view, sample, card } = await opened('unit:one')
-    expect(view.sections.map(section => section.kind)).toEqual(['values', 'topology'])
-    const topology = view.sections[1]
+    expect(view.sections.map(section => section.kind)).toEqual(['values', 'alerts', 'topology'])
+    const topology = view.sections[2]
     expect(topology?.kind === 'topology' && [topology.family, topology.packId]).toEqual(['flow', 'fixture'])
     expect(topology?.kind === 'topology' && topology.nodes.map(node => [node.id, node.class])).toEqual([['tank', 'store'], ['engine', 'mover']])
     expect(topology?.kind === 'topology' && topology.nodes[1]?.bindings).toEqual([{ role: 'flow', ref: 'unit:one#speed', quantity: 'speed', unit: 'm/s' }])

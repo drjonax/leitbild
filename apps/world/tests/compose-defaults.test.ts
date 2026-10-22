@@ -238,10 +238,38 @@ describe('World defaults of every subject kind', () => {
     const fixture = await fixtureComposeRun()
     try {
       const fixtureRun = await fixture.runOf()
-      expect(kinds((await opened(fixtureRun, 'unit:one')).view.sections)).toEqual(['values', 'topology'])
+      expect(kinds((await opened(fixtureRun, 'unit:one')).view.sections)).toEqual(['values', 'alerts', 'topology'])
       expect(kinds((await opened(fixtureRun, 'site:base')).view.sections)).toEqual(['slots', 'map'])
       expect(kinds((await opened(fixtureRun, 'unit:one#engine')).view.sections)).toEqual(['values', 'topology'])
       expect(kinds((await opened(fixtureRun, { of: { category: 'tasks', closed: false } })).view.sections)).toEqual(['entity', 'map'])
+    } finally { await fixture.close() }
+  })
+})
+
+// UX audit H1: an overview opened before an upset never showed the upset's alerts. Its default listed alerts only where
+// the object had some when it was composed, and a sample carried alert rows only for an alerts view, which the drawing's
+// item frames and the frame's worst chip read too.
+describe('a default opened before an upset', () => {
+  test('shows the alerts raised after it within one sample: its alerts view, and its drawing\'s object\'s rows for the frames and the worst chip', async () => {
+    const fixture = await fixtureComposeRun()
+    try {
+      const quiet = await fixture.runOf()
+      expect(quiet.objects.find(object => object.id === 'unit:one')!.alerts).toEqual([])
+      const outcome = await composeDefault(quiet, 'unit:one')
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.issues))
+      expect(outcome.state.views.map(view => view.kind)).toEqual(['values', 'alerts', 'topology'])
+      // Its alerts keep a head and four lines though none are raised yet: the first to come show, not only their count.
+      expect(outcome.state.views.find(view => view.kind === 'alerts')?.rows).toBe(5)
+      expect((await sampleVignette(quiet, outcome.state)).alerts).toEqual([])
+      // The same state, sampled once the engine alarms.
+      const raised: AlertState = { id: 'overspeed', kind: 'test', severity: 'critical', message: 'Engine overspeed', raisedAt: quiet.clock!.currentTime as AlertState['raisedAt'], acknowledged: false, priority: 'alarm', clock: 'simulation', subject: { element: 'engine' } }
+      const alarmed = await fixture.runOf({ objects: quiet.objects.map(object => (object.id === 'unit:one' ? { ...object, alerts: [raised] } : object)) })
+      expect((await sampleVignette(alarmed, outcome.state)).alerts.map(row => [row.objectId, row.alert.message, row.priority])).toEqual([['unit:one', 'Engine overspeed', 'alarm']])
+      // A drawing alone, with no alerts view, still carries its object's rows: its item frames and the worst chip read them.
+      const drawn = await composeVignette(quiet, displaySpecSchema.parse({ title: 'Engine', question: 'What feeds the engine?', subjects: ['unit:one'], views: [{ kind: 'topology', around: ['unit:one#engine'], reach: 1 }] }))
+      if (!drawn.ok) throw new Error(JSON.stringify(drawn.issues))
+      expect(drawn.state.views.map(view => view.kind)).toEqual(['topology'])
+      expect((await sampleVignette(alarmed, drawn.state)).alerts.map(row => row.alert.message)).toEqual(['Engine overspeed'])
     } finally { await fixture.close() }
   })
 })

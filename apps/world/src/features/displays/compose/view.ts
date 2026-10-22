@@ -232,6 +232,9 @@ export const sampleVignette = async (run: ViewRun, state: VignetteState, history
   const maps: Record<number, VignetteSample['maps'][number]> = {}
   state.views.forEach((view, index) => {
     if (view.kind === 'alerts') for (const row of alertsOf(run, view)) alerts.set(row.key, row)
+    // A drawing frames its items by its object's alerts now, whether or not an alerts view lists them (and the frame's
+    // worst chip reads them): after the views' own rows, each row once.
+    if (view.kind === 'topology') for (const row of alertsOf(run, { kind: 'alerts', objectIds: [view.objectId], rows: 1 })) if (!alerts.has(row.key)) alerts.set(row.key, row)
     const object = view.kind === 'slots' ? visibleObject(run, view.objectId) : undefined
     if (object !== undefined) slots[object.id] = Object.fromEntries(slotsOf(run, object).map(({ key, value, since }) => [key, { value, ...(since === undefined ? {} : { since }) }]))
     if (view.kind === 'entity' || view.kind === 'collection') entities[index] = entityRows(run, view)

@@ -142,7 +142,7 @@ export interface SeriesPoint { readonly t: number; readonly v: number }
 export interface VignetteSample {
   readonly at: Stamp & { readonly paused: boolean }
   readonly observations: ReadonlyArray<Observation>
-  /** The rows of every alerts section, in each section's order (alertsOf), each row once. */
+  /** The rows of every alerts section, in each section's order (alertsOf), then those of each drawn topology's object (its frames), each row once. */
   readonly alerts: ReadonlyArray<AlertRow>
   /** By section index: an entity section's rows, sorted and capped, and how many more there are. */
   readonly entities: Readonly<Record<number, { readonly rows: ReadonlyArray<EntityRow>; readonly more: number }>>
