@@ -6,7 +6,7 @@
   import { embeddedDisplayFrame } from '../view-host.ts'
   import { paintLines } from './lines.ts'
   import type { VignetteSection } from '../../../features/displays/compose/model.ts'
-  import { networkDrawing } from './network.ts'
+  import { drawingScale, networkDrawing } from './network.ts'
   import type { AlertTone } from './readout.ts'
   import './openbridge.ts'
 
@@ -14,10 +14,12 @@
   // end caps through connector-diagram on a canvas; obc-bus, obc-switch,
   // obc-transformer and obc-source over it; names and readings as text. At
   // one grid unit a row, scrolled sideways where it is wider than its frame,
-  // never scaled below its 12 px text. Its attribution closes it.
+  // and scaled as the composer scaled it where its rows are fewer than its
+  // height (a chat column). Its attribution closes it.
   let { section, observations, palette }: { section: Extract<VignetteSection, { kind: 'topology' }>; observations: ReadonlyArray<Observation>; palette: Palette } = $props()
 
   const drawing = $derived(networkDrawing(section, observations))
+  const scale = $derived(drawingScale(section))
   let zoom = $state(1)
   runOnMount(() => embeddedDisplayFrame().subscribe(presentation => { zoom = presentation.zoom }))
 
@@ -33,7 +35,8 @@
 </script>
 
 <div class="network">
-  <div class="drawing" style:width={`${drawing.width}px`} style:height={`${drawing.height}px`} role="img" aria-label="Network topology">
+  <div class="fit" style:width={`${drawing.width * scale}px`} style:height={`${drawing.height * scale}px`}>
+  <div class="drawing" style:width={`${drawing.width}px`} style:height={`${drawing.height}px`} style:transform={scale < 1 ? `scale(${scale})` : undefined} role="img" aria-label="Network topology">
     <canvas use:lines={{ segments: drawing.segments, width: drawing.width, height: drawing.height, palette, zoom }}></canvas>
     {#each drawing.buses as bus (bus.id)}
       <obc-bus class="placed" size="small" vertical={bus.vertical} label={bus.label} title={bus.title} style:left={`${bus.x}px`} style:top={`${bus.y}px`} style:width={`${bus.width}px`} style:height={`${bus.height}px`}></obc-bus>
@@ -55,12 +58,13 @@
       </div>
     {/each}
   </div>
+  </div>
 </div>
 {#if section.attribution !== undefined}<p class="attribution">{section.attribution}</p>{/if}
 
 <style>
   .network { overflow-x: auto; overflow-y: hidden; }
-  .drawing { position: relative; }
+  .drawing { position: relative; transform-origin: 0 0; }
   canvas { position: absolute; left: 0; top: 0; }
   .placed { position: absolute; }
   .text { position: absolute; height: var(--row); line-height: 20px; font-size: 12px; white-space: nowrap; overflow: hidden; }

@@ -11,6 +11,8 @@ import { scopeTopology, type TopologyRequest } from '../src/features/displays/to
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { servedPlantTopology } from '../src/packs/process-plant/observation/topology.ts'
 import { flowDrawing, glyphOf, symbolOf } from '../src/ui/embed/vignette/flow-symbols.ts'
+import { VIGNETTE_ROW_PX } from '../src/ui/embed/vignette/grid.ts'
+import { drawingScale } from '../src/ui/embed/vignette/network.ts'
 import { overlaps } from './helpers/network-layout-measure.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
@@ -239,5 +241,20 @@ describe('flow symbols', () => {
     const frozen = flowDrawing(section, live, [], true)
     expect(frozen.devices.every(device => device.unknown)).toBe(true)
     expect(frozen.segments.filter(segment => 'connectionId' in segment && segment.connectionId === 'a.0').every(segment => segment.value === 'closed-dash')).toBe(true)
+  })
+})
+
+describe('scaled drawings', () => {
+  test('a drawing the composer scaled to fit (a chat column) shows at the scale its card says, within its rows, its attribution under it', () => {
+    const model = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:overview', loopCount: 4 }))
+    const { layout } = flowLayout(overviewOf(servedPlantTopology('plant:overview' as never, model))!, ROOM)!
+    // The composer's rows (compose.ts): the grid rows the layout reaches into and its attribution, scaled to no less than a third or eight.
+    const natural = Math.ceil(layout.height) + 1
+    const rows = Math.max(8, Math.ceil((natural - 1) / 3) + 1)
+    expect(drawingScale({ rows: natural, layout })).toBe(1)
+    const scale = drawingScale({ rows, layout })
+    expect(Math.round(100 * scale)).toBe(Math.round(100 * (rows - 1) / (natural - 1)))
+    expect(layout.height * VIGNETTE_ROW_PX * scale).toBeLessThanOrEqual((rows - 1) * VIGNETTE_ROW_PX)
+    expect(layout.width * VIGNETTE_ROW_PX * scale).toBeLessThan(layout.width * VIGNETTE_ROW_PX)
   })
 })

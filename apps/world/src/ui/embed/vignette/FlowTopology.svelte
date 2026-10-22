@@ -9,6 +9,7 @@
   import { embeddedDisplayFrame } from '../view-host.ts'
   import ElementPopover from './ElementPopover.svelte'
   import { FLOW_LINE_PX, flowDrawing } from './flow-symbols.ts'
+  import { drawingScale } from './network.ts'
   import { paintLines } from './lines.ts'
   import { nextPopover, POPOVER_CLOSED, type PopoverState } from './popover.ts'
   import type { AlertTone } from './readout.ts'
@@ -21,9 +22,10 @@
   // tanks, heat exchangers and buses as OpenBridge's own elements over it, the
   // lanes' hub as the registered vessel; names and readings as text where the
   // layout kept room for them. At one grid unit a row, scrolled sideways where
-  // it is wider than its frame. Each item is a button: a press (or Enter or
-  // Space) opens its pop-over, the element's default with its Pack's actions;
-  // a second press, Esc or a press outside closes it.
+  // it is wider than its frame, and scaled as the composer scaled it where its
+  // rows are fewer than its height (a chat column). Each item is a button: a
+  // press (or Enter or Space) opens its pop-over (ElementPopover.svelte); a
+  // second press, Esc or a press outside closes it.
   let { section, observations, alerts, palette, frozen, runId }: {
     section: Extract<VignetteSection, { kind: 'topology' }>
     observations: ReadonlyArray<Observation>
@@ -35,6 +37,7 @@
   } = $props()
 
   const drawing = $derived(flowDrawing(section, observations, alerts, frozen))
+  const scale = $derived(drawingScale(section))
   let zoom = $state(1)
   runOnMount(() => embeddedDisplayFrame().subscribe(presentation => { zoom = presentation.zoom }))
 
@@ -72,7 +75,8 @@
 </script>
 
 <div class="flow">
-  <div class="drawing" bind:this={drawingElement} style:width={`${drawing.width}px`} style:height={`${drawing.height}px`} role="group" aria-label="Flow topology">
+  <div class="fit" style:width={`${drawing.width * scale}px`} style:height={`${drawing.height * scale}px`}>
+  <div class="drawing" bind:this={drawingElement} style:width={`${drawing.width}px`} style:height={`${drawing.height}px`} style:transform={scale < 1 ? `scale(${scale})` : undefined} role="group" aria-label="Flow topology">
     <canvas use:lines={{ segments: drawing.segments, width: drawing.width, height: drawing.height, palette, zoom }}></canvas>
     {#each drawing.buses as bus (bus.id)}
       <obc-bus class="placed" size="small" vertical={bus.vertical} label="" title={bus.title} style:left={`${bus.x}px`} style:top={`${bus.y}px`} style:width={`${bus.width}px`} style:height={`${bus.height}px`}></obc-bus>
@@ -104,16 +108,18 @@
         {#each text.lines as line, at (at)}<span class={line.kind}>{line.text}</span>{/each}
       </div>
     {/each}
-    {#if open !== undefined && opener !== null}
-      <ElementPopover {runId} objectId={section.objectId} packId={section.packId} elementId={open.element} name={texts.get(open.id)?.lines[0]?.text ?? open.title} anchor={opener} text={drawingElement?.querySelector<HTMLElement>(`[data-item="${CSS.escape(open.id)}"]`) ?? null} {zoom} {palette} onclose={close} />
-    {/if}
   </div>
+  </div>
+  <!-- Outside the drawing: a scaled drawing's transform would otherwise hold the pop-over's fixed place. -->
+  {#if open !== undefined && opener !== null}
+    <ElementPopover {runId} objectId={section.objectId} packId={section.packId} elementId={open.element} name={texts.get(open.id)?.lines[0]?.text ?? open.title} anchor={opener} text={drawingElement?.querySelector<HTMLElement>(`[data-item="${CSS.escape(open.id)}"]`) ?? null} {zoom} {palette} onclose={close} />
+  {/if}
 </div>
 {#if section.attribution !== undefined}<p class="attribution">{section.attribution}</p>{/if}
 
 <style>
   .flow { overflow-x: auto; overflow-y: hidden; }
-  .drawing { position: relative; }
+  .drawing { position: relative; transform-origin: 0 0; }
   canvas { position: absolute; left: 0; top: 0; }
   .placed { position: absolute; }
   /* A device's button is its symbol's two cells, so a press, a pointer and the focus ring find it; the symbol stands at its centre. */
