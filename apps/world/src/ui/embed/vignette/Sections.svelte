@@ -5,7 +5,7 @@
   import { slotLook } from './collection.ts'
   import type { OpenedFrom } from './popover.ts'
   import { underTitle } from './format.ts'
-  import { VIGNETTE_ROW_PX } from './grid.ts'
+  import { standsBeside, VIGNETTE_ROW_PX } from './grid.ts'
   import { valueLook } from './readout.ts'
   import type { VignetteSnapshot } from './vignette-client.ts'
   import AlertsSection from './AlertsSection.svelte'
@@ -76,7 +76,7 @@
   {/if}
 {/snippet}
 
-{#if view.beside === true && drawing >= 0}
+{#if standsBeside(view, drawings)}
   <!-- A window frame (Q20): the drawing at its own width, every other view in a column beside it. -->
   <div class="beside">
     <div class="drawing">{@render one(view.sections[drawing]!, drawing)}</div>

@@ -11,9 +11,11 @@ import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import { composeDefault } from '../src/features/displays/compose/compose.ts'
+import type { VignetteView } from '../src/features/displays/compose/model.ts'
 import { compileVignette, type ViewRun } from '../src/features/displays/compose/view.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../src/scenarios/definitions.ts'
+import { standsBeside } from '../src/ui/embed/vignette/grid.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -29,6 +31,8 @@ const plantId = 'plant:halden-1' as ObjectId
 let registry: SimulationRunRegistry
 let dataDir: string
 let run: ViewRun
+/** Each element's default as compiled by the first test, for the tests after it. */
+const views = new Map<string, VignetteView>()
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'leitbild-element-defaults-'))
   registry = createSimulationRunRegistry({
@@ -60,11 +64,23 @@ describe('element defaults on four-loop Halden', () => {
           if (outcome.issues.length === 0 || outcome.issues.some(issue => issue.message === '')) failures.push(`${subject}: refused without a reason`)
           continue
         }
-        await compileVignette(run, outcome.state)
+        views.set(element.id, await compileVignette(run, outcome.state))
       } catch (error) {
         failures.push(`${subject}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
     expect(failures).toEqual([])
   }, 240_000)
+
+  test('in an element\'s pop-over every default stacks its views at the pop-over\'s width: none keeps the window\'s 360 px column, so no value falls outside it', () => {
+    // UX audit H3: SG A's default, beside its drawing in the window, kept that column inside the 304 px pop-over and
+    // lost 4 of its 8 values, AFW flow to SG A among them.
+    const beside = [...views].filter(([, view]) => view.beside === true)
+    expect(beside.map(([id]) => id)).toEqual(expect.arrayContaining(['sgA']))
+    expect(beside.filter(([, view]) => !standsBeside(view, true)).map(([id]) => id)).toEqual([])
+    expect([...views].filter(([, view]) => standsBeside(view, false)).map(([id]) => id)).toEqual([])
+    // Stacked, each values view has a row for each of its values (the pop-over draws every section but its drawings).
+    const short = [...views].flatMap(([id, view]) => view.sections.flatMap(section => (section.kind === 'values' && section.rows < section.values.length ? [`${id}: ${section.values.length} values in ${section.rows} rows`] : [])))
+    expect(short).toEqual([])
+  })
 })
