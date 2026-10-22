@@ -81,13 +81,13 @@ export const customShapes: ReadonlyArray<CustomShape> = [
   },
   // The Plant's operating panel (embed only).
   {
-    id: 'cited-reading-sparkline',
-    draws: 'A proposal\'s cited reading: its last ten minutes as a sparkline beside its margin to its limit.',
+    id: 'sparkline',
+    draws: 'A reading\'s recent trend as a hand-drawn sparkline, standing in for OpenBridge\'s mini graph: a proposal\'s cited reading, its last ten minutes beside its margin to its limit.',
     sites: [{ file: 'packs/process-plant/ui/displays/operation/ProposalSection.svelte', mark: '<svg class="spark"', drawn: 'svg' }],
     standsInFor: ['obc-graph-mini'],
     reason: 'A',
-    evidence: 'As the old renderer\'s lead sparkline (approved Q11): obc-graph-mini cannot break its line where nothing was recorded (wiki design-system page). The trend is the lead\'s D3 ruling 1 for the proposal card\'s evidence.',
-    decision: 'pending owner approval',
+    evidence: 'obc-graph-mini cannot break its line where nothing was recorded (wiki design-system page). Approved in Q11 for the old renderer\'s lead sparkline (ui/embed/composed-display/Sparkline.svelte, deleted at the swap); the proposal card\'s cited reading, the lead\'s D3 ruling 1 for its evidence, is the same shape for the same reason, and its one site since the swap.',
+    decision: APPROVED,
     ends: 'kept',
   },
   // The vignette renderer (P2).
