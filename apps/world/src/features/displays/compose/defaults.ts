@@ -128,11 +128,13 @@ export const defaultViews = async (run: ComposeRun, subject: Subject): Promise<R
   }
   if (subject.kind === 'element') {
     // Its values (elementRefs); where it is part of another element (a valve inside a vessel), its first four, then that
-    // element's (the vessel's pressure and level), eight at most.
+    // element's not already listed (the vessel's pressure and level), then its own others, eight at most.
     const own = await elementRefs(run, subject.objectId, subject.elementId)
     const parent = (await declarationOf(run, subject.objectId, [subject.elementId]))?.elements.find(element => element.id === subject.elementId)?.parent
     const graph = await topologyOf(run, subject.objectId)
-    const refs = parent === undefined ? own : [...new Set([...own.slice(0, 4), ...await elementRefs(run, subject.objectId, parent, 4), ...own.slice(4)])].slice(0, 8)
+    const first = own.slice(0, 4)
+    const hosted = parent === undefined ? [] : (await elementRefs(run, subject.objectId, parent)).filter(ref => !first.includes(ref))
+    const refs = [...new Set([...first, ...hosted, ...own.slice(4)])].slice(0, 8)
     const trend = await recordedOf(run, refs, 4)
     return [
       ...(refs.length > 0 ? [{ kind: 'values', refs: [...refs] } as DraftView] : []),

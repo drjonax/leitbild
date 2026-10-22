@@ -203,7 +203,7 @@ describe('P9: an equipment default carries what the detail display carries', () 
 
   // E2 porv-open: once the Plant declares the PORV's host (parent: the pressurizer, p2-plant), its default carries the
   // pressurizer's lead values after its own, its pressure and level among them.
-  test.todo('the PORV carries the pressurizer\'s pressure and level after its own readings', async () => {
+  test('the PORV carries the pressurizer\'s pressure and level after its own readings', async () => {
     const { state } = await opened(`${plantId}#PORV`)
     const readings = state.views.find(entry => entry.kind === 'values')
     expect(readings?.kind === 'values' && readings.refs).toEqual(expect.arrayContaining([`${plantId}#pressurizer.pressureMPa`, `${plantId}#pressurizer.levelPercent`]))
@@ -218,7 +218,7 @@ describe('Q22: equipment defaults lead with today\'s detail key values', () => {
     pressurizer: ['pressurizer.pressureMPa', 'pressurizer.reliefValveFlowing', 'pressurizer-relief-to-tank.temperatureC', 'pressurizer.safetyValvesOpen', 'pressurizer.levelDeviationPercent', 'pressurizer.levelPercent', 'pressurizer.levelProgramPercent', 'pressurizer.backupHeaterDemandMw'],
     rcpA: ['rcpA.runningState', 'rcpA.loopFlowKgPerS'],
   }
-  test.todo('SG A, the pressurizer and RCP A at power', async () => {
+  test('SG A, the pressurizer and RCP A at power', async () => {
     const atPower = await registry.create({ scenarioId: 'halden-power-complex' })
     await atPower.setClock({ paused: true })
     await atPower.runMaximumPace(new Date(Date.parse(atPower.snapshot().clock!.currentTime) + 30_000).toISOString() as IsoTimestamp, { shouldStop: () => false })
